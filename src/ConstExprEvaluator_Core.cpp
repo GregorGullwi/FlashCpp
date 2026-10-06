@@ -3,6 +3,7 @@
 #include <limits>
 #include <ranges>
 #include <unordered_set>
+#include <vector>
 
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
@@ -1608,7 +1609,7 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 				}
 
 				const IdentifierNode* base_identifier = array_identifier;
-				std::unordered_set<const VariableDeclarationNode*> visited_references;
+				std::vector<const VariableDeclarationNode*> visited_references;
 				for (;;) {
 					std::optional<ASTNode> symbol = lookup_identifier_symbol(
 						base_identifier, base_identifier->name(), *context.symbols);
@@ -1634,11 +1635,19 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 					}
 
 					const VariableDeclarationNode& reference = symbol->as<VariableDeclarationNode>();
-					if (!visited_references.insert(&reference).second || !reference.initializer().has_value()) {
+					bool already_visited = false;
+					for (const VariableDeclarationNode* visited_reference : visited_references) {
+						if (visited_reference == &reference) {
+							already_visited = true;
+							break;
+						}
+					}
+					if (already_visited || !reference.initializer().has_value()) {
 						return EvalResult::error(
 							"Reference target is unavailable for address-of subscript in constant expression",
 							EvalErrorType::NotConstantExpression);
 					}
+					visited_references.push_back(&reference);
 					base_identifier = tryGetIdentifier(*reference.initializer());
 					if (!base_identifier) {
 						return EvalResult::error(
