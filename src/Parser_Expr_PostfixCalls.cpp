@@ -728,10 +728,16 @@ ParseResult Parser::finalizePostfixCallExpression(
 		paren_token.line(),
 		paren_token.column(),
 		paren_token.file_index());
-	const bool all_arg_types_known = arg_types.size() == args.size();
+	// A callable-object call resolves its `operator()` overload set from the
+	// argument types. Preserve each argument's lvalue value category so the
+	// selected overload - and therefore the parser-facing return type that
+	// `decltype` reads - matches the runtime call: an lvalue argument must not
+	// select the rvalue-reference overload.
+	const std::vector<TypeSpecifierNode> deduced_arg_types = apply_lvalue_reference_deduction(args, arg_types);
+	const bool all_arg_types_known = deduced_arg_types.size() == args.size();
 	const ConcreteCallOperatorResolution call_operator_resolution = tryResolveConcreteCallOperator(
 		result,
-		arg_types,
+		deduced_arg_types,
 		args.size(),
 		all_arg_types_known);
 	const FunctionDeclarationNode* func_ref = call_operator_resolution.function;
@@ -745,7 +751,7 @@ ParseResult Parser::finalizePostfixCallExpression(
 		if (const auto* qualified_receiver = std::get_if<QualifiedIdentifierNode>(&receiver_expr)) {
 			func_ref = tryResolveQualifiedCallableObjectTemplateOperator(
 				*qualified_receiver,
-				arg_types);
+				deduced_arg_types);
 			if (func_ref != nullptr) {
 				resolved_qualified_callable_template_operator = true;
 			}
@@ -788,7 +794,7 @@ ParseResult Parser::finalizePostfixCallExpression(
 			result->as<ExpressionNode>(),
 			current_template_definition_lookup_context_,
 			operator_token,
-			arg_types,
+			deduced_arg_types,
 			false,
 			*func_ref);
 	}
