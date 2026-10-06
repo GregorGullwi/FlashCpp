@@ -768,6 +768,7 @@ private:
 		const StructTypeInfo* owner = nullptr;
 		const QualifiedIdentifierNode* qualified = nullptr;
 		const FunctionDeclarationNode* selected_function = nullptr;
+		const TemplateFunctionDeclarationNode* selected_template = nullptr;
 		std::vector<TypeSpecifierNode> target_parameter_types;
 		TypeSpecifierNode target_return_type;
 		TypeId target_return_type_id{};

@@ -3761,11 +3761,8 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 										return std::nullopt;
 									}
 									const std::optional<ASTNode> instantiated_function =
-										try_instantiate_member_function_template_explicit(
-											struct_name,
-											qualified_identifier->name(),
-											*explicit_template_args,
-											false);
+										try_instantiate_member_function_template_explicit_candidate(
+											struct_name, qualified_identifier->name(), *explicit_template_args, false, nullptr);
 									const FunctionDeclarationNode* function =
 										get_function_decl_node(instantiated_function);
 									if (function == nullptr) {

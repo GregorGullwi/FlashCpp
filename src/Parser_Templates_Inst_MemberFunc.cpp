@@ -1573,18 +1573,15 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	std::string_view struct_name,
 	std::string_view member_name,
 	std::span<const TemplateTypeArg> template_type_args) {
-	return try_instantiate_member_function_template_explicit(
-		struct_name,
-		member_name,
-		template_type_args,
-		true);
+	return try_instantiate_member_function_template_explicit_candidate(
+		struct_name, member_name, template_type_args, true, nullptr);
 }
 
-std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit(
+std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit_candidate(
 	std::string_view struct_name,
 	std::string_view member_name,
 	std::span<const TemplateTypeArg> template_type_args,
-	bool materialize_body) {
+	bool materialize_body, const TemplateFunctionDeclarationNode* selected_template) {
 
 	ScopedInjectedClassOwnerContext owner_context(*this, struct_name);
 
@@ -1594,7 +1591,18 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	StringHandle qualified_name = StringTable::getOrInternStringHandle(qualified_name_sb);
 	StringHandle specialization_lookup_name = qualified_name;
 	StringHandle struct_name_handle = StringTable::getOrInternStringHandle(struct_name);
-	auto requested_key = FlashCpp::makeInstantiationKey(qualified_name, template_type_args);
+	const auto discriminated_instantiation_name = [selected_template](StringHandle base_name) {
+		if (selected_template == nullptr) {
+			return base_name;
+		}
+		StringBuilder discriminated_name;
+		discriminated_name.append(base_name.view())
+			.append("$mfp")
+			.append(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(selected_template)));
+		return StringTable::getOrInternStringHandle(discriminated_name);
+	};
+	StringHandle requested_instantiation_name = discriminated_instantiation_name(qualified_name);
+	auto requested_key = FlashCpp::makeInstantiationKey(requested_instantiation_name, template_type_args);
 	if (auto existing_inst = gTemplateRegistry.getInstantiation(requested_key);
 		existing_inst.has_value()) {
 		return *existing_inst;
@@ -1787,6 +1795,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		}
 
 		const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
+		if (selected_template != nullptr && &template_func != selected_template) {
+			continue;
+		}
 		const auto& template_params = template_func.template_parameters();
 		const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 		if (template_type_args.size() > template_params.size()) {
@@ -1815,7 +1826,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			continue;
 		}
 		const auto& template_args = completed_template_args;
-		auto key = FlashCpp::makeInstantiationKey(candidate_qualified_name, template_args);
+		StringHandle candidate_instantiation_name = discriminated_instantiation_name(candidate_qualified_name);
+		auto key = FlashCpp::makeInstantiationKey(candidate_instantiation_name, template_args);
 
 		// Determine call arg types for this explicit call path.  Do this before
 		// the cache lookup so we can skip stale cached overloads whose pointer
@@ -1956,7 +1968,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			StringTable::getStringView(candidate_owner_name),
 			member_name,
 			candidate_qualified_name,
-			candidate_qualified_name,
+			candidate_instantiation_name,
 			template_node,
 			template_args,
 			key,

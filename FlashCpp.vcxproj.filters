@@ -413,6 +413,9 @@
     <ClInclude Include="src\SymbolTable.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\TemplateConstraintSubsumption.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\TemplateInstantiationHelper.h">
       <Filter>Header Files</Filter>
     </ClInclude>

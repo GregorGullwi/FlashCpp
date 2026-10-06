@@ -550,6 +550,7 @@
     <ClInclude Include="src\StringTable.h" />
     <ClInclude Include="src\SemanticAnalysis.h" />
     <ClInclude Include="src\SymbolTable.h" />
+    <ClInclude Include="src\TemplateConstraintSubsumption.h" />
     <ClInclude Include="src\TemplateInstantiationHelper.h" />
     <ClInclude Include="src\TemplateProfilingStats.h" />
     <ClInclude Include="src\TemplateRegistry.h" />
