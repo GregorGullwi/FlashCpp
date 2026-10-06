@@ -1098,3 +1098,19 @@ canonical classification answers every signedness question the corpus asks and
 the fallback only runs when a canonical import is unavailable. They are kept as
 the compatibility path for unmigrated operands, and a regression that forces an
 unimportable operand through them is still owed.
+
+Constructibility has one shared authority: `evaluateConstructibility` in
+`TypeTraitEvaluator.cpp` answers the zero-argument and argument-bearing
+questions and takes a `ConstructibilityFallback` (the lazy path asks `None` and
+keeps its unknown result; the folded and codegen paths ask `Sema` for the
+compatibility answer). The canonical helpers are file-local, so the three paths
+cannot drift apart, and default-construction facts and unary structural
+properties share one `CanonicalRecordFacts` mask.
+`tests/test_constructibility_paths_equivalence_ret0.cpp` pins that the folded,
+lazy, and lowered evaluators agree.
+
+Canonical imports use `tryImportSupportedCanonical(table, syntax)`, returning a
+`TypeId` only on `Supported` and an empty result otherwise (including
+`Invalid`, which callers recover from). It takes the table explicitly because
+resolving it through `requireFrontendContext()` pulls `FrontendContext.h` into a
+widely-included header and breaks the canonical-type mutation harness.
