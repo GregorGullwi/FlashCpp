@@ -763,15 +763,33 @@ Continue boundary 3A in this order:
     checks that `Buffer<Value, 1>` and `Buffer<1, Value>` remain incomparable;
     the canonical unit test checks declaration-identity binding and ordering.
     For equivalent member-template function patterns, a satisfied associated
-    constraint now ranks ahead of an unconstrained candidate. The negative
-    regression `tests/test_canonical_member_function_template_constraint_address_e1617.cpp`
+    constraint now ranks ahead of an unconstrained candidate. Supported
+    type-only constraints on equivalent constrained candidates are normalized,
+    named concepts are expanded, and atomic constraints are compared by source
+    expression and only the mappings for template parameters actually referenced
+    by that expression before logical subsumption ranks them. Constrained type
+    parameters place the constrained type before explicit concept arguments.
+    Dependent concept arguments keep their pointer, reference, and cv structure;
+    decorated dependent mappings such as `T*`, `const T`, and `T&` are compared
+    distinctly instead of collapsing onto the bare parameter, so `C<T>` and
+    `C<T*>` remain incomparable. The selected candidate is carried through late
+    body materialization by declaration identity, because structurally matching
+    overloads share a `TemplateDeclId` even when their constraints differ.
+    Regressions cover concept refinement, concept-parameter refinement,
+    disjunction subsumption, unused concept arguments, distinct atomic
+    expressions, asymmetric explicit concept arguments, default concept
+    arguments, decorated-dependent incomparability, and invocation of the
+    selected specialization body. The negative regression
+    `tests/test_canonical_member_function_template_constraint_address_e1617.cpp`
     checks that the constrained private overload is selected for `int`, while
     the unconstrained overload remains viable when the constraint fails for
     `char`. The concept-parameter regression
     `tests/test_canonical_member_function_template_concept_address_e1617.cpp`
     checks the same candidate selection through a constrained template
-    parameter. Full C++20 subsumption between two constrained candidates and
-    constraint evaluation for templates containing packs remain unsupported.
+    parameter. Complex non-type concept argument expressions, constraint
+    evaluation for templates containing packs, arrays or member/function
+    dependent decorations, and constraint forms that cannot be normalized remain
+    unsupported; those candidates remain unordered.
     Complex NTTP expressions, non-literal dependent arguments, and non-type
     packs remain unsupported, as do pack forms beyond the single trailing type
     pack. A C-style ellipsis combined with a template pack is also unsupported.

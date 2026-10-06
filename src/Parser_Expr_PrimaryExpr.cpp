@@ -1085,20 +1085,21 @@ Parser::tryInstantiateMemberFunctionTemplateCandidateForAddress(
 	TypeId target_return_type_id,
 	bool& return_type_deduced) {
 	return_type_deduced = false;
-	if (member_id.has_template_arguments()) {
-		return std::nullopt;
-	}
 	const std::string_view owner_name = StringTable::getStringView(owner.name);
 	const std::string_view member_name =
 		StringTable::getStringView(member_id.nameHandle());
 	bool deduced_from_return_type = false;
-	std::optional<TemplateArgumentVector> template_args =
-		tryDeduceFunctionTemplateAddressArguments(
+	std::optional<TemplateArgumentVector> template_args;
+	if (member_id.has_template_arguments()) {
+		template_args = materializeConcreteCallTemplateArguments(member_id.template_arguments());
+	} else {
+		template_args = tryDeduceFunctionTemplateAddressArguments(
 			function_template,
 			target_parameter_types,
 			target_return_type,
 			target_return_type_id,
 			deduced_from_return_type);
+	}
 	if (!template_args.has_value()) {
 		return std::nullopt;
 	}
@@ -1106,13 +1107,9 @@ Parser::tryInstantiateMemberFunctionTemplateCandidateForAddress(
 	FlashCpp::ScopedState guard_explicit_call_arg_types(
 		current_explicit_call_arg_types_);
 	current_explicit_call_arg_types_ = &target_parameter_types;
-	std::optional<ASTNode> instantiated =
-		try_instantiate_member_function_template_explicit(
-			owner_name,
-			member_name,
-			std::span<const TemplateTypeArg>(
-				template_args->data(),
-				template_args->size()));
+	std::optional<ASTNode> instantiated = try_instantiate_member_function_template_explicit_candidate(
+		owner_name, member_name,
+		std::span<const TemplateTypeArg>(template_args->data(), template_args->size()), true, &function_template);
 	if (instantiated.has_value()) {
 		return_type_deduced = deduced_from_return_type;
 	}
@@ -10830,20 +10827,44 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 									// Store the template arguments for later evaluation
 									std::vector<ASTNode> template_arg_nodes;
-									for (const auto& arg : *explicit_template_args) {
-										// Convert TemplateTypeArg to an appropriate expression node
-										if (arg.is_dependent && arg.dependent_name.isValid()) {
-											Token dep_token(Token::Type::Identifier, arg.dependent_name.view(),
-															concept_token.line(), concept_token.column(), concept_token.file_index());
-											auto dep_node = emplace_node<ExpressionNode>(IdentifierNode(dep_token));
-											template_arg_nodes.push_back(dep_node);
-										} else if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
-											std::string_view type_name = StringTable::getStringView(type_info->name_);
-											Token type_token(Token::Type::Identifier, type_name,
-															 concept_token.line(), concept_token.column(), concept_token.file_index());
-											auto type_node = emplace_node<ExpressionNode>(IdentifierNode(type_token));
-											template_arg_nodes.push_back(type_node);
+									template_arg_nodes.reserve(explicit_template_args->size());
+									for (const TemplateTypeArg& arg : *explicit_template_args) {
+										// Template-template arguments, parameter packs, and
+										// non-type values keep the legacy identifier form so
+										// the evaluator and substitutor can rebind them by
+										// name. A plain dependent type parameter also stays an
+										// identifier for the same reason.
+										const bool keep_as_identifier = !arg.isTypeArgument() || arg.is_pack ||
+											(arg.is_dependent && arg.dependent_name.isValid() && arg.pointer_depth == 0 &&
+												arg.ref_qualifier == ReferenceQualifier::None && arg.cv_qualifier == CVQualifier::None &&
+												!arg.is_array && !arg.function_signature.has_value());
+										if (keep_as_identifier) {
+											StringHandle identifier_name = arg.dependent_name;
+											if (!identifier_name.isValid() && arg.template_name_handle.isValid()) {
+												identifier_name = arg.template_name_handle;
+											}
+											if (!identifier_name.isValid()) {
+												if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
+													identifier_name = type_info->name_;
+												}
+											}
+											if (identifier_name.isValid()) {
+												Token arg_token(Token::Type::Identifier, identifier_name.view(),
+																concept_token.line(), concept_token.column(), concept_token.file_index());
+												template_arg_nodes.push_back(emplace_node<ExpressionNode>(IdentifierNode(arg_token)));
+											}
+											continue;
 										}
+										// A decorated dependent type or a concrete type is
+										// preserved as a full type specifier so pointer,
+										// reference, and cv structure is not discarded before
+										// constraint normalization.
+										TypeSpecifierNode type_spec = makeTypeSpecifierFromTemplateTypeArg(arg, concept_token);
+										if (arg.is_dependent && arg.dependent_name.isValid()) {
+											type_spec.set_template_parameter_identity(arg.dependent_name);
+										}
+										template_arg_nodes.push_back(ASTNode(
+											&gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(std::move(type_spec))));
 									}
 									concept_call.set_template_arguments(std::move(template_arg_nodes));
 

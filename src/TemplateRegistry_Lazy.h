@@ -2238,10 +2238,27 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				} else if (arg_node.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = arg_node.as<TypeSpecifierNode>();
 					TemplateTypeArg type_arg;
-					type_arg.type_index = type_spec.type_index();
-					type_arg.ref_qualifier = type_spec.reference_qualifier();
-					type_arg.pointer_depth = type_spec.pointer_depth();
-					type_arg.cv_qualifier = type_spec.cv_qualifier();
+					bool substituted_base = false;
+					if (type_spec.has_template_parameter_identity()) {
+						const std::string_view base_name = type_spec.template_parameter_name().view();
+						for (size_t j = 0; j < template_param_names.size() && j < template_args.size(); ++j) {
+							if (template_param_names[j] == base_name) {
+								// Start from the bound base argument, then apply the
+								// pattern's declarator so `T*` becomes the bound type
+								// with one extra pointer level rather than a bare T.
+								type_arg = template_args[j];
+								substituted_base = true;
+								break;
+							}
+						}
+					}
+					if (!substituted_base) {
+						type_arg.type_index = type_spec.type_index();
+					}
+					type_arg.ref_qualifier = type_spec.reference_qualifier() != ReferenceQualifier::None
+						? type_spec.reference_qualifier() : type_arg.ref_qualifier;
+					type_arg.pointer_depth = static_cast<uint8_t>(type_arg.pointer_depth + type_spec.pointer_depth());
+					type_arg.cv_qualifier = type_arg.cv_qualifier | type_spec.cv_qualifier();
 					concept_args.push_back(type_arg);
 				}
 			}

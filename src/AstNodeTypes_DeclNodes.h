@@ -3844,6 +3844,7 @@ public:
 	explicit NumericLiteralNode(Token identifier, NumericLiteralValue value, TypeCategory cat, TypeQualifier qualifier, unsigned char size) : value_(value), type_cat_(cat), size_(size), qualifier_(qualifier), identifier_(identifier) {}
 
 	std::string_view token() const { return identifier_.value(); }
+	const Token& source_token() const { return identifier_; }
 	NumericLiteralValue value() const { return value_; }
 	TypeCategory type() const { return type_cat_; }
 	unsigned char sizeInBits() const { return size_; }
@@ -3862,6 +3863,7 @@ public:
 	explicit StringLiteralNode(Token identifier) : identifier_(identifier) {}
 
 	std::string_view value() const { return identifier_.value(); }
+	const Token& source_token() const { return identifier_; }
 
 private:
 	Token identifier_;
@@ -3873,6 +3875,7 @@ public:
 
 	bool value() const { return value_; }
 	std::string_view token() const { return identifier_.value(); }
+	const Token& source_token() const { return identifier_; }
 
 private:
 	Token identifier_;
