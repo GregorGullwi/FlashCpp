@@ -604,11 +604,12 @@ measurement is stale.
 The explicit-criteria rollup is **10/79 complete**. The boundary-3A criterion
 that pointer-to-member overloads distinguish owner and pointee types is now
 covered; passing tests or the breadth of landed code do not complete the
-boundary. This slice advanced the importer/declarator coverage work item by
+boundary. This branch advanced the importer/declarator coverage work item by
 completing the `[dcl.type.decltype]` value-category rule: callable-object calls
 select their overload from each argument's value category, an unparenthesized
 class member access names the declared member type, and a pointer dereference is
-an lvalue of the pointee type; it completes no exit criterion on its own. The
+an lvalue of the pointee type. It also fixed partial-specialization matching for
+a deduced pattern base. Neither completes an exit criterion on its own. The
 flat-field-absence criterion remains advanced
 but incomplete for the type-trait consumer family, the lazy-constraint
 evaluator, and trait-operand nominal and member-owner identity; the flat
@@ -869,10 +870,21 @@ are covered by `tests/test_decltype_unparenthesized_member_access_ret0.cpp`.
 A pointer dereference now yields an lvalue of the pointee type, so
 `decltype(*pointer)` is `T&` without parentheses and overload ranking selects the
 lvalue overload; `tests/test_decltype_dereference_value_category_ret0.cpp`
-covers scalar, nested, and record pointees plus a runtime binding. The
-ordered-declarator pointer-to-array dereference still defers to sema, so its
-`decltype` remains open. Calls whose argument value category is not known at
-parse time also remain open.
+covers scalar, nested, and record pointees plus a runtime binding. A
+pointer-to-array dereference resolves through its legacy projection to
+`int(&)[3]`; a fully non-projectable ordered spine still defers to sema. Calls
+whose argument value category is not known at parse time also remain open.
+
+Partial-specialization matching now lets a pattern whose base is a bare deduced
+parameter absorb the concrete argument's cv and array shape: `T&` matches
+`const int&` and `int(&)[3]`, deducing `T = const int` and `T = int[3]`, while
+`const T` and `T[N]` keep their qualifiers structural. Before the change the
+matcher compared the pattern's absent cv/array shape against the concrete
+argument, so those specializations were rejected (and the result depended on
+instantiation order). `tests/test_partial_spec_deduced_base_modifiers_ret0.cpp`
+pins the reference, cv, and array-reference deductions plus the primary and
+`T[N]` cases. This is a template-deduction correctness fix and completes no
+boundary-3A exit criterion.
 
 Overload-ranking tie-breakers for reference parameter identity and pointer
 
@@ -1013,10 +1025,9 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
    unparenthesized class member access names the declared member type, covered
    by `tests/test_decltype_unparenthesized_member_access_ret0.cpp`, and a
    pointer dereference yields an lvalue of the pointee type, covered by
-   `tests/test_decltype_dereference_value_category_ret0.cpp`. Remaining: the
-   ordered-declarator pointer-to-array dereference (deferred to sema) and a call
-   or xvalue operand whose value category the parser does not know at parse
-   time.
+   `tests/test_decltype_dereference_value_category_ret0.cpp`. Remaining: a fully
+   non-projectable ordered-spine dereference (deferred to sema) and a call or
+   xvalue operand whose value category the parser does not know at parse time.
 4. **Close and mutation-validate the 3A exit criteria.** Prove independence
    from parser/context stacks, parse order, and string insertion order; cover
    remaining pointer-to-member, function, dependent, and template families;
