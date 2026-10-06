@@ -5456,6 +5456,18 @@ ParseResult Parser::parse_decltype_specifier() {
 		FlashCpp::ParserFunctionTypeHelpers::tryGetBareFunctionDesignatorType(
 			*decltype_expr);
 	if (!type_spec_opt.has_value()) {
+		// [dcl.type.decltype]: an unparenthesized class member access names the
+		// declared type of the member, not the value-category-adjusted type of
+		// the access expression. Suppress the value-category reference for that
+		// shape; a parenthesized operand keeps the reference rule below.
+		const bool unparenthesized_member_access =
+			!last_expr_starts_with_paren && decltype_expr->is<ExpressionNode>() &&
+			std::holds_alternative<MemberAccessNode>(decltype_expr->as<ExpressionNode>());
+		const bool previous_suppression = suppress_member_access_value_category_;
+		suppress_member_access_value_category_ = unparenthesized_member_access;
+		ScopeGuard suppression_guard([this, previous_suppression]() {
+			suppress_member_access_value_category_ = previous_suppression;
+		});
 		type_spec_opt = get_expression_type(*decltype_expr);
 	}
 	if (!type_spec_opt.has_value()) {

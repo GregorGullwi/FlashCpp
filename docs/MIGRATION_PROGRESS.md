@@ -605,10 +605,10 @@ The explicit-criteria rollup is **10/79 complete**. The boundary-3A criterion
 that pointer-to-member overloads distinguish owner and pointee types is now
 covered; passing tests or the breadth of landed code do not complete the
 boundary. This slice advanced the importer/declarator coverage work item by
-making callable-object call overload selection preserve each argument's value
-category, so `decltype` of a call - through an identifier, a temporary, or an
-object data member - agrees with the runtime overload; it completes no exit
-criterion on its own. The flat-field-absence criterion remains advanced
+completing the `[dcl.type.decltype]` value-category rule: callable-object calls
+select their overload from each argument's value category, and an
+unparenthesized class member access names the declared member type; it completes
+no exit criterion on its own. The flat-field-absence criterion remains advanced
 but incomplete for the type-trait consumer family, the lazy-constraint
 evaluator, and trait-operand nominal and member-owner identity; the flat
 classifier in `TypeTraitEvaluator.cpp` remains for the families listed under
@@ -859,8 +859,13 @@ member-access path builds the member-access expression, deduces the argument
 value categories, and stores the selected `operator()` as the callee, so `.`,
 `->`, and nested member callables keep the lvalue or xvalue overload's return
 type instead of the synthetic `int` fallback. The same regression covers those
-member forms. Calls whose argument value category is not known at parse time
-remain open.
+member forms. The complement of the reference rule is now handled too: an
+unparenthesized class member access names the declared type of the member, so
+`decltype(s.member)` is `int` while `decltype((s.member))` is `int&`, and a
+declared reference member keeps its `int&` in both forms. The parser suppresses
+the value-category reference for that one shape; `.`, `->`, and nested members
+are covered by `tests/test_decltype_unparenthesized_member_access_ret0.cpp`.
+Calls whose argument value category is not known at parse time remain open.
 
 Overload-ranking tie-breakers for reference parameter identity and pointer
 
@@ -997,8 +1002,11 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
    temporary, or an object data member reached through `.`, `->`, or a nested
    member matches the runtime overload's return type (including `T&` and
    `T&&`); `tests/test_decltype_call_operator_value_category_ret0.cpp` checks
-   those forms. Remaining: a call or xvalue operand whose value category the
-   parser does not know at parse time.
+   those forms. The reference rule's complement is also in place: an
+   unparenthesized class member access names the declared member type, covered
+   by `tests/test_decltype_unparenthesized_member_access_ret0.cpp`. Remaining: a
+   call or xvalue operand whose value category the parser does not know at parse
+   time.
 4. **Close and mutation-validate the 3A exit criteria.** Prove independence
    from parser/context stacks, parse order, and string insertion order; cover
    remaining pointer-to-member, function, dependent, and template families;

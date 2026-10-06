@@ -4287,7 +4287,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					applyMemberDeclaratorShape(member_type, *member_result.member);
 					if (member_result.member->reference_qualifier != ReferenceQualifier::None) {
 						member_type.set_reference_qualifier(member_result.member->reference_qualifier);
-					} else {
+					} else if (!suppress_member_access_value_category_) {
 						apply_member_access_value_category(
 							member_type,
 							object_type,

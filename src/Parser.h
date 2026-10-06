@@ -1342,6 +1342,11 @@ private:
 	// C++20 [temp.res.general]: omitted `typename` is valid in decl-specifier-seq
 	// and trailing-return-type contexts (P0634R3).
 	bool parsing_implicit_typename_context_ = false;
+	// [dcl.type.decltype]: an unparenthesized class member access names the
+	// declared type of the member, not its value-category-adjusted type. Set
+	// while the decltype builder asks for that expression type so the member
+	// access branch skips the value-category reference.
+	bool suppress_member_access_value_category_ = false;
 	static constexpr size_t MAX_PARSING_DEPTH = 500;	 // Reasonable limit for nested parsing
 	std::vector<std::string_view> template_param_names_;	 // Template parameter names in current scope
 
