@@ -10,13 +10,21 @@ failure while processing the standard header, separate from Itanium symbol
 mangling; the typeinfo test therefore does not currently verify the mangling
 change on WSL.
 
-## Unbounded array reference as a template argument does not parse
+## Reference-to-array support is incomplete
 
-`Kind<int(&)[]>` (a reference to an unbounded array) is a valid template
-argument, but the parser rejects it with "Expected primary expression". The
-bounded form `Kind<int(&)[3]>` parses and matches a `T&` partial specialization.
-The gap is in parsing an abstract declarator whose array bound is omitted behind
-a reference, not in the partial-specialization matcher.
+A reference to an array of unknown bound (`int(&)[]`) is a valid type. It now
+parses as a type-id, a template argument, and a named reference, and a reference
+to a global or local array aliases the array for element reads and writes
+(`tests/test_reference_to_unknown_bound_array_ret0.cpp`). A global array
+identifier now publishes address-only metadata and `ContainsAddress` storage,
+matching the LEA that `handleGlobalLoad` already emitted, so the reference binds
+the array address instead of the temporary's own frame slot.
+
+Remaining: a function parameter spelled directly as `int (&)[]` does not accept
+an `int[5]` argument ("No matching function"), while the aliased spelling
+`using Ref = int(&)[]; void f(Ref);` does. An element address comparison such as
+`&ref[0] == &arr[0]` is also still reported false for both global and local
+arrays; that is an address-of-subscript bug independent of the reference type.
 
 ## Complex member-type class-template bases still need stack coverage
 

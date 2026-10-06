@@ -674,12 +674,23 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					op.is_array = is_array_type;
 					StringHandle saved_name = op.global_name;
 					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
-					if (!is_array_type) {
+					if (is_array_type) {
+							// handleGlobalLoad emits LEA for an array, so this temp already
+							// holds the array's address. Mark it as an address so a reference
+							// binding copies the value instead of materialising the temp's
+							// own frame slot.
+						setTempVarMetadata(result_temp, TempVarMetadata::makeAddressOnly(
+							nativeTypeIndex(type_n.type()), SizeInBits{size_bits}, ValueCategory::LValue));
+					} else {
 						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
 															LValueInfo(LValueInfo::Kind::Global, saved_name, 0),
 															type_n.category(), size_bits));
 					}
-					return makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp, true);
+					ExprResult global_result = makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp, true);
+					if (is_array_type) {
+						global_result.storage = ValueStorage::ContainsAddress;
+					}
+					return global_result;
 				}
 
 				if (fast_sym->is<DeclarationNode>()) {
@@ -700,12 +711,23 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					op.is_array = is_array_type;
 					StringHandle saved_global_name = op.global_name;
 					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
-					if (!is_array_type) {
+					if (is_array_type) {
+							// handleGlobalLoad emits LEA for an array, so this temp already
+							// holds the array's address. Mark it as an address so a reference
+							// binding copies the value instead of materialising the temp's
+							// own frame slot.
+						setTempVarMetadata(result_temp, TempVarMetadata::makeAddressOnly(
+							nativeTypeIndex(type_n.type()), SizeInBits{size_bits}, ValueCategory::LValue));
+					} else {
 						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
 															LValueInfo(LValueInfo::Kind::Global, saved_global_name, 0),
 															type_n.category(), size_bits));
 					}
-					return makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp, true);
+					ExprResult global_result = makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp, true);
+					if (is_array_type) {
+						global_result.storage = ValueStorage::ContainsAddress;
+					}
+					return global_result;
 				}
 				// Other symbol types (FunctionDeclarationNode, etc.): fall through to cascade
 			}
@@ -1200,7 +1222,14 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			op.is_array = is_array_type;	 // Arrays need LEA to get address
 			StringHandle saved_global_name = op.global_name;
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
-			if (!is_array_type) {
+			if (is_array_type) {
+					// handleGlobalLoad emits LEA for an array, so this temp already
+					// holds the array's address. Mark it as an address so a reference
+					// binding copies the value instead of materialising the temp's own
+					// frame slot.
+				setTempVarMetadata(result_temp, TempVarMetadata::makeAddressOnly(
+					nativeTypeIndex(type_node.type()), SizeInBits{size_bits}, ValueCategory::LValue));
+			} else {
 				setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
 													LValueInfo(LValueInfo::Kind::Global, saved_global_name, 0),
 													type_node.category(), size_bits));
@@ -1209,7 +1238,11 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				// Return the temp variable that will hold the loaded value
 				// For pointers and arrays, return 64 bits (pointer size)
 				// Include type_index for struct types
-			return makeIdentifierResultFromTypeNode(type_node, size_bits, result_temp, true);
+			ExprResult global_result = makeIdentifierResultFromTypeNode(type_node, size_bits, result_temp, true);
+			if (is_array_type) {
+				global_result.storage = ValueStorage::ContainsAddress;
+			}
+			return global_result;
 		}
 
 			// Check if this is a reference parameter - if so, we need to dereference it
@@ -1396,7 +1429,14 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 				// Register Global lvalue metadata so compound assignments (+=, -=, etc.) can write back
-			if (!is_array_type) {
+			if (is_array_type) {
+					// handleGlobalLoad emits LEA for an array, so this temp already
+					// holds the array's address. Mark it as an address so a reference
+					// binding copies the value instead of materialising the temp's own
+					// frame slot.
+				setTempVarMetadata(result_temp, TempVarMetadata::makeAddressOnly(
+					nativeTypeIndex(type_node.type()), SizeInBits{size_bits}, ValueCategory::LValue));
+			} else {
 				setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
 													LValueInfo(LValueInfo::Kind::Global, saved_global_name, 0),
 													type_node.category(), size_bits));
@@ -1404,7 +1444,11 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 
 				// Return the temp variable that will hold the loaded value
 				// Include type_index for struct types
-			return makeIdentifierResultFromTypeNode(type_node, size_bits, result_temp, true);
+			ExprResult global_result = makeIdentifierResultFromTypeNode(type_node, size_bits, result_temp, true);
+			if (is_array_type) {
+				global_result.storage = ValueStorage::ContainsAddress;
+			}
+			return global_result;
 		} else {
 				// This is a local variable
 
