@@ -1177,22 +1177,27 @@ bool Parser::parseReferenceToArrayDeclarator(
 	}
 
 	std::vector<ASTNode> array_dimensions;
+	bool is_unsized_outer_array = false;
 	while (peek() == "["_tok) {
 		advance(); // consume '['
 
-		// A reference to an array of unknown bound is ill-formed, so an empty
-		// extent is not a valid suffix here.
+		// [dcl.array]/1: a reference to an array of unknown bound is valid
+		// (`int(&)[]`), so the outermost extent may be absent. Only the first
+		// dimension can be unsized.
 		if (peek() == "]"_tok) {
-			restore_token_position(group_body_start);
-			return false;
+			if (is_unsized_outer_array || !array_dimensions.empty()) {
+				restore_token_position(group_body_start);
+				return false;
+			}
+			is_unsized_outer_array = true;
+		} else {
+			auto size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			if (size_result.is_error()) {
+				restore_token_position(group_body_start);
+				return false;
+			}
+			array_dimensions.push_back(*size_result.node());
 		}
-
-		auto size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-		if (size_result.is_error()) {
-			restore_token_position(group_body_start);
-			return false;
-		}
-		array_dimensions.push_back(*size_result.node());
 
 		if (!consume("]"_tok)) {
 			restore_token_position(group_body_start);
@@ -1203,6 +1208,9 @@ bool Parser::parseReferenceToArrayDeclarator(
 	type_spec.set_reference_qualifier(
 		is_rvalue_ref ? ReferenceQualifier::RValueReference : ReferenceQualifier::LValueReference);
 	type_spec.set_array(true);
+	if (is_unsized_outer_array) {
+		type_spec.set_unsized_outer_array_dimension(true);
+	}
 	addConstantArrayDimensionsToTypeSpec(type_spec, array_dimensions);
 
 	out_identifier = identifier;
