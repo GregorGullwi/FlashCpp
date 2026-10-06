@@ -3023,6 +3023,19 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 		stripCanonicalTopCv(table, source_referent);
 	const auto [target_type, target_referent_cv] =
 		stripCanonicalTopCv(table, target_referent);
+	auto arrayBoundsMatchForReferenceBinding = [](
+		const CanonicalTypeNode& source_array,
+		const CanonicalTypeNode& target_array,
+		bool allow_unknown_outer_bound) {
+		if (source_array.flags == target_array.flags &&
+			source_array.array_extent == target_array.array_extent) {
+			return true;
+		}
+		return allow_unknown_outer_bound &&
+			hasCanonicalTypeNodeFlag(
+				source_array.flags, CanonicalTypeNodeFlags::KnownArrayBound) &&
+			target_array.flags == CanonicalTypeNodeFlags::None;
+	};
 	auto objectCvThroughArrays = [&table](TypeId type) {
 		CVQualifier qualifiers = CVQualifier::None;
 		for (;;) {
@@ -3049,6 +3062,7 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 	TypeId source_shape = source_type;
 	TypeId target_shape = target_type;
 	bool same_shape_ignoring_cv = true;
+	bool allow_unknown_outer_array_bound = true;
 	for (;;) {
 		source_shape = stripCanonicalTopCv(table, source_shape).first;
 		target_shape = stripCanonicalTopCv(table, target_shape).first;
@@ -3063,12 +3077,20 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 			same_shape_ignoring_cv = source_shape == target_shape;
 			break;
 		}
+		const bool component_shape_matches =
+			source_shape_node.kind == CanonicalTypeKind::Array
+				? arrayBoundsMatchForReferenceBinding(
+					source_shape_node,
+					target_shape_node,
+					allow_unknown_outer_array_bound)
+				: source_shape_node.flags == target_shape_node.flags &&
+					source_shape_node.array_extent == target_shape_node.array_extent;
 		if (source_shape_node.builtin != target_shape_node.builtin ||
-			source_shape_node.flags != target_shape_node.flags ||
-			source_shape_node.array_extent != target_shape_node.array_extent) {
+			!component_shape_matches) {
 			same_shape_ignoring_cv = false;
 			break;
 		}
+		allow_unknown_outer_array_bound = false;
 		source_shape = source_shape_node.child;
 		target_shape = target_shape_node.child;
 	}
@@ -3249,6 +3271,7 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 		// element type, such as a pointer element gaining pointee cv, is a
 		// qualification conversion.
 		bool qualification_changed = false;
+		bool allow_unknown_outer_array_bound = true;
 		TypeId source_element = source_type;
 		TypeId target_element = target_type;
 		for (;;) {
@@ -3288,10 +3311,13 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 				}
 				return ConversionPlan::exact_match();
 			}
-			if (source_shape_node.array_extent != target_shape_node.array_extent ||
-				source_shape_node.flags != target_shape_node.flags) {
+			if (!arrayBoundsMatchForReferenceBinding(
+					source_shape_node,
+					target_shape_node,
+					allow_unknown_outer_array_bound)) {
 				return ConversionPlan::no_match();
 			}
+			allow_unknown_outer_array_bound = false;
 			source_element = source_shape_node.child;
 			target_element = target_shape_node.child;
 		}
