@@ -1236,116 +1236,11 @@ extern ConceptRegistry gConceptRegistry;
 // ============================================================================
 // Concept Subsumption for C++20
 // ============================================================================
-
-// Check if constraint A subsumes constraint B
-// A subsumes B if whenever A is satisfied, B is also satisfied
-// In practice: A subsumes B if A's requirements are a superset of B's
-inline bool constraintSubsumes(const ASTNode& constraintA, const ASTNode& constraintB) {
-	// Advanced subsumption rules:
-	// 1. Identical constraints subsume each other
-	// 2. A && B subsumes A (conjunction implies the parts)
-	// 3. A && B subsumes B (conjunction implies the parts)
-	// 4. A subsumes A || B (A is stronger than disjunction with A)
-	// 5. A && !B does not subsume A (negation creates incompatibility)
-	// 6. Transitivity: if A subsumes B and B subsumes C, then A subsumes C
-	// 7. A && B && C subsumes A && B (more constraints = more specific)
-
-	// If constraints are identical, they subsume each other
-	// This is a simplified check - full implementation would need deep comparison
-	if (constraintA.type_name() == constraintB.type_name()) {
-		// Same type - might be the same constraint
-		// For full correctness, we'd need to compare the actual expressions
-		return true;
-	}
-
-	// Check if A is a conjunction that includes B
-	if (constraintA.is<BinaryOperatorNode>()) {
-		const auto& binop = constraintA.as<BinaryOperatorNode>();
-		if (binop.op() == "&&") {
-			// A = X && Y, check if X or Y subsumes B
-			if (constraintSubsumes(binop.get_lhs(), constraintB)) {
-				return true;
-			}
-			if (constraintSubsumes(binop.get_rhs(), constraintB)) {
-				return true;
-			}
-
-			// Check transitive subsumption: (A && B) subsumes C if A subsumes C or B subsumes C
-			// Already handled above
-		}
-
-		// Handle negation: !A does not subsume A
-		if (binop.op() == "||") {
-			// A = X || Y does not generally subsume anything
-			// (disjunction is weaker than either branch)
-			return false;
-		}
-	}
-
-	// Check if A is a unary negation operator
-	if (constraintA.is<UnaryOperatorNode>()) {
-		const auto& unop = constraintA.as<UnaryOperatorNode>();
-		if (unop.op() == "!") {
-			// !A does not subsume A (they're contradictory)
-			// !A subsumes !(A && B) is complex, skip for now
-			return false;
-		}
-	}
-
-	// Check if B is a disjunction where A subsumes one branch
-	if (constraintB.is<BinaryOperatorNode>()) {
-		const auto& binop = constraintB.as<BinaryOperatorNode>();
-		if (binop.op() == "||") {
-			// B = X || Y, A subsumes B if A subsumes both X and Y
-			if (constraintSubsumes(constraintA, binop.get_lhs()) &&
-				constraintSubsumes(constraintA, binop.get_rhs())) {
-				return true;
-			}
-		}
-
-		// Check if B is a conjunction where A subsumes the whole conjunction
-		if (binop.op() == "&&") {
-			// B = X && Y, A subsumes B if A subsumes (X && Y) as a whole
-			// This is tricky: A subsumes (X && Y) if A subsumes at least one of them
-			// Example: A subsumes (A && B) because A is less restrictive
-			// But we already check if constraintA matches constraintB above
-			// So skip detailed analysis here
-		}
-	}
-
-	return false;  // Conservative: assume no subsumption
-}
-
-// Compare two concepts for subsumption ordering
-// Returns: -1 if A subsumes B, 1 if B subsumes A, 0 if neither
-inline int compareConceptSubsumption(const ASTNode& conceptA, const ASTNode& conceptB) {
-	// Get constraint expressions from concepts
-	const ASTNode* exprA = nullptr;
-	const ASTNode* exprB = nullptr;
-
-	if (conceptA.is<ConceptDeclarationNode>()) {
-		exprA = &conceptA.as<ConceptDeclarationNode>().constraint_expr();
-	}
-	if (conceptB.is<ConceptDeclarationNode>()) {
-		exprB = &conceptB.as<ConceptDeclarationNode>().constraint_expr();
-	}
-
-	if (!exprA || !exprB) {
-		return 0;  // Can't compare
-	}
-
-	bool a_subsumes_b = constraintSubsumes(*exprA, *exprB);
-	bool b_subsumes_a = constraintSubsumes(*exprB, *exprA);
-
-	if (a_subsumes_b && !b_subsumes_a) {
-		return -1;  // A is more specific (subsumes B)
-	}
-	if (b_subsumes_a && !a_subsumes_b) {
-		return 1;	  // B is more specific (subsumes A)
-	}
-
-	return 0;  // Neither subsumes the other (or both do - equivalent)
-}
+// Constraint ranking for member-function-template addresses is performed by the
+// normalized, parameter-mapping-aware engine in TemplateConstraintSubsumption.h.
+// The former structural helpers here only compared expression shapes, could not
+// distinguish atoms across parameter lists, and had no callers, so they were
+// removed in favor of that single implementation.
 
 // ============================================================================
 // Constraint Evaluation for C++20 Concepts
@@ -2237,29 +2132,37 @@ inline ConstraintEvaluationResult evaluateConstraint(
 					}
 				} else if (arg_node.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = arg_node.as<TypeSpecifierNode>();
-					TemplateTypeArg type_arg;
-					bool substituted_base = false;
+					const TemplateTypeArg* bound_base = nullptr;
 					if (type_spec.has_template_parameter_identity()) {
 						const std::string_view base_name = type_spec.template_parameter_name().view();
 						for (size_t j = 0; j < template_param_names.size() && j < template_args.size(); ++j) {
 							if (template_param_names[j] == base_name) {
-								// Start from the bound base argument, then apply the
-								// pattern's declarator so `T*` becomes the bound type
-								// with one extra pointer level rather than a bare T.
-								type_arg = template_args[j];
-								substituted_base = true;
+								bound_base = &template_args[j];
 								break;
 							}
 						}
 					}
-					if (!substituted_base) {
+					if (bound_base != nullptr) {
+						// Start from the bound base argument and reuse the shared
+						// dependent-pattern rebinding so pointer levels, cv, and
+						// reference collapsing match ordinary substitution (`T*`
+						// becomes the bound type with one extra pointer level).
+						TemplateTypeArg pattern;
+						pattern.pointer_depth = static_cast<uint8_t>(type_spec.pointer_depth());
+						pattern.cv_qualifier = type_spec.cv_qualifier();
+						pattern.ref_qualifier = type_spec.reference_qualifier();
+						for (const PointerLevel& pointer_level : type_spec.pointer_levels()) {
+							pattern.pointer_cv_qualifiers.push_back(pointer_level.cv_qualifier);
+						}
+						concept_args.push_back(rebindDependentTemplateTypeArg(*bound_base, pattern));
+					} else {
+						TemplateTypeArg type_arg;
 						type_arg.type_index = type_spec.type_index();
+						type_arg.ref_qualifier = type_spec.reference_qualifier();
+						type_arg.pointer_depth = type_spec.pointer_depth();
+						type_arg.cv_qualifier = type_spec.cv_qualifier();
+						concept_args.push_back(type_arg);
 					}
-					type_arg.ref_qualifier = type_spec.reference_qualifier() != ReferenceQualifier::None
-						? type_spec.reference_qualifier() : type_arg.ref_qualifier;
-					type_arg.pointer_depth = static_cast<uint8_t>(type_arg.pointer_depth + type_spec.pointer_depth());
-					type_arg.cv_qualifier = type_arg.cv_qualifier | type_spec.cv_qualifier();
-					concept_args.push_back(type_arg);
 				}
 			}
 

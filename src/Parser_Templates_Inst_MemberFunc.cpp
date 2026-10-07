@@ -1595,10 +1595,20 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		if (selected_template == nullptr) {
 			return base_name;
 		}
+		// Key instantiation caches by reproducible declaration identity rather than a
+		// raw address: overloads that share a TemplateDeclId (same name and function
+		// signature) are separated by the declaration's source position.
+		const Token& declaration_token = selected_template->function_decl_node().decl_node().identifier_token();
 		StringBuilder discriminated_name;
 		discriminated_name.append(base_name.view())
 			.append("$mfp")
-			.append(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(selected_template)));
+			.append(static_cast<uint64_t>(selected_template->template_decl_id().value))
+			.append("_")
+			.append(static_cast<uint64_t>(declaration_token.line()))
+			.append("_")
+			.append(static_cast<uint64_t>(declaration_token.column()))
+			.append("_")
+			.append(static_cast<uint64_t>(declaration_token.file_index()));
 		return StringTable::getOrInternStringHandle(discriminated_name);
 	};
 	StringHandle requested_instantiation_name = discriminated_instantiation_name(qualified_name);
@@ -2274,9 +2284,15 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	// can deduce the same template arguments for different declarations, so the
 	// instantiation key may carry a "$olN" discriminator.  Mirror that
 	// discriminator in the synthetic function identifier to keep the materialized
-	// overload bodies and call targets distinct.
+	// overload bodies and call targets distinct.  Any declaration-identity suffix
+	// ("$mfp...") used only for cache keying is stripped so it never reaches the
+	// mangled symbol name.
 	std::string_view mangle_base_name = member_name;
 	std::string_view qualified_name_view = StringTable::getStringView(qualified_name);
+	if (size_t identity_discriminator_pos = qualified_name_view.find("$mfp");
+		identity_discriminator_pos != std::string_view::npos) {
+		qualified_name_view = qualified_name_view.substr(0, identity_discriminator_pos);
+	}
 	size_t overload_discriminator_pos = qualified_name_view.rfind("$ol");
 	if (overload_discriminator_pos != std::string_view::npos) {
 		mangle_base_name = StringBuilder()
