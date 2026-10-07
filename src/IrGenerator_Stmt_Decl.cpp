@@ -362,12 +362,15 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	const VariableDeclarationNode& node = ast_node.as<VariableDeclarationNode>();
 	const auto& decl = node.declaration();
 	const auto& type_node = decl.type_specifier_node();
-	// This slice migrates storage for an outer pointer object or reference.
-	// An ordered spine whose outermost wrapper is an array or callable is not
-	// a pointer object and stays fail-closed.
+	// This slice migrates storage for an outer pointer object, reference, or a
+	// member pointer (which lowers as a fixed-size scalar). An ordered spine
+	// whose outermost wrapper is an array or bare callable stays fail-closed.
 	const size_t runtime_pointer_depth = type_node.runtime_pointer_depth();
+	const bool is_member_pointer_object =
+		type_node.is_member_function_pointer() ||
+		type_node.is_member_object_pointer_type();
 	if (type_node.has_ordered_declarator() && runtime_pointer_depth == 0 &&
-		!type_node.is_reference()) {
+		!type_node.is_reference() && !is_member_pointer_object) {
 		throw InternalError(
 			"interleaved declarator reached unmigrated array-object IR lowering");
 	}
