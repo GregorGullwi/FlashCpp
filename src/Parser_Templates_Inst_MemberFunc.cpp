@@ -1573,8 +1573,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	std::string_view struct_name,
 	std::string_view member_name,
 	std::span<const TemplateTypeArg> template_type_args) {
-	return try_instantiate_member_function_template_explicit_candidate(
-		struct_name, member_name, template_type_args, true, nullptr);
+	return try_instantiate_member_function_template_explicit_candidate(struct_name, member_name, template_type_args, true, nullptr);
 }
 
 std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit_candidate(

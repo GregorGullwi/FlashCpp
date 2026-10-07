@@ -7413,8 +7413,7 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 						}
 						if (!mapped_argument.has_value() &&
 							type.has_template_parameter_decl() &&
-							type.template_decl_id() == function_template.template_decl_id() &&
-							type.template_parameter_index() < template_arguments.size()) {
+							type.template_decl_id() == function_template.template_decl_id() && type.template_parameter_index() < template_arguments.size()) {
 							mapped_argument = template_arguments[type.template_parameter_index()];
 						}
 						if (!mapped_argument.has_value() && !type.has_template_parameter_identity()) {
@@ -7758,13 +7757,11 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 					} else {
 						is_maximal[first] = false;
 					}
-				} else if (ordering == CanonicalTemplatePartialOrdering::Equivalent &&
-					viable_template_addresses[first].has_associated_constraints) {
+				} else if (ordering == CanonicalTemplatePartialOrdering::Equivalent && viable_template_addresses[first].has_associated_constraints) {
 					const auto& first_candidate = viable_template_addresses[first];
 					const auto& second_candidate = viable_template_addresses[second];
 					const auto& first_template = first_candidate.member_function->function_decl.as<TemplateFunctionDeclarationNode>();
-					const auto& second_template =
-						second_candidate.member_function->function_decl.as<TemplateFunctionDeclarationNode>();
+					const auto& second_template = second_candidate.member_function->function_decl.as<TemplateFunctionDeclarationNode>();
 					const FlashCpp::detail::ConstraintSubsumptionOrdering constraint_ordering =
 						FlashCpp::detail::compareMemberTemplateConstraints(canonical_types, first_template, second_template);
 					if (constraint_ordering == FlashCpp::detail::ConstraintSubsumptionOrdering::Unsupported) {

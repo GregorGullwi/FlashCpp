@@ -55,14 +55,12 @@ struct ParameterMapping {
 
 	static ParameterMapping templateParameter(TemplateParameterKind parameter_kind, uint32_t parameter_index) {
 		return ParameterMapping{
-			MappingKind::TemplateParameter,
-			parameter_kind, parameter_index, TypeId{}, 0, 0, CVQualifier::None, ReferenceQualifier::None};
+			MappingKind::TemplateParameter, parameter_kind, parameter_index, TypeId{}, 0, 0, CVQualifier::None, ReferenceQualifier::None};
 	}
 
 	static ParameterMapping canonicalType(TypeId type_id) {
 		return ParameterMapping{
-			MappingKind::CanonicalType,
-			TemplateParameterKind::Type, 0, type_id, 0, 0, CVQualifier::None, ReferenceQualifier::None};
+			MappingKind::CanonicalType, TemplateParameterKind::Type, 0, type_id, 0, 0, CVQualifier::None, ReferenceQualifier::None};
 	}
 
 	friend bool operator==(const ParameterMapping&, const ParameterMapping&) = default;
@@ -98,8 +96,7 @@ struct Scope {
 
 inline bool sameSourceToken(const Token& lhs, const Token& rhs) {
 	return lhs.type() == rhs.type() &&
-		lhs.file_index() == rhs.file_index() &&
-		lhs.line() == rhs.line() && lhs.column() == rhs.column() && lhs.value() == rhs.value();
+		lhs.file_index() == rhs.file_index() && lhs.line() == rhs.line() && lhs.column() == rhs.column() && lhs.value() == rhs.value();
 }
 
 inline bool sameAtomicConstraint(const AtomicConstraint& lhs, const AtomicConstraint& rhs) {
@@ -121,8 +118,7 @@ std::optional<Token> tryGetSourceToken(const Expression& expression) {
 		std::is_same_v<ExpressionType, TernaryOperatorNode> ||
 		std::is_same_v<ExpressionType, FoldExpressionNode> || std::is_same_v<ExpressionType, PackExpansionExprNode>) {
 		return expression.get_token();
-	} else if constexpr (std::is_same_v<ExpressionType, ConstructorCallNode> ||
-		std::is_same_v<ExpressionType, CallExprNode>) {
+	} else if constexpr (std::is_same_v<ExpressionType, ConstructorCallNode> || std::is_same_v<ExpressionType, CallExprNode>) {
 		return expression.called_from();
 	} else if constexpr (std::is_same_v<ExpressionType, MemberAccessNode>) {
 		return expression.member_token();
@@ -132,8 +128,7 @@ std::optional<Token> tryGetSourceToken(const Expression& expression) {
 		return expression.type_name_token();
 	} else if constexpr (std::is_same_v<ExpressionType, ArraySubscriptNode>) {
 		return expression.bracket_token();
-	} else if constexpr (std::is_same_v<ExpressionType, SizeofExprNode> ||
-		std::is_same_v<ExpressionType, SizeofPackNode>) {
+	} else if constexpr (std::is_same_v<ExpressionType, SizeofExprNode> || std::is_same_v<ExpressionType, SizeofPackNode>) {
 		return expression.sizeof_token();
 	} else if constexpr (std::is_same_v<ExpressionType, AlignofExprNode>) {
 		return expression.alignof_token();
@@ -239,8 +234,7 @@ public:
 		std::vector<ParameterMapping> parameter_mappings;
 		parameter_mappings.reserve(parameters.size());
 		for (size_t index = 0; index < parameters.size(); ++index) {
-			parameter_mappings.push_back(ParameterMapping::templateParameter(
-				parameters[index].kind(), static_cast<uint32_t>(index)));
+			parameter_mappings.push_back(ParameterMapping::templateParameter(parameters[index].kind(), static_cast<uint32_t>(index)));
 		}
 		const std::optional<size_t> function_scope = appendScope(parameters, parameter_mappings);
 		if (!function_scope.has_value()) {
@@ -315,8 +309,7 @@ private:
 		const ConceptDeclarationNode* concept_declaration;
 	};
 
-	std::optional<size_t> appendScope(
-		std::span<const TemplateParameterNode> parameters, std::span<const ParameterMapping> mappings) {
+	std::optional<size_t> appendScope(std::span<const TemplateParameterNode> parameters, std::span<const ParameterMapping> mappings) {
 		if (parameters.size() != mappings.size()) {
 			return std::nullopt;
 		}
@@ -329,8 +322,7 @@ private:
 			const ParameterMapping& mapping = mappings[index];
 			if (parameter.kind() == TemplateParameterKind::Template ||
 				(mapping.kind == MappingKind::TemplateParameter &&
-				 mapping.parameter_kind != parameter.kind()) ||
-				(mapping.kind == MappingKind::CanonicalType && parameter.kind() != TemplateParameterKind::Type)) {
+				 mapping.parameter_kind != parameter.kind()) || (mapping.kind == MappingKind::CanonicalType && parameter.kind() != TemplateParameterKind::Type)) {
 				return std::nullopt;
 			}
 			scope_entries_.push_back(ScopeEntry{
@@ -341,8 +333,7 @@ private:
 		return scope;
 	}
 
-	std::optional<size_t> appendScope(
-		const TemplateParameterVector& parameters, std::span<const ParameterMapping> mappings) {
+	std::optional<size_t> appendScope(const TemplateParameterVector& parameters, std::span<const ParameterMapping> mappings) {
 		return appendScope(std::span<const TemplateParameterNode>(parameters.data(), parameters.size()), mappings);
 	}
 
@@ -372,12 +363,10 @@ private:
 	bool isPlainTemplateParameterType(const TypeSpecifierNode& type) const {
 		return !type.is_pointer() && !type.is_reference() && !type.is_array() &&
 			!type.has_ordered_declarator() &&
-			type.cv_qualifier() == CVQualifier::None &&
-			type.qualifier() == TypeQualifier::None && !type.has_member_class() && !type.has_function_signature();
+			type.cv_qualifier() == CVQualifier::None && type.qualifier() == TypeQualifier::None && !type.has_member_class() && !type.has_function_signature();
 	}
 
-	std::optional<std::vector<ParameterMapping>> tryCollectAtomicParameterMapping(
-		const ASTNode& root_expression, size_t scope) const {
+	std::optional<std::vector<ParameterMapping>> tryCollectAtomicParameterMapping(const ASTNode& root_expression, size_t scope) const {
 		const Scope& current_scope = scopes_[scope];
 		std::vector<uint8_t> referenced(current_scope.size, 0);
 		std::vector<ASTNode> worklist{root_expression};
@@ -408,14 +397,12 @@ private:
 					if (type.has_template_parameter_identity()) {
 						entry = lookupScopeEntry(scope, type.template_parameter_name());
 					}
-					if (!entry.has_value() &&
-						type.has_template_parameter_decl() && type.template_decl_id() == function_template_.template_decl_id()) {
+					if (!entry.has_value() && type.has_template_parameter_decl() && type.template_decl_id() == function_template_.template_decl_id()) {
 						for (size_t index = current_scope.begin;
 							 index < current_scope.begin + current_scope.size;
 							 ++index) {
 							const ParameterMapping& mapping = scope_entries_[index].mapping;
-							if (mapping.kind == MappingKind::TemplateParameter &&
-								mapping.parameter_index == type.template_parameter_index()) {
+							if (mapping.kind == MappingKind::TemplateParameter && mapping.parameter_index == type.template_parameter_index()) {
 								entry = index;
 								break;
 							}
@@ -431,9 +418,7 @@ private:
 					// unrelated constants. Fail closed.
 					return std::nullopt;
 				}
-			} else if (
-				expression.is<IdentifierNode>() &&
-				expression.as<IdentifierNode>().binding() == IdentifierBinding::TemplateParameter) {
+			} else if (expression.is<IdentifierNode>() && expression.as<IdentifierNode>().binding() == IdentifierBinding::TemplateParameter) {
 				if (!mark_scope_entry(lookupScopeEntry(scope, expression.as<IdentifierNode>().getOrInternNameHandle()))) {
 					return std::nullopt;
 				}
@@ -446,8 +431,7 @@ private:
 			}
 
 			const bool is_supported_leaf =
-				expression.is<TypeSpecifierNode>() ||
-				expression.is<IdentifierNode>() || expression.is<TemplateParameterReferenceNode>();
+				expression.is<TypeSpecifierNode>() || expression.is<IdentifierNode>() || expression.is<TemplateParameterReferenceNode>();
 			const bool has_children = ExpressionStructure::visitExpressionChildren(
 				expression, [&worklist](ExpressionStructure::ExpressionChildRole, const ASTNode& child) {
 					worklist.push_back(child);
@@ -507,8 +491,7 @@ private:
 			// and declaration qualifiers remain unsupported rather than being
 			// collapsed onto the bare parameter.
 			if (type.has_ordered_declarator() || type.has_member_class() ||
-				type.has_function_signature() || type.is_array() ||
-				type.is_pack_expansion() || type.qualifier() != TypeQualifier::None) {
+				type.has_function_signature() || type.is_array() || type.is_pack_expansion() || type.qualifier() != TypeQualifier::None) {
 				return std::nullopt;
 			}
 			ParameterMapping decorated = *base_mapping;
@@ -527,8 +510,7 @@ private:
 		return std::nullopt;
 	}
 
-	std::optional<size_t> buildConcept(
-		const ConceptDeclarationNode& concept_declaration, std::span<const ParameterMapping> mappings) {
+	std::optional<size_t> buildConcept(const ConceptDeclarationNode& concept_declaration, std::span<const ParameterMapping> mappings) {
 		const std::optional<size_t> concept_scope = appendScope(concept_declaration.template_params(), mappings);
 		if (!concept_scope.has_value()) {
 			return std::nullopt;
@@ -536,8 +518,7 @@ private:
 		return buildExpression(concept_declaration.constraint_expr(), *concept_scope, &concept_declaration);
 	}
 
-	std::optional<size_t> buildExpression(
-		const ASTNode& root_expression, size_t root_scope, const ConceptDeclarationNode* root_concept) {
+	std::optional<size_t> buildExpression(const ASTNode& root_expression, size_t root_scope, const ConceptDeclarationNode* root_concept) {
 		std::vector<BuildTask> tasks;
 		std::vector<size_t> results;
 		std::vector<const ConceptDeclarationNode*> active_concepts;
@@ -842,8 +823,7 @@ inline bool implies(const Formula& antecedent, const Formula& consequent) {
 } // namespace ConstraintSubsumption
 
 inline ConstraintSubsumptionOrdering compareMemberTemplateConstraints(
-	CanonicalTypeTable& canonical_types,
-	const TemplateFunctionDeclarationNode& first, const TemplateFunctionDeclarationNode& second) {
+	CanonicalTypeTable& canonical_types, const TemplateFunctionDeclarationNode& first, const TemplateFunctionDeclarationNode& second) {
 	// Atomic constraints are keyed by parameter mapping position. Comparing two
 	// templates that way is only sound when their template parameter lists
 	// correspond element-wise; otherwise the same index would denote different
