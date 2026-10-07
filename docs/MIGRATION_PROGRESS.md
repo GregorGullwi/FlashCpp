@@ -43,6 +43,10 @@ The architecture the remaining work builds on:
   access, built-in subscripting, and callable-object calls.
 - Class-template substitution, alias-template forwarding, and member-pointer
   owner identity preserve canonical `TypeId`s across AST copies and substitution.
+  An ordered member-function-pointer declarator whose callable return carries its
+  own declarator (for example `int* (Owner::*)() const`) imports structurally:
+  the spine's return components fold into the canonical function signature and
+  the owner `TypeId` is preserved.
 
 Compatibility counters and identity inventories are baselined under
 `tests/migration_counters/`; the flat classifier in `TypeTraitEvaluator.cpp`
@@ -59,12 +63,15 @@ Continue boundary 3A in this order.
    use structural identity and replace remaining flat-field reads with a single
    compatibility materializer at each legacy boundary, preserving full callable
    comparison, nested cv, array decay, and value-category behavior. Remaining:
-   dependent member-function-pointer forms that do not import structurally;
    unsupported callable conversions that still need substitution-aware canonical
    ranking; derived-to-base conversions through non-projectable declarators and
    callable-component conversions, which remain deferred; conversion-function
    standard tails outside the canonical projectable set; and array and callable
    outer wrappers, which stay guarded where their consumers are not migrated.
+   An interleaved-return member function pointer is not yet lowered as an IR
+   object or ABI-mangled, and a member function pointer whose owner is a template
+   parameter is still canonicalized before owner substitution in a dependent
+   `noexcept`/`constexpr` context and fails closed.
    `FunctionDeclarationNode` does not yet retain an `explicit` specifier for
    conversion functions, so implicit viability of explicit conversion functions
    remains a separate parser/sema gap.
