@@ -87,19 +87,29 @@ To show IR, use `--log-level=Codegen:debug`
 * When creating tests, mix different native types and sizes with structs and templates to get good coverage of each feature.
 * PR Descriptions should be describing the solved problem in a descriptive way, not just listing bullet points. It should not contain a list of run tests, but describe what any added tests actually verify.
 * Keep lines at or under 120 characters; count each tab as one character.
-* Avoid breaking a simple declaration initializer or `for` header when the
-  complete line is 120 characters or fewer, counting each tab as one character.
-  For declaration initializers, break only when the joined line would exceed
-  120, or when the initializer is a braced/initializer list or a call whose
-  argument list is genuinely clearer multi-line.
+* Any logical construct whose joined form is 120 characters or fewer (counting
+  each tab as one character) MUST be written as a single line. This applies to
+  function signatures and their calls, declarations and initializers, `for`
+  headers, conditions, ternaries, and nested calls. Breaking such a line is a
+  defect: re-join it when touching the code, and do not introduce new wraps for
+  a line that fits.
+* Break a construct only when the joined line would exceed 120 characters, or
+  when a braced/initializer list or a call whose arguments form a nested block
+  is genuinely clearer multi-line. When a construct must be broken, fill each
+  line up to the limit before wrapping rather than wrapping one argument or
+  operand per line.
  - bad:
 	std::string_view base_template_name =
 		StringTable::getStringView(deferred_base.base_template_name);
 	for (int i :
 		collection) {
+	std::optional<ParameterMapping> mapArgument(
+		const ASTNode& argument,
+		size_t parent_scope) const;
 	const std::vector<TypeSpecifierNode> deduced_arg_types =
 		apply_lvalue_reference_deduction(args, arg_types);
  - good:
 	std::string_view base_template_name = StringTable::getStringView(deferred_base.base_template_name);
 	for (int i : collection) {
+	std::optional<ParameterMapping> mapArgument(const ASTNode& argument, size_t parent_scope) const;
 	const std::vector<TypeSpecifierNode> deduced_arg_types = apply_lvalue_reference_deduction(args, arg_types);
