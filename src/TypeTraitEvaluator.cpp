@@ -903,15 +903,12 @@ bool defaultInitializerIsDefaultConstruction(const ASTNode& initializer) {
 // parser records the selection for a non-default initializer so the nothrow
 // walk can read the constructor's exception specification; an initializer whose
 // selection the parser could not resolve returns null and stays deferred.
-const ConstructorDeclarationNode* defaultInitializerResolvedConstructor(
-	const ASTNode& initializer) {
-	if (initializer.is<InitializerListNode>()) {
-		return initializer.as<InitializerListNode>().resolved_constructor();
+const ConstructorDeclarationNode* defaultInitializerResolvedConstructor(const ASTNode& initializer) {
+	if (const auto* init_list = initializer.get_if<InitializerListNode>()) {
+		return init_list->resolved_constructor();
 	}
-	if (initializer.is<ExpressionNode>()) {
-		const ExpressionNode& expression = initializer.as<ExpressionNode>();
-		if (const auto* constructor_call =
-				std::get_if<ConstructorCallNode>(&expression)) {
+	if (const auto* expression = initializer.get_if<ExpressionNode>()) {
+		if (const auto* constructor_call = std::get_if<ConstructorCallNode>(expression)) {
 			return constructor_call->resolved_constructor();
 		}
 	}
@@ -993,15 +990,12 @@ bool recordSubobjectsSatisfyDefaultConstruction(
 					if (defaultInitializerIsDefaultConstruction(initializer)) {
 						pending.push_back(structInfoFromTypeIndex(member.type_index));
 					} else if (!member.is_array) {
-						const ConstructorDeclarationNode* selected =
-							defaultInitializerResolvedConstructor(initializer);
+						const ConstructorDeclarationNode* selected = defaultInitializerResolvedConstructor(initializer);
 						// A user-provided constructor states its own exception
 						// specification. An implicit or defaulted selection
 						// derives it from subobjects this walk does not model
 						// here, so it stays deferred rather than guessing.
-						if (selected != nullptr && !selected->is_implicit() &&
-							!selected->is_explicitly_defaulted() &&
-							!selected->is_noexcept()) {
+						if (selected != nullptr && !selected->is_implicit() && !selected->is_explicitly_defaulted() && !selected->is_noexcept()) {
 							return false;
 						}
 					}

@@ -4760,28 +4760,23 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// known. An initializer whose selection is ambiguous or untyped stays
 	// unresolved and the nothrow walk defers it.
 	for (const StructMember& member : struct_info->members) {
-		if (!member.default_initializer.has_value() || member.pointer_depth != 0 ||
-			member.is_array || !is_struct_type(member.type_index.category())) {
+		if (!member.default_initializer.has_value() || member.pointer_depth != 0 || member.is_array || !is_struct_type(member.type_index.category())) {
 			continue;
 		}
 		const ASTNode& initializer = *member.default_initializer;
+		const ExpressionNode* expression = initializer.get_if<ExpressionNode>();
+		const ConstructorCallNode* constructor_call = std::get_if<ConstructorCallNode>(expression);
+		const InitializerListNode* init_list = initializer.get_if<InitializerListNode>();
 		std::vector<const ASTNode*> constructor_arguments;
 		const ConstructorDeclarationNode* already_resolved = nullptr;
-		if (initializer.is<ExpressionNode>()) {
-			const auto* constructor_call =
-				std::get_if<ConstructorCallNode>(&initializer.as<ExpressionNode>());
-			if (constructor_call == nullptr) {
-				continue;
-			}
+		if (constructor_call != nullptr) {
 			already_resolved = constructor_call->resolved_constructor();
 			for (const ASTNode& argument : constructor_call->arguments()) {
 				constructor_arguments.push_back(&argument);
 			}
-		} else if (initializer.is<InitializerListNode>()) {
-			const InitializerListNode& init_list =
-				initializer.as<InitializerListNode>();
-			already_resolved = init_list.resolved_constructor();
-			for (const ASTNode& argument : init_list.initializers()) {
+		} else if (init_list != nullptr) {
+			already_resolved = init_list->resolved_constructor();
+			for (const ASTNode& argument : init_list->initializers()) {
 				constructor_arguments.push_back(&argument);
 			}
 		} else {
@@ -4790,8 +4785,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		if (constructor_arguments.empty() || already_resolved != nullptr) {
 			continue;
 		}
-		const StructTypeInfo* member_struct_info =
-			tryGetStructTypeInfo(member.type_index);
+		const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index);
 		if (member_struct_info == nullptr) {
 			continue;
 		}
@@ -4799,8 +4793,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		argument_types.reserve(constructor_arguments.size());
 		bool all_argument_types_known = true;
 		for (const ASTNode* argument : constructor_arguments) {
-			std::optional<TypeSpecifierNode> argument_type =
-				get_expression_type(*argument);
+			std::optional<TypeSpecifierNode> argument_type = get_expression_type(*argument);
 			if (!argument_type.has_value()) {
 				all_argument_types_known = false;
 				break;
@@ -4810,17 +4803,14 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		if (!all_argument_types_known) {
 			continue;
 		}
-		const ConstructorOverloadResolutionResult resolution =
-			resolve_constructor_overload(*member_struct_info, argument_types, true);
+		const ConstructorOverloadResolutionResult resolution = resolve_constructor_overload(*member_struct_info, argument_types, true);
 		if (resolution.selected_overload == nullptr) {
 			continue;
 		}
-		if (initializer.is<ExpressionNode>()) {
-			std::get_if<ConstructorCallNode>(&initializer.as<ExpressionNode>())
-				->set_resolved_constructor(resolution.selected_overload);
+		if (constructor_call != nullptr) {
+			constructor_call->set_resolved_constructor(resolution.selected_overload);
 		} else {
-			initializer.as<InitializerListNode>().set_resolved_constructor(
-				resolution.selected_overload);
+			init_list->set_resolved_constructor(resolution.selected_overload);
 		}
 	}
 
