@@ -899,6 +899,25 @@ bool defaultInitializerIsDefaultConstruction(const ASTNode& initializer) {
 	return false;
 }
 
+// The constructor selected by a class-type default member initializer. The
+// parser records the selection for a non-default initializer so the nothrow
+// walk can read the constructor's exception specification; an initializer whose
+// selection the parser could not resolve returns null and stays deferred.
+const ConstructorDeclarationNode* defaultInitializerResolvedConstructor(
+	const ASTNode& initializer) {
+	if (initializer.is<InitializerListNode>()) {
+		return initializer.as<InitializerListNode>().resolved_constructor();
+	}
+	if (initializer.is<ExpressionNode>()) {
+		const ExpressionNode& expression = initializer.as<ExpressionNode>();
+		if (const auto* constructor_call =
+				std::get_if<ConstructorCallNode>(&expression)) {
+			return constructor_call->resolved_constructor();
+		}
+	}
+	return nullptr;
+}
+
 // A class whose default constructor is implicit or explicitly defaulted
 // inherits its default-construction property from every base class and member
 // that constructor initializes. A user-provided default constructor initializes
@@ -963,15 +982,29 @@ bool recordSubobjectsSatisfyDefaultConstruction(
 			if (member.default_initializer.has_value()) {
 				// A default member initializer of a class type that default
 				// constructs the member still runs that class's default
-				// constructor, so the nothrow answer must include it. Other
-				// initializer expressions need expression-level noexcept
-				// evaluation and stay deferred.
+				// constructor, so the nothrow answer must include it. A
+				// non-default initializer selects another constructor, whose
+				// exception specification the parser records on the
+				// initializer; an unresolved selection stays deferred.
 				if (recurse_default_initialized_members &&
 					member.pointer_depth == 0 &&
-					is_struct_type(member.type_index.category()) &&
-					defaultInitializerIsDefaultConstruction(
-						*member.default_initializer)) {
-					pending.push_back(structInfoFromTypeIndex(member.type_index));
+					is_struct_type(member.type_index.category())) {
+					const ASTNode& initializer = *member.default_initializer;
+					if (defaultInitializerIsDefaultConstruction(initializer)) {
+						pending.push_back(structInfoFromTypeIndex(member.type_index));
+					} else if (!member.is_array) {
+						const ConstructorDeclarationNode* selected =
+							defaultInitializerResolvedConstructor(initializer);
+						// A user-provided constructor states its own exception
+						// specification. An implicit or defaulted selection
+						// derives it from subobjects this walk does not model
+						// here, so it stays deferred rather than guessing.
+						if (selected != nullptr && !selected->is_implicit() &&
+							!selected->is_explicitly_defaulted() &&
+							!selected->is_noexcept()) {
+							return false;
+						}
+					}
 				}
 				continue;
 			}
