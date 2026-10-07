@@ -358,6 +358,9 @@ public:
 		return !(*this == other);
 	}
 
+	using value_type = T;
+	using size_type = size_t;
+	using difference_type = std::ptrdiff_t;
 	using iterator = T*;
 	using const_iterator = const T*;
 
