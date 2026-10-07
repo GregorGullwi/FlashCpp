@@ -1004,13 +1004,12 @@ bool recordSubobjectsSatisfyDefaultConstruction(
 						// Each element selects its own constructor; the array
 						// construction is throwing if any element is.
 						const auto* array_elements = initializer.get_if<InitializerListNode>();
-						if (array_elements != nullptr) {
-							for (const ASTNode& element : array_elements->initializers()) {
-								const std::optional<bool> throws = defaultInitializerConstructorThrows(element);
-								if (throws.has_value() && *throws) {
-									return false;
-								}
-							}
+						const auto element_throws = [](const ASTNode& element) {
+							const std::optional<bool> throws = defaultInitializerConstructorThrows(element);
+							return throws.has_value() && *throws;
+						};
+						if (array_elements != nullptr && std::ranges::any_of(array_elements->initializers(), element_throws)) {
+							return false;
 						}
 					} else {
 						const std::optional<bool> throws = defaultInitializerConstructorThrows(initializer);
