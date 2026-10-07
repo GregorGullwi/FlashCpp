@@ -86,14 +86,14 @@ To show IR, use `--log-level=Codegen:debug`
 * Avoid coding in fallback paths. Invalid cases should throw InternalError or CompileError.
 * When creating tests, mix different native types and sizes with structs and templates to get good coverage of each feature.
 * PR Descriptions should be describing the solved problem in a descriptive way, not just listing bullet points. It should not contain a list of run tests, but describe what any added tests actually verify.
-* Keep lines at or under 120 characters; count each tab as one character.
-* Any logical construct whose joined form is 120 characters or fewer (counting
+* Keep lines at or under 150 characters; count each tab as one character.
+* Any logical construct whose joined form is 150 characters or fewer (counting
   each tab as one character) MUST be written as a single line. This applies to
   function signatures and their calls, declarations and initializers, `for`
   headers, conditions, ternaries, and nested calls. Breaking such a line is a
   defect: re-join it when touching the code, and do not introduce new wraps for
   a line that fits.
-* Break a construct only when the joined line would exceed 120 characters, or
+* Break a construct only when the joined line would exceed 150 characters, or
   when a braced/initializer list or a call whose arguments form a nested block
   is genuinely clearer multi-line. When a construct must be broken, fill each
   line up to the limit before wrapping rather than wrapping one argument or
