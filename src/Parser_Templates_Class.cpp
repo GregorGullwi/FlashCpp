@@ -2472,7 +2472,12 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						register_parameters_in_scope(ctor_ref.parameter_nodes());
 
 						// Parse noexcept and trailing requires clause after params are in scope
-						ctor_ref.set_noexcept(parse_constructor_exception_specifier());
+						bool ctor_is_noexcept = false;
+						ParseResult exception_specifier_result = parse_constructor_exception_specifier(ctor_is_noexcept);
+						if (exception_specifier_result.is_error()) {
+							return exception_specifier_result;
+						}
+						ctor_ref.set_noexcept(ctor_is_noexcept);
 						if (auto req = parse_trailing_requires_clause()) {
 							ctor_ref.set_requires_clause(*req);
 						}
@@ -3965,7 +3970,12 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						register_parameters_in_scope(ctor_ref.parameter_nodes());
 
 						// Parse noexcept and trailing requires clause after params are in scope
-						ctor_ref.set_noexcept(parse_constructor_exception_specifier());
+						bool ctor_is_noexcept = false;
+						ParseResult exception_specifier_result = parse_constructor_exception_specifier(ctor_is_noexcept);
+						if (exception_specifier_result.is_error()) {
+							return exception_specifier_result;
+						}
+						ctor_ref.set_noexcept(ctor_is_noexcept);
 						if (auto req = parse_trailing_requires_clause()) {
 							ctor_ref.set_requires_clause(*req);
 						}

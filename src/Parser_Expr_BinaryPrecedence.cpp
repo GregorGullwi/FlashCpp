@@ -1462,36 +1462,36 @@ void Parser::skip_noexcept_specifier() {
 	}
 }
 
-// Parse constructor exception specifier (noexcept or throw())
-// Returns true if the constructor should be treated as noexcept
-// throw() is equivalent to noexcept(true) in C++
-bool Parser::parse_constructor_exception_specifier() {
-	bool is_noexcept = false;
+// Parse constructor exception specifier (noexcept or throw()).
+// Sets out_is_noexcept to the effective value; throw() is noexcept(true).
+// Returns an error result when the noexcept operand is malformed.
+ParseResult Parser::parse_constructor_exception_specifier(bool& out_is_noexcept) {
+	out_is_noexcept = false;
 
 	// Parse noexcept specifier
 	if (peek() == "noexcept"_tok) {
 		advance(); // consume 'noexcept'
-		is_noexcept = true;
+		out_is_noexcept = true;
 
 		// Check for noexcept(expr) form. [except.spec]/7 requires the operand to
 		// be a constant expression, so evaluate it and carry the effective value
-		// rather than the keyword-present answer. A malformed or non-constant
-		// operand keeps the keyword-present answer and is skipped.
+		// rather than the keyword-present answer. A non-constant operand (for
+		// example a dependent expression) keeps the keyword-present answer.
 		if (peek() == "("_tok) {
-			SaveHandle operand_start = save_token_position();
 			advance(); // consume '('
 			ParseResult noexcept_operand = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-			if (!noexcept_operand.is_error() && noexcept_operand.node().has_value() && peek() == ")"_tok) {
-				discard_saved_token(operand_start);
-				advance(); // consume ')'
-				const auto evaluated = try_evaluate_constant_expression(*noexcept_operand.node());
-				if (evaluated.has_value()) {
-					is_noexcept = evaluated->value != 0;
-				}
-			} else {
-				restore_token_position(operand_start);
-				discard_saved_token(operand_start);
-				skip_balanced_parens();
+			if (noexcept_operand.is_error()) {
+				return noexcept_operand;
+			}
+			if (!noexcept_operand.node().has_value()) {
+				throw InternalError("Parsed noexcept specification is missing its expression node");
+			}
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after noexcept expression", current_token_);
+			}
+			const auto evaluated = try_evaluate_constant_expression(*noexcept_operand.node());
+			if (evaluated.has_value()) {
+				out_is_noexcept = evaluated->value != 0;
 			}
 		}
 	}
@@ -1503,10 +1503,10 @@ bool Parser::parse_constructor_exception_specifier() {
 		if (peek() == "("_tok) {
 			skip_balanced_parens(); // skip throw(...)
 		}
-		is_noexcept = true;
+		out_is_noexcept = true;
 	}
 
-	return is_noexcept;
+	return ParseResult::success();
 }
 
 // Skip function trailing specifiers and attributes after parameters
