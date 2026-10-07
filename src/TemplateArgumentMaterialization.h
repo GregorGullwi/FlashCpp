@@ -247,6 +247,67 @@ inline int computeTemplateArgumentTypeSizeBits(TypeIndex type_index) {
 	return struct_info ? struct_info->sizeInBits().value : 0;
 }
 
+// Non-concrete concept-call arguments stay IdentifierNode so the evaluator and
+// substitutor can rebind them by name. A decorated dependent type (for example
+// `T*` or `const T&`) is not reducible to its base name, so it is materialized as
+// a TypeSpecifierNode that preserves the decoration and dependent identity.
+inline bool templateArgumentUsesNamedIdentifierForm(const TemplateTypeArg& arg) {
+	return !arg.isTypeArgument() || arg.is_pack ||
+		(arg.is_dependent && arg.dependent_name.isValid() &&
+		 arg.pointer_depth == 0 &&
+		 arg.ref_qualifier == ReferenceQualifier::None &&
+		 arg.cv_qualifier == CVQualifier::None &&
+		 !arg.is_array &&
+		 !arg.function_signature.has_value());
+}
+
+inline StringHandle templateArgumentIdentifierName(const TemplateTypeArg& arg) {
+	if (arg.dependent_name.isValid()) {
+		return arg.dependent_name;
+	}
+	if (arg.template_name_handle.isValid()) {
+		return arg.template_name_handle;
+	}
+	if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
+		return type_info->name_;
+	}
+	return {};
+}
+
+inline ASTNode materializeNamedIdentifierTemplateArgumentNode(const TemplateTypeArg& arg, const Token& source_token) {
+	const StringHandle identifier_name = templateArgumentIdentifierName(arg);
+	Token arg_token(
+		Token::Type::Identifier,
+		identifier_name.isValid() ? identifier_name.view() : std::string_view{},
+		source_token.line(),
+		source_token.column(),
+		source_token.file_index());
+	ExpressionNode& arg_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(IdentifierNode(arg_token));
+	return ASTNode(&arg_expr);
+}
+
+inline std::vector<ASTNode> materializeNamedTemplateArgumentNodes(
+	std::span<const TemplateTypeArg> template_args,
+	const Token& source_token) {
+	std::vector<ASTNode> result;
+	result.reserve(template_args.size());
+	for (const TemplateTypeArg& arg : template_args) {
+		if (templateArgumentUsesNamedIdentifierForm(arg)) {
+			if (templateArgumentIdentifierName(arg).isValid()) {
+				result.push_back(materializeNamedIdentifierTemplateArgumentNode(arg, source_token));
+			}
+			continue;
+		}
+		TypeSpecifierNode type_spec = makeTypeSpecifierFromTemplateTypeArg(arg, source_token);
+		if (arg.is_dependent && arg.dependent_name.isValid()) {
+			type_spec.set_template_parameter_identity(arg.dependent_name);
+		}
+		TypeSpecifierNode& stored = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(std::move(type_spec));
+		result.push_back(ASTNode(&stored));
+	}
+	return result;
+}
+
 inline std::vector<ASTNode> materializeTemplateArgumentNodes(
 	std::span<const TemplateTypeArg> template_args,
 	const Token& source_token) {

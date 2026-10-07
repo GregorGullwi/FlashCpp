@@ -10826,47 +10826,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										concept_token);
 
 									// Store the template arguments for later evaluation
-									std::vector<ASTNode> template_arg_nodes;
-									template_arg_nodes.reserve(explicit_template_args->size());
-									for (const TemplateTypeArg& arg : *explicit_template_args) {
-										// Template-template arguments, parameter packs, and
-										// non-type values keep the legacy identifier form so
-										// the evaluator and substitutor can rebind them by
-										// name. A plain dependent type parameter also stays an
-										// identifier for the same reason.
-										const bool keep_as_identifier = !arg.isTypeArgument() || arg.is_pack ||
-											(arg.is_dependent && arg.dependent_name.isValid() && arg.pointer_depth == 0 &&
-												arg.ref_qualifier == ReferenceQualifier::None && arg.cv_qualifier == CVQualifier::None &&
-												!arg.is_array && !arg.function_signature.has_value());
-										if (keep_as_identifier) {
-											StringHandle identifier_name = arg.dependent_name;
-											if (!identifier_name.isValid() && arg.template_name_handle.isValid()) {
-												identifier_name = arg.template_name_handle;
-											}
-											if (!identifier_name.isValid()) {
-												if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
-													identifier_name = type_info->name_;
-												}
-											}
-											if (identifier_name.isValid()) {
-												Token arg_token(Token::Type::Identifier, identifier_name.view(),
-																concept_token.line(), concept_token.column(), concept_token.file_index());
-												template_arg_nodes.push_back(emplace_node<ExpressionNode>(IdentifierNode(arg_token)));
-											}
-											continue;
-										}
-										// A decorated dependent type or a concrete type is
-										// preserved as a full type specifier so pointer,
-										// reference, and cv structure is not discarded before
-										// constraint normalization.
-										TypeSpecifierNode type_spec = makeTypeSpecifierFromTemplateTypeArg(arg, concept_token);
-										if (arg.is_dependent && arg.dependent_name.isValid()) {
-											type_spec.set_template_parameter_identity(arg.dependent_name);
-										}
-										template_arg_nodes.push_back(ASTNode(
-											&gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(std::move(type_spec))));
-									}
-									concept_call.set_template_arguments(std::move(template_arg_nodes));
+									concept_call.set_template_arguments(materializeNamedTemplateArgumentNodes(
+										*explicit_template_args, concept_token));
 
 									result = emplace_node<ExpressionNode>(std::move(concept_call));
 									return ParseResult::success(*result);

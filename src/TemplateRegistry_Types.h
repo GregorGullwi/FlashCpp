@@ -683,6 +683,23 @@ inline TypeSpecifierNode typeSpecifierFromTemplateTypeArgProjection(
 using TemplateArgumentVector =
 	TemplateVector<TemplateTypeArg, 4>;
 
+// Find the argument bound to the parameter named `name` in a parallel
+// parameter-name / argument sequence, matching by position. Returns nullptr when
+// the name is unknown or the sequences disagree in length. This centralizes the
+// positional scan repeated across constraint evaluation and semantic checks.
+inline const TemplateTypeArg* findTemplateArgumentByName(
+	std::span<const std::string_view> parameter_names,
+	std::span<const TemplateTypeArg> template_arguments,
+	std::string_view name) {
+	const size_t count = std::min(parameter_names.size(), template_arguments.size());
+	for (size_t index = 0; index < count; ++index) {
+		if (parameter_names[index] == name) {
+			return &template_arguments[index];
+		}
+	}
+	return nullptr;
+}
+
 // Hash function for TemplateTypeArg
 struct TemplateTypeArgHash {
 	size_t operator()(const TemplateTypeArg& arg) const {
