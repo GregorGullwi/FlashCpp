@@ -83,9 +83,12 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 						declaration->type_specifier_node();
 					if (declared_type.has_ordered_declarator() &&
 						declared_type.runtime_pointer_depth() == 0 &&
-						!declared_type.is_reference()) {
+						!declared_type.is_reference() &&
+						!declared_type.is_member_function_pointer() &&
+						!declared_type.is_member_object_pointer_type()) {
 						// Ordered pointer objects now lower as pointer-sized
-						// values; ordered array/callable objects stay
+						// values; ordered member pointers lower as fixed-size
+						// scalars. Ordered array/callable objects stay
 						// fail-closed in expression lowering. Ordered
 						// references keep address-sized storage.
 						declared_type.require_legacy_declarator_projection(
@@ -1610,10 +1613,13 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 									 StringHandle global_name) -> ExprResult {
 		if (type_node.has_ordered_declarator() &&
 			type_node.runtime_pointer_depth() == 0 &&
-			!type_node.is_reference()) {
+			!type_node.is_reference() &&
+			!type_node.is_member_function_pointer() &&
+			!type_node.is_member_object_pointer_type()) {
 			// Ordered pointer objects lower as pointer-sized values; ordered
-			// array/callable objects stay fail-closed. Ordered references keep
-			// address-sized storage.
+			// member pointers lower as fixed-size scalars. Ordered array/callable
+			// objects stay fail-closed. Ordered references keep address-sized
+			// storage.
 			type_node.require_legacy_declarator_projection(
 				"qualified identifier IR lowering");
 		}
