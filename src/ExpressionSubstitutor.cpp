@@ -10,6 +10,7 @@
 #include "Parser.h"
 #include "TemplateInstantiationHelper.h"
 #include "TemplateArgumentMaterialization.h"
+#include "ParserTemplateClassShared.h"
 #include "AstTraversal.h"
 #include "Log.h"
 #include "ConstExprEvaluator.h"
@@ -5221,6 +5222,58 @@ CanonicalTipProjectionStatus tryProjectCanonicalTipOntoTypeSpecifier(
 
 } // namespace
 
+void ExpressionSubstitutor::rebindDependentMemberPointerOwner(TypeSpecifierNode& type) {
+	if (!type.has_member_class() || type.has_member_class_entity() || type.has_member_class_type_id()) {
+		return;
+	}
+	const StringHandle owner_spelling = type.member_class_name();
+	if (!owner_spelling.isValid()) {
+		return;
+	}
+	const auto binding = param_map_.find(StringTable::getStringView(owner_spelling));
+	if (binding == param_map_.end()) {
+		return;
+	}
+	const TemplateTypeArg& argument = binding->second;
+	if (argument.is_pack || templateArgIsStructurallyDependent(argument) || !argument.isTypeArgument()) {
+		return;
+	}
+	const TypeIndex owner_type_index = FlashCpp::canonicalizeTemplateIdentityTypeIndex(argument.type_index);
+	const TypeInfo* owner_type_info = tryGetTypeInfo(owner_type_index);
+	if (owner_type_info == nullptr) {
+		throw InternalError("Concrete member-pointer owner is missing canonical class type metadata");
+	}
+	if (!owner_type_info->isStruct() && !owner_type_info->isTemplateInstantiation()) {
+		throw CompileError("Member-pointer owner must be a class or union type");
+	}
+	type.clear_member_class_identity();
+	type.set_member_class_name(owner_type_info->name());
+	tryBindPublishedMemberClassEntity(type, owner_type_info->registeredTypeIndex().withCategory(owner_type_info->typeEnum()));
+	if (!type.has_member_class_type_id() && !type.has_member_class_entity()) {
+		throw InternalError("substituted member-pointer owner was not published");
+	}
+	if (!type.has_ordered_declarator()) {
+		return;
+	}
+	std::vector<DeclaratorComponent> components(type.declarator_components().begin(), type.declarator_components().end());
+	bool stamped_owner = false;
+	for (DeclaratorComponent& component : components) {
+		const bool is_member_pointer = component.kind == DeclaratorComponentKind::MemberObjectPointer ||
+			component.kind == DeclaratorComponentKind::MemberFunctionPointer;
+		if (!is_member_pointer || component.hasMemberOwner()) {
+			continue;
+		}
+		const bool is_function_pointer = component.kind == DeclaratorComponentKind::MemberFunctionPointer;
+		component = type.has_member_class_type_id()
+			? DeclaratorComponent::memberPointer(type.member_class_type_id(), is_function_pointer, component.cv_qualifier)
+			: DeclaratorComponent::memberPointer(type.member_class_entity(), is_function_pointer, component.cv_qualifier);
+		stamped_owner = true;
+	}
+	if (stamped_owner) {
+		type.set_ordered_declarator(std::move(components));
+	}
+}
+
 TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNode& type) {
 	// Fail-closed overlay: structurally rewrite dependent_name_type_ when the
 	// stamp survives legacy TypeIndex substitution. Never skip the legacy body.
@@ -5229,6 +5282,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	// family kinds); unresolved DependentName-family tips are restamped.
 	const DependentNameRestampResult restamp = tryRestampDependentNameType(type);
 	TypeSpecifierNode result = substituteInTypeCore(type);
+	rebindDependentMemberPointerOwner(result);
 	if (!result.has_dependent_name_type()) {
 		return result;
 	}
