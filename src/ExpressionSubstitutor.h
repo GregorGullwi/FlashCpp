@@ -186,6 +186,10 @@ private:
 	// Helper: substitute in a type specifier with template args
 	TypeSpecifierNode substituteInType(const TypeSpecifierNode& type);
 	TypeSpecifierNode substituteInTypeCore(const TypeSpecifierNode& type);
+	// A member-pointer owner spelled as a type parameter (int* (T::*)()) is not
+	// the type's token, so base-type substitution leaves it unresolved. Publish
+	// the concrete class identity before semantic canonicalization.
+	void rebindDependentMemberPointerOwner(TypeSpecifierNode& type);
 	enum class DependentNameRestampAction : uint8_t {
 		None,
 		Set,
