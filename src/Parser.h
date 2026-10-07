@@ -1266,6 +1266,19 @@ private:
 	// its replay-only dependent member template-id path out of class and
 	// out-of-line signature parsing.
 	bool is_replaying_published_function_template_body_ = false;
+	// Typed context for the active free-function-template replay. The argument
+	// span is borrowed from the replay caller and remains valid for this body
+	// window. Member-template replay uses a separate path and needs a class TypeId
+	// before it can use this identity scheme.
+	struct ActiveFunctionTemplateLocalClassOwner {
+		TemplateDeclId template_decl_id{};
+		NamespaceHandle namespace_handle{};
+		Token function_token{};
+		std::span<const TemplateTypeArg> template_args{};
+
+		bool isValid() const { return function_token.handle().isValid(); }
+	};
+	ActiveFunctionTemplateLocalClassOwner active_function_template_local_class_owner_{};
 
 	// Template parameter substitution for deferred template body parsing
 	// Maps template parameter names to their substituted values (for non-type AND type parameters)
@@ -3814,6 +3827,7 @@ private:
 	struct MemberPointerOwnerParse {
 		StringHandle spelling;
 		std::optional<ASTNode> specialization_node;
+		TypeId specialization_type_id{};
 	};
 	MemberPointerOwnerParse parseMemberPointerOwnerAfterName(Token class_name_token);
 

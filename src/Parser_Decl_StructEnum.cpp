@@ -780,10 +780,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		!current_function_->has_outer_template_bindings();
 	bool owns_published_local_class_identity =
 		can_publish_local_class_identity && struct_parsing_context_stack_.empty();
-	bool owns_replayed_local_class_identity =
-		replaying_template_member_local_classes_ &&
-		is_local_class_declaration &&
-		struct_parsing_context_stack_.empty();
+	const bool has_local_class_replay_owner = replaying_template_member_local_classes_ || active_function_template_local_class_owner_.isValid();
+	bool owns_replayed_local_class_identity = has_local_class_replay_owner && is_local_class_declaration && struct_parsing_context_stack_.empty();
 	std::vector<DelayedFunctionBody> saved_local_class_parent_delayed_bodies;
 	if (is_local_class_declaration) {
 		saved_local_class_parent_delayed_bodies = std::move(delayed_function_bodies_);
@@ -887,14 +885,33 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		type_name = full_qualified_name; // TypeInfo should also use fully qualified name
 	}
 	if (owns_replayed_local_class_identity) {
-		const Token function_token = current_function_->decl_node().identifier_token();
 		StringBuilder local_identity;
-		if (!current_function_->parent_struct_name().empty()) {
-			local_identity.append(current_function_->parent_struct_name()).append("::");
+		if (active_function_template_local_class_owner_.isValid()) {
+			const auto& owner = active_function_template_local_class_owner_;
+			if (owner.namespace_handle.isValid() && !owner.namespace_handle.isGlobal()) {
+				local_identity.append(gNamespaceRegistry.getQualifiedName(owner.namespace_handle)).append("::");
+			}
+			local_identity.append("$function-template$");
+			if (owner.template_decl_id) {
+				local_identity.append("decl$").append(static_cast<int64_t>(owner.template_decl_id.value));
+			} else {
+				local_identity.append("source$")
+					.append(static_cast<int64_t>(owner.function_token.file_index()))
+					.append('_')
+					.append(static_cast<int64_t>(owner.function_token.line()))
+					.append('_')
+					.append(static_cast<int64_t>(owner.function_token.column()));
+			}
+			const auto function_template_identity = gTemplateRegistry.mangleTemplateName(StringTable::getStringView(owner.function_token.handle()), owner.template_args);
+			local_identity.append('$').append(function_template_identity).append("::$local$");
+		} else {
+			const Token function_token = current_function_->decl_node().identifier_token();
+			if (!current_function_->parent_struct_name().empty()) {
+				local_identity.append(current_function_->parent_struct_name()).append("::");
+			}
+			local_identity.append(function_token.handle()).append("::$local$");
 		}
 		local_identity
-			.append(function_token.handle())
-			.append("::$local$")
 			.append(static_cast<int64_t>(name_token.file_index()))
 			.append('_')
 			.append(static_cast<int64_t>(name_token.line()))
@@ -902,6 +919,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			.append(static_cast<int64_t>(name_token.column()))
 			.append("::")
 			.append(struct_name);
+		// This spelling is a compatibility lookup key for the legacy TypeInfo
+		// name map; the replay owner remains the typed context above, and the
+		// registered TypeIndex is the identity consumed by semantic analysis/codegen.
 		type_name = StringTable::getOrInternStringHandle(local_identity.commit());
 		qualified_struct_name = type_name;
 		full_qualified_name = type_name;

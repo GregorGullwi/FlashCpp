@@ -1277,6 +1277,14 @@ void Parser::reparse_template_function_body(
 	FlashCpp::ScopedStateCopy guard_published_function_body_replay(
 		is_replaying_published_function_template_body_);
 	is_replaying_published_function_template_body_ = true;
+	FlashCpp::ScopedStateCopy guard_function_template_local_class_owner(
+		active_function_template_local_class_owner_);
+	const Token function_token = func_decl.decl_node().identifier_token();
+	active_function_template_local_class_owner_ = {
+		template_decl_id,
+		new_func_ref.namespace_handle(),
+		function_token,
+		template_args};
 	TemplateParamNameVector param_names;
 	param_names.reserve(template_params.size());
 	for (const TemplateParameterNode& template_param : template_params) {

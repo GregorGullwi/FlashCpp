@@ -1310,6 +1310,16 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 		Token alias_name_token = peek_info();
 		std::string_view alias_name = alias_name_token.value();
 		advance();
+		TemplateDeclId alias_template_decl{};
+		FlashCpp::ScopedState alias_template_decl_guard(active_template_decl_id_);
+		const ScopeType alias_publish_scope = gSymbolTable.get_current_scope_type();
+		if (alias_publish_scope == ScopeType::Global || alias_publish_scope == ScopeType::Namespace) {
+			FrontendContext& front_end = requireFrontendContext();
+			const OwnerId owner = ownerIdFromNamespaceHandle(gSymbolTable.get_current_namespace_handle());
+			alias_template_decl = front_end.templateDecls().publishPrimaryAliasTemplate(owner, StringTable::getOrInternStringHandle(alias_name));
+			active_template_decl_id_ = alias_template_decl;
+			bindCurrentUnpublishedTemplateParameters(alias_template_decl);
+		}
 
 		// Alias templates are typedef-names, not class templates, so they have no
 		// specialization grammar ([temp.alias], [temp.class.spec]). A template-id
@@ -1685,14 +1695,9 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 		// longer depends on the registry spelling key. Member alias primaries
 		// publish through the same table from parse_member_template_alias.
 		{
-			const ScopeType publish_scope = gSymbolTable.get_current_scope_type();
-			if (publish_scope == ScopeType::Global || publish_scope == ScopeType::Namespace) {
+			if (alias_template_decl) {
 				FrontendContext& front_end = requireFrontendContext();
-				const OwnerId owner =
-					ownerIdFromNamespaceHandle(gSymbolTable.get_current_namespace_handle());
-				const TemplateDeclId template_decl =
-					front_end.templateDecls().publishPrimaryAliasTemplate(
-						owner, StringTable::getOrInternStringHandle(alias_name));
+				const TemplateDeclId template_decl = alias_template_decl;
 				alias_node.as<TemplateAliasNode>().set_template_decl_id(template_decl);
 				front_end.templateDecls().attachPrimaryAliasPattern(template_decl, alias_node);
 				// The direct alias target is a canonical pattern in the alias's own
