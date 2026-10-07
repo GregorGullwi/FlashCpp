@@ -543,7 +543,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 				// Parse noexcept specifier and trailing requires clause after params are in scope
 				bool ctor_is_noexcept = false;
-				ParseResult exception_specifier_result = parse_constructor_exception_specifier(ctor_is_noexcept);
+				ParseResult exception_specifier_result = parse_constructor_exception_specifier(ctor_is_noexcept, ctor_ref.parameter_nodes());
 				if (exception_specifier_result.is_error()) {
 					return exception_specifier_result;
 				}

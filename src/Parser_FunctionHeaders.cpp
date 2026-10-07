@@ -680,6 +680,42 @@ ParseResult Parser::parse_function_type_qualifiers(
 	return parse_function_type_qualifiers(out_quals, out_specs, no_params);
 }
 
+ParseResult Parser::parse_noexcept_specifier(FlashCpp::FunctionSpecifiers& out_specs, std::span<const ASTNode> params) {
+	if (peek() == "noexcept"_tok) {
+		advance(); // consume 'noexcept'
+		out_specs.is_noexcept = true;
+		if (peek() == "("_tok) {
+			advance(); // consume '('
+			FlashCpp::SymbolTableScope noexcept_scope(ScopeType::Function);
+			register_parameters_in_scope(params);
+			ParseResult expression_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			if (expression_result.is_error()) {
+				return expression_result;
+			}
+			if (!expression_result.node().has_value()) {
+				throw InternalError("Parsed noexcept specification is missing its expression node");
+			}
+			out_specs.noexcept_expr = ExpressionHandle(*expression_result.node());
+			if (!consume(")"_tok)) {
+				return ParseResult::error("Expected ')' after noexcept expression", current_token_);
+			}
+		}
+		return ParseResult::success();
+	}
+
+	if (peek() == "throw"_tok) {
+		advance(); // consume 'throw'
+		if (peek() == "("_tok) {
+			skip_balanced_parens(); // skip throw(...)
+		}
+		// throw() is equivalent to noexcept(true) ([except.spec]).
+		out_specs.is_noexcept = true;
+		return ParseResult::success();
+	}
+
+	return ParseResult::success();
+}
+
 ParseResult Parser::parse_function_type_qualifiers(
 	FlashCpp::MemberQualifiers& out_quals,
 	FlashCpp::FunctionSpecifiers& out_specs,
@@ -701,36 +737,10 @@ ParseResult Parser::parse_function_type_qualifiers(
 			continue;
 		}
 
-		if (token.kind() == "noexcept"_tok) {
-			advance(); // consume 'noexcept'
-			out_specs.is_noexcept = true;
-			if (peek() == "("_tok) {
-				advance(); // consume '('
-				FlashCpp::SymbolTableScope noexcept_scope(ScopeType::Function);
-				register_parameters_in_scope(params);
-				ParseResult expression_result =
-					parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-				if (expression_result.is_error()) {
-					return expression_result;
-				}
-				if (!expression_result.node().has_value()) {
-					throw InternalError(
-						"Parsed noexcept specification is missing its expression node");
-				}
-				out_specs.noexcept_expr = ExpressionHandle(*expression_result.node());
-				if (!consume(")"_tok)) {
-					return ParseResult::error(
-						"Expected ')' after noexcept expression",
-						current_token_);
-				}
-			}
-			continue;
-		}
-
-		if (token.kind() == "throw"_tok) {
-			advance(); // consume 'throw'
-			if (peek() == "("_tok) {
-				skip_balanced_parens();
+		if (token.kind() == "noexcept"_tok || token.kind() == "throw"_tok) {
+			ParseResult noexcept_result = parse_noexcept_specifier(out_specs, params);
+			if (noexcept_result.is_error()) {
+				return noexcept_result;
 			}
 			continue;
 		}

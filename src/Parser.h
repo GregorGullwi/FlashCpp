@@ -4431,9 +4431,14 @@ private:	 // Resume private methods
 	void skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals);	   // Skip all trailing specifiers after function parameters (stops before 'requires')
 	void skip_trailing_requires_clause();		  // Parse and discard trailing requires clause (if present)
 	std::optional<ASTNode> parse_trailing_requires_clause();	 // Parse trailing requires clause, return RequiresClauseNode
+	// Parse a noexcept or throw() specifier at the cursor and record it in
+	// out_specs. The operand is parsed in a parameter scope so it may name the
+	// function's parameters ([basic.scope.param]). Returns an error result when
+	// a noexcept operand is malformed.
+	ParseResult parse_noexcept_specifier(FlashCpp::FunctionSpecifiers& out_specs, std::span<const ASTNode> params);
 	// Parse noexcept or throw() and set out_is_noexcept to the effective value.
 	// Returns an error result when a noexcept operand is malformed.
-	ParseResult parse_constructor_exception_specifier(bool& out_is_noexcept);
+	ParseResult parse_constructor_exception_specifier(bool& out_is_noexcept, std::span<const ASTNode> params);
 	void consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type);  // Consume *, &, && after conversion operator target type
 	void consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec);  // Consume trailing *, &, && and apply to type specifier
 	void consume_array_type_id_modifiers(TypeSpecifierNode& type_spec); // Consume trailing [N] / [] abstract-declarators on a type-id

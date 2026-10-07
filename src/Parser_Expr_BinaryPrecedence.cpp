@@ -1465,47 +1465,28 @@ void Parser::skip_noexcept_specifier() {
 // Parse constructor exception specifier (noexcept or throw()).
 // Sets out_is_noexcept to the effective value; throw() is noexcept(true).
 // Returns an error result when the noexcept operand is malformed.
-ParseResult Parser::parse_constructor_exception_specifier(bool& out_is_noexcept) {
+ParseResult Parser::parse_constructor_exception_specifier(bool& out_is_noexcept, std::span<const ASTNode> params) {
 	out_is_noexcept = false;
-
-	// Parse noexcept specifier
-	if (peek() == "noexcept"_tok) {
-		advance(); // consume 'noexcept'
-		out_is_noexcept = true;
-
-		// Check for noexcept(expr) form. [except.spec]/7 requires the operand to
-		// be a constant expression, so evaluate it and carry the effective value
-		// rather than the keyword-present answer. A non-constant operand (for
-		// example a dependent expression) keeps the keyword-present answer.
-		if (peek() == "("_tok) {
-			advance(); // consume '('
-			ParseResult noexcept_operand = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-			if (noexcept_operand.is_error()) {
-				return noexcept_operand;
-			}
-			if (!noexcept_operand.node().has_value()) {
-				throw InternalError("Parsed noexcept specification is missing its expression node");
-			}
-			if (!consume(")"_tok)) {
-				return ParseResult::error("Expected ')' after noexcept expression", current_token_);
-			}
-			const auto evaluated = try_evaluate_constant_expression(*noexcept_operand.node());
-			if (evaluated.has_value()) {
-				out_is_noexcept = evaluated->value != 0;
-			}
-		}
+	FlashCpp::FunctionSpecifiers specs;
+	ParseResult result = parse_noexcept_specifier(specs, params);
+	if (result.is_error()) {
+		return result;
 	}
-
-	// Parse throw() (old-style exception specification)
-	// throw() is equivalent to noexcept(true) in C++
-	if (peek() == "throw"_tok) {
-		advance(); // consume 'throw'
-		if (peek() == "("_tok) {
-			skip_balanced_parens(); // skip throw(...)
-		}
-		out_is_noexcept = true;
+	if (!specs.is_noexcept) {
+		return ParseResult::success();
 	}
-
+	// [except.spec]/7 requires the operand to be a constant expression, so
+	// evaluate it and carry the effective value rather than the keyword-present
+	// answer. A non-constant operand (for example a dependent expression) keeps
+	// the keyword-present answer.
+	out_is_noexcept = true;
+	if (!specs.noexcept_expr.has_value()) {
+		return ParseResult::success();
+	}
+	const auto evaluated = try_evaluate_constant_expression(specs.noexcept_expr->node());
+	if (evaluated.has_value()) {
+		out_is_noexcept = evaluated->value != 0;
+	}
 	return ParseResult::success();
 }
 

@@ -2675,7 +2675,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 				// Parse exception specifier (noexcept or throw()) before initializer list
 				bool ctor_is_noexcept = false;
-				ParseResult exception_specifier_result = parse_constructor_exception_specifier(ctor_is_noexcept);
+				ParseResult exception_specifier_result = parse_constructor_exception_specifier(ctor_is_noexcept, ctor_ref.parameter_nodes());
 				if (exception_specifier_result.is_error()) {
 					return exception_specifier_result;
 				}
