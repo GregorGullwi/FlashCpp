@@ -188,6 +188,15 @@ The following remain unsupported and are rejected or left unresolved:
 - Calling through a materialized member-function pointer is a separate,
   still-unimplemented path (it emits an ``.()`` symbol).
 
+## Multidimensional array member subscript fails during IR generation
+
+Reading an element of a multidimensional array member through two or more
+subscripts (`h.grid[1][1]`) fails in IR generation with
+`Struct type info not found for type_index=0 category=28`, even for a plain
+array member with no default member initializer; a single subscript works. The
+failure reproduces on `origin/main` and is independent of the canonical-type
+work. A regression that pins it is still owed.
+
 ## Static-member template initializer replay still re-parses source text
 
 Variable-template initializers now substitute structurally from the
