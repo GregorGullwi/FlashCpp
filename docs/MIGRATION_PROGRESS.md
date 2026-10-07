@@ -604,10 +604,11 @@ measurement is stale.
 The explicit-criteria rollup is **10/79 complete**. The boundary-3A criterion
 that pointer-to-member overloads distinguish owner and pointee types is now
 covered; passing tests or the breadth of landed code do not complete the
-boundary. This branch advanced the constructibility work item: a class-type
-array member's default member initializer now contributes each element's
-selected constructor exception specification to the nothrow answer. It does not
-complete an exit criterion on its own. The
+boundary. This branch advanced the constructibility work item: a constructor's
+exception specification now carries the effective value of a constant
+`noexcept(expr)` operand, so the nothrow answer no longer treats
+`noexcept(false)` as non-throwing. It does not complete an exit criterion on
+its own. The
 flat-field-absence criterion remains advanced
 but incomplete for the type-trait consumer family, the lazy-constraint
 evaluator, and trait-operand nominal and member-owner identity; the flat
@@ -970,12 +971,19 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       and `tests/test_nothrow_constructible_default_member_initializer_array_ret0.cpp`
       cover one- and two-argument braced initializers, the parenthesized
       copy-initialization spelling, the brace-list array element spelling, mixed
-      native and class members, and the trivially-constructible answer. The
-      canonical (non-sema) form of the argument-bearing query remains, as do an
-      initializer whose selected constructor is implicit or defaulted, argument
-      expressions whose own noexcept is not yet evaluated, a constructor written
-      with a `noexcept(expr)` whose effective value `is_noexcept()` does not
-      carry, and multidimensional array element order. Code generation now delegates the
+      native and class members, and the trivially-constructible answer. A
+      constructor's exception specification now carries the effective value of
+      its `noexcept(expr)` operand instead of only the presence of the keyword,
+      so `Member member{arg}` with a `noexcept(false)` constructor makes the
+      class throwing; the constant-expression and `throw()` spellings are
+      covered by
+      `tests/test_nothrow_constructible_constructor_noexcept_expression_ret0.cpp`.
+      The canonical (non-sema) form of the argument-bearing query remains, as do
+      an initializer whose selected constructor is implicit or defaulted,
+      argument expressions whose own noexcept is not yet evaluated,
+      multidimensional array element order, and a constructor whose noexcept
+      operand is dependent or otherwise not a constant expression (it keeps the
+      keyword-present answer). Code generation now delegates the
       three constructibility kinds to the shared evaluator instead of its own
       approximate switch, which removed the duplicate logic and keeps the
       folded, constexpr, and lowered answers on one classification. The unary triviality and lifetime traits now use TypeId-keyed
