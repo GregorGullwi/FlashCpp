@@ -628,7 +628,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 
 			const StructMember* member = member_multi_dim->member_info;
 			TypeCategory element_type = member->memberType();
-			int base_element_size = get_type_size_bits(element_type);
+			TypeIndex element_type_index = member->type_index;
+			int base_element_size = deriveElementStrideBitsFromType(element_type, element_type_index, static_cast<int>(member->size * 8));
 
 			// A pointer-to-array member has one extra outer pointer subscript
 			// before the dimensions bound inside the pointer, e.g. p[0][i] for
@@ -738,7 +739,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 
 			ArrayAccessOp payload;
 			payload.result = result_var;
-			payload.element_type_index = nativeTypeIndex(element_type);
+			payload.element_type_index = element_type_index.withCategory(element_type);
 			payload.element_size_in_bits = base_element_size;
 			payload.array = base_object;
 			payload.member_offset = access_member_offset;
@@ -749,11 +750,11 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			payload.index.value = flat_index;
 
 			if (context == ExpressionContext::LValueAddress) {
-				return makeArrayResult(element_type, base_element_size, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsAddress);
+				return makeArrayResult(element_type, base_element_size, IrOperand{result_var}, element_type_index, PointerDepth{}, ValueStorage::ContainsAddress);
 			}
 
 			ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
-			return makeArrayResult(element_type, base_element_size, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeArrayResult(element_type, base_element_size, IrOperand{result_var}, element_type_index, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// This could be a multidimensional array access

@@ -1080,6 +1080,75 @@ TEST_CASE("Canonical TypeIds plan member function pointer base conversions") {
 	CHECK_FALSE(rejected_reverse_plan->is_valid);
 }
 
+TEST_CASE("Canonical TypeIds convert non-projectable ordered member-pointer owners") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const EntityId base_owner{840};
+	const EntityId derived_owner{841};
+	const EntityId private_derived_owner{842};
+	const CanonicalRecordBase public_base{
+		base_owner, 0, CanonicalAccess::Public,
+		CanonicalRecordBaseFlags::None, 0, 0};
+	const CanonicalRecordBase private_base{
+		base_owner, 0, CanonicalAccess::Private,
+		CanonicalRecordBaseFlags::None, 0, 0};
+	auto publish_record = [&table](EntityId entity, std::span<const CanonicalRecordBase> bases) {
+		table.publishRecordLayout(CanonicalRecordLayout{
+			entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(bases.size()),
+			CanonicalRecordLayoutFlags::None, 0});
+		table.publishRecordFieldSchema(entity, std::span<const CanonicalRecordMember>{}, bases);
+	};
+	publish_record(base_owner, {});
+	publish_record(derived_owner, std::span<const CanonicalRecordBase>(&public_base, 1));
+	publish_record(private_derived_owner, std::span<const CanonicalRecordBase>(&private_base, 1));
+	auto make_ordered_member_pointer = [](EntityId owner) {
+		TypeSpecifierNode type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		type.set_ordered_declarator({DeclaratorComponent::memberPointer(owner, false, CVQualifier::None)});
+		return type;
+	};
+	TypeSpecifierNode base_member = make_ordered_member_pointer(base_owner);
+	base_member.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	const TypeSpecifierNode derived_member = make_ordered_member_pointer(derived_owner);
+	const TypeSpecifierNode private_derived_member = make_ordered_member_pointer(private_derived_owner);
+	CHECK_FALSE(base_member.ordered_declarator_has_legacy_projection());
+	CHECK_FALSE(derived_member.ordered_declarator_has_legacy_projection());
+
+	const std::optional<ConversionPlan> base_to_derived_plan = tryBuildCanonicalOrderedConversionPlan(base_member, derived_member);
+	REQUIRE(base_to_derived_plan.has_value());
+	CHECK(base_to_derived_plan->is_valid);
+	CHECK(base_to_derived_plan->rank == ConversionRank::Conversion);
+	CHECK(base_to_derived_plan->kind == StandardConversionKind::PointerConversion);
+	const std::optional<ConversionPlan> inaccessible_plan = tryBuildCanonicalOrderedConversionPlan(base_member, private_derived_member);
+	REQUIRE(inaccessible_plan.has_value());
+	CHECK_FALSE(inaccessible_plan->is_valid);
+
+	TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	FunctionSignature noexcept_signature;
+	noexcept_signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	noexcept_signature.is_noexcept = true;
+	FunctionSignature throwing_signature = noexcept_signature;
+	throwing_signature.is_noexcept = false;
+	auto make_ordered_member_function_pointer = [](EntityId owner, const FunctionSignature& signature) {
+		TypeSpecifierNode type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		type.set_function_signature(signature);
+		type.set_ordered_declarator({DeclaratorComponent::memberPointer(owner, true, CVQualifier::None)});
+		return type;
+	};
+	TypeSpecifierNode base_noexcept_member_function = make_ordered_member_function_pointer(base_owner, noexcept_signature);
+	base_noexcept_member_function.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	const TypeSpecifierNode derived_throwing_member_function = make_ordered_member_function_pointer(derived_owner, throwing_signature);
+	CHECK_FALSE(base_noexcept_member_function.ordered_declarator_has_legacy_projection());
+
+	const std::optional<ConversionPlan> callable_conversion_plan =
+		tryBuildCanonicalOrderedConversionPlan(
+			base_noexcept_member_function,
+			derived_throwing_member_function);
+	REQUIRE(callable_conversion_plan.has_value());
+	CHECK(callable_conversion_plan->is_valid);
+	CHECK(callable_conversion_plan->rank == ConversionRank::Conversion);
+	CHECK(callable_conversion_plan->kind == StandardConversionKind::PointerConversion);
+}
+
 TEST_CASE("Canonical TypeIds retain class specialization member function pointer owners") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();

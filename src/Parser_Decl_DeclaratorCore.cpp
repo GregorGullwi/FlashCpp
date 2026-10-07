@@ -91,14 +91,24 @@ Parser::MemberPointerOwnerParse Parser::parseMemberPointerOwnerAfterName(
 		return parsed;
 	}
 	SaveHandle args_pos = save_token_position();
-	auto args = parse_explicit_template_arguments(
-		class_template->as<TemplateClassDeclarationNode>().template_parameters(),
-		static_cast<std::vector<ASTNode>*>(nullptr));
+	std::vector<ASTNode> argument_syntax_nodes;
+	auto args = parse_explicit_template_arguments(class_template->as<TemplateClassDeclarationNode>().template_parameters(), &argument_syntax_nodes);
 	if (!args.has_value()) {
 		restore_token_position(args_pos);
 		return parsed;
 	}
 	discard_saved_token(args_pos);
+	TypeSpecifierNode owner_type_spec(TypeCategory::Struct, TypeQualifier::None, SizeInBits{0}, class_name_token, CVQualifier::None);
+	tryStampTypeOnlyClassTemplateSpecialization(owner_type_spec, class_name_token.handle(), *args, argument_syntax_nodes);
+	if (owner_type_spec.has_template_specialization()) {
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		CanonicalTypeTransaction transaction(table);
+		const CanonicalTypeImport imported = importCanonicalType(table, owner_type_spec);
+		if (imported.status == CanonicalTypeImportStatus::Supported && table.node(imported.type).kind == CanonicalTypeKind::TemplateSpecialization) {
+			parsed.specialization_type_id = imported.type;
+			transaction.commit();
+		}
+	}
 	if (auto instantiated = try_instantiate_class_template(primary, *args);
 		instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
 		registerAndNormalizeLateMaterializedTopLevelNode(*instantiated);
@@ -140,6 +150,11 @@ void Parser::applyMemberPointerOwner(
 				return;
 			}
 		}
+	}
+
+	if (parsed.specialization_type_id) {
+		type_spec.set_member_class_type_id(parsed.specialization_type_id);
+		return;
 	}
 
 	tryBindPublishedMemberClassEntity(type_spec);

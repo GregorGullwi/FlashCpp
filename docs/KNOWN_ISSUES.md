@@ -31,18 +31,6 @@ instantiation. Stack usage for deep chains through those forms remains
 unverified. Extend dependency scheduling to cover them while sharing base
 substitution semantics with ordinary instantiation.
 
-## Replayed function-template local classes can reach codegen without coherent TypeInfo ownership
-
-A namespace/global function-template body that declares a local class and is
-then instantiated can reach IR collection with the internal error
-`Sema-ready class entity has inconsistent TypeInfo ownership`. The same replay
-path works for local typedefs. Direct local classes in non-template functions
-now have lexical-scope-owned EntityIds and distinct TypeInfo lookup keys, but
-that owner does not identify a local class across function-template
-specializations. The remaining replay defect needs an owner that includes the
-concrete specialization identity; a transient replay ScopeId or type spelling
-is not sufficient.
-
 ## Boundary 2F removed unsupported legacy negative fixtures
 
 On 2026-08-30 boundary 2F removed the frozen `_fail.cpp` inventories and their
@@ -187,15 +175,6 @@ The following remain unsupported and are rejected or left unresolved:
   the old uninitialized-slot behavior can still appear there.
 - Calling through a materialized member-function pointer is a separate,
   still-unimplemented path (it emits an ``.()`` symbol).
-
-## Multidimensional array member subscript fails during IR generation
-
-Reading an element of a multidimensional array member through two or more
-subscripts (`h.grid[1][1]`) fails in IR generation with
-`Struct type info not found for type_index=0 category=28`, even for a plain
-array member with no default member initializer; a single subscript works. The
-failure reproduces on `origin/main` and is independent of the canonical-type
-work. A regression that pins it is still owed.
 
 ## Static-member template initializer replay still re-parses source text
 
