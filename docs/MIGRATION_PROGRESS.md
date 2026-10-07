@@ -604,10 +604,10 @@ measurement is stale.
 The explicit-criteria rollup is **10/79 complete**. The boundary-3A criterion
 that pointer-to-member overloads distinguish owner and pointee types is now
 covered; passing tests or the breadth of landed code do not complete the
-boundary. This branch advanced the constructibility work item: a
-multidimensional class-type array member's default member initializer now
-contributes each element leaf's constructor exception specification to the
-nothrow answer. It does not complete an exit criterion on its own. The
+boundary. This branch advanced the constructibility work item: a default member
+initializer that selects the member type's implicit or defaulted copy or move
+constructor now contributes that constructor's derived exception specification
+to the nothrow answer. It does not complete an exit criterion on its own. The
 flat-field-absence criterion remains advanced
 but incomplete for the type-trait consumer family, the lazy-constraint
 evaluator, and trait-operand nominal and member-owner identity; the flat
@@ -981,11 +981,19 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       leaves, so `Member grid[M][N] = {...}` makes the class throwing when any
       element can throw, in both the flat and nested row forms, covered by
       `tests/test_nothrow_constructible_default_member_initializer_multidim_array_ret0.cpp`.
+      An initializer that selects the member type's implicit or defaulted copy or
+      move constructor now derives the exception specification from the member
+      type's subobject constructors, so `Member member{Member{}}` makes the class
+      throwing when the member type's copy or move construction can throw;
+      covered by
+      `tests/test_nothrow_constructible_default_member_initializer_implicit_constructor_ret0.cpp`.
       The canonical (non-sema) form of the argument-bearing query remains, as do
-      an initializer whose selected constructor is implicit or defaulted,
-      argument expressions whose own noexcept is not yet evaluated, and a
-      constructor whose noexcept operand is dependent or otherwise not a
-      constant expression (it keeps the keyword-present answer). Code generation now delegates the
+      argument expressions whose own noexcept is not yet evaluated, a constructor
+      whose noexcept operand is dependent or otherwise not a constant expression
+      (it keeps the keyword-present answer), and an array element initialized
+      directly from a prvalue of the member type (guaranteed copy elision
+      default-constructs it, which the per-element walk does not yet classify).
+      Code generation now delegates the
       three constructibility kinds to the shared evaluator instead of its own
       approximate switch, which removed the duplicate logic and keeps the
       folded, constexpr, and lowered answers on one classification. The unary triviality and lifetime traits now use TypeId-keyed

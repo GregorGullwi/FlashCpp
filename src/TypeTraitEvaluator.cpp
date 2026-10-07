@@ -915,22 +915,74 @@ const ConstructorDeclarationNode* defaultInitializerResolvedConstructor(const AS
 	return nullptr;
 }
 
-// Whether a resolved default member initializer selects a user-provided
-// potentially-throwing constructor. An unresolved selection or an implicit or
-// defaulted one returns nullopt so the nothrow walk defers rather than guesses.
-std::optional<bool> defaultInitializerConstructorThrows(const ASTNode& initializer) {
+// Whether the copy or move construction of a class, following implicitly-defined
+// special members, can throw. A user-provided subobject constructor states its
+// own exception specification; an implicit or defaulted one is followed
+// recursively. Uses an explicit worklist so subobject depth stays off the native
+// stack.
+bool recordNothrowCopyOrMoveConstruction(const StructTypeInfo& root, bool prefer_move) {
+	TemplateVector<const StructTypeInfo*, 8> pending{&root};
+	TemplateVector<const StructTypeInfo*, 8> visited;
+	while (!pending.empty()) {
+		const StructTypeInfo* info = pending.back();
+		pending.pop_back();
+		if (info == nullptr) {
+			return false;
+		}
+		if (std::find(visited.begin(), visited.end(), info) != visited.end()) {
+			continue;
+		}
+		visited.push_back(info);
+		const StructMemberFunction* constructor = info->findPreferredSameTypeConstructor(prefer_move, true);
+		if (constructor != nullptr && constructor->access != AccessSpecifier::Public) {
+			return false;
+		}
+		if (constructor != nullptr && constructor->function_decl.is<ConstructorDeclarationNode>()) {
+			const ConstructorDeclarationNode& declaration = constructor->function_decl.as<ConstructorDeclarationNode>();
+			if (!declaration.is_implicit() && !declaration.is_explicitly_defaulted()) {
+				if (!declaration.is_noexcept()) {
+					return false;
+				}
+				continue;
+			}
+		}
+		for (const BaseClassSpecifier& base : info->base_classes) {
+			if (base.is_deferred) {
+				continue;
+			}
+			pending.push_back(structInfoFromTypeIndex(base.type_index));
+		}
+		for (const StructMember& member : info->members) {
+			if (member.pointer_depth > 0 || member.is_reference() || !is_struct_type(member.type_index.category())) {
+				continue;
+			}
+			pending.push_back(structInfoFromTypeIndex(member.type_index));
+		}
+	}
+	return true;
+}
+
+// Whether a resolved default member initializer selects a potentially-throwing
+// constructor. A user-provided constructor states its own exception
+// specification; an implicit or defaulted one derives it from the member type's
+// copy or move construction. An unresolved selection returns nullopt so the walk
+// defers rather than guesses.
+std::optional<bool> defaultInitializerConstructorThrows(const ASTNode& initializer, const StructTypeInfo& member_type) {
 	const ConstructorDeclarationNode* selected = defaultInitializerResolvedConstructor(initializer);
-	if (selected == nullptr || selected->is_implicit() || selected->is_explicitly_defaulted()) {
+	if (selected == nullptr) {
 		return std::nullopt;
+	}
+	if (selected->is_implicit() || selected->is_explicitly_defaulted()) {
+		return !recordNothrowCopyOrMoveConstruction(member_type, true);
 	}
 	return !selected->is_noexcept();
 }
 
 // Whether any element leaf of an array member's default member initializer
-// selects a user-provided potentially-throwing constructor. Nested brace lists
-// (rows of a multidimensional array) are flattened to their leaves with an
-// explicit worklist so nesting depth stays off the native stack.
-bool defaultInitializerArrayElementThrows(const ASTNode& initializer) {
+// selects a potentially-throwing constructor. Nested brace lists (rows of a
+// multidimensional array) are flattened to their leaves with an explicit
+// worklist so nesting depth stays off the native stack.
+bool defaultInitializerArrayElementThrows(const ASTNode& initializer, const StructTypeInfo& member_type) {
 	TemplateVector<ASTNode, 4> pending;
 	pending.push_back(initializer);
 	while (!pending.empty()) {
@@ -940,7 +992,7 @@ bool defaultInitializerArrayElementThrows(const ASTNode& initializer) {
 			std::ranges::copy(nested->initializers(), std::back_inserter(pending));
 			continue;
 		}
-		const std::optional<bool> throws = defaultInitializerConstructorThrows(element);
+		const std::optional<bool> throws = defaultInitializerConstructorThrows(element, member_type);
 		if (throws.has_value() && *throws) {
 			return true;
 		}
@@ -1014,24 +1066,28 @@ bool recordSubobjectsSatisfyDefaultConstruction(
 				// constructs the member still runs that class's default
 				// constructor, so the nothrow answer must include it. A
 				// non-default initializer selects another constructor, whose
-				// exception specification the parser records on the
-				// initializer; an unresolved selection stays deferred.
+				// exception specification the parser records on the initializer
+				// or, for an implicit or defaulted one, derives from the member
+				// type's copy or move construction; an unresolved selection
+				// stays deferred.
 				if (recurse_default_initialized_members &&
 					member.pointer_depth == 0 &&
 					is_struct_type(member.type_index.category())) {
 					const ASTNode& initializer = *member.default_initializer;
 					if (defaultInitializerIsDefaultConstruction(initializer)) {
 						pending.push_back(structInfoFromTypeIndex(member.type_index));
-					} else if (member.is_array) {
-						// Each element leaf selects its own constructor; the
-						// array construction is throwing if any leaf is.
-						if (defaultInitializerArrayElementThrows(initializer)) {
-							return false;
-						}
-					} else {
-						const std::optional<bool> throws = defaultInitializerConstructorThrows(initializer);
-						if (throws.has_value() && *throws) {
-							return false;
+					} else if (const StructTypeInfo* member_struct_info = structInfoFromTypeIndex(member.type_index)) {
+						if (member.is_array) {
+							// Each element leaf selects its own constructor; the
+							// array construction is throwing if any leaf is.
+							if (defaultInitializerArrayElementThrows(initializer, *member_struct_info)) {
+								return false;
+							}
+						} else {
+							const std::optional<bool> throws = defaultInitializerConstructorThrows(initializer, *member_struct_info);
+							if (throws.has_value() && *throws) {
+								return false;
+							}
 						}
 					}
 				}

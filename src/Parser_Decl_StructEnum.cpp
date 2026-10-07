@@ -4792,13 +4792,19 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				argument_types.push_back(std::move(*argument_type));
 			}
 			const ConstructorOverloadResolutionResult resolution = resolve_constructor_overload(target, argument_types, true);
-			if (resolution.selected_overload == nullptr) {
+			const ConstructorDeclarationNode* selected = resolution.selected_overload;
+			if (selected == nullptr) {
+				// No user-provided constructor matched; the initializer selects
+				// the implicit or defaulted copy or move constructor.
+				selected = resolve_constructor_overload(target, argument_types, false).selected_overload;
+			}
+			if (selected == nullptr) {
 				return;
 			}
 			if (constructor_call != nullptr) {
-				constructor_call->set_resolved_constructor(resolution.selected_overload);
+				constructor_call->set_resolved_constructor(selected);
 			} else {
-				init_list->set_resolved_constructor(resolution.selected_overload);
+				init_list->set_resolved_constructor(selected);
 			}
 		};
 	for (const StructMember& member : struct_info->members) {
