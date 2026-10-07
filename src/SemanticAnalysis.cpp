@@ -7367,12 +7367,13 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 		}
 		bool all_concept_constraints_satisfied = true;
 		const auto template_argument_for_name = [&](std::string_view name) -> std::optional<TemplateTypeArg> {
-			for (size_t index = 0; index < parameter_names.size() && index < template_arguments.size(); ++index) {
-				if (parameter_names[index] == name) {
-					return template_arguments[index];
-				}
+			const TemplateTypeArg* argument = findTemplateArgumentByName(
+				std::span<const std::string_view>(parameter_names.data(), parameter_names.size()),
+				std::span<const TemplateTypeArg>(template_arguments.data(), template_arguments.size()), name);
+			if (argument == nullptr) {
+				return std::nullopt;
 			}
-			return std::nullopt;
+			return *argument;
 		};
 		forEachNonPackTemplateParamArgBinding(
 			template_parameters,
