@@ -278,6 +278,23 @@ inline TypeSpecifierNode buildFunctionSignatureReturnTypeForMangling(
 		sig.return_reference_qualifier);
 }
 
+// An interleaved member-function-pointer declarator stores the callable's
+// return declarator in the ordered spine after the member-pointer component
+// (for example `int* (Owner::*)()`). The signature return keeps a compatibility
+// shape that can duplicate the spine, so fold the trailing components onto the
+// return base to recover the complete return type for ABI mangling.
+inline TypeSpecifierNode applyOrderedReturnComponentsForMangling(
+	TypeSpecifierNode return_type,
+	std::span<const DeclaratorComponent> components) {
+	if (components.empty()) {
+		return return_type;
+	}
+	return_type.clear_declarator_shape();
+	return_type.set_ordered_declarator(std::vector<DeclaratorComponent>(
+		components.begin(), components.end()));
+	return return_type;
+}
+
 template <typename OutputType>
 inline void appendMsvcCallingConventionCode(
 	OutputType& output,
@@ -630,8 +647,9 @@ inline void appendMsvcOrderedDeclaratorTypeCode(
 			throw InternalError("MSVC name mangling: ordered callable declarator is not materialized");
 		case DeclaratorComponentKind::MemberObjectPointer:
 		case DeclaratorComponentKind::MemberFunctionPointer: {
-			if (index + 1 != components.size()) {
-				throw InternalError("MSVC name mangling: ordered member pointer is not innermost");
+			if (index + 1 != components.size() &&
+				component.kind != DeclaratorComponentKind::MemberFunctionPointer) {
+				throw InternalError("MSVC name mangling: ordered member object pointer is not innermost");
 			}
 			const std::string_view class_name = getMsvcMemberPointerClassName(normalized);
 			if (class_name.empty()) {
@@ -672,7 +690,11 @@ inline void appendMsvcOrderedDeclaratorTypeCode(
 			output += "@@";
 			const FunctionSignature& signature = normalized.function_signature();
 			appendMsvcMemberFunctionPointerQualifierCode(output, signature);
-			appendTypeCode(output, buildFunctionSignatureReturnTypeForMangling(signature));
+			TypeSpecifierNode return_type =
+				buildFunctionSignatureReturnTypeForMangling(signature);
+			return_type = applyOrderedReturnComponentsForMangling(
+				return_type, components.subspan(index + 1));
+			appendTypeCode(output, return_type);
 			if (signature.parameter_type_indices.empty()) {
 				output += 'X';
 			} else {
@@ -1506,8 +1528,9 @@ inline void appendItaniumOrderedDeclaratorTypeCode(
 			throw InternalError("Itanium name mangling: ordered callable declarator is not materialized");
 		case DeclaratorComponentKind::MemberObjectPointer:
 		case DeclaratorComponentKind::MemberFunctionPointer: {
-			if (index + 1 != components.size()) {
-				throw InternalError("Itanium name mangling: ordered member pointer is not innermost");
+			if (index + 1 != components.size() &&
+				component.kind != DeclaratorComponentKind::MemberFunctionPointer) {
+				throw InternalError("Itanium name mangling: ordered member object pointer is not innermost");
 			}
 			const std::string_view class_name =
 				getItaniumMemberPointerClassName(output, normalized);
@@ -1541,8 +1564,16 @@ inline void appendItaniumOrderedDeclaratorTypeCode(
 			if (!normalized.has_function_signature()) {
 				throw InternalError("Itanium name mangling: ordered member function pointer missing function signature");
 			}
+			FunctionSignature signature = normalized.function_signature();
+			if (index + 1 != components.size()) {
+				TypeSpecifierNode return_type =
+					buildFunctionSignatureReturnTypeForMangling(signature);
+				return_type = applyOrderedReturnComponentsForMangling(
+					return_type, components.subspan(index + 1));
+				signature.setReturnType(makeFunctionTypeFromSpecifier(return_type));
+			}
 			appendItaniumMemberFunctionPointerTypeCode(
-				output, class_name, normalized.function_signature());
+				output, class_name, signature);
 			return;
 		}
 		}

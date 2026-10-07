@@ -46,7 +46,8 @@ The architecture the remaining work builds on:
   An ordered member-function-pointer declarator whose callable return carries its
   own declarator (for example `int* (Owner::*)() const`) imports structurally:
   the spine's return components fold into the canonical function signature and
-  the owner `TypeId` is preserved.
+  the owner `TypeId` is preserved. MSVC and Itanium mangling fold the same spine
+  components into the callable's return type instead of rejecting the form.
 
 Compatibility counters and identity inventories are baselined under
 `tests/migration_counters/`; the flat classifier in `TypeTraitEvaluator.cpp`
@@ -69,8 +70,8 @@ Continue boundary 3A in this order.
    standard tails outside the canonical projectable set; and array and callable
    outer wrappers, which stay guarded where their consumers are not migrated.
    An interleaved-return member function pointer is not yet lowered as an IR
-   object or ABI-mangled, and a member function pointer whose owner is a template
-   parameter is still canonicalized before owner substitution in a dependent
+   object, and a member function pointer whose owner is a template parameter is
+   still canonicalized before owner substitution in a dependent
    `noexcept`/`constexpr` context and fails closed.
    `FunctionDeclarationNode` does not yet retain an `explicit` specifier for
    conversion functions, so implicit viability of explicit conversion functions

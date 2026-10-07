@@ -83,10 +83,10 @@ they remain vulnerable to projection drift.
 Ordered declarators over alias array, reference, function, or member-pointer
 wrappers remain unsupported. An ordered member-function-pointer declarator whose
 callable return carries its own declarator (for example
-`int* (Owner::*)() const`) now imports structurally and preserves the owner
-`TypeId`, but lowering a value of that type to IR and ABI-mangling it are still
-unmigrated, so the form is usable only where its type identity is consumed
-without an object or a mangled signature. Multi-hop pointer-to-array alias
+`int* (Owner::*)() const`) now imports structurally with the owner `TypeId` and
+ABI-mangles in both the MSVC and Itanium styles; only lowering a value of that
+type to IR is still unmigrated, so the form is usable where its type identity or
+mangled signature is consumed without an object. Multi-hop pointer-to-array alias
 forwarding keeps the pointee extent; an eight-hop chain is pinned by
 `tests/test_alias_template_forwarded_pointer_to_array_bounds_deep_ret0.cpp`.
 Non-projectable spines are rejected at migrated boundary guards rather than

@@ -758,11 +758,14 @@ inline CanonicalTypeImport importCanonicalFunctionSignature(
 inline CanonicalTypeImport importCanonicalMemberPointerReturnBase(
 	CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax,
-	const FunctionSignature& signature) {
+	const FunctionSignature& signature,
+	bool strip_return_declarator) {
 	// Ordered member-pointer spines carry the callable's return declarator as
 	// components, so only the return base identity is needed here. Preserve a
 	// template-specialization owner, otherwise recover the structured return
-	// component or its flat projection.
+	// component or its flat projection. When the spine already carries the
+	// return declarator, the signature return keeps a compatibility shape that
+	// must not be applied a second time.
 	if (syntax.has_template_specialization()) {
 		TypeSpecifierNode return_base = syntax;
 		return_base.clear_declarator_shape();
@@ -775,16 +778,25 @@ inline CanonicalTypeImport importCanonicalMemberPointerReturnBase(
 			CanonicalTypeImportContext::Exact);
 	}
 	if (signature.hasStructuredTypes()) {
-		return importCanonicalFunctionTypeComponent(
-			table,
-			signature.return_type(),
-			CanonicalTypeImportContext::Exact);
+		if (!strip_return_declarator) {
+			return importCanonicalFunctionTypeComponent(
+				table,
+				signature.return_type(),
+				CanonicalTypeImportContext::Exact);
+		}
+		TypeSpecifierNode return_base =
+			typeSpecifierFromFunctionType(signature.return_type());
+		return_base.clear_declarator_shape();
+		return importCanonicalTypeImpl(
+			table, return_base, CanonicalTypeImportContext::Exact);
 	}
 	return importCanonicalFunctionComponentFromProjection(
 		table,
 		signature.return_type_index,
-		0,
-		ReferenceQualifier::None,
+		strip_return_declarator ? 0 : signature.return_pointer_depth,
+		strip_return_declarator
+			? ReferenceQualifier::None
+			: signature.return_reference_qualifier,
 		CanonicalTypeImportContext::Exact);
 }
 
@@ -850,9 +862,14 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 		// innermost component. Its return base still has to be imported before
 		// the spine is applied.
 		bool has_member_function_pointer = false;
-		for (const DeclaratorComponent& component : components) {
-			has_member_function_pointer |=
-				component.kind == DeclaratorComponentKind::MemberFunctionPointer;
+		size_t member_function_pointer_index = components.size();
+		for (size_t index = 0; index < components.size(); ++index) {
+			if (components[index].kind ==
+				DeclaratorComponentKind::MemberFunctionPointer) {
+				has_member_function_pointer = true;
+				member_function_pointer_index = index;
+				break;
+			}
 		}
 		if (has_member_function_pointer) {
 			if (!syntax.has_function_signature()) {
@@ -860,8 +877,14 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 			}
 			FunctionSignature signature = syntax.function_signature();
 			signature.class_name = {};
+			const bool has_trailing_return_declarator =
+				member_function_pointer_index + 1 < components.size();
 			const CanonicalTypeImport imported_return_base =
-				importCanonicalMemberPointerReturnBase(table, syntax, signature);
+				importCanonicalMemberPointerReturnBase(
+					table,
+					syntax,
+					signature,
+					has_trailing_return_declarator);
 			if (imported_return_base.status !=
 				CanonicalTypeImportStatus::Supported) {
 				return imported_return_base;
