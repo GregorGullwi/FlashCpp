@@ -93,11 +93,9 @@ those fields directly. Template argument and substitution storage and general
 IR layout/subscript consumers still read parallel flat pointer/array fields, so
 they remain vulnerable to projection drift.
 Ordered declarators over alias array, reference, function, or member-pointer
-wrappers remain unsupported. A three-hop alias-template forwarding chain can
-lose the pointee array extent even when one forwarding alias preserves it:
-`A0<T, N> = T (*)[N]`, `A1<T, N> = A0<T, N>`, `A2<T, N> = A1<T, N>`, and
-`A3<T, N> = A2<T, N>` make `sizeof(*p)` fail to retain the full array size
-for `A3<T, 3> p`; a 64-hop probe reported `sizeof(T)` instead.
+wrappers remain unsupported. Multi-hop pointer-to-array alias forwarding keeps
+the pointee extent; an eight-hop chain is pinned by
+`tests/test_alias_template_forwarded_pointer_to_array_bounds_deep_ret0.cpp`.
 Non-projectable spines are rejected at migrated boundary guards rather than
 being reordered or truncated. Remove this entry when those consumers migrate
 and the compatibility projection fields are deleted.
