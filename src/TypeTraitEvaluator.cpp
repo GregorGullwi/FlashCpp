@@ -931,18 +931,16 @@ std::optional<bool> defaultInitializerConstructorThrows(const ASTNode& initializ
 // (rows of a multidimensional array) are flattened to their leaves with an
 // explicit worklist so nesting depth stays off the native stack.
 bool defaultInitializerArrayElementThrows(const ASTNode& initializer) {
-	std::vector<const ASTNode*> pending;
-	pending.push_back(&initializer);
+	TemplateVector<ASTNode, 4> pending;
+	pending.push_back(initializer);
 	while (!pending.empty()) {
-		const ASTNode* element = pending.back();
+		const ASTNode element = pending.back();
 		pending.pop_back();
-		if (const auto* nested = element->get_if<InitializerListNode>()) {
-			for (const ASTNode& child : nested->initializers()) {
-				pending.push_back(&child);
-			}
+		if (const auto* nested = element.get_if<InitializerListNode>()) {
+			std::ranges::copy(nested->initializers(), std::back_inserter(pending));
 			continue;
 		}
-		const std::optional<bool> throws = defaultInitializerConstructorThrows(*element);
+		const std::optional<bool> throws = defaultInitializerConstructorThrows(element);
 		if (throws.has_value() && *throws) {
 			return true;
 		}

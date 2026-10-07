@@ -4768,16 +4768,14 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			const ExpressionNode* expression = initializer.get_if<ExpressionNode>();
 			const ConstructorCallNode* constructor_call = std::get_if<ConstructorCallNode>(expression);
 			const InitializerListNode* init_list = initializer.get_if<InitializerListNode>();
-			std::vector<const ASTNode*> constructor_arguments;
+			TemplateVector<ASTNode, 4> constructor_arguments;
 			const ConstructorDeclarationNode* already_resolved = nullptr;
 			if (constructor_call != nullptr) {
 				already_resolved = constructor_call->resolved_constructor();
-				std::ranges::transform(constructor_call->arguments(), std::back_inserter(constructor_arguments),
-					[](const ASTNode& argument) { return &argument; });
+				std::ranges::copy(constructor_call->arguments(), std::back_inserter(constructor_arguments));
 			} else if (init_list != nullptr) {
 				already_resolved = init_list->resolved_constructor();
-				std::ranges::transform(init_list->initializers(), std::back_inserter(constructor_arguments),
-					[](const ASTNode& argument) { return &argument; });
+				std::ranges::copy(init_list->initializers(), std::back_inserter(constructor_arguments));
 			} else {
 				return;
 			}
@@ -4786,8 +4784,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 			std::vector<TypeSpecifierNode> argument_types;
 			argument_types.reserve(constructor_arguments.size());
-			for (const ASTNode* argument : constructor_arguments) {
-				std::optional<TypeSpecifierNode> argument_type = get_expression_type(*argument);
+			for (const ASTNode& argument : constructor_arguments) {
+				std::optional<TypeSpecifierNode> argument_type = get_expression_type(argument);
 				if (!argument_type.has_value()) {
 					return;
 				}
@@ -4824,20 +4822,16 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Each leaf of the brace-elision tree is one array element; nested brace
 		// lists (rows of a multidimensional array) are flattened to their leaves
 		// with an explicit worklist so nesting depth stays off the native stack.
-		std::vector<const ASTNode*> pending_elements;
-		for (const ASTNode& element : array_elements->initializers()) {
-			pending_elements.push_back(&element);
-		}
+		TemplateVector<ASTNode, 4> pending_elements;
+		std::ranges::copy(array_elements->initializers(), std::back_inserter(pending_elements));
 		while (!pending_elements.empty()) {
-			const ASTNode* element = pending_elements.back();
+			const ASTNode element = pending_elements.back();
 			pending_elements.pop_back();
-			if (const auto* nested = element->get_if<InitializerListNode>()) {
-				for (const ASTNode& child : nested->initializers()) {
-					pending_elements.push_back(&child);
-				}
+			if (const auto* nested = element.get_if<InitializerListNode>()) {
+				std::ranges::copy(nested->initializers(), std::back_inserter(pending_elements));
 				continue;
 			}
-			resolve_default_member_initializer_constructor(*element, *member_struct_info);
+			resolve_default_member_initializer_constructor(element, *member_struct_info);
 		}
 	}
 
