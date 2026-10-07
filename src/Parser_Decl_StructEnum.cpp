@@ -4817,15 +4817,27 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			resolve_default_member_initializer_constructor(initializer, *member_struct_info);
 			continue;
 		}
-		if (member.array_dimensions.size() != 1) {
-			continue;  // multidimensional element order is not a constructor argument list
-		}
 		const InitializerListNode* array_elements = initializer.get_if<InitializerListNode>();
 		if (array_elements == nullptr) {
 			continue;
 		}
+		// Each leaf of the brace-elision tree is one array element; nested brace
+		// lists (rows of a multidimensional array) are flattened to their leaves
+		// with an explicit worklist so nesting depth stays off the native stack.
+		std::vector<const ASTNode*> pending_elements;
 		for (const ASTNode& element : array_elements->initializers()) {
-			resolve_default_member_initializer_constructor(element, *member_struct_info);
+			pending_elements.push_back(&element);
+		}
+		while (!pending_elements.empty()) {
+			const ASTNode* element = pending_elements.back();
+			pending_elements.pop_back();
+			if (const auto* nested = element->get_if<InitializerListNode>()) {
+				for (const ASTNode& child : nested->initializers()) {
+					pending_elements.push_back(&child);
+				}
+				continue;
+			}
+			resolve_default_member_initializer_constructor(*element, *member_struct_info);
 		}
 	}
 

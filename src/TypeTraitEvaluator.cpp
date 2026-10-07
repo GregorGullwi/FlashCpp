@@ -926,6 +926,30 @@ std::optional<bool> defaultInitializerConstructorThrows(const ASTNode& initializ
 	return !selected->is_noexcept();
 }
 
+// Whether any element leaf of an array member's default member initializer
+// selects a user-provided potentially-throwing constructor. Nested brace lists
+// (rows of a multidimensional array) are flattened to their leaves with an
+// explicit worklist so nesting depth stays off the native stack.
+bool defaultInitializerArrayElementThrows(const ASTNode& initializer) {
+	std::vector<const ASTNode*> pending;
+	pending.push_back(&initializer);
+	while (!pending.empty()) {
+		const ASTNode* element = pending.back();
+		pending.pop_back();
+		if (const auto* nested = element->get_if<InitializerListNode>()) {
+			for (const ASTNode& child : nested->initializers()) {
+				pending.push_back(&child);
+			}
+			continue;
+		}
+		const std::optional<bool> throws = defaultInitializerConstructorThrows(*element);
+		if (throws.has_value() && *throws) {
+			return true;
+		}
+	}
+	return false;
+}
+
 // A class whose default constructor is implicit or explicitly defaulted
 // inherits its default-construction property from every base class and member
 // that constructor initializes. A user-provided default constructor initializes
@@ -1001,14 +1025,9 @@ bool recordSubobjectsSatisfyDefaultConstruction(
 					if (defaultInitializerIsDefaultConstruction(initializer)) {
 						pending.push_back(structInfoFromTypeIndex(member.type_index));
 					} else if (member.is_array) {
-						// Each element selects its own constructor; the array
-						// construction is throwing if any element is.
-						const auto* array_elements = initializer.get_if<InitializerListNode>();
-						const auto element_throws = [](const ASTNode& element) {
-							const std::optional<bool> throws = defaultInitializerConstructorThrows(element);
-							return throws.has_value() && *throws;
-						};
-						if (array_elements != nullptr && std::ranges::any_of(array_elements->initializers(), element_throws)) {
+						// Each element leaf selects its own constructor; the
+						// array construction is throwing if any leaf is.
+						if (defaultInitializerArrayElementThrows(initializer)) {
 							return false;
 						}
 					} else {
