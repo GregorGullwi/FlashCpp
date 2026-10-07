@@ -59,9 +59,15 @@ Continue boundary 3A in this order.
    use structural identity and replace remaining flat-field reads with a single
    compatibility materializer at each legacy boundary, preserving full callable
    comparison, nested cv, array decay, and value-category behavior. Remaining:
-   dependent member-function-pointer forms that do not import structurally, and
+   dependent member-function-pointer forms that do not import structurally;
    unsupported callable conversions that still need substitution-aware canonical
-   ranking.
+   ranking; derived-to-base conversions through non-projectable declarators and
+   callable-component conversions, which remain deferred; conversion-function
+   standard tails outside the canonical projectable set; and array and callable
+   outer wrappers, which stay guarded where their consumers are not migrated.
+   `FunctionDeclarationNode` does not yet retain an `explicit` specifier for
+   conversion functions, so implicit viability of explicit conversion functions
+   remains a separate parser/sema gap.
 
 2. **Migrate remaining flat consumers.**
    1. **The constructibility family.** The zero-argument variants and published
@@ -98,7 +104,8 @@ Continue boundary 3A in this order.
    preserved through every AST copy and substitution route. Remaining: a fully
    non-projectable ordered-spine `decltype` dereference (deferred to sema) and a
    call or xvalue operand whose value category the parser does not know at parse
-   time.
+   time. `UnsupportedStaticMemberType` (1020) remains a fail-closed guard for
+   canonical type families not yet imported.
 
 4. **Close and mutation-validate the 3A exit criteria.** Prove independence from
    parser/context stacks, parse order, and string-table insertion order; cover
@@ -189,10 +196,12 @@ Run the host-native migration-counter and identity-inventory scripts under
 `tests/migration_counters/` after compiler changes and keep every fixed-corpus
 entry within baseline. `canonical_structural_trait_fallback` is 0 on the
 structural-trait and lazy-constraint regressions (baseline lowered from 23 so a
-reappearance fails); the inline dollar-recovery inventory and the
-canonical-adapter source corpus remain within their supported/deferred baselines.
-Gate 0's Windows and ELF multi-translation-unit checks remain required
-compatibility evidence. See the plan for complete boundary-specific validation.
+reappearance fails); the residual lazy-constraint fallbacks are the
+constructibility probes, which need the canonical constructor-query path. The
+inline dollar-recovery inventory and the canonical-adapter source corpus remain
+within their supported/deferred baselines. Gate 0's Windows and ELF
+multi-translation-unit checks remain required compatibility evidence. See the
+plan for complete boundary-specific validation.
 
 For recursive-path changes, report the largest changed native stack frame and
 whether stack use stays bounded as logical depth grows; do not raise the stack
@@ -206,6 +215,12 @@ are file-local, and default-construction facts and unary structural properties
 share one `CanonicalRecordFacts` mask
 (`tests/test_constructibility_paths_equivalence_ret0.cpp` pins path agreement).
 Canonical imports use `tryImportSupportedCanonical(table, syntax)`, returning a
-`TypeId` only on `Supported`; it takes the table explicitly because resolving it
+`TypeId` only on `Supported` and an empty result otherwise (including `Invalid`,
+which callers recover from); it takes the table explicitly because resolving it
 through `requireFrontendContext()` pulls `FrontendContext.h` into a
 widely-included header and breaks the canonical-type mutation harness.
+
+The recorded Clang stack-usage probe measured `parse_declarator` at 5,160 bytes
+versus 5,000 bytes on `origin/main`; repeat the comparison when changing
+recursive parser paths. The latest canonical architecture probe reports
+`TypeSpecifierNode` at 600 bytes.
