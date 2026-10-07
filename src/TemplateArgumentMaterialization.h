@@ -255,10 +255,7 @@ inline bool templateArgumentUsesNamedIdentifierForm(const TemplateTypeArg& arg) 
 	return !arg.isTypeArgument() || arg.is_pack ||
 		(arg.is_dependent && arg.dependent_name.isValid() &&
 		 arg.pointer_depth == 0 &&
-		 arg.ref_qualifier == ReferenceQualifier::None &&
-		 arg.cv_qualifier == CVQualifier::None &&
-		 !arg.is_array &&
-		 !arg.function_signature.has_value());
+		 arg.ref_qualifier == ReferenceQualifier::None && arg.cv_qualifier == CVQualifier::None && !arg.is_array && !arg.function_signature.has_value());
 }
 
 inline StringHandle templateArgumentIdentifierName(const TemplateTypeArg& arg) {
@@ -278,17 +275,12 @@ inline ASTNode materializeNamedIdentifierTemplateArgumentNode(const TemplateType
 	const StringHandle identifier_name = templateArgumentIdentifierName(arg);
 	Token arg_token(
 		Token::Type::Identifier,
-		identifier_name.isValid() ? identifier_name.view() : std::string_view{},
-		source_token.line(),
-		source_token.column(),
-		source_token.file_index());
+		identifier_name.isValid() ? identifier_name.view() : std::string_view{}, source_token.line(), source_token.column(), source_token.file_index());
 	ExpressionNode& arg_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(IdentifierNode(arg_token));
 	return ASTNode(&arg_expr);
 }
 
-inline std::vector<ASTNode> materializeNamedTemplateArgumentNodes(
-	std::span<const TemplateTypeArg> template_args,
-	const Token& source_token) {
+inline std::vector<ASTNode> materializeNamedTemplateArgumentNodes(std::span<const TemplateTypeArg> template_args, const Token& source_token) {
 	std::vector<ASTNode> result;
 	result.reserve(template_args.size());
 	for (const TemplateTypeArg& arg : template_args) {

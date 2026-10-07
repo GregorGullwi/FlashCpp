@@ -688,9 +688,7 @@ using TemplateArgumentVector =
 // the name is unknown or the sequences disagree in length. This centralizes the
 // positional scan repeated across constraint evaluation and semantic checks.
 inline const TemplateTypeArg* findTemplateArgumentByName(
-	std::span<const std::string_view> parameter_names,
-	std::span<const TemplateTypeArg> template_arguments,
-	std::string_view name) {
+	std::span<const std::string_view> parameter_names, std::span<const TemplateTypeArg> template_arguments, std::string_view name) {
 	const size_t count = std::min(parameter_names.size(), template_arguments.size());
 	for (size_t index = 0; index < count; ++index) {
 		if (parameter_names[index] == name) {

@@ -1108,8 +1108,7 @@ Parser::tryInstantiateMemberFunctionTemplateCandidateForAddress(
 		current_explicit_call_arg_types_);
 	current_explicit_call_arg_types_ = &target_parameter_types;
 	std::optional<ASTNode> instantiated = try_instantiate_member_function_template_explicit_candidate(
-		owner_name, member_name,
-		std::span<const TemplateTypeArg>(template_args->data(), template_args->size()), true, &function_template);
+		owner_name, member_name, std::span<const TemplateTypeArg>(template_args->data(), template_args->size()), true, &function_template);
 	if (instantiated.has_value()) {
 		return_type_deduced = deduced_from_return_type;
 	}
@@ -10826,8 +10825,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										concept_token);
 
 									// Store the template arguments for later evaluation
-									concept_call.set_template_arguments(materializeNamedTemplateArgumentNodes(
-										*explicit_template_args, concept_token));
+									concept_call.set_template_arguments(materializeNamedTemplateArgumentNodes(*explicit_template_args, concept_token));
 
 									result = emplace_node<ExpressionNode>(std::move(concept_call));
 									return ParseResult::success(*result);
