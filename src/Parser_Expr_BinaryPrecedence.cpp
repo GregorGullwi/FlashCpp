@@ -1473,9 +1473,26 @@ bool Parser::parse_constructor_exception_specifier() {
 		advance(); // consume 'noexcept'
 		is_noexcept = true;
 
-		// Check for noexcept(expr) form
+		// Check for noexcept(expr) form. [except.spec]/7 requires the operand to
+		// be a constant expression, so evaluate it and carry the effective value
+		// rather than the keyword-present answer. A malformed or non-constant
+		// operand keeps the keyword-present answer and is skipped.
 		if (peek() == "("_tok) {
-			skip_balanced_parens(); // skip the noexcept expression
+			SaveHandle operand_start = save_token_position();
+			advance(); // consume '('
+			ParseResult noexcept_operand = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			if (!noexcept_operand.is_error() && noexcept_operand.node().has_value() && peek() == ")"_tok) {
+				discard_saved_token(operand_start);
+				advance(); // consume ')'
+				const auto evaluated = try_evaluate_constant_expression(*noexcept_operand.node());
+				if (evaluated.has_value()) {
+					is_noexcept = evaluated->value != 0;
+				}
+			} else {
+				restore_token_position(operand_start);
+				discard_saved_token(operand_start);
+				skip_balanced_parens();
+			}
 		}
 	}
 
