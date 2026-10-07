@@ -5,7 +5,7 @@ plan](2026-08-24-front-end-rearchitecture-plan.md) is authoritative for the
 design, boundaries, and exit criteria. This file records current state and
 next work; completed implementation history belongs in git.
 
-Last updated: 2026-10-06.
+Last updated: 2026-10-07.
 
 ## Current state
 
@@ -604,12 +604,10 @@ measurement is stale.
 The explicit-criteria rollup is **10/79 complete**. The boundary-3A criterion
 that pointer-to-member overloads distinguish owner and pointee types is now
 covered; passing tests or the breadth of landed code do not complete the
-boundary. This branch advanced the importer/declarator coverage work item by
-completing the `[dcl.type.decltype]` value-category rule: callable-object calls
-select their overload from each argument's value category, an unparenthesized
-class member access names the declared member type, and a pointer dereference is
-an lvalue of the pointee type. It also fixed partial-specialization matching for
-a deduced pattern base. Neither completes an exit criterion on its own. The
+boundary. This branch advanced the constructibility work item: a non-default
+class-type default member initializer now contributes its selected
+constructor's exception specification to the nothrow answer. It does not
+complete an exit criterion on its own. The
 flat-field-absence criterion remains advanced
 but incomplete for the type-trait consumer family, the lazy-constraint
 evaluator, and trait-operand nominal and member-owner identity; the flat
@@ -961,9 +959,20 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       class-type default member initializer that default-constructs the member
       now contributes to the nothrow answer, so a member initialized as
       `Member member{}` makes the class nothrow only when `Member`'s default
-      constructor is. Other default member initializer expressions need
-      expression-level noexcept evaluation, and the canonical (non-sema) form
-      of the argument-bearing query remains. Code generation now delegates the
+      constructor is. A non-default initializer now contributes too: the parser
+      resolves the selected constructor when every argument type is known and
+      records it on the initializer, and the nothrow walk reads a user-provided
+      constructor's exception specification, so `Member member{arg}` makes the
+      class throwing when that constructor can throw. The regression
+      `tests/test_nothrow_constructible_default_member_initializer_args_ret0.cpp`
+      covers one- and two-argument braced initializers, the parenthesized
+      copy-initialization spelling, mixed native and class members, and the
+      trivially-constructible answer. The canonical (non-sema) form of the
+      argument-bearing query remains, as do array-member initializers, an
+      initializer whose selected constructor is implicit or defaulted, argument
+      expressions whose own noexcept is not yet evaluated, and a constructor
+      written with a `noexcept(expr)` whose effective value `is_noexcept()` does
+      not carry. Code generation now delegates the
       three constructibility kinds to the shared evaluator instead of its own
       approximate switch, which removed the duplicate logic and keeps the
       folded, constexpr, and lowered answers on one classification. The unary triviality and lifetime traits now use TypeId-keyed

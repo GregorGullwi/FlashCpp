@@ -4752,6 +4752,78 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// They will be added to the AST by the caller
 	pending_struct_variables_ = std::move(struct_variables);
 
+	// Resolve the constructor selected by a class-type default member
+	// initializer so the record's nothrow-construction fact can read its
+	// exception specification. Sema owns expression constructor selection, but
+	// that selection is not available when the record fact is published during
+	// parsing, so record the same selection here when the argument types are
+	// known. An initializer whose selection is ambiguous or untyped stays
+	// unresolved and the nothrow walk defers it.
+	for (const StructMember& member : struct_info->members) {
+		if (!member.default_initializer.has_value() || member.pointer_depth != 0 ||
+			member.is_array || !is_struct_type(member.type_index.category())) {
+			continue;
+		}
+		const ASTNode& initializer = *member.default_initializer;
+		std::vector<const ASTNode*> constructor_arguments;
+		const ConstructorDeclarationNode* already_resolved = nullptr;
+		if (initializer.is<ExpressionNode>()) {
+			const auto* constructor_call =
+				std::get_if<ConstructorCallNode>(&initializer.as<ExpressionNode>());
+			if (constructor_call == nullptr) {
+				continue;
+			}
+			already_resolved = constructor_call->resolved_constructor();
+			for (const ASTNode& argument : constructor_call->arguments()) {
+				constructor_arguments.push_back(&argument);
+			}
+		} else if (initializer.is<InitializerListNode>()) {
+			const InitializerListNode& init_list =
+				initializer.as<InitializerListNode>();
+			already_resolved = init_list.resolved_constructor();
+			for (const ASTNode& argument : init_list.initializers()) {
+				constructor_arguments.push_back(&argument);
+			}
+		} else {
+			continue;
+		}
+		if (constructor_arguments.empty() || already_resolved != nullptr) {
+			continue;
+		}
+		const StructTypeInfo* member_struct_info =
+			tryGetStructTypeInfo(member.type_index);
+		if (member_struct_info == nullptr) {
+			continue;
+		}
+		std::vector<TypeSpecifierNode> argument_types;
+		argument_types.reserve(constructor_arguments.size());
+		bool all_argument_types_known = true;
+		for (const ASTNode* argument : constructor_arguments) {
+			std::optional<TypeSpecifierNode> argument_type =
+				get_expression_type(*argument);
+			if (!argument_type.has_value()) {
+				all_argument_types_known = false;
+				break;
+			}
+			argument_types.push_back(std::move(*argument_type));
+		}
+		if (!all_argument_types_known) {
+			continue;
+		}
+		const ConstructorOverloadResolutionResult resolution =
+			resolve_constructor_overload(*member_struct_info, argument_types, true);
+		if (resolution.selected_overload == nullptr) {
+			continue;
+		}
+		if (initializer.is<ExpressionNode>()) {
+			std::get_if<ConstructorCallNode>(&initializer.as<ExpressionNode>())
+				->set_resolved_constructor(resolution.selected_overload);
+		} else {
+			initializer.as<InitializerListNode>().set_resolved_constructor(
+				resolution.selected_overload);
+		}
+	}
+
 	stampStructLexicalScope();
 	if (struct_ref.has_entity_id() && struct_info->hasCompleteObjectLayout()) {
 		FrontendContext& front_end = requireFrontendContext();
