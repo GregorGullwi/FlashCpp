@@ -4769,14 +4769,12 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			const ConstructorDeclarationNode* already_resolved = nullptr;
 			if (constructor_call != nullptr) {
 				already_resolved = constructor_call->resolved_constructor();
-				for (const ASTNode& argument : constructor_call->arguments()) {
-					constructor_arguments.push_back(&argument);
-				}
+				std::ranges::transform(constructor_call->arguments(), std::back_inserter(constructor_arguments),
+					[](const ASTNode& argument) { return &argument; });
 			} else if (init_list != nullptr) {
 				already_resolved = init_list->resolved_constructor();
-				for (const ASTNode& argument : init_list->initializers()) {
-					constructor_arguments.push_back(&argument);
-				}
+				std::ranges::transform(init_list->initializers(), std::back_inserter(constructor_arguments),
+					[](const ASTNode& argument) { return &argument; });
 			} else {
 				return;
 			}

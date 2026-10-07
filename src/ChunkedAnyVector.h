@@ -359,6 +359,12 @@ public:
 		}
 		bool operator!=(std::default_sentinel_t s) const { return !(*this == s); }
 
+		// C++20 std::sentinel_for requires the comparison in both operand
+		// orders, so a default sentinel compares equal to a matching iterator.
+		friend bool operator==(std::default_sentinel_t s, const iterator_impl& other) {
+			return other == s;
+		}
+
 	private:
 		data_ptr_t data_ = nullptr;
 		uint32_t chunk_idx_ = 0;
