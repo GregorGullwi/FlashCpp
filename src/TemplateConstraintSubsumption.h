@@ -519,9 +519,9 @@ private:
 	}
 
 	std::optional<size_t> buildExpression(const ASTNode& root_expression, size_t root_scope, const ConceptDeclarationNode* root_concept) {
-		std::vector<BuildTask> tasks;
-		std::vector<size_t> results;
-		std::vector<const ConceptDeclarationNode*> active_concepts;
+		TemplateVector<BuildTask, 8> tasks;
+		TemplateVector<size_t, 8> results;
+		TemplateVector<const ConceptDeclarationNode*, 4> active_concepts;
 		if (root_concept != nullptr) {
 			active_concepts.push_back(root_concept);
 		}
@@ -576,7 +576,7 @@ private:
 				if (concept_parameters.size() != concept_use->arguments.size()) {
 					return std::nullopt;
 				}
-				std::vector<ParameterMapping> mappings;
+				TemplateVector<ParameterMapping, 4> mappings;
 				mappings.reserve(concept_use->arguments.size());
 				for (const ASTNode& argument : concept_use->arguments) {
 					const std::optional<ParameterMapping> mapping = mapArgument(argument, task.scope);
