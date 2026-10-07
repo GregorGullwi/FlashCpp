@@ -353,18 +353,20 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 			}
 			break;
 		case DeclaratorComponentKind::MemberFunctionPointer: {
-			if (index != components.size() - 1 || !component.hasMemberOwner() ||
+			if (!component.hasMemberOwner() ||
 				!isValidCVQualifier(component.cv_qualifier) ||
 				!syntax.has_function_signature()) {
 				return {{}, CanonicalTypeImportStatus::Invalid};
 			}
+			// Components at higher indices were already folded into `id`, so
+			// they are the callable's return type. `id` therefore carries the
+			// complete return shape and overrides the flat signature
+			// projection, which cannot represent an interleaved return (for
+			// example `int* (Owner::*)()`).
 			FunctionSignature signature = syntax.function_signature();
 			signature.class_name = {};
 			const CanonicalTypeImport imported_function =
-				importCanonicalMemberPointerFunctionSignature(
-					table,
-					syntax,
-					signature);
+				importCanonicalFunctionSignature(table, signature, id);
 			if (imported_function.status != CanonicalTypeImportStatus::Supported) {
 				return imported_function;
 			}
@@ -753,6 +755,39 @@ inline CanonicalTypeImport importCanonicalFunctionSignature(
 		CanonicalTypeImportStatus::Supported};
 }
 
+inline CanonicalTypeImport importCanonicalMemberPointerReturnBase(
+	CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax,
+	const FunctionSignature& signature) {
+	// Ordered member-pointer spines carry the callable's return declarator as
+	// components, so only the return base identity is needed here. Preserve a
+	// template-specialization owner, otherwise recover the structured return
+	// component or its flat projection.
+	if (syntax.has_template_specialization()) {
+		TypeSpecifierNode return_base = syntax;
+		return_base.clear_declarator_shape();
+		return_base.clear_function_signature();
+		return_base.clear_member_class_identity();
+		return_base.set_cv_qualifier(CVQualifier::None);
+		return importCanonicalTemplateSpecialization(
+			table,
+			return_base,
+			CanonicalTypeImportContext::Exact);
+	}
+	if (signature.hasStructuredTypes()) {
+		return importCanonicalFunctionTypeComponent(
+			table,
+			signature.return_type(),
+			CanonicalTypeImportContext::Exact);
+	}
+	return importCanonicalFunctionComponentFromProjection(
+		table,
+		signature.return_type_index,
+		0,
+		ReferenceQualifier::None,
+		CanonicalTypeImportContext::Exact);
+}
+
 inline CanonicalTypeImport importCanonicalMemberPointerFunctionSignature(
 	CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax,
@@ -810,11 +845,34 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 		if (components.empty()) {
 			return {{}, CanonicalTypeImportStatus::Invalid};
 		}
-		const DeclaratorComponent& innermost = components.back();
-		if (innermost.kind == DeclaratorComponentKind::MemberFunctionPointer) {
-			return applyCanonicalOrderedDeclarator(table, TypeId{}, syntax,
+		// A member function pointer may be followed by the callable's return
+		// declarator (for example `int* (Owner::*)()`), so it is not always the
+		// innermost component. Its return base still has to be imported before
+		// the spine is applied.
+		bool has_member_function_pointer = false;
+		for (const DeclaratorComponent& component : components) {
+			has_member_function_pointer |=
+				component.kind == DeclaratorComponentKind::MemberFunctionPointer;
+		}
+		if (has_member_function_pointer) {
+			if (!syntax.has_function_signature()) {
+				return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+			}
+			FunctionSignature signature = syntax.function_signature();
+			signature.class_name = {};
+			const CanonicalTypeImport imported_return_base =
+				importCanonicalMemberPointerReturnBase(table, syntax, signature);
+			if (imported_return_base.status !=
+				CanonicalTypeImportStatus::Supported) {
+				return imported_return_base;
+			}
+			return applyCanonicalOrderedDeclarator(
+				table,
+				imported_return_base.type,
+				syntax,
 				CanonicalTypeImportContext::Exact);
 		}
+		const DeclaratorComponent& innermost = components.back();
 		if (innermost.kind != DeclaratorComponentKind::MemberObjectPointer) {
 			return {{}, CanonicalTypeImportStatus::Invalid};
 		}
