@@ -96,13 +96,13 @@ struct Scope {
 	size_t size;
 };
 
-bool sameSourceToken(const Token& lhs, const Token& rhs) {
+inline bool sameSourceToken(const Token& lhs, const Token& rhs) {
 	return lhs.type() == rhs.type() &&
 		lhs.file_index() == rhs.file_index() &&
 		lhs.line() == rhs.line() && lhs.column() == rhs.column() && lhs.value() == rhs.value();
 }
 
-bool sameAtomicConstraint(const AtomicConstraint& lhs, const AtomicConstraint& rhs) {
+inline bool sameAtomicConstraint(const AtomicConstraint& lhs, const AtomicConstraint& rhs) {
 	return sameSourceToken(lhs.source_token, rhs.source_token) && lhs.parameter_mapping == rhs.parameter_mapping;
 }
 
@@ -181,7 +181,7 @@ std::optional<Token> tryGetDirectSourceToken(const ASTNode& expression, std::ind
 	return source_token;
 }
 
-std::optional<Token> tryGetSourceToken(const ASTNode& expression) {
+inline std::optional<Token> tryGetSourceToken(const ASTNode& expression) {
 	if (expression.is<ExpressionNode>()) {
 		return std::visit([](const auto& expression_node) {
 			return tryGetSourceToken(expression_node);
@@ -190,7 +190,7 @@ std::optional<Token> tryGetSourceToken(const ASTNode& expression) {
 	return tryGetDirectSourceToken(expression, std::make_index_sequence<std::variant_size_v<ExpressionNode>>{});
 }
 
-ASTNode unwrapExpressionNode(const ASTNode& expression) {
+inline ASTNode unwrapExpressionNode(const ASTNode& expression) {
 	if (!expression.is<ExpressionNode>()) {
 		return expression;
 	}
@@ -206,7 +206,7 @@ struct ConceptUse {
 	std::span<const ASTNode> arguments;
 };
 
-std::optional<ConceptUse> tryGetConceptUse(const ASTNode& expression) {
+inline std::optional<ConceptUse> tryGetConceptUse(const ASTNode& expression) {
 	const ASTNode unwrapped = unwrapExpressionNode(expression);
 	std::string_view concept_name;
 	std::span<const ASTNode> arguments;
@@ -832,7 +832,7 @@ private:
 	int variable_count_ = 0;
 };
 
-bool implies(const Formula& antecedent, const Formula& consequent) {
+inline bool implies(const Formula& antecedent, const Formula& consequent) {
 	ConstraintSatSolver solver;
 	const int antecedent_root = solver.appendFormula(antecedent);
 	const int consequent_root = solver.appendFormula(consequent);
@@ -841,9 +841,24 @@ bool implies(const Formula& antecedent, const Formula& consequent) {
 
 } // namespace ConstraintSubsumption
 
-ConstraintSubsumptionOrdering compareMemberTemplateConstraints(
+inline ConstraintSubsumptionOrdering compareMemberTemplateConstraints(
 	CanonicalTypeTable& canonical_types,
 	const TemplateFunctionDeclarationNode& first, const TemplateFunctionDeclarationNode& second) {
+	// Atomic constraints are keyed by parameter mapping position. Comparing two
+	// templates that way is only sound when their template parameter lists
+	// correspond element-wise; otherwise the same index would denote different
+	// parameters in the two candidates. Fail closed instead of reporting a bogus
+	// ordering.
+	const TemplateParameterVector& first_parameters = first.template_parameters();
+	const TemplateParameterVector& second_parameters = second.template_parameters();
+	if (first_parameters.size() != second_parameters.size()) {
+		return ConstraintSubsumptionOrdering::Unsupported;
+	}
+	for (size_t index = 0; index < first_parameters.size(); ++index) {
+		if (first_parameters[index].kind() != second_parameters[index].kind()) {
+			return ConstraintSubsumptionOrdering::Unsupported;
+		}
+	}
 	ConstraintSubsumption::FormulaBuilder first_builder(canonical_types, first);
 	ConstraintSubsumption::FormulaBuilder second_builder(canonical_types, second);
 	std::optional<ConstraintSubsumption::Formula> first_formula = first_builder.build();
