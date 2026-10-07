@@ -604,9 +604,9 @@ measurement is stale.
 The explicit-criteria rollup is **10/79 complete**. The boundary-3A criterion
 that pointer-to-member overloads distinguish owner and pointee types is now
 covered; passing tests or the breadth of landed code do not complete the
-boundary. This branch advanced the constructibility work item: a non-default
-class-type default member initializer now contributes its selected
-constructor's exception specification to the nothrow answer. It does not
+boundary. This branch advanced the constructibility work item: a class-type
+array member's default member initializer now contributes each element's
+selected constructor exception specification to the nothrow answer. It does not
 complete an exit criterion on its own. The
 flat-field-absence criterion remains advanced
 but incomplete for the type-trait consumer family, the lazy-constraint
@@ -963,16 +963,19 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       resolves the selected constructor when every argument type is known and
       records it on the initializer, and the nothrow walk reads a user-provided
       constructor's exception specification, so `Member member{arg}` makes the
-      class throwing when that constructor can throw. The regression
-      `tests/test_nothrow_constructible_default_member_initializer_args_ret0.cpp`
-      covers one- and two-argument braced initializers, the parenthesized
-      copy-initialization spelling, mixed native and class members, and the
-      trivially-constructible answer. The canonical (non-sema) form of the
-      argument-bearing query remains, as do array-member initializers, an
+      class throwing when that constructor can throw. An array member
+      contributes one selection per element, so `Member members[N] = {...}` makes
+      the class throwing when any element's constructor can throw. The
+      regressions `tests/test_nothrow_constructible_default_member_initializer_args_ret0.cpp`
+      and `tests/test_nothrow_constructible_default_member_initializer_array_ret0.cpp`
+      cover one- and two-argument braced initializers, the parenthesized
+      copy-initialization spelling, the brace-list array element spelling, mixed
+      native and class members, and the trivially-constructible answer. The
+      canonical (non-sema) form of the argument-bearing query remains, as do an
       initializer whose selected constructor is implicit or defaulted, argument
-      expressions whose own noexcept is not yet evaluated, and a constructor
-      written with a `noexcept(expr)` whose effective value `is_noexcept()` does
-      not carry. Code generation now delegates the
+      expressions whose own noexcept is not yet evaluated, a constructor written
+      with a `noexcept(expr)` whose effective value `is_noexcept()` does not
+      carry, and multidimensional array element order. Code generation now delegates the
       three constructibility kinds to the shared evaluator instead of its own
       approximate switch, which removed the duplicate logic and keeps the
       folded, constexpr, and lowered answers on one classification. The unary triviality and lifetime traits now use TypeId-keyed
@@ -981,10 +984,7 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       unary record-property facts for completed record TypeIds. Class-template
       instantiation refreshes virtual metadata and layout after attaching member
       declarations, propagates deleted special-member facts, and then publishes
-      these facts. Remaining: the exception specification contributed by a
-      default member initializer that is not a default construction (needs
-      expression-level noexcept evaluation), and the canonical (non-sema) form
-      of the argument-bearing query.
+      these facts.
 
       Code generation delegates these rules and the assignability forms to the
       shared evaluator through `isRecordPropertyTraitOwnedBySharedEvaluator`.

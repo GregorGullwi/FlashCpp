@@ -915,6 +915,17 @@ const ConstructorDeclarationNode* defaultInitializerResolvedConstructor(const AS
 	return nullptr;
 }
 
+// Whether a resolved default member initializer selects a user-provided
+// potentially-throwing constructor. An unresolved selection or an implicit or
+// defaulted one returns nullopt so the nothrow walk defers rather than guesses.
+std::optional<bool> defaultInitializerConstructorThrows(const ASTNode& initializer) {
+	const ConstructorDeclarationNode* selected = defaultInitializerResolvedConstructor(initializer);
+	if (selected == nullptr || selected->is_implicit() || selected->is_explicitly_defaulted()) {
+		return std::nullopt;
+	}
+	return !selected->is_noexcept();
+}
+
 // A class whose default constructor is implicit or explicitly defaulted
 // inherits its default-construction property from every base class and member
 // that constructor initializes. A user-provided default constructor initializes
@@ -989,13 +1000,21 @@ bool recordSubobjectsSatisfyDefaultConstruction(
 					const ASTNode& initializer = *member.default_initializer;
 					if (defaultInitializerIsDefaultConstruction(initializer)) {
 						pending.push_back(structInfoFromTypeIndex(member.type_index));
-					} else if (!member.is_array) {
-						const ConstructorDeclarationNode* selected = defaultInitializerResolvedConstructor(initializer);
-						// A user-provided constructor states its own exception
-						// specification. An implicit or defaulted selection
-						// derives it from subobjects this walk does not model
-						// here, so it stays deferred rather than guessing.
-						if (selected != nullptr && !selected->is_implicit() && !selected->is_explicitly_defaulted() && !selected->is_noexcept()) {
+					} else if (member.is_array) {
+						// Each element selects its own constructor; the array
+						// construction is throwing if any element is.
+						const auto* array_elements = initializer.get_if<InitializerListNode>();
+						if (array_elements != nullptr) {
+							for (const ASTNode& element : array_elements->initializers()) {
+								const std::optional<bool> throws = defaultInitializerConstructorThrows(element);
+								if (throws.has_value() && *throws) {
+									return false;
+								}
+							}
+						}
+					} else {
+						const std::optional<bool> throws = defaultInitializerConstructorThrows(initializer);
+						if (throws.has_value() && *throws) {
 							return false;
 						}
 					}
