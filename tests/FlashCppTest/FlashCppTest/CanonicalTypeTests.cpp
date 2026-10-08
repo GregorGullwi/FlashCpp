@@ -156,6 +156,25 @@ TEST_CASE("Canonical record constructor schema is independent of the field schem
 	CHECK(table.recordConstructorParameterAt(record_type, 0, 0) == int_type);
 }
 
+TEST_CASE("Canonical adapter keys an explicit specialization by its primary template") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+
+	// A specialization without the primary's identity has no canonical type.
+	StructDeclarationNode specialization(StringHandle{}, false, false);
+	CHECK(importCanonicalClassDeclaration(table, specialization).status ==
+		CanonicalTypeImportStatus::UnmigratedNominal);
+
+	// With the recorded owner it is the same TemplateSpecialization an implicit
+	// instantiation of the primary would produce, not a fresh nominal entity.
+	const TemplateDeclId primary_decl{4242};
+	specialization.set_canonical_specialization_owner_template_decl_id(primary_decl);
+	const CanonicalTypeImport imported = importCanonicalClassDeclaration(table, specialization);
+	REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+	CHECK(table.node(imported.type).kind == CanonicalTypeKind::TemplateSpecialization);
+	CHECK(imported.type == table.templateSpecialization(primary_decl, std::span<const TypeId>{}));
+}
+
 TEST_CASE("Overload ranking compares non-projectable parameter shapes structurally") {
 	FrontendContext frontend;
 	TypeSpecifierNode smaller_array(
