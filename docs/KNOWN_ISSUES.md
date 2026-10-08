@@ -1,5 +1,26 @@
 # Known Issues
 
+## Conversion-operator results cannot yet initialize a class base parameter
+
+Overload ranking now recognizes a public derived-to-base tail after a conversion
+operator returns a class-template specialization, but an evaluated call still
+fails during IR generation because sema does not record this class-valued
+conversion for the call argument:
+
+```cpp
+template<class T> struct Base { int value; };
+template<class T> struct Derived : Base<T> {};
+struct Source { operator Derived<int>() const { return {}; } };
+int choose(Base<int>) { return 0; }
+int choose(...) { return 1; }
+int main() { return choose(Source{}); }
+```
+
+The compiler reports that sema missed the resolved call-argument conversion.
+The matching `decltype` regression isolates ranking; sema annotation, base
+subobject materialization, and post-selection access checking remain follow-up
+work.
+
 ## Calling a user-declared copy-assignment operator crashes at runtime
 
 Reproduced on 2026-10-08 on Linux with the sharded build. A class with a
