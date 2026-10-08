@@ -91,20 +91,26 @@ Continue boundary 3A in this order.
       operand and rejects a non-constant one with `NoexceptSpecifierNotConstant`
       (#1021) through one `resolveParsedNoexcept` / `applyParsedNoexcept` choke
       point, including static member functions, whose specifier was previously
-      dropped. Class-template member-function instantiation now re-evaluates a
-      retained dependent operand, so an instantiated member's own answer is
+      dropped, and destructors: a non-constant destructor operand is rejected
+      with #1021, an explicit specifier is marked on the node, and a
+      class-template destructor's retained dependent operand is re-evaluated at
+      instantiation. Class-template member-function instantiation now re-evaluates
+      a retained dependent operand, so an instantiated member's own answer is
       correct, and the constexpr `noexcept` evaluator resolves the instantiated
       member for an external member call through the receiver's type. Remaining:
       the codegen `noexcept` evaluator (`AstToIr::isExpressionNoexcept`) still
       reads the member-function *pattern*, so the member-function parse path keeps
       a keyword-present interim answer and the two noexcept evaluators need to
-      share one member-call resolution; destructors still fold but do not reject a
-      non-constant operand; neither evaluator resolves a qualified static-member
-      call or an overloaded operator/conversion function's selected declaration;
-      the canonical (non-sema) argument-bearing query; argument expressions whose
-      own noexcept is not yet evaluated; and the triviality/lifetime record walks,
-      which still read `StructTypeInfo` and need member, base, and special-member
-      properties published alongside the class facts.
+      share one member-call resolution; the pseudo-destructor `noexcept` consumer
+      (`p->~T()`) reads the pattern destructor for a class-template
+      specialization, so a dependent destructor is observable through
+      `__is_nothrow_destructible` but not through the `noexcept` operator; neither
+      evaluator resolves a qualified static-member call or an overloaded
+      operator/conversion function's selected declaration; the canonical
+      (non-sema) argument-bearing query; argument expressions whose own noexcept
+      is not yet evaluated; and the triviality/lifetime record walks, which still
+      read `StructTypeInfo` and need member, base, and special-member properties
+      published alongside the class facts.
    2. **Confirm a gap with a counter before adding identity plumbing.** A
       `const TypeSpecifierNode&` parameter cannot stamp its operand, but the
       operand already carries its published `EntityId`; that signature is not a
