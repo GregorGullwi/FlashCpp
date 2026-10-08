@@ -3149,8 +3149,46 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 	}
 
 	if (const auto* cast = std::get_if<StaticCastNode>(&expr)) {
-		return !cast->expr().is<ExpressionNode>() ||
-			   is_expression_noexcept(cast->expr().as<ExpressionNode>(), context);
+		if (!cast->expr().is<ExpressionNode>()) {
+			return true;
+		}
+		const ExpressionNode& operand = cast->expr().as<ExpressionNode>();
+		if (!is_expression_noexcept(operand, context)) {
+			return false;
+		}
+		// A class operand converted to the target type runs a user-defined
+		// conversion function whose exception specification decides the result.
+		if (context.parser != nullptr) {
+			std::optional<TypeSpecifierNode> operand_type;
+			if (context.sema != nullptr) {
+				operand_type = context.sema->getOverloadResolutionArgType(cast->expr());
+			}
+			if (!operand_type.has_value()) {
+				operand_type = context.parser->get_expression_type(cast->expr());
+			}
+			if (operand_type.has_value()) {
+				operand_type->limit_pointer_depth(0);
+				operand_type->set_reference_qualifier(ReferenceQualifier::None);
+				if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(operand_type->type_index())) {
+					const TypeIndex target = getCanonicalConversionTargetType(cast->target_type());
+					const StructMemberFunction* conversion = nullptr;
+					for (const StructMemberFunction& member : struct_info->member_functions) {
+						if (!member.is_conversion_operator() || member.conversion_target_type != target) {
+							continue;
+						}
+						if (conversion != nullptr) {
+							conversion = nullptr;  // ambiguous: fall back
+							break;
+						}
+						conversion = &member;
+					}
+					if (conversion != nullptr) {
+						return conversion->is_noexcept;
+					}
+				}
+			}
+		}
+		return true;
 	}
 
 	if (const auto* cast = std::get_if<ConstCastNode>(&expr)) {
