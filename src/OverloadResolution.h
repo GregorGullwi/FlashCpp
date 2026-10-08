@@ -4144,6 +4144,12 @@ inline ConversionPlan buildConversionPlan(
 				return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 			}
 		}
+		if (effective_to_category == TypeCategory::Struct &&
+			to.type_index().is_valid() &&
+			hasImplicitConvertingConstructorForArgument(
+				to.type_index(), from, argument_node)) {
+			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+		}
 		if (!hasCompleteStructInfo(from.type_index())) {
 			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 		}
