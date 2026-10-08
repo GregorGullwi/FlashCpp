@@ -2247,12 +2247,12 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 	if (imported.status != CanonicalTypeImportStatus::Supported) {
 		return std::nullopt;
 	}
-	const CanonicalTypeNode node = table.node(imported.type);
-	if (node.kind != CanonicalTypeKind::Record) {
+	const CanonicalTypeKind type_kind = table.node(imported.type).kind;
+	if (type_kind != CanonicalTypeKind::Record &&
+		type_kind != CanonicalTypeKind::TemplateSpecialization) {
 		return std::nullopt;
 	}
-	const EntityId entity{static_cast<uint32_t>(node.array_extent)};
-	if (!table.hasRecordConstructors(entity)) {
+	if (!table.hasRecordConstructors(imported.type)) {
 		return std::nullopt;
 	}
 	std::vector<TypeId> argument_types;
@@ -2264,15 +2264,15 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 		}
 		argument_types.push_back(*imported_argument);
 	}
-	const size_t constructor_count = table.recordConstructorCount(entity);
+	const size_t constructor_count = table.recordConstructorCount(imported.type);
 	for (size_t index = 0; index < constructor_count; ++index) {
-		const CanonicalRecordConstructor constructor = table.recordConstructorAt(entity, index);
+		const CanonicalRecordConstructor constructor = table.recordConstructorAt(imported.type, index);
 		if (constructor.parameter_count != argument_types.size()) {
 			continue;
 		}
 		bool matches = true;
 		for (size_t parameter = 0; parameter < constructor.parameter_count; ++parameter) {
-			if (table.recordConstructorParameterAt(entity, index, parameter) != argument_types[parameter]) {
+			if (table.recordConstructorParameterAt(imported.type, index, parameter) != argument_types[parameter]) {
 				matches = false;
 				break;
 			}

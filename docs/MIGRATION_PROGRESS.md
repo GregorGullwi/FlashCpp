@@ -119,15 +119,16 @@ Continue boundary 3A in this order.
       constructor (zero-argument) or the unique user-provided same-arity
       constructor (argument-bearing), while an ambiguous selection stays
       conservative; the canonical argument-bearing query answers an exact
-      argument match (constructible and nothrow-constructible) from the record's
-      published constructor schema, and a conversion-requiring match reads the
-      selected user-provided constructor's exception specification, the
-      triviality variant reads the selected constructor (user-provided is
-      non-trivial; an implicit/defaulted copy or move is trivial exactly when the
-      class is trivially copyable), and an implicit/defaulted nothrow selection
-      follows the copy or move construction through the subobjects;
-      class-template specializations still defer to `StructTypeInfo`; a call's
-      receiver/argument evaluation,
+      argument match (constructible and nothrow-constructible) from the class's
+      published constructor schema, which is keyed by canonical `TypeId` and
+      published from the declaration node for both records and class-template
+      specializations (no `StructTypeInfo` at publication), and a
+      conversion-requiring match reads the selected user-provided constructor's
+      exception specification, the triviality variant reads the selected
+      constructor (user-provided is non-trivial; an implicit/defaulted copy or
+      move is trivial exactly when the class is trivially copyable), and an
+      implicit/defaulted nothrow selection follows the copy or move construction
+      through the subobjects; a call's receiver/argument evaluation,
       which is not counted because `is_expression_noexcept` is boolean and cannot
       separate a known-throwing operand from one it cannot resolve (a blanket
       argument check was tried and regressed template noexcept cases, so it needs
@@ -195,9 +196,9 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
   import structurally is skipped, and the schema stays unpublished (consumers
   fall back to `StructTypeInfo`) only when no constructor is importable. The
   field schema is still unpublished for anonymous-union and unimportable-member
-  records, and class-template specializations do not yet publish either schema.
-  These are canonical-importer gaps, not language rules, and seed the
-  constructor/member-function schema migration.
+  records and is not published for class-template specializations, which do
+  publish the constructor schema. These are canonical-importer gaps, not language
+  rules, and seed the constructor/member-function schema migration.
 
 ## Other open boundaries
 

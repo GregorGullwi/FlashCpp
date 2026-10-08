@@ -85,15 +85,13 @@ TEST_CASE("Canonical TypeIds rank by-value derived-to-base conversions") {
 	CHECK(exact_conversion->rank == ConversionRank::ExactMatch);
 }
 
-TEST_CASE("Canonical record constructor schema publishes by EntityId") {
+TEST_CASE("Canonical record constructor schema publishes by TypeId") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();
 	const EntityId entity{901};
 	table.publishRecordLayout(CanonicalRecordLayout{
 		entity, 4, 4, 4, 4, 0, 0, CanonicalRecordLayoutFlags::None, 0});
-	table.publishRecordFieldSchema(entity,
-		std::span<const CanonicalRecordMember>{},
-		std::span<const CanonicalRecordBase>{});
+	const TypeId record_type = table.record(entity);
 
 	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
 	const std::array<TypeId, 1> one_parameter{int_type};
@@ -104,32 +102,35 @@ TEST_CASE("Canonical record constructor schema publishes by EntityId") {
 			std::span<const TypeId>(one_parameter.data(), one_parameter.size()),
 			CanonicalRecordFunctionFlags::None, false},
 	};
-	table.publishRecordConstructors(entity, constructors);
+	table.publishRecordConstructors(record_type, constructors);
 
-	REQUIRE(table.hasRecordConstructors(entity));
-	CHECK(table.recordConstructorCount(entity) == 2);
-	const CanonicalRecordConstructor default_constructor = table.recordConstructorAt(entity, 0);
+	REQUIRE(table.hasRecordConstructors(record_type));
+	CHECK(table.recordConstructorCount(record_type) == 2);
+	const CanonicalRecordConstructor default_constructor = table.recordConstructorAt(record_type, 0);
 	CHECK(default_constructor.parameter_count == 0);
 	CHECK(default_constructor.is_noexcept == 1);
 	CHECK(default_constructor.flags == CanonicalRecordFunctionFlags::Implicit);
-	const CanonicalRecordConstructor value_constructor = table.recordConstructorAt(entity, 1);
+	const CanonicalRecordConstructor value_constructor = table.recordConstructorAt(record_type, 1);
 	CHECK(value_constructor.parameter_count == 1);
 	CHECK(value_constructor.is_noexcept == 0);
 	CHECK(value_constructor.flags == CanonicalRecordFunctionFlags::None);
-	CHECK(table.recordConstructorParameterAt(entity, 1, 0) == int_type);
+	CHECK(table.recordConstructorParameterAt(record_type, 1, 0) == int_type);
 
 	// Equal republication is idempotent.
-	table.publishRecordConstructors(entity, constructors);
-	CHECK(table.recordConstructorCount(entity) == 2);
+	table.publishRecordConstructors(record_type, constructors);
+	CHECK(table.recordConstructorCount(record_type) == 2);
 }
 
-TEST_CASE("Canonical record constructor schema requires a complete layout") {
+TEST_CASE("Canonical record constructor schema requires a class type") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();
-	const EntityId entity{902};
-	CHECK_FALSE(table.hasRecordConstructors(entity));
+	CHECK_FALSE(table.hasRecordConstructors(TypeId{}));
+	CHECK_FALSE(table.hasRecordConstructors(table.builtin(CanonicalBuiltinKind::Int)));
 	CHECK_THROWS(table.publishRecordConstructors(
-		entity, std::span<const CanonicalRecordConstructorSpec>{}));
+		TypeId{}, std::span<const CanonicalRecordConstructorSpec>{}));
+	CHECK_THROWS(table.publishRecordConstructors(
+		table.builtin(CanonicalBuiltinKind::Int),
+		std::span<const CanonicalRecordConstructorSpec>{}));
 }
 
 TEST_CASE("Canonical record constructor schema is independent of the field schema") {
@@ -139,8 +140,9 @@ TEST_CASE("Canonical record constructor schema is independent of the field schem
 	table.publishRecordLayout(CanonicalRecordLayout{
 		entity, 4, 4, 4, 4, 0, 0, CanonicalRecordLayoutFlags::None, 0});
 	// No field schema is published (as for an anonymous-union / unimportable
-	// member record); the constructor schema still publishes from the layout.
+	// member record); the constructor schema still publishes from the type node.
 	CHECK_FALSE(table.hasRecordFieldSchema(entity));
+	const TypeId record_type = table.record(entity);
 	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
 	const std::array<TypeId, 1> one_parameter{int_type};
 	const std::array<CanonicalRecordConstructorSpec, 1> constructors{
@@ -148,10 +150,10 @@ TEST_CASE("Canonical record constructor schema is independent of the field schem
 			std::span<const TypeId>(one_parameter.data(), one_parameter.size()),
 			CanonicalRecordFunctionFlags::None, false},
 	};
-	table.publishRecordConstructors(entity, constructors);
-	REQUIRE(table.hasRecordConstructors(entity));
-	CHECK(table.recordConstructorCount(entity) == 1);
-	CHECK(table.recordConstructorParameterAt(entity, 0, 0) == int_type);
+	table.publishRecordConstructors(record_type, constructors);
+	REQUIRE(table.hasRecordConstructors(record_type));
+	CHECK(table.recordConstructorCount(record_type) == 1);
+	CHECK(table.recordConstructorParameterAt(record_type, 0, 0) == int_type);
 }
 
 TEST_CASE("Overload ranking compares non-projectable parameter shapes structurally") {

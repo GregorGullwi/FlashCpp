@@ -708,17 +708,18 @@ public:
 
 	CanonicalRecordBase recordBaseAt(EntityId entity, size_t index) const;
 
-	// Constructor schema for a completed record. Parameter identity is canonical
-	// (TypeId); constructors are keyed by the record's EntityId.
-	void publishRecordConstructors(EntityId entity, std::span<const CanonicalRecordConstructorSpec> constructors);
+	// Constructor schema for a completed class, keyed by canonical TypeId (Record
+	// or TemplateSpecialization) so records and specializations share one lookup.
+	// Parameter identity is canonical (TypeId).
+	void publishRecordConstructors(TypeId type, std::span<const CanonicalRecordConstructorSpec> constructors);
 
-	bool hasRecordConstructors(EntityId entity) const;
+	bool hasRecordConstructors(TypeId type) const;
 
-	size_t recordConstructorCount(EntityId entity) const;
+	size_t recordConstructorCount(TypeId type) const;
 
-	CanonicalRecordConstructor recordConstructorAt(EntityId entity, size_t index) const;
+	CanonicalRecordConstructor recordConstructorAt(TypeId type, size_t index) const;
 
-	TypeId recordConstructorParameterAt(EntityId entity, size_t constructor_index, size_t parameter_index) const;
+	TypeId recordConstructorParameterAt(TypeId type, size_t constructor_index, size_t parameter_index) const;
 
 	// Publish nested type members (typedef / using / nested class targets) keyed by
 	// EntityId. Identifier content is NameBytes; StringHandle is never stored.
@@ -780,7 +781,7 @@ private:
 	static_assert(sizeof(CanonicalNamedTypeMemberSchemaHeader) == 16);
 
 	struct CanonicalRecordConstructorSchemaHeader {
-		EntityId entity;
+		TypeId type;
 		uint32_t constructor_begin;
 		uint32_t parameter_begin;
 		uint16_t constructor_count;
@@ -938,10 +939,10 @@ private:
 		return record_field_schema_headers_[found->second];
 	}
 
-	CanonicalRecordConstructorSchemaHeader recordConstructorSchemaHeaderUnlocked(EntityId entity) const {
-		const auto found = record_constructor_schema_ids_.find(entity.value);
-		if (!entity || found == record_constructor_schema_ids_.end()) {
-			throw InternalError("canonical type: record has no constructor schema");
+	CanonicalRecordConstructorSchemaHeader recordConstructorSchemaHeaderUnlocked(TypeId type) const {
+		const auto found = record_constructor_schema_ids_.find(type.value);
+		if (!type || found == record_constructor_schema_ids_.end()) {
+			throw InternalError("canonical type: type has no constructor schema");
 		}
 		return record_constructor_schema_headers_[found->second];
 	}
