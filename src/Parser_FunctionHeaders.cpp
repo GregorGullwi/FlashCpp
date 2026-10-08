@@ -6,6 +6,21 @@
 #include "Parser_FunctionTypeHelpers.h"
 #include "TypeTraitEvaluator.h"
 
+namespace {
+// [except.spec]/7: a noexcept operand must be a constant expression. Report a
+// located diagnostic rather than an unlocated CompileError so the top-level
+// handler renders file/line/column and the diagnostic id.
+[[noreturn]] void throwNoexceptSpecifierNotConstant(DiagnosticEngine& diagnostics, SourceLocation location) {
+	throw makeStructuredCompileError(
+		diagnostics,
+		DiagnosticId::NoexceptSpecifierNotConstant,
+		DiagnosticSeverity::Error,
+		location,
+		"noexcept specification is not a constant expression",
+		{});
+}
+}  // namespace
+
 // Phase 1: Unified parameter list parsing
 // This method handles all the common parameter parsing logic:
 // - Basic parameters: (int x, float y)
@@ -682,6 +697,7 @@ ParseResult Parser::parse_function_type_qualifiers(
 
 ParseResult Parser::parse_noexcept_specifier(FlashCpp::FunctionSpecifiers& out_specs, std::span<const ASTNode> params) {
 	if (peek() == "noexcept"_tok) {
+		out_specs.noexcept_keyword_location = SourceLocation::fromToken(peek_info());
 		advance(); // consume 'noexcept'
 		out_specs.is_noexcept = true;
 		if (peek() == "("_tok) {
@@ -785,7 +801,7 @@ void Parser::apply_parsed_function_type_qualifiers(
 		return;
 	}
 	if (!isDependentTemplateContext()) {
-		throw CompileError("noexcept specification is not a constant expression");
+		throwNoexceptSpecifierNotConstant(diagnostics(), specifiers.noexcept_keyword_location);
 	}
 	signature.is_noexcept = false;
 	DependentExpressionTable& exprs =
@@ -822,7 +838,7 @@ void Parser::apply_parsed_function_noexcept(
 		return;
 	}
 	if (!isDependentTemplateContext()) {
-		throw CompileError("noexcept specification is not a constant expression");
+		throwNoexceptSpecifierNotConstant(diagnostics(), specifiers.noexcept_keyword_location);
 	}
 	function.set_noexcept(false);
 	function.set_noexcept_expression(expression);
@@ -853,7 +869,7 @@ void Parser::apply_constructor_noexcept(ConstructorDeclarationNode& constructor,
 		return;
 	}
 	if (!isDependentTemplateContext()) {
-		throw CompileError("noexcept specification is not a constant expression");
+		throwNoexceptSpecifierNotConstant(diagnostics(), specifiers.noexcept_keyword_location);
 	}
 	constructor.set_noexcept(false);
 	constructor.set_noexcept_expression(expression);
