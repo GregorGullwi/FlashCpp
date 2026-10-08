@@ -379,6 +379,35 @@ struct CanonicalNamedTypeMemberSpec {
 	TypeId type;
 };
 
+enum class CanonicalRecordFunctionFlags : uint8_t {
+	None = 0,
+	Implicit = 1 << 0,
+	ExplicitlyDefaulted = 1 << 1,
+};
+
+// Constructor schema entry for a completed record, keyed by the record's
+// EntityId. Parameter identity is canonical (TypeId); spelling is absent.
+// `parameter_begin`/`parameter_count` index the table's flat parameter arena.
+struct CanonicalRecordConstructor {
+	uint32_t parameter_begin;
+	uint16_t parameter_count;
+	CanonicalRecordFunctionFlags flags;
+	uint8_t is_noexcept;
+	friend bool operator==(CanonicalRecordConstructor, CanonicalRecordConstructor) = default;
+};
+static_assert(sizeof(CanonicalRecordConstructor) == 8);
+
+// Publication input for one constructor.
+struct CanonicalRecordConstructorSpec {
+	std::span<const TypeId> parameter_types;
+	CanonicalRecordFunctionFlags flags = CanonicalRecordFunctionFlags::None;
+	bool is_noexcept = false;
+};
+
+inline CanonicalRecordFunctionFlags operator|(CanonicalRecordFunctionFlags a, CanonicalRecordFunctionFlags b) {
+	return static_cast<CanonicalRecordFunctionFlags>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+}
+
 inline CanonicalRecordMemberFlags operator|(CanonicalRecordMemberFlags a,
 	CanonicalRecordMemberFlags b) {
 	return static_cast<CanonicalRecordMemberFlags>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
@@ -679,6 +708,18 @@ public:
 
 	CanonicalRecordBase recordBaseAt(EntityId entity, size_t index) const;
 
+	// Constructor schema for a completed record. Parameter identity is canonical
+	// (TypeId); constructors are keyed by the record's EntityId.
+	void publishRecordConstructors(EntityId entity, std::span<const CanonicalRecordConstructorSpec> constructors);
+
+	bool hasRecordConstructors(EntityId entity) const;
+
+	size_t recordConstructorCount(EntityId entity) const;
+
+	CanonicalRecordConstructor recordConstructorAt(EntityId entity, size_t index) const;
+
+	TypeId recordConstructorParameterAt(EntityId entity, size_t constructor_index, size_t parameter_index) const;
+
 	// Publish nested type members (typedef / using / nested class targets) keyed by
 	// EntityId. Identifier content is NameBytes; StringHandle is never stored.
 	// Equal republish is idempotent; conflicting content throws. Layout is not
@@ -738,6 +779,16 @@ private:
 	};
 	static_assert(sizeof(CanonicalNamedTypeMemberSchemaHeader) == 16);
 
+	struct CanonicalRecordConstructorSchemaHeader {
+		EntityId entity;
+		uint32_t constructor_begin;
+		uint32_t parameter_begin;
+		uint16_t constructor_count;
+		uint16_t reserved;
+		friend bool operator==(CanonicalRecordConstructorSchemaHeader, CanonicalRecordConstructorSchemaHeader) = default;
+	};
+	static_assert(sizeof(CanonicalRecordConstructorSchemaHeader) == 16);
+
 	struct TransactionMark {
 		size_t node_count;
 		size_t record_layout_count;
@@ -751,6 +802,9 @@ private:
 		size_t class_base_count;
 		size_t named_type_member_schema_count;
 		size_t named_type_member_count;
+		size_t record_constructor_schema_count;
+		size_t record_constructor_count;
+		size_t record_constructor_parameter_count;
 	};
 
 	struct CanonicalEnumLayoutUpdate {
@@ -884,6 +938,14 @@ private:
 		return record_field_schema_headers_[found->second];
 	}
 
+	CanonicalRecordConstructorSchemaHeader recordConstructorSchemaHeaderUnlocked(EntityId entity) const {
+		const auto found = record_constructor_schema_ids_.find(entity.value);
+		if (!entity || found == record_constructor_schema_ids_.end()) {
+			throw InternalError("canonical type: record has no constructor schema");
+		}
+		return record_constructor_schema_headers_[found->second];
+	}
+
 	CanonicalClassBaseSchemaHeader classBaseSchemaHeaderUnlocked(TypeId class_type) const {
 		const auto found = class_base_schema_ids_.find(class_type.value);
 		if (!class_type || found == class_base_schema_ids_.end()) {
@@ -944,6 +1006,9 @@ private:
 	size_t live_class_base_count_ = 0;
 	size_t live_named_type_member_schema_count_ = 0;
 	size_t live_named_type_member_count_ = 0;
+	size_t live_record_constructor_schema_count_ = 0;
+	size_t live_record_constructor_count_ = 0;
+	size_t live_record_constructor_parameter_count_ = 0;
 	SemanticArenaAccounting* accounting_ = nullptr;
 	std::vector<TransactionMark> transaction_marks_;
 	std::vector<CanonicalEnumLayoutUpdate> enum_layout_update_history_;
@@ -977,6 +1042,12 @@ private:
 	ChunkedVector<CanonicalNamedTypeMemberSchemaHeader, 16> named_type_member_schema_headers_;
 	ChunkedVector<CanonicalNamedTypeMember, 32> named_type_members_;
 	std::unordered_map<uint32_t, size_t> named_type_member_schema_ids_;
+	// Constructor schema samples: 16 headers, 16 constructors, 32 parameters per
+	// chunk until a production corpus measures a larger peak.
+	ChunkedVector<CanonicalRecordConstructorSchemaHeader, 16> record_constructor_schema_headers_;
+	ChunkedVector<CanonicalRecordConstructor, 16> record_constructors_;
+	ChunkedVector<TypeId, 32> record_constructor_parameters_;
+	std::unordered_map<uint32_t, size_t> record_constructor_schema_ids_;
 };
 
 // Checkpoints publish only when the surrounding transaction commits. Nested

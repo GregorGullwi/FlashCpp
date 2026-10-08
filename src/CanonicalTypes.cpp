@@ -1186,6 +1186,126 @@ CanonicalRecordBase CanonicalTypeTable::recordBaseAt(EntityId entity, size_t ind
 	return record_bases_[header.base_begin + index];
 }
 
+void CanonicalTypeTable::publishRecordConstructors(EntityId entity, std::span<const CanonicalRecordConstructorSpec> constructors) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	if (!entity) {
+		throw InternalError("canonical type: invalid record constructor schema entity");
+	}
+	if (constructors.size() > std::numeric_limits<uint16_t>::max()) {
+		throw InternalError("canonical type: too many record constructors");
+	}
+	// A constructor schema is only meaningful for a complete record; requiring
+	// the field schema keeps publication ordered after layout.
+	(void)fieldSchemaHeaderUnlocked(entity);
+	const auto existing = record_constructor_schema_ids_.find(entity.value);
+	if (existing != record_constructor_schema_ids_.end()) {
+		const CanonicalRecordConstructorSchemaHeader header = record_constructor_schema_headers_[existing->second];
+		if (header.constructor_count != constructors.size()) {
+			throw InternalError("canonical type: conflicting record constructor schema publication");
+		}
+		uint32_t parameter_cursor = header.parameter_begin;
+		for (size_t index = 0; index < constructors.size(); ++index) {
+			const CanonicalRecordConstructor expected = record_constructors_[header.constructor_begin + index];
+			if (expected.parameter_begin != parameter_cursor ||
+				expected.parameter_count != constructors[index].parameter_types.size()) {
+				throw InternalError("canonical type: conflicting record constructor schema publication");
+			}
+			for (size_t parameter = 0; parameter < expected.parameter_count; ++parameter) {
+				if (record_constructor_parameters_[expected.parameter_begin + parameter] != constructors[index].parameter_types[parameter]) {
+					throw InternalError("canonical type: conflicting record constructor schema publication");
+				}
+			}
+			parameter_cursor += expected.parameter_count;
+		}
+		return;
+	}
+	size_t total_parameters = 0;
+	for (const CanonicalRecordConstructorSpec& constructor : constructors) {
+		if (constructor.parameter_types.size() > std::numeric_limits<uint16_t>::max()) {
+			throw InternalError("canonical type: too many record constructor parameters");
+		}
+		total_parameters += constructor.parameter_types.size();
+	}
+	const uint32_t constructor_begin = static_cast<uint32_t>(live_record_constructor_count_);
+	const uint32_t parameter_begin = static_cast<uint32_t>(live_record_constructor_parameter_count_);
+	if (static_cast<uint64_t>(constructor_begin) + constructors.size() >
+			std::numeric_limits<uint32_t>::max() ||
+		static_cast<uint64_t>(parameter_begin) + total_parameters >
+			std::numeric_limits<uint32_t>::max()) {
+		throw InternalError("canonical type: record constructor schema arena exhausted");
+	}
+	uint32_t parameter_cursor = parameter_begin;
+	for (const CanonicalRecordConstructorSpec& constructor : constructors) {
+		for (const TypeId parameter : constructor.parameter_types) {
+			appendSchemaEntryUnlocked(record_constructor_parameters_, live_record_constructor_parameter_count_, parameter);
+		}
+		const CanonicalRecordConstructor entry{
+			.parameter_begin = parameter_cursor,
+			.parameter_count = static_cast<uint16_t>(constructor.parameter_types.size()),
+			.flags = constructor.flags,
+			.is_noexcept = static_cast<uint8_t>(constructor.is_noexcept ? 1 : 0),
+		};
+		appendSchemaEntryUnlocked(record_constructors_, live_record_constructor_count_, entry);
+		parameter_cursor += entry.parameter_count;
+	}
+	const CanonicalRecordConstructorSchemaHeader header{
+		.entity = entity,
+		.constructor_begin = constructor_begin,
+		.parameter_begin = parameter_begin,
+		.constructor_count = static_cast<uint16_t>(constructors.size()),
+		.reserved = 0,
+	};
+	const size_t header_index = live_record_constructor_schema_count_;
+	appendSchemaEntryUnlocked(record_constructor_schema_headers_, live_record_constructor_schema_count_, header);
+	try {
+		record_constructor_schema_ids_.emplace(entity.value, header_index);
+	} catch (...) {
+		live_record_constructor_schema_count_ = header_index;
+		live_record_constructor_count_ = constructor_begin;
+		live_record_constructor_parameter_count_ = parameter_begin;
+		noteArenaBytes();
+		throw;
+	}
+	noteArenaBytes();
+}
+
+bool CanonicalTypeTable::hasRecordConstructors(EntityId entity) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	return entity && record_constructor_schema_ids_.contains(entity.value);
+}
+
+size_t CanonicalTypeTable::recordConstructorCount(EntityId entity) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	return recordConstructorSchemaHeaderUnlocked(entity).constructor_count;
+}
+
+CanonicalRecordConstructor CanonicalTypeTable::recordConstructorAt(EntityId entity, size_t index) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const CanonicalRecordConstructorSchemaHeader header = recordConstructorSchemaHeaderUnlocked(entity);
+	if (index >= header.constructor_count) {
+		throw InternalError("canonical type: record constructor index out of range");
+	}
+	return record_constructors_[header.constructor_begin + index];
+}
+
+TypeId CanonicalTypeTable::recordConstructorParameterAt(EntityId entity, size_t constructor_index, size_t parameter_index) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const CanonicalRecordConstructorSchemaHeader header = recordConstructorSchemaHeaderUnlocked(entity);
+	if (constructor_index >= header.constructor_count) {
+		throw InternalError("canonical type: record constructor index out of range");
+	}
+	const CanonicalRecordConstructor constructor = record_constructors_[header.constructor_begin + constructor_index];
+	if (parameter_index >= constructor.parameter_count) {
+		throw InternalError("canonical type: record constructor parameter index out of range");
+	}
+	return record_constructor_parameters_[constructor.parameter_begin + parameter_index];
+}
+
 void CanonicalTypeTable::publishClassBaseSchema(TypeId class_type,
 	std::span<const CanonicalClassBase> bases) {
 	std::lock_guard lock(mutex_);
@@ -2879,7 +2999,10 @@ uint64_t CanonicalTypeTable::usedBytesUnlocked() const {
 		static_cast<uint64_t>(live_class_base_count_) * sizeof(CanonicalClassBase) +
 		static_cast<uint64_t>(live_named_type_member_schema_count_) *
 			sizeof(CanonicalNamedTypeMemberSchemaHeader) +
-		static_cast<uint64_t>(live_named_type_member_count_) * sizeof(CanonicalNamedTypeMember);
+		static_cast<uint64_t>(live_named_type_member_count_) * sizeof(CanonicalNamedTypeMember) +
+		static_cast<uint64_t>(live_record_constructor_schema_count_) * sizeof(CanonicalRecordConstructorSchemaHeader) +
+		static_cast<uint64_t>(live_record_constructor_count_) * sizeof(CanonicalRecordConstructor) +
+		static_cast<uint64_t>(live_record_constructor_parameter_count_) * sizeof(TypeId);
 }
 
 uint64_t CanonicalTypeTable::reservedBytesUnlocked() const {
@@ -2890,6 +3013,7 @@ uint64_t CanonicalTypeTable::reservedBytesUnlocked() const {
 		class_base_schema_headers_.reservedBytes() + class_bases_.reservedBytes() +
 		named_type_member_schema_headers_.reservedBytes() +
 		named_type_members_.reservedBytes() +
+		record_constructor_schema_headers_.reservedBytes() + record_constructors_.reservedBytes() + record_constructor_parameters_.reservedBytes() +
 		static_cast<uint64_t>(enum_layout_update_history_.capacity()) *
 			sizeof(CanonicalEnumLayoutUpdate);
 }
@@ -2922,6 +3046,7 @@ size_t CanonicalTypeTable::beginTransaction() {
 		live_class_base_count_,
 		live_named_type_member_schema_count_,
 		live_named_type_member_count_,
+		live_record_constructor_schema_count_, live_record_constructor_count_, live_record_constructor_parameter_count_,
 	});
 	transaction_owner_ = std::this_thread::get_id();
 	return transaction_marks_.size();
@@ -2980,6 +3105,12 @@ void CanonicalTypeTable::finishTransaction(size_t depth, bool commit) {
 			--live_named_type_member_schema_count_;
 		}
 		live_named_type_member_count_ = mark.named_type_member_count;
+		while (live_record_constructor_schema_count_ > mark.record_constructor_schema_count) {
+			record_constructor_schema_ids_.erase(record_constructor_schema_headers_[live_record_constructor_schema_count_ - 1].entity.value);
+			--live_record_constructor_schema_count_;
+		}
+		live_record_constructor_count_ = mark.record_constructor_count;
+		live_record_constructor_parameter_count_ = mark.record_constructor_parameter_count;
 		noteArenaBytes();
 	}
 	transaction_marks_.pop_back();
