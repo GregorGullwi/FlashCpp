@@ -860,7 +860,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 
 		// Apply noexcept specifier to free functions
 		if (auto func_node_ptr = function_definition_result.node()) {
-			applyParsedNoexcept(func_node_ptr->as<FunctionDeclarationNode>(), func_specs, NoexceptDependentAnswer::Conservative);
+			applyParsedNoexcept(func_node_ptr->as<FunctionDeclarationNode>(), func_specs);
 		}
 		if (func_specs.asm_symbol_name.has_value()) {
 			if (auto func_node_ptr = function_definition_result.node()) {

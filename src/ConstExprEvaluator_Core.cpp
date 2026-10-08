@@ -3052,54 +3052,19 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 		// A member call on a class-template specialization can keep the pattern
 		// member as its callee. Resolve that pattern to the instantiated member
 		// through the receiver's type so its noexcept answer is authoritative.
-		auto tryResolveInstantiatedMemberNoexcept = [&]() -> std::optional<bool> {
-			if (!call_expr->has_receiver() || context.parser == nullptr) {
+		auto tryResolveReceiverMemberNoexcept = [&]() -> std::optional<bool> {
+			if (context.parser == nullptr) {
 				return std::nullopt;
 			}
-			const std::string_view callee_name =
-				call_expr->callee().declaration().identifier_token().value();
-			if (callee_name.empty()) {
-				return std::nullopt;
-			}
+			const CallInfo call_info = CallInfo::from(*call_expr);
 			std::optional<TypeSpecifierNode> receiver_type;
 			if (context.sema != nullptr) {
-				receiver_type = context.sema->getOverloadResolutionArgType(call_expr->receiver());
+				receiver_type = context.sema->getOverloadResolutionArgType(call_info.receiver);
 			}
 			if (!receiver_type.has_value()) {
-				receiver_type = context.parser->get_expression_type(call_expr->receiver());
+				receiver_type = context.parser->get_expression_type(call_info.receiver);
 			}
-			if (!receiver_type.has_value()) {
-				return std::nullopt;
-			}
-			receiver_type->limit_pointer_depth(0);
-			receiver_type->set_reference_qualifier(ReferenceQualifier::None);
-			const StructTypeInfo* struct_info = tryGetStructTypeInfo(receiver_type->type_index());
-			if (struct_info == nullptr) {
-				return std::nullopt;
-			}
-			const size_t argument_count = call_expr->arguments().size();
-			const StructMemberFunction* match = nullptr;
-			for (const StructMemberFunction& member : struct_info->member_functions) {
-				if (member.is_constructor || member.is_destructor ||
-					member.operator_kind != OverloadableOperator::None) {
-					continue;
-				}
-				if (StringTable::getStringView(member.getName()) != callee_name) {
-					continue;
-				}
-				if (const FunctionDeclarationNode* fn = get_function_decl_node(member.function_decl);
-					fn != nullptr && fn->parameter_nodes().size() != argument_count) {
-					continue;
-				}
-				if (match != nullptr) {
-					return std::nullopt;  // ambiguous overload set
-				}
-				match = &member;
-			}
-			if (match == nullptr) {
-				return std::nullopt;
-			}
-			return match->is_noexcept;
+			return tryResolveInstantiatedMemberNoexcept(call_info, receiver_type);
 		};
 		if (std::optional<bool> template_noexcept =
 				tryEvaluateInstantiatedExceptionSpecification();
@@ -3113,7 +3078,7 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 		}
 		if (const FunctionDeclarationNode* function_decl = getParserStoredDirectCallTarget(*call_expr)) {
 			if (function_decl->has_noexcept_expression()) {
-				if (std::optional<bool> member_noexcept = tryResolveInstantiatedMemberNoexcept();
+				if (std::optional<bool> member_noexcept = tryResolveReceiverMemberNoexcept();
 					member_noexcept.has_value()) {
 					return *member_noexcept;
 				}
@@ -3155,7 +3120,7 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 		}
 		if (const FunctionDeclarationNode* function_decl = resolve_function_call_decl(*call_expr, context);
 			function_decl != nullptr && function_decl->has_noexcept_expression()) {
-			if (std::optional<bool> member_noexcept = tryResolveInstantiatedMemberNoexcept();
+			if (std::optional<bool> member_noexcept = tryResolveReceiverMemberNoexcept();
 				member_noexcept.has_value()) {
 				return *member_noexcept;
 			}

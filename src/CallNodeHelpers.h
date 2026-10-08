@@ -231,6 +231,53 @@ struct CallInfo {
 	}
 };
 
+// Resolve the noexcept answer for a call whose callee still points at a
+// class-template member-function pattern. `receiver_type` is the call receiver's
+// type (pointers/references allowed) as produced by the caller's type query.
+// Returns nullopt when there is no receiver, no receiver record, an operator or
+// conversion (handled elsewhere), or a non-unique overload set.
+inline std::optional<bool> tryResolveInstantiatedMemberNoexcept(
+	const CallInfo& call,
+	const std::optional<TypeSpecifierNode>& receiver_type) {
+	if (!call.has_receiver || !receiver_type.has_value()) {
+		return std::nullopt;
+	}
+	const std::string_view callee_name = call.declaration->identifier_token().value();
+	if (callee_name.empty()) {
+		return std::nullopt;
+	}
+	TypeSpecifierNode unwrapped = *receiver_type;
+	unwrapped.limit_pointer_depth(0);
+	unwrapped.set_reference_qualifier(ReferenceQualifier::None);
+	const StructTypeInfo* struct_info = tryGetStructTypeInfo(unwrapped.type_index());
+	if (struct_info == nullptr) {
+		return std::nullopt;
+	}
+	const size_t argument_count = call.arguments->size();
+	const StructMemberFunction* match = nullptr;
+	for (const StructMemberFunction& member : struct_info->member_functions) {
+		if (member.is_constructor || member.is_destructor ||
+			member.operator_kind != OverloadableOperator::None) {
+			continue;
+		}
+		if (StringTable::getStringView(member.getName()) != callee_name) {
+			continue;
+		}
+		if (const FunctionDeclarationNode* fn = get_function_decl_node(member.function_decl);
+			fn != nullptr && fn->parameter_nodes().size() != argument_count) {
+			continue;
+		}
+		if (match != nullptr) {
+			return std::nullopt;  // ambiguous overload set
+		}
+		match = &member;
+	}
+	if (match == nullptr) {
+		return std::nullopt;
+	}
+	return match->is_noexcept;
+}
+
 struct CallMetadataCopyOptions {
 	bool copy_mangled_name = true;
 	bool copy_qualified_name = true;

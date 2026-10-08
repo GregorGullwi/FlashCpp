@@ -3235,7 +3235,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			member_func_ref.set_is_const_member_function(member_quals.is_const());
 			member_func_ref.set_is_volatile_member_function(member_quals.is_volatile());
 			member_func_ref.set_function_reference_qualifier(member_quals.ref_qualifier);
-			applyParsedNoexcept(member_func_ref, func_specs, NoexceptDependentAnswer::KeywordPresent);
+			applyParsedNoexcept(member_func_ref, func_specs);
 
 			// Handle defaulted functions: set implicit flag and create empty body
 			if (is_defaulted) {
