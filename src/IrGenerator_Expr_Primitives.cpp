@@ -262,7 +262,15 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 ExprResult AstToIr::generateNoexceptExprIr(const NoexceptExprNode& noexcept_node) {
 	bool is_noexcept = true;
 	if (noexcept_node.expr().is<ExpressionNode>()) {
-		is_noexcept = isExpressionNoexcept(noexcept_node.expr().as<ExpressionNode>());
+		// Delegate to the one noexcept authority rather than duplicating the
+		// [expr.unary.noexcept] rules here. The terminal fix is to fold this in
+		// expression sema and read the value.
+		ConstExpr::EvaluationContext context = makeEvalContext(symbol_table);
+		if (global_symbol_table_ != nullptr) {
+			context.global_symbols = global_symbol_table_;
+		}
+		is_noexcept = ConstExpr::Evaluator::is_expression_noexcept(
+			noexcept_node.expr().as<ExpressionNode>(), context);
 	}
 	return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{is_noexcept ? 1ULL : 0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 }
