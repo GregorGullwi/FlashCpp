@@ -91,14 +91,17 @@ Continue boundary 3A in this order.
       operand and rejects a non-constant one with `NoexceptSpecifierNotConstant`
       (#1021) through one `resolveParsedNoexcept` / `applyParsedNoexcept` choke
       point, including static member functions, whose specifier was previously
-      dropped. Remaining: a class-template member function's dependent `noexcept`
-      operand, which class-template instantiation still copies without
-      re-evaluating (the member function keeps the keyword-present answer until
-      that path is migrated); destructors still fold but do not reject a
-      non-constant operand; the `noexcept`-operator consumer does not yet resolve
-      a qualified static-member call or an overloaded operator/conversion
-      function's selected declaration; the canonical (non-sema) argument-bearing
-      query; argument expressions whose own noexcept is not yet evaluated; and the
+      dropped. Class-template member-function instantiation now re-evaluates a
+      retained dependent operand, so an instantiated member's own answer is
+      correct (observable through an unqualified in-member call). Remaining: the
+      `noexcept`-operator consumer resolves the member-function *pattern*
+      declaration for an external member call, so the member-function parse path
+      keeps a keyword-present interim answer until that resolution is migrated to
+      the instantiated declaration; destructors still fold but do not reject a
+      non-constant operand; the consumer also does not yet resolve a qualified
+      static-member call or an overloaded operator/conversion function's selected
+      declaration; the canonical (non-sema) argument-bearing query; argument
+      expressions whose own noexcept is not yet evaluated; and the
       triviality/lifetime record walks, which still read `StructTypeInfo` and
       need member, base, and special-member properties published alongside the
       class facts.

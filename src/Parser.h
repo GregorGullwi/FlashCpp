@@ -1934,10 +1934,11 @@ private:
 	ParseResult parse_function_type_qualifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs);
 	ParseResult parse_function_type_qualifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs, std::span<const ASTNode> params);
 	void apply_parsed_function_type_qualifiers(FunctionSignature& signature, const FlashCpp::MemberQualifiers& qualifiers, const FlashCpp::FunctionSpecifiers& specifiers);
-	// Interim answer for a dependent noexcept operand. Conservative folds to
-	// potentially-throwing and relies on substitution re-evaluating the retained
-	// operand; KeywordPresent keeps the keyword-present answer for kinds whose
-	// instantiation does not yet re-evaluate it.
+	// Interim answer for a dependent noexcept operand. Conservative treats it as
+	// potentially throwing until instantiation re-evaluates the retained operand.
+	// KeywordPresent keeps the keyword-present answer for member functions, whose
+	// external member-call consumers still resolve the pattern declaration rather
+	// than the instantiated one.
 	enum class NoexceptDependentAnswer : uint8_t {
 		Conservative,
 		KeywordPresent,
@@ -1981,6 +1982,10 @@ private:
 	ParseResult parse_delayed_function_body(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body);	 // Phase 5: Unified delayed body parsing
 	FlashCpp::SignatureValidationResult validate_signature_match(const FunctionDeclarationNode& declaration, const FunctionDeclarationNode& definition);	 // Phase 7: Unified signature validation
 	void copy_function_properties(FunctionDeclarationNode& dest, const FunctionDeclarationNode& src);  // Copy semantic properties needed before signature finalization/mangling
+	// Copy properties and re-evaluate a retained dependent noexcept operand under
+	// a class-template specialization's arguments.
+	void copy_function_properties(FunctionDeclarationNode& dest, const FunctionDeclarationNode& src,
+		std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args);
 	ASTNode create_defaulted_member_function_body(const FunctionDeclarationNode& func_node);	 // Synthesize parser-owned bodies for defaulted member functions
 	void finalize_function_signature_after_definition(FunctionDeclarationNode& func_node);  // Materialize return type and other body-dependent signature data
 	void finalize_function_after_definition(FunctionDeclarationNode& func_node, bool force_recompute_mangled_name = false);	// Finalize signature, then mangle
@@ -3975,6 +3980,10 @@ public:	// Public methods for template instantiation
 	// Re-evaluate a class-template constructor's retained dependent noexcept
 	// operand under a specialization's arguments and set the effective value.
 	void materializeInstantiatedConstructorNoexcept(ConstructorDeclarationNode& target, const ConstructorDeclarationNode& pattern,
+		std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args);
+	// Re-evaluate a class-template member function's retained dependent noexcept
+	// operand under a specialization's arguments and set the effective value.
+	void materializeInstantiatedFunctionNoexcept(FunctionDeclarationNode& target, const FunctionDeclarationNode& pattern,
 		std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args);
 
 	// Helper to substitute template parameters in lazy member function/constructor/destructor bodies

@@ -19,6 +19,35 @@ namespace {
 		"noexcept specification is not a constant expression",
 		{});
 }
+
+// Re-evaluate a retained dependent noexcept operand for a function-like node
+// under a specialization's arguments. Shared by constructors and member
+// functions, whose node types expose the same noexcept accessors.
+template <typename Node>
+void materializeInstantiatedNoexcept(Parser& parser, Node& target, const Node& pattern,
+	std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args) {
+	if (!pattern.has_noexcept_expression()) {
+		target.set_noexcept(pattern.is_noexcept());
+		return;
+	}
+	ASTNode substituted_expression = parser.substituteTemplateParameters(pattern.noexcept_expression()->node(), template_params, template_args);
+	ConstExpr::EvaluationContext context(gSymbolTable, parser);
+	context.template_args = template_args;
+	for (const TemplateParameterNode& template_param : template_params) {
+		context.template_param_names.push_back(template_param.name());
+	}
+	const ConstExpr::EvalResult evaluated = ConstExpr::Evaluator::evaluate(substituted_expression, context);
+	if (!evaluated.success()) {
+		// The operand still depends on this node's own template parameters or is
+		// otherwise not yet evaluable; retain it for a later substitution and
+		// stay conservative until then.
+		target.set_noexcept(false);
+		target.set_noexcept_expression(ExpressionHandle(substituted_expression));
+		return;
+	}
+	target.set_noexcept(evaluated.as_bool());
+	target.clear_noexcept_expression();
+}
 }  // namespace
 
 // Phase 1: Unified parameter list parsing
@@ -841,27 +870,12 @@ Parser::ParsedNoexceptResolution Parser::resolveParsedNoexcept(const FlashCpp::F
 
 void Parser::materializeInstantiatedConstructorNoexcept(ConstructorDeclarationNode& target, const ConstructorDeclarationNode& pattern,
 	std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args) {
-	if (!pattern.has_noexcept_expression()) {
-		target.set_noexcept(pattern.is_noexcept());
-		return;
-	}
-	ASTNode substituted_expression = substituteTemplateParameters(pattern.noexcept_expression()->node(), template_params, template_args);
-	ConstExpr::EvaluationContext context(gSymbolTable, *this);
-	context.template_args = template_args;
-	for (const TemplateParameterNode& template_param : template_params) {
-		context.template_param_names.push_back(template_param.name());
-	}
-	const ConstExpr::EvalResult evaluated = ConstExpr::Evaluator::evaluate(substituted_expression, context);
-	if (!evaluated.success()) {
-		// The operand still depends on this constructor's own template
-		// parameters or is otherwise not yet evaluable; retain it for a later
-		// substitution and stay conservative until then.
-		target.set_noexcept(false);
-		target.set_noexcept_expression(ExpressionHandle(substituted_expression));
-		return;
-	}
-	target.set_noexcept(evaluated.as_bool());
-	target.clear_noexcept_expression();
+	materializeInstantiatedNoexcept(*this, target, pattern, template_params, template_args);
+}
+
+void Parser::materializeInstantiatedFunctionNoexcept(FunctionDeclarationNode& target, const FunctionDeclarationNode& pattern,
+	std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args) {
+	materializeInstantiatedNoexcept(*this, target, pattern, template_params, template_args);
 }
 
 ParseResult Parser::parse_function_trailing_specifiers(
