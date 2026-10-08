@@ -114,8 +114,11 @@ Continue boundary 3A in this order.
       instantiated destructor for cast, identifier, arrow, and dereference object
       forms but still falls back to the pattern for an object expression it cannot
       type; the canonical
-      (non-sema) argument-bearing query; argument expressions whose own noexcept
-      is not yet evaluated; and the triviality/lifetime record walks, which still
+      (non-sema) argument-bearing query; a call's receiver/argument evaluation,
+      which is not counted because `is_expression_noexcept` is boolean and cannot
+      separate a known-throwing operand from one it cannot resolve (a blanket
+      argument check was tried and regressed template noexcept cases, so it needs
+      a tri-state result); and the triviality/lifetime record walks, which still
       read `StructTypeInfo` and need member, base, and special-member properties
       published alongside the class facts.
    2. **Confirm a gap with a counter before adding identity plumbing.** A
