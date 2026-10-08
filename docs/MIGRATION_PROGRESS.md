@@ -106,7 +106,11 @@ Continue boundary 3A in this order.
       Remaining: an overloaded binary operator now consults its selected member
       or free-function overload, but a user-defined conversion function's
       selected declaration and a qualified static-member call are not yet
-      resolved, and the pseudo-destructor `noexcept` consumer resolves the
+      resolved (`parse_postfix_expression` builds a free-function callee for
+      `S::f()` and does not reach the class-scope static-member resolver; retrying
+      that resolver when the symbol is a plain declaration was reverted because it
+      did not change the callee and is unverified), and the pseudo-destructor
+      `noexcept` consumer resolves the
       instantiated destructor for cast, identifier, arrow, and dereference object
       forms but still falls back to the pattern for an object expression it cannot
       type; the canonical
