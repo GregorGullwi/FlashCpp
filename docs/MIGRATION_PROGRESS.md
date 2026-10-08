@@ -103,11 +103,10 @@ Continue boundary 3A in this order.
       authority; its own `AstToIr::isExpressionNoexcept` evaluator is deleted.
       `noexcept(expr)` is a compile-time constant, so the terminal fix is to fold
       it once in expression sema (boundary 4) and have lowering read the value.
-      Remaining: the pseudo-destructor
-      `noexcept` consumer (`p->~T()`) reads the pattern destructor for a
-      class-template specialization, so a dependent destructor is observable
-      through `__is_nothrow_destructible` but not through the `noexcept` operator;
-      neither evaluator resolves a qualified static-member call or an overloaded
+      Remaining: the pseudo-destructor `noexcept` consumer resolves the
+      instantiated destructor for cast and identifier object forms but still falls
+      back to the pattern for an object expression it cannot type; neither
+      evaluator resolves a qualified static-member call or an overloaded
       operator/conversion function's selected declaration; the canonical
       (non-sema) argument-bearing query; argument expressions whose own noexcept
       is not yet evaluated; and the triviality/lifetime record walks, which still

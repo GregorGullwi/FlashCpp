@@ -797,6 +797,18 @@ std::optional<TypeIndex> resolvePseudoDestructorExpressionTypeIndex(const Expres
 	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 		return call_expr->callee().declaration().type_specifier_node().type_index();
 	}
+	if (const auto* cast = std::get_if<StaticCastNode>(&expr)) {
+		return cast->target_type().type_index();
+	}
+	if (const auto* cast = std::get_if<DynamicCastNode>(&expr)) {
+		return cast->target_type().type_index();
+	}
+	if (const auto* cast = std::get_if<ConstCastNode>(&expr)) {
+		return cast->target_type().type_index();
+	}
+	if (const auto* cast = std::get_if<ReinterpretCastNode>(&expr)) {
+		return cast->target_type().type_index();
+	}
 	return std::nullopt;
 }
 
