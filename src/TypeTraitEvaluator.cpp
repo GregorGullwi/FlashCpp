@@ -2201,6 +2201,17 @@ TypeTraitResult evaluateRecordConstructibleFromArgs(
 				: TypeTraitResult::success_false();
 		}
 	}
+	if (kind == TypeTraitKind::IsTriviallyConstructible) {
+		const ConstructorDeclarationNode* selected = ctor_resolution.selected_overload;
+		if (selected != nullptr && !selected->is_implicit() && !selected->is_explicitly_defaulted()) {
+			return TypeTraitResult::success_false();  // user-provided is non-trivial
+		}
+		// An argument-bearing trivial construction is a copy or move, so it is
+		// trivial exactly when the class is trivially copyable.
+		return isStructTriviallyCopyable(&struct_info)
+			? TypeTraitResult::success_true()
+			: TypeTraitResult::success_false();
+	}
 	return (!struct_info.has_vtable && !struct_info.hasUserDefinedConstructor())
 		? TypeTraitResult::success_true()
 		: TypeTraitResult::success_false();

@@ -121,8 +121,10 @@ Continue boundary 3A in this order.
       conservative; the canonical argument-bearing query answers an exact
       argument match (constructible and nothrow-constructible) from the record's
       published constructor schema, and a conversion-requiring match reads the
-      selected user-provided constructor's exception specification; the
-      triviality variant and class-template specializations still defer to
+      selected user-provided constructor's exception specification, and the
+      triviality variant reads the selected constructor (user-provided is
+      non-trivial; an implicit/defaulted copy or move is trivial exactly when the
+      class is trivially copyable); class-template specializations still defer to
       `StructTypeInfo`; a call's receiver/argument evaluation,
       which is not counted because `is_expression_noexcept` is boolean and cannot
       separate a known-throwing operand from one it cannot resolve (a blanket
