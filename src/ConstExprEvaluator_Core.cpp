@@ -3201,13 +3201,36 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 			   is_expression_noexcept(cast->expr().as<ExpressionNode>(), context);
 	}
 
+	if (const auto* constructor_call = std::get_if<ConstructorCallNode>(&expr)) {
+		// A class constructor call runs the selected constructor; a functional
+		// cast to a non-class type is a no-op conversion. Argument evaluation is
+		// not counted here (see the call branch).
+		if (const ConstructorDeclarationNode* selected = constructor_call->resolved_constructor()) {
+			return selected->is_noexcept();
+		}
+		const TypeSpecifierNode& target = constructor_call->type_node();
+		if (!is_struct_type(target.category())) {
+			return true;
+		}
+		// Zero-argument construction selects the default constructor; a
+		// selection the parser did not record for an argument-bearing call stays
+		// conservative.
+		if (constructor_call->arguments().empty()) {
+			if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(target.type_index())) {
+				if (const StructMemberFunction* default_constructor = struct_info->findDefaultConstructor()) {
+					return default_constructor->is_noexcept;
+				}
+			}
+		}
+		return false;
+	}
+
 	if (std::holds_alternative<DynamicCastNode>(expr) ||
 		std::holds_alternative<TypeidNode>(expr) ||
 		std::holds_alternative<NewExpressionNode>(expr) ||
 		std::holds_alternative<DeleteExpressionNode>(expr) ||
 		std::holds_alternative<FoldExpressionNode>(expr) ||
-		std::holds_alternative<ThrowExpressionNode>(expr) ||
-		std::holds_alternative<ConstructorCallNode>(expr)) {
+		std::holds_alternative<ThrowExpressionNode>(expr)) {
 		return false;
 	}
 
