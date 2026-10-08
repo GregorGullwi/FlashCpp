@@ -794,6 +794,13 @@ std::optional<TypeIndex> resolvePseudoDestructorExpressionTypeIndex(const Expres
 	if (const auto* subscript = std::get_if<ArraySubscriptNode>(&expr)) {
 		return resolvePseudoDestructorObjectTypeIndex(subscript->array_expr(), symbols);
 	}
+	if (const auto* unary = std::get_if<UnaryOperatorNode>(&expr)) {
+		// (*p).~T(): the dereference target is the pointee type.
+		if (unary->op() == "*" && unary->get_operand().is<ExpressionNode>()) {
+			return resolvePseudoDestructorExpressionTypeIndex(unary->get_operand().as<ExpressionNode>(), symbols);
+		}
+		return std::nullopt;
+	}
 	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 		return call_expr->callee().declaration().type_specifier_node().type_index();
 	}

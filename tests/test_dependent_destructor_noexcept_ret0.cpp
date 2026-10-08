@@ -19,6 +19,8 @@ static_assert(!__is_nothrow_destructible(Probe<false>), "disabled destructor can
 // The pseudo-destructor spelling resolves the instantiated destructor too.
 static_assert(noexcept(((Probe<true>*)nullptr)->~Probe()), "enabled pseudo-destructor is noexcept");
 static_assert(!noexcept(((Probe<false>*)nullptr)->~Probe()), "disabled pseudo-destructor can throw");
+static_assert(noexcept((*((Probe<true>*)nullptr)).~Probe()), "enabled dereferenced pseudo-destructor is noexcept");
+static_assert(!noexcept((*((Probe<false>*)nullptr)).~Probe()), "disabled dereferenced pseudo-destructor can throw");
 
 int main() {
 	Probe<true> enabled;
