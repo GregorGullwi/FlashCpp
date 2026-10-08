@@ -822,9 +822,7 @@ void Parser::apply_parsed_function_noexcept(
 	}
 
 	const ExpressionHandle expression = *specifiers.noexcept_expr;
-	const bool is_dependent =
-		ParserExpressionDependency::nodeHasDeferredTemplateDependency(
-			expression.node(), currentTemplateParamNames());
+	const bool is_dependent = ParserExpressionDependency::nodeHasDeferredTemplateDependency(expression.node(), currentTemplateParamNames());
 	if (is_dependent) {
 		function.set_noexcept(false);
 		function.set_noexcept_expression(expression);
@@ -842,6 +840,34 @@ void Parser::apply_parsed_function_noexcept(
 	}
 	function.set_noexcept(false);
 	function.set_noexcept_expression(expression);
+}
+
+void Parser::apply_parsed_member_function_noexcept(FunctionDeclarationNode& function, const FlashCpp::FunctionSpecifiers& specifiers) {
+	if (!specifiers.is_noexcept) {
+		return;
+	}
+	if (!specifiers.noexcept_expr.has_value()) {
+		function.set_noexcept(true);
+		return;
+	}
+	const ExpressionHandle expression = *specifiers.noexcept_expr;
+	const auto evaluated = try_evaluate_constant_expression(expression.node());
+	if (evaluated.has_value()) {
+		function.set_noexcept(evaluated->value != 0);
+		function.clear_noexcept_expression();
+		return;
+	}
+	const bool is_dependent = ParserExpressionDependency::nodeHasDeferredTemplateDependency(expression.node(), currentTemplateParamNames());
+	if (is_dependent || isDependentTemplateContext()) {
+		// A class-template member function's operand is substituted only when the
+		// class is instantiated, and that instantiation currently copies the
+		// retained operand without re-evaluating it. Preserve the keyword-present
+		// answer until member-function noexcept instantiation is migrated.
+		function.set_noexcept(true);
+		function.set_noexcept_expression(expression);
+		return;
+	}
+	throwNoexceptSpecifierNotConstant(diagnostics(), specifiers.noexcept_keyword_location);
 }
 
 void Parser::apply_constructor_noexcept(ConstructorDeclarationNode& constructor, const FlashCpp::FunctionSpecifiers& specifiers) {

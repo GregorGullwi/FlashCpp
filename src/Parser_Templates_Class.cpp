@@ -2981,11 +2981,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					member_func_ref.set_function_reference_qualifier(member_quals.ref_qualifier);
 
 					// Propagate noexcept specifier to the function declaration node
-					if (func_specs.is_noexcept) {
-						member_func_ref.set_noexcept(true);
-						if (func_specs.noexcept_expr)
-							member_func_ref.set_noexcept_expression(*func_specs.noexcept_expr);
-					}
+					apply_parsed_member_function_noexcept(member_func_ref, func_specs);
 
 					// Check for function body and use delayed parsing
 					if (peek() == "{"_tok) {
@@ -4451,11 +4447,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					member_func_ref.set_function_reference_qualifier(member_quals.ref_qualifier);
 
 					// Propagate noexcept specifier to the function declaration node
-					if (func_specs.is_noexcept) {
-						member_func_ref.set_noexcept(true);
-						if (func_specs.noexcept_expr)
-							member_func_ref.set_noexcept_expression(*func_specs.noexcept_expr);
-					}
+					apply_parsed_member_function_noexcept(member_func_ref, func_specs);
 
 					// Extract parsed specifiers
 					bool is_defaulted = func_specs.is_defaulted();
@@ -6371,12 +6363,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						if (trailing_return_result.is_error()) {
 							return trailing_return_result;
 						}
-						if (func_specs.is_noexcept) {
-							member_func_ref.set_noexcept(true);
-							if (func_specs.noexcept_expr) {
-								member_func_ref.set_noexcept_expression(*func_specs.noexcept_expr);
-							}
-						}
+						apply_parsed_member_function_noexcept(member_func_ref, func_specs);
 						ParseResult tail_result =
 							skipStaticMemberTemplateFunctionTail(member_func_ref);
 						if (tail_result.is_error()) {
@@ -6619,11 +6606,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				member_func_ref.set_is_const_member_function(member_quals.is_const());
 				member_func_ref.set_is_volatile_member_function(member_quals.is_volatile());
 				member_func_ref.set_function_reference_qualifier(member_quals.ref_qualifier);
-				if (func_specs.is_noexcept) {
-					member_func_ref.set_noexcept(true);
-					if (func_specs.noexcept_expr)
-						member_func_ref.set_noexcept_expression(*func_specs.noexcept_expr);
-				}
+				apply_parsed_member_function_noexcept(member_func_ref, func_specs);
 
 				// Handle function body or semicolon
 				if (peek() == "{"_tok) {
@@ -6970,12 +6953,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					if (trailing_return_result.is_error()) {
 						return trailing_return_result;
 					}
-					if (func_specs.is_noexcept) {
-						member_func_ref.set_noexcept(true);
-						if (func_specs.noexcept_expr) {
-							member_func_ref.set_noexcept_expression(*func_specs.noexcept_expr);
-						}
-					}
+					apply_parsed_member_function_noexcept(member_func_ref, func_specs);
 					ParseResult tail_result =
 						skipStaticMemberTemplateFunctionTail(member_func_ref);
 					if (tail_result.is_error()) {
@@ -7272,11 +7250,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			member_func_ref.set_is_const_member_function(member_quals.is_const());
 			member_func_ref.set_is_volatile_member_function(member_quals.is_volatile());
 			member_func_ref.set_function_reference_qualifier(member_quals.ref_qualifier);
-			if (func_specs.is_noexcept) {
-				member_func_ref.set_noexcept(true);
-				if (func_specs.noexcept_expr)
-					member_func_ref.set_noexcept_expression(*func_specs.noexcept_expr);
-			}
+			apply_parsed_member_function_noexcept(member_func_ref, func_specs);
 
 			// Handle function body or semicolon
 			// For member struct templates, we skip the body and save the position for later
