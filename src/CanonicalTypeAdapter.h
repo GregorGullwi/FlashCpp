@@ -1476,7 +1476,7 @@ inline CanonicalTypeImport importCanonicalClassSource(
 	}
 	struct PendingClassImport {
 		const StructDeclarationNode* declaration;
-		const StructDeclarationNode* pattern;
+		TemplateDeclId specialization_owner;
 		size_t next_argument = 0;
 		size_t waiting_argument = std::numeric_limits<size_t>::max();
 		std::vector<CanonicalTemplateArgument> arguments;
@@ -1504,7 +1504,15 @@ inline CanonicalTypeImport importCanonicalClassSource(
 
 		const StructDeclarationNode* pattern =
 			declaration->injected_class_pattern_declaration();
-		if (pattern == nullptr || !pattern->has_template_decl_id()) {
+		TemplateDeclId specialization_owner{};
+		if (pattern != nullptr && pattern->has_template_decl_id()) {
+			specialization_owner = pattern->template_decl_id();
+		} else if (declaration->has_canonical_specialization_owner()) {
+			// An explicit (full) specialization carries the primary's template identity
+			// directly, so its canonical type is the same TemplateSpecialization an
+			// implicit instantiation would produce.
+			specialization_owner = declaration->canonical_specialization_owner_template_decl_id();
+		} else {
 			if (declaration->has_entity_id()) {
 				return CanonicalTypeImport{
 					table.record(declaration->entity_id()),
@@ -1518,7 +1526,7 @@ inline CanonicalTypeImport importCanonicalClassSource(
 		}
 		PendingClassImport pending{};
 		pending.declaration = declaration;
-		pending.pattern = pattern;
+		pending.specialization_owner = specialization_owner;
 		pending.arguments.reserve(declaration->outer_template_args().size());
 		worklist.push_back(std::move(pending));
 		return std::nullopt;
@@ -1601,7 +1609,7 @@ inline CanonicalTypeImport importCanonicalClassSource(
 		}
 
 		const TypeId specialization = table.templateSpecialization(
-			current.pattern->template_decl_id(), current.arguments);
+			current.specialization_owner, current.arguments);
 		active_declarations.erase(current.declaration);
 		worklist.pop_back();
 		completed = CanonicalTypeImport{
