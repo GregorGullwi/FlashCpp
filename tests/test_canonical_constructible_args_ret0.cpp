@@ -41,6 +41,28 @@ struct TrivialCopy {
 static_assert(!__is_trivially_constructible(NonTrivialCopy, const NonTrivialCopy&), "non-trivial copy constructor");
 static_assert(__is_trivially_constructible(TrivialCopy, const TrivialCopy&), "trivial copy constructor");
 
+// An implicit copy or move constructor derives its exception specification from
+// its subobjects, so a throwing member makes the implicit construction throwing.
+struct ThrowingCopyMember {
+	ThrowingCopyMember(const ThrowingCopyMember&) noexcept(false) {}
+	int value = 0;
+};
+
+struct ThrowingImplicitCopy {
+	ThrowingCopyMember member;
+};
+
+struct PlainMember {
+	int value = 0;
+};
+
+struct PlainImplicitCopy {
+	PlainMember member;
+};
+
+static_assert(!__is_nothrow_constructible(ThrowingImplicitCopy, const ThrowingImplicitCopy&), "throwing implicit copy constructor");
+static_assert(__is_nothrow_constructible(PlainImplicitCopy, const PlainImplicitCopy&), "trivial implicit copy constructor");
+
 static_assert(__is_constructible(NothrowInt, int), "exact argument is constructible");
 static_assert(__is_constructible(ThrowingInt, int), "exact throwing argument is constructible");
 static_assert(__is_nothrow_constructible(NothrowInt, int), "exact noexcept constructor is nothrow");
