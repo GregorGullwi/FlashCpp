@@ -87,8 +87,13 @@ Continue boundary 3A in this order.
       constructor whose `noexcept` operand is dependent and is re-evaluated per
       specialization, and an array element that default-constructs the member
       type from a prvalue `T{}` or an empty brace `{}` under guaranteed copy
-      elision). Remaining: the canonical (non-sema) argument-bearing query;
-      argument expressions whose own noexcept is not yet evaluated; and the
+      elision). A constant member-function `noexcept` operand is now folded and
+      a non-constant one is rejected with `NoexceptSpecifierNotConstant` (#1021).
+      Remaining: a class-template member function's dependent `noexcept` operand,
+      which class-template instantiation still copies without re-evaluating (the
+      member function keeps the keyword-present answer until that path is
+      migrated); the canonical (non-sema) argument-bearing query; argument
+      expressions whose own noexcept is not yet evaluated; and the
       triviality/lifetime record walks, which still read `StructTypeInfo` and
       need member, base, and special-member properties published alongside the
       class facts.

@@ -1127,14 +1127,9 @@ ParseResult Parser::parse_variable_declaration() {
 				}
 
 				// Apply noexcept specifier
-				if (func_specs.is_noexcept) {
-					if (auto func_node_ptr = function_result.node()) {
-						FunctionDeclarationNode& func_node = func_node_ptr->as<FunctionDeclarationNode>();
-						func_node.set_noexcept(true);
-						if (func_specs.noexcept_expr.has_value()) {
-							func_node.set_noexcept_expression(*func_specs.noexcept_expr);
-						}
-					}
+				if (auto func_node_ptr = function_result.node()) {
+					FunctionDeclarationNode& func_node = func_node_ptr->as<FunctionDeclarationNode>();
+					apply_parsed_function_noexcept(func_node, func_specs);
 				}
 				if (func_specs.asm_symbol_name.has_value()) {
 					if (auto func_node_ptr = function_result.node()) {

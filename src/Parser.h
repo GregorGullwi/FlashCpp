@@ -4463,6 +4463,11 @@ private:	 // Resume private methods
 	// apply_parsed_function_noexcept: a constant operand is folded, a dependent
 	// operand is retained on the node.
 	void apply_constructor_noexcept(ConstructorDeclarationNode& constructor, const FlashCpp::FunctionSpecifiers& specifiers);
+	// Apply an already-parsed noexcept specifier to a class member function. A
+	// constant operand is folded and a non-constant operand is rejected; a
+	// dependent operand keeps the keyword-present answer because class-template
+	// member-function instantiation does not yet re-evaluate its retained operand.
+	void apply_parsed_member_function_noexcept(FunctionDeclarationNode& function, const FlashCpp::FunctionSpecifiers& specifiers);
 	void consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type);  // Consume *, &, && after conversion operator target type
 	void consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec);  // Consume trailing *, &, && and apply to type specifier
 	void consume_array_type_id_modifiers(TypeSpecifierNode& type_spec); // Consume trailing [N] / [] abstract-declarators on a type-id
