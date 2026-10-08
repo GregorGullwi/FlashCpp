@@ -1,5 +1,23 @@
 # Known Issues
 
+## Calling a user-declared copy-assignment operator crashes at runtime
+
+Reproduced on 2026-10-08 on Linux with the sharded build. A class with a
+user-provided copy-assignment operator whose call is actually executed
+SIGSEGVs (exit 139) at runtime; the implicit assignment works, and the
+miscompile needs no `noexcept` or template involvement:
+
+```cpp
+struct S { S& operator=(const S&) noexcept(false) {} };
+int main() { S a{}; S b{}; a = b; return 0; }  // runtime SIGSEGV
+```
+
+The same source with the operator removed (implicit assignment) runs normally.
+This is a codegen/call-path defect for the selected user operator, not a
+`noexcept`-evaluation issue (the failing assignment performs no `noexcept`
+query). `tests/test_noexcept_overloaded_operator_ret0.cpp` therefore asserts the
+`noexcept` answers without executing the operator.
+
 ## WSL front end crashes while processing the libstdc++ `<typeinfo>` test
 
 Reproduced on 2026-10-06 on Ubuntu 24.04 under WSL2 with a fresh Debug compiler

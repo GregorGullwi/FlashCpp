@@ -103,11 +103,13 @@ Continue boundary 3A in this order.
       authority; its own `AstToIr::isExpressionNoexcept` evaluator is deleted.
       `noexcept(expr)` is a compile-time constant, so the terminal fix is to fold
       it once in expression sema (boundary 4) and have lowering read the value.
-      Remaining: the pseudo-destructor `noexcept` consumer resolves the
-      instantiated destructor for cast and identifier object forms but still falls
-      back to the pattern for an object expression it cannot type; neither
-      evaluator resolves a qualified static-member call or an overloaded
-      operator/conversion function's selected declaration; the canonical
+      Remaining: an overloaded binary operator now consults its selected member
+      or free-function overload, but a user-defined conversion function's
+      selected declaration and a qualified static-member call are not yet
+      resolved, and the pseudo-destructor `noexcept` consumer resolves the
+      instantiated destructor for cast and identifier object forms but still
+      falls back to the pattern for an object expression it cannot type; the
+      canonical
       (non-sema) argument-bearing query; argument expressions whose own noexcept
       is not yet evaluated; and the triviality/lifetime record walks, which still
       read `StructTypeInfo` and need member, base, and special-member properties

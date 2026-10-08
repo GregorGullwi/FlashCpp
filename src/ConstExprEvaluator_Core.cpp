@@ -2810,7 +2810,21 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 							is_expression_noexcept(binop.get_lhs().as<ExpressionNode>(), context);
 		bool rhs_noexcept = !binop.get_rhs().is<ExpressionNode>() ||
 							is_expression_noexcept(binop.get_rhs().as<ExpressionNode>(), context);
-		return lhs_noexcept && rhs_noexcept;
+		if (!lhs_noexcept || !rhs_noexcept) {
+			return false;
+		}
+		// An overloaded operator call is only noexcept when its selected
+		// declaration is; a built-in operator is noexcept ([expr.unary.noexcept]
+		// covers operand evaluation, checked above).
+		if (binop.has_resolved_member_operator_overload()) {
+			const StructMemberFunction* overload = binop.resolved_member_operator_overload();
+			return overload != nullptr && overload->is_noexcept;
+		}
+		if (binop.has_resolved_free_function_operator_overload()) {
+			const FunctionDeclarationNode* overload = binop.resolved_free_function_operator_overload();
+			return overload != nullptr && is_function_decl_noexcept(*overload, context);
+		}
+		return true;
 	}
 
 	if (const auto* unary = std::get_if<UnaryOperatorNode>(&expr)) {
