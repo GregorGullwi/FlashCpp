@@ -113,9 +113,10 @@ Continue boundary 3A in this order.
       `noexcept` consumer resolves the
       instantiated destructor for cast, identifier, arrow, and dereference object
       forms but still falls back to the pattern for an object expression it cannot
-      type; a zero-argument class constructor call now consults the record's
-      default constructor, while an argument-bearing constructor call stays
-      conservative because its selection is sema-populated; the canonical
+      type; a class constructor call now consults the record's default
+      constructor (zero-argument) or the unique user-provided same-arity
+      constructor (argument-bearing), while an ambiguous selection stays
+      conservative; the canonical
       (non-sema) argument-bearing query; a call's receiver/argument evaluation,
       which is not counted because `is_expression_noexcept` is boolean and cannot
       separate a known-throwing operand from one it cannot resolve (a blanket
