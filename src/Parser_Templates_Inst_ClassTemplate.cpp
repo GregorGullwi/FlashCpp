@@ -3393,7 +3393,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_ctor_ref.set_was_defaulted_on_first_declaration(
 						orig_ctor.was_defaulted_on_first_declaration());
 					new_ctor_ref.set_is_inline(orig_ctor.is_inline());
-					new_ctor_ref.set_noexcept(orig_ctor.is_noexcept());
+					materializeInstantiatedConstructorNoexcept(new_ctor_ref, orig_ctor, template_params, template_args_for_member_copy);
 					struct_info->addConstructor(new_ctor_node, mem_func.access);
 					registerSourceMemberStructInfoIndex(
 						struct_info_member_identity_maps,
@@ -11937,7 +11937,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_ctor_ref.set_was_defaulted_on_first_declaration(
 						ctor_decl.was_defaulted_on_first_declaration());
 					new_ctor_ref.set_is_inline(ctor_decl.is_inline());
-					new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
+					materializeInstantiatedConstructorNoexcept(new_ctor_ref, ctor_decl, template_params, template_args_to_use);
 					if (substituted_body.has_value()) {
 						new_ctor_ref.set_definition(*substituted_body);
 					}
@@ -12022,7 +12022,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_ctor_ref.set_was_defaulted_on_first_declaration(
 						ctor_decl.was_defaulted_on_first_declaration());
 					new_ctor_ref.set_is_inline(ctor_decl.is_inline());
-					new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
+					materializeInstantiatedConstructorNoexcept(new_ctor_ref, ctor_decl, template_params, template_args_to_use);
 					new_ctor_ref.set_explicit(ctor_decl.is_explicit());
 					new_ctor_ref.set_constexpr(ctor_decl.is_constexpr());
 					if (ctor_decl.has_requires_clause()) {

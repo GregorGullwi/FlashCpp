@@ -1463,30 +1463,15 @@ void Parser::skip_noexcept_specifier() {
 }
 
 // Parse constructor exception specifier (noexcept or throw()).
-// Sets out_is_noexcept to the effective value; throw() is noexcept(true).
+// Applies the effective value to the constructor; throw() is noexcept(true).
 // Returns an error result when the noexcept operand is malformed.
-ParseResult Parser::parse_constructor_exception_specifier(bool& out_is_noexcept, std::span<const ASTNode> params) {
-	out_is_noexcept = false;
+ParseResult Parser::parse_constructor_exception_specifier(ConstructorDeclarationNode& constructor, std::span<const ASTNode> params) {
 	FlashCpp::FunctionSpecifiers specs;
 	ParseResult result = parse_noexcept_specifier(specs, params);
 	if (result.is_error()) {
 		return result;
 	}
-	if (!specs.is_noexcept) {
-		return ParseResult::success();
-	}
-	// [except.spec]/7 requires the operand to be a constant expression, so
-	// evaluate it and carry the effective value rather than the keyword-present
-	// answer. A non-constant operand (for example a dependent expression) keeps
-	// the keyword-present answer.
-	out_is_noexcept = true;
-	if (!specs.noexcept_expr.has_value()) {
-		return ParseResult::success();
-	}
-	const auto evaluated = try_evaluate_constant_expression(specs.noexcept_expr->node());
-	if (evaluated.has_value()) {
-		out_is_noexcept = evaluated->value != 0;
-	}
+	apply_constructor_noexcept(constructor, specs);
 	return ParseResult::success();
 }
 

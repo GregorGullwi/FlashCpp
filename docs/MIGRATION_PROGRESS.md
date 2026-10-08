@@ -83,14 +83,15 @@ Continue boundary 3A in this order.
       `StructTypeInfo` through constructor overload resolution. Default member
       initializers now contribute their selected constructor's exception
       specification (scalar, single- and multi-dimension array, implicit or
-      defaulted copy/move, constant `noexcept(expr)`, and an array element that
-      default-constructs the member type from a prvalue `T{}` or an empty brace
-      `{}` under guaranteed copy elision). Remaining: the canonical (non-sema)
-      argument-bearing query; argument expressions whose own noexcept is not yet
-      evaluated; a constructor whose `noexcept` operand is dependent or otherwise
-      not a constant expression; and the triviality/lifetime record walks, which
-      still read `StructTypeInfo` and need member, base, and special-member
-      properties published alongside the class facts.
+      defaulted copy/move, constant `noexcept(expr)`, a class-template
+      constructor whose `noexcept` operand is dependent and is re-evaluated per
+      specialization, and an array element that default-constructs the member
+      type from a prvalue `T{}` or an empty brace `{}` under guaranteed copy
+      elision). Remaining: the canonical (non-sema) argument-bearing query;
+      argument expressions whose own noexcept is not yet evaluated; and the
+      triviality/lifetime record walks, which still read `StructTypeInfo` and
+      need member, base, and special-member properties published alongside the
+      class facts.
    2. **Confirm a gap with a counter before adding identity plumbing.** A
       `const TypeSpecifierNode&` parameter cannot stamp its operand, but the
       operand already carries its published `EntityId`; that signature is not a

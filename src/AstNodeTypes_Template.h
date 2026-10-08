@@ -712,6 +712,12 @@ public:
 	// noexcept specifier support
 	void set_noexcept(bool is_noexcept) { is_noexcept_ = is_noexcept; }
 	bool is_noexcept() const { return is_noexcept_; }
+	// A dependent noexcept(expr) operand is retained until a class-template
+	// specialization substitutes it, then re-evaluated to set is_noexcept.
+	void set_noexcept_expression(ExpressionHandle expr) { noexcept_expression_ = expr; }
+	const std::optional<ExpressionHandle>& noexcept_expression() const { return noexcept_expression_; }
+	bool has_noexcept_expression() const { return noexcept_expression_.has_value(); }
+	void clear_noexcept_expression() { noexcept_expression_.reset(); }
 
 	// explicit specifier support (for future use)
 	void set_explicit(bool is_explicit) { is_explicit_ = is_explicit; }
@@ -865,6 +871,7 @@ private:
 	bool is_constexpr_ = false;	// constexpr specifier
 	bool is_inline_ = false;  // True if the constructor has C++ inline semantics
 	std::string_view mangled_name_;	// Pre-computed mangled name (points to ChunkedStringAllocator storage)
+	std::optional<ExpressionHandle> noexcept_expression_;	// Retained dependent noexcept(expr)
 	std::optional<ASTNode> requires_clause_;	 // C++20 trailing requires clause
 	TemplateParameterVector template_parameters_;
 	bool has_template_body_ = false;
