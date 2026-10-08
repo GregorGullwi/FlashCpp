@@ -3938,6 +3938,10 @@ public:	// Public methods for template instantiation
 		FunctionSignature& signature,
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args);
+	// Re-evaluate a class-template constructor's retained dependent noexcept
+	// operand under a specialization's arguments and set the effective value.
+	void materializeInstantiatedConstructorNoexcept(ConstructorDeclarationNode& target, const ConstructorDeclarationNode& pattern,
+		std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args);
 
 	// Helper to substitute template parameters in lazy member function/constructor/destructor bodies
 	// Uses the stored outer template environment snapshot from lazy_info
@@ -4450,9 +4454,15 @@ private:	 // Resume private methods
 	// function's parameters ([basic.scope.param]). Returns an error result when
 	// a noexcept operand is malformed.
 	ParseResult parse_noexcept_specifier(FlashCpp::FunctionSpecifiers& out_specs, std::span<const ASTNode> params);
-	// Parse noexcept or throw() and set out_is_noexcept to the effective value.
-	// Returns an error result when a noexcept operand is malformed.
-	ParseResult parse_constructor_exception_specifier(bool& out_is_noexcept, std::span<const ASTNode> params);
+	// Parse noexcept or throw() and apply the effective value to the constructor.
+	// A dependent operand is retained on the node for re-evaluation after
+	// class-template substitution. Returns an error result when a noexcept
+	// operand is malformed.
+	ParseResult parse_constructor_exception_specifier(ConstructorDeclarationNode& constructor, std::span<const ASTNode> params);
+	// Apply an already-parsed noexcept specifier to a constructor. Mirrors
+	// apply_parsed_function_noexcept: a constant operand is folded, a dependent
+	// operand is retained on the node.
+	void apply_constructor_noexcept(ConstructorDeclarationNode& constructor, const FlashCpp::FunctionSpecifiers& specifiers);
 	void consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type);  // Consume *, &, && after conversion operator target type
 	void consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec);  // Consume trailing *, &, && and apply to type specifier
 	void consume_array_type_id_modifiers(TypeSpecifierNode& type_spec); // Consume trailing [N] / [] abstract-declarators on a type-id

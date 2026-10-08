@@ -451,7 +451,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 		new_ctor_ref.set_was_defaulted_on_first_declaration(
 			ctor_decl.was_defaulted_on_first_declaration());
 		new_ctor_ref.set_is_inline(ctor_decl.is_inline());
-		new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
+		materializeInstantiatedConstructorNoexcept(new_ctor_ref, ctor_decl,
+			std::span<const TemplateParameterNode>(lazy_info.template_params.data(), lazy_info.template_params.size()),
+			std::span<const TemplateTypeArg>(lazy_info.template_args.data(), lazy_info.template_args.size()));
 
 		std::optional<ASTNode> body_to_substitute;
 		if (ctor_decl.is_materialized()) {

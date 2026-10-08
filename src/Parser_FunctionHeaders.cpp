@@ -828,6 +828,62 @@ void Parser::apply_parsed_function_noexcept(
 	function.set_noexcept_expression(expression);
 }
 
+void Parser::apply_constructor_noexcept(ConstructorDeclarationNode& constructor, const FlashCpp::FunctionSpecifiers& specifiers) {
+	if (!specifiers.is_noexcept) {
+		return;
+	}
+	constructor.set_noexcept(true);
+	if (!specifiers.noexcept_expr.has_value()) {
+		return;
+	}
+
+	const ExpressionHandle expression = *specifiers.noexcept_expr;
+	const bool is_dependent = ParserExpressionDependency::nodeHasDeferredTemplateDependency(expression.node(), currentTemplateParamNames());
+	if (is_dependent) {
+		// A dependent operand cannot be folded until the class template is
+		// specialized; retain it for re-evaluation at instantiation.
+		constructor.set_noexcept(false);
+		constructor.set_noexcept_expression(expression);
+		return;
+	}
+
+	const auto evaluated = try_evaluate_constant_expression(expression.node());
+	if (evaluated.has_value()) {
+		constructor.set_noexcept(evaluated->value != 0);
+		return;
+	}
+	if (!isDependentTemplateContext()) {
+		throw CompileError("noexcept specification is not a constant expression");
+	}
+	constructor.set_noexcept(false);
+	constructor.set_noexcept_expression(expression);
+}
+
+void Parser::materializeInstantiatedConstructorNoexcept(ConstructorDeclarationNode& target, const ConstructorDeclarationNode& pattern,
+	std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args) {
+	if (!pattern.has_noexcept_expression()) {
+		target.set_noexcept(pattern.is_noexcept());
+		return;
+	}
+	ASTNode substituted_expression = substituteTemplateParameters(pattern.noexcept_expression()->node(), template_params, template_args);
+	ConstExpr::EvaluationContext context(gSymbolTable, *this);
+	context.template_args = template_args;
+	for (const TemplateParameterNode& template_param : template_params) {
+		context.template_param_names.push_back(template_param.name());
+	}
+	const ConstExpr::EvalResult evaluated = ConstExpr::Evaluator::evaluate(substituted_expression, context);
+	if (!evaluated.success()) {
+		// The operand still depends on this constructor's own template
+		// parameters or is otherwise not yet evaluable; retain it for a later
+		// substitution and stay conservative until then.
+		target.set_noexcept(false);
+		target.set_noexcept_expression(ExpressionHandle(substituted_expression));
+		return;
+	}
+	target.set_noexcept(evaluated.as_bool());
+	target.clear_noexcept_expression();
+}
+
 ParseResult Parser::parse_function_trailing_specifiers(
 	FlashCpp::MemberQualifiers& out_quals,
 	FlashCpp::FunctionSpecifiers& out_specs,

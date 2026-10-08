@@ -2477,12 +2477,10 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						register_parameters_in_scope(ctor_ref.parameter_nodes());
 
 						// Parse noexcept and trailing requires clause after params are in scope
-						bool ctor_is_noexcept = false;
-						ParseResult exception_specifier_result = parse_constructor_exception_specifier(ctor_is_noexcept, ctor_ref.parameter_nodes());
+						ParseResult exception_specifier_result = parse_constructor_exception_specifier(ctor_ref, ctor_ref.parameter_nodes());
 						if (exception_specifier_result.is_error()) {
 							return exception_specifier_result;
 						}
-						ctor_ref.set_noexcept(ctor_is_noexcept);
 						if (auto req = parse_trailing_requires_clause()) {
 							ctor_ref.set_requires_clause(*req);
 						}
@@ -3975,12 +3973,10 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						register_parameters_in_scope(ctor_ref.parameter_nodes());
 
 						// Parse noexcept and trailing requires clause after params are in scope
-						bool ctor_is_noexcept = false;
-						ParseResult exception_specifier_result = parse_constructor_exception_specifier(ctor_is_noexcept, ctor_ref.parameter_nodes());
+						ParseResult exception_specifier_result = parse_constructor_exception_specifier(ctor_ref, ctor_ref.parameter_nodes());
 						if (exception_specifier_result.is_error()) {
 							return exception_specifier_result;
 						}
-						ctor_ref.set_noexcept(ctor_is_noexcept);
 						if (auto req = parse_trailing_requires_clause()) {
 							ctor_ref.set_requires_clause(*req);
 						}
@@ -6514,7 +6510,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					}
 					constructor_ref.set_explicit(is_member_explicit);
 					constructor_ref.set_constexpr(member_specs.is_constexpr());
-					constructor_ref.set_noexcept(constructor_specs.is_noexcept);
+					apply_constructor_noexcept(constructor_ref, constructor_specs);
 					if (constructor_specs.is_deleted()) {
 						if (!consume(";"_tok)) {
 							return ParseResult::error("Expected ';' after '= delete'", peek_info());
@@ -7170,7 +7166,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				}
 				constructor_ref.set_explicit(is_member_explicit2);
 				constructor_ref.set_constexpr(member_specs2.is_constexpr());
-				constructor_ref.set_noexcept(constructor_specs.is_noexcept);
+				apply_constructor_noexcept(constructor_ref, constructor_specs);
 				if (constructor_specs.is_deleted()) {
 					if (!consume(";"_tok)) {
 						return ParseResult::error("Expected ';' after '= delete'", peek_info());

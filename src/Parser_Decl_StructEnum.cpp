@@ -2694,12 +2694,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				}
 
 				// Parse exception specifier (noexcept or throw()) before initializer list
-				bool ctor_is_noexcept = false;
-				ParseResult exception_specifier_result = parse_constructor_exception_specifier(ctor_is_noexcept, ctor_ref.parameter_nodes());
+				ParseResult exception_specifier_result = parse_constructor_exception_specifier(ctor_ref, ctor_ref.parameter_nodes());
 				if (exception_specifier_result.is_error()) {
 					return exception_specifier_result;
 				}
-				ctor_ref.set_noexcept(ctor_is_noexcept);
 
 				// Handle trailing requires clause: pair() requires constraint : first(), second() { }
 				// Skip the constraint expression (we don't enforce constraints yet, but need to parse them)
