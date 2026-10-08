@@ -93,18 +93,18 @@ Continue boundary 3A in this order.
       point, including static member functions, whose specifier was previously
       dropped. Class-template member-function instantiation now re-evaluates a
       retained dependent operand, so an instantiated member's own answer is
-      correct (observable through an unqualified in-member call). Remaining: the
-      `noexcept`-operator consumer resolves the member-function *pattern*
-      declaration for an external member call, so the member-function parse path
-      keeps a keyword-present interim answer until that resolution is migrated to
-      the instantiated declaration; destructors still fold but do not reject a
-      non-constant operand; the consumer also does not yet resolve a qualified
-      static-member call or an overloaded operator/conversion function's selected
-      declaration; the canonical (non-sema) argument-bearing query; argument
-      expressions whose own noexcept is not yet evaluated; and the
-      triviality/lifetime record walks, which still read `StructTypeInfo` and
-      need member, base, and special-member properties published alongside the
-      class facts.
+      correct, and the constexpr `noexcept` evaluator resolves the instantiated
+      member for an external member call through the receiver's type. Remaining:
+      the codegen `noexcept` evaluator (`AstToIr::isExpressionNoexcept`) still
+      reads the member-function *pattern*, so the member-function parse path keeps
+      a keyword-present interim answer and the two noexcept evaluators need to
+      share one member-call resolution; destructors still fold but do not reject a
+      non-constant operand; neither evaluator resolves a qualified static-member
+      call or an overloaded operator/conversion function's selected declaration;
+      the canonical (non-sema) argument-bearing query; argument expressions whose
+      own noexcept is not yet evaluated; and the triviality/lifetime record walks,
+      which still read `StructTypeInfo` and need member, base, and special-member
+      properties published alongside the class facts.
    2. **Confirm a gap with a counter before adding identity plumbing.** A
       `const TypeSpecifierNode&` parameter cannot stamp its operand, but the
       operand already carries its published `EntityId`; that signature is not a
