@@ -565,16 +565,33 @@ ASTNode Parser::substituteTemplateParametersWithState(
 			}
 			return emplace_node<TypeSpecifierNode>(substituted_spec);
 		};
+		const auto substituteSpecializationTypeArgs = [&](TypeSpecifierNode& type) {
+			for (size_t index = 0; index < type.specialization_arg_count(); ++index) {
+				if (!type.specialization_arg_is_type(index)) {
+					continue;
+				}
+				ASTNode argument_node = emplace_node<TypeSpecifierNode>(type.specialization_arg_type(index));
+				ASTNode substituted_argument = substitute_nested(argument_node);
+				if (!substituted_argument.is<TypeSpecifierNode>()) {
+					throw InternalError("template substitution: specialization type argument did not remain a type");
+				}
+				type.specialization_arg_type(index) = substituted_argument.as<TypeSpecifierNode>();
+			}
+		};
 		const auto makeTypeSpecifier = [&](const TypeInfo& target_type_info) -> ASTNode {
 			const bool is_struct_like = target_type_info.type_index_.category() == TypeCategory::Struct ||
-										target_type_info.getStructInfo() != nullptr;
-			int size_bits = 0;
-			if (is_struct_like) {
-				size_bits = static_cast<int>(target_type_info.sizeInBits().value);
-			} else {
-				size_bits = target_type_info.hasStoredSize()
+				target_type_info.getStructInfo() != nullptr;
+			const int size_bits = is_struct_like
+				? static_cast<int>(target_type_info.sizeInBits().value)
+				: (target_type_info.hasStoredSize()
 					? static_cast<int>(target_type_info.sizeInBits().value)
-					: get_type_size_bits(target_type_info.type_index_.category());
+					: get_type_size_bits(target_type_info.type_index_.category()));
+			if (type_spec.has_template_specialization()) {
+				TypeSpecifierNode substituted_spec = type_spec;
+				substituted_spec.set_type_index(target_type_info.registeredTypeIndex().withCategory(target_type_info.typeEnum()));
+				substituted_spec.set_size_in_bits(size_bits);
+				substituteSpecializationTypeArgs(substituted_spec);
+				return emplace_node<TypeSpecifierNode>(substituted_spec);
 			}
 			Token substituted_token = type_spec.token();
 			if (target_type_info.type_index_.category() == TypeCategory::Struct ||
@@ -792,6 +809,12 @@ ASTNode Parser::substituteTemplateParametersWithState(
 					}
 				}
 			}
+		}
+
+		if (type_spec.has_template_specialization()) {
+			TypeSpecifierNode substituted_specialization = type_spec;
+			substituteSpecializationTypeArgs(substituted_specialization);
+			return emplace_node<TypeSpecifierNode>(substituted_specialization);
 		}
 
 		if (substituted_callable_type_node.has_value()) {
