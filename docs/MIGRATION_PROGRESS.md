@@ -73,10 +73,11 @@ Continue boundary 3A in this order.
    unsupported callable conversions that still need substitution-aware canonical
    ranking; derived-to-base conversions through non-projectable declarators and
    callable-component conversions, which remain deferred; conversion-function
-   tails for inaccessible nominal base paths and unsupported callable relations,
-   while supported public nominal tails use published class-base schemas and
-   supported non-nominal tails use the ordered canonical planner; and array and
-   callable outer wrappers, which stay guarded where their consumers are not
+   tails for unsupported callable relations. Nominal tails use published
+   class-base schemas to rank unique base paths regardless of access;
+   post-selection access diagnostics remain a separate unresolved sema step.
+   The ordered canonical planner handles supported non-nominal tails. Array
+   and callable outer wrappers stay guarded where their consumers are not
    migrated.
    `FunctionDeclarationNode` does not yet retain an `explicit` specifier for
    conversion functions, so implicit viability of explicit conversion functions

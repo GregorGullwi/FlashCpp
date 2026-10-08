@@ -4032,6 +4032,55 @@ int main() {
 		CHECK_FALSE(pointer_to_array_plan->is_valid);
 	}
 
+	TEST_CASE("Canonical TypeIds rank inaccessible conversion-function base tails") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		FrontendContext context;
+		const std::string code =
+			"struct CanonicalTailBase {};\n"
+			"struct CanonicalTailPrivateDerived : private CanonicalTailBase {};\n"
+			"struct CanonicalTailLeft : public CanonicalTailBase {};\n"
+			"struct CanonicalTailRight : public CanonicalTailBase {};\n"
+			"struct CanonicalTailAmbiguousDerived : public CanonicalTailLeft, public CanonicalTailRight {};\n";
+		CompileContext test_context;
+		test_context.setInputFile("canonical_conversion_function_base_tail.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		auto find_type_info = [](std::string_view name) -> const TypeInfo& {
+			const auto found = getTypesByNameMap().find(
+				StringTable::getOrInternStringHandle(name));
+			if (found == getTypesByNameMap().end()) {
+				throw InternalError("canonical conversion tail test type not found");
+			}
+			return *found->second;
+		};
+		auto make_type = [](const TypeInfo& info) {
+			TypeSpecifierNode type(
+				info.registeredTypeIndex().withCategory(TypeCategory::Struct),
+				info.sizeInBits(), Token{}, CVQualifier::None,
+				ReferenceQualifier::None);
+			tryBindPublishedTypeEntity(type);
+			return type;
+		};
+		const TypeSpecifierNode base_type = make_type(find_type_info("CanonicalTailBase"));
+		const TypeSpecifierNode private_derived_type = make_type(find_type_info("CanonicalTailPrivateDerived"));
+		const std::optional<ConversionPlan> private_tail_plan = tryBuildCanonicalConversionFunctionTailPlan(private_derived_type, base_type);
+		REQUIRE(private_tail_plan.has_value());
+		CHECK(private_tail_plan->is_valid);
+		CHECK(private_tail_plan->rank == ConversionRank::Conversion);
+		CHECK(private_tail_plan->kind == StandardConversionKind::DerivedToBase);
+
+		const TypeSpecifierNode ambiguous_derived_type = make_type(find_type_info("CanonicalTailAmbiguousDerived"));
+		const std::optional<ConversionPlan> ambiguous_tail_plan = tryBuildCanonicalConversionFunctionTailPlan(ambiguous_derived_type, base_type);
+		REQUIRE(ambiguous_tail_plan.has_value());
+		CHECK_FALSE(ambiguous_tail_plan->is_valid);
+	}
+
 	TEST_CASE("Forward-declared published nominal parameters import by EntityId") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();
