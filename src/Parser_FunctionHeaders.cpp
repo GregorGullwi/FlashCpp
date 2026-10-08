@@ -844,11 +844,10 @@ void Parser::applyParsedDestructorNoexcept(DestructorDeclarationNode& destructor
 		return;
 	}
 	destructor.set_has_noexcept_specifier(true);
-	applyParsedNoexcept(destructor, specifiers, NoexceptDependentAnswer::Conservative);
+	applyParsedNoexcept(destructor, specifiers);
 }
 
-Parser::ParsedNoexceptResolution Parser::resolveParsedNoexcept(const FlashCpp::FunctionSpecifiers& specifiers,
-	NoexceptDependentAnswer dependent_answer) {
+Parser::ParsedNoexceptResolution Parser::resolveParsedNoexcept(const FlashCpp::FunctionSpecifiers& specifiers) {
 	ParsedNoexceptResolution resolved{};
 	if (!specifiers.noexcept_expr.has_value()) {
 		resolved.is_noexcept = true;  // bare noexcept
@@ -858,8 +857,7 @@ Parser::ParsedNoexceptResolution Parser::resolveParsedNoexcept(const FlashCpp::F
 	const bool is_dependent = ParserExpressionDependency::nodeHasDeferredTemplateDependency(expression.node(), currentTemplateParamNames());
 	if (is_dependent) {
 		// A dependent operand cannot be folded until substitution; retain it for
-		// re-evaluation and use the caller's interim answer.
-		resolved.is_noexcept = dependent_answer == NoexceptDependentAnswer::KeywordPresent;
+		// re-evaluation and treat it as potentially throwing meanwhile.
 		resolved.expression = expression;
 		return resolved;
 	}
@@ -869,7 +867,6 @@ Parser::ParsedNoexceptResolution Parser::resolveParsedNoexcept(const FlashCpp::F
 		return resolved;
 	}
 	if (isDependentTemplateContext()) {
-		resolved.is_noexcept = dependent_answer == NoexceptDependentAnswer::KeywordPresent;
 		resolved.expression = expression;
 		return resolved;
 	}
@@ -1283,7 +1280,7 @@ ParseResult Parser::create_function_from_header(
 	func_ref.set_is_variadic(header.params.is_variadic);
 
 	// Set noexcept if specified
-	applyParsedNoexcept(func_ref, header.specifiers, NoexceptDependentAnswer::Conservative);
+	applyParsedNoexcept(func_ref, header.specifiers);
 
 	if (header.specifiers.asm_symbol_name.has_value()) {
 		func_ref.set_mangled_name(*header.specifiers.asm_symbol_name);

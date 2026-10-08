@@ -1471,7 +1471,7 @@ ParseResult Parser::parse_constructor_exception_specifier(ConstructorDeclaration
 	if (result.is_error()) {
 		return result;
 	}
-	applyParsedNoexcept(constructor, specs, NoexceptDependentAnswer::Conservative);
+	applyParsedNoexcept(constructor, specs);
 	return ParseResult::success();
 }
 
@@ -1914,7 +1914,7 @@ bool Parser::parse_static_member_function(
 		type_and_name_result = trailing_qualifier_result;
 		return true;
 	}
-	applyParsedNoexcept(member_func_ref, func_specs, NoexceptDependentAnswer::KeywordPresent);
+	applyParsedNoexcept(member_func_ref, func_specs);
 
 	// Check for trailing requires clause: static int func(int x) requires constraint { ... }
 	// This is common in C++20 code, e.g., requires requires { expr; }

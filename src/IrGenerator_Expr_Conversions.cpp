@@ -2915,6 +2915,16 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			resolved_function != nullptr) {
 			return isFunctionDeclNoexcept(*resolved_function);
 		}
+		if (call_info->function_declaration != nullptr &&
+			call_info->function_declaration->has_noexcept_expression()) {
+			const std::optional<TypeSpecifierNode> receiver_type =
+				tryBuildCodegenOverloadResolutionArgType(call_info->receiver);
+			if (std::optional<bool> member_noexcept =
+					tryResolveInstantiatedMemberNoexcept(*call_info, receiver_type);
+				member_noexcept.has_value()) {
+				return *member_noexcept;
+			}
+		}
 		if (const FunctionDeclarationNode* func_decl = call_info->function_declaration) {
 			return isFunctionDeclNoexcept(*func_decl);
 		}

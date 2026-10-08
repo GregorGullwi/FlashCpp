@@ -1934,15 +1934,6 @@ private:
 	ParseResult parse_function_type_qualifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs);
 	ParseResult parse_function_type_qualifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs, std::span<const ASTNode> params);
 	void apply_parsed_function_type_qualifiers(FunctionSignature& signature, const FlashCpp::MemberQualifiers& qualifiers, const FlashCpp::FunctionSpecifiers& specifiers);
-	// Interim answer for a dependent noexcept operand. Conservative treats it as
-	// potentially throwing until instantiation re-evaluates the retained operand.
-	// KeywordPresent keeps the keyword-present answer for member functions, whose
-	// external member-call consumers still resolve the pattern declaration rather
-	// than the instantiated one.
-	enum class NoexceptDependentAnswer : uint8_t {
-		Conservative,
-		KeywordPresent,
-	};
 	// Effective value and optional retained operand of a parsed noexcept
 	// specifier after applying the [except.spec]/7 constant-expression rule.
 	struct ParsedNoexceptResolution {
@@ -1950,19 +1941,20 @@ private:
 		std::optional<ExpressionHandle> expression;
 	};
 	// Fold a parsed noexcept operand, retaining a dependent operand for later
-	// substitution. A non-constant operand outside a dependent template context
-	// throws the located NoexceptSpecifierNotConstant diagnostic.
-	ParsedNoexceptResolution resolveParsedNoexcept(const FlashCpp::FunctionSpecifiers& specifiers, NoexceptDependentAnswer dependent_answer);
+	// substitution. A dependent operand is treated as potentially throwing until
+	// instantiation re-evaluates it. A non-constant operand outside a dependent
+	// template context throws the located NoexceptSpecifierNotConstant diagnostic.
+	ParsedNoexceptResolution resolveParsedNoexcept(const FlashCpp::FunctionSpecifiers& specifiers);
 	// Apply a parsed noexcept specifier to any function-like node exposing
 	// set_noexcept/set_noexcept_expression/clear_noexcept_expression. `specifiers`
 	// must come from parse_function_trailing_specifiers or
 	// parse_function_type_qualifiers.
 	template <typename Node>
-	void applyParsedNoexcept(Node& node, const FlashCpp::FunctionSpecifiers& specifiers, NoexceptDependentAnswer dependent_answer) {
+	void applyParsedNoexcept(Node& node, const FlashCpp::FunctionSpecifiers& specifiers) {
 		if (!specifiers.is_noexcept) {
 			return;
 		}
-		const ParsedNoexceptResolution resolved = resolveParsedNoexcept(specifiers, dependent_answer);
+		const ParsedNoexceptResolution resolved = resolveParsedNoexcept(specifiers);
 		node.set_noexcept(resolved.is_noexcept);
 		if (resolved.expression.has_value()) {
 			node.set_noexcept_expression(*resolved.expression);

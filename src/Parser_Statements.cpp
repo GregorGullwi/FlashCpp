@@ -1129,7 +1129,7 @@ ParseResult Parser::parse_variable_declaration() {
 				// Apply noexcept specifier
 				if (auto func_node_ptr = function_result.node()) {
 					FunctionDeclarationNode& func_node = func_node_ptr->as<FunctionDeclarationNode>();
-					applyParsedNoexcept(func_node, func_specs, NoexceptDependentAnswer::Conservative);
+					applyParsedNoexcept(func_node, func_specs);
 				}
 				if (func_specs.asm_symbol_name.has_value()) {
 					if (auto func_node_ptr = function_result.node()) {

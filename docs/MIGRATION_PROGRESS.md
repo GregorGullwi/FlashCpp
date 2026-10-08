@@ -94,18 +94,15 @@ Continue boundary 3A in this order.
       dropped, and destructors: a non-constant destructor operand is rejected
       with #1021, an explicit specifier is marked on the node, and a
       class-template destructor's retained dependent operand is re-evaluated at
-      instantiation. Class-template member-function instantiation now re-evaluates
-      a retained dependent operand, so an instantiated member's own answer is
-      correct, and the constexpr `noexcept` evaluator resolves the instantiated
-      member for an external member call through the receiver's type. Remaining:
-      the codegen `noexcept` evaluator (`AstToIr::isExpressionNoexcept`) still
-      reads the member-function *pattern*, so the member-function parse path keeps
-      a keyword-present interim answer and the two noexcept evaluators need to
-      share one member-call resolution; the pseudo-destructor `noexcept` consumer
-      (`p->~T()`) reads the pattern destructor for a class-template
-      specialization, so a dependent destructor is observable through
-      `__is_nothrow_destructible` but not through the `noexcept` operator; neither
-      evaluator resolves a qualified static-member call or an overloaded
+      instantiation. Class-template member-function instantiation re-evaluates a
+      retained dependent operand, and both `noexcept` evaluators now share the
+      `tryResolveInstantiatedMemberNoexcept` member-call resolution through the
+      receiver's type (`CallNodeHelpers.h`), so the member-function
+      keyword-present interim answer is gone. Remaining: the pseudo-destructor
+      `noexcept` consumer (`p->~T()`) reads the pattern destructor for a
+      class-template specialization, so a dependent destructor is observable
+      through `__is_nothrow_destructible` but not through the `noexcept` operator;
+      neither evaluator resolves a qualified static-member call or an overloaded
       operator/conversion function's selected declaration; the canonical
       (non-sema) argument-bearing query; argument expressions whose own noexcept
       is not yet evaluated; and the triviality/lifetime record walks, which still
