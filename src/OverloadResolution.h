@@ -3341,7 +3341,30 @@ inline std::optional<ConversionPlan> tryBuildCanonicalConversionFunctionTailPlan
 	if (target_type.is_reference() || target_type.is_rvalue_reference() || orderedDeclaratorIsReference(target_type)) {
 		return tryBuildCanonicalReferenceBindingPlan(return_type, target_type);
 	}
-	return tryBuildCanonicalProjectableConversionPlan(return_type, target_type);
+	if (const std::optional<ConversionPlan> plan =
+			tryBuildCanonicalProjectableConversionPlan(return_type, target_type);
+		plan.has_value()) {
+		return plan;
+	}
+	FrontendContext* const context = FrontendContext::active();
+	if (context != nullptr) {
+		CanonicalTypeTable& table = context->canonicalTypes();
+		CanonicalTypeTransaction transaction(table);
+		const CanonicalTypeImport source_import = importCanonicalType(table, return_type);
+		const CanonicalTypeImport target_import = importCanonicalType(table, target_type);
+		if (source_import.status == CanonicalTypeImportStatus::Supported && target_import.status == CanonicalTypeImportStatus::Supported) {
+			const TypeId source = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, source_import.type)).first;
+			const TypeId target = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, target_import.type)).first;
+			const CanonicalTypeKind source_kind = table.node(source).kind;
+			const CanonicalTypeKind target_kind = table.node(target).kind;
+			const bool source_is_nominal = source_kind == CanonicalTypeKind::Record || source_kind == CanonicalTypeKind::TemplateSpecialization;
+			const bool target_is_nominal = target_kind == CanonicalTypeKind::Record || target_kind == CanonicalTypeKind::TemplateSpecialization;
+			if (source_is_nominal && target_is_nominal && source != target) {
+				return std::nullopt;
+			}
+		}
+	}
+	return tryBuildCanonicalOrderedConversionPlan(return_type, target_type);
 }
 
 // Bounded ordered-declarator conversion path: a null pointer constant to an

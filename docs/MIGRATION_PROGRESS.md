@@ -36,8 +36,9 @@ The architecture the remaining work builds on:
   planner and canonical base graph for builtin arithmetic, array decay,
   null-pointer, function decay, object-pointer, member-pointer reference
   temporaries, direct derived-to-base reference and pointer conversions, regular
-  function-pointer and same-owner member-function-pointer pairs, and the
-  member-pointer owner graph.
+  function-pointer and same-owner member-function-pointer pairs,
+  conversion-function member-pointer-to-`bool` tails, and the member-pointer
+  owner graph.
 - `decltype` implements the `[dcl.type.decltype]` value-category rule for
   parenthesized id-expressions, the last comma operand, dereference, member
   access, built-in subscripting, and callable-object calls.
@@ -71,7 +72,8 @@ Continue boundary 3A in this order.
    unsupported callable conversions that still need substitution-aware canonical
    ranking; derived-to-base conversions through non-projectable declarators and
    callable-component conversions, which remain deferred; conversion-function
-   standard tails outside the canonical projectable set; and array and callable
+   tails for nominal hierarchy or unsupported callable relations, while supported
+   non-nominal tails use the ordered canonical planner; and array and callable
    outer wrappers, which stay guarded where their consumers are not migrated.
    `FunctionDeclarationNode` does not yet retain an `explicit` specifier for
    conversion functions, so implicit viability of explicit conversion functions
