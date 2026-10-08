@@ -103,10 +103,10 @@ Continue boundary 3A in this order.
       authority; its own `AstToIr::isExpressionNoexcept` evaluator is deleted.
       `noexcept(expr)` is a compile-time constant, so the terminal fix is to fold
       it once in expression sema (boundary 4) and have lowering read the value.
-      Remaining: an overloaded binary operator now consults its selected member
-      or free-function overload, but a user-defined conversion function's
-      selected declaration and a qualified static-member call are not yet
-      resolved (`parse_postfix_expression` builds a free-function callee for
+      Remaining: an overloaded binary operator and a user-defined conversion
+      function now consult their selected declarations, but a qualified
+      static-member call is not yet resolved
+      (`parse_postfix_expression` builds a free-function callee for
       `S::f()` and does not reach the class-scope static-member resolver; retrying
       that resolver when the symbol is a plain declaration was reverted because it
       did not change the callee and is unverified), and the pseudo-destructor
