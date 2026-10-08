@@ -3504,6 +3504,13 @@ inline SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShe
 			partial_pattern_owner_name,
 			template_params);
 	}
+	if (owner_decl != nullptr && owner_decl->has_template_decl_id() && substituted_return_type.has_function_signature()) {
+		auto materialize_owner = [this](const TypeInfo& owner_type_info, std::span<const TemplateTypeArg> owner_template_args) {
+			return materializeCanonicalOwnerTypeForLookup(owner_type_info, owner_template_args);
+		};
+		substituteCanonicalMemberFunctionPointerOwner(substituted_return_type, original_return_type, owner_decl->template_decl_id(), template_params,
+			template_args, materialize_owner);
+	}
 
 	StringHandle effective_name = effective_name_override.isValid()
 		? effective_name_override

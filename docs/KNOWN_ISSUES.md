@@ -1,6 +1,6 @@
 # Known Issues
 
-## Conversion-operator results cannot yet initialize a class base parameter
+## Conversion-operator standard tails are not recorded for evaluated calls
 
 Overload ranking now recognizes a public derived-to-base tail after a conversion
 operator returns a class-template specialization, but an evaluated call still
@@ -20,6 +20,12 @@ The compiler reports that sema missed the resolved call-argument conversion.
 The matching `decltype` regression isolates ranking; sema annotation, base
 subobject materialization, and post-selection access checking remain follow-up
 work.
+
+The same sema gap occurs when a conversion operator returns
+`int (Base<T>::*)() noexcept` and the selected parameter is
+`int (Derived<T>::*)() noexcept`. `tests/test_canonical_dependent_member_function_pointer_conversion_tail_ret0.cpp`
+checks ranking in `decltype`; evaluating that call still fails during IR
+generation because sema does not record the argument conversion.
 
 ## Calling a user-declared copy-assignment operator crashes at runtime
 
