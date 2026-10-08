@@ -4866,8 +4866,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			canonical_types,
 			record_type,
 			*struct_info);
-		(void)tryPublishCanonicalRecordFieldSchema(
+		const bool field_schema_published = tryPublishCanonicalRecordFieldSchema(
 			canonical_types, struct_ref.entity_id(), *struct_info);
+		if (field_schema_published) {
+			(void)tryPublishCanonicalRecordConstructors(canonical_types, struct_ref.entity_id(), *struct_info);
+		}
 		tryPublishNestedClassEntities(
 			front_end.declarationBuilder(),
 			canonical_types,

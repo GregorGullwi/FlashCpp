@@ -85,6 +85,53 @@ TEST_CASE("Canonical TypeIds rank by-value derived-to-base conversions") {
 	CHECK(exact_conversion->rank == ConversionRank::ExactMatch);
 }
 
+TEST_CASE("Canonical record constructor schema publishes by EntityId") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const EntityId entity{901};
+	table.publishRecordLayout(CanonicalRecordLayout{
+		entity, 4, 4, 4, 4, 0, 0, CanonicalRecordLayoutFlags::None, 0});
+	table.publishRecordFieldSchema(entity,
+		std::span<const CanonicalRecordMember>{},
+		std::span<const CanonicalRecordBase>{});
+
+	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
+	const std::array<TypeId, 1> one_parameter{int_type};
+	const std::array<CanonicalRecordConstructorSpec, 2> constructors{
+		CanonicalRecordConstructorSpec{std::span<const TypeId>{},
+			CanonicalRecordFunctionFlags::Implicit, true},
+		CanonicalRecordConstructorSpec{
+			std::span<const TypeId>(one_parameter.data(), one_parameter.size()),
+			CanonicalRecordFunctionFlags::None, false},
+	};
+	table.publishRecordConstructors(entity, constructors);
+
+	REQUIRE(table.hasRecordConstructors(entity));
+	CHECK(table.recordConstructorCount(entity) == 2);
+	const CanonicalRecordConstructor default_constructor = table.recordConstructorAt(entity, 0);
+	CHECK(default_constructor.parameter_count == 0);
+	CHECK(default_constructor.is_noexcept == 1);
+	CHECK(default_constructor.flags == CanonicalRecordFunctionFlags::Implicit);
+	const CanonicalRecordConstructor value_constructor = table.recordConstructorAt(entity, 1);
+	CHECK(value_constructor.parameter_count == 1);
+	CHECK(value_constructor.is_noexcept == 0);
+	CHECK(value_constructor.flags == CanonicalRecordFunctionFlags::None);
+	CHECK(table.recordConstructorParameterAt(entity, 1, 0) == int_type);
+
+	// Equal republication is idempotent.
+	table.publishRecordConstructors(entity, constructors);
+	CHECK(table.recordConstructorCount(entity) == 2);
+}
+
+TEST_CASE("Canonical record constructor schema requires a complete record") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const EntityId entity{902};
+	CHECK_FALSE(table.hasRecordConstructors(entity));
+	CHECK_THROWS(table.publishRecordConstructors(
+		entity, std::span<const CanonicalRecordConstructorSpec>{}));
+}
+
 TEST_CASE("Overload ranking compares non-projectable parameter shapes structurally") {
 	FrontendContext frontend;
 	TypeSpecifierNode smaller_array(

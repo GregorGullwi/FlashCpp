@@ -1658,6 +1658,62 @@ inline bool tryPublishCanonicalRecordProperties(
 	return true;
 }
 
+// Publish a completed record's constructor schema keyed by its EntityId. Each
+// constructor's parameter types must import structurally; otherwise the whole
+// schema stays unpublished (fail closed) and consumers fall back.
+inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, EntityId entity, const StructTypeInfo& struct_info) {
+	struct PendingConstructor {
+		std::vector<TypeId> parameter_types;
+		CanonicalRecordFunctionFlags flags = CanonicalRecordFunctionFlags::None;
+		bool is_noexcept = false;
+	};
+	std::vector<PendingConstructor> pending;
+	pending.reserve(struct_info.member_functions.size());
+	for (const StructMemberFunction& member : struct_info.member_functions) {
+		if (!member.is_constructor || !member.function_decl.is<ConstructorDeclarationNode>()) {
+			continue;
+		}
+		const ConstructorDeclarationNode& constructor = member.function_decl.as<ConstructorDeclarationNode>();
+		PendingConstructor entry;
+		entry.parameter_types.reserve(constructor.parameter_nodes().size());
+		bool importable = true;
+		for (const ASTNode& parameter : constructor.parameter_nodes()) {
+			if (!parameter.is<DeclarationNode>()) {
+				importable = false;
+				break;
+			}
+			const std::optional<TypeId> imported = tryImportSupportedCanonical(table, parameter.as<DeclarationNode>().type_specifier_node());
+			if (!imported.has_value()) {
+				importable = false;
+				break;
+			}
+			entry.parameter_types.push_back(*imported);
+		}
+		if (!importable) {
+			return false;
+		}
+		if (constructor.is_implicit()) {
+			entry.flags = entry.flags | CanonicalRecordFunctionFlags::Implicit;
+		}
+		if (constructor.is_explicitly_defaulted()) {
+			entry.flags = entry.flags | CanonicalRecordFunctionFlags::ExplicitlyDefaulted;
+		}
+		entry.is_noexcept = constructor.is_noexcept();
+		pending.push_back(std::move(entry));
+	}
+	std::vector<CanonicalRecordConstructorSpec> constructors;
+	constructors.reserve(pending.size());
+	for (const PendingConstructor& entry : pending) {
+		constructors.push_back({
+			.parameter_types = std::span<const TypeId>(entry.parameter_types.data(), entry.parameter_types.size()),
+			.flags = entry.flags,
+			.is_noexcept = entry.is_noexcept,
+		});
+	}
+	table.publishRecordConstructors(entity, constructors);
+	return true;
+}
+
 inline bool tryPublishCanonicalClassBaseSchema(
 	CanonicalTypeTable& table,
 	TypeId root_type,
