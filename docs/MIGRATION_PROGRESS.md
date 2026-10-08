@@ -199,6 +199,16 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
   records and is not published for class-template specializations, which do
   publish the constructor schema. These are canonical-importer gaps, not language
   rules, and seed the constructor/member-function schema migration.
+- An explicit (full) class-template specialization is answered by the
+  compatibility constructor resolver rather than the canonical schema: it is
+  parsed without a published class entity, so `importCanonicalClassSource` finds
+  no injected-class pattern and no `EntityId` and returns `UnmigratedNominal`, and
+  the record-completion publication (which is gated on `has_entity_id()`) is
+  skipped for both record properties and the constructor schema. Its
+  constructibility answers are still correct (pinned by
+  `tests/test_canonical_constructible_explicit_specialization_ret0.cpp`). Fixing
+  it requires publishing the explicit specialization's class entity and binding
+  the type use to it — a declaration-identity change, not a schema tweak.
 
 ## Other open boundaries
 
