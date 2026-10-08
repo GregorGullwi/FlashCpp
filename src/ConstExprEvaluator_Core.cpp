@@ -3212,14 +3212,41 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 		if (!is_struct_type(target.category())) {
 			return true;
 		}
-		// Zero-argument construction selects the default constructor; a
-		// selection the parser did not record for an argument-bearing call stays
-		// conservative.
-		if (constructor_call->arguments().empty()) {
-			if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(target.type_index())) {
+		if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(target.type_index())) {
+			if (constructor_call->arguments().empty()) {
 				if (const StructMemberFunction* default_constructor = struct_info->findDefaultConstructor()) {
 					return default_constructor->is_noexcept;
 				}
+				return false;
+			}
+			// Argument-bearing: prefer the unique user-provided same-arity
+			// constructor (the implicit copy/move constructors share its arity);
+			// otherwise a sole same-arity constructor, else stay conservative.
+			const size_t argument_count = constructor_call->arguments().size();
+			const ConstructorDeclarationNode* user_match = nullptr;
+			size_t user_count = 0;
+			const ConstructorDeclarationNode* sole_match = nullptr;
+			size_t total_count = 0;
+			for (const StructMemberFunction& member : struct_info->member_functions) {
+				if (!member.is_constructor || !member.function_decl.is<ConstructorDeclarationNode>()) {
+					continue;
+				}
+				const ConstructorDeclarationNode& candidate = member.function_decl.as<ConstructorDeclarationNode>();
+				if (candidate.parameter_nodes().size() != argument_count) {
+					continue;
+				}
+				total_count++;
+				sole_match = &candidate;
+				if (!candidate.is_implicit() && !candidate.is_explicitly_defaulted()) {
+					user_count++;
+					user_match = &candidate;
+				}
+			}
+			if (user_count == 1) {
+				return user_match->is_noexcept();
+			}
+			if (total_count == 1) {
+				return sole_match->is_noexcept();
 			}
 		}
 		return false;
