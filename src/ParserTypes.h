@@ -107,6 +107,7 @@ struct FunctionSpecifiers {
 	DefinitionSpecifier definition = DefinitionSpecifier::None;
 	bool is_noexcept = false;
 	std::optional<ExpressionHandle> noexcept_expr;  // For noexcept(expr)
+	SourceLocation noexcept_keyword_location{};  // Location of the noexcept/throw keyword for diagnostics
 	bool is_implicit = false;	  // Compiler-generated (implicit copy ctor, operator=, etc.)
 	std::optional<std::string_view> asm_symbol_name;	 // GNU asm label suffix: __asm("symbol")
 
