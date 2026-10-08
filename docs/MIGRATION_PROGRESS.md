@@ -98,7 +98,12 @@ Continue boundary 3A in this order.
       retained dependent operand, and both `noexcept` evaluators now share the
       `tryResolveInstantiatedMemberNoexcept` member-call resolution through the
       receiver's type (`CallNodeHelpers.h`), so the member-function
-      keyword-present interim answer is gone. Remaining: the pseudo-destructor
+      keyword-present interim answer is gone, and codegen `noexcept` lowering now
+      delegates to the single `ConstExpr::Evaluator::is_expression_noexcept`
+      authority; its own `AstToIr::isExpressionNoexcept` evaluator is deleted.
+      `noexcept(expr)` is a compile-time constant, so the terminal fix is to fold
+      it once in expression sema (boundary 4) and have lowering read the value.
+      Remaining: the pseudo-destructor
       `noexcept` consumer (`p->~T()`) reads the pattern destructor for a
       class-template specialization, so a dependent destructor is observable
       through `__is_nothrow_destructible` but not through the `noexcept` operator;

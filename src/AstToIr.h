@@ -659,10 +659,6 @@ private:
 		return ExprResult{};
 	}
 
-	// Helper function to evaluate whether an expression is noexcept
-	// Returns true if the expression is guaranteed not to throw, false otherwise
-	bool isExpressionNoexcept(const ExpressionNode& expr) const;
-
 	// Pack a struct aggregate initializer into raw bytes for static/global storage.
 	// Callers provide the scalar evaluator so the same member walk can be reused for
 	// globals, inline static members, and template-instantiated static members.
