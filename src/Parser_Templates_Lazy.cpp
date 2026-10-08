@@ -694,40 +694,10 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 			}
 		}
 
-		if (dtor_decl.has_noexcept_expression()) {
-			ASTNode substituted_noexcept = substituteTemplateParameters(
-				dtor_decl.noexcept_expression()->node(),
-				lazy_info.template_params,
-				converted_template_args,
-				instantiated_owner_type_index,
-				true,
-				owner_struct_decl);
-			new_dtor_ref.set_noexcept_expression(
-				ExpressionHandle(substituted_noexcept));
-			ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
-			std::optional<TemplateEnvironment> outer_environment;
-			ctx.template_environment = buildLazySubstitutionEnvironment(
-				lazy_info.outer_template_environment_snapshot,
-				std::span<const TemplateParameterNode>(lazy_info.template_params.data(), lazy_info.template_params.size()),
-				std::span<const TemplateTypeArg>(converted_template_args.data(), converted_template_args.size()),
-				outer_environment);
-			ctx.template_args = converted_template_args;
-			for (const TemplateParameterNode& tparam : lazy_info.template_params) {
-				ctx.template_param_names.push_back(tparam.name());
-			}
-			auto owner_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
-			if (owner_it != getTypesByNameMap().end() && owner_it->second) {
-				ctx.struct_info = owner_it->second->getStructInfo();
-				ctx.struct_type_index = owner_it->second->registeredTypeIndex().withCategory(TypeCategory::Struct);
-			}
-			auto eval = ConstExpr::Evaluator::evaluate(substituted_noexcept, ctx);
-			if (!eval.success()) {
-				throw CompileError("Failed to evaluate lazy instantiated destructor noexcept-expression");
-			}
-			new_dtor_ref.set_noexcept(eval.as_bool());
-		} else {
-			new_dtor_ref.set_noexcept(dtor_decl.is_noexcept());
-		}
+		materializeInstantiatedDestructorNoexcept(
+			new_dtor_ref, dtor_decl,
+			std::span<const TemplateParameterNode>(lazy_info.template_params.data(), lazy_info.template_params.size()),
+			std::span<const TemplateTypeArg>(converted_template_args.data(), converted_template_args.size()));
 
 		new_dtor_ref.set_is_inline(dtor_decl.is_inline());
 		new_dtor_ref.set_is_constexpr(dtor_decl.is_constexpr());

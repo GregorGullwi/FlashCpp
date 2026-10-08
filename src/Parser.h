@@ -1970,6 +1970,11 @@ private:
 			node.clear_noexcept_expression();
 		}
 	}
+	// Apply a parsed noexcept specifier to a destructor. An explicit specifier
+	// makes the destructor's own answer authoritative and marks
+	// has_noexcept_specifier; an absent specifier leaves the implicit noexcept(true)
+	// default for isStructNothrowDestructible to refine from the subobjects.
+	void applyParsedDestructorNoexcept(DestructorDeclarationNode& destructor, const FlashCpp::FunctionSpecifiers& specifiers);
 	FunctionType makeFunctionType(const TypeSpecifierNode& type_spec) const;
 	ParseResult parse_function_header(const FlashCpp::FunctionParsingContext& ctx, FlashCpp::ParsedFunctionHeader& out_header);	// Phase 4: Unified function header parsing
 	ParseResult create_function_from_header(const FlashCpp::ParsedFunctionHeader& header, const FlashCpp::FunctionParsingContext& ctx);	// Phase 4: Create FunctionDeclarationNode from header
@@ -3984,6 +3989,10 @@ public:	// Public methods for template instantiation
 	// Re-evaluate a class-template member function's retained dependent noexcept
 	// operand under a specialization's arguments and set the effective value.
 	void materializeInstantiatedFunctionNoexcept(FunctionDeclarationNode& target, const FunctionDeclarationNode& pattern,
+		std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args);
+	// Re-evaluate a class-template destructor's retained dependent noexcept
+	// operand under a specialization's arguments and set the effective value.
+	void materializeInstantiatedDestructorNoexcept(DestructorDeclarationNode& target, const DestructorDeclarationNode& pattern,
 		std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args);
 
 	// Helper to substitute template parameters in lazy member function/constructor/destructor bodies

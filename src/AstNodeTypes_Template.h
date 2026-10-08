@@ -993,6 +993,7 @@ public:
 	void set_noexcept_expression(ExpressionHandle expr) { noexcept_expression_ = expr; }
 	const std::optional<ExpressionHandle>& noexcept_expression() const { return noexcept_expression_; }
 	bool has_noexcept_expression() const { return noexcept_expression_.has_value(); }
+	void clear_noexcept_expression() { noexcept_expression_.reset(); }
 	void set_has_noexcept_specifier(bool v) { has_noexcept_specifier_ = v; }
 	bool has_noexcept_specifier() const { return has_noexcept_specifier_; }
 

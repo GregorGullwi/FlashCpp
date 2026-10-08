@@ -2992,18 +2992,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// explicit noexcept(expr) is present, store the expression AND evaluate
 			// it immediately (it must be a constant expression per [except.spec]/7)
 			// so that is_noexcept() is always authoritative for all consumers.
-			if (dtor_func_specs.is_noexcept) {
-				dtor_ref.set_noexcept(true);
-				dtor_ref.set_has_noexcept_specifier(true);
-				if (dtor_func_specs.noexcept_expr.has_value()) {
-					dtor_ref.set_noexcept_expression(*dtor_func_specs.noexcept_expr);
-					ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
-					auto eval = ConstExpr::Evaluator::evaluate(
-						dtor_func_specs.noexcept_expr->node(), ctx);
-					if (eval.success())
-						dtor_ref.set_noexcept(eval.as_bool());
-				}
-			}
+			applyParsedDestructorNoexcept(dtor_ref, dtor_func_specs);
 
 			// In C++, 'override' or 'final' on destructor implies 'virtual'
 			if (is_override || is_final) {

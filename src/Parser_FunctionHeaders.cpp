@@ -839,6 +839,14 @@ void Parser::apply_parsed_function_type_qualifiers(
 		exprs.intern(signature.noexcept_expression->node());
 }
 
+void Parser::applyParsedDestructorNoexcept(DestructorDeclarationNode& destructor, const FlashCpp::FunctionSpecifiers& specifiers) {
+	if (!specifiers.is_noexcept) {
+		return;
+	}
+	destructor.set_has_noexcept_specifier(true);
+	applyParsedNoexcept(destructor, specifiers, NoexceptDependentAnswer::Conservative);
+}
+
 Parser::ParsedNoexceptResolution Parser::resolveParsedNoexcept(const FlashCpp::FunctionSpecifiers& specifiers,
 	NoexceptDependentAnswer dependent_answer) {
 	ParsedNoexceptResolution resolved{};
@@ -875,6 +883,12 @@ void Parser::materializeInstantiatedConstructorNoexcept(ConstructorDeclarationNo
 
 void Parser::materializeInstantiatedFunctionNoexcept(FunctionDeclarationNode& target, const FunctionDeclarationNode& pattern,
 	std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args) {
+	materializeInstantiatedNoexcept(*this, target, pattern, template_params, template_args);
+}
+
+void Parser::materializeInstantiatedDestructorNoexcept(DestructorDeclarationNode& target, const DestructorDeclarationNode& pattern,
+	std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args) {
+	target.set_has_noexcept_specifier(pattern.has_noexcept_specifier());
 	materializeInstantiatedNoexcept(*this, target, pattern, template_params, template_args);
 }
 
