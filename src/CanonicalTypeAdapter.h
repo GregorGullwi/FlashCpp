@@ -1690,7 +1690,9 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Ent
 			entry.parameter_types.push_back(*imported);
 		}
 		if (!importable) {
-			return false;
+			// Skip this constructor; a present entry's answer is still sound and
+			// an exact-match miss defers to the compatibility path.
+			continue;
 		}
 		if (constructor.is_implicit()) {
 			entry.flags = entry.flags | CanonicalRecordFunctionFlags::Implicit;
@@ -1700,6 +1702,9 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Ent
 		}
 		entry.is_noexcept = constructor.is_noexcept();
 		pending.push_back(std::move(entry));
+	}
+	if (pending.empty()) {
+		return false;  // no importable constructor: leave the schema unpublished
 	}
 	std::vector<CanonicalRecordConstructorSpec> constructors;
 	constructors.reserve(pending.size());

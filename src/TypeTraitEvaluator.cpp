@@ -2198,6 +2198,71 @@ TypeTraitResult evaluateRecordConstructibleFromArgs(
 		: TypeTraitResult::success_false();
 }
 
+// Exact-match canonical constructor query. When the target is a published record
+// with a constructor schema and every argument imports to the exact parameter
+// TypeIds, answer without StructTypeInfo. A conversion-requiring match (or an
+// unpublished schema, or the triviality variant, which the schema does not yet
+// carry) defers to the compatibility path.
+static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFromArgs(
+	TypeTraitKind kind,
+	const TypeSpecifierNode& target,
+	std::span<const TypeSpecifierNode> arguments) {
+	if (kind == TypeTraitKind::IsTriviallyConstructible) {
+		return std::nullopt;
+	}
+	FrontendContext* context = FrontendContext::active();
+	if (context == nullptr) {
+		return std::nullopt;
+	}
+	CanonicalTypeTable& table = context->canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalTypeImport imported = importCanonicalStructuralTraitOperand(table, target);
+	if (imported.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	const CanonicalTypeNode node = table.node(imported.type);
+	if (node.kind != CanonicalTypeKind::Record) {
+		return std::nullopt;
+	}
+	const EntityId entity{static_cast<uint32_t>(node.array_extent)};
+	if (!table.hasRecordConstructors(entity)) {
+		return std::nullopt;
+	}
+	std::vector<TypeId> argument_types;
+	argument_types.reserve(arguments.size());
+	for (const TypeSpecifierNode& argument : arguments) {
+		const std::optional<TypeId> imported_argument = tryImportSupportedCanonical(table, argument);
+		if (!imported_argument.has_value()) {
+			return std::nullopt;
+		}
+		argument_types.push_back(*imported_argument);
+	}
+	const size_t constructor_count = table.recordConstructorCount(entity);
+	for (size_t index = 0; index < constructor_count; ++index) {
+		const CanonicalRecordConstructor constructor = table.recordConstructorAt(entity, index);
+		if (constructor.parameter_count != argument_types.size()) {
+			continue;
+		}
+		bool matches = true;
+		for (size_t parameter = 0; parameter < constructor.parameter_count; ++parameter) {
+			if (table.recordConstructorParameterAt(entity, index, parameter) != argument_types[parameter]) {
+				matches = false;
+				break;
+			}
+		}
+		if (!matches) {
+			continue;
+		}
+		if (kind == TypeTraitKind::IsConstructible) {
+			return TypeTraitResult::success_true();
+		}
+		return constructor.is_noexcept != 0
+			? TypeTraitResult::success_true()
+			: TypeTraitResult::success_false();
+	}
+	return std::nullopt;
+}
+
 static std::optional<TypeTraitResult> tryEvaluateCanonicalConstructibleFromArgs(
 	TypeTraitKind kind,
 	const TypeSpecifierNode& target,
@@ -2221,6 +2286,11 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalConstructibleFromArgs(
 		return constructibleFromArgument(target, arguments.front())
 			? TypeTraitResult::success_true()
 			: TypeTraitResult::success_false();
+	}
+	if (const std::optional<TypeTraitResult> canonical =
+			tryEvaluateCanonicalRecordConstructibleFromArgs(kind, target, arguments);
+		canonical.has_value()) {
+		return canonical;
 	}
 	const StructTypeInfo* struct_info = structInfoFromTypeIndex(target.type_index());
 	if (struct_info == nullptr) {

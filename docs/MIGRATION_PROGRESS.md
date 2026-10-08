@@ -118,8 +118,11 @@ Continue boundary 3A in this order.
       type; a class constructor call now consults the record's default
       constructor (zero-argument) or the unique user-provided same-arity
       constructor (argument-bearing), while an ambiguous selection stays
-      conservative; the canonical
-      (non-sema) argument-bearing query; a call's receiver/argument evaluation,
+      conservative; the canonical argument-bearing query now answers an exact
+      argument match (constructible and nothrow-constructible) from the record's
+      published constructor schema, while a conversion-requiring match, the
+      triviality variant, and class-template specializations still defer to
+      `StructTypeInfo`; a call's receiver/argument evaluation,
       which is not counted because `is_expression_noexcept` is boolean and cannot
       separate a known-throwing operand from one it cannot resolve (a blanket
       argument check was tried and regressed template noexcept cases, so it needs
@@ -183,12 +186,13 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
 - The compatibility `TypeTraitEval::isSigned`/`isUnsigned` adapters are
   unexercised; a regression forcing an unimportable operand through them is owed.
 - The canonical record constructor schema is published for a completed record
-  independently of the field schema. It stays unpublished (consumers fall back to
-  `StructTypeInfo`) when a constructor parameter type does not import
-  structurally; the field schema itself is still unpublished for anonymous-union
-  and unimportable-member records, and class-template specializations do not yet
-  publish either schema. These are canonical-importer gaps, not language rules,
-  and seed the constructor/member-function schema migration.
+  independently of the field schema. A constructor whose parameter types do not
+  import structurally is skipped, and the schema stays unpublished (consumers
+  fall back to `StructTypeInfo`) only when no constructor is importable. The
+  field schema is still unpublished for anonymous-union and unimportable-member
+  records, and class-template specializations do not yet publish either schema.
+  These are canonical-importer gaps, not language rules, and seed the
+  constructor/member-function schema migration.
 
 ## Other open boundaries
 
