@@ -3472,7 +3472,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						false, // Do not force resolved TypeIndex onto full AST substitutions
 						true); // Preserve dependent member-template signature identity for replay
 
-					copy_function_properties(new_func_ref, orig_func);
+					copy_function_properties(new_func_ref, orig_func, template_params, template_args_for_member_copy);
 					// Ensure is_const_member_function is set from pattern so propagateAstProperties derives cv_qualifier.
 					new_func_ref.set_is_const_member_function(mem_func.is_const());
 					new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
@@ -4588,7 +4588,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					false,
 					true,
 					true);
-				copy_function_properties(replacement_function, original_function);
+				copy_function_properties(replacement_function, original_function, template_params, template_args_for_member_copy);
 				replacement_function.set_is_const_member_function(deferred_signature.is_const);
 				replacement_function.set_is_volatile_member_function(deferred_signature.is_volatile);
 				pack_param_info_.resize(saved_pack_info);
@@ -5013,7 +5013,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								func_decl.parameter_nodes().data(),
 								func_decl.parameter_nodes().size()));
 
-						copy_function_properties(new_func_ref, func_decl);
+						copy_function_properties(new_func_ref, func_decl, template_params, template_args_for_pattern);
 						new_func_ref.set_is_const_member_function(mem_func.is_const());
 						new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 						if (func_decl.is_materialized())
@@ -5078,7 +5078,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							new_func_ref_no_subst.add_parameter_node(param);
 						}
 
-						copy_function_properties(new_func_ref_no_subst, func_decl);
+						copy_function_properties(new_func_ref_no_subst, func_decl, template_params, template_args_for_pattern);
 						new_func_ref_no_subst.set_is_const_member_function(mem_func.is_const());
 						new_func_ref_no_subst.set_is_volatile_member_function(mem_func.is_volatile());
 						if (func_decl.is_materialized())
@@ -5272,7 +5272,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						FLASH_LOG(Templates, Trace, "Original function has NO definition - may need delayed parsing");
 					}
 
-					copy_function_properties(new_func, orig_func);
+					copy_function_properties(new_func, orig_func, template_params, template_args_for_pattern);
 					pack_param_info_.resize(saved_pack_info);
 					if (new_func.is_materialized()) {
 						finalize_function_after_definition(new_func);
@@ -11557,7 +11557,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Copy function properties but DO NOT set definition. Delay mangling until
 				// a body/finalized signature exists to avoid caching stale self-type encodings.
-				copy_function_properties(new_func_ref, func_decl);
+				copy_function_properties(new_func_ref, func_decl, effective_template_params, effective_template_args);
 				new_func_ref.set_is_const_member_function(mem_func.is_const());
 				new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 
@@ -11739,7 +11739,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				// Copy function specifiers from original
-				copy_function_properties(new_func_ref, func_decl);
+				copy_function_properties(new_func_ref, func_decl, template_params, template_args_to_use);
 				new_func_ref.set_is_const_member_function(mem_func.is_const());
 				new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 				if (new_func_ref.is_materialized()) {
@@ -11790,7 +11790,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				pack_param_info_.resize(saved_pack_info);
 
 				// Copy other function properties
-				copy_function_properties(new_func_ref, func_decl);
+				copy_function_properties(new_func_ref, func_decl, template_params, template_args_to_use);
 				new_func_ref.set_is_const_member_function(mem_func.is_const());
 				new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 				if (new_func_ref.is_materialized()) {
@@ -12469,7 +12469,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						func_decl.parameter_nodes().size()));
 
 				// Copy function specifiers
-				copy_function_properties(new_func_ref, func_decl);
+				copy_function_properties(new_func_ref, func_decl, template_params, template_args_to_use);
 				new_func_ref.set_is_const_member_function(mem_func.is_const());
 				new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 				if (func_decl.is_materialized())
@@ -12657,7 +12657,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_func_ref.add_parameter_node(param);
 				}
 
-				copy_function_properties(new_func_ref, func_decl);
+				copy_function_properties(new_func_ref, func_decl, template_params, template_args_to_use);
 				new_func_ref.set_is_const_member_function(mem_func.is_const());
 				new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 				if (func_decl.is_materialized())

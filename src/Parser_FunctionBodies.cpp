@@ -637,6 +637,12 @@ void Parser::copy_function_properties(FunctionDeclarationNode& dest, const Funct
 	}
 }
 
+void Parser::copy_function_properties(FunctionDeclarationNode& dest, const FunctionDeclarationNode& src,
+	std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args) {
+	copy_function_properties(dest, src);
+	materializeInstantiatedFunctionNoexcept(dest, src, template_params, template_args);
+}
+
 ASTNode Parser::create_defaulted_member_function_body(const FunctionDeclarationNode& func_node) {
 	auto [block_node, block_ref] = create_node_ref(BlockNode());
 	const DeclarationNode& decl_node = func_node.decl_node();
