@@ -979,20 +979,32 @@ std::optional<bool> defaultInitializerConstructorThrows(const ASTNode& initializ
 }
 
 // Whether any element leaf of an array member's default member initializer
-// selects a potentially-throwing constructor. Nested brace lists (rows of a
+// selects a potentially-throwing constructor. An element leaf that
+// default-constructs the element type (a prvalue `T{}` or an empty brace `{}`)
+// carries no recorded constructor selection; `schedule_default_construction`
+// hands its element type back to the caller's worklist so that type's own
+// default construction is classified. Nested brace lists (rows of a
 // multidimensional array) are flattened to their leaves with an explicit
 // worklist so nesting depth stays off the native stack.
-bool defaultInitializerArrayElementThrows(const ASTNode& initializer, const StructTypeInfo& member_type) {
+template <typename ScheduleDefaultConstruction>
+bool defaultInitializerArrayElementThrows(
+	const ASTNode& initializer,
+	const StructTypeInfo& element_type,
+	ScheduleDefaultConstruction schedule_default_construction) {
 	TemplateVector<ASTNode, 4> pending;
 	pending.push_back(initializer);
 	while (!pending.empty()) {
 		const ASTNode element = pending.back();
 		pending.pop_back();
+		if (defaultInitializerIsDefaultConstruction(element)) {
+			schedule_default_construction(element_type);
+			continue;
+		}
 		if (const auto* nested = element.get_if<InitializerListNode>()) {
 			std::ranges::copy(nested->initializers(), std::back_inserter(pending));
 			continue;
 		}
-		const std::optional<bool> throws = defaultInitializerConstructorThrows(element, member_type);
+		const std::optional<bool> throws = defaultInitializerConstructorThrows(element, element_type);
 		if (throws.has_value() && *throws) {
 			return true;
 		}
@@ -1078,9 +1090,17 @@ bool recordSubobjectsSatisfyDefaultConstruction(
 						pending.push_back(structInfoFromTypeIndex(member.type_index));
 					} else if (const StructTypeInfo* member_struct_info = structInfoFromTypeIndex(member.type_index)) {
 						if (member.is_array) {
-							// Each element leaf selects its own constructor; the
-							// array construction is throwing if any leaf is.
-							if (defaultInitializerArrayElementThrows(initializer, *member_struct_info)) {
+							// Each element leaf either default-constructs the
+							// element type or selects a constructor. A
+							// default-constructing leaf recurses through the
+							// element type's own default construction; a
+							// selecting leaf contributes its exception spec.
+							const bool element_throws = defaultInitializerArrayElementThrows(
+								initializer, *member_struct_info,
+								[&pending](const StructTypeInfo& element_type) {
+									pending.push_back(&element_type);
+								});
+							if (element_throws) {
 								return false;
 							}
 						} else {
