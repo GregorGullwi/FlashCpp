@@ -810,95 +810,33 @@ void Parser::apply_parsed_function_type_qualifiers(
 		exprs.intern(signature.noexcept_expression->node());
 }
 
-void Parser::apply_parsed_function_noexcept(
-	FunctionDeclarationNode& function,
-	const FlashCpp::FunctionSpecifiers& specifiers) {
-	if (!specifiers.is_noexcept) {
-		return;
-	}
-	function.set_noexcept(true);
+Parser::ParsedNoexceptResolution Parser::resolveParsedNoexcept(const FlashCpp::FunctionSpecifiers& specifiers,
+	NoexceptDependentAnswer dependent_answer) {
+	ParsedNoexceptResolution resolved{};
 	if (!specifiers.noexcept_expr.has_value()) {
-		return;
+		resolved.is_noexcept = true;  // bare noexcept
+		return resolved;
 	}
-
 	const ExpressionHandle expression = *specifiers.noexcept_expr;
 	const bool is_dependent = ParserExpressionDependency::nodeHasDeferredTemplateDependency(expression.node(), currentTemplateParamNames());
 	if (is_dependent) {
-		function.set_noexcept(false);
-		function.set_noexcept_expression(expression);
-		return;
+		// A dependent operand cannot be folded until substitution; retain it for
+		// re-evaluation and use the caller's interim answer.
+		resolved.is_noexcept = dependent_answer == NoexceptDependentAnswer::KeywordPresent;
+		resolved.expression = expression;
+		return resolved;
 	}
-
 	const auto evaluated = try_evaluate_constant_expression(expression.node());
 	if (evaluated.has_value()) {
-		function.set_noexcept(evaluated->value != 0);
-		function.clear_noexcept_expression();
-		return;
+		resolved.is_noexcept = evaluated->value != 0;
+		return resolved;
 	}
-	if (!isDependentTemplateContext()) {
-		throwNoexceptSpecifierNotConstant(diagnostics(), specifiers.noexcept_keyword_location);
-	}
-	function.set_noexcept(false);
-	function.set_noexcept_expression(expression);
-}
-
-void Parser::apply_parsed_member_function_noexcept(FunctionDeclarationNode& function, const FlashCpp::FunctionSpecifiers& specifiers) {
-	if (!specifiers.is_noexcept) {
-		return;
-	}
-	if (!specifiers.noexcept_expr.has_value()) {
-		function.set_noexcept(true);
-		return;
-	}
-	const ExpressionHandle expression = *specifiers.noexcept_expr;
-	const auto evaluated = try_evaluate_constant_expression(expression.node());
-	if (evaluated.has_value()) {
-		function.set_noexcept(evaluated->value != 0);
-		function.clear_noexcept_expression();
-		return;
-	}
-	const bool is_dependent = ParserExpressionDependency::nodeHasDeferredTemplateDependency(expression.node(), currentTemplateParamNames());
-	if (is_dependent || isDependentTemplateContext()) {
-		// A class-template member function's operand is substituted only when the
-		// class is instantiated, and that instantiation currently copies the
-		// retained operand without re-evaluating it. Preserve the keyword-present
-		// answer until member-function noexcept instantiation is migrated.
-		function.set_noexcept(true);
-		function.set_noexcept_expression(expression);
-		return;
+	if (isDependentTemplateContext()) {
+		resolved.is_noexcept = dependent_answer == NoexceptDependentAnswer::KeywordPresent;
+		resolved.expression = expression;
+		return resolved;
 	}
 	throwNoexceptSpecifierNotConstant(diagnostics(), specifiers.noexcept_keyword_location);
-}
-
-void Parser::apply_constructor_noexcept(ConstructorDeclarationNode& constructor, const FlashCpp::FunctionSpecifiers& specifiers) {
-	if (!specifiers.is_noexcept) {
-		return;
-	}
-	constructor.set_noexcept(true);
-	if (!specifiers.noexcept_expr.has_value()) {
-		return;
-	}
-
-	const ExpressionHandle expression = *specifiers.noexcept_expr;
-	const bool is_dependent = ParserExpressionDependency::nodeHasDeferredTemplateDependency(expression.node(), currentTemplateParamNames());
-	if (is_dependent) {
-		// A dependent operand cannot be folded until the class template is
-		// specialized; retain it for re-evaluation at instantiation.
-		constructor.set_noexcept(false);
-		constructor.set_noexcept_expression(expression);
-		return;
-	}
-
-	const auto evaluated = try_evaluate_constant_expression(expression.node());
-	if (evaluated.has_value()) {
-		constructor.set_noexcept(evaluated->value != 0);
-		return;
-	}
-	if (!isDependentTemplateContext()) {
-		throwNoexceptSpecifierNotConstant(diagnostics(), specifiers.noexcept_keyword_location);
-	}
-	constructor.set_noexcept(false);
-	constructor.set_noexcept_expression(expression);
 }
 
 void Parser::materializeInstantiatedConstructorNoexcept(ConstructorDeclarationNode& target, const ConstructorDeclarationNode& pattern,
@@ -1317,7 +1255,7 @@ ParseResult Parser::create_function_from_header(
 	func_ref.set_is_variadic(header.params.is_variadic);
 
 	// Set noexcept if specified
-	apply_parsed_function_noexcept(func_ref, header.specifiers);
+	applyParsedNoexcept(func_ref, header.specifiers, NoexceptDependentAnswer::Conservative);
 
 	if (header.specifiers.asm_symbol_name.has_value()) {
 		func_ref.set_mangled_name(*header.specifiers.asm_symbol_name);

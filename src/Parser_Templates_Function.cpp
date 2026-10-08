@@ -196,7 +196,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 	if (qualifier_result.is_error()) {
 		return qualifier_result;
 	}
-	apply_parsed_function_noexcept(func_decl, function_specifiers);
+	applyParsedNoexcept(func_decl, function_specifiers, NoexceptDependentAnswer::Conservative);
 	func_decl.set_is_const_member_function(member_quals.is_const());
 	func_decl.set_is_volatile_member_function(member_quals.is_volatile());
 	func_decl.set_function_reference_qualifier(member_quals.ref_qualifier);
