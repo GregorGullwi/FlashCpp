@@ -1708,6 +1708,15 @@ public:
 	void set_template_decl_id(TemplateDeclId template_decl_id) { template_decl_id_ = template_decl_id; }
 	bool has_template_decl_id() const { return static_cast<bool>(template_decl_id_); }
 
+	// Canonical identity of an explicit (full) specialization: the primary class
+	// template whose TemplateSpecialization this declaration specializes. Kept
+	// separate from template_decl_id_ so it never affects member lookup or template
+	// classification. The specialization's own concrete arguments are read from
+	// outer_template_args().
+	TemplateDeclId canonical_specialization_owner_template_decl_id() const { return canonical_specialization_owner_template_decl_id_; }
+	void set_canonical_specialization_owner_template_decl_id(TemplateDeclId id) { canonical_specialization_owner_template_decl_id_ = id; }
+	bool has_canonical_specialization_owner() const { return static_cast<bool>(canonical_specialization_owner_template_decl_id_); }
+
 private:
 	StringHandle name_;	// Points directly into source text from lexer token
 	StringHandle semantic_name_; // Lookup-qualified TypeInfo name for local classes
@@ -1741,6 +1750,7 @@ private:
 	ScopeId lexical_scope_id_;
 	EntityId entity_id_;
 	TemplateDeclId template_decl_id_;
+	TemplateDeclId canonical_specialization_owner_template_decl_id_;
 };
 
 // Template class declaration node - represents a class template

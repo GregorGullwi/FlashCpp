@@ -3262,6 +3262,24 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				return ParseResult::error(struct_info_ptr->getFinalizationError(), Token());
 			}
 
+			// Give the full specialization the same canonical identity as an implicit
+			// instantiation of the primary: templateSpecialization(primary, args). This is
+			// recorded through a dedicated owner field, not the injected-class pattern, so
+			// member lookup keeps seeing the specialization's own members. Bind after
+			// member parsing; the concrete arguments are only read for the canonical type.
+			if (primary_class_declaration != nullptr && primary_class_declaration->has_template_decl_id()) {
+				struct_ref.set_canonical_specialization_owner_template_decl_id(primary_class_declaration->template_decl_id());
+				struct_ref.set_outer_template_bindings(primary_class_declaration->outer_template_param_names(), template_args);
+			}
+			{
+				CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+				const CanonicalTypeImport imported_specialization = importCanonicalClassTypeInfo(canonical_types, struct_type_info);
+				if (imported_specialization.status == CanonicalTypeImportStatus::Supported) {
+					(void)tryPublishCanonicalRecordProperties(canonical_types, imported_specialization.type, *struct_info_ptr);
+					(void)tryPublishCanonicalRecordConstructors(canonical_types, imported_specialization.type, struct_ref);
+				}
+			}
+
 			// Parse delayed function bodies for specialization member functions
 			// Destructor nodes must be pushed to ast_nodes_ AFTER restore_token_position
 			// (restore_token_position erases non-function/struct nodes added after the save point).
