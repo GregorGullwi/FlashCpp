@@ -1934,7 +1934,41 @@ private:
 	ParseResult parse_function_type_qualifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs);
 	ParseResult parse_function_type_qualifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs, std::span<const ASTNode> params);
 	void apply_parsed_function_type_qualifiers(FunctionSignature& signature, const FlashCpp::MemberQualifiers& qualifiers, const FlashCpp::FunctionSpecifiers& specifiers);
-	void apply_parsed_function_noexcept(FunctionDeclarationNode& function, const FlashCpp::FunctionSpecifiers& specifiers);
+	// Interim answer for a dependent noexcept operand. Conservative folds to
+	// potentially-throwing and relies on substitution re-evaluating the retained
+	// operand; KeywordPresent keeps the keyword-present answer for kinds whose
+	// instantiation does not yet re-evaluate it.
+	enum class NoexceptDependentAnswer : uint8_t {
+		Conservative,
+		KeywordPresent,
+	};
+	// Effective value and optional retained operand of a parsed noexcept
+	// specifier after applying the [except.spec]/7 constant-expression rule.
+	struct ParsedNoexceptResolution {
+		bool is_noexcept = false;
+		std::optional<ExpressionHandle> expression;
+	};
+	// Fold a parsed noexcept operand, retaining a dependent operand for later
+	// substitution. A non-constant operand outside a dependent template context
+	// throws the located NoexceptSpecifierNotConstant diagnostic.
+	ParsedNoexceptResolution resolveParsedNoexcept(const FlashCpp::FunctionSpecifiers& specifiers, NoexceptDependentAnswer dependent_answer);
+	// Apply a parsed noexcept specifier to any function-like node exposing
+	// set_noexcept/set_noexcept_expression/clear_noexcept_expression. `specifiers`
+	// must come from parse_function_trailing_specifiers or
+	// parse_function_type_qualifiers.
+	template <typename Node>
+	void applyParsedNoexcept(Node& node, const FlashCpp::FunctionSpecifiers& specifiers, NoexceptDependentAnswer dependent_answer) {
+		if (!specifiers.is_noexcept) {
+			return;
+		}
+		const ParsedNoexceptResolution resolved = resolveParsedNoexcept(specifiers, dependent_answer);
+		node.set_noexcept(resolved.is_noexcept);
+		if (resolved.expression.has_value()) {
+			node.set_noexcept_expression(*resolved.expression);
+		} else {
+			node.clear_noexcept_expression();
+		}
+	}
 	FunctionType makeFunctionType(const TypeSpecifierNode& type_spec) const;
 	ParseResult parse_function_header(const FlashCpp::FunctionParsingContext& ctx, FlashCpp::ParsedFunctionHeader& out_header);	// Phase 4: Unified function header parsing
 	ParseResult create_function_from_header(const FlashCpp::ParsedFunctionHeader& header, const FlashCpp::FunctionParsingContext& ctx);	// Phase 4: Create FunctionDeclarationNode from header
@@ -4459,15 +4493,6 @@ private:	 // Resume private methods
 	// class-template substitution. Returns an error result when a noexcept
 	// operand is malformed.
 	ParseResult parse_constructor_exception_specifier(ConstructorDeclarationNode& constructor, std::span<const ASTNode> params);
-	// Apply an already-parsed noexcept specifier to a constructor. Mirrors
-	// apply_parsed_function_noexcept: a constant operand is folded, a dependent
-	// operand is retained on the node.
-	void apply_constructor_noexcept(ConstructorDeclarationNode& constructor, const FlashCpp::FunctionSpecifiers& specifiers);
-	// Apply an already-parsed noexcept specifier to a class member function. A
-	// constant operand is folded and a non-constant operand is rejected; a
-	// dependent operand keeps the keyword-present answer because class-template
-	// member-function instantiation does not yet re-evaluate its retained operand.
-	void apply_parsed_member_function_noexcept(FunctionDeclarationNode& function, const FlashCpp::FunctionSpecifiers& specifiers);
 	void consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type);  // Consume *, &, && after conversion operator target type
 	void consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec);  // Consume trailing *, &, && and apply to type specifier
 	void consume_array_type_id_modifiers(TypeSpecifierNode& type_spec); // Consume trailing [N] / [] abstract-declarators on a type-id

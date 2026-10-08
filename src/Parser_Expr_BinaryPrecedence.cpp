@@ -1471,7 +1471,7 @@ ParseResult Parser::parse_constructor_exception_specifier(ConstructorDeclaration
 	if (result.is_error()) {
 		return result;
 	}
-	apply_constructor_noexcept(constructor, specs);
+	applyParsedNoexcept(constructor, specs, NoexceptDependentAnswer::Conservative);
 	return ParseResult::success();
 }
 
@@ -1905,9 +1905,16 @@ bool Parser::parse_static_member_function(
 	// Mark as static member function (no implicit 'this' parameter)
 	member_func_ref.set_is_static(true);
 
-	// Skip any trailing specifiers (const, volatile, noexcept, etc.) after parameter list
+	// Parse trailing cv/ref/noexcept specifiers after the parameter list and
+	// record the exception specification; the previous skip dropped it.
 	FlashCpp::MemberQualifiers member_quals;
-	skip_function_trailing_specifiers(member_quals);
+	FlashCpp::FunctionSpecifiers func_specs;
+	auto trailing_qualifier_result = parse_function_type_qualifiers(member_quals, func_specs, member_func_ref.parameter_nodes());
+	if (trailing_qualifier_result.is_error()) {
+		type_and_name_result = trailing_qualifier_result;
+		return true;
+	}
+	applyParsedNoexcept(member_func_ref, func_specs, NoexceptDependentAnswer::KeywordPresent);
 
 	// Check for trailing requires clause: static int func(int x) requires constraint { ... }
 	// This is common in C++20 code, e.g., requires requires { expr; }
