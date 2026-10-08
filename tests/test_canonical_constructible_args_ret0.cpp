@@ -13,17 +13,23 @@ struct ThrowingInt {
 	int value;
 };
 
-// A converting argument does not match the schema exactly and still uses the
-// compatibility path, which reports a user-provided constructor as throwing.
-struct ConvertingLong {
-	ConvertingLong(long) noexcept(true) {}
+// A converting argument does not match the schema exactly; the compatibility
+// resolver selects the constructor and its exception specification is read.
+struct ConvertingNothrow {
+	ConvertingNothrow(long) noexcept(true) {}
+};
+
+struct ConvertingThrowing {
+	ConvertingThrowing(long) noexcept(false) {}
 };
 
 static_assert(__is_constructible(NothrowInt, int), "exact argument is constructible");
 static_assert(__is_constructible(ThrowingInt, int), "exact throwing argument is constructible");
 static_assert(__is_nothrow_constructible(NothrowInt, int), "exact noexcept constructor is nothrow");
 static_assert(!__is_nothrow_constructible(ThrowingInt, int), "exact throwing constructor is not nothrow");
-static_assert(__is_constructible(ConvertingLong, int), "converting argument stays constructible");
+static_assert(__is_constructible(ConvertingNothrow, int), "converting argument stays constructible");
+static_assert(__is_nothrow_constructible(ConvertingNothrow, int), "converting noexcept constructor is nothrow");
+static_assert(!__is_nothrow_constructible(ConvertingThrowing, int), "converting throwing constructor is not nothrow");
 
 int main() {
 	NothrowInt nothrow{1};
