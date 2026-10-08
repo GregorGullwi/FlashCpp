@@ -2193,6 +2193,14 @@ TypeTraitResult evaluateRecordConstructibleFromArgs(
 	if (kind == TypeTraitKind::IsConstructible) {
 		return TypeTraitResult::success_true();
 	}
+	if (kind == TypeTraitKind::IsNothrowConstructible) {
+		const ConstructorDeclarationNode* selected = ctor_resolution.selected_overload;
+		if (selected != nullptr && !selected->is_implicit() && !selected->is_explicitly_defaulted()) {
+			return selected->is_noexcept()
+				? TypeTraitResult::success_true()
+				: TypeTraitResult::success_false();
+		}
+	}
 	return (!struct_info.has_vtable && !struct_info.hasUserDefinedConstructor())
 		? TypeTraitResult::success_true()
 		: TypeTraitResult::success_false();
