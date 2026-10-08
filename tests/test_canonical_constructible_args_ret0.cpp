@@ -23,6 +23,24 @@ struct ConvertingThrowing {
 	ConvertingThrowing(long) noexcept(false) {}
 };
 
+// An argument-bearing trivial construction is a copy or move, so it is trivial
+// exactly when the class is trivially copyable.
+struct NonTrivialMember {
+	NonTrivialMember(const NonTrivialMember&) {}
+	int value = 0;
+};
+
+struct NonTrivialCopy {
+	NonTrivialMember member;
+};
+
+struct TrivialCopy {
+	int value;
+};
+
+static_assert(!__is_trivially_constructible(NonTrivialCopy, const NonTrivialCopy&), "non-trivial copy constructor");
+static_assert(__is_trivially_constructible(TrivialCopy, const TrivialCopy&), "trivial copy constructor");
+
 static_assert(__is_constructible(NothrowInt, int), "exact argument is constructible");
 static_assert(__is_constructible(ThrowingInt, int), "exact throwing argument is constructible");
 static_assert(__is_nothrow_constructible(NothrowInt, int), "exact noexcept constructor is nothrow");
