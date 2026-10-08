@@ -2347,8 +2347,7 @@ inline std::optional<ConversionPlan> tryBuildCanonicalMemberPointerConversionPla
 	if (source_owner == target_owner) {
 		return buildCanonicalStructuralConversionPlan(table, source_member, target_member);
 	}
-	std::optional<DerivedBaseConversionKind> owner_conversion =
-		classifyCanonicalDerivedBaseConversion(table, target_owner, source_owner);
+	std::optional<DerivedBaseConversionKind> owner_conversion = classifyCanonicalDerivedBaseConversion(table, target_owner, source_owner);
 	if (!owner_conversion.has_value()) {
 		// Use the legacy class graph only as a proof bridge until the canonical
 		// specialization graph is published; never fall back by category alone.
@@ -2938,13 +2937,11 @@ trySelectCanonicalUserDefinedConversionOperator(
 			CanonicalTypeTransaction return_type_transaction(table);
 			TypeSpecifierNode canonical_return_type = return_type;
 			tryBindPublishedTypeEntity(canonical_return_type);
-			const CanonicalTypeImport return_type_import =
-				importCanonicalOverloadNominalType(table, canonical_return_type);
+			const CanonicalTypeImport return_type_import = importCanonicalOverloadNominalType(table, canonical_return_type);
 			if (return_type_import.status != CanonicalTypeImportStatus::Supported) {
 				continue;
 			}
-			const std::optional<ConversionPlan> trailing_plan =
-				tryBuildCanonicalConversionFunctionTailPlan(return_type, target_type);
+			const std::optional<ConversionPlan> trailing_plan = tryBuildCanonicalConversionFunctionTailPlan(return_type, target_type);
 			if (!trailing_plan.has_value() || !trailing_plan->is_valid ||
 				trailing_plan->rank == ConversionRank::UserDefined) {
 				continue;

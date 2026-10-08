@@ -390,8 +390,10 @@ inline void substituteCanonicalMemberFunctionPointerOwner(
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
 	MaterializeOwnerFn&& materialize_owner) {
-	if (substituted_type.category() != TypeCategory::MemberFunctionPointer ||
-		!template_decl || template_params.empty() ||
+	const bool has_member_function_owner = substituted_type.has_member_class() ||
+		(substituted_type.has_function_signature() &&
+		 substituted_type.function_signature().class_name.isValid());
+	if (!substituted_type.has_function_signature() || !has_member_function_owner || !template_decl || template_params.empty() ||
 		template_params.size() != template_args.size()) {
 		return;
 	}
@@ -436,10 +438,21 @@ inline void substituteCanonicalMemberFunctionPointerOwner(
 		}
 	}
 
-	if (!original_type.has_member_class()) {
+	const StringHandle original_owner_name = original_type.has_member_class()
+		? original_type.member_class_name()
+		: (original_type.has_function_signature()
+			? original_type.function_signature().class_name
+			: StringHandle{});
+	const StringHandle substituted_owner_name = substituted_type.has_member_class()
+		? substituted_type.member_class_name()
+		: substituted_type.function_signature().class_name;
+	const StringHandle owner_name = original_owner_name.isValid()
+		? original_owner_name
+		: substituted_owner_name;
+	if (!owner_name.isValid()) {
 		return;
 	}
-	const TypeInfo* owner_pattern = findTypeByName(original_type.member_class_name());
+	const TypeInfo* owner_pattern = findTypeByName(owner_name);
 	if (owner_pattern == nullptr || !owner_pattern->isTemplateInstantiation()) {
 		return;
 	}
@@ -460,6 +473,13 @@ inline void substituteCanonicalMemberFunctionPointerOwner(
 		return;
 	}
 	substituted_type.set_member_class_name(concrete_owner_name);
+	if (substituted_type.has_function_signature()) {
+		FunctionSignature substituted_signature = substituted_type.function_signature();
+		substituted_signature.class_name = concrete_owner_name;
+		substituted_type.set_function_signature(std::move(substituted_signature));
+	}
+	// Replace a template-pattern owner TypeId before binding the concrete owner.
+	substituted_type.set_member_class_type_id(TypeId{});
 	tryBindPublishedMemberClassEntity(
 		substituted_type,
 		concrete_owner->registeredTypeIndex().withCategory(concrete_owner->typeEnum()));
