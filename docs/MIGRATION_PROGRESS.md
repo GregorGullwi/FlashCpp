@@ -105,11 +105,13 @@ Continue boundary 3A in this order.
       it once in expression sema (boundary 4) and have lowering read the value.
       Remaining: an overloaded binary operator and a user-defined conversion
       function now consult their selected declarations, but a qualified
-      static-member call is not yet resolved
-      (`parse_postfix_expression` builds a free-function callee for
-      `S::f()` and does not reach the class-scope static-member resolver; retrying
-      that resolver when the symbol is a plain declaration was reverted because it
-      did not change the callee and is unverified), and the pseudo-destructor
+      static-member call is not yet resolved: `parse_primary_expression`'s
+      qualified path (`lookup_qualified` returns null for `S::f`) builds a
+      free-function callee, and resolving the static member there was reverted
+      because sema then throws "Resolved member function access has no semantic
+      owner class" — the same owner-class identity gap as the boundary-4
+      member-function-pointer handoff (an earlier `parse_postfix_expression`
+      resolver retry was likewise reverted), and the pseudo-destructor
       `noexcept` consumer resolves the
       instantiated destructor for cast, identifier, arrow, and dereference object
       forms but still falls back to the pattern for an object expression it cannot
