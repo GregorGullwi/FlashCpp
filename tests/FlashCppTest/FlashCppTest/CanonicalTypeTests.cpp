@@ -123,13 +123,35 @@ TEST_CASE("Canonical record constructor schema publishes by EntityId") {
 	CHECK(table.recordConstructorCount(entity) == 2);
 }
 
-TEST_CASE("Canonical record constructor schema requires a complete record") {
+TEST_CASE("Canonical record constructor schema requires a complete layout") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();
 	const EntityId entity{902};
 	CHECK_FALSE(table.hasRecordConstructors(entity));
 	CHECK_THROWS(table.publishRecordConstructors(
 		entity, std::span<const CanonicalRecordConstructorSpec>{}));
+}
+
+TEST_CASE("Canonical record constructor schema is independent of the field schema") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const EntityId entity{903};
+	table.publishRecordLayout(CanonicalRecordLayout{
+		entity, 4, 4, 4, 4, 0, 0, CanonicalRecordLayoutFlags::None, 0});
+	// No field schema is published (as for an anonymous-union / unimportable
+	// member record); the constructor schema still publishes from the layout.
+	CHECK_FALSE(table.hasRecordFieldSchema(entity));
+	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
+	const std::array<TypeId, 1> one_parameter{int_type};
+	const std::array<CanonicalRecordConstructorSpec, 1> constructors{
+		CanonicalRecordConstructorSpec{
+			std::span<const TypeId>(one_parameter.data(), one_parameter.size()),
+			CanonicalRecordFunctionFlags::None, false},
+	};
+	table.publishRecordConstructors(entity, constructors);
+	REQUIRE(table.hasRecordConstructors(entity));
+	CHECK(table.recordConstructorCount(entity) == 1);
+	CHECK(table.recordConstructorParameterAt(entity, 0, 0) == int_type);
 }
 
 TEST_CASE("Overload ranking compares non-projectable parameter shapes structurally") {

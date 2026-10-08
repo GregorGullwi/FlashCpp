@@ -1195,9 +1195,13 @@ void CanonicalTypeTable::publishRecordConstructors(EntityId entity, std::span<co
 	if (constructors.size() > std::numeric_limits<uint16_t>::max()) {
 		throw InternalError("canonical type: too many record constructors");
 	}
-	// A constructor schema is only meaningful for a complete record; requiring
-	// the field schema keeps publication ordered after layout.
-	(void)fieldSchemaHeaderUnlocked(entity);
+	// A constructor schema is a property of a complete record and is independent
+	// of the member field schema, which can be unpublished for anonymous-union or
+	// unimportable members while the constructor signature still imports. Require
+	// only the completed record layout.
+	if (!record_layout_ids_.contains(entity.value)) {
+		throw InternalError("canonical type: record constructor schema requires complete layout");
+	}
 	const auto existing = record_constructor_schema_ids_.find(entity.value);
 	if (existing != record_constructor_schema_ids_.end()) {
 		const CanonicalRecordConstructorSchemaHeader header = record_constructor_schema_headers_[existing->second];
