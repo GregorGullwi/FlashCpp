@@ -1658,22 +1658,24 @@ inline bool tryPublishCanonicalRecordProperties(
 	return true;
 }
 
-// Publish a completed record's constructor schema keyed by its EntityId. Each
-// constructor's parameter types must import structurally; otherwise the whole
-// schema stays unpublished (fail closed) and consumers fall back.
-inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, EntityId entity, const StructTypeInfo& struct_info) {
+// Publish a completed class's constructor schema keyed by its canonical TypeId
+// (Record or TemplateSpecialization), read from the declaration node so no
+// StructTypeInfo is needed; implicit special members are added to it as well.
+// Constructors whose parameter types do not import structurally are skipped; the
+// schema stays unpublished when none import.
+inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, TypeId type, const StructDeclarationNode& struct_decl) {
 	struct PendingConstructor {
 		std::vector<TypeId> parameter_types;
 		CanonicalRecordFunctionFlags flags = CanonicalRecordFunctionFlags::None;
 		bool is_noexcept = false;
 	};
 	std::vector<PendingConstructor> pending;
-	pending.reserve(struct_info.member_functions.size());
-	for (const StructMemberFunction& member : struct_info.member_functions) {
-		if (!member.is_constructor || !member.function_decl.is<ConstructorDeclarationNode>()) {
+	pending.reserve(struct_decl.member_functions().size());
+	for (const StructMemberFunctionDecl& member : struct_decl.member_functions()) {
+		if (!member.is_constructor || !member.function_declaration.is<ConstructorDeclarationNode>()) {
 			continue;
 		}
-		const ConstructorDeclarationNode& constructor = member.function_decl.as<ConstructorDeclarationNode>();
+		const ConstructorDeclarationNode& constructor = member.function_declaration.as<ConstructorDeclarationNode>();
 		PendingConstructor entry;
 		entry.parameter_types.reserve(constructor.parameter_nodes().size());
 		bool importable = true;
@@ -1715,7 +1717,7 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Ent
 			.is_noexcept = entry.is_noexcept,
 		});
 	}
-	table.publishRecordConstructors(entity, constructors);
+	table.publishRecordConstructors(type, constructors);
 	return true;
 }
 
