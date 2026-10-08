@@ -2200,6 +2200,14 @@ TypeTraitResult evaluateRecordConstructibleFromArgs(
 				? TypeTraitResult::success_true()
 				: TypeTraitResult::success_false();
 		}
+		if (selected != nullptr) {
+			// An implicit or defaulted selection is a copy or move, so its
+			// exception specification derives from the subobjects.
+			const bool prefer_move = !arguments.empty() && arguments.front().is_rvalue_reference();
+			return recordNothrowCopyOrMoveConstruction(struct_info, prefer_move)
+				? TypeTraitResult::success_true()
+				: TypeTraitResult::success_false();
+		}
 	}
 	if (kind == TypeTraitKind::IsTriviallyConstructible) {
 		const ConstructorDeclarationNode* selected = ctor_resolution.selected_overload;
