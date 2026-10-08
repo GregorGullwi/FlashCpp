@@ -3447,7 +3447,10 @@ inline std::optional<ConversionPlan> tryBuildCanonicalConversionFunctionTailPlan
 				const std::optional<DerivedBaseConversionKind> base_conversion =
 					classifyCanonicalDerivedBaseConversion(table, source, target);
 				if (base_conversion == DerivedBaseConversionKind::UniquePublicNonVirtual ||
-					base_conversion == DerivedBaseConversionKind::PublicVirtual) {
+					base_conversion == DerivedBaseConversionKind::PublicVirtual ||
+					base_conversion == DerivedBaseConversionKind::Inaccessible) {
+					// [class.access.general] applies accessibility after overload
+					// selection, so inaccessible base paths still rank as conversions.
 					return ConversionPlan{ConversionRank::Conversion,
 						StandardConversionKind::DerivedToBase, true};
 				}
