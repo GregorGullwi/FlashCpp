@@ -182,6 +182,13 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
   reference, member-pointer) remains open.
 - The compatibility `TypeTraitEval::isSigned`/`isUnsigned` adapters are
   unexercised; a regression forcing an unimportable operand through them is owed.
+- The canonical record constructor schema is published for a completed record
+  independently of the field schema. It stays unpublished (consumers fall back to
+  `StructTypeInfo`) when a constructor parameter type does not import
+  structurally; the field schema itself is still unpublished for anonymous-union
+  and unimportable-member records, and class-template specializations do not yet
+  publish either schema. These are canonical-importer gaps, not language rules,
+  and seed the constructor/member-function schema migration.
 
 ## Other open boundaries
 
