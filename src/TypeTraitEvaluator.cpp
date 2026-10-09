@@ -2335,6 +2335,10 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 		return TypeTraitResult::success_true();
 	}
 	if (kind == TypeTraitKind::IsNothrowConstructible) {
+		if (hasCanonicalRecordFunctionFlag(selected.flags, CanonicalRecordFunctionFlags::Implicit) ||
+			hasCanonicalRecordFunctionFlag(selected.flags, CanonicalRecordFunctionFlags::ExplicitlyDefaulted)) {
+			return std::nullopt;
+		}
 		return selected.is_noexcept != 0 ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
 	}
 	if (kind == TypeTraitKind::IsTriviallyConstructible) {
@@ -2343,11 +2347,7 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 		if (!is_implicit_or_defaulted) {
 			return TypeTraitResult::success_false();
 		}
-		if (!table.hasRecordProperties(imported.type)) {
-			return std::nullopt;
-		}
-		const CanonicalRecordFacts facts = table.recordProperties(imported.type).facts;
-		return hasCanonicalRecordFact(facts, CanonicalRecordFacts::TriviallyCopyable) ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
+		return std::nullopt;
 	}
 	throw InternalError("canonical constructibility: unexpected trait kind");
 }
