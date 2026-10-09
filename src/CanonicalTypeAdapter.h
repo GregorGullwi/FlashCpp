@@ -1671,7 +1671,8 @@ inline bool tryPublishCanonicalRecordProperties(
 // StructTypeInfo is needed; implicit special members are added to it as well.
 // Constructors whose parameter types do not import structurally are skipped; the
 // schema stays unpublished when none import.
-inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, TypeId type, const StructDeclarationNode& struct_decl) {
+inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, TypeId type, const StructDeclarationNode& struct_decl,
+	bool has_deleted_constructor) {
 	struct PendingConstructor {
 		std::vector<TypeId> parameter_types;
 		CanonicalRecordFunctionFlags flags = CanonicalRecordFunctionFlags::None;
@@ -1679,6 +1680,7 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 	};
 	std::vector<PendingConstructor> pending;
 	pending.reserve(struct_decl.member_functions().size());
+	bool has_incomplete_candidates = has_deleted_constructor;
 	for (const StructMemberFunctionDecl& member : struct_decl.member_functions()) {
 		if (!member.is_constructor || !member.function_declaration.is<ConstructorDeclarationNode>()) {
 			continue;
@@ -1686,6 +1688,9 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 		const ConstructorDeclarationNode& constructor = member.function_declaration.as<ConstructorDeclarationNode>();
 		PendingConstructor entry;
 		entry.parameter_types.reserve(constructor.parameter_nodes().size());
+		if (member.access != AccessSpecifier::Public) {
+			entry.flags = entry.flags | CanonicalRecordFunctionFlags::NonPublic;
+		}
 		bool importable = true;
 		for (const ASTNode& parameter : constructor.parameter_nodes()) {
 			if (!parameter.is<DeclarationNode>()) {
@@ -1702,6 +1707,7 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 		if (!importable) {
 			// Skip this constructor; a present entry's answer is still sound and
 			// an exact-match miss defers to the compatibility path.
+			has_incomplete_candidates = true;
 			continue;
 		}
 		if (constructor.is_implicit()) {
@@ -1719,9 +1725,13 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 	std::vector<CanonicalRecordConstructorSpec> constructors;
 	constructors.reserve(pending.size());
 	for (const PendingConstructor& entry : pending) {
+		CanonicalRecordFunctionFlags flags = entry.flags;
+		if (has_incomplete_candidates) {
+			flags = flags | CanonicalRecordFunctionFlags::SchemaIncomplete;
+		}
 		constructors.push_back({
 			.parameter_types = std::span<const TypeId>(entry.parameter_types.data(), entry.parameter_types.size()),
-			.flags = entry.flags,
+			.flags = flags,
 			.is_noexcept = entry.is_noexcept,
 		});
 	}
