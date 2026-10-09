@@ -534,6 +534,13 @@ private:
 											CanonicalTypeId expr_type_id,
 											CanonicalTypeId target_type_id,
 											const UserDefinedConversionOperatorSelection& selected_conversion);
+	// static_cast and direct-initialization select a conversion operator for a
+	// class source. Record it on `slot_expression`'s slot so codegen lowers it
+	// without re-running lookup. Unlike an implicit conversion, an explicit
+	// conversion function is eligible.
+	bool tryAnnotateExplicitConversion(const ASTNode& slot_expression,
+									   const ASTNode& source_expression,
+									   const TypeSpecifierNode& target_type);
 	bool tryAnnotateCopyInitConvertingConstructor(const ASTNode& expr_node,
 												  CanonicalTypeId target_type_id,
 												  const char* context_description,

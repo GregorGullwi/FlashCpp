@@ -1552,21 +1552,24 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				ExprResult init_operands = visitVariableInitializer(single_init.as<ExpressionNode>());
 
 					// A class object direct-initializing a scalar invokes a conversion
-					// operator ([dcl.init]); call it rather than storing the object
-					// representation. Direct-initialization may use an explicit operator.
-				if (init_operands.category() == TypeCategory::Struct &&
-					init_operands.type_index.is_valid()) {
-					if (const TypeInfo* source_type_info = tryGetTypeInfo(init_operands.type_index)) {
-						const StructMemberFunction* conv_op = findConversionOperator(
-							source_type_info->getStructInfo(), type_node.type_index(),
-							isExprConstQualified(single_init));
-						if (conv_op != nullptr) {
-							const int target_size = static_cast<int>(type_node.size_in_bits());
-							if (std::optional<ExprResult> converted = emitConversionOperatorCall(
-									init_operands, *source_type_info, *conv_op,
-									type_node.type_index(), target_size, decl.identifier_token());
-								converted.has_value()) {
-								init_operands = *converted;
+					// operator ([dcl.init]); sema recorded the selection on the single
+					// argument, so consume it rather than re-running lookup.
+				if (single_init.is<ExpressionNode>()) {
+					const auto slot = sema_.getSlot(&single_init.as<ExpressionNode>());
+					if (slot.has_value() && slot->has_cast()) {
+						const ImplicitCastInfo& cast_info = sema_.castInfoTable()[slot->cast_info_index.value - 1];
+						if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
+							cast_info.selected_conversion_function != nullptr) {
+							const TypeIndex source_type_index = sema_.typeContext().get(cast_info.source_type_id).type_index;
+							const TypeInfo* source_type_info = source_type_index.is_valid() ? tryGetTypeInfo(source_type_index) : nullptr;
+							if (source_type_info != nullptr) {
+								std::optional<ExprResult> converted = emitSemaSelectedConversionOperatorCall(
+									init_operands, *source_type_info, cast_info,
+									sema_.typeContext().get(cast_info.target_type_id).category(),
+									decl.identifier_token());
+								if (converted.has_value()) {
+									init_operands = *converted;
+								}
 							}
 						}
 					}
