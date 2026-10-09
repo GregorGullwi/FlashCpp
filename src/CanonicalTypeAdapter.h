@@ -1666,6 +1666,42 @@ inline bool tryPublishCanonicalRecordProperties(
 	return true;
 }
 
+inline bool tryPublishCanonicalRecordSubobjectTypes(CanonicalTypeTable& table, TypeId type, const StructTypeInfo& struct_info) {
+	std::vector<TypeId> member_types;
+	member_types.reserve(struct_info.members.size());
+	for (const StructMember& member : struct_info.members) {
+		TypeSpecifierNode syntax(member.type_index, TypeQualifier::None, SizeInBits{static_cast<int>(member.size * 8)}, Token{}, CVQualifier::None);
+		syntax.set_reference_qualifier(member.reference_qualifier);
+		if (member.pointer_depth > 0) {
+			syntax.add_pointer_levels(member.pointer_depth);
+		}
+		if (member.pointee_array_declarator) {
+			syntax.set_pointee_array_declarator(true);
+			if (!member.array_dimensions.empty()) {
+				syntax.set_pointee_array_dimensions(member.array_dimensions);
+			}
+		} else if (member.is_array) {
+			if (!member.array_dimensions.empty()) {
+				syntax.set_array_dimensions(member.array_dimensions);
+			} else {
+				syntax.set_array(true, std::nullopt);
+			}
+		}
+		if (member.function_signature.has_value()) {
+			syntax.set_function_signature(*member.function_signature);
+		}
+		tryBindPublishedTypeEntity(syntax);
+		tryBindPublishedMemberClassEntity(syntax);
+		const std::optional<TypeId> imported = tryImportSupportedCanonical(table, syntax);
+		if (!imported.has_value()) {
+			return false;
+		}
+		member_types.push_back(*imported);
+	}
+	table.publishRecordSubobjectTypes(type, member_types);
+	return true;
+}
+
 // Publish a completed class's constructor schema keyed by its canonical TypeId
 // (Record or TemplateSpecialization), read from the declaration node so no
 // StructTypeInfo is needed; implicit special members are added to it as well.
@@ -1752,14 +1788,10 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 	return true;
 }
 
-inline bool tryPublishCanonicalClassBaseSchema(
-	CanonicalTypeTable& table,
-	TypeId root_type,
-	const StructTypeInfo& root_struct_info) {
+inline bool tryPublishCanonicalClassBaseSchema(CanonicalTypeTable& table, TypeId root_type, const StructTypeInfo& root_struct_info) {
 	const auto is_class_type = [&table](TypeId type) {
 		const CanonicalTypeKind kind = table.node(type).kind;
-		return kind == CanonicalTypeKind::Record ||
-			kind == CanonicalTypeKind::TemplateSpecialization;
+		return kind == CanonicalTypeKind::Record || kind == CanonicalTypeKind::TemplateSpecialization;
 	};
 	if (!root_type || !is_class_type(root_type)) {
 		return false;
@@ -1779,14 +1811,43 @@ inline bool tryPublishCanonicalClassBaseSchema(
 		if (!visited.insert(current.type.value).second) {
 			continue;
 		}
-		if (current.struct_info == nullptr ||
-			!current.struct_info->layout_is_complete ||
-			current.struct_info->has_deferred_base_classes) {
+		if (current.struct_info == nullptr || !current.struct_info->layout_is_complete || current.struct_info->has_deferred_base_classes) {
 			return false;
 		}
-		if (!tryPublishCanonicalRecordProperties(
-				table, current.type, *current.struct_info)) {
+		(void)tryPublishCanonicalRecordSubobjectTypes(table, current.type, *current.struct_info);
+		if (!tryPublishCanonicalRecordProperties(table, current.type, *current.struct_info)) {
 			return false;
+		}
+		if (table.hasRecordSubobjectTypes(current.type)) {
+			const size_t member_count = table.recordSubobjectMemberCount(current.type);
+			if (member_count != current.struct_info->members.size()) {
+				throw InternalError("canonical type: record subobject type schema count mismatch");
+			}
+			for (size_t index = 0; index < member_count; ++index) {
+				const StructMember& member = current.struct_info->members[index];
+				if (member.pointer_depth > 0 || member.is_reference()) {
+					continue;
+				}
+				TypeId member_type = table.recordSubobjectMemberAt(current.type, index);
+				CanonicalTypeNode member_node = table.node(member_type);
+				while (member_node.kind == CanonicalTypeKind::Qualified || member_node.kind == CanonicalTypeKind::Array) {
+					member_type = member_node.child;
+					member_node = table.node(member_type);
+				}
+				if (member_node.kind != CanonicalTypeKind::Record && member_node.kind != CanonicalTypeKind::TemplateSpecialization) {
+					continue;
+				}
+				const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
+				const StructTypeInfo* member_struct_info = member_type_info == nullptr ? nullptr : canonicalClassStructInfoFromTypeInfo(*member_type_info);
+				if (member_struct_info == nullptr) {
+					continue;
+				}
+				const bool has_member_schemas = table.hasRecordProperties(member_type) && table.hasClassBaseSchema(member_type) &&
+					table.hasRecordSubobjectTypes(member_type);
+				if (!has_member_schemas) {
+					worklist.push_back({member_type, member_struct_info});
+				}
+			}
 		}
 		if (table.hasClassBaseSchema(current.type)) {
 			continue;
@@ -1795,18 +1856,15 @@ inline bool tryPublishCanonicalClassBaseSchema(
 		std::vector<CanonicalClassBase> bases;
 		bases.reserve(current.struct_info->base_classes.size());
 		for (const BaseClassSpecifier& base : current.struct_info->base_classes) {
-			if (base.is_deferred || !base.type_index.is_valid() ||
-				base.offset > std::numeric_limits<uint32_t>::max()) {
+			if (base.is_deferred || !base.type_index.is_valid() || base.offset > std::numeric_limits<uint32_t>::max()) {
 				return false;
 			}
 			const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
 			if (base_type_info == nullptr) {
 				return false;
 			}
-			const CanonicalTypeImport imported_base =
-				importCanonicalClassTypeInfo(table, *base_type_info);
-			if (imported_base.status != CanonicalTypeImportStatus::Supported ||
-				!is_class_type(imported_base.type)) {
+			const CanonicalTypeImport imported_base = importCanonicalClassTypeInfo(table, *base_type_info);
+			if (imported_base.status != CanonicalTypeImportStatus::Supported || !is_class_type(imported_base.type)) {
 				return false;
 			}
 

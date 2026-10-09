@@ -318,6 +318,14 @@ enum class CanonicalRecordFacts : uint32_t {
 	DefaultConstructible = 1u << 14,
 	TriviallyDefaultConstructible = 1u << 15,
 	NothrowDefaultConstructible = 1u << 16,
+	DestructorDeleted = 1u << 17,
+	DestructorNonPublic = 1u << 18,
+	DestructorVirtual = 1u << 19,
+	DestructorNonTrivial = 1u << 20,
+	DestructorHasNoexceptSpecifier = 1u << 21,
+	DestructorNoexcept = 1u << 22,
+	TrivialCopyingSpecialMembers = 1u << 23,
+	TrivialDefaultConstructor = 1u << 24,
 };
 
 // Semantic facts that cannot be derived from object layout alone. These are
@@ -703,6 +711,14 @@ public:
 
 	CanonicalClassBase classBaseAt(TypeId class_type, size_t index) const;
 
+	void publishRecordSubobjectTypes(TypeId type, std::span<const TypeId> member_types);
+
+	bool hasRecordSubobjectTypes(TypeId type) const;
+
+	size_t recordSubobjectMemberCount(TypeId type) const;
+
+	TypeId recordSubobjectMemberAt(TypeId type, size_t index) const;
+
 	bool hasRecordFieldSchema(EntityId entity) const;
 
 	CanonicalRecordMember recordMemberAt(EntityId entity, size_t index) const;
@@ -770,6 +786,17 @@ private:
 	};
 	static_assert(sizeof(CanonicalClassBaseSchemaHeader) == 16);
 
+	struct CanonicalRecordSubobjectTypeSchemaHeader {
+		TypeId type;
+		uint32_t member_begin;
+		uint16_t member_count;
+		uint16_t reserved;
+		uint32_t reserved2;
+		friend bool operator==(CanonicalRecordSubobjectTypeSchemaHeader,
+			CanonicalRecordSubobjectTypeSchemaHeader) = default;
+	};
+	static_assert(sizeof(CanonicalRecordSubobjectTypeSchemaHeader) == 16);
+
 	struct CanonicalNamedTypeMemberSchemaHeader {
 		EntityId entity;
 		uint32_t member_begin;
@@ -802,6 +829,8 @@ private:
 		size_t record_base_count;
 		size_t class_base_schema_count;
 		size_t class_base_count;
+		size_t record_subobject_schema_count;
+		size_t record_subobject_member_count;
 		size_t named_type_member_schema_count;
 		size_t named_type_member_count;
 		size_t record_constructor_schema_count;
@@ -956,6 +985,14 @@ private:
 		return class_base_schema_headers_[found->second];
 	}
 
+	CanonicalRecordSubobjectTypeSchemaHeader recordSubobjectTypeSchemaHeaderUnlocked(TypeId type) const {
+		const auto found = record_subobject_type_schema_ids_.find(type.value);
+		if (!type || found == record_subobject_type_schema_ids_.end()) {
+			throw InternalError("canonical type: class has no subobject type schema");
+		}
+		return record_subobject_type_schema_headers_[found->second];
+	}
+
 	bool nameBytesEqualUnlocked(TypeId name_link, std::string_view identifier) const;
 
 	std::optional<TypeId> tryLookupNamedTypeMemberUnlocked(EntityId entity,
@@ -1006,6 +1043,8 @@ private:
 	size_t live_record_base_count_ = 0;
 	size_t live_class_base_schema_count_ = 0;
 	size_t live_class_base_count_ = 0;
+	size_t live_record_subobject_schema_count_ = 0;
+	size_t live_record_subobject_member_count_ = 0;
 	size_t live_named_type_member_schema_count_ = 0;
 	size_t live_named_type_member_count_ = 0;
 	size_t live_record_constructor_schema_count_ = 0;
@@ -1039,6 +1078,10 @@ private:
 	ChunkedVector<CanonicalClassBaseSchemaHeader, 16> class_base_schema_headers_;
 	ChunkedVector<CanonicalClassBase, 16> class_bases_;
 	std::unordered_map<uint32_t, size_t> class_base_schema_ids_;
+	// Subobject walk samples: 16 class headers / 32 direct member TypeIds.
+	ChunkedVector<CanonicalRecordSubobjectTypeSchemaHeader, 16> record_subobject_type_schema_headers_;
+	ChunkedVector<TypeId, 32> record_subobject_member_types_;
+	std::unordered_map<uint32_t, size_t> record_subobject_type_schema_ids_;
 	// Named type-member schema samples: 16 headers / 32 members per chunk until a
 	// production nested-type corpus measures a larger peak.
 	ChunkedVector<CanonicalNamedTypeMemberSchemaHeader, 16> named_type_member_schema_headers_;
