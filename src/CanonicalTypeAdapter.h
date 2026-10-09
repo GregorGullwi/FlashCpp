@@ -1737,15 +1737,31 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 		bool importable = true;
 		for (size_t index = 0; index < constructor.parameter_nodes().size(); ++index) {
 			const ASTNode& parameter = constructor.parameter_nodes()[index];
-			if (!parameter.is<DeclarationNode>()) {
+			const TypeSpecifierNode* parameter_type = nullptr;
+			if (parameter.is<DeclarationNode>()) {
+				const DeclarationNode& declaration = parameter.as<DeclarationNode>();
+				if (declaration.has_default_value() && entry.minimum_parameter_count == parameter_count) {
+					entry.minimum_parameter_count = static_cast<uint16_t>(index);
+				}
+				parameter_type = &declaration.type_specifier_node();
+			} else if (parameter.is<TypeSpecifierNode>()) {
+				parameter_type = &parameter.as<TypeSpecifierNode>();
+			} else {
 				importable = false;
 				break;
 			}
-			const DeclarationNode& declaration = parameter.as<DeclarationNode>();
-			if (declaration.has_default_value() && entry.minimum_parameter_count == parameter_count) {
-				entry.minimum_parameter_count = static_cast<uint16_t>(index);
+			std::optional<TypeId> imported = tryImportSupportedCanonical(table, *parameter_type);
+			if (!imported.has_value() && constructor.is_implicit() && parameter_type->category() == TypeCategory::Struct &&
+				!parameter_type->is_pointer() && (parameter_type->is_lvalue_reference() || parameter_type->is_rvalue_reference())) {
+				TypeId parameter_object = type;
+				if (parameter_type->cv_qualifier() != CVQualifier::None) {
+					parameter_object = table.qualify(parameter_object, parameter_type->cv_qualifier());
+				}
+				const ReferenceQualifier reference_qualifier = parameter_type->is_rvalue_reference()
+					? ReferenceQualifier::RValueReference
+					: ReferenceQualifier::LValueReference;
+				imported = table.reference(parameter_object, reference_qualifier);
 			}
-			const std::optional<TypeId> imported = tryImportSupportedCanonical(table, declaration.type_specifier_node());
 			if (!imported.has_value()) {
 				importable = false;
 				break;
