@@ -152,12 +152,12 @@ Continue boundary 3A in this order.
       type; a class constructor call now consults the record's default
       constructor (zero-argument) or the unique user-provided same-arity
       constructor (argument-bearing), while an ambiguous selection stays
-      conservative; the canonical argument-bearing query answers an exact
-      argument match (constructible and nothrow-constructible) from the class's
-      published constructor schema, which is keyed by canonical `TypeId` and
-      published from the declaration node for both records and class-template
-      specializations (no `StructTypeInfo` at publication), and a
-      fixed-arity candidates with supported canonical standard conversions use
+      conservative; the canonical argument-bearing query uses the class's
+      published constructor schema to answer exact-match viability and selected
+      user-provided constructor exception facts. The schema is keyed by canonical
+      `TypeId` and published from the declaration node for both records and
+      class-template specializations (no `StructTypeInfo` at publication).
+      Fixed-arity candidates with supported canonical standard conversions use
       per-argument conversion ranks. These include builtin conversions,
       supported pointer conversions, same-owner member-pointer conversions, and
       array/function decay. Single-argument builtin-to-builtin scalar
