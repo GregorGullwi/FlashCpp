@@ -6,7 +6,7 @@ authoritative for the design, boundaries, and exit criteria. This file records
 the current boundary state, the remaining work, and the validation contract;
 completed implementation history belongs in git.
 
-Last updated: 2026-10-08.
+Last updated: 2026-10-09.
 
 ## Current state
 
@@ -39,7 +39,8 @@ The architecture the remaining work builds on:
   function-pointer and same-owner member-function-pointer pairs,
   conversion-function member-pointer-to-`bool` tails, public nominal
   derived-to-base tails (including template-specialization bases when their
-  class-base schemas are available), and the member-pointer owner graph.
+  class-base schemas are available), conversion-operator results bound to
+  const lvalue references and rvalue references, and the member-pointer owner graph.
 - `decltype` implements the `[dcl.type.decltype]` value-category rule for
   parenthesized id-expressions, the last comma operand, dereference, member
   access, built-in subscripting, and callable-object calls.
