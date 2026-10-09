@@ -10130,6 +10130,40 @@ bool SemanticAnalysis::annotateSelectedConversionOperator(
 		return false;
 	}
 	const StringHandle conversion_name = selected_conversion.function->decl_node().identifier_token().handle();
+	// [class.access]: accessibility applies after overload ranking selected this
+	// conversion function, so an inaccessible operator is diagnosed here rather
+	// than dropped as a candidate.
+	const Token access_token =
+		FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(expr_node).value_or(Token{});
+	checkMemberAccess(
+		selected_conversion.access,
+		*declaring_struct_info,
+		access_token,
+		conversion_name,
+		false,
+		declaring_struct_info->own_type_index_.value_or(TypeIndex{}),
+		TypeIndex{});
+	if (selected_conversion.trailing_standard_kind == StandardConversionKind::DerivedToBase) {
+		// [class.access.base]: the derived-to-base step of the selected conversion
+		// must itself be accessible. Ranking keeps inaccessible paths viable so
+		// access applies after selection; diagnose an inaccessible base here.
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		const TypeSpecifierNode return_type =
+			selected_conversion.function->decl_node().type_specifier_node();
+		const TypeSpecifierNode target_type = materializeTypeSpecifier(type_context_.get(target_type_id));
+		const CanonicalTypeImport return_import = importCanonicalOverloadNominalType(table, return_type);
+		const CanonicalTypeImport target_import = importCanonicalOverloadNominalType(table, target_type);
+		if (return_import.status == CanonicalTypeImportStatus::Supported &&
+			target_import.status == CanonicalTypeImportStatus::Supported) {
+			tryPublishCanonicalOverloadBaseSchema(table, return_import.type, return_type);
+			tryPublishCanonicalOverloadBaseSchema(table, target_import.type, target_type);
+			const std::optional<DerivedBaseConversionKind> base_conversion =
+				classifyCanonicalDerivedBaseConversion(table, return_import.type, target_import.type);
+			if (base_conversion == DerivedBaseConversionKind::Inaccessible) {
+				throw CompileError("Cannot convert to an inaccessible base class");
+			}
+		}
+	}
 	if (conversion_name.isValid()) {
 		const bool conversion_is_const = hasCVQualifier(selected_conversion.member_cv_qualifier, CVQualifier::Const);
 		LazyMemberInstantiationRegistry::getInstance().markOdrUsed(declaring_struct_info->name, conversion_name, conversion_is_const);

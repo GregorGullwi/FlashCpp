@@ -995,6 +995,7 @@ struct UserDefinedConversionOperatorSelection {
 	StandardConversionKind trailing_standard_kind = StandardConversionKind::None;
 	ConversionRank trailing_standard_rank = ConversionRank::NoMatch;
 	CVQualifier member_cv_qualifier = CVQualifier::None;
+	AccessSpecifier access = AccessSpecifier::Public;
 	bool ambiguous = false;
 };
 
@@ -2954,6 +2955,7 @@ trySelectCanonicalUserDefinedConversionOperator(
 			candidate.trailing_standard_kind = trailing_plan->kind;
 			candidate.trailing_standard_rank = trailing_plan->rank;
 			candidate.member_cv_qualifier = member_function.cv_qualifier;
+			candidate.access = member_function.access;
 			candidates.push_back({candidate, pending_type.depth});
 		}
 		for (const BaseClassSpecifier& base_specifier : struct_info->base_classes) {
