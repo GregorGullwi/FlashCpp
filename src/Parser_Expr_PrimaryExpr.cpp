@@ -950,7 +950,8 @@ ArgumentConversionInfo buildQualifiedMemberFunctionAddressArgumentConversion(
 	const std::optional<ConversionPlan> conversion = parameter_is_reference
 		? tryBuildCanonicalReferenceBindingPlan(
 			  selected_function_type,
-			  canonical_parameter_type)
+			  canonical_parameter_type,
+			  false)
 		: tryBuildCanonicalProjectableConversionPlan(
 			  selected_function_type,
 			  canonical_parameter_type);

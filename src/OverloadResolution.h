@@ -3027,7 +3027,8 @@ trySelectCanonicalUserDefinedConversionOperator(
 // Use canonical TypeIds for reference binding. Value category remains expression
 // metadata; same-shape binding preserves qualification ranking, while supported
 // standard conversions may materialize a temporary for an eligible reference.
-inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
+inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
+	const TypeSpecifierNode& from, const TypeSpecifierNode& to, bool allow_same_record_binding) {
 	const bool to_has_lvalue_reference = to.is_lvalue_reference() ||
 		orderedDeclaratorIsLvalueReference(to);
 	const bool to_has_rvalue_reference = to.is_rvalue_reference() ||
@@ -3091,7 +3092,7 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(const
 	const auto [target_type, target_referent_cv] =
 		stripCanonicalTopCv(table, target_referent);
 	const bool same_record_kind = table.node(source_type).kind == CanonicalTypeKind::Record && table.node(target_type).kind == CanonicalTypeKind::Record;
-	if (same_record_kind && source_type == target_type) {
+	if (!allow_same_record_binding && same_record_kind && source_type == target_type) {
 		// Keep same-record reference ranking on the established path; the
 		// canonical planner is needed here only for a distinct conversion tail.
 		return std::nullopt;
@@ -3247,8 +3248,37 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(const
 			}
 			return pointer_conversion_plan;
 		}
-		if (unqualified_source_node.kind == CanonicalTypeKind::Record &&
-			unqualified_target_node.kind == CanonicalTypeKind::Record) {
+		const bool source_is_nominal_class =
+			unqualified_source_node.kind == CanonicalTypeKind::Record ||
+			unqualified_source_node.kind == CanonicalTypeKind::TemplateSpecialization;
+		const bool target_is_nominal_class =
+			unqualified_target_node.kind == CanonicalTypeKind::Record ||
+			unqualified_target_node.kind == CanonicalTypeKind::TemplateSpecialization;
+		if (source_is_nominal_class && target_is_nominal_class) {
+			std::optional<DerivedBaseConversionKind> base_conversion;
+			if (unqualified_source_node.kind == CanonicalTypeKind::Record &&
+				unqualified_target_node.kind == CanonicalTypeKind::Record) {
+				const EntityId source_entity = table.recordEntity(source_type);
+				const EntityId target_entity = table.recordEntity(target_type);
+				// Resolve the relationship from canonical base edges; do not round-trip
+				// nominal TypeIds through the compatibility TypeIndex registry.
+				base_conversion = classifyCanonicalDerivedBaseConversion(
+					table, source_entity, target_entity);
+			} else {
+				// Template specializations publish their base schema on the class
+				// TypeId. The entity schema used for ordinary records is empty here.
+				tryPublishCanonicalOverloadBaseSchema(table, source_type, from);
+				tryPublishCanonicalOverloadBaseSchema(table, target_type, to);
+				base_conversion = classifyCanonicalDerivedBaseConversion(
+					table, source_type, target_type);
+			}
+			// Unrelated classes are not a reference-binding result. Returning
+			// no-match here would hide a conversion operator that materializes
+			// a temporary for a const lvalue reference or an rvalue reference.
+			if (!base_conversion.has_value() ||
+				*base_conversion == DerivedBaseConversionKind::NotRelated) {
+				return std::nullopt;
+			}
 			if (target_is_rvalue_reference && source_is_lvalue &&
 				!source_is_rvalue) {
 				return ConversionPlan::no_match();
@@ -3256,16 +3286,6 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(const
 			if ((static_cast<uint8_t>(source_referent_cv) &
 				~static_cast<uint8_t>(target_referent_cv)) != 0) {
 				return ConversionPlan::no_match();
-			}
-			const EntityId source_entity = table.recordEntity(source_type);
-			const EntityId target_entity = table.recordEntity(target_type);
-			// Resolve the relationship from canonical base edges; do not round-trip
-			// nominal TypeIds through the compatibility TypeIndex registry.
-			const std::optional<DerivedBaseConversionKind> base_conversion =
-				classifyCanonicalDerivedBaseConversion(
-					table, source_entity, target_entity);
-			if (!base_conversion.has_value()) {
-				return std::nullopt;
 			}
 			if (*base_conversion == DerivedBaseConversionKind::UniquePublicNonVirtual ||
 				*base_conversion == DerivedBaseConversionKind::PublicVirtual) {
@@ -3421,7 +3441,7 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(const
 inline std::optional<ConversionPlan> tryBuildCanonicalConversionFunctionTailPlan(
 	const TypeSpecifierNode& return_type, const TypeSpecifierNode& target_type) {
 	if (target_type.is_reference() || target_type.is_rvalue_reference() || orderedDeclaratorIsReference(target_type)) {
-		return tryBuildCanonicalReferenceBindingPlan(return_type, target_type);
+		return tryBuildCanonicalReferenceBindingPlan(return_type, target_type, true);
 	}
 	if (const std::optional<ConversionPlan> plan =
 			tryBuildCanonicalProjectableConversionPlan(return_type, target_type);
@@ -3635,7 +3655,7 @@ inline ConversionPlan buildConversionPlan(
 	const TypeSpecifierNode& to,
 	const ASTNode* argument_node) {
 	if (const std::optional<ConversionPlan> reference_plan =
-			tryBuildCanonicalReferenceBindingPlan(from, to);
+			tryBuildCanonicalReferenceBindingPlan(from, to, false);
 		reference_plan.has_value()) {
 		return *reference_plan;
 	}
@@ -3962,8 +3982,20 @@ inline ConversionPlan buildConversionPlan(
 					}
 				}
 
-				// Lvalue ref can't bind to rvalue ref parameter, and non-const lvalue refs
-				// can't bind to xvalues of a different reference kind.
+				// A named lvalue does not bind directly to an rvalue reference, but a
+				// conversion operator can produce a prvalue that does. Direct binding
+				// of the original lvalue stays ill-formed.
+				if (to_is_rvalue && !from_is_rvalue && from_base_index.isStruct() && from_base_index.is_valid()) {
+					if (const auto selected_conversion =
+							trySelectCanonicalUserDefinedConversionOperator(
+								from.type_index(), from.cv_qualifier(), to);
+						selected_conversion.has_value()) {
+						if (selected_conversion->ambiguous) {
+							return ConversionPlan::no_match();
+						}
+						return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true, selected_conversion->trailing_standard_rank};
+					}
+				}
 				return ConversionPlan::no_match();
 			} else {
 				// 'from' is not a reference, 'to' is a reference

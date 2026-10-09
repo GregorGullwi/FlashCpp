@@ -3388,6 +3388,18 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 					ValueStorage::ContainsAddress);
 			}
 			return materializeTemporaryAndTakeAddress(*materialized);
+		} else if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
+			from_t == TypeCategory::Struct && cast_info.selected_conversion_function != nullptr) {
+			const TypeInfo* source_type_info = tryGetTypeInfo(from_desc.type_index);
+			if (source_type_info == nullptr) {
+				throw InternalError("User-defined reference binding has no source struct metadata");
+			}
+			std::optional<ExprResult> converted = emitSemaSelectedConversionOperatorCall(
+				arg_result, *source_type_info, cast_info, to_t, source_token);
+			if (!converted.has_value()) {
+				throw InternalError("Failed to lower the user-defined reference binding conversion");
+			}
+			return materializeTemporaryAndTakeAddress(std::move(*converted));
 		}
 		if (from_t == TypeCategory::Enum && from_t != arg_result.typeEnum()) {
 			from_t = arg_result.typeEnum();

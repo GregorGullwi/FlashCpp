@@ -11866,8 +11866,31 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 	}
 
 	const ConversionPlan value_plan = buildConversionPlan(arg_value_type, param_value_type);
-	if (!value_plan.is_valid || value_plan.rank == ConversionRank::UserDefined) {
+	if (!value_plan.is_valid) {
 		return std::nullopt;
+	}
+	if (value_plan.rank == ConversionRank::UserDefined) {
+		// A user-defined conversion materializes a temporary from the conversion
+		// result and binds the reference to it; record the selected operator so
+		// codegen lowers the conversion before materializing the temporary.
+		const auto selected_conversion =
+			trySelectCanonicalUserDefinedConversionOperator(
+				arg_value_type.type_index(), arg_value_type.cv_qualifier(), param_value_type);
+		if (!selected_conversion.has_value() || selected_conversion->ambiguous ||
+			selected_conversion->function == nullptr) {
+			return std::nullopt;
+		}
+		ImplicitCastInfo cast_info;
+		cast_info.source_type_id = arg_value_type_id;
+		cast_info.target_type_id = param_value_type_id;
+		cast_info.cast_kind = StandardConversionKind::UserDefined;
+		cast_info.value_category_after = ValueCategory::PRValue;
+		cast_info.selected_conversion_function = selected_conversion->function;
+		cast_info.trailing_standard_conversion = selected_conversion->trailing_standard_kind;
+		info.pre_bind_cast_info_index = allocateCastInfo(cast_info);
+		info.flags = ConversionPlanFlags::IsValid | ConversionPlanFlags::IsUserDefined |
+			ConversionPlanFlags::MaterializesTemporary;
+		return info;
 	}
 	const bool source_and_target_are_reference_related =
 		value_plan.kind == StandardConversionKind::None ||

@@ -3863,7 +3863,7 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 		bool compatible = false;
 		if (source_type->is_array()) {
 			const std::optional<ConversionPlan> binding_plan =
-				tryBuildCanonicalReferenceBindingPlan(*source_type, target_type);
+				tryBuildCanonicalReferenceBindingPlan(*source_type, target_type, false);
 			if (!binding_plan.has_value()) {
 				throw InternalError(
 					"reference-to-array NTTP compatibility has no canonical binding result");
