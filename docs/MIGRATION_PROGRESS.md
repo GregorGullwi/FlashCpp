@@ -161,10 +161,11 @@ Continue boundary 3A in this order.
       per-argument conversion ranks. These include builtin conversions,
       supported pointer conversions, same-owner member-pointer conversions, and
       array/function decay. Single-argument builtin-to-builtin scalar
-      construction also uses the canonical planner, with `nullptr_t` to `bool`
-      handled as direct initialization. References, enums, dependent or nominal
-      conversion tails, and user-defined conversion shapes defer to
-      compatibility resolution; variadic candidates and other record
+      construction also uses the canonical planner; supported pointer and
+      member-pointer scalar conversions use it as well, and `nullptr_t` to
+      `bool` is handled as direct initialization. References, enums, dependent
+      or nominal conversion tails, callable mismatches, and user-defined
+      conversion shapes defer to compatibility resolution; variadic candidates and other record
       conversion shapes use constructor overload resolution to read the
       selected user-provided constructor's exception specification. The triviality
       variant reads the selected constructor (user-provided is non-trivial; an

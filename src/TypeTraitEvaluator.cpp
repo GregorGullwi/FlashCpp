@@ -2178,7 +2178,26 @@ bool constructibleFromArgument(
 	return can_convert_type(arg, target).is_valid;
 }
 
-static std::optional<TypeTraitResult> tryEvaluateCanonicalBuiltinConstructionFromArgument(
+static bool containsUnresolvedConversionType(const CanonicalTypeTable& table, TypeId type) {
+	for (;;) {
+		const CanonicalTypeNode node = table.node(type);
+		switch (node.kind) {
+		case CanonicalTypeKind::Qualified:
+		case CanonicalTypeKind::LValueReference:
+		case CanonicalTypeKind::RValueReference:
+		case CanonicalTypeKind::Pointer:
+		case CanonicalTypeKind::Array:
+			type = node.child;
+			break;
+		case CanonicalTypeKind::Builtin:
+			return false;
+		default:
+			return true;
+		}
+	}
+}
+
+static std::optional<TypeTraitResult> tryEvaluateCanonicalScalarConstructionFromArgument(
 	const TypeSpecifierNode& target, const TypeSpecifierNode& argument) {
 	if (target.is_reference()) {
 		return std::nullopt;
@@ -2201,19 +2220,22 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalBuiltinConstructionFro
 	}
 	const TypeId source_base = table.withoutTopLevelQualifiers(source_type);
 	const TypeId target_base = table.withoutTopLevelQualifiers(imported_target.type);
-	if (table.node(source_base).kind != CanonicalTypeKind::Builtin || table.node(target_base).kind != CanonicalTypeKind::Builtin) {
-		return std::nullopt;
-	}
-	if (table.node(source_base).builtin == CanonicalBuiltinKind::Nullptr &&
+	if (table.node(source_base).kind == CanonicalTypeKind::Builtin &&
+		table.node(target_base).kind == CanonicalTypeKind::Builtin &&
+		table.node(source_base).builtin == CanonicalBuiltinKind::Nullptr &&
 		table.node(target_base).builtin == CanonicalBuiltinKind::Bool) {
 		return TypeTraitResult::success_true();
 	}
 	const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, *imported_argument, imported_target.type);
-	if (!conversion.is_valid) {
-		return TypeTraitResult::success_false();
+	if (conversion.is_valid) {
+		// A valid standard scalar conversion is trivial and cannot throw.
+		return TypeTraitResult::success_true();
 	}
-	// Builtin initialization performs no constructor call and cannot throw.
-	return TypeTraitResult::success_true();
+	if (containsUnresolvedConversionType(table, *imported_argument) ||
+		containsUnresolvedConversionType(table, imported_target.type)) {
+		return std::nullopt;
+	}
+	return TypeTraitResult::success_false();
 }
 
 // Shared record branch of the argument-bearing constructibility query. The
@@ -2322,24 +2344,6 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 			kind == CanonicalTypeKind::DependentName || kind == CanonicalTypeKind::DependentTemplateMember ||
 			kind == CanonicalTypeKind::DependentMemberAlias;
 	};
-	const auto containsUnresolvedConversionType = [&table](TypeId type) {
-		for (;;) {
-			const CanonicalTypeNode node = table.node(type);
-			switch (node.kind) {
-			case CanonicalTypeKind::Qualified:
-			case CanonicalTypeKind::LValueReference:
-			case CanonicalTypeKind::RValueReference:
-			case CanonicalTypeKind::Pointer:
-			case CanonicalTypeKind::Array:
-				type = node.child;
-				break;
-			case CanonicalTypeKind::Builtin:
-				return false;
-			default:
-				return true;
-			}
-		}
-	};
 	for (size_t index = 0; index < constructor_count; ++index) {
 		const CanonicalRecordConstructor constructor = table.recordConstructorAt(imported.type, index);
 		if (constructor.parameter_count != argument_types.size()) {
@@ -2368,8 +2372,8 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 			}
 			const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, argument_types[parameter], parameter_type);
 			if (!conversion.is_valid) {
-				if (containsUnresolvedConversionType(argument_types[parameter]) ||
-					containsUnresolvedConversionType(parameter_type)) {
+				if (containsUnresolvedConversionType(table, argument_types[parameter]) ||
+					containsUnresolvedConversionType(table, parameter_type)) {
 					return std::nullopt;
 				}
 				matches = false;
@@ -2437,7 +2441,7 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalConstructibleFromArgs(
 		if (arguments.size() != 1) {
 			return TypeTraitResult::success_false();
 		}
-		const std::optional<TypeTraitResult> canonical = tryEvaluateCanonicalBuiltinConstructionFromArgument(target, arguments.front());
+		const std::optional<TypeTraitResult> canonical = tryEvaluateCanonicalScalarConstructionFromArgument(target, arguments.front());
 		if (canonical.has_value()) {
 			return canonical;
 		}
