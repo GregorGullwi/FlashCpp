@@ -2377,6 +2377,19 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									source_type_info->getStructInfo(), type_node.type_index(),
 									isExprConstQualified(init_node));
 								if (conv_op) {
+									if (conv_op->is_explicit) {
+										// [class.conv.fct]/2: an explicit conversion function
+										// is not viable for a copy-initialization.
+										throw makeStructuredCompileError(
+											context_->diagnostics(),
+											DiagnosticId::ExplicitConversionFunctionCopyInitialization,
+											DiagnosticSeverity::Error,
+											SourceLocation::fromToken(decl.identifier_token()),
+											"conversion function '" +
+												std::string(StringTable::getStringView(conv_op->getName())) +
+												"' is explicit and cannot be used for copy-initialization",
+											{});
+									}
 									throw InternalError(
 										"Codegen-side var-init conversion-operator fallback should not run: "
 										"sema must annotate struct-to-primitive variable initialization conversions");

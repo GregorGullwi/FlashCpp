@@ -4293,6 +4293,11 @@ public:
 	void set_is_consteval(bool is_consteval) { is_consteval_ = is_consteval; }
 	bool is_consteval() const { return is_consteval_; }
 
+	// explicit specifier for conversion functions: an explicit conversion
+	// function is not viable for an implicit conversion ([class.conv.fct]/2).
+	void set_is_explicit(bool is_explicit) { is_explicit_ = is_explicit; }
+	bool is_explicit() const { return is_explicit_; }
+
 	// noexcept support
 	void set_noexcept(bool is_noexcept) { is_noexcept_ = is_noexcept; }
 	bool is_noexcept() const { return is_noexcept_; }
@@ -4432,6 +4437,7 @@ private:
 	bool is_constinit_;
 	bool is_consteval_;
 	bool is_noexcept_ = false;  // True if function is declared noexcept
+	bool is_explicit_ = false;  // True for an explicit conversion function
 	bool is_deleted_ = false;  // True if function is declared = delete
 	bool is_template_pattern_ = false;  // True for uninstantiated template pattern function nodes
 	bool is_static_ = false;	 // True if function is a static member function (no 'this' pointer)

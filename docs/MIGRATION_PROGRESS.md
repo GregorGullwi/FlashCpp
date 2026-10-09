@@ -83,9 +83,12 @@ Continue boundary 3A in this order.
    The ordered canonical planner handles supported non-nominal tails. Array
    and callable outer wrappers stay guarded where their consumers are not
    migrated.
-   `FunctionDeclarationNode` does not yet retain an `explicit` specifier for
-   conversion functions, so implicit viability of explicit conversion functions
-   remains a separate parser/sema gap.
+   `FunctionDeclarationNode` now retains the `explicit` specifier for conversion
+   functions, so an explicit conversion function is excluded from implicit
+   viability (an argument or copy-initialization no longer selects it) while a
+   `static_cast` or direct-initialization still considers it. Lowering an explicit
+   conversion through `static_cast` or direct-initialization still yields a
+   garbage value (a separate codegen gap recorded in KNOWN_ISSUES).
 
 2. **Migrate remaining flat consumers.**
    1. **The constructibility family.** The zero-argument variants and published
