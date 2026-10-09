@@ -157,15 +157,16 @@ Continue boundary 3A in this order.
       published constructor schema, which is keyed by canonical `TypeId` and
       published from the declaration node for both records and class-template
       specializations (no `StructTypeInfo` at publication), and a
-      fixed-arity candidates with builtin argument-to-parameter conversions are
-      also ranked by per-argument standard-conversion rank from a complete
-      canonical constructor schema; single-argument builtin-to-builtin scalar
+      fixed-arity candidates with supported canonical standard conversions use
+      per-argument conversion ranks. These include builtin conversions,
+      supported pointer conversions, same-owner member-pointer conversions, and
+      array/function decay. Single-argument builtin-to-builtin scalar
       construction also uses the canonical planner, with `nullptr_t` to `bool`
-      handled as direct initialization. Pointer, enum, reference, and
-      user-defined conversion shapes still use the compatibility conversion
-      path, while variadic candidates and other record conversion shapes still
-      use constructor overload resolution to read the selected user-provided
-      constructor's exception specification. The triviality
+      handled as direct initialization. References, enums, dependent or nominal
+      conversion tails, and user-defined conversion shapes defer to
+      compatibility resolution; variadic candidates and other record
+      conversion shapes use constructor overload resolution to read the
+      selected user-provided constructor's exception specification. The triviality
       variant reads the selected constructor (user-provided is non-trivial; an
       implicit/defaulted copy or move is trivial exactly when the class is
       trivially copyable), and an
