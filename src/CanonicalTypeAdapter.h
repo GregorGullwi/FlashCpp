@@ -1677,6 +1677,7 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 		std::vector<TypeId> parameter_types;
 		CanonicalRecordFunctionFlags flags = CanonicalRecordFunctionFlags::None;
 		bool is_noexcept = false;
+		uint16_t minimum_parameter_count = 0;
 	};
 	std::vector<PendingConstructor> pending;
 	pending.reserve(struct_decl.member_functions().size());
@@ -1686,18 +1687,29 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 			continue;
 		}
 		const ConstructorDeclarationNode& constructor = member.function_declaration.as<ConstructorDeclarationNode>();
+		if (constructor.parameter_nodes().size() > std::numeric_limits<uint16_t>::max()) {
+			has_incomplete_candidates = true;
+			continue;
+		}
 		PendingConstructor entry;
 		entry.parameter_types.reserve(constructor.parameter_nodes().size());
+		const uint16_t parameter_count = static_cast<uint16_t>(constructor.parameter_nodes().size());
+		entry.minimum_parameter_count = parameter_count;
 		if (member.access != AccessSpecifier::Public) {
 			entry.flags = entry.flags | CanonicalRecordFunctionFlags::NonPublic;
 		}
 		bool importable = true;
-		for (const ASTNode& parameter : constructor.parameter_nodes()) {
+		for (size_t index = 0; index < constructor.parameter_nodes().size(); ++index) {
+			const ASTNode& parameter = constructor.parameter_nodes()[index];
 			if (!parameter.is<DeclarationNode>()) {
 				importable = false;
 				break;
 			}
-			const std::optional<TypeId> imported = tryImportSupportedCanonical(table, parameter.as<DeclarationNode>().type_specifier_node());
+			const DeclarationNode& declaration = parameter.as<DeclarationNode>();
+			if (declaration.has_default_value() && entry.minimum_parameter_count == parameter_count) {
+				entry.minimum_parameter_count = static_cast<uint16_t>(index);
+			}
+			const std::optional<TypeId> imported = tryImportSupportedCanonical(table, declaration.type_specifier_node());
 			if (!imported.has_value()) {
 				importable = false;
 				break;
@@ -1733,6 +1745,7 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 			.parameter_types = std::span<const TypeId>(entry.parameter_types.data(), entry.parameter_types.size()),
 			.flags = flags,
 			.is_noexcept = entry.is_noexcept,
+			.minimum_parameter_count = entry.minimum_parameter_count,
 		});
 	}
 	table.publishRecordConstructors(type, constructors);

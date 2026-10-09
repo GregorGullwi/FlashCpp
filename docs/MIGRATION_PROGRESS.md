@@ -167,7 +167,10 @@ Continue boundary 3A in this order.
       or nominal conversion tails, callable mismatches, and user-defined
       conversion shapes defer to compatibility resolution; variadic candidates and other record
       conversion shapes use constructor overload resolution to read the
-      selected user-provided constructor's exception specification. The triviality
+      selected user-provided constructor's exception specification. The schema
+      records trailing default-argument arity, so canonical viability accepts
+      those calls; nothrow queries with omitted arguments defer because the
+      default expression's exception behavior is not published. The triviality
       variant reads the selected constructor (user-provided is non-trivial; an
       implicit/defaulted copy or move is trivial exactly when the class is
       trivially copyable), and an
