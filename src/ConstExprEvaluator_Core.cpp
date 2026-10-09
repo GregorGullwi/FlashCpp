@@ -3491,10 +3491,20 @@ EvalResult Evaluator::evaluate_static_cast(const StaticCastNode& cast_node, Eval
 	}
 
 	if (auto source_type = tryGetExpressionType(result, cast_node.expr(), context);
-		source_type.has_value() &&
-		typesMatchIgnoringCvAndRef(type_spec, *source_type)) {
-		maybe_set_exact_type(result, type_spec);
-		return result;
+		source_type.has_value()) {
+		if (typesMatchIgnoringCvAndRef(type_spec, *source_type)) {
+			maybe_set_exact_type(result, type_spec);
+			return result;
+		}
+		// A class-to-scalar/enum/pointer static_cast is a user-defined conversion.
+		// This evaluator does not fold conversion operators, so report the operand
+		// as non-constant and let expression lowering call the selected operator.
+		if (source_type->category() == TypeCategory::Struct &&
+			type_spec.category() != TypeCategory::Struct) {
+			return EvalResult::error(
+				"class-type static_cast is not a constant expression",
+				EvalErrorType::NotConstantExpression);
+		}
 	}
 
 	return convertEvalResultToTargetType(type_spec, result, "Unsupported type in static_cast for constant evaluation");

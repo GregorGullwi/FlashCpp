@@ -1,22 +1,5 @@
 # Known Issues
 
-## Explicit conversion operators are not lowered through static_cast or direct-initialization
-
-A `static_cast` or direct-initialization that selects an explicit conversion
-operator compiles but produces a garbage value instead of calling the operator:
-
-```cpp
-struct S { explicit operator int() const { return 7; } };
-int main() { return static_cast<int>(S{}); }  // returns garbage, not 7
-```
-
-The value is read from the object representation rather than from the selected
-conversion function. This predates and is independent of the viability change
-that excludes explicit conversion functions from implicit conversions;
-`tests/test_explicit_conversion_function_copy_init_e1509.cpp` and
-`tests/test_explicit_conversion_function_argument_e1704.cpp` cover only the
-implicit-vs-explicit selection, not this lowering.
-
 ## Missing-return detection is a heuristic, not a control-flow diagnostic
 
 A value-returning function that flows off its end — for example a user-declared
