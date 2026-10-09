@@ -10116,6 +10116,45 @@ static bool structHasConversionOperatorTo(
 
 // --- Core conversion annotation helper ---
 
+bool SemanticAnalysis::annotateSelectedConversionOperator(
+	const ASTNode& expr_node,
+	CanonicalTypeId expr_type_id,
+	CanonicalTypeId target_type_id,
+	const UserDefinedConversionOperatorSelection& selected_conversion) {
+	if (selected_conversion.function == nullptr) {
+		return false;
+	}
+	const TypeInfo* const declaring_type_info = tryGetTypeInfo(selected_conversion.declaring_type_index);
+	const StructTypeInfo* const declaring_struct_info = declaring_type_info != nullptr ? declaring_type_info->getStructInfo() : nullptr;
+	if (declaring_struct_info == nullptr || !declaring_struct_info->name.isValid()) {
+		return false;
+	}
+	const StringHandle conversion_name = selected_conversion.function->decl_node().identifier_token().handle();
+	if (conversion_name.isValid()) {
+		const bool conversion_is_const = hasCVQualifier(selected_conversion.member_cv_qualifier, CVQualifier::Const);
+		LazyMemberInstantiationRegistry::getInstance().markOdrUsed(declaring_struct_info->name, conversion_name, conversion_is_const);
+		LazyMemberInstantiationRegistry::getInstance().markOdrUsedAllInClass(declaring_struct_info->name);
+	}
+	if (selected_conversion.function->needs_body_materialization()) {
+		ensureMemberFunctionMaterialized(declaring_struct_info->name, *selected_conversion.function);
+	}
+	ImplicitCastInfo cast_info;
+	cast_info.source_type_id = expr_type_id;
+	cast_info.target_type_id = target_type_id;
+	cast_info.cast_kind = StandardConversionKind::UserDefined;
+	cast_info.value_category_after = ValueCategory::PRValue;
+	cast_info.selected_conversion_function = selected_conversion.function;
+	cast_info.trailing_standard_conversion = selected_conversion.trailing_standard_kind;
+	const CastInfoIndex idx = allocateCastInfo(cast_info);
+	SemanticSlot slot;
+	slot.type_id = target_type_id;
+	slot.cast_info_index = idx;
+	slot.value_category = ValueCategory::PRValue;
+	setSlot(getExpressionKey(expr_node), slot);
+	stats_.slots_filled++;
+	return true;
+}
+
 bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 											 CanonicalTypeId target_type_id,
 											 CanonicalTypeId expr_type_id) {
@@ -10367,8 +10406,17 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
 			throw CompileError("Cannot convert to an inaccessible base class");
 		if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
-			base_conversion.kind != DerivedBaseConversionKind::PublicVirtual)
+			base_conversion.kind != DerivedBaseConversionKind::PublicVirtual) {
+			// The source is not a base subobject of the target, but a conversion
+			// operator returning the target (or a class derived from it) is still a
+			// valid user-defined conversion, possibly with a derived-to-base tail.
+			const TypeSpecifierNode nominal_target = materializeTypeSpecifier(to_desc);
+			const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(from_desc.type_index, from_desc.base_cv, nominal_target);
+			if (selected_conversion.has_value() && !selected_conversion->ambiguous) {
+				return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
+			}
 			return false;
+		}
 
 		// Reference conversions do not construct a new Base object, so the
 		// selected offset is consumed by reference binding in codegen.
@@ -10407,52 +10455,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 				from_desc.base_cv,
 				target_type);
 		if (selected_conversion.has_value() && !selected_conversion->ambiguous) {
-			const TypeInfo* const declaring_type_info =
-				tryGetTypeInfo(selected_conversion->declaring_type_index);
-			const StructTypeInfo* const declaring_struct_info =
-				declaring_type_info != nullptr
-					? declaring_type_info->getStructInfo()
-					: nullptr;
-			if (declaring_struct_info == nullptr ||
-				!declaring_struct_info->name.isValid() ||
-				selected_conversion->function == nullptr) {
-				return false;
-			}
-			const StringHandle conversion_name =
-				selected_conversion->function->decl_node().identifier_token().handle();
-			if (conversion_name.isValid()) {
-				const bool conversion_is_const = hasCVQualifier(
-					selected_conversion->member_cv_qualifier,
-					CVQualifier::Const);
-				LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
-					declaring_struct_info->name,
-					conversion_name,
-					conversion_is_const);
-				LazyMemberInstantiationRegistry::getInstance().markOdrUsedAllInClass(
-					declaring_struct_info->name);
-			}
-			if (selected_conversion->function->needs_body_materialization()) {
-				ensureMemberFunctionMaterialized(
-					declaring_struct_info->name,
-					*selected_conversion->function);
-			}
-
-			ImplicitCastInfo cast_info;
-			cast_info.source_type_id = expr_type_id;
-			cast_info.target_type_id = target_type_id;
-			cast_info.cast_kind = StandardConversionKind::UserDefined;
-			cast_info.value_category_after = ValueCategory::PRValue;
-			cast_info.selected_conversion_function = selected_conversion->function;
-			cast_info.trailing_standard_conversion =
-				selected_conversion->trailing_standard_kind;
-			const CastInfoIndex idx = allocateCastInfo(cast_info);
-			SemanticSlot slot;
-			slot.type_id = target_type_id;
-			slot.cast_info_index = idx;
-			slot.value_category = ValueCategory::PRValue;
-			setSlot(getExpressionKey(expr_node), slot);
-			stats_.slots_filled++;
-			return true;
+			return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
 		}
 		if (selected_conversion.has_value() && selected_conversion->ambiguous) {
 			return false;
@@ -11936,6 +11939,21 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 			param_value_type.set_reference_qualifier(ReferenceQualifier::None);
 			const ConversionPlan plan =
 				buildConversionPlan(arg_value_type, param_value_type);
+			// A user-defined conversion (conversion operator, possibly followed by a
+			// derived-to-base tail) must be recorded with the selected function so
+			// codegen can lower it. Select against the real parameter node, which still
+			// carries a member-pointer signature that a reconstructed type would lose.
+			if (plan.is_valid &&
+				plan.rank == ConversionRank::UserDefined &&
+				arg_type_id &&
+				arg_value_type.type_index().is_valid()) {
+				const auto selected_conversion =
+					trySelectCanonicalUserDefinedConversionOperator(arg_value_type.type_index(), arg_value_type.cv_qualifier(), param_value_type);
+				if (selected_conversion.has_value() && !selected_conversion->ambiguous &&
+					annotateSelectedConversionOperator(arg, arg_type_id, param_type_id, *selected_conversion)) {
+					return;
+				}
+			}
 			if (plan.is_valid &&
 				plan.rank != ConversionRank::UserDefined &&
 				plan.kind != StandardConversionKind::None) {
