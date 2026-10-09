@@ -159,9 +159,13 @@ Continue boundary 3A in this order.
       specializations (no `StructTypeInfo` at publication), and a
       fixed-arity candidates with builtin argument-to-parameter conversions are
       also ranked by per-argument standard-conversion rank from a complete
-      canonical constructor schema; variadic candidates and other conversion
-      shapes still use constructor overload resolution to read the selected
-      user-provided constructor's exception specification. The triviality
+      canonical constructor schema; single-argument builtin-to-builtin scalar
+      construction also uses the canonical planner, with `nullptr_t` to `bool`
+      handled as direct initialization. Pointer, enum, reference, and
+      user-defined conversion shapes still use the compatibility conversion
+      path, while variadic candidates and other record conversion shapes still
+      use constructor overload resolution to read the selected user-provided
+      constructor's exception specification. The triviality
       variant reads the selected constructor (user-provided is non-trivial; an
       implicit/defaulted copy or move is trivial exactly when the class is
       trivially copyable), and an

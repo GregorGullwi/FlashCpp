@@ -2178,6 +2178,44 @@ bool constructibleFromArgument(
 	return can_convert_type(arg, target).is_valid;
 }
 
+static std::optional<TypeTraitResult> tryEvaluateCanonicalBuiltinConstructionFromArgument(
+	const TypeSpecifierNode& target, const TypeSpecifierNode& argument) {
+	if (target.is_reference()) {
+		return std::nullopt;
+	}
+	FrontendContext* context = FrontendContext::active();
+	if (context == nullptr) {
+		return std::nullopt;
+	}
+	CanonicalTypeTable& table = context->canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalTypeImport imported_target = importCanonicalTraitOperand(table, target);
+	const std::optional<TypeId> imported_argument = tryImportSupportedCanonical(table, argument);
+	if (imported_target.status != CanonicalTypeImportStatus::Supported || !imported_argument.has_value()) {
+		return std::nullopt;
+	}
+	TypeId source_type = *imported_argument;
+	while (table.node(source_type).kind == CanonicalTypeKind::LValueReference ||
+		table.node(source_type).kind == CanonicalTypeKind::RValueReference) {
+		source_type = table.node(source_type).child;
+	}
+	const TypeId source_base = table.withoutTopLevelQualifiers(source_type);
+	const TypeId target_base = table.withoutTopLevelQualifiers(imported_target.type);
+	if (table.node(source_base).kind != CanonicalTypeKind::Builtin || table.node(target_base).kind != CanonicalTypeKind::Builtin) {
+		return std::nullopt;
+	}
+	if (table.node(source_base).builtin == CanonicalBuiltinKind::Nullptr &&
+		table.node(target_base).builtin == CanonicalBuiltinKind::Bool) {
+		return TypeTraitResult::success_true();
+	}
+	const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, *imported_argument, imported_target.type);
+	if (!conversion.is_valid) {
+		return TypeTraitResult::success_false();
+	}
+	// Builtin initialization performs no constructor call and cannot throw.
+	return TypeTraitResult::success_true();
+}
+
 // Shared record branch of the argument-bearing constructibility query. The
 // caller supplies the already-resolved argument types; a record target is
 // constructible when constructor-overload resolution finds a match, with the
@@ -2366,6 +2404,10 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalConstructibleFromArgs(
 	if (target.is_reference() || TypeTraitEval::isScalarType(target.category(), target.is_reference(), target.pointer_depth())) {
 		if (arguments.size() != 1) {
 			return TypeTraitResult::success_false();
+		}
+		const std::optional<TypeTraitResult> canonical = tryEvaluateCanonicalBuiltinConstructionFromArgument(target, arguments.front());
+		if (canonical.has_value()) {
+			return canonical;
 		}
 		return constructibleFromArgument(target, arguments.front()) ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
 	}
