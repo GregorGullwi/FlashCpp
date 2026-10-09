@@ -4040,6 +4040,7 @@ int main() {
 		FrontendContext context;
 		const std::string code =
 			"struct CanonicalTailBase {};\n"
+			"enum CanonicalTailEnum { CanonicalTailEnumValue };\n"
 			"struct CanonicalTailPrivateDerived : private CanonicalTailBase {};\n"
 			"struct CanonicalTailLeft : public CanonicalTailBase {};\n"
 			"struct CanonicalTailRight : public CanonicalTailBase {};\n"
@@ -4052,8 +4053,7 @@ int main() {
 		REQUIRE(!parser.parse().is_error());
 
 		auto find_type_info = [](std::string_view name) -> const TypeInfo& {
-			const auto found = getTypesByNameMap().find(
-				StringTable::getOrInternStringHandle(name));
+			const auto found = getTypesByNameMap().find(StringTable::getOrInternStringHandle(name));
 			if (found == getTypesByNameMap().end()) {
 				throw InternalError("canonical conversion tail test type not found");
 			}
@@ -4079,6 +4079,48 @@ int main() {
 		const std::optional<ConversionPlan> ambiguous_tail_plan = tryBuildCanonicalConversionFunctionTailPlan(ambiguous_derived_type, base_type);
 		REQUIRE(ambiguous_tail_plan.has_value());
 		CHECK_FALSE(ambiguous_tail_plan->is_valid);
+
+		const TypeInfo& enum_type_info = find_type_info("CanonicalTailEnum");
+		TypeSpecifierNode enum_type(enum_type_info.registeredTypeIndex().withCategory(TypeCategory::Enum),
+			enum_type_info.sizeInBits(), Token{}, CVQualifier::None, ReferenceQualifier::None);
+		tryBindPublishedTypeEntity(enum_type);
+		const std::optional<ConversionPlan> enum_tail_plan = tryBuildCanonicalConversionFunctionTailPlan(enum_type, enum_type);
+		REQUIRE(enum_tail_plan.has_value());
+		CHECK(enum_tail_plan->rank == ConversionRank::ExactMatch);
+	}
+
+	TEST_CASE("Sema records reference-qualified conversion operator selection") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		FrontendContext context;
+		const std::string code =
+			"struct ReferenceConversionSource {\n"
+			"  operator int() const { return 42; }\n"
+			"  operator int() { return 43; }\n"
+			"};\n"
+			"int convert_reference_conversion(const ReferenceConversionSource& source) {\n"
+			"  return const_cast<const ReferenceConversionSource&>(source);\n"
+			"}\n";
+		CompileContext test_context;
+		test_context.setInputFile("reference_conversion_selection_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+		sema.run();
+
+		const ImplicitCastInfo* selected_conversion = nullptr;
+		for (const ImplicitCastInfo& cast_info : sema.castInfoTable()) {
+			if (cast_info.cast_kind == StandardConversionKind::UserDefined) {
+				selected_conversion = &cast_info;
+				break;
+			}
+		}
+		REQUIRE(selected_conversion != nullptr);
+		REQUIRE(selected_conversion->selected_conversion_function != nullptr);
+		CHECK(selected_conversion->selected_conversion_function->is_const_member_function());
 	}
 
 	TEST_CASE("Forward-declared published nominal parameters import by EntityId") {

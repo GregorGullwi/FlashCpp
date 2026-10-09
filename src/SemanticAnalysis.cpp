@@ -10028,108 +10028,67 @@ void SemanticAnalysis::diagnoseScopedEnumBinaryOperands(BinaryOperatorNode& bin_
 		{});
 }
 
-// --- Conversion operator existence helper (Phase 5, Phase 21 Item 2) ---
-
-// Phase 5: Returns true if the struct type described by from_desc has a user-defined
-// conversion operator to the type described by to_desc.
-// Used by tryAnnotateConversion to avoid emitting spurious UserDefined sema annotations
-// when no matching conversion operator exists in the source struct.
-// Mirrors the operator-existence logic in AstToIr::findConversionOperator, but is
-// sema-owned and avoids interning new strings (uses string_view comparison only).
-//
-// Phase 5 (Slice A): when a matching conversion operator is discovered, this helper
-// also eagerly materializes its lazy body via `ensureMemberFunctionMaterialized` when
-// `sema` is provided. This removes the need for codegen's `emitConversionOperatorCall`
-// to trigger lazy materialization as a "make the body exist now" fallback: by the time
-// codegen runs the struct visitor, the instantiated body already lives on the struct
-// and gets queued for deferred codegen through the normal path. All callers
-// always pass a valid SemanticAnalysis reference.
-static bool structHasConversionOperatorTo(
-	const CanonicalTypeDesc& from_desc,
-	const CanonicalTypeDesc& to_desc,
-	SemanticAnalysis& sema,
-	int depth = 0) {
-	// Guard against infinite recursion in pathological inheritance graphs.
-	static constexpr int kMaxInheritanceDepth = 8;
-	if (depth > kMaxInheritanceDepth)
-		return false;
-	const TypeInfo* from_type_info = tryGetTypeInfo(from_desc.type_index);
-	if (!from_type_info)
-		return false;
-	const StructTypeInfo* struct_info = from_type_info->getStructInfo();
-	if (!struct_info)
-		return false;
-	if (!to_desc.pointer_levels.empty() || !to_desc.array_dimensions.empty()) {
-		return findStructPointerConversionOperator(from_desc, &to_desc, sema, depth).has_value();
+// Lazy class-template conversion declarations can expose a canonical target
+// before their return type is usable by canonical tail planning. Materialize
+// exact-target candidates first, then let the selector rank and record a winner.
+static void materializeExactTargetLazyConversionOperators(TypeIndex source_type_index, CVQualifier source_cv_qualifier, TypeIndex target_type_index,
+	TypeCategory target_category, bool target_has_indirection, SemanticAnalysis& sema) {
+	if (!source_type_index.is_valid() || target_has_indirection ||
+		target_category == TypeCategory::MemberObjectPointer ||
+		target_category == TypeCategory::MemberFunctionPointer) {
+		return;
 	}
-	TypeIndex canonical_target_type = canonicalize_conversion_target_type(to_desc.type_index, to_desc.category());
-	if (!canonical_target_type.is_valid())
-		return false;
-
-	// Scan direct member functions for an exact conversion target match.
-	// Iterate all matching overloads so that both const and non-const
-	// conversion operators with the same target type are marked ODR-used.
-	// Codegen's `findConversionOperator` honors the cv-aware lookup (const
-	// source may call const op; non-const source prefers non-const op but
-	// falls back to const), so we cannot predict here which overload codegen
-	// will select without replicating that logic. Marking both is safe —
-	// the registry dedups and non-existent overloads are no-ops.
-	bool found = false;
-	for (const auto& mf : struct_info->member_functions) {
-		if (mf.conversion_target_type != canonical_target_type)
+	const TypeIndex canonical_target_type = canonicalize_conversion_target_type(target_type_index, target_category);
+	if (!canonical_target_type.is_valid()) {
+		return;
+	}
+	InlineVector<TypeIndex, FlashCpp::InlineVectorSpillFamily::OverloadResolution, 4> pending_types{source_type_index};
+	InlineVector<TypeIndex, FlashCpp::InlineVectorSpillFamily::OverloadResolution, 4> visited_types;
+	const uint8_t source_cv_bits = static_cast<uint8_t>(source_cv_qualifier);
+	for (size_t pending_index = 0; pending_index < pending_types.size(); ++pending_index) {
+		const TypeIndex current_type = pending_types[pending_index];
+		if (std::find(visited_types.begin(), visited_types.end(), current_type) != visited_types.end()) {
 			continue;
-		// An explicit conversion function is not viable for an implicit conversion
-		// ([class.conv.fct]/2); this helper serves implicit annotation only.
-		if (mf.is_explicit)
+		}
+		visited_types.push_back(current_type);
+		const TypeInfo* const type_info = tryGetTypeInfo(current_type);
+		if (type_info == nullptr) {
 			continue;
-
-		// Phase 5 Slice A: if the matched conversion operator is still a lazy
-		// stub, materialize it now in sema so codegen does not need to. The
-		// lazy registry key uses the canonical member name (e.g. "operator int"
-		// for a LazyWrapper<int> instantiation), which is exactly mf.getName().
-		// ensureMemberFunctionMaterialized is idempotent and cheap when the
-		// entry is already marked instantiated, so calling it unconditionally
-		// here is safe for non-lazy conversion operators too.
-		if (struct_info->name.isValid() && mf.getName().isValid()) {
-			// Phase 5 Slice G: the conversion operator was selected by
-			// overload resolution in a non-SFINAE annotation path, so this
-			// is a real ODR-use. Record it before materialization so the
-			// signal persists even after the lazy entry is erased.
-			LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
-				struct_info->name, mf.getName(), /*is_const=*/mf.is_const());
-			// Phase 5 Slice G item #4: conversion-operator stubs may be
-			// registered under an un-canonicalized name (e.g.
-			// "operator value_type" when computeInstantiatedLookupName
-			// fails to resolve an enum template argument). Mark all lazy
-			// members of this instantiated class as ODR-used to ensure
-			// the matching stub is drained regardless of its stored name.
-			// This only fires for classes the user's code actually reaches.
-			LazyMemberInstantiationRegistry::getInstance().markOdrUsedAllInClass(
-				struct_info->name);
-			const bool needs_materialization =
-				mf.function_decl.is<FunctionDeclarationNode>() &&
-				mf.function_decl.as<FunctionDeclarationNode>().needs_body_materialization();
-			if (needs_materialization) {
-				sema.ensureMemberFunctionMaterialized(
-					struct_info->name, mf.function_decl.as<FunctionDeclarationNode>());
+		}
+		const StructTypeInfo* const struct_info = type_info->getStructInfo();
+		if (struct_info == nullptr) {
+			continue;
+		}
+		std::vector<const FunctionDeclarationNode*> matching_functions;
+		for (const StructMemberFunction& member_function : struct_info->member_functions) {
+			if (!member_function.is_conversion_operator() ||
+				member_function.conversion_target_type != canonical_target_type ||
+				member_function.is_explicit ||
+				!member_function.function_decl.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+			const uint8_t member_cv_bits = static_cast<uint8_t>(member_function.cv_qualifier);
+			if ((source_cv_bits & ~member_cv_bits) != 0) {
+				continue;
+			}
+			matching_functions.push_back(&member_function.function_decl.as<FunctionDeclarationNode>());
+		}
+		for (const FunctionDeclarationNode* function_decl : matching_functions) {
+			if (function_decl->needs_body_materialization() && struct_info->name.isValid()) {
+				LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
+					struct_info->name,
+					function_decl->decl_node().identifier_token().handle(),
+					function_decl->is_const_member_function());
+				LazyMemberInstantiationRegistry::getInstance().markOdrUsedAllInClass(struct_info->name);
+				(void)sema.ensureMemberFunctionMaterialized(struct_info->name, *function_decl);
 			}
 		}
-		found = true;
+		for (const BaseClassSpecifier& base_class : struct_info->base_classes) {
+			if (!base_class.is_deferred && base_class.type_index.is_valid()) {
+				pending_types.push_back(base_class.type_index);
+			}
+		}
 	}
-	if (found)
-		return true;
-
-	// Recurse into non-deferred base classes (inherited conversion operators).
-	for (const auto& base : struct_info->base_classes) {
-		if (base.is_deferred)
-			continue;
-		CanonicalTypeDesc base_from_desc;
-		base_from_desc.type_index = nativeTypeIndex(TypeCategory::Struct);
-		base_from_desc.type_index = base.type_index;
-		if (structHasConversionOperatorTo(base_from_desc, to_desc, sema, depth + 1))
-			return true;
-	}
-	return false;
 }
 
 // --- Core conversion annotation helper ---
@@ -10245,9 +10204,7 @@ bool SemanticAnalysis::tryAnnotateExplicitConversion(
 	return true;
 }
 
-bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
-											 CanonicalTypeId target_type_id,
-											 CanonicalTypeId expr_type_id) {
+bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, CanonicalTypeId target_type_id, CanonicalTypeId expr_type_id) {
 	if (!target_type_id)
 		return false;
 	checkMemberFunctionAddressAccessForTarget(expr_node, target_type_id);
@@ -10263,8 +10220,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
-	const bool target_is_member_object_pointer =
-		isMemberObjectPointerType(target_type_id);
+	const bool target_is_member_object_pointer = isMemberObjectPointerType(target_type_id);
 
 	// C++20 [conv.ptr]: nullptr_t converts to any object, function, or member
 	// pointer type. Lowering selects the target representation of the null value.
@@ -10276,10 +10232,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		 to_desc.category() == TypeCategory::MemberObjectPointer)) {
 		SemanticSlot slot;
 		slot.type_id = target_type_id;
-		slot.cast_info_index = allocateNonUserDefinedCastInfo(
-			expr_type_id,
-			target_type_id,
-			StandardConversionKind::PointerConversion);
+		slot.cast_info_index = allocateNonUserDefinedCastInfo(expr_type_id, target_type_id, StandardConversionKind::PointerConversion);
 		slot.value_category = ValueCategory::PRValue;
 		const void* key = static_cast<const void*>(&expr_node.as<ExpressionNode>());
 		setSlot(key, slot);
@@ -10292,23 +10245,18 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	// specialized inheritance, reference, and user-defined conversion paths.
 	const CanonicalTypeImport from_import = tryImportCanonicalTypeDesc(from_desc);
 	const CanonicalTypeImport to_import = tryImportCanonicalTypeDesc(to_desc);
-	if (from_import.status == CanonicalTypeImportStatus::Supported &&
-		to_import.status == CanonicalTypeImportStatus::Supported) {
+	if (from_import.status == CanonicalTypeImportStatus::Supported && to_import.status == CanonicalTypeImportStatus::Supported) {
 		const ConversionPlan canonical_plan = buildCanonicalStructuralConversionPlan(
-			requireFrontendContext().canonicalTypes(),
-			from_import.type,
-			to_import.type);
+			requireFrontendContext().canonicalTypes(), from_import.type, to_import.type);
 		if (canonical_plan.is_valid) {
 			if (canonical_plan.kind == StandardConversionKind::None) {
 				return false;
 			}
 			SemanticSlot canonical_slot;
 			canonical_slot.type_id = target_type_id;
-			canonical_slot.cast_info_index = allocateNonUserDefinedCastInfo(
-				expr_type_id, target_type_id, canonical_plan.kind);
+			canonical_slot.cast_info_index = allocateNonUserDefinedCastInfo(expr_type_id, target_type_id, canonical_plan.kind);
 			canonical_slot.value_category = ValueCategory::PRValue;
-			const void* canonical_key =
-				static_cast<const void*>(&expr_node.as<ExpressionNode>());
+			const void* canonical_key = static_cast<const void*>(&expr_node.as<ExpressionNode>());
 			setSlot(canonical_key, canonical_slot);
 			stats_.slots_filled++;
 			return true;
@@ -10355,9 +10303,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		to_desc.category() == TypeCategory::Void &&
 		from_desc.pointer_levels.empty() &&
 		to_desc.pointer_levels.size() == 1;
-	if (!from_desc.array_dimensions.empty() &&
-		!to_desc.pointer_levels.empty() &&
-		(direct_array_decay || decay_followed_by_void_pointer_conversion)) {
+	if (!from_desc.array_dimensions.empty() && !to_desc.pointer_levels.empty() && (direct_array_decay || decay_followed_by_void_pointer_conversion)) {
 		ImplicitCastInfo cast_info;
 		cast_info.source_type_id = expr_type_id;
 		cast_info.target_type_id = target_type_id;
@@ -10390,8 +10336,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		from_desc.type_index.is_valid() &&
 		to_desc.type_index.is_valid() &&
 		from_desc.type_index != to_desc.type_index) {
-		const DerivedBaseConversionInfo base_conversion =
-			classifyDerivedBaseConversion(from_desc.type_index, to_desc.type_index);
+		const DerivedBaseConversionInfo base_conversion = classifyDerivedBaseConversion(from_desc.type_index, to_desc.type_index);
 		if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
 			throw makeStructuredCompileError(
 				context_.diagnostics(),
@@ -10408,8 +10353,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 				SourceLocation(),
 				"Cannot convert to an inaccessible base class",
 				{});
-		if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual ||
-			base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
+		if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual || base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
 			ImplicitCastInfo cast_info;
 			cast_info.source_type_id = expr_type_id;
 			cast_info.target_type_id = target_type_id;
@@ -10432,11 +10376,8 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		to_desc.array_dimensions.empty()) {
 		// Run sema-owned conversion-operator selection once and record the
 		// chosen function on the cast info. Codegen consumes this selection
-		// directly rather than re-running lookup. structHasConversionOperatorTo
-		// is still useful as a side effect to mark ODR-use of any matching
-		// overload(s), so we call it for that purpose first.
-		const auto pointer_conversion =
-			findStructPointerConversionOperator(from_desc, &to_desc, *this, 0);
+		// directly rather than re-running lookup.
+		const auto pointer_conversion = findStructPointerConversionOperator(from_desc, &to_desc, *this, 0);
 		if (!pointer_conversion) {
 			FLASH_LOG(General, Debug,
 					  "SemanticAnalysis: skipping UserDefined pointer annotation — "
@@ -10472,15 +10413,9 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		from_desc.type_index.is_valid() &&
 		to_desc.type_index.is_valid() &&
 		from_desc.type_index != to_desc.type_index) {
-		const bool has_reference_qualifier =
-			from_desc.ref_qualifier != ReferenceQualifier::None ||
-			to_desc.ref_qualifier != ReferenceQualifier::None;
+		const bool has_reference_qualifier = from_desc.ref_qualifier != ReferenceQualifier::None || to_desc.ref_qualifier != ReferenceQualifier::None;
 		if (!has_reference_qualifier &&
-			tryAnnotateCopyInitConvertingConstructor(
-				expr_node,
-				target_type_id,
-				" in derived-to-base conversion",
-				expr_type_id)) {
+			tryAnnotateCopyInitConvertingConstructor(expr_node, target_type_id, " in derived-to-base conversion", expr_type_id)) {
 			return true;
 		}
 
@@ -10495,13 +10430,18 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 			throw CompileError("Ambiguous derived-to-base conversion");
 		if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
 			throw CompileError("Cannot convert to an inaccessible base class");
-		if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
-			base_conversion.kind != DerivedBaseConversionKind::PublicVirtual) {
+		if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual && base_conversion.kind != DerivedBaseConversionKind::PublicVirtual) {
 			// The source is not a base subobject of the target, but a conversion
 			// operator returning the target (or a class derived from it) is still a
 			// valid user-defined conversion, possibly with a derived-to-base tail.
-			const TypeSpecifierNode nominal_target = materializeTypeSpecifier(to_desc);
-			const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(from_desc.type_index, from_desc.base_cv, nominal_target, false);
+			const TypeIndex source_type_index = from_desc.type_index;
+			const CVQualifier source_cv = from_desc.base_cv;
+			const TypeIndex target_type_index = to_desc.type_index;
+			const TypeCategory target_category = to_desc.category();
+			const bool target_has_indirection = !to_desc.pointer_levels.empty() || !to_desc.array_dimensions.empty();
+			materializeExactTargetLazyConversionOperators(source_type_index, source_cv, target_type_index, target_category, target_has_indirection, *this);
+			const TypeSpecifierNode nominal_target = materializeTypeSpecifier(type_context_.get(target_type_id));
+			const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(source_type_index, source_cv, nominal_target, false);
 			if (selected_conversion.has_value() && !selected_conversion->ambiguous) {
 				return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
 			}
@@ -10538,19 +10478,18 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		to_desc.array_dimensions.empty() &&
 		from_desc.ref_qualifier == ReferenceQualifier::None &&
 		to_desc.ref_qualifier == ReferenceQualifier::None) {
-		const TypeSpecifierNode target_type = materializeTypeSpecifier(to_desc);
-		const auto selected_conversion =
-			trySelectCanonicalUserDefinedConversionOperator(
-				from_desc.type_index,
-				from_desc.base_cv,
-				target_type,
-				false);
+		const TypeIndex source_type_index = from_desc.type_index;
+		const CVQualifier source_cv = from_desc.base_cv;
+		const TypeIndex target_type_index = to_desc.type_index;
+		const TypeCategory target_category = to_desc.category();
+		const bool target_has_indirection = !to_desc.pointer_levels.empty() || !to_desc.array_dimensions.empty();
+		materializeExactTargetLazyConversionOperators(source_type_index, source_cv, target_type_index, target_category, target_has_indirection, *this);
+		const TypeSpecifierNode target_type = materializeTypeSpecifier(type_context_.get(target_type_id));
+		const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(source_type_index, source_cv, target_type, false);
 		if (selected_conversion.has_value() && !selected_conversion->ambiguous) {
 			return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
 		}
-		if (selected_conversion.has_value() && selected_conversion->ambiguous) {
-			return false;
-		}
+		return false;
 	}
 
 	// Same base type but different canonical IDs (differ only in qualifiers or type_index,
@@ -10562,9 +10501,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	// to bool, and an array lvalue reaches bool through [conv.array] decay
 	// first. The target representation determines the null comparison. nullptr_t
 	// itself is not a [conv.bool] source.
-	const bool boolean_target =
-		to_desc.category() == TypeCategory::Bool &&
-		to_desc.pointer_levels.empty() && to_desc.array_dimensions.empty();
+	const bool boolean_target = to_desc.category() == TypeCategory::Bool && to_desc.pointer_levels.empty() && to_desc.array_dimensions.empty();
 	const bool boolean_convertible_source =
 		!from_desc.pointer_levels.empty() ||
 		!from_desc.array_dimensions.empty() ||
@@ -10596,10 +10533,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	auto is_unresolved_type = [](TypeCategory t) {
 		return t == TypeCategory::UserDefined || t == TypeCategory::Invalid || isPlaceholderAutoType(t);
 	};
-	auto is_non_primitive_target = [](TypeCategory t) {
-		return is_struct_type(t) ||
-			   t == TypeCategory::Invalid || isPlaceholderAutoType(t);
-	};
+	auto is_non_primitive_target = [](TypeCategory t) { return is_struct_type(t) || t == TypeCategory::Invalid || isPlaceholderAutoType(t); };
 	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty())
 		return false;
 	// Array source → incompatible scalar target: this is always ill-formed.
@@ -10649,8 +10583,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		from_desc.type_index.is_valid() && tryGetTypeInfo(from_desc.type_index) != nullptr) {
 		const CanonicalTypeAlias resolved = canonicalize_type_alias(from_desc.type_index);
 		const TypeCategory resolved_cat = resolved.typeEnum();
-		if (!is_unresolved_type(resolved_cat) && !is_struct_type(resolved_cat) &&
-			resolved_cat != TypeCategory::Invalid) {
+		if (!is_unresolved_type(resolved_cat) && !is_struct_type(resolved_cat) && resolved_cat != TypeCategory::Invalid) {
 			const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to_desc.type_index);
 			const ConversionPlan alias_plan = buildConversionPlan(resolved_cat, to_canonical.typeEnum());
 			if (alias_plan.is_valid && alias_plan.rank != ConversionRank::UserDefined) {
@@ -10691,8 +10624,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	// Primitive->enum is forbidden (C++11+), but struct->enum IS allowed
 	// via a user-defined conversion operator (e.g. `operator Color() const`).
 	// Fall through to the UserDefined rank check below in that case.
-	if (to_desc.category() == TypeCategory::Enum &&
-		from_desc.category() != TypeCategory::Struct)
+	if (to_desc.category() == TypeCategory::Enum && from_desc.category() != TypeCategory::Struct)
 		return false; // no implicit conversion TO enum from non-struct
 	// C++11+: scoped enums (enum class) do not allow implicit conversion to other types.
 	// Silently reject here; callers that need a diagnostic (variable init, return, assignment)
@@ -10713,8 +10645,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	// there may still be a further primitive-to-primitive conversion needed
 	// (e.g. char& → char, then char → int). We annotate the remaining conversion
 	// by treating the source as its underlying non-reference primitive type.
-	if (from_desc.ref_qualifier != ReferenceQualifier::None &&
-		from_desc.category() != TypeCategory::Struct) {
+	if (from_desc.ref_qualifier != ReferenceQualifier::None && from_desc.category() != TypeCategory::Struct) {
 		// Re-derive the from type without the reference qualifier so we can
 		// check whether a primitive->primitive conversion annotation is needed.
 		CanonicalTypeDesc from_stripped = from_desc;
@@ -10770,18 +10701,24 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	if (plan.rank == ConversionRank::UserDefined && from_desc.category() != TypeCategory::Struct)
 		return false;
 
-	// Phase 5: for UserDefined (struct->primitive) annotations, verify that a conversion
-	// operator actually exists before annotating. Without this check, sema optimistically
-	// annotates UserDefined for any Struct->primitive pair (Phase 21 item 2), which inflates
-	// slots_filled stats and misrepresents the actual operator availability.
-	// Codegen already handles null conv_op safely, so this is a stats/accuracy fix only.
+	// A residual struct-source conversion still participates in the same canonical
+	// conversion-operator selection as the specialized class, scalar, and pointer paths.
+	// Do not record an existential UserDefined rank: codegen must consume the selected
+	// declaration, including cv ranking and any standard conversion tail.
 	if (plan.rank == ConversionRank::UserDefined) {
-		if (!structHasConversionOperatorTo(from_desc, to_desc, *this)) {
-			FLASH_LOG(General, Debug,
-					  "SemanticAnalysis: skipping UserDefined annotation — "
-					  "no conversion operator found in struct source type");
+		const TypeIndex source_type_index = from_desc.type_index;
+		const CVQualifier source_cv = from_desc.base_cv;
+		const TypeIndex target_type_index = to_desc.type_index;
+		const TypeCategory target_category = to_desc.category();
+		const bool target_has_indirection = !to_desc.pointer_levels.empty() || !to_desc.array_dimensions.empty();
+		materializeExactTargetLazyConversionOperators(source_type_index, source_cv, target_type_index, target_category, target_has_indirection, *this);
+		const TypeSpecifierNode target_type = materializeTypeSpecifier(type_context_.get(target_type_id));
+		const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(source_type_index, source_cv, target_type, false);
+		if (!selected_conversion.has_value() || selected_conversion->ambiguous) {
+			FLASH_LOG(General, Debug, "SemanticAnalysis: skipping UserDefined annotation — " "conversion operator selection failed or was ambiguous");
 			return false;
 		}
+		return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
 	}
 
 	ImplicitCastInfo cast_info;

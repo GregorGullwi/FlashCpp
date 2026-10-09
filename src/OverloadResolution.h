@@ -3448,43 +3448,44 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 	return referent_plan;
 }
 
-inline std::optional<ConversionPlan> tryBuildCanonicalConversionFunctionTailPlan(
-	const TypeSpecifierNode& return_type, const TypeSpecifierNode& target_type) {
+inline std::optional<ConversionPlan> tryBuildCanonicalConversionFunctionTailPlan(const TypeSpecifierNode& return_type,
+	const TypeSpecifierNode& target_type) {
 	if (target_type.is_reference() || target_type.is_rvalue_reference() || orderedDeclaratorIsReference(target_type)) {
 		return tryBuildCanonicalReferenceBindingPlan(return_type, target_type, true);
 	}
-	if (const std::optional<ConversionPlan> plan =
-			tryBuildCanonicalProjectableConversionPlan(return_type, target_type);
-		plan.has_value()) {
+	if (const std::optional<ConversionPlan> plan = tryBuildCanonicalProjectableConversionPlan(return_type, target_type); plan.has_value()) {
 		return plan;
 	}
 	FrontendContext* const context = FrontendContext::active();
 	if (context != nullptr) {
 		CanonicalTypeTable& table = context->canonicalTypes();
 		CanonicalTypeTransaction transaction(table);
-		const CanonicalTypeImport source_import =
-			importCanonicalOverloadNominalType(table, return_type);
-		const CanonicalTypeImport target_import =
-			importCanonicalOverloadNominalType(table, target_type);
+		TypeSpecifierNode canonical_return_type = return_type;
+		TypeSpecifierNode canonical_target_type = target_type;
+		tryBindPublishedTypeEntity(canonical_return_type);
+		tryBindPublishedTypeEntity(canonical_target_type);
+		const CanonicalTypeImport source_import = importCanonicalOverloadNominalType(table, canonical_return_type);
+		const CanonicalTypeImport target_import = importCanonicalOverloadNominalType(table, canonical_target_type);
 		if (source_import.status == CanonicalTypeImportStatus::Supported && target_import.status == CanonicalTypeImportStatus::Supported) {
 			const TypeId source = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, source_import.type)).first;
 			const TypeId target = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, target_import.type)).first;
+			if (source == target) {
+				return ConversionPlan::exact_match();
+			}
 			const CanonicalTypeKind source_kind = table.node(source).kind;
 			const CanonicalTypeKind target_kind = table.node(target).kind;
 			const bool source_is_nominal = source_kind == CanonicalTypeKind::Record || source_kind == CanonicalTypeKind::TemplateSpecialization;
 			const bool target_is_nominal = target_kind == CanonicalTypeKind::Record || target_kind == CanonicalTypeKind::TemplateSpecialization;
 			if (source_is_nominal && target_is_nominal && source != target) {
-				tryPublishCanonicalOverloadBaseSchema(table, source, return_type);
-				tryPublishCanonicalOverloadBaseSchema(table, target, target_type);
-				const std::optional<DerivedBaseConversionKind> base_conversion =
-					classifyCanonicalDerivedBaseConversion(table, source, target);
+				tryPublishCanonicalOverloadBaseSchema(table, source, canonical_return_type);
+				tryPublishCanonicalOverloadBaseSchema(table, target, canonical_target_type);
+				const std::optional<DerivedBaseConversionKind> base_conversion = classifyCanonicalDerivedBaseConversion(table, source, target);
 				if (base_conversion == DerivedBaseConversionKind::UniquePublicNonVirtual ||
 					base_conversion == DerivedBaseConversionKind::PublicVirtual ||
 					base_conversion == DerivedBaseConversionKind::Inaccessible) {
 					// [class.access.general] applies accessibility after overload
 					// selection, so inaccessible base paths still rank as conversions.
-					return ConversionPlan{ConversionRank::Conversion,
-						StandardConversionKind::DerivedToBase, true};
+					return ConversionPlan{ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
 				}
 				return ConversionPlan::no_match();
 			}
