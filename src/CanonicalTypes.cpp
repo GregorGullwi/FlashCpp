@@ -1200,8 +1200,7 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 	// anonymous-union or unimportable members while the constructor signature
 	// still imports.
 	const CanonicalTypeKind type_kind = nodeUnlocked(type).kind;
-	if (type_kind != CanonicalTypeKind::Record &&
-		type_kind != CanonicalTypeKind::TemplateSpecialization) {
+	if (type_kind != CanonicalTypeKind::Record && type_kind != CanonicalTypeKind::TemplateSpecialization) {
 		throw InternalError("canonical type: constructor schema requires a class type");
 	}
 	const auto minimumParameterCount = [](const CanonicalRecordConstructorSpec& constructor) {
@@ -1218,10 +1217,8 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 		uint32_t parameter_cursor = header.parameter_begin;
 		for (size_t index = 0; index < constructors.size(); ++index) {
 			const CanonicalRecordConstructor expected = record_constructors_[header.constructor_begin + index];
-			if (expected.parameter_begin != parameter_cursor ||
-				expected.parameter_count != constructors[index].parameter_types.size() ||
-				expected.minimum_parameter_count != minimumParameterCount(constructors[index]) ||
-				expected.flags != constructors[index].flags ||
+			if (expected.parameter_begin != parameter_cursor || expected.parameter_count != constructors[index].parameter_types.size() ||
+				expected.minimum_parameter_count != minimumParameterCount(constructors[index]) || expected.flags != constructors[index].flags ||
 				expected.is_noexcept != static_cast<uint8_t>(constructors[index].is_noexcept ? 1 : 0)) {
 				throw InternalError("canonical type: conflicting record constructor schema publication");
 			}
@@ -1236,8 +1233,9 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 	}
 	size_t total_parameters = 0;
 	for (const CanonicalRecordConstructorSpec& constructor : constructors) {
-		if (constructor.parameter_types.size() > std::numeric_limits<uint16_t>::max() ||
-			minimumParameterCount(constructor) > constructor.parameter_types.size()) {
+		const size_t parameter_count = constructor.parameter_types.size();
+		const size_t minimum_parameter_count = minimumParameterCount(constructor);
+		if (parameter_count > std::numeric_limits<uint16_t>::max() || minimum_parameter_count > parameter_count) {
 			throw InternalError("canonical type: invalid record constructor arity");
 		}
 		total_parameters += constructor.parameter_types.size();
