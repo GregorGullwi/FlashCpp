@@ -96,9 +96,8 @@ Continue boundary 3A in this order.
    paths still fall back to `findConversionOperator` / `emitConversionOperatorCall`
    re-selection; the var-initialization fallback is already dead because sema
    always records the selected function. The migrated `static_cast` and
-   direct-initialization paths should also fail closed when the annotation is
-   absent, as the sibling paths do with their `"sema must annotate"` internal
-   error.
+   direct-initialization paths now fail closed when the annotation is absent,
+   with the same `"sema must annotate"` internal error as the sibling paths.
 
 2. **Migrate remaining flat consumers.**
    1. **The constructibility family.** The zero-argument variants and published

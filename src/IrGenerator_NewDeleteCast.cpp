@@ -923,6 +923,15 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 	TypeCategory source_type = expr_operands.typeEnum();
 	int source_size = expr_operands.size_in_bits.value;
 	TypeIndex source_type_index = expr_operands.type_index;
+	// Fail closed: a class operand cast to a non-class, non-void, non-reference
+	// target must be lowered by the sema-selected conversion operator above.
+	// Reaching here means no conversion was recorded, so the reinterpretation
+	// below would silently miscompile instead of reporting the missing annotation.
+	if (source_type == TypeCategory::Struct && target_type != TypeCategory::Struct &&
+		target_type != TypeCategory::Void && !target_type_node.is_reference() &&
+		!target_type_node.is_rvalue_reference()) {
+		throw InternalError("sema must annotate a class-to-non-class static_cast conversion");
+	}
 	// The operand's IR type already carries its ABI representation, so a
 	// member-pointer source is tested against its null sentinel without
 	// re-inferring the semantic type here.
