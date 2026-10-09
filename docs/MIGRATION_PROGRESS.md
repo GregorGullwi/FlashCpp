@@ -88,6 +88,17 @@ Continue boundary 3A in this order.
    viability (an argument or copy-initialization no longer selects it) while a
    `static_cast` or direct-initialization still considers it, and both forms now
    lower by calling the selected operator rather than reinterpreting the object.
+   Conversion-operator selection is consolidating on one sema authority:
+   `static_cast` and scalar direct-initialization select the operator in sema and
+   codegen consumes the recorded cast through
+   `emitSemaSelectedConversionOperatorCall`. Remaining: the var-initialization,
+   return, call-argument, contextual-`bool`, and constructor-argument codegen
+   paths still fall back to `findConversionOperator` / `emitConversionOperatorCall`
+   re-selection; the var-initialization fallback is already dead because sema
+   always records the selected function. The migrated `static_cast` and
+   direct-initialization paths should also fail closed when the annotation is
+   absent, as the sibling paths do with their `"sema must annotate"` internal
+   error.
 
 2. **Migrate remaining flat consumers.**
    1. **The constructibility family.** The zero-argument variants and published
