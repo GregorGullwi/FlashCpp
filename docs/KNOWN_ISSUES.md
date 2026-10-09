@@ -1,22 +1,24 @@
 # Known Issues
 
-## Conversion operators to a class target miss named lvalue arguments
+## Conversion operators to a class target miss named lvalue reference arguments
 
 A conversion operator whose target is a class or class-template specialization is
-selected for a temporary argument but not for a named lvalue of the source class,
-so the call is reported as having no matching function:
+now ranked for a named lvalue argument when the parameter is by value, but a
+reference parameter still misses it and reports no matching function:
 
 ```cpp
 struct B { int value; };
 struct S { operator B() const { return B{}; } };
-int choose(B) { return 0; }
+int choose(const B&) { return 0; }
 int call(S s) { return choose(s); }   // error: No matching function
 ```
 
-`choose(S{})` compiles, so the gap is in the ranking of the named-lvalue
-argument, not in the conversion itself; conversion operators to builtin targets
-(such as `operator int()`) are unaffected. `tests/test_conversion_operator_standard_tail_call_ret0.cpp`
-uses temporaries and therefore does not cover this.
+`choose(S{})` and the by-value `choose(B)` with a named lvalue both work. The
+remaining gap is the both-references ranking branch in `buildConversionPlan`,
+which defers a same-record reference binding to the legacy path and has no
+fallback when the conversion-operator tail plan is empty.
+`tests/test_conversion_operator_named_lvalue_argument_ret0.cpp` covers the
+by-value and derived-to-base named-lvalue cases.
 
 ## Calling a user-declared copy-assignment operator crashes at runtime
 
