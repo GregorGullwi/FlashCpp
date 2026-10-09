@@ -362,6 +362,20 @@ bool isCanonicalFloatingPointBuiltin(CanonicalBuiltinKind builtin) {
 		builtin == CanonicalBuiltinKind::LongDouble;
 }
 
+bool isCanonicalScalarType(CanonicalTypeKind kind, CanonicalBuiltinKind builtin) {
+	switch (kind) {
+	case CanonicalTypeKind::Builtin:
+		return builtin != CanonicalBuiltinKind::Void && builtin != CanonicalBuiltinKind::Count;
+	case CanonicalTypeKind::Enum:
+	case CanonicalTypeKind::Pointer:
+	case CanonicalTypeKind::MemberObjectPointer:
+	case CanonicalTypeKind::MemberFunctionPointer:
+		return true;
+	default:
+		return false;
+	}
+}
+
 // [basic.types] and [meta.unary.prop] classify a dependent identity by its
 // eventual shape, which the canonical table cannot answer before substitution.
 // These families keep their compatibility answer until the dependent families
@@ -620,6 +634,7 @@ std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property, cons
 	const CanonicalTypeKind kind = node.kind;
 	const bool is_builtin = kind == CanonicalTypeKind::Builtin;
 	const CanonicalBuiltinKind builtin = node.builtin;
+	const bool is_scalar = !is_reference && isCanonicalScalarType(kind, builtin);
 	const bool is_bounded_array = kind == CanonicalTypeKind::Array && hasCanonicalTypeNodeFlag(node.flags, CanonicalTypeNodeFlags::KnownArrayBound);
 	const bool is_unbounded_array = kind == CanonicalTypeKind::Array && !is_bounded_array;
 	switch (property) {
@@ -689,8 +704,7 @@ std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property, cons
 	case CanonicalTraitProperty::IsFundamental:
 		return !is_reference && is_builtin;
 	case CanonicalTraitProperty::IsScalar:
-		return !is_reference && ((is_builtin && builtin != CanonicalBuiltinKind::Void) || kind == CanonicalTypeKind::Enum ||
-			kind == CanonicalTypeKind::Pointer || kind == CanonicalTypeKind::MemberObjectPointer || kind == CanonicalTypeKind::MemberFunctionPointer);
+		return is_scalar;
 	case CanonicalTraitProperty::IsObject:
 		return !is_reference && kind != CanonicalTypeKind::Function && !(is_builtin && builtin == CanonicalBuiltinKind::Void);
 	case CanonicalTraitProperty::IsCompound:
@@ -735,6 +749,25 @@ std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property, cons
 	case CanonicalTraitProperty::IsNothrowDestructible:
 	case CanonicalTraitProperty::HasTrivialDestructor:
 	case CanonicalTraitProperty::HasVirtualDestructor: {
+		if (is_scalar) {
+			switch (property) {
+			case CanonicalTraitProperty::IsTriviallyCopyable:
+			case CanonicalTraitProperty::IsTrivial:
+			case CanonicalTraitProperty::IsPod:
+			case CanonicalTraitProperty::IsStandardLayout:
+			case CanonicalTraitProperty::IsDestructible:
+			case CanonicalTraitProperty::IsTriviallyDestructible:
+			case CanonicalTraitProperty::IsNothrowDestructible:
+			case CanonicalTraitProperty::HasTrivialDestructor:
+				return true;
+			case CanonicalTraitProperty::IsAggregate:
+			case CanonicalTraitProperty::IsEmpty:
+			case CanonicalTraitProperty::HasVirtualDestructor:
+				return false;
+			default:
+				break;
+			}
+		}
 		if (is_reference || (kind != CanonicalTypeKind::Record && kind != CanonicalTypeKind::TemplateSpecialization)) {
 			const bool is_existing_class_trait = property == CanonicalTraitProperty::IsPolymorphic || property == CanonicalTraitProperty::IsFinal ||
 				property == CanonicalTraitProperty::IsAbstract;
