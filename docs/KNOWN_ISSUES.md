@@ -1,22 +1,24 @@
 # Known Issues
 
-## Calling a user-declared copy-assignment operator crashes at runtime
+## Missing-return detection is a heuristic, not a control-flow diagnostic
 
-Reproduced on 2026-10-08 on Linux with the sharded build. A class with a
-user-provided copy-assignment operator whose call is actually executed
-SIGSEGVs (exit 139) at runtime; the implicit assignment works, and the
-miscompile needs no `noexcept` or template involvement:
+A value-returning function that flows off its end — for example a user-declared
+copy-assignment operator with an empty body — is undefined behavior
+([stmt.return]). The compiler now warns and emits a bare return so the generated
+function cannot fall through into the next one and corrupt the caller's stack;
+before this, such a function had no return instruction and executing the
+assignment SIGSEGVed:
 
 ```cpp
 struct S { S& operator=(const S&) noexcept(false) {} };
-int main() { S a{}; S b{}; a = b; return 0; }  // runtime SIGSEGV
+int main() { S a{}; S b{}; a = b; return 0; }  // previously runtime SIGSEGV
 ```
 
-The same source with the operator removed (implicit assignment) runs normally.
-This is a codegen/call-path defect for the selected user operator, not a
-`noexcept`-evaluation issue (the failing assignment performs no `noexcept`
-query). `tests/test_noexcept_overloaded_operator_ret0.cpp` therefore asserts the
-`noexcept` answers without executing the operator.
+The diagnostic is only a heuristic: it fires when the last emitted instruction is
+not a return, so it also fires for valid functions whose every path returns
+through a branch or that never return at all. Reporting the missing return
+reliably — and deciding whether it should be a hard error rather than a warning —
+requires control-flow analysis over all paths, which is not implemented.
 
 ## WSL front end crashes while processing the libstdc++ `<typeinfo>` test
 
