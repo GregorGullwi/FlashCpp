@@ -2316,6 +2316,30 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 		}
 		return 0;
 	};
+	const auto mayNeedCompatibilityResolution = [](CanonicalTypeKind kind) {
+		return kind == CanonicalTypeKind::Record || kind == CanonicalTypeKind::TemplateSpecialization ||
+			kind == CanonicalTypeKind::Enum || kind == CanonicalTypeKind::TemplateParameter ||
+			kind == CanonicalTypeKind::DependentName || kind == CanonicalTypeKind::DependentTemplateMember ||
+			kind == CanonicalTypeKind::DependentMemberAlias;
+	};
+	const auto containsUnresolvedConversionType = [&table](TypeId type) {
+		for (;;) {
+			const CanonicalTypeNode node = table.node(type);
+			switch (node.kind) {
+			case CanonicalTypeKind::Qualified:
+			case CanonicalTypeKind::LValueReference:
+			case CanonicalTypeKind::RValueReference:
+			case CanonicalTypeKind::Pointer:
+			case CanonicalTypeKind::Array:
+				type = node.child;
+				break;
+			case CanonicalTypeKind::Builtin:
+				return false;
+			default:
+				return true;
+			}
+		}
+	};
 	for (size_t index = 0; index < constructor_count; ++index) {
 		const CanonicalRecordConstructor constructor = table.recordConstructorAt(imported.type, index);
 		if (constructor.parameter_count != argument_types.size()) {
@@ -2335,11 +2359,19 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 			}
 			const TypeId source_base = table.withoutTopLevelQualifiers(argument_types[parameter]);
 			const TypeId target_base = table.withoutTopLevelQualifiers(parameter_type);
-			if (table.node(source_base).kind != CanonicalTypeKind::Builtin || table.node(target_base).kind != CanonicalTypeKind::Builtin) {
+			const CanonicalTypeKind source_kind = table.node(source_base).kind;
+			const CanonicalTypeKind target_kind = table.node(target_base).kind;
+			if (table.node(parameter_type).kind == CanonicalTypeKind::LValueReference ||
+				table.node(parameter_type).kind == CanonicalTypeKind::RValueReference ||
+				mayNeedCompatibilityResolution(source_kind) || mayNeedCompatibilityResolution(target_kind)) {
 				return std::nullopt;
 			}
 			const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, argument_types[parameter], parameter_type);
 			if (!conversion.is_valid) {
+				if (containsUnresolvedConversionType(argument_types[parameter]) ||
+					containsUnresolvedConversionType(parameter_type)) {
+					return std::nullopt;
+				}
 				matches = false;
 				break;
 			}
