@@ -4046,6 +4046,16 @@ inline ConversionPlan buildConversionPlan(
 					if (hasConvertingConstructorFrom(to.type_index(), from.type_index())) {
 						return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 					}
+					// A conversion operator on the referenced source type reaches the
+					// target through the same user-defined sequence as a by-value source.
+					if (const auto selected_conversion =
+							trySelectCanonicalUserDefinedConversionOperator(from.type_index(), from.cv_qualifier(), to);
+						selected_conversion.has_value()) {
+						if (selected_conversion->ambiguous) {
+							return ConversionPlan::no_match();
+						}
+						return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true, selected_conversion->trailing_standard_rank};
+					}
 					// Struct info not yet finalized (parse-time): optimistically allow.
 					if (to.type_index().index() >= getTypeInfoCount() ||
 						!getTypeInfo(to.type_index()).getStructInfo()) {
