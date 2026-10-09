@@ -2214,16 +2214,15 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalScalarConstructionFrom
 		return std::nullopt;
 	}
 	TypeId source_type = *imported_argument;
-	while (table.node(source_type).kind == CanonicalTypeKind::LValueReference ||
-		table.node(source_type).kind == CanonicalTypeKind::RValueReference) {
+	while (table.node(source_type).kind == CanonicalTypeKind::LValueReference || table.node(source_type).kind == CanonicalTypeKind::RValueReference) {
 		source_type = table.node(source_type).child;
 	}
 	const TypeId source_base = table.withoutTopLevelQualifiers(source_type);
 	const TypeId target_base = table.withoutTopLevelQualifiers(imported_target.type);
-	if (table.node(source_base).kind == CanonicalTypeKind::Builtin &&
-		table.node(target_base).kind == CanonicalTypeKind::Builtin &&
-		table.node(source_base).builtin == CanonicalBuiltinKind::Nullptr &&
-		table.node(target_base).builtin == CanonicalBuiltinKind::Bool) {
+	const CanonicalTypeNode source_node = table.node(source_base);
+	const CanonicalTypeNode target_node = table.node(target_base);
+	if (source_node.kind == CanonicalTypeKind::Builtin && target_node.kind == CanonicalTypeKind::Builtin &&
+		source_node.builtin == CanonicalBuiltinKind::Nullptr && target_node.builtin == CanonicalBuiltinKind::Bool) {
 		return TypeTraitResult::success_true();
 	}
 	const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, *imported_argument, imported_target.type);
@@ -2231,8 +2230,7 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalScalarConstructionFrom
 		// A valid standard scalar conversion is trivial and cannot throw.
 		return TypeTraitResult::success_true();
 	}
-	if (containsUnresolvedConversionType(table, *imported_argument) ||
-		containsUnresolvedConversionType(table, imported_target.type)) {
+	if (containsUnresolvedConversionType(table, *imported_argument) || containsUnresolvedConversionType(table, imported_target.type)) {
 		return std::nullopt;
 	}
 	return TypeTraitResult::success_false();
@@ -2278,7 +2276,7 @@ TypeTraitResult evaluateRecordConstructibleFromArgs(TypeTraitKind kind, const St
 	return (!struct_info.has_vtable && !struct_info.hasUserDefinedConstructor()) ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
 }
 
-// Canonical constructor query for complete schemas and supported builtin conversion sequences.
+// Canonical constructor query for complete schemas and supported standard conversion sequences.
 // Other overload shapes defer to the compatibility resolver.
 static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFromArgs(TypeTraitKind kind, const TypeSpecifierNode& target,
 	std::span<const TypeSpecifierNode> arguments) {
@@ -2346,8 +2344,7 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 	};
 	for (size_t index = 0; index < constructor_count; ++index) {
 		const CanonicalRecordConstructor constructor = table.recordConstructorAt(imported.type, index);
-		if (argument_types.size() < constructor.minimum_parameter_count ||
-			argument_types.size() > constructor.parameter_count) {
+		if (argument_types.size() < constructor.minimum_parameter_count || argument_types.size() > constructor.parameter_count) {
 			continue;
 		}
 		bool matches = true;
@@ -2363,15 +2360,15 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 			const TypeId target_base = table.withoutTopLevelQualifiers(parameter_type);
 			const CanonicalTypeKind source_kind = table.node(source_base).kind;
 			const CanonicalTypeKind target_kind = table.node(target_base).kind;
-			if (table.node(parameter_type).kind == CanonicalTypeKind::LValueReference ||
-				table.node(parameter_type).kind == CanonicalTypeKind::RValueReference ||
-				mayNeedCompatibilityResolution(source_kind) || mayNeedCompatibilityResolution(target_kind)) {
+			const CanonicalTypeKind parameter_kind = table.node(parameter_type).kind;
+			const bool is_reference_parameter = parameter_kind == CanonicalTypeKind::LValueReference || parameter_kind == CanonicalTypeKind::RValueReference;
+			const bool may_need_compatibility_resolution = mayNeedCompatibilityResolution(source_kind) || mayNeedCompatibilityResolution(target_kind);
+			if (is_reference_parameter || may_need_compatibility_resolution) {
 				return std::nullopt;
 			}
 			const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, argument_types[parameter], parameter_type);
 			if (!conversion.is_valid) {
-				if (containsUnresolvedConversionType(table, argument_types[parameter]) ||
-					containsUnresolvedConversionType(table, parameter_type)) {
+				if (containsUnresolvedConversionType(table, argument_types[parameter]) || containsUnresolvedConversionType(table, parameter_type)) {
 					return std::nullopt;
 				}
 				matches = false;
@@ -2434,8 +2431,7 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalConstructibleFromArgs(
 	if (arguments.empty()) {
 		return std::nullopt;  // the zero-argument query owns this case
 	}
-	if (kind != TypeTraitKind::IsConstructible && kind != TypeTraitKind::IsTriviallyConstructible &&
-		kind != TypeTraitKind::IsNothrowConstructible) {
+	if (kind != TypeTraitKind::IsConstructible && kind != TypeTraitKind::IsTriviallyConstructible && kind != TypeTraitKind::IsNothrowConstructible) {
 		return std::nullopt;
 	}
 	// A reference or scalar target accepts at most one source type and uses the
