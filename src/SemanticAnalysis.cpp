@@ -10064,6 +10064,10 @@ static bool structHasConversionOperatorTo(
 	for (const auto& mf : struct_info->member_functions) {
 		if (mf.conversion_target_type != canonical_target_type)
 			continue;
+		// An explicit conversion function is not viable for an implicit conversion
+		// ([class.conv.fct]/2); this helper serves implicit annotation only.
+		if (mf.is_explicit)
+			continue;
 
 		// Phase 5 Slice A: if the matched conversion operator is still a lazy
 		// stub, materialize it now in sema so codegen does not need to. The

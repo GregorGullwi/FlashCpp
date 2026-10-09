@@ -1391,6 +1391,9 @@ struct StructMemberFunction {
 	// noexcept tracking for type traits
 	bool is_noexcept = false;		  // True if declared noexcept (e.g., void foo() noexcept)
 
+	// Explicit conversion function: not viable for an implicit conversion.
+	bool is_explicit = false;
+
 	bool is_conversion_operator() const { return conversion_target_type.is_valid(); }
 	bool is_const() const { return (static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0; }
 	bool is_volatile() const { return (static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0; }

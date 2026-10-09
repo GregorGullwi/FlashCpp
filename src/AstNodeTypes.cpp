@@ -2002,6 +2002,7 @@ void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
 			mf.operator_kind = derived_kind;
 		}
 		mf.is_noexcept = fn->is_noexcept();
+		mf.is_explicit = fn->is_explicit();
 		mf.ref_qualifier = fn->function_reference_qualifier();
 		// Auto-derive cv_qualifier from the stored const/volatile member function flags.
 		// Parse paths set these flags before addMemberFunction / addOperatorOverload.

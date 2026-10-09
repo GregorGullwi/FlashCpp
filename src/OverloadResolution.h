@@ -1034,6 +1034,7 @@ inline bool hasConversionOperator(TypeIndex source_type_index, TypeCategory targ
 					std::string_view func_name = func_decl.decl_node().identifier_token().value();
 					const ASTNode& type_node = func_decl.decl_node().type_node();
 					if (func_name.starts_with("operator ") &&
+						!func_decl.is_explicit() &&
 						type_node.template is<TypeSpecifierNode>() &&
 						getCanonicalConversionTargetType(type_node.template as<TypeSpecifierNode>()) == canonical_target_type) {
 						return true; // Found conversion operator in parsed struct
@@ -1047,7 +1048,8 @@ inline bool hasConversionOperator(TypeIndex source_type_index, TypeCategory targ
 		if (source_struct_info) {
 			// Search member functions for the conversion operator
 			for (const auto& member_func : source_struct_info->member_functions) {
-				if (member_func.conversion_target_type == canonical_target_type) {
+				if (!member_func.is_explicit &&
+					member_func.conversion_target_type == canonical_target_type) {
 					return true;
 				}
 			}
@@ -2898,6 +2900,13 @@ trySelectCanonicalUserDefinedConversionOperator(
 		for (const StructMemberFunction& member_function : struct_info->member_functions) {
 			if (!member_function.is_conversion_operator() ||
 				!member_function.function_decl.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+			// An explicit conversion function is not viable for an implicit
+			// conversion ([class.conv.fct]/2); this selector only ranks implicit
+			// sequences. Explicit conversions (static_cast, direct-init) use
+			// findConversionOperator, which does not consult this path.
+			if (member_function.is_explicit) {
 				continue;
 			}
 			const TypeIndex conversion_target_type =

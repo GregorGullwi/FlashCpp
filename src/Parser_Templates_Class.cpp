@@ -2947,6 +2947,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					member_func_ref.set_is_constexpr(conv_specs & FlashCpp::MLS_Constexpr);
 					member_func_ref.set_is_consteval(conv_specs & FlashCpp::MLS_Consteval);
 					member_func_ref.set_is_inline(conv_specs & FlashCpp::MLS_Inline);
+					member_func_ref.set_is_explicit(static_cast<bool>(conv_specs & FlashCpp::MLS_Explicit));
 
 					// Parse trailing specifiers (const, volatile, &, &&, noexcept, override, final)
 					FlashCpp::MemberQualifiers member_quals;
@@ -4420,6 +4421,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					member_func_ref.set_is_constexpr(conv_specs & FlashCpp::MLS_Constexpr);
 					member_func_ref.set_is_consteval(conv_specs & FlashCpp::MLS_Consteval);
 					member_func_ref.set_is_inline(conv_specs & FlashCpp::MLS_Inline);
+					member_func_ref.set_is_explicit(static_cast<bool>(conv_specs & FlashCpp::MLS_Explicit));
 
 					// Parse trailing specifiers (const, volatile, noexcept, override, final, = default, = delete)
 					FlashCpp::MemberQualifiers member_quals;
