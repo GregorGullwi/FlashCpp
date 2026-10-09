@@ -2257,8 +2257,27 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 		}
 		argument_types.push_back(*imported_argument);
 	}
-	std::optional<CanonicalRecordConstructor> selected;
-	std::optional<ConversionRank> selected_rank;
+	struct RankedConstructor {
+		CanonicalRecordConstructor constructor;
+		std::vector<ConversionRank> argument_ranks;
+	};
+	std::vector<RankedConstructor> best_candidates;
+	best_candidates.reserve(constructor_count);
+	const auto compare_ranks = [](const std::vector<ConversionRank>& lhs, const std::vector<ConversionRank>& rhs) {
+		bool lhs_better = false;
+		bool rhs_better = false;
+		for (size_t index = 0; index < lhs.size(); ++index) {
+			lhs_better = lhs_better || lhs[index] < rhs[index];
+			rhs_better = rhs_better || rhs[index] < lhs[index];
+		}
+		if (lhs_better && !rhs_better) {
+			return 1;
+		}
+		if (rhs_better && !lhs_better) {
+			return -1;
+		}
+		return 0;
+	};
 	for (size_t index = 0; index < constructor_count; ++index) {
 		const CanonicalRecordConstructor constructor = table.recordConstructorAt(imported.type, index);
 		if (constructor.parameter_count != argument_types.size()) {
@@ -2268,14 +2287,13 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 			continue;
 		}
 		bool matches = true;
-		ConversionRank candidate_rank = ConversionRank::ExactMatch;
+		RankedConstructor candidate{constructor, {}};
+		candidate.argument_ranks.reserve(argument_types.size());
 		for (size_t parameter = 0; parameter < constructor.parameter_count; ++parameter) {
 			const TypeId parameter_type = table.recordConstructorParameterAt(imported.type, index, parameter);
 			if (parameter_type == argument_types[parameter]) {
+				candidate.argument_ranks.push_back(ConversionRank::ExactMatch);
 				continue;
-			}
-			if (argument_types.size() != 1) {
-				return std::nullopt;
 			}
 			const TypeId source_base = table.withoutTopLevelQualifiers(argument_types[parameter]);
 			const TypeId target_base = table.withoutTopLevelQualifiers(parameter_type);
@@ -2287,35 +2305,41 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 				matches = false;
 				break;
 			}
-			candidate_rank = conversion.rank;
+			candidate.argument_ranks.push_back(conversion.rank);
 		}
 		if (!matches) {
 			continue;
 		}
-		if (selected_rank.has_value() && candidate_rank == *selected_rank) {
-			// Equal ranks still need the sema resolver's overload tie-breaks.
-			return std::nullopt;
+		if (std::ranges::any_of(best_candidates, [&candidate, &compare_ranks](const RankedConstructor& current) {
+			return compare_ranks(current.argument_ranks, candidate.argument_ranks) > 0;
+		})) {
+			continue;
 		}
-		if (!selected_rank.has_value() || candidate_rank < *selected_rank) {
-			selected = constructor;
-			selected_rank = candidate_rank;
-		}
+		std::erase_if(best_candidates, [&candidate, &compare_ranks](const RankedConstructor& current) {
+			return compare_ranks(candidate.argument_ranks, current.argument_ranks) > 0;
+		});
+		best_candidates.push_back(std::move(candidate));
 	}
-	if (!selected.has_value()) {
+	if (best_candidates.empty()) {
+		return TypeTraitResult::success_false();
+	}
+	if (best_candidates.size() > 1) {
+		// Equal or incomparable conversion sequences need sema's overload tie-breaks.
 		return std::nullopt;
 	}
-	if (hasCanonicalRecordFunctionFlag(selected->flags, CanonicalRecordFunctionFlags::NonPublic)) {
+	const CanonicalRecordConstructor selected = best_candidates.front().constructor;
+	if (hasCanonicalRecordFunctionFlag(selected.flags, CanonicalRecordFunctionFlags::NonPublic)) {
 		return TypeTraitResult::success_false();
 	}
 	if (kind == TypeTraitKind::IsConstructible) {
 		return TypeTraitResult::success_true();
 	}
 	if (kind == TypeTraitKind::IsNothrowConstructible) {
-		return selected->is_noexcept != 0 ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
+		return selected.is_noexcept != 0 ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
 	}
 	if (kind == TypeTraitKind::IsTriviallyConstructible) {
-		const bool is_implicit_or_defaulted = hasCanonicalRecordFunctionFlag(selected->flags, CanonicalRecordFunctionFlags::Implicit) ||
-			hasCanonicalRecordFunctionFlag(selected->flags, CanonicalRecordFunctionFlags::ExplicitlyDefaulted);
+		const bool is_implicit_or_defaulted = hasCanonicalRecordFunctionFlag(selected.flags, CanonicalRecordFunctionFlags::Implicit) ||
+			hasCanonicalRecordFunctionFlag(selected.flags, CanonicalRecordFunctionFlags::ExplicitlyDefaulted);
 		if (!is_implicit_or_defaulted) {
 			return TypeTraitResult::success_false();
 		}

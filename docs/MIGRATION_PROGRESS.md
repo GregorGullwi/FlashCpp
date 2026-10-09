@@ -157,8 +157,9 @@ Continue boundary 3A in this order.
       published constructor schema, which is keyed by canonical `TypeId` and
       published from the declaration node for both records and class-template
       specializations (no `StructTypeInfo` at publication), and a
-      conversion matches between builtin argument and parameter types are also
-      ranked from a complete canonical constructor schema; other conversion
+      fixed-arity candidates with builtin argument-to-parameter conversions are
+      also ranked by per-argument standard-conversion rank from a complete
+      canonical constructor schema; variadic candidates and other conversion
       shapes still use constructor overload resolution to read the selected
       user-provided constructor's exception specification. The triviality
       variant reads the selected constructor (user-provided is non-trivial; an
