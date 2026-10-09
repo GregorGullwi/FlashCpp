@@ -4422,6 +4422,16 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 					" in variable initialization",
 					true);
 			}
+			// Direct-initialization `T x(arg)` of a scalar from a class argument selects
+			// a conversion operator; record it on the single argument for codegen.
+			if (init->is<InitializerListNode>() && vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& declared_type = vtype.as<TypeSpecifierNode>();
+				const InitializerListNode& init_list = init->as<InitializerListNode>();
+				if (declared_type.category() != TypeCategory::Struct && init_list.initializers().size() == 1) {
+					tryAnnotateExplicitConversion(
+						init_list.initializers()[0], init_list.initializers()[0], declared_type);
+				}
+			}
 			annotateStructInitListCtor();
 		}
 	} else if (node.is<StructuredBindingNode>()) {
@@ -5509,6 +5519,10 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				checkMemberFunctionAddressAccessForTarget(
 					e.expr(),
 					canonicalizeType(e.target_type()));
+				// static_cast may use a conversion operator, including an explicit
+				// one; record the selection on the operand so it composes with any
+				// enclosing conversion recorded on the cast expression itself.
+				tryAnnotateExplicitConversion(e.expr(), e.expr(), e.target_type());
 			} else if constexpr (std::is_same_v<T, DynamicCastNode>) {
 				normalizeExpression(e.expr(), ctx);
 			} else if constexpr (std::is_same_v<T, ConstCastNode>) {
@@ -10193,6 +10207,44 @@ bool SemanticAnalysis::annotateSelectedConversionOperator(
 	return true;
 }
 
+bool SemanticAnalysis::tryAnnotateExplicitConversion(
+	const ASTNode& slot_expression,
+	const ASTNode& source_expression,
+	const TypeSpecifierNode& target_type) {
+	const CanonicalTypeId source_type_id = inferExpressionType(source_expression);
+	if (!source_type_id) {
+		return false;
+	}
+	const CanonicalTypeId target_type_id = canonicalizeType(target_type);
+	if (!target_type_id) {
+		return false;
+	}
+	if (type_context_.get(source_type_id).category() != TypeCategory::Struct) {
+		return false;
+	}
+	const TypeSpecifierNode source_type = materializeTypeSpecifier(type_context_.get(source_type_id));
+	TypeSpecifierNode target_value_type = target_type;
+	target_value_type.set_reference_qualifier(ReferenceQualifier::None);
+	const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(
+		source_type.type_index(), source_type.cv_qualifier(), target_value_type, /*allow_explicit=*/true);
+	if (!selected_conversion.has_value() || selected_conversion->ambiguous ||
+		selected_conversion->function == nullptr) {
+		return false;
+	}
+	if (!annotateSelectedConversionOperator(
+			slot_expression, source_type_id, target_type_id, *selected_conversion)) {
+		return false;
+	}
+	// A cast does not change the operand's own type. Keep the operand's slot type
+	// as the source so re-inference (for example the constant evaluator) still
+	// sees the class type; codegen reads the recorded cast info, not the slot type.
+	const void* key = getExpressionKey(slot_expression);
+	SemanticSlot slot = getSlot(key).value_or(SemanticSlot{});
+	slot.type_id = source_type_id;
+	setSlot(key, slot);
+	return true;
+}
+
 bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 											 CanonicalTypeId target_type_id,
 											 CanonicalTypeId expr_type_id) {
@@ -10449,7 +10501,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 			// operator returning the target (or a class derived from it) is still a
 			// valid user-defined conversion, possibly with a derived-to-base tail.
 			const TypeSpecifierNode nominal_target = materializeTypeSpecifier(to_desc);
-			const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(from_desc.type_index, from_desc.base_cv, nominal_target);
+			const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(from_desc.type_index, from_desc.base_cv, nominal_target, false);
 			if (selected_conversion.has_value() && !selected_conversion->ambiguous) {
 				return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
 			}
@@ -10491,7 +10543,8 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 			trySelectCanonicalUserDefinedConversionOperator(
 				from_desc.type_index,
 				from_desc.base_cv,
-				target_type);
+				target_type,
+				false);
 		if (selected_conversion.has_value() && !selected_conversion->ambiguous) {
 			return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
 		}
@@ -11879,7 +11932,8 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 		// codegen lowers the conversion before materializing the temporary.
 		const auto selected_conversion =
 			trySelectCanonicalUserDefinedConversionOperator(
-				arg_value_type.type_index(), arg_value_type.cv_qualifier(), param_value_type);
+				arg_value_type.type_index(), arg_value_type.cv_qualifier(), param_value_type,
+				false);
 		if (!selected_conversion.has_value() || selected_conversion->ambiguous ||
 			selected_conversion->function == nullptr) {
 			return std::nullopt;
@@ -12009,7 +12063,7 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 				arg_type_id &&
 				arg_value_type.type_index().is_valid()) {
 				const auto selected_conversion =
-					trySelectCanonicalUserDefinedConversionOperator(arg_value_type.type_index(), arg_value_type.cv_qualifier(), param_value_type);
+					trySelectCanonicalUserDefinedConversionOperator(arg_value_type.type_index(), arg_value_type.cv_qualifier(), param_value_type, false);
 				if (selected_conversion.has_value() && !selected_conversion->ambiguous &&
 					annotateSelectedConversionOperator(arg, arg_type_id, param_type_id, *selected_conversion)) {
 					return;

@@ -869,6 +869,34 @@ ExprResult AstToIr::handleLValueReferenceCast(
 }
 
 ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
+	// A class-to-target static_cast is lowered by the conversion operator sema
+	// selected and recorded on the operand expression; consume that annotation
+	// rather than re-running lookup. The operand's own slot holds the conversion
+	// to the cast target, leaving the cast expression's slot for an enclosing
+	// conversion (for example the return type).
+	const ASTNode& operand_node = staticCastNode.expr();
+	if (operand_node.is<ExpressionNode>()) {
+		const auto slot = sema_.getSlot(&operand_node.as<ExpressionNode>());
+		if (slot.has_value() && slot->has_cast()) {
+			const ImplicitCastInfo& cast_info = sema_.castInfoTable()[slot->cast_info_index.value - 1];
+			if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
+				cast_info.selected_conversion_function != nullptr) {
+				ExprResult operand = visitExpressionNode(operand_node.as<ExpressionNode>(), ExpressionContext::Load);
+				const TypeIndex source_type_index = sema_.typeContext().get(cast_info.source_type_id).type_index;
+				const TypeInfo* source_type_info = source_type_index.is_valid() ? tryGetTypeInfo(source_type_index) : nullptr;
+				if (source_type_info != nullptr) {
+					std::optional<ExprResult> converted = emitSemaSelectedConversionOperatorCall(
+						operand, *source_type_info, cast_info,
+						sema_.typeContext().get(cast_info.target_type_id).category(),
+						staticCastNode.cast_token());
+					if (converted.has_value()) {
+						return *converted;
+					}
+				}
+			}
+		}
+	}
+
 		// Get the target type from the type specifier first
 	const auto& target_type_node = staticCastNode.target_type();
 	TypeCategory target_type = target_type_node.type();
@@ -1164,26 +1192,6 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		// based on signedness and size.
 	if (isIntegralConversionType(source_type) && is_integer_type(target_type) && source_size != target_size) {
 		return generateTypeConversion(expr_operands, source_type, target_type, staticCastNode.cast_token());
-	}
-
-	// A class object cast to a scalar or class target invokes a conversion
-	// operator ([expr.static.cast]/4); lowering must call it rather than
-	// reinterpret the object representation. `findConversionOperator` does not
-	// filter explicit operators, which a static_cast is allowed to use.
-	if (source_type == TypeCategory::Struct && source_type_index.is_valid()) {
-		if (const TypeInfo* source_type_info = tryGetTypeInfo(source_type_index)) {
-			const StructMemberFunction* conv_op = findConversionOperator(
-				source_type_info->getStructInfo(), target_type_node.type_index(),
-				isExprConstQualified(staticCastNode.expr()));
-			if (conv_op != nullptr) {
-				std::optional<ExprResult> converted = emitConversionOperatorCall(
-					expr_operands, *source_type_info, *conv_op,
-					target_type_node.type_index(), target_size, staticCastNode.cast_token());
-				if (converted.has_value()) {
-					return *converted;
-				}
-			}
-		}
 	}
 
 		// For numeric conversions, we might need to generate a conversion instruction

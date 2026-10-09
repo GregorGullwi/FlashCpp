@@ -1003,7 +1003,8 @@ inline std::optional<UserDefinedConversionOperatorSelection>
 trySelectCanonicalUserDefinedConversionOperator(
 	TypeIndex source_type_index,
 	CVQualifier source_cv_qualifier,
-	const TypeSpecifierNode& target_type);
+	const TypeSpecifierNode& target_type,
+	bool allow_explicit);
 
 // Helper function to find a conversion operator in a struct
 // Returns true if a conversion operator exists from source_type to target_type
@@ -2857,7 +2858,8 @@ inline std::optional<UserDefinedConversionOperatorSelection>
 trySelectCanonicalUserDefinedConversionOperator(
 	TypeIndex source_type_index,
 	CVQualifier source_cv_qualifier,
-	const TypeSpecifierNode& target_type) {
+	const TypeSpecifierNode& target_type,
+	bool allow_explicit) {
 	if (!source_type_index.is_valid()) {
 		return std::nullopt;
 	}
@@ -2903,10 +2905,9 @@ trySelectCanonicalUserDefinedConversionOperator(
 				continue;
 			}
 			// An explicit conversion function is not viable for an implicit
-			// conversion ([class.conv.fct]/2); this selector only ranks implicit
-			// sequences. Explicit conversions (static_cast, direct-init) use
-			// findConversionOperator, which does not consult this path.
-			if (member_function.is_explicit) {
+			// conversion ([class.conv.fct]/2). Explicit conversions (static_cast,
+			// direct-initialization) pass allow_explicit to include them.
+			if (!allow_explicit && member_function.is_explicit) {
 				continue;
 			}
 			const TypeIndex conversion_target_type =
@@ -3940,7 +3941,7 @@ inline ConversionPlan buildConversionPlan(
 							return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
 						}
 						if (const auto selected_conversion =
-							trySelectCanonicalUserDefinedConversionOperator(from.type_index(), from.cv_qualifier(), to);
+							trySelectCanonicalUserDefinedConversionOperator(from.type_index(), from.cv_qualifier(), to, false);
 							selected_conversion.has_value()) {
 							if (selected_conversion->ambiguous) {
 								return ConversionPlan::no_match();
@@ -3997,7 +3998,7 @@ inline ConversionPlan buildConversionPlan(
 				if (to_is_rvalue && !from_is_rvalue && from_base_index.isStruct() && from_base_index.is_valid()) {
 					if (const auto selected_conversion =
 							trySelectCanonicalUserDefinedConversionOperator(
-								from.type_index(), from.cv_qualifier(), to);
+								from.type_index(), from.cv_qualifier(), to, false);
 						selected_conversion.has_value()) {
 						if (selected_conversion->ambiguous) {
 							return ConversionPlan::no_match();
@@ -4090,7 +4091,7 @@ inline ConversionPlan buildConversionPlan(
 					// A conversion operator on the referenced source type reaches the
 					// target through the same user-defined sequence as a by-value source.
 					if (const auto selected_conversion =
-							trySelectCanonicalUserDefinedConversionOperator(from.type_index(), from.cv_qualifier(), to);
+							trySelectCanonicalUserDefinedConversionOperator(from.type_index(), from.cv_qualifier(), to, false);
 						selected_conversion.has_value()) {
 						if (selected_conversion->ambiguous) {
 							return ConversionPlan::no_match();
@@ -4181,7 +4182,7 @@ inline ConversionPlan buildConversionPlan(
 			if (has_canonical_conversion_target) {
 				if (const auto selected_conversion =
 					trySelectCanonicalUserDefinedConversionOperator(
-						from.type_index(), from.cv_qualifier(), to);
+						from.type_index(), from.cv_qualifier(), to, false);
 					selected_conversion.has_value()) {
 					if (selected_conversion->ambiguous) {
 						return ConversionPlan::no_match();
