@@ -90,19 +90,22 @@ Continue boundary 3A in this order.
    lower by calling the selected operator rather than reinterpreting the object.
    Conversion-operator selection is migrating to a single sema authority, with
    the end state that codegen never re-selects. Today two independent lookups
-   coexist: the canonical selector `trySelectCanonicalUserDefinedConversionOperator`
-   (`TypeId` currency, cv-aware), recorded in `ImplicitCastInfo` and consumed by
-   `emitSemaSelectedConversionOperatorCall`; and the legacy codegen
+   coexist: the sema selector `trySelectCanonicalUserDefinedConversionOperator`
+   (currently entered through `TypeIndex` and reading candidate functions from
+   `StructTypeInfo`, with canonical target and tail planning), recorded in
+   `ImplicitCastInfo` and consumed by `emitSemaSelectedConversionOperatorCall`; and the legacy codegen
    `findConversionOperator` / `emitConversionOperatorCall` (compat `TypeIndex`
    currency, its own cv-aware overload choice). `static_cast` and scalar
    direct-initialization now use the canonical path and fail closed when the
    annotation is absent. The legacy path is still load-bearing, not dead:
-   `tryAnnotateConversion`'s tail records `UserDefined` casts without a selected
-   function, so the var-initialization, return, call-argument, contextual-`bool`,
-   and constructor-argument codegen paths must re-select. Long-term plan:
+   `tryAnnotateConversion`'s generic residual tail now selects and records the
+   conversion function, including the cv-ranked choice for a reference-qualified
+   source. The reference-stripped sibling and other sema paths can still leave
+   the var-initialization, return, call-argument, contextual-`bool`, and
+   constructor-argument codegen paths needing re-selection. Long-term plan:
    (1) make every sema `UserDefined` annotation record the selected function,
-   starting with `tryAnnotateConversion`'s tail and its reference-stripped
-   sibling; (2) migrate the sibling codegen contexts to consume the annotation
+   starting with the reference-stripped sibling and the remaining unselected
+   paths; (2) migrate the sibling codegen contexts to consume the annotation
    through `emitSemaSelectedConversionOperatorCall` and fail closed; (3) delete
    `findConversionOperator` / `emitConversionOperatorCall`, leaving one selection
    authority on the canonical `TypeId` currency. Until step 3 the two lookups can
