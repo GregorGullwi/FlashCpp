@@ -1166,6 +1166,26 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		return generateTypeConversion(expr_operands, source_type, target_type, staticCastNode.cast_token());
 	}
 
+	// A class object cast to a scalar or class target invokes a conversion
+	// operator ([expr.static.cast]/4); lowering must call it rather than
+	// reinterpret the object representation. `findConversionOperator` does not
+	// filter explicit operators, which a static_cast is allowed to use.
+	if (source_type == TypeCategory::Struct && source_type_index.is_valid()) {
+		if (const TypeInfo* source_type_info = tryGetTypeInfo(source_type_index)) {
+			const StructMemberFunction* conv_op = findConversionOperator(
+				source_type_info->getStructInfo(), target_type_node.type_index(),
+				isExprConstQualified(staticCastNode.expr()));
+			if (conv_op != nullptr) {
+				std::optional<ExprResult> converted = emitConversionOperatorCall(
+					expr_operands, *source_type_info, *conv_op,
+					target_type_node.type_index(), target_size, staticCastNode.cast_token());
+				if (converted.has_value()) {
+					return *converted;
+				}
+			}
+		}
+	}
+
 		// For numeric conversions, we might need to generate a conversion instruction
 		// For now, just change the type metadata (works for most cases)
 	return makeExprResult(nativeTypeIndex(target_type), SizeInBits{static_cast<int>(target_size)}, expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);

@@ -86,9 +86,8 @@ Continue boundary 3A in this order.
    `FunctionDeclarationNode` now retains the `explicit` specifier for conversion
    functions, so an explicit conversion function is excluded from implicit
    viability (an argument or copy-initialization no longer selects it) while a
-   `static_cast` or direct-initialization still considers it. Lowering an explicit
-   conversion through `static_cast` or direct-initialization still yields a
-   garbage value (a separate codegen gap recorded in KNOWN_ISSUES).
+   `static_cast` or direct-initialization still considers it, and both forms now
+   lower by calling the selected operator rather than reinterpreting the object.
 
 2. **Migrate remaining flat consumers.**
    1. **The constructibility family.** The zero-argument variants and published

@@ -1551,6 +1551,27 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					// Visit the initializer expression to get its IR
 				ExprResult init_operands = visitVariableInitializer(single_init.as<ExpressionNode>());
 
+					// A class object direct-initializing a scalar invokes a conversion
+					// operator ([dcl.init]); call it rather than storing the object
+					// representation. Direct-initialization may use an explicit operator.
+				if (init_operands.category() == TypeCategory::Struct &&
+					init_operands.type_index.is_valid()) {
+					if (const TypeInfo* source_type_info = tryGetTypeInfo(init_operands.type_index)) {
+						const StructMemberFunction* conv_op = findConversionOperator(
+							source_type_info->getStructInfo(), type_node.type_index(),
+							isExprConstQualified(single_init));
+						if (conv_op != nullptr) {
+							const int target_size = static_cast<int>(type_node.size_in_bits());
+							if (std::optional<ExprResult> converted = emitConversionOperatorCall(
+									init_operands, *source_type_info, *conv_op,
+									type_node.type_index(), target_size, decl.identifier_token());
+								converted.has_value()) {
+								init_operands = *converted;
+							}
+						}
+					}
+				}
+
 					// Append the initializer operands
 				appendExprResultToOperands(init_operands);
 
