@@ -1311,12 +1311,20 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			emitReturn(0ULL, nativeTypeIndex(TypeCategory::Int), 32,
 				func_decl.identifier_token(), ValueStorage::ContainsData);
 		}
-		// For other non-void functions, this is a warning (missing return statement)
-		// A full implementation would require control flow analysis to check all paths,
-		// but warning on functions that don't end with a return catches common cases.
+		// For other non-void functions, flowing off the end is undefined behavior
+		// ([stmt.return]); the standard requires no diagnostic, so this stays a
+		// warning rather than a compile error. The check is a heuristic — does the
+		// last emitted instruction happen to be a return? — so it also fires for
+		// valid functions whose every path returns through a branch or that never
+		// return at all. A full implementation would require control flow analysis
+		// to check all paths, but warning on functions that don't end with a return
+		// catches the common cases. Still emit a bare return so an execution that
+		// reaches the end cannot run into the next function and corrupt the caller's
+		// stack.
 		else {
 			FLASH_LOG_FORMAT(Codegen, Warning, "Non-void function '{}' does not end with a return statement",
 							 func_decl.identifier_token().value());
+			emitVoidReturn(func_decl.identifier_token());
 		}
 	}
 
