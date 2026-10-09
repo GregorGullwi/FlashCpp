@@ -100,13 +100,15 @@ try {
 		"DeclarationBuilder publishes: 8",
 		"Unscoped-enum TypeIndex fallbacks: 9",
 		"Canonical structural trait fallbacks: 10",
-		"Lazy-constraint trait fallbacks: 11"
+		"Lazy-constraint trait fallbacks: 11",
+		"Canonical TypeIndex EntityId import recoveries: 12"
 	) -join "`n"
 	$migrationValues = Get-FlashCppMigrationCounterValues -CompilerOutput $migrationOutput
 	Assert-Runner ($migrationValues.outside_engine -eq 1) "migration telemetry parses outside-engine count"
 	Assert-Runner ($migrationValues.unscoped_enum_typeindex_fallback -eq 9) "migration telemetry parses unscoped-enum fallback count"
 	Assert-Runner ($migrationValues.canonical_structural_trait_fallback -eq 10) "migration telemetry parses canonical structural trait fallback count"
 	Assert-Runner ($migrationValues.lazy_constraint_trait_fallback -eq 11) "migration telemetry parses lazy-constraint trait fallback count"
+	Assert-Runner ($migrationValues.canonical_type_entity_import_recovery -eq 12) "migration telemetry parses canonical EntityId import recovery count"
 	Assert-Runner ($migrationValues.template_old_engine -eq 6) "migration telemetry parses template route count"
 	$missingMigration = Get-FlashCppMigrationCounterValues -CompilerOutput "compiler crashed without telemetry"
 	Assert-Runner ($null -eq $missingMigration) "output missing migration telemetry yields no values"

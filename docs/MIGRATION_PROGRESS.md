@@ -157,10 +157,13 @@ Continue boundary 3A in this order.
       published constructor schema, which is keyed by canonical `TypeId` and
       published from the declaration node for both records and class-template
       specializations (no `StructTypeInfo` at publication), and a
-      conversion-requiring match reads the selected user-provided constructor's
-      exception specification, the triviality variant reads the selected
-      constructor (user-provided is non-trivial; an implicit/defaulted copy or
-      move is trivial exactly when the class is trivially copyable), and an
+      conversion matches between builtin argument and parameter types are also
+      ranked from a complete canonical constructor schema; other conversion
+      shapes still use constructor overload resolution to read the selected
+      user-provided constructor's exception specification. The triviality
+      variant reads the selected constructor (user-provided is non-trivial; an
+      implicit/defaulted copy or move is trivial exactly when the class is
+      trivially copyable), and an
       implicit/defaulted nothrow selection follows the copy or move construction
       through the subobjects; a call's receiver/argument evaluation,
       which is not counted because `is_expression_noexcept` is boolean and cannot
@@ -169,12 +172,13 @@ Continue boundary 3A in this order.
       a tri-state result); and the triviality/lifetime record walks, which still
       read `StructTypeInfo` and need member, base, and special-member properties
       published alongside the class facts.
-   2. **Confirm a gap with a counter before adding identity plumbing.** A
-      `const TypeSpecifierNode&` parameter cannot stamp its operand, but the
-      operand already carries its published `EntityId`; that signature is not a
-      gap. Put a counter at the import site and run the fixed corpus first: zero
-      means the new accessor would be permanent dead weight; nonzero means capture
-      a reduced failing regression and land the accessor with it.
+   2. **Recover nominal identity only when the counter proves the flat projection lost it.**
+      `gCanonicalTypeEntityImportRecoveryCount` found 11 recoveries in the fixed
+      corpus, including two in the reduced
+      `test_canonical_trait_operand_entity_ret0.cpp` regression. The normalized
+      trait operand now preserves its source `EntityId` and injected declaration
+      before canonical import; the fixed corpus reports zero recoveries after
+      that change. No new identity accessor was needed.
    3. **Template argument and substitution storage.** The lazy constraint
       evaluator substitutes a template parameter by name against
       `template_param_names`; boundary 6 replaces that with depth-and-index

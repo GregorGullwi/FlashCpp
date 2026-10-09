@@ -152,6 +152,13 @@ TypeSpecifierNode normalizeTypeTraitOperand(const TypeSpecifierNode& type_spec) 
 	} else if (resolved_alias.has_member_class_owner()) {
 		applyResolvedAliasMemberOwner(normalized_type, resolved_alias);
 	}
+	if (type_spec.has_type_entity()) {
+		normalized_type.set_type_entity(type_spec.type_entity());
+	}
+	if (type_spec.has_injected_class_declaration()) {
+		normalized_type.set_injected_class_declaration(type_spec.injected_class_declaration());
+	}
+	tryBindPublishedTypeEntity(normalized_type);
 
 	return normalized_type;
 }
@@ -228,6 +235,7 @@ enum class CanonicalTraitProperty : uint8_t {
 	IsArray,
 	IsBoundedArray,
 	IsUnboundedArray,
+	IsCompleteOrUnbounded,
 	IsFunction,
 	IsMemberObjectPointer,
 	IsMemberFunctionPointer,
@@ -261,6 +269,7 @@ enum class CanonicalTraitProperty : uint8_t {
 	IsVolatile,
 	IsSigned,
 	IsUnsigned,
+	HasUniqueObjectRepresentations,
 };
 
 CanonicalTraitProperty canonicalTraitProperty(TypeTraitKind kind) {
@@ -274,6 +283,7 @@ CanonicalTraitProperty canonicalTraitProperty(TypeTraitKind kind) {
 	case TypeTraitKind::IsArray: return CanonicalTraitProperty::IsArray;
 	case TypeTraitKind::IsBoundedArray: return CanonicalTraitProperty::IsBoundedArray;
 	case TypeTraitKind::IsUnboundedArray: return CanonicalTraitProperty::IsUnboundedArray;
+	case TypeTraitKind::IsCompleteOrUnbounded: return CanonicalTraitProperty::IsCompleteOrUnbounded;
 	case TypeTraitKind::IsFunction: return CanonicalTraitProperty::IsFunction;
 	case TypeTraitKind::IsMemberObjectPointer:
 		return CanonicalTraitProperty::IsMemberObjectPointer;
@@ -316,6 +326,7 @@ CanonicalTraitProperty canonicalTraitProperty(TypeTraitKind kind) {
 	case TypeTraitKind::IsVolatile: return CanonicalTraitProperty::IsVolatile;
 	case TypeTraitKind::IsSigned: return CanonicalTraitProperty::IsSigned;
 	case TypeTraitKind::IsUnsigned: return CanonicalTraitProperty::IsUnsigned;
+	case TypeTraitKind::HasUniqueObjectRepresentations: return CanonicalTraitProperty::HasUniqueObjectRepresentations;
 	default:
 		return CanonicalTraitProperty::None;
 	}
@@ -402,16 +413,13 @@ CanonicalRecordFacts canonicalRecordPropertyFlag(
 // Classifies one canonical type. `type` is the imported identity, not a peeled
 // node: cv qualification and array bounds are part of the answer for some
 // properties, so each property decides how far to walk.
-std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property,
-	const CanonicalTypeTable& table, TypeId type) {
+std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property, const CanonicalTypeTable& table, TypeId type) {
 	// [dcl.array] an array type is identically cv-qualified to its element, and
 	// [dcl.ref] cv-qualifiers introduced through a reference are ignored. The
 	// array walk is iterative so array rank stays off the native stack.
 	TypeId walk = type;
 	const CanonicalTypeNode outer = table.node(walk);
-	const bool is_reference =
-		outer.kind == CanonicalTypeKind::LValueReference ||
-		outer.kind == CanonicalTypeKind::RValueReference;
+	const bool is_reference = outer.kind == CanonicalTypeKind::LValueReference || outer.kind == CanonicalTypeKind::RValueReference;
 	switch (property) {
 	case CanonicalTraitProperty::IsConst:
 	case CanonicalTraitProperty::IsVolatile: {
@@ -430,9 +438,7 @@ std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property,
 			}
 			break;
 		}
-		const CVQualifier bit = property == CanonicalTraitProperty::IsConst
-			? CVQualifier::Const
-			: CVQualifier::Volatile;
+		const CVQualifier bit = property == CanonicalTraitProperty::IsConst ? CVQualifier::Const : CVQualifier::Volatile;
 		return (static_cast<uint8_t>(accumulated) & static_cast<uint8_t>(bit)) != 0;
 	}
 	default:
@@ -453,12 +459,8 @@ std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property,
 	const CanonicalTypeKind kind = node.kind;
 	const bool is_builtin = kind == CanonicalTypeKind::Builtin;
 	const CanonicalBuiltinKind builtin = node.builtin;
-	const bool is_bounded_array =
-		kind == CanonicalTypeKind::Array &&
-		hasCanonicalTypeNodeFlag(
-			node.flags, CanonicalTypeNodeFlags::KnownArrayBound);
-	const bool is_unbounded_array =
-		kind == CanonicalTypeKind::Array && !is_bounded_array;
+	const bool is_bounded_array = kind == CanonicalTypeKind::Array && hasCanonicalTypeNodeFlag(node.flags, CanonicalTypeNodeFlags::KnownArrayBound);
+	const bool is_unbounded_array = kind == CanonicalTypeKind::Array && !is_bounded_array;
 	switch (property) {
 	case CanonicalTraitProperty::IsReference:
 		return is_reference;
@@ -474,6 +476,37 @@ std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property,
 		return is_bounded_array;
 	case CanonicalTraitProperty::IsUnboundedArray:
 		return is_unbounded_array;
+	case CanonicalTraitProperty::IsCompleteOrUnbounded: {
+		TypeId complete_type = type;
+		for (;;) {
+			const CanonicalTypeNode complete_node = table.node(complete_type);
+			if (complete_node.kind == CanonicalTypeKind::Qualified) {
+				complete_type = complete_node.child;
+				continue;
+			}
+			if (complete_node.kind == CanonicalTypeKind::Array) {
+				if (!hasCanonicalTypeNodeFlag(complete_node.flags, CanonicalTypeNodeFlags::KnownArrayBound)) {
+					return true;
+				}
+				complete_type = complete_node.child;
+				continue;
+			}
+			if (complete_node.kind == CanonicalTypeKind::Builtin) {
+				return complete_node.builtin != CanonicalBuiltinKind::Void;
+			}
+			if (complete_node.kind == CanonicalTypeKind::Record) {
+				const EntityId entity = table.recordEntity(complete_type);
+				return entity && table.hasRecordLayout(entity);
+			}
+			if (complete_node.kind == CanonicalTypeKind::TemplateSpecialization) {
+				if (table.hasRecordProperties(complete_type)) {
+					return true;
+				}
+				return std::nullopt;
+			}
+			return true;
+		}
+	}
 	case CanonicalTraitProperty::IsFunction:
 		return kind == CanonicalTypeKind::Function;
 	case CanonicalTraitProperty::IsMemberObjectPointer:
@@ -483,38 +516,30 @@ std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property,
 	case CanonicalTraitProperty::IsEnum:
 		return kind == CanonicalTypeKind::Enum;
 	case CanonicalTraitProperty::IsVoid:
-		return !is_reference && is_builtin &&
-			builtin == CanonicalBuiltinKind::Void;
+		return !is_reference && is_builtin && builtin == CanonicalBuiltinKind::Void;
 	case CanonicalTraitProperty::IsNullptr:
-		return !is_reference && is_builtin &&
-			builtin == CanonicalBuiltinKind::Nullptr;
+		return !is_reference && is_builtin && builtin == CanonicalBuiltinKind::Nullptr;
 	case CanonicalTraitProperty::IsIntegral:
 		return !is_reference && is_builtin && isCanonicalIntegralBuiltin(builtin);
 	case CanonicalTraitProperty::IsFloatingPoint:
-		return !is_reference && is_builtin &&
-			isCanonicalFloatingPointBuiltin(builtin);
+		return !is_reference && is_builtin && isCanonicalFloatingPointBuiltin(builtin);
 	case CanonicalTraitProperty::IsArithmetic:
-		return !is_reference && is_builtin &&
-			(isCanonicalIntegralBuiltin(builtin) ||
-				isCanonicalFloatingPointBuiltin(builtin));
+		return !is_reference && is_builtin && (isCanonicalIntegralBuiltin(builtin) || isCanonicalFloatingPointBuiltin(builtin));
 	case CanonicalTraitProperty::IsFundamental:
 		return !is_reference && is_builtin;
 	case CanonicalTraitProperty::IsScalar:
-		return !is_reference &&
-			((is_builtin && builtin != CanonicalBuiltinKind::Void) ||
-				kind == CanonicalTypeKind::Enum ||
-				kind == CanonicalTypeKind::Pointer ||
-				kind == CanonicalTypeKind::MemberObjectPointer ||
-				kind == CanonicalTypeKind::MemberFunctionPointer);
+		return !is_reference && ((is_builtin && builtin != CanonicalBuiltinKind::Void) || kind == CanonicalTypeKind::Enum ||
+			kind == CanonicalTypeKind::Pointer || kind == CanonicalTypeKind::MemberObjectPointer || kind == CanonicalTypeKind::MemberFunctionPointer);
 	case CanonicalTraitProperty::IsObject:
-		return !is_reference && kind != CanonicalTypeKind::Function &&
-			!(is_builtin && builtin == CanonicalBuiltinKind::Void);
+		return !is_reference && kind != CanonicalTypeKind::Function && !(is_builtin && builtin == CanonicalBuiltinKind::Void);
 	case CanonicalTraitProperty::IsCompound:
 		return !is_builtin;
 	case CanonicalTraitProperty::IsSigned:
 		return !is_reference && is_builtin && canonicalBuiltinIsSigned(builtin);
 	case CanonicalTraitProperty::IsUnsigned:
 		return !is_reference && is_builtin && canonicalBuiltinIsUnsigned(builtin);
+	case CanonicalTraitProperty::HasUniqueObjectRepresentations:
+		return !is_reference && is_builtin && isCanonicalIntegralBuiltin(builtin) && builtin != CanonicalBuiltinKind::Bool;
 	case CanonicalTraitProperty::IsClass:
 	case CanonicalTraitProperty::IsUnion: {
 		// A class-template specialization is a class type and never a union.
@@ -529,12 +554,10 @@ std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property,
 		// closed to the compatibility classifier rather than guessing.
 		const EntityId entity = table.recordEntity(peeled);
 		if (!entity || !table.hasRecordLayout(entity)) {
-			throw InternalError(
-				"canonical trait: class trait needs a published record layout");
+			throw InternalError("canonical trait: class trait needs a published record layout");
 		}
 		const CanonicalRecordLayout layout = table.recordLayout(entity);
-		const bool is_union = hasCanonicalRecordLayoutFlag(
-			layout.flags, CanonicalRecordLayoutFlags::Union);
+		const bool is_union = hasCanonicalRecordLayoutFlag(layout.flags, CanonicalRecordLayoutFlags::Union);
 		return property == CanonicalTraitProperty::IsUnion ? is_union : !is_union;
 	}
 	case CanonicalTraitProperty::IsPolymorphic:
@@ -551,12 +574,8 @@ std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property,
 	case CanonicalTraitProperty::IsNothrowDestructible:
 	case CanonicalTraitProperty::HasTrivialDestructor:
 	case CanonicalTraitProperty::HasVirtualDestructor: {
-		if (is_reference ||
-			(kind != CanonicalTypeKind::Record &&
-				kind != CanonicalTypeKind::TemplateSpecialization)) {
-			const bool is_existing_class_trait =
-				property == CanonicalTraitProperty::IsPolymorphic ||
-				property == CanonicalTraitProperty::IsFinal ||
+		if (is_reference || (kind != CanonicalTypeKind::Record && kind != CanonicalTypeKind::TemplateSpecialization)) {
+			const bool is_existing_class_trait = property == CanonicalTraitProperty::IsPolymorphic || property == CanonicalTraitProperty::IsFinal ||
 				property == CanonicalTraitProperty::IsAbstract;
 			if (is_existing_class_trait) {
 				return false;
@@ -567,16 +586,13 @@ std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property,
 			if (kind == CanonicalTypeKind::Record) {
 				const EntityId entity = table.recordEntity(peeled);
 				if (entity && table.hasRecordLayout(entity)) {
-					throw InternalError(
-						"canonical trait: complete record has no published property facts");
+					throw InternalError("canonical trait: complete record has no published property facts");
 				}
 			}
 			return std::nullopt;
 		}
-		const CanonicalRecordFacts facts =
-			table.recordProperties(peeled).facts;
-		return hasCanonicalRecordFact(
-			facts, canonicalRecordPropertyFlag(property));
+		const CanonicalRecordFacts facts = table.recordProperties(peeled).facts;
+		return hasCanonicalRecordFact(facts, canonicalRecordPropertyFlag(property));
 	}
 	case CanonicalTraitProperty::IsConst:
 	case CanonicalTraitProperty::IsVolatile:
@@ -586,11 +602,23 @@ std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property,
 	throw InternalError("canonical trait: unclassified structural property");
 }
 
+CanonicalTypeImport importCanonicalTraitOperand(CanonicalTypeTable& table, const TypeSpecifierNode& syntax) {
+	const CanonicalTypeImport imported = importCanonicalStructuralTraitOperand(table, syntax);
+	const bool has_injected_class_entity = syntax.has_injected_class_declaration() && syntax.injected_class_declaration()->has_entity_id();
+	const bool has_syntax_entity = syntax.has_type_entity() || has_injected_class_entity;
+	if (imported.status == CanonicalTypeImportStatus::Supported && !has_syntax_entity && syntax.type_index().is_valid()) {
+		const TypeInfo* type_info = tryGetTypeInfo(syntax.type_index());
+		const StructTypeInfo* struct_info = type_info == nullptr ? nullptr : canonicalClassStructInfoFromTypeInfo(*type_info);
+		if (struct_info != nullptr && struct_info->declaration_node != nullptr && struct_info->declaration_node->has_entity_id()) {
+			recordCanonicalTypeEntityImportRecovery();
+		}
+	}
+	return imported;
+}
+
 } // namespace
 
-std::optional<TypeTraitResult> tryEvaluateCanonicalSameTrait(
-	const TypeSpecifierNode& lhs,
-	const TypeSpecifierNode& rhs) {
+std::optional<TypeTraitResult> tryEvaluateCanonicalSameTrait(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
 	FrontendContext* context = FrontendContext::active();
 	if (context == nullptr) {
 		return std::nullopt;
@@ -599,37 +627,30 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalSameTrait(
 	CanonicalTypeTransaction transaction(table);
 	// A class-template specialization projected as a nominal specifier needs the
 	// structural-trait importer to recover its published EntityId.
-	const CanonicalTypeImport lhs_type =
-		importCanonicalStructuralTraitOperand(table, lhs);
+	const CanonicalTypeImport lhs_type = importCanonicalTraitOperand(table, lhs);
 	if (lhs_type.status == CanonicalTypeImportStatus::Invalid) {
 		return TypeTraitResult::failure();
 	}
 	if (lhs_type.status != CanonicalTypeImportStatus::Supported) {
 		return std::nullopt;
 	}
-	const CanonicalTypeImport rhs_type =
-		importCanonicalStructuralTraitOperand(table, rhs);
+	const CanonicalTypeImport rhs_type = importCanonicalTraitOperand(table, rhs);
 	if (rhs_type.status == CanonicalTypeImportStatus::Invalid) {
 		return TypeTraitResult::failure();
 	}
 	if (rhs_type.status != CanonicalTypeImportStatus::Supported) {
 		return std::nullopt;
 	}
-	if (isDependentCanonicalNode(table.node(lhs_type.type).kind) ||
-		isDependentCanonicalNode(table.node(rhs_type.type).kind)) {
+	if (isDependentCanonicalNode(table.node(lhs_type.type).kind) || isDependentCanonicalNode(table.node(rhs_type.type).kind)) {
 		// [temp.over.link] compares dependent names without the result of lookup
 		// in the template context; a dependent operand keeps its compatibility
 		// answer until substitution.
 		return std::nullopt;
 	}
-	return lhs_type.type == rhs_type.type
-		? TypeTraitResult::success_true()
-		: TypeTraitResult::success_false();
+	return lhs_type.type == rhs_type.type ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
 }
 
-std::optional<TypeTraitResult> tryEvaluateCanonicalStructuralTrait(
-	TypeTraitKind kind,
-	const TypeSpecifierNode& type_spec) {
+std::optional<TypeTraitResult> tryEvaluateCanonicalStructuralTrait(TypeTraitKind kind, const TypeSpecifierNode& type_spec) {
 	const CanonicalTraitProperty property = canonicalTraitProperty(kind);
 	if (property == CanonicalTraitProperty::None) {
 		return std::nullopt;
@@ -642,15 +663,12 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalStructuralTrait(
 
 	CanonicalTypeTable& table = context->canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
-	const CanonicalTypeImport imported_type =
-		importCanonicalStructuralTraitOperand(table, type_spec);
+	const CanonicalTypeImport imported_type = importCanonicalTraitOperand(table, type_spec);
 	if (imported_type.status == CanonicalTypeImportStatus::Invalid) {
 		return TypeTraitResult::failure();
 	}
-	if (imported_type.status != CanonicalTypeImportStatus::Supported ||
-		isDependentCanonicalNode(table.node(imported_type.type).kind)) {
-		if (type_spec.has_ordered_declarator() &&
-			!type_spec.ordered_declarator_has_legacy_projection()) {
+	if (imported_type.status != CanonicalTypeImportStatus::Supported || isDependentCanonicalNode(table.node(imported_type.type).kind)) {
+		if (type_spec.has_ordered_declarator() && !type_spec.ordered_declarator_has_legacy_projection()) {
 			return TypeTraitResult::failure();
 		}
 		recordCanonicalStructuralTraitFallback();
@@ -660,15 +678,12 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalStructuralTrait(
 	// Each property decides how far to walk the canonical chain: cv
 	// qualification and array bounds are part of some answers, so the peel is not
 	// hoisted out here.
-	const std::optional<bool> canonical_result = canonicalNodeSatisfies(
-		property, table, imported_type.type);
+	const std::optional<bool> canonical_result = canonicalNodeSatisfies(property, table, imported_type.type);
 	if (!canonical_result.has_value()) {
 		recordCanonicalStructuralTraitFallback();
 		return std::nullopt;
 	}
-	return *canonical_result
-		? TypeTraitResult::success_true()
-		: TypeTraitResult::success_false();
+	return *canonical_result ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
 }
 
 CanonicalRecordFacts canonicalConstructionFlagForTrait(
@@ -691,11 +706,8 @@ CanonicalRecordFacts canonicalConstructionFlagForTrait(
 // constructible, references, arrays, functions, and void are not. Returns
 // nullopt when the operand cannot be imported or its fact is not published, so
 // the caller keeps its compatibility answer.
-static std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTrait(
-	TypeTraitKind kind,
-	const TypeSpecifierNode& type_spec) {
-	const CanonicalRecordFacts property =
-		canonicalConstructionFlagForTrait(kind);
+static std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTrait(TypeTraitKind kind, const TypeSpecifierNode& type_spec) {
+	const CanonicalRecordFacts property = canonicalConstructionFlagForTrait(kind);
 	if (property == CanonicalRecordFacts::None) {
 		return std::nullopt;
 	}
@@ -708,8 +720,7 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTra
 	// The lazy operand materializer projects a class-template specialization as
 	// a nominal specifier; the structural-trait importer recovers its published
 	// EntityId before the plain importer would defer it.
-	const CanonicalTypeImport imported =
-		importCanonicalStructuralTraitOperand(table, type_spec);
+	const CanonicalTypeImport imported = importCanonicalTraitOperand(table, type_spec);
 	if (imported.status == CanonicalTypeImportStatus::Invalid) {
 		return TypeTraitResult::failure();
 	}
@@ -718,8 +729,7 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTra
 	}
 	TypeId type = imported.type;
 	const CanonicalTypeKind imported_kind = table.node(type).kind;
-	if (imported_kind == CanonicalTypeKind::LValueReference ||
-		imported_kind == CanonicalTypeKind::RValueReference) {
+	if (imported_kind == CanonicalTypeKind::LValueReference || imported_kind == CanonicalTypeKind::RValueReference) {
 		return TypeTraitResult::success_false();
 	}
 	type = table.withoutTopLevelQualifiers(type);
@@ -730,14 +740,9 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTra
 		if (!table.hasRecordProperties(type)) {
 			return std::nullopt;
 		}
-		return hasCanonicalRecordFact(
-					table.recordProperties(type).facts, property)
-			? TypeTraitResult::success_true()
-			: TypeTraitResult::success_false();
+		return hasCanonicalRecordFact(table.recordProperties(type).facts, property) ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
 	case CanonicalTypeKind::Builtin:
-		return node.builtin == CanonicalBuiltinKind::Void
-			? TypeTraitResult::success_false()
-			: TypeTraitResult::success_true();
+		return node.builtin == CanonicalBuiltinKind::Void ? TypeTraitResult::success_false() : TypeTraitResult::success_true();
 	case CanonicalTypeKind::Pointer:
 	case CanonicalTypeKind::MemberObjectPointer:
 	case CanonicalTypeKind::MemberFunctionPointer:
@@ -2177,16 +2182,12 @@ bool constructibleFromArgument(
 // caller supplies the already-resolved argument types; a record target is
 // constructible when constructor-overload resolution finds a match, with the
 // trivial and nothrow variants keeping the record's own constructor property.
-TypeTraitResult evaluateRecordConstructibleFromArgs(
-	TypeTraitKind kind,
-	const StructTypeInfo& struct_info,
-	std::span<const TypeSpecifierNode> arguments,
-	size_t target_pointer_depth) {
+TypeTraitResult evaluateRecordConstructibleFromArgs(TypeTraitKind kind, const StructTypeInfo& struct_info,
+	std::span<const TypeSpecifierNode> arguments, size_t target_pointer_depth) {
 	if (struct_info.is_union || target_pointer_depth != 0) {
 		return TypeTraitResult::success_false();
 	}
-	const ConstructorOverloadResolutionResult ctor_resolution =
-		resolve_constructor_overload(struct_info, arguments, false);
+	const ConstructorOverloadResolutionResult ctor_resolution = resolve_constructor_overload(struct_info, arguments, false);
 	if (!ctor_resolution.has_match) {
 		return TypeTraitResult::success_false();
 	}
@@ -2196,17 +2197,13 @@ TypeTraitResult evaluateRecordConstructibleFromArgs(
 	if (kind == TypeTraitKind::IsNothrowConstructible) {
 		const ConstructorDeclarationNode* selected = ctor_resolution.selected_overload;
 		if (selected != nullptr && !selected->is_implicit() && !selected->is_explicitly_defaulted()) {
-			return selected->is_noexcept()
-				? TypeTraitResult::success_true()
-				: TypeTraitResult::success_false();
+			return selected->is_noexcept() ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
 		}
 		if (selected != nullptr) {
 			// An implicit or defaulted selection is a copy or move, so its
 			// exception specification derives from the subobjects.
 			const bool prefer_move = !arguments.empty() && arguments.front().is_rvalue_reference();
-			return recordNothrowCopyOrMoveConstruction(struct_info, prefer_move)
-				? TypeTraitResult::success_true()
-				: TypeTraitResult::success_false();
+			return recordNothrowCopyOrMoveConstruction(struct_info, prefer_move) ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
 		}
 	}
 	if (kind == TypeTraitKind::IsTriviallyConstructible) {
@@ -2216,44 +2213,40 @@ TypeTraitResult evaluateRecordConstructibleFromArgs(
 		}
 		// An argument-bearing trivial construction is a copy or move, so it is
 		// trivial exactly when the class is trivially copyable.
-		return isStructTriviallyCopyable(&struct_info)
-			? TypeTraitResult::success_true()
-			: TypeTraitResult::success_false();
+		return isStructTriviallyCopyable(&struct_info) ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
 	}
-	return (!struct_info.has_vtable && !struct_info.hasUserDefinedConstructor())
-		? TypeTraitResult::success_true()
-		: TypeTraitResult::success_false();
+	return (!struct_info.has_vtable && !struct_info.hasUserDefinedConstructor()) ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
 }
 
-// Exact-match canonical constructor query. When the target is a published record
-// with a constructor schema and every argument imports to the exact parameter
-// TypeIds, answer without StructTypeInfo. A conversion-requiring match (or an
-// unpublished schema, or the triviality variant, which the schema does not yet
-// carry) defers to the compatibility path.
-static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFromArgs(
-	TypeTraitKind kind,
-	const TypeSpecifierNode& target,
+// Canonical constructor query for complete schemas and supported builtin conversion sequences.
+// Other overload shapes defer to the compatibility resolver.
+static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFromArgs(TypeTraitKind kind, const TypeSpecifierNode& target,
 	std::span<const TypeSpecifierNode> arguments) {
-	if (kind == TypeTraitKind::IsTriviallyConstructible) {
-		return std::nullopt;
-	}
 	FrontendContext* context = FrontendContext::active();
 	if (context == nullptr) {
 		return std::nullopt;
 	}
 	CanonicalTypeTable& table = context->canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
-	const CanonicalTypeImport imported = importCanonicalStructuralTraitOperand(table, target);
+	const CanonicalTypeImport imported = importCanonicalTraitOperand(table, target);
 	if (imported.status != CanonicalTypeImportStatus::Supported) {
 		return std::nullopt;
 	}
 	const CanonicalTypeKind type_kind = table.node(imported.type).kind;
-	if (type_kind != CanonicalTypeKind::Record &&
-		type_kind != CanonicalTypeKind::TemplateSpecialization) {
+	if (type_kind != CanonicalTypeKind::Record && type_kind != CanonicalTypeKind::TemplateSpecialization) {
 		return std::nullopt;
 	}
 	if (!table.hasRecordConstructors(imported.type)) {
 		return std::nullopt;
+	}
+	const size_t constructor_count = table.recordConstructorCount(imported.type);
+	if (constructor_count == 0) {
+		return std::nullopt;
+	}
+	for (size_t index = 0; index < constructor_count; ++index) {
+		if (hasCanonicalRecordFunctionFlag(table.recordConstructorAt(imported.type, index).flags, CanonicalRecordFunctionFlags::SchemaIncomplete)) {
+			return std::nullopt;
+		}
 	}
 	std::vector<TypeId> argument_types;
 	argument_types.reserve(arguments.size());
@@ -2264,58 +2257,95 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 		}
 		argument_types.push_back(*imported_argument);
 	}
-	const size_t constructor_count = table.recordConstructorCount(imported.type);
+	std::optional<CanonicalRecordConstructor> selected;
+	std::optional<ConversionRank> selected_rank;
 	for (size_t index = 0; index < constructor_count; ++index) {
 		const CanonicalRecordConstructor constructor = table.recordConstructorAt(imported.type, index);
 		if (constructor.parameter_count != argument_types.size()) {
+			if (constructor.parameter_count > argument_types.size()) {
+				return std::nullopt;
+			}
 			continue;
 		}
 		bool matches = true;
+		ConversionRank candidate_rank = ConversionRank::ExactMatch;
 		for (size_t parameter = 0; parameter < constructor.parameter_count; ++parameter) {
-			if (table.recordConstructorParameterAt(imported.type, index, parameter) != argument_types[parameter]) {
+			const TypeId parameter_type = table.recordConstructorParameterAt(imported.type, index, parameter);
+			if (parameter_type == argument_types[parameter]) {
+				continue;
+			}
+			if (argument_types.size() != 1) {
+				return std::nullopt;
+			}
+			const TypeId source_base = table.withoutTopLevelQualifiers(argument_types[parameter]);
+			const TypeId target_base = table.withoutTopLevelQualifiers(parameter_type);
+			if (table.node(source_base).kind != CanonicalTypeKind::Builtin || table.node(target_base).kind != CanonicalTypeKind::Builtin) {
+				return std::nullopt;
+			}
+			const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, argument_types[parameter], parameter_type);
+			if (!conversion.is_valid) {
 				matches = false;
 				break;
 			}
+			candidate_rank = conversion.rank;
 		}
 		if (!matches) {
 			continue;
 		}
-		if (kind == TypeTraitKind::IsConstructible) {
-			return TypeTraitResult::success_true();
+		if (selected_rank.has_value() && candidate_rank == *selected_rank) {
+			// Equal ranks still need the sema resolver's overload tie-breaks.
+			return std::nullopt;
 		}
-		return constructor.is_noexcept != 0
-			? TypeTraitResult::success_true()
-			: TypeTraitResult::success_false();
+		if (!selected_rank.has_value() || candidate_rank < *selected_rank) {
+			selected = constructor;
+			selected_rank = candidate_rank;
+		}
 	}
-	return std::nullopt;
+	if (!selected.has_value()) {
+		return std::nullopt;
+	}
+	if (hasCanonicalRecordFunctionFlag(selected->flags, CanonicalRecordFunctionFlags::NonPublic)) {
+		return TypeTraitResult::success_false();
+	}
+	if (kind == TypeTraitKind::IsConstructible) {
+		return TypeTraitResult::success_true();
+	}
+	if (kind == TypeTraitKind::IsNothrowConstructible) {
+		return selected->is_noexcept != 0 ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
+	}
+	if (kind == TypeTraitKind::IsTriviallyConstructible) {
+		const bool is_implicit_or_defaulted = hasCanonicalRecordFunctionFlag(selected->flags, CanonicalRecordFunctionFlags::Implicit) ||
+			hasCanonicalRecordFunctionFlag(selected->flags, CanonicalRecordFunctionFlags::ExplicitlyDefaulted);
+		if (!is_implicit_or_defaulted) {
+			return TypeTraitResult::success_false();
+		}
+		if (!table.hasRecordProperties(imported.type)) {
+			return std::nullopt;
+		}
+		const CanonicalRecordFacts facts = table.recordProperties(imported.type).facts;
+		return hasCanonicalRecordFact(facts, CanonicalRecordFacts::TriviallyCopyable) ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
+	}
+	throw InternalError("canonical constructibility: unexpected trait kind");
 }
 
-static std::optional<TypeTraitResult> tryEvaluateCanonicalConstructibleFromArgs(
-	TypeTraitKind kind,
-	const TypeSpecifierNode& target,
+static std::optional<TypeTraitResult> tryEvaluateCanonicalConstructibleFromArgs(TypeTraitKind kind, const TypeSpecifierNode& target,
 	std::span<const TypeSpecifierNode> arguments) {
 	if (arguments.empty()) {
 		return std::nullopt;  // the zero-argument query owns this case
 	}
-	if (kind != TypeTraitKind::IsConstructible &&
-		kind != TypeTraitKind::IsTriviallyConstructible &&
+	if (kind != TypeTraitKind::IsConstructible && kind != TypeTraitKind::IsTriviallyConstructible &&
 		kind != TypeTraitKind::IsNothrowConstructible) {
 		return std::nullopt;
 	}
 	// A reference or scalar target accepts at most one source type and uses the
 	// implicit conversion rules rather than constructor overload resolution.
-	if (target.is_reference() ||
-		TypeTraitEval::isScalarType(
-			target.category(), target.is_reference(), target.pointer_depth())) {
+	if (target.is_reference() || TypeTraitEval::isScalarType(target.category(), target.is_reference(), target.pointer_depth())) {
 		if (arguments.size() != 1) {
 			return TypeTraitResult::success_false();
 		}
-		return constructibleFromArgument(target, arguments.front())
-			? TypeTraitResult::success_true()
-			: TypeTraitResult::success_false();
+		return constructibleFromArgument(target, arguments.front()) ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
 	}
-	if (const std::optional<TypeTraitResult> canonical =
-			tryEvaluateCanonicalRecordConstructibleFromArgs(kind, target, arguments);
+	if (const std::optional<TypeTraitResult> canonical = tryEvaluateCanonicalRecordConstructibleFromArgs(kind, target, arguments);
 		canonical.has_value()) {
 		return canonical;
 	}
@@ -2323,8 +2353,7 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalConstructibleFromArgs(
 	if (struct_info == nullptr) {
 		return std::nullopt;  // unmigrated target shapes defer
 	}
-	return evaluateRecordConstructibleFromArgs(
-		kind, *struct_info, arguments, target.runtime_pointer_depth());
+	return evaluateRecordConstructibleFromArgs(kind, *struct_info, arguments, target.runtime_pointer_depth());
 }
 
 // Canonical-only constructibility: the zero-argument query answers from the

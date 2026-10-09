@@ -3277,7 +3277,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				const CanonicalTypeImport imported_specialization = importCanonicalClassTypeInfo(canonical_types, struct_type_info);
 				if (imported_specialization.status == CanonicalTypeImportStatus::Supported) {
 					(void)tryPublishCanonicalRecordProperties(canonical_types, imported_specialization.type, *struct_info_ptr);
-					(void)tryPublishCanonicalRecordConstructors(canonical_types, imported_specialization.type, struct_ref);
+					(void)tryPublishCanonicalRecordConstructors(canonical_types, imported_specialization.type, struct_ref, struct_info_ptr->has_deleted_constructor);
 				}
 			}
 

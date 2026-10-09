@@ -20,6 +20,7 @@ inline uint64_t gDeclarationBuilderPublishCount = 0;
 inline uint64_t gUnscopedEnumTypeIndexFallbackCount = 0;
 inline uint64_t gCanonicalStructuralTraitFallbackCount = 0;
 inline uint64_t gLazyConstraintTraitFallbackCount = 0;
+inline uint64_t gCanonicalTypeEntityImportRecoveryCount = 0;
 
 inline void recordTokenReplay() {
 	FLASHCPP_MIGRATION_COUNTER_BODY(++gTokenReplayCount);
@@ -69,6 +70,12 @@ inline void recordCanonicalStructuralTraitFallback() {
 	FLASHCPP_MIGRATION_COUNTER_BODY(++gCanonicalStructuralTraitFallbackCount);
 }
 
+// Boundary 3A probe: counts canonical trait imports that recover a published
+// class EntityId through TypeIndex instead of using the syntax identity stamp.
+inline void recordCanonicalTypeEntityImportRecovery() {
+	FLASHCPP_MIGRATION_COUNTER_BODY(++gCanonicalTypeEntityImportRecoveryCount);
+}
+
 inline uint64_t tokenReplayCount() {
 	return gTokenReplayCount;
 }
@@ -113,12 +120,10 @@ inline void printMigrationTelemetry() {
 	FLASH_LOG(General, Info, "TemplateEngine old-engine routes: ", gTemplateEngineOldEngineRouteCount);
 	FLASH_LOG(General, Info, "Dollar identity recoveries: ", gDollarIdentityRecoveryCount);
 	FLASH_LOG(General, Info, "DeclarationBuilder publishes: ", gDeclarationBuilderPublishCount);
-	FLASH_LOG(General, Info, "Unscoped-enum TypeIndex fallbacks: ",
-		gUnscopedEnumTypeIndexFallbackCount);
-	FLASH_LOG(General, Info, "Canonical structural trait fallbacks: ",
-		gCanonicalStructuralTraitFallbackCount);
-	FLASH_LOG(General, Info, "Lazy-constraint trait fallbacks: ",
-		gLazyConstraintTraitFallbackCount);
+	FLASH_LOG(General, Info, "Unscoped-enum TypeIndex fallbacks: ", gUnscopedEnumTypeIndexFallbackCount);
+	FLASH_LOG(General, Info, "Canonical structural trait fallbacks: ", gCanonicalStructuralTraitFallbackCount);
+	FLASH_LOG(General, Info, "Lazy-constraint trait fallbacks: ", gLazyConstraintTraitFallbackCount);
+	FLASH_LOG(General, Info, "Canonical TypeIndex EntityId import recoveries: ", gCanonicalTypeEntityImportRecoveryCount);
 	FLASH_LOG(General, Info, "InlineVector spill events: ", FlashCpp::inlineVectorSpillCount());
 	for (std::size_t index = 0; index < static_cast<std::size_t>(FlashCpp::InlineVectorSpillFamily::Count); ++index) {
 		const uint64_t count =

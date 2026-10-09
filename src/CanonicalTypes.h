@@ -383,6 +383,8 @@ enum class CanonicalRecordFunctionFlags : uint8_t {
 	None = 0,
 	Implicit = 1 << 0,
 	ExplicitlyDefaulted = 1 << 1,
+	NonPublic = 1 << 2,
+	SchemaIncomplete = 1 << 3,
 };
 
 // Constructor schema entry for a completed record, keyed by the record's
@@ -407,43 +409,38 @@ struct CanonicalRecordConstructorSpec {
 inline CanonicalRecordFunctionFlags operator|(CanonicalRecordFunctionFlags a, CanonicalRecordFunctionFlags b) {
 	return static_cast<CanonicalRecordFunctionFlags>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
 }
-
-inline CanonicalRecordMemberFlags operator|(CanonicalRecordMemberFlags a,
-	CanonicalRecordMemberFlags b) {
-	return static_cast<CanonicalRecordMemberFlags>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
-}
-inline CanonicalRecordMemberFlags& operator|=(CanonicalRecordMemberFlags& a,
-	CanonicalRecordMemberFlags b) {
-	return a = a | b;
-}
-inline bool hasCanonicalRecordMemberFlag(CanonicalRecordMemberFlags flags,
-	CanonicalRecordMemberFlags bit) {
+inline bool hasCanonicalRecordFunctionFlag(CanonicalRecordFunctionFlags flags, CanonicalRecordFunctionFlags bit) {
 	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
 }
 
-inline CanonicalRecordFacts operator|(CanonicalRecordFacts a,
-	CanonicalRecordFacts b) {
+inline CanonicalRecordMemberFlags operator|(CanonicalRecordMemberFlags a, CanonicalRecordMemberFlags b) {
+	return static_cast<CanonicalRecordMemberFlags>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+}
+inline CanonicalRecordMemberFlags& operator|=(CanonicalRecordMemberFlags& a, CanonicalRecordMemberFlags b) {
+	return a = a | b;
+}
+inline bool hasCanonicalRecordMemberFlag(CanonicalRecordMemberFlags flags, CanonicalRecordMemberFlags bit) {
+	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
+}
+
+inline CanonicalRecordFacts operator|(CanonicalRecordFacts a, CanonicalRecordFacts b) {
 	return static_cast<CanonicalRecordFacts>(
 		static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
 }
-inline CanonicalRecordFacts& operator|=(CanonicalRecordFacts& a,
-	CanonicalRecordFacts b) {
+inline CanonicalRecordFacts& operator|=(CanonicalRecordFacts& a, CanonicalRecordFacts b) {
 	return a = a | b;
 }
-inline bool hasCanonicalRecordFact(CanonicalRecordFacts flags,
-	CanonicalRecordFacts bit) {
+inline bool hasCanonicalRecordFact(CanonicalRecordFacts flags, CanonicalRecordFacts bit) {
 	return (static_cast<uint32_t>(flags) & static_cast<uint32_t>(bit)) != 0;
 }
 
 inline CanonicalRecordBaseFlags operator|(CanonicalRecordBaseFlags a, CanonicalRecordBaseFlags b) {
 	return static_cast<CanonicalRecordBaseFlags>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
 }
-inline CanonicalRecordBaseFlags& operator|=(CanonicalRecordBaseFlags& a,
-	CanonicalRecordBaseFlags b) {
+inline CanonicalRecordBaseFlags& operator|=(CanonicalRecordBaseFlags& a, CanonicalRecordBaseFlags b) {
 	return a = a | b;
 }
-inline bool hasCanonicalRecordBaseFlag(CanonicalRecordBaseFlags flags,
-	CanonicalRecordBaseFlags bit) {
+inline bool hasCanonicalRecordBaseFlag(CanonicalRecordBaseFlags flags, CanonicalRecordBaseFlags bit) {
 	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
 }
 
