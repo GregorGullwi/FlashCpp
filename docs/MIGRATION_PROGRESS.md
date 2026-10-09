@@ -179,9 +179,9 @@ Continue boundary 3A in this order.
       which is not counted because `is_expression_noexcept` is boolean and cannot
       separate a known-throwing operand from one it cannot resolve (a blanket
       argument check was tried and regressed template noexcept cases, so it needs
-      a tri-state result); and the triviality/lifetime record walks, which still
-      read `StructTypeInfo` and need member, base, and special-member properties
-      published alongside the class facts.
+      a tri-state result). Triviality and lifetime traits now walk published
+      TypeId member/base schemas using direct special-member facts; unsupported
+      or incomplete schemas defer to the compatibility classifier.
    2. **Recover nominal identity only when the counter proves the flat projection lost it.**
       `gCanonicalTypeEntityImportRecoveryCount` found 11 recoveries in the fixed
       corpus, including two in the reduced
