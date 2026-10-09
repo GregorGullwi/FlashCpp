@@ -74,7 +74,9 @@ Continue boundary 3A in this order.
    ranking; derived-to-base conversions through non-projectable declarators and
    callable-component conversions, which remain deferred; conversion-function
    tails for unsupported callable relations. Nominal tails use published
-   class-base schemas to rank unique base paths regardless of access;
+   class-base schemas to rank unique base paths regardless of access, and an
+   evaluated call now records the selected conversion operator (with its
+   derived-to-base or member-pointer tail) so codegen materializes it;
    post-selection access diagnostics remain a separate unresolved sema step.
    The ordered canonical planner handles supported non-nominal tails. Array
    and callable outer wrappers stay guarded where their consumers are not

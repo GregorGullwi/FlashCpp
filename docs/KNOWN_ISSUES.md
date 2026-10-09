@@ -1,31 +1,23 @@
 # Known Issues
 
-## Conversion-operator standard tails are not recorded for evaluated calls
+## Post-selection access checking for conversion-operator tails
 
-Overload ranking now recognizes a public derived-to-base tail after a conversion
-operator returns a class-template specialization, but an evaluated call still
-fails during IR generation because sema does not record this class-valued
-conversion for the call argument:
+Overload ranking selects a conversion operator whose return type reaches the
+parameter through a derived-to-base tail (a class target or a member-pointer
+owner adjustment), and the evaluated call now records and materializes that
+conversion. Accessibility of the conversion function and of the base path is
+still not diagnosed after selection, so an inaccessible conversion that should
+be ill-formed is accepted:
 
 ```cpp
 template<class T> struct Base { int value; };
-template<class T> struct Derived : Base<T> {};
-struct Source { operator Derived<int>() const { return {}; } };
+struct Source { private: operator Base<int>() const { return {}; } };
 int choose(Base<int>) { return 0; }
-int choose(...) { return 1; }
-int main() { return choose(Source{}); }
+int main() { return choose(Source{}); }  // should be an access error
 ```
 
-The compiler reports that sema missed the resolved call-argument conversion.
-The matching `decltype` regression isolates ranking; sema annotation, base
-subobject materialization, and post-selection access checking remain follow-up
-work.
-
-The same sema gap occurs when a conversion operator returns
-`int (Base<T>::*)() noexcept` and the selected parameter is
-`int (Derived<T>::*)() noexcept`. `tests/test_canonical_dependent_member_function_pointer_conversion_tail_ret0.cpp`
-checks ranking in `decltype`; evaluating that call still fails during IR
-generation because sema does not record the argument conversion.
+`tests/test_conversion_operator_standard_tail_call_ret0.cpp` covers the evaluated
+call; a negative access regression is still owed.
 
 ## Calling a user-declared copy-assignment operator crashes at runtime
 
