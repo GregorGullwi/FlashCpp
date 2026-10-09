@@ -163,9 +163,15 @@ Continue boundary 3A in this order.
       array/function decay. Single-argument builtin-to-builtin scalar
       construction also uses the canonical planner; supported pointer and
       member-pointer scalar conversions use it as well, and `nullptr_t` to
-      `bool` is handled as direct initialization. References, enums, dependent
-      or nominal conversion tails, callable mismatches, and user-defined
-      conversion shapes defer to compatibility resolution; variadic candidates and other record
+      `bool` is handled as direct initialization. References, dependent or
+      nominal conversion tails, callable mismatches, and user-defined
+      conversion shapes defer to compatibility resolution. Unscoped enum
+      arguments use published promotion and underlying types for builtin
+      scalar and constructor parameters; scoped enum-to-builtin conversions
+      are rejected canonically. Implicit copy/move constructor schemas derive
+      their self-reference parameter TypeIds from the owning canonical
+      identity when synthesized parameter nodes lack entity bindings.
+      Variadic candidates and other record
       conversion shapes use constructor overload resolution to read the
       selected user-provided constructor's exception specification. The schema
       records trailing default-argument arity, so canonical viability accepts

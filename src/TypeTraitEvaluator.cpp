@@ -2370,6 +2370,40 @@ static bool containsUnresolvedConversionType(const CanonicalTypeTable& table, Ty
 	}
 }
 
+static std::optional<ConversionPlan> tryBuildCanonicalEnumToBuiltinConversionPlan(CanonicalTypeTable& table, TypeId source_type, TypeId target_type) {
+	while (table.node(source_type).kind == CanonicalTypeKind::LValueReference ||
+		table.node(source_type).kind == CanonicalTypeKind::RValueReference) {
+		source_type = table.node(source_type).child;
+	}
+	const TypeId source = table.withoutTopLevelQualifiers(source_type);
+	const TypeId target = table.withoutTopLevelQualifiers(target_type);
+	if (table.node(source).kind != CanonicalTypeKind::Enum || table.node(target).kind != CanonicalTypeKind::Builtin) {
+		return std::nullopt;
+	}
+	const CanonicalBuiltinKind target_builtin = table.node(target).builtin;
+	if (target_builtin == CanonicalBuiltinKind::Void || target_builtin == CanonicalBuiltinKind::Nullptr) {
+		return ConversionPlan::no_match();
+	}
+	const EntityId enum_entity = table.enumEntity(source);
+	if (!table.hasEnumLayout(enum_entity)) {
+		return std::nullopt;
+	}
+	const CanonicalEnumLayout layout = table.enumLayout(enum_entity);
+	if (hasCanonicalEnumLayoutFlag(layout.flags, CanonicalEnumLayoutFlags::Scoped)) {
+		return ConversionPlan::no_match();
+	}
+	const bool has_fixed_underlying = hasCanonicalEnumLayoutFlag(layout.flags, CanonicalEnumLayoutFlags::FixedUnderlying);
+	const TypeId promotion_type = has_fixed_underlying ? layout.underlying_type : layout.unfixed_promotion_type;
+	if (!promotion_type) {
+		return std::nullopt;
+	}
+	if (target == table.withoutTopLevelQualifiers(promotion_type) ||
+		(has_fixed_underlying && target == table.withoutTopLevelQualifiers(layout.underlying_type))) {
+		return ConversionPlan{ConversionRank::Promotion, StandardConversionKind::IntegralPromotion, true};
+	}
+	return buildCanonicalStructuralConversionPlan(table, promotion_type, target_type);
+}
+
 static std::optional<TypeTraitResult> tryEvaluateCanonicalScalarConstructionFromArgument(
 	const TypeSpecifierNode& target, const TypeSpecifierNode& argument) {
 	if (target.is_reference()) {
@@ -2397,6 +2431,13 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalScalarConstructionFrom
 	if (source_node.kind == CanonicalTypeKind::Builtin && target_node.kind == CanonicalTypeKind::Builtin &&
 		source_node.builtin == CanonicalBuiltinKind::Nullptr && target_node.builtin == CanonicalBuiltinKind::Bool) {
 		return TypeTraitResult::success_true();
+	}
+	if (source_node.kind == CanonicalTypeKind::Enum && target_node.kind == CanonicalTypeKind::Builtin) {
+		const std::optional<ConversionPlan> conversion =
+			tryBuildCanonicalEnumToBuiltinConversionPlan(table, source_type, imported_target.type);
+		if (conversion.has_value()) {
+			return conversion->is_valid ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
+		}
 	}
 	const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, *imported_argument, imported_target.type);
 	if (conversion.is_valid) {
@@ -2529,14 +2570,52 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 				candidate.argument_ranks.push_back(ConversionRank::ExactMatch);
 				continue;
 			}
-			const TypeId source_base = table.withoutTopLevelQualifiers(argument_types[parameter]);
-			const TypeId target_base = table.withoutTopLevelQualifiers(parameter_type);
+			TypeId source_type = argument_types[parameter];
+			while (table.node(source_type).kind == CanonicalTypeKind::LValueReference ||
+				table.node(source_type).kind == CanonicalTypeKind::RValueReference) {
+				source_type = table.node(source_type).child;
+			}
+			const TypeId source_base = table.withoutTopLevelQualifiers(source_type);
+			TypeId parameter_object = parameter_type;
+			while (table.node(parameter_object).kind == CanonicalTypeKind::LValueReference ||
+				table.node(parameter_object).kind == CanonicalTypeKind::RValueReference) {
+				parameter_object = table.node(parameter_object).child;
+			}
+			const TypeId target_base = table.withoutTopLevelQualifiers(parameter_object);
 			const CanonicalTypeKind source_kind = table.node(source_base).kind;
 			const CanonicalTypeKind target_kind = table.node(target_base).kind;
 			const CanonicalTypeKind parameter_kind = table.node(parameter_type).kind;
 			const bool is_reference_parameter = parameter_kind == CanonicalTypeKind::LValueReference || parameter_kind == CanonicalTypeKind::RValueReference;
+			if (is_reference_parameter) {
+				if (source_kind == CanonicalTypeKind::Enum &&
+					(target_kind == CanonicalTypeKind::Record || target_kind == CanonicalTypeKind::TemplateSpecialization)) {
+					matches = false;
+					break;
+				}
+				return std::nullopt;
+			}
+			if (source_kind == CanonicalTypeKind::Enum && target_kind == CanonicalTypeKind::Builtin) {
+				const std::optional<ConversionPlan> conversion =
+					tryBuildCanonicalEnumToBuiltinConversionPlan(table, argument_types[parameter], parameter_type);
+				if (!conversion.has_value()) {
+					return std::nullopt;
+				}
+				if (!conversion->is_valid) {
+					matches = false;
+					break;
+				}
+				candidate.argument_ranks.push_back(conversion->rank);
+				continue;
+			}
+			const bool source_is_class = source_kind == CanonicalTypeKind::Record || source_kind == CanonicalTypeKind::TemplateSpecialization;
+			const bool target_is_class = target_kind == CanonicalTypeKind::Record || target_kind == CanonicalTypeKind::TemplateSpecialization;
+			if ((source_kind == CanonicalTypeKind::Enum && !target_is_class && !isDependentCanonicalNode(target_kind)) ||
+				(target_kind == CanonicalTypeKind::Enum && !source_is_class && !isDependentCanonicalNode(source_kind))) {
+				matches = false;
+				break;
+			}
 			const bool may_need_compatibility_resolution = mayNeedCompatibilityResolution(source_kind) || mayNeedCompatibilityResolution(target_kind);
-			if (is_reference_parameter || may_need_compatibility_resolution) {
+			if (may_need_compatibility_resolution) {
 				return std::nullopt;
 			}
 			const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, argument_types[parameter], parameter_type);
