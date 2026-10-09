@@ -2346,16 +2346,14 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 	};
 	for (size_t index = 0; index < constructor_count; ++index) {
 		const CanonicalRecordConstructor constructor = table.recordConstructorAt(imported.type, index);
-		if (constructor.parameter_count != argument_types.size()) {
-			if (constructor.parameter_count > argument_types.size()) {
-				return std::nullopt;
-			}
+		if (argument_types.size() < constructor.minimum_parameter_count ||
+			argument_types.size() > constructor.parameter_count) {
 			continue;
 		}
 		bool matches = true;
 		RankedConstructor candidate{constructor, {}};
 		candidate.argument_ranks.reserve(argument_types.size());
-		for (size_t parameter = 0; parameter < constructor.parameter_count; ++parameter) {
+		for (size_t parameter = 0; parameter < argument_types.size(); ++parameter) {
 			const TypeId parameter_type = table.recordConstructorParameterAt(imported.type, index, parameter);
 			if (parameter_type == argument_types[parameter]) {
 				candidate.argument_ranks.push_back(ConversionRank::ExactMatch);
@@ -2409,6 +2407,11 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 		return TypeTraitResult::success_true();
 	}
 	if (kind == TypeTraitKind::IsNothrowConstructible) {
+		if (argument_types.size() < selected.parameter_count) {
+			// The default argument expression may throw independently of the
+			// selected constructor's exception specification.
+			return std::nullopt;
+		}
 		if (hasCanonicalRecordFunctionFlag(selected.flags, CanonicalRecordFunctionFlags::Implicit) ||
 			hasCanonicalRecordFunctionFlag(selected.flags, CanonicalRecordFunctionFlags::ExplicitlyDefaulted)) {
 			return std::nullopt;

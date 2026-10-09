@@ -1204,6 +1204,11 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 		type_kind != CanonicalTypeKind::TemplateSpecialization) {
 		throw InternalError("canonical type: constructor schema requires a class type");
 	}
+	const auto minimumParameterCount = [](const CanonicalRecordConstructorSpec& constructor) {
+		return constructor.minimum_parameter_count == std::numeric_limits<uint16_t>::max()
+			? constructor.parameter_types.size()
+			: static_cast<size_t>(constructor.minimum_parameter_count);
+	};
 	const auto existing = record_constructor_schema_ids_.find(type.value);
 	if (existing != record_constructor_schema_ids_.end()) {
 		const CanonicalRecordConstructorSchemaHeader header = record_constructor_schema_headers_[existing->second];
@@ -1214,7 +1219,10 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 		for (size_t index = 0; index < constructors.size(); ++index) {
 			const CanonicalRecordConstructor expected = record_constructors_[header.constructor_begin + index];
 			if (expected.parameter_begin != parameter_cursor ||
-				expected.parameter_count != constructors[index].parameter_types.size()) {
+				expected.parameter_count != constructors[index].parameter_types.size() ||
+				expected.minimum_parameter_count != minimumParameterCount(constructors[index]) ||
+				expected.flags != constructors[index].flags ||
+				expected.is_noexcept != static_cast<uint8_t>(constructors[index].is_noexcept ? 1 : 0)) {
 				throw InternalError("canonical type: conflicting record constructor schema publication");
 			}
 			for (size_t parameter = 0; parameter < expected.parameter_count; ++parameter) {
@@ -1228,8 +1236,9 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 	}
 	size_t total_parameters = 0;
 	for (const CanonicalRecordConstructorSpec& constructor : constructors) {
-		if (constructor.parameter_types.size() > std::numeric_limits<uint16_t>::max()) {
-			throw InternalError("canonical type: too many record constructor parameters");
+		if (constructor.parameter_types.size() > std::numeric_limits<uint16_t>::max() ||
+			minimumParameterCount(constructor) > constructor.parameter_types.size()) {
+			throw InternalError("canonical type: invalid record constructor arity");
 		}
 		total_parameters += constructor.parameter_types.size();
 	}
@@ -1251,6 +1260,7 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 			.parameter_count = static_cast<uint16_t>(constructor.parameter_types.size()),
 			.flags = constructor.flags,
 			.is_noexcept = static_cast<uint8_t>(constructor.is_noexcept ? 1 : 0),
+			.minimum_parameter_count = static_cast<uint16_t>(minimumParameterCount(constructor)),
 		};
 		appendSchemaEntryUnlocked(record_constructors_, live_record_constructor_count_, entry);
 		parameter_cursor += entry.parameter_count;
