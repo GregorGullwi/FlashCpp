@@ -1554,6 +1554,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					// A class object direct-initializing a scalar invokes a conversion
 					// operator ([dcl.init]); sema recorded the selection on the single
 					// argument, so consume it rather than re-running lookup.
+				bool conversion_applied = false;
 				if (single_init.is<ExpressionNode>()) {
 					const auto slot = sema_.getSlot(&single_init.as<ExpressionNode>());
 					if (slot.has_value() && slot->has_cast()) {
@@ -1569,10 +1570,17 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									decl.identifier_token());
 								if (converted.has_value()) {
 									init_operands = *converted;
+									conversion_applied = true;
 								}
 							}
 						}
 					}
+				}
+				// Fail closed: a class argument direct-initializing a scalar must be
+				// lowered through the sema-selected conversion operator; storing the
+				// object representation would silently miscompile.
+				if (!conversion_applied && init_operands.category() == TypeCategory::Struct) {
+					throw InternalError("sema must annotate a struct-to-scalar direct-initialization conversion");
 				}
 
 					// Append the initializer operands
