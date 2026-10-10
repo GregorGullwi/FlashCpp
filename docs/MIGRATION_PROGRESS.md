@@ -6,7 +6,7 @@ authoritative for the design, boundaries, and exit criteria. This file records
 the current boundary state, the remaining work, and the validation contract;
 completed implementation history belongs in git.
 
-Last updated: 2026-10-09.
+Last updated: 2026-10-10.
 
 ## Current state
 
@@ -166,8 +166,11 @@ Continue boundary 3A in this order.
       array/function decay. Single-argument builtin-to-builtin scalar
       construction also uses the canonical planner; supported pointer and
       member-pointer scalar conversions use it as well, and `nullptr_t` to
-      `bool` is handled as direct initialization. References, dependent or
-      nominal conversion tails, callable mismatches, and user-defined
+      `bool` is handled as direct initialization. Single-argument reference
+      targets use the canonical reference-binding planner for supported
+      bindings and temporary materialization. Record constructor candidates
+      with reference parameters, dependent or nominal conversion tails,
+      callable mismatches, and user-defined
       conversion shapes defer to compatibility resolution. Unscoped enum
       arguments use published promotion and underlying types for builtin
       scalar and constructor parameters; scoped enum-to-builtin conversions
