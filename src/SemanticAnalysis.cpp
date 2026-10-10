@@ -759,6 +759,23 @@ CanonicalTypeImport tryImportCanonicalTypeDesc(const CanonicalTypeDesc& desc) {
 		requireFrontendContext().canonicalTypes(), syntax);
 }
 
+std::optional<UserDefinedConversionOperatorSelection> trySelectCanonicalImplicitConversionOperator(
+	const CanonicalTypeDesc& source_desc,
+	const TypeSpecifierNode& target_type) {
+	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+	CanonicalTypeTransaction source_type_transaction(canonical_types);
+	const CanonicalTypeImport source_type_import = tryImportCanonicalTypeDesc(source_desc);
+	if (source_type_import.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	const auto selected_conversion =
+		trySelectCanonicalUserDefinedConversionOperator(source_type_import.type, target_type, false);
+	if (selected_conversion.has_value()) {
+		source_type_transaction.commit();
+	}
+	return selected_conversion;
+}
+
 // [expr.cond] applies the array-to-pointer conversion before choosing a
 // common pointer result.  Keep this canonical so string literals and ordinary
 // array expressions follow the same path; their parser-facing expression
@@ -11975,10 +11992,8 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 		// A user-defined conversion materializes a temporary from the conversion
 		// result and binds the reference to it; record the selected operator so
 		// codegen lowers the conversion before materializing the temporary.
-		const auto selected_conversion =
-			trySelectCanonicalUserDefinedConversionOperator(
-				arg_value_type.type_index(), arg_value_type.cv_qualifier(), param_value_type,
-				false);
+		const auto selected_conversion = trySelectCanonicalImplicitConversionOperator(
+			type_context_.get(arg_value_type_id), param_value_type);
 		if (!selected_conversion.has_value() || selected_conversion->ambiguous ||
 			selected_conversion->function == nullptr) {
 			return std::nullopt;
@@ -12088,7 +12103,7 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 	if (!tryAnnotateCopyInitConvertingConstructor(arg, param_type_id,
 												  context_description, arg_type_id)) {
 		const bool annotated_standard_conversion =
-			tryAnnotateConversion(arg, param_type_id, arg_type_id);
+			tryAnnotateConversionByTypeId(arg, param_type_id, arg_type_id);
 		diagnoseScopedEnumConversion(arg, param_type_id, context_description, arg_type_id);
 		if (!annotated_standard_conversion &&
 			arg_binding_type.has_value() &&
@@ -12107,8 +12122,8 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 				plan.rank == ConversionRank::UserDefined &&
 				arg_type_id &&
 				arg_value_type.type_index().is_valid()) {
-				const auto selected_conversion =
-					trySelectCanonicalUserDefinedConversionOperator(arg_value_type.type_index(), arg_value_type.cv_qualifier(), param_value_type, false);
+				const auto selected_conversion = trySelectCanonicalImplicitConversionOperator(
+					type_context_.get(arg_type_id), param_value_type);
 				if (selected_conversion.has_value() && !selected_conversion->ambiguous &&
 					annotateSelectedConversionOperator(arg, arg_type_id, param_type_id, *selected_conversion)) {
 					return;
