@@ -541,6 +541,10 @@ private:
 	bool tryAnnotateExplicitConversion(const ASTNode& slot_expression,
 									   const ASTNode& source_expression,
 									   const TypeSpecifierNode& target_type);
+	// The static_cast path starts selection from canonical source and base TypeIds.
+	bool tryAnnotateExplicitConversionByTypeId(const ASTNode& slot_expression,
+												const ASTNode& source_expression,
+												const TypeSpecifierNode& target_type);
 	bool tryAnnotateCopyInitConvertingConstructor(const ASTNode& expr_node,
 												  CanonicalTypeId target_type_id,
 												  const char* context_description,

@@ -1001,6 +1001,12 @@ struct UserDefinedConversionOperatorSelection {
 
 inline std::optional<UserDefinedConversionOperatorSelection>
 trySelectCanonicalUserDefinedConversionOperator(
+	TypeId source_type_id,
+	const TypeSpecifierNode& target_type,
+	bool allow_explicit);
+
+inline std::optional<UserDefinedConversionOperatorSelection>
+trySelectCanonicalUserDefinedConversionOperator(
 	TypeIndex source_type_index,
 	CVQualifier source_cv_qualifier,
 	const TypeSpecifierNode& target_type,
@@ -2852,6 +2858,211 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 		return std::nullopt;
 	}
 	return plan;
+}
+
+// Conversion-function schema publication is still pending. Resolve the
+// compatibility declaration container by canonical class identity.
+inline const TypeInfo* tryFindCanonicalOverloadClassTypeInfo(CanonicalTypeTable& table, TypeId class_type) {
+	const CanonicalTypeKind kind = table.node(class_type).kind;
+	if (kind == CanonicalTypeKind::Record) {
+		return tryFindTypeInfoByEntityId(table.recordEntity(class_type));
+	}
+	if (kind != CanonicalTypeKind::TemplateSpecialization) {
+		return nullptr;
+	}
+	for (size_t slot = 1; slot < getTypeInfoCount(); ++slot) {
+		const TypeInfo* const type_info = tryGetTypeInfo(TypeIndex{slot});
+		if (type_info == nullptr || type_info->getStructInfo() == nullptr) {
+			continue;
+		}
+		CanonicalTypeTransaction transaction(table);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *type_info);
+		if (imported.status == CanonicalTypeImportStatus::Supported && imported.type == class_type) {
+			transaction.commit();
+			return type_info;
+		}
+	}
+	return nullptr;
+}
+
+inline std::optional<UserDefinedConversionOperatorSelection>
+trySelectCanonicalUserDefinedConversionOperator(
+	TypeId source_type_id,
+	const TypeSpecifierNode& target_type,
+	bool allow_explicit) {
+	if (!source_type_id) {
+		return std::nullopt;
+	}
+	FrontendContext& context = requireFrontendContext();
+	CanonicalTypeTable& table = context.canonicalTypes();
+	TypeId source_type = canonicalTypeWithoutReference(table, source_type_id);
+	const auto [source_class_type, source_cv_qualifier] =
+		stripCanonicalTopCv(table, source_type);
+	const CanonicalTypeKind source_kind = table.node(source_class_type).kind;
+	if (source_kind != CanonicalTypeKind::Record && source_kind != CanonicalTypeKind::TemplateSpecialization) {
+		return std::nullopt;
+	}
+	std::unordered_map<uint32_t, const TypeInfo*> class_type_info_cache;
+	auto find_class_type_info = [&table, &class_type_info_cache](TypeId class_type) {
+		const auto cached = class_type_info_cache.find(class_type.value);
+		if (cached != class_type_info_cache.end()) {
+			return cached->second;
+		}
+		const TypeInfo* const type_info = tryFindCanonicalOverloadClassTypeInfo(table, class_type);
+		class_type_info_cache.emplace(class_type.value, type_info);
+		return type_info;
+	};
+	const TypeInfo* const source_type_info = find_class_type_info(source_class_type);
+	if (source_type_info == nullptr ||
+		!tryPublishCanonicalClassBaseSchema(table, source_class_type, *source_type_info) ||
+		!table.hasClassBaseSchema(source_class_type)) {
+		return std::nullopt;
+	}
+	struct PendingType {
+		TypeId type;
+		size_t depth;
+	};
+	struct Candidate {
+		UserDefinedConversionOperatorSelection selection;
+		size_t depth;
+	};
+	struct NearestDeclaration {
+		TypeIndex conversion_target_type;
+		size_t depth;
+	};
+	std::vector<PendingType> pending_types{{source_class_type, 0}};
+	std::vector<TypeId> visited_types;
+	std::vector<const FunctionDeclarationNode*> visited_functions;
+	std::vector<NearestDeclaration> nearest_declarations;
+	std::vector<Candidate> candidates;
+	const uint8_t source_cv_bits = static_cast<uint8_t>(source_cv_qualifier);
+	for (size_t pending_index = 0; pending_index < pending_types.size(); ++pending_index) {
+		const PendingType pending_type = pending_types[pending_index];
+		if (std::find(visited_types.begin(), visited_types.end(), pending_type.type) != visited_types.end()) {
+			continue;
+		}
+		visited_types.push_back(pending_type.type);
+		const TypeInfo* const type_info = find_class_type_info(pending_type.type);
+		if (type_info == nullptr) {
+			continue;
+		}
+		const StructTypeInfo* const struct_info = type_info->getStructInfo();
+		if (struct_info == nullptr) {
+			continue;
+		}
+		for (const StructMemberFunction& member_function : struct_info->member_functions) {
+			if (!member_function.is_conversion_operator() || !member_function.function_decl.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+			if (!allow_explicit && member_function.is_explicit) {
+				continue;
+			}
+			const TypeIndex conversion_target_type = member_function.conversion_target_type;
+			if (!conversion_target_type.is_valid()) {
+				continue;
+			}
+			auto nearest_declaration = std::find_if(
+				nearest_declarations.begin(),
+				nearest_declarations.end(),
+				[conversion_target_type](const NearestDeclaration& declaration) {
+					return declaration.conversion_target_type == conversion_target_type;
+				});
+			if (nearest_declaration == nearest_declarations.end()) {
+				nearest_declarations.push_back({conversion_target_type, pending_type.depth});
+			} else {
+				nearest_declaration->depth = std::min(nearest_declaration->depth, pending_type.depth);
+			}
+			const FunctionDeclarationNode& function = member_function.function_decl.as<FunctionDeclarationNode>();
+			if (std::find(visited_functions.begin(), visited_functions.end(), &function) != visited_functions.end()) {
+				continue;
+			}
+			visited_functions.push_back(&function);
+			const uint8_t member_cv_bits = static_cast<uint8_t>(member_function.cv_qualifier);
+			if ((source_cv_bits & ~member_cv_bits) != 0) {
+				continue;
+			}
+			const TypeSpecifierNode& return_type = function.decl_node().type_specifier_node();
+			CanonicalTypeTransaction return_type_transaction(table);
+			TypeSpecifierNode canonical_return_type = return_type;
+			tryBindPublishedTypeEntity(canonical_return_type);
+			const CanonicalTypeImport return_type_import = importCanonicalOverloadNominalType(table, canonical_return_type);
+			if (return_type_import.status != CanonicalTypeImportStatus::Supported) {
+				continue;
+			}
+			const std::optional<ConversionPlan> trailing_plan = tryBuildCanonicalConversionFunctionTailPlan(return_type, target_type);
+			if (!trailing_plan.has_value() || !trailing_plan->is_valid || trailing_plan->rank == ConversionRank::UserDefined) {
+				continue;
+			}
+
+			UserDefinedConversionOperatorSelection candidate;
+			candidate.function = &function;
+			candidate.declaring_type_index = type_info->registeredTypeIndex();
+			candidate.conversion_target_type = conversion_target_type;
+			candidate.trailing_standard_kind = trailing_plan->kind;
+			candidate.trailing_standard_rank = trailing_plan->rank;
+			candidate.member_cv_qualifier = member_function.cv_qualifier;
+			candidate.access = member_function.access;
+			candidates.push_back({candidate, pending_type.depth});
+		}
+		const size_t base_count = table.classBaseCount(pending_type.type);
+		for (size_t base_index = 0; base_index < base_count; ++base_index) {
+			pending_types.push_back({
+				table.classBaseAt(pending_type.type, base_index).type,
+				pending_type.depth + 1});
+		}
+	}
+
+	std::optional<ConversionRank> best_trailing_rank;
+	std::vector<UserDefinedConversionOperatorSelection> visible_candidates;
+	for (const Candidate& candidate : candidates) {
+		const auto nearest_declaration = std::find_if(
+			nearest_declarations.begin(),
+			nearest_declarations.end(),
+			[&candidate](const NearestDeclaration& declaration) {
+				return declaration.conversion_target_type ==
+					candidate.selection.conversion_target_type;
+			});
+		if (nearest_declaration == nearest_declarations.end() || candidate.depth != nearest_declaration->depth) {
+			continue;
+		}
+		if (!best_trailing_rank.has_value() || candidate.selection.trailing_standard_rank < *best_trailing_rank) {
+			best_trailing_rank = candidate.selection.trailing_standard_rank;
+			visible_candidates.clear();
+		}
+		if (candidate.selection.trailing_standard_rank == *best_trailing_rank &&
+			std::none_of(
+				visible_candidates.begin(),
+				visible_candidates.end(),
+				[&candidate](const UserDefinedConversionOperatorSelection& visible) {
+					return visible.function == candidate.selection.function;
+				})) {
+			visible_candidates.push_back(candidate.selection);
+		}
+	}
+	if (visible_candidates.empty()) {
+		return std::nullopt;
+	}
+	std::vector<UserDefinedConversionOperatorSelection> best_candidates;
+	for (const UserDefinedConversionOperatorSelection& candidate : visible_candidates) {
+		const uint8_t candidate_cv_bits = static_cast<uint8_t>(candidate.member_cv_qualifier);
+		const bool is_dominated = std::any_of(
+			visible_candidates.begin(),
+			visible_candidates.end(),
+			[&candidate, candidate_cv_bits](
+				const UserDefinedConversionOperatorSelection& other) {
+				if (other.function == candidate.function) {
+					return false;
+				}
+				const uint8_t other_cv_bits = static_cast<uint8_t>(other.member_cv_qualifier);
+				return (other_cv_bits & ~candidate_cv_bits) == 0 && other_cv_bits != candidate_cv_bits;
+			});
+		if (!is_dominated) {
+			best_candidates.push_back(candidate);
+		}
+	}
+	UserDefinedConversionOperatorSelection result = best_candidates.front();
+	result.ambiguous = best_candidates.size() != 1;
+	return result;
 }
 
 inline std::optional<UserDefinedConversionOperatorSelection>
