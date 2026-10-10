@@ -527,6 +527,8 @@ private:
 	bool tryAnnotateConversion(const ASTNode& expr_node,
 							   CanonicalTypeId target_type_id,
 							   CanonicalTypeId expr_type_id = {});
+	bool tryAnnotateConversionByTypeId(const ASTNode& expr_node, CanonicalTypeId target_type_id, CanonicalTypeId expr_type_id);
+	bool annotateConversionImpl(const ASTNode& expr_node, CanonicalTypeId target_type_id, CanonicalTypeId expr_type_id, bool use_type_ids);
 	// Record a sema-selected conversion operator (with its trailing standard
 	// conversion) on the argument's slot so codegen can lower it without
 	// re-running lookup. Shared by the builtin/enum and nominal-target paths.
