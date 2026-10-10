@@ -2440,6 +2440,11 @@ static std::optional<ConversionPlan> tryBuildCanonicalEnumToBuiltinConversionPla
 static std::optional<TypeTraitResult> tryEvaluateCanonicalScalarConstructionFromArgument(
 	const TypeSpecifierNode& target, const TypeSpecifierNode& argument) {
 	if (target.is_reference()) {
+		const std::optional<ConversionPlan> binding =
+			tryBuildCanonicalReferenceBindingPlan(argument, target, true);
+		if (binding.has_value()) {
+			return binding->is_valid ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
+		}
 		return std::nullopt;
 	}
 	FrontendContext* context = FrontendContext::active();
