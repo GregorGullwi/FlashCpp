@@ -4392,9 +4392,11 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 				}
 				const TypeInfo* type_info = tryGetTypeInfo(ts.type_index());
 				const StructTypeInfo* si = type_info ? type_info->getStructInfo() : nullptr;
+				const InitializerListNode& il = init->as<InitializerListNode>();
 				if (si && si->hasAnyConstructor()) {
-					const InitializerListNode& il = init->as<InitializerListNode>();
 					tryAnnotateInitListConstructorArgs(il, *si, ts, decl.identifier_token());
+				} else {
+					tryAnnotateParenClassTargetConversion(il, ts);
 				}
 			};
 
@@ -4433,19 +4435,6 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 				}
 			}
 			annotateStructInitListCtor();
-			if (init->is<InitializerListNode>() && vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
-				const TypeSpecifierNode& declared_type = vtype.as<TypeSpecifierNode>();
-				const InitializerListNode& init_list = init->as<InitializerListNode>();
-				const TypeInfo* target_type_info = declared_type.category() == TypeCategory::Struct
-					? tryGetTypeInfo(declared_type.type_index()) : nullptr;
-				const StructTypeInfo* target_struct_info = target_type_info ? target_type_info->getStructInfo() : nullptr;
-				if (declared_type.category() == TypeCategory::Struct && init_list.is_paren_init() &&
-					init_list.initializers().size() == 1 && init_list.resolved_constructor() == nullptr &&
-					(!target_struct_info || !target_struct_info->hasAnyConstructor()) &&
-					init_list.initializers()[0].is<ExpressionNode>()) {
-					tryAnnotateExplicitConversion(init_list.initializers()[0], init_list.initializers()[0], declared_type);
-				}
-			}
 		}
 	} else if (node.is<StructuredBindingNode>()) {
 		const auto& binding = node.as<StructuredBindingNode>();
@@ -13959,6 +13948,23 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 	}
 
 	return total_materialized;
+}
+
+void SemanticAnalysis::tryAnnotateParenClassTargetConversion(const InitializerListNode& init_list, const TypeSpecifierNode& target_type) {
+	if (target_type.category() != TypeCategory::Struct || !init_list.is_paren_init() || init_list.resolved_constructor()) {
+		return;
+	}
+	const auto& initializers = init_list.initializers();
+	if (initializers.size() != 1 || !initializers.front().is<ExpressionNode>()) {
+		return;
+	}
+	const TypeInfo* target_type_info = tryGetTypeInfo(target_type.type_index());
+	const StructTypeInfo* target_struct_info = target_type_info ? target_type_info->getStructInfo() : nullptr;
+	if (target_struct_info && target_struct_info->hasAnyConstructor()) {
+		return;
+	}
+	const ASTNode& initializer = initializers.front();
+	tryAnnotateExplicitConversion(initializer, initializer, target_type);
 }
 
 void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
