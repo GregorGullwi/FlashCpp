@@ -31,15 +31,19 @@ def write_text(path, text):
     path.write_text(text, encoding="utf-8")
 
 
+# Keep transitive quoted includes in the same overlay: otherwise #pragma once
+# cannot prevent duplicate definitions from the copied and src/ header paths.
 # Files copied into every mutation directory. The list is also what decides
 # whether a translation unit can reuse the pristine object: a mutation that
 # leaves a TU's inputs byte-identical cannot change that TU's object.
 PROJECT_FILES = ("CanonicalTypes.h", "CanonicalTypes.cpp", "CanonicalTypeAdapter.h",
-                 "ArenaAccounting.h", "TemplateDeclTable.h")
+                 "ArenaAccounting.h", "TemplateDeclTable.h", "FrontendContext.h",
+                 "ArenaDomains.h", "DeclarationBuilder.h")
 # The regression source includes the adapter and template tables; the
 # implementation only includes CanonicalTypes.h (which pulls ArenaAccounting.h).
 TEST_TU_INPUTS = ("CanonicalTypes.h", "CanonicalTypeAdapter.h", "ArenaAccounting.h",
-                  "TemplateDeclTable.h")
+                  "TemplateDeclTable.h", "FrontendContext.h", "ArenaDomains.h",
+                  "DeclarationBuilder.h")
 IMPL_TU_INPUTS = ("CanonicalTypes.h", "CanonicalTypes.cpp", "ArenaAccounting.h")
 OBJECT_SUFFIX = ".obj" if sys.platform == "win32" else ".o"
 
@@ -182,9 +186,7 @@ def run_template_owner_tag_mutation():
         raise RuntimeError("mutation anchor changed: " + name)
     directory = OUTPUT / name
     directory.mkdir(parents=True, exist_ok=True)
-    for sibling in (
-        "CanonicalTypes.h", "CanonicalTypes.cpp", "CanonicalTypeAdapter.h",
-        "ArenaAccounting.h", "TemplateDeclTable.h"):
+    for sibling in PROJECT_FILES:
         text = read_text(ROOT / "src" / sibling)
         if sibling == "TemplateDeclTable.h":
             text = text.replace(before, after)
@@ -195,9 +197,7 @@ def run_template_owner_tag_mutation():
 def run_adapter_order_mutation(name, before, after):
     directory = OUTPUT / name
     directory.mkdir(parents=True, exist_ok=True)
-    for sibling in (
-        "CanonicalTypes.h", "CanonicalTypes.cpp", "CanonicalTypeAdapter.h",
-        "ArenaAccounting.h"):
+    for sibling in PROJECT_FILES:
         text = read_text(ROOT / "src" / sibling)
         if sibling == "CanonicalTypeAdapter.h":
             if text.count(before) != 1:
@@ -542,8 +542,7 @@ def main():
                 raise RuntimeError("mutation anchor changed: " + name)
             directory = OUTPUT / name
             directory.mkdir(parents=True, exist_ok=True)
-            for sibling in ("CanonicalTypes.h", "CanonicalTypes.cpp",
-                            "CanonicalTypeAdapter.h", "ArenaAccounting.h"):
+            for sibling in PROJECT_FILES:
                 write_text(directory / sibling, read_text(ROOT / "src" / sibling))
             write_text(directory / IMPL.name, original.replace(before, after))
             jobs.append((name, directory, 1))
@@ -649,8 +648,7 @@ def main():
         ):
             directory = OUTPUT / name
             directory.mkdir(parents=True, exist_ok=True)
-            for sibling in ("CanonicalTypes.h", "CanonicalTypes.cpp",
-                            "CanonicalTypeAdapter.h", "ArenaAccounting.h"):
+            for sibling in PROJECT_FILES:
                 text = read_text(ROOT / "src" / sibling)
                 if sibling == header:
                     if text.count(before) != 1:
