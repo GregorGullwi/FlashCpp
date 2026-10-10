@@ -100,12 +100,14 @@ Continue boundary 3A in this order.
    annotation is absent. The legacy path is still load-bearing, not dead:
    `tryAnnotateConversion`'s generic residual tail now selects and records the
    conversion function, including the cv-ranked choice for a reference-qualified
-   source. The reference-stripped sibling and other sema paths can still leave
-   the var-initialization, return, call-argument, contextual-`bool`, and
-   constructor-argument codegen paths needing re-selection. Long-term plan:
+   source. Its reference-stripped alias-to-class path now also records the
+   selected operator. Other sema paths can still leave variable-initialization,
+   return, call-argument, contextual-`bool`, and constructor-argument codegen
+   paths needing re-selection. The selector still takes a `TypeIndex`; migrating
+   that API to canonical `TypeId` remains separate work. Long-term plan:
    (1) make every sema `UserDefined` annotation record the selected function,
-   starting with the reference-stripped sibling and the remaining unselected
-   paths; (2) migrate the sibling codegen contexts to consume the annotation
+   extending this to the remaining unselected paths; (2) migrate sibling codegen
+   contexts to consume the annotation
    through `emitSemaSelectedConversionOperatorCall` and fail closed; (3) delete
    `findConversionOperator` / `emitConversionOperatorCall`, leaving one selection
    authority on the canonical `TypeId` currency. Until step 3 the two lookups can
