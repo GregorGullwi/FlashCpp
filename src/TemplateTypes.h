@@ -86,26 +86,20 @@ struct FunctionSignatureIdentityFrame {
 	size_t next_child;
 };
 
-inline bool equalFunctionTypeIdentityShallow(
-	const FunctionType& lhs, const FunctionType& rhs) {
-	const bool type_identity_matches =
-		lhs.callable_signature && rhs.callable_signature
-			? lhs.type_index.category() == rhs.type_index.category()
-			: equalTypeIndexIdentity(lhs.type_index, rhs.type_index);
+inline bool equalFunctionTypeIdentityShallow(const FunctionType& lhs, const FunctionType& rhs) {
+	const bool type_identity_matches = lhs.callable_signature && rhs.callable_signature ? lhs.type_index.category() == rhs.type_index.category()
+		: equalTypeIndexIdentity(lhs.type_index, rhs.type_index);
+	// Canonical IDs may be absent on legacy projections of the same type; hashes
+	// stay representation-neutral, while two canonical values compare exactly.
 	if (!type_identity_matches ||
-		lhs.cv_qualifier != rhs.cv_qualifier ||
-		lhs.pointer_qualifiers != rhs.pointer_qualifiers ||
-		lhs.ordered_declarator_components !=
-			rhs.ordered_declarator_components ||
-		lhs.reference_qualifier != rhs.reference_qualifier ||
-		lhs.array_dimensions != rhs.array_dimensions ||
-		lhs.pointee_array_declarator != rhs.pointee_array_declarator ||
-		lhs.has_unsized_outer_array_dimension != rhs.has_unsized_outer_array_dimension ||
-		lhs.is_pack_expansion != rhs.is_pack_expansion ||
-		lhs.template_parameter_name != rhs.template_parameter_name ||
-		lhs.member_class_name != rhs.member_class_name ||
-		static_cast<bool>(lhs.callable_signature) !=
-		static_cast<bool>(rhs.callable_signature)) {
+		(lhs.canonical_type_id && rhs.canonical_type_id && lhs.canonical_type_id != rhs.canonical_type_id) ||
+		lhs.cv_qualifier != rhs.cv_qualifier || lhs.pointer_qualifiers != rhs.pointer_qualifiers ||
+		lhs.ordered_declarator_components != rhs.ordered_declarator_components || lhs.reference_qualifier != rhs.reference_qualifier ||
+		lhs.array_dimensions != rhs.array_dimensions || lhs.pointee_array_declarator != rhs.pointee_array_declarator ||
+		lhs.has_unsized_outer_array_dimension != rhs.has_unsized_outer_array_dimension || lhs.is_pack_expansion != rhs.is_pack_expansion ||
+		lhs.template_parameter_name != rhs.template_parameter_name || lhs.template_parameter_decl != rhs.template_parameter_decl ||
+		lhs.template_parameter_index != rhs.template_parameter_index || lhs.member_class_name != rhs.member_class_name ||
+		static_cast<bool>(lhs.callable_signature) != static_cast<bool>(rhs.callable_signature)) {
 		return false;
 	}
 	return true;
@@ -266,63 +260,41 @@ struct FunctionSignatureIdentityHashFrame {
 	size_t next_child;
 };
 
-inline void appendFunctionTypeIdentityHash(
-	size_t& hash, const FunctionType& type) {
-	const bool has_callable_signature =
-		static_cast<bool>(type.callable_signature);
+inline void appendFunctionTypeIdentityHash(size_t& hash, const FunctionType& type) {
+	const bool has_callable_signature = static_cast<bool>(type.callable_signature);
 	combineFunctionTypeIdentityHash(hash, std::hash<uint8_t>{}(1));
-	combineFunctionTypeIdentityHash(
-		hash,
-		has_callable_signature
-			? std::hash<int>{}(static_cast<int>(type.type_index.category()))
-			: hashTypeIndexIdentity(type.type_index));
-	combineFunctionTypeIdentityHash(
-		hash, std::hash<bool>{}(has_callable_signature));
-	combineFunctionTypeIdentityHash(
-		hash, std::hash<uint8_t>{}(static_cast<uint8_t>(type.cv_qualifier)));
-	combineFunctionTypeIdentityHash(
-		hash, std::hash<size_t>{}(type.pointer_qualifiers.size()));
+	combineFunctionTypeIdentityHash(hash, has_callable_signature
+		? std::hash<int>{}(static_cast<int>(type.type_index.category()))
+		: hashTypeIndexIdentity(type.type_index));
+	combineFunctionTypeIdentityHash(hash, std::hash<bool>{}(has_callable_signature));
+	combineFunctionTypeIdentityHash(hash, std::hash<uint8_t>{}(static_cast<uint8_t>(type.cv_qualifier)));
+	combineFunctionTypeIdentityHash(hash, std::hash<size_t>{}(type.pointer_qualifiers.size()));
 	for (CVQualifier qualifier : type.pointer_qualifiers) {
-		combineFunctionTypeIdentityHash(
-			hash, std::hash<uint8_t>{}(static_cast<uint8_t>(qualifier)));
+		combineFunctionTypeIdentityHash(hash, std::hash<uint8_t>{}(static_cast<uint8_t>(qualifier)));
 	}
-	combineFunctionTypeIdentityHash(
-		hash, std::hash<size_t>{}(type.ordered_declarator_components.size()));
-	for (const DeclaratorComponent& component :
-		type.ordered_declarator_components) {
-		combineFunctionTypeIdentityHash(
-			hash, std::hash<uint8_t>{}(static_cast<uint8_t>(component.kind)));
-		combineFunctionTypeIdentityHash(
-			hash, std::hash<uint64_t>{}(component.payload));
-		combineFunctionTypeIdentityHash(
-			hash, std::hash<uint32_t>{}(component.member_owner.value));
-		combineFunctionTypeIdentityHash(
-			hash, std::hash<uint8_t>{}(
-				static_cast<uint8_t>(component.owner_identity_kind)));
-		combineFunctionTypeIdentityHash(
-			hash,
-			std::hash<uint8_t>{}(static_cast<uint8_t>(component.cv_qualifier)));
+	combineFunctionTypeIdentityHash(hash, std::hash<size_t>{}(type.ordered_declarator_components.size()));
+	for (const DeclaratorComponent& component : type.ordered_declarator_components) {
+		combineFunctionTypeIdentityHash(hash, std::hash<uint8_t>{}(static_cast<uint8_t>(component.kind)));
+		combineFunctionTypeIdentityHash(hash, std::hash<uint64_t>{}(component.payload));
+		combineFunctionTypeIdentityHash(hash, std::hash<uint32_t>{}(component.member_owner.value));
+		combineFunctionTypeIdentityHash(hash, std::hash<uint8_t>{}(static_cast<uint8_t>(component.owner_identity_kind)));
+		combineFunctionTypeIdentityHash(hash, std::hash<uint8_t>{}(static_cast<uint8_t>(component.cv_qualifier)));
 	}
-	combineFunctionTypeIdentityHash(
-		hash, std::hash<uint8_t>{}(static_cast<uint8_t>(type.reference_qualifier)));
-	combineFunctionTypeIdentityHash(
-		hash, std::hash<size_t>{}(type.array_dimensions.size()));
+	combineFunctionTypeIdentityHash(hash, std::hash<uint8_t>{}(static_cast<uint8_t>(type.reference_qualifier)));
+	combineFunctionTypeIdentityHash(hash, std::hash<size_t>{}(type.array_dimensions.size()));
 	for (size_t dimension : type.array_dimensions) {
 		combineFunctionTypeIdentityHash(hash, std::hash<size_t>{}(dimension));
 	}
-	combineFunctionTypeIdentityHash(
-		hash, std::hash<bool>{}(type.pointee_array_declarator));
-	combineFunctionTypeIdentityHash(
-		hash, std::hash<bool>{}(type.has_unsized_outer_array_dimension));
-	combineFunctionTypeIdentityHash(
-		hash, std::hash<bool>{}(type.is_pack_expansion));
-	combineFunctionTypeIdentityHash(
-		hash, std::hash<bool>{}(type.template_parameter_name.isValid()));
+	combineFunctionTypeIdentityHash(hash, std::hash<bool>{}(type.pointee_array_declarator));
+	combineFunctionTypeIdentityHash(hash, std::hash<bool>{}(type.has_unsized_outer_array_dimension));
+	combineFunctionTypeIdentityHash(hash, std::hash<bool>{}(type.is_pack_expansion));
+	combineFunctionTypeIdentityHash(hash, std::hash<bool>{}(type.template_parameter_name.isValid()));
 	if (type.template_parameter_name.isValid()) {
 		combineFunctionTypeIdentityHash(hash, type.template_parameter_name.hash());
 	}
-	combineFunctionTypeIdentityHash(
-		hash, std::hash<bool>{}(type.member_class_name.isValid()));
+	combineFunctionTypeIdentityHash(hash, std::hash<uint32_t>{}(type.template_parameter_decl.value));
+	combineFunctionTypeIdentityHash(hash, std::hash<uint32_t>{}(type.template_parameter_index));
+	combineFunctionTypeIdentityHash(hash, std::hash<bool>{}(type.member_class_name.isValid()));
 	if (type.member_class_name.isValid()) {
 		combineFunctionTypeIdentityHash(hash, type.member_class_name.hash());
 	}

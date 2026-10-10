@@ -2,6 +2,7 @@
 
 #include "AstNodeTypes.h"
 #include "CanonicalTypes.h"
+#include "FrontendContext.h"
 #include "TemplateRegistry_Types.h"
 
 #include <limits>
@@ -127,6 +128,8 @@ struct CanonicalDeclaratorExport {
 	std::vector<DeclaratorComponent> components;
 	CanonicalTypeImportStatus status;
 };
+
+inline CanonicalDeclaratorExport exportCanonicalDeclarator(const CanonicalTypeTable& table, TypeId type);
 
 enum class CanonicalTypeImportContext : uint8_t {
 	Exact, FunctionParameter,
@@ -457,8 +460,23 @@ inline TypeSpecifierNode typeSpecifierFromFunctionType(const FunctionType& type)
 	if (type.is_pack_expansion) {
 		spec.set_pack_expansion(true);
 	}
+	if (type.canonical_type_id && type.ordered_declarator_components.empty()) {
+		const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(requireFrontendContext().canonicalTypes(), type.canonical_type_id);
+		const bool has_non_projectable_component = std::ranges::any_of(
+			exported.components,
+			[](const DeclaratorComponent& component) {
+				return component.kind == DeclaratorComponentKind::Function || component.kind == DeclaratorComponentKind::MemberObjectPointer ||
+					component.kind == DeclaratorComponentKind::MemberFunctionPointer;
+			});
+		if (exported.status == CanonicalTypeImportStatus::Supported && !has_non_projectable_component && !exported.components.empty()) {
+			spec.set_ordered_declarator(exported.components);
+		}
+	}
 	if (type.template_parameter_name.isValid()) {
 		spec.set_template_parameter_identity(type.template_parameter_name);
+	}
+	if (type.template_parameter_decl) {
+		spec.set_template_parameter_decl(type.template_parameter_decl, type.template_parameter_index);
 	}
 	if (type.injected_class_declaration != nullptr) {
 		spec.set_injected_class_declaration(type.injected_class_declaration);

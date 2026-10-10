@@ -189,23 +189,56 @@ inline const TemplateTypeArg* findTemplateArgByRegisteredTypeIndex(
 	return matched_arg;
 }
 
+inline TypeId substituteCanonicalFunctionTypeComponent(CanonicalTypeTable& table, const FunctionType& pattern, const TemplateTypeArg& argument) {
+	if (!pattern.template_parameter_decl || !argument.isTypeArgument() || argument.is_pack || pattern.is_pack_expansion) {
+		return {};
+	}
+	TypeSpecifierNode pattern_type = typeSpecifierFromFunctionType(pattern);
+	const std::optional<TypeId> imported_pattern = tryImportSupportedCanonical(table, pattern_type);
+	if (!imported_pattern.has_value()) {
+		return {};
+	}
+	TypeSpecifierNode argument_type = typeSpecifierFromTemplateTypeArgProjection(argument);
+	argument_type.set_type_index(canonicalizeConcreteTemplateArgumentTypeIndex(argument));
+	tryBindPublishedTypeEntity(argument_type);
+	const std::optional<TypeId> imported_argument = tryImportSupportedCanonical(table, argument_type);
+	if (!imported_argument.has_value()) {
+		return {};
+	}
+	std::vector<TypeId> arguments;
+	arguments.reserve(static_cast<size_t>(pattern.template_parameter_index) + 1);
+	for (uint32_t index = 0; index < pattern.template_parameter_index; ++index) {
+		arguments.push_back(table.templateParameter(pattern.template_parameter_decl, index));
+	}
+	arguments.push_back(*imported_argument);
+	return table.substitute(*imported_pattern, pattern.template_parameter_decl, arguments);
+}
+
 template <typename ParamContainer, typename ArgContainer>
-inline FunctionSignature substituteTemplateFunctionSignatureTypes(
-	FunctionSignature signature,
-	const ParamContainer& template_params,
-	const ArgContainer& template_args) {
-	auto apply_template_argument = [&](
-		FunctionType& type,
-		const TemplateTypeArg& arg) {
-		TypeSpecifierNode substituted_type =
-			typeSpecifierFromTemplateTypeArgProjection(arg);
-		substituted_type.set_type_index(
-			canonicalizeConcreteTemplateArgumentTypeIndex(arg));
+inline FunctionSignature substituteTemplateFunctionSignatureTypesImpl(
+	FunctionSignature signature, const ParamContainer& template_params,
+	const ArgContainer& template_args, CanonicalTypeTable* canonical_types) {
+	auto apply_template_argument = [&](FunctionType& type, const TemplateTypeArg& arg) {
+		const TypeId canonical_substitution = canonical_types != nullptr ? substituteCanonicalFunctionTypeComponent(*canonical_types, type, arg) : TypeId{};
+		TypeSpecifierNode substituted_type = typeSpecifierFromTemplateTypeArgProjection(arg);
+		substituted_type.set_type_index(canonicalizeConcreteTemplateArgumentTypeIndex(arg));
 		tryBindPublishedTypeEntity(substituted_type);
 		const TypeSpecifierNode pattern_type = typeSpecifierFromFunctionType(type);
-		applyOuterDeclaratorShapeForSubstitution(
-			substituted_type, pattern_type);
+		applyOuterDeclaratorShapeForSubstitution(substituted_type, pattern_type);
 		FunctionType substituted = makeFunctionTypeFromSpecifier(substituted_type);
+		substituted.canonical_type_id = canonical_substitution;
+		if (canonical_substitution) {
+			const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(*canonical_types, canonical_substitution);
+			const bool has_non_projectable_component = std::ranges::any_of(
+				exported.components,
+				[](const DeclaratorComponent& component) {
+					return component.kind == DeclaratorComponentKind::Function || component.kind == DeclaratorComponentKind::MemberObjectPointer ||
+						component.kind == DeclaratorComponentKind::MemberFunctionPointer;
+				});
+			if (exported.status == CanonicalTypeImportStatus::Supported && !has_non_projectable_component) {
+				substituted.ordered_declarator_components.clear();
+			}
+		}
 		substituted.is_pack_expansion = type.is_pack_expansion;
 		if (arg.member_class_name.isValid()) {
 			substituted.member_class_name = arg.member_class_name;
@@ -218,27 +251,20 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypes(
 	std::unordered_set<FunctionSignature*> visited_signatures;
 	visited_signatures.insert(&signature);
 	auto enqueue_callable_signature = [&](const FunctionType& type) {
-		if (type.callable_signature &&
-			visited_signatures.insert(type.callable_signature.get()).second) {
+		if (type.callable_signature && visited_signatures.insert(type.callable_signature.get()).second) {
 			pending_signatures.push_back(type.callable_signature.get());
 		}
 	};
 	auto substitute_function_type = [&](FunctionType& type) {
 		if (type.template_parameter_name.isValid()) {
 			bool substituted = false;
-			forEachNonPackTemplateParamArgBinding(
-				template_params,
-				template_args,
-				[&](const TemplateParameterNode& param,
-					const TemplateTypeArg& arg,
-					size_t) {
-					if (substituted ||
-						param.nameHandle() != type.template_parameter_name) {
+			forEachNonPackTemplateParamArgBinding(template_params, template_args, [&](const TemplateParameterNode& param,
+				const TemplateTypeArg& arg, size_t) {
+					if (substituted || param.nameHandle() != type.template_parameter_name) {
 						return;
 					}
 					if (!arg.isTypeArgument()) {
-						throw InternalError(
-							"Function type component was bound to a non-type template argument");
+						throw InternalError("Function type component was bound to a non-type template argument");
 					}
 					apply_template_argument(type, arg);
 					substituted = true;
@@ -248,8 +274,7 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypes(
 				return;
 			}
 		} else {
-			type.type_index = substituteTemplateParameterTypeIndex(
-				type.type_index, template_params, template_args);
+			type.type_index = substituteTemplateParameterTypeIndex(type.type_index, template_params, template_args);
 			// A substituted nominal component only carries a TypeIndex; bind its
 			// published entity here so the canonical adapter never has to reach
 			// into the compiler's type table during import.
@@ -257,8 +282,7 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypes(
 			tryBindPublishedTypeEntity(bound_component);
 			type.type_entity = bound_component.type_entity();
 			if (bound_component.has_injected_class_declaration()) {
-				type.injected_class_declaration =
-					bound_component.injected_class_declaration();
+				type.injected_class_declaration = bound_component.injected_class_declaration();
 			}
 		}
 		enqueue_callable_signature(type);
@@ -273,14 +297,10 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypes(
 				substituted_parameter_types.reserve(parameter_types.size());
 				for (FunctionType& parameter_type : parameter_types) {
 					bool expanded_pack = false;
-					if (parameter_type.is_pack_expansion &&
-						parameter_type.template_parameter_name.isValid()) {
+					if (parameter_type.is_pack_expansion && parameter_type.template_parameter_name.isValid()) {
 						size_t arg_index = 0;
-						for (size_t param_index = 0;
-							 param_index < template_params.size();
-							 ++param_index) {
-							const TemplateParameterNode* template_param =
-								tryGetTemplateParameterNode(template_params[param_index]);
+						for (size_t param_index = 0; param_index < template_params.size(); ++param_index) {
+							const TemplateParameterNode* template_param = tryGetTemplateParameterNode(template_params[param_index]);
 							if (template_param == nullptr) {
 								continue;
 							}
@@ -288,26 +308,16 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypes(
 								++arg_index;
 								continue;
 							}
-							const size_t remaining_args = arg_index < template_args.size()
-								? template_args.size() - arg_index
-								: 0;
-							const size_t required_after =
-								countRequiredTemplateArgsAfter<ParamContainer, ArgContainer>(
-									template_params, param_index + 1);
-							const size_t pack_size = remaining_args > required_after
-								? remaining_args - required_after
-								: 0;
-							if (template_param->nameHandle() ==
-								parameter_type.template_parameter_name) {
+							const size_t remaining_args = arg_index < template_args.size() ? template_args.size() - arg_index : 0;
+							const size_t required_after = countRequiredTemplateArgsAfter<ParamContainer, ArgContainer>(template_params, param_index + 1);
+							const size_t pack_size = remaining_args > required_after ? remaining_args - required_after : 0;
+							if (template_param->nameHandle() == parameter_type.template_parameter_name) {
 								for (size_t pack_index = 0; pack_index < pack_size; ++pack_index) {
 									FunctionType expanded_type = parameter_type;
 									expanded_type.is_pack_expansion = false;
-								apply_template_argument(
-									expanded_type,
-									template_args[arg_index + pack_index]);
-								enqueue_callable_signature(expanded_type);
-								substituted_parameter_types.push_back(
-										std::move(expanded_type));
+									apply_template_argument(expanded_type, template_args[arg_index + pack_index]);
+									enqueue_callable_signature(expanded_type);
+									substituted_parameter_types.push_back(std::move(expanded_type));
 								}
 								expanded_pack = true;
 								break;
@@ -323,15 +333,9 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypes(
 				parameter_types = std::move(substituted_parameter_types);
 			});
 		}
-		current.return_type_index = substituteTemplateParameterTypeIndex(
-			current.return_type_index,
-			template_params,
-			template_args);
+		current.return_type_index = substituteTemplateParameterTypeIndex(current.return_type_index, template_params, template_args);
 		for (TypeIndex& parameter_type_index : current.parameter_type_indices) {
-			parameter_type_index = substituteTemplateParameterTypeIndex(
-				parameter_type_index,
-				template_params,
-				template_args);
+			parameter_type_index = substituteTemplateParameterTypeIndex(parameter_type_index, template_params, template_args);
 		}
 	};
 	process_signature(signature);
@@ -341,6 +345,18 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypes(
 		process_signature(*pending);
 	}
 	return signature;
+}
+
+template <typename ParamContainer, typename ArgContainer>
+inline FunctionSignature substituteTemplateFunctionSignatureTypes(FunctionSignature signature, const ParamContainer& template_params,
+	const ArgContainer& template_args) {
+	return substituteTemplateFunctionSignatureTypesImpl(std::move(signature), template_params, template_args, nullptr);
+}
+
+template <typename ParamContainer, typename ArgContainer>
+inline FunctionSignature substituteTemplateFunctionSignatureTypes(FunctionSignature signature, const ParamContainer& template_params,
+	const ArgContainer& template_args, CanonicalTypeTable& canonical_types) {
+	return substituteTemplateFunctionSignatureTypesImpl(std::move(signature), template_params, template_args, &canonical_types);
 }
 
 template <typename ParamContainer, typename ArgContainer>
