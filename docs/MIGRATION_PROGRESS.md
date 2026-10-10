@@ -102,9 +102,12 @@ Continue boundary 3A in this order.
    conversion function, including the cv-ranked choice for a reference-qualified
    source. Its residual tail now also handles class aliases by value, and its
    reference-stripped path records the selected operator for class aliases.
+   Constructor-argument codegen now requires the sema-selected conversion
+   function and fails closed if the annotation is missing; it no longer performs
+   a second cv-based lookup in that path.
    Other sema paths can still leave variable-initialization,
-   return, call-argument, contextual-`bool`, and constructor-argument codegen
-   paths needing re-selection. The selector still takes a `TypeIndex`; migrating
+   return, call-argument, and contextual-`bool` codegen paths needing
+   re-selection. The selector still takes a `TypeIndex`; migrating
    that API to canonical `TypeId` remains separate work. Long-term plan:
    (1) make every sema `UserDefined` annotation record the selected function,
    extending this to the remaining unselected paths; (2) migrate sibling codegen
