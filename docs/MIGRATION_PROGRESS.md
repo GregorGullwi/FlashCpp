@@ -168,9 +168,10 @@ Continue boundary 3A in this order.
       member-pointer scalar conversions use it as well, and `nullptr_t` to
       `bool` is handled as direct initialization. Single-argument reference
       targets use the canonical reference-binding planner for supported
-      bindings and temporary materialization. Record constructor candidates
-      with reference parameters, dependent or nominal conversion tails,
-      callable mismatches, and user-defined
+      bindings and temporary materialization. Record constructor reference
+      parameters with the same canonical referent use canonical ranking for
+      qualification-only bindings; differing referents, dependent or nominal
+      conversion tails, callable mismatches, and user-defined
       conversion shapes defer to compatibility resolution. Unscoped enum
       arguments use published promotion and underlying types for builtin
       scalar and constructor parameters; scoped enum-to-builtin conversions

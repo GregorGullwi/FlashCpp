@@ -5,6 +5,9 @@ struct Copyable {
 };
 
 static_assert(__is_constructible(Copyable, const Copyable&));
+static_assert(__is_constructible(Copyable, Copyable&));
+static_assert(__is_constructible(Copyable, Copyable));
+static_assert(!__is_constructible(Copyable, volatile Copyable&));
 static_assert(__is_nothrow_constructible(Copyable, const Copyable&));
 
 int main() {
