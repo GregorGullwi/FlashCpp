@@ -2978,26 +2978,20 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 			const CanonicalTypeDesc& to_desc = sema_.typeContext().get(ci.target_type_id);
 			TypeCategory from_t = from_desc.category();
 			const TypeCategory to_t = to_desc.category();
-			if (ci.cast_kind == StandardConversionKind::DerivedToBase &&
-				from_desc.category() == TypeCategory::Struct &&
-				to_desc.category() == TypeCategory::Struct) {
+			if (ci.cast_kind == StandardConversionKind::DerivedToBase && from_t == TypeCategory::Struct && to_t == TypeCategory::Struct) {
 				const DerivedBaseConversionInfo base_conversion =
 					classifyDerivedBaseConversion(from_desc.type_index, to_desc.type_index);
 				if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
 					throw CompileError("Ambiguous derived-to-base conversion");
 				if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
 					throw CompileError("Cannot convert to an inaccessible base class");
-				if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
-					base_conversion.kind != DerivedBaseConversionKind::PublicVirtual)
+				if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual && base_conversion.kind != DerivedBaseConversionKind::PublicVirtual)
 					throw InternalError("Sema annotated an unrelated derived-to-base constructor argument");
 
 				if (param_type.is_reference() || param_type.is_rvalue_reference()) {
 					ExprResult address_result = arg_result;
 					if (address_result.storage != ValueStorage::ContainsAddress) {
-						address_result = materializeAddressResult(
-							arg_expr.as<ExpressionNode>(),
-							address_result,
-							source_token);
+						address_result = materializeAddressResult(arg_expr.as<ExpressionNode>(), address_result, source_token);
 					}
 					int target_size_bits = static_cast<int>(param_type.size_in_bits());
 					if (target_size_bits <= 0) {
@@ -3008,70 +3002,39 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 							throw InternalError("Derived-to-base reference binding is missing target struct size");
 						target_size_bits = static_cast<int>(target_struct_info->sizeInBits().value);
 					}
-					arg_result = adjustDerivedToBaseAddress(
-						std::move(address_result),
-						from_desc.type_index,
-						to_desc.type_index,
-						SizeInBits{target_size_bits},
-						source_token);
+					arg_result = adjustDerivedToBaseAddress(std::move(address_result), from_desc.type_index,
+						to_desc.type_index, SizeInBits{target_size_bits}, source_token);
 					sema_applied = true;
 				} else {
 					if (!ci.selected_constructor)
 						throw InternalError("Sema missed the selected base copy/move constructor");
 					TypeSpecifierNode target_object_type = param_type;
 					target_object_type.set_reference_qualifier(ReferenceQualifier::None);
-					auto materialized = materializeSelectedConvertingConstructor(
-						arg_result,
-						arg_expr,
-						target_object_type,
-						*ci.selected_constructor,
-						source_token,
-						false,
-						base_conversion.offset);
+					auto materialized = materializeSelectedConvertingConstructor(arg_result, arg_expr, target_object_type,
+						*ci.selected_constructor, source_token, false, base_conversion.offset);
 					if (!materialized)
 						throw InternalError("Failed to materialize derived-to-base constructor argument");
 					arg_result = *materialized;
 					sema_applied = true;
 				}
-			} else if (ci.cast_kind == StandardConversionKind::UserDefined &&
-				from_desc.category() == TypeCategory::Struct) {
+			} else if (ci.cast_kind == StandardConversionKind::UserDefined && from_desc.category() == TypeCategory::Struct && !ci.selected_constructor) {
 				TypeIndex source_type_idx = from_desc.type_index;
-				if (const TypeInfo* src_type_info = tryGetTypeInfo(source_type_idx)) {
-					if (ci.selected_conversion_function != nullptr) {
-						if (auto result = emitSemaSelectedConversionOperatorCall(
-								arg_result,
-								*src_type_info,
-								ci,
-								param_type.category(),
-								source_token)) {
-							arg_result = *result;
-							sema_applied = true;
-						} else {
-							throw InternalError(
-								"Sema-selected conversion operator failed to lower a constructor argument conversion");
-						}
-					} else {
-						const bool source_is_const = ((static_cast<uint8_t>(from_desc.base_cv)) & (static_cast<uint8_t>(CVQualifier::Const))) != 0;
-						const StructMemberFunction* conv_op = findConversionOperator(
-							src_type_info->getStructInfo(), param_type.type_index(), source_is_const);
-						if (conv_op) {
-							FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in constructor arg from ",
-									  StringTable::getStringView(src_type_info->name()), " to parameter type");
-							const int param_size = static_cast<int>(param_type.size_in_bits());
-							if (auto result = emitConversionOperatorCall(arg_result, *src_type_info, *conv_op,
-															 param_type.type_index(), param_size, source_token)) {
-								arg_result = *result;
-								sema_applied = true;
-							}
-						}
-						}
-					}
-				} else if (ci.cast_kind == StandardConversionKind::UserDefined &&
-					   ci.selected_constructor &&
-					   from_desc.category() != TypeCategory::Struct &&
-					   param_base_type != TypeCategory::Struct) {
-					// Pre-bind conversion: target is the selected constructor's first parameter type,
-					// not the outer param type (which may be the struct being constructed).
+				const TypeInfo* const src_type_info = tryGetTypeInfo(source_type_idx);
+				if (src_type_info == nullptr || ci.selected_conversion_function == nullptr) {
+					throw InternalError(
+						"Sema missed the selected conversion operator for a constructor argument");
+				}
+				if (auto result = emitSemaSelectedConversionOperatorCall(arg_result, *src_type_info, ci, param_type.category(), source_token)) {
+					arg_result = *result;
+					sema_applied = true;
+				} else {
+					throw InternalError(
+						"Sema-selected conversion operator failed to lower a constructor argument conversion");
+				}
+			} else if (ci.cast_kind == StandardConversionKind::UserDefined && ci.selected_constructor &&
+				from_desc.category() != TypeCategory::Struct && param_base_type != TypeCategory::Struct) {
+				// Pre-bind conversion: target is the selected constructor's first parameter type,
+				// not the outer param type (which may be the struct being constructed).
 				const auto& ctor_params = ci.selected_constructor->parameter_nodes();
 				if (ctor_params.empty() || !ctor_params[0].is<DeclarationNode>())
 					throw InternalError("applyConstructorArgConversion: selected_constructor has no accessible first parameter");
@@ -3092,9 +3055,8 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 				const int elem_size = get_type_size_bits(elem_type);
 				const IrValue source = std::visit([](const auto& v) -> IrValue {
 					using T = std::decay_t<decltype(v)>;
-					if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-								  std::is_same_v<T, LocalVarId> ||
-								  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+					if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> || std::is_same_v<T, LocalVarId> ||
+						std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 						return IrValue(v);
 					} else if constexpr (std::is_same_v<T, int>) {
 						return IrValue(static_cast<unsigned long long>(v));
@@ -3111,8 +3073,8 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 				arg_result.pointer_depth = PointerDepth{arg_result.pointer_depth.value + 1};
 				sema_applied = true;
 			} else if (!is_struct_type(from_t) && !is_struct_type(to_t)) {
-					// Sema may annotate as TypeCategory::Enum while codegen resolves enum
-					// constants to their underlying type; use actual runtime type.
+				// Sema may annotate as TypeCategory::Enum while codegen resolves enum
+				// constants to their underlying type; use actual runtime type.
 				if (from_t == TypeCategory::Enum && from_t != arg_result.typeEnum())
 					from_t = arg_result.typeEnum();
 				arg_result = generateTypeConversion(arg_result, from_t, to_t, source_token);
@@ -3122,12 +3084,14 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 	}
 
 	// sema must annotate all standard constructor arg conversions.
-	if (!sema_applied && param_type.runtime_pointer_depth() == 0 &&
-		arg_result.typeEnum() != param_base_type) {
+	if (!sema_applied && param_type.runtime_pointer_depth() == 0 && arg_result.typeEnum() != param_base_type) {
 		TypeConversionResult conv = can_convert_type(arg_result.typeEnum(), param_base_type);
 		if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
 			if (sema_normalized_current_function_ && is_standard_arithmetic_type(arg_result.typeEnum()) && is_standard_arithmetic_type(param_base_type))
-				throw InternalError(std::string("Phase 15: sema missed constructor arg conversion (") + std::string(getTypeName(arg_result.typeEnum())) + " -> " + std::string(getTypeName(param_base_type)) + ")");
+				throw InternalError(
+					std::string("Phase 15: sema missed constructor arg conversion (") +
+					std::string(getTypeName(arg_result.typeEnum())) + " -> " +
+					std::string(getTypeName(param_base_type)) + ")");
 			// Fallback for non-arithmetic types (enum, etc.)
 			arg_result = generateTypeConversion(arg_result, arg_result.category(), param_base_type, source_token);
 		}
@@ -3597,7 +3561,9 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 	ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), source_token));
 	setTempVarMetadata(result_var, TempVarMetadata::makeRVOEligiblePRValue());
 
-	return makeExprResult(target_type.type_index().withCategory(target_type.category()), SizeInBits{actual_size_bits}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(
+		target_type.type_index().withCategory(target_type.category()),
+		SizeInBits{actual_size_bits}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
 std::optional<ExprResult> AstToIr::tryMaterializeSemaSelectedConvertingConstructor(
