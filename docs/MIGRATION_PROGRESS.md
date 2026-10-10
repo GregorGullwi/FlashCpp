@@ -89,15 +89,19 @@ Continue boundary 3A in this order.
    `static_cast` or direct-initialization still considers it, and both forms now
    lower by calling the selected operator rather than reinterpreting the object.
    Conversion-operator selection is migrating to a single sema authority, with
-   the end state that codegen never re-selects. Today two independent lookups
-   coexist: the sema selector `trySelectCanonicalUserDefinedConversionOperator`
-   (currently entered through `TypeIndex` and reading candidate functions from
-   `StructTypeInfo`, with canonical target and tail planning), recorded in
-   `ImplicitCastInfo` and consumed by `emitSemaSelectedConversionOperatorCall`; and the legacy codegen
-   `findConversionOperator` / `emitConversionOperatorCall` (compat `TypeIndex`
-   currency, its own cv-aware overload choice). `static_cast` and scalar
-   direct-initialization now use the canonical path and fail closed when the
-   annotation is absent. The legacy path is still load-bearing, not dead:
+   the end state that codegen never re-selects. The sema selector
+   `trySelectCanonicalUserDefinedConversionOperator` has a canonical `TypeId`
+   entry point for `static_cast`; it traverses canonical class-base identities
+   while reading candidate declarations through a `StructTypeInfo` compatibility
+   bridge. Shared implicit-conversion callers still enter through `TypeIndex`.
+   The selected function is recorded in `ImplicitCastInfo` and consumed by
+   `emitSemaSelectedConversionOperatorCall`. The legacy codegen lookup
+   `findConversionOperator` / `emitConversionOperatorCall` still uses compat
+   `TypeIndex` currency and its own cv-aware overload choice. `static_cast` and
+   direct-initialization lower through selected annotations and fail closed in
+   codegen when one is absent. Direct-initialization still selects through
+   `TypeIndex` with canonical target and tail planning. The legacy path is still
+   load-bearing, not dead:
    `tryAnnotateConversion`'s generic residual tail now selects and records the
    conversion function, including the cv-ranked choice for a reference-qualified
    source. Its residual tail now also handles class aliases by value, and its
@@ -107,8 +111,9 @@ Continue boundary 3A in this order.
    a second cv-based lookup in that path.
    Other sema paths can still leave variable-initialization,
    return, call-argument, and contextual-`bool` codegen paths needing
-   re-selection. The selector still takes a `TypeIndex`; migrating
-   that API to canonical `TypeId` remains separate work. Long-term plan:
+   re-selection. The `TypeId` entry point still reads candidate declarations
+   from `StructTypeInfo`, and most shared implicit-conversion callers still use
+   the `TypeIndex` entry point. Long-term plan:
    (1) make every sema `UserDefined` annotation record the selected function,
    extending this to the remaining unselected paths; (2) migrate sibling codegen
    contexts to consume the annotation

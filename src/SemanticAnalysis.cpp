@@ -5524,7 +5524,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				// static_cast may use a conversion operator, including an explicit
 				// one; record the selection on the operand so it composes with any
 				// enclosing conversion recorded on the cast expression itself.
-				tryAnnotateExplicitConversion(e.expr(), e.expr(), e.target_type());
+				tryAnnotateExplicitConversionByTypeId(e.expr(), e.expr(), e.target_type());
 			} else if constexpr (std::is_same_v<T, DynamicCastNode>) {
 				normalizeExpression(e.expr(), ctx);
 			} else if constexpr (std::is_same_v<T, ConstCastNode>) {
@@ -10168,6 +10168,50 @@ bool SemanticAnalysis::annotateSelectedConversionOperator(
 	return true;
 }
 
+bool SemanticAnalysis::tryAnnotateExplicitConversionByTypeId(
+	const ASTNode& slot_expression,
+	const ASTNode& source_expression,
+	const TypeSpecifierNode& target_type) {
+	const CanonicalTypeId source_type_id = inferExpressionType(source_expression);
+	if (!source_type_id) {
+		return false;
+	}
+	const CanonicalTypeId target_type_id = canonicalizeType(target_type);
+	if (!target_type_id) {
+		return false;
+	}
+	if (type_context_.get(source_type_id).category() != TypeCategory::Struct) {
+		return false;
+	}
+	const TypeSpecifierNode source_type = materializeTypeSpecifier(type_context_.get(source_type_id));
+	TypeSpecifierNode target_value_type = target_type;
+	target_value_type.set_reference_qualifier(ReferenceQualifier::None);
+	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+	CanonicalTypeTransaction source_type_transaction(canonical_types);
+	TypeSpecifierNode canonical_source_type = source_type;
+	tryBindPublishedTypeEntity(canonical_source_type);
+	const CanonicalTypeImport source_type_import = importCanonicalOverloadNominalType(canonical_types, canonical_source_type);
+	if (source_type_import.status != CanonicalTypeImportStatus::Supported) {
+		return false;
+	}
+	source_type_transaction.commit();
+	const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(source_type_import.type, target_value_type, /*allow_explicit=*/true);
+	if (!selected_conversion.has_value() || selected_conversion->ambiguous || selected_conversion->function == nullptr) {
+		return false;
+	}
+	if (!annotateSelectedConversionOperator(slot_expression, source_type_id, target_type_id, *selected_conversion)) {
+		return false;
+	}
+	// A cast does not change the operand's own type. Keep the operand's slot type
+	// as the source so re-inference (for example the constant evaluator) still
+	// sees the class type; codegen reads the recorded cast info, not the slot type.
+	const void* key = getExpressionKey(slot_expression);
+	SemanticSlot slot = getSlot(key).value_or(SemanticSlot{});
+	slot.type_id = source_type_id;
+	setSlot(key, slot);
+	return true;
+}
+
 bool SemanticAnalysis::tryAnnotateExplicitConversion(
 	const ASTNode& slot_expression,
 	const ASTNode& source_expression,
@@ -10188,17 +10232,12 @@ bool SemanticAnalysis::tryAnnotateExplicitConversion(
 	target_value_type.set_reference_qualifier(ReferenceQualifier::None);
 	const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(
 		source_type.type_index(), source_type.cv_qualifier(), target_value_type, /*allow_explicit=*/true);
-	if (!selected_conversion.has_value() || selected_conversion->ambiguous ||
-		selected_conversion->function == nullptr) {
+	if (!selected_conversion.has_value() || selected_conversion->ambiguous || selected_conversion->function == nullptr) {
 		return false;
 	}
-	if (!annotateSelectedConversionOperator(
-			slot_expression, source_type_id, target_type_id, *selected_conversion)) {
+	if (!annotateSelectedConversionOperator(slot_expression, source_type_id, target_type_id, *selected_conversion)) {
 		return false;
 	}
-	// A cast does not change the operand's own type. Keep the operand's slot type
-	// as the source so re-inference (for example the constant evaluator) still
-	// sees the class type; codegen reads the recorded cast info, not the slot type.
 	const void* key = getExpressionKey(slot_expression);
 	SemanticSlot slot = getSlot(key).value_or(SemanticSlot{});
 	slot.type_id = source_type_id;

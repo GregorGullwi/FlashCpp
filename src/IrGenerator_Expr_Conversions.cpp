@@ -2883,44 +2883,22 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 			// Enum/integer/pointer/void* → bool: normalize to an actual bool8 value
 			// so logical operators and other consumers do not reinterpret a
 			// full-width scalar as an already-materialized bool.
-			if (cast_info.cast_kind == StandardConversionKind::BooleanConversion ||
-				cast_info.cast_kind == StandardConversionKind::PointerConversion) {
+			if (cast_info.cast_kind == StandardConversionKind::BooleanConversion || cast_info.cast_kind == StandardConversionKind::PointerConversion) {
 				if (sema_.isMemberObjectPointerType(cast_info.source_type_id))
 					condition.ir_type = IrType::MemberObjectPointer;
 				return emitNonZeroBoolValue(std::move(condition), source_token);
 			}
-				// Phase 23: Struct → bool via user-defined operator bool().
-				// Sema annotates as UserDefined; call emitConversionOperatorCall.
-			if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
-				from_desc.category() == TypeCategory::Struct) {
-					// Sema already verified the operator exists via structHasConversionOperatorTo;
-					// set flag immediately so the fallback doesn't duplicate this lookup.
+			// Struct → bool uses the conversion operator selected by sema.
+			if (cast_info.cast_kind == StandardConversionKind::UserDefined && from_desc.category() == TypeCategory::Struct) {
 				sema_applied_bool_conv = true;
-				TypeIndex source_type_idx = from_desc.type_index;
-				if (const TypeInfo* src_type_info = tryGetTypeInfo(source_type_idx)) {
-					if (cast_info.selected_conversion_function != nullptr) {
-						if (auto result = emitSemaSelectedConversionOperatorCall(
-								condition,
-								*src_type_info,
-								cast_info,
-								TypeCategory::Bool,
-								source_token)) {
-							return *result;
-						}
-						throw InternalError(
-							"Sema-selected conversion operator failed to lower a contextual bool conversion");
-					}
-					const bool source_is_const = ((static_cast<uint8_t>(from_desc.base_cv)) & (static_cast<uint8_t>(CVQualifier::Const))) != 0;
-					const StructMemberFunction* conv_op = findConversionOperator(
-						src_type_info->getStructInfo(), nativeTypeIndex(TypeCategory::Bool), source_is_const);
-					if (conv_op) {
-						FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in contextual bool from ",
-								  StringTable::getStringView(src_type_info->name()), " to bool");
-						if (auto result = emitConversionOperatorCall(condition, *src_type_info, *conv_op,
-																	 nativeTypeIndex(TypeCategory::Bool), 8, source_token))
-							return *result;
-					}
+				const TypeInfo* const source_type_info = tryGetTypeInfo(from_desc.type_index);
+				if (source_type_info == nullptr || cast_info.selected_conversion_function == nullptr) {
+					throw InternalError("Sema must annotate a contextual bool conversion with its selected operator");
 				}
+				if (auto result = emitSemaSelectedConversionOperatorCall(condition, *source_type_info, cast_info, TypeCategory::Bool, source_token)) {
+					return *result;
+				}
+				throw InternalError("Sema-selected conversion operator failed to lower a contextual bool conversion");
 			}
 		}
 	}
@@ -2949,8 +2927,7 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 	if (!sema_applied_bool_conv && condition.category() == TypeCategory::Struct) {
 		TypeIndex cond_type_idx = condition.type_index;
 		if (const TypeInfo* src_type_info = tryGetTypeInfo(cond_type_idx)) {
-			if (findConversionOperator(
-					src_type_info->getStructInfo(), nativeTypeIndex(TypeCategory::Bool), false)) {
+			if (findConversionOperator(src_type_info->getStructInfo(), nativeTypeIndex(TypeCategory::Bool), false)) {
 				throw InternalError(
 					"Codegen-side contextual-bool conversion-operator fallback should not run: "
 					"sema must annotate struct-to-bool contextual conversions");
