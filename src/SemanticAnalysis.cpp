@@ -10274,24 +10274,47 @@ bool SemanticAnalysis::annotateConversionImpl(
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
 	const bool target_is_member_object_pointer = isMemberObjectPointerType(target_type_id);
-	auto select_conversion_operator = [this, use_type_ids](
+	auto select_conversion_operator = [use_type_ids](
 		TypeIndex source_type_index, CVQualifier source_cv,
-		const TypeSpecifierNode& target_type, const CanonicalTypeDesc& source_desc) {
+		const TypeSpecifierNode& target_type, const CanonicalTypeDesc& source_desc)
+		-> std::optional<UserDefinedConversionOperatorSelection> {
 		if (!use_type_ids) {
 			return trySelectCanonicalUserDefinedConversionOperator(source_type_index, source_cv, target_type, false);
 		}
 		CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
 		CanonicalTypeTransaction source_type_transaction(canonical_types);
-		const CanonicalTypeImport source_type_import = tryImportCanonicalTypeDesc(source_desc);
-		if (source_type_import.status != CanonicalTypeImportStatus::Supported) {
-			return std::optional<UserDefinedConversionOperatorSelection>{};
+		const TypeInfo* const source_legacy_type_info = source_desc.type_index.is_valid()
+			? tryGetTypeInfo(source_desc.type_index)
+			: nullptr;
+		CanonicalTypeImport source_type_import = source_desc.structural_type_id
+			? CanonicalTypeImport{source_desc.structural_type_id, CanonicalTypeImportStatus::Supported}
+			: source_legacy_type_info != nullptr
+				? tryImportCanonicalTypeDesc(source_desc)
+				: CanonicalTypeImport{{}, CanonicalTypeImportStatus::Unresolved};
+		bool nominal_source_import_supported = false;
+		if (source_type_index.is_valid() && source_legacy_type_info != nullptr) {
+			TypeSpecifierNode canonical_source_type = materializeTypeSpecifier(source_desc);
+			tryBindPublishedTypeEntity(canonical_source_type);
+			const CanonicalTypeImport nominal_source_type_import = importCanonicalOverloadNominalType(canonical_types, canonical_source_type);
+			if (nominal_source_type_import.status == CanonicalTypeImportStatus::Supported) {
+				source_type_import = nominal_source_type_import;
+				nominal_source_import_supported = true;
+			}
 		}
-		const auto selected_conversion =
-			trySelectCanonicalUserDefinedConversionOperator(source_type_import.type, target_type, false);
+		if (source_type_import.status != CanonicalTypeImportStatus::Supported) {
+			// Keep class specializations without a canonical source identity on the compatibility selector.
+			return trySelectCanonicalUserDefinedConversionOperator(source_type_index, source_cv, target_type, false);
+		}
+		const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(source_type_import.type, target_type, false);
 		if (selected_conversion.has_value()) {
 			source_type_transaction.commit();
+			return selected_conversion;
 		}
-		return selected_conversion;
+		if (nominal_source_import_supported) {
+			return std::nullopt;
+		}
+		// Structural identity may exist before its declaration bridge can resolve the source class.
+		return trySelectCanonicalUserDefinedConversionOperator(source_type_index, source_cv, target_type, false);
 	};
 
 	// C++20 [conv.ptr]: nullptr_t converts to any object, function, or member

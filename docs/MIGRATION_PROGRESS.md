@@ -94,6 +94,8 @@ Continue boundary 3A in this order.
    entry point for `static_cast`, variable-initialization, and return conversion
    operators; it traverses canonical class-base identities while reading
    candidate declarations through a `StructTypeInfo` compatibility bridge.
+   Variable-initialization and return retain a `TypeIndex` fallback when a
+   source specialization cannot be imported or resolved through that bridge.
    Other shared implicit-conversion callers still enter through `TypeIndex`.
    The selected function is recorded in `ImplicitCastInfo` and consumed by
    `emitSemaSelectedConversionOperatorCall`. The legacy codegen lookup
