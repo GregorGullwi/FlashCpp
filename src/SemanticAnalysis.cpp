@@ -10710,17 +10710,18 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 	const ConversionPlan plan = buildConversionPlan(from_canonical.typeEnum(), to_canonical.typeEnum());
 	if (!plan.is_valid)
 		return false;
-	// Allow UserDefined rank only when source is Struct (conversion operator case).
+	// Allow UserDefined rank only when the resolved source is Struct (conversion operator case).
 	// Reject UserDefined for non-struct sources (converting constructors are separate).
-	if (plan.rank == ConversionRank::UserDefined && from_desc.category() != TypeCategory::Struct)
+	if (plan.rank == ConversionRank::UserDefined && from_canonical.typeEnum() != TypeCategory::Struct)
 		return false;
 
-	// A residual struct-source conversion still participates in the same canonical
-	// conversion-operator selection as the specialized class, scalar, and pointer paths.
+	// A residual conversion from a resolved struct source still uses the same canonical
+	// operator selection as the specialized class, scalar, and pointer paths.
 	// Do not record an existential UserDefined rank: codegen must consume the selected
 	// declaration, including cv ranking and any standard conversion tail.
 	if (plan.rank == ConversionRank::UserDefined) {
-		const TypeIndex source_type_index = from_desc.type_index;
+		const TypeIndex source_type_index = from_desc.category() == TypeCategory::Struct ? from_desc.type_index : from_canonical.resolvedTypeIndex();
+		if (!source_type_index.is_valid()) return false;
 		const CVQualifier source_cv = from_desc.base_cv;
 		const TypeIndex target_type_index = to_desc.type_index;
 		const TypeCategory target_category = to_desc.category();

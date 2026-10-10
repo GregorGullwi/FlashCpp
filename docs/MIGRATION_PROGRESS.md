@@ -100,8 +100,9 @@ Continue boundary 3A in this order.
    annotation is absent. The legacy path is still load-bearing, not dead:
    `tryAnnotateConversion`'s generic residual tail now selects and records the
    conversion function, including the cv-ranked choice for a reference-qualified
-   source. Its reference-stripped alias-to-class path now also records the
-   selected operator. Other sema paths can still leave variable-initialization,
+   source. Its residual tail now also handles class aliases by value, and its
+   reference-stripped path records the selected operator for class aliases.
+   Other sema paths can still leave variable-initialization,
    return, call-argument, contextual-`bool`, and constructor-argument codegen
    paths needing re-selection. The selector still takes a `TypeIndex`; migrating
    that API to canonical `TypeId` remains separate work. Long-term plan:
