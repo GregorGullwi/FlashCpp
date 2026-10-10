@@ -539,6 +539,7 @@ struct CallOp {
 	bool returns_reference = false;		// 1 byte - True if function returns T& or T&&
 	bool returns_rvalue_reference = false; // 1 byte - True if function returns T&&
 	std::optional<TempVar> return_slot;	// Optional temp var representing the return slot location
+	std::optional<LocalVarId> result_destination;	// Direct object result for guaranteed copy elision
 
 	// Helper to get function_name as StringHandle
 	StringHandle getFunctionName() const {

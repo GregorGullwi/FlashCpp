@@ -4591,7 +4591,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 
 		int result_offset = 0;
 		if (!returns_valueless_void) {
-			result_offset = getStackOffsetFromTempVar(call_op.result);
+			result_offset = call_op.result_destination.has_value() ? getVariableOffsetOrThrow(*call_op.result_destination, "call result destination")
+				: getStackOffsetFromTempVar(call_op.result);
 		}
 
 			// Platform-specific format check for ABI differences

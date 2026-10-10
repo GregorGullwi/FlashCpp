@@ -2653,6 +2653,10 @@ bool Parser::looks_like_function_parameters() {
 				// `Factory<int>::make(7)`, or `Color::Green` are
 				// direct-initialization arguments, not parameter declarations.
 				advance();  // consume the identifier
+				if (peek() == "{"_tok) {
+					restore_token_position(saved);
+					return false;
+				}
 				if (peek() == "::"_tok) {
 					if (type_iter->second && type_iter->second->getEnumInfo()) {
 						// Qualified enum value access (e.g., Color::Green) = direct init argument

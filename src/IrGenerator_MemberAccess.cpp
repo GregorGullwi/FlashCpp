@@ -3403,12 +3403,22 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 }
 
 std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
-	const ExprResult& source,
-	const TypeInfo& source_type_info,
-	const FunctionDeclarationNode& func_decl,
-	TypeIndex target_type_index,
-	int target_size_bits,
-	const Token& token) {
+	const ExprResult& source, const TypeInfo& source_type_info, const FunctionDeclarationNode& func_decl,
+	TypeIndex target_type_index, int target_size_bits, const Token& token) {
+	return emitConversionOperatorCallInternal(source, source_type_info, func_decl, target_type_index, target_size_bits, token, std::nullopt);
+}
+
+std::optional<ExprResult> AstToIr::emitConversionOperatorCallToDestination(
+	const ExprResult& source, const TypeInfo& source_type_info, const FunctionDeclarationNode& func_decl,
+	TypeIndex target_type_index, int target_size_bits, const Token& token, LocalVarId result_destination) {
+	return emitConversionOperatorCallInternal(source, source_type_info, func_decl, target_type_index, target_size_bits, token, result_destination);
+}
+
+std::optional<ExprResult> AstToIr::emitConversionOperatorCallInternal(
+	const ExprResult& source, const TypeInfo& source_type_info, const FunctionDeclarationNode& func_decl,
+	TypeIndex target_type_index, int target_size_bits, const Token& token,
+	std::optional<LocalVarId> result_destination) {
+	const TypeSpecifierNode& conversion_return_type = func_decl.decl_node().type_specifier_node();
 
 	// Phase 5 Slice K: historical lazy-conversion-operator materialize-and-queue
 	// fallback removed. Sema's `tryAnnotateConversion` now eagerly materializes the
@@ -3439,6 +3449,10 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 		SizeInBits{target_size_bits},
 		true,
 		false);
+	call_op.result_destination = result_destination;
+	if (needsHiddenReturnParam(conversion_return_type, context_->isLLP64())) {
+		call_op.return_slot = result_var;
+	}
 
 	// Determine the source object address and pass as 'this'
 	IrValue source_value = std::visit([](auto&& arg) -> IrValue {
@@ -3506,13 +3520,11 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 
 	if (std::holds_alternative<StringHandle>(source_value)) {
 		// Named variable — take its address using the shared emitAddressOf helper
-		TempVar this_ptr = emitAddressOf(source.category(), source.size_in_bits.value,
-										 IrValue(std::get<StringHandle>(source_value)), token);
+		TempVar this_ptr = emitAddressOf(source.category(), source.size_in_bits.value, IrValue(std::get<StringHandle>(source_value)), token);
 
 		call_op.args.push_back(makeMemberThisCallArgument(source.type_index, IrValue(this_ptr)));
 	} else if (std::holds_alternative<LocalVarId>(source_value)) {
-		TempVar this_ptr = emitAddressOf(source.category(), source.size_in_bits.value,
-										 IrValue(std::get<LocalVarId>(source_value)), token);
+		TempVar this_ptr = emitAddressOf(source.category(), source.size_in_bits.value, IrValue(std::get<LocalVarId>(source_value)), token);
 		call_op.args.push_back(makeMemberThisCallArgument(source.type_index, IrValue(this_ptr)));
 	} else if (std::holds_alternative<TempVar>(source_value)) {
 		TempVar object_temp = std::get<TempVar>(source_value);
@@ -3521,21 +3533,12 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 		// object storage and must be AddressOf'd (LEA), not MOV'd as a fake pointer.
 		const bool temp_already_holds_address =
 			std::holds_alternative<TempVar>(source.value) &&
-			std::get<TempVar>(source.value).var_number == object_temp.var_number &&
-			source.storage == ValueStorage::ContainsAddress;
+			std::get<TempVar>(source.value).var_number == object_temp.var_number && source.storage == ValueStorage::ContainsAddress;
 		if (temp_already_holds_address) {
-			call_op.args.push_back(makeMemberThisCallArgument(
-				source.type_index,
-				IrValue(object_temp)));
+			call_op.args.push_back(makeMemberThisCallArgument(source.type_index, IrValue(object_temp)));
 		} else {
-			TempVar this_ptr = emitAddressOf(
-				source.category(),
-				source.size_in_bits.value,
-				IrValue(object_temp),
-				token);
-			call_op.args.push_back(makeMemberThisCallArgument(
-				source.type_index,
-				IrValue(this_ptr)));
+			TempVar this_ptr = emitAddressOf(source.category(), source.size_in_bits.value, IrValue(object_temp), token);
+			call_op.args.push_back(makeMemberThisCallArgument(source.type_index, IrValue(this_ptr)));
 		}
 	} else {
 		throw InternalError("emitConversionOperatorCall: source value is neither StringHandle nor TempVar");
@@ -3543,104 +3546,82 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), token));
 
-	return makeExprResult(target_type_index, SizeInBits{target_size_bits}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+	const IrOperand result_value = result_destination.has_value() ? IrOperand{*result_destination} : IrOperand{result_var};
+	return makeExprResult(target_type_index, SizeInBits{target_size_bits}, result_value, PointerDepth{}, ValueStorage::ContainsData);
 }
 
 std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCall(
-	const ExprResult& source,
-	const TypeInfo& source_type_info,
-	const ImplicitCastInfo& cast_info,
-	TypeCategory destination_type_category,
-	const Token& token) {
+	const ExprResult& source, const TypeInfo& source_type_info, const ImplicitCastInfo& cast_info,
+	TypeCategory destination_type_category, const Token& token) {
+	return emitSemaSelectedConversionOperatorCallInternal(source, source_type_info, cast_info, destination_type_category, token, std::nullopt);
+}
+
+std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCall(
+	const ExprResult& source, const TypeInfo& source_type_info, const ImplicitCastInfo& cast_info,
+	TypeCategory destination_type_category, const Token& token, LocalVarId result_destination) {
+	return emitSemaSelectedConversionOperatorCallInternal(source, source_type_info, cast_info, destination_type_category, token, result_destination);
+}
+
+std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCallInternal(
+	const ExprResult& source, const TypeInfo& source_type_info, const ImplicitCastInfo& cast_info,
+	TypeCategory destination_type_category, const Token& token,
+	std::optional<LocalVarId> result_destination) {
 	if (cast_info.selected_conversion_function == nullptr) {
 		return std::nullopt;
 	}
-	const FunctionDeclarationNode& conversion_function =
-		*cast_info.selected_conversion_function;
-	const TypeSpecifierNode& conversion_return_type =
-		conversion_function.decl_node().type_specifier_node();
+	const FunctionDeclarationNode& conversion_function = *cast_info.selected_conversion_function;
+	const TypeSpecifierNode& conversion_return_type = conversion_function.decl_node().type_specifier_node();
 	TypeIndex conversion_return_type_index = conversion_return_type.type_index();
 	if (!conversion_return_type_index.is_valid()) {
 		conversion_return_type_index = nativeTypeIndex(conversion_return_type.category());
 	}
-	const CanonicalTypeId conversion_return_type_id =
-		sema_.canonicalizeTypeForImplicitConversion(conversion_return_type);
-	const bool conversion_returns_member_object_pointer =
-		sema_.isMemberObjectPointerType(conversion_return_type_id);
-	const TypeIndex conversion_result_type_index =
-		conversion_returns_member_object_pointer
-			? conversion_return_type_index.withCategory(TypeCategory::MemberObjectPointer)
-			: conversion_return_type_index;
-	const int conversion_result_size_bits = conversion_returns_member_object_pointer
-		? POINTER_SIZE_BITS
+	const CanonicalTypeId conversion_return_type_id = sema_.canonicalizeTypeForImplicitConversion(conversion_return_type);
+	const bool conversion_returns_member_object_pointer = sema_.isMemberObjectPointerType(conversion_return_type_id);
+	const TypeIndex conversion_result_type_index = conversion_returns_member_object_pointer
+		? conversion_return_type_index.withCategory(TypeCategory::MemberObjectPointer) : conversion_return_type_index;
+	const int conversion_result_size_bits = conversion_returns_member_object_pointer ? POINTER_SIZE_BITS
 		: static_cast<int>(conversion_return_type.size_in_bits());
-	std::optional<ExprResult> result = emitConversionOperatorCall(
-		source,
-		source_type_info,
-		conversion_function,
-		conversion_result_type_index,
-		conversion_result_size_bits,
-		token);
+	std::optional<ExprResult> result;
+	if (result_destination.has_value()) {
+		result = emitConversionOperatorCallToDestination(source, source_type_info, conversion_function,
+			conversion_result_type_index, conversion_result_size_bits, token, *result_destination);
+	} else {
+		result = emitConversionOperatorCall(source, source_type_info, conversion_function, conversion_result_type_index,
+			conversion_result_size_bits, token);
+	}
 	if (result.has_value()) {
-		result->pointer_depth = conversion_returns_member_object_pointer
-			? PointerDepth{}
-			: PointerDepth{
-				static_cast<int>(conversion_return_type.runtime_pointer_depth())};
+		result->pointer_depth = conversion_returns_member_object_pointer ? PointerDepth{}
+			: PointerDepth{static_cast<int>(conversion_return_type.runtime_pointer_depth())};
 		if (conversion_returns_member_object_pointer) {
 			result->ir_type = IrType::MemberObjectPointer;
 		}
 	}
-	if (!result.has_value() ||
-		cast_info.trailing_standard_conversion == StandardConversionKind::None) {
+	if (!result.has_value() || cast_info.trailing_standard_conversion == StandardConversionKind::None) {
 		return result;
 	}
-	if (cast_info.trailing_standard_conversion ==
-		StandardConversionKind::PointerConversion) {
-		const CanonicalTypeDesc& conversion_return_desc =
-			sema_.typeContext().get(conversion_return_type_id);
-		const CanonicalTypeDesc& destination_desc =
-			sema_.typeContext().get(cast_info.target_type_id);
-		if (sema_.isMemberObjectPointerType(conversion_return_type_id) &&
-			sema_.isMemberObjectPointerType(cast_info.target_type_id)) {
-			if (!conversion_return_desc.structural_type_id ||
-				!destination_desc.structural_type_id) {
-				throw InternalError(
-					"Sema-selected member-object-pointer conversion has no canonical types");
+	if (cast_info.trailing_standard_conversion == StandardConversionKind::PointerConversion) {
+		const CanonicalTypeDesc& conversion_return_desc = sema_.typeContext().get(conversion_return_type_id);
+		const CanonicalTypeDesc& destination_desc = sema_.typeContext().get(cast_info.target_type_id);
+		if (sema_.isMemberObjectPointerType(conversion_return_type_id) && sema_.isMemberObjectPointerType(cast_info.target_type_id)) {
+			if (!conversion_return_desc.structural_type_id || !destination_desc.structural_type_id) {
+				throw InternalError("Sema-selected member-object-pointer conversion has no canonical types");
 			}
 
 			CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
-			const TypeId source_member_pointer =
-				canonical_types.withoutTopLevelQualifiers(
-					conversion_return_desc.structural_type_id);
-			const TypeId target_member_pointer =
-				canonical_types.withoutTopLevelQualifiers(
-					destination_desc.structural_type_id);
-			if (canonical_types.node(source_member_pointer).kind !=
-					CanonicalTypeKind::MemberObjectPointer ||
-				canonical_types.node(target_member_pointer).kind !=
-					CanonicalTypeKind::MemberObjectPointer) {
-				throw InternalError(
-					"Sema-selected data-member-pointer conversion has a non-member-pointer shape");
+			const TypeId source_member_pointer = canonical_types.withoutTopLevelQualifiers(conversion_return_desc.structural_type_id);
+			const TypeId target_member_pointer = canonical_types.withoutTopLevelQualifiers(destination_desc.structural_type_id);
+			if (canonical_types.node(source_member_pointer).kind != CanonicalTypeKind::MemberObjectPointer ||
+				canonical_types.node(target_member_pointer).kind != CanonicalTypeKind::MemberObjectPointer) {
+				throw InternalError("Sema-selected data-member-pointer conversion has a non-member-pointer shape");
 			}
-			const TypeId source_owner =
-				canonical_types.memberPointerOwner(source_member_pointer);
-			const TypeId target_owner =
-				canonical_types.memberPointerOwner(target_member_pointer);
+			const TypeId source_owner = canonical_types.memberPointerOwner(source_member_pointer);
+			const TypeId target_owner = canonical_types.memberPointerOwner(target_member_pointer);
 			if (source_owner != target_owner) {
-				return adjustMemberObjectPointerForCanonicalBaseConversion(
-					std::move(*result),
-					source_member_pointer,
-					target_member_pointer,
-					token);
+				return adjustMemberObjectPointerForCanonicalBaseConversion(std::move(*result), source_member_pointer, target_member_pointer, token);
 			}
 		}
 	}
-	return generateTypeConversion(
-		*result,
-		conversion_return_type.category(),
-		destination_type_category,
-		cast_info.trailing_standard_conversion,
-		token);
+	return generateTypeConversion(*result, conversion_return_type.category(), destination_type_category, cast_info.trailing_standard_conversion, token);
 }
 
 ExprResult AstToIr::adjustMemberObjectPointerForCanonicalBaseConversion(

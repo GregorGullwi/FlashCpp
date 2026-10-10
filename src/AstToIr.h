@@ -1097,19 +1097,22 @@ private:
 		TypeIndex target_type_index,
 		int target_size_bits,
 		const Token& token);
-	std::optional<ExprResult> emitConversionOperatorCall(
-		const ExprResult& source,
-		const TypeInfo& source_type_info,
-		const FunctionDeclarationNode& conversion_function,
-		TypeIndex target_type_index,
-		int target_size_bits,
-		const Token& token);
-	std::optional<ExprResult> emitSemaSelectedConversionOperatorCall(
-		const ExprResult& source,
-		const TypeInfo& source_type_info,
-		const ImplicitCastInfo& cast_info,
-		TypeCategory destination_type_category,
-		const Token& token);
+	std::optional<ExprResult> emitConversionOperatorCall(const ExprResult& source, const TypeInfo& source_type_info,
+		const FunctionDeclarationNode& conversion_function, TypeIndex target_type_index, int target_size_bits, const Token& token);
+	std::optional<ExprResult> emitConversionOperatorCallToDestination(const ExprResult& source, const TypeInfo& source_type_info,
+		const FunctionDeclarationNode& conversion_function, TypeIndex target_type_index, int target_size_bits,
+		const Token& token, LocalVarId result_destination);
+	std::optional<ExprResult> emitConversionOperatorCallInternal(const ExprResult& source, const TypeInfo& source_type_info,
+		const FunctionDeclarationNode& conversion_function, TypeIndex target_type_index, int target_size_bits, const Token& token,
+		std::optional<LocalVarId> result_destination);
+	std::optional<ExprResult> emitSemaSelectedConversionOperatorCall(const ExprResult& source, const TypeInfo& source_type_info,
+		const ImplicitCastInfo& cast_info, TypeCategory destination_type_category, const Token& token);
+	std::optional<ExprResult> emitSemaSelectedConversionOperatorCall(const ExprResult& source, const TypeInfo& source_type_info,
+		const ImplicitCastInfo& cast_info, TypeCategory destination_type_category, const Token& token,
+		LocalVarId result_destination);
+	std::optional<ExprResult> emitSemaSelectedConversionOperatorCallInternal(const ExprResult& source, const TypeInfo& source_type_info,
+		const ImplicitCastInfo& cast_info, TypeCategory destination_type_category, const Token& token,
+		std::optional<LocalVarId> result_destination);
 
 	// Helper to get the size of a type in bytes
 	// Reuses the same logic as sizeof() operator

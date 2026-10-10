@@ -112,7 +112,10 @@ Continue boundary 3A in this order.
    diverge on cv-aware overload choice, explicit filtering, and `TypeId` versus
    `TypeIndex` identity. The migrated `static_cast` and direct-initialization
    paths now fail closed when the annotation is absent, with the same
-   `"sema must annotate"` internal error as the sibling paths.
+   `"sema must annotate"` internal error as the sibling paths. Class-target
+   variable initialization now consumes exact prvalue conversion selections
+   for copy-initialization and parenthesized direct-initialization, constructing
+   into the declared object.
 
 2. **Migrate remaining flat consumers.**
    1. **The constructibility family.** The zero-argument variants and published
