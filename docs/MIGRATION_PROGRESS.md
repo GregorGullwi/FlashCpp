@@ -210,10 +210,17 @@ Continue boundary 3A in this order.
    3. **Template argument and substitution storage.** The lazy constraint
       evaluator substitutes a template parameter by name against
       `template_param_names`; boundary 6 replaces that with depth-and-index
-      parameters, then constexpr type queries and IR layout/subscript paths. Make
-      callable `TypeId`s authoritative through signature substitution so a
-      `FunctionType` no longer carries a duplicate ordered spine beside its flat
-      projections. Keep unsupported shapes fail-closed.
+      parameters, then constexpr type queries and IR layout/subscript paths.
+      Callable signature substitution now stamps published type-parameter
+      declaration/index identities through nested signatures with an explicit
+      worklist. When both the pattern and argument import canonically, the
+      substituted `FunctionType` retains the complete canonical `TypeId` and
+      re-exports supported pointer/array/reference declarators instead of storing
+      a duplicate ordered spine. Function identity comparison permits canonical
+      components to match legacy projections, compares TypeIds when both are
+      present, and keeps hashes representation-neutral.
+      Non-projectable function/member-pointer shapes remain deferred until their
+      canonical substitution and export coverage is available.
 
 3. **Complete importer and declarator coverage.** Add canonical import support
    for remaining valid ordered forms still rejected at a boundary, including

@@ -102,12 +102,11 @@ static TypeIndex selectAliasRegistrationSourceIndex(
 		alias_registration_type_spec.type());
 }
 
-FunctionSignature Parser::substituteTemplateFunctionSignature(
-	FunctionSignature signature,
-	std::span<const TemplateParameterNode> template_params,
-	std::span<const TemplateTypeArg> template_args) {
-	signature = substituteTemplateFunctionSignatureTypes(
-		std::move(signature), template_params, template_args);
+FunctionSignature Parser::substituteTemplateFunctionSignature(FunctionSignature signature,
+	std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args) {
+	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+	CanonicalTypeTransaction canonical_transaction(canonical_types);
+	signature = substituteTemplateFunctionSignatureTypes(std::move(signature), template_params, template_args, canonical_types);
 	if (signature.hasStructuredTypes()) {
 		// Structured signatures retain dependent member TypeInfo separately from
 		// the alias target TypeSpecifier, so resolve it before canonical import.
@@ -116,53 +115,45 @@ FunctionSignature Parser::substituteTemplateFunctionSignature(
 				return false;
 			}
 			const TypeInfo* type_info = tryGetTypeInfo(component.type_index);
-			return type_info != nullptr && type_info->isDependentMemberType() &&
-				type_info->hasDependentQualifiedName();
+			return type_info != nullptr && type_info->isDependentMemberType() && type_info->hasDependentQualifiedName();
 		};
-		bool has_dependent_member_component =
-			isDependentMemberComponent(signature.return_type());
+		bool has_dependent_member_component = isDependentMemberComponent(signature.return_type());
 		for (const FunctionType& parameter : signature.parameter_types()) {
 			has_dependent_member_component |= isDependentMemberComponent(parameter);
 		}
 		if (has_dependent_member_component) {
-			SubstitutionParamMap sub_map = buildSubstitutionParamMap(
-				template_params, template_args);
-			ExpressionSubstitutor substitutor(
-				sub_map.param_map, *this, sub_map.param_order);
-			const auto resolveDependentMemberComponent =
-				[&](FunctionType& component) {
-					if (!isDependentMemberComponent(component)) {
-						return;
-					}
-					TypeSpecifierNode component_spec = typeSpecifierFromFunctionType(component);
-					TypeSpecifierNode substituted_spec =
-						substitutor.substituteTypeSpecifier(component_spec);
-					if (substituted_spec.type_index() == component.type_index ||
-						typeSpecStillUsesDependentPlaceholder(substituted_spec)) {
-						return;
-					}
-					FunctionType substituted_component =
-						makeFunctionTypeFromSpecifier(substituted_spec);
-					substituted_component.is_pack_expansion = component.is_pack_expansion;
-					component = std::move(substituted_component);
-				};
+			SubstitutionParamMap sub_map = buildSubstitutionParamMap(template_params, template_args);
+			ExpressionSubstitutor substitutor(sub_map.param_map, *this, sub_map.param_order);
+			const auto resolveDependentMemberComponent = [&](FunctionType& component) {
+				if (!isDependentMemberComponent(component)) {
+					return;
+				}
+				TypeSpecifierNode component_spec = typeSpecifierFromFunctionType(component);
+				TypeSpecifierNode substituted_spec = substitutor.substituteTypeSpecifier(component_spec);
+				if (substituted_spec.type_index() == component.type_index || typeSpecStillUsesDependentPlaceholder(substituted_spec)) {
+					return;
+				}
+				FunctionType substituted_component = makeFunctionTypeFromSpecifier(substituted_spec);
+				substituted_component.is_pack_expansion = component.is_pack_expansion;
+				component = std::move(substituted_component);
+			};
 			signature.updateReturnType(resolveDependentMemberComponent);
-			signature.updateParameterTypes(
-				[&](OverloadVector<FunctionType, 4>& parameters) {
-					for (FunctionType& parameter : parameters) {
-						resolveDependentMemberComponent(parameter);
-					}
-				});
+			signature.updateParameterTypes([&](OverloadVector<FunctionType, 4>& parameters) {
+				for (FunctionType& parameter : parameters) {
+					resolveDependentMemberComponent(parameter);
+				}
+			});
 		}
 	}
 	if (!signature.noexcept_expression.has_value()) {
+		canonical_transaction.commit();
 		return signature;
 	}
 
-	ASTNode substituted_expression = substituteTemplateParameters(
-		signature.noexcept_expression->node(), template_params, template_args);
+	ASTNode substituted_expression = substituteTemplateParameters(signature.noexcept_expression->node(), template_params, template_args);
 	signature.noexcept_expression = ExpressionHandle(substituted_expression);
 	foldInstantiatedNoexceptSpecification(signature, template_params, template_args);
+	canonical_transaction.commit();
 	return signature;
 }
 

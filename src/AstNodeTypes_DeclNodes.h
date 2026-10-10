@@ -2849,34 +2849,30 @@ inline FunctionType makeFunctionTypeFromSpecifier(const TypeSpecifierNode& type_
 	type.type_entity = type_spec.type_entity();
 	type.cv_qualifier = type_spec.cv_qualifier();
 	type.reference_qualifier = type_spec.reference_qualifier();
-	type.array_dimensions.assign(
-		type_spec.array_dimensions().begin(), type_spec.array_dimensions().end());
-	type.pointee_array_declarator =
-		type_spec.has_pointee_array_declarator();
-	type.has_unsized_outer_array_dimension =
-		type_spec.has_unsized_outer_array_dimension();
+	type.array_dimensions.assign(type_spec.array_dimensions().begin(), type_spec.array_dimensions().end());
+	type.pointee_array_declarator = type_spec.has_pointee_array_declarator();
+	type.has_unsized_outer_array_dimension = type_spec.has_unsized_outer_array_dimension();
 	type.is_pack_expansion = type_spec.is_pack_expansion();
 	if (type_spec.has_template_parameter_identity()) {
 		type.template_parameter_name = type_spec.template_parameter_name();
 	}
-	type.injected_class_declaration =
-		type_spec.injected_class_declaration();
+	if (type_spec.has_template_parameter_decl()) {
+		type.template_parameter_decl = type_spec.template_decl_id();
+		type.template_parameter_index = type_spec.template_parameter_index();
+	}
+	type.injected_class_declaration = type_spec.injected_class_declaration();
 	type.pointer_qualifiers.reserve(type_spec.pointer_levels().size());
 	for (const PointerLevel& pointer_level : type_spec.pointer_levels()) {
 		type.pointer_qualifiers.push_back(pointer_level.cv_qualifier);
 	}
-	if (type_spec.has_ordered_declarator() &&
-		!type_spec.ordered_declarator_has_legacy_projection()) {
-		type.ordered_declarator_components.assign(
-			type_spec.declarator_components().begin(),
-			type_spec.declarator_components().end());
+	if (type_spec.has_ordered_declarator() && !type_spec.ordered_declarator_has_legacy_projection()) {
+		type.ordered_declarator_components.assign(type_spec.declarator_components().begin(), type_spec.declarator_components().end());
 	}
 	if (type_spec.has_member_class()) {
 		type.member_class_name = type_spec.member_class_name();
 	}
 	if (type_spec.has_function_signature()) {
-		type.callable_signature =
-			std::make_shared<FunctionSignature>(type_spec.function_signature());
+		type.callable_signature = std::make_shared<FunctionSignature>(type_spec.function_signature());
 	}
 	return type;
 }
@@ -3370,17 +3366,12 @@ inline bool typeSpecStillUsesDependentPlaceholder(const TypeSpecifierNode& type_
 		return false;
 	}
 
-	auto function_type_is_dependent = [&](
-		const FunctionType& root_type,
-		auto&& self,
-		size_t depth_limit) -> bool {
+	auto function_type_is_dependent = [&](const FunctionType& root_type, auto&& self, size_t depth_limit) -> bool {
 		if (depth_limit == 0) {
 			return true;
 		}
-		if (root_type.template_parameter_name.isValid() ||
-			root_type.is_pack_expansion ||
-			typeIndexContainsDependentPlaceholder(
-				root_type.type_index, depth_limit)) {
+		if (root_type.template_parameter_name.isValid() || root_type.template_parameter_decl || root_type.is_pack_expansion ||
+			typeIndexContainsDependentPlaceholder(root_type.type_index, depth_limit)) {
 			return true;
 		}
 		if (!root_type.callable_signature) {
@@ -3390,24 +3381,19 @@ inline bool typeSpecStillUsesDependentPlaceholder(const TypeSpecifierNode& type_
 		if (nested_signature.noexcept_expression.has_value()) {
 			return true;
 		}
-		if (nested_signature.hasStructuredTypes() &&
-			self(nested_signature.return_type(), self, depth_limit - 1)) {
+		if (nested_signature.hasStructuredTypes() && self(nested_signature.return_type(), self, depth_limit - 1)) {
 			return true;
 		}
-		for (const FunctionType& parameter_type :
-			 nested_signature.parameter_types()) {
+		for (const FunctionType& parameter_type : nested_signature.parameter_types()) {
 			if (self(parameter_type, self, depth_limit - 1)) {
 				return true;
 			}
 		}
-		if (typeIndexContainsDependentPlaceholder(
-				nested_signature.return_type_index, depth_limit - 1)) {
+		if (typeIndexContainsDependentPlaceholder(nested_signature.return_type_index, depth_limit - 1)) {
 			return true;
 		}
-		for (TypeIndex parameter_type_index :
-			 nested_signature.parameter_type_indices) {
-			if (typeIndexContainsDependentPlaceholder(
-					parameter_type_index, depth_limit - 1)) {
+		for (TypeIndex parameter_type_index : nested_signature.parameter_type_indices) {
+			if (typeIndexContainsDependentPlaceholder(parameter_type_index, depth_limit - 1)) {
 				return true;
 			}
 		}
@@ -3419,24 +3405,19 @@ inline bool typeSpecStillUsesDependentPlaceholder(const TypeSpecifierNode& type_
 		return true;
 	}
 	const size_t depth_limit = getDependentPlaceholderTraversalBudget();
-	if (signature.hasStructuredTypes() &&
-		function_type_is_dependent(
-			signature.return_type(), function_type_is_dependent, depth_limit)) {
+	if (signature.hasStructuredTypes() && function_type_is_dependent(signature.return_type(), function_type_is_dependent, depth_limit)) {
 		return true;
 	}
 	for (const FunctionType& parameter_type : signature.parameter_types()) {
-		if (function_type_is_dependent(
-				parameter_type, function_type_is_dependent, depth_limit)) {
+		if (function_type_is_dependent(parameter_type, function_type_is_dependent, depth_limit)) {
 			return true;
 		}
 	}
-	if (typeIndexContainsDependentPlaceholder(
-			signature.return_type_index, depth_limit)) {
+	if (typeIndexContainsDependentPlaceholder(signature.return_type_index, depth_limit)) {
 		return true;
 	}
 	for (TypeIndex parameter_type_index : signature.parameter_type_indices) {
-		if (typeIndexContainsDependentPlaceholder(
-				parameter_type_index, depth_limit)) {
+		if (typeIndexContainsDependentPlaceholder(parameter_type_index, depth_limit)) {
 			return true;
 		}
 	}

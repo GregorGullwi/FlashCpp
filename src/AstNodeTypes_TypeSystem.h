@@ -1180,9 +1180,9 @@ struct FunctionSignature;
 // adjustment is performed by the parser before this value is created.
 struct FunctionType {
 	TypeIndex type_index{};
-	// A short-lived exact return override used while checking a callable type
-	// against a target. Persistent FunctionType objects leave this empty; the
-	// owning TypeSpecifier keeps canonical import tied to its transaction.
+	// Exact complete type identity when signature substitution has imported and
+	// substituted this component canonically. The creating transaction must be
+	// committed before this ID is published in persistent signature storage.
 	TypeId canonical_type_id{};
 	// Published nominal identity for a Struct/Enum component. The canonical
 	// adapter reads this instead of resolving TypeIndex through the global type
@@ -1198,6 +1198,8 @@ struct FunctionType {
 	bool has_unsized_outer_array_dimension = false;
 	bool is_pack_expansion = false;
 	StringHandle template_parameter_name;
+	TemplateDeclId template_parameter_decl{};
+	uint32_t template_parameter_index = 0;
 	const StructDeclarationNode* injected_class_declaration = nullptr;
 	StringHandle member_class_name;
 	std::shared_ptr<FunctionSignature> callable_signature;
