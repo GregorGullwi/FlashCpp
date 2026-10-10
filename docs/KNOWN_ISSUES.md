@@ -1,24 +1,5 @@
 # Known Issues
 
-## Class-target conversion operators are not applied in variable initialization
-
-A class converted to another class by a conversion operator is miscompiled in
-copy-initialization and misparsed in direct-initialization:
-
-```cpp
-struct Base { int v; };
-struct Source { operator Base() const { return Base{7}; } };
-int main() { Base x = Source{}; return x.v; }   // returns 0, not 7
-// Base x(Source{});                            // fails to parse: Expected type specifier
-```
-
-Copy-initialization drops the conversion and reads the source object; the
-parenthesized direct-initialization form is rejected by the parser. Both predate
-and are independent of the `static_cast` and scalar direct-initialization
-lowering, which now call the sema-selected conversion operator. They are the
-class-target remainder of the conversion-operator selection migration tracked in
-`MIGRATION_PROGRESS.md`.
-
 ## Missing-return detection is a heuristic, not a control-flow diagnostic
 
 A value-returning function that flows off its end — for example a user-declared

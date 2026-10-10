@@ -4394,7 +4394,7 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 				const StructTypeInfo* si = type_info ? type_info->getStructInfo() : nullptr;
 				if (si && si->hasAnyConstructor()) {
 					const InitializerListNode& il = init->as<InitializerListNode>();
-					tryAnnotateInitListConstructorArgs(il, *si, decl.identifier_token());
+					tryAnnotateInitListConstructorArgs(il, *si, ts, decl.identifier_token());
 				}
 			};
 
@@ -4433,6 +4433,19 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 				}
 			}
 			annotateStructInitListCtor();
+			if (init->is<InitializerListNode>() && vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& declared_type = vtype.as<TypeSpecifierNode>();
+				const InitializerListNode& init_list = init->as<InitializerListNode>();
+				const TypeInfo* target_type_info = declared_type.category() == TypeCategory::Struct
+					? tryGetTypeInfo(declared_type.type_index()) : nullptr;
+				const StructTypeInfo* target_struct_info = target_type_info ? target_type_info->getStructInfo() : nullptr;
+				if (declared_type.category() == TypeCategory::Struct && init_list.is_paren_init() &&
+					init_list.initializers().size() == 1 && init_list.resolved_constructor() == nullptr &&
+					(!target_struct_info || !target_struct_info->hasAnyConstructor()) &&
+					init_list.initializers()[0].is<ExpressionNode>()) {
+					tryAnnotateExplicitConversion(init_list.initializers()[0], init_list.initializers()[0], declared_type);
+				}
+			}
 		}
 	} else if (node.is<StructuredBindingNode>()) {
 		const auto& binding = node.as<StructuredBindingNode>();
@@ -13951,6 +13964,7 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	const InitializerListNode& init_list,
 	const StructTypeInfo& struct_info,
+	const TypeSpecifierNode& target_type,
 	const Token& declaration_token) {
 	const auto& initializers = init_list.initializers();
 	if (initializers.empty())
@@ -14058,6 +14072,31 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	}
 	resolution.selected_overload = ensureSelectedConstructorMaterialized(struct_info, resolution.selected_overload);
 	if (!resolution.selected_overload) {
+		if (!resolution.has_match && init_list.is_paren_init() && initializers.size() == 1 &&
+			initializers[0].is<ExpressionNode>()) {
+			const ASTNode& initializer = initializers[0];
+			const ExpressionNode& initializer_expression = initializer.as<ExpressionNode>();
+			const CanonicalTypeId target_type_id = canonicalizeType(target_type);
+			auto has_exact_target_conversion = [&]() {
+				const auto slot = getSlot(&initializer_expression);
+				if (!slot.has_value() || !slot->has_cast()) {
+					return false;
+				}
+				const ImplicitCastInfo& cast_info = castInfoTable()[slot->cast_info_index.value - 1];
+				if (cast_info.cast_kind != StandardConversionKind::UserDefined ||
+					cast_info.target_type_id != target_type_id || cast_info.selected_conversion_function == nullptr ||
+					cast_info.trailing_standard_conversion != StandardConversionKind::None) {
+					return false;
+				}
+				const TypeSpecifierNode& return_type = cast_info.selected_conversion_function->decl_node().type_specifier_node();
+				return return_type.category() == TypeCategory::Struct && return_type.runtime_pointer_depth() == 0 &&
+					!return_type.is_reference() && !return_type.is_rvalue_reference() && canonicalizeType(return_type) == target_type_id;
+			};
+			if (has_exact_target_conversion() ||
+				(tryAnnotateExplicitConversion(initializer, initializer, target_type) && has_exact_target_conversion())) {
+				return;
+			}
+		}
 		// No constructor matched — restore the old scoped-enum diagnostic.
 		// If any argument is a scoped enum that couldn't be implicitly converted,
 		// find the closest ctor by arity and diagnose the bad arg against its

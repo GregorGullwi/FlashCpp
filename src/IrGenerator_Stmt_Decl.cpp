@@ -1467,6 +1467,31 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		}
 		return result;
 	};
+	auto getExactClassConversion = [&](const ASTNode& initializer, const TypeSpecifierNode& target_type) -> const ImplicitCastInfo* {
+		if (!initializer.is<ExpressionNode>() || target_type.category() != TypeCategory::Struct || target_type.runtime_pointer_depth() != 0) {
+			return nullptr;
+		}
+		const auto slot = sema_.getSlot(&initializer.as<ExpressionNode>());
+		if (!slot.has_value() || !slot->has_cast()) {
+			return nullptr;
+		}
+		const ImplicitCastInfo& cast_info = sema_.castInfoTable()[slot->cast_info_index.value - 1];
+		if (cast_info.cast_kind != StandardConversionKind::UserDefined || cast_info.selected_conversion_function == nullptr ||
+			cast_info.trailing_standard_conversion != StandardConversionKind::None) {
+			return nullptr;
+		}
+		const CanonicalTypeId target_type_id = sema_.canonicalizeTypeForImplicitConversion(target_type);
+		if (cast_info.target_type_id != target_type_id) {
+			return nullptr;
+		}
+		const TypeSpecifierNode& return_type = cast_info.selected_conversion_function->decl_node().type_specifier_node();
+		if (return_type.category() != TypeCategory::Struct || return_type.runtime_pointer_depth() != 0 ||
+			return_type.is_reference() || return_type.is_rvalue_reference() ||
+			sema_.canonicalizeTypeForImplicitConversion(return_type) != target_type_id) {
+			return nullptr;
+		}
+		return &cast_info;
+	};
 	operands.emplace_back(type_node.type());
 		// For pointers, allocate 64 bits (pointer size on x64), not the pointed-to type size
 	int size_in_bits = runtime_pointer_depth > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
@@ -1653,6 +1678,22 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 
 							const auto& initializers = init_list.initializers();
+							if (init_list.is_paren_init() && !init_list.resolved_constructor() && initializers.size() == 1 && initializers[0].is<ExpressionNode>()) {
+								if (const ImplicitCastInfo* cast_info = getExactClassConversion(initializers[0], type_node)) {
+									ExprResult source = visitVariableInitializer(initializers[0].as<ExpressionNode>());
+									const TypeIndex source_type_index = sema_.typeContext().get(cast_info->source_type_id).type_index;
+									const TypeInfo* source_type_info = source_type_index.is_valid() ? tryGetTypeInfo(source_type_index) : nullptr;
+									if (source_type_info == nullptr) {
+										throw InternalError("Sema-selected class conversion has no source TypeInfo");
+									}
+									if (!emitSemaSelectedConversionOperatorCall(source, *source_type_info, *cast_info, type_node.category(),
+										decl.identifier_token(), local_var_id)) {
+										throw InternalError("Sema-selected class conversion could not be emitted");
+									}
+									register_destructor_if_needed(type_info);
+									return;
+								}
+							}
 							const bool default_constructor_is_deleted =
 								struct_info.isDefaultConstructorDeleted() ||
 								(struct_info.implicit_default_constructor.is_finalized &&
@@ -2840,9 +2881,16 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							FLASH_LOG(Codegen, Debug, "Checking initializer for ", decl.identifier_token().value());
 							// Check if this is a direct constructor call (e.g., S s(x))
 							if (const auto* constructor_call = std::get_if<ConstructorCallNode>(&expr)) {
-								has_direct_ctor_call = true;
-								direct_ctor = constructor_call;
-								FLASH_LOG(Codegen, Debug, "Found ConstructorCallNode initializer");
+								const TypeSpecifierNode& constructor_type = constructor_call->type_node();
+								const bool constructs_target_type = constructor_type.category() == type_node.category() &&
+									isSameStructTypeForInitialization(constructor_type.type_index(), type_node.type_index());
+								if (constructs_target_type) {
+									has_direct_ctor_call = true;
+									direct_ctor = constructor_call;
+									FLASH_LOG(Codegen, Debug, "Found ConstructorCallNode initializer");
+								} else {
+									has_copy_init = true;
+								}
 							} else {
 								// For copy initialization like "AllSizes b = a;", we need to
 								// generate a copy constructor call.
@@ -2851,7 +2899,24 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 					}
 
-					if (has_direct_ctor_call && direct_ctor) {
+					const ImplicitCastInfo* selected_class_conversion = has_copy_init && node.initializer()
+						? getExactClassConversion(*node.initializer(), type_node) : nullptr;
+
+					if (selected_class_conversion != nullptr) {
+						const ASTNode& init_node = *node.initializer();
+						ExprResult init_operands = cached_copy_init_expr_result.has_value()
+							? *cached_copy_init_expr_result : visitExpressionNode(init_node.as<ExpressionNode>());
+						const TypeIndex source_type_index = sema_.typeContext().get(selected_class_conversion->source_type_id).type_index;
+						const TypeInfo* source_type_info = source_type_index.is_valid() ? tryGetTypeInfo(source_type_index) : nullptr;
+						if (source_type_info == nullptr) {
+							throw InternalError("Sema-selected class conversion has no source TypeInfo");
+						}
+						if (!emitSemaSelectedConversionOperatorCall(init_operands, *source_type_info, *selected_class_conversion,
+							type_node.category(), decl.identifier_token(), local_var_id)) {
+							throw InternalError("Sema-selected class conversion could not be emitted");
+						}
+						register_destructor_if_needed(type_info);
+					} else if (has_direct_ctor_call && direct_ctor) {
 						// Direct constructor call like S s(x) - process its arguments directly
 						FLASH_LOG(Codegen, Debug, "Processing direct constructor call for ", type_info->name());
 						// Find the matching constructor to get parameter types for reference handling
