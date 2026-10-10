@@ -3017,7 +3017,7 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 					arg_result = *materialized;
 					sema_applied = true;
 				}
-			} else if (ci.cast_kind == StandardConversionKind::UserDefined && from_desc.category() == TypeCategory::Struct) {
+			} else if (ci.cast_kind == StandardConversionKind::UserDefined && from_desc.category() == TypeCategory::Struct && !ci.selected_constructor) {
 				TypeIndex source_type_idx = from_desc.type_index;
 				const TypeInfo* const src_type_info = tryGetTypeInfo(source_type_idx);
 				if (src_type_info == nullptr || ci.selected_conversion_function == nullptr) {
