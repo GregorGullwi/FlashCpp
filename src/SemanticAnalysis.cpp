@@ -10246,6 +10246,18 @@ bool SemanticAnalysis::tryAnnotateExplicitConversion(
 }
 
 bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, CanonicalTypeId target_type_id, CanonicalTypeId expr_type_id) {
+	return annotateConversionImpl(expr_node, target_type_id, expr_type_id, false);
+}
+
+bool SemanticAnalysis::tryAnnotateConversionByTypeId(const ASTNode& expr_node, CanonicalTypeId target_type_id, CanonicalTypeId expr_type_id) {
+	return annotateConversionImpl(expr_node, target_type_id, expr_type_id, true);
+}
+
+bool SemanticAnalysis::annotateConversionImpl(
+	const ASTNode& expr_node,
+	CanonicalTypeId target_type_id,
+	CanonicalTypeId expr_type_id,
+	bool use_type_ids) {
 	if (!target_type_id)
 		return false;
 	checkMemberFunctionAddressAccessForTarget(expr_node, target_type_id);
@@ -10262,6 +10274,48 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
 	const bool target_is_member_object_pointer = isMemberObjectPointerType(target_type_id);
+	auto select_conversion_operator = [use_type_ids](
+		TypeIndex source_type_index, CVQualifier source_cv,
+		const TypeSpecifierNode& target_type, const CanonicalTypeDesc& source_desc)
+		-> std::optional<UserDefinedConversionOperatorSelection> {
+		if (!use_type_ids) {
+			return trySelectCanonicalUserDefinedConversionOperator(source_type_index, source_cv, target_type, false);
+		}
+		CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+		CanonicalTypeTransaction source_type_transaction(canonical_types);
+		const TypeInfo* const source_legacy_type_info = source_desc.type_index.is_valid()
+			? tryGetTypeInfo(source_desc.type_index)
+			: nullptr;
+		CanonicalTypeImport source_type_import = source_desc.structural_type_id
+			? CanonicalTypeImport{source_desc.structural_type_id, CanonicalTypeImportStatus::Supported}
+			: source_legacy_type_info != nullptr
+				? tryImportCanonicalTypeDesc(source_desc)
+				: CanonicalTypeImport{{}, CanonicalTypeImportStatus::Unresolved};
+		bool nominal_source_import_supported = false;
+		if (source_type_index.is_valid() && source_legacy_type_info != nullptr) {
+			TypeSpecifierNode canonical_source_type = materializeTypeSpecifier(source_desc);
+			tryBindPublishedTypeEntity(canonical_source_type);
+			const CanonicalTypeImport nominal_source_type_import = importCanonicalOverloadNominalType(canonical_types, canonical_source_type);
+			if (nominal_source_type_import.status == CanonicalTypeImportStatus::Supported) {
+				source_type_import = nominal_source_type_import;
+				nominal_source_import_supported = true;
+			}
+		}
+		if (source_type_import.status != CanonicalTypeImportStatus::Supported) {
+			// Keep class specializations without a canonical source identity on the compatibility selector.
+			return trySelectCanonicalUserDefinedConversionOperator(source_type_index, source_cv, target_type, false);
+		}
+		const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(source_type_import.type, target_type, false);
+		if (selected_conversion.has_value()) {
+			source_type_transaction.commit();
+			return selected_conversion;
+		}
+		if (nominal_source_import_supported) {
+			return std::nullopt;
+		}
+		// Structural identity may exist before its declaration bridge can resolve the source class.
+		return trySelectCanonicalUserDefinedConversionOperator(source_type_index, source_cv, target_type, false);
+	};
 
 	// C++20 [conv.ptr]: nullptr_t converts to any object, function, or member
 	// pointer type. Lowering selects the target representation of the null value.
@@ -10482,7 +10536,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 			const bool target_has_indirection = !to_desc.pointer_levels.empty() || !to_desc.array_dimensions.empty();
 			materializeExactTargetLazyConversionOperators(source_type_index, source_cv, target_type_index, target_category, target_has_indirection, *this);
 			const TypeSpecifierNode nominal_target = materializeTypeSpecifier(type_context_.get(target_type_id));
-			const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(source_type_index, source_cv, nominal_target, false);
+			const auto selected_conversion = select_conversion_operator(source_type_index, source_cv, nominal_target, from_desc);
 			if (selected_conversion.has_value() && !selected_conversion->ambiguous) {
 				return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
 			}
@@ -10526,7 +10580,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 		const bool target_has_indirection = !to_desc.pointer_levels.empty() || !to_desc.array_dimensions.empty();
 		materializeExactTargetLazyConversionOperators(source_type_index, source_cv, target_type_index, target_category, target_has_indirection, *this);
 		const TypeSpecifierNode target_type = materializeTypeSpecifier(type_context_.get(target_type_id));
-		const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(source_type_index, source_cv, target_type, false);
+		const auto selected_conversion = select_conversion_operator(source_type_index, source_cv, target_type, from_desc);
 		if (selected_conversion.has_value() && !selected_conversion->ambiguous) {
 			return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
 		}
@@ -10715,8 +10769,8 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 			materializeExactTargetLazyConversionOperators(stripped_resolved_tidx, stripped_desc.base_cv, to_desc.type_index, target_category,
 				target_has_indirection, *this);
 			const TypeSpecifierNode target_type = materializeTypeSpecifier(type_context_.get(target_type_id));
-			const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(stripped_resolved_tidx, stripped_desc.base_cv,
-				target_type, false);
+			const auto selected_conversion = select_conversion_operator(
+				stripped_resolved_tidx, stripped_desc.base_cv, target_type, stripped_desc);
 			if (!selected_conversion.has_value() || selected_conversion->ambiguous || selected_conversion->function == nullptr) return false;
 			return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
 		}
@@ -10767,7 +10821,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 		const bool target_has_indirection = !to_desc.pointer_levels.empty() || !to_desc.array_dimensions.empty();
 		materializeExactTargetLazyConversionOperators(source_type_index, source_cv, target_type_index, target_category, target_has_indirection, *this);
 		const TypeSpecifierNode target_type = materializeTypeSpecifier(type_context_.get(target_type_id));
-		const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(source_type_index, source_cv, target_type, false);
+		const auto selected_conversion = select_conversion_operator(source_type_index, source_cv, target_type, from_desc);
 		if (!selected_conversion.has_value() || selected_conversion->ambiguous) {
 			FLASH_LOG(General, Debug, "SemanticAnalysis: skipping UserDefined annotation — " "conversion operator selection failed or was ambiguous");
 			return false;
@@ -11156,7 +11210,7 @@ void SemanticAnalysis::tryAnnotateVariableInitializationConversion(
 		return;
 	}
 
-	tryAnnotateConversion(init_expr, target_type_id, init_type_id);
+	tryAnnotateConversionByTypeId(init_expr, target_type_id, init_type_id);
 	diagnoseScopedEnumConversion(init_expr, target_type_id, context_description, init_type_id);
 }
 
@@ -11169,7 +11223,7 @@ void SemanticAnalysis::tryAnnotateReturnConversion(const ASTNode& expr_node, con
 	}
 	if (!tryAnnotateCopyInitConvertingConstructor(
 			expr_node, *ctx.current_function_return_type_id, " in return statement")) {
-		tryAnnotateConversion(expr_node, *ctx.current_function_return_type_id);
+		tryAnnotateConversionByTypeId(expr_node, *ctx.current_function_return_type_id, {});
 		diagnoseScopedEnumConversion(expr_node, *ctx.current_function_return_type_id,
 										 " in return statement");
 	}

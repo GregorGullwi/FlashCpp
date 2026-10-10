@@ -91,9 +91,12 @@ Continue boundary 3A in this order.
    Conversion-operator selection is migrating to a single sema authority, with
    the end state that codegen never re-selects. The sema selector
    `trySelectCanonicalUserDefinedConversionOperator` has a canonical `TypeId`
-   entry point for `static_cast`; it traverses canonical class-base identities
-   while reading candidate declarations through a `StructTypeInfo` compatibility
-   bridge. Shared implicit-conversion callers still enter through `TypeIndex`.
+   entry point for `static_cast`, variable-initialization, and return conversion
+   operators; it traverses canonical class-base identities while reading
+   candidate declarations through a `StructTypeInfo` compatibility bridge.
+   Variable-initialization and return retain a `TypeIndex` fallback when a
+   source specialization cannot be imported or resolved through that bridge.
+   Other shared implicit-conversion callers still enter through `TypeIndex`.
    The selected function is recorded in `ImplicitCastInfo` and consumed by
    `emitSemaSelectedConversionOperatorCall`. The legacy codegen lookup
    `findConversionOperator` / `emitConversionOperatorCall` still uses compat
