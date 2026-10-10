@@ -708,6 +708,7 @@ private:
 		const StructTypeInfo& struct_info,
 		const TypeSpecifierNode& target_type,
 		const Token& declaration_token);
+	void tryAnnotateParenClassTargetConversion(const InitializerListNode& init_list, const TypeSpecifierNode& target_type);
 	void diagnoseDeletedSameTypeConstructorUsage(
 		const StructTypeInfo& struct_info,
 		const TypeSpecifierNode& source_type,
