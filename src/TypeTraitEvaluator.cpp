@@ -2437,11 +2437,10 @@ static std::optional<ConversionPlan> tryBuildCanonicalEnumToBuiltinConversionPla
 	return buildCanonicalStructuralConversionPlan(table, promotion_type, target_type);
 }
 
-static std::optional<TypeTraitResult> tryEvaluateCanonicalScalarConstructionFromArgument(
-	const TypeSpecifierNode& target, const TypeSpecifierNode& argument) {
+static std::optional<TypeTraitResult> tryEvaluateCanonicalScalarConstructionFromArgument(const TypeSpecifierNode& target,
+	const TypeSpecifierNode& argument) {
 	if (target.is_reference()) {
-		const std::optional<ConversionPlan> binding =
-			tryBuildCanonicalReferenceBindingPlan(argument, target, true);
+		const std::optional<ConversionPlan> binding = tryBuildCanonicalReferenceBindingPlan(argument, target, true);
 		if (binding.has_value()) {
 			return binding->is_valid ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
 		}
@@ -2471,8 +2470,7 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalScalarConstructionFrom
 		return TypeTraitResult::success_true();
 	}
 	if (source_node.kind == CanonicalTypeKind::Enum && target_node.kind == CanonicalTypeKind::Builtin) {
-		const std::optional<ConversionPlan> conversion =
-			tryBuildCanonicalEnumToBuiltinConversionPlan(table, source_type, imported_target.type);
+		const std::optional<ConversionPlan> conversion = tryBuildCanonicalEnumToBuiltinConversionPlan(table, source_type, imported_target.type);
 		if (conversion.has_value()) {
 			return conversion->is_valid ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
 		}
@@ -2530,6 +2528,36 @@ TypeTraitResult evaluateRecordConstructibleFromArgs(TypeTraitKind kind, const St
 
 // Canonical constructor query for complete schemas and supported standard conversion sequences.
 // Other overload shapes defer to the compatibility resolver.
+static std::optional<ConversionPlan> tryBuildSameReferentReferencePlan(const CanonicalTypeTable& table, TypeId source_type, TypeId target_type) {
+	const CanonicalTypeKind target_kind = table.node(target_type).kind;
+	const bool target_is_lvalue_reference = target_kind == CanonicalTypeKind::LValueReference;
+	const bool target_is_rvalue_reference = target_kind == CanonicalTypeKind::RValueReference;
+	if (!target_is_lvalue_reference && !target_is_rvalue_reference) {
+		return std::nullopt;
+	}
+	const CanonicalTypeKind source_kind = table.node(source_type).kind;
+	const bool source_is_lvalue = source_kind == CanonicalTypeKind::LValueReference;
+	const bool source_has_reference = source_is_lvalue || source_kind == CanonicalTypeKind::RValueReference;
+	const TypeId source_referent = source_has_reference ? table.node(source_type).child : source_type;
+	const TypeId target_referent = table.node(target_type).child;
+	const auto [source_base, source_cv] = stripCanonicalTopCv(table, source_referent);
+	const auto [target_base, target_cv] = stripCanonicalTopCv(table, target_referent);
+	if (source_base != target_base) {
+		return std::nullopt;
+	}
+	if ((static_cast<uint8_t>(source_cv) & ~static_cast<uint8_t>(target_cv)) != 0) {
+		return ConversionPlan::no_match();
+	}
+	const bool target_is_const = (static_cast<uint8_t>(target_cv) & static_cast<uint8_t>(CVQualifier::Const)) != 0;
+	if (target_is_lvalue_reference && !source_is_lvalue && !target_is_const) {
+		return ConversionPlan::no_match();
+	}
+	if (target_is_rvalue_reference && source_is_lvalue) {
+		return ConversionPlan::no_match();
+	}
+	return ConversionPlan::exact_match();
+}
+
 static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFromArgs(TypeTraitKind kind, const TypeSpecifierNode& target,
 	std::span<const TypeSpecifierNode> arguments) {
 	FrontendContext* context = FrontendContext::active();
@@ -2609,8 +2637,7 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 				continue;
 			}
 			TypeId source_type = argument_types[parameter];
-			while (table.node(source_type).kind == CanonicalTypeKind::LValueReference ||
-				table.node(source_type).kind == CanonicalTypeKind::RValueReference) {
+			while (table.node(source_type).kind == CanonicalTypeKind::LValueReference || table.node(source_type).kind == CanonicalTypeKind::RValueReference) {
 				source_type = table.node(source_type).child;
 			}
 			const TypeId source_base = table.withoutTopLevelQualifiers(source_type);
@@ -2623,18 +2650,27 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 			const CanonicalTypeKind source_kind = table.node(source_base).kind;
 			const CanonicalTypeKind target_kind = table.node(target_base).kind;
 			const CanonicalTypeKind parameter_kind = table.node(parameter_type).kind;
+			const bool source_is_class = source_kind == CanonicalTypeKind::Record || source_kind == CanonicalTypeKind::TemplateSpecialization;
+			const bool target_is_class = target_kind == CanonicalTypeKind::Record || target_kind == CanonicalTypeKind::TemplateSpecialization;
 			const bool is_reference_parameter = parameter_kind == CanonicalTypeKind::LValueReference || parameter_kind == CanonicalTypeKind::RValueReference;
 			if (is_reference_parameter) {
-				if (source_kind == CanonicalTypeKind::Enum &&
-					(target_kind == CanonicalTypeKind::Record || target_kind == CanonicalTypeKind::TemplateSpecialization)) {
+				if (source_kind == CanonicalTypeKind::Enum && target_is_class) {
 					matches = false;
 					break;
 				}
-				return std::nullopt;
+				const std::optional<ConversionPlan> binding = tryBuildSameReferentReferencePlan(table, argument_types[parameter], parameter_type);
+				if (!binding.has_value()) {
+					return std::nullopt;
+				}
+				if (!binding->is_valid) {
+					matches = false;
+					break;
+				}
+				candidate.argument_ranks.push_back(binding->rank);
+				continue;
 			}
 			if (source_kind == CanonicalTypeKind::Enum && target_kind == CanonicalTypeKind::Builtin) {
-				const std::optional<ConversionPlan> conversion =
-					tryBuildCanonicalEnumToBuiltinConversionPlan(table, argument_types[parameter], parameter_type);
+				const std::optional<ConversionPlan> conversion = tryBuildCanonicalEnumToBuiltinConversionPlan(table, argument_types[parameter], parameter_type);
 				if (!conversion.has_value()) {
 					return std::nullopt;
 				}
@@ -2645,8 +2681,6 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 				candidate.argument_ranks.push_back(conversion->rank);
 				continue;
 			}
-			const bool source_is_class = source_kind == CanonicalTypeKind::Record || source_kind == CanonicalTypeKind::TemplateSpecialization;
-			const bool target_is_class = target_kind == CanonicalTypeKind::Record || target_kind == CanonicalTypeKind::TemplateSpecialization;
 			if ((source_kind == CanonicalTypeKind::Enum && !target_is_class && !isDependentCanonicalNode(target_kind)) ||
 				(target_kind == CanonicalTypeKind::Enum && !source_is_class && !isDependentCanonicalNode(source_kind))) {
 				matches = false;
