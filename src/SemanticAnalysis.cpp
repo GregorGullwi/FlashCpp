@@ -10664,11 +10664,23 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 		const TypeCategory stripped_resolved_category = from_canonical2.typeEnum();
 		const CanonicalTypeAlias to_canonical2 = canonicalize_type_alias(to_desc.type_index);
 		const ConversionPlan plan2 = buildConversionPlan(stripped_resolved_category, to_canonical2.typeEnum());
-		if (!plan2.is_valid || plan2.rank == ConversionRank::UserDefined)
+		if (!plan2.is_valid)
 			return false;
 		TypeIndex stripped_resolved_tidx = from_canonical2.resolvedTypeIndex();
 		if (!stripped_resolved_tidx.is_valid())
 			stripped_resolved_tidx = nativeTypeIndex(stripped_resolved_category);
+		if (plan2.rank == ConversionRank::UserDefined) {
+			if (stripped_resolved_category != TypeCategory::Struct || !stripped_resolved_tidx.is_valid()) return false;
+			const TypeCategory target_category = to_desc.category();
+			const bool target_has_indirection = !to_desc.pointer_levels.empty() || !to_desc.array_dimensions.empty();
+			materializeExactTargetLazyConversionOperators(stripped_resolved_tidx, stripped_desc.base_cv, to_desc.type_index, target_category,
+				target_has_indirection, *this);
+			const TypeSpecifierNode target_type = materializeTypeSpecifier(type_context_.get(target_type_id));
+			const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(stripped_resolved_tidx, stripped_desc.base_cv,
+				target_type, false);
+			if (!selected_conversion.has_value() || selected_conversion->ambiguous || selected_conversion->function == nullptr) return false;
+			return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
+		}
 		CanonicalTypeDesc stripped_resolved_desc;
 		stripped_resolved_desc.type_index = stripped_resolved_tidx;
 		const CanonicalTypeId stripped_resolved_from_id = type_context_.intern(stripped_resolved_desc);
