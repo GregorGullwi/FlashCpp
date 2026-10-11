@@ -3296,6 +3296,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 	// attachment choke points, which previously threw an unlocated CompileError.
 	std::optional<ASTNode> failTemplateInstantiationDiagnosed(
 		DiagnosticId id,
+		const Token& token,
 		bool force_eager,
 		std::string_view reason,
 		const FlashCpp::TemplateInstantiationKey* key,

@@ -5347,6 +5347,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						 .class_decl_node();
 			}
 			for (const auto& out_of_line_member : out_of_line_members) {
+				const Token out_of_line_member_token =
+					out_of_line_member.function_node.is<FunctionDeclarationNode>()
+						? out_of_line_member.function_node.as<FunctionDeclarationNode>().decl_node().identifier_token()
+						: Token{};
 				const StructDeclarationNode* recorded_pattern_owner =
 					out_of_line_member.pattern_owner_struct_node;
 				if (recorded_pattern_owner != nullptr &&
@@ -5493,7 +5497,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								.append(instantiated_name)
 								.append("'")
 								.commit());
-							return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+							return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 						}
 					} else {
 						StringBuilder error_builder;
@@ -5518,7 +5522,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							error_builder.append("'");
 						}
 						std::string error_msg = std::string(error_builder.commit());
-						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 					}
 					continue;
 				}
@@ -5610,7 +5614,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.append(instantiated_name)
 							.append("'")
 							.commit());
-						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 					}
 					if (inst_func_decl != nullptr) {
 						auto outer_params_span = std::span<const TemplateParameterNode>(
@@ -5699,7 +5703,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.append(instantiated_name)
 							.append("' to exactly one declaration after template substitution")
 							.commit());
-						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 					} else {
 						std::string error_msg = std::string(StringBuilder()
 							.append("Could not attach partial-spec nested out-of-line member template '")
@@ -5708,7 +5712,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.append(instantiated_name)
 							.append("' via source-member identity mapping")
 							.commit());
-						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 					}
 					continue;
 				}
@@ -5762,7 +5766,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						.append(instantiated_name)
 						.append("'")
 						.commit());
-					return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+					return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 				}
 				if (ctor_resolution.ctor == nullptr) {
 					StringBuilder error_builder;
@@ -5783,7 +5787,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						error_builder.append("'");
 					}
 					std::string error_msg = std::string(error_builder.commit());
-					return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+					return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 				}
 
 				ConstructorDeclarationNode& ctor_decl = *ctor_resolution.ctor;
@@ -9862,6 +9866,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			for (const auto& out_of_line_member : nested_out_of_line_members) {
+				const Token out_of_line_member_token =
+					out_of_line_member.function_node.is<FunctionDeclarationNode>()
+						? out_of_line_member.function_node.as<FunctionDeclarationNode>().decl_node().identifier_token()
+						: Token{};
 				if (out_of_line_member.pattern_owner_struct_node != nullptr &&
 					out_of_line_member.pattern_owner_struct_node != &nested_struct) {
 					continue;
@@ -9900,7 +9908,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.append(qualified_name)
 							.append("'")
 							.commit());
-						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 					} else if (ctor_resolution.ctor != nullptr) {
 						ConstructorDeclarationNode& ctor_decl = *ctor_resolution.ctor;
 						setOutOfLineConstructorTemplateReplayMetadata(
@@ -9928,7 +9936,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							error_builder.append("'");
 						}
 						std::string error_msg = std::string(error_builder.commit());
-						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 					}
 					continue;
 				}
@@ -9970,7 +9978,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.append(qualified_name)
 							.append("'")
 							.commit());
-						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 					}
 					if (ctor_resolution.ctor == nullptr) {
 						StringBuilder error_builder;
@@ -9991,7 +9999,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							error_builder.append("'");
 						}
 						std::string error_msg = std::string(error_builder.commit());
-						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 					}
 
 					ConstructorDeclarationNode& ctor_decl = *ctor_resolution.ctor;
@@ -10122,7 +10130,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.append(StringTable::getStringView(qualified_name))
 							.append("'")
 							.commit());
-						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 					}
 					if (matched_nested_func_decl != nullptr) {
 						matched_nested_func_decl->set_template_body_position(out_of_line_member.body_start);
@@ -10149,7 +10157,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.append(StringTable::getStringView(qualified_name))
 							.append("' to exactly one declaration after template substitution")
 							.commit());
-						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 					} else {
 						std::string error_msg = std::string(StringBuilder()
 							.append("Could not attach nested out-of-line member template '")
@@ -10160,7 +10168,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.append(StringTable::getStringView(qualified_name))
 							.append("'")
 							.commit());
-						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+						return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 					}
 				}
 			}
@@ -12733,6 +12741,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	FLASH_LOG(Templates, Trace, "Processing ", out_of_line_members.size(), " out-of-line member functions for ", template_name);
 
 	for (const auto& out_of_line_member : out_of_line_members) {
+		const Token out_of_line_member_token =
+			out_of_line_member.function_node.is<FunctionDeclarationNode>()
+				? out_of_line_member.function_node.as<FunctionDeclarationNode>().decl_node().identifier_token()
+				: Token{};
 		const StructDeclarationNode* pattern_owner_struct_node =
 			out_of_line_member.pattern_owner_struct_node;
 		if (pattern_owner_struct_node != nullptr &&
@@ -12801,7 +12813,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						.append(instantiated_name)
 						.append("'")
 						.commit());
-					return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+					return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 				}
 
 				if (ctor_resolution.ctor == nullptr) {
@@ -12823,7 +12835,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						error_builder.append("'");
 					}
 					std::string error_msg = std::string(error_builder.commit());
-					return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+					return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 				}
 
 				ConstructorDeclarationNode& ctor_decl = *ctor_resolution.ctor;
@@ -12968,7 +12980,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					.append(instantiated_name)
 					.append("'")
 					.commit());
-				return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+				return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 			}
 
 			if (inst_func_decl != nullptr) {
@@ -13054,7 +13066,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					.append(instantiated_name)
 					.append("' to exactly one declaration after template substitution")
 					.commit());
-				return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+				return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 			}
 
 			if (!found) {
@@ -13065,7 +13077,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					.append(instantiated_name)
 					.append("' via source-member identity mapping")
 					.commit());
-				return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+				return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 			}
 
 			continue;
@@ -13224,7 +13236,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				.append(instantiated_name)
 				.append("'")
 				.commit());
-			return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+			return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 		}
 		if (!out_of_line_ctor_stub &&
 			plain_member_resolution.insufficient_evidence) {
@@ -13235,7 +13247,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				.append(instantiated_name)
 				.append("' to exactly one declaration after template substitution")
 				.commit());
-			return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+			return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 		}
 		if (out_of_line_ctor_stub) {
 			OutOfLineConstructorStubResolution ctor_resolution =
@@ -13336,7 +13348,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					error_builder.append("'");
 				}
 				std::string error_msg = std::string(error_builder.commit());
-				return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+				return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 			}
 
 			if (ctor_resolution.ctor != nullptr) {
@@ -13673,7 +13685,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				.append(instantiated_name)
 				.append("'")
 				.commit());
-			return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, force_eager, error_msg, nullptr, std::nullopt);
+			return failTemplateInstantiationDiagnosed(DiagnosticId::OutOfLineMemberNotAttached, out_of_line_member_token, force_eager, error_msg, nullptr, std::nullopt);
 		}
 	}
 
