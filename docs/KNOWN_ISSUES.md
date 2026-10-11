@@ -77,14 +77,6 @@ reproducers under `tests/unsupported_boundary_2f/`:
   and `test_template_member_call_const_receiver_fail.cpp`.
 - A reference-returning member-function-pointer declarator in an out-of-line
   member-template context: `test_template_member_func_template_const_ref_return_fail.cpp`.
-- Out-of-line and injected-identity fixtures that require identity recovery:
-  `test_injected_identity_ool_namespace_owner_fail.cpp`,
-  `test_template_nested_ool_ctor_template_alias_target_mismatch_fail.cpp`,
-  `test_template_ool_member_template_single_candidate_alias_target_mismatch_fail.cpp`,
-  `test_template_ool_plain_member_multi_param_late_mismatch_fail.cpp`,
-  `test_template_ool_plain_member_single_candidate_alias_target_mismatch_fail.cpp`,
-  `test_template_partial_spec_ool_ctor_template_alias_target_mismatch_fail.cpp`,
-  and `test_template_partial_spec_ool_plain_member_alias_target_mismatch_fail.cpp`.
 - Three tests that previously depended on status-2 compatibility:
   `test_operator_subscript_const_ambiguity_fail.cpp`,
   `test_template_lazy_static_member_implicit_this_fail.cpp`, and

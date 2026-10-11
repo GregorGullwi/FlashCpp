@@ -33,3 +33,24 @@ std::optional<ASTNode> Parser::failTemplateInstantiation(
 	// HardUse and ShapeOnly are both non-probe modes: failures are not soft.
 	throw CompileError(std::string(reason));
 }
+
+std::optional<ASTNode> Parser::failTemplateInstantiationDiagnosed(
+	DiagnosticId id,
+	bool force_eager,
+	std::string_view reason,
+	const FlashCpp::TemplateInstantiationKey* key,
+	std::optional<uintptr_t> overload_id) {
+	if (!force_eager && isTemplateInstantiationFailureProbeMode()) {
+		if (key != nullptr && overload_id.has_value()) {
+			gTemplateRegistry.markFailedInstantiation(*key, *overload_id);
+		}
+		return std::nullopt;
+	}
+	throw makeStructuredCompileError(
+		context_.diagnostics(),
+		id,
+		DiagnosticSeverity::Error,
+		SourceLocation{},
+		reason,
+		{});
+}
