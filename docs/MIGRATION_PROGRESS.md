@@ -106,7 +106,12 @@ Continue boundary 3A in this order.
    compatibility resolver when the schema cannot prove the answer. Member
    pointer owner conversions now publish and query canonical class-base schemas
    before using the legacy TypeIndex owner bridge.
-   Shared overload candidate ranking still has legacy `TypeIndex` consumers.
+   Shared unary and binary operator ranking now traverses class and base
+   identities with canonical `TypeId`s; candidate declarations still come from
+   the `StructTypeInfo` compatibility bridge. Parser and IR entry points that
+   only have a `TypeIndex` adapt at the boundary. Current-instantiation
+   self-reference rewriting within callable signatures still uses `TypeIndex`
+   identity and remains open.
    The selected function is recorded in `ImplicitCastInfo`; call arguments,
    returns, variable initialization, assignment, contextual `bool`, constructor
    arguments, and builtin subscripting now lower that declaration without
@@ -125,8 +130,8 @@ Continue boundary 3A in this order.
    The TypeId selector still reads candidate declarations from
    `StructTypeInfo`; remaining work is to remove compatibility selection where
    canonical import and declaration publication can cover the source, finish
-   unsupported callable and user-defined constructor ranking, and migrate
-   legacy overload-ranking consumers to canonical identities. Class-target
+   unsupported callable and user-defined constructor ranking, and migrate the
+   remaining self-reference rewrite to canonical identity. Class-target
    variable initialization now consumes exact prvalue conversion selections
    for copy-initialization and parenthesized direct-initialization, constructing
    into the declared object.
