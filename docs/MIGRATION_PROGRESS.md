@@ -109,9 +109,11 @@ Continue boundary 3A in this order.
    Shared unary and binary operator ranking now traverses class and base
    identities with canonical `TypeId`s; candidate declarations still come from
    the `StructTypeInfo` compatibility bridge. Parser and IR entry points that
-   only have a `TypeIndex` adapt at the boundary. Current-instantiation
-   self-reference rewriting within callable signatures still uses `TypeIndex`
-   identity and remains open.
+   only have a `TypeIndex` adapt at the boundary. TypeId-driven operator ranking
+   now matches current-instantiation self references by canonical class identity
+   and `TemplateDeclId`, then projects the owner through `TypeInfo` for the
+   existing `TypeSpecifierNode` conversion descriptor. Legacy TypeIndex entry
+   points remain for consumers that have not migrated.
    The selected function is recorded in `ImplicitCastInfo`; call arguments,
    returns, variable initialization, assignment, contextual `bool`, constructor
    arguments, and builtin subscripting now lower that declaration without
@@ -131,7 +133,7 @@ Continue boundary 3A in this order.
    `StructTypeInfo`; remaining work is to remove compatibility selection where
    canonical import and declaration publication can cover the source, finish
    unsupported callable and user-defined constructor ranking, and migrate the
-   remaining self-reference rewrite to canonical identity. Class-target
+   remaining TypeIndex self-reference callers. Class-target
    variable initialization now consumes exact prvalue conversion selections
    for copy-initialization and parenthesized direct-initialization, constructing
    into the declared object.
