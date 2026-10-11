@@ -37,7 +37,6 @@ An agent looking for a regression to recover should:
 | `test_template_callable_operator_const_receiver_explicit_member_fail.cpp.txt` | Callable member-template substitution | Const-receiver substitution has a stable call owner. |
 | `test_template_lazy_static_member_implicit_this_fail.cpp.txt` | Lazy member materialization | Implicit-`this` validation is stable without internal-failure compatibility. |
 | `test_template_member_call_const_receiver_fail.cpp.txt` | Const member-call substitution | The existing member-call owner reports the failure. |
-| `test_template_member_func_template_const_ref_return_fail.cpp.txt` | Member-pointer declarator parse | A reference-returning member-function-pointer declarator parses in the member-template context. |
 | `test_template_out_of_line_static_member_implicit_this_fail.cpp.txt` | Out-of-line static-member materialization | Static-member implicit-`this` validation has a stable owner. |
 
 The archive is intentionally indexed by source filename rather than by a

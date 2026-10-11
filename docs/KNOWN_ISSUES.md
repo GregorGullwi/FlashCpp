@@ -170,34 +170,6 @@ with `Expected identifier token`. The fix is a single `parse_declarator` call
 after the base type so the recursive declarator grammar owns every interleaving.
 The current probe is marked temporary at its dispatch site.
 
-## Member-function-pointer signature mismatches are not rejected
-
-Initializing a member-function pointer does not compare the callable's return
-or parameter types, so a mismatch is silently accepted. All of the following
-compile even though the target's return type differs from the address-of
-operand's (MSVC rejects each with C2440):
-
-```cpp
-struct C { const int& f() const; };
-int& (C::*p)() const = &C::f;      // const int& vs int&
-```
-
-```cpp
-struct C { int f() const; };
-int* (C::*p)() const = &C::f;      // int vs int*
-```
-
-```cpp
-struct C { int f() const; };
-double (C::*p)() const = &C::f;    // int vs double
-```
-
-This is pre-existing (a plain `int (C::*p)()` target has the same gap), and it
-also blocks recovering the archived boundary-2F reproducer
-`test_template_member_func_template_const_ref_return_fail.cpp`: once the
-reference-returning member-pointer declarator parses, the return-type mismatch
-must be diagnosed for the fixture to become a negative contract.
-
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 
 `FrontendScratchTransaction` now journals frontend scratch state,
