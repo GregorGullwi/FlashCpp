@@ -90,7 +90,7 @@ const FunctionDeclarationNode* Parser::tryInstantiateOperatorTemplateForBinary(
 		ConversionRank lhs_rank = rankBinaryOperatorOperandMatch(
 			left_type_spec,
 			lhs_type_node.as<TypeSpecifierNode>(),
-			left_type_spec.type_index(),
+			left_type_spec,
 			&left_argument);
 		if (lhs_rank == ConversionRank::NoMatch) {
 			return false;
@@ -99,7 +99,7 @@ const FunctionDeclarationNode* Parser::tryInstantiateOperatorTemplateForBinary(
 		ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(
 			right_type_spec,
 			rhs_type_node.as<TypeSpecifierNode>(),
-			right_type_spec.type_index(),
+			right_type_spec,
 			&right_argument);
 		if (rhs_rank == ConversionRank::NoMatch) {
 			return false;
