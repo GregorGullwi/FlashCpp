@@ -338,8 +338,8 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 
 				// Consume the operator symbol (=, ==, !=, <<, >>, etc.)
 				if (peek().is_eof()) {
-					FLASH_LOG(Parser, Error, "Expected operator symbol after 'operator'");
-					return error(DiagnosticId::UnexpectedToken, function_name_token, "Unexpected token");
+					return error(DiagnosticId::OutOfLineDefinitionMalformedTarget, function_name_token,
+						"Expected an operator symbol after 'operator' in an out-of-line definition");
 				}
 
 				// Build the full operator name using StringBuilder
@@ -382,16 +382,20 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				function_name_token = peek_info();
 				advance();
 			} else {
-				FLASH_LOG(Parser, Error, "Expected function name or 'operator' after '::'");
-				return error(DiagnosticId::UnexpectedToken, peek_info(), "Unexpected token");
+				return error(DiagnosticId::OutOfLineDefinitionMalformedTarget, peek_info(),
+					"Expected a function name or 'operator' after '::' in an out-of-line definition");
 			}
 		}
 
 		// Find the struct in the type registry
 		auto struct_iter = getTypesByNameMap().find(class_name);
 		if (struct_iter == getTypesByNameMap().end()) {
-			FLASH_LOG(Parser, Error, "Unknown class '", class_name.view(), "' in out-of-line member function definition");
-			return error(DiagnosticId::UnexpectedToken, decl_node.identifier_token(), "Unexpected token");
+			return error(DiagnosticId::OutOfLineDefinitionUnknownClass, decl_node.identifier_token(),
+				StringBuilder()
+					.append("Unknown class '")
+					.append(class_name.view())
+					.append("' in an out-of-line member definition")
+					.commit());
 		}
 
 		TypeInfo* type_info = struct_iter->second;
@@ -406,8 +410,12 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			}
 		}
 		if (!struct_info) {
-			FLASH_LOG(Parser, Error, "'", class_name.view(), "' is not a struct/class type");
-			return error(DiagnosticId::UnexpectedToken, decl_node.identifier_token(), "Unexpected token");
+			return error(DiagnosticId::OutOfLineDefinitionNotAClass, decl_node.identifier_token(),
+				StringBuilder()
+					.append("'")
+					.append(class_name.view())
+					.append("' is not a class type in an out-of-line member definition")
+					.commit());
 		}
 
 		// Check if this is an out-of-line static member variable definition with parenthesized initializer
@@ -724,8 +732,14 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 
 		// Validate that the existing declaration is a FunctionDeclarationNode
 		if (!existing_member->function_decl.is<FunctionDeclarationNode>()) {
-			FLASH_LOG(Parser, Error, "Member '", function_name_token.value(), "' is not a function");
-			return error(DiagnosticId::UnexpectedToken, function_name_token, "Unexpected token");
+			return error(DiagnosticId::OutOfLineDefinitionNotAFunction, function_name_token,
+				StringBuilder()
+					.append("Out-of-line definition of '")
+					.append(class_name.view())
+					.append("::")
+					.append(function_name_token.value())
+					.append("' names a non-function member")
+					.commit());
 		}
 
 		FunctionDeclarationNode& existing_func_ref = existing_member->function_decl.as<FunctionDeclarationNode>();
@@ -783,9 +797,14 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		// existing_func_ref is already defined earlier after validation
 		if (body_result.node().has_value()) {
 			if (!existing_func_ref.set_definition(*body_result.node())) {
-				FLASH_LOG(Parser, Error, "Function '", class_name.view(), "::", function_name_token.value(),
-						  "' already has a definition");
-				return error(DiagnosticId::UnexpectedToken, function_name_token, "Unexpected token");
+				return error(DiagnosticId::OutOfLineDefinitionAlreadyDefined, function_name_token,
+					StringBuilder()
+						.append("Out-of-line definition of '")
+						.append(class_name.view())
+						.append("::")
+						.append(function_name_token.value())
+						.append("' duplicates an existing definition")
+						.commit());
 			}
 			// Update parameter nodes to use definition's parameter names
 			// C++ allows declaration and definition to have different parameter names
@@ -1505,15 +1524,23 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_name);
 	auto struct_iter = getTypesByNameMap().find(class_name_handle);
 	if (struct_iter == getTypesByNameMap().end()) {
-		FLASH_LOG(Parser, Error, "Unknown class '", class_name, "' in out-of-line constructor/destructor definition");
-		return ParseResult::error("Unknown class in out-of-line constructor/destructor", class_name_token);
+		return error(DiagnosticId::OutOfLineDefinitionUnknownClass, class_name_token,
+			StringBuilder()
+				.append("Unknown class '")
+				.append(class_name)
+				.append("' in an out-of-line constructor/destructor definition")
+				.commit());
 	}
 
 	TypeInfo* type_info = struct_iter->second;
 	StructTypeInfo* struct_info = type_info->getStructInfo();
 	if (!struct_info) {
-		FLASH_LOG(Parser, Error, "'", class_name, "' is not a struct/class type");
-		return ParseResult::error("Not a struct/class type", class_name_token);
+		return error(DiagnosticId::OutOfLineDefinitionNotAClass, class_name_token,
+			StringBuilder()
+				.append("'")
+				.append(class_name)
+				.append("' is not a class type in an out-of-line constructor/destructor definition")
+				.commit());
 	}
 
 	// Parse parameter list
@@ -1782,8 +1809,14 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 		if (is_destructor && existing_member->function_decl.is<DestructorDeclarationNode>()) {
 			DestructorDeclarationNode& dtor = existing_member->function_decl.as<DestructorDeclarationNode>();
 			if (!dtor.set_definition(*body_result.node())) {
-				FLASH_LOG(Parser, Error, "Destructor '", class_name, "::~", class_name, "' already has a definition");
-				return ParseResult::error("Destructor already has definition", func_name_token);
+				return error(DiagnosticId::OutOfLineDefinitionAlreadyDefined, func_name_token,
+					StringBuilder()
+						.append("Out-of-line definition of '")
+						.append(class_name)
+						.append("::~")
+						.append(class_name)
+						.append("' duplicates an existing definition")
+						.commit());
 			}
 			if (specs.is_inline) {
 				dtor.set_is_inline(true);
@@ -1791,8 +1824,14 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 			// Note: Destructors have no parameters, so no need to update parameter nodes
 		} else if (ctor_ref) {
 			if (!ctor_ref->set_definition(*body_result.node())) {
-				FLASH_LOG(Parser, Error, "Constructor '", class_name, "::", class_name, "' already has a definition");
-				return ParseResult::error("Constructor already has definition", func_name_token);
+				return error(DiagnosticId::OutOfLineDefinitionAlreadyDefined, func_name_token,
+					StringBuilder()
+						.append("Out-of-line definition of '")
+						.append(class_name)
+						.append("::")
+						.append(class_name)
+						.append("' duplicates an existing definition")
+						.commit());
 			}
 			if (specs.is_inline) {
 				ctor_ref->set_is_inline(true);
