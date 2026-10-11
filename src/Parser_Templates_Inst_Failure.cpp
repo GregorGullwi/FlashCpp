@@ -36,6 +36,7 @@ std::optional<ASTNode> Parser::failTemplateInstantiation(
 
 std::optional<ASTNode> Parser::failTemplateInstantiationDiagnosed(
 	DiagnosticId id,
+	const Token& token,
 	bool force_eager,
 	std::string_view reason,
 	const FlashCpp::TemplateInstantiationKey* key,
@@ -50,7 +51,7 @@ std::optional<ASTNode> Parser::failTemplateInstantiationDiagnosed(
 		context_.diagnostics(),
 		id,
 		DiagnosticSeverity::Error,
-		SourceLocation{},
+		lexer_.getSourceLocation(token),
 		reason,
 		{});
 }
