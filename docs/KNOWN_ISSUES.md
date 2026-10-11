@@ -155,6 +155,49 @@ over aliases with callable, array, reference, or member-pointer wrappers. Static
 member semantic identity must remain canonical and must not be flattened to
 bypass this consumer migration gap.
 
+## Declarator parsing re-checks the opening parenthesis instead of recursing
+
+The C++20 declarator grammar is recursive: a `declarator` is a sequence of
+ptr-operators (`*`, `&`, `&&`, `nested-name-specifier *`) interleaved with
+parenthesized direct-declarators and suffixes. `parse_type_and_name` does not
+call `parse_declarator` once after the base type; it re-checks for `(` at
+several points (right after the type, after pointer levels, and after reference
+modifiers). A parenthesized declarator that follows a pointer/reference return
+type is therefore re-dispatched by a probe that only recognizes `*` and
+`identifier::*` after `(`, and it still misses other interleavings, for example
+`int* (&p)()` (a reference to a function returning `int*`), which is rejected
+with `Expected identifier token`. The fix is a single `parse_declarator` call
+after the base type so the recursive declarator grammar owns every interleaving.
+The current probe is marked temporary at its dispatch site.
+
+## Member-function-pointer signature mismatches are not rejected
+
+Initializing a member-function pointer does not compare the callable's return
+or parameter types, so a mismatch is silently accepted. All of the following
+compile even though the target's return type differs from the address-of
+operand's (MSVC rejects each with C2440):
+
+```cpp
+struct C { const int& f() const; };
+int& (C::*p)() const = &C::f;      // const int& vs int&
+```
+
+```cpp
+struct C { int f() const; };
+int* (C::*p)() const = &C::f;      // int vs int*
+```
+
+```cpp
+struct C { int f() const; };
+double (C::*p)() const = &C::f;    // int vs double
+```
+
+This is pre-existing (a plain `int (C::*p)()` target has the same gap), and it
+also blocks recovering the archived boundary-2F reproducer
+`test_template_member_func_template_const_ref_return_fail.cpp`: once the
+reference-returning member-pointer declarator parses, the return-type mismatch
+must be diagnosed for the fixture to become a negative contract.
+
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 
 `FrontendScratchTransaction` now journals frontend scratch state,

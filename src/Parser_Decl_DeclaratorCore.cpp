@@ -653,31 +653,67 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 		type_spec.add_pointer_level(ptr_cv);
 	}
 
+	// TEMPORARY WORKAROUND: `parse_type_and_name` re-checks `(` after each
+	// modifier group instead of routing the whole declarator to
+	// `parse_declarator` once, so a parenthesized declarator that follows a
+	// pointer/reference return type needs this re-dispatch. The probe below only
+	// recognizes `*` and `identifier::*` after `(`, so it still misses other
+	// ptr-operator interleavings (for example `int* (&p)()`, a reference to a
+	// function returning `int*`). The real fix is a single `parse_declarator`
+	// call after the base type, letting the recursive declarator grammar own
+	// every interleaving; see KNOWN_ISSUES "Declarator parsing re-checks the
+	// opening parenthesis".
+	//
+	// A '(' after a pointer or reference return type may open an ordered
+	// declarator whose whole shape lives on the spine: a function pointer
+	// (`int* (*p)()`) or a member pointer (`int* (C::*p)()`). Probe the opening
+	// and, when it is such a shape, let parse_declarator own it. Returns the
+	// parsed result, or nullopt to keep the flat path.
+	auto tryParseOrderedDeclaratorAtOpenParen = [&]() -> std::optional<ParseResult> {
+		if (peek() != "("_tok) {
+			return std::nullopt;
+		}
+		SaveHandle saved_pos = save_token_position();
+		advance(); // consume '('
+		last_calling_convention_ = parse_calling_convention(last_calling_convention_);
+		bool try_structural = peek() == "*"_tok;
+		if (!try_structural && peek().is_identifier()) {
+			SaveHandle owner_probe = save_token_position();
+			Token owner_token = peek_info();
+			advance();
+			(void)parseMemberPointerOwnerAfterName(owner_token);
+			try_structural = consume("::"_tok) && consume("*"_tok);
+			restore_token_position(owner_probe);
+		}
+		if (!try_structural) {
+			restore_token_position(saved_pos);
+			return std::nullopt;
+		}
+		restore_token_position(saved_pos);
+		ParseResult result = parse_declarator(type_spec, Linkage::None);
+		if (result.is_error()) {
+			restore_token_position(saved_pos);
+			return std::nullopt;
+		}
+		if (auto decl_node = result.node(); custom_alignment.has_value() && decl_node) {
+			if (decl_node->is<DeclarationNode>()) {
+				decl_node->as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
+			} else if (decl_node->is<FunctionDeclarationNode>()) {
+				decl_node->as<FunctionDeclarationNode>().decl_node().set_custom_alignment(custom_alignment.value());
+			}
+		}
+		discard_saved_token(saved_pos);
+		return result;
+	};
+
 	// Second function pointer check: after pointer levels have been consumed.
 	// This handles patterns like: void *(*callback)(void *)
 	// After parsing 'void' as type and '*' as pointer level (making void*),
 	// we now see '(' which starts a function pointer declarator.
-	if (type_spec.pointer_depth() > 0 && peek() == "("_tok) {
-		SaveHandle saved_pos = save_token_position();
-		advance(); // consume '('
-
-		last_calling_convention_ = parse_calling_convention(last_calling_convention_);
-
-		if (peek() == "*"_tok) {
-			// Looks like a function pointer with pointer return type: type* (*name)(params)
-			restore_token_position(saved_pos);
-			auto result = parse_declarator(type_spec, Linkage::None);
-			if (!result.is_error()) {
-				if (auto decl_node = result.node()) {
-					if (decl_node->is<DeclarationNode>() && custom_alignment.has_value()) {
-						decl_node->as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
-					}
-				}
-				discard_saved_token(saved_pos);
-				return result;
-			}
+	if (type_spec.pointer_depth() > 0) {
+		if (auto result = tryParseOrderedDeclaratorAtOpenParen(); result.has_value()) {
+			return *result;
 		}
-		restore_token_position(saved_pos);
 	}
 
 	// Parse postfix cv-qualifiers before pointers/references: Type const* or Type const&
@@ -694,27 +730,10 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 	// Function pointer check after reference declarators have been consumed.
 	// This handles patterns like: int& (*fp)(int) or ostream& (*__pf)(ostream&)
 	// After consuming '&', we now see '(' which starts a function pointer declarator.
-	if ((type_spec.is_reference() || type_spec.is_rvalue_reference()) && peek() == "("_tok) {
-		SaveHandle saved_pos = save_token_position();
-		advance(); // consume '('
-
-		last_calling_convention_ = parse_calling_convention(last_calling_convention_);
-
-		if (peek() == "*"_tok) {
-			// Looks like a function pointer with reference return type: type& (*name)(params)
-			restore_token_position(saved_pos);
-			auto result = parse_declarator(type_spec, Linkage::None);
-			if (!result.is_error()) {
-				if (auto decl_node = result.node()) {
-					if (decl_node->is<DeclarationNode>() && custom_alignment.has_value()) {
-						decl_node->as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
-					}
-				}
-				discard_saved_token(saved_pos);
-				return result;
-			}
+	if (type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+		if (auto result = tryParseOrderedDeclaratorAtOpenParen(); result.has_value()) {
+			return *result;
 		}
-		restore_token_position(saved_pos);
 	}
 
 	// Check for calling convention AFTER pointer/reference declarators
