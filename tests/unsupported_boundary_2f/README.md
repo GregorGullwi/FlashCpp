@@ -33,19 +33,12 @@ An agent looking for a regression to recover should:
 | `test_const_rvalue_reference_before_pack_lvalue_fail.cpp.txt` | Function-template deduction | Reference/pack deduction has a stable mismatch owner. |
 | `test_constrained_auto_double_fail.cpp.txt` | Constrained abbreviated template | Constraint rejection has a stable bounded owner. |
 | `test_function_template_recursive_trailing_return_fail.cpp.txt` | Recursive trailing-return instantiation | Recursive substitution terminates through a stable rejection owner. |
-| `test_injected_identity_ool_namespace_owner_fail.cpp.txt` | Out-of-line injected identity | Namespace/owner identity is preserved without recovery heuristics. |
 | `test_operator_subscript_const_ambiguity_fail.cpp.txt` | Const operator overload resolution | Ambiguity is reported by the existing operator owner. |
 | `test_template_callable_operator_const_receiver_explicit_member_fail.cpp.txt` | Callable member-template substitution | Const-receiver substitution has a stable call owner. |
 | `test_template_lazy_static_member_implicit_this_fail.cpp.txt` | Lazy member materialization | Implicit-`this` validation is stable without internal-failure compatibility. |
 | `test_template_member_call_const_receiver_fail.cpp.txt` | Const member-call substitution | The existing member-call owner reports the failure. |
 | `test_template_member_func_template_const_ref_return_fail.cpp.txt` | Member-pointer declarator parse | A reference-returning member-function-pointer declarator parses in the member-template context. |
-| `test_template_nested_ool_ctor_template_alias_target_mismatch_fail.cpp.txt` | Out-of-line constructor identity | Nested constructor/alias identity has a stable owner. |
-| `test_template_ool_member_template_single_candidate_alias_target_mismatch_fail.cpp.txt` | Out-of-line member-template identity | The single-candidate alias target mismatch is directly diagnosed. |
-| `test_template_ool_plain_member_multi_param_late_mismatch_fail.cpp.txt` | Out-of-line member deduction | Late multi-parameter mismatch has a bounded deduction owner. |
-| `test_template_ool_plain_member_single_candidate_alias_target_mismatch_fail.cpp.txt` | Out-of-line member identity | Single-candidate alias matching is stable. |
 | `test_template_out_of_line_static_member_implicit_this_fail.cpp.txt` | Out-of-line static-member materialization | Static-member implicit-`this` validation has a stable owner. |
-| `test_template_partial_spec_ool_ctor_template_alias_target_mismatch_fail.cpp.txt` | Partial-specialization identity | Partial-specialization constructor identity is preserved. |
-| `test_template_partial_spec_ool_plain_member_alias_target_mismatch_fail.cpp.txt` | Partial-specialization member identity | Partial-specialization member matching has a bounded owner. |
 
 The archive is intentionally indexed by source filename rather than by a
 guessed diagnostic number. Recovery assigns the filename ID only after the

@@ -3290,6 +3290,16 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		std::string_view reason,
 		const FlashCpp::TemplateInstantiationKey* key,
 		std::optional<uintptr_t> overload_id);
+	// A hard template-instantiation failure that names its rejected rule with a
+	// stable DiagnosticId. Probe modes stay soft and return nullopt; a
+	// force-eager caller always reports. Used by the out-of-line member/template
+	// attachment choke points, which previously threw an unlocated CompileError.
+	std::optional<ASTNode> failTemplateInstantiationDiagnosed(
+		DiagnosticId id,
+		bool force_eager,
+		std::string_view reason,
+		const FlashCpp::TemplateInstantiationKey* key,
+		std::optional<uintptr_t> overload_id);
 	// Select the instantiation mode to use for a nested instantiation triggered from
 	// the current context.
 	//
