@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "IRControlFlow.h"
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 #include "BuiltinListInitNarrowing.h"
@@ -577,6 +578,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	function_param_cache_[cache_key] = std::move(cached_params);
 
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), func_decl.identifier_token()));
+	const size_t function_body_begin = ir_.instructionCount();
 
 	// Generate memberwise three-way comparison for defaulted operator<=>
 	if (function_operator_kind == OverloadableOperator::Spaceship && node.is_implicit()) {
@@ -669,11 +671,13 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 
 						// Find operator<=> in the member struct and generate its mangled name
 						StringHandle member_spaceship_mangled;
+						uint8_t member_spaceship_flow_flags = static_cast<uint8_t>(IrCallFlowFlags::None);
 						if (member_struct_info) {
 							for (const auto& mf : member_struct_info->member_functions) {
 								if (mf.operator_kind == OverloadableOperator::Spaceship) {
 									if (mf.function_decl.is<FunctionDeclarationNode>()) {
 										const auto& spaceship_func = mf.function_decl.as<FunctionDeclarationNode>();
+										member_spaceship_flow_flags = functionCallFlowFlags(spaceship_func);
 											// Use generateMangledNameForCall for consistent mangling across platforms
 										StringHandle member_struct_name = member_type_info->name();
 										member_spaceship_mangled = StringTable::getOrInternStringHandle(
@@ -719,6 +723,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 								SizeInBits{32},
 								true,
 								false);
+							call_op.control_flow_flags = member_spaceship_flow_flags;
 
 							// MemberAccess materializes the member object in a temp.
 							// 'this' for the nested <=> must be the address of that object.
@@ -937,6 +942,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		// Find the operator<=> to call it - generate mangled name from the function signature
 		// (AST mangled name may not be set for user-defined operator<=>)
 		StringHandle spaceship_mangled;
+		uint8_t spaceship_flow_flags = static_cast<uint8_t>(IrCallFlowFlags::None);
 		auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
 		if (type_it != getTypesByNameMap().end()) {
 			const StructTypeInfo* struct_info = type_it->second->getStructInfo();
@@ -945,6 +951,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 					if (mf.operator_kind == OverloadableOperator::Spaceship) {
 						if (mf.function_decl.is<FunctionDeclarationNode>()) {
 							const auto& spaceship_func = mf.function_decl.as<FunctionDeclarationNode>();
+							spaceship_flow_flags = functionCallFlowFlags(spaceship_func);
 							// Use generateMangledNameForCall for consistent mangling across platforms
 							spaceship_mangled = StringTable::getOrInternStringHandle(
 								generateMangledNameForCall(spaceship_func, StringTable::getOrInternStringHandle(node.parent_struct_name()), {}));
@@ -965,6 +972,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 				SizeInBits{32},
 				true,
 				false);
+			call_op.control_flow_flags = spaceship_flow_flags;
 
 			TypeIndex owner_type_index = type_it->second->type_index_.withCategory(TypeCategory::Struct);
 			call_op.args.push_back(makeMemberThisCallArgument(
@@ -1013,10 +1021,12 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 					const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
 					const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr;
 					StringHandle member_equal_mangled;
+					uint8_t member_equal_flow_flags = static_cast<uint8_t>(IrCallFlowFlags::None);
 					if (member_struct_info) {
 						for (const auto& mf : member_struct_info->member_functions) {
 							if (mf.operator_kind == OverloadableOperator::Equal && mf.function_decl.is<FunctionDeclarationNode>()) {
 								const auto& equal_func = mf.function_decl.as<FunctionDeclarationNode>();
+								member_equal_flow_flags = functionCallFlowFlags(equal_func);
 								StringHandle member_struct_name = member_type_info->name();
 								member_equal_mangled = StringTable::getOrInternStringHandle(
 									generateMangledNameForCall(equal_func, member_struct_name, {}));
@@ -1058,6 +1068,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 							SizeInBits{8},
 							true,
 							false);
+						call_op.control_flow_flags = member_equal_flow_flags;
 
 						TempVar lhs_addr = emitAddressOf(
 							member.type_index.category(),
@@ -1293,40 +1304,10 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		exitFunctionScope();
 	}
 
-	// Add implicit return if needed
-	// Check if the last instruction is a return
-	bool ends_with_return = false;
-	if (!ir_.getInstructions().empty()) {
-		const auto& last_instr = ir_.getInstructions().back();
-		ends_with_return = (last_instr.getOpcode() == IrOpcode::Return);
-	}
-
-	if (!ends_with_return) {
-		// Add implicit return for void functions
-		if (ret_type.category() == TypeCategory::Void) {
-			emitVoidReturn(func_decl.identifier_token());
-		}
-		// Special case: main() implicitly returns 0 if no return statement
-		else if (func_decl.identifier_token().value() == "main") {
-			emitReturn(0ULL, nativeTypeIndex(TypeCategory::Int), 32,
-				func_decl.identifier_token(), ValueStorage::ContainsData);
-		}
-		// For other non-void functions, flowing off the end is undefined behavior
-		// ([stmt.return]); the standard requires no diagnostic, so this stays a
-		// warning rather than a compile error. The check is a heuristic — does the
-		// last emitted instruction happen to be a return? — so it also fires for
-		// valid functions whose every path returns through a branch or that never
-		// return at all. A full implementation would require control flow analysis
-		// to check all paths, but warning on functions that don't end with a return
-		// catches the common cases. Still emit a bare return so an execution that
-		// reaches the end cannot run into the next function and corrupt the caller's
-		// stack.
-		else {
-			FLASH_LOG_FORMAT(Codegen, Warning, "Non-void function '{}' does not end with a return statement",
-							 func_decl.identifier_token().value());
-			emitVoidReturn(func_decl.identifier_token());
-		}
-	}
+	const bool is_main = !node.is_member_function() && namespace_for_mangling == NamespaceRegistry::GLOBAL_NAMESPACE &&
+		func_decl.identifier_token().value() == "main";
+	finishFunctionControlFlow(function_body_begin, StringTable::getOrInternStringHandle(func_decl.identifier_token().value()),
+		func_decl.identifier_token(), is_main);
 
 	// Emit function-level cleanup landing pad (ELF Phase 2: after return, before function end)
 	emitPendingFunctionCleanupLP(func_decl.identifier_token());
@@ -1334,6 +1315,32 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	symbol_table.exit_scope();
 	// Don't clear current_function_name_ here - let the top-level visitor manage it
 	// This allows nested contexts (like local struct member functions) to work properly
+}
+
+void AstToIr::finishFunctionControlFlow(size_t body_begin, StringHandle function_name, const Token& token, bool is_main) {
+	const IrControlFlowGraph graph(ir_.getInstructions().subspan(body_begin));
+	if (!graph.mayReachEnd()) {
+		// Keep the return PC of a trailing throwing call inside this function's
+		// unwind range. The terminator also traps violated no-return contracts.
+		ir_.addInstruction(IrInstruction(IrOpcode::Unreachable, std::vector<IrOperand>{}, token));
+		return;
+	}
+	if (is_main) {
+		// C++20 [basic.start.main]: only the global entry function gets return 0.
+		emitReturn(0ULL, nativeTypeIndex(TypeCategory::Int), 32, token, ValueStorage::ContainsData);
+		return;
+	}
+	const bool returns_value = currentFunctionReturnTypeIndex().category() != TypeCategory::Void ||
+		current_function_return_value_mode_ != ReturnValueMode::None;
+	if (returns_value) {
+		// [stmt.return] defines UB on execution, not an ill-formed declaration.
+		const std::array<DiagnosticArgument, 1> arguments{DiagnosticArgument::text(StringTable::getStringView(function_name))};
+		context_->diagnostics().report(DiagnosticId::ControlReachesEndOfValueFunction, DiagnosticSeverity::Warning, SourceLocation::fromToken(token),
+			"Control reaches end of non-void function '{}'", arguments);
+	}
+	// A bare return confines an executed UB path to this function. It supplies no
+	// value and does not make missing-return execution well-defined.
+	emitVoidReturn(token);
 }
 
 bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {

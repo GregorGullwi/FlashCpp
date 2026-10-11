@@ -1727,6 +1727,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 				TempVar ptr_result = var_counter.next();
 
 				CallOp call_op = createCallOp(ptr_result, StringHandle{}, return_type, true, false);
+				call_op.applyFunctionControlFlow(func_decl);
 				call_op.function_name = mangled_name;
 
 				// Add 'this' pointer as first argument
@@ -1959,6 +1960,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 
 			TempVar ptr_result = var_counter.next();
 			CallOp call_op = createCallOp(ptr_result, StringHandle{}, return_type, true, false);
+			call_op.applyFunctionControlFlow(func_decl);
 			call_op.function_name = mangled_name;
 			std::visit([&](auto&& base_value) {
 				call_op.args.push_back(makeTypedValue(
@@ -3331,6 +3333,7 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCallInternal(
 		SizeInBits{target_size_bits},
 		true,
 		false);
+	call_op.applyFunctionControlFlow(func_decl);
 	call_op.result_destination = result_destination;
 	if (needsHiddenReturnParam(conversion_return_type, context_->isLLP64())) {
 		call_op.return_slot = result_var;

@@ -320,6 +320,9 @@
     <ClInclude Include="src\IRTypes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\IRControlFlow.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\IRTypes_Core.h">
       <Filter>Header Files</Filter>
     </ClInclude>

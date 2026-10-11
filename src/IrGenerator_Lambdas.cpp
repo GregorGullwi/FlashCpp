@@ -819,6 +819,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 	}
 
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
+	const size_t function_body_begin = ir_.instructionCount();
 	symbol_table.enter_scope(ScopeType::Function);
 
 	// Reset the temporary variable counter for each new function
@@ -854,22 +855,16 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 	addCapturedVariablesToSymbolTable(lambda_info.captures, lambda_info.captured_var_decls);
 
 	// Generate the lambda body
-	bool has_return_statement = false;
 	if (lambda_info.lambda_body.is<BlockNode>()) {
 		const auto& body = lambda_info.lambda_body.as<BlockNode>();
 		body.get_statements().visit([&](const ASTNode& stmt) {
 			visit(stmt);
-			if (stmt.is<ReturnStatementNode>()) {
-				has_return_statement = true;
-			}
 		});
 	}
 
-	// Add implicit return for void lambdas (matching regular function behavior)
-	if (!has_return_statement && lambda_info.return_type_index.category() == TypeCategory::Void) {
-		ReturnOp ret_op;	 // No return value for void
-		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), lambda_info.lambda_token));
-	}
+	// Complete reachable lambda fallthrough using the shared function policy
+	finishFunctionControlFlow(function_body_begin, StringTable::getOrInternStringHandle(lambda_info.operator_call_name),
+		lambda_info.lambda_token, false);
 
 	// Restore outer lambda context (if any)
 	popLambdaContext();
@@ -967,6 +962,7 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 	}
 
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
+	const size_t function_body_begin = ir_.instructionCount();
 	symbol_table.enter_scope(ScopeType::Function);
 
 		// Reset the temporary variable counter for each new function
@@ -1001,22 +997,16 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 	pushLambdaContext(lambda_info);
 
 		// Generate the lambda body
-	bool has_return_statement = false;
 	if (lambda_info.lambda_body.is<BlockNode>()) {
 		const auto& body = lambda_info.lambda_body.as<BlockNode>();
 		body.get_statements().visit([&](const ASTNode& stmt) {
 			visit(stmt);
-			if (stmt.is<ReturnStatementNode>()) {
-				has_return_statement = true;
-			}
 		});
 	}
 
-		// Add implicit return for void lambdas (matching regular function behavior)
-	if (!has_return_statement && lambda_info.return_type_index.category() == TypeCategory::Void) {
-		ReturnOp ret_op;	 // No return value for void
-		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), lambda_info.lambda_token));
-	}
+		// Complete reachable lambda fallthrough using the shared function policy
+	finishFunctionControlFlow(function_body_begin, StringTable::getOrInternStringHandle(lambda_info.invoke_name),
+		lambda_info.lambda_token, false);
 
 		// Restore outer lambda context
 	popLambdaContext();

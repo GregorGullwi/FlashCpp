@@ -2931,6 +2931,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					// Create a new FunctionDeclarationNode with member function info
 					auto [member_func_node, member_func_ref] =
 						emplace_node_ref<FunctionDeclarationNode>(func_decl_node, instantiated_name);
+					member_func_ref.set_is_noreturn(func_decl.is_noreturn());
 
 					// Copy parameters from the parsed function
 					for (const auto& param : func_decl.parameter_nodes()) {
@@ -2947,6 +2948,9 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					member_func_ref.set_is_constexpr(conv_specs & FlashCpp::MLS_Constexpr);
 					member_func_ref.set_is_consteval(conv_specs & FlashCpp::MLS_Consteval);
 					member_func_ref.set_is_inline(conv_specs & FlashCpp::MLS_Inline);
+					if (conv_specs & FlashCpp::MLS_NoReturn) {
+						member_func_ref.set_is_noreturn(true);
+					}
 					member_func_ref.set_is_explicit(static_cast<bool>(conv_specs & FlashCpp::MLS_Explicit));
 
 					// Parse trailing specifiers (const, volatile, &, &&, noexcept, override, final)
@@ -4322,6 +4326,9 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					SaveHandle conv_saved = save_token_position();
 					bool found_conversion_op = false;
 					conv_specs = parse_member_leading_specifiers();
+					if (leading_cpp_attributes.has_noreturn) {
+						conv_specs |= FlashCpp::MLS_NoReturn;
+					}
 					if (peek() == "operator"_tok) {
 						// Check if this is a conversion operator (not operator() or operator<< etc.)
 						SaveHandle op_saved = save_token_position();
@@ -4412,6 +4419,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					// Create a new FunctionDeclarationNode with member function info
 					auto [member_func_node, member_func_ref] =
 						emplace_node_ref<FunctionDeclarationNode>(func_decl_node, StringTable::getStringView(instantiated_name));
+					member_func_ref.set_is_noreturn(func_decl.is_noreturn());
 
 					// Copy parameters from the parsed function
 					for (const auto& param : func_decl.parameter_nodes()) {
@@ -4422,6 +4430,9 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					member_func_ref.set_is_constexpr(conv_specs & FlashCpp::MLS_Constexpr);
 					member_func_ref.set_is_consteval(conv_specs & FlashCpp::MLS_Consteval);
 					member_func_ref.set_is_inline(conv_specs & FlashCpp::MLS_Inline);
+					if (conv_specs & FlashCpp::MLS_NoReturn) {
+						member_func_ref.set_is_noreturn(true);
+					}
 					member_func_ref.set_is_explicit(static_cast<bool>(conv_specs & FlashCpp::MLS_Explicit));
 
 					// Parse trailing specifiers (const, volatile, noexcept, override, final, = default, = delete)

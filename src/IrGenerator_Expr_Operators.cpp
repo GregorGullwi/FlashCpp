@@ -2569,6 +2569,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 							return_type,
 							true,
 							false);
+						call_op.applyFunctionControlFlow(func_decl);
 
 						// Pass 'this' pointer as first argument
 						call_op.args.push_back(makeMemberThisCallArgument(
@@ -2965,6 +2966,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				return_type,
 				false,
 				false);
+			call_op.applyFunctionControlFlow(func_decl);
 
 			bool needs_hidden_return = needsHiddenReturnParam(return_type, context_->isLLP64());
 			if (needs_hidden_return) {
@@ -3161,6 +3163,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				resolved_return_type_spec,
 				true,
 				false);
+			call_op.applyFunctionControlFlow(func_decl);
 
 			int actual_return_size = call_op.return_size_in_bits.value;
 
@@ -3358,6 +3361,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 						return_size,
 						true,
 						func_decl.is_variadic());
+					call_op.applyFunctionControlFlow(func_decl);
 
 					// Determine if return slot is needed (same logic as generateFunctionCallIr)
 					bool returns_struct_by_value = returnsStructByValue(return_type_node);
@@ -5812,11 +5816,9 @@ ExprResult AstToIr::generateBuiltinUnreachableIntrinsic(const CallExprNode& call
 		FLASH_LOG(Codegen, Warning, "__builtin_unreachable should not have arguments (ignoring)");
 	}
 
-	// For now, we just return void and don't generate any IR
-	// A more sophisticated implementation could:
-	// 1. Mark the current basic block as unreachable for optimization
-	// 2. Allow following code to be eliminated as dead code
-	// 3. Use this information for branch prediction
+	// This compiler intrinsic asserts UB on reaching the call. Preserve it as
+	// a terminator so graph analyses and the backend share the same semantics.
+	ir_.addInstruction(IrInstruction(IrOpcode::Unreachable, std::vector<IrOperand>{}, callExprNode.called_from()));
 
 	FLASH_LOG(Codegen, Debug, "__builtin_unreachable encountered - marking code path as unreachable");
 

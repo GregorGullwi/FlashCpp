@@ -1063,6 +1063,7 @@ private:
 	struct LoopContext {
 		StringHandle loop_end_label;		 // Label to jump to for break
 		StringHandle loop_increment_label; // Label to jump to for continue
+		LoopConstructKind kind;
 	};
 	std::vector<LoopContext> loop_context_stack_;
 

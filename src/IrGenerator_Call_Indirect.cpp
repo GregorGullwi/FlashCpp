@@ -1419,6 +1419,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 			actual_func_decl = &called_member_func->function_decl.as<FunctionDeclarationNode>();
 		}
+		vcall_op.control_flow_flags = functionCallFlowFlags(*actual_func_decl);
 		size_t arg_index = 0;
 		callExprNode.arguments().visit([&](ASTNode argument) {
 			const CallParamView param_view = resolveCallParamView(
@@ -1826,6 +1827,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 			actual_func_decl_for_variadic = &called_member_func->function_decl.as<FunctionDeclarationNode>();
 		}
+		call_op.applyFunctionControlFlow(*actual_func_decl_for_variadic);
 		call_op.is_variadic = actual_func_decl_for_variadic->is_variadic();
 
 		// Detect if calling a member function that returns struct by value (needs hidden return parameter for RVO)

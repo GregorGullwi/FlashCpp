@@ -117,6 +117,7 @@ enum class IrOpcode : int_fast16_t {
 	ZeroExtend,
 	Truncate,
 	Return,
+	Unreachable,
 	FunctionDecl,
 	VariableDecl,
 	FunctionCall,

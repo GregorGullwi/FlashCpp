@@ -3658,6 +3658,10 @@ public:
 	// Unsized array support (e.g., int arr[] = {1, 2, 3})
 	bool is_unsized_array() const { return is_unsized_array_; }
 	void set_unsized_array(bool unsized) { is_unsized_array_ = unsized; }
+	bool is_noreturn_attribute() const { return (attribute_flags_ & 1u) != 0; }
+	void set_noreturn_attribute(bool is_noreturn) {
+		attribute_flags_ = static_cast<uint8_t>((attribute_flags_ & ~1u) | static_cast<uint8_t>(is_noreturn));
+	}
 
 	// Alignment support
 	size_t custom_alignment() const { return custom_alignment_; }
@@ -3677,6 +3681,7 @@ public:
 		custom_alignment_ = other.custom_alignment_;
 		is_parameter_pack_ = other.is_parameter_pack_;
 		is_unsized_array_ = other.is_unsized_array_;
+		attribute_flags_ = other.attribute_flags_;
 		array_dimensions_ = other.array_dimensions_;
 		default_value_ = other.default_value_;
 		qualified_declarator_owner_ = other.qualified_declarator_owner_;
@@ -3701,6 +3706,7 @@ private:
 	size_t custom_alignment_;			  // Custom alignment from alignas(n), 0 = use natural alignment
 	bool is_parameter_pack_;			 // True for parameter packs like Args... args
 	bool is_unsized_array_;				// True for unsized arrays like int arr[] = {1, 2, 3}
+	uint8_t attribute_flags_ = 0; // Bit 0: noreturn on the declarator-id, never part of its function type.
 	std::optional<ASTNode> default_value_;  // Default argument value for function parameters
 	StringHandle qualified_declarator_owner_;
 	StringHandle mangled_name_;
@@ -4091,15 +4097,21 @@ private:
 
 class FunctionDeclarationNode {
 public:
+	enum ControlFlowFlags : uint8_t {
+		ControlFlowNone = 0,
+		ControlFlowNoReturn = 1u << 0,
+	};
 	FunctionDeclarationNode() = delete;
-	FunctionDeclarationNode(DeclarationNode& decl_node)
-		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
-	FunctionDeclarationNode(DeclarationNode& decl_node, std::string_view parent_struct_name)
-		: decl_node_(decl_node), parent_struct_name_(parent_struct_name), is_member_function_(true), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
+	FunctionDeclarationNode(DeclarationNode& decl_node) : FunctionDeclarationNode(decl_node, Linkage::None) {}
+	FunctionDeclarationNode(DeclarationNode& decl_node, std::string_view parent_struct_name) : FunctionDeclarationNode(decl_node, Linkage::None) {
+		parent_struct_name_ = parent_struct_name;
+		is_member_function_ = true;
+	}
 	FunctionDeclarationNode(DeclarationNode& decl_node, StringHandle parent_struct_name_handle)
-		: decl_node_(decl_node), parent_struct_name_(StringTable::getStringView(parent_struct_name_handle)), is_member_function_(true), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
+		: FunctionDeclarationNode(decl_node, StringTable::getStringView(parent_struct_name_handle)) {}
 	FunctionDeclarationNode(DeclarationNode& decl_node, Linkage linkage)
-		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(linkage), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
+		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(linkage),
+		  is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 
 	const DeclarationNode& decl_node() const {
 		return decl_node_;
@@ -4280,6 +4292,11 @@ public:
 	bool is_explicit() const { return is_explicit_; }
 
 	// noexcept support
+	void set_is_noreturn(bool is_noreturn) {
+		control_flow_flags_ = static_cast<uint8_t>((control_flow_flags_ & ~ControlFlowNoReturn) |
+			(is_noreturn ? ControlFlowNoReturn : ControlFlowNone));
+	}
+	bool is_noreturn() const { return (control_flow_flags_ & ControlFlowNoReturn) != 0; }
 	void set_noexcept(bool is_noexcept) { is_noexcept_ = is_noexcept; }
 	bool is_noexcept() const { return is_noexcept_; }
 	void set_noexcept_expression(ExpressionHandle expr) { noexcept_expression_ = expr; }
@@ -4418,6 +4435,7 @@ private:
 	bool is_constinit_;
 	bool is_consteval_;
 	bool is_noexcept_ = false;  // True if function is declared noexcept
+	uint8_t control_flow_flags_ = decl_node_.is_noreturn_attribute() ? ControlFlowNoReturn : ControlFlowNone;
 	bool is_explicit_ = false;  // True for an explicit conversion function
 	bool is_deleted_ = false;  // True if function is declared = delete
 	bool is_template_pattern_ = false;  // True for uninstantiated template pattern function nodes

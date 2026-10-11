@@ -609,6 +609,7 @@ void Parser::copy_function_properties(FunctionDeclarationNode& dest, const Funct
 	dest.set_is_constexpr(src.is_constexpr());
 	dest.set_is_consteval(src.is_consteval());
 	dest.set_is_constinit(src.is_constinit());
+	dest.set_is_noreturn(src.is_noreturn());
 	dest.set_noexcept(src.is_noexcept());
 	if (src.has_noexcept_expression()) {
 		dest.set_noexcept_expression(*src.noexcept_expression());

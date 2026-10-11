@@ -28,6 +28,9 @@ jobs:
       - name: Canonical type identity and mutation guards
         run: python3 tests/architecture/run_canonical_types.py --mutations
 
+      - name: IR control-flow graph and bounded stack usage
+        run: python3 tests/architecture/run_return_flow_graph.py
+
       - name: Build FlashCpp with Make
         run: |
           make sharded -j$(nproc) CXX=clang++

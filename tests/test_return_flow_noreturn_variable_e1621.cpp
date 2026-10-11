@@ -1,0 +1,1 @@
+[[noreturn]] int value;

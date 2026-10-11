@@ -694,6 +694,9 @@ FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers() {
 			if (attribute_info.has_no_unique_address) {
 				specs |= MLS_NoUniqueAddress;
 			}
+			if (attribute_info.has_noreturn) {
+				specs |= MLS_NoReturn;
+			}
 			skip_gcc_attributes();
 		} else {
 			break;

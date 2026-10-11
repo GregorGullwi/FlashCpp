@@ -872,6 +872,9 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			func_node.set_is_constinit(is_constinit);
 			func_node.set_is_consteval(is_consteval);
 			func_node.set_is_inline(is_inline);
+			if (specs.is_noreturn) {
+				func_node.set_is_noreturn(true);
+			}
 		}
 
 		// Continue with function-specific logic
@@ -1135,6 +1138,9 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 	} else {
 		FlashCpp::ScopedState failed_function_fallback_guard(
 			parsing_failed_function_fallback_);
+		if (specs.is_noreturn || decl_node.is_noreturn_attribute()) {
+			return error(DiagnosticId::InvalidNoreturnAttribute, decl_node.identifier_token(), "noreturn applies only to a function declaration");
+		}
 		parsing_failed_function_fallback_ = true;
 		// Function parsing failed - restore position to try variable declaration
 		if (before_function_parse.has_value()) {

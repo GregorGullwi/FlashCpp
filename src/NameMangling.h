@@ -2481,7 +2481,7 @@ inline MangledName generateMangledName(
 	std::string_view struct_name_sv = StringTable::getStringView(struct_name);
 
 	// Special case: main function is never mangled
-	if (func_name == "main") {
+	if (func_name == "main" && !struct_name.isValid() && namespace_path.empty()) {
 		builder.append("main");
 		return MangledName(builder.commit());
 	}
@@ -2616,7 +2616,7 @@ inline MangledName generateMangledName(
 	std::string_view struct_name_sv = StringTable::getStringView(struct_name);
 
 	// Special case: main function is never mangled
-	if (func_name == "main") {
+	if (func_name == "main" && !struct_name.isValid() && namespace_path.empty()) {
 		builder.append("main");
 		return MangledName(builder.commit());
 	}
@@ -2714,7 +2714,7 @@ inline MangledName generateMangledNameWithTemplateArgs(
 	StringHandle struct_name,
 	std::span<const std::string_view> namespace_path,
 	bool is_const_method) {
-	if (func_name == "main") {
+	if (func_name == "main" && !struct_name.isValid() && namespace_path.empty()) {
 		StringBuilder builder;
 		builder.append("main");
 		return MangledName(builder.commit());
@@ -2775,7 +2775,7 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 	StringHandle struct_name,
 	std::span<const std::string_view> namespace_path,
 	bool is_const_method) {
-	if (func_name == "main") {
+	if (func_name == "main" && !struct_name.isValid() && namespace_path.empty()) {
 		StringBuilder builder;
 		builder.append("main");
 		return MangledName(builder.commit());

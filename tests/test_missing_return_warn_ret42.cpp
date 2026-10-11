@@ -1,5 +1,5 @@
 // Test that missing return in non-void function is handled
-// The warning is a log message, not a hard error, so this should compile
+// Fallthrough is UB on execution; the structured warning does not reject this definition.
 int compute(int x) {
 	if (x > 0) {
 		return x * 2;

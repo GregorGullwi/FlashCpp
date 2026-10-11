@@ -494,6 +494,7 @@
     <ClInclude Include="src\IRConverter_Emit_MovLoadStore.h" />
     <ClInclude Include="src\IRConverter_Encoding.h" />
     <ClInclude Include="src\IRTypes.h" />
+    <ClInclude Include="src\IRControlFlow.h" />
     <ClInclude Include="src\IRTypes_Core.h" />
     <ClInclude Include="src\IRTypes_Instructions.h" />
     <ClInclude Include="src\IRTypes_Ops.h" />
