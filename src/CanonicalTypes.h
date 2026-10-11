@@ -393,6 +393,7 @@ enum class CanonicalRecordFunctionFlags : uint8_t {
 	ExplicitlyDefaulted = 1 << 1,
 	NonPublic = 1 << 2,
 	SchemaIncomplete = 1 << 3,
+	Explicit = 1 << 4,
 };
 
 // Constructor schema entry for a completed record, keyed by the record's

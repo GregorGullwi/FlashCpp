@@ -2377,13 +2377,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					TypeCategory init_type = init_operands.typeEnum();
 					TypeIndex init_type_index = init_operands.type_index;
 					const TypeCategory init_cat = init_operands.category();
-					const int target_size = runtime_pointer_depth > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 
 						// Check if source and target types differ and source is a struct
 					bool need_conversion = (init_type != type_node.type()) ||
 											   (init_cat == TypeCategory::Struct && init_type_index != type_node.type_index());
 
-					bool conv_op_applied = false;
 					if (need_conversion && init_cat == TypeCategory::Struct &&
 						(type_node.is_reference() || type_node.is_rvalue_reference()) &&
 						init_type_index.isStruct() && type_node.type_index().isStruct()) {
@@ -2401,7 +2399,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								type_node.type_index(),
 								SizeInBits{static_cast<int>(type_node.size_in_bits())},
 								decl.identifier_token());
-							conv_op_applied = true;
 						}
 					}
 					if (need_conversion && init_cat == TypeCategory::Struct) {
@@ -2422,7 +2419,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									if (auto result = emitSemaSelectedConversionOperatorCall(
 											init_operands, *source_type_info, cast_info, type_node.category(), decl.identifier_token())) {
 										init_operands = *result;
-										conv_op_applied = true;
 									} else {
 										throw InternalError("Sema-selected conversion operator failed to lower a variable initializer");
 									}
