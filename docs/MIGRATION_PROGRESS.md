@@ -112,8 +112,9 @@ Continue boundary 3A in this order.
    only have a `TypeIndex` adapt at the boundary. TypeId-driven operator ranking
    now matches current-instantiation self references by canonical class identity
    and `TemplateDeclId`, then projects the owner through `TypeInfo` for the
-   existing `TypeSpecifierNode` conversion descriptor. Legacy TypeIndex entry
-   points remain for consumers that have not migrated.
+   existing `TypeSpecifierNode` conversion descriptor. TypeIndex self-reference
+   entry points now adapt through canonical owner identities when importable;
+   TypeInfo-based matching remains only as a compatibility fallback.
    The selected function is recorded in `ImplicitCastInfo`; call arguments,
    returns, variable initialization, assignment, contextual `bool`, constructor
    arguments, and builtin subscripting now lower that declaration without

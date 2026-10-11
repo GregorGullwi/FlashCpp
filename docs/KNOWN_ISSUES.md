@@ -198,28 +198,6 @@ The following remain unsupported and are rejected or left unresolved:
 - Calling through a materialized member-function pointer is a separate,
   still-unimplemented path (it emits an ``.()`` symbol).
 
-## Pointer member access in a template member operator can crash at runtime
-
-On Windows, this valid template member operator compiles and links, then crashes
-with `0xC0000005` when the instantiated body reads `other->value`:
-
-```cpp
-template <class T>
-struct S {
-	T value;
-	int operator+(const S* other) const { return static_cast<int>(other->value); }
-};
-
-int main() {
-	S<int> left{1};
-	S<int> right{2};
-	return left + &right;
-}
-```
-
-A non-template member function that reads the same pointer form passes the
-targeted check. The template member-body path needs separate investigation.
-
 ## Static-member template initializer replay still re-parses source text
 
 Variable-template initializers now substitute structurally from the

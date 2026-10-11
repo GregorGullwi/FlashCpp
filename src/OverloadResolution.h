@@ -6061,6 +6061,16 @@ inline TypeSpecifierNode resolveTypeSpecifierForSelfReference(const TypeSpecifie
 }
 
 inline TypeSpecifierNode resolveTypeSpecifierForSelfReference(const TypeSpecifierNode& type_spec, TypeIndex enclosing_type_index) {
+	FrontendContext& context = requireFrontendContext();
+	CanonicalTypeTable& table = context.canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const TypeSpecifierNode enclosing_type_spec = makeBinaryOperatorTypeSpecifier(enclosing_type_index);
+	const TypeId enclosing_type_id = tryGetCanonicalOverloadClassTypeId(table, enclosing_type_spec);
+	if (enclosing_type_id) {
+		TypeSpecifierNode resolved = resolveTypeSpecifierForSelfReference(type_spec, enclosing_type_id);
+		transaction.commit();
+		return resolved;
+	}
 	TypeSpecifierNode resolved = type_spec;
 	TypeCategory resolved_type = resolved.category();
 	if (resolved.type_index().is_valid()) {
