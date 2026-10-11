@@ -10274,13 +10274,15 @@ bool SemanticAnalysis::annotateConversionImpl(
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
 	const bool target_is_member_object_pointer = isMemberObjectPointerType(target_type_id);
-	auto select_conversion_operator = [use_type_ids](
+	auto select_conversion_operator = [this, use_type_ids](
 		TypeIndex source_type_index, CVQualifier source_cv,
-		const TypeSpecifierNode& target_type, const CanonicalTypeDesc& source_desc)
+		const TypeSpecifierNode& target_type, CanonicalTypeId source_type_id)
 		-> std::optional<UserDefinedConversionOperatorSelection> {
 		if (!use_type_ids) {
 			return trySelectCanonicalUserDefinedConversionOperator(source_type_index, source_cv, target_type, false);
 		}
+		// Lazy specialization may intern types and reallocate TypeContext's backing vector.
+		const CanonicalTypeDesc& source_desc = type_context_.get(source_type_id);
 		CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
 		CanonicalTypeTransaction source_type_transaction(canonical_types);
 		const TypeInfo* const source_legacy_type_info = source_desc.type_index.is_valid()
@@ -10536,7 +10538,7 @@ bool SemanticAnalysis::annotateConversionImpl(
 			const bool target_has_indirection = !to_desc.pointer_levels.empty() || !to_desc.array_dimensions.empty();
 			materializeExactTargetLazyConversionOperators(source_type_index, source_cv, target_type_index, target_category, target_has_indirection, *this);
 			const TypeSpecifierNode nominal_target = materializeTypeSpecifier(type_context_.get(target_type_id));
-			const auto selected_conversion = select_conversion_operator(source_type_index, source_cv, nominal_target, from_desc);
+			const auto selected_conversion = select_conversion_operator(source_type_index, source_cv, nominal_target, expr_type_id);
 			if (selected_conversion.has_value() && !selected_conversion->ambiguous) {
 				return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
 			}
@@ -10580,7 +10582,7 @@ bool SemanticAnalysis::annotateConversionImpl(
 		const bool target_has_indirection = !to_desc.pointer_levels.empty() || !to_desc.array_dimensions.empty();
 		materializeExactTargetLazyConversionOperators(source_type_index, source_cv, target_type_index, target_category, target_has_indirection, *this);
 		const TypeSpecifierNode target_type = materializeTypeSpecifier(type_context_.get(target_type_id));
-		const auto selected_conversion = select_conversion_operator(source_type_index, source_cv, target_type, from_desc);
+		const auto selected_conversion = select_conversion_operator(source_type_index, source_cv, target_type, expr_type_id);
 		if (selected_conversion.has_value() && !selected_conversion->ambiguous) {
 			return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
 		}
@@ -10770,7 +10772,7 @@ bool SemanticAnalysis::annotateConversionImpl(
 				target_has_indirection, *this);
 			const TypeSpecifierNode target_type = materializeTypeSpecifier(type_context_.get(target_type_id));
 			const auto selected_conversion = select_conversion_operator(
-				stripped_resolved_tidx, stripped_desc.base_cv, target_type, stripped_desc);
+				stripped_resolved_tidx, stripped_desc.base_cv, target_type, stripped_from_id);
 			if (!selected_conversion.has_value() || selected_conversion->ambiguous || selected_conversion->function == nullptr) return false;
 			return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
 		}
@@ -10821,7 +10823,7 @@ bool SemanticAnalysis::annotateConversionImpl(
 		const bool target_has_indirection = !to_desc.pointer_levels.empty() || !to_desc.array_dimensions.empty();
 		materializeExactTargetLazyConversionOperators(source_type_index, source_cv, target_type_index, target_category, target_has_indirection, *this);
 		const TypeSpecifierNode target_type = materializeTypeSpecifier(type_context_.get(target_type_id));
-		const auto selected_conversion = select_conversion_operator(source_type_index, source_cv, target_type, from_desc);
+		const auto selected_conversion = select_conversion_operator(source_type_index, source_cv, target_type, expr_type_id);
 		if (!selected_conversion.has_value() || selected_conversion->ambiguous) {
 			FLASH_LOG(General, Debug, "SemanticAnalysis: skipping UserDefined annotation — " "conversion operator selection failed or was ambiguous");
 			return false;
