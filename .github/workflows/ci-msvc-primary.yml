@@ -26,6 +26,10 @@ jobs:
         shell: pwsh
         run: python tests/architecture/run_canonical_types.py --mutations
 
+      - name: IR control-flow graph and bounded stack usage
+        shell: pwsh
+        run: python tests/architecture/run_return_flow_graph.py
+
       - name: Build FlashCppMSVC project (Sharded)
         shell: powershell
         run: |
@@ -34,6 +38,10 @@ jobs:
 
       - name: Canonical production adapter counters and traces
         run: python tests/architecture/run_canonical_adapter.py --compiler x64/Sharded/FlashCppMSVC.exe
+
+      - name: Return-flow diagnostic contracts
+        shell: pwsh
+        run: .\tests\run_return_flow_tests.ps1
 
       - name: Test Reference Files (Compile & Link)
         shell: pwsh

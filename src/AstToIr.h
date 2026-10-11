@@ -1351,6 +1351,8 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), token));
 	}
 
+	void finishFunctionControlFlow(size_t body_begin, StringHandle function_name, const Token& token, bool is_main);
+
 	Ir ir_;
 	TempVar var_counter{0};
 	// Numeric identity for function-local objects. Every named local declaration

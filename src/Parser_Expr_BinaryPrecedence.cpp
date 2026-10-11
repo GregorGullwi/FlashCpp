@@ -1326,6 +1326,7 @@ Parser::CppAttributeInfo Parser::skip_cpp_attributes_with_info() {
 	while (peek() == "["_tok && peek_info(1).value() == "[") {
 		CppAttributeInfo block_info = consume_cpp_attribute_blocks();
 		info.has_no_unique_address = info.has_no_unique_address || block_info.has_no_unique_address;
+		info.has_noreturn = info.has_noreturn || block_info.has_noreturn;
 	}
 
 	// Also skip GCC-style attributes - they often appear together
@@ -1344,14 +1345,46 @@ Parser::CppAttributeInfo Parser::consume_cpp_attribute_blocks() {
 
 			// Skip everything until ]]
 			int bracket_depth = 2;
+			int paren_depth = 0;
+			bool at_attribute_start = true;
+			bool using_namespace = false;
+			bool saw_noreturn = false;
 			while (!peek().is_eof() && bracket_depth > 0) {
-				if (peek().is_identifier() && peek_info().value() == "no_unique_address") {
-					info.has_no_unique_address = true;
+				if (bracket_depth == 2 && paren_depth == 0 && at_attribute_start && peek() == "using"_tok) {
+					using_namespace = true;
+				}
+				if (bracket_depth == 2 && paren_depth == 0 && at_attribute_start && peek().is_identifier()) {
+					const std::string_view attribute_name = peek_info().value();
+					const TokenKind following_token = peek(1);
+					const bool unqualified_attribute = following_token == ","_tok || following_token == "]"_tok;
+					if (!using_namespace && unqualified_attribute && attribute_name == "no_unique_address") {
+						info.has_no_unique_address = true;
+					}
+					if (!using_namespace && unqualified_attribute && attribute_name == "noreturn") {
+						if (saw_noreturn) {
+							throw makeStructuredCompileError(context_.diagnostics(), DiagnosticId::InvalidNoreturnAttribute, DiagnosticSeverity::Error,
+								lexer_.getSourceLocation(peek_info()), "noreturn may appear only once in an attribute list", {});
+						}
+						saw_noreturn = true;
+						info.has_noreturn = true;
+					}
+					if (!using_namespace && attribute_name == "noreturn" && following_token == "("_tok) {
+						throw makeStructuredCompileError(context_.diagnostics(), DiagnosticId::InvalidNoreturnAttribute, DiagnosticSeverity::Error,
+							lexer_.getSourceLocation(peek_info()), "noreturn does not accept an argument clause", {});
+					}
+					at_attribute_start = false;
+				}
+				if (peek() == "("_tok) {
+					paren_depth++;
+				} else if (peek() == ")"_tok && paren_depth > 0) {
+					paren_depth--;
 				}
 				if (peek() == "["_tok) {
 					bracket_depth++;
 				} else if (peek() == "]"_tok) {
 					bracket_depth--;
+				} else if (bracket_depth == 2 && paren_depth == 0 && peek() == ","_tok) {
+					at_attribute_start = true;
 				}
 				advance();
 			}
@@ -2346,7 +2379,7 @@ CallingConvention Parser::parse_calling_convention(CallingConvention calling_con
 Parser::AttributeInfo Parser::parse_attributes() {
 	AttributeInfo info;
 
-	skip_cpp_attributes();  // C++ [[...]] and GCC __attribute__(...) specifications
+	info.is_noreturn = skip_cpp_attributes_with_info().has_noreturn;
 	tryParseDeclspecSpecifiers(info);
 	info.calling_convention = parse_calling_convention(info.calling_convention);
 
@@ -2366,6 +2399,7 @@ Parser::AttributeInfo Parser::parse_attributes() {
 		if (more_info.is_selectany) {
 			info.is_selectany = true;
 		}
+		info.is_noreturn = info.is_noreturn || more_info.is_noreturn;
 	}
 
 	return info;

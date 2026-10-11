@@ -117,6 +117,9 @@ void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_vie
 
 		try {
 			switch (instruction.getOpcode()) {
+			case IrOpcode::Unreachable:
+				emitUnreachable(textSectionData);
+				break;
 			case IrOpcode::FunctionDecl:
 				FLASH_LOG(Codegen, Debug, "Processing IrOpcode::FunctionDecl");
 				handleFunctionDecl(instruction);
@@ -12837,8 +12840,7 @@ void IrToObjConverter<TWriterClass>::handleLoopBegin(const IrInstruction& instru
 	StringHandle loop_increment_label = op.loop_increment_label;
 
 		// Push loop context onto stack for break/continue handling
-	loop_context_stack_.push_back({loop_end_label,
-								   loop_increment_label});
+	loop_context_stack_.push_back({loop_end_label, loop_increment_label, op.kind});
 
 		// Flush all dirty registers at loop boundaries
 	flushAllDirtyRegisters();
@@ -12890,10 +12892,11 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleContinue(const IrInstruction& instruction) {
 		// Continue: unconditional jump to loop increment label
 	assert(instruction.getOperandCount() == 0 && "Continue must have 0 operands");
-	assert(!loop_context_stack_.empty() && "Continue must be inside a loop");
-
-	auto& loop_context = loop_context_stack_.back();
-	auto target_label = loop_context.loop_increment_label;
+	auto loop_context = std::find_if(loop_context_stack_.rbegin(), loop_context_stack_.rend(), [](const LoopContext& context) {
+		return context.kind == LoopConstructKind::Iteration;
+	});
+	assert(loop_context != loop_context_stack_.rend() && "Continue must be inside a loop");
+	auto target_label = loop_context->loop_increment_label;
 
 		// Flush all dirty registers before branching
 	flushAllDirtyRegisters();

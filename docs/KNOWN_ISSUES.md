@@ -1,24 +1,31 @@
 # Known Issues
 
-## Missing-return detection is a heuristic, not a control-flow diagnostic
+## SEH finally funclet termination is conservative in return-flow diagnostics
 
-A value-returning function that flows off its end — for example a user-declared
-copy-assignment operator with an empty body — is undefined behavior
-([stmt.return]). The compiler now warns and emits a bare return so the generated
-function cannot fall through into the next one and corrupt the caller's stack;
-before this, such a function had no return instruction and executing the
-assignment SIGSEGVed:
+The control-flow analysis models a Windows `SehFinallyCall` as a call that can
+return normally or throw to the active enclosing handler. It does not yet
+summarize its out-of-line `__finally` body. Consequently, a value-returning
+function whose finally body always throws, calls a `[[noreturn]]` function, or
+loops forever can receive a conservative missing-return warning. SEH is a
+target extension, separate from the C++20 try/catch paths that are analyzed
+directly. A future implementation should compute funclet return/throw summaries
+and use them at each invocation, preserving its individual continuation and
+exception context.
+
+## Member access on a directly list-initialized class prvalue is rejected
+
+The parser rejects a valid C++20 expression such as `S{}.f()` with "Expected
+identifier token". Reduced example:
 
 ```cpp
-struct S { S& operator=(const S&) noexcept(false) {} };
-int main() { S a{}; S b{}; a = b; return 0; }  // previously runtime SIGSEGV
+struct S { void f() {} };
+int main() { S{}.f(); }
 ```
 
-The diagnostic is only a heuristic: it fires when the last emitted instruction is
-not a return, so it also fires for valid functions whose every path returns
-through a branch or that never return at all. Reporting the missing return
-reliably — and deciding whether it should be a hard error rather than a warning —
-requires control-flow analysis over all paths, which is not implemented.
+The return-flow regressions use named objects to isolate control-flow metadata
+from this separate expression-parsing issue. Fixing it requires parsing a
+class prvalue primary expression followed by the ordinary postfix member-access
+chain, rather than special handling of a particular type or method name.
 
 ## WSL front end crashes while processing the libstdc++ `<typeinfo>` test
 

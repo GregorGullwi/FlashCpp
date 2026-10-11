@@ -887,6 +887,13 @@ int main_impl(int argc, char* argv[]) {
 		return exitCode(CompilerExitStatus::InternalFailure);
 	}
 
+	// Successful compilation still reports structured advisory diagnostics.
+	for (const Diagnostic& diagnostic : context.diagnostics().diagnostics()) {
+		if (diagnostic.severity == DiagnosticSeverity::Warning) {
+			std::cerr << renderDiagnostic(diagnostic, context.diagnostics(), lexer.file_paths()) << std::endl;
+		}
+	}
+
 	// Print final timing summary
 	printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, semantic_analysis_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
 

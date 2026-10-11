@@ -97,6 +97,7 @@ int AstToIr::getFunctionSignatureReturnSizeBits(const FunctionSignature& signatu
 }
 
 void AstToIr::populateIndirectCallReturnInfo(IndirectCallOp& call_op, const FunctionSignature& signature) {
+	call_op.applyFunctionSignatureControlFlow(signature);
 	const TypeSpecifierNode return_type = buildFunctionSignatureReturnType(signature);
 	call_op.return_type_index = getFunctionSignatureReturnTypeIndex(signature);
 	call_op.return_size_in_bits = SizeInBits{getFunctionSignatureReturnSizeBits(signature)};
@@ -1702,6 +1703,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		effective_return_type,
 		false,
 		false);
+	if (matched_func_decl) {
+		call_op.applyFunctionControlFlow(*matched_func_decl);
+	}
 
 	// Check if this is an indirect call (function pointer/reference)
 	call_op.is_indirect_call = callExprNode.callee().is_indirect();

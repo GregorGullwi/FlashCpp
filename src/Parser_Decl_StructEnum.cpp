@@ -2337,6 +2337,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// This also handles cases where specifiers precede 'static' or 'friend' in any order,
 		// e.g., "constexpr static int x = 42;" or "inline friend void foo() {}"
 		auto member_specs = parse_member_leading_specifiers();
+		if (leading_cpp_attributes.has_noreturn) {
+			member_specs |= FlashCpp::MLS_NoReturn;
+		}
 
 		// Check for 'friend' keyword - may appear after specifiers like constexpr/inline
 		if (peek() == "friend"_tok) {
@@ -3195,6 +3198,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				member_func_ref.set_namespace_handle(struct_parsing_context_stack_.back().namespace_handle);
 			}
 			member_func_ref.set_calling_convention(func_decl.calling_convention());
+			member_func_ref.set_is_noreturn(func_decl.is_noreturn());
 			for (const auto& param : func_decl.parameter_nodes()) {
 				member_func_ref.add_parameter_node(param);
 			}
@@ -3203,6 +3207,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			member_func_ref.set_is_constexpr(member_specs & FlashCpp::MLS_Constexpr);
 			member_func_ref.set_is_consteval(member_specs & FlashCpp::MLS_Consteval);
 			member_func_ref.set_is_inline(member_specs & FlashCpp::MLS_Inline);
+			if (member_specs & FlashCpp::MLS_NoReturn) {
+				member_func_ref.set_is_noreturn(true);
+			}
 			member_func_ref.set_is_explicit(static_cast<bool>(member_specs & FlashCpp::MLS_Explicit));
 
 			// Use unified trailing specifiers parsing (Phase 2)

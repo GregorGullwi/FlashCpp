@@ -366,6 +366,7 @@ void AstToIr::visitSwitchStatementNode(const SwitchStatementNode& node) {
 	loop_begin.loop_start_label = switch_end_label;
 	loop_begin.loop_end_label = switch_end_label;
 	loop_begin.loop_increment_label = switch_end_label;
+	loop_begin.kind = LoopConstructKind::Switch;
 	ir_.addInstruction(IrInstruction(IrOpcode::LoopBegin, std::move(loop_begin), Token()));
 
 	ActiveSwitchContext switch_context;

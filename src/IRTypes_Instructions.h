@@ -183,6 +183,9 @@ public:
 			oss << formatConversionOp("trunc", getTypedPayload<ConversionOp>(), local_debug_names);
 			break;
 
+		case IrOpcode::Unreachable:
+			oss << "unreachable";
+			break;
 		case IrOpcode::Return: {
 			const auto& op = getTypedPayload<ReturnOp>();
 			oss << "ret ";

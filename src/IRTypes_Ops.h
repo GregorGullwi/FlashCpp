@@ -523,6 +523,30 @@ struct CondBranchOp {
 };
 
 // Function call
+enum class IrCallFlowFlags : uint8_t {
+	None = 0,
+	NoNormalReturn = 1u << 0,
+	NoThrow = 1u << 1,
+};
+
+constexpr IrCallFlowFlags operator|(IrCallFlowFlags lhs, IrCallFlowFlags rhs) {
+	return static_cast<IrCallFlowFlags>(static_cast<uint8_t>(lhs) | static_cast<uint8_t>(rhs));
+}
+
+constexpr uint8_t operator|(uint8_t lhs, IrCallFlowFlags rhs) {
+	return static_cast<uint8_t>(lhs | static_cast<uint8_t>(rhs));
+}
+
+constexpr uint8_t& operator|=(uint8_t& lhs, IrCallFlowFlags rhs) {
+	lhs = lhs | rhs;
+	return lhs;
+}
+
+inline uint8_t functionCallFlowFlags(const FunctionDeclarationNode& function) {
+	return static_cast<uint8_t>((function.is_noreturn() ? static_cast<uint8_t>(IrCallFlowFlags::NoNormalReturn) : 0) |
+		(function.is_noexcept() ? static_cast<uint8_t>(IrCallFlowFlags::NoThrow) : 0));
+}
+
 struct CallOp {
 	StringHandle function_name;	// Pure StringHandle
 	std::vector<TypedValue> args;		  // 24 bytes (using TypedValue instead of CallArg)
@@ -530,6 +554,7 @@ struct CallOp {
 	SizeInBits return_size_in_bits;				// 4 bytes
 	SizeInBits referenced_value_size_in_bits{}; // Referenced object size for T&/T&& returns
 	TypeIndex return_type_index{};	   // TypeCategory embedded; replaces Type return_type
+	uint8_t control_flow_flags = static_cast<uint8_t>(IrCallFlowFlags::None);
 
 	TypeCategory returnType() const { return return_type_index.category(); }
 	bool is_member_function = false;		 // 1 byte
@@ -544,6 +569,15 @@ struct CallOp {
 	// Helper to get function_name as StringHandle
 	StringHandle getFunctionName() const {
 		return function_name;
+	}
+	bool hasNormalReturn() const {
+		return (control_flow_flags & static_cast<uint8_t>(IrCallFlowFlags::NoNormalReturn)) == 0;
+	}
+	bool mayThrow() const {
+		return (control_flow_flags & static_cast<uint8_t>(IrCallFlowFlags::NoThrow)) == 0;
+	}
+	void applyFunctionControlFlow(const FunctionDeclarationNode& function) {
+		control_flow_flags = functionCallFlowFlags(function);
 	}
 
 	// Helper to check if using hidden return parameter for RVO
@@ -753,6 +787,13 @@ struct DestructorCallOp {
 
 // Virtual function call through vtable
 struct VirtualCallOp {
+	uint8_t control_flow_flags = static_cast<uint8_t>(IrCallFlowFlags::None);
+	bool hasNormalReturn() const {
+		return (control_flow_flags & static_cast<uint8_t>(IrCallFlowFlags::NoNormalReturn)) == 0;
+	}
+	bool mayThrow() const {
+		return (control_flow_flags & static_cast<uint8_t>(IrCallFlowFlags::NoThrow)) == 0;
+	}
 	TypedValue result;							   // Return value (type, size, and result temp var)
 	TypeIndex object_type_index{};				   // Type of the object (TypeCategory embedded)
 	TypeCategory objectType() const { return object_type_index.category(); }
@@ -803,11 +844,17 @@ struct AssignmentOp {
 	bool propagate_rhs_address_metadata = false;	// True when an explicit address copy must preserve indirect storage metadata
 };
 
-// Loop begin (marks loop start with labels for break/continue)
+enum class LoopConstructKind : uint8_t {
+	Iteration,
+	Switch
+};
+
+// Loop begin (marks a breakable construct with labels for break/continue)
 struct LoopBeginOp {
 	StringHandle loop_start_label;					   // Label for loop start
 	StringHandle loop_end_label;						 // Label for break
 	StringHandle loop_increment_label;				   // Label for continue
+	LoopConstructKind kind = LoopConstructKind::Iteration;
 };
 
 // Function parameter information
@@ -1090,9 +1137,19 @@ struct IndirectCallOp {
 	bool use_return_slot = false;
 	bool returns_reference = false;
 	bool returns_rvalue_reference = false;
+	uint8_t control_flow_flags = static_cast<uint8_t>(IrCallFlowFlags::None);
 
 	TypeCategory returnType() const { return return_type_index.category(); }
 	bool usesReturnSlot() const { return use_return_slot; }
+	bool hasNormalReturn() const { return true; }
+	bool mayThrow() const {
+		return (control_flow_flags & static_cast<uint8_t>(IrCallFlowFlags::NoThrow)) == 0;
+	}
+	void applyFunctionSignatureControlFlow(const FunctionSignature& signature) {
+		if (signature.is_noexcept) {
+			control_flow_flags |= IrCallFlowFlags::NoThrow;
+		}
+	}
 };
 
 // Catch block begin marker

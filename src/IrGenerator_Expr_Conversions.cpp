@@ -42,6 +42,12 @@ ExprResult AstToIr::emitNonZeroBoolValue(ExprResult operand, const Token& source
 			operand.effectiveIrType() == IrType::MemberObjectPointer ? ~0ULL : 0ULL)
 		: makeTypedValue(operand.typeEnum(), test_size_bits, 0ULL);
 
+	if (const auto* value = std::get_if<unsigned long long>(&lhs.value)) {
+		const auto zero = std::get<unsigned long long>(rhs.value);
+		return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{static_cast<unsigned long long>(*value != zero)},
+			PointerDepth{}, ValueStorage::ContainsData);
+	}
+
 	TempVar result_var = var_counter.next();
 	BinaryOp bin_op{
 		.lhs = lhs,
@@ -1891,6 +1897,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 
 				TempVar ret_var = var_counter.next();
 				CallOp call_op = createCallOp(ret_var, mangled_name, return_type, true, false);
+				call_op.applyFunctionControlFlow(func_decl);
 				if (needsHiddenReturnParam(return_type, context_->isLLP64())) {
 					call_op.return_slot = ret_var;
 				}
@@ -2450,6 +2457,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 
 	TempVar ret_var = var_counter.next();
 	CallOp call_op = createCallOp(ret_var, mangled_name, return_type, true, false);
+	call_op.applyFunctionControlFlow(func_decl);
 
 	// Detect if returning struct by value (needs hidden return parameter for RVO).
 	// SysV MEMORY-class and oversized aggregates use a return_slot; register-class returns do not.
@@ -2851,6 +2859,10 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 	}
 
 	auto emitFloatNonZeroTest = [&](ExprResult cond) -> ExprResult {
+		if (const auto* value = std::get_if<double>(&cond.value)) {
+			return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{static_cast<unsigned long long>(*value != 0.0)},
+				PointerDepth{}, ValueStorage::ContainsData);
+		}
 		// Materialize a 0.0 constant with the same float type as the condition.
 		// The caller guarantees cond.typeEnum() is Float or Double.
 		ExprResult zero = makeExprResult(nativeTypeIndex(cond.typeEnum()), cond.size_in_bits, IrOperand{0.0}, PointerDepth{}, ValueStorage::ContainsData);

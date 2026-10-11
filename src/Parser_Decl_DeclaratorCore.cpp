@@ -758,6 +758,7 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 
 	// Parse the identifier (name) or operator overload
 	Token identifier_token;
+	bool has_noreturn_attribute = false;
 
 	// Check for operator overload (e.g., operator=, operator())
 	if (peek() == "operator"_tok) {
@@ -779,7 +780,7 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 
 		// Skip any C++ attributes like [[nodiscard]] that may appear after the operator name
 		// but before the parameter list (e.g., operator() [[nodiscard]] (args))
-		skip_cpp_attributes();
+		has_noreturn_attribute = skip_cpp_attributes_with_info().has_noreturn;
 	} else {
 		// Regular identifier (or unnamed parameter)
 		// First, skip any specifiers that may appear after the return type but before the identifier
@@ -881,8 +882,8 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 		}
 	}
 
-	// Skip C++ attributes after identifier (e.g., func_name [[nodiscard]] (params))
-	skip_cpp_attributes();
+	// Preserve function attributes between the declarator-id and parameter list.
+	has_noreturn_attribute |= skip_cpp_attributes_with_info().has_noreturn;
 
 	// Check for array declaration: identifier[size] or identifier[size1][size2]...
 	std::vector<ASTNode> array_dimensions;
@@ -969,6 +970,9 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 		// Apply custom alignment if specified
 		if (custom_alignment.has_value()) {
 			decl_node.as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
+		}
+		if (has_noreturn_attribute) {
+			decl_node.as<DeclarationNode>().set_noreturn_attribute(true);
 		}
 		if (asm_symbol_name.has_value()) {
 			decl_node.as<DeclarationNode>().set_mangled_name(*asm_symbol_name);
@@ -2461,6 +2465,7 @@ FlashCpp::DeclarationSpecifiers Parser::parse_declaration_specifiers() {
 			specs.calling_convention = attributes.calling_convention;
 		}
 		specs.is_selectany |= attributes.is_selectany;
+		specs.is_noreturn |= attributes.is_noreturn;
 	};
 	auto tryParseMsvcDeclspec = [&]() {
 		AttributeInfo attributes;

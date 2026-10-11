@@ -3,6 +3,12 @@
 
 inline constexpr uint8_t kWindowsStackProbePrefixSize = 11;
 
+inline void emitUnreachable(std::vector<uint8_t>& code) {
+	// UD2 confines execution of an explicitly unreachable path to a trap.
+	code.push_back(0x0F);
+	code.push_back(0x0B);
+}
+
 inline void emitWindowsStackProbePlaceholder(std::vector<uint8_t>& code) {
 	// Two multi-byte NOPs reserve MOV R11D, imm32; CALL rel32. Small frames
 	// execute only these NOPs, without a branch or a runtime helper call.

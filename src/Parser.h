@@ -1926,6 +1926,7 @@ private:
 	std::vector<TypeSpecifierNode> apply_lvalue_reference_deduction(const ChunkedVector<ASTNode>& args, std::span<const TypeSpecifierNode> arg_types);  // For template deduction: marks lvalue args with lvalue_reference for T&& forwarding
 	struct CppAttributeInfo {
 		bool has_no_unique_address = false;
+		bool has_noreturn = false;
 	};
 	FlashCpp::MemberLeadingSpecifiers parse_member_leading_specifiers();	 // Consume constexpr/consteval/inline/explicit/virtual before a member
 	CppAttributeInfo consume_cpp_attribute_blocks();	 // Consume consecutive [[...]] blocks and return detected flags
@@ -4480,6 +4481,7 @@ private:	 // Resume private methods
 		Linkage linkage = Linkage::None;
 		CallingConvention calling_convention = CallingConvention::Default;
 		bool is_selectany = false;
+		bool is_noreturn = false;
 	};
 
 	// Attribute handling

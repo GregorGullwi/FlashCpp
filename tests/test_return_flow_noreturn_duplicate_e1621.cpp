@@ -1,0 +1,1 @@
+[[noreturn, noreturn]] void stop();
