@@ -441,21 +441,26 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			// Parse the initializer expression
 			auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (init_result.is_error() || !init_result.node().has_value()) {
-				FLASH_LOG(Parser, Error, "Failed to parse initializer for static member variable '",
-						  class_name.view(), "::", function_name_token.value(), "'");
-				return error(DiagnosticId::UnexpectedToken, function_name_token, "Unexpected token");
+				return error(DiagnosticId::StaticMemberInitializerMalformed, function_name_token,
+					StringBuilder()
+						.append("Failed to parse the initializer for static member variable '")
+						.append(class_name.view())
+						.append("::")
+						.append(function_name_token.value())
+						.append("'")
+						.commit());
 			}
 
 			// Expect closing parenthesis
 			if (!consume(")"_tok)) {
-				FLASH_LOG(Parser, Error, "Expected ')' after static member variable initializer");
-				return error(DiagnosticId::UnexpectedToken, peek_info(), "Unexpected token");
+				return error(DiagnosticId::ExpectedCloseParenAfterStaticMemberInitializer, peek_info(),
+					"Expected ')' after the static member variable initializer");
 			}
 
 			// Expect semicolon
 			if (!consume(";"_tok)) {
-				FLASH_LOG(Parser, Error, "Expected ';' after static member variable definition");
-				return error(DiagnosticId::UnexpectedToken, peek_info(), "Unexpected token");
+				return error(DiagnosticId::MissingSemicolon, peek_info(),
+					"Expected ';' after static member variable definition");
 			}
 
 			return finalize_static_member_init(static_member, *init_result.node(), decl_node, function_name_token, saved_position);
@@ -485,8 +490,8 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 
 			// Expect semicolon
 			if (!consume(";"_tok)) {
-				FLASH_LOG(Parser, Error, "Expected ';' after static member variable brace initializer");
-				return error(DiagnosticId::UnexpectedToken, peek_info(), "Unexpected token");
+				return error(DiagnosticId::MissingSemicolon, peek_info(),
+					"Expected ';' after static member variable brace initializer");
 			}
 
 			// Finalize the static member initializer (handling empty brace-init) and return the variable node
@@ -505,15 +510,20 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				return init_result;
 			}
 			if (!init_result.node().has_value()) {
-				FLASH_LOG(Parser, Error, "Failed to parse initializer for static member variable '",
-						  class_name.view(), "::", function_name_token.value(), "'");
-				return error(DiagnosticId::UnexpectedToken, function_name_token, "Unexpected token");
+				return error(DiagnosticId::StaticMemberInitializerMalformed, function_name_token,
+					StringBuilder()
+						.append("Failed to parse the initializer for static member variable '")
+						.append(class_name.view())
+						.append("::")
+						.append(function_name_token.value())
+						.append("'")
+						.commit());
 			}
 
 			// Expect semicolon
 			if (!consume(";"_tok)) {
-				FLASH_LOG(Parser, Error, "Expected ';' after static member variable definition");
-				return error(DiagnosticId::UnexpectedToken, peek_info(), "Unexpected token");
+				return error(DiagnosticId::MissingSemicolon, peek_info(),
+					"Expected ';' after static member variable definition");
 			}
 
 			return finalize_static_member_init(static_member, init_result.node(), decl_node, function_name_token, saved_position);
@@ -697,9 +707,8 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 
 			// Parse function body
 			if (peek() != "{"_tok && peek() != "try"_tok) {
-				FLASH_LOG(Parser, Error, "Expected '{' or ';' after function declaration, got: '",
-						  (!peek().is_eof() ? std::string(peek_info().value()) : "<EOF>"), "'");
-				return error(DiagnosticId::UnexpectedToken, peek_info(), "Unexpected token");
+				return error(DiagnosticId::ExpectedFunctionBodyOrSemicolon, peek_info(),
+					"Expected '{' or ';' after a function declaration");
 			}
 
 			// Parse body using delayed parsing (skip_function_body handles try-blocks too).
@@ -774,9 +783,8 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 
 		// Parse function body
 		if (peek() != "{"_tok && peek() != "try"_tok) {
-			FLASH_LOG(Parser, Error, "Expected '{' or ';' after function declaration, got: '",
-					  (!peek().is_eof() ? std::string(peek_info().value()) : "<EOF>"), "'");
-			return error(DiagnosticId::UnexpectedToken, peek_info(), "Unexpected token");
+			return error(DiagnosticId::ExpectedFunctionBodyOrSemicolon, peek_info(),
+				"Expected '{' or ';' after a function declaration");
 		}
 
 		// FunctionParsingScopeGuard owns all per-function entry/exit work:

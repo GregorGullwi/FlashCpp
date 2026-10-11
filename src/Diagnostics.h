@@ -94,6 +94,9 @@ enum class DiagnosticId : uint32_t {
 	OutOfLineDefinitionNotAClass = 1025,
 	OutOfLineDefinitionNotAFunction = 1026,
 	OutOfLineDefinitionAlreadyDefined = 1027,
+	StaticMemberInitializerMalformed = 1028,
+	ExpectedFunctionBodyOrSemicolon = 1029,
+	ExpectedCloseParenAfterStaticMemberInitializer = 1030,
 
 	// Notes attached to declarator-family diagnostics (1051..1079).
 	NoteToMatchOpeningBracket = 1051,
@@ -290,6 +293,12 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "OutOfLineDefinitionNotAFunction";
 	case DiagnosticId::OutOfLineDefinitionAlreadyDefined:
 		return "OutOfLineDefinitionAlreadyDefined";
+	case DiagnosticId::StaticMemberInitializerMalformed:
+		return "StaticMemberInitializerMalformed";
+	case DiagnosticId::ExpectedFunctionBodyOrSemicolon:
+		return "ExpectedFunctionBodyOrSemicolon";
+	case DiagnosticId::ExpectedCloseParenAfterStaticMemberInitializer:
+		return "ExpectedCloseParenAfterStaticMemberInitializer";
 	case DiagnosticId::NoteToMatchOpeningBracket:
 		return "NoteToMatchOpeningBracket";
 	case DiagnosticId::HexFloatRequiresBinaryExponent:
