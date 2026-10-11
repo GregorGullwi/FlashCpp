@@ -212,6 +212,7 @@ public:
 	// identity as sema while keeping the primary canonicalizeType helper private.
 	CanonicalTypeId canonicalizeTypeForImplicitConversion(const TypeSpecifierNode& type);
 	bool isMemberObjectPointerType(CanonicalTypeId type_id) const;
+	bool isMemberFunctionPointerType(CanonicalTypeId type_id) const;
 	// Build the type/category view used specifically for overload-resolution arguments.
 	// Unlike getExpressionType(), this preserves overload-sensitive lvalue/xvalue details
 	// such as prvalue member access becoming an xvalue.

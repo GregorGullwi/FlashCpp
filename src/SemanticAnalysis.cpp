@@ -5863,7 +5863,12 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 			throw InternalError(
 				"semantic canonicalization rejected ordered declarator");
 		}
-		if (!resolved_syntax.ordered_declarator_has_legacy_projection()) {
+		const bool has_member_function_pointer = std::ranges::any_of(
+			resolved_syntax.declarator_components(),
+			[](const DeclaratorComponent& component) {
+				return component.kind == DeclaratorComponentKind::MemberFunctionPointer;
+			});
+		if (!resolved_syntax.ordered_declarator_has_legacy_projection() || has_member_function_pointer) {
 			desc.structural_type_id = *imported;
 		}
 		// [dcl.ptr]/1: a pointer whose immediate pointee is an array designates
@@ -5898,6 +5903,23 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 			const CanonicalTypeImport imported = importCanonicalType(canonical_types, syntax);
 			if (imported.status == CanonicalTypeImportStatus::Supported) {
 				desc.structural_type_id = imported.type;
+			}
+		}
+	}
+	if (!type.has_ordered_declarator() && (type.is_member_function_pointer() || (type.has_member_class() && type.has_function_signature()))) {
+		TypeSpecifierNode syntax = type;
+		tryBindPublishedMemberClassEntity(syntax);
+		if (syntax.has_member_class_entity() || syntax.has_member_class_type_id()) {
+			CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+			const CanonicalTypeImport imported = importCanonicalType(canonical_types, syntax);
+			if (imported.status == CanonicalTypeImportStatus::Supported) {
+				CanonicalTypeNode imported_node = canonical_types.node(imported.type);
+				while (imported_node.kind == CanonicalTypeKind::Qualified && imported_node.child) {
+					imported_node = canonical_types.node(imported_node.child);
+				}
+				if (imported_node.kind == CanonicalTypeKind::MemberFunctionPointer) {
+					desc.structural_type_id = imported.type;
+				}
 			}
 		}
 	}
@@ -5942,6 +5964,25 @@ bool SemanticAnalysis::isMemberObjectPointerType(CanonicalTypeId type_id) const 
 	while (node.kind == CanonicalTypeKind::Qualified && node.child)
 		node = table.node(node.child);
 	return node.kind == CanonicalTypeKind::MemberObjectPointer;
+}
+
+bool SemanticAnalysis::isMemberFunctionPointerType(CanonicalTypeId type_id) const {
+	if (!type_id) {
+		return false;
+	}
+	const CanonicalTypeDesc& desc = type_context_.get(type_id);
+	if (desc.category() == TypeCategory::MemberFunctionPointer) {
+		return true;
+	}
+	if (!desc.structural_type_id) {
+		return false;
+	}
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	CanonicalTypeNode node = table.node(desc.structural_type_id);
+	while (node.kind == CanonicalTypeKind::Qualified && node.child) {
+		node = table.node(node.child);
+	}
+	return node.kind == CanonicalTypeKind::MemberFunctionPointer;
 }
 
 std::optional<SemanticSlot> SemanticAnalysis::getSlot(const void* key) const {
@@ -7151,8 +7192,7 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 	const CanonicalTypeImport target_import =
 		tryImportCanonicalTypeDesc(target_desc);
 	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
-	const bool target_is_member_function_pointer =
-		target_desc.category() == TypeCategory::MemberFunctionPointer ||
+	const bool target_is_member_function_pointer = isMemberFunctionPointerType(target_type_id) ||
 		resolved_target_alias.typeEnum() == TypeCategory::MemberFunctionPointer;
 	const FunctionSignature* target_signature =
 		target_desc.function_signature.has_value()
@@ -10291,6 +10331,7 @@ bool SemanticAnalysis::annotateConversionImpl(
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
 	const bool target_is_member_object_pointer = isMemberObjectPointerType(target_type_id);
+	const bool target_is_member_function_pointer = isMemberFunctionPointerType(target_type_id);
 	auto select_conversion_operator = [this, use_type_ids](
 		TypeIndex source_type_index, CVQualifier source_cv,
 		const TypeSpecifierNode& target_type, CanonicalTypeId source_type_id)
@@ -10342,8 +10383,8 @@ bool SemanticAnalysis::annotateConversionImpl(
 		 isIntegerLiteralZeroNullPointerConstant(expr_node)) &&
 		(!to_desc.pointer_levels.empty() ||
 		 to_desc.category() == TypeCategory::FunctionPointer ||
-		 to_desc.category() == TypeCategory::MemberFunctionPointer ||
-		 to_desc.category() == TypeCategory::MemberObjectPointer)) {
+		 isMemberFunctionPointerType(target_type_id) ||
+		 isMemberObjectPointerType(target_type_id))) {
 		SemanticSlot slot;
 		slot.type_id = target_type_id;
 		slot.cast_info_index = allocateNonUserDefinedCastInfo(expr_type_id, target_type_id, StandardConversionKind::PointerConversion);
@@ -10551,7 +10592,7 @@ bool SemanticAnalysis::annotateConversionImpl(
 			const TypeIndex source_type_index = from_desc.type_index;
 			const CVQualifier source_cv = from_desc.base_cv;
 			const TypeIndex target_type_index = to_desc.type_index;
-			const TypeCategory target_category = to_desc.category();
+			const TypeCategory target_category = target_is_member_function_pointer ? TypeCategory::MemberFunctionPointer : to_desc.category();
 			const bool target_has_indirection = !to_desc.pointer_levels.empty() || !to_desc.array_dimensions.empty();
 			materializeExactTargetLazyConversionOperators(source_type_index, source_cv, target_type_index, target_category, target_has_indirection, *this);
 			const TypeSpecifierNode nominal_target = materializeTypeSpecifier(type_context_.get(target_type_id));
@@ -10585,17 +10626,19 @@ bool SemanticAnalysis::annotateConversionImpl(
 	if (from_desc.category() == TypeCategory::Struct &&
 		(is_builtin_type(to_desc.category()) ||
 			to_desc.category() == TypeCategory::Enum ||
-			target_is_member_object_pointer) &&
+			target_is_member_object_pointer ||
+			target_is_member_function_pointer) &&
 		from_desc.pointer_levels.empty() &&
 		from_desc.array_dimensions.empty() &&
-		(target_is_member_object_pointer || to_desc.pointer_levels.empty()) &&
+		(target_is_member_object_pointer || target_is_member_function_pointer ||
+		 to_desc.pointer_levels.empty()) &&
 		to_desc.array_dimensions.empty() &&
 		from_desc.ref_qualifier == ReferenceQualifier::None &&
 		to_desc.ref_qualifier == ReferenceQualifier::None) {
 		const TypeIndex source_type_index = from_desc.type_index;
 		const CVQualifier source_cv = from_desc.base_cv;
 		const TypeIndex target_type_index = to_desc.type_index;
-		const TypeCategory target_category = to_desc.category();
+		const TypeCategory target_category = target_is_member_function_pointer ? TypeCategory::MemberFunctionPointer : to_desc.category();
 		const bool target_has_indirection = !to_desc.pointer_levels.empty() || !to_desc.array_dimensions.empty();
 		materializeExactTargetLazyConversionOperators(source_type_index, source_cv, target_type_index, target_category, target_has_indirection, *this);
 		const TypeSpecifierNode target_type = materializeTypeSpecifier(type_context_.get(target_type_id));
@@ -10621,7 +10664,7 @@ bool SemanticAnalysis::annotateConversionImpl(
 		!from_desc.array_dimensions.empty() ||
 		from_desc.category() == TypeCategory::FunctionPointer ||
 		isMemberObjectPointerType(expr_type_id) ||
-		from_desc.category() == TypeCategory::MemberFunctionPointer;
+		isMemberFunctionPointerType(expr_type_id);
 	if (boolean_target && boolean_convertible_source) {
 		ImplicitCastInfo cast_info;
 		cast_info.source_type_id = expr_type_id;
@@ -10783,7 +10826,7 @@ bool SemanticAnalysis::annotateConversionImpl(
 			stripped_resolved_tidx = nativeTypeIndex(stripped_resolved_category);
 		if (plan2.rank == ConversionRank::UserDefined) {
 			if (stripped_resolved_category != TypeCategory::Struct || !stripped_resolved_tidx.is_valid()) return false;
-			const TypeCategory target_category = to_desc.category();
+			const TypeCategory target_category = target_is_member_function_pointer ? TypeCategory::MemberFunctionPointer : to_desc.category();
 			const bool target_has_indirection = !to_desc.pointer_levels.empty() || !to_desc.array_dimensions.empty();
 			materializeExactTargetLazyConversionOperators(stripped_resolved_tidx, stripped_desc.base_cv, to_desc.type_index, target_category,
 				target_has_indirection, *this);
@@ -10836,7 +10879,7 @@ bool SemanticAnalysis::annotateConversionImpl(
 		if (!source_type_index.is_valid()) return false;
 		const CVQualifier source_cv = from_desc.base_cv;
 		const TypeIndex target_type_index = to_desc.type_index;
-		const TypeCategory target_category = to_desc.category();
+		const TypeCategory target_category = target_is_member_function_pointer ? TypeCategory::MemberFunctionPointer : to_desc.category();
 		const bool target_has_indirection = !to_desc.pointer_levels.empty() || !to_desc.array_dimensions.empty();
 		materializeExactTargetLazyConversionOperators(source_type_index, source_cv, target_type_index, target_category, target_has_indirection, *this);
 		const TypeSpecifierNode target_type = materializeTypeSpecifier(type_context_.get(target_type_id));
@@ -11535,7 +11578,7 @@ void SemanticAnalysis::tryAnnotateContextualBool(const ASTNode& expr_node) {
 	const bool is_enum = (from_desc.category() == TypeCategory::Enum);
 	const bool is_pointer = !from_desc.pointer_levels.empty() ||
 		isMemberObjectPointerType(expr_type_id) ||
-		from_desc.category() == TypeCategory::MemberFunctionPointer;
+		isMemberFunctionPointerType(expr_type_id);
 	if (!is_enum && !is_pointer)
 		return;
 
