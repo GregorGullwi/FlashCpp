@@ -6001,6 +6001,8 @@ inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(TypeIndex type_index) {
 	return TypeSpecifierNode(effective_type, TypeQualifier::None, size_bits, Token{}, CVQualifier::None);
 }
 
+inline TypeId canonicalSelfReferenceClassType(CanonicalTypeTable& table, TypeId type);
+
 inline TypeSpecifierNode resolveTypeSpecifierForSelfReference(const TypeSpecifierNode& type_spec, TypeId enclosing_type_id) {
 	if (!enclosing_type_id) {
 		return type_spec;
@@ -6009,22 +6011,52 @@ inline TypeSpecifierNode resolveTypeSpecifierForSelfReference(const TypeSpecifie
 	if (context == nullptr) {
 		return type_spec;
 	}
-	const TypeInfo* const owner_type_info = tryFindCanonicalOverloadClassTypeInfo(context->canonicalTypes(), enclosing_type_id);
+	CanonicalTypeTable& table = context->canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const TypeId owner_class_type = canonicalSelfReferenceClassType(table, enclosing_type_id);
+	TypeSpecifierNode canonical_parameter = type_spec;
+	tryBindPublishedTypeEntity(canonical_parameter);
+	const CanonicalTypeImport parameter_import = importCanonicalOverloadNominalType(table, canonical_parameter);
+	if (parameter_import.status != CanonicalTypeImportStatus::Supported) {
+		return type_spec;
+	}
+	const TypeId parameter_class_type = canonicalSelfReferenceClassType(table, parameter_import.type);
+	const CanonicalTypeNode owner_node = table.node(owner_class_type);
+	const CanonicalTypeNode parameter_node = table.node(parameter_class_type);
+	bool is_current_instantiation = parameter_class_type == owner_class_type;
+	if (!is_current_instantiation && type_spec.has_injected_class_declaration()) {
+		const StructDeclarationNode* injected_declaration = type_spec.injected_class_declaration();
+		const StructDeclarationNode* pattern_declaration =
+			injected_declaration->injected_class_pattern_declaration() != nullptr
+				? injected_declaration->injected_class_pattern_declaration()
+				: injected_declaration;
+		if (owner_node.kind == CanonicalTypeKind::Record && parameter_node.kind == CanonicalTypeKind::Record && pattern_declaration->has_entity_id()) {
+			const EntityId pattern_entity = pattern_declaration->entity_id();
+			is_current_instantiation = table.recordEntity(parameter_class_type) == pattern_entity &&
+				table.recordEntity(owner_class_type) == pattern_entity;
+		} else if (owner_node.kind == CanonicalTypeKind::TemplateSpecialization && parameter_node.kind == CanonicalTypeKind::Record &&
+			pattern_declaration->has_template_decl_id() && pattern_declaration->has_entity_id()) {
+			is_current_instantiation = table.templateSpecializationDecl(owner_class_type) == pattern_declaration->template_decl_id() &&
+				table.recordEntity(parameter_class_type) == pattern_declaration->entity_id();
+		}
+	}
+	if (!is_current_instantiation) {
+		return type_spec;
+	}
+	const TypeInfo* const owner_type_info = tryFindCanonicalOverloadClassTypeInfo(table, owner_class_type);
 	if (owner_type_info == nullptr) {
 		return type_spec;
 	}
-	const TypeIndex enclosing_type_index = owner_type_info->registeredTypeIndex();
-	if (!enclosing_type_index.is_valid() || !type_spec.type_index().is_valid()) {
+	const TypeIndex owner_type_index = owner_type_info->registeredTypeIndex();
+	if (!owner_type_index.is_valid()) {
 		return type_spec;
 	}
+	transaction.commit();
 	TypeSpecifierNode resolved = type_spec;
-	const TypeIndex parameter_type_index = resolved.type_index();
-	const TypeIndex resolved_type_index = resolveSelfRefParamIndex(parameter_type_index, enclosing_type_index, resolved.injected_class_declaration());
-	if (resolved_type_index != parameter_type_index) {
-		resolved.clear_type_entity();
-		resolved.clear_template_specialization();
-		resolved.set_type_index(resolved_type_index.withCategory(TypeCategory::Struct));
-	}
+	resolved.clear_type_entity();
+	resolved.clear_injected_class_declaration();
+	resolved.clear_template_specialization();
+	resolved.set_type_index(owner_type_index.withCategory(TypeCategory::Struct));
 	return resolved;
 }
 
@@ -6090,6 +6122,21 @@ inline ConversionRank rankBinaryOperatorOperandMatch(const TypeSpecifierNode& ar
 	CanonicalTypeTransaction transaction(table);
 	const TypeId enclosing_type_id = tryGetCanonicalOverloadClassTypeId(table, enclosing_type_spec);
 	return rankBinaryOperatorOperandMatch(arg_spec, param_spec, enclosing_type_id, argument_node);
+}
+
+inline TypeId canonicalSelfReferenceClassType(CanonicalTypeTable& table, TypeId type) {
+	while (type) {
+		type = table.withoutTopLevelQualifiers(type);
+		const CanonicalTypeNode node = table.node(type);
+		if (node.kind == CanonicalTypeKind::LValueReference ||
+			node.kind == CanonicalTypeKind::RValueReference ||
+			node.kind == CanonicalTypeKind::Pointer || node.kind == CanonicalTypeKind::Array) {
+			type = node.child;
+			continue;
+		}
+		return type;
+	}
+	return {};
 }
 
 inline ConversionRank rankImplicitObjectToOperator(const TypeSpecifierNode& object_spec, const StructMemberFunction& member_func,
