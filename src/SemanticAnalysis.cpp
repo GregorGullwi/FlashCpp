@@ -3487,7 +3487,7 @@ void SemanticAnalysis::normalizeTopLevelNode(const ASTNode& node) {
 				TypeSpecifierNode declared_type = vtype.as<TypeSpecifierNode>();
 				applyDeclarationArrayBoundsToTypeSpec(decl, declared_type, *this);
 				const CanonicalTypeId decl_type_id = canonicalizeType(declared_type);
-				if (decl_type_id) {
+				if (decl_type_id && isMemberFunctionPointerType(decl_type_id)) {
 					checkMemberFunctionAddressAccessForTarget(*init, decl_type_id);
 				}
 			}
