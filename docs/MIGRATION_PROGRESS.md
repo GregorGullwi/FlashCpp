@@ -130,11 +130,13 @@ Continue boundary 3A in this order.
    function, including the cv-ranked choice for a reference-qualified source.
    Its residual tail also handles class aliases by value, and its
    reference-stripped path records the selected operator for class aliases.
-   The TypeId selector still reads candidate declarations from
-   `StructTypeInfo`; remaining work is to remove compatibility selection where
-   canonical import and declaration publication can cover the source, finish
-   unsupported callable and user-defined constructor ranking, and migrate the
-   remaining TypeIndex self-reference callers. Class-target
+   Ordered declarator compatibility ranking now compares base identities with
+   canonical `TypeId`s whenever both bases import, retaining `TypeIndex` only
+   when the canonical importer cannot identify a base. The TypeId selector
+   still reads candidate declarations from `StructTypeInfo`; remaining work is
+   to remove compatibility selection where canonical import and declaration
+   publication can cover the source, and finish unsupported callable and
+   user-defined constructor ranking. Class-target
    variable initialization now consumes exact prvalue conversion selections
    for copy-initialization and parenthesized direct-initialization, constructing
    into the declared object.
