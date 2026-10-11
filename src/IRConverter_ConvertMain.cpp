@@ -9225,6 +9225,54 @@ StringHandle IrToObjConverter<TWriterClass>::getOrCreateCatchContinuationFixupLa
 }
 
 template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::emitCopyIndirectValueToReturnSlot(
+	int32_t src_pointer_offset, int32_t struct_size_bits) {
+	auto return_slot_it = variable_scopes.back().variables.find(
+		StringTable::getOrInternStringHandle("__return_slot"));
+	if (return_slot_it == variable_scopes.back().variables.end()) {
+		return;
+	}
+	const int32_t return_slot_param_offset = return_slot_it->second.offset;
+	const int struct_size_bytes = struct_size_bits / 8;
+	X64Register src_reg = allocateRegisterWithSpilling();
+	emitMovFromFrame(src_reg, src_pointer_offset);
+	X64Register dest_reg = allocateRegisterWithSpilling();
+	emitMovFromFrame(dest_reg, return_slot_param_offset);
+	X64Register temp_reg = allocateRegisterWithSpilling();
+	int bytes_copied = 0;
+	while (bytes_copied + 8 <= struct_size_bytes) {
+		emitMovFromMemory(temp_reg, src_reg, bytes_copied, 8);
+		emitStoreToMemory(textSectionData, temp_reg, dest_reg, bytes_copied, 8);
+		bytes_copied += 8;
+	}
+	if (bytes_copied + 4 <= struct_size_bytes) {
+		emitMovFromMemory(temp_reg, src_reg, bytes_copied, 4);
+		emitStoreToMemory(textSectionData, temp_reg, dest_reg, bytes_copied, 4);
+		bytes_copied += 4;
+	}
+	if (bytes_copied + 2 <= struct_size_bytes) {
+		emitMovFromMemory(temp_reg, src_reg, bytes_copied, 2);
+		emitStoreToMemory(textSectionData, temp_reg, dest_reg, bytes_copied, 2);
+		bytes_copied += 2;
+	}
+	if (bytes_copied + 1 <= struct_size_bytes) {
+		emitMovFromMemory(temp_reg, src_reg, bytes_copied, 1);
+		emitStoreToMemory(textSectionData, temp_reg, dest_reg, bytes_copied, 1);
+		bytes_copied += 1;
+	}
+	regAlloc.release(temp_reg);
+	regAlloc.release(dest_reg);
+	regAlloc.release(src_reg);
+	// Both Win64 and SysV require the hidden return-slot pointer in RAX so
+	// callers that forward aggregates observe a valid source.
+	spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+	emitMovFromFrame(X64Register::RAX, return_slot_param_offset);
+	FLASH_LOG_FORMAT(Codegen, Debug,
+		"Copied indirect value of {} bytes to return slot at offset {}",
+		struct_size_bytes, return_slot_param_offset);
+}
+
+template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instruction) {
 	FLASH_LOG(Codegen, Debug, "handleReturn called");
 
@@ -9557,70 +9605,10 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 							// This is a reference and function returns by value
 							// Check if function uses hidden return parameter (struct return)
 						if (current_function_has_hidden_return_param_) {
-								// Returning via rvalue reference (std::move) to a struct-returning function
-								// Need to copy the struct from the referenced location to the return slot
-							FLASH_LOG(Codegen, Debug, "handleReturn: Copying struct via rvalue reference at offset ", var_offset);
-
-								// Load return slot address from __return_slot parameter
-							auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
-							if (return_slot_it != variable_scopes.back().variables.end()) {
-								int return_slot_param_offset = return_slot_it->second.offset;
-
-									// Load the source address (where the rvalue reference points)
-								X64Register src_reg = allocateRegisterWithSpilling();
-								emitMovFromFrame(src_reg, var_offset);  // Load the pointer from rvalue reference
-
-									// Load the destination address (return slot)
-								X64Register dest_reg = allocateRegisterWithSpilling();
-								emitMovFromFrame(dest_reg, return_slot_param_offset);
-
-									// Get struct size from the return operation, not the reference info
-									// ref_it->second.value_size_bits would be 64 (pointer size), but we need
-									// the actual struct size that the function returns
-								int struct_size_bytes = ret_op.return_size / 8;
-								FLASH_LOG_FORMAT(Codegen, Debug,
-												 "Copying struct via rvalue ref: size={} bytes, from ref at offset {}, return_slot at offset {}",
-												 struct_size_bytes, var_offset, return_slot_param_offset);
-
-									// Copy struct from source to destination
-								int bytes_copied = 0;
-								X64Register temp_reg = allocateRegisterWithSpilling();
-
-									// Copy 8-byte chunks
-								while (bytes_copied + 8 <= struct_size_bytes) {
-									emitMovFromMemory(temp_reg, src_reg, bytes_copied, 8);
-									emitStoreToMemory(textSectionData, temp_reg, dest_reg, bytes_copied, 8);
-									bytes_copied += 8;
-								}
-
-									// Handle remaining bytes (4, 2, 1)
-								if (bytes_copied + 4 <= struct_size_bytes) {
-									emitMovFromMemory(temp_reg, src_reg, bytes_copied, 4);
-									emitStoreToMemory(textSectionData, temp_reg, dest_reg, bytes_copied, 4);
-									bytes_copied += 4;
-								}
-								if (bytes_copied + 2 <= struct_size_bytes) {
-									emitMovFromMemory(temp_reg, src_reg, bytes_copied, 2);
-									emitStoreToMemory(textSectionData, temp_reg, dest_reg, bytes_copied, 2);
-									bytes_copied += 2;
-								}
-								if (bytes_copied + 1 <= struct_size_bytes) {
-									emitMovFromMemory(temp_reg, src_reg, bytes_copied, 1);
-									emitStoreToMemory(textSectionData, temp_reg, dest_reg, bytes_copied, 1);
-									bytes_copied += 1;
-								}
-
-								regAlloc.release(temp_reg);
-								regAlloc.release(dest_reg);
-								regAlloc.release(src_reg);
-
-									// For struct return, RAX should contain the return slot address (per ABI)
-								spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
-								emitMovFromFrame(X64Register::RAX, return_slot_param_offset);
-
-								FLASH_LOG_FORMAT(Codegen, Debug,
-												 "Struct copy via rvalue ref complete: copied {} bytes", bytes_copied);
-							}
+							// Returning a by-value aggregate (or a reference to one) from a
+							// struct-returning function: copy the pointee into the return slot.
+							FLASH_LOG(Codegen, Debug, "handleReturn: Copying struct via reference at offset ", var_offset);
+							emitCopyIndirectValueToReturnSlot(var_offset, ret_op.return_size);
 						} else {
 								// Scalar return by value - load pointer and dereference
 							FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing reference at offset ", var_offset);
@@ -9750,15 +9738,22 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 						// ALSO skip dereferencing if this is 'this' or holds_address_only is set (pointer, not reference)
 					auto ref_info = getIndirectStackInfo(var_offset);
 					if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value()) && !current_function_returns_reference_) {
-							// This is a reference and function does not return a reference - load pointer and dereference to get value
-						FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing named reference at offset ", var_offset);
-						X64Register ptr_reg = X64Register::RAX;
-						spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
-						emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
+						if (current_function_has_hidden_return_param_) {
+							// A by-value aggregate parameter or a reference to an aggregate:
+							// copy the pointee into the caller's hidden return slot.
+							FLASH_LOG(Codegen, Debug, "handleReturn: Copying struct via reference at offset ", var_offset);
+							emitCopyIndirectValueToReturnSlot(var_offset, ret_op.return_size);
+						} else {
+							// Scalar value - load the pointer and dereference it.
+							FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing named reference at offset ", var_offset);
+							X64Register ptr_reg = X64Register::RAX;
+							spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
+							emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
 							// Dereference to get the value
-						int value_size_bytes = ref_info->value_size_bits.value / 8;
-						emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
+							int value_size_bytes = ref_info->value_size_bits.value / 8;
+							emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 							// Value is now in RAX, ready to return
+						}
 					} else if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value()) && current_function_returns_reference_) {
 							// This is a reference and function returns a reference - return the address itself
 						FLASH_LOG(Codegen, Debug, "handleReturn: Returning named reference address at offset ", var_offset);
