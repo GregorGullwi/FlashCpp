@@ -335,10 +335,8 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
 
 ## Active findings
 
-- The top-level expression fallback masks a declaration-parse failure that
-  returns without a `DiagnosticId`. The out-of-line definition mismatch, target,
-  and duplicate failures now carry stable IDs (`1022`–`1027`) and surface
-  directly; other non-structured declaration errors can still be masked.
+- The top-level expression fallback can mask declaration-parse errors; see
+  [known issues](KNOWN_ISSUES.md).
 
 ## Validation handoff
 
