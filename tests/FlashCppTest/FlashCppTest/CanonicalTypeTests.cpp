@@ -199,10 +199,26 @@ TEST_CASE("Overload ranking compares non-projectable parameter shapes structural
 	CHECK(isSameTypeIgnoringTopLevelCvAndRef(smaller_array, smaller_array));
 }
 
+TEST_CASE("Ordered declarator base matching prefers canonical record identity") {
+	FrontendContext frontend;
+	TypeSpecifierNode first(TypeCategory::Struct, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	first.set_type_index(TypeIndex{900, TypeCategory::Struct});
+	first.set_type_entity(EntityId{803});
+	first.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+		DeclaratorComponent::pointer(CVQualifier::None),
+	});
+	TypeSpecifierNode second = first;
+	second.set_type_entity(EntityId{804});
+
+	CHECK_FALSE(orderedDeclaratorBaseTypeMatches(first, second));
+	CHECK(orderedDeclaratorBaseTypeMatches(first, first));
+}
+
 TEST_CASE("Qualification ranking reads pointee cv from canonical pointer-to-array types") {
 	FrontendContext frontend;
-	TypeSpecifierNode argument(
-		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	TypeSpecifierNode argument(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 	argument.set_ordered_declarator({
 		DeclaratorComponent::pointer(CVQualifier::None),
 		DeclaratorComponent::array(3),

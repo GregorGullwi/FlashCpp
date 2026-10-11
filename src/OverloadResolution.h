@@ -2012,36 +2012,39 @@ inline TypeSpecifierNode materializeStaticMemberTypeSpecifier(
 
 // A non-projectable ordered declarator cannot be flattened into the legacy
 // pointer/array fields, so overload/conversion resolution must consume the
-// ordered spine directly. Compare the resolved base type and callable payload
-// that the declarator wraps; the wrapper sequence itself is compared by
-// sameOrderedDeclaratorShapeIgnoringCv(), and cv is handled by the
-// qualification rule.
-inline bool orderedDeclaratorBaseTypeMatches(
-	const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
-	const CanonicalTypeAlias from_canonical =
-		canonicalize_type_alias(from.type_index());
-	const CanonicalTypeAlias to_canonical =
-		canonicalize_type_alias(to.type_index());
+// ordered spine directly. Prefer canonical base identity; the TypeIndex and
+// FunctionSignature checks below remain fallbacks when that base cannot import.
+inline bool orderedDeclaratorBaseTypeMatches(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
+	FrontendContext& context = requireFrontendContext();
+	CanonicalTypeTable& table = context.canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	TypeSpecifierNode from_base = from;
+	from_base.clear_declarator_shape();
+	from_base.set_cv_qualifier(CVQualifier::None);
+	TypeSpecifierNode to_base = to;
+	to_base.clear_declarator_shape();
+	to_base.set_cv_qualifier(CVQualifier::None);
+	const std::optional<TypeId> from_type = tryImportSupportedCanonical(table, from_base);
+	const std::optional<TypeId> to_type = tryImportSupportedCanonical(table, to_base);
+	if (from_type.has_value() && to_type.has_value()) {
+		return stripCanonicalTopCv(table, *from_type).first == stripCanonicalTopCv(table, *to_type).first;
+	}
+	const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type_index());
+	const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type_index());
 	const TypeIndex from_resolved = from_canonical.resolvedTypeIndex();
 	const TypeIndex to_resolved = to_canonical.resolvedTypeIndex();
-	const TypeCategory from_category = from_resolved.is_valid()
-		? from_resolved.category() : from.category();
-	const TypeCategory to_category = to_resolved.is_valid()
-		? to_resolved.category() : to.category();
+	const TypeCategory from_category = from_resolved.is_valid() ? from_resolved.category() : from.category();
+	const TypeCategory to_category = to_resolved.is_valid() ? to_resolved.category() : to.category();
 	if (from_category != to_category) {
 		return false;
 	}
-	if (needs_type_index(from_category) &&
-		from_resolved.is_valid() && to_resolved.is_valid() &&
-		from_resolved != to_resolved) {
+	if (needs_type_index(from_category) && from_resolved.is_valid() && to_resolved.is_valid() && from_resolved != to_resolved) {
 		return false;
 	}
 	if (from.has_function_signature() != to.has_function_signature()) {
 		return false;
 	}
-	if (from.has_function_signature() &&
-		!FlashCpp::equalFunctionSignatureIdentity(
-			from.function_signature(), to.function_signature())) {
+	if (from.has_function_signature() && !FlashCpp::equalFunctionSignatureIdentity(from.function_signature(), to.function_signature())) {
 		return false;
 	}
 	return true;
