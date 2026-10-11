@@ -377,38 +377,18 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 						sema_applied_conversion = true;
 					} else if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
 						annotated_source_type == TypeCategory::Struct) {
-							// Sema annotated a user-defined conversion operator call
-						TypeIndex source_type_idx = sema_.typeContext().get(cast_info.source_type_id).type_index;
-						if (const TypeInfo* src_type_info = tryGetTypeInfo(source_type_idx)) {
-							if (cast_info.selected_conversion_function != nullptr) {
-								if (auto result = emitSemaSelectedConversionOperatorCall(
-										operands,
-										*src_type_info,
-										cast_info,
-										return_category,
-										node.return_token())) {
-									operands = *result;
-									sema_applied_conversion = true;
-								} else {
-									throw InternalError(
-										"Sema-selected conversion operator failed to lower a return conversion");
-								}
-							} else {
-								const StructTypeInfo* src_struct_info = src_type_info->getStructInfo();
-								const TypeIndex ret_type_idx = is_struct_type(return_category) ? current_function_return_type_index_ : nativeTypeIndex(return_category);
-								const bool source_is_const = ((static_cast<uint8_t>(sema_.typeContext().get(cast_info.source_type_id).base_cv)) & (static_cast<uint8_t>(CVQualifier::Const))) != 0;
-								const StructMemberFunction* conv_op = findConversionOperator(
-									src_struct_info, ret_type_idx, source_is_const);
-								if (conv_op) {
-									FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in return from ",
-											  StringTable::getStringView(src_type_info->name()), " to return type");
-									if (auto result = emitConversionOperatorCall(operands, *src_type_info, *conv_op,
-														 ret_type_idx, return_size, node.return_token())) {
-										operands = *result;
-										sema_applied_conversion = true;
-									}
-								}
-							}
+						if (cast_info.selected_conversion_function == nullptr)
+							throw InternalError("Sema must select the conversion operator for a return conversion");
+						const TypeIndex source_type_index = sema_.typeContext().get(cast_info.source_type_id).type_index;
+						const TypeInfo* const source_type_info = tryGetTypeInfo(source_type_index);
+						if (source_type_info == nullptr)
+							throw InternalError("Selected return conversion has no source class declaration");
+						if (auto result = emitSemaSelectedConversionOperatorCall(
+								operands, *source_type_info, cast_info, return_category, node.return_token())) {
+							operands = *result;
+							sema_applied_conversion = true;
+						} else {
+							throw InternalError("Sema-selected conversion operator failed to lower a return conversion");
 						}
 					} else if (cast_info.cast_kind == StandardConversionKind::DerivedToBase &&
 						annotated_source_type == TypeCategory::Struct &&
@@ -525,97 +505,15 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 					sema_applied_conversion = true;
 					return true;
 				};
-				// Check for user-defined conversion operator (fallback when sema did not run)
-				// If expr is a struct type with a conversion operator to return_type, call it
 				if (is_struct_type(expr_category)) {
-					TypeIndex expr_type_index = operands.type_index;
-
-					if (!tryApplyResolvedAliasReturnConversion(expr_type_index)) {
-						if (const TypeInfo* source_type_info = tryGetTypeInfo(expr_type_index)) {
-							const StructTypeInfo* source_struct_info = source_type_info->getStructInfo();
-							if (!source_struct_info) {
-								if (source_type_info->isTypeAlias()) {
-									throw InternalError(
-										std::string("Alias return type reached codegen fallback - should have been resolved during parsing/template substitution: ") +
-										std::string(StringTable::getStringView(source_type_info->name())));
-								}
-								operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
-							} else {
-								const TypeIndex ret_type_idx = is_struct_type(return_category) ? current_function_return_type_index_ : nativeTypeIndex(return_category);
-
-								// Look for a conversion operator to the return type
-								const StructMemberFunction* conv_op = findConversionOperator(
-									source_struct_info, ret_type_idx, isExprConstQualified(*expr_opt));
-
-								if (conv_op) {
-									// Probed 2026-04-29 across the full 2243-test corpus with a hard-fail
-									// guard and never hit. Sema's return-conversion annotation already
-									// covers struct-with-conversion-operator returns; this codegen-side
-									// fallback is dead.
-									throw InternalError(
-										"Codegen-side return conversion-operator fallback should not run: "
-										"sema must annotate struct-to-non-struct return conversions");
-								} else {
-									if (sema_normalized_current_function_) {
-										StringBuilder err;
-										err.append("sema-normalized return lowering should not require struct-without-conversion-operator fallback: func=");
-										if (current_function_mangled_name_.isValid()) {
-											err.append(StringTable::getStringView(current_function_mangled_name_));
-										} else if (current_function_name_.isValid()) {
-											err.append(StringTable::getStringView(current_function_name_));
-										} else {
-											err.append("<unknown>");
-										}
-										err.append(" expr=");
-										if (source_type_info) {
-											err.append(StringTable::getStringView(source_type_info->name()));
-										} else {
-											err.append(getTypeName(expr_type));
-										}
-										err.append(" return=");
-										if (const TypeInfo* ret_info = tryGetTypeInfo(ret_type_idx)) {
-											err.append(StringTable::getStringView(ret_info->name()));
-										} else {
-											err.append(getTypeName(return_type));
-										}
-										throw InternalError(std::string(err.commit()));
-									}
-									// Legacy parser-only paths (e.g. direct parser-driven codegen
-									// without sema normalization) can still reach this conversion
-									// fallback. Keep behavior unchanged for those paths while
-									// enforcing hard-fail for sema-normalized code.
-									operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
-								}
-							}
-						} else {
-							// expr_type_index has no TypeInfo entry.
-							//
-							// Two distinct cases reach this point:
-							//
-							// 1. TypeIndex is invalid (index==0): this occurs for unresolved
-							//    template-type parameters in lambdas with their own template
-							//    parameters (e.g. []<typename T>(T value){return value;}).
-							//    FlashCpp does not yet implement per-call instantiation of
-							//    lambda-own template parameters (T is stored as TypeIndex{0,
-							//    UserDefined}).  The generateTypeConversion fallback produces
-							//    correct object code because the ABI-level value is already
-							//    the right bit pattern; the type mismatch is a metadata
-							//    artifact, not a value mismatch.  See KNOWN_ISSUES.md.
-							//
-							// 2. TypeIndex is valid but gTypeInfo has no entry: internal error.
-							if (expr_type_index.is_valid()) {
-								throw InternalError(std::string(StringBuilder()
-									.append("struct-category expr has valid TypeIndex (")
-									.append(static_cast<uint64_t>(expr_type_index.index()))
-									.append(") but no TypeInfo; sema missed this case: expr=")
-									.append(getTypeName(expr_type))
-									.append(" return=")
-									.append(getTypeName(return_type))
-									.commit()));
-							}
-							// Case 1: unresolved template-type placeholder (known limitation).
-							operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+					if (!tryApplyResolvedAliasReturnConversion(operands.type_index)) {
+						if (operands.type_index.is_valid()) {
+							throw InternalError("Sema must annotate a class return conversion before code generation");
 						}
+						// Uninstantiated lambda template parameters retain an invalid TypeIndex today.
+						// Their return operand already has the ABI representation; preserve that path.
+						operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+						sema_applied_conversion = true;
 					}
 				} else {
 					if (return_requires_ctor_resolution && return_ctor_no_match) {

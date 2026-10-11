@@ -43,34 +43,6 @@ static std::optional<size_t> tryGetTypeSizeForSizeof(const TypeSpecifierNode& ty
 	return static_cast<size_t>(size_bits) / 8;
 }
 
-static const StructMemberFunction* findMemberFunctionByDecl(
-	const StructTypeInfo* struct_info,
-	const FunctionDeclarationNode* target_decl,
-	int depth) {
-	static constexpr int kMaxInheritanceDepth = 8;
-	if (!struct_info || !target_decl || depth > kMaxInheritanceDepth)
-		return nullptr;
-	for (const auto& member_func : struct_info->member_functions) {
-		if (!member_func.function_decl.is<FunctionDeclarationNode>())
-			continue;
-		if (&member_func.function_decl.as<FunctionDeclarationNode>() == target_decl)
-			return &member_func;
-	}
-	for (const auto& base_spec : struct_info->base_classes) {
-		if (base_spec.is_deferred)
-			continue;
-		if (const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index)) {
-			if (const StructTypeInfo* base_struct_info = base_type_info->getStructInfo()) {
-				if (const StructMemberFunction* result = findMemberFunctionByDecl(
-						base_struct_info, target_decl, depth + 1)) {
-					return result;
-				}
-			}
-		}
-	}
-	return nullptr;
-}
-
 static std::optional<size_t> tryGetTypeAlignmentForAlignof(const TypeSpecifierNode& type_spec) {
 	TypeSpecifierNode aligned_type = type_spec;
 	if (aligned_type.is_array()) {
@@ -1168,55 +1140,39 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
 				source_desc.category() == TypeCategory::Struct &&
 				!target_desc.pointer_levels.empty()) {
-				if (const TypeInfo* source_type_info = tryGetTypeInfo(source_desc.type_index)) {
-					// Sema already selected the conversion function during
-					// tryAnnotateConversion. Codegen consumes it directly here
-					// rather than re-running conversion-operator lookup.
-					if (!cast_info.selected_conversion_function) {
-						throw InternalError(std::string(StringBuilder()
-							.append("generateArraySubscriptIr: sema annotated struct-to-pointer subscript conversion for '")
-							.append(StringTable::getStringView(source_type_info->name()))
-							.append("' but no selected conversion function was recorded")
-							.commit()));
+				const TypeInfo* const source_type_info = tryGetTypeInfo(source_desc.type_index);
+				if (source_type_info == nullptr || !cast_info.selected_conversion_function) {
+					throw InternalError("Sema must select the struct-to-pointer subscript conversion");
+				}
+				if (auto converted = emitConversionOperatorCall(
+						array_result,
+						*source_type_info,
+						*cast_info.selected_conversion_function,
+						target_desc.type_index.withCategory(target_desc.category()),
+						POINTER_SIZE_BITS,
+						arraySubscriptNode.bracket_token())) {
+					array_result = *converted;
+					CanonicalTypeDesc element_desc = target_desc;
+					element_desc.pointer_levels.pop_back();
+					element_type = element_desc.category();
+					element_type_index = element_desc.type_index.withCategory(element_type);
+					element_pointer_depth = static_cast<int>(element_desc.pointer_levels.size());
+					element_size_bits = element_pointer_depth > 0
+											? POINTER_SIZE_BITS
+											: get_type_size_bits(element_type);
+					if (element_size_bits == 0 && element_type_index.is_valid()) {
+						TypeSpecifierNode element_spec(
+							element_type_index.withCategory(element_type),
+							SizeInBits{0},
+							Token{},
+							CVQualifier::None,
+							ReferenceQualifier::None);
+						element_size_bits = queryConcreteAliasResolvedTypeSizeBits(element_spec).size_bits;
 					}
-					const StructMemberFunction* conv_op = findMemberFunctionByDecl(
-						source_type_info->getStructInfo(),
-						cast_info.selected_conversion_function, 0);
-					if (!conv_op) {
-						throw InternalError(std::string(StringBuilder()
-							.append("generateArraySubscriptIr: sema-selected conversion function for '")
-							.append(StringTable::getStringView(source_type_info->name()))
-							.append("' could not be located among struct members")
-							.commit()));
-					}
-					if (auto converted = emitConversionOperatorCall(
-							array_result,
-							*source_type_info,
-							*conv_op,
-							target_desc.type_index.withCategory(target_desc.category()),
-							POINTER_SIZE_BITS,
-							arraySubscriptNode.bracket_token())) {
-						array_result = *converted;
-						CanonicalTypeDesc element_desc = target_desc;
-						element_desc.pointer_levels.pop_back();
-						element_type = element_desc.category();
-						element_type_index = element_desc.type_index.withCategory(element_type);
-						element_pointer_depth = static_cast<int>(element_desc.pointer_levels.size());
-						element_size_bits = element_pointer_depth > 0
-												? POINTER_SIZE_BITS
-												: get_type_size_bits(element_type);
-						if (element_size_bits == 0 && element_type_index.is_valid()) {
-							TypeSpecifierNode element_spec(
-								element_type_index.withCategory(element_type),
-								SizeInBits{0},
-								Token{},
-								CVQualifier::None,
-								ReferenceQualifier::None);
-							element_size_bits = queryConcreteAliasResolvedTypeSizeBits(element_spec).size_bits;
-						}
-						base_holds_address = true;
-						applied_subscript_pointer_conversion = true;
-					}
+					base_holds_address = true;
+					applied_subscript_pointer_conversion = true;
+				} else {
+					throw InternalError("Sema-selected subscript conversion failed to lower");
 				}
 			}
 		}
@@ -3326,82 +3282,8 @@ bool AstToIr::isExprConstQualified(const ASTNode& expr_node) const {
 	return false;
 }
 
-// Helper to find a conversion operator in a struct that converts to the target type
-// Returns nullptr if no suitable conversion operator is found
-// Searches the struct and its base classes for "operator target_type()"
-const StructMemberFunction* AstToIr::findConversionOperator(
-	const StructTypeInfo* struct_info,
-	TypeIndex target_type_index,
-	bool source_is_const) const {
-
-	if (!struct_info)
-		return nullptr;
-
-	TypeIndex canonical_target_type = canonicalize_conversion_target_type(target_type_index, target_type_index.category());
-	if (!canonical_target_type.is_valid()) {
-		return nullptr;
-	}
-
-	// CV-aware lookup:
-	//   Pass 1 – exact match: const source → const op; non-const source → non-const op.
-	//   Pass 2 – fallback: non-const source may call const op; const source cannot call non-const op.
-	const StructMemberFunction* fallback_const_op = nullptr;
-	for (const auto& member_func : struct_info->member_functions) {
-		if (member_func.conversion_target_type != canonical_target_type) {
-			continue;
-		}
-		if (source_is_const) {
-			// const source: only const operators are viable; pick first const match
-			if (member_func.is_const())
-				return &member_func;
-		} else {
-			// non-const source: prefer non-const; remember const as fallback
-			if (!member_func.is_const())
-				return &member_func;
-			if (!fallback_const_op)
-				fallback_const_op = &member_func;
-		}
-	}
-	// Fallback: non-const source with only const overloads
-	if (fallback_const_op)
-		return fallback_const_op;
-	// Search base classes recursively
-	for (const auto& base_spec : struct_info->base_classes) {
-		if (const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index)) {
-			if (base_type_info->isStruct()) {
-				const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
-				const StructMemberFunction* result = findConversionOperator(
-					base_struct_info, target_type_index, source_is_const);
-				if (result)
-					return result;
-			}
-		}
-	}
-
-	return nullptr;
-}
-
 // Emit a call to a user-defined conversion operator and return the converted ExprResult.
-// All three call sites (return, variable-init, function-arg) share this implementation.
-std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
-	const ExprResult& source,
-	const TypeInfo& source_type_info,
-	const StructMemberFunction& conv_op,
-	TypeIndex target_type_index,
-	int target_size_bits,
-	const Token& token) {
-
-	if (!conv_op.function_decl.is<FunctionDeclarationNode>())
-		return std::nullopt;
-	return emitConversionOperatorCall(
-		source,
-		source_type_info,
-		conv_op.function_decl.as<FunctionDeclarationNode>(),
-		target_type_index,
-		target_size_bits,
-		token);
-}
-
+// Sema-selected conversion paths share this implementation.
 std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	const ExprResult& source, const TypeInfo& source_type_info, const FunctionDeclarationNode& func_decl,
 	TypeIndex target_type_index, int target_size_bits, const Token& token) {

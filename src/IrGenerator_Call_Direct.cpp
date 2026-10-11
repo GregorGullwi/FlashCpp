@@ -1518,55 +1518,22 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					}
 					if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
 						from_type == TypeCategory::Struct) {
-						TypeIndex source_type_idx =
-							sema_.typeContext().get(cast_info.source_type_id).type_index;
-						if (const TypeInfo* src_type_info = tryGetTypeInfo(source_type_idx)) {
-							if (cast_info.selected_conversion_function != nullptr) {
-								if (auto result = emitSemaSelectedConversionOperatorCall(
-										argumentIrOperands,
-										*src_type_info,
-										cast_info,
-										param_type->category(),
-										callExprNode.called_from())) {
-									argumentIrOperands = *result;
-									arg_type = argumentIrOperands.typeEnum();
-									arg_type_index = argumentIrOperands.type_index;
-									return true;
-								}
-								return false;
-							}
-							const bool source_is_const =
-								((static_cast<uint8_t>(
-									 sema_.typeContext().get(cast_info.source_type_id).base_cv)) &
-								 (static_cast<uint8_t>(CVQualifier::Const))) != 0;
-							const StructMemberFunction* conv_op = findConversionOperator(
-								src_type_info->getStructInfo(),
-								param_type->type_index(),
-								source_is_const);
-							if (conv_op) {
-								FLASH_LOG(
-									Codegen,
-									Debug,
-									"Sema-annotated user-defined conversion in function arg from ",
-									StringTable::getStringView(src_type_info->name()),
-									" to parameter type");
-								const int param_size =
-									static_cast<int>(param_type->size_in_bits());
-								if (auto result = emitConversionOperatorCall(
-										argumentIrOperands,
-										*src_type_info,
-										*conv_op,
-										param_type->type_index(),
-										param_size,
-										callExprNode.called_from())) {
-									argumentIrOperands = *result;
-									arg_type = argumentIrOperands.typeEnum();
-									arg_type_index = argumentIrOperands.type_index;
-									return true;
-								}
-							}
+						if (cast_info.selected_constructor != nullptr)
+							throw InternalError("Sema selected a converting constructor that was not materialized for a call argument");
+						if (cast_info.selected_conversion_function == nullptr)
+							throw InternalError("Sema must select the conversion operator for a function argument");
+						const TypeIndex source_type_index = sema_.typeContext().get(cast_info.source_type_id).type_index;
+						const TypeInfo* const source_type_info = tryGetTypeInfo(source_type_index);
+						if (source_type_info == nullptr)
+							throw InternalError("Selected call-argument conversion has no source class declaration");
+						if (auto result = emitSemaSelectedConversionOperatorCall(
+								argumentIrOperands, *source_type_info, cast_info, param_type->category(), callExprNode.called_from())) {
+							argumentIrOperands = *result;
+							arg_type = argumentIrOperands.typeEnum();
+							arg_type_index = argumentIrOperands.type_index;
+							return true;
 						}
-						return false;
+						throw InternalError("Sema-selected conversion operator failed to lower a function argument");
 					}
 					if (!is_struct_type(from_type) &&
 						!is_struct_type(to_type) &&
@@ -1593,8 +1560,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				const void* key = &argument.as<ExpressionNode>();
 				const auto slot = sema_.getSlot(key);
 				if (slot.has_value()) {
-					sema_applied_arg_conversion =
-						applySemaAnnotatedArgConversion(*slot);
+					sema_applied_arg_conversion = applySemaAnnotatedArgConversion(*slot);
 				}
 			}
 
@@ -1615,98 +1581,6 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				}
 			}
 
-			// Check if argument type doesn't match parameter type and parameter expects struct
-			// This handles implicit conversions via converting constructors
-			if (arg_type != param_base_type && param_base_type == TypeCategory::Struct && param_type->runtime_pointer_depth() == 0) {
-				TypeIndex param_type_index = param_type->type_index();
-
-				if (const TypeInfo* target_type_info = tryGetTypeInfo(param_type_index)) {
-					const StructTypeInfo* target_struct_info = target_type_info->getStructInfo();
-
-						// Look for a converting constructor that takes the argument type
-					if (target_struct_info) {
-						bool found_matching_ctor = false;
-						bool found_non_explicit_ctor = false;
-						for (const auto& func : target_struct_info->member_functions) {
-							if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
-								const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
-								const auto& params = ctor_node.parameter_nodes();
-
-									// Check for single-parameter constructor (or multi-parameter with defaults)
-								if (params.size() >= 1) {
-									if (params[0].is<DeclarationNode>()) {
-										const auto& ctor_param_decl = params[0].as<DeclarationNode>();
-										const auto& ctor_param_type = ctor_param_decl.type_specifier_node();
-
-											// Match if types are compatible
-										bool param_matches = false;
-										if (ctor_param_type.type() == arg_type) {
-											param_matches = true;
-												// For class types, require exact type match, not just Type::Struct kind.
-											if (isIrStructType(toIrType(arg_type)) &&
-												(!arg_type_index.is_valid() || !ctor_param_type.type_index().is_valid() ||
-												 ctor_param_type.type_index() != arg_type_index)) {
-												param_matches = false;
-											}
-										}
-
-										if (param_matches) {
-												// Check if remaining parameters have defaults
-											bool all_have_defaults = true;
-											for (size_t i = 1; i < params.size(); ++i) {
-												if (!params[i].is<DeclarationNode>() ||
-													!params[i].as<DeclarationNode>().has_default_value()) {
-													all_have_defaults = false;
-													break;
-												}
-											}
-
-											if (all_have_defaults) {
-												found_matching_ctor = true;
-												if (!ctor_node.is_explicit()) {
-													found_non_explicit_ctor = true; // Optimization: a valid non-explicit ctor is found.
-													break;
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-
-						// Emit error only when every matching converting constructor is explicit.
-						if (found_matching_ctor && !found_non_explicit_ctor) {
-							FLASH_LOG(General, Error, "Cannot use implicit conversion with explicit constructor for type '",
-									  StringTable::getStringView(target_type_info->name()), "'");
-							FLASH_LOG(General, Error, "  In function call at argument ", arg_index);
-							FLASH_LOG(General, Error, "  Use explicit construction: ",
-									  StringTable::getStringView(target_type_info->name()), "(value)");
-							throw CompileError("Cannot use implicit conversion with explicit constructor in function argument");
-						}
-					}
-				}
-			}
-
-			// Check if argument is struct type and parameter expects different type
-			if (arg_type == TypeCategory::Struct && arg_type != param_base_type && param_type->runtime_pointer_depth() == 0) {
-				if (const TypeInfo* source_type_info = tryGetTypeInfo(arg_type_index)) {
-					const int param_size = static_cast<int>(param_type->size_in_bits());
-
-						// Look for a conversion operator to the parameter type
-					const bool source_is_const = isExprConstQualified(argument);
-					const StructMemberFunction* conv_op = findConversionOperator(
-						source_type_info->getStructInfo(), param_type->type_index(), source_is_const);
-
-					if (conv_op) {
-						FLASH_LOG(Codegen, Debug, "Found conversion operator for function argument from ",
-								  StringTable::getStringView(source_type_info->name()),
-								  " to parameter type");
-						if (auto result = emitConversionOperatorCall(argumentIrOperands, *source_type_info, *conv_op,
-																	 param_type->type_index(), param_size, Token()))
-							argumentIrOperands = *result;
-					}
-				}
-			}
 		}
 
 		// Check if visitExpressionNode returned a TempVar - this means the value was computed
