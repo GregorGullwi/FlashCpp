@@ -1888,9 +1888,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				expr, from_t, to_t, ci.cast_kind, binaryOperatorNode.get_token());
 			return true;
 		}
-		if (ci.cast_kind == StandardConversionKind::UserDefined &&
-			from_t == TypeCategory::Struct &&
-			ci.selected_conversion_function != nullptr) {
+		if (ci.cast_kind == StandardConversionKind::UserDefined && from_t == TypeCategory::Struct) {
+			if (ci.selected_conversion_function == nullptr) {
+				if (to_t == TypeCategory::Struct && ci.selected_constructor != nullptr)
+					return false;
+				throw InternalError("Sema must annotate assignment conversion with its selected conversion operator");
+			}
 			const CanonicalTypeDesc& source_desc =
 				sema_.typeContext().get(ci.source_type_id);
 			const TypeInfo* const source_type_info =
@@ -2874,6 +2877,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		}
 
 		bool requires_user_defined_operator = false;
+		const bool is_logical_operator =
+			op_kind == OverloadableOperator::LogicalAnd || op_kind == OverloadableOperator::LogicalOr;
 		// Pointers never require a user-defined binary operator regardless of
 		// which path (concrete-type-specs vs. type-index fallback) supplied the
 		// operand types. sema's TypeSpecifierNode for expressions like `this`
@@ -2883,7 +2888,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		// struct-operator lookup. (C++20 [expr.eq]/3.)
 		const bool either_operand_is_pointer =
 			lhsExprResult.pointer_depth.is_pointer() || rhsExprResult.pointer_depth.is_pointer();
-		if (either_operand_is_pointer) {
+		if (either_operand_is_pointer || is_logical_operator) {
 			requires_user_defined_operator = false;
 		} else if (concrete_type_specs.has_value()) {
 			requires_user_defined_operator =
