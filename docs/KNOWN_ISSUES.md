@@ -389,22 +389,4 @@ slice; until then a constrained-overload regression must stay within the
 prose-verified probe count and pair each constrained overload with an
 unconstrained fallback rather than with a second constrained overload.
 
-## Mixed aggregate return through a by-value function template corrupts a field
 
-A small reproducer, well below 256 temporaries, fails on the unchanged baseline
-as well as the current compiler:
-
-```cpp
-struct Payload { long long wide; double fraction; int small; };
-template<class T> T identity(T value) { return value; }
-int exercise(int input) {
-    Payload result = identity(Payload{0x123456789LL + input, 2.5, input});
-    long long wide = identity(result.wide) + 7;
-    return wide == 0x123456789LL + input + 7 ? 0 : 3;
-}
-int main() { return exercise(2); }
-```
-
-The wide-field check returns 3. Direct aggregate initialization passes. This
-requires a separate investigation of by-value aggregate argument/return storage;
-it is independent of numeric temporary identity.

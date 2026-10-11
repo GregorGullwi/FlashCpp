@@ -554,6 +554,11 @@ private:
 
 	void handleReturn(const IrInstruction& instruction);
 
+	// Copy the pointee of an indirect (by-value aggregate or reference) value
+	// into the caller's hidden return slot and leave the slot address in RAX.
+	// `src_pointer_offset` is the frame slot that holds the source pointer.
+	void emitCopyIndirectValueToReturnSlot(int32_t src_pointer_offset, int32_t struct_size_bits);
+
 	void handleStackAlloc([[maybe_unused]] const IrInstruction& instruction);
 
 	void handleBinaryArithmetic(const IrInstruction& instruction, uint8_t opcode, const char* description);
