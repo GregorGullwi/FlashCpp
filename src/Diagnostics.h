@@ -196,6 +196,7 @@ enum class DiagnosticId : uint32_t {
 	StaticAssertFailure = 1619,
 	ControlReachesEndOfValueFunction = 1620,
 	InvalidNoreturnAttribute = 1621,
+	MemberFunctionPointerSignatureMismatch = 1622,
 
 	// Call-expression family (1701..1799).
 	AmbiguousFunctionCall = 1701,
@@ -472,6 +473,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "ControlReachesEndOfValueFunction";
 	case DiagnosticId::InvalidNoreturnAttribute:
 		return "InvalidNoreturnAttribute";
+	case DiagnosticId::MemberFunctionPointerSignatureMismatch:
+		return "MemberFunctionPointerSignatureMismatch";
 	case DiagnosticId::AmbiguousFunctionCall:
 		return "AmbiguousFunctionCall";
 	case DiagnosticId::AmbiguousCallOperator:
