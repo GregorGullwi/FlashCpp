@@ -1425,7 +1425,7 @@ inline std::optional<TypeId> tryImportSupportedCanonical(
 	return imported.type;
 }
 
-inline CanonicalTypeImport importCanonicalStructuralTraitOperand(
+inline CanonicalTypeImport importCanonicalTypeWithClassFallback(
 	CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax) {
 	const CanonicalTypeImport imported = importCanonicalType(table, syntax);
@@ -1452,6 +1452,10 @@ inline CanonicalTypeImport importCanonicalStructuralTraitOperand(
 		id = table.reference(id, syntax.reference_qualifier());
 	}
 	return {id, CanonicalTypeImportStatus::Supported};
+}
+
+inline CanonicalTypeImport importCanonicalStructuralTraitOperand(CanonicalTypeTable& table, const TypeSpecifierNode& syntax) {
+	return importCanonicalTypeWithClassFallback(table, syntax);
 }
 
 inline CanonicalTypeImport importCanonicalTemplateTypeArgumentDirect(
@@ -1751,6 +1755,9 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 		entry.minimum_parameter_count = parameter_count;
 		if (member.access != AccessSpecifier::Public) {
 			entry.flags = entry.flags | CanonicalRecordFunctionFlags::NonPublic;
+		}
+		if (constructor.is_explicit()) {
+			entry.flags = entry.flags | CanonicalRecordFunctionFlags::Explicit;
 		}
 		bool importable = true;
 		for (size_t index = 0; index < constructor.parameter_nodes().size(); ++index) {

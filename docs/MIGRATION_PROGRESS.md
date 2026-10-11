@@ -93,9 +93,19 @@ Continue boundary 3A in this order.
    assignment, arithmetic promotions, conditional branches, contextual `bool`,
    constructor arguments, and builtin subscript conversions. It traverses
    canonical class-base identities while reading candidate declarations through
-   a `StructTypeInfo` compatibility bridge. The explicitly named
+   a `StructTypeInfo` compatibility bridge. Candidate hiding now keys on the
+   full return `TypeId`, preserving pointer and callable target shape, and
+   selected canonical candidates carry their declaring class `TypeId` through
+   access checking. The explicitly named
    `trySelectCompatibilityUserDefinedConversionOperator` remains available
    only when source import or the declaration bridge cannot resolve the class.
+   Constructor-conversion probes now take source and target syntax and consult
+   the published constructor schema by canonical `TypeId` for supported builtin
+   and pointer conversions, including explicit-constructor filtering. Class,
+   reference, dependent, and unsupported callable argument shapes still use the
+   compatibility resolver when the schema cannot prove the answer. Member
+   pointer owner conversions now publish and query canonical class-base schemas
+   before using the legacy TypeIndex owner bridge.
    Shared overload candidate ranking still has legacy `TypeIndex` consumers.
    The selected function is recorded in `ImplicitCastInfo`; call arguments,
    returns, variable initialization, assignment, contextual `bool`, constructor
@@ -114,8 +124,9 @@ Continue boundary 3A in this order.
    reference-stripped path records the selected operator for class aliases.
    The TypeId selector still reads candidate declarations from
    `StructTypeInfo`; remaining work is to remove compatibility selection where
-   canonical import and declaration publication can cover the source, and to
-   migrate legacy overload-ranking consumers to canonical identities. Class-target
+   canonical import and declaration publication can cover the source, finish
+   unsupported callable and user-defined constructor ranking, and migrate
+   legacy overload-ranking consumers to canonical identities. Class-target
    variable initialization now consumes exact prvalue conversion selections
    for copy-initialization and parenthesized direct-initialization, constructing
    into the declared object.

@@ -10154,7 +10154,10 @@ bool SemanticAnalysis::annotateSelectedConversionOperator(
 	if (selected_conversion.function == nullptr) {
 		return false;
 	}
-	const TypeInfo* const declaring_type_info = tryGetTypeInfo(selected_conversion.declaring_type_index);
+	const TypeInfo* const declaring_type_info = selected_conversion.declaring_type
+		? tryFindCanonicalOverloadClassTypeInfo(
+			requireFrontendContext().canonicalTypes(), selected_conversion.declaring_type)
+		: tryGetTypeInfo(selected_conversion.compatibility_declaring_type_index);
 	const StructTypeInfo* const declaring_struct_info = declaring_type_info != nullptr ? declaring_type_info->getStructInfo() : nullptr;
 	if (declaring_struct_info == nullptr || !declaring_struct_info->name.isValid()) {
 		return false;
