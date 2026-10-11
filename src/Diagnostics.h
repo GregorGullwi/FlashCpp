@@ -88,6 +88,7 @@ enum class DiagnosticId : uint32_t {
 	MissingDefaultArgumentForTrailingParameter = 1019,
 	UnsupportedStaticMemberType = 1020,
 	NoexceptSpecifierNotConstant = 1021,
+	OutOfLineDefinitionMismatch = 1022,
 
 	// Notes attached to declarator-family diagnostics (1051..1079).
 	NoteToMatchOpeningBracket = 1051,
@@ -272,6 +273,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "UnsupportedStaticMemberType";
 	case DiagnosticId::NoexceptSpecifierNotConstant:
 		return "NoexceptSpecifierNotConstant";
+	case DiagnosticId::OutOfLineDefinitionMismatch:
+		return "OutOfLineDefinitionMismatch";
 	case DiagnosticId::NoteToMatchOpeningBracket:
 		return "NoteToMatchOpeningBracket";
 	case DiagnosticId::HexFloatRequiresBinaryExponent:
