@@ -2413,59 +2413,19 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								const ImplicitCastInfo& cast_info =
 									sema_.castInfoTable()[slot->cast_info_index.value - 1];
 								if (cast_info.cast_kind == StandardConversionKind::UserDefined) {
-									TypeIndex source_type_index = sema_.typeContext().get(cast_info.source_type_id).type_index;
-									if (const TypeInfo* src_info = tryGetTypeInfo(source_type_index)) {
-										if (cast_info.selected_conversion_function != nullptr) {
-											if (auto result = emitSemaSelectedConversionOperatorCall(
-												init_operands,
-												*src_info,
-												cast_info,
-												type_node.category(),
-												decl.identifier_token())) {
-												init_operands = *result;
-												conv_op_applied = true;
-											}
-										} else {
-											const StructMemberFunction* conv_op = findConversionOperator(
-												src_info->getStructInfo(), type_node.type_index(),
-												isExprConstQualified(init_node));
-											if (conv_op) {
-												FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in var init from ",
-													  StringTable::getStringView(src_info->name()), " to target type");
-												if (auto result = emitConversionOperatorCall(init_operands, *src_info, *conv_op,
-																 type_node.type_index(), target_size, decl.identifier_token())) {
-													init_operands = *result;
-													conv_op_applied = true;
-												}
-											}
-										}
+									if (cast_info.selected_conversion_function == nullptr)
+										throw InternalError("Sema must select the conversion operator for variable initialization");
+									const TypeIndex source_type_index = sema_.typeContext().get(cast_info.source_type_id).type_index;
+									const TypeInfo* const source_type_info = tryGetTypeInfo(source_type_index);
+									if (source_type_info == nullptr)
+										throw InternalError("Selected variable-init conversion has no source class declaration");
+									if (auto result = emitSemaSelectedConversionOperatorCall(
+											init_operands, *source_type_info, cast_info, type_node.category(), decl.identifier_token())) {
+										init_operands = *result;
+										conv_op_applied = true;
+									} else {
+										throw InternalError("Sema-selected conversion operator failed to lower a variable initializer");
 									}
-								}
-							}
-						}
-
-						if (!conv_op_applied) {
-							if (const TypeInfo* source_type_info = tryGetTypeInfo(init_type_index)) {
-								const StructMemberFunction* conv_op = findConversionOperator(
-									source_type_info->getStructInfo(), type_node.type_index(),
-									isExprConstQualified(init_node));
-								if (conv_op) {
-									if (conv_op->is_explicit) {
-										// [class.conv.fct]/2: an explicit conversion function
-										// is not viable for a copy-initialization.
-										throw makeStructuredCompileError(
-											context_->diagnostics(),
-											DiagnosticId::ExplicitConversionFunctionCopyInitialization,
-											DiagnosticSeverity::Error,
-											SourceLocation::fromToken(decl.identifier_token()),
-											"conversion function '" +
-												std::string(StringTable::getStringView(conv_op->getName())) +
-												"' is explicit and cannot be used for copy-initialization",
-											{});
-									}
-									throw InternalError(
-										"Codegen-side var-init conversion-operator fallback should not run: "
-										"sema must annotate struct-to-primitive variable initialization conversions");
 								}
 							}
 						}

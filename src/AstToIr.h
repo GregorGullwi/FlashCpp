@@ -1065,38 +1065,19 @@ private:
 	// Returns the TempVar holding the function pointer address
 	TempVar generateLambdaInvokeFunctionAddress(const LambdaExpressionNode& lambda);
 
-	// Helper to find a conversion operator in a struct that converts to the target type
-	// Returns nullptr if no suitable conversion operator is found
-	// Searches the struct and its base classes for "operator target_type()"
-	// source_is_const: true when the source object is const-qualified; prefers const overloads and
-	//                  refuses to call non-const ones when set.
-	const StructMemberFunction* findConversionOperator(
-		const StructTypeInfo* struct_info,
-		TypeIndex target_type_index,
-		bool source_is_const) const;
-
 	// Determine whether an expression node yields a const-qualified object.
 	// Covers direct declaration constness plus semantic expression types such as
 	// const-qualified reference-returning calls.
-	// Used to pick the correct const/non-const conversion-operator overload and
-	// to reject assignments to non-modifiable const expressions.
+	// Used to reject assignments to non-modifiable const expressions.
 	bool isExprConstQualified(const ASTNode& expr_node) const;
 
 	// Emit a call to a user-defined conversion operator and return the converted ExprResult.
-	// Returns nullopt if conv_op has no valid FunctionDeclarationNode (should not happen in practice).
+	// Returns nullopt if the selected conversion cannot be emitted.
 	// source           - ExprResult for the source struct object
 	// source_type_info - TypeInfo of the source struct (for struct name / mangling)
-	// conv_op          - conversion function found via findConversionOperator (must not be nullptr)
 	// target_type_index - TypeIndex of target (carrying the TypeCategory; use nativeTypeIndex(cat) for primitives)
 	// target_size_bits - size in bits of the target type
 	// token            - source token for IR instruction location
-	std::optional<ExprResult> emitConversionOperatorCall(
-		const ExprResult& source,
-		const TypeInfo& source_type_info,
-		const StructMemberFunction& conv_op,
-		TypeIndex target_type_index,
-		int target_size_bits,
-		const Token& token);
 	std::optional<ExprResult> emitConversionOperatorCall(const ExprResult& source, const TypeInfo& source_type_info,
 		const FunctionDeclarationNode& conversion_function, TypeIndex target_type_index, int target_size_bits, const Token& token);
 	std::optional<ExprResult> emitConversionOperatorCallToDestination(const ExprResult& source, const TypeInfo& source_type_info,

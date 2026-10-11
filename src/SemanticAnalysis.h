@@ -531,21 +531,12 @@ private:
 											CanonicalTypeId expr_type_id,
 											CanonicalTypeId target_type_id,
 											const UserDefinedConversionOperatorSelection& selected_conversion);
-	// static_cast and direct-initialization select a conversion operator for a
-	// class source. Record it on `slot_expression`'s slot so codegen lowers it
-	// without re-running lookup. Unlike an implicit conversion, an explicit
-	// conversion function is eligible.
-	bool tryAnnotateExplicitConversion(const ASTNode& slot_expression,
-									   const ASTNode& source_expression,
-									   const TypeSpecifierNode& target_type);
-	// The static_cast path starts selection from canonical source and base TypeIds.
-	bool tryAnnotateExplicitConversionByTypeId(const ASTNode& slot_expression,
-												const ASTNode& source_expression,
-												const TypeSpecifierNode& target_type);
+	// Explicit conversions start selection from canonical source and target TypeIds.
+	bool tryAnnotateExplicitConversionByTypeId(const ASTNode& slot_expression, const ASTNode& source_expression, const TypeSpecifierNode& target_type);
 	bool tryAnnotateCopyInitConvertingConstructor(const ASTNode& expr_node,
 												  CanonicalTypeId target_type_id,
 												  const char* context_description,
-												  CanonicalTypeId expr_type_id = {});
+												  CanonicalTypeId expr_type_id);
 	bool isSameTypeConstructorCallInitialization(const ASTNode& expr_node,
 												 CanonicalTypeId target_type_id);
 	void tryAnnotateVariableInitializationConversion(const ASTNode& init_expr,
@@ -559,8 +550,7 @@ private:
 
 	// Annotate binary arithmetic/comparison operands with their common-type conversions.
 	// The caller may pass precomputed operand type IDs to avoid re-running inference on hot paths.
-	void tryAnnotateBinaryOperandConversions(const BinaryOperatorNode& bin_op,
-											 CanonicalTypeId lhs_type_id = {}, CanonicalTypeId rhs_type_id = {});
+	void tryAnnotateBinaryOperandConversions(const BinaryOperatorNode& bin_op, CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id);
 
 	// C++20 [expr.ass]/7: for compound assignment E1 op= E2, the result of the
 	// arithmetic is converted back from the common type to the LHS type

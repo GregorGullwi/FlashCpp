@@ -1006,74 +1006,11 @@ trySelectCanonicalUserDefinedConversionOperator(
 	bool allow_explicit);
 
 inline std::optional<UserDefinedConversionOperatorSelection>
-trySelectCanonicalUserDefinedConversionOperator(
+trySelectCompatibilityUserDefinedConversionOperator(
 	TypeIndex source_type_index,
 	CVQualifier source_cv_qualifier,
 	const TypeSpecifierNode& target_type,
 	bool allow_explicit);
-
-// Helper function to find a conversion operator in a struct
-// Returns true if a conversion operator exists from source_type to target_type
-// This version searches both gTypeInfo (for CodeGen) and gSymbolTable (for Parser/overload resolution)
-inline bool hasConversionOperator(TypeIndex source_type_index, TypeCategory target_type, TypeIndex target_type_index) {
-	TypeIndex canonical_target_type = canonicalize_conversion_target_type(target_type_index, target_type);
-	if (!canonical_target_type.is_valid()) {
-		return false;
-	}
-
-	// First, try to get struct name from gTypeInfo and search gSymbolTable
-	// This is needed during parsing when gTypeInfo.member_functions is not yet populated
-	if (const TypeInfo* source_type_info_ptr = tryGetTypeInfo(source_type_index)) {
-		const TypeInfo& source_type_info = *source_type_info_ptr;
-		std::string_view struct_name = StringTable::getStringView(source_type_info.name());
-
-		// Look up the struct in gSymbolTable
-		extern SymbolTable gSymbolTable;
-		auto struct_symbol = gSymbolTable.lookup(StringTable::getOrInternStringHandle(struct_name));
-		if (struct_symbol.has_value() && struct_symbol->is<StructDeclarationNode>()) {
-			const StructDeclarationNode& struct_node = struct_symbol->template as<StructDeclarationNode>();
-
-			// Search member functions in the StructDeclarationNode
-			for (const auto& member_func_decl : struct_node.member_functions()) {
-				const ASTNode& member_func = member_func_decl.function_declaration;
-				if (member_func.template is<FunctionDeclarationNode>()) {
-					const auto& func_decl = member_func.template as<FunctionDeclarationNode>();
-					std::string_view func_name = func_decl.decl_node().identifier_token().value();
-					const ASTNode& type_node = func_decl.decl_node().type_node();
-					if (func_name.starts_with("operator ") &&
-						!func_decl.is_explicit() &&
-						type_node.template is<TypeSpecifierNode>() &&
-						getCanonicalConversionTargetType(type_node.template as<TypeSpecifierNode>()) == canonical_target_type) {
-						return true; // Found conversion operator in parsed struct
-					}
-				}
-			}
-		}
-
-		// Also check gTypeInfo.member_functions (for CodeGen where it's populated)
-		const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
-		if (source_struct_info) {
-			// Search member functions for the conversion operator
-			for (const auto& member_func : source_struct_info->member_functions) {
-				if (!member_func.is_explicit &&
-					member_func.conversion_target_type == canonical_target_type) {
-					return true;
-				}
-			}
-
-			// Search base classes recursively
-			for (const auto& base_spec : source_struct_info->base_classes) {
-				if (base_spec.type_index.is_valid()) {
-					if (hasConversionOperator(base_spec.type_index, target_type, target_type_index)) {
-						return true;
-					}
-				}
-			}
-		}
-	}
-
-	return false;
-}
 
 // Shared implementation: walks base_classes recursively and tests for derivation.
 // When public_only is true, only Public inheritance paths are considered.
@@ -3066,7 +3003,7 @@ trySelectCanonicalUserDefinedConversionOperator(
 }
 
 inline std::optional<UserDefinedConversionOperatorSelection>
-trySelectCanonicalUserDefinedConversionOperator(
+trySelectCompatibilityUserDefinedConversionOperator(
 	TypeIndex source_type_index,
 	CVQualifier source_cv_qualifier,
 	const TypeSpecifierNode& target_type,
@@ -3243,6 +3180,34 @@ trySelectCanonicalUserDefinedConversionOperator(
 	UserDefinedConversionOperatorSelection result = best_candidates.front();
 	result.ambiguous = best_candidates.size() != 1;
 	return result;
+}
+
+inline std::optional<UserDefinedConversionOperatorSelection>
+trySelectUserDefinedConversionOperator(
+	const TypeSpecifierNode& source_type,
+	const TypeSpecifierNode& target_type,
+	bool allow_explicit) {
+	FrontendContext& context = requireFrontendContext();
+	CanonicalTypeTable& table = context.canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	TypeSpecifierNode canonical_source = source_type;
+	tryBindPublishedTypeEntity(canonical_source);
+	const CanonicalTypeImport imported_source = importCanonicalOverloadNominalType(table, canonical_source);
+	if (imported_source.status == CanonicalTypeImportStatus::Supported) {
+		const TypeId source_type_without_reference = canonicalTypeWithoutReference(table, imported_source.type);
+		const TypeId source_class_type = stripCanonicalTopCv(table, source_type_without_reference).first;
+		const TypeInfo* const source_type_info = tryFindCanonicalOverloadClassTypeInfo(table, source_class_type);
+		if (source_type_info != nullptr &&
+			tryPublishCanonicalClassBaseSchema(table, source_class_type, *source_type_info) &&
+			table.hasClassBaseSchema(source_class_type)) {
+			const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(imported_source.type, target_type, allow_explicit);
+			if (selected_conversion.has_value()) {
+				transaction.commit();
+			}
+			return selected_conversion;
+		}
+	}
+	return trySelectCompatibilityUserDefinedConversionOperator(source_type.type_index(), source_type.cv_qualifier(), target_type, allow_explicit);
 }
 
 // Use canonical TypeIds for reference binding. Value category remains expression
@@ -4152,8 +4117,7 @@ inline ConversionPlan buildConversionPlan(
 							hasUsablePublicDerivedBaseConversion(from_base_index, to_base_index)) {
 							return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
 						}
-						if (const auto selected_conversion =
-							trySelectCanonicalUserDefinedConversionOperator(from.type_index(), from.cv_qualifier(), to, false);
+						if (const auto selected_conversion = trySelectUserDefinedConversionOperator(from, to, false);
 							selected_conversion.has_value()) {
 							if (selected_conversion->ambiguous) {
 								return ConversionPlan::no_match();
@@ -4208,9 +4172,7 @@ inline ConversionPlan buildConversionPlan(
 				// conversion operator can produce a prvalue that does. Direct binding
 				// of the original lvalue stays ill-formed.
 				if (to_is_rvalue && !from_is_rvalue && from_base_index.isStruct() && from_base_index.is_valid()) {
-					if (const auto selected_conversion =
-							trySelectCanonicalUserDefinedConversionOperator(
-								from.type_index(), from.cv_qualifier(), to, false);
+					if (const auto selected_conversion = trySelectUserDefinedConversionOperator(from, to, false);
 						selected_conversion.has_value()) {
 						if (selected_conversion->ambiguous) {
 							return ConversionPlan::no_match();
@@ -4302,8 +4264,7 @@ inline ConversionPlan buildConversionPlan(
 					}
 					// A conversion operator on the referenced source type reaches the
 					// target through the same user-defined sequence as a by-value source.
-					if (const auto selected_conversion =
-							trySelectCanonicalUserDefinedConversionOperator(from.type_index(), from.cv_qualifier(), to, false);
+					if (const auto selected_conversion = trySelectUserDefinedConversionOperator(from, to, false);
 						selected_conversion.has_value()) {
 						if (selected_conversion->ambiguous) {
 							return ConversionPlan::no_match();
@@ -4392,9 +4353,7 @@ inline ConversionPlan buildConversionPlan(
 					to.is_member_object_pointer_type() ||
 					to.is_member_function_pointer());
 			if (has_canonical_conversion_target) {
-				if (const auto selected_conversion =
-					trySelectCanonicalUserDefinedConversionOperator(
-						from.type_index(), from.cv_qualifier(), to, false);
+				if (const auto selected_conversion = trySelectUserDefinedConversionOperator(from, to, false);
 					selected_conversion.has_value()) {
 					if (selected_conversion->ambiguous) {
 						return ConversionPlan::no_match();
@@ -4404,10 +4363,6 @@ inline ConversionPlan buildConversionPlan(
 						true,
 						selected_conversion->trailing_standard_rank};
 				}
-			}
-			if (hasConversionOperator(
-				from.type_index(), effective_to_category, to.type_index())) {
-				return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 			}
 		}
 		if (effective_to_category == TypeCategory::Struct &&

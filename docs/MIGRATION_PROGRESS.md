@@ -88,47 +88,34 @@ Continue boundary 3A in this order.
    viability (an argument or copy-initialization no longer selects it) while a
    `static_cast` or direct-initialization still considers it, and both forms now
    lower by calling the selected operator rather than reinterpreting the object.
-   Conversion-operator selection is migrating to a single sema authority, with
-   the end state that codegen never re-selects. The sema selector
-   `trySelectCanonicalUserDefinedConversionOperator` has a canonical `TypeId`
-   entry point for `static_cast`, initialization, returns, ordinary call
-   arguments, assignment, arithmetic promotions, conditional branches,
-   contextual `bool`, constructor arguments, and builtin subscript conversions.
-   It traverses canonical class-base identities while reading candidate
-   declarations through a `StructTypeInfo` compatibility bridge. Canonical
-   selection retains a `TypeIndex` fallback when a source specialization cannot
-   be imported or resolved through that bridge. Shared overload candidate
-   ranking still exposes its `TypeIndex` overload for unmigrated consumers.
-   The selected function is recorded in `ImplicitCastInfo` and consumed by
-   `emitSemaSelectedConversionOperatorCall`. The legacy codegen lookup
-   `findConversionOperator` / `emitConversionOperatorCall` still uses compat
-   `TypeIndex` currency and its own cv-aware overload choice. `static_cast` and
-   direct-initialization lower through selected annotations and fail closed in
-   codegen when one is absent. Direct-initialization still selects through
-   `TypeIndex` with canonical target and tail planning. The legacy path is still
-   load-bearing, not dead:
+   Conversion-operator selection uses the sema-owned canonical `TypeId` path
+   first for `static_cast`, initialization, returns, ordinary call arguments,
+   assignment, arithmetic promotions, conditional branches, contextual `bool`,
+   constructor arguments, and builtin subscript conversions. It traverses
+   canonical class-base identities while reading candidate declarations through
+   a `StructTypeInfo` compatibility bridge. The explicitly named
+   `trySelectCompatibilityUserDefinedConversionOperator` remains available
+   only when source import or the declaration bridge cannot resolve the class.
+   Shared overload candidate ranking still has legacy `TypeIndex` consumers.
+   The selected function is recorded in `ImplicitCastInfo`; call arguments,
+   returns, variable initialization, assignment, contextual `bool`, constructor
+   arguments, and builtin subscripting now lower that declaration without
+   codegen-side overload lookup. `findConversionOperator` and its recursive
+   TypeIndex search are removed. `static_cast` and direct-initialization both
+   select through the TypeId path and fail closed in codegen when the annotation
+   is absent. IR operands still use TypeIndex projections where existing backend
+   call and storage operations require them. The compatibility path is still
+   needed for source shapes the canonical importer or declaration bridge cannot
+   yet represent:
    `tryAnnotateConversionByTypeId` now backs all shared implicit-conversion
    annotations. Its generic residual tail selects and records the conversion
    function, including the cv-ranked choice for a reference-qualified source.
    Its residual tail also handles class aliases by value, and its
    reference-stripped path records the selected operator for class aliases.
-   Constructor-argument codegen now requires the sema-selected conversion
-   function and fails closed if the annotation is missing; it no longer performs
-   a second cv-based lookup in that path. Assignment and contextual-`bool`
-   lowering also consume the sema-selected function and fail closed when it is
-   missing. The `TypeId` entry point still reads candidate declarations from
-   `StructTypeInfo`; legacy initialization and call lowering still retain
-   codegen-side re-selection paths. Long-term plan:
-   (1) make every sema `UserDefined` annotation record the selected function,
-   extending this to the remaining unselected paths; (2) migrate sibling codegen
-   contexts to consume the annotation
-   through `emitSemaSelectedConversionOperatorCall` and fail closed; (3) delete
-   `findConversionOperator` / `emitConversionOperatorCall`, leaving one selection
-   authority on the canonical `TypeId` currency. Until step 3 the two lookups can
-   diverge on cv-aware overload choice, explicit filtering, and `TypeId` versus
-   `TypeIndex` identity. The migrated `static_cast` and direct-initialization
-   paths now fail closed when the annotation is absent, with the same
-   `"sema must annotate"` internal error as the sibling paths. Class-target
+   The TypeId selector still reads candidate declarations from
+   `StructTypeInfo`; remaining work is to remove compatibility selection where
+   canonical import and declaration publication can cover the source, and to
+   migrate legacy overload-ranking consumers to canonical identities. Class-target
    variable initialization now consumes exact prvalue conversion selections
    for copy-initialization and parenthesized direct-initialization, constructing
    into the declared object.
