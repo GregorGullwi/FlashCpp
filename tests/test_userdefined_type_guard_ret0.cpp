@@ -1,4 +1,4 @@
-// Regression test: tryAnnotateConversion() must not crash when the expression
+// Regression test: tryAnnotateConversionByTypeId() must not crash when the expression
 // type or the target type is Type::UserDefined (typedef / type-alias).
 // Before the fix, can_convert_type(UserDefined, UserDefined) returned ExactMatch
 // for any two UserDefined types regardless of their type_index, so the

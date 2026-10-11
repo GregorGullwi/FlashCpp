@@ -2868,7 +2868,6 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 	};
 
 	// 1. Try sema annotation
-	bool sema_applied_bool_conv = false;
 	if (cond_node.is<ExpressionNode>()) {
 		const void* key = &cond_node.as<ExpressionNode>();
 		const auto slot = sema_.getSlot(key);
@@ -2890,7 +2889,6 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 			}
 			// Struct → bool uses the conversion operator selected by sema.
 			if (cast_info.cast_kind == StandardConversionKind::UserDefined && from_desc.category() == TypeCategory::Struct) {
-				sema_applied_bool_conv = true;
 				const TypeInfo* const source_type_info = tryGetTypeInfo(from_desc.type_index);
 				if (source_type_info == nullptr || cast_info.selected_conversion_function == nullptr) {
 					throw InternalError("Sema must annotate a contextual bool conversion with its selected operator");
@@ -2917,23 +2915,8 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 	if (condition.category() != TypeCategory::Struct) {
 		return emitNonZeroBoolValue(std::move(condition), source_token);
 	}
-	// Note 2026-04-29: the codegen-side struct → bool conversion-operator fallback
-	// previously located here was probed across the full 2243-test corpus with a
-	// hard-fail guard and never hit. Sema's contextual-bool annotation already
-	// covers struct-to-bool conversions in if/while/for/&&/|| conditions, so the
-	// fallback was removed. If a future regression reaches this point with an
-	// unannotated struct condition, the assertion below will surface it instead
-	// of silently emitting a runtime call.
-	if (!sema_applied_bool_conv && condition.category() == TypeCategory::Struct) {
-		TypeIndex cond_type_idx = condition.type_index;
-		if (const TypeInfo* src_type_info = tryGetTypeInfo(cond_type_idx)) {
-			if (findConversionOperator(src_type_info->getStructInfo(), nativeTypeIndex(TypeCategory::Bool), false)) {
-				throw InternalError(
-					"Codegen-side contextual-bool conversion-operator fallback should not run: "
-					"sema must annotate struct-to-bool contextual conversions");
-			}
-		}
-	}
+	if (condition.category() == TypeCategory::Struct)
+		throw InternalError("Sema must annotate struct-to-bool contextual conversions");
 	return condition;
 }
 

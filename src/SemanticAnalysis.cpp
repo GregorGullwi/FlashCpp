@@ -1353,7 +1353,7 @@ const CanonicalTypeDesc& TypeContext::get(CanonicalTypeId id) const {
 // NOTE: determineConversionKind() was removed in Phase 11 and unified into
 // buildConversionPlan() (OverloadResolution.h), which returns both the
 // ConversionRank and StandardConversionKind in a single call.
-// See tryAnnotateConversion() below for usage.
+// See tryAnnotateConversionByTypeId() below for usage.
 
 namespace {
 template <typename T>
@@ -5221,10 +5221,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 					e.get_rhs().template is<ExpressionNode>()) {
 					if (assignment_lhs_type_id) {
 						const CanonicalTypeId rhs_id = inferExpressionType(e.get_rhs());
-						tryAnnotateConversion(
-							e.get_rhs(),
-							assignment_lhs_type_id,
-							rhs_id);
+						tryAnnotateConversionByTypeId(e.get_rhs(), assignment_lhs_type_id, rhs_id);
 						diagnoseScopedEnumConversion(e.get_rhs(), assignment_lhs_type_id,
 													 " in assignment", rhs_id);
 					}
@@ -5489,10 +5486,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 						normalizeBuiltinSubscriptOperands(e);
 					const CanonicalTypeId array_type_id = inferExpressionType(e.array_expr());
 					if (array_type_id && pointer_conversion_target_type_id) {
-						tryAnnotateConversion(
-							e.array_expr(),
-							*pointer_conversion_target_type_id,
-							array_type_id);
+						tryAnnotateConversionByTypeId(e.array_expr(), *pointer_conversion_target_type_id, array_type_id);
 					}
 				}
 				// If sema resolved this subscript to operator[], annotate the index
@@ -10302,19 +10296,11 @@ bool SemanticAnalysis::tryAnnotateExplicitConversion(
 	return true;
 }
 
-bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, CanonicalTypeId target_type_id, CanonicalTypeId expr_type_id) {
-	return annotateConversionImpl(expr_node, target_type_id, expr_type_id, false);
-}
-
 bool SemanticAnalysis::tryAnnotateConversionByTypeId(const ASTNode& expr_node, CanonicalTypeId target_type_id, CanonicalTypeId expr_type_id) {
-	return annotateConversionImpl(expr_node, target_type_id, expr_type_id, true);
+	return annotateConversionImpl(expr_node, target_type_id, expr_type_id);
 }
 
-bool SemanticAnalysis::annotateConversionImpl(
-	const ASTNode& expr_node,
-	CanonicalTypeId target_type_id,
-	CanonicalTypeId expr_type_id,
-	bool use_type_ids) {
+bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, CanonicalTypeId target_type_id, CanonicalTypeId expr_type_id) {
 	if (!target_type_id)
 		return false;
 	checkMemberFunctionAddressAccessForTarget(expr_node, target_type_id);
@@ -10332,13 +10318,10 @@ bool SemanticAnalysis::annotateConversionImpl(
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
 	const bool target_is_member_object_pointer = isMemberObjectPointerType(target_type_id);
 	const bool target_is_member_function_pointer = isMemberFunctionPointerType(target_type_id);
-	auto select_conversion_operator = [this, use_type_ids](
+	auto select_conversion_operator = [this](
 		TypeIndex source_type_index, CVQualifier source_cv,
 		const TypeSpecifierNode& target_type, CanonicalTypeId source_type_id)
 		-> std::optional<UserDefinedConversionOperatorSelection> {
-		if (!use_type_ids) {
-			return trySelectCanonicalUserDefinedConversionOperator(source_type_index, source_cv, target_type, false);
-		}
 		// Lazy specialization may intern types and reallocate TypeContext's backing vector.
 		const CanonicalTypeDesc& source_desc = type_context_.get(source_type_id);
 		CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
@@ -11370,8 +11353,8 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 		return;
 	}
 
-	tryAnnotateConversion(bin_op.get_lhs(), common_type_id, lhs_type_id);
-	tryAnnotateConversion(bin_op.get_rhs(), common_type_id, rhs_type_id);
+	tryAnnotateConversionByTypeId(bin_op.get_lhs(), common_type_id, lhs_type_id);
+	tryAnnotateConversionByTypeId(bin_op.get_rhs(), common_type_id, rhs_type_id);
 }
 
 // --- Compound assignment back-conversion annotation ---
@@ -11505,12 +11488,12 @@ void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNod
 	if (promoted_lhs != lhs_cat) {
 		CanonicalTypeDesc promoted_desc;
 		promoted_desc.type_index = nativeTypeIndex(promoted_lhs);
-		tryAnnotateConversion(bin_op.get_lhs(), type_context_.intern(promoted_desc), lhs_type_id);
+		tryAnnotateConversionByTypeId(bin_op.get_lhs(), type_context_.intern(promoted_desc), lhs_type_id);
 	}
 	if (promoted_rhs != rhs_cat) {
 		CanonicalTypeDesc promoted_desc;
 		promoted_desc.type_index = nativeTypeIndex(promoted_rhs);
-		tryAnnotateConversion(bin_op.get_rhs(), type_context_.intern(promoted_desc), rhs_type_id);
+		tryAnnotateConversionByTypeId(bin_op.get_rhs(), type_context_.intern(promoted_desc), rhs_type_id);
 	}
 }
 
@@ -11551,7 +11534,7 @@ void SemanticAnalysis::tryAnnotateUnaryOperandPromotion(const UnaryOperatorNode&
 	if (promoted_cat != operand_cat) {
 		CanonicalTypeDesc promoted_desc;
 		promoted_desc.type_index = nativeTypeIndex(promoted_cat);
-		tryAnnotateConversion(unary_op.get_operand(), type_context_.intern(promoted_desc));
+		tryAnnotateConversionByTypeId(unary_op.get_operand(), type_context_.intern(promoted_desc), operand_type_id);
 	}
 }
 
@@ -11561,17 +11544,17 @@ void SemanticAnalysis::tryAnnotateUnaryOperandPromotion(const UnaryOperatorNode&
 // Used for: if/while/for/do-while conditions, ternary condition, && / || operands.
 
 void SemanticAnalysis::tryAnnotateContextualBool(const ASTNode& expr_node) {
+	if (!expr_node.is<ExpressionNode>())
+		return;
+	const CanonicalTypeId expr_type_id = inferExpressionType(expr_node);
 	// First try the standard primitive conversion path (handles int/float/char -> bool).
-	if (tryAnnotateConversion(expr_node, bool_type_id_))
+	if (tryAnnotateConversionByTypeId(expr_node, bool_type_id_, expr_type_id))
 		return;
 
 	// Handle enum/pointer -> bool (C++20 [conv.bool]/1): contextual conversion
 	// to bool applies to enums and pointers. Zero/null -> false, non-zero -> true.
 	// The backend TEST instruction already handles this correctly; the annotation
 	// records the semantic intent for future codegen migration.
-	if (!expr_node.is<ExpressionNode>())
-		return;
-	const CanonicalTypeId expr_type_id = inferExpressionType(expr_node);
 	if (!expr_type_id)
 		return;
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
@@ -13897,7 +13880,7 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 				param_type_id,
 				" in constructor argument",
 				arg_type_id)) {
-			tryAnnotateConversion(arg, param_type_id, arg_type_id);
+			tryAnnotateConversionByTypeId(arg, param_type_id, arg_type_id);
 		}
 		diagnoseScopedEnumConversion(arg, param_type_id, " in constructor argument", arg_type_id);
 		++i;
@@ -14359,7 +14342,7 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 				param_type_id,
 				" in constructor argument",
 				arg_type_id)) {
-			tryAnnotateConversion(arg, param_type_id, arg_type_id);
+			tryAnnotateConversionByTypeId(arg, param_type_id, arg_type_id);
 		}
 		diagnoseScopedEnumConversion(arg, param_type_id, " in constructor argument", arg_type_id);
 	}
@@ -14432,10 +14415,10 @@ void SemanticAnalysis::tryAnnotateTernaryBranchConversions(const TernaryOperator
 	// this is required even when both branches share the same array type, where
 	// no branch-to-common conversion would otherwise be recorded.
 	if (const std::optional<CanonicalTypeDesc> true_decayed = decayArrayForConditional(true_desc)) {
-		tryAnnotateConversion(ternary_node.true_expr(), type_context_.intern(*true_decayed), true_type_id);
+		tryAnnotateConversionByTypeId(ternary_node.true_expr(), type_context_.intern(*true_decayed), true_type_id);
 	}
 	if (const std::optional<CanonicalTypeDesc> false_decayed = decayArrayForConditional(false_desc)) {
-		tryAnnotateConversion(ternary_node.false_expr(), type_context_.intern(*false_decayed), false_type_id);
+		tryAnnotateConversionByTypeId(ternary_node.false_expr(), type_context_.intern(*false_decayed), false_type_id);
 	}
 
 	if (canonical_types_match(true_type_id, false_type_id))
@@ -14449,9 +14432,9 @@ void SemanticAnalysis::tryAnnotateTernaryBranchConversions(const TernaryOperator
 			false_desc.category() == TypeCategory::Nullptr)) {
 		const CanonicalTypeId common_type_id = type_context_.intern(*pointer_result);
 		if (!canonical_types_match(true_type_id, common_type_id))
-			tryAnnotateConversion(ternary_node.true_expr(), common_type_id, true_type_id);
+			tryAnnotateConversionByTypeId(ternary_node.true_expr(), common_type_id, true_type_id);
 		if (!canonical_types_match(false_type_id, common_type_id))
-			tryAnnotateConversion(ternary_node.false_expr(), common_type_id, false_type_id);
+			tryAnnotateConversionByTypeId(ternary_node.false_expr(), common_type_id, false_type_id);
 		return;
 	}
 
@@ -14472,7 +14455,7 @@ void SemanticAnalysis::tryAnnotateTernaryBranchConversions(const TernaryOperator
 
 	// Annotate each branch if it needs conversion to the common type.
 	if (!canonical_types_match(true_type_id, common_type_id))
-		tryAnnotateConversion(ternary_node.true_expr(), common_type_id);
+		tryAnnotateConversionByTypeId(ternary_node.true_expr(), common_type_id, true_type_id);
 	if (!canonical_types_match(false_type_id, common_type_id))
-		tryAnnotateConversion(ternary_node.false_expr(), common_type_id);
+		tryAnnotateConversionByTypeId(ternary_node.false_expr(), common_type_id, false_type_id);
 }

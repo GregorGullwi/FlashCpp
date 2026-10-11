@@ -521,15 +521,9 @@ private:
 	// Store a semantic slot for the given expression node pointer.
 	void setSlot(const void* key, const SemanticSlot& slot);
 
-	// Core annotation helper: if the inferred type of expr_node differs from target_type_id
-	// and a standard (non-user-defined) primitive conversion applies, allocate an
-	// ImplicitCastInfo and fill the expression's SemanticSlot.
-	// Returns true when a slot was filled.
-	bool tryAnnotateConversion(const ASTNode& expr_node,
-							   CanonicalTypeId target_type_id,
-							   CanonicalTypeId expr_type_id = {});
+	// Implicit conversions enter through canonical identities; source declaration lookup retains a compatibility bridge.
 	bool tryAnnotateConversionByTypeId(const ASTNode& expr_node, CanonicalTypeId target_type_id, CanonicalTypeId expr_type_id);
-	bool annotateConversionImpl(const ASTNode& expr_node, CanonicalTypeId target_type_id, CanonicalTypeId expr_type_id, bool use_type_ids);
+	bool annotateConversionImpl(const ASTNode& expr_node, CanonicalTypeId target_type_id, CanonicalTypeId expr_type_id);
 	// Record a sema-selected conversion operator (with its trailing standard
 	// conversion) on the argument's slot so codegen can lower it without
 	// re-running lookup. Shared by the builtin/enum and nominal-target paths.
