@@ -1752,7 +1752,94 @@ static std::string cv_qualifier_to_string(CVQualifier cv) {
 	return result;
 }
 
+// Render one FunctionType (a callable's return or parameter) as its specifier
+// spelling. Shared by the readable renderer below so function and member
+// pointer types are described by their signature instead of their category.
+static std::string readableFunctionComponent(const FunctionType& type) {
+	TypeSpecifierNode spec(type.type_index, TypeQualifier::None, 0, Token{}, type.cv_qualifier);
+	if (type.type_entity) {
+		spec.set_type_entity(type.type_entity);
+	}
+	spec.set_reference_qualifier(type.reference_qualifier);
+	for (const CVQualifier pointer_cv : type.pointer_qualifiers) {
+		spec.add_pointer_level(pointer_cv);
+	}
+	if (type.member_class_name.isValid()) {
+		spec.set_member_class_name(type.member_class_name);
+	}
+	if (!type.array_dimensions.empty()) {
+		if (type.pointee_array_declarator) {
+			spec.set_pointee_array_declarator(true);
+			spec.set_pointee_array_dimensions(type.array_dimensions);
+		} else {
+			spec.set_array_dimensions(type.array_dimensions);
+		}
+	}
+	return spec.getReadableString();
+}
+
+// Render a function, function-pointer, or member-function-pointer specifier
+// from its callable signature: return type, declarator, parameters, and
+// cv/ref/noexcept qualifiers.
+static std::string readableFunctionDeclarator(const TypeSpecifierNode& node, const FunctionSignature& signature) {
+	std::string result = readableFunctionComponent(signature.return_type());
+	result += " ";
+	const bool is_member_pointer = node.category() == TypeCategory::MemberFunctionPointer;
+	const bool is_function_pointer = node.category() == TypeCategory::FunctionPointer;
+	if (is_member_pointer) {
+		result += "(";
+		if (node.has_member_class()) {
+			result += StringTable::getStringView(node.member_class_name());
+		}
+		result += "::*";
+	} else if (is_function_pointer) {
+		result += "(*";
+	}
+	for (const PointerLevel& pointer_level : node.pointer_levels()) {
+		const std::string pointer_cv = cv_qualifier_to_string(pointer_level.cv_qualifier);
+		if (!pointer_cv.empty()) {
+			result += " " + pointer_cv;
+		}
+	}
+	if (is_member_pointer || is_function_pointer) {
+		result += ")";
+	}
+	result += "(";
+	const std::span<const FunctionType> parameters = signature.parameter_types();
+	for (size_t index = 0; index < parameters.size(); ++index) {
+		if (index != 0) {
+			result += ", ";
+		}
+		result += readableFunctionComponent(parameters[index]);
+	}
+	if (signature.is_variadic) {
+		result += parameters.empty() ? "..." : ", ...";
+	}
+	result += ")";
+	if (signature.is_const) {
+		result += " const";
+	}
+	if (signature.is_volatile) {
+		result += " volatile";
+	}
+	if (signature.function_reference_qualifier == ReferenceQualifier::LValueReference) {
+		result += " &";
+	} else if (signature.function_reference_qualifier == ReferenceQualifier::RValueReference) {
+		result += " &&";
+	}
+	if (signature.is_noexcept) {
+		result += " noexcept";
+	}
+	return result;
+}
+
 std::string TypeSpecifierNode::getReadableString() const {
+	if (has_function_signature() && function_signature().hasStructuredTypes() &&
+		(category() == TypeCategory::Function || category() == TypeCategory::FunctionPointer ||
+		 category() == TypeCategory::MemberFunctionPointer)) {
+		return readableFunctionDeclarator(*this, function_signature());
+	}
+
 	std::ostringstream oss;
 
 	// Start with base type CV-qualifiers

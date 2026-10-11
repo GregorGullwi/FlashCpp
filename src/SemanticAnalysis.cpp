@@ -7978,31 +7978,9 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 	if ((same_owner_signature_mismatch ||
 			(target_is_member_function_pointer && saw_unmatched_member_template_candidate)) &&
 		best_member_function == nullptr && best_template_address == nullptr && !template_address_ambiguous) {
-		std::string target_description;
-		if (target_signature != nullptr && target_signature->hasStructuredTypes()) {
-			target_description = typeSpecifierFromFunctionType(target_signature->return_type()).getReadableString();
-			target_description += " (";
-			target_description += std::string(StringTable::getStringView(member_owner->getName()));
-			target_description += "::*)(";
-			const std::span<const FunctionType> target_parameters = target_signature->parameter_types();
-			for (size_t index = 0; index < target_parameters.size(); ++index) {
-				if (index != 0) {
-					target_description += ", ";
-				}
-				target_description += typeSpecifierFromFunctionType(target_parameters[index]).getReadableString();
-			}
-			target_description += ")";
-			if (target_signature->is_const) {
-				target_description += " const";
-			}
-			if (target_signature->is_volatile) {
-				target_description += " volatile";
-			}
-			if (target_signature->is_noexcept) {
-				target_description += " noexcept";
-			}
-		} else {
-			target_description = target_type_spec.getReadableString();
+		TypeSpecifierNode target_description_type = target_type_spec;
+		if (!target_description_type.has_member_class() && member_owner != nullptr) {
+			target_description_type.set_member_class_name(member_owner->getName());
 		}
 		throw makeStructuredCompileError(
 			context_.diagnostics(),
@@ -8010,7 +7988,8 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 			DiagnosticSeverity::Error,
 			SourceLocation::fromToken(qualified->identifier_token()),
 			"member function '" + std::string(StringTable::getStringView(qualified->nameHandle())) +
-				"' does not match the target pointer-to-member type '" + target_description + "'",
+				"' does not match the target pointer-to-member type '" +
+				target_description_type.getReadableString() + "'",
 			{});
 	}
 	if (template_address_ambiguous &&
