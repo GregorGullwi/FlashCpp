@@ -68,11 +68,8 @@ reproducers under `tests/unsupported_boundary_2f/`:
   `test_function_template_recursive_trailing_return_fail.cpp`,
   `test_template_callable_operator_const_receiver_explicit_member_fail.cpp`,
   and `test_template_member_call_const_receiver_fail.cpp`.
-- Declaration-parser failures masked by the top-level expression fallback:
-  `test_mismatch_args_fail.cpp`, `test_mismatch_const_fail.cpp`,
-  `test_mismatch_return_fail.cpp`, `test_pointer_const_mismatch_fail.cpp`,
-  `test_reference_const_mismatch_fail.cpp`, and
-  `test_template_member_func_template_const_ref_return_fail.cpp`.
+- A reference-returning member-function-pointer declarator in an out-of-line
+  member-template context: `test_template_member_func_template_const_ref_return_fail.cpp`.
 - Out-of-line and injected-identity fixtures that require identity recovery:
   `test_injected_identity_ool_namespace_owner_fail.cpp`,
   `test_template_nested_ool_ctor_template_alias_target_mismatch_fail.cpp`,

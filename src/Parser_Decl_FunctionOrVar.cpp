@@ -635,15 +635,25 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			}
 			if (has_name_match && !has_qualifier_match) {
 				// The name matches, but the cv/ref-qualifiers don't match.
-				FLASH_LOG(Parser, Error, "Out-of-line definition of '", class_name.view(), "::", function_name_token.value(),
-						  "' does not match any declaration in the class (cv/ref qualifier mismatch)");
-				return error(DiagnosticId::UnexpectedToken, function_name_token, "Unexpected token");
+				return error(DiagnosticId::OutOfLineDefinitionMismatch, function_name_token,
+					StringBuilder()
+						.append("Out-of-line definition of '")
+						.append(class_name.view())
+						.append("::")
+						.append(function_name_token.value())
+						.append("' does not match any declaration in the class (cv/ref qualifier mismatch)")
+						.commit());
 			}
 			if (has_name_match && has_qualifier_match) {
 				// Name and qualifiers match but parameter count differs (overload not found)
-				FLASH_LOG(Parser, Error, "Out-of-line definition of '", class_name.view(), "::", function_name_token.value(),
-						  "' does not match any declaration in the class (parameter count mismatch)");
-				return error(DiagnosticId::UnexpectedToken, function_name_token, "Unexpected token");
+				return error(DiagnosticId::OutOfLineDefinitionMismatch, function_name_token,
+					StringBuilder()
+						.append("Out-of-line definition of '")
+						.append(class_name.view())
+						.append("::")
+						.append(function_name_token.value())
+						.append("' does not match any declaration in the class (parameter count mismatch)")
+						.commit());
 			}
 
 			// No declaration at all for this name. This can happen for:
@@ -723,9 +733,15 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		// Phase 7: Use unified signature validation
 		auto validation_result = validate_signature_match(existing_func_ref, func_ref);
 		if (!validation_result.is_match()) {
-			FLASH_LOG(Parser, Error, validation_result.error_message, " in out-of-line definition of '",
-					  class_name.view(), "::", function_name_token.value(), "'");
-			return error(DiagnosticId::UnexpectedToken, function_name_token, "Unexpected token");
+			return error(DiagnosticId::OutOfLineDefinitionMismatch, function_name_token,
+				StringBuilder()
+					.append(validation_result.error_message)
+					.append(" in out-of-line definition of '")
+					.append(class_name.view())
+					.append("::")
+					.append(function_name_token.value())
+					.append("'")
+					.commit());
 		}
 
 		if (auto special = handle_out_of_line_default_delete(existing_func_ref);
@@ -1518,9 +1534,14 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	StructMemberFunction* existing_member = find_ctor_dtor_for_definition(*struct_info, is_destructor, params);
 
 	if (!existing_member) {
-		FLASH_LOG(Parser, Error, "Out-of-line definition of '", class_name, is_destructor ? "::~" : "::", class_name,
-				  "' does not match any declaration in the class");
-		return ParseResult::error("No matching declaration found", func_name_token);
+		return error(DiagnosticId::OutOfLineDefinitionMismatch, func_name_token,
+			StringBuilder()
+				.append("Out-of-line definition of '")
+				.append(class_name)
+				.append(is_destructor ? "::~" : "::")
+				.append(class_name)
+				.append("' does not match any declaration in the class")
+				.commit());
 	}
 
 	// = default / = delete out-of-line definition of a constructor/destructor.
