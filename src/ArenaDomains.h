@@ -48,11 +48,20 @@ public:
 	template<typename T, typename... Args>
 	T* allocateObject(Args&&... args) {
 		void* storage = allocate(sizeof(T), alignof(T));
-		T* object = new (storage) T(std::forward<Args>(args)...);
 		if constexpr (!std::is_trivially_destructible_v<T>) {
-			registerDestructor(object);
+			// Register before construction so a throwing registration cannot
+			// strand a constructed object without a destructor. A throwing
+			// constructor instead pops the entry it never used.
+			registerDestructor(static_cast<T*>(storage));
 		}
-		return object;
+		try {
+			return new (storage) T(std::forward<Args>(args)...);
+		} catch (...) {
+			if constexpr (!std::is_trivially_destructible_v<T>) {
+				destructors_.pop_back();
+			}
+			throw;
+		}
 	}
 
 	ScratchArenaState mark() const;

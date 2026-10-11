@@ -155,6 +155,25 @@ TEST_SUITE("FrontendContext") {
 		CHECK(arena.mark().destructor_count == 1);
 	}
 
+	TEST_CASE("Scratch arena registers a destructor before constructing the object") {
+		struct SelfObserving {
+			const MonotonicScratchArena* arena;
+			std::size_t destructor_count_at_construction;
+			explicit SelfObserving(const MonotonicScratchArena* owner)
+				: arena(owner)
+				, destructor_count_at_construction(owner->mark().destructor_count) {}
+			~SelfObserving() {}
+		};
+		DiagnosticEngine diagnostics;
+		MonotonicScratchArena arena(diagnostics, 4096);
+		SelfObserving* object = arena.allocateObject<SelfObserving>(&arena);
+		// The destructor must be registered before the constructor runs so a
+		// throwing registration cannot strand a constructed object.
+		CHECK(object->destructor_count_at_construction == 1);
+		CHECK(arena.mark().destructor_count == 1);
+		CHECK_FALSE(diagnostics.hasErrors());
+	}
+
 	TEST_CASE("Scratch budget charges alignment padding and bounds retained blocks") {
 		DiagnosticEngine diagnostics;
 		MonotonicScratchArena arena(diagnostics, 8192);

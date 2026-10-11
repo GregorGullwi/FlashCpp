@@ -335,9 +335,6 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
 
 ## Active findings
 
-- Scratch `allocateObject` constructs an object before destructor-vector
-  registration can throw `bad_alloc`, leaving its destructor unregistered. Fix
-  before production scratch probes use nontrivial objects.
 - The top-level expression fallback can mask declaration-parse errors; see
   [known issues](KNOWN_ISSUES.md).
 
