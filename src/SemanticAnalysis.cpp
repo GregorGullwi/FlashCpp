@@ -3478,6 +3478,19 @@ void SemanticAnalysis::normalizeTopLevelNode(const ASTNode& node) {
 			registerOuterTemplateBindingsInScope(var);
 			normalizeExpression(*init, ctx);
 			popScope();
+			// Namespace-scope initializers do not pass through normalizeStatement,
+			// so the pointer-to-member address-of check would otherwise be skipped
+			// and a signature mismatch accepted silently.
+			const auto& decl = var.declaration();
+			const ASTNode vtype = decl.type_node();
+			if (vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
+				TypeSpecifierNode declared_type = vtype.as<TypeSpecifierNode>();
+				applyDeclarationArrayBoundsToTypeSpec(decl, declared_type, *this);
+				const CanonicalTypeId decl_type_id = canonicalizeType(declared_type);
+				if (decl_type_id) {
+					checkMemberFunctionAddressAccessForTarget(*init, decl_type_id);
+				}
+			}
 		}
 	}
 
@@ -7639,6 +7652,7 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 	std::vector<ViableTemplateAddressCandidate> viable_template_addresses;
 	const StructMemberFunction* best_template_address = nullptr;
 	bool template_address_ambiguous = false;
+	bool saw_unmatched_member_template_candidate = false;
 	if (target_function_type ||
 		(target_signature != nullptr && target_signature->hasStructuredTypes())) {
 		for (const StructMemberFunction& candidate : member_owner->member_functions) {
@@ -7747,6 +7761,7 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 					return_type_deduced).has_value();
 			}
 			if (!target_match) {
+				saw_unmatched_member_template_candidate = true;
 				continue;
 			}
 			const bool candidate_has_associated_constraints =
@@ -7856,6 +7871,45 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 		}
 	}
 
+	// C++20 [conv.mem]: a pointer-to-member conversion may only change the owner
+	// class; the function type is invariant and no user-defined conversion
+	// applies to a pointer-to-member. Record when a non-template candidate is a
+	// member of the target's own class but its function type does not match the
+	// target, so the address-of can be diagnosed instead of silently left
+	// unresolved (which codegen would lower as a mismatched pointer).
+	const TypeId target_member_pointer_owner = [&]() -> TypeId {
+		if (target_import.status != CanonicalTypeImportStatus::Supported) {
+			return {};
+		}
+		const TypeId member = stripCanonicalTopCv(canonical_types, target_import.type).first;
+		if (canonical_types.node(member).kind != CanonicalTypeKind::MemberFunctionPointer) {
+			return {};
+		}
+		return canonical_types.memberPointerOwner(member);
+	}();
+	// Reference-returning member-function pointers canonicalise without a
+	// structural id and cannot be imported through the structural planner, so a
+	// same-owner candidate is also checked by comparing the callable signatures
+	// directly. [conv.mem] requires the callable's function type to be identical;
+	// only the owner class may change (and only to a related class), so a
+	// candidate whose signature differs is never convertible regardless of owner.
+	const TypeSpecifierNode target_type_spec = materializeTypeSpecifier(target_desc);
+	const bool target_spec_is_member_function_pointer =
+		target_type_spec.category() == TypeCategory::MemberFunctionPointer && target_type_spec.has_function_signature();
+	auto candidate_signature_matches_target = [&](const TypeSpecifierNode& candidate_type) -> bool {
+		if (!target_spec_is_member_function_pointer || !candidate_type.has_function_signature() ||
+			candidate_type.category() != TypeCategory::MemberFunctionPointer) {
+			return false;
+		}
+		FunctionSignature candidate_signature = candidate_type.function_signature();
+		FunctionSignature target_signature_copy = target_type_spec.function_signature();
+		candidate_signature.class_name = {};
+		target_signature_copy.class_name = {};
+		candidate_signature.linkage = Linkage::None;
+		target_signature_copy.linkage = Linkage::None;
+		return FlashCpp::equalFunctionSignatureIdentity(candidate_signature, target_signature_copy);
+	};
+	bool same_owner_signature_mismatch = false;
 	const StructMemberFunction* best_member_function = nullptr;
 	ConversionRank best_rank = ConversionRank::NoMatch;
 	bool best_is_ambiguous = false;
@@ -7881,22 +7935,37 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 		if (candidate_type_id == target_type_id) {
 			candidate_rank = ConversionRank::ExactMatch;
 		} else {
-			if (target_import.status != CanonicalTypeImportStatus::Supported) {
-				continue;
+			bool planned = false;
+			if (target_import.status == CanonicalTypeImportStatus::Supported) {
+				const CanonicalTypeImport candidate_import =
+					tryImportCanonicalTypeDesc(type_context_.get(candidate_type_id));
+				if (candidate_import.status == CanonicalTypeImportStatus::Supported) {
+					const ConversionPlan plan = buildCanonicalStructuralConversionPlan(
+						requireFrontendContext().canonicalTypes(),
+						candidate_import.type,
+						target_import.type);
+					if (plan.is_valid) {
+						candidate_rank = plan.rank;
+						planned = true;
+					} else if (target_member_pointer_owner) {
+						const TypeId candidate_member = stripCanonicalTopCv(canonical_types, candidate_import.type).first;
+						if (canonical_types.node(candidate_member).kind == CanonicalTypeKind::MemberFunctionPointer &&
+							canonical_types.memberPointerOwner(candidate_member) == target_member_pointer_owner) {
+							same_owner_signature_mismatch = true;
+						}
+					}
+				}
 			}
-			const CanonicalTypeImport candidate_import =
-				tryImportCanonicalTypeDesc(type_context_.get(candidate_type_id));
-			if (candidate_import.status != CanonicalTypeImportStatus::Supported) {
-				continue;
+			if (!planned) {
+				if (candidate_signature_matches_target(candidate_type)) {
+					candidate_rank = ConversionRank::ExactMatch;
+				} else if (target_spec_is_member_function_pointer) {
+					same_owner_signature_mismatch = true;
+				}
+				if (candidate_rank == ConversionRank::NoMatch) {
+					continue;
+				}
 			}
-			const ConversionPlan plan = buildCanonicalStructuralConversionPlan(
-				requireFrontendContext().canonicalTypes(),
-				candidate_import.type,
-				target_import.type);
-			if (!plan.is_valid) {
-				continue;
-			}
-			candidate_rank = plan.rank;
 		}
 		if (candidate_rank < best_rank) {
 			best_member_function = &candidate;
@@ -7905,6 +7974,44 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 		} else if (candidate_rank == best_rank) {
 			best_is_ambiguous = true;
 		}
+	}
+	if ((same_owner_signature_mismatch ||
+			(target_is_member_function_pointer && saw_unmatched_member_template_candidate)) &&
+		best_member_function == nullptr && best_template_address == nullptr && !template_address_ambiguous) {
+		std::string target_description;
+		if (target_signature != nullptr && target_signature->hasStructuredTypes()) {
+			target_description = typeSpecifierFromFunctionType(target_signature->return_type()).getReadableString();
+			target_description += " (";
+			target_description += std::string(StringTable::getStringView(member_owner->getName()));
+			target_description += "::*)(";
+			const std::span<const FunctionType> target_parameters = target_signature->parameter_types();
+			for (size_t index = 0; index < target_parameters.size(); ++index) {
+				if (index != 0) {
+					target_description += ", ";
+				}
+				target_description += typeSpecifierFromFunctionType(target_parameters[index]).getReadableString();
+			}
+			target_description += ")";
+			if (target_signature->is_const) {
+				target_description += " const";
+			}
+			if (target_signature->is_volatile) {
+				target_description += " volatile";
+			}
+			if (target_signature->is_noexcept) {
+				target_description += " noexcept";
+			}
+		} else {
+			target_description = target_type_spec.getReadableString();
+		}
+		throw makeStructuredCompileError(
+			context_.diagnostics(),
+			DiagnosticId::MemberFunctionPointerSignatureMismatch,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(qualified->identifier_token()),
+			"member function '" + std::string(StringTable::getStringView(qualified->nameHandle())) +
+				"' does not match the target pointer-to-member type '" + target_description + "'",
+			{});
 	}
 	if (template_address_ambiguous &&
 		(best_member_function == nullptr ||
