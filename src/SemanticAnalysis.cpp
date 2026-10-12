@@ -8262,7 +8262,7 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 			return type_info;
 		};
 
-		auto resolve_owner_type = [this, &resolve_alias_target](NamespaceHandle owner_ns) -> const TypeInfo* {
+		auto resolve_owner_type = [this, &resolve_alias_target, &qualified_identifier](NamespaceHandle owner_ns) -> const TypeInfo* {
 			std::vector<StringHandle> components;
 			NamespaceHandle current = owner_ns;
 			while (current.isValid() && !current.isGlobal()) {
@@ -8297,9 +8297,13 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 							return true;
 						});
 						if (nested_enum_matches.size() > 1) {
-							throw CompileError(
-								"ambiguous nested enum type '" +
-								std::string(components.front().view()) + "'");
+							throw makeStructuredCompileError(
+								context_.diagnostics(),
+								DiagnosticId::AmbiguousQualifiedLookup,
+								DiagnosticSeverity::Error,
+								SourceLocation::fromToken(qualified_identifier.identifier_token()),
+								std::string("ambiguous nested enum type '") + std::string(components.front().view()) + "'",
+								{});
 						}
 						if (!nested_enum_matches.empty()) {
 							owner_type_info = nested_enum_matches.front();
@@ -11884,7 +11888,13 @@ void SemanticAnalysis::tryResolveUnaryAddressOfOperator(const UnaryOperatorNode&
 		OverloadableOperator::BitwiseAnd,
 		symbols_);
 	if (resolution.is_ambiguous) {
-		throw CompileError("Ambiguous overload for unary operator&");
+		throw makeStructuredCompileError(
+			context_.diagnostics(),
+			DiagnosticId::AmbiguousOperatorOverload,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(unary_node.get_token()),
+			"Ambiguous overload for unary operator&",
+			{});
 	}
 	if (!resolution.has_match) {
 		return;
@@ -13584,10 +13594,13 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 			return overload_resolution.ambiguous;
 		};
 		if (hasDiagnosableLocalCallableMiss()) {
-			throw CompileError(
-				std::string("callable object '") +
-				std::string(callee_decl.identifier_token().value()) +
-				"' has no matching operator()");
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::NoViableCallOperator,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(callee_decl.identifier_token()),
+				std::string("callable object '") + std::string(callee_decl.identifier_token().value()) + "' has no matching operator()",
+				{});
 		}
 		if (std::optional<std::string> member_name =
 				diagnosableConstReceiverMemberName();

@@ -4819,7 +4819,13 @@ ExprResult AstToIr::generateBuiltinBitCastIntrinsic(const CallExprNode& callExpr
 
 	const TypeSpecifierNode& target_type = callExprNode.arguments()[0].as<TypeSpecifierNode>();
 	if (target_type.is_reference() || target_type.is_rvalue_reference()) {
-		throw CompileError("__builtin_bit_cast destination type cannot be a reference");
+		throw makeStructuredCompileError(
+			context_->diagnostics(),
+			DiagnosticId::BitCastReferenceDestination,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(callExprNode.called_from()),
+			"__builtin_bit_cast destination type cannot be a reference",
+			{});
 	}
 
 	ExprResult source = visitExpressionNode(callExprNode.arguments()[1].as<ExpressionNode>());
@@ -4830,10 +4836,15 @@ ExprResult AstToIr::generateBuiltinBitCastIntrinsic(const CallExprNode& callExpr
 		target_size_bits = static_cast<int>(target_type.size_in_bits());
 	}
 	if (target_size_bits <= 0 || source.size_in_bits.value != target_size_bits) {
-		throw CompileError(
+		throw makeStructuredCompileError(
+			context_->diagnostics(),
+			DiagnosticId::BitCastSizeMismatch,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(callExprNode.called_from()),
 			"__builtin_bit_cast source and destination types must have the same size (source=" +
-			std::to_string(source.size_in_bits.value) + ", destination=" +
-			std::to_string(target_size_bits) + ")");
+				std::to_string(source.size_in_bits.value) + ", destination=" +
+				std::to_string(target_size_bits) + ")",
+			{});
 	}
 
 	const TypeIndex target_type_index = canonicalize_conversion_target_type(
