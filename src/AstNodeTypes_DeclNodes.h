@@ -4667,17 +4667,27 @@ private:
 };
 
 // Constructor call node - represents constructor calls like T(args)
+class InitializerListNode;
+
 class ConstructorCallNode {
 public:
 	explicit ConstructorCallNode(const TypeSpecifierNode& type_node, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
 		: type_node_(type_node), arguments_(std::move(arguments)), called_from_(called_from_token) {}
 	explicit ConstructorCallNode(ASTNode type_node, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
 		: ConstructorCallNode(type_node.as<TypeSpecifierNode>(), std::move(arguments), called_from_token) {}
+	explicit ConstructorCallNode(const TypeSpecifierNode& type_node, ASTNode aggregate_initializer, Token called_from_token)
+		: type_node_(type_node), called_from_(called_from_token), flags_(AggregateInitialization) {
+		arguments_.push_back(aggregate_initializer);
+	}
+	explicit ConstructorCallNode(ASTNode type_node, ASTNode aggregate_initializer, Token called_from_token)
+		: ConstructorCallNode(type_node.as<TypeSpecifierNode>(), aggregate_initializer, called_from_token) {}
 
 	const TypeSpecifierNode& type_node() const { return type_node_; }
 	TypeSpecifierNode& type_specifier_node() { return type_node_; }
 	const TypeSpecifierNode& type_specifier_node() const { return type_node_; }
 	const auto& arguments() const { return arguments_; }
+	bool isAggregateInitialization() const { return (flags_ & AggregateInitialization) != 0; }
+	const InitializerListNode* aggregateInitializer() const;
 	const ConstructorDeclarationNode* resolved_constructor() const { return resolved_constructor_; }
 
 	void add_argument(ASTNode argument) { arguments_.push_back(argument); }
@@ -4690,6 +4700,8 @@ private:
 	ChunkedVector<ASTNode> arguments_;
 	Token called_from_;
 	mutable const ConstructorDeclarationNode* resolved_constructor_ = nullptr;
+	enum : uint8_t { AggregateInitialization = 1 };
+	uint8_t flags_ = 0;
 };
 
 // Returns true if any parameter of `func` still carries an unsubstituted

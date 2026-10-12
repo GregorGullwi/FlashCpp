@@ -77,8 +77,12 @@ void visitExpressionChildrenForType(const T& expression, Visitor& visitor) {
 		emitChild(visitor, ExpressionChildRole::FalseBranch, expression.false_expr());
 	} else if constexpr (std::is_same_v<ExpressionType, ConstructorCallNode>) {
 		emitChild(visitor, ExpressionChildRole::ConstructedType, expression.type_node());
-		for (const auto& argument : expression.arguments()) {
-			emitChild(visitor, ExpressionChildRole::ConstructorArgument, argument);
+		if (const InitializerListNode* initializer = expression.aggregateInitializer()) {
+			emitChild(visitor, ExpressionChildRole::InitializerElement, *initializer);
+		} else {
+			for (const auto& argument : expression.arguments()) {
+				emitChild(visitor, ExpressionChildRole::ConstructorArgument, argument);
+			}
 		}
 	} else if constexpr (std::is_same_v<ExpressionType, MemberAccessNode>) {
 		emitChild(visitor, ExpressionChildRole::Receiver, expression.object());

@@ -3450,10 +3450,14 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				else if (peek().is_identifier()) {
 					// Save position in case this isn't a type name
 					SaveHandle member_init_saved_pos = save_token_position();
+					Token candidate_type_token = peek_info();
 
 					// Try to parse as type specifier
 					ParseResult type_result = parse_type_specifier();
-					if (!type_result.is_error() && type_result.node().has_value() &&
+					const TypeSpecifierNode* parsed_type = type_result.node().has_value() ? type_result.node()->get_if<TypeSpecifierNode>() : nullptr;
+					const bool candidate_is_type = parsed_type && (parsed_type->type_index().is_valid() ||
+						lookupTypeInCurrentContext(candidate_type_token.handle()) != nullptr);
+					if (!type_result.is_error() && type_result.node().has_value() && candidate_is_type &&
 						!peek().is_eof() && (peek() == "{"_tok || peek() == "("_tok)) {
 						// This is a type name followed by initializer: B{...} or B(...)
 						const TypeSpecifierNode& init_type_spec = type_result.node()->as<TypeSpecifierNode>();
@@ -3493,7 +3497,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							}
 							default_initializer = init_list_node;
 						}
-						discard_saved_token(saved_pos);
+						discard_saved_token(member_init_saved_pos);
 					} else {
 						// Not a type name, restore and parse as expression
 						restore_token_position(member_init_saved_pos);
@@ -4779,6 +4783,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			const ExpressionNode* expression = initializer.get_if<ExpressionNode>();
 			const ConstructorCallNode* constructor_call = std::get_if<ConstructorCallNode>(expression);
 			const InitializerListNode* init_list = initializer.get_if<InitializerListNode>();
+			if (constructor_call != nullptr && constructor_call->isAggregateInitialization()) {
+				return;
+			}
 			TemplateVector<ASTNode, 4> constructor_arguments;
 			const ConstructorDeclarationNode* already_resolved = nullptr;
 			if (constructor_call != nullptr) {

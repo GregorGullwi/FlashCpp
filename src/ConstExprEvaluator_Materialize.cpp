@@ -164,6 +164,9 @@ EvalResult Evaluator::materialize_constructor_object_value(
 	if (!struct_info) {
 		return EvalResult::error("Constructor call type is not a struct/class");
 	}
+	if (const InitializerListNode* initializer = ctor_call.aggregateInitializer()) {
+		return materialize_aggregate_object_value(struct_info, type_index, *initializer, context, outer_bindings);
+	}
 
 	// Delegate to the shared helper for the find→bind→materialize sequence.
 	auto ctor_result = try_materialize_struct_from_ctor_args(
@@ -629,7 +632,7 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 			"Excess or unrecognized initializer in aggregate initialization "
 			"(no matching member for positional initializer)");
 	}
-	// Apply default member initializers for remaining members.
+	// Omitted aggregate elements use their default member initializer or empty-list initialization.
 	for (size_t mi = 0; mi < struct_info->members.size(); ++mi) {
 		const auto& member = struct_info->members[mi];
 		std::string_view mname = StringTable::getStringView(member.getName());
@@ -665,6 +668,13 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 			if (!default_result.success())
 				return default_result;
 			bindings[mname] = default_result;
+		} else if (bindings.find(mname) == bindings.end()) {
+			InitializerListNode empty_initializer;
+			EvalResult value = materialize_member_initializer_value(member, ASTNode(&empty_initializer), context, evaluation_bindings, true);
+			if (!value.success()) {
+				return value;
+			}
+			bindings[mname] = std::move(value);
 		}
 	}
 	return EvalResult::from_bool(true);
@@ -1238,9 +1248,16 @@ EvalResult Evaluator::extract_object_members(
 	if (var_decl && !var_decl->is_constexpr()) {
 		return EvalResult::error("Variable in member function call must be constexpr: " + std::string(var_name));
 	}
+	if (resolved_object.materialized_value.has_value()) {
+		member_bindings = resolved_object.materialized_value->object_member_bindings;
+		return EvalResult::from_bool(true);
+	}
 
 	const std::optional<ASTNode>* initializer = resolved_object.initializer;
 	TypeIndex declared_type_index = resolved_object.declared_type_index;
+	if (!initializer) {
+		return EvalResult::error("Member function call object source is unavailable for constant evaluation");
+	}
 	if (!initializer->has_value()) {
 		return EvalResult::error("Constexpr variable has no initializer: " + std::string(var_name));
 	}
@@ -1618,6 +1635,16 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 
 	if (resolved_object.var_decl && !resolved_object.var_decl->is_constexpr()) {
 		return EvalResult::error("Variable in array subscript must be constexpr");
+	}
+	if (resolved_object.materialized_value.has_value()) {
+		const EvalResult& object_value = *resolved_object.materialized_value;
+		auto member_it = object_value.object_member_bindings.find(member_name);
+		if (member_it != object_value.object_member_bindings.end()) {
+			return extract_indexed_array_value(member_it->second);
+		}
+	}
+	if (!resolved_object.initializer) {
+		return EvalResult::error("Array member source is unavailable for constant evaluation");
 	}
 
 	const std::optional<ASTNode>* initializer = resolved_object.initializer;

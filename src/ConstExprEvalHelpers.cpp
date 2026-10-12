@@ -1734,7 +1734,7 @@ EvalResult materialize_member_initializer_value(
 		const InitializerListNode& init_list = initializer.as<InitializerListNode>();
 
 		if (member_info.is_array) {
-			return Evaluator::materialize_array_value(member_info.type_index, init_list, context, evaluation_bindings);
+			return Evaluator::materialize_array_value_with_spec(makeAggregateMemberTypeSpec(member_info), init_list, context, evaluation_bindings);
 		}
 
 		if (is_struct_type(member_info.type_index.category())) {
@@ -1762,6 +1762,9 @@ EvalResult materialize_member_initializer_value(
 					context,
 					evaluation_bindings);
 			}
+		}
+		if (init_list.initializers().empty()) {
+			return applyAggregateMemberScalarInitialization(member_info, EvalResult::from_int(0), enforce_list_narrowing);
 		}
 	}
 

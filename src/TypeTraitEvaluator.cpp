@@ -1120,6 +1120,9 @@ bool defaultInitializerIsDefaultConstruction(const ASTNode& initializer) {
 		const ExpressionNode& expression = initializer.as<ExpressionNode>();
 		if (const auto* constructor_call =
 				std::get_if<ConstructorCallNode>(&expression)) {
+			if (const InitializerListNode* initializer_list = constructor_call->aggregateInitializer()) {
+				return initializer_list->initializers().empty();
+			}
 			return constructor_call->arguments().empty();
 		}
 	}

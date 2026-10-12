@@ -3763,6 +3763,21 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			result_type_index = type_it->second->registeredTypeIndex();
 		}
 	}
+	if (const InitializerListNode* aggregate_init = constructorCallNode.aggregateInitializer()) {
+		if (!struct_info || !result_type_index.is_valid()) {
+			throw InternalError("Aggregate class-prvalue initialization has no resolved struct type");
+		}
+		StackAllocOp allocation;
+		allocation.result = ret_var;
+		allocation.type_index = result_type_index.withCategory(TypeCategory::Struct);
+		allocation.size_in_bits = SizeInBits{actual_size_bits};
+		ir_.addInstruction(IrInstruction(IrOpcode::StackAlloc, std::move(allocation), constructorCallNode.called_from()));
+		generateNestedMemberStores(*struct_info, *aggregate_init, ret_var, 0, false, constructorCallNode.called_from());
+		setTempVarMetadata(ret_var, TempVarMetadata::makeRVOEligiblePRValue());
+		return makeExprResult(result_type_index.withCategory(TypeCategory::Struct), SizeInBits{actual_size_bits}, IrOperand{ret_var},
+			PointerDepth{}, ValueStorage::ContainsData);
+	}
+
 	TypeCategory result_type_category = struct_info ? TypeCategory::Struct : constructor_type_category;
 
 	// Build ConstructorCallOp

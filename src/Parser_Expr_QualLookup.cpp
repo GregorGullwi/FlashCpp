@@ -351,97 +351,65 @@ bool Parser::expressionTypeDeductionIsStillDependent(const ASTNode& expr) {
 	return isTypeDependentExpression(expr);
 }
 
-// Helper: Parse template brace initialization: Template<Args>{}
-// Parses the brace initializer, looks up the instantiated type, and creates a ConstructorCallNode
-ParseResult Parser::parse_template_brace_initialization(
-	std::span<const TemplateTypeArg> template_args,
-	std::string_view template_name,
-	const Token& identifier_token) {
+ParseResult Parser::parseResolvedClassConstruction(const Token& type_token, TypeIndex type_index, SizeInBits type_size) {
+	const bool is_brace = peek() == "{"_tok;
+	if (!is_brace && peek() != "("_tok) {
+		return ParseResult::error("Expected '(' or '{' for class construction", peek_info());
+	}
+	if (is_brace) {
+		TypeSpecifierNode type_spec(type_index, type_size, type_token, CVQualifier::None, ReferenceQualifier::None);
+		ParseResult init_result = parse_brace_initializer(type_spec);
+		if (init_result.is_error()) {
+			return init_result;
+		}
+		if (init_result.node().has_value() && init_result.node()->is<InitializerListNode>()) {
+			ASTNode construction = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec, *init_result.node(), type_token));
+			return ParseResult::success(construction);
+		}
+		return init_result;
+	}
 
-	AliasTemplateMaterializationResult materialized_type =
-		materializeTemplateTypeForConstruction(template_name, template_args);
+	advance();
+	ChunkedVector<ASTNode> args;
+	const std::string_view closing = is_brace ? "}" : ")";
+	while (!current_token_.kind().is_eof() && current_token_.value() != closing) {
+		ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		if (arg_result.is_error()) {
+			return arg_result;
+		}
+		if (auto arg = arg_result.node()) {
+			args.push_back(*arg);
+		}
+		if (current_token_.value() == ",") {
+			advance();
+		} else if (current_token_.kind().is_eof() || current_token_.value() != closing) {
+			return ParseResult::error(
+				is_brace ? "Expected ',' or '}' in brace initializer" : "Expected ',' or ')' in constructor arguments",
+				current_token_);
+		}
+	}
+	if (!(is_brace ? consume("}"_tok) : consume(")"_tok))) {
+		return ParseResult::error(
+			is_brace ? "Expected '}' after brace initializer" : "Expected ')' after constructor arguments",
+			current_token_);
+	}
+	auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index, type_size, type_token, CVQualifier::None, ReferenceQualifier::None);
+	ASTNode construction = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), type_token));
+	return ParseResult::success(construction);
+}
+
+// Resolve the specialization before parsing its typed initializer.
+ParseResult Parser::parse_template_brace_initialization(
+	std::span<const TemplateTypeArg> template_args, std::string_view template_name, const Token& identifier_token) {
+	AliasTemplateMaterializationResult materialized_type = materializeTemplateTypeForConstruction(template_name, template_args);
 	if (materialized_type.instantiated_name.empty() || materialized_type.resolved_type_info == nullptr) {
 		return ParseResult::error("Template instantiation failed or type not found", identifier_token);
 	}
-
-	// Determine which token checking method to use based on what token is '{'
-	// If current_token_ is '{', we use current_token_ style checking
-	// Otherwise, we use peek_token() style checking
-	bool use_current_token = current_token_.value() == "{";
-
-	// Consume the opening '{'
-	if (use_current_token) {
-		advance(); // consume '{'
-	} else if (peek() == "{"_tok) {
-		advance(); // consume '{'
-	} else {
-		return ParseResult::error("Expected '{' for brace initialization", identifier_token);
-	}
-
-	// Parse arguments inside braces
-	ChunkedVector<ASTNode> args;
-	while (true) {
-		// Check for closing brace
-		bool at_close = use_current_token
-							? (current_token_.value() == "}")
-							: (peek() == "}"_tok);
-
-		if (at_close) {
-			break;
-		}
-
-		// Parse argument expression
-		auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-		if (argResult.is_error()) {
-			return argResult;
-		}
-		if (auto node = argResult.node()) {
-			args.push_back(*node);
-		}
-
-		// Check for comma or closing brace
-		bool has_comma = use_current_token
-							 ? (current_token_.value() == ",")
-							 : (peek() == ","_tok);
-
-		bool has_close = use_current_token
-							 ? (current_token_.value() == "}")
-							 : (peek() == "}"_tok);
-
-		if (has_comma) {
-			advance(); // consume ','
-		} else if (!has_close) {
-			return ParseResult::error("Expected ',' or '}' in brace initializer", current_token_);
-		}
-	}
-
-	// Consume the closing '}'
-	if (use_current_token) {
-		if (current_token_.kind().is_eof() || current_token_.value() != "}") {
-			return ParseResult::error("Expected '}' after brace initializer", current_token_);
-		}
-		advance();
-	} else {
-		if (!consume("}"_tok)) {
-			return ParseResult::error("Expected '}' after brace initializer", current_token_);
-		}
-	}
-
-	// Create TypeSpecifierNode for the instantiated class
-	const TypeInfo& type_info = *materialized_type.resolved_type_info;
-	TypeIndex type_index = type_info.type_index_;
-	SizeInBits type_size{};
-	if (type_info.getStructInfo()) {
-		type_size = type_info.getStructInfo()->sizeInBits();
-	}
-	Token type_token(Token::Type::Identifier, materialized_type.instantiated_name,
-					 identifier_token.line(), identifier_token.column(), identifier_token.file_index());
-	auto type_spec_node = emplace_node<TypeSpecifierNode>(
-		type_index.withCategory(type_info.typeEnum()), type_size, type_token, CVQualifier::None, ReferenceQualifier::None);
-
-	// Create ConstructorCallNode
-	std::optional<ASTNode> result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), type_token));
-	return ParseResult::success(*result);
+	Token type_token(Token::Type::Identifier, materialized_type.instantiated_name, identifier_token.line(), identifier_token.column(),
+		identifier_token.file_index());
+	ASTNode type_node = makeFunctionalCastTypeSpecifierNode(*materialized_type.resolved_type_info, type_token);
+	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	return parseResolvedClassConstruction(type_token, type_spec.type_index(), SizeInBits{type_spec.size_in_bits()});
 }
 
 // Helper: Parse qualified identifier path after template arguments (Template<T>::member)

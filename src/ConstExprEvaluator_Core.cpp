@@ -4744,23 +4744,29 @@ EvalResult Evaluator::evaluate_callable_object(
 
 		// Build object member bindings from the full constructor materialization path.
 		std::unordered_map<std::string_view, EvalResult> evaluation_bindings;
-		const auto& ctor_args = ctor_call.arguments();
-		auto ctor_result = try_materialize_struct_from_ctor_args(
-			struct_info,
-			type_spec.type_index(),
-			ctor_args,
-			context,
-			false,
-			outer_bindings,
-			ctor_call.resolved_constructor(),
-			false);
-		if (!ctor_result.has_value()) {
-			return EvalResult::error("No matching constructor found for callable object");
+		EvalResult ctor_object;
+		if (ctor_call.isAggregateInitialization()) {
+			ctor_object = materialize_constructor_object_value(ctor_call, context, outer_bindings);
+		} else {
+			const auto& ctor_args = ctor_call.arguments();
+			auto ctor_result = try_materialize_struct_from_ctor_args(
+				struct_info,
+				type_spec.type_index(),
+				ctor_args,
+				context,
+				false,
+				outer_bindings,
+				ctor_call.resolved_constructor(),
+				false);
+			if (!ctor_result.has_value()) {
+				return EvalResult::error("No matching constructor found for callable object");
+			}
+			ctor_object = std::move(*ctor_result);
 		}
-		if (!ctor_result->success()) {
-			return *ctor_result;
+		if (!ctor_object.success()) {
+			return ctor_object;
 		}
-		evaluation_bindings = std::move(ctor_result->object_member_bindings);
+		evaluation_bindings = std::move(ctor_object.object_member_bindings);
 
 		const auto& parameters = call_operator->parameter_nodes();
 		auto call_bind_result = bind_evaluated_arguments(

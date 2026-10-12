@@ -12,20 +12,50 @@ directly. A future implementation should compute funclet return/throw summaries
 and use them at each invocation, preserving its individual continuation and
 exception context.
 
-## Member access on a directly list-initialized class prvalue is rejected
+## Direct list-initialization of an array prvalue is rejected
 
-The parser rejects a valid C++20 expression such as `S{}.f()` with "Expected
-identifier token". Reduced example:
+An array typedef can name the array type in a C++20 functional conversion:
 
 ```cpp
-struct S { void f() {} };
-int main() { S{}.f(); }
+using Values = int[2];
+int main() { return Values{4, 8}[1] == 8 ? 0 : 1; }
 ```
 
-The return-flow regressions use named objects to isolate control-flow metadata
-from this separate expression-parsing issue. Fixing it requires parsing a
-class prvalue primary expression followed by the ordinary postfix member-access
-chain, rather than special handling of a particular type or method name.
+The functional-conversion parser currently treats this as scalar construction
+and rejects the second initializer. Array prvalues need typed array
+initialization, temporary storage, and the usual postfix/subscript semantics.
+This is separate from array members initialized inside a class aggregate.
+
+## Construction through a class-template member alias is rejected
+
+A member alias declared by a class template cannot currently be used to
+construct its resolved class type:
+
+```cpp
+template <typename T>
+struct Names { using Type = T; };
+struct Box { int value; };
+int main() { return Names<Box>::Type{1}.value; }
+```
+
+The parser does not materialize the template owner and complete member-type
+lookup for this qualified construction. A fix should resolve the instantiated
+owner, perform ordinary member lookup for its alias, and then construct the
+resulting type through the shared class-construction path.
+
+## Deep aggregate initialization still uses native recursion
+
+The shared aggregate member-store emitter recursively descends into base
+subobjects, nested members, default member initializers, and struct array
+elements. Its array shape and initializer-list walks also use native recursion.
+Consequently, native stack usage grows with source aggregate nesting; the
+current parser also has recursive expression frames. Ordinary nested structs
+and array members work, but sufficiently deep inputs can exhaust the stack.
+
+A future refactor should use continuation frames on an explicit worklist for
+aggregate and array traversal together. Frames must resume each parent after
+its child finishes, preserving base, member, and array element initialization
+order, including constructor and default member initializer side effects.
 
 ## WSL front end crashes while processing the libstdc++ `<typeinfo>` test
 
