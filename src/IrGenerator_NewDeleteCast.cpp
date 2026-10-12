@@ -11,7 +11,9 @@ constexpr bool isIntegralConversionType(TypeCategory category) {
 	return is_integer_type(category) || is_bool_type(category);
 }
 
-[[noreturn]] void throwNarrowingNewBraceInitCompileError(
+[[noreturn]] void throwNarrowingNewBraceInitDiagnostic(
+	CompileContext& context,
+	const Token& token,
 	TypeCategory source,
 	TypeCategory target) {
 	std::string_view source_name = getTypeName(source);
@@ -22,14 +24,21 @@ constexpr bool isIntegralConversionType(TypeCategory category) {
 	if (target_name.empty()) {
 		target_name = "target type";
 	}
-	throw CompileError(std::string(
+	const std::string message = std::string(
 		StringBuilder()
 			.append("Narrowing conversion from '")
 			.append(source_name)
 			.append("' to '")
 			.append(target_name)
 			.append("' in direct-list-initialization")
-			.commit()));
+			.commit());
+	throw makeStructuredCompileError(
+		context.diagnostics(),
+		DiagnosticId::NarrowingConversionInListInitialization,
+		DiagnosticSeverity::Error,
+		SourceLocation::fromToken(token),
+		message,
+		{});
 }
 
 } // namespace
@@ -90,7 +99,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 			TypeCategory source_category = BuiltinListInitNarrowing::effectiveScalarCategory(init_operands.category(), init_operands.type_index);
 			TypeCategory target_category = BuiltinListInitNarrowing::effectiveScalarCategory(type_spec.category(), type_spec.type_index());
 			if (BuiltinListInitNarrowing::isNarrowingConversion(source_category, target_category, constant_value)) {
-				throwNarrowingNewBraceInitCompileError(source_category, target_category);
+				throwNarrowingNewBraceInitDiagnostic(*context_, type_spec.token(), source_category, target_category);
 			}
 		}
 		init_operands = generateTypeConversion(init_operands, init_operands.category(), allocated_type_enum, Token());
@@ -175,7 +184,13 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 			return;
 		}
 
-		throw CompileError("No matching constructor found for new-expression");
+		throw makeStructuredCompileError(
+			context_->diagnostics(),
+			DiagnosticId::NoMatchingConstructor,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(type_spec.token()),
+			"No matching constructor found for new-expression",
+			{});
 	};
 
 		// Check if this is an array allocation (with or without placement)
