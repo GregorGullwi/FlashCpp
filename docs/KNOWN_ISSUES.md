@@ -75,8 +75,7 @@ reproducers under `tests/unsupported_boundary_2f/`:
   and `test_function_template_recursive_trailing_return_fail.cpp`.
 - A reference-returning member-function-pointer declarator in an out-of-line
   member-template context: `test_template_member_func_template_const_ref_return_fail.cpp`.
-- Two tests that previously depended on status-2 compatibility:
-  `test_template_lazy_static_member_implicit_this_fail.cpp` and
+- A test that previously depended on status-2 compatibility:
   `test_template_out_of_line_static_member_implicit_this_fail.cpp`.
 
 These archived reproducers should return to executable discovery only after
