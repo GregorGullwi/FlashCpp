@@ -2148,7 +2148,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 		// For scalar types, only allow a single initializer (no comma)
 		if (peek() == ","_tok) {
-			return ParseResult::error("Too many initializers for scalar type", current_token_);
+			return error(DiagnosticId::TooManyInitializers, current_token_, "Too many initializers for scalar type");
 		}
 
 		if (!consume("}"_tok)) {

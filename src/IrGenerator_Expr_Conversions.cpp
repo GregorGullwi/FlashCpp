@@ -1984,7 +1984,13 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		// C++20 [expr.unary.op]/10: ~ requires integral or unscoped enumeration type.
 		// After promotion, non-integral operands (e.g. float/double) are ill-formed.
 		if (!is_integer_type(operandType) && operandType != TypeCategory::Bool) {
-			throw CompileError("operand of '~' must have integral or unscoped enumeration type");
+			throw makeStructuredCompileError(
+				context_->diagnostics(),
+				DiagnosticId::BitwiseNotRequiresIntegral,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(unaryOperatorNode.get_token()),
+				"operand of '~' must have integral or unscoped enumeration type",
+				{});
 		}
 			// Bitwise NOT - use UnaryOp struct
 		UnaryOp unary_op{
