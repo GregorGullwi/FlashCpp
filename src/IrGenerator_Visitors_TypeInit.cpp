@@ -6,6 +6,16 @@
 #include "RebindStaticMemberAst.h"
 #include "SemanticAnalysis.h"
 
+[[noreturn]] static void throwTooManyInitializers(CompileContext& context, std::string_view message) {
+	throw makeStructuredCompileError(
+		context.diagnostics(),
+		DiagnosticId::TooManyInitializers,
+		DiagnosticSeverity::Error,
+		SourceLocation(),
+		message,
+		{});
+}
+
 // ============================================================================
 // Shared helpers: array-to-pointer decay
 // ============================================================================
@@ -1348,7 +1358,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 									size_t element_index = 0;
 									for (const ASTNode& node : current_list.initializers()) {
 										if (element_index >= current_dim) {
-											throw CompileError("Too many initializers for array");
+											throwTooManyInitializers(*context_, "Too many initializers for array");
 										}
 										std::vector<char> element_bytes(element_size, 0);
 										if (node.is<InitializerListNode>()) {
@@ -1424,7 +1434,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 								size_t subarray_index = 0;
 								for (const ASTNode& node : current_list.initializers()) {
 									if (subarray_index >= current_dim) {
-										throw CompileError("Too many initializers for array");
+										throwTooManyInitializers(*context_, "Too many initializers for array");
 									}
 									if (!node.is<InitializerListNode>()) {
 										throw CompileError("Expected braced initializer for array subobject");
@@ -2884,11 +2894,11 @@ bool AstToIr::tryEmitArrayMemberStores(
 		if (node.is<InitializerListNode>()) {
 			nested_subarray_count++;
 			if (nested_subarray_count > first_dimension_limit) {
-				throw CompileError("Too many initializers for array");
+				throwTooManyInitializers(*context_, "Too many initializers for array");
 			}
 			if (member.array_dimensions.size() > 1 &&
 				count_expressions(count_expressions, node.as<InitializerListNode>()) > subarray_limit) {
-				throw CompileError("Too many initializers for array subobject");
+				throwTooManyInitializers(*context_, "Too many initializers for array subobject");
 			}
 		}
 	}
@@ -2905,7 +2915,7 @@ bool AstToIr::tryEmitArrayMemberStores(
 	};
 	collect_initializers(collect_initializers, init_list);
 	if (flat_initializers.size() > element_count) {
-		throw CompileError("Too many initializers for array");
+		throwTooManyInitializers(*context_, "Too many initializers for array");
 	}
 
 	const size_t emit_count = std::min(element_count, flat_initializers.size());

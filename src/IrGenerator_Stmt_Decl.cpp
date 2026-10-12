@@ -1673,8 +1673,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 								// Check if this is an abstract class (only for non-pointer types)
 							if (struct_info.is_abstract && type_node.pointer_levels().empty()) {
-								FLASH_LOG(General, Error, "Cannot instantiate abstract class '", type_info->name(), "'");
-								throw CompileError("Cannot instantiate abstract class");
+								throw makeStructuredCompileError(
+									context_->diagnostics(),
+									DiagnosticId::AbstractClassInstantiation,
+									DiagnosticSeverity::Error,
+									SourceLocation::fromToken(type_node.token()),
+									std::string("Cannot instantiate abstract class '") + std::string(StringTable::getStringView(type_info->name())) + "'",
+									{});
 							}
 
 							const auto& initializers = init_list.initializers();
@@ -2676,7 +2681,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			std::string literal_bytes = FlashCpp::decodeStringLiteralBytes(string_literal.value());
 			const size_t required_elements = literal_bytes.size() + 1;
 			if (array_count < required_elements) {
-				throw CompileError("initializer-string for char array is too long");
+				throw makeStructuredCompileError(
+					context_->diagnostics(),
+					DiagnosticId::InitializerStringTooLongForArray,
+					DiagnosticSeverity::Error,
+					SourceLocation::fromToken(type_node.token()),
+					"initializer-string for char array is too long",
+					{});
 			}
 
 			const auto emitCharStore = [&](size_t index, char value) {
@@ -2808,8 +2819,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			if (type_info->getStructInfo()) {
 					// Check if this is an abstract class (only for non-pointer types)
 				if (type_info->getStructInfo()->is_abstract && type_node.pointer_levels().empty()) {
-					FLASH_LOG(General, Error, "Cannot instantiate abstract class '", type_info->name(), "'");
-					throw CompileError("Cannot instantiate abstract class");
+					throw makeStructuredCompileError(
+						context_->diagnostics(),
+						DiagnosticId::AbstractClassInstantiation,
+						DiagnosticSeverity::Error,
+						SourceLocation::fromToken(type_node.token()),
+						std::string("Cannot instantiate abstract class '") + std::string(StringTable::getStringView(type_info->name())) + "'",
+						{});
 				}
 
 				const auto& implicit_default_constructor =

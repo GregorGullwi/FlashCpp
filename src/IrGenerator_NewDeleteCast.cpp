@@ -123,7 +123,13 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 			return false;
 		}
 		if (ctor_args.size() > struct_info.members.size()) {
-			throw CompileError("Too many initializers for aggregate type in new-expression");
+			throw makeStructuredCompileError(
+				context_->diagnostics(),
+				DiagnosticId::TooManyInitializers,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(type_spec.token()),
+				"Too many initializers for aggregate type in new-expression",
+				{});
 		}
 
 		InitializerListNode aggregate_init_list;
@@ -514,8 +520,13 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 					if (type_info->getStructInfo()) {
 						// Check if this is an abstract class
 					if (type_info->getStructInfo()->is_abstract) {
-						std::cerr << "Error: Cannot instantiate abstract class '" << type_info->name() << "'\n";
-						throw CompileError("Cannot instantiate abstract class");
+						throw makeStructuredCompileError(
+							context_->diagnostics(),
+							DiagnosticId::AbstractClassInstantiation,
+							DiagnosticSeverity::Error,
+							SourceLocation::fromToken(type_spec.token()),
+							std::string("Cannot instantiate abstract class '") + std::string(StringTable::getStringView(type_info->name())) + "'",
+							{});
 					}
 
 					emit_struct_new_initializer(result_var, *type_info->getStructInfo());
@@ -541,8 +552,13 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 				if (type_info->getStructInfo()) {
 						// Check if this is an abstract class
 					if (type_info->getStructInfo()->is_abstract) {
-						std::cerr << "Error: Cannot instantiate abstract class '" << type_info->name() << "'\n";
-						throw CompileError("Cannot instantiate abstract class");
+						throw makeStructuredCompileError(
+							context_->diagnostics(),
+							DiagnosticId::AbstractClassInstantiation,
+							DiagnosticSeverity::Error,
+							SourceLocation::fromToken(type_spec.token()),
+							std::string("Cannot instantiate abstract class '") + std::string(StringTable::getStringView(type_info->name())) + "'",
+							{});
 					}
 
 					emit_struct_new_initializer(result_var, *type_info->getStructInfo());
