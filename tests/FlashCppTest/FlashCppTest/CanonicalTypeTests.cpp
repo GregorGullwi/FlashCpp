@@ -133,6 +133,88 @@ TEST_CASE("Canonical record constructor schema requires a class type") {
 		std::span<const CanonicalRecordConstructorSpec>{}));
 }
 
+TEST_CASE("Canonical constructor arguments bind base references without compatibility types") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId base_type = table.record(EntityId{910});
+	const TypeId derived_type = table.record(EntityId{911});
+	const TypeId consumer_type = table.record(EntityId{912});
+	const std::array<CanonicalClassBase, 1> bases{{base_type, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0}};
+	table.publishClassBaseSchema(base_type, {});
+	table.publishClassBaseSchema(derived_type, bases);
+	const std::array<TypeId, 1> parameters{table.reference(base_type, ReferenceQualifier::LValueReference)};
+	const std::array<CanonicalRecordConstructorSpec, 1> constructors{{parameters, CanonicalRecordFunctionFlags::None, true}};
+	table.publishRecordConstructors(consumer_type, constructors);
+	TypeSpecifierNode consumer(TypeCategory::Struct, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	consumer.set_type_entity(EntityId{912});
+	TypeSpecifierNode argument(TypeCategory::Struct, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	argument.set_type_entity(EntityId{911});
+	argument.set_reference_qualifier(ReferenceQualifier::LValueReference);
+
+	const std::optional<bool> converting = tryHasCanonicalImplicitConvertingConstructorForArgument(consumer, argument, nullptr);
+	REQUIRE(converting.has_value());
+	CHECK(*converting);
+	const std::array<TypeSpecifierNode, 1> arguments{argument};
+	const auto constructible = evaluateConstructibility(TypeTraitKind::IsConstructible, consumer, arguments, ConstructibilityFallback::None);
+	REQUIRE(constructible.has_value());
+	CHECK(constructible->success);
+	CHECK(constructible->value);
+	const auto nothrow = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, consumer, arguments, ConstructibilityFallback::None);
+	REQUIRE(nothrow.has_value());
+	CHECK(nothrow->success);
+	CHECK(nothrow->value);
+
+	argument.set_cv_qualifier(CVQualifier::Const);
+	const std::optional<bool> rejected = tryHasCanonicalImplicitConvertingConstructorForArgument(consumer, argument, nullptr);
+	REQUIRE(rejected.has_value());
+	CHECK_FALSE(*rejected);
+}
+
+TEST_CASE("Canonical direct reference binding preserves access cv and value category") {
+	CanonicalTypeTable table;
+	const TypeId base_type = table.record(EntityId{913});
+	const TypeId derived_type = table.record(EntityId{914});
+	const TypeId private_type = table.record(EntityId{915});
+	const std::array<CanonicalClassBase, 1> public_base{{base_type, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0}};
+	const std::array<CanonicalClassBase, 1> private_base{{base_type, CanonicalAccess::Private, CanonicalRecordBaseFlags::None, 0}};
+	table.publishClassBaseSchema(base_type, {});
+	table.publishClassBaseSchema(derived_type, public_base);
+	table.publishClassBaseSchema(private_type, private_base);
+	const TypeId const_base_ref = table.reference(table.qualify(base_type, CVQualifier::Const), ReferenceQualifier::LValueReference);
+	const TypeId base_ref = table.reference(base_type, ReferenceQualifier::LValueReference);
+	const TypeId base_rvalue_ref = table.reference(base_type, ReferenceQualifier::RValueReference);
+	const TypeId derived_ref = table.reference(derived_type, ReferenceQualifier::LValueReference);
+	const auto binding = tryBuildCanonicalDirectReferenceBindingPlan(table, derived_ref, const_base_ref);
+	REQUIRE(binding.has_value());
+	CHECK(binding->is_valid);
+	CHECK(binding->kind == StandardConversionKind::DerivedToBase);
+	CHECK(binding->rank == ConversionRank::Conversion);
+	const auto check_binding = [&table](TypeId source, TypeId target, bool expected) {
+		const auto plan = tryBuildCanonicalDirectReferenceBindingPlan(table, source, target);
+		REQUIRE(plan.has_value());
+		CHECK(plan->is_valid == expected);
+	};
+	check_binding(derived_type, base_ref, false);
+	check_binding(derived_ref, base_rvalue_ref, false);
+	check_binding(derived_type, base_rvalue_ref, true);
+	check_binding(table.qualify(derived_type, CVQualifier::Const), base_rvalue_ref, false);
+	check_binding(private_type, const_base_ref, false);
+	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
+	CHECK_FALSE(tryBuildCanonicalDirectReferenceBindingPlan(table, int_type, const_base_ref).has_value());
+
+	TypeId deepest_type = derived_type;
+	for (uint32_t depth = 0; depth < 1024; ++depth) {
+		const TypeId next_type = table.templateSpecialization(TemplateDeclId{10000 + depth}, std::span<const TypeId>{});
+		const std::array<CanonicalClassBase, 1> next_base{{deepest_type, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0}};
+		table.publishClassBaseSchema(next_type, next_base);
+		deepest_type = next_type;
+	}
+	const auto deep_binding = tryBuildCanonicalDirectReferenceBindingPlan(table, deepest_type, const_base_ref);
+	REQUIRE(deep_binding.has_value());
+	CHECK(deep_binding->is_valid);
+	CHECK(deep_binding->kind == StandardConversionKind::DerivedToBase);
+}
+
 TEST_CASE("Canonical record constructor schema is independent of the field schema") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();
