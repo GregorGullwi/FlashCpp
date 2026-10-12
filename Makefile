@@ -143,7 +143,7 @@ FLASHCPPTEST_SOURCES := \
 $(TEST_TARGET): $(FLASHCPPTEST_SOURCES) $(UNITY_SOURCES)
 	@echo "Building test executable for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(TEST_DIR) 2>nul || $(MKDIR) $(TEST_DIR) || true
-	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -O1 -g -Wno-shadow -Wno-unused-parameter -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-but-set-variable -o $@ $(FLASHCPPTEST_SOURCES)
+	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -O0 -g -Wno-shadow -Wno-unused-parameter -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-but-set-variable -o $@ $(FLASHCPPTEST_SOURCES)
 	@echo "Built: $@"
 
 $(MODULAR_DIR)/%.o: $(SRCDIR)/%.cpp $(HEADER_SOURCES) | $(MODULAR_DIR)
