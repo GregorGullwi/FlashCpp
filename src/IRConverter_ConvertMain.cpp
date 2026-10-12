@@ -7046,9 +7046,9 @@ void IrToObjConverter<TWriterClass>::emitDerivedToBasePointerAdjust(X64Register 
 	const DerivedBaseConversionInfo conversion =
 		classifyDerivedBaseConversion(derived_type, base_type);
 	if (conversion.kind == DerivedBaseConversionKind::Ambiguous)
-		throw CompileError("Ambiguous derived-to-base pointer conversion");
+		throw InternalError("Ambiguous derived-to-base pointer conversion");
 	if (conversion.kind == DerivedBaseConversionKind::Inaccessible)
-		throw CompileError("Cannot convert to an inaccessible base class");
+		throw InternalError("Cannot convert to an inaccessible base class");
 	if (conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
 		if (!conversion.virtual_base_index.has_value()) {
 			throw InternalError("Finalized virtual-base pointer conversion is missing its runtime table index");
@@ -7079,9 +7079,9 @@ void IrToObjConverter<TWriterClass>::emitVirtualBasePointerAdjust(
 	const DerivedBaseConversionInfo conversion =
 		classifyDerivedBaseConversion(derived_type, base_type);
 	if (conversion.kind == DerivedBaseConversionKind::Ambiguous)
-		throw CompileError("Ambiguous derived-to-base pointer conversion");
+		throw InternalError("Ambiguous derived-to-base pointer conversion");
 	if (conversion.kind == DerivedBaseConversionKind::Inaccessible)
-		throw CompileError("Cannot convert to an inaccessible base class");
+		throw InternalError("Cannot convert to an inaccessible base class");
 	if (conversion.kind != DerivedBaseConversionKind::PublicVirtual)
 		throw InternalError("Virtual-base pointer adjustment reached a non-virtual conversion");
 
