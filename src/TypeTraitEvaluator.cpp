@@ -2531,36 +2531,6 @@ TypeTraitResult evaluateRecordConstructibleFromArgs(TypeTraitKind kind, const St
 
 // Canonical constructor query for complete schemas and supported standard conversion sequences.
 // Other overload shapes defer to the compatibility resolver.
-static std::optional<ConversionPlan> tryBuildSameReferentReferencePlan(const CanonicalTypeTable& table, TypeId source_type, TypeId target_type) {
-	const CanonicalTypeKind target_kind = table.node(target_type).kind;
-	const bool target_is_lvalue_reference = target_kind == CanonicalTypeKind::LValueReference;
-	const bool target_is_rvalue_reference = target_kind == CanonicalTypeKind::RValueReference;
-	if (!target_is_lvalue_reference && !target_is_rvalue_reference) {
-		return std::nullopt;
-	}
-	const CanonicalTypeKind source_kind = table.node(source_type).kind;
-	const bool source_is_lvalue = source_kind == CanonicalTypeKind::LValueReference;
-	const bool source_has_reference = source_is_lvalue || source_kind == CanonicalTypeKind::RValueReference;
-	const TypeId source_referent = source_has_reference ? table.node(source_type).child : source_type;
-	const TypeId target_referent = table.node(target_type).child;
-	const auto [source_base, source_cv] = stripCanonicalTopCv(table, source_referent);
-	const auto [target_base, target_cv] = stripCanonicalTopCv(table, target_referent);
-	if (source_base != target_base) {
-		return std::nullopt;
-	}
-	if ((static_cast<uint8_t>(source_cv) & ~static_cast<uint8_t>(target_cv)) != 0) {
-		return ConversionPlan::no_match();
-	}
-	const bool target_is_const = (static_cast<uint8_t>(target_cv) & static_cast<uint8_t>(CVQualifier::Const)) != 0;
-	if (target_is_lvalue_reference && !source_is_lvalue && !target_is_const) {
-		return ConversionPlan::no_match();
-	}
-	if (target_is_rvalue_reference && source_is_lvalue) {
-		return ConversionPlan::no_match();
-	}
-	return ConversionPlan::exact_match();
-}
-
 static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFromArgs(TypeTraitKind kind, const TypeSpecifierNode& target,
 	std::span<const TypeSpecifierNode> arguments) {
 	FrontendContext* context = FrontendContext::active();
@@ -2661,7 +2631,7 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 					matches = false;
 					break;
 				}
-				const std::optional<ConversionPlan> binding = tryBuildSameReferentReferencePlan(table, argument_types[parameter], parameter_type);
+				const auto binding = tryBuildCanonicalDirectReferenceBindingPlan(table, argument_types[parameter], parameter_type);
 				if (!binding.has_value()) {
 					return std::nullopt;
 				}

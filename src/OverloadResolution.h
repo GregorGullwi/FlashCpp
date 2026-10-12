@@ -1547,13 +1547,46 @@ inline bool tryPublishCanonicalClassBaseSchema(CanonicalTypeTable& table, TypeId
 
 inline bool isIntegerLiteralZeroNullPointerConstant(const ASTNode& arg_node);
 
-inline std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgument(const TypeSpecifierNode& target_type,
-	const TypeSpecifierNode& source_type, const ASTNode* argument_node) {
-	FrontendContext* const context = FrontendContext::active();
-	if (context == nullptr) {
+// Direct reference binding needs only TypeIds and the published class-base graph.
+// Differing referents that require a conversion temporary or user-defined conversion stay deferred.
+inline std::optional<ConversionPlan> tryBuildCanonicalDirectReferenceBindingPlan(const CanonicalTypeTable& table, TypeId source_type,
+	TypeId target_type) {
+	const CanonicalTypeNode target_node = table.node(target_type);
+	const bool target_is_lvalue_reference = target_node.kind == CanonicalTypeKind::LValueReference;
+	const bool target_is_rvalue_reference = target_node.kind == CanonicalTypeKind::RValueReference;
+	if (!target_is_lvalue_reference && !target_is_rvalue_reference) {
 		return std::nullopt;
 	}
-	CanonicalTypeTable& table = context->canonicalTypes();
+	const CanonicalTypeNode source_node = table.node(source_type);
+	const bool source_is_lvalue = source_node.kind == CanonicalTypeKind::LValueReference;
+	const bool source_has_reference = source_is_lvalue || source_node.kind == CanonicalTypeKind::RValueReference;
+	const TypeId source_referent = source_has_reference ? source_node.child : source_type;
+	const auto [source_base, source_cv] = stripCanonicalTopCv(table, source_referent);
+	const auto [target_base, target_cv] = stripCanonicalTopCv(table, target_node.child);
+	if (source_base != target_base) {
+		const auto base_conversion = classifyCanonicalDerivedBaseConversion(table, source_base, target_base);
+		if (!base_conversion.has_value() || *base_conversion == DerivedBaseConversionKind::NotRelated) {
+			return std::nullopt;
+		}
+		if (*base_conversion != DerivedBaseConversionKind::UniquePublicNonVirtual && *base_conversion != DerivedBaseConversionKind::PublicVirtual) {
+			return ConversionPlan::no_match();
+		}
+	}
+	if ((static_cast<uint8_t>(source_cv) & ~static_cast<uint8_t>(target_cv)) != 0) {
+		return ConversionPlan::no_match();
+	}
+	const bool target_accepts_rvalue = target_cv == CVQualifier::Const;
+	if ((target_is_lvalue_reference && !source_is_lvalue && !target_accepts_rvalue) || (target_is_rvalue_reference && source_is_lvalue)) {
+		return ConversionPlan::no_match();
+	}
+	return source_base == target_base ? ConversionPlan::exact_match() :
+		ConversionPlan{ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
+}
+
+inline std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgument(const TypeSpecifierNode& target_type,
+	const TypeSpecifierNode& source_type, const ASTNode* argument_node) {
+	FrontendContext& context = requireFrontendContext();
+	CanonicalTypeTable& table = context.canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
 	TypeSpecifierNode canonical_target = target_type;
 	TypeSpecifierNode canonical_source = source_type;
@@ -1588,11 +1621,18 @@ inline std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgume
 		TypeId effective_source = source_import.type;
 		const TypeId parameter_object = stripCanonicalTopCv(table, parameter_type).first;
 		const CanonicalTypeKind parameter_kind = table.node(parameter_object).kind;
-	const bool parameter_is_pointer_like = parameter_kind == CanonicalTypeKind::Pointer || parameter_kind == CanonicalTypeKind::MemberObjectPointer ||
-		parameter_kind == CanonicalTypeKind::MemberFunctionPointer;
-	if (argument_node != nullptr && isIntegerLiteralZeroNullPointerConstant(*argument_node) &&
-		(source_type.category() == TypeCategory::Nullptr || isIntegralType(source_type.category())) && parameter_is_pointer_like) {
+		const bool parameter_is_pointer_like = parameter_kind == CanonicalTypeKind::Pointer || parameter_kind == CanonicalTypeKind::MemberObjectPointer ||
+			parameter_kind == CanonicalTypeKind::MemberFunctionPointer;
+		if (argument_node != nullptr && isIntegerLiteralZeroNullPointerConstant(*argument_node) &&
+			(source_type.category() == TypeCategory::Nullptr || isIntegralType(source_type.category())) && parameter_is_pointer_like) {
 			effective_source = table.builtin(CanonicalBuiltinKind::Nullptr);
+		}
+		const auto reference_binding = tryBuildCanonicalDirectReferenceBindingPlan(table, effective_source, parameter_type);
+		if (reference_binding.has_value()) {
+			if (reference_binding->is_valid) {
+				return true;
+			}
+			continue;
 		}
 		const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, effective_source, parameter_type);
 		if (conversion.is_valid) {
@@ -1600,12 +1640,12 @@ inline std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgume
 		}
 		const TypeId source_object = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, effective_source)).first;
 		const CanonicalTypeKind source_kind = table.node(source_object).kind;
-	const bool source_is_supported = source_kind == CanonicalTypeKind::Builtin || source_kind == CanonicalTypeKind::Enum ||
-		source_kind == CanonicalTypeKind::Pointer || source_kind == CanonicalTypeKind::MemberObjectPointer ||
-		source_kind == CanonicalTypeKind::MemberFunctionPointer;
-	const bool parameter_is_supported = parameter_kind == CanonicalTypeKind::Builtin || parameter_kind == CanonicalTypeKind::Enum ||
-		parameter_kind == CanonicalTypeKind::Pointer || parameter_kind == CanonicalTypeKind::MemberObjectPointer ||
-		parameter_kind == CanonicalTypeKind::MemberFunctionPointer;
+		const bool source_is_supported = source_kind == CanonicalTypeKind::Builtin || source_kind == CanonicalTypeKind::Enum ||
+			source_kind == CanonicalTypeKind::Pointer || source_kind == CanonicalTypeKind::MemberObjectPointer ||
+			source_kind == CanonicalTypeKind::MemberFunctionPointer;
+		const bool parameter_is_supported = parameter_kind == CanonicalTypeKind::Builtin || parameter_kind == CanonicalTypeKind::Enum ||
+			parameter_kind == CanonicalTypeKind::Pointer || parameter_kind == CanonicalTypeKind::MemberObjectPointer ||
+			parameter_kind == CanonicalTypeKind::MemberFunctionPointer;
 		if (!source_is_supported || !parameter_is_supported) {
 			has_unsupported_candidate = true;
 		}
