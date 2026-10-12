@@ -4896,6 +4896,23 @@ inline size_t countMinRequiredArgs(const ConstructorDeclarationNode& ctor) {
 	return min_required;
 }
 
+inline bool matchesConstructorArgumentTypes(const ConstructorDeclarationNode& ctor, std::span<const TypeSpecifierNode> argument_types) {
+	const auto& parameters = ctor.parameter_nodes();
+	if (argument_types.size() < countMinRequiredArgs(ctor) || argument_types.size() > parameters.size()) {
+		return false;
+	}
+	for (size_t i = 0; i < argument_types.size(); ++i) {
+		if (!parameters[i].is<DeclarationNode>()) {
+			return false;
+		}
+		const auto& parameter_type = parameters[i].as<DeclarationNode>().type_specifier_node();
+		if (!can_convert_type(argument_types[i], parameter_type).is_valid) {
+			return false;
+		}
+	}
+	return true;
+}
+
 inline bool isSameTypeCopyOrMoveConstructorCandidate(
 	const StructTypeInfo& struct_info,
 	const ConstructorDeclarationNode& ctor_decl) {

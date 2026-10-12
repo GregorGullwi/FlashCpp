@@ -1,13 +1,14 @@
 #pragma once
 
+#include <limits>
 #include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
 
-#include <limits>
-#include "Parser.h"
 #include "MigrationStats.h"
+#include "OverloadResolution.h"
+#include "Parser.h"
 
 class TemplateEngine {
 public:
@@ -418,6 +419,27 @@ inline const ConstructorDeclarationNode* TemplateEngine::materializeMatchingCons
 	std::span<const TypeSpecifierNode> arg_types,
 	const ConstructorDeclarationNode* preferred_ctor,
 	bool& is_ambiguous) {
+	if (preferred_ctor != nullptr && !preferred_ctor->has_template_parameters() && preferred_ctor->template_specialization_source() == nullptr) {
+		// Ordinary constructors need argument validation, without template instantiation.
+		if (matchesConstructorArgumentTypes(*preferred_ctor, arg_types)) {
+			is_ambiguous = false;
+			return preferred_ctor;
+		}
+		preferred_ctor = nullptr;
+	}
+	if (preferred_ctor == nullptr) {
+		bool has_constructor_template = false;
+		for (const auto& member_func : struct_info.member_functions) {
+			if (member_func.is_constructor && member_func.function_decl.as<ConstructorDeclarationNode>().has_template_parameters()) {
+				has_constructor_template = true;
+				break;
+			}
+		}
+		if (!has_constructor_template) {
+			is_ambiguous = false;
+			return nullptr;
+		}
+	}
 	recordTemplateEngineOldEngineRoute();
 	return parser().materializeMatchingConstructorTemplate(
 		instantiated_struct_name,
