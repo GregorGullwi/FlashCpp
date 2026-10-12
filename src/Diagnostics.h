@@ -173,6 +173,8 @@ enum class DiagnosticId : uint32_t {
 	NarrowingConversionInListInitialization = 1507,
 	NoMatchingConstructor = 1508,
 	ExplicitConversionFunctionCopyInitialization = 1509,
+	TooManyInitializers = 1510,
+	InitializerStringTooLongForArray = 1511,
 
 	// Semantic validity family (1601..1699).
 	RangeForBeginEndRequired = 1601,
@@ -198,6 +200,7 @@ enum class DiagnosticId : uint32_t {
 	InvalidNoreturnAttribute = 1621,
 	MemberFunctionPointerSignatureMismatch = 1622,
 	NonStaticMemberUseInStaticFunction = 1623,
+	AbstractClassInstantiation = 1624,
 
 	// Call-expression family (1701..1799).
 	AmbiguousFunctionCall = 1701,
@@ -422,6 +425,10 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "ExplicitConstructorCopyInitialization";
 	case DiagnosticId::ExplicitConversionFunctionCopyInitialization:
 		return "ExplicitConversionFunctionCopyInitialization";
+	case DiagnosticId::TooManyInitializers:
+		return "TooManyInitializers";
+	case DiagnosticId::InitializerStringTooLongForArray:
+		return "InitializerStringTooLongForArray";
 	case DiagnosticId::AmbiguousConstructorCall:
 		return "AmbiguousConstructorCall";
 	case DiagnosticId::DllImportConstexprConflict:
@@ -478,6 +485,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "MemberFunctionPointerSignatureMismatch";
 	case DiagnosticId::NonStaticMemberUseInStaticFunction:
 		return "NonStaticMemberUseInStaticFunction";
+	case DiagnosticId::AbstractClassInstantiation:
+		return "AbstractClassInstantiation";
 	case DiagnosticId::AmbiguousFunctionCall:
 		return "AmbiguousFunctionCall";
 	case DiagnosticId::AmbiguousCallOperator:

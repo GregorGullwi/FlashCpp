@@ -2029,7 +2029,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 								   ? *flat_total_size
 								   : *array_size;
 				if (element_count >= limit) {
-					return ParseResult::error("Too many initializers for array", current_token_);
+					return error(DiagnosticId::TooManyInitializers, current_token_, "Too many initializers for array");
 				}
 			}
 
@@ -2623,7 +2623,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			// Skip the check when a pack expansion was already seen — we can't know
 			// the remaining member count until template substitution expands the pack.
 			if (!has_seen_pack_expansion && member_index >= struct_info.members.size()) {
-				return ParseResult::error("Too many initializers for struct", current_token_);
+				return error(DiagnosticId::TooManyInitializers, current_token_, "Too many initializers for struct");
 			}
 
 			FLASH_LOG(Parser, Debug, "Parsing positional initializer for member index: ", member_index);
