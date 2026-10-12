@@ -9063,17 +9063,31 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			else if (!member_function_context_stack_.empty()) {
 				const auto& member_func_ctx = member_function_context_stack_.back();
 				const StructDeclarationNode* struct_node = member_func_ctx.struct_node;
+				// A static member function has no implicit object, so an unqualified
+				// non-static data member cannot be transformed into `this->member`.
+				const bool implicit_this_must_be_rejected = current_function_ != nullptr && current_function_->is_static();
+				const bool consider_implicit_members = member_func_ctx.has_implicit_this || implicit_this_must_be_rejected;
+				auto rejectImplicitThisInStaticFunction = [&]() {
+					return error(
+						DiagnosticId::NonStaticMemberUseInStaticFunction,
+						identifier_token,
+						std::string("Invalid use of non-static data member '") +
+							std::string(identifier_token.value()) + "' in static member function");
+				};
 
 				// Check if this identifier matches any data member in the struct (including inherited members)
 				// First try AST node members (for regular structs), then fall back to TypeInfo (for template instantiations)
 				bool found_in_ast = false;
-				if (member_func_ctx.has_implicit_this && struct_node && !struct_node->members().empty()) {
+				if (consider_implicit_members && struct_node && !struct_node->members().empty()) {
 					// First check direct members
 					for (const auto& member_decl : struct_node->members()) {
 						const ASTNode& member_node = member_decl.declaration;
 						if (member_node.is<DeclarationNode>()) {
 							const DeclarationNode& decl = member_node.as<DeclarationNode>();
 							if (decl.identifier_token().value() == identifier_token.value()) {
+								if (implicit_this_must_be_rejected) {
+									return rejectImplicitThisInStaticFunction();
+								}
 								// This is a member variable! Transform it into this->member
 								// Create a "this" token with the correct value
 								Token this_token(Token::Type::Keyword, "this"sv,
@@ -9103,6 +9117,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							// Check if the identifier is a member of the base class (recursively)
 							auto member_result = FlashCpp::gLazyMemberResolver.resolve(base_type_index, identifier_token.handle());
 							if (member_result) {
+								if (implicit_this_must_be_rejected) {
+									return rejectImplicitThisInStaticFunction();
+								}
 								// This is an inherited member variable! Transform it into this->member
 								Token this_token(Token::Type::Keyword, "this"sv,
 												 identifier_token.line(), identifier_token.column(),
@@ -9123,7 +9140,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// If not found in AST, try TypeInfo (or local_struct_info for static member initializers)
 				// This handles template class instantiations and static member initializers
-				if (member_func_ctx.has_implicit_this && !found_in_ast) {
+				if (consider_implicit_members && !found_in_ast) {
 					// First try local_struct_info (for static member initializers where TypeInfo::struct_info_ isn't populated yet)
 					const StructTypeInfo* struct_info = member_func_ctx.local_struct_info;
 
@@ -9169,6 +9186,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						// Check instance members (these use this->)
 						for (const auto& member : struct_info->members) {
 							if (member.getName() == identifier_token.handle()) {
+								if (implicit_this_must_be_rejected) {
+									return rejectImplicitThisInStaticFunction();
+								}
 								// This is a member variable! Transform it into this->member
 								Token this_token(Token::Type::Keyword, "this"sv,
 												 identifier_token.line(), identifier_token.column(),
@@ -9187,6 +9207,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						// Also check base class members
 						auto member_result = FlashCpp::gLazyMemberResolver.resolve(member_func_ctx.struct_type_index, identifier_token.handle());
 						if (member_result) {
+							if (implicit_this_must_be_rejected) {
+								return rejectImplicitThisInStaticFunction();
+							}
 							// This is an inherited member variable! Transform it into this->member
 							Token this_token(Token::Type::Keyword, "this"sv,
 											 identifier_token.line(), identifier_token.column(),
