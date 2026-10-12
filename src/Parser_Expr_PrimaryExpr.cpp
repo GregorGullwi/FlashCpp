@@ -8944,6 +8944,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// Try to instantiate the template function (skip in extern "C" contexts - C has no templates).
 			// Dependent calls are resolved at the point of instantiation; attempting overload
 			// resolution here can emit false diagnostics for overloads that are not viable yet.
+			const size_t diagnostics_before_instantiation = context_.diagnostics().count(DiagnosticSeverity::Error);
 			std::optional<ASTNode> template_func_inst;
 			if (current_linkage_ != Linkage::C && !has_dependent_call_args) {
 				template_func_inst = try_instantiate_template(identifier_token.value(), arg_types);
@@ -9045,10 +9046,25 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// Let the caller reject the overload without emitting a hard parser error.
 				if (!isHardUseLikeInstantiationMode()) {
 					FLASH_LOG_FORMAT(Templates, Trace, "SFINAE: template instantiation failed for call to '{}'", identifier_token.value());
-				} else {
-					FLASH_LOG(Parser, Error, "Template instantiation failed");
+					return ParseResult::error("Failed to instantiate template function", identifier_token);
 				}
-				return ParseResult::error("Failed to instantiate template function", identifier_token);
+				// Hard use: the name denotes a function template but no specialization is
+				// viable, so report the missing-candidate owner rather than a bare string.
+				FLASH_LOG(Parser, Error, "Template instantiation failed");
+				if (context_.diagnostics().count(DiagnosticSeverity::Error) != diagnostics_before_instantiation) {
+					// Instantiation already reported the specific failing construct; adding a
+					// second missing-candidate error here would only duplicate it.
+					return ParseResult::error("Failed to instantiate template function", identifier_token);
+				}
+				const std::string no_viable_message = std::string(StringBuilder().append("No matching function for call to '")
+					.append(identifier_token.value()).append("'").commit());
+				context_.diagnostics().report(
+					DiagnosticId::NoViableFunctionCall,
+					DiagnosticSeverity::Error,
+					lexer_.getSourceLocation(identifier_token),
+					no_viable_message,
+					{});
+				return ParseResult::error(no_viable_message, identifier_token);
 			}
 		}
 
