@@ -4115,22 +4115,9 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 		}
 	}
 
-	if (node.identifiers().size() != public_member_count) {
-		throw makeStructuredCompileError(
-			context_->diagnostics(),
-			DiagnosticId::StructuredBindingMemberCountMismatch,
-			DiagnosticSeverity::Error,
-			SourceLocation::fromToken(node.bracket_token()),
-			StringBuilder()
-				.append("structured binding declares ")
-				.append(static_cast<int64_t>(node.identifiers().size()))
-				.append(" identifier(s) but the initializer has ")
-				.append(static_cast<int64_t>(public_member_count))
-				.append(" non-static data member(s)")
-				.commit(),
-			{});
-	}
-
+	// Sema already rejects an identifier/member count mismatch during aggregate
+	// decomposition (StructuredBindingMemberCountMismatch), so codegen can rely on
+	// the counts matching here.
 	FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Decomposing struct with ",
 			  public_member_count, " public members");
 
