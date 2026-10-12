@@ -11957,8 +11957,18 @@ void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& sub
 		}
 	}
 
-	if (!best_match)
+	if (!best_match) {
+		if (explicitly_ambiguous) {
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::AmbiguousOperatorOverload,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(subscript_node.bracket_token()),
+				"Ambiguous overload for operator[]",
+				{});
+		}
 		return;
+	}
 
 	best_match = tryMaterializeLazyReceiverMemberTarget(
 		best_match,

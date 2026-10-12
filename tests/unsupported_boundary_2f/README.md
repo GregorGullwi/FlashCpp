@@ -33,7 +33,6 @@ An agent looking for a regression to recover should:
 | `test_const_rvalue_reference_before_pack_lvalue_fail.cpp.txt` | Function-template deduction | Reference/pack deduction has a stable mismatch owner. |
 | `test_constrained_auto_double_fail.cpp.txt` | Constrained abbreviated template | Constraint rejection has a stable bounded owner. |
 | `test_function_template_recursive_trailing_return_fail.cpp.txt` | Recursive trailing-return instantiation | Recursive substitution terminates through a stable rejection owner. |
-| `test_operator_subscript_const_ambiguity_fail.cpp.txt` | Const operator overload resolution | Ambiguity is reported by the existing operator owner. |
 | `test_template_callable_operator_const_receiver_explicit_member_fail.cpp.txt` | Callable member-template substitution | Const-receiver substitution has a stable call owner. |
 | `test_template_lazy_static_member_implicit_this_fail.cpp.txt` | Lazy member materialization | Implicit-`this` validation is stable without internal-failure compatibility. |
 | `test_template_member_call_const_receiver_fail.cpp.txt` | Const member-call substitution | The existing member-call owner reports the failure. |
