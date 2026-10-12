@@ -41,6 +41,10 @@ bool matchesConstexprFunctionName(
 bool sameConstexprFunctionIdentity(
 	const FunctionDeclarationNode& lhs,
 	const FunctionDeclarationNode& rhs);
+const StructMemberFunction* findMemberFunctionMetadataRecursive(const StructTypeInfo* struct_info, const FunctionDeclarationNode& target_function);
+const StructMemberFunction* findMemberFunctionMetadataRecursive(const StructTypeInfo* struct_info, const FunctionDeclarationNode& target_function,
+	const StructTypeInfo** owner_struct_info);
+StringHandle concreteTemplateMemberFunctionOwnerName(StringHandle pattern_owner_name, const TypeInfo* concrete_owner_type);
 const StructMemberFunction* findCollectedMemberFunctionByIdentity(
 	std::span<const StructMemberFunction* const> candidates,
 	const FunctionDeclarationNode& target_function);
@@ -68,9 +72,6 @@ TemplateParameterKind inferTemplateBindingKindForLookup(const TemplateTypeArg& a
 TemplateEnvironment buildOuterFunctionTemplateEnvironment(
 	const TemplateParamNameVector& param_names,
 	const TemplateArgInfoVector& args);
-const StructMemberFunction* findMemberFunctionMetadataRecursive(
-	const StructTypeInfo* struct_info,
-	const FunctionDeclarationNode& target_function);
 const StructMemberFunction* findFinalOverrider(
 	const StructTypeInfo* dynamic_struct_info,
 	const StructMemberFunction& base_virtual,

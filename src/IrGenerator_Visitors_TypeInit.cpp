@@ -1581,22 +1581,30 @@ void AstToIr::generateStaticMemberDeclarations() {
 						if (std::holds_alternative<ConstructorCallNode>(init_expr)) {
 							const auto& ctor_call = std::get<ConstructorCallNode>(init_expr);
 							bool evaluated_ctor = false;
-							if (const StructTypeInfo* static_struct_info = tryGetStructTypeInfo(static_member.type_index)) {
+							const bool aggregate_init = ctor_call.isAggregateInitialization();
+							const StructTypeInfo* static_struct_info = tryGetStructTypeInfo(static_member.type_index);
+							if (aggregate_init && static_struct_info == nullptr) {
+								throw InternalError("Aggregate static-member constructor has no struct type metadata");
+							}
+							if (static_struct_info != nullptr) {
 								ConstExpr::EvaluationContext object_ctx = makeStaticMemberEvalContext(struct_info);
-								ConstExpr::EvalResult object_result = ConstExpr::Evaluator::evaluate(ASTNode(&init_expr), object_ctx);
-								if (object_result.success() && !object_result.object_member_bindings.empty()) {
+								ConstExpr::EvalResult object_result = aggregate_init
+									? ConstExpr::Evaluator::materialize_constructor_object_value(ctor_call, object_ctx, nullptr)
+									: ConstExpr::Evaluator::evaluate(ASTNode(&init_expr), object_ctx);
+								if (object_result.success() && (aggregate_init || !object_result.object_member_bindings.empty())) {
 									op.init_data.resize(toSizeT(static_struct_info->sizeInBytes()), 0);
-									packStructEvalResultIntoInitData(
-										packStructEvalResultIntoInitData,
-										op.init_data,
-										*static_struct_info,
-										object_result,
-										0,
-										0);
+									packStructEvalResultIntoInitData(packStructEvalResultIntoInitData, op.init_data, *static_struct_info, object_result, 0, 0);
 									evaluated_ctor = true;
-									FLASH_LOG(Codegen, Debug, "Packed constexpr constructor-call initializer for static member '",
+									FLASH_LOG(Codegen, Debug, "Packed constructor-call initializer for static member '",
 										qualified_name, "' (", op.init_data.size(), " bytes)");
 									write_back_constant_bytes();
+								} else if (aggregate_init) {
+									fail_constexpr_initializer(object_result.error_message.empty()
+										? "aggregate constructor initializer did not evaluate"
+										: std::string_view(object_result.error_message));
+									allowNormalizedWriteBack = false;
+									zero_initialize();
+									evaluated_ctor = true;
 								}
 							}
 							// Try constexpr evaluation for constructor calls with arguments

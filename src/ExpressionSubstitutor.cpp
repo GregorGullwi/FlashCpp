@@ -3426,8 +3426,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		}
 	}
 
-	// Check if this is actually a template constructor call like base_trait<T>()
-	// In this case, the function_declaration might have template information
+	// Substitute a dependent struct return type so the call retains a concrete type hint.
 	FLASH_LOG(Templates, Trace, "  DeclarationNode identifier: ", decl_node.identifier_token().value());
 
 	// Check the type_node - it might contain template information
@@ -3445,23 +3444,22 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				// Try to substitute template arguments in this type
 				TypeSpecifierNode substituted_type = substituteInType(type_spec);
 
-				// If substitution happened, create a new constructor call
-				// Check if the type_index changed
+				// A substituted function return type does not turn a function call into
+				// construction of that return type. Keep the callee and substitute its
+				// return-type hint for later expression typing.
 				if (substituted_type.type_index() != type_spec.type_index()) {
-					FLASH_LOG(Templates, Trace, "  Type was substituted, creating ConstructorCallNode");
+					FLASH_LOG(Templates, Trace, "  Type was substituted, preserving function call");
 
-					// Create a ConstructorCallNode instead of an ordinary CallExprNode
-					ChunkedVector<ASTNode> substituted_args_nodes =
-						substituteCallArgumentsPreservingPackExpansion(call.arguments());
+					ChunkedVector<ASTNode> substituted_args = substituteCallArgumentsPreservingPackExpansion(call.arguments());
+					CallExprNode substituted_call(call.callee(), std::move(substituted_args), call.called_from());
+					copyCallMetadataWithTransformedTemplateArguments(substituted_call, call,
+						[this](const ASTNode& template_arg) {
+							return substitute(template_arg);
+						},
+						CallMetadataCopyOptions{});
+					setCallParserReturnTypeHint(substituted_call, substituted_type);
 
-					TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(substituted_type);
-					ConstructorCallNode& new_ctor = gChunkedAnyStorage.emplace_back<ConstructorCallNode>(
-						ASTNode(&new_type),
-						std::move(substituted_args_nodes),
-						call.called_from());
-
-					// Wrap in ExpressionNode
-					ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_ctor);
+					ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(std::move(substituted_call));
 					return ASTNode(&new_expr);
 				}
 			}

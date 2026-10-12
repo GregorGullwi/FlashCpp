@@ -1,6 +1,7 @@
 // C++20 aggregate rules: an explicitly defaulted constructor is still
 // user-declared, so the type is not an aggregate and cannot be list-initialized
-// from aggregate member clauses.
+// from aggregate member clauses. Semantic constructor checking rejects the
+// unmatched argument before constexpr evaluation (NoMatchingConstructor, 1508).
 
 struct Defaulted {
 	int value;

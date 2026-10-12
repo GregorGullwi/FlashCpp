@@ -1,7 +1,8 @@
 // Test that an evaluation failure inside a ternary struct initializer is
 // propagated as the real error rather than being silenced and replaced with the
 // generic "Constexpr member access requires a struct initializer" message.
-// This is a negative (fail) test — the compiler must reject it.
+// The undefined constexpr call must retain diagnostic 1218, rather than being
+// replaced with a constructor-selection diagnostic.
 
 struct Pt { int x; int y; };
 constexpr int undef_fn();   // declared but not defined — causes evaluation failure

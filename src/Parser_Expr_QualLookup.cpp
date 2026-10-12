@@ -363,7 +363,19 @@ ParseResult Parser::parseResolvedClassConstruction(const Token& type_token, Type
 			return init_result;
 		}
 		if (init_result.node().has_value() && init_result.node()->is<InitializerListNode>()) {
-			ASTNode construction = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec, *init_result.node(), type_token));
+			const InitializerListNode& initializer = init_result.node()->as<InitializerListNode>();
+			const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_index);
+			if (typeSpecStillUsesDependentPlaceholder(type_spec) ||
+				(is_struct_type(type_spec.category()) && (struct_info == nullptr || struct_info->isAggregate()))) {
+				ASTNode construction = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec, *init_result.node(), type_token));
+				return ParseResult::success(construction);
+			}
+
+			ChunkedVector<ASTNode> arguments;
+			for (const ASTNode& argument : initializer.initializers()) {
+				arguments.push_back(argument);
+			}
+			ASTNode construction = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec, std::move(arguments), type_token));
 			return ParseResult::success(construction);
 		}
 		return init_result;
