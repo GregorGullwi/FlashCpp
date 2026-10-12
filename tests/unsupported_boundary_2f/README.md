@@ -27,12 +27,6 @@ An agent looking for a regression to recover should:
 
 | Reproducer | Blocked owner | Recover when |
 | --- | --- | --- |
-| `concept_error_test_fail.cpp.txt` | Template constraint evaluation | Constraint failure has a stable existing diagnostic owner. |
-| `template_call_wrong_placeholder_base_fail.cpp.txt` | Template placeholder/base deduction | Placeholder/base matching has a bounded rejection owner. |
-| `template_concrete_undeduced_fail.cpp.txt` | Explicit template deduction | The undeduced-argument path reports a stable diagnostic. |
-| `test_const_rvalue_reference_before_pack_lvalue_fail.cpp.txt` | Function-template deduction | Reference/pack deduction has a stable mismatch owner. |
-| `test_constrained_auto_double_fail.cpp.txt` | Constrained abbreviated template | Constraint rejection has a stable bounded owner. |
-| `test_function_template_recursive_trailing_return_fail.cpp.txt` | Recursive trailing-return instantiation | Recursive substitution terminates through a stable rejection owner. |
 | `test_template_out_of_line_static_member_implicit_this_fail.cpp.txt` | Out-of-line static-member materialization | Static-member implicit-`this` validation has a stable owner. |
 
 The archive is intentionally indexed by source filename rather than by a

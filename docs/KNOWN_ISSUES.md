@@ -66,17 +66,11 @@ converted into diagnostic contracts because their failures are outside an
 existing bounded owner. Their source is preserved as non-discovered `.cpp.txt`
 reproducers under `tests/unsupported_boundary_2f/`:
 
-- Template deduction or constraint failures that collapse to the generic
-  template-instantiation rejection: `concept_error_test_fail.cpp`,
-  `template_call_wrong_placeholder_base_fail.cpp`,
-  `template_concrete_undeduced_fail.cpp`,
-  `test_const_rvalue_reference_before_pack_lvalue_fail.cpp`,
-  `test_constrained_auto_double_fail.cpp`,
-  and `test_function_template_recursive_trailing_return_fail.cpp`.
-- A reference-returning member-function-pointer declarator in an out-of-line
-  member-template context: `test_template_member_func_template_const_ref_return_fail.cpp`.
-- A test that previously depended on status-2 compatibility:
-  `test_template_out_of_line_static_member_implicit_this_fail.cpp`.
+- An out-of-line static member function of a class template that references a
+  non-static data member: `test_template_out_of_line_static_member_implicit_this_fail.cpp`.
+  It stops while attaching the out-of-line member (`OutOfLineMemberNotAttached`)
+  before it can reach the implicit-`this` validation that now owns the equivalent
+  in-class and non-template forms.
 
 These archived reproducers should return to executable discovery only after
 their owning parser, identity, constexpr, or lowering work can provide a stable
