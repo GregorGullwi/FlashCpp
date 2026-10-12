@@ -604,10 +604,10 @@ ExprResult AstToIr::adjustDerivedToBaseAddress(
 	const DerivedBaseConversionInfo base_conversion =
 		classifyDerivedBaseConversion(source_type_index, target_type_index);
 	if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous) {
-		throw CompileError("Ambiguous derived-to-base conversion");
+		throw InternalError("Ambiguous derived-to-base conversion");
 	}
 	if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible) {
-		throw CompileError("Cannot convert to an inaccessible base class");
+		throw InternalError("Cannot convert to an inaccessible base class");
 	}
 	if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
 		base_conversion.kind != DerivedBaseConversionKind::PublicVirtual) {
@@ -701,10 +701,10 @@ ExprResult AstToIr::adjustDerivedToBasePointer(
 	const DerivedBaseConversionInfo base_conversion =
 		classifyDerivedBaseConversion(source_type_index, target_type_index);
 	if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous) {
-		throw CompileError("Ambiguous derived-to-base pointer conversion");
+		throw InternalError("Ambiguous derived-to-base pointer conversion");
 	}
 	if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible) {
-		throw CompileError("Cannot convert to an inaccessible base class");
+		throw InternalError("Cannot convert to an inaccessible base class");
 	}
 	if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
 		base_conversion.kind != DerivedBaseConversionKind::PublicVirtual) {
@@ -2960,9 +2960,9 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 				const DerivedBaseConversionInfo base_conversion =
 					classifyDerivedBaseConversion(from_desc.type_index, to_desc.type_index);
 				if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
-					throw CompileError("Ambiguous derived-to-base conversion");
+					throw InternalError("Ambiguous derived-to-base conversion");
 				if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
-					throw CompileError("Cannot convert to an inaccessible base class");
+					throw InternalError("Cannot convert to an inaccessible base class");
 				if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual && base_conversion.kind != DerivedBaseConversionKind::PublicVirtual)
 					throw InternalError("Sema annotated an unrelated derived-to-base constructor argument");
 
@@ -3167,9 +3167,9 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 		if (base_conversion.kind == DerivedBaseConversionKind::NotRelated)
 			return address_result;
 		if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
-			throw CompileError("Ambiguous derived-to-base reference binding");
+			throw InternalError("Ambiguous derived-to-base reference binding");
 		if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
-			throw CompileError("Cannot bind a reference to an inaccessible base class");
+			throw InternalError("Cannot bind a reference to an inaccessible base class");
 		int target_size_bits = static_cast<int>(param_type.size_in_bits());
 		if (target_size_bits <= 0) {
 			const TypeInfo* target_type_info = tryGetTypeInfo(target_type_index);
@@ -3296,9 +3296,9 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 			const DerivedBaseConversionInfo base_conversion =
 				classifyDerivedBaseConversion(from_desc.type_index, to_desc.type_index);
 			if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
-				throw CompileError("Ambiguous derived-to-base conversion");
+				throw InternalError("Ambiguous derived-to-base conversion");
 			if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
-				throw CompileError("Cannot convert to an inaccessible base class");
+				throw InternalError("Cannot convert to an inaccessible base class");
 			if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
 				base_conversion.kind != DerivedBaseConversionKind::PublicVirtual)
 				throw InternalError("Sema annotated an unrelated derived-to-base reference binding");
@@ -3413,9 +3413,9 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 		const DerivedBaseConversionInfo base_conversion =
 			classifyDerivedBaseConversion(source_result.type_index, target_type.type_index());
 		if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
-			throw CompileError("Ambiguous derived-to-base conversion");
+			throw InternalError("Ambiguous derived-to-base conversion");
 		if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
-			throw CompileError("Cannot convert to an inaccessible base class");
+			throw InternalError("Cannot convert to an inaccessible base class");
 		if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
 			base_conversion.kind != DerivedBaseConversionKind::PublicVirtual)
 			throw InternalError("Selected copy/move constructor has an unrelated source type");
@@ -3581,9 +3581,9 @@ std::optional<ExprResult> AstToIr::tryMaterializeSemaSelectedConvertingConstruct
 		const DerivedBaseConversionInfo base_conversion =
 			classifyDerivedBaseConversion(source_desc.type_index, target_desc.type_index);
 		if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
-			throw CompileError("Ambiguous derived-to-base conversion");
+			throw InternalError("Ambiguous derived-to-base conversion");
 		if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
-			throw CompileError("Cannot convert to an inaccessible base class");
+			throw InternalError("Cannot convert to an inaccessible base class");
 		if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
 			base_conversion.kind != DerivedBaseConversionKind::PublicVirtual)
 			throw InternalError("Sema selected a derived-to-base constructor for unrelated types");

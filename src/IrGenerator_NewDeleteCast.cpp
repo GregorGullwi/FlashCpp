@@ -989,9 +989,9 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		const DerivedBaseConversionInfo base_conversion =
 			classifyDerivedBaseConversion(source_type_index, target_type_index);
 		if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
-			throw CompileError("Ambiguous derived-to-base reference cast");
+			throw InternalError("Ambiguous derived-to-base reference cast");
 		if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
-			throw CompileError("Cannot cast to an inaccessible base class");
+			throw InternalError("Cannot cast to an inaccessible base class");
 		if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual ||
 			base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
 			expr_operands = adjustDerivedToBaseAddress(
@@ -1031,9 +1031,9 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 			const DerivedBaseConversionInfo base_conversion =
 				classifyDerivedBaseConversion(source_type_index, target_type_index);
 			if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
-				throw CompileError("Ambiguous derived-to-base pointer cast");
+				throw InternalError("Ambiguous derived-to-base pointer cast");
 			if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
-				throw CompileError("Cannot cast to an inaccessible base class");
+				throw InternalError("Cannot cast to an inaccessible base class");
 			if ((base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual ||
 				 base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) &&
 				target_pointer_depth != 1) {

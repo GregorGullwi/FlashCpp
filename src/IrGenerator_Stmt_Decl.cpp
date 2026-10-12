@@ -2405,9 +2405,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						const DerivedBaseConversionInfo base_conversion =
 							classifyDerivedBaseConversion(init_type_index, type_node.type_index());
 						if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
-							throw CompileError("Ambiguous derived-to-base reference binding");
+							throw InternalError("Ambiguous derived-to-base reference binding");
 						if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
-							throw CompileError("Cannot bind a reference to an inaccessible base class");
+							throw InternalError("Cannot bind a reference to an inaccessible base class");
 						if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual ||
 							base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
 							init_operands = adjustDerivedToBaseAddress(
@@ -2454,7 +2454,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						const DerivedBaseConversionInfo base_conversion =
 							classifyDerivedBaseConversion(init_type_index, type_node.type_index());
 						if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
-							throw CompileError("Ambiguous derived-to-base pointer conversion");
+							throw InternalError("Ambiguous derived-to-base pointer conversion");
 						if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible) {
 							const TypeInfo* src_info = tryGetTypeInfo(init_type_index);
 							const TypeInfo* tgt_info = tryGetTypeInfo(type_node.type_index());
@@ -3170,9 +3170,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								const DerivedBaseConversionInfo base_conversion =
 									classifyDerivedBaseConversion(init_type_index, type_node.type_index());
 								if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
-									throw CompileError("Ambiguous derived-to-base conversion");
+									throw InternalError("Ambiguous derived-to-base conversion");
 								if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
-									throw CompileError("Cannot convert to an inaccessible base class");
+									throw InternalError("Cannot convert to an inaccessible base class");
 								if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual ||
 									base_conversion.kind == DerivedBaseConversionKind::PublicVirtual)
 									derived_base_copy_init = base_conversion;
@@ -3219,9 +3219,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 												const DerivedBaseConversionInfo base_conversion =
 													classifyDerivedBaseConversion(source_desc.type_index, target_desc.type_index);
 												if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
-													throw CompileError("Ambiguous derived-to-base conversion");
+													throw InternalError("Ambiguous derived-to-base conversion");
 												if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
-													throw CompileError("Cannot convert to an inaccessible base class");
+													throw InternalError("Cannot convert to an inaccessible base class");
 												if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
 													base_conversion.kind != DerivedBaseConversionKind::PublicVirtual)
 													throw InternalError("Sema selected an unrelated derived-to-base constructor");
@@ -3303,17 +3303,16 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 									// Emit error only when every matching converting constructor is explicit.
 								if (found_matching_ctor && !found_non_explicit_ctor) {
-									const std::string_view target_name = StringTable::getStringView(type_info->name());
 									const bool suppress_explicit_ctor_error =
 										is_integer_type(init_type) && type_info->getStructInfo() &&
 										toSizeT(type_info->getStructInfo()->sizeInBytes()) == 1 &&
 										isExactComparisonCategoryType(type_info->type_index_);
 									if (!suppress_explicit_ctor_error) {
-										FLASH_LOG(General, Error, "Cannot use copy initialization with explicit constructor for type '",
-												  target_name, "'");
-										FLASH_LOG(General, Error, "  Use direct initialization: ",
-												  decl.identifier_token().value(), "(value) instead of = value");
-										throw CompileError("Cannot use copy initialization with explicit constructor");
+										// Sema owns this rejection
+										// (ExplicitConstructorCopyInitialization); codegen must not
+										// reach an all-explicit converting-constructor set.
+										throw InternalError(
+											"Sema must reject copy initialization through an explicit constructor");
 									}
 								}
 							}
