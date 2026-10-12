@@ -1048,6 +1048,7 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, Referenc
 	if (peek() != "["_tok) {
 		return ParseResult::error("Expected '[' for structured binding", current_token_);
 	}
+	const Token bracket_token = peek_info();
 	advance(); // consume '['
 
 	// Parse the identifier list: a, b, c
@@ -1129,7 +1130,8 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, Referenc
 		std::move(identifiers),
 		*initializer,
 		cv_qualifiers,
-		ref_qualifier);
+		ref_qualifier,
+		bracket_token);
 
 	FLASH_LOG(Parser, Debug, "parse_structured_binding: Created StructuredBindingNode");
 

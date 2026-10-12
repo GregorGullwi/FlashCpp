@@ -4963,12 +4963,51 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 	std::vector<TemplateTypeArg> tuple_size_args = {object_type_arg};
 	const StructDeclarationNode* tuple_size_decl = resolve_struct_specialization(tuple_size_lookup_set, tuple_size_args);
 	if (!tuple_size_decl) {
+		// Aggregate decomposition ([dcl.struct.bind]/4): the number of identifiers
+		// must equal the number of non-static data members of the initializer type.
+		const StructTypeInfo* aggregate_struct_info =
+			(!init_type_info->is_incomplete_instantiation_ && !init_type_info->isDependentPlaceholder())
+				? init_type_info->getStructInfo()
+				: nullptr;
+		if (aggregate_struct_info != nullptr) {
+			size_t data_member_count = 0;
+			for (const StructMember& member : aggregate_struct_info->members) {
+				if (member.access == AccessSpecifier::Public) {
+					++data_member_count;
+				}
+			}
+			if (binding.identifiers().size() != data_member_count) {
+				throw makeStructuredCompileError(
+					context_.diagnostics(),
+					DiagnosticId::StructuredBindingMemberCountMismatch,
+					DiagnosticSeverity::Error,
+					SourceLocation::fromToken(binding.bracket_token()),
+					StringBuilder()
+						.append("structured binding declares ")
+						.append(static_cast<int64_t>(binding.identifiers().size()))
+						.append(" identifier(s) but the initializer has ")
+						.append(static_cast<int64_t>(data_member_count))
+						.append(" non-static data member(s)")
+						.commit(),
+					{});
+			}
+		}
 		return;	// aggregate decomposition path
 	}
 
+	auto rejectStructuredBindingTupleProtocol = [&](std::string_view reason) -> void {
+		throw makeStructuredCompileError(
+			context_.diagnostics(),
+			DiagnosticId::StructuredBindingTupleLikeProtocolFailure,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(binding.bracket_token()),
+			reason,
+			{});
+	};
+
 	const TypeInfo* tuple_size_type_info = resolve_type_info(tuple_size_decl);
 	if (!tuple_size_type_info) {
-		throw CompileError("structured binding tuple-like protocol failed: unable to resolve tuple_size specialization type info");
+		rejectStructuredBindingTupleProtocol("structured binding tuple-like protocol failed: unable to resolve tuple_size specialization type info");
 	}
 
 	size_t tuple_size_value = 0;
@@ -4984,20 +5023,20 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 		: ConstExpr::EvaluationContext(symbols_, *this);
 	auto eval_result = ConstExpr::Evaluator::evaluate(tuple_size_value_expr, eval_ctx);
 	if (!eval_result.success()) {
-		throw CompileError("structured binding tuple-like protocol failed: cannot evaluate tuple_size::value");
+		rejectStructuredBindingTupleProtocol("structured binding tuple-like protocol failed: cannot evaluate tuple_size::value");
 	}
 	if (eval_result.is_uint()) {
 		tuple_size_value = static_cast<size_t>(eval_result.as_uint_raw());
 	} else {
 		long long signed_tuple_size = eval_result.as_int();
 		if (signed_tuple_size < 0) {
-			throw CompileError("structured binding tuple-like protocol failed: tuple_size::value is negative");
+			rejectStructuredBindingTupleProtocol("structured binding tuple-like protocol failed: tuple_size::value is negative");
 		}
 		tuple_size_value = static_cast<size_t>(signed_tuple_size);
 	}
 
 	if (binding.identifiers().size() != tuple_size_value) {
-		throw CompileError("structured binding tuple-like protocol failed: identifier count does not match tuple_size::value");
+		rejectStructuredBindingTupleProtocol("structured binding tuple-like protocol failed: identifier count does not match tuple_size::value");
 	}
 
 	auto make_index_arg = [](size_t index, TypeCategory index_type) -> TemplateTypeArg {
@@ -5035,13 +5074,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 			}
 		}
 		if (!tuple_element_decl) {
-			throw makeStructuredCompileError(
-				context_.diagnostics(),
-				DiagnosticId::StructuredBindingTupleLikeProtocolFailure,
-				DiagnosticSeverity::Error,
-				SourceLocation(),
-				"structured binding tuple-like protocol failed: missing tuple_element specialization",
-				{});
+			rejectStructuredBindingTupleProtocol("structured binding tuple-like protocol failed: missing tuple_element specialization");
 		}
 
 		const TypeAliasDecl* type_alias = nullptr;
@@ -5052,7 +5085,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 			}
 		}
 		if (!type_alias) {
-			throw CompileError("structured binding tuple-like protocol failed: tuple_element specialization is missing alias 'type'");
+			rejectStructuredBindingTupleProtocol("structured binding tuple-like protocol failed: tuple_element specialization is missing alias 'type'");
 		}
 
 		const TypeSpecifierNode* element_type_spec = nullptr;
@@ -5062,7 +5095,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 			element_type_spec = &type_alias->type_node.as<DeclarationNode>().type_specifier_node();
 		}
 		if (!element_type_spec) {
-			throw CompileError("structured binding tuple-like protocol failed: tuple_element::type is not a resolvable type");
+			rejectStructuredBindingTupleProtocol("structured binding tuple-like protocol failed: tuple_element::type is not a resolvable type");
 		}
 
 		std::optional<ASTNode> get_spec;
@@ -5096,12 +5129,12 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 			}
 		}
 		if (!get_spec.has_value()) {
-			throw CompileError("structured binding tuple-like protocol failed: missing get<I>(...) specialization");
+			rejectStructuredBindingTupleProtocol("structured binding tuple-like protocol failed: missing get<I>(...) specialization");
 		}
 
 		const FunctionDeclarationNode* get_func = get_function_decl_node(*get_spec);
 		if (!get_func) {
-			throw CompileError("structured binding tuple-like protocol failed: get<I> specialization is not a function declaration");
+			rejectStructuredBindingTupleProtocol("structured binding tuple-like protocol failed: get<I> specialization is not a function declaration");
 		}
 
 		const DeclarationNode& decl_node = get_func->decl_node();
