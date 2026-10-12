@@ -10327,7 +10327,13 @@ bool SemanticAnalysis::annotateSelectedConversionOperator(
 			const std::optional<DerivedBaseConversionKind> base_conversion =
 				classifyCanonicalDerivedBaseConversion(table, return_import.type, target_import.type);
 			if (base_conversion == DerivedBaseConversionKind::Inaccessible) {
-				throw CompileError("Cannot convert to an inaccessible base class");
+				throw makeStructuredCompileError(
+					context_.diagnostics(),
+					DiagnosticId::InaccessibleDerivedToBaseConversion,
+					DiagnosticSeverity::Error,
+					SourceLocation::fromToken(access_token),
+					"Cannot convert to an inaccessible base class",
+					{});
 			}
 		}
 	}
@@ -10623,10 +10629,24 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 				getCurrentMemberContext() != nullptr
 					? getCurrentMemberContext()->type_index
 					: TypeIndex{});
+		const Token derived_base_source_token =
+			FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(expr_node).value_or(Token{});
 		if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
-			throw CompileError("Ambiguous derived-to-base conversion");
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::AmbiguousDerivedToBaseConversion,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(derived_base_source_token),
+				"Ambiguous derived-to-base conversion",
+				{});
 		if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
-			throw CompileError("Cannot convert to an inaccessible base class");
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::InaccessibleDerivedToBaseConversion,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(derived_base_source_token),
+				"Cannot convert to an inaccessible base class",
+				{});
 		if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual && base_conversion.kind != DerivedBaseConversionKind::PublicVirtual) {
 			// The source is not a base subobject of the target, but a conversion
 			// operator returning the target (or a class derived from it) is still a
@@ -11096,11 +11116,25 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 					getCurrentMemberContext() != nullptr
 						? getCurrentMemberContext()->type_index
 						: TypeIndex{});
+			const Token derived_base_source_token =
+				FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(expr_node).value_or(Token{});
 			if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous) {
-				throw CompileError("Ambiguous derived-to-base conversion");
+				throw makeStructuredCompileError(
+					context_.diagnostics(),
+					DiagnosticId::AmbiguousDerivedToBaseConversion,
+					DiagnosticSeverity::Error,
+					SourceLocation::fromToken(derived_base_source_token),
+					"Ambiguous derived-to-base conversion",
+					{});
 			}
 			if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible) {
-				throw CompileError("Cannot convert to an inaccessible base class");
+				throw makeStructuredCompileError(
+					context_.diagnostics(),
+					DiagnosticId::InaccessibleDerivedToBaseConversion,
+					DiagnosticSeverity::Error,
+					SourceLocation::fromToken(derived_base_source_token),
+					"Cannot convert to an inaccessible base class",
+					{});
 			}
 			if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual ||
 				base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
