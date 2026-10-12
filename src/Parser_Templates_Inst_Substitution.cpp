@@ -5570,30 +5570,47 @@ ASTNode Parser::substitute_template_params_in_expression(
 			}
 			return nullptr;
 		};
+		auto substitute_arguments = [&]() {
+			ChunkedVector<ASTNode> new_args;
+			if (const InitializerListNode* initializer = ctor.aggregateInitializer()) {
+				InitializerListNode substituted_list(initializer->is_paren_init()
+					? InitializerListNode::InitializationStyle::Paren
+					: InitializerListNode::InitializationStyle::Brace);
+				for (size_t i = 0; i < initializer->size(); ++i) {
+					ASTNode element = substitute_template_params_in_expression(initializer->initializers()[i], type_substitution_map,
+						nontype_substitution_map, substitution_owner);
+					if (initializer->is_designated(i)) {
+						substituted_list.add_designated_initializer(initializer->member_name(i), element);
+					} else {
+						substituted_list.add_initializer(element);
+					}
+				}
+				new_args.push_back(emplace_node<InitializerListNode>(std::move(substituted_list)));
+				return new_args;
+			}
+			for (const ASTNode& argument : ctor.arguments()) {
+				new_args.push_back(substitute_template_params_in_expression(
+					argument, type_substitution_map, nontype_substitution_map, substitution_owner));
+			}
+			return new_args;
+		};
 
 		if (const TemplateTypeArg* substituted_ctor_arg = tryFindTypeSubstitution();
 			substituted_ctor_arg != nullptr) {
-			ChunkedVector<ASTNode> new_args;
-			for (size_t i = 0; i < ctor.arguments().size(); ++i) {
-				new_args.push_back(substitute_template_params_in_expression(
-					ctor.arguments()[i],
-					type_substitution_map,
-					nontype_substitution_map,
-					substitution_owner));
-			}
+			ChunkedVector<ASTNode> new_args = substitute_arguments();
 
-			auto new_type_node = emplace_node<TypeSpecifierNode>(
-				makeSubstitutedTypeNode(*substituted_ctor_arg, ctor.called_from()));
-			ConstructorCallNode new_ctor(new_type_node, std::move(new_args), ctor.called_from());
+			auto new_type_node = emplace_node<TypeSpecifierNode>(makeSubstitutedTypeNode(*substituted_ctor_arg, ctor.called_from()));
+			ConstructorCallNode new_ctor = ctor.isAggregateInitialization()
+				? ConstructorCallNode(new_type_node, new_args[0], ctor.called_from())
+				: ConstructorCallNode(new_type_node, std::move(new_args), ctor.called_from());
 			return emplace_node<ExpressionNode>(new_ctor);
 		}
 
 		// Not a template parameter constructor - recursively substitute in arguments
-		ChunkedVector<ASTNode> new_args;
-		for (size_t i = 0; i < ctor.arguments().size(); ++i) {
-			new_args.push_back(substitute_template_params_in_expression(ctor.arguments()[i], type_substitution_map, nontype_substitution_map, substitution_owner));
-		}
-		ConstructorCallNode new_ctor(ctor.type_node(), std::move(new_args), ctor.called_from());
+		ChunkedVector<ASTNode> new_args = substitute_arguments();
+		ConstructorCallNode new_ctor = ctor.isAggregateInitialization()
+			? ConstructorCallNode(ctor.type_node(), new_args[0], ctor.called_from())
+			: ConstructorCallNode(ctor.type_node(), std::move(new_args), ctor.called_from());
 		return emplace_node<ExpressionNode>(new_ctor);
 	}
 

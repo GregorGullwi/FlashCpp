@@ -33,6 +33,7 @@ static const std::unordered_set<std::string_view> kExpressionOnlyAfterParen = {
 // Tokens that can ONLY continue an expression after a leading identifier in a
 // statement. If one of these follows immediately, the statement cannot be a
 // declaration that starts with a type-name.
+// In particular, Type{...} is a value construction, not a declaration.
 //
 // Excluded on purpose:
 //   '(' '[' '<' '*' '&' '&&' identifiers/keywords
@@ -41,7 +42,7 @@ static const std::unordered_set<std::string_view> kExpressionOnlyAfterParen = {
 // expression, because `T *p;` is a common declaration form and [stmt.ambig]
 // prefers the declaration path unless the following token rules it out.
 static const std::unordered_set<std::string_view> kExpressionOnlyAfterLeadingIdentifier = {
-	";", ",",
+	";", ",", "{",
 	".", "->",
 	"?", "++", "--",
 	"+", "-", "/", "%",
@@ -276,6 +277,41 @@ ParseResult Parser::parse_statement_or_declaration() {
 		return canStartDeclarator(peek_info());
 	};
 
+	// Positioned after a known type-name and its template arguments. Braced
+	// construction cannot be a declarator; parentheses still prefer declarations
+	// unless their continuation rules that out ([stmt.ambig]).
+	auto typeConstructionContinuesExpression = [&]() -> bool {
+		if (peek() == "{"_tok) {
+			return true;
+		}
+		if (peek() != "("_tok && peek() != "::"_tok) {
+			return false;
+		}
+		SaveHandle saved_pos = save_token_position();
+		ScopeGuard restore_guard([&]() { restore_token_position(saved_pos); });
+		while (peek() == "::"_tok) {
+			advance();
+			if (peek() == "template"_tok) {
+				advance();
+			}
+			if (!canStartQualifiedNamePart(peek_info())) {
+				return false;
+			}
+			advance();
+			if (peek() == "<"_tok) {
+				skip_template_arguments();
+			}
+		}
+		if (peek() == "{"_tok) {
+			return true;
+		}
+		if (peek() != "("_tok) {
+			return false;
+		}
+		skip_balanced_parens();
+		return !peek().is_eof() && kExpressionOnlyAfterParen.count(peek_info().value());
+	};
+
 	auto looksLikeIdentifierDeclarationStart = [&]() -> bool {
 		if (!peek().is_identifier()) {
 			return false;
@@ -359,12 +395,9 @@ ParseResult Parser::parse_statement_or_declaration() {
 					restore_token_position(scope_check);
 				}
 
-				if (peek() == "("_tok) {
-					skip_balanced_parens();
-					if (!peek().is_eof() && kExpressionOnlyAfterParen.count(peek_info().value())) {
-						restore_token_position(check_pos);
-						return false;
-					}
+				if (typeConstructionContinuesExpression()) {
+					restore_token_position(check_pos);
+					return false;
 				}
 				restore_token_position(check_pos);
 				return true;
@@ -382,6 +415,10 @@ ParseResult Parser::parse_statement_or_declaration() {
 				if (peek() == "<"_tok) {
 					SaveHandle template_check = save_token_position();
 					skip_template_arguments();
+					if (typeConstructionContinuesExpression()) {
+						restore_token_position(saved_pos);
+						return false;
+					}
 					if (peek() == "("_tok) {
 						auto tmpl_opt = gTemplateRegistry.lookupTemplate(type_name_handle);
 						if (tmpl_opt && is_function_or_template_function(*tmpl_opt)) {
@@ -772,16 +809,9 @@ ParseResult Parser::parse_statement_or_declaration() {
 					restore_token_position(scope_check);
 				}
 
-				if (peek() == "("_tok) {
-					// TypeName(...) - could be declaration or functional cast
-					// Use skip_balanced_parens to skip to matching )
-					skip_balanced_parens();
-
-					// Check what follows the ) using the shared expression-only token set
-					if (!peek().is_eof() && kExpressionOnlyAfterParen.count(peek_info().value())) {
-						restore_token_position(check_pos);
-						return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					}
+				if (typeConstructionContinuesExpression()) {
+					restore_token_position(check_pos);
+					return parse_expression_statement();
 				}
 				restore_token_position(check_pos);
 
@@ -814,6 +844,10 @@ ParseResult Parser::parse_statement_or_declaration() {
 					// Lookahead: skip template args to check what follows
 					SaveHandle template_check = save_token_position();
 					skip_template_arguments();
+					if (typeConstructionContinuesExpression()) {
+						restore_token_position(saved_pos);
+						return parse_expression_statement();
+					}
 					if (peek() == "("_tok) {
 						// template<args>(...) - could be function call or functional cast
 						// Check if the template is a function template
@@ -2283,18 +2317,11 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				ConstructorCallNode(type_spec_node, std::move(ctor_args), brace_token)));
 	}
 
-	// If the type has user-defined constructors, or a deleted same-type special
-	// member that needs the semantic deleted-constructor diagnostic, brace-init
-	// must perform constructor overload resolution rather than falling through to
-	// aggregate initialization.
-	// Also keep the old member-less special case: those cannot be aggregate-initialized
-	// meaningfully and must use constructor initialization too.
+	// Non-aggregates always use constructor overload resolution for list-init.
 	// This handles patterns like:
 	//   inline constexpr nullopt_t nullopt { nullopt_t::_Construct::_Token };
 	//   Widget w{42};  // when Widget has a user-declared constructor
-	const bool has_deleted_same_type_constructor =
-		struct_info.isCopyConstructorDeleted() || struct_info.isMoveConstructorDeleted();
-	if (struct_info.members.empty() || struct_info.hasUserDefinedConstructor() || has_deleted_same_type_constructor) {
+	if (!struct_info.isAggregate()) {
 		// Must use constructor initialization here.
 		// Parse all the brace elements first
 		std::vector<ASTNode> elements;
@@ -2350,128 +2377,14 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 					ConstructorCallNode(type_spec_node, std::move(ctor_args), brace_token)));
 		};
 
-		if (struct_info.hasUserDefinedConstructor() || has_deleted_same_type_constructor) {
-			// Semantic analysis now owns constructor overload selection and diagnostics
-			// for user-declared-constructor brace-init paths.
-			return make_constructor_call(elements);
-		}
-
-		// No user-declared constructors: empty braces are value/aggregate initialization
-		// (C++20 [dcl.init.general]/[dcl.init.aggr]). Do not require an already-
-		// synthesized implicit default constructor entry — e.g. trailing variables
-		// after `struct S { } s{}` are parsed before implicit special members exist.
-		if (elements.empty()) {
-			return make_constructor_call(elements);
-		}
-
-		// Check if there's a constructor that matches the argument count and types
-		bool found_matching_ctor = false;
-		auto ctor_candidates = struct_info.getConstructorsByParameterCount(elements.size(), false);
-		for (const auto* member_func : ctor_candidates) {
-			if (!member_func || !member_func->function_decl.has_value())
-				continue;
-
-			// Get parameters from constructor
-			std::span<const ASTNode> params;
-			if (member_func->function_decl.is<ConstructorDeclarationNode>()) {
-				params = member_func->function_decl.as<ConstructorDeclarationNode>().parameter_nodes();
-			} else if (member_func->function_decl.is<FunctionDeclarationNode>()) {
-				params = member_func->function_decl.as<FunctionDeclarationNode>().parameter_nodes();
-			}
-
-			if (params.size() != elements.size()) {
-				continue;
-			}
-
-			// Match parameter types with argument types
-			bool types_match = true;
-			for (size_t i = 0; i < params.size() && types_match; ++i) {
-				const ASTNode& param_node = params[i];
-				const ASTNode& arg_node = elements[i];
-
-				// Get parameter type
-				const TypeSpecifierNode* param_type = nullptr;
-				if (param_node.is<VariableDeclarationNode>()) {
-					const VariableDeclarationNode& var = param_node.as<VariableDeclarationNode>();
-					{
-						param_type = &var.declaration().type_specifier_node();
-					}
-				} else if (param_node.is<DeclarationNode>()) {
-					const DeclarationNode& decl = param_node.as<DeclarationNode>();
-					{
-						param_type = &decl.type_specifier_node();
-					}
-				}
-
-				if (!param_type) {
-					// Can't determine parameter type - skip type checking for this param
-					continue;
-				}
-
-				// Get argument type
-				auto arg_type_opt = get_expression_type(arg_node);
-				if (!arg_type_opt.has_value()) {
-					// Can't determine argument type - skip type checking for this param
-					// This handles dependent expressions and complex cases
-					continue;
-				}
-
-				const TypeSpecifierNode& arg_type = *arg_type_opt;
-
-				// Compare types (allowing for implicit conversions in some cases)
-				// For enum class types, we need exact match (no implicit conversions)
-				if (param_type->category() == TypeCategory::Enum && arg_type.category() == TypeCategory::Enum) {
-					// Enum types must match exactly by type_index
-					if (param_type->type_index() != arg_type.type_index()) {
-						types_match = false;
-					}
-				} else if (param_type->category() != arg_type.category()) {
-					// Different base types - check for compatible integer/enum types
-					// Allow enum -> int conversions for scoped enums passed as their underlying type
-					bool compatible = false;
-					if (arg_type.category() == TypeCategory::Enum &&
-						(param_type->category() == TypeCategory::Int || param_type->category() == TypeCategory::UnsignedInt ||
-						 param_type->category() == TypeCategory::Long || param_type->category() == TypeCategory::UnsignedLong)) {
-						// Enum to integer conversion (for scoped enum underlying type)
-						compatible = true;
-					}
-					if (!compatible) {
-						types_match = false;
-					}
-				} else if (is_struct_type(param_type->category())) {
-					// For user-defined/struct types, check type_index
-					if (param_type->type_index() != arg_type.type_index()) {
-						types_match = false;
-					}
-				}
-
-				// Check pointer depth - must match exactly
-				if (types_match && param_type->pointer_depth() != arg_type.pointer_depth()) {
-					types_match = false;
-				}
-
-				// Check reference qualifiers - must match exactly
-				if (types_match && param_type->is_reference() != arg_type.is_reference()) {
-					types_match = false;
-				}
-			}
-
-			if (types_match) {
-				found_matching_ctor = true;
-				break;
-			}
-		}
-
-		if (found_matching_ctor) {
-			return make_constructor_call(elements);
-		}
-
-		// No matching constructor and no members - this is an error
-		return ParseResult::error("No matching constructor for brace initialization", brace_token);
+		// Semantic analysis owns overload selection and reports deleted or
+		// non-matching constructors with the appropriate diagnostic.
+		return make_constructor_call(elements);
 	}
 
 	// Parse comma-separated initializer expressions (positional or designated)
 	size_t member_index = 0;
+	size_t base_index = 0;
 	bool has_designated = false; // Track if we've seen any designated initializers
 	bool has_positional_initializer = false;
 	size_t next_designated_member_index = 0;
@@ -2612,6 +2525,39 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			} else {
 				return ParseResult::error("Expected initializer expression", current_token_);
 			}
+		} else if (!has_seen_pack_expansion && base_index < struct_info.base_classes.size()) {
+			if (has_designated) {
+				return ParseResult::error("Positional initializers cannot follow designated initializers", current_token_);
+			}
+			has_positional_initializer = true;
+			const TypeIndex base_type_index = struct_info.base_classes[base_index].type_index;
+			const StructTypeInfo* base_info = tryGetStructTypeInfo(base_type_index);
+			if (!base_info) {
+				throw InternalError("Aggregate base initializer has no resolved class type");
+			}
+			TypeSpecifierNode base_type(base_type_index, base_info->sizeInBits(), brace_token, CVQualifier::None, ReferenceQualifier::None);
+			const bool is_braced_base_clause = peek() == "{"_tok;
+			ParseResult base_result = is_braced_base_clause ? parse_brace_initializer(base_type) : parse_expression(2, ExpressionContext::Normal);
+			if (base_result.is_error()) {
+				return base_result;
+			}
+			if (!base_result.node().has_value()) {
+				return ParseResult::error("Expected aggregate base initializer", current_token_);
+			}
+			ASTNode base_initializer = *base_result.node();
+			if (is_braced_base_clause && base_initializer.is<ExpressionNode>()) {
+				const auto* base_constructor = std::get_if<ConstructorCallNode>(&base_initializer.as<ExpressionNode>());
+				if (base_constructor != nullptr && !base_constructor->isAggregateInitialization()) {
+					InitializerListNode base_init_list;
+					for (const ASTNode& argument : base_constructor->arguments()) {
+						base_init_list.add_initializer(argument);
+					}
+					base_init_list.set_resolved_constructor(base_constructor->resolved_constructor());
+					base_initializer = emplace_node<InitializerListNode>(std::move(base_init_list));
+				}
+			}
+			init_list_ref.add_initializer(base_initializer);
+			++base_index;
 		} else {
 			// Positional initializer
 			if (has_designated) {

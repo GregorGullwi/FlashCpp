@@ -4950,6 +4950,19 @@ ParseResult Parser::parseExplicitTemplateTypeConstruction(
 		is_brace ? "brace" : "paren",
 		has_dependent_args);
 
+	if (is_brace && !has_dependent_args) {
+		AliasTemplateMaterializationResult materialized_type = materializeTemplateTypeForConstruction(identifier_token.value(), explicit_template_args);
+		if (materialized_type.resolved_type_info != nullptr) {
+			Token type_token(Token::Type::Identifier, materialized_type.instantiated_name, identifier_token.line(),
+				identifier_token.column(), identifier_token.file_index());
+			ASTNode type_node = makeFunctionalCastTypeSpecifierNode(*materialized_type.resolved_type_info, type_token);
+			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+			if (is_struct_type(type_spec.category()) && !type_spec.is_array() && type_spec.runtime_pointer_depth() == 0) {
+				return parseResolvedClassConstruction(type_token, type_spec.type_index(), SizeInBits{type_spec.size_in_bits()});
+			}
+		}
+	}
+
 	advance(); // consume '(' or '{'
 
 	ChunkedVector<ASTNode> args;
@@ -7197,44 +7210,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// If parsing failed, fall through to function call check
 			}
 
-			// Check if this is a non-template brace initialization: ns::Type{args}
-			if (!template_args.has_value() && current_token_.value() == "{") {
+			// Resolve aliases before classifying qualified value construction.
+			if (!template_args.has_value() && (peek() == "{"_tok || peek() == "("_tok)) {
 				std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
-				StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name);
-				auto type_it = getTypesByNameMap().find(qualified_handle);
-				if (type_it == getTypesByNameMap().end()) {
-					type_it = getTypesByNameMap().find(final_identifier.handle());
+				Token type_token(Token::Type::Identifier, qualified_name, final_identifier.line(), final_identifier.column(),
+					final_identifier.file_index());
+				if (auto resolved_type = tryResolveConstructibleClassAlias(type_token)) {
+					return parseResolvedClassConstruction(type_token, resolved_type->first, resolved_type->second);
 				}
-				if (type_it != getTypesByNameMap().end()) {
-					const TypeInfo* type_info_ptr = type_it->second;
-					TypeIndex type_index = type_info_ptr->type_index_;
-
-					advance(); // consume '{'
-
-					ChunkedVector<ASTNode> args;
-					while (!current_token_.kind().is_eof() && current_token_.value() != "}") {
-						auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-						if (argResult.is_error()) {
-							return argResult;
-						}
-						if (auto node = argResult.node()) {
-							args.push_back(*node);
-						}
-						if (current_token_.value() == ",") {
-							advance();
-						} else if (current_token_.value() != "}") {
-							return ParseResult::error("Expected ',' or '}' in brace initializer", current_token_);
-						}
-					}
-
-					if (!consume("}"_tok)) {
-						return ParseResult::error("Expected '}' after brace initializer", current_token_);
-					}
-
-					const SizeInBits type_size = type_info_ptr->sizeInBits();
-					auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(type_info_ptr->category()), type_size, final_identifier, CVQualifier::None, ReferenceQualifier::None);
-					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), final_identifier));
-					return ParseResult::success(*result);
+				if (const TypeInfo* type_info = lookupTypeInCurrentContext(type_token.handle());
+					type_info && (type_info->isTypeAlias() || type_info->isEnum())) {
+					return parse_functional_cast(qualified_name, type_token);
 				}
 			}
 
@@ -11741,7 +11727,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							member_var_result.has_value()) {
 							return *member_var_result;
 						}
-
 						// Not a function call - return as already-wrapped qualified identifier
 						return ParseResult::success(*qualified_result.node());
 					}
@@ -11859,127 +11844,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 			}
 
-			if (found_as_type_alias && !identifierType && peek() == "("_tok) {
+			if (found_as_type_alias && !identifierType && (peek() == "("_tok || peek() == "{"_tok)) {
 				if (auto resolved_ctor_type = tryResolveConstructibleClassAlias(identifier_token)) {
-					advance(); // consume '('
-
-					ChunkedVector<ASTNode> args;
-					while (!current_token_.kind().is_eof() &&
-						   (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")")) {
-						auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-						if (argResult.is_error()) {
-							return argResult;
-						}
-						if (auto node = argResult.node()) {
-							args.push_back(*node);
-						}
-
-						if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == ",") {
-							advance(); // consume ','
-						} else if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")") {
-							return ParseResult::error("Expected ',' or ')' in constructor arguments", current_token_);
-						}
-					}
-
-					if (!consume(")"_tok)) {
-						return ParseResult::error("Expected ')' after constructor arguments", current_token_);
-					}
-
-					auto type_spec_node = emplace_node<TypeSpecifierNode>(
-						resolved_ctor_type->first, resolved_ctor_type->second, identifier_token, CVQualifier::None, ReferenceQualifier::None);
-					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
-					return ParseResult::success(*result);
-				}
-			}
-
-			// Handle brace initialization for type names: TypeName{} or TypeName{args}
-			// This handles expressions like "throw bad_any_cast{}" where bad_any_cast is a class
-			if (found_as_type_alias && !identifierType && peek() == "{"_tok) {
-				// Look up the actual type info to determine if this is an aggregate
-				if (auto resolved_ctor_type = tryResolveConstructibleClassAlias(identifier_token)) {
-					TypeIndex type_index = resolved_ctor_type->first;
-					const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_index);
-					const bool is_aggregate = struct_info && struct_info->isAggregate();
-
-					if (is_aggregate) {
-						// For aggregates, use parse_brace_initializer which creates proper InitializerListNode
-						const SizeInBits type_size = resolved_ctor_type->second;
-						auto type_spec = TypeSpecifierNode(type_index, type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
-						ParseResult init_result = parse_brace_initializer(type_spec);
-						if (init_result.is_error()) {
-							return init_result;
-						}
-						// Wrap the result in a ConstructorCallNode so codegen knows the target type
-						if (init_result.node().has_value() && init_result.node()->is<InitializerListNode>()) {
-							auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index, type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
-							// Convert InitializerListNode initializers to ConstructorCallNode args
-							const InitializerListNode& init_list = init_result.node()->as<InitializerListNode>();
-							ChunkedVector<ASTNode> args;
-							for (const auto& init : init_list.initializers()) {
-								args.push_back(init);
-							}
-							result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
-							return ParseResult::success(*result);
-						}
-						return init_result;
-					} else {
-						// Non-aggregate: use constructor call with proper type info
-						advance(); // consume '{'
-
-						ChunkedVector<ASTNode> args;
-						while (current_token_.value() != "}") {
-							auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-							if (arg_result.is_error()) {
-								return arg_result;
-							}
-							if (auto arg = arg_result.node()) {
-								args.push_back(*arg);
-							}
-
-							if (current_token_.value() == ",") {
-								advance(); // consume ','
-							} else if (current_token_.kind().is_eof() || current_token_.value() != "}") {
-								return ParseResult::error("Expected ',' or '}' in brace initializer", current_token_);
-							}
-						}
-
-						if (!consume("}"_tok)) {
-							return ParseResult::error("Expected '}' after brace initializer", current_token_);
-						}
-
-						const SizeInBits type_size = resolved_ctor_type->second;
-						auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index, type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
-						result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
-						return ParseResult::success(*result);
-					}
-				} else {
-					// Type not found - fall back to generic constructor call
-					advance(); // consume '{'
-
-					ChunkedVector<ASTNode> args;
-					while (current_token_.value() != "}") {
-						auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-						if (arg_result.is_error()) {
-							return arg_result;
-						}
-						if (auto arg = arg_result.node()) {
-							args.push_back(*arg);
-						}
-
-						if (current_token_.value() == ",") {
-							advance(); // consume ','
-						} else if (current_token_.kind().is_eof() || current_token_.value() != "}") {
-							return ParseResult::error("Expected ',' or '}' in brace initializer", current_token_);
-						}
-					}
-
-					if (!consume("}"_tok)) {
-						return ParseResult::error("Expected '}' after brace initializer", current_token_);
-					}
-
-					auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, identifier_token, CVQualifier::None);
-					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
-					return ParseResult::success(*result);
+					return parseResolvedClassConstruction(identifier_token, resolved_ctor_type->first, resolved_ctor_type->second);
 				}
 			}
 

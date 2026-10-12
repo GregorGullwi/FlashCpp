@@ -8,7 +8,7 @@ struct Deleted {
 
 static_assert(!__is_aggregate(Deleted));
 
-constexpr Deleted bad{42};	// ERROR: deleted/user-declared constructor, not aggregate init
+constexpr Deleted bad{42};	// Semantic constructor overload resolution rejects the deleted constructor before constexpr evaluation.
 
 int main() {
 	return bad.value;

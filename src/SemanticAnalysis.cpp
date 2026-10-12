@@ -5426,8 +5426,35 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 					annotateExpressionTypeSlot(node, result_type_id, inferExpressionValueCategory(node));
 				}
 			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
-				for (const auto& arg : e.arguments()) {
-					normalizeExpression(arg, ctx);
+				if (const InitializerListNode* initializer = e.aggregateInitializer()) {
+					normalizeExpression(ASTNode(initializer), ctx);
+					const TypeInfo* type_info = tryGetTypeInfo(e.type_node().type_index());
+					const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+					if (struct_info != nullptr) {
+						const size_t base_count = std::min(struct_info->base_classes.size(), initializer->size());
+						for (size_t base_index = 0; base_index < base_count; ++base_index) {
+							if (initializer->is_designated(base_index)) {
+								break;
+							}
+							const ASTNode& base_initializer = initializer->initializers()[base_index];
+							if (!base_initializer.is<InitializerListNode>()) {
+								continue;
+							}
+							const BaseClassSpecifier& base = struct_info->base_classes[base_index];
+							const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+							const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
+							if (base_struct_info == nullptr || base_struct_info->isAggregate()) {
+								continue;
+							}
+							TypeSpecifierNode base_type(base.type_index, base_struct_info->sizeInBits(), e.called_from(),
+								CVQualifier::None, ReferenceQualifier::None);
+							tryAnnotateInitListConstructorArgs(base_initializer.as<InitializerListNode>(), *base_struct_info, base_type, e.called_from());
+						}
+					}
+				} else {
+					for (const auto& arg : e.arguments()) {
+						normalizeExpression(arg, ctx);
+					}
 				}
 				tryAnnotateConstructorCallArgConversions(e);
 			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
@@ -13874,6 +13901,8 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	}
 	if (!type_info)
 		return;
+	if (call_node.isAggregateInitialization())
+		return;
 
 	const StructTypeInfo* struct_info = type_info->getStructInfo();
 	if (!struct_info || !struct_info->hasAnyConstructor())
@@ -14261,8 +14290,6 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	const TypeSpecifierNode& target_type,
 	const Token& declaration_token) {
 	const auto& initializers = init_list.initializers();
-	if (initializers.empty())
-		return;
 
 	// Build argument types for overload resolution.
 	// Mirror the codegen path: call adjust_argument_type_for_overload_resolution

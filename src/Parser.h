@@ -4424,6 +4424,8 @@ private:	 // Resume private methods
 		std::span<const TemplateTypeArg> template_args,
 		std::string_view template_name,
 		const Token& identifier_token);
+	// Parse construction after lookup has resolved the destination class type.
+	ParseResult parseResolvedClassConstruction(const Token& type_token, TypeIndex type_index, SizeInBits type_size);
 	ParseResult tryParseExplicitTemplateBraceInitialization(
 		const Token& identifier_token,
 		const TemplateArgumentVector& explicit_template_args);

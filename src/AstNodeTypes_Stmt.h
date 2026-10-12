@@ -120,6 +120,16 @@ private:
 	InitializationStyle initialization_style_ = InitializationStyle::Brace;
 };
 
+inline const InitializerListNode* ConstructorCallNode::aggregateInitializer() const {
+	if (!isAggregateInitialization()) {
+		return nullptr;
+	}
+	if (arguments_.size() != 1 || !arguments_[0].is<InitializerListNode>()) {
+		throw InternalError("Aggregate construction must retain exactly one initializer list");
+	}
+	return &arguments_[0].as<InitializerListNode>();
+}
+
 class IfStatementNode {
 public:
 	explicit IfStatementNode(ASTNode condition, ASTNode then_statement,
