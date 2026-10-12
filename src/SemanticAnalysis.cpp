@@ -2859,9 +2859,15 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 	}
 
 	if (!has_member_begin || !has_member_end) {
-		throw CompileError(!has_member_begin
-			? "range-based for loop requires type to have a begin() method when member range access is selected"
-			: "range-based for loop requires type to have an end() method when member range access is selected");
+		throw makeStructuredCompileError(
+			context_.diagnostics(),
+			DiagnosticId::RangeForBeginEndRequired,
+			DiagnosticSeverity::Error,
+			SourceLocation(),
+			!has_member_begin
+				? "range-based for loop requires type to have a begin() method when member range access is selected"
+				: "range-based for loop requires type to have an end() method when member range access is selected",
+			{});
 	}
 
 	const auto& begin_func_decl = begin_func->function_decl.as<FunctionDeclarationNode>();

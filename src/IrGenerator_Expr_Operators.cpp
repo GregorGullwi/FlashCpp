@@ -1710,7 +1710,13 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	if (is_assignment_like &&
 		binaryOperatorNode.get_lhs().is<ExpressionNode>() &&
 		isExprConstQualified(binaryOperatorNode.get_lhs())) {
-		throw CompileError("Assignment to const-qualified expression is not allowed");
+		throw makeStructuredCompileError(
+			context_->diagnostics(),
+			DiagnosticId::AssignmentToConstObject,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(binaryOperatorNode.get_token()),
+			"Assignment to const-qualified expression is not allowed",
+			{});
 	}
 
 	// Special handling for comma operator
@@ -3593,7 +3599,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 		// If we get here, operator<=> is not defined or not found
 		if (can_try_spaceship_rewrite) {
-			throw CompileError("Operator" + std::string(op) + " not defined for operand types");
+			throwOperatorOverloadNotFoundDiagnostic(*context_, binaryOperatorNode.get_token(), op);
 		}
 	}
 
@@ -4067,7 +4073,13 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				throw InternalError("Address-only assignment LHS must be held in a temporary");
 			}
 			if (getTempVarMetadata(*lhs_address).category != ValueCategory::LValue) {
-				throw CompileError("Assignment requires a modifiable lvalue");
+				throw makeStructuredCompileError(
+					context_->diagnostics(),
+					DiagnosticId::AssignmentRequiresModifiableLvalue,
+					DiagnosticSeverity::Error,
+					SourceLocation::fromToken(binaryOperatorNode.get_token()),
+					"Assignment requires a modifiable lvalue",
+					{});
 			}
 
 			ExprResult materialized_rhs = materializeAddressResultForValueContext(
