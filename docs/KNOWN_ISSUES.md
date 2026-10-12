@@ -72,9 +72,7 @@ reproducers under `tests/unsupported_boundary_2f/`:
   `template_concrete_undeduced_fail.cpp`,
   `test_const_rvalue_reference_before_pack_lvalue_fail.cpp`,
   `test_constrained_auto_double_fail.cpp`,
-  `test_function_template_recursive_trailing_return_fail.cpp`,
-  `test_template_callable_operator_const_receiver_explicit_member_fail.cpp`,
-  and `test_template_member_call_const_receiver_fail.cpp`.
+  and `test_function_template_recursive_trailing_return_fail.cpp`.
 - A reference-returning member-function-pointer declarator in an out-of-line
   member-template context: `test_template_member_func_template_const_ref_return_fail.cpp`.
 - Two tests that previously depended on status-2 compatibility:
