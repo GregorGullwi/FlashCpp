@@ -205,6 +205,8 @@ enum class DiagnosticId : uint32_t {
 	AbstractClassInstantiation = 1624,
 	StructuredBindingMemberCountMismatch = 1625,
 	VirtualMemberFunctionAddressUnsupported = 1626,
+	BitCastReferenceDestination = 1627,
+	BitCastSizeMismatch = 1628,
 
 	// Call-expression family (1701..1799).
 	AmbiguousFunctionCall = 1701,
@@ -499,6 +501,10 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "StructuredBindingMemberCountMismatch";
 	case DiagnosticId::VirtualMemberFunctionAddressUnsupported:
 		return "VirtualMemberFunctionAddressUnsupported";
+	case DiagnosticId::BitCastReferenceDestination:
+		return "BitCastReferenceDestination";
+	case DiagnosticId::BitCastSizeMismatch:
+		return "BitCastSizeMismatch";
 	case DiagnosticId::AmbiguousFunctionCall:
 		return "AmbiguousFunctionCall";
 	case DiagnosticId::AmbiguousCallOperator:
