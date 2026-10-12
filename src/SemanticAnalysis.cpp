@@ -8081,8 +8081,13 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 		// encoding and dynamic dispatch; the current 64-bit member-pointer
 		// representation cannot carry that, so reject rather than emit a wrong
 		// static address.
-		throw CompileError(
-			"taking the address of a virtual member function is not yet supported");
+		throw makeStructuredCompileError(
+			context_.diagnostics(),
+			DiagnosticId::VirtualMemberFunctionAddressUnsupported,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(qualified->identifier_token()),
+			"taking the address of a virtual member function is not yet supported",
+			{});
 	}
 	PendingMemberFunctionAddress request;
 	request.owner = member_owner;
@@ -11596,7 +11601,13 @@ void SemanticAnalysis::tryAnnotateUnaryOperandPromotion(const UnaryOperatorNode&
 	// Unary +, -, ~ are only defined for arithmetic types
 	// C++20 [expr.unary.op]/10: ~ requires integral or unscoped enumeration type.
 	if (unary_op.op() == "~" && isFloatingPointType(operand_cat)) {
-		throw CompileError("operand of '~' must have integral or unscoped enumeration type");
+		throw makeStructuredCompileError(
+			context_.diagnostics(),
+			DiagnosticId::BitwiseNotRequiresIntegral,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(unary_op.get_token()),
+			"operand of '~' must have integral or unscoped enumeration type",
+			{});
 	}
 	if (isFloatingPointType(operand_cat))
 		return; // float/double: no promotion needed

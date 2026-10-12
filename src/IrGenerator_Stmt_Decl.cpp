@@ -2164,11 +2164,17 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											} else if (source_decl &&
 												(source_decl->is_array_object() || source_decl->type_specifier_node().is_array()) &&
 												member.pointer_depth <= 0 && !member.is_reference() && !member.is_rvalue_reference()) {
-												throw CompileError(std::string(StringBuilder()
-													.append("Invalid initializer for non-pointer member '")
-													.append(decl.identifier_token().value())
-													.append("': cannot assign array to non-pointer type")
-													.commit()));
+												throw makeStructuredCompileError(
+													context_->diagnostics(),
+													DiagnosticId::ArrayToNonPointerMemberInitializer,
+													DiagnosticSeverity::Error,
+													SourceLocation::fromToken(decl.identifier_token()),
+													std::string(StringBuilder()
+														.append("Invalid initializer for non-pointer member '")
+														.append(decl.identifier_token().value())
+														.append("': cannot assign array to non-pointer type")
+														.commit()),
+													{});
 											} else {
 												member_value = *local_id;
 											}
@@ -2184,11 +2190,17 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											} else if (source_decl &&
 												(source_decl->is_array_object() || source_decl->type_specifier_node().is_array()) &&
 													   member.pointer_depth <= 0 && !member.is_reference() && !member.is_rvalue_reference()) {
-												throw CompileError(std::string(StringBuilder()
-																		.append("Invalid initializer for non-pointer member '")
-																		.append(decl.identifier_token().value())
-																		.append("': cannot assign array to non-pointer type")
-																		.commit()));
+												throw makeStructuredCompileError(
+													context_->diagnostics(),
+													DiagnosticId::ArrayToNonPointerMemberInitializer,
+													DiagnosticSeverity::Error,
+													SourceLocation::fromToken(decl.identifier_token()),
+													std::string(StringBuilder()
+														.append("Invalid initializer for non-pointer member '")
+														.append(decl.identifier_token().value())
+														.append("': cannot assign array to non-pointer type")
+														.commit()),
+													{});
 											} else {
 												member_value = *string;
 											}

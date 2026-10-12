@@ -156,6 +156,7 @@ enum class DiagnosticId : uint32_t {
 	DeletedOperatorFunction = 1320,
 	DeletedFunctionCall = 1321,
 	DeletedDefaultConstructorCall = 1322,
+	BitwiseNotRequiresIntegral = 1323,
 
 	// Implicit enum conversion family (1401..1499).
 	ScopedEnumImplicitConversion = 1401,
@@ -175,6 +176,7 @@ enum class DiagnosticId : uint32_t {
 	ExplicitConversionFunctionCopyInitialization = 1509,
 	TooManyInitializers = 1510,
 	InitializerStringTooLongForArray = 1511,
+	ArrayToNonPointerMemberInitializer = 1512,
 
 	// Semantic validity family (1601..1699).
 	RangeForBeginEndRequired = 1601,
@@ -202,6 +204,7 @@ enum class DiagnosticId : uint32_t {
 	NonStaticMemberUseInStaticFunction = 1623,
 	AbstractClassInstantiation = 1624,
 	StructuredBindingMemberCountMismatch = 1625,
+	VirtualMemberFunctionAddressUnsupported = 1626,
 
 	// Call-expression family (1701..1799).
 	AmbiguousFunctionCall = 1701,
@@ -410,6 +413,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "DeletedFunctionCall";
 	case DiagnosticId::DeletedDefaultConstructorCall:
 		return "DeletedDefaultConstructorCall";
+	case DiagnosticId::BitwiseNotRequiresIntegral:
+		return "BitwiseNotRequiresIntegral";
 	case DiagnosticId::ScopedEnumImplicitConversion:
 		return "ScopedEnumImplicitConversion";
 	case DiagnosticId::ScopedEnumBinaryOperand:
@@ -430,6 +435,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "TooManyInitializers";
 	case DiagnosticId::InitializerStringTooLongForArray:
 		return "InitializerStringTooLongForArray";
+	case DiagnosticId::ArrayToNonPointerMemberInitializer:
+		return "ArrayToNonPointerMemberInitializer";
 	case DiagnosticId::AmbiguousConstructorCall:
 		return "AmbiguousConstructorCall";
 	case DiagnosticId::DllImportConstexprConflict:
@@ -490,6 +497,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "AbstractClassInstantiation";
 	case DiagnosticId::StructuredBindingMemberCountMismatch:
 		return "StructuredBindingMemberCountMismatch";
+	case DiagnosticId::VirtualMemberFunctionAddressUnsupported:
+		return "VirtualMemberFunctionAddressUnsupported";
 	case DiagnosticId::AmbiguousFunctionCall:
 		return "AmbiguousFunctionCall";
 	case DiagnosticId::AmbiguousCallOperator:
