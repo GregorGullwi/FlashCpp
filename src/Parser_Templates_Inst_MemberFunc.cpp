@@ -1421,24 +1421,6 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 		return &instantiated_ctor;
 	};
 
-	auto matches_call_arguments = [&](const ConstructorDeclarationNode& ctor) {
-		size_t min_required = countMinRequiredArgs(ctor);
-		if (arg_types.size() < min_required || arg_types.size() > ctor.parameter_nodes().size()) {
-			return false;
-		}
-		for (size_t i = 0; i < arg_types.size(); ++i) {
-			if (!ctor.parameter_nodes()[i].is<DeclarationNode>()) {
-				return false;
-			}
-			const auto& param_type = ctor.parameter_nodes()[i].as<DeclarationNode>().type_specifier_node();
-			const TypeConversionResult conversion = can_convert_type(arg_types[i], param_type);
-			if (!conversion.is_valid) {
-				return false;
-			}
-		}
-		return true;
-	};
-
 	auto materialize_template_ctor_candidates =
 		[&](const ConstructorDeclarationNode* preferred_template_ctor)
 			-> const ConstructorDeclarationNode* {
@@ -1475,7 +1457,7 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 			// Only publish specializations that actually match the call. Failed
 			// probes must not enter the overload set (they would poison arity
 			// fallback and displace later, better specializations).
-			const bool matches = matches_call_arguments(concrete_ctor_ref);
+			const bool matches = matchesConstructorArgumentTypes(concrete_ctor_ref, arg_types);
 			if (!matches) {
 				return;
 			}
@@ -1544,7 +1526,7 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 			// convert from the current arguments. Otherwise a stale specialization
 			// (e.g. Inner(T*,U) kept with dependent T*) can suppress probing the
 			// correct constructor template overload.
-			if (matches_call_arguments(*preferred_ctor)) {
+			if (matchesConstructorArgumentTypes(*preferred_ctor, arg_types)) {
 				if (const ConstructorDeclarationNode* source_template =
 						preferred_ctor->template_specialization_source()) {
 					return materialize_template_ctor_candidates(source_template);
