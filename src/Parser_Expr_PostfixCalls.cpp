@@ -915,10 +915,11 @@ std::optional<ParseResult> Parser::diagnoseConstIncompatibleConcreteReceiverMemb
 			typeSpecifierObjectIsConst(*type_opt))) {
 		return std::nullopt;
 	}
-	return ParseResult::error(
-		"member function '" + std::string(member_name) +
-			"' cannot be called through a const receiver",
-		error_token);
+	return error(
+		DiagnosticId::NonConstCallThroughConstReceiver,
+		error_token,
+		std::string("member function '") + std::string(member_name) +
+			"' cannot be called through a const receiver");
 }
 
 std::optional<ParseResult> Parser::diagnoseHardUseConcreteReceiverNamedMember(
