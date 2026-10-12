@@ -18,10 +18,13 @@ struct Outer {
 		return {};
 	}
 
-	static constexpr int selected = helper().value;
-	static_assert(selected == 42, "helper().value should use Outer::helper");
+	static constexpr int selected() {
+		return helper().value;
+	}
 };
 
+static_assert(Outer::selected() == 42, "helper().value should use Outer::helper");
+
 int main() {
-	return 42;
+	return Outer::selected();
 }
