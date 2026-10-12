@@ -1065,12 +1065,6 @@ private:
 	// Returns the TempVar holding the function pointer address
 	TempVar generateLambdaInvokeFunctionAddress(const LambdaExpressionNode& lambda);
 
-	// Determine whether an expression node yields a const-qualified object.
-	// Covers direct declaration constness plus semantic expression types such as
-	// const-qualified reference-returning calls.
-	// Used to reject assignments to non-modifiable const expressions.
-	bool isExprConstQualified(const ASTNode& expr_node) const;
-
 	// Emit a call to a user-defined conversion operator and return the converted ExprResult.
 	// Returns nullopt if the selected conversion cannot be emitted.
 	// source           - ExprResult for the source struct object

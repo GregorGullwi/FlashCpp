@@ -1705,19 +1705,6 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 
 ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode) {
 	const auto& op = binaryOperatorNode.op();
-	const bool is_assignment_like = op == "=" || isCompoundAssignmentOp(op);
-
-	if (is_assignment_like &&
-		binaryOperatorNode.get_lhs().is<ExpressionNode>() &&
-		isExprConstQualified(binaryOperatorNode.get_lhs())) {
-		throw makeStructuredCompileError(
-			context_->diagnostics(),
-			DiagnosticId::AssignmentToConstObject,
-			DiagnosticSeverity::Error,
-			SourceLocation::fromToken(binaryOperatorNode.get_token()),
-			"Assignment to const-qualified expression is not allowed",
-			{});
-	}
 
 	// Special handling for comma operator
 	// The comma operator evaluates both operands left-to-right and returns the right operand
@@ -4068,18 +4055,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		// the selector slot and would violate [expr.cond]'s glvalue semantics.
 		if (lhsExprResult.storage == ValueStorage::ContainsAddress &&
 			resultHoldsAddressOnlyValue(lhsExprResult)) {
+			// Sema rejects a non-lvalue assignment target before codegen
+			// (AssignmentRequiresModifiableLvalue), so the selected conditional
+			// glvalue is a modifiable lvalue here.
 			const auto* lhs_address = std::get_if<TempVar>(&lhsExprResult.value);
 			if (!lhs_address) {
 				throw InternalError("Address-only assignment LHS must be held in a temporary");
-			}
-			if (getTempVarMetadata(*lhs_address).category != ValueCategory::LValue) {
-				throw makeStructuredCompileError(
-					context_->diagnostics(),
-					DiagnosticId::AssignmentRequiresModifiableLvalue,
-					DiagnosticSeverity::Error,
-					SourceLocation::fromToken(binaryOperatorNode.get_token()),
-					"Assignment requires a modifiable lvalue",
-					{});
 			}
 
 			ExprResult materialized_rhs = materializeAddressResultForValueContext(
