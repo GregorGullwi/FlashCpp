@@ -13,6 +13,9 @@ struct Box {
 	static constexpr int value = make_holder().get();
 };
 
+static_assert(Box<short>::value == 40);
+static_assert(Box<double>::value == 46);
+
 int main() {
 	return Box<int>::value;
 }

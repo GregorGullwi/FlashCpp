@@ -174,32 +174,29 @@ private:
 				node.get_token())));
 		} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
 			TypeSpecifierNode type = rewriteType(node.type_node(), Role::ConstructedType, one_to_one);
-			ConstructorCallNode rewritten = [&]() {
-				if (const InitializerListNode* initializer = node.aggregateInitializer()) {
-					InitializerListNode rewritten_initializer(initializer->is_paren_init()
-						? InitializerListNode::InitializationStyle::Paren
-						: InitializerListNode::InitializationStyle::Brace);
-					for (size_t i = 0; i < initializer->size(); ++i) {
-						std::vector<ASTNode> elements;
-						zero_to_many(initializer->initializers()[i], Role::InitializerElement, elements);
-						for (const ASTNode& element : elements) {
-							if (initializer->is_designated(i)) {
-								rewritten_initializer.add_designated_initializer(initializer->member_name(i), element);
-							} else {
-								rewritten_initializer.add_initializer(element);
-							}
+			ChunkedVector<ASTNode> rewritten_arguments;
+			if (const InitializerListNode* initializer = node.aggregateInitializer()) {
+				InitializerListNode rewritten_initializer(initializer->is_paren_init()
+					? InitializerListNode::InitializationStyle::Paren
+					: InitializerListNode::InitializationStyle::Brace);
+				for (size_t i = 0; i < initializer->size(); ++i) {
+					std::vector<ASTNode> elements;
+					zero_to_many(initializer->initializers()[i], Role::InitializerElement, elements);
+					for (const ASTNode& element : elements) {
+						if (initializer->is_designated(i)) {
+							rewritten_initializer.add_designated_initializer(initializer->member_name(i), element);
+						} else {
+							rewritten_initializer.add_initializer(element);
 						}
 					}
-					ASTNode initializer_node = ASTNode::emplace_node<InitializerListNode>(std::move(rewritten_initializer));
-					return ConstructorCallNode(type, initializer_node, node.called_from());
 				}
-				ChunkedVector<ASTNode> stored_arguments;
+				rewritten_arguments.push_back(ASTNode::emplace_node<InitializerListNode>(std::move(rewritten_initializer)));
+			} else {
 				for (const ASTNode& argument : rewriteSequence(node.arguments(), Role::ConstructorArgument, zero_to_many)) {
-					stored_arguments.push_back(argument);
+					rewritten_arguments.push_back(argument);
 				}
-				return ConstructorCallNode(type, std::move(stored_arguments), node.called_from());
-			}();
-			rewritten.set_resolved_constructor(node.resolved_constructor());
+			}
+			ConstructorCallNode rewritten = node.withSubstitutedTypeAndArguments(type, std::move(rewritten_arguments));
 			return wrap<OneToOne, ZeroToMany>(ExpressionNode(std::move(rewritten)));
 		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 			return wrap<OneToOne, ZeroToMany>(ExpressionNode(MemberAccessNode(

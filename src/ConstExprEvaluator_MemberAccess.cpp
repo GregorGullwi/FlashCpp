@@ -2056,6 +2056,27 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 	}
 
 	const ConstructorCallNode& ctor_call = *ctor_call_ptr;
+	if (ctor_call.isAggregateInitialization()) {
+		const TypeInfo* type_info = tryGetTypeInfo(ctor_call.type_node().type_index());
+		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+		if (!struct_info) {
+			return EvalResult::error("Aggregate constructor type is unavailable in " + std::string(usage_name));
+		}
+		resolved_member.member_info = find_member_info(struct_info);
+		if (!resolved_member.member_info) {
+			return EvalResult::error("Member '" + std::string(member_name) + "' not found in " + std::string(usage_name));
+		}
+		EvalResult object_result = materialize_constructor_object_value(ctor_call, context, enclosing_bindings);
+		if (!object_result.success()) {
+			return object_result;
+		}
+		auto member_it = object_result.object_member_bindings.find(member_name);
+		if (member_it == object_result.object_member_bindings.end()) {
+			return EvalResult::error("Member '" + std::string(member_name) + "' has no value in " + std::string(usage_name));
+		}
+		resolved_member.value = member_it->second;
+		return std::nullopt;
+	}
 	const TypeSpecifierNode& type_spec = ctor_call.type_node();
 	if (!is_struct_type(type_spec.category())) {
 		return EvalResult::error("Constexpr " + std::string(usage_name) + " requires a struct type");
@@ -2891,6 +2912,17 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 		if (!struct_info) {
 			return EvalResult::error("Array element is not a struct in member access");
 		}
+		if (ctor_call.isAggregateInitialization()) {
+			EvalResult object_result = Evaluator::materialize_constructor_object_value(ctor_call, context, nullptr);
+			if (!object_result.success()) {
+				return object_result;
+			}
+			auto member_it = object_result.object_member_bindings.find(member_name);
+			if (member_it == object_result.object_member_bindings.end()) {
+				return EvalResult::error("Member '" + std::string(member_name) + "' not found in aggregate array element");
+			}
+			return member_it->second;
+		}
 
 		const auto& ctor_args = ctor_call.arguments();
 		const ConstructorDeclarationNode* matching_ctor = ctor_call.resolved_constructor();
@@ -3683,9 +3715,18 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 	if (actual_func &&
 		!actual_func->get_definition().has_value()) {
 		const FunctionDeclarationNode* requested_func = actual_func;
-		StringHandle owner_name = struct_info->name;
-		if (!actual_func->parent_struct_name().empty()) {
-			owner_name = StringTable::getOrInternStringHandle(actual_func->parent_struct_name());
+		StringHandle pattern_owner_name = StringTable::getOrInternStringHandle(actual_func->parent_struct_name());
+		StringHandle owner_name = pattern_owner_name.isValid() ? pattern_owner_name : struct_info->name;
+		const StructTypeInfo* declaring_struct_info = nullptr;
+		findMemberFunctionMetadataRecursive(struct_info, *actual_func, &declaring_struct_info);
+		const TypeInfo* declaring_type_info = declaring_struct_info != nullptr && declaring_struct_info->own_type_index_.has_value()
+			? tryGetTypeInfo(*declaring_struct_info->own_type_index_)
+			: nullptr;
+		StringHandle concrete_owner_name = concreteTemplateMemberFunctionOwnerName(pattern_owner_name, declaring_type_info);
+		if (concrete_owner_name.isValid()) {
+			owner_name = concrete_owner_name;
+		} else if (declaring_struct_info != nullptr && declaring_struct_info->name.isValid()) {
+			owner_name = declaring_struct_info->name;
 		}
 		auto replay_sema_services =
 			context

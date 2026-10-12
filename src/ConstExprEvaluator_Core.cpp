@@ -165,7 +165,8 @@ std::optional<EvalResult> tryEvaluateSimpleConstexprTypeHelperCall(
 	}
 
 	const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr);
-	if (!ctor.arguments().empty()) {
+	const InitializerListNode* aggregate_initializer = ctor.aggregateInitializer();
+	if (aggregate_initializer != nullptr ? !aggregate_initializer->initializers().empty() : !ctor.arguments().empty()) {
 		return std::nullopt;
 	}
 	std::optional<TypeSpecifierNode> checked_type = tryExtractFirstTemplateTypeArgument(
@@ -2720,8 +2721,18 @@ EvalResult Evaluator::evaluate_resolved_function_call(
 	const FunctionDeclarationNode* resolved_func = &func_decl;
 	if (!resolved_func->get_definition().has_value() &&
 		!resolved_func->parent_struct_name().empty()) {
-		StringHandle owner_name = StringTable::getOrInternStringHandle(
-			resolved_func->parent_struct_name());
+		StringHandle owner_name = StringTable::getOrInternStringHandle(resolved_func->parent_struct_name());
+		const TypeInfo* context_owner_type = nullptr;
+		if (context.struct_info != nullptr && context.struct_info->own_type_index_.has_value()) {
+			context_owner_type = tryGetTypeInfo(*context.struct_info->own_type_index_);
+		}
+		StringHandle concrete_owner_name = concreteTemplateMemberFunctionOwnerName(owner_name, context_owner_type);
+		if (!concrete_owner_name.isValid() && context.struct_type_index.is_valid()) {
+			concrete_owner_name = concreteTemplateMemberFunctionOwnerName(owner_name, tryGetTypeInfo(context.struct_type_index));
+		}
+		if (concrete_owner_name.isValid()) {
+			owner_name = concrete_owner_name;
+		}
 		if (std::optional<ASTNode> materialized =
 				context
 					.requireParserAttachedSema("resolved member-function call materialization")
@@ -2741,7 +2752,8 @@ EvalResult Evaluator::evaluate_resolved_function_call(
 
 	const auto& definition = resolved_func->get_definition();
 	if (!definition.has_value()) {
-		return EvalResult::error("Constexpr function has no body: " + std::string(func_name));
+		return EvalResult::error("Constexpr function has no body: " + std::string(func_name),
+			EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionNonConstexprCall);
 	}
 
 	const size_t parameter_count = resolved_func->parameter_nodes().size();
@@ -6223,7 +6235,8 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 	// Get the function body
 	const auto& definition = func_decl.get_definition();
 	if (!definition.has_value()) {
-		return EvalResult::error("Constexpr function has no body");
+		return EvalResult::error("Constexpr function has no body", EvalErrorType::NotConstantExpression,
+			DiagnosticId::ConstantExpressionNonConstexprCall);
 	}
 
 	// Evaluate arguments

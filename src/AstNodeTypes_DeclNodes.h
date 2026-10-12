@@ -4688,6 +4688,7 @@ public:
 	const auto& arguments() const { return arguments_; }
 	bool isAggregateInitialization() const { return (flags_ & AggregateInitialization) != 0; }
 	const InitializerListNode* aggregateInitializer() const;
+	ConstructorCallNode withSubstitutedTypeAndArguments(const TypeSpecifierNode& type_node, ChunkedVector<ASTNode>&& arguments) const;
 	const ConstructorDeclarationNode* resolved_constructor() const { return resolved_constructor_; }
 
 	void add_argument(ASTNode argument) { arguments_.push_back(argument); }

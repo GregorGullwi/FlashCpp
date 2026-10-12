@@ -1124,12 +1124,14 @@ private:
 	std::vector<size_t> reference_temp_var_numbers_;
 	struct TemporarySlot {
 		int32_t offset = INT_MIN;
-		int size_bits = 0;
+		uint32_t size_bits : 31 = 0;
+		uint32_t is_stack_allocated_object : 1 = 0;
 	};
 	// Function-local numeric identity. Dense storage avoids string interning and
 	// per-temporary hash nodes; clear() retains capacity for subsequent functions.
 	std::vector<TemporarySlot> temporary_slots_;
 	TemporarySlot& temporarySlot(TempVar temp);
+	bool isStackAllocatedObject(TempVar temp) const;
 	void recordTemporarySize(TempVar temp, int size_bits);
 	void patchWindowsStackProbe(uint32_t frame_size);
 	void emitWindowsStackProbeHelper();

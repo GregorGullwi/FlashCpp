@@ -99,6 +99,14 @@ bool sameConstexprFunctionIdentity(
 	return true;
 }
 
+StringHandle concreteTemplateMemberFunctionOwnerName(StringHandle pattern_owner_name, const TypeInfo* concrete_owner_type) {
+	if (concrete_owner_type == nullptr || !concrete_owner_type->isTemplateInstantiation() ||
+		concrete_owner_type->baseTemplateName() != pattern_owner_name) {
+		return {};
+	}
+	return concrete_owner_type->name();
+}
+
 const StructMemberFunction* findCollectedMemberFunctionByIdentity(
 	std::span<const StructMemberFunction* const> candidates,
 	const FunctionDeclarationNode& target_function) {
@@ -236,9 +244,12 @@ TemplateEnvironment buildOuterFunctionTemplateEnvironment(
 	return env;
 }
 
-const StructMemberFunction* findMemberFunctionMetadataRecursive(
-	const StructTypeInfo* struct_info,
-	const FunctionDeclarationNode& target_function) {
+const StructMemberFunction* findMemberFunctionMetadataRecursive(const StructTypeInfo* struct_info, const FunctionDeclarationNode& target_function) {
+	return findMemberFunctionMetadataRecursive(struct_info, target_function, nullptr);
+}
+
+const StructMemberFunction* findMemberFunctionMetadataRecursive(const StructTypeInfo* struct_info, const FunctionDeclarationNode& target_function,
+	const StructTypeInfo** owner_struct_info) {
 	if (!struct_info) {
 		return nullptr;
 	}
@@ -249,14 +260,23 @@ const StructMemberFunction* findMemberFunctionMetadataRecursive(
 		}
 		const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
 		if (&candidate == &target_function || &candidate.decl_node() == &target_function.decl_node()) {
+			if (owner_struct_info != nullptr) {
+				*owner_struct_info = struct_info;
+			}
 			return &member_func;
 		}
 		if (candidate.has_mangled_name() &&
 			target_function.has_mangled_name() &&
 			candidate.mangled_name() == target_function.mangled_name()) {
+			if (owner_struct_info != nullptr) {
+				*owner_struct_info = struct_info;
+			}
 			return &member_func;
 		}
 		if (sameConstexprFunctionIdentity(candidate, target_function)) {
+			if (owner_struct_info != nullptr) {
+				*owner_struct_info = struct_info;
+			}
 			return &member_func;
 		}
 	}
@@ -270,8 +290,7 @@ const StructMemberFunction* findMemberFunctionMetadataRecursive(
 		if (!base_struct_info) {
 			continue;
 		}
-		if (const StructMemberFunction* base_match =
-				findMemberFunctionMetadataRecursive(base_struct_info, target_function)) {
+		if (const StructMemberFunction* base_match = findMemberFunctionMetadataRecursive(base_struct_info, target_function, owner_struct_info)) {
 			return base_match;
 		}
 	}

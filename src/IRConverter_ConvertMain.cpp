@@ -1899,6 +1899,9 @@ bool IrToObjConverter<TWriterClass>::shouldImplicitlyDeref(const typename IrToOb
 
 template <class TWriterClass>
 bool IrToObjConverter<TWriterClass>::isPointerBaseStorage(int32_t stack_offset, TempVar temp_var) const {
+	if (isStackAllocatedObject(temp_var)) {
+		return false;
+	}
 		// Check stack-offset map first (covers named variables including 'this')
 	if (hasIndirectStackStorage(stack_offset)) {
 		return true;
@@ -2371,6 +2374,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 				else if (const StackAllocOp* stack_allocation = std::any_cast<StackAllocOp>(&instruction.getTypedPayload())) {
 					if (const auto* temp = std::get_if<TempVar>(&stack_allocation->result)) {
 						recordTemporarySize(*temp, stack_allocation->size_in_bits.value);
+						temporarySlot(*temp).is_stack_allocated_object = true;
 					} else {
 						throw InternalError("StackAlloc requires numeric temporary storage");
 					}
@@ -2647,13 +2651,18 @@ typename IrToObjConverter<TWriterClass>::TemporarySlot& IrToObjConverter<TWriter
 }
 
 template <class TWriterClass>
+bool IrToObjConverter<TWriterClass>::isStackAllocatedObject(TempVar temp) const {
+	return temp.var_number != 0 && temp.var_number <= temporary_slots_.size() && temporary_slots_[temp.var_number - 1].is_stack_allocated_object;
+}
+
+template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::recordTemporarySize(TempVar temp, int size_bits) {
 	if (size_bits <= 0) {
 		throw InternalError(std::string("Temporary storage requires a positive IR size for temporary ") +
 			std::to_string(temp.var_number) + " (received " + std::to_string(size_bits) + " bits)");
 	}
 	TemporarySlot& slot = temporarySlot(temp);
-	slot.size_bits = std::max(slot.size_bits, size_bits);
+	slot.size_bits = std::max(slot.size_bits, static_cast<uint32_t>(size_bits));
 }
 
 template <class TWriterClass>

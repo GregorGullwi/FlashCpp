@@ -13901,11 +13901,25 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	}
 	if (!type_info)
 		return;
+	const StructTypeInfo* struct_info = type_info->getStructInfo();
+	if (!struct_info)
+		return;
 	if (call_node.isAggregateInitialization())
 		return;
 
-	const StructTypeInfo* struct_info = type_info->getStructInfo();
-	if (!struct_info || !struct_info->hasAnyConstructor())
+	const auto& arguments = call_node.arguments();
+	size_t num_args = 0;
+	arguments.visit([&](ASTNode) { num_args++; });
+	if (num_args == 0 && struct_info->isDefaultConstructorDeleted()) {
+		const auto resolution = resolve_constructor_overload(*struct_info, std::span<const TypeSpecifierNode>{}, true);
+		const bool deleted_constructor_selected = resolution.selected_overload != nullptr && resolution.selected_overload->parameter_nodes().empty();
+		if (deleted_constructor_selected || !struct_info->hasAnyConstructor()) {
+			const std::string message = "Call to deleted constructor of '" + std::string(StringTable::getStringView(type_info->name())) + "'";
+			throw makeStructuredCompileError(context_.diagnostics(), DiagnosticId::DeletedDefaultConstructorCall, DiagnosticSeverity::Error,
+				SourceLocation::fromToken(call_node.called_from()), message, {});
+		}
+	}
+	if (!struct_info->hasAnyConstructor())
 		return;
 
 	auto buildConstructorDiagnostic = [&](std::string_view prefix, size_t arg_count) {
@@ -13924,10 +13938,6 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 		call_node.called_from().value() == std::string_view{"{"};
 
 	// Resolve the matching constructor via overload resolution.
-	const auto& arguments = call_node.arguments();
-	size_t num_args = 0;
-	arguments.visit([&](ASTNode) { num_args++; });
-
 	std::vector<TypeSpecifierNode> arg_types;
 	std::vector<CanonicalTypeId> inferred_arg_type_ids;
 	arg_types.reserve(num_args);

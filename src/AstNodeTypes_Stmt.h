@@ -130,6 +130,39 @@ inline const InitializerListNode* ConstructorCallNode::aggregateInitializer() co
 	return &arguments_[0].as<InitializerListNode>();
 }
 
+inline ConstructorCallNode ConstructorCallNode::withSubstitutedTypeAndArguments(const TypeSpecifierNode& type_node,
+	ChunkedVector<ASTNode>&& arguments) const {
+	if (!isAggregateInitialization()) {
+		ConstructorCallNode result(type_node, std::move(arguments), called_from_);
+		if (type_node.type_index() == type_node_.type_index()) {
+			result.set_resolved_constructor(resolved_constructor_);
+		}
+		return result;
+	}
+	if (arguments.size() != 1 || !arguments[0].is<InitializerListNode>()) {
+		throw InternalError("Aggregate construction must retain exactly one initializer list");
+	}
+	const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_node.type_index());
+	const bool remains_aggregate = typeSpecStillUsesDependentPlaceholder(type_node) ||
+		(is_struct_type(type_node.category()) && struct_info != nullptr && struct_info->isAggregate());
+	if (remains_aggregate) {
+		ConstructorCallNode result(type_node, arguments[0], called_from_);
+		if (type_node.type_index() == type_node_.type_index()) {
+			result.set_resolved_constructor(resolved_constructor_);
+		}
+		return result;
+	}
+	const InitializerListNode& initializer = arguments[0].as<InitializerListNode>();
+	if (initializer.has_any_designated()) {
+		throw CompileError("Designated initializers require an aggregate type");
+	}
+	ChunkedVector<ASTNode> constructor_arguments;
+	for (const ASTNode& argument : initializer.initializers()) {
+		constructor_arguments.push_back(argument);
+	}
+	return ConstructorCallNode(type_node, std::move(constructor_arguments), called_from_);
+}
+
 class IfStatementNode {
 public:
 	explicit IfStatementNode(ASTNode condition, ASTNode then_statement,

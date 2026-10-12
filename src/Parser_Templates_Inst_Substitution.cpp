@@ -5595,22 +5595,17 @@ ASTNode Parser::substitute_template_params_in_expression(
 			return new_args;
 		};
 
-		if (const TemplateTypeArg* substituted_ctor_arg = tryFindTypeSubstitution();
-			substituted_ctor_arg != nullptr) {
+		if (const TemplateTypeArg* substituted_ctor_arg = tryFindTypeSubstitution(); substituted_ctor_arg != nullptr) {
 			ChunkedVector<ASTNode> new_args = substitute_arguments();
 
 			auto new_type_node = emplace_node<TypeSpecifierNode>(makeSubstitutedTypeNode(*substituted_ctor_arg, ctor.called_from()));
-			ConstructorCallNode new_ctor = ctor.isAggregateInitialization()
-				? ConstructorCallNode(new_type_node, new_args[0], ctor.called_from())
-				: ConstructorCallNode(new_type_node, std::move(new_args), ctor.called_from());
+			ConstructorCallNode new_ctor = ctor.withSubstitutedTypeAndArguments(new_type_node.as<TypeSpecifierNode>(), std::move(new_args));
 			return emplace_node<ExpressionNode>(new_ctor);
 		}
 
 		// Not a template parameter constructor - recursively substitute in arguments
 		ChunkedVector<ASTNode> new_args = substitute_arguments();
-		ConstructorCallNode new_ctor = ctor.isAggregateInitialization()
-			? ConstructorCallNode(ctor.type_node(), new_args[0], ctor.called_from())
-			: ConstructorCallNode(ctor.type_node(), std::move(new_args), ctor.called_from());
+		ConstructorCallNode new_ctor = ctor.withSubstitutedTypeAndArguments(ctor.type_node(), std::move(new_args));
 		return emplace_node<ExpressionNode>(new_ctor);
 	}
 

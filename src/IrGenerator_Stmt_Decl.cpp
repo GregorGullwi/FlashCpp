@@ -2883,6 +2883,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 					}
 
+					const bool direct_aggregate_initializes_target = has_direct_ctor_call && direct_ctor && direct_ctor->aggregateInitializer() &&
+						direct_ctor->type_node().category() == TypeCategory::Struct && type_node.category() == TypeCategory::Struct &&
+						isSameStructTypeForInitialization(direct_ctor->type_node().type_index(), type_node.type_index());
 					const ImplicitCastInfo* selected_class_conversion = has_copy_init && node.initializer()
 						? getExactClassConversion(*node.initializer(), type_node) : nullptr;
 
@@ -2899,6 +2902,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							type_node.category(), decl.identifier_token(), local_var_id)) {
 							throw InternalError("Sema-selected class conversion could not be emitted");
 						}
+						register_destructor_if_needed(type_info);
+					} else if (direct_aggregate_initializes_target) {
+						generateNestedMemberStores(*type_info->getStructInfo(), *direct_ctor->aggregateInitializer(),
+							std::variant<StringHandle, TempVar, LocalVarId>{local_var_id}, 0, decl.identifier_token());
 						register_destructor_if_needed(type_info);
 					} else if (has_direct_ctor_call && direct_ctor) {
 						// Direct constructor call like S s(x) - process its arguments directly
