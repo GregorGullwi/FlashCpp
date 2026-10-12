@@ -3899,9 +3899,19 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 
 			// Validate identifier count matches array size
 		if (node.identifiers().size() != array_size) {
-			FLASH_LOG(Codegen, Error, "Structured binding: number of identifiers (", node.identifiers().size(),
-					  ") does not match array size (", array_size, ")");
-			return;
+			throw makeStructuredCompileError(
+				context_->diagnostics(),
+				DiagnosticId::StructuredBindingMemberCountMismatch,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(node.bracket_token()),
+				StringBuilder()
+					.append("structured binding declares ")
+					.append(static_cast<int64_t>(node.identifiers().size()))
+					.append(" identifier(s) but the initializer has ")
+					.append(static_cast<int64_t>(array_size))
+					.append(" array element(s)")
+					.commit(),
+				{});
 		}
 
 			// Create bindings for each array element
@@ -4106,9 +4116,19 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 	}
 
 	if (node.identifiers().size() != public_member_count) {
-		FLASH_LOG(Codegen, Error, "Structured binding: number of identifiers (", node.identifiers().size(),
-				  ") does not match number of public members (", public_member_count, ")");
-		return;
+		throw makeStructuredCompileError(
+			context_->diagnostics(),
+			DiagnosticId::StructuredBindingMemberCountMismatch,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(node.bracket_token()),
+			StringBuilder()
+				.append("structured binding declares ")
+				.append(static_cast<int64_t>(node.identifiers().size()))
+				.append(" identifier(s) but the initializer has ")
+				.append(static_cast<int64_t>(public_member_count))
+				.append(" non-static data member(s)")
+				.commit(),
+			{});
 	}
 
 	FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Decomposing struct with ",

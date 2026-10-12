@@ -201,6 +201,7 @@ enum class DiagnosticId : uint32_t {
 	MemberFunctionPointerSignatureMismatch = 1622,
 	NonStaticMemberUseInStaticFunction = 1623,
 	AbstractClassInstantiation = 1624,
+	StructuredBindingMemberCountMismatch = 1625,
 
 	// Call-expression family (1701..1799).
 	AmbiguousFunctionCall = 1701,
@@ -487,6 +488,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "NonStaticMemberUseInStaticFunction";
 	case DiagnosticId::AbstractClassInstantiation:
 		return "AbstractClassInstantiation";
+	case DiagnosticId::StructuredBindingMemberCountMismatch:
+		return "StructuredBindingMemberCountMismatch";
 	case DiagnosticId::AmbiguousFunctionCall:
 		return "AmbiguousFunctionCall";
 	case DiagnosticId::AmbiguousCallOperator:
