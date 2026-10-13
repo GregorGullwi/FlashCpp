@@ -6,7 +6,7 @@ authoritative for the design, boundaries, and exit criteria. This file records
 the current boundary state, the remaining work, and the validation contract;
 completed implementation history belongs in git.
 
-Last updated: 2026-10-10.
+Last updated: 2026-10-13.
 
 ## Current state
 
