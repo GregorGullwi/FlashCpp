@@ -1596,6 +1596,27 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 		FLASH_LOG(Templates, Trace, "Evaluating ternary operator expression");
 		auto ctx = makeConstExprContext();
+		const ASTNode* selected_branch = &expr_node;
+		bool selected_branch_resolved = true;
+		while (selected_branch->is<ExpressionNode>()) {
+			const auto* ternary = std::get_if<TernaryOperatorNode>(&selected_branch->as<ExpressionNode>());
+			if (!ternary) {
+				break;
+			}
+			auto condition_result = ConstExpr::Evaluator::evaluate(ternary->condition(), ctx);
+			if (!condition_result.success()) {
+				selected_branch_resolved = false;
+				break;
+			}
+			selected_branch = condition_result.pointer_to_var.isValid() || condition_result.as_bool()
+				? &ternary->true_expr()
+				: &ternary->false_expr();
+		}
+		if (selected_branch_resolved) {
+			if (auto selected_value = try_evaluate_constant_expression(*selected_branch)) {
+				return selected_value;
+			}
+		}
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		if (eval_result.success()) {
 			FLASH_LOG_FORMAT(Templates, Trace, "Ternary evaluated to: {}", eval_result.as_int());
