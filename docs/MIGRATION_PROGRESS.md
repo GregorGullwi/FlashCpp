@@ -264,9 +264,16 @@ Continue boundary 3A in this order.
       separately, preserving its typed value identity and source stamp, or
       interning an expanded expression stamp when no source stamp exists. Focused
       unit coverage protects typed identity and expression-stamp reconstruction.
-      Other NTTP reconstruction paths remain outside this slice. Non-projectable
-      function/member-pointer shapes remain deferred until canonical substitution
-      and export coverage is available.
+      Deferred dependent-base arguments now preserve the evaluated
+      `NonTypeValueIdentity` and source `ExprId` when materialized. Ternary
+      arguments retain function-address identity by evaluating the selected
+      branch through the NTTP-aware path; nested ternaries are traversed
+      iteratively. `test_deferred_base_nttp_function_pointer_identity_ret0.cpp`
+      covers a dependent-base argument selecting an explicit function-pointer
+      specialization through a conditional expression. Other NTTP reconstruction
+      paths remain outside this slice. Non-projectable function/member-pointer
+      shapes remain deferred until canonical substitution and export coverage is
+      available.
 
 3. **Complete importer and declarator coverage.** Add canonical import support
    for remaining valid ordered forms still rejected at a boundary, including

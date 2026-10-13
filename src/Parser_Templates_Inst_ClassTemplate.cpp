@@ -7698,6 +7698,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							FLASH_LOG_FORMAT(Templates, Trace, "Identifier '{}' unresolved in deferred base – falling through", id_name);
 						}
 
+						struct DeferredBaseConstantValue {
+							int64_t value = 0;
+							TypeCategory type = TypeCategory::Int;
+							TypeIndex type_index{};
+							FlashCpp::NonTypeValueIdentity identity{};
+						};
 						auto makeEvaluatedDeferredBaseValueArg = [&](const auto& constant_value) {
 							TypeIndex target_index = makeTypeIndexForDeferredBaseNttp(deferred_arg_index, resolved_args);
 							if (isPlaceholderNttpTypeIndex(target_index)) {
@@ -7705,17 +7711,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									constant_value.type,
 									constant_value.type_index);
 							}
-							TemplateTypeArg val_arg;
-							val_arg.is_value = true;
-							val_arg.value = constant_value.value;
-							val_arg.type_index = target_index;
-							val_arg.is_pack = arg_info.is_pack;
-							return val_arg;
-						};
-						struct DeferredBaseConstantValue {
-							int64_t value = 0;
-							TypeCategory type = TypeCategory::Int;
-							TypeIndex type_index{};
+							FlashCpp::NonTypeValueIdentity identity = constant_value.identity;
+							if (target_index.is_valid()) {
+								identity.value_type_index = target_index;
+							}
+							if (identity.kind == FlashCpp::NonTypeValueIdentityKind::Integral) {
+								identity.value = constant_value.value;
+							}
+							TemplateTypeArg source_arg;
+							source_arg.is_pack = arg_info.is_pack;
+							if (arg_info.node.is<ExpressionNode>()) {
+								source_arg.nttp_expr = requireFrontendContext().dependentExpressions().intern(arg_info.node);
+							}
+							return makeConcreteNttpArg(identity, source_arg);
 						};
 						auto tryEvaluateDeferredBaseConstant =
 							[&](const ASTNode& node) -> std::optional<DeferredBaseConstantValue> {
@@ -7723,7 +7731,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								return DeferredBaseConstantValue{
 									value->value,
 									value->type,
-									value->type_index};
+									value->type_index,
+									value->identity};
 							}
 							ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
 							auto eval_result = ConstExpr::Evaluator::evaluate(node, eval_ctx);
@@ -7740,10 +7749,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							} else if (eval_result.is_uint()) {
 								result_type = TypeCategory::UnsignedLongLong;
 							}
-							return DeferredBaseConstantValue{
-								eval_result.as_int(),
+							TypeIndex identity_type_index = makeDeferredBaseValueTypeIndex(
 								result_type,
-								result_type_index};
+								result_type_index);
+							FlashCpp::NonTypeValueIdentity identity =
+								std::holds_alternative<double>(eval_result.value)
+									? FlashCpp::NonTypeValueIdentity::makeFloating(
+											std::get<double>(eval_result.value), identity_type_index)
+									: FlashCpp::NonTypeValueIdentity::makeConcrete(
+											eval_result.as_int(), identity_type_index);
+							return DeferredBaseConstantValue{
+								identity.value,
+								result_type,
+								identity_type_index,
+								identity};
 						};
 
 						// Special handling for TypeTraitExprNode - need to substitute template parameters
