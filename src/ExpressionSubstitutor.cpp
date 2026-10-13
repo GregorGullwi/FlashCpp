@@ -1499,8 +1499,7 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 		if (arg.is_value && arg.dependent_expr.has_value()) {
 			ASTNode substituted_expr = substitute(*arg.dependent_expr);
 			if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
-				TemplateTypeArg concrete_arg = TemplateTypeArg::makeValueIdentity(eval_result->identity);
-				concrete_arg.is_pack = arg.is_pack;
+				TemplateTypeArg concrete_arg = makeConcreteNttpArg(eval_result->identity, arg);
 				arg = concrete_arg;
 			} else {
 				arg.dependent_expr = std::move(substituted_expr);
@@ -4853,9 +4852,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			if (arg.is_value && arg.dependent_expr.has_value()) {
 				ASTNode substituted_expr = substitute(*arg.dependent_expr);
 				if (auto value = parser_.try_evaluate_constant_expression(substituted_expr)) {
-					TemplateTypeArg concrete_arg(value->value, value->type);
-					concrete_arg.is_pack = arg.is_pack;
-					arg = concrete_arg;
+					arg = makeConcreteNttpArg(value->identity, arg);
 					break;
 				}
 				arg.dependent_expr = std::move(substituted_expr);
