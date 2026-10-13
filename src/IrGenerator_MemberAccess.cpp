@@ -3418,6 +3418,7 @@ std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCallInterna
 			CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
 			const TypeId source_member_pointer = canonical_types.withoutTopLevelQualifiers(conversion_return_desc.structural_type_id);
 			const TypeId target_member_pointer = canonical_types.withoutTopLevelQualifiers(destination_desc.structural_type_id);
+			// One qualifier layer is stripped above. A reference to a data-member pointer is not an adjustment operand.
 			if (canonical_types.node(source_member_pointer).kind != CanonicalTypeKind::MemberObjectPointer ||
 				canonical_types.node(target_member_pointer).kind != CanonicalTypeKind::MemberObjectPointer) {
 				throw InternalError("Sema-selected data-member-pointer conversion has a non-member-pointer shape");

@@ -497,15 +497,37 @@ inline CanonicalTypeImport importCanonicalClassTypeInfo(
 	CanonicalTypeTable& table,
 	const TypeInfo& type_info);
 
+inline CanonicalTypeImport importCanonicalShapedBase(CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context, TypeId id);
+
+// A specifier rebuilt from a TypeIndex or FunctionType has no entity stamp.
+// When the direct import is UnmigratedNominal, recover the published class and
+// reapply this specifier's pointer, cv, array, and parameter adjustment. The
+// semantic layer stamps identity onto structured signature components, so this
+// stays a fallback for callers that still publish a bare TypeIndex.
+inline CanonicalTypeImport importCanonicalNominalComponent(CanonicalTypeTable& table, const TypeSpecifierNode& syntax,
+	CanonicalTypeImportContext context) {
+	const CanonicalTypeImport imported = importCanonicalTypeImpl(table, syntax, context);
+	if (imported.status != CanonicalTypeImportStatus::UnmigratedNominal || !syntax.type_index().is_valid()) {
+		return imported;
+	}
+	const TypeInfo* type_info = tryGetTypeInfo(syntax.type_index());
+	if (type_info == nullptr) {
+		return imported;
+	}
+	const CanonicalTypeImport imported_class = importCanonicalClassTypeInfo(table, *type_info);
+	if (imported_class.status != CanonicalTypeImportStatus::Supported) {
+		return imported_class;
+	}
+	return importCanonicalShapedBase(table, syntax, context, imported_class.type);
+}
+
 inline CanonicalTypeImport importCanonicalFunctionTypeComponent(CanonicalTypeTable& table,
 	const FunctionType& type, CanonicalTypeImportContext context) {
 	if (type.canonical_type_id) {
 		return {type.canonical_type_id, CanonicalTypeImportStatus::Supported};
 	}
-	return importCanonicalTypeImpl(
-		table,
-		typeSpecifierFromFunctionType(type),
-		context);
+	return importCanonicalTypeImpl(table, typeSpecifierFromFunctionType(type), context);
 }
 
 inline CVQualifier functionSignatureCV(const FunctionSignature& signature) {
@@ -1425,33 +1447,10 @@ inline std::optional<TypeId> tryImportSupportedCanonical(
 	return imported.type;
 }
 
-inline CanonicalTypeImport importCanonicalTypeWithClassFallback(
-	CanonicalTypeTable& table,
-	const TypeSpecifierNode& syntax) {
-	const CanonicalTypeImport imported = importCanonicalType(table, syntax);
-	if (imported.status != CanonicalTypeImportStatus::UnmigratedNominal ||
-		!syntax.type_index().is_valid()) {
-		return imported;
-	}
-	const TypeInfo* type_info = tryGetTypeInfo(syntax.type_index());
-	if (type_info == nullptr) {
-		return imported;
-	}
-	const CanonicalTypeImport imported_class =
-		importCanonicalClassTypeInfo(table, *type_info);
-	if (imported_class.status != CanonicalTypeImportStatus::Supported) {
-		return imported_class;
-	}
-	auto id = table.qualify(imported_class.type, syntax.cv_qualifier());
-	if (syntax.has_ordered_declarator()) {
-		return applyCanonicalOrderedDeclarator(
-			table, id, syntax, CanonicalTypeImportContext::Exact);
-	}
-	id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
-	if (syntax.reference_qualifier() != ReferenceQualifier::None) {
-		id = table.reference(id, syntax.reference_qualifier());
-	}
-	return {id, CanonicalTypeImportStatus::Supported};
+// Trait operands share the component reshape, so a class recovered from TypeInfo keeps its array bounds.
+// The previous reshape kept only cv, pointers, and a reference.
+inline CanonicalTypeImport importCanonicalTypeWithClassFallback(CanonicalTypeTable& table, const TypeSpecifierNode& syntax) {
+	return importCanonicalNominalComponent(table, syntax, CanonicalTypeImportContext::Exact);
 }
 
 inline CanonicalTypeImport importCanonicalStructuralTraitOperand(CanonicalTypeTable& table, const TypeSpecifierNode& syntax) {
