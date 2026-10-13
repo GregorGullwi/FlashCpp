@@ -257,6 +257,21 @@ TEST_CASE("Canonical adapter keys an explicit specialization by its primary temp
 	CHECK(imported.type == table.templateSpecialization(primary_decl, std::span<const TypeId>{}));
 }
 
+TEST_CASE("Concrete NTTP reconstruction preserves its source expression identity") {
+	TemplateTypeArg source = TemplateTypeArg::makeDependentValue(StringTable::getOrInternStringHandle("N"), TypeCategory::Int, 0);
+	source.is_pack = true;
+	source.nttp_expr = ExprId{17};
+	const TemplateTypeArg concrete = makeConcreteNttpArg(FlashCpp::NonTypeValueIdentity::makeConcrete(4, TypeCategory::Int), source);
+	CHECK(concrete.is_value);
+	CHECK(concrete.value == 4);
+	CHECK_FALSE(concrete.is_dependent);
+	CHECK_FALSE(concrete.dependent_name.isValid());
+	CHECK_FALSE(concrete.dependent_expr.has_value());
+	CHECK(concrete.is_pack);
+	CHECK(concrete.nttp_expr == ExprId{17});
+	CHECK(toTemplateArgInfo(concrete).nttp_expr == ExprId{17});
+}
+
 TEST_CASE("Overload ranking compares non-projectable parameter shapes structurally") {
 	FrontendContext frontend;
 	TypeSpecifierNode smaller_array(

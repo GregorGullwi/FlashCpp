@@ -657,6 +657,13 @@ struct TemplateTypeArg {
 	}
 };
 
+inline TemplateTypeArg makeConcreteNttpArg(const FlashCpp::NonTypeValueIdentity& identity, const TemplateTypeArg& source) {
+	TemplateTypeArg result = TemplateTypeArg::makeValueIdentity(identity);
+	result.is_pack = source.is_pack;
+	result.nttp_expr = source.nttp_expr;
+	return result;
+}
+
 inline TypeSpecifierNode typeSpecifierFromTemplateTypeArgProjection(
 	const TemplateTypeArg& arg) {
 	TypeSpecifierNode type_spec(

@@ -2018,23 +2018,21 @@ TypeSpecifierNode Parser::buildDependentAliasTemplateTypeSpecifier(
 					stamped = false;
 					break;
 				}
-				const ASTNode* nttp_syntax = argument.dependent_expr.has_value()
-					? &*argument.dependent_expr
-					: nullptr;
-				if (nttp_syntax == nullptr && index < argument_syntax_nodes.size()) {
+				ExprId nttp_expr = argument.nttp_expr;
+				const ASTNode* nttp_syntax = argument.dependent_expr.has_value() ? &*argument.dependent_expr : nullptr;
+				if (!nttp_expr && nttp_syntax == nullptr && index < argument_syntax_nodes.size()) {
 					const ASTNode& argument_syntax = argument_syntax_nodes[index];
-					if (argument_syntax.is<ExpressionNode>() &&
-						isStampableNttpLiteralExpression(
-							argument_syntax.as<ExpressionNode>())) {
+					if (argument_syntax.is<ExpressionNode>() && isStampableNttpLiteralExpression(argument_syntax.as<ExpressionNode>())) {
 						nttp_syntax = &argument_syntax;
 					}
 				}
-				if (nttp_syntax == nullptr) {
+				if (!nttp_expr && nttp_syntax == nullptr) {
 					stamped = false;
 					break;
 				}
-				const ExprId nttp_expr =
-					requireFrontendContext().dependentExpressions().intern(*nttp_syntax);
+				if (!nttp_expr) {
+					nttp_expr = requireFrontendContext().dependentExpressions().intern(*nttp_syntax);
+				}
 				if (!nttp_expr) {
 					stamped = false;
 					break;

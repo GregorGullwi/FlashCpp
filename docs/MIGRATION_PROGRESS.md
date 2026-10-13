@@ -258,9 +258,12 @@ Continue boundary 3A in this order.
       member-function-pointer defaults carry the declared class/signature into
       specialization lookup. Regressions cover dependent integral defaults,
       defaulted member-function pointers, and explicit specialization stamps.
-      Other instantiated values can still be rebuilt without their source
-      expression identity. Non-projectable function/member-pointer shapes remain
-      deferred until canonical substitution and export coverage is available.
+      Dependent record arguments and dependent qualified-id substitution now
+      retain an existing source ExprId when rebuilding a concrete NTTP; a focused
+      unit regression protects that reconstruction contract. Pack expansion and
+      other reconstruction paths remain outside this slice. Non-projectable
+      function/member-pointer shapes remain deferred until canonical substitution
+      and export coverage is available.
 
 3. **Complete importer and declarator coverage.** Add canonical import support
    for remaining valid ordered forms still rejected at a boundary, including
