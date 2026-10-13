@@ -4142,10 +4142,27 @@ const TypeInfo* Parser::tryMaterializeMemberAliasTemplateSpecialization(
 						*referenced_static_member->initializer,
 						eval_ctx);
 					if (eval_result.success()) {
-						concrete_arg.value = eval_result.as_int();
-						concrete_arg.is_dependent = false;
-						concrete_arg.dependent_name = StringHandle{};
-						concrete_arg.dependent_expr.reset();
+						if (auto value = try_evaluate_constant_expression(
+								*referenced_static_member->initializer)) {
+							FlashCpp::NonTypeValueIdentity identity = value->identity;
+							if (concrete_arg.type_index.is_valid()) {
+								identity.value_type_index = concrete_arg.type_index;
+							}
+							if (identity.kind == FlashCpp::NonTypeValueIdentityKind::Integral) {
+								identity.value = value->value;
+							}
+							concrete_arg = makeConcreteNttpArg(identity, concrete_arg);
+						} else {
+							TemplateTypeArg evaluated_arg = templateTypeArgFromEvalResult(eval_result);
+							if (evaluated_arg.has_typed_value_identity) {
+								concrete_arg = makeConcreteNttpArg(evaluated_arg.valueIdentity(), concrete_arg);
+							} else {
+								concrete_arg.value = eval_result.as_int();
+								concrete_arg.is_dependent = false;
+								concrete_arg.dependent_name = StringHandle{};
+								concrete_arg.dependent_expr.reset();
+							}
+						}
 					}
 				}
 			}

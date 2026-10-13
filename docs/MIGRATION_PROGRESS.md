@@ -276,6 +276,12 @@ Continue boundary 3A in this order.
       materialization, interning the substituted expression when no source stamp
       exists. `test_materialize_stored_nttp_function_pointer_identity_ret0.cpp`
       covers function-pointer specialization lookup through this path.
+      Member-alias materialization now preserves typed identity when resolving
+      a dependent static-member NTTP, and early initializer normalization keeps
+      pointer-to-member expressions available for that resolution.
+      `test_member_alias_static_memberptr_nttp_identity_ret0.cpp` protects the
+      specialization lookup. This extends the NTTP follow-up without completing
+      a 3A exit criterion; the 3A rollup remains 10/79.
       Non-projectable function/member-pointer shapes remain deferred until
       canonical substitution and export coverage is available.
 
