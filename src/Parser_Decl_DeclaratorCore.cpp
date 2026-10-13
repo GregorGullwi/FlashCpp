@@ -164,6 +164,110 @@ void Parser::bindMemberPointerOwner(TypeSpecifierNode& type_spec, Token class_na
 	applyMemberPointerOwner(type_spec, parseMemberPointerOwnerAfterName(class_name_token));
 }
 
+// T (&name)(Params) / T (&&name)(Params): a reference to a function. The
+// entity itself stores only the referred-to function's address, so the return
+// type's pointer/array projection moves onto the signature instead of staying
+// on the specifier, matching the type-alias path. Shared by the parenthesized
+// group dispatch right after the type and the recursive-declarator re-dispatch
+// that runs after pointer and reference modifiers, so both spellings agree.
+std::optional<ParseResult> Parser::tryParseReferenceToFunctionDeclarator(
+	TypeSpecifierNode& type_spec, const std::optional<size_t>& custom_alignment) {
+	if (peek() != "("_tok) {
+		return std::nullopt;
+	}
+	SaveHandle saved_pos = save_token_position();
+	advance(); // consume '('
+	last_calling_convention_ = parse_calling_convention(last_calling_convention_);
+
+	bool is_rvalue_ref = false;
+	if (peek() == "&&"_tok) {
+		is_rvalue_ref = true;
+		advance();
+	} else if (peek() == "&"_tok) {
+		advance();
+		if (peek() == "&"_tok) {
+			is_rvalue_ref = true;
+			advance();
+		}
+	} else {
+		restore_token_position(saved_pos);
+		return std::nullopt;
+	}
+
+	Token ref_identifier;
+	bool has_name = false;
+	if (peek().is_identifier()) {
+		ref_identifier = peek_info();
+		has_name = true;
+		advance();
+	}
+
+	if (peek() != ")"_tok) {
+		restore_token_position(saved_pos);
+		return std::nullopt;
+	}
+	advance(); // consume ')'
+
+	// Reference-to-array and other ordered declarators keep their own paths;
+	// this helper owns only the callable reference shape.
+	if (peek() != "("_tok) {
+		restore_token_position(saved_pos);
+		return std::nullopt;
+	}
+	advance(); // consume '('
+
+	std::vector<FunctionType> param_types;
+	bool is_variadic = false;
+	auto param_result = parse_function_pointer_parameter_types(param_types, is_variadic);
+	if (param_result.is_error()) {
+		restore_token_position(saved_pos);
+		return std::nullopt;
+	}
+	if (!consume(")"_tok)) {
+		restore_token_position(saved_pos);
+		return std::nullopt;
+	}
+
+	FlashCpp::MemberQualifiers qualifiers;
+	FlashCpp::FunctionSpecifiers specifiers;
+	ParseResult qualifier_result = parse_function_type_qualifiers(qualifiers, specifiers);
+	if (qualifier_result.is_error()) {
+		restore_token_position(saved_pos);
+		return std::nullopt;
+	}
+
+	FunctionSignature signature;
+	signature.setReturnType(makeFunctionType(type_spec));
+	signature.return_type_index = type_spec.type_index();
+	signature.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
+	signature.return_reference_qualifier = type_spec.reference_qualifier();
+	signature.setParameterTypes(std::move(param_types));
+	signature.linkage = Linkage::None;
+	signature.calling_convention = last_calling_convention_;
+	signature.is_variadic = is_variadic;
+	apply_parsed_function_type_qualifiers(signature, qualifiers, specifiers);
+
+	// All parses succeeded, so the specifier can be updated in place: the
+	// signature already captured the return type's pointer/array projection,
+	// and clearing it here keeps the reference from double-counting an object
+	// wrapper.
+	type_spec.limit_pointer_depth(0);
+	type_spec.set_array(false);
+	type_spec.set_reference_qualifier(is_rvalue_ref ? ReferenceQualifier::RValueReference : ReferenceQualifier::LValueReference);
+	type_spec.set_function_signature(signature);
+
+	if (!has_name) {
+		ref_identifier = Token(Token::Type::Identifier, ""sv, type_spec.token().line(), type_spec.token().column(), type_spec.token().file_index());
+	}
+
+	auto decl_node = emplace_node<DeclarationNode>(emplace_node<TypeSpecifierNode>(type_spec), ref_identifier);
+	if (custom_alignment.has_value()) {
+		decl_node.as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
+	}
+	discard_saved_token(saved_pos);
+	return ParseResult::success(decl_node);
+}
+
 ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 	// Add parsing depth check to prevent infinite loops
 	if (++parsing_depth_ > MAX_PARSING_DEPTH) {
@@ -399,84 +503,13 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 		} else if (!peek().is_eof() && (peek() == "&"_tok || peek() == "&&"_tok)) {
 			// Reference-to-function: T (&name)(Args...). Reference-to-array was
 			// handled by tryConsumeReferenceToArrayDeclarator above.
-			bool is_rvalue_ref = (peek() == "&&"_tok);
-			advance(); // consume '&' or '&&'
-			if (peek().is_identifier()) {
-				ref_identifier = peek_info();
-				has_name = true;
-				advance();
+			restore_token_position(saved_pos);
+			if (auto reference_result = tryParseReferenceToFunctionDeclarator(type_spec, custom_alignment); reference_result.has_value()) {
+				discard_saved_token(saved_pos);
+				return *reference_result;
 			}
-			if (peek() != ")"_tok) {
-				// Not a valid reference declarator pattern, restore and continue
-				restore_token_position(saved_pos);
-			} else {
-				advance(); // consume ')'
-				if (peek() == "("_tok) {
-					advance(); // consume '('
-
-					std::vector<FunctionType> param_types;
-					bool is_variadic = false;
-					auto param_result =
-						parse_function_pointer_parameter_types(param_types, is_variadic);
-					if (param_result.is_error()) {
-						restore_token_position(saved_pos);
-					} else if (!consume(")"_tok)) {
-						restore_token_position(saved_pos);
-					} else {
-						FlashCpp::MemberQualifiers qualifiers;
-						FlashCpp::FunctionSpecifiers specifiers;
-						ParseResult qualifier_result =
-							parse_function_type_qualifiers(qualifiers, specifiers);
-						if (qualifier_result.is_error()) {
-							return qualifier_result;
-						}
-
-						FunctionSignature signature;
-						signature.setReturnType(makeFunctionType(type_spec));
-						signature.return_type_index = type_spec.type_index();
-						signature.return_pointer_depth =
-							static_cast<int>(type_spec.pointer_depth());
-						signature.return_reference_qualifier =
-							type_spec.reference_qualifier();
-						signature.setParameterTypes(std::move(param_types));
-						signature.linkage = Linkage::None;
-						signature.calling_convention = last_calling_convention_;
-						signature.is_variadic = is_variadic;
-						apply_parsed_function_type_qualifiers(
-							signature, qualifiers, specifiers);
-
-						type_spec.set_function_signature(signature);
-						type_spec.set_reference_qualifier(
-							is_rvalue_ref
-								? ReferenceQualifier::RValueReference
-								: ReferenceQualifier::LValueReference);
-
-						if (!has_name) {
-							ref_identifier = Token(
-								Token::Type::Identifier,
-								""sv,
-								type_spec.token().line(),
-								type_spec.token().column(),
-								type_spec.token().file_index());
-						}
-
-						auto decl_node = emplace_node<DeclarationNode>(
-							emplace_node<TypeSpecifierNode>(type_spec),
-							ref_identifier);
-
-						if (custom_alignment.has_value()) {
-							decl_node.as<DeclarationNode>().set_custom_alignment(
-								custom_alignment.value());
-						}
-
-						discard_saved_token(saved_pos);
-						return ParseResult::success(decl_node);
-					}
-				} else {
-					// Not a valid reference declarator pattern, restore and continue
-					restore_token_position(saved_pos);
-				}
-			}
+			// Not a reference-to-function declarator; leave the opening '(' for
+			// the regular pointer/reference/identifier paths below.
 		} else if (peek().is_identifier()) {
 			// Check for pointer-to-member-function pattern: type (ClassName::*identifier)(params)
 			// After '(' we see an identifier, check if it's followed by ::*
@@ -576,6 +609,23 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 			restore_token_position(ptrmf_check_pos);
 			// Continue to restore outer position below
 			restore_token_position(saved_pos);
+		} else if (peek() == "("_tok) {
+			// Nested parenthesized declarator: ((*p))() or ((name))(). The
+			// recursive declarator grammar owns the inner group.
+			restore_token_position(saved_pos);
+			auto result = parse_declarator(type_spec, Linkage::None);
+			if (!result.is_error()) {
+				if (auto decl_node = result.node(); custom_alignment.has_value() && decl_node) {
+					if (decl_node->is<DeclarationNode>()) {
+						decl_node->as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
+					} else if (decl_node->is<FunctionDeclarationNode>()) {
+						decl_node->as<FunctionDeclarationNode>().decl_node().set_custom_alignment(custom_alignment.value());
+					}
+				}
+				discard_saved_token(saved_pos);
+				return result;
+			}
+			restore_token_position(saved_pos);
 		} else {
 			// Not a function pointer or reference declarator, restore and continue with regular parsing
 			FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Not a function pointer, restoring. Before restore: current_token={}",
@@ -656,27 +706,31 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 	// TEMPORARY WORKAROUND: `parse_type_and_name` re-checks `(` after each
 	// modifier group instead of routing the whole declarator to
 	// `parse_declarator` once, so a parenthesized declarator that follows a
-	// pointer/reference return type needs this re-dispatch. The probe below only
-	// recognizes `*` and `identifier::*` after `(`, so it still misses other
-	// ptr-operator interleavings (for example `int* (&p)()`, a reference to a
-	// function returning `int*`). The real fix is a single `parse_declarator`
+	// pointer/reference return type needs this re-dispatch. Reference shapes
+	// (`int* (&p)()`) and ordered spines (`int* (*p)()`, `int* (C::*p)()`) are
+	// now owned here, but the probe below still recognizes only a single
+	// ptr-operator after `(`, so a nested group such as `int* ((*p))()` still
+	// misses the recursive grammar. The real fix is a single `parse_declarator`
 	// call after the base type, letting the recursive declarator grammar own
 	// every interleaving; see KNOWN_ISSUES "Declarator parsing re-checks the
 	// opening parenthesis".
 	//
-	// A '(' after a pointer or reference return type may open an ordered
-	// declarator whose whole shape lives on the spine: a function pointer
-	// (`int* (*p)()`) or a member pointer (`int* (C::*p)()`). Probe the opening
-	// and, when it is such a shape, let parse_declarator own it. Returns the
-	// parsed result, or nullopt to keep the flat path.
+	// A '(' after a pointer or reference return type may open a reference to a
+	// function (`int* (&p)()`), a function pointer (`int* (*p)()`), or a member
+	// pointer (`int* (C::*p)()`). Probe the opening and, when it is such a
+	// shape, let the owning path parse it. Returns the parsed result, or
+	// nullopt to keep the flat path.
 	auto tryParseOrderedDeclaratorAtOpenParen = [&]() -> std::optional<ParseResult> {
 		if (peek() != "("_tok) {
 			return std::nullopt;
 		}
+		if (auto reference_result = tryParseReferenceToFunctionDeclarator(type_spec, custom_alignment); reference_result.has_value()) {
+			return reference_result;
+		}
 		SaveHandle saved_pos = save_token_position();
 		advance(); // consume '('
 		last_calling_convention_ = parse_calling_convention(last_calling_convention_);
-		bool try_structural = peek() == "*"_tok;
+		bool try_structural = peek() == "*"_tok || peek() == "("_tok;
 		if (!try_structural && peek().is_identifier()) {
 			SaveHandle owner_probe = save_token_position();
 			Token owner_token = peek_info();
@@ -1365,7 +1419,12 @@ ParseResult Parser::parse_declarator(
 				advance(); // opening group
 				skip_noop_gnu_qualifiers();
 				(void)parse_calling_convention(CallingConvention::Default);
-				if (peek() == "*"_tok) {
+				if (peek() == "("_tok) {
+					// A nested parenthesized declarator such as ((*p))() or
+					// ((name))(). A pending base reference has no frame prefix
+					// yet, so leave it to the flat paths instead of dropping it.
+					candidate = !base_type.is_reference() && !base_type.is_rvalue_reference();
+				} else if (peek() == "*"_tok) {
 					advance();
 					[[maybe_unused]] const CVQualifier ignored_cv = parse_cv_qualifiers();
 					skip_noop_gnu_qualifiers();
@@ -1671,27 +1730,6 @@ ParseResult Parser::parse_declarator(
 								failed = true;
 								break;
 							}
-							// Frame close appends pointer prefixes after the
-							// Function suffix, so a nested abstract form such as
-							// (**)(params) is assembled as
-							// [Function, inner*, outer*]. Reverse that leading
-							// Function + trailing-pointer spine into the
-							// outermost-to-innermost order used by the rest of
-							// the ordered-declarator consumers.
-							if (*function_index == 0 && completed.size() > 1) {
-								bool trailing_pointers_only = true;
-								for (size_t index = 1; index < completed.size(); ++index) {
-									if (completed[index].kind !=
-										DeclaratorComponentKind::Pointer) {
-										trailing_pointers_only = false;
-										break;
-									}
-								}
-								if (trailing_pointers_only) {
-									std::reverse(completed.begin(), completed.end());
-									function_index = completed.size() - 1;
-								}
-							}
 							ReferenceQualifier function_pointer_reference =
 								ReferenceQualifier::None;
 							size_t function_pointer_component = 0;
@@ -1721,6 +1759,14 @@ ParseResult Parser::parse_declarator(
 							if (!return_components.empty()) {
 								return_type.set_ordered_declarator(
 									std::move(return_components));
+								// The flat FunctionPointer representation carries
+								// the return shape in the flat pointer/array
+								// fields, not an ordered callable spine. When the
+								// return projects, drop the ordered form so a
+								// shape such as int* ((*p))() stays flat.
+								if (return_type.ordered_declarator_has_legacy_projection()) {
+									return_type.clear_ordered_declarator();
+								}
 							}
 							// A bare function return with one or more pointer
 							// wrappers is a (possibly nested) function-pointer

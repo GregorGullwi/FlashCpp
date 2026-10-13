@@ -182,13 +182,36 @@ ptr-operators (`*`, `&`, `&&`, `nested-name-specifier *`) interleaved with
 parenthesized direct-declarators and suffixes. `parse_type_and_name` does not
 call `parse_declarator` once after the base type; it re-checks for `(` at
 several points (right after the type, after pointer levels, and after reference
-modifiers). A parenthesized declarator that follows a pointer/reference return
-type is therefore re-dispatched by a probe that only recognizes `*` and
-`identifier::*` after `(`, and it still misses other interleavings, for example
-`int* (&p)()` (a reference to a function returning `int*`), which is rejected
-with `Expected identifier token`. The fix is a single `parse_declarator` call
-after the base type so the recursive declarator grammar owns every interleaving.
-The current probe is marked temporary at its dispatch site.
+modifiers). The fix is a single `parse_declarator` call after the base type so
+the recursive declarator grammar owns every interleaving. The re-check probe is
+still marked temporary at its dispatch site.
+
+Reference interleavings are now owned by the shared entry point
+`tryParseReferenceToFunctionDeclarator`, invoked both right after the type and
+by the post-modifier re-dispatch, so `int* (&p)()` (a reference to a function
+returning `int*`), `int& (&p)()`, `int* (&&p)()`, and `int (&&p)()` parse and
+lower. The regression
+`tests/test_reference_to_function_pointer_return_ret42.cpp` calls through each
+of these spellings alongside a plain function reference and a function pointer
+control case.
+
+Nested and redundant parenthesized groups are routed to the recursive grammar
+from both dispatch points, and the structural parser now projects a projectable
+callable return type onto the flat fields instead of rejecting it. The dead
+reverse-spine that flipped `[Function, pointers]` into `[pointers, Function]`
+has been removed; it mis-ordered a redundant group around a name. The
+regression `tests/test_nested_parenthesized_declarator_ret42.cpp` pins the
+nested function-pointer object and the redundant-name function declaration,
+with and without a pointer return type.
+
+The remaining parenthesized interleaving is a callable whose return is itself a
+callable, for example `int (*(*p)())()` (a pointer to a function returning a
+function pointer), still rejected with `Expected identifier token`. The ordered
+spine keeps a single cold `FunctionSignature`, so a second `Function` component
+has nowhere to store its parameter list; supporting it needs a nested callable
+return representation. Consolidating the remaining `(` re-checks (including the
+parallel ones in the typedef/using paths and the member-type-alias probe) into
+the single `parse_declarator` call closes that gap as well.
 
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 
