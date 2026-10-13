@@ -4038,9 +4038,13 @@ inline std::optional<NormalizedInitializer> tryBuildConstantStaticMemberInitiali
 	size_t size_in_bytes,
 	ReferenceQualifier reference_qualifier,
 	int pointer_depth) {
+	const bool is_member_pointer_value =
+		eval_result.member_pointer_member.isValid() || eval_result.is_null_member_pointer;
 	if (!eval_result.success() || size_in_bytes == 0 ||
-		reference_qualifier != ReferenceQualifier::None || pointer_depth != 0 ||
-		eval_result.pointer_to_var.isValid()) {
+		reference_qualifier != ReferenceQualifier::None ||
+		(pointer_depth != 0 && !is_member_pointer_value) ||
+		(eval_result.pointer_to_var.isValid() && !is_member_pointer_value) ||
+		(is_member_pointer_value && size_in_bytes > sizeof(unsigned long long))) {
 		return std::nullopt;
 	}
 
@@ -4234,7 +4238,11 @@ inline std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 		return std::nullopt;
 	}
 
-	if (is_integer_type(type_index.category()) || type_index.category() == TypeCategory::Enum) {
+	// A member pointer can share an integral ABI representation, so keep its AST identity.
+	if ((is_integer_type(type_index.category()) || type_index.category() == TypeCategory::Enum) &&
+		!eval_result.pointer_to_var.isValid() &&
+		!eval_result.member_pointer_member.isValid() &&
+		!eval_result.is_null_member_pointer) {
 		int64_t val = eval_result.as_int();
 		std::string_view val_str = StringBuilder().append(val).commit();
 		Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
