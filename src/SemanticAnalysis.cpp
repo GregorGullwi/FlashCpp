@@ -755,8 +755,13 @@ CanonicalTypeImport tryImportCanonicalTypeDesc(const CanonicalTypeDesc& desc) {
 	}
 	TypeSpecifierNode syntax = materializeTypeSpecifier(desc);
 	tryBindPublishedTypeEntity(syntax);
-	return importCanonicalType(
-		requireFrontendContext().canonicalTypes(), syntax);
+	// The signature still holds the owner; bind that spelling here and leave the interned descriptor unchanged.
+	if (desc.category() == TypeCategory::MemberFunctionPointer && desc.function_signature.has_value() && desc.function_signature->class_name.isValid()
+		&& !syntax.has_member_class()) {
+		syntax.set_member_class_name(desc.function_signature->class_name);
+		tryBindPublishedMemberClassEntity(syntax);
+	}
+	return importCanonicalType(requireFrontendContext().canonicalTypes(), syntax);
 }
 
 std::optional<UserDefinedConversionOperatorSelection> trySelectCanonicalImplicitConversionOperator(
@@ -5780,6 +5785,63 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 
 // --- Helpers ---
 
+namespace {
+CanonicalTypeNode nodeUnderQualifiersAndReferences(CanonicalTypeTable& table, TypeId type_id) {
+	CanonicalTypeNode node = table.node(type_id);
+	while (node.child && (node.kind == CanonicalTypeKind::Qualified || node.kind == CanonicalTypeKind::LValueReference ||
+		node.kind == CanonicalTypeKind::RValueReference)) {
+		node = table.node(node.child);
+	}
+	return node;
+}
+
+// Bind the published class identity onto one structured signature component so
+// the canonical adapter imports it without the semantic type table. Returns
+// whether the component gained an identity.
+bool bindPublishedClassComponent(CanonicalTypeTable& table, FunctionType& type, CanonicalTypeImportContext context) {
+	if (type.canonical_type_id || !type.type_index.is_valid()) {
+		return false;
+	}
+	const TypeInfo* type_info = tryGetTypeInfo(type.type_index);
+	if (type_info == nullptr) {
+		return false;
+	}
+	const CanonicalTypeImport imported_base = importCanonicalClassTypeInfo(table, *type_info);
+	if (imported_base.status != CanonicalTypeImportStatus::Supported) {
+		return false;
+	}
+	const TypeSpecifierNode shape = typeSpecifierFromFunctionType(type);
+	const CanonicalTypeImport imported_shape = importCanonicalShapedBase(table, shape, context, imported_base.type);
+	if (imported_shape.status != CanonicalTypeImportStatus::Supported) {
+		return false;
+	}
+	type.canonical_type_id = imported_shape.type;
+	return true;
+}
+
+// Single place that stamps a signature's structured components with their class
+// identity. Signature writers that do not publish it upstream get it here.
+void bindPublishedClassComponents(CanonicalTypeTable& table, FunctionSignature& signature) {
+	if (!signature.hasStructuredTypes()) {
+		return;
+	}
+	FunctionType return_type = signature.return_type();
+	bool changed = bindPublishedClassComponent(table, return_type, CanonicalTypeImportContext::Exact);
+	const std::span<const FunctionType> existing_parameters = signature.parameter_types();
+	OverloadVector<FunctionType, 4> parameter_types;
+	parameter_types.reserve(existing_parameters.size());
+	for (const FunctionType& parameter : existing_parameters) {
+		FunctionType bound = parameter;
+		changed |= bindPublishedClassComponent(table, bound, CanonicalTypeImportContext::FunctionParameter);
+		parameter_types.push_back(std::move(bound));
+	}
+	if (changed) {
+		signature.setReturnType(std::move(return_type));
+		signature.setParameterTypes(std::move(parameter_types));
+	}
+}
+}
+
 CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type) {
 	CanonicalTypeDesc desc;
 	desc.type_index = type.type_index();
@@ -5813,6 +5875,7 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 	// modifiers, so the signature itself is the authoritative callable marker.
 	if (type.has_function_signature()) {
 		desc.function_signature = type.function_signature();
+		bindPublishedClassComponents(requireFrontendContext().canonicalTypes(), *desc.function_signature);
 		desc.flags = desc.flags | CanonicalTypeFlags::IsFunctionType;
 	}
 	if (type.type_index().is_valid()) {
@@ -5985,14 +6048,11 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		if (syntax.has_member_class_entity() || syntax.has_member_class_type_id()) {
 			CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
 			const CanonicalTypeImport imported = importCanonicalType(canonical_types, syntax);
-			if (imported.status == CanonicalTypeImportStatus::Supported) {
-				CanonicalTypeNode imported_node = canonical_types.node(imported.type);
-				while (imported_node.kind == CanonicalTypeKind::Qualified && imported_node.child) {
-					imported_node = canonical_types.node(imported_node.child);
-				}
-				if (imported_node.kind == CanonicalTypeKind::MemberFunctionPointer) {
-					desc.structural_type_id = imported.type;
-				}
+			// Store the imported type even when it is a reference to the member pointer. Only this block looks through
+			// that reference; the data-member block stores its imported type unchanged, reference included.
+			if (imported.status == CanonicalTypeImportStatus::Supported && nodeUnderQualifiersAndReferences(canonical_types, imported.type).kind ==
+				CanonicalTypeKind::MemberFunctionPointer) {
+				desc.structural_type_id = imported.type;
 			}
 		}
 	}
@@ -9050,15 +9110,11 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				}
 
 				CanonicalTypeDesc result_desc = type_context_.get(member_pointer_type_id);
-				// The accessed member's type is the member pointer's pointee, not
-				// the member pointer itself, so replace the structural
-				// MemberObjectPointer node with its pointee before returning.
+				// The accessed member's type is the member pointer's pointee. Walk a reference wrapper: member-function
+				// publication stores that wrapper as the pointer type's canonical form.
 				if (result_desc.structural_type_id) {
 					CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-					CanonicalTypeNode member_node = table.node(result_desc.structural_type_id);
-					while (member_node.kind == CanonicalTypeKind::Qualified && member_node.child) {
-						member_node = table.node(member_node.child);
-					}
+					const CanonicalTypeNode member_node = nodeUnderQualifiersAndReferences(table, result_desc.structural_type_id);
 					if (member_node.kind == CanonicalTypeKind::MemberObjectPointer ||
 						member_node.kind == CanonicalTypeKind::MemberFunctionPointer) {
 						result_desc.structural_type_id = member_node.child;

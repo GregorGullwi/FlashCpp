@@ -336,13 +336,15 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
   declarations with non-projectable ordered callable parameters; address at
   boundary 3B.
 - **Boundary 4 handoff - member-function-pointer descriptor identity:** a
-  concrete member-function-pointer target whose owner survives only as the
-  signature's class name reaches `tryImportCanonicalTypeDesc` with
-  `structural_type_id` unset, so `materializeTypeSpecifier` rebuilds it from the
-  flat `type_index` and the importer returns `UnmigratedCallable`. First split:
-  populate `structural_type_id` on member-function-pointer descriptors in the
-  semantic type context from the canonical owner `TypeId`, then let
-  materialization reconstruct the owner. Trace:
+  concrete member-function-pointer descriptor now reconstructs without the
+  compatibility projection. `canonicalizeType` stamps the published class
+  identity onto the signature's structured return and parameter components
+  (`bindPublishedClassComponents`), and `tryImportCanonicalTypeDesc` binds the
+  owner spelling carried by the signature before importing, so
+  `materializeTypeSpecifier` round-trips the member pointer and the importer
+  returns `Supported`. Remaining: dependent-address NTTP cases still return
+  `Unresolved`, and the identity stamp should move into the remaining signature
+  writers so the centralized step can be dropped. Trace:
   `checkMemberFunctionAddressAccessForTarget` (`SemanticAnalysis.cpp`) ->
   `tryImportCanonicalTypeDesc` -> `materializeTypeSpecifier` ->
   `set_function_signature`.
