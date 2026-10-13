@@ -250,6 +250,12 @@ Continue boundary 3A in this order.
       a duplicate ordered spine. Function identity comparison permits canonical
       components to match legacy projections, compares TypeIds when both are
       present, and keeps hashes representation-neutral.
+      Explicit source NTTP expression identity now survives the
+      `TemplateTypeArg`/`TemplateArgInfo` round trip, so declaration-based class
+      specialization import emits the same opaque NonType Spec link as
+      syntax-based import when that identity is present. Instantiated values
+      rebuilt without the source expression identity and residual
+      member-function-pointer NTTP fallbacks remain outside this coverage.
       Non-projectable function/member-pointer shapes remain deferred until their
       canonical substitution and export coverage is available.
 

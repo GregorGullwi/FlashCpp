@@ -1185,6 +1185,10 @@ struct TypeInfo {
 		StringHandle nttp_member_name;                 // Member name for member-pointer NTTPs
 		int64_t nttp_pointer_offset;                   // Object-pointer element offset or member-pointer value offset
 		FlashCpp::StructuralClassValue* structural_value = nullptr;
+		// Opaque identity of the source non-type argument expression, so the
+		// canonical adapter imports the same NonType Spec argument the syntax
+		// path stamps. Only meaningful when is_value == true.
+		ExprId nttp_expr{};
 
 		// Index into gTemplateArgInfoColdPayloads for rare fat fields (~function sig / dependent expr).
 		uint32_t cold_payload_index_ = kNoColdPayload;

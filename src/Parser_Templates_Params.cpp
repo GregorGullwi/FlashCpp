@@ -3575,6 +3575,16 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 	std::span<const TemplateParameterNode> target_template_params,
 	TemplateArgumentVector& template_args,
 	std::span<const ASTNode> argument_syntax_nodes) {
+	// Keep the source non-type argument expression identity with the argument so
+	// a specialization imported from its declaration reuses the same canonical
+	// NonType Spec argument the syntax path stamps.
+	for (size_t index = 0; index < template_args.size() && index < argument_syntax_nodes.size(); ++index) {
+		TemplateTypeArg& argument = template_args[index];
+		if (!argument.is_value || argument.nttp_expr || !argument_syntax_nodes[index].is<ExpressionNode>()) {
+			continue;
+		}
+		argument.nttp_expr = requireFrontendContext().dependentExpressions().intern(argument_syntax_nodes[index]);
+	}
 	if (target_template_params.empty() || template_args.empty()) {
 		return;
 	}

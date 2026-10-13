@@ -1602,6 +1602,14 @@ inline CanonicalTypeImport importCanonicalClassSource(
 			const size_t argument_index = current.next_argument;
 			const TypeInfo::TemplateArgInfo& argument =
 				source_arguments[argument_index];
+			// A non-type argument keeps its published opaque expression identity,
+			// matching the syntax-based specialization import.
+			if (argument.is_value && argument.nttp_expr) {
+				current.arguments.push_back(
+					CanonicalTemplateArgument::makeNonType(argument.nttp_expr));
+				++current.next_argument;
+				continue;
+			}
 			const CanonicalTypeImport direct_import =
 				importCanonicalTemplateTypeArgumentDirect(table, argument);
 			if (direct_import.status == CanonicalTypeImportStatus::Supported) {
