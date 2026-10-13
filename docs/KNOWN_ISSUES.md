@@ -26,6 +26,32 @@ and rejects the second initializer. Array prvalues need typed array
 initialization, temporary storage, and the usual postfix/subscript semantics.
 This is separate from array members initialized inside a class aggregate.
 
+## Direct constructor initialization does not materialize scalar reference temporaries
+
+On 2026-10-13, the reduced program below compiled, but a runtime check returned
+the assigned failure status with the Windows sharded compiler. The constructor
+copies the parameter before the temporary's lifetime ends, so this is not a
+dangling-reference case:
+
+```cpp
+struct Receiver {
+	long value;
+	Receiver(const long& argument) noexcept : value(argument) {}
+};
+int main() { short source = 7; Receiver result(source); return result.value == 7 ? 0 : 1; }
+```
+
+Direct constructor initialization in `IrGenerator_Stmt_Decl.cpp` currently
+passes the argument through `buildConstructorArgumentValue` without the generic
+call-argument reference-binding path. It needs to materialize the converted
+`long` scalar temporary and pass its address before the selected constructor
+call. Ordinary calls already use `SemanticAnalysis::buildCallArgReferenceBinding`
+and `annotateResolvedCallArgConversions`, followed by
+`AstToIr::tryApplySemaCallArgReferenceBinding`; those paths are the reference
+implementation for a future lowering slice. The canonical constructor
+viability and ranking query can describe the conversion, but does not fix this
+runtime materialization path.
+
 ## Construction through a class-template member alias is rejected
 
 A member alias declared by a class template cannot currently be used to

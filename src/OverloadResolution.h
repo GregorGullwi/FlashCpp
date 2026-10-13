@@ -1583,6 +1583,34 @@ inline std::optional<ConversionPlan> tryBuildCanonicalDirectReferenceBindingPlan
 		ConversionPlan{ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
 }
 
+// Reference arguments first use direct binding; only builtin-to-builtin conversions may materialize a temporary here.
+inline std::optional<ConversionPlan> tryBuildCanonicalReferenceArgumentConversionPlan(CanonicalTypeTable& table, TypeId source_type,
+	TypeId target_type) {
+	const std::optional<ConversionPlan> direct_binding = tryBuildCanonicalDirectReferenceBindingPlan(table, source_type, target_type);
+	if (direct_binding.has_value()) {
+		return direct_binding;
+	}
+	const CanonicalTypeNode target_node = table.node(target_type);
+	const bool target_is_lvalue_reference = target_node.kind == CanonicalTypeKind::LValueReference;
+	const bool target_is_rvalue_reference = target_node.kind == CanonicalTypeKind::RValueReference;
+	if (!target_is_lvalue_reference && !target_is_rvalue_reference) {
+		return std::nullopt;
+	}
+	const CanonicalTypeNode source_node = table.node(source_type);
+	const bool source_has_reference = source_node.kind == CanonicalTypeKind::LValueReference || source_node.kind == CanonicalTypeKind::RValueReference;
+	const TypeId source_referent = source_has_reference ? source_node.child : source_type;
+	const TypeId target_referent = target_node.child;
+	const TypeId source_base = stripCanonicalTopCv(table, source_referent).first;
+	const auto [target_base, target_cv] = stripCanonicalTopCv(table, target_referent);
+	if (table.node(source_base).kind != CanonicalTypeKind::Builtin || table.node(target_base).kind != CanonicalTypeKind::Builtin) {
+		return std::nullopt;
+	}
+	if (target_is_lvalue_reference && target_cv != CVQualifier::Const) {
+		return ConversionPlan::no_match();
+	}
+	return buildCanonicalStructuralConversionPlan(table, source_base, target_referent);
+}
+
 inline std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgument(const TypeSpecifierNode& target_type,
 	const TypeSpecifierNode& source_type, const ASTNode* argument_node) {
 	FrontendContext& context = requireFrontendContext();
@@ -1627,7 +1655,7 @@ inline std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgume
 			(source_type.category() == TypeCategory::Nullptr || isIntegralType(source_type.category())) && parameter_is_pointer_like) {
 			effective_source = table.builtin(CanonicalBuiltinKind::Nullptr);
 		}
-		const auto reference_binding = tryBuildCanonicalDirectReferenceBindingPlan(table, effective_source, parameter_type);
+		const auto reference_binding = tryBuildCanonicalReferenceArgumentConversionPlan(table, effective_source, parameter_type);
 		if (reference_binding.has_value()) {
 			if (reference_binding->is_valid) {
 				return true;

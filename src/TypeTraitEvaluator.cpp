@@ -2631,7 +2631,7 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 					matches = false;
 					break;
 				}
-				const auto binding = tryBuildCanonicalDirectReferenceBindingPlan(table, argument_types[parameter], parameter_type);
+				const auto binding = tryBuildCanonicalReferenceArgumentConversionPlan(table, argument_types[parameter], parameter_type);
 				if (!binding.has_value()) {
 					return std::nullopt;
 				}

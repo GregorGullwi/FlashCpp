@@ -105,9 +105,9 @@ Continue boundary 3A in this order.
    reference bindings now share a TypeId planner with the constructor trait
    query, including same-referent and public derived-to-base bindings, cv and
    value-category checks, and rejection of inaccessible or ambiguous bases.
-   Class values, conversion temporaries, dependent types, and unsupported
-   callable argument shapes still use the compatibility resolver when the
-   schema cannot prove the answer. Member
+   Class values, non-builtin reference conversion temporaries, dependent types,
+   and unsupported callable argument shapes still use the compatibility
+   resolver when the schema cannot prove the answer. Member
    pointer owner conversions now publish and query canonical class-base schemas
    before using the legacy TypeIndex owner bridge.
    Shared unary and binary operator ranking now traverses class and base
@@ -201,14 +201,24 @@ Continue boundary 3A in this order.
       targets use the canonical reference-binding planner for supported
       bindings and temporary materialization. Record constructor reference
       parameters with the same canonical referent or a public canonical base
-      use direct reference ranking. The shared planner replaces the local
-      same-referent helper; canonical-only native tests exercise the constructor
-      probe and trait query without TypeInfo identities, and
+      use direct reference ranking, while differing builtin scalar referents
+      use promotion or conversion ranking for temporary binding to const
+      lvalue references and rvalue references. Identical-referent direct-binding
+      decisions remain authoritative, including rejection of mutable lvalue
+      references to conversion temporaries; nullptr-to-bool reference arguments
+      remain rejected. The shared TypeId-only planner replaces the local
+      same-referent helper; canonical-only native tests exercise its ranks and
+      the constructor probe and trait query without TypeInfo identities, and
       `test_canonical_constructor_base_reference_args_ret0.cpp` covers record
       and specialization bindings, rejection cases, overload ranking, and a
-      lazy concept. Conversion temporaries, dependent types, callable
-      mismatches, and user-defined
-      conversion shapes defer to compatibility resolution. Unscoped enum
+      lazy concept. `test_canonical_scalar_reference_temporary_args_ret0.cpp`
+      covers builtin scalar lvalue/rvalue reference arguments, promotion versus
+      conversion ranking, selected constructor exception facts, and a lazy
+      concept. Enum and dependent types, class user-defined conversions, and
+      pointer/callable referent conversions still defer to compatibility
+      resolution. Direct constructor code generation also still needs to
+      materialize scalar conversion temporaries before passing reference
+      parameters; see [known issues](KNOWN_ISSUES.md). Unscoped enum
       arguments use published promotion and underlying types for builtin
       scalar and constructor parameters; scoped enum-to-builtin conversions
       are rejected canonically. Implicit copy/move constructor schemas derive
