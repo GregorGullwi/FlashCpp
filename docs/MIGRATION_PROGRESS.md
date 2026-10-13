@@ -271,9 +271,13 @@ Continue boundary 3A in this order.
       iteratively. `test_deferred_base_nttp_function_pointer_identity_ret0.cpp`
       covers a dependent-base argument selecting an explicit function-pointer
       specialization through a conditional expression. Other NTTP reconstruction
-      paths remain outside this slice. Non-projectable function/member-pointer
-      shapes remain deferred until canonical substitution and export coverage is
-      available.
+      paths remain outside this slice. Dependent stored NTTP arguments now also
+      keep their evaluated value identity and original `ExprId` during
+      materialization, interning the substituted expression when no source stamp
+      exists. `test_materialize_stored_nttp_function_pointer_identity_ret0.cpp`
+      covers function-pointer specialization lookup through this path.
+      Non-projectable function/member-pointer shapes remain deferred until
+      canonical substitution and export coverage is available.
 
 3. **Complete importer and declarator coverage.** Add canonical import support
    for remaining valid ordered forms still rejected at a boundary, including
