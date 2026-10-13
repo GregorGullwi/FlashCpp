@@ -258,10 +258,13 @@ Continue boundary 3A in this order.
       member-function-pointer defaults carry the declared class/signature into
       specialization lookup. Regressions cover dependent integral defaults,
       defaulted member-function pointers, and explicit specialization stamps.
-      Dependent record arguments and dependent qualified-id substitution now
-      retain an existing source ExprId when rebuilding a concrete NTTP; a focused
-      unit regression protects that reconstruction contract. Pack expansion and
-      other reconstruction paths remain outside this slice. Non-projectable
+      Dependent record arguments and dependent qualified-id substitution retain
+      an existing source ExprId when rebuilding a concrete NTTP. Stored and
+      dependent-record value-pack expansion now evaluate each concrete element
+      separately, preserving its typed value identity and source stamp, or
+      interning an expanded expression stamp when no source stamp exists. Focused
+      unit coverage protects typed identity and expression-stamp reconstruction.
+      Other NTTP reconstruction paths remain outside this slice. Non-projectable
       function/member-pointer shapes remain deferred until canonical substitution
       and export coverage is available.
 

@@ -211,6 +211,8 @@ private:
 	std::vector<TemplateTypeArg> expandPacksInArguments(
 		std::span<const ASTNode> template_arg_nodes);
 	std::vector<TemplateTypeArg> collectCurrentBoundTemplateArgs(std::string_view use_site) const;
+	std::optional<std::vector<TemplateTypeArg>> expandDependentValuePack(
+		const TemplateTypeArg& pack_arg);
 	MaterializedStoredTemplateArgs materializeStoredTemplateArgs(
 		const TypeInfo& template_instantiation_info,
 		bool evaluate_dependent_member_values,

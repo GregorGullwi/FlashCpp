@@ -1173,6 +1173,119 @@ std::vector<TemplateTypeArg> ExpressionSubstitutor::collectCurrentBoundTemplateA
 	throw InternalError("ExpressionSubstitutor requires template parameter declaration order when collecting bound args for " + std::string(use_site));
 }
 
+std::optional<std::vector<TemplateTypeArg>> ExpressionSubstitutor::expandDependentValuePack(
+	const TemplateTypeArg& pack_arg) {
+	if (!pack_arg.is_value || !pack_arg.dependent_expr.has_value()) {
+		return std::nullopt;
+	}
+
+	std::vector<StringHandle> matched_pack_names;
+	AstTraversal::visitAST(
+		*pack_arg.dependent_expr,
+		[&](const ASTNode& node) {
+			StringHandle candidate_name;
+			if (node.is<TemplateParameterReferenceNode>()) {
+				candidate_name = node.as<TemplateParameterReferenceNode>().param_name();
+			} else if (node.is<IdentifierNode>()) {
+				candidate_name = node.as<IdentifierNode>().getOrInternNameHandle();
+			} else if (node.is<QualifiedIdentifierNode>()) {
+				const QualifiedIdentifierNode& qualified_id = node.as<QualifiedIdentifierNode>();
+				std::string_view namespace_name =
+					gNamespaceRegistry.getQualifiedName(qualified_id.namespace_handle());
+				if (!namespace_name.empty()) {
+					candidate_name = StringTable::getOrInternStringHandle(namespace_name);
+				}
+			}
+			if (!candidate_name.isValid() || pack_map_.find(candidate_name) == pack_map_.end() ||
+				std::find(matched_pack_names.begin(), matched_pack_names.end(), candidate_name) !=
+					matched_pack_names.end()) {
+				return;
+			}
+			matched_pack_names.push_back(candidate_name);
+		});
+	if (matched_pack_names.empty()) {
+		return std::nullopt;
+	}
+
+	const auto first_pack = pack_map_.find(matched_pack_names.front());
+	if (first_pack == pack_map_.end()) {
+		throw InternalError("Dependent NTTP pack expansion lost its first pack binding");
+	}
+	const size_t expansion_count = first_pack->second.size();
+	for (size_t pack_index = 1; pack_index < matched_pack_names.size(); ++pack_index) {
+		const auto pack_it = pack_map_.find(matched_pack_names[pack_index]);
+		if (pack_it == pack_map_.end()) {
+			throw InternalError("Dependent NTTP pack expansion lost a referenced pack binding");
+		}
+		if (pack_it->second.size() != expansion_count) {
+			throw InternalError("Mismatched template parameter pack sizes while expanding a dependent NTTP");
+		}
+	}
+	for (StringHandle matched_pack_name : matched_pack_names) {
+		const auto pack_it = pack_map_.find(matched_pack_name);
+		if (pack_it == pack_map_.end()) {
+			throw InternalError("Dependent NTTP pack expansion lost a referenced pack binding");
+		}
+		for (const TemplateTypeArg& pack_element : pack_it->second) {
+			if (pack_element.is_dependent || pack_element.dependent_name.isValid() ||
+				pack_element.dependent_expr.has_value()) {
+				return std::nullopt;
+			}
+		}
+	}
+
+	std::vector<TemplateTypeArg> expanded_args;
+	expanded_args.reserve(expansion_count);
+	for (size_t expansion_index = 0; expansion_index < expansion_count; ++expansion_index) {
+		std::unordered_map<std::string_view, TemplateTypeArg> scalar_bindings = param_map_;
+		for (StringHandle matched_pack_name : matched_pack_names) {
+			const auto pack_it = pack_map_.find(matched_pack_name);
+			if (pack_it == pack_map_.end() || expansion_index >= pack_it->second.size()) {
+				throw InternalError("Missing pack element while expanding a dependent NTTP");
+			}
+			scalar_bindings[StringTable::getStringView(matched_pack_name)] =
+				pack_it->second[expansion_index];
+		}
+
+		ExpressionSubstitutor element_substitutor(
+			scalar_bindings,
+			parser_,
+			template_param_order_);
+		element_substitutor.setCurrentOwnerTypeName(current_owner_type_name_);
+		element_substitutor.setCurrentOwnerDeclaration(current_owner_declaration_);
+		ASTNode substituted_expr = element_substitutor.substitute(*pack_arg.dependent_expr);
+		ExprId substituted_expr_id{};
+		if (FrontendContext* context = frontendContext()) {
+			substituted_expr_id = context->dependentExpressions().intern(substituted_expr);
+		}
+
+		if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
+			TemplateTypeArg expanded_arg = makeConcreteNttpArg(eval_result->identity, pack_arg);
+			expanded_arg.is_pack = false;
+			if (substituted_expr_id && !expanded_arg.nttp_expr) {
+				expanded_arg.nttp_expr = substituted_expr_id;
+			}
+			expanded_args.push_back(std::move(expanded_arg));
+			continue;
+		}
+
+		TemplateTypeArg unresolved_arg = pack_arg;
+		unresolved_arg.is_pack = false;
+		unresolved_arg.is_dependent = true;
+		unresolved_arg.dependent_expr = std::move(substituted_expr);
+		if (substituted_expr_id && !unresolved_arg.nttp_expr) {
+			unresolved_arg.nttp_expr = substituted_expr_id;
+		}
+		if (std::find(matched_pack_names.begin(), matched_pack_names.end(), unresolved_arg.dependent_name) !=
+			matched_pack_names.end()) {
+			unresolved_arg.dependent_name = {};
+		}
+		expanded_args.push_back(std::move(unresolved_arg));
+	}
+
+	return expanded_args;
+}
+
 ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::materializeStoredTemplateArgs(
 	const TypeInfo& template_instantiation_info,
 	bool evaluate_dependent_member_values,
@@ -1206,84 +1319,6 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 		active_environment.bindings.empty() && active_environment.parent != nullptr
 		? *active_environment.parent
 		: active_environment;
-	auto expressionReferencesPackBinding = [&](const ASTNode& expr) {
-		bool references_pack = false;
-		AstTraversal::visitAST(expr, [&](const ASTNode& node) {
-			if (references_pack) {
-				return;
-			}
-			StringHandle candidate_name;
-			if (node.is<TemplateParameterReferenceNode>()) {
-				candidate_name = node.as<TemplateParameterReferenceNode>().param_name();
-			} else if (node.is<IdentifierNode>()) {
-				candidate_name = node.as<IdentifierNode>().getOrInternNameHandle();
-			} else if (node.is<QualifiedIdentifierNode>()) {
-				std::string_view ns_name =
-					gNamespaceRegistry.getQualifiedName(node.as<QualifiedIdentifierNode>().namespace_handle());
-				if (!ns_name.empty()) {
-					candidate_name = StringTable::getOrInternStringHandle(ns_name);
-				}
-			}
-			if (candidate_name.isValid() && pack_map_.find(candidate_name) != pack_map_.end()) {
-				references_pack = true;
-			}
-		});
-		return references_pack;
-	};
-	auto expandDependentValuePack =
-		[&](const TemplateTypeArg& pack_arg) -> std::optional<std::vector<TemplateTypeArg>> {
-		if (!pack_arg.is_value || !pack_arg.dependent_expr.has_value()) {
-			return std::nullopt;
-		}
-		if (!pack_arg.is_pack &&
-			!expressionReferencesPackBinding(*pack_arg.dependent_expr)) {
-			return std::nullopt;
-		}
-
-		std::optional<size_t> expansion_count;
-		for (const auto& [pack_name, pack_args] : pack_map_) {
-			(void)pack_name;
-			if (!expansion_count.has_value()) {
-				expansion_count = pack_args.size();
-			} else if (*expansion_count != pack_args.size()) {
-				return std::nullopt;
-			}
-		}
-		if (!expansion_count.has_value()) {
-			return std::nullopt;
-		}
-
-		std::vector<TemplateTypeArg> expanded_args;
-		expanded_args.reserve(*expansion_count);
-		for (size_t expansion_index = 0; expansion_index < *expansion_count; ++expansion_index) {
-			std::unordered_map<std::string_view, TemplateTypeArg> scalar_bindings = param_map_;
-			for (const auto& [pack_name, pack_args] : pack_map_) {
-				if (expansion_index >= pack_args.size()) {
-					return std::nullopt;
-				}
-				scalar_bindings[StringTable::getStringView(pack_name)] = pack_args[expansion_index];
-			}
-
-			ExpressionSubstitutor element_substitutor(scalar_bindings, parser_, template_param_order_);
-			element_substitutor.setCurrentOwnerTypeName(current_owner_type_name_);
-			element_substitutor.setCurrentOwnerDeclaration(
-				current_owner_declaration_);
-			ASTNode substituted_expr = element_substitutor.substitute(*pack_arg.dependent_expr);
-			if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
-				expanded_args.emplace_back(eval_result->value, eval_result->type);
-				continue;
-			}
-
-			TemplateTypeArg unresolved_arg = pack_arg;
-			unresolved_arg.is_pack = false;
-			unresolved_arg.is_dependent = true;
-			unresolved_arg.dependent_expr = std::move(substituted_expr);
-			expanded_args.push_back(std::move(unresolved_arg));
-		}
-
-		return expanded_args;
-	};
-
 	for (const auto& arg : stored_args) {
 		TemplateTypeArg materialized_arg = toTemplateTypeArg(arg);
 		bool substituted = false;
@@ -1304,6 +1339,10 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 			for (TemplateTypeArg& expanded_arg : *expanded_pack_args) {
 				result.args.push_back(std::move(expanded_arg));
 			}
+			continue;
+		}
+		if (materialized_arg.is_pack && materialized_arg.dependent_expr.has_value()) {
+			result.args.push_back(std::move(materialized_arg));
 			continue;
 		}
 
@@ -1479,6 +1518,18 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 	materialized_args.reserve(stored_args.size());
 	for (const TypeInfo::TemplateArgInfo& stored_arg : stored_args) {
 		TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
+		if (std::optional<std::vector<TemplateTypeArg>> expanded_args =
+				expandDependentValuePack(arg);
+			expanded_args.has_value()) {
+			for (TemplateTypeArg& expanded_arg : *expanded_args) {
+				materialized_args.push_back(std::move(expanded_arg));
+			}
+			continue;
+		}
+		if (arg.is_pack && arg.dependent_expr.has_value()) {
+			materialized_args.push_back(std::move(arg));
+			continue;
+		}
 		if (arg.is_pack) {
 			StringHandle pack_name = arg.dependent_name;
 			if (!pack_name.isValid() && arg.type_index.is_valid()) {

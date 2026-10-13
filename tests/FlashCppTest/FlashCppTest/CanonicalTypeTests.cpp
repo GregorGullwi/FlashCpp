@@ -270,6 +270,16 @@ TEST_CASE("Concrete NTTP reconstruction preserves its source expression identity
 	CHECK(concrete.is_pack);
 	CHECK(concrete.nttp_expr == ExprId{17});
 	CHECK(toTemplateArgInfo(concrete).nttp_expr == ExprId{17});
+	const StringHandle function_name = StringTable::getOrInternStringHandle("pack_function");
+	const FlashCpp::NonTypeValueIdentity function_identity = FlashCpp::NonTypeValueIdentity::makeFunctionPointer(
+		TypeIndex{42, TypeCategory::FunctionPointer},
+		function_name);
+	source.nttp_expr = ExprId{18};
+	const TemplateTypeArg concrete_function = makeConcreteNttpArg(function_identity, source);
+	CHECK(concrete_function.has_typed_value_identity);
+	CHECK(concrete_function.valueIdentity() == function_identity);
+	CHECK(concrete_function.is_pack);
+	CHECK(concrete_function.nttp_expr == ExprId{18});
 }
 
 TEST_CASE("Overload ranking compares non-projectable parameter shapes structurally") {
