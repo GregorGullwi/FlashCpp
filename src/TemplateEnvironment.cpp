@@ -55,6 +55,7 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 	// a named entity, also preserve the explicit identity kind and entity name in the
 	// dedicated fields so the roundtrip through toTemplateTypeArg is lossless.
 	info.value = arg.value;
+	info.nttp_expr = arg.nttp_expr;
 	if (arg.has_typed_value_identity) {
 		const auto& id = arg.typed_value_identity;
 		info.nttp_kind = id.kind;
@@ -99,6 +100,7 @@ TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 	ta.member_pointer_kind = arg.member_pointer_kind;
 	ta.member_class_name = arg.member_class_name;
 	ta.injected_class_declaration = arg.injected_class_declaration;
+	ta.nttp_expr = arg.nttp_expr;
 	if (arg.is_value) {
 		const bool has_explicit_nttp_identity =
 			arg.nttp_kind != FlashCpp::NonTypeValueIdentityKind::Integral ||

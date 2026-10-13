@@ -177,6 +177,10 @@ struct TemplateTypeArg {
 	int64_t value;  // the value for non-type parameters
 	bool has_typed_value_identity;  // true when non-integral NTTP identity carries semantic payload
 	FlashCpp::NonTypeValueIdentity typed_value_identity;
+	// Opaque identity of the source non-type argument expression. Carried so a
+	// specialization imported from a declaration keeps the same canonical
+	// NonType argument identity the syntax path stamps.
+	ExprId nttp_expr{};
 
 	// For variadic templates (parameter packs)
 	bool is_pack;  // true if this represents a parameter pack (typename... Args)
