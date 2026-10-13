@@ -953,7 +953,7 @@ std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentityIm
 }
 
 std::optional<EvalResult> tryResolveTemplateValueParameterImpl(const TemplateTypeArg& arg) {
-	if (!arg.is_value) {
+	if (!arg.is_value || arg.is_dependent) {
 		return std::nullopt;
 	}
 	if (arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::StructuralClass &&
@@ -1040,6 +1040,14 @@ std::optional<MemberPointerTarget> tryResolveMemberPointerTargetRecursive(
 	for (const auto& member : struct_info->members) {
 		if (member.getName() == member_name) {
 			return MemberPointerTarget{member_name, base_offset + static_cast<int64_t>(member.offset)};
+		}
+	}
+
+	for (const auto& member_function : struct_info->member_functions) {
+		if (member_function.name == member_name &&
+			!member_function.is_constructor &&
+			!member_function.is_destructor) {
+			return MemberPointerTarget{member_name, 0};
 		}
 	}
 
@@ -1296,6 +1304,11 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 		const StringHandle param_name_handle = template_param.param_name();
 		std::string_view param_name = StringTable::getStringView(param_name_handle);
 		if (const TemplateTypeArg* arg = findTemplateValueParameterBinding(param_name_handle, context)) {
+			if (arg->is_dependent) {
+				return EvalResult::error(
+					"Template parameter in constant expression: " + std::string(param_name),
+					EvalErrorType::TemplateDependentExpression);
+			}
 			if (auto resolved = tryResolveTemplateValueParameter(*arg)) {
 				return *resolved;
 			}
@@ -4092,6 +4105,11 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	StringHandle name_handle = identifier.getOrInternNameHandle();
 
 	if (const TemplateTypeArg* arg = findTemplateValueParameterBinding(name_handle, context)) {
+		if (arg->is_dependent) {
+			return EvalResult::error(
+				"Template parameter in constant expression: " + std::string(var_name),
+				EvalErrorType::TemplateDependentExpression);
+		}
 		if (auto resolved = tryResolveTemplateValueParameter(*arg)) {
 			return *resolved;
 		}
