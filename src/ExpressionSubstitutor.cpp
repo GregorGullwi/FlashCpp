@@ -1319,15 +1319,20 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 		active_environment.bindings.empty() && active_environment.parent != nullptr
 		? *active_environment.parent
 		: active_environment;
+	auto internExpression = [&](const ASTNode& expression) {
+		if (FrontendContext* context = frontendContext()) {
+			return context->dependentExpressions().intern(expression);
+		}
+		return ExprId{};
+	};
 	for (const auto& arg : stored_args) {
 		TemplateTypeArg materialized_arg = toTemplateTypeArg(arg);
 		bool substituted = false;
-		auto applyEvaluatedValue = [&](const Parser::ConstantValue& value) {
-			materialized_arg.is_value = true;
-			materialized_arg.value = value.value;
-			materialized_arg.type_index = nativeTypeIndex(value.type);
-			materialized_arg.dependent_name = {};
-			materialized_arg.is_dependent = false;
+		auto applyEvaluatedValue = [&](const Parser::ConstantValue& value, ExprId evaluated_expr_id) {
+			materialized_arg = makeConcreteNttpArg(value.identity, materialized_arg);
+			if (evaluated_expr_id && !materialized_arg.nttp_expr) {
+				materialized_arg.nttp_expr = evaluated_expr_id;
+			}
 			result.had_substitution = true;
 			substituted = true;
 		};
@@ -1350,7 +1355,7 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 			const ASTNode& stored_expr = *materialized_arg.dependent_expr;
 			ASTNode substituted_expr = substitute(stored_expr);
 			if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
-				applyEvaluatedValue(*eval_result);
+				applyEvaluatedValue(*eval_result, internExpression(substituted_expr));
 				FLASH_LOG(Templates, Trace, "materializeStoredTemplateArgs: evaluated dependent value expr -> ", eval_result->value);
 			} else {
 				materialized_arg.dependent_expr = std::move(substituted_expr);
@@ -1398,8 +1403,9 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 										member_token);
 								ExpressionNode& member_expr =
 									gChunkedAnyStorage.emplace_back<ExpressionNode>(member_qual_id);
-								if (auto value = parser_.try_evaluate_constant_expression(ASTNode(&member_expr))) {
-									applyEvaluatedValue(*value);
+								ASTNode member_expr_node(&member_expr);
+								if (auto value = parser_.try_evaluate_constant_expression(member_expr_node)) {
+									applyEvaluatedValue(*value, internExpression(member_expr_node));
 								}
 							}
 						}
