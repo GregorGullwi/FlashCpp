@@ -4083,6 +4083,9 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 						arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Integral ||
 						arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Nullptr ||
 						(param.has_type() &&
+						 param.type_specifier_node().has_member_class() &&
+						 param.type_specifier_node().has_function_signature()) ||
+						(param.has_type() &&
 						 param.type_specifier_node().is_reference_to_array() &&
 						 !param.type_specifier_node().array_dimensions().empty()))) {
 					reclassified = makeValueArgForSyntax(syntax_node, arg, param);
@@ -4092,6 +4095,7 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 				}
 				if (reclassified.has_value()) {
 					reclassified->is_pack = was_pack;
+					reclassified->nttp_expr = arg.nttp_expr;
 					arg = *reclassified;
 				}
 				++arg_index;
@@ -4111,6 +4115,9 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 					arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Integral ||
 					arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Nullptr ||
 					(param.has_type() &&
+					 param.type_specifier_node().has_member_class() &&
+					 param.type_specifier_node().has_function_signature()) ||
+					(param.has_type() &&
 					 param.type_specifier_node().is_reference_to_array() &&
 					 !param.type_specifier_node().array_dimensions().empty()))) {
 			reclassified = makeValueArgForSyntax(syntax_node, arg, param);
@@ -4120,6 +4127,7 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 		}
 		if (reclassified.has_value()) {
 			reclassified->is_pack = was_pack;
+			reclassified->nttp_expr = arg.nttp_expr;
 			arg = *reclassified;
 		}
 		++arg_index;

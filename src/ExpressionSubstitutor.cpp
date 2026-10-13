@@ -4251,6 +4251,10 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 
 		// Handle non-type template parameters (values)
 		if (arg.is_value) {
+			if (arg.is_dependent && arg.dependent_name == id.getOrInternNameHandle()) {
+				ExpressionNode& expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(id);
+				return ASTNode(&expr);
+			}
 			if (arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::StructuralClass) {
 				// Keep structural class values as identifiers so member access can be
 				// evaluated from the aggregate value bound in the constexpr context.

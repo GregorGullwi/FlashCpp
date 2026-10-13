@@ -250,14 +250,17 @@ Continue boundary 3A in this order.
       a duplicate ordered spine. Function identity comparison permits canonical
       components to match legacy projections, compares TypeIds when both are
       present, and keeps hashes representation-neutral.
-      Explicit source NTTP expression identity now survives the
-      `TemplateTypeArg`/`TemplateArgInfo` round trip, so declaration-based class
-      specialization import emits the same opaque NonType Spec link as
-      syntax-based import when that identity is present. Instantiated values
-      rebuilt without the source expression identity and residual
-      member-function-pointer NTTP fallbacks remain outside this coverage.
-      Non-projectable function/member-pointer shapes remain deferred until their
-      canonical substitution and export coverage is available.
+      Explicit source NTTP expression identity now survives argument
+      reclassification and the `TemplateTypeArg`/`TemplateArgInfo` round trip,
+      so declaration-based class specialization import emits the same opaque
+      NonType Spec link as syntax-based import when that identity is present.
+      Dependent defaults now stay dependent until substitution, and simple
+      member-function-pointer defaults carry the declared class/signature into
+      specialization lookup. Regressions cover dependent integral defaults,
+      defaulted member-function pointers, and explicit specialization stamps.
+      Other instantiated values can still be rebuilt without their source
+      expression identity. Non-projectable function/member-pointer shapes remain
+      deferred until canonical substitution and export coverage is available.
 
 3. **Complete importer and declarator coverage.** Add canonical import support
    for remaining valid ordered forms still rejected at a boundary, including

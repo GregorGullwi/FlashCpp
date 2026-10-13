@@ -625,6 +625,16 @@ namespace {
 			if (!target_type_index.is_valid()) {
 				target_type_index = TypeIndex{0, target_category};
 			}
+			if (coerced_default.is_value &&
+				coerced_default.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer &&
+				target_type->has_member_class() &&
+				target_type->has_function_signature()) {
+				FlashCpp::NonTypeValueIdentity identity = coerced_default.valueIdentity();
+				identity.value_type_index = target_type_index;
+				identity.member_class_name = target_type->member_class_name();
+				identity.function_signature = target_type->function_signature();
+				return TemplateTypeArg::makeValueIdentity(identity);
+			}
 			if (coerced_default.is_value && isIntegralType(target_category)) {
 				coerced_default.value = convertIntegralTemplateValueToType(
 					coerced_default.value,
