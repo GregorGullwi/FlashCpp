@@ -1336,12 +1336,41 @@ bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
 // --- TypeContext ---
 
 CanonicalTypeId TypeContext::intern(const CanonicalTypeDesc& desc) {
-	auto it = index_.find(desc);
+	CanonicalTypeDesc canonical = desc;
+	// A member-function-pointer whose owner survives only as the signature's class
+	// name (for example through an alias) carries no member-class entity, so the
+	// descriptor would fall back to the compatibility projection. Resolve the
+	// owner's canonical TypeId and publish the structural identity here, the single
+	// entry into the semantic type context.
+	if (canonical.category() == TypeCategory::MemberFunctionPointer &&
+		!canonical.structural_type_id && canonical.function_signature.has_value() &&
+		canonical.function_signature->class_name.isValid()) {
+		TypeSpecifierNode syntax = materializeTypeSpecifier(canonical);
+		syntax.set_member_class_name(canonical.function_signature->class_name);
+		if (!syntax.has_function_signature()) {
+			syntax.set_function_signature(*canonical.function_signature);
+		}
+		tryBindPublishedMemberClassEntity(syntax);
+		if (syntax.has_member_class_entity() || syntax.has_member_class_type_id()) {
+			CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+			const CanonicalTypeImport imported = importCanonicalType(canonical_types, syntax);
+			if (imported.status == CanonicalTypeImportStatus::Supported) {
+				CanonicalTypeNode node = canonical_types.node(imported.type);
+				while (node.kind == CanonicalTypeKind::Qualified && node.child) {
+					node = canonical_types.node(node.child);
+				}
+				if (node.kind == CanonicalTypeKind::MemberFunctionPointer) {
+					canonical.structural_type_id = imported.type;
+				}
+			}
+		}
+	}
+	auto it = index_.find(canonical);
 	if (it != index_.end())
 		return it->second;
-	types_.push_back(desc);
+	types_.push_back(canonical);
 	const CanonicalTypeId id{static_cast<uint32_t>(types_.size())}; // 1-based
-	index_.emplace(desc, id);
+	index_.emplace(canonical, id);
 	return id;
 }
 

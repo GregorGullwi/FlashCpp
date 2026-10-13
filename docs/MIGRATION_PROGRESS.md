@@ -337,15 +337,15 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
   boundary 3B.
 - **Boundary 4 handoff - member-function-pointer descriptor identity:** a
   concrete member-function-pointer target whose owner survives only as the
-  signature's class name reaches `tryImportCanonicalTypeDesc` with
-  `structural_type_id` unset, so `materializeTypeSpecifier` rebuilds it from the
-  flat `type_index` and the importer returns `UnmigratedCallable`. First split:
-  populate `structural_type_id` on member-function-pointer descriptors in the
-  semantic type context from the canonical owner `TypeId`, then let
-  materialization reconstruct the owner. Trace:
-  `checkMemberFunctionAddressAccessForTarget` (`SemanticAnalysis.cpp`) ->
-  `tryImportCanonicalTypeDesc` -> `materializeTypeSpecifier` ->
-  `set_function_signature`.
+  signature's class name now publishes its canonical `structural_type_id` in
+  `TypeContext::intern` (the single entry into the semantic type context): it
+  resolves the owner `TypeId` from the signature's class name, binds the
+  published member-class entity, and imports the member-function-pointer shape.
+  The descriptor therefore round-trips through `materializeTypeSpecifier`
+  without the flat `type_index` projection and no longer returns
+  `UnmigratedCallable`, removing the compatibility fallback for this shape. The
+  boundary-4 handoff (the remaining sema/lowering work for the
+  member-function-pointer descriptor) continues from there.
 - **Negative tests:** encode the exact expected diagnostic ID multiset in the
   filename (`_e1001.cpp`, `_e1003_e1051.cpp`); `_fail.cpp` is reserved for the
   immutable legacy inventory.
