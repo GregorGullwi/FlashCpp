@@ -170,6 +170,135 @@ TEST_CASE("Canonical constructor arguments bind base references without compatib
 	CHECK_FALSE(*rejected);
 }
 
+TEST_CASE("Canonical reference argument plans rank scalar conversion temporaries") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId short_type = table.builtin(CanonicalBuiltinKind::Short);
+	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId long_type = table.builtin(CanonicalBuiltinKind::Long);
+	const TypeId short_lvalue = table.reference(short_type, ReferenceQualifier::LValueReference);
+	const TypeId const_short_lvalue = table.reference(table.qualify(short_type, CVQualifier::Const), ReferenceQualifier::LValueReference);
+	const TypeId const_int_lvalue = table.reference(table.qualify(int_type, CVQualifier::Const), ReferenceQualifier::LValueReference);
+	const TypeId const_long_lvalue = table.reference(table.qualify(long_type, CVQualifier::Const), ReferenceQualifier::LValueReference);
+	const TypeId mutable_long_lvalue = table.reference(long_type, ReferenceQualifier::LValueReference);
+	const TypeId long_rvalue = table.reference(long_type, ReferenceQualifier::RValueReference);
+	const TypeId const_long_rvalue = table.reference(table.qualify(long_type, CVQualifier::Const), ReferenceQualifier::RValueReference);
+	auto plan = tryBuildCanonicalReferenceArgumentConversionPlan(table, short_lvalue, const_int_lvalue);
+	REQUIRE(plan.has_value());
+	CHECK(plan->is_valid);
+	CHECK(plan->rank == ConversionRank::Promotion);
+	CHECK(plan->kind == StandardConversionKind::IntegralPromotion);
+	plan = tryBuildCanonicalReferenceArgumentConversionPlan(table, const_short_lvalue, const_long_lvalue);
+	REQUIRE(plan.has_value());
+	CHECK(plan->is_valid);
+	CHECK(plan->rank == ConversionRank::Conversion);
+	plan = tryBuildCanonicalReferenceArgumentConversionPlan(table, short_lvalue, long_rvalue);
+	REQUIRE(plan.has_value());
+	CHECK(plan->is_valid);
+	CHECK(plan->rank == ConversionRank::Conversion);
+	plan = tryBuildCanonicalReferenceArgumentConversionPlan(table, const_short_lvalue, long_rvalue);
+	REQUIRE(plan.has_value());
+	CHECK(plan->is_valid);
+	CHECK(plan->rank == ConversionRank::Conversion);
+	plan = tryBuildCanonicalReferenceArgumentConversionPlan(table, short_lvalue, mutable_long_lvalue);
+	REQUIRE(plan.has_value());
+	CHECK_FALSE(plan->is_valid);
+	plan = tryBuildCanonicalReferenceArgumentConversionPlan(table, long_type, const_long_rvalue);
+	REQUIRE(plan.has_value());
+	CHECK(plan->is_valid);
+	plan = tryBuildCanonicalReferenceArgumentConversionPlan(table, const_long_lvalue, long_rvalue);
+	REQUIRE(plan.has_value());
+	CHECK_FALSE(plan->is_valid);
+	const TypeId null_pointer = table.builtin(CanonicalBuiltinKind::Nullptr);
+	const TypeId const_bool_lvalue = table.reference(table.qualify(table.builtin(CanonicalBuiltinKind::Bool), CVQualifier::Const),
+		ReferenceQualifier::LValueReference);
+	plan = tryBuildCanonicalReferenceArgumentConversionPlan(table, null_pointer, const_bool_lvalue);
+	REQUIRE(plan.has_value());
+	CHECK_FALSE(plan->is_valid);
+}
+
+TEST_CASE("Canonical constructor schemas rank scalar reference temporaries without TypeInfo") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const EntityId ranked_entity{916};
+	const TypeId int_reference = table.reference(table.qualify(table.builtin(CanonicalBuiltinKind::Int), CVQualifier::Const),
+		ReferenceQualifier::LValueReference);
+	const TypeId long_reference = table.reference(table.qualify(table.builtin(CanonicalBuiltinKind::Long), CVQualifier::Const),
+		ReferenceQualifier::LValueReference);
+	const std::array<TypeId, 1> int_parameters{int_reference};
+	const std::array<TypeId, 1> long_parameters{long_reference};
+	const std::array<CanonicalRecordConstructorSpec, 2> ranked_constructors{{
+		{int_parameters, CanonicalRecordFunctionFlags::None, true},
+		{long_parameters, CanonicalRecordFunctionFlags::None, false},
+	}};
+	table.publishRecordConstructors(table.record(ranked_entity), ranked_constructors);
+	TypeSpecifierNode ranked_target(TypeCategory::Struct, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	ranked_target.set_type_entity(ranked_entity);
+	TypeSpecifierNode short_argument(TypeCategory::Short, TypeQualifier::None, 16, Token{}, CVQualifier::None);
+	short_argument.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	const std::array<TypeSpecifierNode, 1> arguments{short_argument};
+	const std::optional<bool> converting = tryHasCanonicalImplicitConvertingConstructorForArgument(ranked_target, short_argument, nullptr);
+	REQUIRE(converting.has_value());
+	CHECK(*converting);
+	const auto constructible = evaluateConstructibility(TypeTraitKind::IsConstructible, ranked_target, arguments, ConstructibilityFallback::None);
+	REQUIRE(constructible.has_value());
+	CHECK(constructible->success);
+	CHECK(constructible->value);
+	const auto nothrow = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, ranked_target, arguments, ConstructibilityFallback::None);
+	REQUIRE(nothrow.has_value());
+	CHECK(nothrow->success);
+	CHECK(nothrow->value);
+	const EntityId throwing_entity{919};
+	const std::array<CanonicalRecordConstructorSpec, 1> throwing_constructors{{
+		{long_parameters, CanonicalRecordFunctionFlags::None, false},
+	}};
+	table.publishRecordConstructors(table.record(throwing_entity), throwing_constructors);
+	TypeSpecifierNode throwing_target(TypeCategory::Struct, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	throwing_target.set_type_entity(throwing_entity);
+	const auto throwing_nothrow = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, throwing_target, arguments,
+		ConstructibilityFallback::None);
+	REQUIRE(throwing_nothrow.has_value());
+	CHECK(throwing_nothrow->success);
+	CHECK_FALSE(throwing_nothrow->value);
+
+	const EntityId mutable_entity{917};
+	const TypeId mutable_reference = table.reference(table.builtin(CanonicalBuiltinKind::Long), ReferenceQualifier::LValueReference);
+	const std::array<TypeId, 1> mutable_parameters{mutable_reference};
+	const std::array<CanonicalRecordConstructorSpec, 1> mutable_constructors{{
+		{mutable_parameters, CanonicalRecordFunctionFlags::None, true},
+	}};
+	table.publishRecordConstructors(table.record(mutable_entity), mutable_constructors);
+	TypeSpecifierNode mutable_target(TypeCategory::Struct, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	mutable_target.set_type_entity(mutable_entity);
+	const std::optional<bool> mutable_conversion = tryHasCanonicalImplicitConvertingConstructorForArgument(mutable_target, short_argument, nullptr);
+	REQUIRE(mutable_conversion.has_value());
+	CHECK_FALSE(*mutable_conversion);
+	const auto mutable_result = evaluateConstructibility(TypeTraitKind::IsConstructible, mutable_target, arguments, ConstructibilityFallback::None);
+	REQUIRE(mutable_result.has_value());
+	CHECK(mutable_result->success);
+	CHECK_FALSE(mutable_result->value);
+
+	const EntityId bool_entity{918};
+	const TypeId bool_reference = table.reference(table.qualify(table.builtin(CanonicalBuiltinKind::Bool), CVQualifier::Const),
+		ReferenceQualifier::LValueReference);
+	const std::array<TypeId, 1> bool_parameters{bool_reference};
+	const std::array<CanonicalRecordConstructorSpec, 1> bool_constructors{{
+		{bool_parameters, CanonicalRecordFunctionFlags::None, true},
+	}};
+	table.publishRecordConstructors(table.record(bool_entity), bool_constructors);
+	TypeSpecifierNode bool_target(TypeCategory::Struct, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	bool_target.set_type_entity(bool_entity);
+	TypeSpecifierNode null_pointer_argument(TypeCategory::Nullptr, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	const std::array<TypeSpecifierNode, 1> null_args{null_pointer_argument};
+	const std::optional<bool> bool_conversion = tryHasCanonicalImplicitConvertingConstructorForArgument(bool_target, null_pointer_argument, nullptr);
+	REQUIRE(bool_conversion.has_value());
+	CHECK_FALSE(*bool_conversion);
+	const auto bool_result = evaluateConstructibility(TypeTraitKind::IsConstructible, bool_target, null_args, ConstructibilityFallback::None);
+	REQUIRE(bool_result.has_value());
+	CHECK(bool_result->success);
+	CHECK_FALSE(bool_result->value);
+}
+
 TEST_CASE("Canonical direct reference binding preserves access cv and value category") {
 	CanonicalTypeTable table;
 	const TypeId base_type = table.record(EntityId{913});
