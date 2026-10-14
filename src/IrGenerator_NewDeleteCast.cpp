@@ -1037,7 +1037,13 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 			if ((base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual ||
 				 base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) &&
 				target_pointer_depth != 1) {
-				throw CompileError("Derived-to-base pointer casts require a single pointer level");
+				throw makeStructuredCompileError(
+					context_->diagnostics(),
+					DiagnosticId::DerivedToBasePointerCastDepthUnsupported,
+					DiagnosticSeverity::Error,
+					SourceLocation::fromToken(staticCastNode.cast_token()),
+					"Derived-to-base pointer casts require a single pointer level",
+					{});
 			}
 			if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
 				if (!base_conversion.virtual_base_index.has_value()) {
