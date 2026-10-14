@@ -9,6 +9,7 @@
 
 class ConstructorDeclarationNode;
 class FunctionDeclarationNode;
+class SemanticArenaAccounting;
 
 // --- Standard conversion kinds (C++20 [conv]) ---
 
@@ -195,11 +196,6 @@ public:
 	CanonicalTypeId intern(const CanonicalTypeDesc& desc);
 	const CanonicalTypeDesc& get(CanonicalTypeId id) const;
 	size_t size() const { return types_.size(); }
-	// Bytes the descriptor arena has handed out and reserved, for semantic
-	// arena accounting. Cumulative; reported by the caller that holds the
-	// FrontendContext.
-	uint64_t descriptorUsedBytes() const { return types_.usedBytes(); }
-	uint64_t descriptorReservedBytes() const { return types_.reservedBytes(); }
 
 private:
 	// 0-based storage; CanonicalTypeId value 0 is reserved as invalid sentinel.
@@ -209,6 +205,9 @@ private:
 	static constexpr uint32_t kDescriptorChunkSize = 1024;
 	ChunkedVector<CanonicalTypeDesc, kDescriptorChunkSize> types_;
 	std::unordered_map<CanonicalTypeDesc, CanonicalTypeId> index_;  // O(1) dedup map
+	// Semantic arena accounting, bound lazily to the active FrontendContext on
+	// the first intern so every intern keeps the Descriptors component current.
+	SemanticArenaAccounting* arena_accounting_ = nullptr;
 };
 
 // --- Semantic expression info (returned from expression normalization) ---
