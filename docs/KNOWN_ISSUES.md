@@ -1,5 +1,38 @@
 # Known Issues
 
+## Full native canonical suite has two baseline failures
+
+The unchanged constructor-initializer commit (`e590ccc7`) and its continuation
+both fail the native cases `Canonical TypeIds convert non-projectable ordered
+member-pointer owners` (an exception reporting an invalid function return type)
+and `Forward-declared published nominal parameters import by EntityId` (its
+assertion that a forward enum has no published layout). These need a separate
+audit of the ordered callable fixture and opaque-enum publication contract.
+Passing focused canonical tests does not make the full native suite green.
+
+## Bare qualified static function designators can be misparsed in parenthesized initialization
+
+For `struct Source { static int answer(); };`, an initialization such as
+`Receiver receiver(Source::answer);` can be parsed as a local function
+declaration. `looks_like_function_parameters` in
+`Parser_Decl_DeclaratorCore.cpp` recognizes a qualified call followed by `(`,
+but treats a bare qualified name beginning with a known class as a parameter
+type without resolving its terminal declaration. The variable is then absent
+when a later expression uses it. Braced direct initialization parses the
+designator correctly. Declaration-versus-expression classification needs to
+resolve the qualified terminal name; this is separate from canonical function
+type inference and function-to-pointer reference binding.
+
+## Aggregate scalar member initialization can omit numeric conversion
+
+`struct Record { double value; }; Record record{9};` writes integer bits into
+the double member, so `record.value == 9.0` is false. The local aggregate path
+in `IrGenerator_Stmt_Decl.cpp` and shared nested/default-member paths in
+`IrGenerator_Visitors_TypeInit.cpp` relabel values with the target category
+without applying the required arithmetic conversion. Boundary 4 must annotate
+aggregate element conversions in expression sema and have lowering consume
+those plans. Using a double initializer avoids this failure.
+
 ## Alias-template function-type targets parse but are not substituted
 
 An alias template whose target is a parenthesized function declarator, for

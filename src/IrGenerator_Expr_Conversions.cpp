@@ -3089,6 +3089,10 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 	if (!param_type.is_reference() && !param_type.is_rvalue_reference()) {
 		return std::nullopt;
 	}
+	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+	const TypeId parameter_type = sema_.typeContext().get(binding_info->parameter_type_id).structural_type_id;
+	const TypeId parameter_object_type = parameter_type
+		? stripCanonicalTopCv(canonical_types, canonicalTypeWithoutReference(canonical_types, parameter_type)).first : TypeId{};
 
 	auto registerStructTempDestructorIfNeeded = [&](const ExprResult& value_result) {
 		if (value_result.category() != TypeCategory::Struct ||
@@ -3147,6 +3151,15 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 	};
 
 	auto materializeTemporaryAndTakeAddress = [&](ExprResult value_result) -> ExprResult {
+		if (parameter_object_type) {
+			const CanonicalTypeKind kind = canonical_types.node(parameter_object_type).kind;
+			if (kind == CanonicalTypeKind::Pointer || kind == CanonicalTypeKind::MemberObjectPointer || kind == CanonicalTypeKind::MemberFunctionPointer) {
+				// A function address is the value of the temporary pointer object,
+				// rather than the address of an already-materialized pointer object.
+				value_result.storage = ValueStorage::ContainsData;
+				value_result.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+			}
+		}
 		if (value_result.category() == TypeCategory::Struct) {
 			if (std::holds_alternative<TempVar>(value_result.value)) {
 				registerStructTempDestructorIfNeeded(value_result);
@@ -3343,13 +3356,35 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 			}
 			return materializeTemporaryAndTakeAddress(std::move(*converted));
 		}
+		// Pointer conversions preserve the pointer object's ABI size, including
+		// nullptr to void*: the pointee category alone has no object size.
+		if (parameter_object_type && (cast_info.cast_kind == StandardConversionKind::PointerConversion ||
+			cast_info.cast_kind == StandardConversionKind::QualificationAdjustment || cast_info.cast_kind == StandardConversionKind::FunctionToPointer)) {
+			TypeId target = parameter_object_type;
+			const CanonicalTypeKind target_kind = canonical_types.node(target).kind;
+			if (target_kind == CanonicalTypeKind::Pointer || target_kind == CanonicalTypeKind::MemberObjectPointer ||
+				target_kind == CanonicalTypeKind::MemberFunctionPointer) {
+				if (target_kind == CanonicalTypeKind::MemberObjectPointer && from_t == TypeCategory::Nullptr) {
+					arg_result = generateTypeConversion(arg_result, from_t, TypeCategory::MemberObjectPointer, cast_info.cast_kind, source_token);
+				} else {
+					int pointer_depth = 0;
+					while (canonical_types.node(target).kind == CanonicalTypeKind::Pointer) {
+						++pointer_depth;
+						target = stripCanonicalTopCv(canonical_types, canonical_types.node(target).child).first;
+					}
+					arg_result = makeExprResult(to_desc.type_index, SizeInBits{POINTER_SIZE_BITS}, std::move(arg_result.value),
+						PointerDepth{pointer_depth}, ValueStorage::ContainsData);
+				}
+				return materializeTemporaryAndTakeAddress(std::move(arg_result));
+			}
+		}
 		if (from_t == TypeCategory::Enum && from_t != arg_result.typeEnum()) {
 			from_t = arg_result.typeEnum();
 		}
 		if (from_t == TypeCategory::Struct || to_t == TypeCategory::Struct) {
 			return std::nullopt;
 		}
-		arg_result = generateTypeConversion(arg_result, from_t, to_t, source_token);
+		arg_result = generateTypeConversion(arg_result, from_t, to_t, cast_info.cast_kind, source_token);
 	}
 
 	return materializeTemporaryAndTakeAddress(arg_result);

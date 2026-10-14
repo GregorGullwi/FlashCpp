@@ -1569,35 +1569,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 
 		// Check if it's a FunctionDeclarationNode (function name used as value)
 	if (symbol->is<FunctionDeclarationNode>()) {
-			// This is a function name being used as a value (e.g., fp = add)
-			// Generate FunctionAddress IR instruction
-		const auto& func_decl = symbol->as<FunctionDeclarationNode>();
-		requestInlineFunctionEmission(func_decl);
-
-			// Compute mangled name from the function declaration, respecting linkage
-			// (extern "C" functions must not be mangled)
-		std::string_view mangled = generateMangledNameForCall(func_decl, StringHandle{}, {});
-
-		TempVar func_addr_var = var_counter.next();
-		FunctionAddressOp op;
-		op.result.setType(TypeCategory::FunctionPointer);
-		op.result.ir_type = IrType::FunctionPointer;
-		op.result.size_in_bits = SizeInBits{64};
-		op.result.value = func_addr_var;
-		op.function_name = StringTable::getOrInternStringHandle(identifierNode.name());
-		op.mangled_name = StringTable::getOrInternStringHandle(mangled);
-		ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
-		setTempVarMetadata(
-			func_addr_var,
-			TempVarMetadata::makeAddressOnly(
-				nativeTypeIndex(TypeCategory::FunctionPointer),
-				SizeInBits{64},
-				ValueCategory::PRValue));
-
-			// Return the function address as a pointer (64 bits).
-			// The TempVar holds the address of the function → ContainsAddress so that
-			// reference binding (func_ref_t ref = get_value) uses MOV, not LEA.
-		return makeExprResult(nativeTypeIndex(TypeCategory::FunctionPointer), SizeInBits{64}, IrOperand{func_addr_var}, PointerDepth{}, ValueStorage::ContainsAddress);
+		return emitFunctionAddress(symbol->as<FunctionDeclarationNode>(), StringTable::getOrInternStringHandle(identifierNode.name()), Token{});
 	}
 
 		// Check if it's a TemplateVariableDeclarationNode (variable template)
@@ -1726,8 +1698,8 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 							return emitQualifiedGlobalLoad(type_node, decl_node.is_array(), resolved->storage_name);
 						}
 						if (resolved->symbol.is<FunctionDeclarationNode>()) {
-							StringHandle func_name = resolved->storage_name.isValid() ? resolved->storage_name : StringTable::getOrInternStringHandle(qualifiedIdNode.name());
-							return makeExprResult(nativeTypeIndex(TypeCategory::Function), SizeInBits{64}, IrOperand{func_name}, PointerDepth{}, ValueStorage::ContainsData);
+							return emitFunctionAddress(resolved->symbol.as<FunctionDeclarationNode>(),
+								qualifiedIdNode.identifier_token().handle(), qualifiedIdNode.identifier_token());
 						}
 						break;
 					case SemanticAnalysis::ResolvedQualifiedIdentifierInfo::Kind::StaticMember:
@@ -1743,9 +1715,10 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 						// a plain qualified-id value has no lowering here.
 						break;
 					case SemanticAnalysis::ResolvedQualifiedIdentifierInfo::Kind::MemberFunction:
-						// A member function is named as a value through a direct call
-						// or `&Class::function`; both are lowered by their dedicated
-						// paths, so a plain qualified-id value has no lowering here.
+						if (resolved->is_static_member_function && resolved->member_function != nullptr) {
+							return emitFunctionAddress(
+								*resolved->member_function, qualifiedIdNode.identifier_token().handle(), qualifiedIdNode.identifier_token());
+						}
 						break;
 				}
 			}

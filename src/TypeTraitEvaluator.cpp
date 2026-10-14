@@ -2405,44 +2405,21 @@ static bool containsUnresolvedConversionType(const CanonicalTypeTable& table, Ty
 		}
 	}
 }
-
-static std::optional<ConversionPlan> tryBuildCanonicalEnumToBuiltinConversionPlan(CanonicalTypeTable& table, TypeId source_type, TypeId target_type) {
-	while (table.node(source_type).kind == CanonicalTypeKind::LValueReference ||
-		table.node(source_type).kind == CanonicalTypeKind::RValueReference) {
-		source_type = table.node(source_type).child;
-	}
-	const TypeId source = table.withoutTopLevelQualifiers(source_type);
-	const TypeId target = table.withoutTopLevelQualifiers(target_type);
-	if (table.node(source).kind != CanonicalTypeKind::Enum || table.node(target).kind != CanonicalTypeKind::Builtin) {
-		return std::nullopt;
-	}
-	const CanonicalBuiltinKind target_builtin = table.node(target).builtin;
-	if (target_builtin == CanonicalBuiltinKind::Void || target_builtin == CanonicalBuiltinKind::Nullptr) {
-		return ConversionPlan::no_match();
-	}
-	const EntityId enum_entity = table.enumEntity(source);
-	if (!table.hasEnumLayout(enum_entity)) {
-		return std::nullopt;
-	}
-	const CanonicalEnumLayout layout = table.enumLayout(enum_entity);
-	if (hasCanonicalEnumLayoutFlag(layout.flags, CanonicalEnumLayoutFlags::Scoped)) {
-		return ConversionPlan::no_match();
-	}
-	const bool has_fixed_underlying = hasCanonicalEnumLayoutFlag(layout.flags, CanonicalEnumLayoutFlags::FixedUnderlying);
-	const TypeId promotion_type = has_fixed_underlying ? layout.underlying_type : layout.unfixed_promotion_type;
-	if (!promotion_type) {
-		return std::nullopt;
-	}
-	if (target == table.withoutTopLevelQualifiers(promotion_type) ||
-		(has_fixed_underlying && target == table.withoutTopLevelQualifiers(layout.underlying_type))) {
-		return ConversionPlan{ConversionRank::Promotion, StandardConversionKind::IntegralPromotion, true};
-	}
-	return buildCanonicalStructuralConversionPlan(table, promotion_type, target_type);
-}
-
 static std::optional<TypeTraitResult> tryEvaluateCanonicalScalarConstructionFromArgument(const TypeSpecifierNode& target,
 	const TypeSpecifierNode& argument) {
 	if (target.is_reference()) {
+		if (FrontendContext* context = FrontendContext::active()) {
+			CanonicalTypeTable& table = context->canonicalTypes();
+			CanonicalTypeTransaction transaction(table);
+			const CanonicalTypeImport imported_target = importCanonicalTraitOperand(table, target);
+			const std::optional<TypeId> imported_argument = tryImportSupportedCanonical(table, argument);
+			if (imported_target.status == CanonicalTypeImportStatus::Supported && imported_argument.has_value()) {
+				const auto binding = tryBuildCanonicalReferenceArgumentConversionPlan(table, *imported_argument, imported_target.type);
+				if (binding.has_value()) {
+					return binding->is_valid ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
+				}
+			}
+		}
 		const std::optional<ConversionPlan> binding = tryBuildCanonicalReferenceBindingPlan(argument, target, true);
 		if (binding.has_value()) {
 			return binding->is_valid ? TypeTraitResult::success_true() : TypeTraitResult::success_false();

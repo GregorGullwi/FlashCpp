@@ -230,7 +230,12 @@ Continue boundary 3A in this order.
       parameters with the same canonical referent or a public canonical base
       use direct reference ranking, while differing builtin scalar referents
       use promotion or conversion ranking for temporary binding to const
-      lvalue references and rvalue references. Identical-referent direct-binding
+      lvalue references and rvalue references. The shared TypeId reference planner
+      also handles published enum arithmetic, pointer/member-pointer boolean and
+      null conversions, array/function decay, and supported callable noexcept
+      relaxation. Similar pointer referents use structural reference compatibility
+      for direct qualification binding, preserving pointer-object alias identity
+      and rejecting related lvalues bound to rvalue references. Identical-referent direct-binding
       decisions remain authoritative, including rejection of mutable lvalue
       references to conversion temporaries; nullptr-to-bool reference arguments
       remain rejected. The shared TypeId-only planner replaces the local
@@ -241,9 +246,12 @@ Continue boundary 3A in this order.
       lazy concept. `test_canonical_scalar_reference_temporary_args_ret0.cpp`
       covers builtin scalar lvalue/rvalue reference arguments, promotion versus
       conversion ranking, selected constructor exception facts, and a lazy
-      concept. Enum and dependent types, class user-defined conversions, and
-      pointer/callable referent conversions still defer to compatibility
-      resolution. Direct declaration initialization, constructor expressions,
+      concept. Class user-defined conversions, missing enum facts, nominal
+      pointer/member-owner adjustments, and unsupported dependent/callable
+      relations still defer to compatibility resolution. Expression sema consumes
+      the same TypeId reference plan before entering its residual compatibility
+      path, and its binding descriptor retains the canonical parameter TypeId for
+      lowering. Direct declaration initialization, constructor expressions,
       and initializer-list constructor arguments now consume sema reference
       binding plans through the shared call-argument materializer. The new
       `test_scalar_reference_ctor_temp_materialization_ret0.cpp` regression
@@ -265,6 +273,35 @@ Continue boundary 3A in this order.
       `test_scalar_reference_ctor_temp_virtual_base_ret0.cpp` and
       `test_scalar_reference_ctor_temp_aggregate_base_forward_ret0.cpp`
       regressions cover virtual-base binding and aggregate-base forwarding.
+      Constructor normalization now prefers the declaration's recorded owner,
+      reads published member/base TypeIds when available, and confines legacy
+      declaration lookup to an explicit canonical bridge. Initializer lowering
+      consumes the selected semantic constructor with its bindings instead of
+      selecting a second overload; new-expressions share the annotation helper.
+      `test_ctor_initializer_selected_overload_ret0.cpp` protects promotion-ranked
+      member/base/delegating overloads, and
+      `test_scalar_reference_ctor_temp_owner_identity_ret0.cpp` protects owners
+      sharing names across namespaces and class-template specializations.
+      Class registration now distinguishes a declaration's registered name from
+      an unqualified lookup alias, so a new global declaration cannot overwrite
+      an existing namespace class; the reduced
+      `test_record_lookup_alias_declaration_identity_ret0.cpp` protects that
+      identity. Function designators retain function type until conversion, while
+      explicit address-of retains pointer type; a conditional expression that
+      selects between two function designators keeps that function identity, and
+      an indirect call through a reference loads the pointer object only when the
+      referent is a pointer rather than a function. The
+      `test_conditional_function_designator_identity_ret0.cpp` and
+      `test_function_pointer_reference_indirect_call_ret0.cpp` regressions
+      protect those two paths. The
+      `test_canonical_constructor_reference_conversion_temporaries_ret0.cpp`
+      regression covers pointer/enum/array/function conversions, null pointer
+      materialization, function references, and pointer-object aliasing.
+      Native TypeId-only tests cover accepted, rejected, and deferred structural
+      reference plans, constructor/scalar trait agreement, and 4,096 nested
+      pointer qualifications under the normal OS stack limit. Constructor
+      selection itself still reads declaration candidates through StructTypeInfo;
+      these changes do not close another 3A exit criterion.
       Unscoped enum
       arguments use published promotion and underlying types for builtin
       scalar and constructor parameters; scoped enum-to-builtin conversions
@@ -484,3 +521,13 @@ The recorded Clang stack-usage probe measured `parse_declarator` at 5,160 bytes
 versus 5,000 bytes on `origin/main`; repeat the comparison when changing
 recursive parser paths. The latest canonical architecture probe reports
 `TypeSpecifierNode` at 600 bytes.
+
+The constructor/reference continuation compared Clang 20 debug frames against
+`e590ccc7`: constructor lowering is 27,384 versus 27,192 bytes, function-call
+lowering 20,488 versus 20,216, reference materialization 3,976 versus 3,608, and
+semantic reference binding 3,960 versus 3,704. The shared structural reference
+planner is 600 versus 328 bytes. The new traversals are iterative; a 4,096-level
+qualification regression passes with a 1 MB stack. Existing nested expression
+lowering still uses native recursion, and these checks do not prove all legacy
+template paths bounded. The full native suite has the same two failures on the
+unchanged baseline; see [known issues](KNOWN_ISSUES.md).

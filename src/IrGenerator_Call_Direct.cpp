@@ -682,10 +682,37 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				func_type.has_function_signature() ? &func_type.function_signature() : nullptr;
 			appendIndirectCallArguments(arguments, callExprNode, indirect_signature);
 
+			// A function reference contains the callable address. A reference to a
+			// function-pointer object contains that object's address and needs a load.
+			std::variant<StringHandle, TempVar, LocalVarId> function_pointer = toVariableBase(resolvedVariableKey(func_name));
+			if (func_type.is_reference() || func_type.is_rvalue_reference()) {
+				CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+				CanonicalTypeTransaction transaction(table);
+				const CanonicalTypeImport imported = importCanonicalType(table, func_type);
+				if (imported.status == CanonicalTypeImportStatus::Invalid) {
+					throw InternalError("Indirect callable reference has an invalid canonical type");
+				}
+				bool refers_to_pointer_object;
+				if (imported.status == CanonicalTypeImportStatus::Supported) {
+					const TypeId referent = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, imported.type)).first;
+					const CanonicalTypeKind kind = table.node(referent).kind;
+					if (kind != CanonicalTypeKind::Pointer && kind != CanonicalTypeKind::Function) {
+						throw InternalError("Indirect callable reference does not refer to a function or function pointer");
+					}
+					refers_to_pointer_object = kind == CanonicalTypeKind::Pointer;
+				} else {
+					// Unpublished callable aliases retain their existing flat compatibility projection.
+					refers_to_pointer_object = func_type.is_function_pointer() || func_type.runtime_pointer_depth() > 0;
+				}
+				if (refers_to_pointer_object) {
+					function_pointer = emitDereference(TypeCategory::FunctionPointer, 64, 1, toIrValue(resolvedVariableKey(func_name)), callExprNode.called_from());
+				}
+			}
+
 			// Add the indirect call instruction
 			IndirectCallOp op{
 				.result = ret_var,
-				.function_pointer = toVariableBase(resolvedVariableKey(func_name)),
+				.function_pointer = std::move(function_pointer),
 				.arguments = std::move(arguments)};
 			if (func_type.has_function_signature()) {
 				populateIndirectCallReturnInfo(op, func_type.function_signature());

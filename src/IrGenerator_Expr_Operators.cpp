@@ -1506,8 +1506,24 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	// below are only for legacy non-normalized bodies that can still reach codegen.
 	TypeCategory common_cat = TypeCategory::Invalid;
 	exact_ternary_result_type = sema_.getTernaryResultType(ternaryNode);
+	bool result_is_function_designator = false;
 	if (context != ExpressionContext::LValueAddress && exact_ternary_result_type.has_value()) {
 		common_cat = exact_ternary_result_type->category();
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		CanonicalTypeTransaction transaction(table);
+		const CanonicalTypeImport imported = importCanonicalType(table, *exact_ternary_result_type);
+		if (imported.status == CanonicalTypeImportStatus::Invalid) {
+			throw InternalError("Conditional expression has an invalid canonical result type");
+		}
+		if (imported.status == CanonicalTypeImportStatus::Supported) {
+			const TypeId result_type = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, imported.type)).first;
+			result_is_function_designator = table.node(result_type).kind == CanonicalTypeKind::Function;
+			if (result_is_function_designator) {
+				// Same-type function glvalues keep their semantic function identity;
+				// the selected callable address has a pointer-sized IR representation.
+				common_cat = TypeCategory::FunctionPointer;
+			}
+		}
 	}
 	if (sema_normalized_current_function_ &&
 		!exact_ternary_result_type.has_value()) {
@@ -1625,6 +1641,8 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	int result_size = 0;
 	if (context == ExpressionContext::LValueAddress) {
 		result_size = true_result.size_in_bits.value;
+	} else if (result_is_function_designator) {
+		result_size = POINTER_SIZE_BITS;
 	} else if (exact_ternary_result_type.has_value()) {
 		result_size = getTypeSpecSizeBits(*exact_ternary_result_type);
 	} else {

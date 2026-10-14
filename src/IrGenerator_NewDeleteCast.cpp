@@ -174,8 +174,11 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 			}
 		}
 
-		if (const ConstructorDeclarationNode* resolved_ctor =
-				resolveCodegenConstructorFromArgs(struct_info, ctor_args)) {
+		const ConstructorDeclarationNode* resolved_ctor = sema_.getSelectedInitializerConstructor(&newExpr);
+		if (!resolved_ctor) {
+			resolved_ctor = resolveCodegenConstructorFromArgs(struct_info, ctor_args);
+		}
+		if (resolved_ctor) {
 			ConstructorCallOp ctor_op;
 			ctor_op.object = pointer_var;
 			ctor_op.is_heap_allocated = true;

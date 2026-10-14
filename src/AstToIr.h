@@ -1173,32 +1173,32 @@ private:
 		return function_pointer_type;
 	}
 
-	std::optional<ExprResult> tryEmitCurrentStructStaticMemberFunctionAddress(
-		StringHandle member_name,
-		const Token& token) {
-		const FunctionDeclarationNode* function_decl =
-			findCurrentStructStaticMemberFunction(member_name);
-		if (!function_decl) {
-			return std::nullopt;
-		}
-
-		std::string_view mangled = generateMangledNameForCall(*function_decl, StringHandle{}, {});
+	ExprResult emitFunctionAddress(const FunctionDeclarationNode& function_decl, StringHandle function_name, const Token& token) {
+		requestInlineFunctionEmission(function_decl);
+		const std::string_view mangled = function_decl.has_mangled_name() ? function_decl.mangled_name() :
+			generateMangledNameForCall(function_decl, StringHandle{}, function_decl.namespace_handle());
 		TempVar func_addr_var = var_counter.next();
 		FunctionAddressOp op;
 		op.result.setType(TypeCategory::FunctionPointer);
 		op.result.ir_type = IrType::FunctionPointer;
 		op.result.size_in_bits = SizeInBits{64};
 		op.result.value = func_addr_var;
-		op.function_name = member_name;
+		op.function_name = function_name;
 		op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), token));
+		setTempVarMetadata(func_addr_var,
+			TempVarMetadata::makeAddressOnly(nativeTypeIndex(TypeCategory::FunctionPointer), SizeInBits{64}, ValueCategory::PRValue));
 
-		return makeExprResult(
-			nativeTypeIndex(TypeCategory::FunctionPointer),
-			SizeInBits{64},
-			IrOperand{func_addr_var},
-			PointerDepth{},
+		return makeExprResult(nativeTypeIndex(TypeCategory::FunctionPointer), SizeInBits{64}, IrOperand{func_addr_var}, PointerDepth{},
 			ValueStorage::ContainsAddress);
+	}
+
+	std::optional<ExprResult> tryEmitCurrentStructStaticMemberFunctionAddress(StringHandle member_name, const Token& token) {
+		const FunctionDeclarationNode* function_decl = findCurrentStructStaticMemberFunction(member_name);
+		if (!function_decl) {
+			return std::nullopt;
+		}
+		return emitFunctionAddress(*function_decl, member_name, token);
 	}
 
 	// ========== Lambda Capture Helper Functions ==========

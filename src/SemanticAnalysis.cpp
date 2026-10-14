@@ -3918,8 +3918,11 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 	SemanticContext ctx;
 
 	std::optional<MemberContext> member_context;
-	if (const TypeInfo* type_info = findStructTypeInfoByNameFragment(ctor.struct_name().view());
-		type_info && type_info->getStructInfo()) {
+	const TypeInfo* declared_owner_type_info = ctor.owning_type_index().is_valid() ? tryGetTypeInfo(ctor.owning_type_index()) : nullptr;
+	if (!declared_owner_type_info) {
+		declared_owner_type_info = findStructTypeInfoByNameFragment(ctor.struct_name().view());
+	}
+	if (const TypeInfo* type_info = declared_owner_type_info; type_info && type_info->getStructInfo()) {
 		member_context = MemberContext{type_info->type_index_, true, CVQualifier::None};
 		member_context_stack_.push_back(*member_context);
 	}
@@ -3934,6 +3937,21 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 	setupNormalizedParameterScope(ctor, ctx);
 	const TypeInfo* owner_type_info = member_context.has_value() ? tryGetTypeInfo(member_context->type_index) : nullptr;
 	const StructTypeInfo* owner_struct_info = owner_type_info ? owner_type_info->getStructInfo() : nullptr;
+	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+	auto import_class_type = [&canonical_types](const TypeInfo* type_info) {
+		if (!type_info) {
+			return TypeId{};
+		}
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(canonical_types, *type_info);
+		return imported.status == CanonicalTypeImportStatus::Supported ? imported.type : TypeId{};
+	};
+	const TypeId owner_type = import_class_type(owner_type_info);
+	auto base_type_at = [&canonical_types, &import_class_type](TypeId owner, const BaseClassSpecifier& base, size_t index) {
+		if (owner && canonical_types.hasClassBaseSchema(owner) && index < canonical_types.classBaseCount(owner)) {
+			return canonical_types.classBaseAt(owner, index).type;
+		}
+		return import_class_type(tryGetTypeInfo(base.type_index));
+	};
 
 	// C++20 [class.base.init]: normalize member initializer expressions so
 	// they receive sema annotations (e.g. integral promotions in `result(x + 1)`).
@@ -3949,17 +3967,28 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 			continue;
 		}
 		const TypeInfo* member_type_info = tryGetTypeInfo(member_it->type_index);
+		TypeId member_type_id{};
+		const size_t member_index = static_cast<size_t>(member_it - owner_struct_info->members.begin());
+		if (owner_type && canonical_types.hasRecordSubobjectTypes(owner_type) &&
+			member_index < canonical_types.recordSubobjectMemberCount(owner_type)) {
+			member_type_id = stripCanonicalTopCv(canonical_types, canonical_types.recordSubobjectMemberAt(owner_type, member_index)).first;
+		} else {
+			member_type_id = import_class_type(member_type_info);
+		}
+		if (member_type_id) {
+			member_type_info = tryFindCanonicalOverloadClassTypeInfo(canonical_types, member_type_id);
+		}
 		const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr;
 		if (!member_struct_info || !member_struct_info->hasUserDefinedConstructor()) {
 			continue;
 		}
 		if (mi.initializer_expr.is<InitializerListNode>()) {
-			TypeSpecifierNode member_type(member_it->type_index, member_type_info->sizeInBits(),
-				ctor.name_token(), member_it->member_cv_qualifier, ReferenceQualifier::None);
+			TypeSpecifierNode member_type(member_type_info->registeredTypeIndex(), member_type_info->sizeInBits(), ctor.name_token(),
+				member_it->member_cv_qualifier, ReferenceQualifier::None);
 			tryAnnotateInitListConstructorArgs(mi.initializer_expr.as<InitializerListNode>(), *member_struct_info, member_type, ctor.name_token());
 		} else {
 			const std::span<const ASTNode> arguments(&mi.initializer_expr, 1);
-			tryAnnotateConstructorArgReferenceBindings(*member_struct_info, arguments, &mi, " in member initializer argument");
+			tryAnnotateConstructorArgReferenceBindings(member_type_id, *member_struct_info, arguments, &mi, " in member initializer argument", false);
 		}
 	}
 	// Normalize base class initializer arguments as well.
@@ -3979,7 +4008,7 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 		if (!owner_struct_info) {
 			continue;
 		}
-		auto try_bind_base_initializer = [&](const BaseClassSpecifier& base) {
+		auto try_bind_base_initializer = [&](const BaseClassSpecifier& base, TypeId base_type) {
 			const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
 			const StringHandle base_name = StringTable::getOrInternStringHandle(base.name);
 			const bool matches_base_name = bi.getBaseClassName() == base_name;
@@ -3988,18 +4017,25 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 			if (!matches_base_name && !matches_base_template) {
 				return false;
 			}
+			if (base_type) {
+				base_type_info = tryFindCanonicalOverloadClassTypeInfo(canonical_types, base_type);
+			}
 			const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
 			if (base_struct_info) {
 				const auto arguments = std::span<const ASTNode>{bi.arguments};
 				const ConstructorDeclarationNode* selected_ctor = tryAnnotateConstructorArgReferenceBindings(
-					*base_struct_info, arguments, &bi, " in base initializer argument");
+					base_type, *base_struct_info, arguments, &bi, " in base initializer argument", false);
 				if (!selected_ctor && base_struct_info->members.empty() &&
 					!base_struct_info->base_classes.empty() && !bi.arguments.empty() &&
 					has_only_implicit_constructors(*base_struct_info)) {
-					for (const auto& inner_base : base_struct_info->base_classes) {
-						const TypeInfo* inner_type_info = tryGetTypeInfo(inner_base.type_index);
+					for (size_t inner_index = 0; inner_index < base_struct_info->base_classes.size(); ++inner_index) {
+						const auto& inner_base = base_struct_info->base_classes[inner_index];
+						const TypeId inner_type = base_type_at(base_type, inner_base, inner_index);
+						const TypeInfo* inner_type_info = inner_type ? tryFindCanonicalOverloadClassTypeInfo(canonical_types, inner_type)
+							: tryGetTypeInfo(inner_base.type_index);
 						const StructTypeInfo* inner_struct_info = inner_type_info ? inner_type_info->getStructInfo() : nullptr;
-						if (inner_struct_info && tryAnnotateConstructorArgReferenceBindings(*inner_struct_info, arguments, &bi, " in base initializer argument")) {
+						if (inner_struct_info && tryAnnotateConstructorArgReferenceBindings(
+							inner_type, *inner_struct_info, arguments, &bi, " in base initializer argument", false)) {
 							break;
 						}
 					}
@@ -4008,15 +4044,16 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 			return true;
 		};
 		bool matched_base = false;
-		for (const auto& base : owner_struct_info->base_classes) {
-			if (try_bind_base_initializer(base)) {
+		for (size_t base_index = 0; base_index < owner_struct_info->base_classes.size(); ++base_index) {
+			const auto& base = owner_struct_info->base_classes[base_index];
+			if (try_bind_base_initializer(base, base_type_at(owner_type, base, base_index))) {
 				matched_base = true;
 				break;
 			}
 		}
 		if (!matched_base) {
 			for (const auto& base : owner_struct_info->virtual_bases) {
-				if (try_bind_base_initializer(base)) {
+				if (try_bind_base_initializer(base, import_class_type(tryGetTypeInfo(base.type_index)))) {
 					break;
 				}
 			}
@@ -4029,8 +4066,8 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 			normalizeExpression(arg, ctx);
 		}
 		if (owner_struct_info) {
-			tryAnnotateConstructorArgReferenceBindings(*owner_struct_info,
-				std::span<const ASTNode>{delegating_initializer.arguments}, &delegating_initializer, " in delegating constructor argument");
+			tryAnnotateConstructorArgReferenceBindings(owner_type, *owner_struct_info, std::span<const ASTNode>{delegating_initializer.arguments},
+				&delegating_initializer, " in delegating constructor argument", false);
 		}
 	}
 
@@ -8868,6 +8905,11 @@ std::optional<CanonicalTypeId> SemanticAnalysis::normalizeBuiltinSubscriptOperan
 	return std::nullopt;
 }
 
+const ConstructorDeclarationNode* SemanticAnalysis::getSelectedInitializerConstructor(const void* key) const {
+	const auto selected = selected_initializer_constructors_.find(key);
+	return selected == selected_initializer_constructors_.end() ? nullptr : selected->second;
+}
+
 const CallArgReferenceBindingInfo* SemanticAnalysis::getCallRefBinding(const void* key, size_t arg_index) const {
 	auto it = call_ref_bindings_.find(key);
 	if (it == call_ref_bindings_.end() || arg_index >= it->second.size()) {
@@ -9038,7 +9080,7 @@ CanonicalTypeId SemanticAnalysis::inferResolvedSymbolType(const ASTNode& symbol)
 
 	if (symbol.is<FunctionDeclarationNode>()) {
 		const auto& func = symbol.as<FunctionDeclarationNode>();
-		return canonicalizeType(FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(func));
+		return canonicalizeType(FlashCpp::ParserFunctionTypeHelpers::buildFunctionTypeFromFunctionDeclaration(func));
 	}
 
 	return {};
@@ -9089,9 +9131,7 @@ CanonicalTypeId SemanticAnalysis::inferStaticMemberFunctionTypeFromContext(const
 		return {};
 	}
 
-	return canonicalizeType(
-		FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(
-			*function_decl));
+	return canonicalizeType(FlashCpp::ParserFunctionTypeHelpers::buildFunctionTypeFromFunctionDeclaration(*function_decl));
 }
 
 // --- Expression type inference ---
@@ -9916,6 +9956,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 							return inferResolvedSymbolType(resolved->symbol);
 						case ResolvedQualifiedIdentifierInfo::Kind::StaticMember:
 							return resolved->semantic_type_id;
+						case ResolvedQualifiedIdentifierInfo::Kind::MemberFunction:
+							if (resolved->is_static_member_function && resolved->member_function != nullptr) {
+								return canonicalizeType(
+									FlashCpp::ParserFunctionTypeHelpers::buildFunctionTypeFromFunctionDeclaration(*resolved->member_function));
+							}
+							return {};
 						case ResolvedQualifiedIdentifierInfo::Kind::EnumConstant: {
 							// Fast path: use the stored enum owner TypeIndex if available.
 							if (resolved->enum_owner_type_index.is_valid()) {
@@ -12419,6 +12465,39 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 
 	const bool arg_is_lvalue = arg_binding_type.is_lvalue_reference();
 	const bool arg_is_xvalue = arg_binding_type.is_rvalue_reference();
+	const CanonicalTypeId source_binding_type_id = canonicalizeType(arg_binding_type);
+	const CanonicalTypeImport source_import = tryImportCanonicalTypeDesc(type_context_.get(source_binding_type_id));
+	const CanonicalTypeImport target_import = tryImportCanonicalTypeDesc(type_context_.get(param_type_id));
+	if (source_import.status == CanonicalTypeImportStatus::Supported && target_import.status == CanonicalTypeImportStatus::Supported) {
+		CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+		const std::optional<ConversionPlan> binding = tryBuildCanonicalReferenceArgumentConversionPlan(
+			canonical_types, source_import.type, target_import.type);
+		if (binding.has_value()) {
+			if (!binding->is_valid) {
+				return std::nullopt;
+			}
+			CanonicalTypeDesc binding_parameter = type_context_.get(param_type_id);
+			binding_parameter.structural_type_id = target_import.type;
+			info.parameter_type_id = type_context_.intern(binding_parameter);
+			const std::optional<ConversionPlan> direct = tryBuildCanonicalDirectReferenceBindingPlan(
+				canonical_types, source_import.type, target_import.type);
+			const CanonicalTypeKind source_kind = canonical_types.node(source_import.type).kind;
+			const bool source_is_reference = source_kind == CanonicalTypeKind::LValueReference || source_kind == CanonicalTypeKind::RValueReference;
+			if (direct.has_value() && direct->is_valid && source_is_reference) {
+				info.flags = ConversionPlanFlags::IsValid | ConversionPlanFlags::BindsReferenceDirectly;
+			} else {
+				info.flags = ConversionPlanFlags::IsValid | ConversionPlanFlags::MaterializesTemporary;
+				if (null_pointer_constant_to_nullptr && inferred_arg_type_id && inferred_arg_type_id != param_value_type_id) {
+					info.pre_bind_cast_info_index = allocateNonUserDefinedCastInfo(
+						inferred_arg_type_id, param_value_type_id, StandardConversionKind::PointerConversion);
+				} else if (binding->kind != StandardConversionKind::None) {
+					info.pre_bind_cast_info_index = allocateNonUserDefinedCastInfo(arg_value_type_id, param_value_type_id, binding->kind);
+				}
+			}
+			return info;
+		}
+	}
+	// Unsupported canonical relations still use the declaration compatibility bridge.
 	const bool direct_base_subobject_binding =
 		arg_value_type.runtime_pointer_depth() == 0 &&
 		param_value_type.runtime_pointer_depth() == 0 &&
@@ -12448,36 +12527,7 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 			return std::nullopt;
 	}
 
-	ConversionPlan value_plan;
-	bool has_canonical_builtin_reference_conversion = false;
-	const CanonicalTypeId source_binding_type_id = canonicalizeType(arg_binding_type);
-	if (source_binding_type_id) {
-		const CanonicalTypeDesc& target_desc = type_context_.get(param_type_id);
-		const CanonicalTypeDesc& source_desc = type_context_.get(source_binding_type_id);
-		if (source_desc.structural_type_id && target_desc.structural_type_id) {
-			CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
-			const TypeId source_referent = canonicalTypeWithoutReference(canonical_types, source_desc.structural_type_id);
-			const TypeId target_referent = canonicalTypeWithoutReference(canonical_types, target_desc.structural_type_id);
-			const TypeId source_base = stripCanonicalTopCv(canonical_types, source_referent).first;
-			const TypeId target_base = stripCanonicalTopCv(canonical_types, target_referent).first;
-			if (source_base != target_base && canonical_types.node(source_base).kind == CanonicalTypeKind::Builtin &&
-				canonical_types.node(target_base).kind == CanonicalTypeKind::Builtin) {
-				const std::optional<ConversionPlan> canonical_binding = tryBuildCanonicalReferenceArgumentConversionPlan(
-					canonical_types, source_desc.structural_type_id, target_desc.structural_type_id);
-				if (!canonical_binding.has_value()) {
-					throw InternalError("Canonical builtin reference conversion planner deferred a builtin pair");
-				}
-				if (!canonical_binding->is_valid) {
-					return std::nullopt;
-				}
-				value_plan = *canonical_binding;
-				has_canonical_builtin_reference_conversion = true;
-			}
-		}
-	}
-	if (!has_canonical_builtin_reference_conversion) {
-		value_plan = buildConversionPlan(arg_value_type, param_value_type);
-	}
+	const ConversionPlan value_plan = buildConversionPlan(arg_value_type, param_value_type);
 	if (!value_plan.is_valid) {
 		return std::nullopt;
 	}
@@ -14390,60 +14440,32 @@ void SemanticAnalysis::tryAnnotateNewExpressionConstructorArgConversions(const N
 		return;
 	}
 
-	const auto& arguments = new_expression.constructor_args();
-	std::vector<TypeSpecifierNode> arg_types;
-	arg_types.reserve(arguments.size());
-	for (const ASTNode& arg : arguments) {
-		if (!arg.is<ExpressionNode>()) {
-			return;
-		}
-		auto arg_type = buildOverloadResolutionArgType(arg, nullptr);
-		if (!arg_type.has_value()) {
-			return;
-		}
-		arg_types.push_back(std::move(*arg_type));
+	const CanonicalTypeImport target = importCanonicalClassTypeInfo(requireFrontendContext().canonicalTypes(), *type_info);
+	std::vector<ASTNode> arguments;
+	arguments.reserve(new_expression.constructor_args().size());
+	for (const ASTNode& argument : new_expression.constructor_args()) {
+		arguments.push_back(argument);
 	}
-
-	auto resolution = resolve_constructor_overload(*struct_info, arg_types, true, arguments);
-	bool template_ctor_ambiguous = false;
-	resolution.selected_overload = parser().templateEngine().materializeMatchingConstructorTemplate(
-		struct_info->getName(), *struct_info, arg_types, resolution.selected_overload,
-		template_ctor_ambiguous);
-	if (template_ctor_ambiguous) {
-		resolution.is_ambiguous = true;
-	} else if (resolution.selected_overload) {
-		resolution.is_ambiguous = false;
-	}
-	if (resolution.is_ambiguous || !resolution.selected_overload) {
-		return;
-	}
-	const ConstructorDeclarationNode* selected_ctor = ensureSelectedConstructorMaterialized(*struct_info, resolution.selected_overload);
-	if (!selected_ctor) {
-		return;
-	}
-
-	const auto& parameters = selected_ctor->parameter_nodes();
-	auto& ref_bindings = call_ref_bindings_[&new_expression];
-	ref_bindings.clear();
-	ref_bindings.resize(std::min(arguments.size(), parameters.size()));
-	for (size_t i = 0; i < ref_bindings.size(); ++i) {
-		if (!parameters[i].is<DeclarationNode>()) {
-			continue;
-		}
-		const TypeSpecifierNode& param_type = parameters[i].as<DeclarationNode>().type_specifier_node();
-		if (param_type.is_reference() || param_type.is_rvalue_reference()) {
-			if (auto binding = buildCallArgReferenceBinding(arguments[i], param_type, " in new-expression argument")) {
-				ref_bindings[i] = *binding;
-			}
-		}
-	}
+	tryAnnotateConstructorArgReferenceBindings(target.status == CanonicalTypeImportStatus::Supported ? target.type : TypeId{},
+		*struct_info, arguments, &new_expression, " in new-expression argument", true);
 }
 
-const ConstructorDeclarationNode* SemanticAnalysis::tryAnnotateConstructorArgReferenceBindings(const StructTypeInfo& struct_info,
-	std::span<const ASTNode> arguments, const void* binding_key, const char* context_description) {
+const ConstructorDeclarationNode* SemanticAnalysis::tryAnnotateConstructorArgReferenceBindings(TypeId target_type,
+	const StructTypeInfo& compatibility_struct_info, std::span<const ASTNode> arguments, const void* binding_key, const char* context_description,
+	bool skip_implicit) {
 	if (arguments.empty() || binding_key == nullptr) {
 		return nullptr;
 	}
+	// Canonical identity selects the declaration bridge; unsupported class imports
+	// retain the existing declaration source until those families are representable.
+	const TypeInfo* target_type_info = target_type
+		? tryFindCanonicalOverloadClassTypeInfo(requireFrontendContext().canonicalTypes(), target_type) : nullptr;
+	const StructTypeInfo* target_struct_info = target_type ? (target_type_info ? target_type_info->getStructInfo() : nullptr)
+		: &compatibility_struct_info;
+	if (!target_struct_info) {
+		return nullptr;
+	}
+	const StructTypeInfo& struct_info = *target_struct_info;
 	std::vector<TypeSpecifierNode> arg_types;
 	arg_types.reserve(arguments.size());
 	for (const ASTNode& arg : arguments) {
@@ -14457,7 +14479,7 @@ const ConstructorDeclarationNode* SemanticAnalysis::tryAnnotateConstructorArgRef
 		arg_types.push_back(std::move(*arg_type));
 	}
 
-	auto resolution = resolve_constructor_overload(struct_info, arg_types, false, arguments);
+	auto resolution = resolve_constructor_overload(struct_info, arg_types, skip_implicit, arguments);
 	bool template_ctor_ambiguous = false;
 	resolution.selected_overload = parser().templateEngine().materializeMatchingConstructorTemplate(struct_info.getName(),
 		struct_info, arg_types, resolution.selected_overload, template_ctor_ambiguous);
@@ -14475,6 +14497,7 @@ const ConstructorDeclarationNode* SemanticAnalysis::tryAnnotateConstructorArgRef
 	}
 
 	const auto& parameters = selected_ctor->parameter_nodes();
+	selected_initializer_constructors_[binding_key] = selected_ctor;
 	auto& ref_bindings = call_ref_bindings_[binding_key];
 	ref_bindings.clear();
 	ref_bindings.resize(std::min(arguments.size(), parameters.size()));

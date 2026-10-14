@@ -716,9 +716,10 @@ TypeCreationResult add_user_type(StringHandle name, int type_size_in_bits, Names
 }
 
 TypeCreationResult add_struct_type(StringHandle name, NamespaceHandle ns) {
-	// Check if type already exists (forward declaration / placeholder case)
+	// Only the declaration's registered name can reuse its identity. An unqualified
+	// lookup alias for another scope must not make a new class overwrite that class.
 	auto existing_it = gTypesByName.find(name);
-	if (existing_it != gTypesByName.end()) {
+	if (existing_it != gTypesByName.end() && existing_it->second->name() == name) {
 		TypeInfo& existing = *existing_it->second;
 		// Upgrade an incomplete class-template placeholder registered under the
 		// final instantiation name into a Struct identity so layout completion
@@ -748,7 +749,11 @@ TypeCreationResult add_struct_type(StringHandle name, NamespaceHandle ns) {
 	TypeIndex idx{gTypeInfo.size(), TypeCategory::Struct};
 	auto& type_info = emplaceTypeInfoTracked("add_struct_type", name, idx, 0);
 	type_info.setNamespaceHandle(ns);
-	emplaceTypeNameTracked("add_struct_type", type_info.name(), &type_info);
+	if (existing_it != gTypesByName.end()) {
+		existing_it->second = &type_info;
+	} else {
+		emplaceTypeNameTracked("add_struct_type", type_info.name(), &type_info);
+	}
 	return TypeCreationResult{type_info, idx};
 }
 

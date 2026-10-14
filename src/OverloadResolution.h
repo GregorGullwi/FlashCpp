@@ -1547,9 +1547,44 @@ inline bool tryPublishCanonicalClassBaseSchema(CanonicalTypeTable& table, TypeId
 
 inline bool isIntegerLiteralZeroNullPointerConstant(const ASTNode& arg_node);
 
+// Similar referents have the same structural spine and terminal identity, ignoring cv.
+inline bool areCanonicalReferenceReferentsSimilar(const CanonicalTypeTable& table, TypeId source, TypeId target) {
+	for (;;) {
+		source = stripCanonicalTopCv(table, source).first;
+		target = stripCanonicalTopCv(table, target).first;
+		if (source == target) {
+			return true;
+		}
+		const CanonicalTypeNode source_node = table.node(source);
+		const CanonicalTypeNode target_node = table.node(target);
+		if (source_node.kind != target_node.kind || source_node.flags != target_node.flags) {
+			return false;
+		}
+		switch (source_node.kind) {
+		case CanonicalTypeKind::Array:
+			if (source_node.array_extent != target_node.array_extent) {
+				return false;
+			}
+			break;
+		case CanonicalTypeKind::MemberObjectPointer:
+		case CanonicalTypeKind::MemberFunctionPointer:
+			if (table.memberPointerOwner(source) != table.memberPointerOwner(target)) {
+				return false;
+			}
+			break;
+		case CanonicalTypeKind::Pointer:
+			break;
+		default:
+			return false;
+		}
+		source = source_node.child;
+		target = target_node.child;
+	}
+}
+
 // Direct reference binding needs only TypeIds and the published class-base graph.
 // Differing referents that require a conversion temporary or user-defined conversion stay deferred.
-inline std::optional<ConversionPlan> tryBuildCanonicalDirectReferenceBindingPlan(const CanonicalTypeTable& table, TypeId source_type,
+inline std::optional<ConversionPlan> tryBuildCanonicalDirectReferenceBindingPlan(CanonicalTypeTable& table, TypeId source_type,
 	TypeId target_type) {
 	const CanonicalTypeNode target_node = table.node(target_type);
 	const bool target_is_lvalue_reference = target_node.kind == CanonicalTypeKind::LValueReference;
@@ -1563,13 +1598,28 @@ inline std::optional<ConversionPlan> tryBuildCanonicalDirectReferenceBindingPlan
 	const TypeId source_referent = source_has_reference ? source_node.child : source_type;
 	const auto [source_base, source_cv] = stripCanonicalTopCv(table, source_referent);
 	const auto [target_base, target_cv] = stripCanonicalTopCv(table, target_node.child);
+	bool qualification_binding = false;
 	if (source_base != target_base) {
-		const auto base_conversion = classifyCanonicalDerivedBaseConversion(table, source_base, target_base);
-		if (!base_conversion.has_value() || *base_conversion == DerivedBaseConversionKind::NotRelated) {
-			return std::nullopt;
-		}
-		if (*base_conversion != DerivedBaseConversionKind::UniquePublicNonVirtual && *base_conversion != DerivedBaseConversionKind::PublicVirtual) {
-			return ConversionPlan::no_match();
+		const CanonicalTypeKind source_kind = table.node(source_base).kind;
+		if ((source_kind == CanonicalTypeKind::Pointer || source_kind == CanonicalTypeKind::MemberObjectPointer ||
+			source_kind == CanonicalTypeKind::MemberFunctionPointer) && areCanonicalReferenceReferentsSimilar(table, source_base, target_base)) {
+			if (source_is_lvalue && target_is_rvalue_reference) {
+				return ConversionPlan::no_match();
+			}
+			const ConversionPlan compatibility = buildCanonicalStructuralConversionPlan(
+				table, table.pointer(source_referent), table.pointer(target_node.child));
+			if (!compatibility.is_valid) {
+				return std::nullopt;
+			}
+			qualification_binding = true;
+		} else {
+			const auto base_conversion = classifyCanonicalDerivedBaseConversion(table, source_base, target_base);
+			if (!base_conversion.has_value() || *base_conversion == DerivedBaseConversionKind::NotRelated) {
+				return std::nullopt;
+			}
+			if (*base_conversion != DerivedBaseConversionKind::UniquePublicNonVirtual && *base_conversion != DerivedBaseConversionKind::PublicVirtual) {
+				return ConversionPlan::no_match();
+			}
 		}
 	}
 	if ((static_cast<uint8_t>(source_cv) & ~static_cast<uint8_t>(target_cv)) != 0) {
@@ -1579,11 +1629,49 @@ inline std::optional<ConversionPlan> tryBuildCanonicalDirectReferenceBindingPlan
 	if ((target_is_lvalue_reference && !source_is_lvalue && !target_accepts_rvalue) || (target_is_rvalue_reference && source_is_lvalue)) {
 		return ConversionPlan::no_match();
 	}
+	if (qualification_binding) {
+		return ConversionPlan::qualification_adjustment();
+	}
 	return source_base == target_base ? ConversionPlan::exact_match() :
 		ConversionPlan{ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
 }
 
-// Reference arguments first use direct binding; only builtin-to-builtin conversions may materialize a temporary here.
+inline std::optional<ConversionPlan> tryBuildCanonicalEnumToBuiltinConversionPlan(CanonicalTypeTable& table, TypeId source_type, TypeId target_type) {
+	while (table.node(source_type).kind == CanonicalTypeKind::LValueReference ||
+		table.node(source_type).kind == CanonicalTypeKind::RValueReference) {
+		source_type = table.node(source_type).child;
+	}
+	const TypeId source = table.withoutTopLevelQualifiers(source_type);
+	const TypeId target = table.withoutTopLevelQualifiers(target_type);
+	if (table.node(source).kind != CanonicalTypeKind::Enum || table.node(target).kind != CanonicalTypeKind::Builtin) {
+		return std::nullopt;
+	}
+	const CanonicalBuiltinKind target_builtin = table.node(target).builtin;
+	if (target_builtin == CanonicalBuiltinKind::Void || target_builtin == CanonicalBuiltinKind::Nullptr) {
+		return ConversionPlan::no_match();
+	}
+	const EntityId enum_entity = table.enumEntity(source);
+	if (!table.hasEnumLayout(enum_entity)) {
+		return std::nullopt;
+	}
+	const CanonicalEnumLayout layout = table.enumLayout(enum_entity);
+	if (hasCanonicalEnumLayoutFlag(layout.flags, CanonicalEnumLayoutFlags::Scoped)) {
+		return ConversionPlan::no_match();
+	}
+	const bool has_fixed_underlying = hasCanonicalEnumLayoutFlag(layout.flags, CanonicalEnumLayoutFlags::FixedUnderlying);
+	const TypeId promotion_type = has_fixed_underlying ? layout.underlying_type : layout.unfixed_promotion_type;
+	if (!promotion_type) {
+		return std::nullopt;
+	}
+	if (target == table.withoutTopLevelQualifiers(promotion_type) ||
+		(has_fixed_underlying && target == table.withoutTopLevelQualifiers(layout.underlying_type))) {
+		return ConversionPlan{ConversionRank::Promotion, StandardConversionKind::IntegralPromotion, true};
+	}
+	return buildCanonicalStructuralConversionPlan(table, promotion_type, target_type);
+}
+
+// TypeId reference plans return an authoritative answer for supported structural conversions.
+// Missing enum facts, nominal relationships, and dependent relations remain deferred.
 inline std::optional<ConversionPlan> tryBuildCanonicalReferenceArgumentConversionPlan(CanonicalTypeTable& table, TypeId source_type,
 	TypeId target_type) {
 	const std::optional<ConversionPlan> direct_binding = tryBuildCanonicalDirectReferenceBindingPlan(table, source_type, target_type);
@@ -1602,13 +1690,89 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceArgumentConversio
 	const TypeId target_referent = target_node.child;
 	const TypeId source_base = stripCanonicalTopCv(table, source_referent).first;
 	const auto [target_base, target_cv] = stripCanonicalTopCv(table, target_referent);
-	if (table.node(source_base).kind != CanonicalTypeKind::Builtin || table.node(target_base).kind != CanonicalTypeKind::Builtin) {
+	const CanonicalTypeKind source_kind = table.node(source_base).kind;
+	const CanonicalTypeKind target_kind = table.node(target_base).kind;
+	std::optional<ConversionPlan> conversion;
+	if (source_kind == CanonicalTypeKind::Enum && target_kind == CanonicalTypeKind::Builtin) {
+		conversion = tryBuildCanonicalEnumToBuiltinConversionPlan(table, source_base, target_base);
+	} else {
+		const auto is_pointer_like = [](CanonicalTypeKind kind) {
+			return kind == CanonicalTypeKind::Pointer || kind == CanonicalTypeKind::MemberObjectPointer ||
+				kind == CanonicalTypeKind::MemberFunctionPointer;
+		};
+		const bool source_can_decay = source_kind == CanonicalTypeKind::Array || source_kind == CanonicalTypeKind::Function;
+		const bool boolean_conversion = target_kind == CanonicalTypeKind::Builtin && table.node(target_base).builtin == CanonicalBuiltinKind::Bool &&
+			(is_pointer_like(source_kind) || source_can_decay);
+		const bool null_pointer_conversion = source_kind == CanonicalTypeKind::Builtin &&
+			table.node(source_base).builtin == CanonicalBuiltinKind::Nullptr && is_pointer_like(target_kind);
+		const bool pointer_conversion = (is_pointer_like(source_kind) && is_pointer_like(target_kind)) ||
+			(source_can_decay && target_kind == CanonicalTypeKind::Pointer);
+		if (!boolean_conversion && !null_pointer_conversion && !pointer_conversion &&
+			(source_kind != CanonicalTypeKind::Builtin || target_kind != CanonicalTypeKind::Builtin)) {
+			return std::nullopt;
+		}
+		// Similar pointer types are reference-related even when their nested cv differs.
+		// An lvalue of a related type cannot initialize an rvalue reference by making a temporary.
+		TypeId source_shape = source_base;
+		if (source_can_decay) {
+			source_shape = source_kind == CanonicalTypeKind::Array ? table.pointer(table.node(source_base).child) : table.pointer(source_base);
+		}
+		TypeId target_shape = target_base;
+		bool unsupported_relation = false;
+		const auto needs_relation_facts = [](CanonicalTypeKind kind) {
+			return kind == CanonicalTypeKind::Record || kind == CanonicalTypeKind::TemplateSpecialization ||
+				kind == CanonicalTypeKind::TemplateParameter || kind == CanonicalTypeKind::AliasTemplateSpecialization ||
+				kind == CanonicalTypeKind::DependentName || kind == CanonicalTypeKind::DependentTemplateMember ||
+				kind == CanonicalTypeKind::DependentMemberAlias;
+		};
+		for (;;) {
+			source_shape = stripCanonicalTopCv(table, source_shape).first;
+			target_shape = stripCanonicalTopCv(table, target_shape).first;
+			if (source_shape == target_shape) {
+				break;
+			}
+			const CanonicalTypeNode source_component = table.node(source_shape);
+			const CanonicalTypeNode target_component = table.node(target_shape);
+			if (source_component.kind != target_component.kind) {
+				unsupported_relation = needs_relation_facts(source_component.kind) || needs_relation_facts(target_component.kind);
+				break;
+			}
+			const CanonicalTypeKind kind = source_component.kind;
+			if (kind == CanonicalTypeKind::MemberObjectPointer || kind == CanonicalTypeKind::MemberFunctionPointer) {
+				if (table.memberPointerOwner(source_shape) != table.memberPointerOwner(target_shape)) {
+					unsupported_relation = true;
+					break;
+				}
+			} else if (kind != CanonicalTypeKind::Pointer && kind != CanonicalTypeKind::Array) {
+				unsupported_relation = needs_relation_facts(kind);
+				if (kind == CanonicalTypeKind::Function) {
+					unsupported_relation = table.functionDependentNoexcept(source_shape) || table.functionDependentNoexcept(target_shape);
+				}
+				break;
+			}
+			if (kind == CanonicalTypeKind::Array && source_component.array_extent != target_component.array_extent) {
+				break;
+			}
+			source_shape = source_component.child;
+			target_shape = target_component.child;
+		}
+		if (target_is_rvalue_reference && source_node.kind == CanonicalTypeKind::LValueReference &&
+			areCanonicalReferenceReferentsSimilar(table, source_base, target_base)) {
+			return ConversionPlan::no_match();
+		}
+		const ConversionPlan structural = buildCanonicalStructuralConversionPlan(table, source_referent, target_referent);
+		if (!structural.is_valid && unsupported_relation) {
+			return std::nullopt;
+		}
+		conversion = structural;
+	}
+	if (!conversion.has_value()) {
 		return std::nullopt;
 	}
 	if (target_is_lvalue_reference && target_cv != CVQualifier::Const) {
 		return ConversionPlan::no_match();
 	}
-	return buildCanonicalStructuralConversionPlan(table, source_base, target_referent);
+	return conversion;
 }
 
 inline std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgument(const TypeSpecifierNode& target_type,

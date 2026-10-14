@@ -345,6 +345,7 @@ public:
 								  const StructTypeInfo*& out_struct_info,
 								  const StructMember*& out_member);
 	const CallArgReferenceBindingInfo* getCallRefBinding(const void* key, size_t arg_index) const;
+	const ConstructorDeclarationNode* getSelectedInitializerConstructor(const void* key) const;
 
 	const CallArgReferenceBindingInfo* getCallExprRefBinding(const CallExprNode* key, size_t arg_index) const;
 
@@ -666,8 +667,8 @@ private:
 	// Annotate constructor-call arguments with their parameter-type conversions.
 	void tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node);
 	void tryAnnotateNewExpressionConstructorArgConversions(const NewExpressionNode& new_expression);
-	const ConstructorDeclarationNode* tryAnnotateConstructorArgReferenceBindings(const StructTypeInfo& struct_info,
-		std::span<const ASTNode> arguments, const void* binding_key, const char* context_description);
+	const ConstructorDeclarationNode* tryAnnotateConstructorArgReferenceBindings(TypeId target_type, const StructTypeInfo& compatibility_struct_info,
+		std::span<const ASTNode> arguments, const void* binding_key, const char* context_description, bool skip_implicit);
 	const ConstructorDeclarationNode* ensureSelectedConstructorMaterialized(
 		const StructTypeInfo& struct_info,
 		const ConstructorDeclarationNode* ctor);
@@ -801,6 +802,7 @@ private:
 	std::unordered_map<StringHandle, CanonicalTypeId> codegen_synthesized_local_types_;
 	std::unordered_set<const void*> analyzed_overload_resolution_arg_queries_;
 	std::unordered_map<const void*, std::vector<CallArgReferenceBindingInfo>> call_ref_bindings_;
+	std::unordered_map<const void*, const ConstructorDeclarationNode*> selected_initializer_constructors_;
 	std::unordered_map<const TernaryOperatorNode*, CanonicalTypeId> ternary_result_types_;
 	std::unordered_map<const StructuredBindingNode*, StructuredBindingPlan> structured_binding_plans_;
 
