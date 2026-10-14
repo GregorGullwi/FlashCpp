@@ -13800,7 +13800,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			}
 			if (!found_global) {
 				FLASH_LOG(Codegen, Error, "MemberAccess missing object: ", StringTable::getStringView(object_name_handle), "\n");
-				throw CompileError(std::string("Struct object '") + std::string(StringTable::getStringView(object_name_handle)) + "' not found in scope or globals");
+				throw InternalError(std::string("Struct object '") + std::string(StringTable::getStringView(object_name_handle)) + "' not found in scope or globals");
 				return;
 			}
 		} else {

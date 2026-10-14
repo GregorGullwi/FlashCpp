@@ -324,8 +324,10 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 							arg_types.push_back(*arg_type_opt);
 							auto resolution = resolve_constructor_overload(*target_struct_info, arg_types, true);
 							if (resolution.is_ambiguous) {
-								throw CompileError(std::string(StringBuilder()
-									.append("Ambiguous constructor call for '")
+								// Sema owns ambiguous return-construction
+								// (AmbiguousConstructorCall); codegen must not re-decide it.
+								throw InternalError(std::string(StringBuilder()
+									.append("Sema must reject ambiguous return construction of '")
 									.append(return_ctor_target_name)
 									.append("'")
 									.commit()));

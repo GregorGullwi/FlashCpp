@@ -5832,7 +5832,7 @@ ExprResult AstToIr::generateBuiltinUnreachableIntrinsic(const CallExprNode& call
 
 ExprResult AstToIr::generateBuiltinNoOpIntrinsic(const CallExprNode& callExprNode, std::string_view func_name) {
 	if (!callExprNode.arguments().empty()) {
-		throw CompileError(std::string(func_name) + " does not accept arguments");
+		throw InternalError(std::string("Sema must reject ") + std::string(func_name) + " with arguments");
 	}
 
 	FLASH_LOG_FORMAT(Codegen, Debug, "{} encountered - no code emitted", func_name);
@@ -5891,7 +5891,7 @@ ExprResult AstToIr::generateBuiltinExpectIntrinsic(const CallExprNode& callExprN
 
 ExprResult AstToIr::generateBuiltinIdentityIntrinsic(const CallExprNode& callExprNode, std::string_view func_name) {
 	if (callExprNode.arguments().size() != 1) {
-		throw CompileError(std::string(func_name) + " requires exactly 1 argument");
+		throw InternalError(std::string("Sema must reject ") + std::string(func_name) + " with a non-single argument count");
 	}
 
 	ASTNode arg = callExprNode.arguments()[0];

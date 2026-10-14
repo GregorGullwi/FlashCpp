@@ -2460,7 +2460,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							const TypeInfo* tgt_info = tryGetTypeInfo(type_node.type_index());
 							std::string src_name = src_info ? std::string(StringTable::getStringView(src_info->name())) : std::string("<unknown>");
 							std::string tgt_name = tgt_info ? std::string(StringTable::getStringView(tgt_info->name())) : std::string("<unknown>");
-							throw CompileError(
+							throw InternalError(
 								"Cannot initialize '" + tgt_name + "*' with pointer to '" + src_name +
 									"': '" + tgt_name + "' is an inaccessible base of '" + src_name + "' [conv.ptr]/3");
 						}

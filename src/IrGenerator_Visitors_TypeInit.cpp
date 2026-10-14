@@ -1407,7 +1407,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 
 											ConstExpr::EvalResult object_result = ConstExpr::Evaluator::evaluate(node, eval_ctx);
 											if (!object_result.success() || object_result.object_member_bindings.empty()) {
-												throw CompileError("Expected constexpr struct initializer for array element");
+												throw InternalError("Expected constexpr struct initializer for array element");
 											}
 											packStructEvalResultIntoInitData(
 												packStructEvalResultIntoInitData,
@@ -1437,7 +1437,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 										throwTooManyInitializers(*context_, "Too many initializers for array");
 									}
 									if (!node.is<InitializerListNode>()) {
-										throw CompileError("Expected braced initializer for array subobject");
+										throw InternalError("Expected braced initializer for array subobject");
 									}
 									self(self, node.as<InitializerListNode>(), dim_index + 1, base_offset + subarray_index * subarray_size);
 									subarray_index++;
@@ -3269,7 +3269,9 @@ void AstToIr::generateNestedMemberStores(
 				}
 
 				if (!member_struct_info->isAggregate()) {
-					throw CompileError(
+					// Sema owns the missing nested-constructor case; codegen reaching a
+					// non-aggregate member with no resolved constructor is an invariant break.
+					throw InternalError(
 						"No matching constructor for nested aggregate member '" +
 						std::string(StringTable::getStringView(member_name)) + "'");
 				}

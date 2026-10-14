@@ -137,7 +137,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 			const ASTNode& argument = ctor_args[member_idx];
 			const StructMember& member = struct_info.members[member_idx];
 			if (!argument.is<ExpressionNode>() && !argument.is<InitializerListNode>()) {
-				throw CompileError("Unsupported aggregate new initializer shape for member '" +
+				throw InternalError("Unsupported aggregate new initializer shape for member '" +
 								   std::string(StringTable::getStringView(member.getName())) + "'");
 			}
 			aggregate_init_list.add_initializer(argument);
