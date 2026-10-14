@@ -945,6 +945,11 @@ private:
 		const ConstructorDeclarationNode* resolved_ctor,
 		const ArgRange& args,
 		const Token& source_token) {
+		appendConstructorCallArguments(ctor_op, resolved_ctor, args, source_token, nullptr);
+	}
+	template <typename ArgRange>
+	void appendConstructorCallArguments(ConstructorCallOp& ctor_op, const ConstructorDeclarationNode* resolved_ctor,
+		const ArgRange& args, const Token& source_token, const void* binding_key) {
 		ctor_op.resolved_constructor = resolved_ctor;
 		const std::span<const ASTNode> ctor_params = resolved_ctor ? resolved_ctor->parameter_nodes() : std::span<const ASTNode>();
 		size_t arg_index = 0;
@@ -959,47 +964,33 @@ private:
 				param_type = &ctor_params[arg_index].as<DeclarationNode>().type_specifier_node();
 			}
 
-			ExpressionContext arg_context = ExpressionContext::Load;
-			if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
-				arg_context = ExpressionContext::LValueAddress;
-			}
-
-			ExprResult argument_result = visitExpressionNode(arg.template as<ExpressionNode>(), arg_context);
-			if (param_type) {
-				const TypeCategory param_base_type = param_type->type();
-				if (resolved_ctor &&
-					param_type->pointer_depth() == 0 &&
-					argument_result.typeEnum() != param_base_type &&
-					is_standard_arithmetic_type(argument_result.typeEnum()) &&
-					is_standard_arithmetic_type(param_base_type)) {
-					TypeConversionResult conv = can_convert_type(argument_result.typeEnum(), param_base_type);
-					if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
-						argument_result = generateTypeConversion(
-							argument_result,
-							argument_result.typeEnum(),
-							param_base_type,
-							source_token);
-					} else {
-						argument_result = applyConstructorArgConversion(
-							argument_result,
-							arg,
-							*param_type,
-							source_token);
-					}
-				} else {
-					argument_result = applyConstructorArgConversion(
-						argument_result,
-						arg,
-						*param_type,
-						source_token);
+			const CallArgReferenceBindingInfo* ref_binding = getSemaCallRefBinding(binding_key, arg_index);
+			if (ref_binding != nullptr && ref_binding->is_valid()) {
+				ctor_op.arguments.push_back(buildSemaAwareConstructorArgument(arg, param_type, ref_binding, source_token));
+			} else {
+				ExpressionContext arg_context = ExpressionContext::Load;
+				if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+					arg_context = ExpressionContext::LValueAddress;
 				}
+				ExprResult argument_result = visitExpressionNode(arg.template as<ExpressionNode>(), arg_context);
+				if (param_type) {
+					const TypeCategory param_base_type = param_type->type();
+					if (resolved_ctor && param_type->pointer_depth() == 0 &&
+						argument_result.typeEnum() != param_base_type &&
+						is_standard_arithmetic_type(argument_result.typeEnum()) &&
+						is_standard_arithmetic_type(param_base_type)) {
+						TypeConversionResult conv = can_convert_type(argument_result.typeEnum(), param_base_type);
+						if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
+							argument_result = generateTypeConversion(argument_result, argument_result.typeEnum(), param_base_type, source_token);
+						} else {
+							argument_result = applyConstructorArgConversion(argument_result, arg, *param_type, source_token);
+						}
+					} else {
+						argument_result = applyConstructorArgConversion(argument_result, arg, *param_type, source_token);
+					}
+				}
+			ctor_op.arguments.push_back(buildConstructorArgumentValue(argument_result, arg, param_type, source_token));
 			}
-
-			ctor_op.arguments.push_back(buildConstructorArgumentValue(
-				argument_result,
-				arg,
-				param_type,
-				source_token));
 			arg_index++;
 		}
 
@@ -1501,8 +1492,11 @@ private:
 	// ABI: member 'this' is always a pointer to the class object, never a by-value aggregate.
 	TypedValue makeMemberThisCallArgument(TypeIndex object_type_index, IrValue this_ptr_value);
 	std::optional<TypedValue> tryBuildSemaBoundCallArgument(ExprResult argument_result, const ASTNode& argument, const TypeSpecifierNode& param_type, const CallArgReferenceBindingInfo* sema_ref_binding, const Token& token);
+	const CallArgReferenceBindingInfo* getSemaCallRefBinding(const void* key, size_t arg_index) const;
 	TypedValue buildSemaAwareConstructorArgument(const ASTNode& argument, const TypeSpecifierNode* param_type,
 		const CallArgReferenceBindingInfo* sema_ref_binding, const Token& token);
+	TypedValue buildSemaAwareConstructorArgument(ExprResult argument_result, const ASTNode& argument,
+		const TypeSpecifierNode* param_type, const CallArgReferenceBindingInfo* sema_ref_binding, const Token& token);
 	ExprResult applyCallArgumentConversions(ExprResult argument_result, const ASTNode& argument, const TypeSpecifierNode* param_type, const Token& token);
 	TypedValue buildOrdinaryCallArgument(const ASTNode& argument, const TypeSpecifierNode* param_type, const std::optional<ExprResult>& evaluated_arg, const Token& token);
 	TypedValue buildReferenceCallArgumentFromDeclaration(const DeclarationNode& decl_node, VariableKey identifier_key);

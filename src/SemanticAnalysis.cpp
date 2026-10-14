@@ -5715,6 +5715,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				for (const auto& arg : e.placement_args()) {
 					normalizeExpression(arg, ctx);
 				}
+				tryAnnotateNewExpressionConstructorArgConversions(e);
 			} else if constexpr (std::is_same_v<T, DeleteExpressionNode>) {
 				normalizeExpression(e.expr(), ctx);
 			} else if constexpr (std::is_same_v<T, StaticCastNode>) {
@@ -11414,6 +11415,15 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	}
 
 	diagnoseScopedEnumConversion(expr_node, param_type_id, context_description, expr_type_id);
+	const TypeSpecifierNode& selected_param_type = selected_param_type_node.as<TypeSpecifierNode>();
+	auto& constructor_ref_bindings = call_ref_bindings_[&expr_node.as<ExpressionNode>()];
+	constructor_ref_bindings.clear();
+	constructor_ref_bindings.resize(1);
+	if (selected_param_type.is_reference() || selected_param_type.is_rvalue_reference()) {
+		if (auto binding = buildCallArgReferenceBinding(expr_node, selected_param_type, " in converting constructor argument")) {
+			constructor_ref_bindings.front() = *binding;
+		}
+	}
 
 	ImplicitCastInfo cast_info;
 	cast_info.source_type_id = expr_type_id;
@@ -14187,10 +14197,7 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	auto resolution = resolve_constructor_overload(*struct_info, arg_types, true, arguments);
 	bool template_ctor_ambiguous = false;
 	resolution.selected_overload = parser().templateEngine().materializeMatchingConstructorTemplate(
-		struct_info->getName(),
-		*struct_info,
-		arg_types,
-		resolution.selected_overload,
+		struct_info->getName(), *struct_info, arg_types, resolution.selected_overload,
 		template_ctor_ambiguous);
 	if (template_ctor_ambiguous) {
 		resolution.is_ambiguous = true;
@@ -14281,6 +14288,72 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 		diagnoseScopedEnumConversion(arg, param_type_id, " in constructor argument", arg_type_id);
 		++i;
 	});
+}
+
+void SemanticAnalysis::tryAnnotateNewExpressionConstructorArgConversions(const NewExpressionNode& new_expression) {
+	if (new_expression.is_array() || new_expression.constructor_args().empty() || !new_expression.type_node().is<TypeSpecifierNode>()) {
+		return;
+	}
+	const TypeSpecifierNode& type_spec = new_expression.type_node().as<TypeSpecifierNode>();
+	const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+	if (!type_info && type_spec.token().handle().isValid()) {
+		const auto type_it = getTypesByNameMap().find(type_spec.token().handle());
+		if (type_it != getTypesByNameMap().end()) {
+			type_info = type_it->second;
+		}
+	}
+	const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+	if (!struct_info || !struct_info->hasUserDefinedConstructor()) {
+		return;
+	}
+
+	const auto& arguments = new_expression.constructor_args();
+	std::vector<TypeSpecifierNode> arg_types;
+	arg_types.reserve(arguments.size());
+	for (const ASTNode& arg : arguments) {
+		if (!arg.is<ExpressionNode>()) {
+			return;
+		}
+		auto arg_type = buildOverloadResolutionArgType(arg, nullptr);
+		if (!arg_type.has_value()) {
+			return;
+		}
+		arg_types.push_back(std::move(*arg_type));
+	}
+
+	auto resolution = resolve_constructor_overload(*struct_info, arg_types, true, arguments);
+	bool template_ctor_ambiguous = false;
+	resolution.selected_overload = parser().templateEngine().materializeMatchingConstructorTemplate(
+		struct_info->getName(), *struct_info, arg_types, resolution.selected_overload,
+		template_ctor_ambiguous);
+	if (template_ctor_ambiguous) {
+		resolution.is_ambiguous = true;
+	} else if (resolution.selected_overload) {
+		resolution.is_ambiguous = false;
+	}
+	if (resolution.is_ambiguous || !resolution.selected_overload) {
+		return;
+	}
+	const ConstructorDeclarationNode* selected_ctor = ensureSelectedConstructorMaterialized(*struct_info, resolution.selected_overload);
+	if (!selected_ctor) {
+		return;
+	}
+
+	const auto& parameters = selected_ctor->parameter_nodes();
+	auto& ref_bindings = call_ref_bindings_[&new_expression];
+	ref_bindings.clear();
+	ref_bindings.resize(std::min(arguments.size(), parameters.size()));
+	for (size_t i = 0; i < ref_bindings.size(); ++i) {
+		if (!parameters[i].is<DeclarationNode>()) {
+			continue;
+		}
+		const TypeSpecifierNode& param_type = parameters[i].as<DeclarationNode>().type_specifier_node();
+		if (param_type.is_reference() || param_type.is_rvalue_reference()) {
+			if (auto binding = buildCallArgReferenceBinding(arguments[i], param_type, " in new-expression argument")) {
+				ref_bindings[i] = *binding;
+			}
+		}
+	}
 }
 
 const ConstructorDeclarationNode* SemanticAnalysis::ensureSelectedConstructorMaterialized(

@@ -3409,27 +3409,16 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									throw InternalError("Derived-to-base constructor argument offset exceeds IR range");
 								}
 								ctor_op.source_base_class_offset = static_cast<int>(*sema_source_base_class_offset);
-							} else if (sema_selected_param_type) {
-								init_operands = applyConstructorArgConversion(
-									init_operands, init_node, *sema_selected_param_type, decl.identifier_token());
 							}
 
 							TypedValue init_arg;
 
 							const TypeSpecifierNode* param_type = sema_selected_param_type;
 
-							// applyConstructorArgConversion now performs the pre-bind scalar conversion
-							// for reference parameters (e.g. int→double for const double&). Reuse the
-							// shared constructor-argument helper so identifier, literal, and general
-							// expression sources all get the correct direct-bind vs
-							// temporary-materialization/address-of handling — consistent with
-							// materializeSelectedConvertingConstructor and brace-init call sites.
 							if (param_type) {
-								init_arg = buildConstructorArgumentValue(
-									init_operands,
-									init_node,
-									param_type,
-									decl.identifier_token());
+								const CallArgReferenceBindingInfo* sema_ref_binding =
+									sema_.getCallRefBinding(&init_node.as<ExpressionNode>(), 0);
+								init_arg = buildSemaAwareConstructorArgument(std::move(init_operands), init_node, param_type, sema_ref_binding, decl.identifier_token());
 							} else {
 								// Check if initializer is an identifier (variable)
 								if (std::holds_alternative<IdentifierNode>(init_node.as<ExpressionNode>())) {
