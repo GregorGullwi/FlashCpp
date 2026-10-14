@@ -243,9 +243,17 @@ Continue boundary 3A in this order.
       conversion ranking, selected constructor exception facts, and a lazy
       concept. Enum and dependent types, class user-defined conversions, and
       pointer/callable referent conversions still defer to compatibility
-      resolution. Direct constructor code generation also still needs to
-      materialize scalar conversion temporaries before passing reference
-      parameters; see [known issues](KNOWN_ISSUES.md). Unscoped enum
+      resolution. Direct declaration initialization, constructor expressions,
+      and initializer-list constructor arguments now consume sema reference
+      binding plans through the shared call-argument materializer. The new
+      `test_scalar_reference_ctor_temp_materialization_ret0.cpp` regression
+      covers converted references, direct alias identity, prvalues, templates,
+      and mixed reference/value parameters. Copy-initialization and
+      new-expressions still lose scalar conversion temporaries for identifier
+      arguments; the reduced runtime failures are documented in
+      [known issues](KNOWN_ISSUES.md). Member/base/delegating probes pass, but
+      those shared argument paths do not yet consume the constructor binding
+      side table. Unscoped enum
       arguments use published promotion and underlying types for builtin
       scalar and constructor parameters; scoped enum-to-builtin conversions
       are rejected canonically. Implicit copy/move constructor schemas derive

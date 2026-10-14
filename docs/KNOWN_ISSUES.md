@@ -74,31 +74,54 @@ and rejects the second initializer. Array prvalues need typed array
 initialization, temporary storage, and the usual postfix/subscript semantics.
 This is separate from array members initialized inside a class aggregate.
 
-## Direct constructor initialization does not materialize scalar reference temporaries
+## Scalar reference constructor temporaries are lost in copy-initialization and new-expressions
 
-On 2026-10-13, the reduced program below compiled, but a runtime check returned
-the assigned failure status with the Windows sharded compiler. The constructor
-copies the parameter before the temporary's lifetime ends, so this is not a
-dangling-reference case:
+On 2026-10-14, these two initialization routes still copied the wrong scalar
+value with the Windows sharded compiler:
 
 ```cpp
 struct Receiver {
 	long value;
 	Receiver(const long& argument) noexcept : value(argument) {}
 };
-int main() { short source = 7; Receiver result(source); return result.value == 7 ? 0 : 1; }
+int main() {
+	short source = 7;
+	Receiver copied = source;
+	Receiver* allocated = new Receiver(source);
+	const bool correct = copied.value == 7 && allocated->value == 7;
+	delete allocated;
+	return correct ? 0 : 1;
+}
 ```
 
-Direct constructor initialization in `IrGenerator_Stmt_Decl.cpp` currently
-passes the argument through `buildConstructorArgumentValue` without the generic
-call-argument reference-binding path. It needs to materialize the converted
-`long` scalar temporary and pass its address before the selected constructor
-call. Ordinary calls already use `SemanticAnalysis::buildCallArgReferenceBinding`
-and `annotateResolvedCallArgConversions`, followed by
-`AstToIr::tryApplySemaCallArgReferenceBinding`; those paths are the reference
-implementation for a future lowering slice. The canonical constructor
-viability and ranking query can describe the conversion, but does not fix this
-runtime materialization path.
+The constructor copies the parameter while its temporary is alive. Both
+reduced routes compiled and returned 1 when checked separately. Explicit local
+construction, constructor expressions, and constructor-backed initializer
+lists now consume sema reference-binding plans and pass these runtime checks.
+Copy-initialization and new-expressions still need that semantic plan carried
+through their selected-constructor paths: taking the original identifier's
+address after the scalar conversion discards the converted temporary. Member,
+base, and delegating initializer probes passed; those shared paths have not
+been migrated to the constructor binding side table.
+
+## Constructor templates with const lvalue reference parameters are rejected
+
+On 2026-10-14, FlashCpp rejected this valid constructor-template call with
+`NoMatchingConstructor` (1508), while Clang accepted it:
+
+```cpp
+struct Receiver {
+	template<class T> Receiver(const T&) {}
+};
+int main() { Receiver result(1); }
+```
+
+The same deduction pattern works for an ordinary function template, and
+constructor controls using `T` or `T&&` compile. Named and unnamed `const T&`
+parameters both fail. Trace output shows that `T` is deduced and lazy member
+materialization begins, but the specialization is not accepted as a viable
+constructor. This needs a fix before overload selection and reference-binding
+annotation.
 
 ## Construction through a class-template member alias is rejected
 

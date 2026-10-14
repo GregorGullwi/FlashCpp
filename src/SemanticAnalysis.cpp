@@ -12355,7 +12355,36 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 			return std::nullopt;
 	}
 
-	const ConversionPlan value_plan = buildConversionPlan(arg_value_type, param_value_type);
+	ConversionPlan value_plan;
+	bool has_canonical_builtin_reference_conversion = false;
+	const CanonicalTypeId source_binding_type_id = canonicalizeType(arg_binding_type);
+	if (source_binding_type_id) {
+		const CanonicalTypeDesc& target_desc = type_context_.get(param_type_id);
+		const CanonicalTypeDesc& source_desc = type_context_.get(source_binding_type_id);
+		if (source_desc.structural_type_id && target_desc.structural_type_id) {
+			CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+			const TypeId source_referent = canonicalTypeWithoutReference(canonical_types, source_desc.structural_type_id);
+			const TypeId target_referent = canonicalTypeWithoutReference(canonical_types, target_desc.structural_type_id);
+			const TypeId source_base = stripCanonicalTopCv(canonical_types, source_referent).first;
+			const TypeId target_base = stripCanonicalTopCv(canonical_types, target_referent).first;
+			if (source_base != target_base && canonical_types.node(source_base).kind == CanonicalTypeKind::Builtin &&
+				canonical_types.node(target_base).kind == CanonicalTypeKind::Builtin) {
+				const std::optional<ConversionPlan> canonical_binding = tryBuildCanonicalReferenceArgumentConversionPlan(
+					canonical_types, source_desc.structural_type_id, target_desc.structural_type_id);
+				if (!canonical_binding.has_value()) {
+					throw InternalError("Canonical builtin reference conversion planner deferred a builtin pair");
+				}
+				if (!canonical_binding->is_valid) {
+					return std::nullopt;
+				}
+				value_plan = *canonical_binding;
+				has_canonical_builtin_reference_conversion = true;
+			}
+		}
+	}
+	if (!has_canonical_builtin_reference_conversion) {
+		value_plan = buildConversionPlan(arg_value_type, param_value_type);
+	}
 	if (!value_plan.is_valid) {
 		return std::nullopt;
 	}
@@ -14201,8 +14230,9 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	call_node.set_resolved_constructor(resolution.selected_overload);
 
 	const auto& ctor_params = resolution.selected_overload->parameter_nodes();
-	if (num_args > ctor_params.size())
-		return;
+	auto& ref_bindings = call_ref_bindings_[&call_node];
+	ref_bindings.clear();
+	ref_bindings.resize(std::min(num_args, ctor_params.size()));
 
 	// Annotate each argument where its type differs from the parameter type.
 	size_t i = 0;
@@ -14227,6 +14257,14 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 			return;
 		}
 
+		const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
+		if (param_type.is_reference() || param_type.is_rvalue_reference()) {
+			if (auto binding = buildCallArgReferenceBinding(arg, param_type, " in constructor argument")) {
+				ref_bindings[i] = *binding;
+			}
+			++i;
+			return;
+		}
 		const CanonicalTypeId param_type_id = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
 		const CanonicalTypeId arg_type_id = inferred_arg_type_ids[i];
 		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) {
@@ -14675,6 +14713,9 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	init_list.set_resolved_constructor(resolution.selected_overload);
 
 	const auto& ctor_params = resolution.selected_overload->parameter_nodes();
+	auto& ref_bindings = call_ref_bindings_[&init_list];
+	ref_bindings.clear();
+	ref_bindings.resize(initializers.size());
 
 	for (size_t i = 0; i < initializers.size() && i < ctor_params.size(); ++i) {
 		const ASTNode& arg = initializers[i];
@@ -14688,6 +14729,13 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>())
 			continue;
 
+		const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
+		if (param_type.is_reference() || param_type.is_rvalue_reference()) {
+			if (auto binding = buildCallArgReferenceBinding(arg, param_type, " in constructor argument")) {
+				ref_bindings[i] = *binding;
+			}
+			continue;
+		}
 		const CanonicalTypeId param_type_id = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
 		const CanonicalTypeId arg_type_id = inferred_arg_type_ids[i];
 		FLASH_LOG(General, Debug, "SemanticAnalysis: init-list arg param_type=", param_type_id.value, " arg_type=", arg_type_id.value, " match=", (arg_type_id && canonical_types_match(arg_type_id, param_type_id)));

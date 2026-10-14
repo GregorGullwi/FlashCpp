@@ -1501,6 +1501,8 @@ private:
 	// ABI: member 'this' is always a pointer to the class object, never a by-value aggregate.
 	TypedValue makeMemberThisCallArgument(TypeIndex object_type_index, IrValue this_ptr_value);
 	std::optional<TypedValue> tryBuildSemaBoundCallArgument(ExprResult argument_result, const ASTNode& argument, const TypeSpecifierNode& param_type, const CallArgReferenceBindingInfo* sema_ref_binding, const Token& token);
+	TypedValue buildSemaAwareConstructorArgument(const ASTNode& argument, const TypeSpecifierNode* param_type,
+		const CallArgReferenceBindingInfo* sema_ref_binding, const Token& token);
 	ExprResult applyCallArgumentConversions(ExprResult argument_result, const ASTNode& argument, const TypeSpecifierNode* param_type, const Token& token);
 	TypedValue buildOrdinaryCallArgument(const ASTNode& argument, const TypeSpecifierNode* param_type, const std::optional<ExprResult>& evaluated_arg, const Token& token);
 	TypedValue buildReferenceCallArgumentFromDeclaration(const DeclarationNode& decl_node, VariableKey identifier_key);

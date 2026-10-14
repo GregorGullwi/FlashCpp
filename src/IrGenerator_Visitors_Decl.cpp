@@ -3996,24 +3996,8 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			param_type = &ctor_params[arg_index].as<DeclarationNode>().type_specifier_node();
 		}
 
-		ExpressionContext arg_context = ExpressionContext::Load;
-		if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
-			arg_context = ExpressionContext::LValueAddress;
-		}
-		ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
-
-		// Apply sema-annotated or standard implicit conversion for this argument.
-		if (param_type) {
-			argumentIrOperands = applyConstructorArgConversion(
-				argumentIrOperands, argument, *param_type, constructorCallNode.called_from());
-		}
-
-		// argumentIrOperands = [type, size, value]
-		ctor_op.arguments.push_back(buildConstructorArgumentValue(
-			argumentIrOperands,
-			argument,
-			param_type,
-			constructorCallNode.called_from()));
+		const CallArgReferenceBindingInfo* sema_ref_binding = sema_.getCallRefBinding(&constructorCallNode, arg_index);
+		ctor_op.arguments.push_back(buildSemaAwareConstructorArgument(argument, param_type, sema_ref_binding, constructorCallNode.called_from()));
 		arg_index++;
 	});
 

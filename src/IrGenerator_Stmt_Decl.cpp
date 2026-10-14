@@ -2042,23 +2042,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											param_type = &ctor_params[arg_index].as<DeclarationNode>().type_specifier_node();
 										}
 
-										ExpressionContext init_context = ExpressionContext::Load;
-										if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
-											init_context = ExpressionContext::LValueAddress;
-										}
-										ExprResult init_operands = visitExpressionNode(init_expr.as<ExpressionNode>(), init_context);
-
-										// Apply sema-annotated or standard implicit conversion.
-										if (param_type) {
-											init_operands = applyConstructorArgConversion(
-												init_operands, init_expr, *param_type, decl.identifier_token());
-										}
-
-										ctor_op.arguments.push_back(buildConstructorArgumentValue(
-											init_operands,
-											init_expr,
-											param_type,
-											decl.identifier_token()));
+										const CallArgReferenceBindingInfo* sema_ref_binding = sema_.getCallRefBinding(&init_list, arg_index);
+										ctor_op.arguments.push_back(buildSemaAwareConstructorArgument(init_expr, param_type, sema_ref_binding, decl.identifier_token()));
 									} else {
 										throw InternalError("Initializer must be an ExpressionNode");
 									}
@@ -3122,17 +3107,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									param_type = &ctor_params[arg_index].as<DeclarationNode>().type_specifier_node();
 								}
 
-								ExpressionContext arg_context = ExpressionContext::Load;
-								if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
-									arg_context = ExpressionContext::LValueAddress;
-								}
-								ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
-								// argumentIrOperands = [type, size, value]
-								ctor_op.arguments.push_back(buildConstructorArgumentValue(
-									argumentIrOperands,
-									argument,
-									param_type,
-									decl.identifier_token()));
+								const CallArgReferenceBindingInfo* sema_ref_binding = sema_.getCallRefBinding(direct_ctor, arg_index);
+								ctor_op.arguments.push_back(buildSemaAwareConstructorArgument(argument, param_type, sema_ref_binding, decl.identifier_token()));
 								arg_index++;
 							});
 
