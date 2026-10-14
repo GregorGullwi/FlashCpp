@@ -29,7 +29,10 @@ The architecture the remaining work builds on:
   spelling only.
 - `TypeContext` stores canonical descriptors in a pinned chunked arena, so a
   `CanonicalTypeDesc` reference returned by `get` stays valid while later
-  descriptors are interned; `CanonicalTypeId` remains the identity.
+  descriptors are interned; `CanonicalTypeId` remains the identity. It reports the
+  arena's used and reserved bytes into semantic arena accounting
+  (`SemanticArenaComponent::Descriptors`), alongside the canonical node table's
+  `Types` and the declaration builder's `Declarations`.
 - `canonicalizeType` publishes `structural_type_id` for a projectable pointer or
   array when the canonical importer can represent that shape. `TypeContext::intern`
   does the same for pointer and array descriptors built outside `canonicalizeType`,

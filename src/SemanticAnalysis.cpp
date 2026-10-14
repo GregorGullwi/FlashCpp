@@ -6171,6 +6171,12 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 	// function, after copying them off any get() reference.
 	publishPointerArrayStructuralId(desc);
 	auto id = type_context_.intern(desc);
+	// Publish the descriptor arena's cumulative bytes into semantic arena
+	// accounting; the descriptor store is owned here, not by CanonicalTypeTable.
+	requireFrontendContext().semanticAccounting().update(
+		SemanticArenaComponent::Descriptors,
+		type_context_.descriptorUsedBytes(),
+		type_context_.descriptorReservedBytes());
 	stats_.canonical_types_interned++;
 	return id;
 }
