@@ -2977,7 +2977,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 									resolved_ctor = resolveCodegenConstructorFromArgs(*member_struct_info, constructor_args);
 								}
 								if (!resolved_ctor) {
-									throw CompileError(
+									throw InternalError(
 										"No matching constructor for member '" +
 										std::string(StringTable::getStringView(member.getName())) + "'");
 								}
@@ -3123,10 +3123,11 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 									}
 									member_value = 0ULL;	 // can't resolve struct info, zero-init
 								} else {
-									// Scalar members with multiple brace-init values are not valid C++.
-									throw CompileError("Brace-initializer used on non-array member '" +
-													   std::string(StringTable::getStringView(member.getName())) +
-													   "': multiple initializer values for a scalar member.");
+									// Scalar members with multiple brace-init values are already
+									// rejected by the parser (TooManyInitializers).
+									throw InternalError("Scalar member '" +
+														std::string(StringTable::getStringView(member.getName())) +
+														"' reached codegen with multiple brace-init values");
 								}
 							} else if (!init_expr_node.is<ExpressionNode>()) {
 								member_value = 0ULL;	 // unexpected node type: fall back to zero

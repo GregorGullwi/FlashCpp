@@ -655,10 +655,10 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			resolved_operator_call_query.state == ResolvedFunctionQueryResult::State::AnalyzedAbsent &&
 			callee_is_struct_callable &&
 			!recursive_self_forward_pattern) {
-			throw CompileError(
-				std::string("callable object '") +
+			throw InternalError(
+				std::string("Sema must reject call to callable object '") +
 				std::string(func_name_view) +
-				"' has no matching operator()");
+				"' with no matching operator()");
 		}
 
 		// Check if this is a function pointer or a substituted function type carrying
@@ -708,7 +708,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		// decltype(auto) is not a valid parameter type; reject it before
 		// the recursive-lambda auto&& callable fallback can mishandle it.
 		if (func_type.category() == TypeCategory::DeclTypeAuto) {
-			throw CompileError("'decltype(auto)' is not allowed as a parameter type");
+			throw InternalError("'decltype(auto)' is not allowed as a parameter type");
 		}
 
 		bool is_recursive_lambda_self = false;
