@@ -3932,22 +3932,105 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 	// Push a scope for this constructor's parameters.
 	pushScope();
 	setupNormalizedParameterScope(ctor, ctx);
+	const TypeInfo* owner_type_info = member_context.has_value() ? tryGetTypeInfo(member_context->type_index) : nullptr;
+	const StructTypeInfo* owner_struct_info = owner_type_info ? owner_type_info->getStructInfo() : nullptr;
 
 	// C++20 [class.base.init]: normalize member initializer expressions so
 	// they receive sema annotations (e.g. integral promotions in `result(x + 1)`).
 	for (const auto& mi : ctor.member_initializers()) {
 		normalizeExpression(mi.initializer_expr, ctx);
+		if (!owner_struct_info) {
+			continue;
+		}
+		const StringHandle member_name = StringTable::getOrInternStringHandle(mi.member_name);
+		const auto member_it = std::find_if(owner_struct_info->members.begin(), owner_struct_info->members.end(),
+			[member_name](const StructMember& member) { return member.getName() == member_name; });
+		if (member_it == owner_struct_info->members.end() || member_it->is_reference() || member_it->is_array) {
+			continue;
+		}
+		const TypeInfo* member_type_info = tryGetTypeInfo(member_it->type_index);
+		const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr;
+		if (!member_struct_info || !member_struct_info->hasUserDefinedConstructor()) {
+			continue;
+		}
+		if (mi.initializer_expr.is<InitializerListNode>()) {
+			TypeSpecifierNode member_type(member_it->type_index, member_type_info->sizeInBits(),
+				ctor.name_token(), member_it->member_cv_qualifier, ReferenceQualifier::None);
+			tryAnnotateInitListConstructorArgs(mi.initializer_expr.as<InitializerListNode>(), *member_struct_info, member_type, ctor.name_token());
+		} else {
+			const std::span<const ASTNode> arguments(&mi.initializer_expr, 1);
+			tryAnnotateConstructorArgReferenceBindings(*member_struct_info, arguments, &mi, " in member initializer argument");
+		}
 	}
 	// Normalize base class initializer arguments as well.
+	auto has_only_implicit_constructors = [](const StructTypeInfo& struct_info) {
+		for (const auto& member_func : struct_info.member_functions) {
+			if (member_func.is_constructor && member_func.function_decl.is<ConstructorDeclarationNode>() &&
+				!member_func.function_decl.as<ConstructorDeclarationNode>().is_implicit()) {
+				return false;
+			}
+		}
+		return true;
+	};
 	for (const auto& bi : ctor.base_initializers()) {
 		for (const auto& arg : bi.arguments) {
 			normalizeExpression(arg, ctx);
 		}
+		if (!owner_struct_info) {
+			continue;
+		}
+		auto try_bind_base_initializer = [&](const BaseClassSpecifier& base) {
+			const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+			const StringHandle base_name = StringTable::getOrInternStringHandle(base.name);
+			const bool matches_base_name = bi.getBaseClassName() == base_name;
+			const bool matches_base_template = base_type_info && base_type_info->isTemplateInstantiation() &&
+				bi.getBaseClassName() == base_type_info->baseTemplateName();
+			if (!matches_base_name && !matches_base_template) {
+				return false;
+			}
+			const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
+			if (base_struct_info) {
+				const auto arguments = std::span<const ASTNode>{bi.arguments};
+				const ConstructorDeclarationNode* selected_ctor = tryAnnotateConstructorArgReferenceBindings(
+					*base_struct_info, arguments, &bi, " in base initializer argument");
+				if (!selected_ctor && base_struct_info->members.empty() &&
+					!base_struct_info->base_classes.empty() && !bi.arguments.empty() &&
+					has_only_implicit_constructors(*base_struct_info)) {
+					for (const auto& inner_base : base_struct_info->base_classes) {
+						const TypeInfo* inner_type_info = tryGetTypeInfo(inner_base.type_index);
+						const StructTypeInfo* inner_struct_info = inner_type_info ? inner_type_info->getStructInfo() : nullptr;
+						if (inner_struct_info && tryAnnotateConstructorArgReferenceBindings(*inner_struct_info, arguments, &bi, " in base initializer argument")) {
+							break;
+						}
+					}
+				}
+			}
+			return true;
+		};
+		bool matched_base = false;
+		for (const auto& base : owner_struct_info->base_classes) {
+			if (try_bind_base_initializer(base)) {
+				matched_base = true;
+				break;
+			}
+		}
+		if (!matched_base) {
+			for (const auto& base : owner_struct_info->virtual_bases) {
+				if (try_bind_base_initializer(base)) {
+					break;
+				}
+			}
+		}
 	}
 	// Normalize delegating constructor arguments if present.
 	if (ctor.delegating_initializer().has_value()) {
-		for (const auto& arg : ctor.delegating_initializer()->arguments) {
+		const auto& delegating_initializer = *ctor.delegating_initializer();
+		for (const auto& arg : delegating_initializer.arguments) {
 			normalizeExpression(arg, ctx);
+		}
+		if (owner_struct_info) {
+			tryAnnotateConstructorArgReferenceBindings(*owner_struct_info,
+				std::span<const ASTNode>{delegating_initializer.arguments}, &delegating_initializer, " in delegating constructor argument");
 		}
 	}
 
@@ -14354,6 +14437,59 @@ void SemanticAnalysis::tryAnnotateNewExpressionConstructorArgConversions(const N
 			}
 		}
 	}
+}
+
+const ConstructorDeclarationNode* SemanticAnalysis::tryAnnotateConstructorArgReferenceBindings(const StructTypeInfo& struct_info,
+	std::span<const ASTNode> arguments, const void* binding_key, const char* context_description) {
+	if (arguments.empty() || binding_key == nullptr) {
+		return nullptr;
+	}
+	std::vector<TypeSpecifierNode> arg_types;
+	arg_types.reserve(arguments.size());
+	for (const ASTNode& arg : arguments) {
+		if (!arg.is<ExpressionNode>()) {
+			return nullptr;
+		}
+		auto arg_type = buildOverloadResolutionArgType(arg, nullptr);
+		if (!arg_type.has_value()) {
+			return nullptr;
+		}
+		arg_types.push_back(std::move(*arg_type));
+	}
+
+	auto resolution = resolve_constructor_overload(struct_info, arg_types, false, arguments);
+	bool template_ctor_ambiguous = false;
+	resolution.selected_overload = parser().templateEngine().materializeMatchingConstructorTemplate(struct_info.getName(),
+		struct_info, arg_types, resolution.selected_overload, template_ctor_ambiguous);
+	if (template_ctor_ambiguous) {
+		resolution.is_ambiguous = true;
+	} else if (resolution.selected_overload) {
+		resolution.is_ambiguous = false;
+	}
+	if (resolution.is_ambiguous || !resolution.selected_overload) {
+		return nullptr;
+	}
+	const ConstructorDeclarationNode* selected_ctor = ensureSelectedConstructorMaterialized(struct_info, resolution.selected_overload);
+	if (!selected_ctor) {
+		return nullptr;
+	}
+
+	const auto& parameters = selected_ctor->parameter_nodes();
+	auto& ref_bindings = call_ref_bindings_[binding_key];
+	ref_bindings.clear();
+	ref_bindings.resize(std::min(arguments.size(), parameters.size()));
+	for (size_t i = 0; i < ref_bindings.size(); ++i) {
+		if (!parameters[i].is<DeclarationNode>()) {
+			continue;
+		}
+		const TypeSpecifierNode& param_type = parameters[i].as<DeclarationNode>().type_specifier_node();
+		if (param_type.is_reference() || param_type.is_rvalue_reference()) {
+			if (auto binding = buildCallArgReferenceBinding(arguments[i], param_type, context_description)) {
+				ref_bindings[i] = *binding;
+			}
+		}
+	}
+	return selected_ctor;
 }
 
 const ConstructorDeclarationNode* SemanticAnalysis::ensureSelectedConstructorMaterialized(
