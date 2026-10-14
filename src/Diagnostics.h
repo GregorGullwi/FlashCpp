@@ -209,6 +209,7 @@ enum class DiagnosticId : uint32_t {
 	BitCastSizeMismatch = 1628,
 	AmbiguousDerivedToBaseConversion = 1629,
 	InaccessibleDerivedToBaseConversion = 1630,
+	DerivedToBasePointerCastDepthUnsupported = 1631,
 
 	// Call-expression family (1701..1799).
 	AmbiguousFunctionCall = 1701,
@@ -511,6 +512,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "AmbiguousDerivedToBaseConversion";
 	case DiagnosticId::InaccessibleDerivedToBaseConversion:
 		return "InaccessibleDerivedToBaseConversion";
+	case DiagnosticId::DerivedToBasePointerCastDepthUnsupported:
+		return "DerivedToBasePointerCastDepthUnsupported";
 	case DiagnosticId::AmbiguousFunctionCall:
 		return "AmbiguousFunctionCall";
 	case DiagnosticId::AmbiguousCallOperator:
