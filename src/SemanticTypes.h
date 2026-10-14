@@ -195,6 +195,11 @@ public:
 	CanonicalTypeId intern(const CanonicalTypeDesc& desc);
 	const CanonicalTypeDesc& get(CanonicalTypeId id) const;
 	size_t size() const { return types_.size(); }
+	// Bytes the descriptor arena has handed out and reserved, for semantic
+	// arena accounting. Cumulative; reported by the caller that holds the
+	// FrontendContext.
+	uint64_t descriptorUsedBytes() const { return types_.usedBytes(); }
+	uint64_t descriptorReservedBytes() const { return types_.reservedBytes(); }
 
 private:
 	// 0-based storage; CanonicalTypeId value 0 is reserved as invalid sentinel.

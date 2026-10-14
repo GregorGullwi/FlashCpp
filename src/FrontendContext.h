@@ -273,6 +273,10 @@ public:
 		return canonical_types_;
 	}
 
+	SemanticArenaAccounting& semanticAccounting() {
+		return semantic_accounting_;
+	}
+
 	DependentExpressionTable& dependentExpressions() {
 		return dependent_expressions_;
 	}

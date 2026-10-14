@@ -11,7 +11,7 @@ struct DomainByteStats {
 	uint64_t peak_reserved_bytes = 0;
 };
 
-enum class SemanticArenaComponent : uint8_t { Declarations, Types };
+enum class SemanticArenaComponent : uint8_t { Declarations, Types, Descriptors, Count };
 
 // Updated at mutation time, including rollback. Component peaks cannot be
 // added: their allocations need not have coexisted. No lock here calls an arena.
@@ -40,8 +40,9 @@ public:
 	}
 
 private:
+	static constexpr size_t kComponentCount = static_cast<size_t>(SemanticArenaComponent::Count);
 	mutable std::mutex mutex_;
-	std::array<uint64_t, 2> used_{};
-	std::array<uint64_t, 2> reserved_{};
+	std::array<uint64_t, kComponentCount> used_{};
+	std::array<uint64_t, kComponentCount> reserved_{};
 	DomainByteStats stats_;
 };
