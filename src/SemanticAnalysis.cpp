@@ -648,7 +648,9 @@ void setMaterializedTypeSpecifierSize(TypeSpecifierNode& type_node) {
 TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 	TypeSpecifierNode type_node(desc.type_index.withCategory(desc.category()), 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
 	type_node.set_cv_qualifier(desc.base_cv);
-	if (desc.structural_type_id) {
+	// Published pointer/array ids are a second name for the flat projection.
+	// Non-projectable structural ids are the only shape materialization can export.
+	if (desc.structural_type_id && !hasFlag(desc.flags, CanonicalTypeFlags::PublishedPointerArray)) {
 		const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(
 				requireFrontendContext().canonicalTypes(),
 			desc.structural_type_id);
@@ -786,8 +788,36 @@ std::optional<UserDefinedConversionOperatorSelection> trySelectCanonicalImplicit
 // array expressions follow the same path; their parser-facing expression
 // types are not necessarily already decayed.
 std::optional<CanonicalTypeDesc> decayArrayForConditional(const CanonicalTypeDesc& desc) {
-	// C++20 [conv.array]/1 applies only to array objects. Pointer-to-array
-	// types already have their extents on the pointee and must not decay.
+	// Read a structural id that canonicalizeType already published. Do not
+	// import here: callers hold TypeContext::get() references, and import can
+	// intern another descriptor and invalidate those references.
+	if (desc.structural_type_id) {
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		TypeId structural_id = desc.structural_type_id;
+		CanonicalTypeNode node = table.node(structural_id);
+		while (node.child && (node.kind == CanonicalTypeKind::LValueReference || node.kind == CanonicalTypeKind::RValueReference)) {
+			structural_id = node.child;
+			node = table.node(structural_id);
+		}
+		if (node.kind == CanonicalTypeKind::Qualified && node.child) {
+			node = table.node(node.child);
+		}
+		// [conv.array] replaces the outermost array with a pointer to its element.
+		// A pointer-to-array is a Pointer node and must not decay.
+		if (node.kind != CanonicalTypeKind::Array || !node.child) {
+			return std::nullopt;
+		}
+		CanonicalTypeDesc decayed = desc;
+		decayed.structural_type_id = table.pointer(node.child);
+		decayed.ref_qualifier = ReferenceQualifier::None;
+		if (!decayed.pointee_array_declarator && !decayed.array_dimensions.empty()) {
+			decayed.array_dimensions.erase(decayed.array_dimensions.begin());
+			decayed.pointer_levels.push_back(PointerLevel{});
+			decayed.has_unsized_outer_array_dimension = false;
+		}
+		return decayed;
+	}
+	// Flat projection for shapes the importer cannot represent.
 	if (desc.pointee_array_declarator) {
 		return std::nullopt;
 	}
@@ -797,22 +827,6 @@ std::optional<CanonicalTypeDesc> decayArrayForConditional(const CanonicalTypeDes
 		decayed.pointer_levels.push_back(PointerLevel{});
 		decayed.ref_qualifier = ReferenceQualifier::None;
 		return decayed;
-	}
-	// Non-projectable ordered arrays carry their structure in the canonical
-	// table instead of the flat array fields. [conv.array] replaces the
-	// outermost array node with a pointer to its element.
-	if (desc.structural_type_id) {
-		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-		CanonicalTypeNode node = table.node(desc.structural_type_id);
-		if (node.kind == CanonicalTypeKind::Qualified && node.child) {
-			node = table.node(node.child);
-		}
-		if (node.kind == CanonicalTypeKind::Array && node.child) {
-			CanonicalTypeDesc decayed = desc;
-			decayed.structural_type_id = table.pointer(node.child);
-			decayed.ref_qualifier = ReferenceQualifier::None;
-			return decayed;
-		}
 	}
 	return std::nullopt;
 }
@@ -839,24 +853,34 @@ std::optional<CanonicalTypeDesc> tryGetConditionalPointerType(
 		if (auto decayed = decayArrayForConditional(desc)) {
 			return decayed;
 		}
+		if (desc.structural_type_id) {
+			CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+			TypeId structural_id = desc.structural_type_id;
+			CanonicalTypeNode node = table.node(structural_id);
+			while (node.child && (node.kind == CanonicalTypeKind::LValueReference || node.kind == CanonicalTypeKind::RValueReference)) {
+				structural_id = node.child;
+				node = table.node(structural_id);
+			}
+			CanonicalTypeNode unqualified = node;
+			if (node.kind == CanonicalTypeKind::Qualified && node.child) {
+				unqualified = table.node(node.child);
+			}
+			if (node.kind == CanonicalTypeKind::Pointer || unqualified.kind == CanonicalTypeKind::Pointer) {
+				CanonicalTypeDesc pointer = desc;
+				pointer.structural_type_id = structural_id;
+				pointer.ref_qualifier = ReferenceQualifier::None;
+				return pointer;
+			}
+			// A published pointer/array id is authoritative. Do not fall back
+			// to flat pointer levels for that family.
+			if (hasFlag(desc.flags, CanonicalTypeFlags::PublishedPointerArray)) {
+				return std::nullopt;
+			}
+		}
 		if (!desc.pointer_levels.empty()) {
 			CanonicalTypeDesc pointer = desc;
 			pointer.ref_qualifier = ReferenceQualifier::None;
 			return pointer;
-		}
-		// Non-projectable pointer objects have no flat pointer levels; their
-		// structure is the canonical pointer node.
-		if (desc.structural_type_id) {
-			CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-			CanonicalTypeNode node = table.node(desc.structural_type_id);
-			if (node.kind == CanonicalTypeKind::Qualified && node.child) {
-				node = table.node(node.child);
-			}
-			if (node.kind == CanonicalTypeKind::Pointer) {
-				CanonicalTypeDesc pointer = desc;
-				pointer.ref_qualifier = ReferenceQualifier::None;
-				return pointer;
-			}
 		}
 		return std::nullopt;
 	};
@@ -1295,6 +1319,61 @@ TypeInfo* findStructTypeInfoForDeclaration(const StructDeclarationNode& declarat
 	}
 	return findStructTypeInfoByNameFragment(declaration.name().view());
 }
+
+bool descriptorHasProjectablePointerOrArray(const CanonicalTypeDesc& desc) {
+	return !desc.pointer_levels.empty() || !desc.array_dimensions.empty() || desc.pointee_array_declarator ||
+		desc.has_unsized_outer_array_dimension;
+}
+
+// Import a projectable pointer or array into structural_type_id. The descriptor
+// argument is a local copy: import can intern other descriptors, so callers must
+// not pass a TypeContext::get() reference. Shapes the importer cannot represent
+// stay flat. PublishedPointerArray tells materialization to keep the flat
+// projection instead of the non-projectable ordered-declarator export.
+void publishPointerArrayStructuralId(CanonicalTypeDesc& desc) {
+	if (desc.structural_type_id || hasFlag(desc.flags, CanonicalTypeFlags::PublishedPointerArray)) {
+		return;
+	}
+	if (desc.function_signature.has_value() || hasFlag(desc.flags, CanonicalTypeFlags::IsFunctionType)) {
+		return;
+	}
+	if (desc.category() == TypeCategory::MemberFunctionPointer || desc.category() == TypeCategory::MemberObjectPointer) {
+		return;
+	}
+	if (!descriptorHasProjectablePointerOrArray(desc)) {
+		return;
+	}
+	static int publish_depth = 0;
+	if (publish_depth != 0) {
+		return;
+	}
+	struct DepthGuard {
+		explicit DepthGuard(int& depth) : depth_(depth) { ++depth_; }
+		~DepthGuard() { --depth_; }
+		int& depth_;
+	} guard(publish_depth);
+	TypeSpecifierNode syntax = materializeTypeSpecifier(desc);
+	tryBindPublishedTypeEntity(syntax);
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	const CanonicalTypeImport imported = importCanonicalType(table, syntax);
+	if (imported.status != CanonicalTypeImportStatus::Supported) {
+		return;
+	}
+	const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(table, imported.type);
+	if (exported.status != CanonicalTypeImportStatus::Supported) {
+		return;
+	}
+	desc.structural_type_id = imported.type;
+	desc.flags = desc.flags | CanonicalTypeFlags::PublishedPointerArray;
+}
+
+void dropPublishedPointerArrayIdentity(CanonicalTypeDesc& desc) {
+	if (!hasFlag(desc.flags, CanonicalTypeFlags::PublishedPointerArray)) {
+		return;
+	}
+	desc.structural_type_id = {};
+	desc.flags = clearFlag(desc.flags, CanonicalTypeFlags::PublishedPointerArray);
+}
 } // namespace
 
 // --- CanonicalTypeDesc::operator== ---
@@ -1341,12 +1420,17 @@ bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
 // --- TypeContext ---
 
 CanonicalTypeId TypeContext::intern(const CanonicalTypeDesc& desc) {
-	auto it = index_.find(desc);
+	// Copy before publishing. desc may be a get() reference, and publishing a
+	// pointer or array imports on the local copy so a later intern cannot
+	// invalidate that reference before the copy exists.
+	CanonicalTypeDesc stored = desc;
+	publishPointerArrayStructuralId(stored);
+	auto it = index_.find(stored);
 	if (it != index_.end())
 		return it->second;
-	types_.push_back(desc);
+	types_.push_back(stored);
 	const CanonicalTypeId id{static_cast<uint32_t>(types_.size())}; // 1-based
-	index_.emplace(desc, id);
+	index_.emplace(stored, id);
 	return id;
 }
 
@@ -6075,6 +6159,10 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 	if (!desc.type_index.is_valid()) {
 		desc.type_index = nativeTypeIndex(desc.type_index.category());
 	}
+	// Publish pointer/array structural identity on this local descriptor before
+	// intern stores it. intern also publishes descriptors built outside this
+	// function, after copying them off any get() reference.
+	publishPointerArrayStructuralId(desc);
 	auto id = type_context_.intern(desc);
 	stats_.canonical_types_interned++;
 	return id;
@@ -8754,6 +8842,7 @@ std::optional<SemanticAnalysis::ResolvedMemberAccessObjectInfo> SemanticAnalysis
 			return std::nullopt;
 		}
 		result.object_desc.pointer_levels.pop_back();
+		dropPublishedPointerArrayIdentity(result.object_desc);
 	}
 
 	if (result.object_desc.category() != TypeCategory::Struct &&
@@ -9163,7 +9252,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					isCanonicalSubscriptIndex(canonical_types, first_desc);
 				const CanonicalTypeId array_type_id = first_is_index ? second_type_id : first_type_id;
 				const CanonicalTypeDesc& array_desc = type_context_.get(array_type_id);
-				if (array_desc.structural_type_id) {
+				if (array_desc.structural_type_id && !hasFlag(array_desc.flags, CanonicalTypeFlags::PublishedPointerArray)) {
 					TypeId element_type_id = array_desc.structural_type_id;
 					CVQualifier array_cv = CVQualifier::None;
 					bool found_element_type = false;
@@ -9214,6 +9303,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				// If it has array dimensions, strip one to get element type.
 				if (!array_desc.array_dimensions.empty()) {
 					CanonicalTypeDesc elem_desc = array_desc;
+					dropPublishedPointerArrayIdentity(elem_desc);
 					elem_desc.array_dimensions.clear();
 					for (size_t i = 1; i < array_desc.array_dimensions.size(); ++i)
 						elem_desc.array_dimensions.push_back(array_desc.array_dimensions[i]);
@@ -9222,6 +9312,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				// Pointer subscript: dereference removes one pointer level.
 				if (!array_desc.pointer_levels.empty()) {
 					CanonicalTypeDesc elem_desc = array_desc;
+					dropPublishedPointerArrayIdentity(elem_desc);
 					elem_desc.pointer_levels.pop_back();
 					return type_context_.intern(elem_desc);
 				}
@@ -9333,12 +9424,13 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						return {};
 					CanonicalTypeDesc result_desc = type_context_.get(operand_id);
 					result_desc.ref_qualifier = ReferenceQualifier::None;
-					if (result_desc.structural_type_id) {
+					if (result_desc.structural_type_id && !hasFlag(result_desc.flags, CanonicalTypeFlags::PublishedPointerArray)) {
 						result_desc.structural_type_id =
 							requireFrontendContext().canonicalTypes().pointer(
 								result_desc.structural_type_id);
 						return type_context_.intern(result_desc);
 					}
+					dropPublishedPointerArrayIdentity(result_desc);
 						// C++20 [expr.unary.op]/3: & applies to the undecayed
 						// operand lvalue. An array object operand yields a
 						// pointer-to-array ([dcl.ptr]/1).
@@ -9361,7 +9453,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						return {};
 					CanonicalTypeDesc result_desc = type_context_.get(operand_id);
 					result_desc.ref_qualifier = ReferenceQualifier::None;
-					if (result_desc.structural_type_id) {
+					if (result_desc.structural_type_id && !hasFlag(result_desc.flags, CanonicalTypeFlags::PublishedPointerArray)) {
 						CanonicalTypeTable& structural_types =
 							requireFrontendContext().canonicalTypes();
 						TypeId outer_id = result_desc.structural_type_id;
@@ -9382,6 +9474,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						result_desc.pointee_array_declarator = false;
 						return type_context_.intern(result_desc);
 					}
+					dropPublishedPointerArrayIdentity(result_desc);
 					if (!result_desc.pointer_levels.empty()) {
 						result_desc.pointer_levels.pop_back();
 						if (result_desc.pointer_levels.empty()) {
@@ -9391,6 +9484,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						return type_context_.intern(result_desc);
 					}
 					if (!result_desc.array_dimensions.empty()) {
+						dropPublishedPointerArrayIdentity(result_desc);
 						TemplateVector<size_t, 4> remaining_dimensions;
 						for (size_t i = 1; i < result_desc.array_dimensions.size(); ++i) {
 							remaining_dimensions.push_back(result_desc.array_dimensions[i]);
@@ -9584,8 +9678,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				const CanonicalTypeId f_id = inferExpressionType(e.false_expr());
 				if (!t_id || !f_id)
 					return {};
-				const CanonicalTypeDesc& t_desc = type_context_.get(t_id);
-				const CanonicalTypeDesc& f_desc = type_context_.get(f_id);
+				const CanonicalTypeDesc t_desc = type_context_.get(t_id);
+				const CanonicalTypeDesc f_desc = type_context_.get(f_id);
 				// C++20 [expr.cond]/3: array-to-pointer conversion applies to
 				// the branches before the common type is chosen, so an array
 				// branch never makes the conditional result an array type. This
@@ -9769,6 +9863,11 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					CanonicalTypeId base_id = canonicalizeType(type_node.template as<TypeSpecifierNode>());
 					if (base_id) {
 						CanonicalTypeDesc ptr_desc = type_context_.get(base_id);
+						if (ptr_desc.structural_type_id && !hasFlag(ptr_desc.flags, CanonicalTypeFlags::PublishedPointerArray)) {
+							ptr_desc.structural_type_id = requireFrontendContext().canonicalTypes().pointer(ptr_desc.structural_type_id);
+							return type_context_.intern(ptr_desc);
+						}
+						dropPublishedPointerArrayIdentity(ptr_desc);
 						ptr_desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
 						return type_context_.intern(ptr_desc);
 					}
@@ -14638,8 +14737,8 @@ void SemanticAnalysis::tryAnnotateTernaryBranchConversions(const TernaryOperator
 	if (!true_type_id || !false_type_id)
 		return;
 
-	const auto& true_desc = type_context_.get(true_type_id);
-	const auto& false_desc = type_context_.get(false_type_id);
+	const CanonicalTypeDesc true_desc = type_context_.get(true_type_id);
+	const CanonicalTypeDesc false_desc = type_context_.get(false_type_id);
 
 	// C++20 [expr.cond]/3: array-to-pointer conversion is applied to the second
 	// and third operands before the common type is chosen. Annotate each array

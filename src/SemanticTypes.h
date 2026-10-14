@@ -105,6 +105,10 @@ enum class CanonicalTypeFlags : uint8_t {
 	None = 0,
 	IsPackExpansion = 1 << 0,
 	IsFunctionType = 1 << 1,
+	// structural_type_id was imported from the flat pointer/array projection.
+	// Materialization keeps using that projection. Non-projectable structural
+	// ids do not set this flag.
+	PublishedPointerArray = 1 << 2,
 };
 
 inline CanonicalTypeFlags operator|(CanonicalTypeFlags a, CanonicalTypeFlags b) {
@@ -112,6 +116,9 @@ inline CanonicalTypeFlags operator|(CanonicalTypeFlags a, CanonicalTypeFlags b) 
 }
 inline bool hasFlag(CanonicalTypeFlags flags, CanonicalTypeFlags flag) {
 	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(flag)) != 0;
+}
+inline CanonicalTypeFlags clearFlag(CanonicalTypeFlags flags, CanonicalTypeFlags flag) {
+	return static_cast<CanonicalTypeFlags>(static_cast<uint8_t>(flags) & ~static_cast<uint8_t>(flag));
 }
 
 struct CanonicalTypeDesc {

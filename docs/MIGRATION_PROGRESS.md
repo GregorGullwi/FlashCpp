@@ -30,6 +30,16 @@ The architecture the remaining work builds on:
 - `TypeContext` stores canonical descriptors in a pinned chunked arena, so a
   `CanonicalTypeDesc` reference returned by `get` stays valid while later
   descriptors are interned; `CanonicalTypeId` remains the identity.
+- `canonicalizeType` publishes `structural_type_id` for a projectable pointer or
+  array when the canonical importer can represent that shape. `TypeContext::intern`
+  does the same for pointer and array descriptors built outside `canonicalizeType`,
+  after copying off any `get()` reference. Conditional array decay and conditional
+  pointer selection read that id and do not import while a descriptor reference is
+  live. Flat pointer-level and array-dimension fields remain for shapes the
+  importer cannot represent, and as the materialization projection of a published
+  pointer or array (`PublishedPointerArray`). Exit criteria 4 and 5 are not
+  closed: other semantic paths still read the flat projection. The 3A rollup
+  remains 10/79.
 - The shared type-trait evaluator classifies the structural `[meta.unary.prop]`
   family plus class/union/qualification and published record properties from
   canonical identity; the folded, constexpr, lazy-constraint, and lowered paths
