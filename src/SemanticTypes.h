@@ -1,5 +1,6 @@
 #pragma once
 #include "AstNodeTypes_TypeSystem.h"
+#include "ChunkedAnyVector.h"
 #include "IRTypes_Registers.h"
 #include "InlineVector.h"
 #include "TemplateTypes.h"
@@ -189,7 +190,12 @@ public:
 	size_t size() const { return types_.size(); }
 
 private:
-	std::vector<CanonicalTypeDesc> types_;  // 0-based storage; CanonicalTypeId value 0 is reserved as invalid sentinel
+	// 0-based storage; CanonicalTypeId value 0 is reserved as invalid sentinel.
+	// A pinned chunked arena keeps element addresses stable across interning, so
+	// a CanonicalTypeDesc reference returned by get() stays valid while later
+	// descriptors are added.
+	static constexpr uint32_t kDescriptorChunkSize = 1024;
+	ChunkedVector<CanonicalTypeDesc, kDescriptorChunkSize> types_;
 	std::unordered_map<CanonicalTypeDesc, CanonicalTypeId> index_;  // O(1) dedup map
 };
 
