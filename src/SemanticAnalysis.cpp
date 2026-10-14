@@ -1343,7 +1343,9 @@ void publishPointerArrayStructuralId(CanonicalTypeDesc& desc) {
 	if (!descriptorHasProjectablePointerOrArray(desc)) {
 		return;
 	}
-	static int publish_depth = 0;
+	// Guard against re-entry through the import path. thread_local rather than a
+	// shared static so a multi-threaded front end cannot race on it.
+	thread_local int publish_depth = 0;
 	if (publish_depth != 0) {
 		return;
 	}
@@ -1424,6 +1426,11 @@ CanonicalTypeId TypeContext::intern(const CanonicalTypeDesc& desc) {
 	// pointer or array imports on the local copy so a later intern cannot
 	// invalidate that reference before the copy exists.
 	CanonicalTypeDesc stored = desc;
+	// Re-derive the flat-projection identity from the descriptor's current flat
+	// pointer/array fields. A path that mutates that projection does not have to
+	// remember to drop the published id: interning recomputes it, so a stale
+	// structural id can never reach the index or the stored descriptor.
+	dropPublishedPointerArrayIdentity(stored);
 	publishPointerArrayStructuralId(stored);
 	auto it = index_.find(stored);
 	if (it != index_.end())
