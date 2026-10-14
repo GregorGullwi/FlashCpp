@@ -35,8 +35,9 @@ The architecture the remaining work builds on:
   does the same for pointer and array descriptors built outside `canonicalizeType`,
   after copying off any `get()` reference, and re-derives the id from the
   descriptor's current flat projection so a stale id cannot survive a projection
-  change. Conditional array decay and conditional
-  pointer selection read that id and do not import while a descriptor reference is
+  change. Conditional array decay, conditional
+  pointer selection, and built-in subscript element extraction read that id and do
+  not import while a descriptor reference is
   live. Flat pointer-level and array-dimension fields remain for shapes the
   importer cannot represent, and as the materialization projection of a published
   pointer or array (`PublishedPointerArray`). Exit criteria 4 and 5 are not
