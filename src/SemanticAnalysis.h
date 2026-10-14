@@ -665,6 +665,7 @@ private:
 
 	// Annotate constructor-call arguments with their parameter-type conversions.
 	void tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node);
+	void tryAnnotateNewExpressionConstructorArgConversions(const NewExpressionNode& new_expression);
 	const ConstructorDeclarationNode* ensureSelectedConstructorMaterialized(
 		const StructTypeInfo& struct_info,
 		const ConstructorDeclarationNode* ctor);

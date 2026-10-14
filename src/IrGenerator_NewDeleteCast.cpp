@@ -180,7 +180,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 			ctor_op.object = pointer_var;
 			ctor_op.is_heap_allocated = true;
 			ctor_op.resolved_constructor = resolved_ctor;
-			appendConstructorCallArguments(ctor_op, resolved_ctor, ctor_args, Token());
+			appendConstructorCallArguments(ctor_op, resolved_ctor, ctor_args, Token(), &newExpr);
 			finalizeConstructorCallOp(ctor_op, struct_info, Token());
 			ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 			return;

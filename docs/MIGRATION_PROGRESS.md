@@ -252,12 +252,13 @@ Continue boundary 3A in this order.
       `test_constructor_template_const_lvalue_ref_ret0.cpp` protects lazy
       constructor-template materialization from dropping declared cv
       qualifiers while combining them with deduced template types.
-      Copy-initialization and
-      new-expressions still lose scalar conversion temporaries for identifier
-      arguments; the reduced runtime failures are documented in
-      [known issues](KNOWN_ISSUES.md). Member/base/delegating probes pass, but
-      those shared argument paths do not yet consume the constructor binding
-      side table. Unscoped enum
+      Copy-initialization and new-expressions now use the same semantic
+      reference-binding plans for converted scalar arguments; the separate
+      `test_scalar_reference_ctor_temp_copy_init_ret0.cpp` and
+      `test_scalar_reference_ctor_temp_new_ret0.cpp` regressions protect those
+      paths. Member/base/delegating initializer probes pass, but those shared
+      argument paths do not yet consume the constructor binding side table.
+      Unscoped enum
       arguments use published promotion and underlying types for builtin
       scalar and constructor parameters; scoped enum-to-builtin conversions
       are rejected canonically. Implicit copy/move constructor schemas derive

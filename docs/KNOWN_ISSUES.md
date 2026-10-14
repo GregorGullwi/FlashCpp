@@ -74,36 +74,6 @@ and rejects the second initializer. Array prvalues need typed array
 initialization, temporary storage, and the usual postfix/subscript semantics.
 This is separate from array members initialized inside a class aggregate.
 
-## Scalar reference constructor temporaries are lost in copy-initialization and new-expressions
-
-On 2026-10-14, these two initialization routes still copied the wrong scalar
-value with the Windows sharded compiler:
-
-```cpp
-struct Receiver {
-	long value;
-	Receiver(const long& argument) noexcept : value(argument) {}
-};
-int main() {
-	short source = 7;
-	Receiver copied = source;
-	Receiver* allocated = new Receiver(source);
-	const bool correct = copied.value == 7 && allocated->value == 7;
-	delete allocated;
-	return correct ? 0 : 1;
-}
-```
-
-The constructor copies the parameter while its temporary is alive. Both
-reduced routes compiled and returned 1 when checked separately. Explicit local
-construction, constructor expressions, and constructor-backed initializer
-lists now consume sema reference-binding plans and pass these runtime checks.
-Copy-initialization and new-expressions still need that semantic plan carried
-through their selected-constructor paths: taking the original identifier's
-address after the scalar conversion discards the converted temporary. Member,
-base, and delegating initializer probes passed; those shared paths have not
-been migrated to the constructor binding side table.
-
 ## Construction through a class-template member alias is rejected
 
 A member alias declared by a class template cannot currently be used to

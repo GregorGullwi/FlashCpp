@@ -644,6 +644,10 @@ const TypeSpecifierNode* AstToIr::CallParamView::type() const {
 	return nullptr;
 }
 
+const CallArgReferenceBindingInfo* AstToIr::getSemaCallRefBinding(const void* key, size_t arg_index) const {
+	return sema_.getCallRefBinding(key, arg_index);
+}
+
 AstToIr::CallParamView AstToIr::resolveCallParamView(
 	std::span<const ASTNode> param_nodes,
 	size_t arg_index,
@@ -729,6 +733,12 @@ TypedValue AstToIr::buildSemaAwareConstructorArgument(const ASTNode& argument, c
 		arg_context = ExpressionContext::LValueAddress;
 	}
 	ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
+	return buildSemaAwareConstructorArgument(std::move(argument_result), argument, param_type, sema_ref_binding, token);
+}
+
+TypedValue AstToIr::buildSemaAwareConstructorArgument(
+	ExprResult argument_result, const ASTNode& argument,
+	const TypeSpecifierNode* param_type, const CallArgReferenceBindingInfo* sema_ref_binding, const Token& token) {
 	if (param_type) {
 		if (auto sema_bound_arg = tryBuildSemaBoundCallArgument(argument_result, argument, *param_type, sema_ref_binding, token)) {
 			return std::move(*sema_bound_arg);
