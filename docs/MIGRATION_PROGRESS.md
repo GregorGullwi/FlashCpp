@@ -27,6 +27,9 @@ The architecture the remaining work builds on:
   named type members, enum layout (underlying type and fixed/unfixed promotion),
   and record property facts. `TypeId` is the external identity; `StringHandle` is
   spelling only.
+- `TypeContext` stores canonical descriptors in a pinned chunked arena, so a
+  `CanonicalTypeDesc` reference returned by `get` stays valid while later
+  descriptors are interned; `CanonicalTypeId` remains the identity.
 - The shared type-trait evaluator classifies the structural `[meta.unary.prop]`
   family plus class/union/qualification and published record properties from
   canonical identity; the folded, constexpr, lazy-constraint, and lowered paths
