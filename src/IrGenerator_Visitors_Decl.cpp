@@ -2191,7 +2191,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				ctor_op.object = StringTable::getOrInternStringHandle("this");
 				const ConstructorDeclarationNode* resolved_ctor =
 					resolveCodegenConstructorFromArgs(*enclosing_struct_info, delegating_init.arguments);
-				appendConstructorCallArguments(ctor_op, resolved_ctor, delegating_init.arguments, node.name_token());
+				appendConstructorCallArguments(ctor_op, resolved_ctor, delegating_init.arguments, node.name_token(), &delegating_init);
 				finalizeConstructorCallOp(ctor_op, *enclosing_struct_info, node.name_token());
 				ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 				emitVoidReturn(node.name_token());
@@ -2233,7 +2233,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						}
 						const ConstructorDeclarationNode* resolved_ctor =
 							resolveCodegenConstructorFromArgs(*base_struct_info, base_init->arguments);
-						appendConstructorCallArguments(ctor_op, resolved_ctor, base_init->arguments, node.name_token());
+						appendConstructorCallArguments(ctor_op, resolved_ctor, base_init->arguments, node.name_token(), base_init);
 						finalizeConstructorCallOp(ctor_op, *base_struct_info, node.name_token());
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 					} else if (base_struct_info && base_struct_info->hasAnyConstructor()) {
@@ -2287,7 +2287,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		ctor_op.object = StringTable::getOrInternStringHandle("this");
 		const ConstructorDeclarationNode* resolved_ctor =
 			resolveCodegenConstructorFromArgs(*enclosing_struct_info, delegating_init.arguments);
-		appendConstructorCallArguments(ctor_op, resolved_ctor, delegating_init.arguments, node.name_token());
+		appendConstructorCallArguments(ctor_op, resolved_ctor, delegating_init.arguments, node.name_token(), &delegating_init);
 		ctor_op.call_base_object_variant = emit_split_ctor_variants;
 		finalizeConstructorCallOp(ctor_op, *enclosing_struct_info, node.name_token());
 
@@ -2381,7 +2381,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								inner_ctor_op.base_class_offset = static_cast<int>(combined_offset);
 								inner_ctor_op.call_base_object_variant = shouldCallBaseObjectVariant(inner_struct_info);
 								inner_ctor_op.resolved_constructor = inner_ctor;
-								appendConstructorCallArguments(inner_ctor_op, inner_ctor, base_init->arguments, node.name_token());
+								appendConstructorCallArguments(inner_ctor_op, inner_ctor, base_init->arguments, node.name_token(), base_init);
 								finalizeConstructorCallOp(inner_ctor_op, *inner_struct_info, node.name_token());
 								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(inner_ctor_op), node.name_token()));
 								handled_as_aggregate_base = true;
@@ -2391,7 +2391,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 					}
 
 					if (!handled_as_aggregate_base) {
-						appendConstructorCallArguments(ctor_op, resolved_ctor, base_init->arguments, node.name_token());
+						appendConstructorCallArguments(ctor_op, resolved_ctor, base_init->arguments, node.name_token(), base_init);
 						finalizeConstructorCallOp(ctor_op, *base_struct_info, node.name_token());
 						// If there's an explicit initializer, generate the constructor call
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
@@ -2954,12 +2954,15 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 							const StructTypeInfo* member_struct_info =
 								member_type_info ? member_type_info->getStructInfo() : nullptr;
 							if (member_struct_info && member_struct_info->hasUserDefinedConstructor()) {
-								const ASTNode& init_expr = explicit_it->second->initializer_expr;
+								const MemberInitializer& member_initializer = *explicit_it->second;
+								const ASTNode& init_expr = member_initializer.initializer_expr;
 								std::vector<ASTNode> constructor_args;
 								const ConstructorDeclarationNode* resolved_ctor = nullptr;
+								const void* binding_key = &member_initializer;
 
 								if (init_expr.is<InitializerListNode>()) {
 									const InitializerListNode& init_list = init_expr.as<InitializerListNode>();
+									binding_key = &init_list;
 									if (const ConstructorDeclarationNode* sema_ctor = init_list.resolved_constructor();
 										sema_ctor && resolvedConstructorMatchesTargetType(*sema_ctor, member.type_index)) {
 										resolved_ctor = sema_ctor;
@@ -2987,8 +2990,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) &&
 									"Member offset exceeds int range");
 								ctor_op.base_class_offset = static_cast<int>(member.offset);
-								appendConstructorCallArguments(
-									ctor_op, resolved_ctor, constructor_args, node.name_token());
+								appendConstructorCallArguments(ctor_op, resolved_ctor, constructor_args, node.name_token(), binding_key);
 								finalizeConstructorCallOp(ctor_op, *member_struct_info, node.name_token());
 								ir_.addInstruction(
 									IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));

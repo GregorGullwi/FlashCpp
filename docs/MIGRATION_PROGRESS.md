@@ -256,8 +256,15 @@ Continue boundary 3A in this order.
       reference-binding plans for converted scalar arguments; the separate
       `test_scalar_reference_ctor_temp_copy_init_ret0.cpp` and
       `test_scalar_reference_ctor_temp_new_ret0.cpp` regressions protect those
-      paths. Member/base/delegating initializer probes pass, but those shared
-      argument paths do not yet consume the constructor binding side table.
+      paths. Member, direct/virtual base, and delegating initializer arguments
+      also carry semantic binding plans into constructor-call lowering. The
+      `test_scalar_reference_ctor_temp_member_init_ret0.cpp`,
+      `test_scalar_reference_ctor_temp_base_init_ret0.cpp`, and
+      `test_scalar_reference_ctor_temp_delegating_init_ret0.cpp` regressions
+      protect converted reference arguments on those paths. Separate
+      `test_scalar_reference_ctor_temp_virtual_base_ret0.cpp` and
+      `test_scalar_reference_ctor_temp_aggregate_base_forward_ret0.cpp`
+      regressions cover virtual-base binding and aggregate-base forwarding.
       Unscoped enum
       arguments use published promotion and underlying types for builtin
       scalar and constructor parameters; scoped enum-to-builtin conversions
