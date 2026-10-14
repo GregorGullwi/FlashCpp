@@ -104,25 +104,6 @@ address after the scalar conversion discards the converted temporary. Member,
 base, and delegating initializer probes passed; those shared paths have not
 been migrated to the constructor binding side table.
 
-## Constructor templates with const lvalue reference parameters are rejected
-
-On 2026-10-14, FlashCpp rejected this valid constructor-template call with
-`NoMatchingConstructor` (1508), while Clang accepted it:
-
-```cpp
-struct Receiver {
-	template<class T> Receiver(const T&) {}
-};
-int main() { Receiver result(1); }
-```
-
-The same deduction pattern works for an ordinary function template, and
-constructor controls using `T` or `T&&` compile. Named and unnamed `const T&`
-parameters both fail. Trace output shows that `T` is deduced and lazy member
-materialization begins, but the specialization is not accepted as a viable
-constructor. This needs a fix before overload selection and reference-binding
-annotation.
-
 ## Construction through a class-template member alias is rejected
 
 A member alias declared by a class template cannot currently be used to

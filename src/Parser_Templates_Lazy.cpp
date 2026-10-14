@@ -293,7 +293,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 					get_type_size_bits(param_type_index.category()),
 					param_decl.identifier_token(),
 					direct_template_arg != nullptr
-						? direct_template_arg->cv_qualifier
+						? (param_type_spec.cv_qualifier() | direct_template_arg->cv_qualifier)
 						: param_type_spec.cv_qualifier());
 				substituted_param_type.set_type_index(param_type_index);
 				if (direct_template_arg != nullptr) {
