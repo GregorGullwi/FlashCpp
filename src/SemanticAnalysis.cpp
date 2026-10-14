@@ -9259,7 +9259,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					isCanonicalSubscriptIndex(canonical_types, first_desc);
 				const CanonicalTypeId array_type_id = first_is_index ? second_type_id : first_type_id;
 				const CanonicalTypeDesc& array_desc = type_context_.get(array_type_id);
-				if (array_desc.structural_type_id && !hasFlag(array_desc.flags, CanonicalTypeFlags::PublishedPointerArray)) {
+				if (array_desc.structural_type_id) {
 					TypeId element_type_id = array_desc.structural_type_id;
 					CVQualifier array_cv = CVQualifier::None;
 					bool found_element_type = false;
@@ -9298,6 +9298,9 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					}
 					if (found_element_type) {
 						CanonicalTypeDesc element_desc = array_desc;
+						// The element carries the canonical node identity, not a flat
+						// projection, so drop the projection marker before interning.
+						element_desc.flags = clearFlag(element_desc.flags, CanonicalTypeFlags::PublishedPointerArray);
 						element_desc.structural_type_id = element_type_id;
 						element_desc.pointer_levels.clear();
 						element_desc.array_dimensions.clear();
@@ -9307,7 +9310,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					}
 					return {};
 				}
-				// If it has array dimensions, strip one to get element type.
+				// Flat projection for shapes the importer could not publish.
 				if (!array_desc.array_dimensions.empty()) {
 					CanonicalTypeDesc elem_desc = array_desc;
 					dropPublishedPointerArrayIdentity(elem_desc);
