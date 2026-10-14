@@ -1438,6 +1438,21 @@ CanonicalTypeId TypeContext::intern(const CanonicalTypeDesc& desc) {
 	types_.push_back(stored);
 	const CanonicalTypeId id{static_cast<uint32_t>(types_.size())}; // 1-based
 	index_.emplace(stored, id);
+	// Report the arena's cumulative bytes from every intern, including the last
+	// one, so the semantic Descriptors accounting does not lag. Bind lazily to
+	// the active frontend context; the descriptor store is owned here, not by
+	// CanonicalTypeTable.
+	if (arena_accounting_ == nullptr) {
+		if (FrontendContext* context = frontendContext()) {
+			arena_accounting_ = &context->semanticAccounting();
+		}
+	}
+	if (arena_accounting_ != nullptr) {
+		arena_accounting_->update(
+			SemanticArenaComponent::Descriptors,
+			types_.usedBytes(),
+			types_.reservedBytes());
+	}
 	return id;
 }
 
@@ -6171,12 +6186,6 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 	// function, after copying them off any get() reference.
 	publishPointerArrayStructuralId(desc);
 	auto id = type_context_.intern(desc);
-	// Publish the descriptor arena's cumulative bytes into semantic arena
-	// accounting; the descriptor store is owned here, not by CanonicalTypeTable.
-	requireFrontendContext().semanticAccounting().update(
-		SemanticArenaComponent::Descriptors,
-		type_context_.descriptorUsedBytes(),
-		type_context_.descriptorReservedBytes());
 	stats_.canonical_types_interned++;
 	return id;
 }
