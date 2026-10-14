@@ -114,26 +114,6 @@ instantiation. Stack usage for deep chains through those forms remains
 unverified. Extend dependency scheduling to cover them while sharing base
 substitution semantics with ordinary instantiation.
 
-## Boundary 2F removed unsupported legacy negative fixtures
-
-On 2026-08-30 boundary 2F removed the frozen `_fail.cpp` inventories and their
-temporary internal-failure compatibility. The remaining fixtures were not
-converted into diagnostic contracts because their failures are outside an
-existing bounded owner. Their source is preserved as non-discovered `.cpp.txt`
-reproducers under `tests/unsupported_boundary_2f/`:
-
-- An out-of-line static member function of a class template that references a
-  non-static data member: `test_template_out_of_line_static_member_implicit_this_fail.cpp`.
-  It stops while attaching the out-of-line member (`OutOfLineMemberNotAttached`)
-  before it can reach the implicit-`this` validation that now owns the equivalent
-  in-class and non-template forms.
-
-These archived reproducers should return to executable discovery only after
-their owning parser, identity, constexpr, or lowering work can provide a stable
-diagnostic contract without adding recovery solely to empty the old inventory.
-The per-file recovery map is indexed in
-`tests/unsupported_boundary_2f/README.md`.
-
 ## Legacy flat consumers cannot yet handle interleaved pointer/array declarators
 
 Boundary 3A is not complete: descriptors carry authoritative

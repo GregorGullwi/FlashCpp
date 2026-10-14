@@ -6,7 +6,7 @@ authoritative for the design, boundaries, and exit criteria. This file records
 the current boundary state, the remaining work, and the validation contract;
 completed implementation history belongs in git.
 
-Last updated: 2026-10-13.
+Last updated: 2026-10-14.
 
 ## Current state
 
@@ -59,6 +59,14 @@ The architecture the remaining work builds on:
 Compatibility counters and identity inventories are baselined under
 `tests/migration_counters/`; the flat classifier in `TypeTraitEvaluator.cpp`
 remains only for the families listed under remaining work item 2.
+
+Boundary **2F** is complete. The archived legacy negative reproducers under
+`tests/unsupported_boundary_2f/` have all been recovered as encoded `_e<ID>`
+negative tests and the archive index is empty. The final reproducer, an
+out-of-line static member function of a class template that references a
+non-static data member, is rejected with `NonStaticMemberUseInStaticFunction`:
+a replayed out-of-line member body now surfaces its structured rejection instead
+of being masked by a generic `OutOfLineMemberNotAttached` attachment failure.
 
 ## Next work
 
