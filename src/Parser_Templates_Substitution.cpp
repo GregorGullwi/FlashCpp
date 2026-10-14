@@ -260,7 +260,7 @@ Parser::TemplateBodySubstitutionState Parser::makeTemplateBodySubstitutionState(
 	if (state.owner_type_index.is_valid()) {
 		const TypeInfo* owner_type_info = tryGetTypeInfo(state.owner_type_index);
 		if (owner_type_info == nullptr) {
-			throw CompileError(std::string(StringBuilder()
+			throw InternalError(std::string(StringBuilder()
 				.append("Unable to resolve concrete template substitution owner TypeIndex ")
 				.append(static_cast<uint64_t>(state.owner_type_index.index()))
 				.commit()));
@@ -280,7 +280,7 @@ Parser::TemplateBodySubstitutionState Parser::makeTemplateBodySubstitutionState(
 			break;
 		}
 	} else if (has_implicit_this) {
-		throw CompileError(
+		throw InternalError(
 			"Implicit-object template substitution requires a concrete owner TypeIndex");
 	}
 	return state;

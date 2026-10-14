@@ -3032,7 +3032,7 @@ void AstToIr::generateNestedMemberStores(
 		} else {
 			const size_t member_index = positional_element_index - base_initializers.size();
 			if (member_index >= struct_info.members.size()) {
-				throw CompileError("Too many initializers for aggregate class");
+				throw InternalError("Too many initializers for aggregate class");
 			}
 			member_init_list.add_initializer(aggregate_elements[i]);
 		}
@@ -3074,7 +3074,7 @@ void AstToIr::generateNestedMemberStores(
 				!base_struct_info->implicit_default_constructor.is_deleted) {
 				fillInDefaultConstructorArguments(base_ctor_op, *base_struct_info);
 			} else if (!base_ctor) {
-				throw CompileError("No matching constructor for aggregate base initializer");
+				throw InternalError("No matching constructor for aggregate base initializer");
 			} else {
 				appendConstructorCallArguments(base_ctor_op, base_ctor, base_args, token);
 			}
@@ -3089,7 +3089,7 @@ void AstToIr::generateNestedMemberStores(
 		base_args.push_back(*base_initializer);
 		const ConstructorDeclarationNode* base_ctor = resolveCodegenConstructorFromArgs(*base_struct_info, base_args);
 		if (!base_ctor) {
-			throw CompileError("No matching constructor for aggregate base expression initializer");
+			throw InternalError("No matching constructor for aggregate base expression initializer");
 		}
 		ConstructorCallOp base_ctor_op;
 		base_ctor_op.object = base_object;
@@ -3157,7 +3157,7 @@ void AstToIr::generateNestedMemberStores(
 							continue;
 						}
 						if (!default_ctor) {
-							throw CompileError("Omitted aggregate member has no usable default constructor");
+							throw InternalError("Omitted aggregate member has no usable default constructor");
 						}
 						ConstructorCallOp ctor_op;
 						ctor_op.object = base_object;
@@ -3195,7 +3195,7 @@ void AstToIr::generateNestedMemberStores(
 							resolved_ctor = resolveCodegenConstructorFromArgs(*member_struct_info, ctor_args);
 						}
 						if (!resolved_ctor) {
-							throw CompileError("No matching constructor for aggregate default-member initializer");
+							throw InternalError("No matching constructor for aggregate default-member initializer");
 						}
 						emit_nested_ctor_call(member, *member_struct_info, *resolved_ctor, ctor_args);
 						continue;
@@ -3210,7 +3210,7 @@ void AstToIr::generateNestedMemberStores(
 					continue;
 				}
 				if (scalar_initializers.size() != 1 || !scalar_initializers[0].is<ExpressionNode>()) {
-					throw CompileError("Scalar aggregate default-member initializer must contain one expression");
+					throw InternalError("Scalar aggregate default-member initializer must contain one expression");
 				}
 				default_expression = &scalar_initializers[0].as<ExpressionNode>();
 			} else if (default_initializer.is<ExpressionNode>()) {
