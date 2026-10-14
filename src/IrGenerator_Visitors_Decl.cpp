@@ -3641,7 +3641,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			}
 			return arg_result;
 		}
-		throw CompileError("Pointer constructor call must have 0 or 1 arguments");
+		throw InternalError("Pointer constructor call must have 0 or 1 arguments");
 	}
 
 	if (!is_struct_type(constructor_type_category) &&
@@ -3690,7 +3690,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			}
 			return generateTypeConversion(arg_result, arg_result.category(), constructor_type_category, constructorCallNode.called_from());
 		}
-		throw CompileError("Primitive constructor call must have 0 or 1 arguments");
+		throw InternalError("Primitive constructor call must have 0 or 1 arguments");
 	}
 
 	// For constructor calls, we need to generate a constructor call instruction
