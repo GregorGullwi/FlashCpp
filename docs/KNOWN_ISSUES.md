@@ -1,5 +1,32 @@
 # Known Issues
 
+## Alias-template function-type targets parse but are not substituted
+
+An alias template whose target is a parenthesized function declarator, for
+example `template <class T> using Fn = int (T);`, is not supported end to end,
+and it needs two things done together:
+
+1. The alias-template target parser (`Parser_Templates_Class.cpp`) duplicates the
+   declarator handling that the non-template `using` form shares through
+   `Parser::parse_type_alias_function_type` (`Parser_Decl_TypedefUsing.cpp`). The
+   template form has its own `(`-probe that only recognizes pointer and
+   member-pointer targets, so a function target is rejected with
+   `UnsupportedAliasTemplateTargetDeclarator` (1816). Routing it through the
+   shared helper makes the target parse — a concrete `using F = int (long);` then
+   compiles — and lets both alias forms share one target parser.
+2. The instantiated function type keeps its dependent parameter. The parameter is
+   correctly marked (`FunctionType::template_parameter_name` is set to `T`), but
+   the alias target's function signature is not routed through the signature
+   substitution (`substitute_function_type` / `process_signature`,
+   `ParserTemplateClassShared.h`) that a declaration's signature uses. A function
+   that uses `Fn<int>` therefore fails with `Dependent function type component 'T'
+   reached name mangling`.
+
+Because (2) is unresolved, the parser must keep rejecting the form with 1816
+rather than reach an internal mangling failure; (1) alone would regress a clean
+diagnostic into an internal error. The token-mangling target and dependent
+parameter are the reduced repro; there is no dedicated regression test yet.
+
 ## Pointer-to-unsized-outer-array identity can lose a bound
 
 A descriptor for a pointer to an array with an unknown outer bound — for example
