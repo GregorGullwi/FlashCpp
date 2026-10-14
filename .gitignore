@@ -19,6 +19,9 @@ output/*.exe
 output/*.obj
 .backup
 
+# Clang stack-usage reports (-fstack-usage)
+*.su
+
 # Test executables
 test_*_exe
 *_exe

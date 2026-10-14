@@ -2175,6 +2175,14 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		}
 	};
 
+	const auto selectInitializerConstructor = [&](const StructTypeInfo& target, TypeIndex target_index,
+		std::span<const ASTNode> arguments, const void* key) {
+		if (const ConstructorDeclarationNode* selected = sema_.getSelectedInitializerConstructor(key)) {
+			return resolvedConstructorMatchesTargetType(*selected, target_index) ? selected : nullptr;
+		}
+		return resolveCodegenConstructorFromArgs(target, arguments);
+	};
+
 	if (emit_split_ctor_variants && enclosing_struct_info) {
 		FunctionDeclOp complete_ctor_decl_op = ctor_decl_op;
 		complete_ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(
@@ -2190,7 +2198,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				ConstructorCallOp ctor_op;
 				ctor_op.object = StringTable::getOrInternStringHandle("this");
 				const ConstructorDeclarationNode* resolved_ctor =
-					resolveCodegenConstructorFromArgs(*enclosing_struct_info, delegating_init.arguments);
+					selectInitializerConstructor(*enclosing_struct_info, enclosing_struct_type_index, delegating_init.arguments, &delegating_init);
 				appendConstructorCallArguments(ctor_op, resolved_ctor, delegating_init.arguments, node.name_token(), &delegating_init);
 				finalizeConstructorCallOp(ctor_op, *enclosing_struct_info, node.name_token());
 				ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
@@ -2232,7 +2240,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 							throw InternalError("Internal error: struct info not found for virtual base class");
 						}
 						const ConstructorDeclarationNode* resolved_ctor =
-							resolveCodegenConstructorFromArgs(*base_struct_info, base_init->arguments);
+							selectInitializerConstructor(*base_struct_info, virtual_base.type_index, base_init->arguments, base_init);
 						appendConstructorCallArguments(ctor_op, resolved_ctor, base_init->arguments, node.name_token(), base_init);
 						finalizeConstructorCallOp(ctor_op, *base_struct_info, node.name_token());
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
@@ -2286,7 +2294,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		ConstructorCallOp ctor_op;
 		ctor_op.object = StringTable::getOrInternStringHandle("this");
 		const ConstructorDeclarationNode* resolved_ctor =
-			resolveCodegenConstructorFromArgs(*enclosing_struct_info, delegating_init.arguments);
+			selectInitializerConstructor(*enclosing_struct_info, enclosing_struct_type_index, delegating_init.arguments, &delegating_init);
 		appendConstructorCallArguments(ctor_op, resolved_ctor, delegating_init.arguments, node.name_token(), &delegating_init);
 		ctor_op.call_base_object_variant = emit_split_ctor_variants;
 		finalizeConstructorCallOp(ctor_op, *enclosing_struct_info, node.name_token());
@@ -2345,7 +2353,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 													.commit()));
 					}
 					const ConstructorDeclarationNode* resolved_ctor =
-						resolveCodegenConstructorFromArgs(*base_struct_info, base_init->arguments);
+						selectInitializerConstructor(*base_struct_info, base.type_index, base_init->arguments, base_init);
 
 					// C++20 aggregate: base has no user-declared constructors and no direct
 					// data members, but has its own base class(es).  Forward the arguments
@@ -2366,7 +2374,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 									continue;
 								}
 								const ConstructorDeclarationNode* inner_ctor =
-									resolveCodegenConstructorFromArgs(*inner_struct_info, base_init->arguments);
+									selectInitializerConstructor(*inner_struct_info, inner_base.type_index, base_init->arguments, base_init);
 								if (!inner_ctor) {
 									continue;
 								}
@@ -2957,7 +2965,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								const MemberInitializer& member_initializer = *explicit_it->second;
 								const ASTNode& init_expr = member_initializer.initializer_expr;
 								std::vector<ASTNode> constructor_args;
-								const ConstructorDeclarationNode* resolved_ctor = nullptr;
+								const ConstructorDeclarationNode* resolved_ctor = sema_.getSelectedInitializerConstructor(&member_initializer);
 								const void* binding_key = &member_initializer;
 
 								if (init_expr.is<InitializerListNode>()) {

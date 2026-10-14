@@ -217,6 +217,131 @@ TEST_CASE("Canonical reference argument plans rank scalar conversion temporaries
 	CHECK_FALSE(plan->is_valid);
 }
 
+TEST_CASE("Canonical reference argument plans use structural conversion temporaries without TypeInfo") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId boolean = table.builtin(CanonicalBuiltinKind::Bool);
+	const TypeId pointer = table.pointer(integer);
+	const TypeId member = table.memberObjectPointer(table.record(EntityId{920}), integer);
+	const TypeId function = table.function(integer, {}, false, CVQualifier::None, ReferenceQualifier::None, true,
+		CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	const TypeId throwing_function = table.function(integer, {}, false, CVQualifier::None, ReferenceQualifier::None, false,
+		CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	const auto check_plan = [&table](TypeId source, TypeId target, StandardConversionKind kind) {
+		const TypeId reference = table.reference(table.qualify(target, CVQualifier::Const), ReferenceQualifier::LValueReference);
+		const auto plan = tryBuildCanonicalReferenceArgumentConversionPlan(table, source, reference);
+		REQUIRE(plan.has_value());
+		CHECK(plan->is_valid);
+		CHECK(plan->kind == kind);
+	};
+	check_plan(table.builtin(CanonicalBuiltinKind::Nullptr), pointer, StandardConversionKind::PointerConversion);
+	check_plan(table.builtin(CanonicalBuiltinKind::Nullptr), member, StandardConversionKind::PointerConversion);
+	check_plan(pointer, boolean, StandardConversionKind::BooleanConversion);
+	check_plan(member, boolean, StandardConversionKind::BooleanConversion);
+	check_plan(table.reference(table.array(integer, 3), ReferenceQualifier::LValueReference), pointer, StandardConversionKind::ArrayToPointer);
+	check_plan(table.reference(function, ReferenceQualifier::LValueReference), table.pointer(throwing_function),
+		StandardConversionKind::FunctionToPointer);
+	check_plan(table.pointer(function), table.pointer(throwing_function), StandardConversionKind::QualificationAdjustment);
+	check_plan(table.memberFunctionPointer(table.record(EntityId{920}), function),
+		table.memberFunctionPointer(table.record(EntityId{920}), throwing_function), StandardConversionKind::QualificationAdjustment);
+	const TypeId enum_type = table.enumeration(EntityId{921});
+	table.publishEnumLayout(CanonicalEnumLayout{.entity = EntityId{921}, .underlying_type = table.builtin(CanonicalBuiltinKind::Short),
+		.size_bytes = 2, .enumerator_count = 1, .flags = CanonicalEnumLayoutFlags::FixedUnderlying});
+	check_plan(table.reference(enum_type, ReferenceQualifier::LValueReference), integer, StandardConversionKind::IntegralPromotion);
+	check_plan(enum_type, table.builtin(CanonicalBuiltinKind::Double), StandardConversionKind::FloatingIntegralConversion);
+	const TypeId scoped_enum = table.enumeration(EntityId{922});
+	table.publishEnumLayout(CanonicalEnumLayout{.entity = EntityId{922}, .underlying_type = integer, .size_bytes = 4, .enumerator_count = 1,
+		.flags = CanonicalEnumLayoutFlags::Scoped | CanonicalEnumLayoutFlags::FixedUnderlying});
+	const TypeId const_integer_reference = table.reference(table.qualify(integer, CVQualifier::Const), ReferenceQualifier::LValueReference);
+	const auto scoped_plan = tryBuildCanonicalReferenceArgumentConversionPlan(table, scoped_enum, const_integer_reference);
+	REQUIRE(scoped_plan.has_value());
+	CHECK_FALSE(scoped_plan->is_valid);
+	const auto mutable_plan = tryBuildCanonicalReferenceArgumentConversionPlan(table, pointer,
+		table.reference(boolean, ReferenceQualifier::LValueReference));
+	REQUIRE(mutable_plan.has_value());
+	CHECK_FALSE(mutable_plan->is_valid);
+	const TypeId pointer_lvalue = table.reference(pointer, ReferenceQualifier::LValueReference);
+	const TypeId qualified_pointer = table.pointer(table.qualify(integer, CVQualifier::Const));
+	const TypeId compatible_reference = table.reference(table.qualify(qualified_pointer, CVQualifier::Const), ReferenceQualifier::LValueReference);
+	const auto direct_plan = tryBuildCanonicalDirectReferenceBindingPlan(table, pointer_lvalue, compatible_reference);
+	REQUIRE(direct_plan.has_value());
+	CHECK(direct_plan->is_valid);
+	CHECK(direct_plan->kind == StandardConversionKind::QualificationAdjustment);
+	const auto related_plan = tryBuildCanonicalReferenceArgumentConversionPlan(table, pointer_lvalue,
+		table.reference(qualified_pointer, ReferenceQualifier::RValueReference));
+	REQUIRE(related_plan.has_value());
+	CHECK_FALSE(related_plan->is_valid);
+	const TypeId unknown_enum = table.enumeration(EntityId{923});
+	CHECK_FALSE(tryBuildCanonicalReferenceArgumentConversionPlan(table, unknown_enum, const_integer_reference).has_value());
+	CHECK_FALSE(tryBuildCanonicalReferenceArgumentConversionPlan(table, table.record(EntityId{924}), const_integer_reference).has_value());
+	const TypeId const_pointer_reference = table.reference(table.qualify(pointer, CVQualifier::Const), ReferenceQualifier::LValueReference);
+	const auto different_pointer = tryBuildCanonicalReferenceArgumentConversionPlan(table, table.pointer(boolean), const_pointer_reference);
+	REQUIRE(different_pointer.has_value());
+	CHECK_FALSE(different_pointer->is_valid);
+	const TypeId record_pointer = table.pointer(table.record(EntityId{924}));
+	const TypeId other_record_pointer = table.pointer(table.record(EntityId{925}));
+	const TypeId nominal_reference = table.reference(table.qualify(other_record_pointer, CVQualifier::Const), ReferenceQualifier::LValueReference);
+	CHECK_FALSE(tryBuildCanonicalReferenceArgumentConversionPlan(table, record_pointer, nominal_reference).has_value());
+	const TypeId dependent_pointer = table.pointer(table.templateParameter(TemplateDeclId{926}, 0));
+	CHECK_FALSE(tryBuildCanonicalReferenceArgumentConversionPlan(table, dependent_pointer, const_pointer_reference).has_value());
+	const TypeId other_member = table.memberObjectPointer(table.record(EntityId{925}), integer);
+	const TypeId member_reference = table.reference(table.qualify(member, CVQualifier::Const), ReferenceQualifier::LValueReference);
+	CHECK_FALSE(tryBuildCanonicalReferenceArgumentConversionPlan(table, other_member, member_reference).has_value());
+	const auto const_array = tryBuildCanonicalReferenceArgumentConversionPlan(table,
+		table.reference(table.array(table.qualify(integer, CVQualifier::Const), 3), ReferenceQualifier::LValueReference), const_pointer_reference);
+	REQUIRE(const_array.has_value());
+	CHECK_FALSE(const_array->is_valid);
+}
+
+TEST_CASE("Canonical constructibility shares structural reference temporary plans without TypeInfo") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId boolean = table.builtin(CanonicalBuiltinKind::Bool);
+	const TypeId boolean_reference = table.reference(table.qualify(boolean, CVQualifier::Const), ReferenceQualifier::LValueReference);
+	const EntityId consumer_entity{927};
+	const std::array<TypeId, 1> parameters{boolean_reference};
+	const std::array<CanonicalRecordConstructorSpec, 1> constructors{{{parameters, CanonicalRecordFunctionFlags::None, true}}};
+	table.publishRecordConstructors(table.record(consumer_entity), constructors);
+	TypeSpecifierNode consumer(TypeCategory::Struct, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	consumer.set_type_entity(consumer_entity);
+	TypeSpecifierNode pointer(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	pointer.add_pointer_level(CVQualifier::None);
+	pointer.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	const std::array<TypeSpecifierNode, 1> arguments{pointer};
+	const auto constructible = evaluateConstructibility(TypeTraitKind::IsConstructible, consumer, arguments, ConstructibilityFallback::None);
+	REQUIRE(constructible.has_value());
+	CHECK(constructible->success);
+	CHECK(constructible->value);
+	TypeSpecifierNode boolean_target(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::Const);
+	boolean_target.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	const auto scalar = evaluateConstructibility(TypeTraitKind::IsConstructible, boolean_target, arguments, ConstructibilityFallback::None);
+	REQUIRE(scalar.has_value());
+	CHECK(scalar->success);
+	CHECK(scalar->value);
+	boolean_target.set_cv_qualifier(CVQualifier::None);
+	const auto mutable_binding = evaluateConstructibility(TypeTraitKind::IsConstructible, boolean_target, arguments, ConstructibilityFallback::None);
+	REQUIRE(mutable_binding.has_value());
+	CHECK(mutable_binding->success);
+	CHECK_FALSE(mutable_binding->value);
+}
+
+TEST_CASE("Canonical reference qualification plans keep deep declarators off the native stack") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	TypeId source = table.builtin(CanonicalBuiltinKind::Int);
+	TypeId target = table.qualify(source, CVQualifier::Const);
+	for (size_t depth = 0; depth < 4096; ++depth) {
+		source = table.pointer(source);
+		target = table.qualify(table.pointer(target), CVQualifier::Const);
+	}
+	const auto binding = tryBuildCanonicalDirectReferenceBindingPlan(table, table.reference(source, ReferenceQualifier::LValueReference),
+		table.reference(target, ReferenceQualifier::LValueReference));
+	REQUIRE(binding.has_value());
+	CHECK(binding->is_valid);
+	CHECK(binding->kind == StandardConversionKind::QualificationAdjustment);
+}
+
 TEST_CASE("Canonical constructor schemas rank scalar reference temporaries without TypeInfo") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();
