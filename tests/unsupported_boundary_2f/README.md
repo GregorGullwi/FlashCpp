@@ -27,7 +27,12 @@ An agent looking for a regression to recover should:
 
 | Reproducer | Blocked owner | Recover when |
 | --- | --- | --- |
-| `test_template_out_of_line_static_member_implicit_this_fail.cpp.txt` | Out-of-line static-member materialization | Static-member implicit-`this` validation has a stable owner. |
+| _(none)_ | | |
+
+All boundary-2F reproducers have been recovered; the last one,
+`test_template_out_of_line_static_member_implicit_this_fail.cpp.txt`, now reports
+`NonStaticMemberUseInStaticFunction` once the replayed out-of-line body surfaces
+its structured rejection instead of a generic attachment failure.
 
 The archive is intentionally indexed by source filename rather than by a
 guessed diagnostic number. Recovery assigns the filename ID only after the

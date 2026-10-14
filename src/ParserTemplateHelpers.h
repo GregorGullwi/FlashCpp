@@ -3158,6 +3158,20 @@ inline bool Parser::replayOutOfLineMemberBody(
 					"': ",
 					e.what());
 			}
+		} else if (body_result.diagnostic_id() != DiagnosticId::None &&
+				   isHardUseLikeInstantiationMode()) {
+			// The replayed body was rejected by a rule that already reported a
+			// structured diagnostic (for example an implicit-this misuse in a
+			// static member function). Surface that owner instead of masking it as
+			// a generic out-of-line attachment failure. Soft/SFINAE probes keep the
+			// previous non-throwing behavior.
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				body_result.diagnostic_id(),
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(body_result.error_token()),
+				body_result.error_message(),
+				{});
 		} else {
 			FLASH_LOG(
 				Templates,
