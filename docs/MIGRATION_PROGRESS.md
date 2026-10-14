@@ -248,7 +248,11 @@ Continue boundary 3A in this order.
       binding plans through the shared call-argument materializer. The new
       `test_scalar_reference_ctor_temp_materialization_ret0.cpp` regression
       covers converted references, direct alias identity, prvalues, templates,
-      and mixed reference/value parameters. Copy-initialization and
+      and mixed reference/value parameters. The new
+      `test_constructor_template_const_lvalue_ref_ret0.cpp` protects lazy
+      constructor-template materialization from dropping declared cv
+      qualifiers while combining them with deduced template types.
+      Copy-initialization and
       new-expressions still lose scalar conversion temporaries for identifier
       arguments; the reduced runtime failures are documented in
       [known issues](KNOWN_ISSUES.md). Member/base/delegating probes pass, but
