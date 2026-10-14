@@ -33,7 +33,9 @@ The architecture the remaining work builds on:
 - `canonicalizeType` publishes `structural_type_id` for a projectable pointer or
   array when the canonical importer can represent that shape. `TypeContext::intern`
   does the same for pointer and array descriptors built outside `canonicalizeType`,
-  after copying off any `get()` reference. Conditional array decay and conditional
+  after copying off any `get()` reference, and re-derives the id from the
+  descriptor's current flat projection so a stale id cannot survive a projection
+  change. Conditional array decay and conditional
   pointer selection read that id and do not import while a descriptor reference is
   live. Flat pointer-level and array-dimension fields remain for shapes the
   importer cannot represent, and as the materialization projection of a published
