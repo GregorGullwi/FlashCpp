@@ -718,6 +718,26 @@ std::optional<TypedValue> AstToIr::tryBuildSemaBoundCallArgument(
 	return typed_arg;
 }
 
+TypedValue AstToIr::buildSemaAwareConstructorArgument(const ASTNode& argument, const TypeSpecifierNode* param_type,
+	const CallArgReferenceBindingInfo* sema_ref_binding, const Token& token) {
+	if (!argument.is<ExpressionNode>()) {
+		throw InternalError("Constructor argument is not an expression");
+	}
+	ExpressionContext arg_context = ExpressionContext::Load;
+	if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference()) &&
+		(!sema_ref_binding || !sema_ref_binding->is_valid() || sema_ref_binding->binds_directly())) {
+		arg_context = ExpressionContext::LValueAddress;
+	}
+	ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
+	if (param_type) {
+		if (auto sema_bound_arg = tryBuildSemaBoundCallArgument(argument_result, argument, *param_type, sema_ref_binding, token)) {
+			return std::move(*sema_bound_arg);
+		}
+		argument_result = applyConstructorArgConversion(argument_result, argument, *param_type, token);
+	}
+	return buildConstructorArgumentValue(argument_result, argument, param_type, token);
+}
+
 ExprResult AstToIr::applyCallArgumentConversions(
 	ExprResult argument_result,
 	const ASTNode& argument,
