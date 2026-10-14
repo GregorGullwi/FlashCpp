@@ -1,5 +1,26 @@
 # Known Issues
 
+## Pointer-to-unsized-outer-array identity can lose a bound
+
+A descriptor for a pointer to an array with an unknown outer bound — for example
+the alias `template <class T, int N> using Rows = T(*)[][N];` — can carry a
+correct flat projection (`pointee_array_declarator` and
+`has_unsized_outer_array_dimension` set) while its canonical `structural_type_id`
+does not represent the same shape. Instrumenting `TypeContext::intern` for
+descriptors with `has_unsized_outer_array_dimension` showed chains such as
+`Pointer -> Array -> int` for a `[][N]` shape (one bound missing) and a
+degenerate `Builtin` chain. The ordered-declarator importer is not at fault: for
+`int(*)[][3]` its components are `[Pointer, UnknownBoundArray, Array(3)]` and
+`UnknownBoundArray` maps to `arrayOfUnknownBound`. The mismatched descriptors are
+built through another construction path that must be identified. Until their
+structural identity carries every bound, consumers that need the array projection
+(the array-to-pointer conversion and multi-dimensional pointer-to-array subscript
+paths in codegen) must keep reading the flat `pointee_array_declarator` /
+`has_unsized_outer_array_dimension` fields, which blocks migrating those consumers
+— and, in turn, the address-of / dereference / new-expression producers — off the
+flat projection. The reduced regression is
+`test_alias_template_dependent_pointer_to_unknown_outer_array_bounds_ret0.cpp`.
+
 ## SEH finally funclet termination is conservative in return-flow diagnostics
 
 The control-flow analysis models a Windows `SehFinallyCall` as a call that can
