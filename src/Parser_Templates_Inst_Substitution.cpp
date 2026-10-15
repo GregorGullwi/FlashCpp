@@ -2248,16 +2248,35 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 						substituted_expr.as<ExpressionNode>());
 				if (substituted_call.has_qualified_name() &&
 					!substituted_call.has_dependent_unqualified_lookup_record() &&
-					!substituted_call.has_dependent_qualified_lookup_record() &&
 					!substituted_call.has_definition_lookup_record() &&
 					!substituted_call.has_parser_return_type_hint()) {
-					throw CompileError(
-						std::string(
-							StringBuilder()
-								.append("No matching function for call to '")
-								.append(substituted_call.qualified_name())
-								.append("'")
-								.commit()));
+					if (!substituted_call.has_dependent_qualified_lookup_record()) {
+						throw CompileError(
+							std::string(
+								StringBuilder()
+									.append("No matching function for call to '")
+									.append(substituted_call.qualified_name())
+									.append("'")
+									.commit()));
+					}
+					// The owner rebound to a concrete instantiation but the member
+					// was never found, so the dependent-qualified record survived
+					// substitution. For a concrete alias instantiation that is an
+					// ill-formed alias target rather than a deferred lookup.
+					if (!anyTemplateArgIsStructurallyDependent(effective_template_args)) {
+						throw makeStructuredCompileError(
+							context_.diagnostics(),
+							DiagnosticId::UndeclaredQualifiedIdentifier,
+							DiagnosticSeverity::Error,
+							SourceLocation::fromToken(substituted_call.called_from()),
+							std::string(
+								StringBuilder()
+									.append("No member named in the instantiated type for qualified call '")
+									.append(substituted_call.qualified_name())
+									.append("'")
+									.commit()),
+							{});
+					}
 				}
 			}
 			return false;
