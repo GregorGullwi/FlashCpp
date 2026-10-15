@@ -229,15 +229,18 @@ element address relocation/store per element. The regressions
 `tests/test_array_of_function_pointers_ret0.cpp` and
 `tests/test_alias_array_of_function_pointers_ret0.cpp` call through the elements.
 
-The remaining parenthesized interleaving is a callable whose return is itself a
-callable, for example `int (*(*p)())()` (a pointer to a function returning a
-function pointer), still rejected with `Expected identifier token`. The ordered
-spine keeps a single cold `FunctionSignature`, so a second `Function` component
-has nowhere to store its parameter list; supporting it needs a nested callable
-return representation (a per-component `FunctionType::callable_signature`). The
-transitional `(*` probe in `tryStructuralPointerArrayDeclarator` and the flat
-`(`-re-check dispatch in `parse_type_and_name` also remain to be removed once the
-recursive grammar owns every interleaving.
+A callable whose return is itself callable now parses and lowers as a pointer
+object: `int (*(*p)())()`, `int (* (*p)(int))(int)`, and deeper nestings keep one
+signature per `Function` component, with each inner signature carried on the
+enclosing return `FunctionType`'s `callable_signature`. Calling through such a
+value (`p()()`, where the receiver is itself a call's function-pointer result)
+still fails closed with `Callable operator() receiver type could not be
+resolved`; sema must type the inner result first. A function definition whose
+return type is a three-deep nested callable is likewise not yet routed through
+the ordered declarator, and the transitional `(*` probe in
+`tryStructuralPointerArrayDeclarator` and the flat `(`-re-check dispatch in
+`parse_type_and_name` remain to be removed once the recursive grammar owns every
+interleaving.
 
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 

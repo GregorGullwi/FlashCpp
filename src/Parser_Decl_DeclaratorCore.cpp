@@ -58,8 +58,9 @@ bool orderedFunctionComponentIsIllFormed(
 	return false;
 }
 
-// One cold FunctionSignature lives on the type. A second Function component
-// has nowhere to put its parameter list, so this slice keeps a single one.
+// The single-function projection path handles one Function component; the
+// nested-callable path builds each inner signature onto the return
+// FunctionType's callable_signature.
 std::optional<size_t> singleFunctionComponentIndex(
 	std::span<const DeclaratorComponent> components) {
 	std::optional<size_t> found;
@@ -1491,12 +1492,24 @@ ParseResult Parser::parse_declarator(
 			}
 
 			if (candidate) {
+				// A Function component's parameter list and qualifiers, in
+				// outermost-first order across the whole declarator. A nested callable
+				// return (`int (*(*p)())()`) has two, so each Function component needs
+				// its own signature.
+				struct OrderedFunctionParams {
+					FlashCpp::ParsedParameterList parameters;
+					FlashCpp::MemberQualifiers qualifiers;
+					FlashCpp::FunctionSpecifiers specifiers;
+					CallingConvention calling_convention = CallingConvention::Default;
+				};
 				struct DeclaratorFrame {
 					std::vector<DeclaratorComponent> prefixes;
 					std::vector<DeclaratorComponent> child;
 					std::vector<DeclaratorComponent> suffixes;
 					std::vector<ASTNode> child_array_bound_expressions;
 					std::vector<ASTNode> suffix_array_bound_expressions;
+					std::vector<OrderedFunctionParams> child_functions;
+					std::vector<OrderedFunctionParams> suffix_functions;
 					CallingConvention calling_convention =
 						CallingConvention::Default;
 					bool delimited = false;
@@ -1664,8 +1677,10 @@ ParseResult Parser::parse_declarator(
 					// Arrays of functions and functions returning arrays are
 					// rejected after the spine is assembled.
 					if (!has_member_pointer && peek() == "("_tok) {
-						if (ordered_function_parameters.has_value() ||
-							!frame.suffixes.empty()) {
+						// A direct-declarator has at most one function suffix; a second
+						// one in the same frame is `f()()` (a function returning a
+						// function), which is ill-formed.
+						if (!frame.suffixes.empty()) {
 							failed = true;
 							break;
 						}
@@ -1683,9 +1698,12 @@ ParseResult Parser::parse_declarator(
 							failed = true;
 							break;
 						}
-						ordered_function_parameters = std::move(params);
+						ordered_function_parameters = params;
 						ordered_function_qualifiers = qualifiers;
 						ordered_function_specifiers = specifiers;
+						frame.suffix_functions.push_back(OrderedFunctionParams{
+							std::move(params), qualifiers, specifiers,
+							last_calling_convention_});
 						frame.suffixes.push_back(DeclaratorComponent::function());
 					}
 					if (frames.size() == 1 && has_member_pointer && peek() == "("_tok) {
@@ -1735,12 +1753,18 @@ ParseResult Parser::parse_declarator(
 					std::vector<DeclaratorComponent> completed = std::move(frame.child);
 					std::vector<ASTNode> completed_array_bound_expressions =
 						std::move(frame.child_array_bound_expressions);
+					std::vector<OrderedFunctionParams> completed_functions =
+						std::move(frame.child_functions);
 					completed.insert(completed.end(), frame.suffixes.begin(),
 										 frame.suffixes.end());
 					completed_array_bound_expressions.insert(
 						completed_array_bound_expressions.end(),
 						frame.suffix_array_bound_expressions.begin(),
 						frame.suffix_array_bound_expressions.end());
+					completed_functions.insert(
+						completed_functions.end(),
+						std::make_move_iterator(frame.suffix_functions.begin()),
+						std::make_move_iterator(frame.suffix_functions.end()));
 					for (auto pointer = frame.prefixes.rbegin();
 							 pointer != frame.prefixes.rend(); ++pointer) {
 						DeclaratorComponent component = *pointer;
@@ -1761,10 +1785,80 @@ ParseResult Parser::parse_declarator(
 							failed = true;
 							break;
 						}
-						if (ordered_function_parameters.has_value()) {
+						if (!completed_functions.empty()) {
 							if (orderedFunctionComponentIsIllFormed(completed)) {
 								failed = true;
 								break;
+							}
+							if (completed_functions.size() > 1) {
+								// A nested callable return such as `int (*(*p)())();` has one
+								// Function component per callable. Build from the innermost
+								// callable outward so each inner signature is available as the
+								// return FunctionType's `callable_signature` when the enclosing
+								// signature is formed.
+								size_t function_cursor = 0;
+								auto build_sub_spine = [&](auto&& self, size_t start) -> TypeSpecifierNode {
+									const size_t end = completed.size();
+									TypeSpecifierNode node = base_type;
+									node.clear_declarator_shape();
+									if (start < end) {
+										node.set_ordered_declarator(std::vector<DeclaratorComponent>(
+											completed.begin() + static_cast<std::ptrdiff_t>(start), completed.end()));
+									}
+									std::optional<size_t> first_function;
+									for (size_t index = start; index < end; ++index) {
+										if (completed[index].kind == DeclaratorComponentKind::Function) {
+											first_function = index;
+											break;
+										}
+									}
+									if (!first_function.has_value()) {
+										return node;
+									}
+									TypeSpecifierNode return_type = self(self, *first_function + 1);
+									const OrderedFunctionParams& function = completed_functions[function_cursor++];
+									FunctionSignature signature;
+									signature.setReturnType(makeFunctionType(return_type));
+									std::vector<FunctionType> parameter_types;
+									parameter_types.reserve(function.parameters.parameters.size());
+									for (const ASTNode& parameter : function.parameters.parameters) {
+										if (!parameter.is<DeclarationNode>()) {
+											continue;
+										}
+										const DeclarationNode& parameter_decl = parameter.as<DeclarationNode>();
+										FunctionType parameter_type = makeFunctionType(parameter_decl.type_specifier_node());
+										if (parameter_decl.is_parameter_pack()) {
+											parameter_type.is_pack_expansion = true;
+										}
+										parameter_types.push_back(std::move(parameter_type));
+									}
+									signature.setParameterTypes(std::move(parameter_types));
+									signature.linkage = linkage;
+									signature.calling_convention = function.calling_convention;
+									signature.is_variadic = function.parameters.is_variadic;
+									apply_parsed_function_type_qualifiers(signature, function.qualifiers, function.specifiers);
+									node.set_ordered_declarator(std::vector<DeclaratorComponent>(
+										completed.begin() + static_cast<std::ptrdiff_t>(start), completed.end()));
+									node.set_function_signature(signature);
+									return node;
+								};
+								TypeSpecifierNode structural_type = build_sub_spine(build_sub_spine, 0);
+								if (identifier.value().empty()) {
+									base_type = structural_type;
+								}
+								if (array_bound_expressions != nullptr) {
+									array_bound_expressions->insert(
+										array_bound_expressions->end(),
+										completed_array_bound_expressions.begin(),
+										completed_array_bound_expressions.end());
+								}
+								ASTNode decl_node = structural_type.is_array_object()
+									? emplace_node<DeclarationNode>(
+										emplace_node<TypeSpecifierNode>(structural_type), identifier,
+										std::vector<ASTNode>(completed_array_bound_expressions))
+									: emplace_node<DeclarationNode>(emplace_node<TypeSpecifierNode>(structural_type), identifier);
+								discard_saved_token(structural_start);
+								return ParseResult::success(decl_node);
 							}
 							std::optional<size_t> function_index =
 								singleFunctionComponentIndex(completed);
@@ -2040,6 +2134,7 @@ ParseResult Parser::parse_declarator(
 					frames.back().child = std::move(completed);
 					frames.back().child_array_bound_expressions =
 						std::move(completed_array_bound_expressions);
+					frames.back().child_functions = std::move(completed_functions);
 					frames.back().after_direct = true;
 				}
 				restore_token_position(structural_start);
