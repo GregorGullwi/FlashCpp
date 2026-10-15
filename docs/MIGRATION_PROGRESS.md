@@ -63,7 +63,12 @@ The architecture the remaining work builds on:
   collectors read it (the member-rooted one through
   `memberPointerToArrayShape`, which interns the member descriptor first) and
   fail closed when a pointer-to-array descriptor has no published structural
-  identity. Exit criteria 4 and 5 are not closed: the member-access
+  identity. The resolver keeps one structural walker: it projects
+  `exportCanonicalDeclarator`, the canonical declarator exporter, instead of
+  re-walking node kinds. `PointerToArrayShape` is a transitional projection with
+  a named deletion boundary — it is removed when lowering consumes sema-produced
+  typed lowering records (architecture boundary 9) and no longer derives shape.
+  Exit criteria 4 and 5 are not closed: the member-access
   `TypeSpecifierNode` projections still keep a flat fallback for unpublished
   shapes. The 3A rollup remains 10/79.
 - The shared type-trait evaluator classifies the structural `[meta.unary.prop]`
