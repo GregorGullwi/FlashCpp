@@ -211,6 +211,27 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 	TypeId id = base;
 	const std::span<const DeclaratorComponent> components =
 		syntax.declarator_components();
+	// Map each Function component to its signature, outermost first. A nested
+	// callable return's inner signature is the `callable_signature` of the
+	// enclosing return FunctionType.
+	std::vector<const FunctionSignature*> function_signature_by_component(
+		components.size(), nullptr);
+	if (syntax.has_function_signature()) {
+		const FunctionSignature* current = &syntax.function_signature();
+		for (size_t index = 0; index < components.size(); ++index) {
+			if (components[index].kind != DeclaratorComponentKind::Function) {
+				continue;
+			}
+			function_signature_by_component[index] = current;
+			if (current == nullptr || !current->hasStructuredTypes()) {
+				current = nullptr;
+				continue;
+			}
+			const std::shared_ptr<FunctionSignature>& nested =
+				current->return_type().callable_signature;
+			current = nested ? nested.get() : nullptr;
+		}
+	}
 	auto arrayElementStatus = [&table](TypeId element) {
 		const CanonicalTypeNode node = table.node(
 			table.withoutTopLevelQualifiers(element));
@@ -263,22 +284,20 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 			id = table.arrayOfUnknownBound(id);
 			break;
 		case DeclaratorComponentKind::Function: {
-			// One cold signature per declarator. The components inside this
-			// wrapper are the return type (`id` has already been built from
-			// them); parameters come from that signature.
-			if (!syntax.has_function_signature()) {
+			// The components inside this wrapper are the return type (`id` has
+			// already been built from them); parameters come from this
+			// component's signature. A nested callable return has more than one
+			// Function component: the node's cold signature is the outermost
+			// callable and each inner callable's signature is the
+			// `callable_signature` of the enclosing return FunctionType.
+			const FunctionSignature* signature_ptr =
+				index < function_signature_by_component.size()
+					? function_signature_by_component[index]
+					: nullptr;
+			if (signature_ptr == nullptr) {
 				return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
 			}
-			size_t function_count = 0;
-			for (const DeclaratorComponent& other : components) {
-				if (other.kind == DeclaratorComponentKind::Function) {
-					++function_count;
-				}
-			}
-			if (function_count != 1) {
-				return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
-			}
-			const FunctionSignature& signature = syntax.function_signature();
+			const FunctionSignature& signature = *signature_ptr;
 			if (signature.class_name.isValid() ||
 				(signature.noexcept_expression.has_value() && !signature.dependent_noexcept) ||
 				(signature.is_noexcept && signature.dependent_noexcept)) {

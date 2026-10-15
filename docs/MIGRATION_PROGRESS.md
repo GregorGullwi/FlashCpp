@@ -155,15 +155,24 @@ Continue boundary 3A in this order.
    element while local pointer arrays store one pointer per element. Regressions:
    `tests/test_array_of_function_pointers_ret0.cpp` and
    `tests/test_alias_array_of_function_pointers_ret0.cpp`.
+   The nested callable return is implemented: a declarator with more than one
+   `Function` component keeps one signature per component. The frame parser stores
+   each frame's parameter list and the outermost-first function list travels with the
+   assembled spine; `build_sub_spine` builds the signatures from the innermost callable
+   outward, so each inner signature becomes the enclosing return `FunctionType`'s
+   `callable_signature`, and `applyCanonicalOrderedDeclarator` maps every Function
+   component to its signature. `int (*(*p)())();` now parses, projects, imports, and
+   lowers as an 8-byte pointer object; the regression is
+   `tests/test_nested_callable_return_ret0.cpp`.
    Remaining, in order:
-   - **Nested callable return** (`int (*(*p)())();`). Two `Function` components still
-     have no representation: `singleFunctionComponentIndex` fails closed and
-     `int (*(*p)())();` is rejected with `Expected identifier token`. Add a
-     per-component parameter list (`FunctionType::callable_signature`, already read by
-     `typeSpecStillUsesDependentPlaceholder`) so the inner callable return carries its
-     own signature, then make projection, `applyCanonicalOrderedDeclarator` export/
-     import, signature substitution, and IR consume it. This is the last parser-side
-     gap for the grammar-faithful declarator.
+   - **Calling through a nested callable.** `p()()` (a call whose receiver is itself a
+     call's function-pointer result) still fails closed with
+     `Callable operator() receiver type could not be resolved`; sema must type the
+     inner result before the outer `operator()`. Also a function *definition* whose
+     return type is a three-deep nested callable
+     (`int (* (*make())())(int) { ... }`) is not yet routed through the ordered
+     declarator. Neither is required by the `int (*(*p)())();` reproduction, which
+     declares and lays out only.
    - **Remove the transitional detection.** `tryStructuralPointerArrayDeclarator`'s
      `(*` probe and the `parse_type_and_name` `(`-re-check dispatch are still present;
      finish consolidating onto a single `parse_declarator` call after the base type and
@@ -173,11 +182,12 @@ Continue boundary 3A in this order.
 
    Agent continuation prompt: "Continue the C++20 declarator consolidation on branch
    `boundary-3a-declarator-consolidation` (stack a new branch if this one is merged).
-   Implement layer 4 (nested callable return) exactly as item 0 above, then delete the
-   transitional `(` re-check dispatch and the `(*` candidate probe so
-   `parse_type_and_name` calls `parse_declarator` once. Do not re-introduce a heuristic
-   spine when a downstream assumption breaks; fix the downstream layer under the
-   grammar. Validate with a full sharded rebuild, `tests/run_all_tests.sh`,
+   Item 0 above is landed except for calling through a nested callable and removing the
+   transitional detection. Next remove the transitional `(` re-check dispatch and the
+   `(*` candidate probe so `parse_type_and_name` calls `parse_declarator` once, then
+   teach sema to type `p()()` for a nested callable return. Do not re-introduce a
+   heuristic spine when a downstream assumption breaks; fix the downstream layer under
+   the grammar. Validate with a full sharded rebuild, `tests/run_all_tests.sh`,
    `tests/run_migration_counters.sh`, and `make test` and keep
    `test_ordered_function_to_pointer_decay_ret42.cpp` green."
 
