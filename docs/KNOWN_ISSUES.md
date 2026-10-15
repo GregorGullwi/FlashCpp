@@ -1,32 +1,5 @@
 # Known Issues
 
-## Arrays of class-template specializations cannot publish structural identity
-
-A descriptor for an array whose element is a class-template specialization (for
-example `PairT<int> pairs[2];` with `template <class T> struct PairT`) carries a
-valid `type_index` and flat `array_dimensions` but no `structural_type_id`.
-`publishPointerArrayStructuralId` materializes the descriptor into a
-`TypeSpecifierNode`, which cannot carry the specialization's primary and argument
-identity, so `importCanonicalCompleteNominalArray` stops at
-`resolveNamedTypeEntity` and the shape stays flat-only.
-
-Consequence: the built-in subscript element-extraction flat fallback
-(`SemanticAnalysis::inferExpressionType`, `ArraySubscriptNode`) is still
-load-bearing for these shapes. Removing it and failing closed on an unpublished
-array/pointer descriptor makes `tests/test_constexpr_pointer_param_write_ret0.cpp`
-fail with `subscript operand has no published structural identity` (the reduced
-regression).
-
-A first attempt to recover the element through
-`importCanonicalNominalComponent`/`importCanonicalClassTypeInfo` inside
-`publishPointerArrayStructuralId` was reverted: for an array element it imports
-the class source, and the resulting identity then makes a later
-`canonicalizeType` ordered-declarator import fail with `semantic canonicalization
-rejected ordered declarator`. The safe fix must publish the specialization
-identity from the source `TypeSpecifierNode` in `canonicalizeType` (while the
-specialization syntax is still available) rather than reconstructing it from a
-materialized, metadata-less descriptor.
-
 ## Full native canonical suite has two baseline failures
 
 The unchanged constructor-initializer commit (`e590ccc7`) and its continuation
