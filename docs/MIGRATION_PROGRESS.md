@@ -59,7 +59,9 @@ The architecture the remaining work builds on:
   has no published structural identity. Exit criteria 4 and 5 are not closed:
   built-in subscript element extraction and the remaining array/member base
   collectors and member-access projections still keep a flat fallback for
-  unpublished shapes. The 3A rollup remains 10/79.
+  unpublished shapes; the subscript fallback is load-bearing for arrays of
+  class-template specializations, which cannot yet publish structural identity
+  (see [known issues](KNOWN_ISSUES.md)). The 3A rollup remains 10/79.
 - The shared type-trait evaluator classifies the structural `[meta.unary.prop]`
   family plus class/union/qualification and published record properties from
   canonical identity; the folded, constexpr, lazy-constraint, and lowered paths
