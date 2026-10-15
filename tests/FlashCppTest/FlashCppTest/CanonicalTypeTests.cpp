@@ -45,6 +45,62 @@ TEST_CASE("Structural TypeId controls semantic type descriptor identity") {
 	CHECK(nested_pointer_id != structural_id);
 }
 
+TEST_CASE("Pointer to unsized outer array identity carries every bound") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	CompileContext test_context;
+	test_context.setInputFile("canonical_pointer_to_unsized_outer_array_identity.cpp");
+	SemanticAnalysis sema(test_context, gSymbolTable);
+	const CanonicalTypeTable& table = context.canonicalTypes();
+
+	TypeSpecifierNode pointer_to_unsized_array(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	pointer_to_unsized_array.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::unknownBoundArray(),
+		DeclaratorComponent::array(3),
+	});
+	REQUIRE(pointer_to_unsized_array.has_unsized_outer_array_dimension());
+	REQUIRE(pointer_to_unsized_array.has_pointee_array_declarator());
+
+	const CanonicalTypeId pointer_id =
+		sema.canonicalizeTypeForImplicitConversion(pointer_to_unsized_array);
+	const CanonicalTypeDesc& pointer_desc = sema.typeContext().get(pointer_id);
+	REQUIRE(static_cast<bool>(pointer_desc.structural_type_id));
+	const CanonicalTypeNode pointer = table.node(pointer_desc.structural_type_id);
+	CHECK(pointer.kind == CanonicalTypeKind::Pointer);
+	const CanonicalTypeNode outer = table.node(pointer.child);
+	CHECK(outer.kind == CanonicalTypeKind::Array);
+	CHECK(!hasCanonicalTypeNodeFlag(outer.flags, CanonicalTypeNodeFlags::KnownArrayBound));
+	const CanonicalTypeNode inner = table.node(outer.child);
+	CHECK(inner.kind == CanonicalTypeKind::Array);
+	CHECK(hasCanonicalTypeNodeFlag(inner.flags, CanonicalTypeNodeFlags::KnownArrayBound));
+	CHECK(inner.array_extent == 3);
+	const CanonicalTypeNode element = table.node(inner.child);
+	CHECK(element.kind == CanonicalTypeKind::Builtin);
+	CHECK(element.builtin == CanonicalBuiltinKind::Int);
+
+	// The same bound retention applies to an ordinary array with an unknown
+	// outer bound (int[][3]); the unknown wrap goes outside the known extent.
+	TypeSpecifierNode ordinary_unsized_array(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	ordinary_unsized_array.set_array(true);
+	ordinary_unsized_array.set_array_dimensions(std::array<size_t, 1>{3});
+	ordinary_unsized_array.set_unsized_outer_array_dimension(true);
+	const CanonicalTypeId ordinary_id =
+		sema.canonicalizeTypeForImplicitConversion(ordinary_unsized_array);
+	const CanonicalTypeDesc& ordinary_desc = sema.typeContext().get(ordinary_id);
+	REQUIRE(static_cast<bool>(ordinary_desc.structural_type_id));
+	const CanonicalTypeNode ordinary_outer = table.node(ordinary_desc.structural_type_id);
+	CHECK(ordinary_outer.kind == CanonicalTypeKind::Array);
+	CHECK(!hasCanonicalTypeNodeFlag(ordinary_outer.flags, CanonicalTypeNodeFlags::KnownArrayBound));
+	const CanonicalTypeNode ordinary_inner = table.node(ordinary_outer.child);
+	CHECK(ordinary_inner.kind == CanonicalTypeKind::Array);
+	CHECK(hasCanonicalTypeNodeFlag(ordinary_inner.flags, CanonicalTypeNodeFlags::KnownArrayBound));
+	CHECK(ordinary_inner.array_extent == 3);
+}
+
 TEST_CASE("Canonical TypeIds rank by-value derived-to-base conversions") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();

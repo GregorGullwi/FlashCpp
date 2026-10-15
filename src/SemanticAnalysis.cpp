@@ -735,6 +735,11 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 		type_node.set_array(true);
 		type_node.set_array_dimensions(desc.array_dimensions);
 	}
+	// The flat projection must carry an unknown outer bound (T[][N] and
+	// T(*)[][N]); dropping it made the re-imported structural id lose a bound.
+	if (desc.has_unsized_outer_array_dimension) {
+		type_node.set_unsized_outer_array_dimension(true);
+	}
 	if (desc.function_signature.has_value()) {
 		type_node.set_function_signature(*desc.function_signature);
 	}

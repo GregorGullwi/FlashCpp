@@ -6,7 +6,7 @@ authoritative for the design, boundaries, and exit criteria. This file records
 the current boundary state, the remaining work, and the validation contract;
 completed implementation history belongs in git.
 
-Last updated: 2026-10-14.
+Last updated: 2026-10-15.
 
 ## Current state
 
@@ -43,7 +43,12 @@ The architecture the remaining work builds on:
   not import while a descriptor reference is
   live. Flat pointer-level and array-dimension fields remain for shapes the
   importer cannot represent, and as the materialization projection of a published
-  pointer or array (`PublishedPointerArray`). Exit criteria 4 and 5 are not
+  pointer or array (`PublishedPointerArray`). The flat materialization projection
+  now preserves an unknown outer array bound, and the canonical array shaper
+  emits the unknown-bound wrapper outside the known dimensions, so a projectable
+  `T(*)[][N]` publishes `Pointer -> Array(?) -> Array(N) -> T` (and an ordinary
+  `T[][N]` publishes `Array(?) -> Array(N) -> T`) instead of dropping the `[?]`
+  bound. Exit criteria 4 and 5 are not
   closed: other semantic paths still read the flat projection. The 3A rollup
   remains 10/79.
 - The shared type-trait evaluator classifies the structural `[meta.unary.prop]`
@@ -419,6 +424,11 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
   pointer is unimplemented.
 - General conversion-descriptor consumption of alias wrappers (callable, array,
   reference, member-pointer) remains open.
+- A projectable pointer or array with an unknown outer bound now publishes
+  structural identity that carries every bound. The nominal array path
+  (`importCanonicalCompleteNominalArray`) still rejects an unsized outer bound, so
+  `Record(*)[][N]`/`Enum(*)[][N]` remain flat-only (unpublished) rather than
+  mismatched; extending that path is a separate slice.
 - The compatibility `TypeTraitEval::isSigned`/`isUnsigned` adapters are
   unexercised; a regression forcing an unimportable operand through them is owed.
 - The canonical record constructor schema is published for a completed record

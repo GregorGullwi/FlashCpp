@@ -2082,7 +2082,10 @@ public:
 	bool has_unsized_outer_array_dimension() const { return has_unsized_outer_array_dimension_; }
 	void set_unsized_outer_array_dimension(bool has_unsized_outer_array_dimension) {
 		has_unsized_outer_array_dimension_ = has_unsized_outer_array_dimension;
-		if (has_unsized_outer_array_dimension_) {
+		// [dcl.ptr]/1: an unknown outer bound on the pointee of a
+		// parenthesized declarator (T (*)[][N]) does not make the declared
+		// entity an array object, so it must not flip is_array_.
+		if (has_unsized_outer_array_dimension_ && !pointee_array_declarator_) {
 			is_array_ = true;
 		}
 	}
