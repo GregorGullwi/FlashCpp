@@ -41,7 +41,9 @@ The architecture the remaining work builds on:
   change. Conditional array decay, conditional
   pointer selection, and built-in subscript element extraction read that id and do
   not import while a descriptor reference is
-  live. Flat pointer-level and array-dimension fields remain for shapes the
+  live, and conditional array decay is structural-only: an array descriptor
+  without a published structural id fails closed. Flat pointer-level and
+  array-dimension fields remain for shapes the
   importer cannot represent, and as the materialization projection of a published
   pointer or array (`PublishedPointerArray`). The flat materialization projection
   now preserves an unknown outer array bound, and the canonical array shaper
@@ -55,8 +57,9 @@ The architecture the remaining work builds on:
   dereference/array-to-pointer-decay and multi-dimensional pointer-to-array
   subscript consumers read it and fail closed when a pointer-to-array descriptor
   has no published structural identity. Exit criteria 4 and 5 are not closed:
-  the remaining array/member base collectors and member-access projections still
-  read the flat projection. The 3A rollup remains 10/79.
+  built-in subscript element extraction and the remaining array/member base
+  collectors and member-access projections still keep a flat fallback for
+  unpublished shapes. The 3A rollup remains 10/79.
 - The shared type-trait evaluator classifies the structural `[meta.unary.prop]`
   family plus class/union/qualification and published record properties from
   canonical identity; the folded, constexpr, lazy-constraint, and lowered paths
@@ -433,8 +436,9 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
 - The projectable pointer/array identity path now covers an unknown outer bound
   for builtin, dependent, specialization, record, and enum elements, and the
   dereference and multi-dimensional pointer-to-array subscript codegen consumers
-  read it through one resolver. The remaining array/member base collectors and
-  member-access `TypeSpecifierNode` projections still read the flat
+  read it through one resolver. Conditional array decay is structural-only. The
+  remaining array/member base collectors and member-access `TypeSpecifierNode`
+  projections still read the flat
   `pointee_array_declarator`/`has_unsized_outer_array_dimension` fields and are
   the next consumers to migrate.
 - The compatibility `TypeTraitEval::isSigned`/`isUnsigned` adapters are

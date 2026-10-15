@@ -793,47 +793,42 @@ std::optional<UserDefinedConversionOperatorSelection> trySelectCanonicalImplicit
 // array expressions follow the same path; their parser-facing expression
 // types are not necessarily already decayed.
 std::optional<CanonicalTypeDesc> decayArrayForConditional(const CanonicalTypeDesc& desc) {
+	// Every projectable array shape now publishes structural identity, so an
+	// array/pointee-array descriptor without one is a publication defect rather
+	// than a reason to read the flat projection.
+	if (!desc.structural_type_id) {
+		if (desc.pointee_array_declarator || !desc.array_dimensions.empty()) {
+			throw InternalError("array descriptor has no published structural identity");
+		}
+		return std::nullopt;
+	}
 	// Read a structural id that canonicalizeType already published. Do not
 	// import here: callers hold TypeContext::get() references, and import can
 	// intern another descriptor and invalidate those references.
-	if (desc.structural_type_id) {
-		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-		TypeId structural_id = desc.structural_type_id;
-		CanonicalTypeNode node = table.node(structural_id);
-		while (node.child && (node.kind == CanonicalTypeKind::LValueReference || node.kind == CanonicalTypeKind::RValueReference)) {
-			structural_id = node.child;
-			node = table.node(structural_id);
-		}
-		if (node.kind == CanonicalTypeKind::Qualified && node.child) {
-			node = table.node(node.child);
-		}
-		// [conv.array] replaces the outermost array with a pointer to its element.
-		// A pointer-to-array is a Pointer node and must not decay.
-		if (node.kind != CanonicalTypeKind::Array || !node.child) {
-			return std::nullopt;
-		}
-		CanonicalTypeDesc decayed = desc;
-		decayed.structural_type_id = table.pointer(node.child);
-		decayed.ref_qualifier = ReferenceQualifier::None;
-		if (!decayed.pointee_array_declarator && !decayed.array_dimensions.empty()) {
-			decayed.array_dimensions.erase(decayed.array_dimensions.begin());
-			decayed.pointer_levels.push_back(PointerLevel{});
-			decayed.has_unsized_outer_array_dimension = false;
-		}
-		return decayed;
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	TypeId structural_id = desc.structural_type_id;
+	CanonicalTypeNode node = table.node(structural_id);
+	while (node.child && (node.kind == CanonicalTypeKind::LValueReference || node.kind == CanonicalTypeKind::RValueReference)) {
+		structural_id = node.child;
+		node = table.node(structural_id);
 	}
-	// Flat projection for shapes the importer cannot represent.
-	if (desc.pointee_array_declarator) {
+	if (node.kind == CanonicalTypeKind::Qualified && node.child) {
+		node = table.node(node.child);
+	}
+	// [conv.array] replaces the outermost array with a pointer to its element.
+	// A pointer-to-array is a Pointer node and must not decay.
+	if (node.kind != CanonicalTypeKind::Array || !node.child) {
 		return std::nullopt;
 	}
-	if (!desc.array_dimensions.empty()) {
-		CanonicalTypeDesc decayed = desc;
+	CanonicalTypeDesc decayed = desc;
+	decayed.structural_type_id = table.pointer(node.child);
+	decayed.ref_qualifier = ReferenceQualifier::None;
+	if (!decayed.pointee_array_declarator && !decayed.array_dimensions.empty()) {
 		decayed.array_dimensions.erase(decayed.array_dimensions.begin());
 		decayed.pointer_levels.push_back(PointerLevel{});
-		decayed.ref_qualifier = ReferenceQualifier::None;
-		return decayed;
+		decayed.has_unsized_outer_array_dimension = false;
 	}
-	return std::nullopt;
+	return decayed;
 }
 
 std::optional<TypeSpecifierNode> tryGetIndirectCallReturnType(const CallExprNode& call) {
