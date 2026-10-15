@@ -81,6 +81,7 @@ Parser::MemberPointerOwnerParse Parser::parseMemberPointerOwnerAfterName(
 	Token class_name_token) {
 	MemberPointerOwnerParse parsed;
 	parsed.spelling = class_name_token.handle();
+	parsed.owner_token = class_name_token;
 	if (peek() != "<"_tok) {
 		return parsed;
 	}
@@ -158,6 +159,26 @@ void Parser::applyMemberPointerOwner(
 	}
 
 	tryBindPublishedMemberClassEntity(type_spec);
+
+	// A member-pointer owner must name a class or union. An alias that resolves to
+	// a non-class type (for example `using Int = int; int Int::* p;`) would
+	// otherwise bind its resolved type as the owner and reach canonical
+	// member-pointer construction, which fails internally instead of rejecting the
+	// declaration.
+	if (type_spec.has_member_class_type_id()) {
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		const CanonicalTypeKind owner_kind = table.node(type_spec.member_class_type_id()).kind;
+		if (owner_kind != CanonicalTypeKind::Record &&
+			owner_kind != CanonicalTypeKind::TemplateSpecialization) {
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::MemberPointerOwnerNotClass,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(parsed.owner_token),
+				"member pointer owner must be a class or union type",
+				{});
+		}
+	}
 }
 
 void Parser::bindMemberPointerOwner(TypeSpecifierNode& type_spec, Token class_name_token) {

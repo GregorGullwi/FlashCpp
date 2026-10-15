@@ -3882,6 +3882,7 @@ private:
 		StringHandle spelling;
 		std::optional<ASTNode> specialization_node;
 		TypeId specialization_type_id{};
+		Token owner_token{};
 	};
 	MemberPointerOwnerParse parseMemberPointerOwnerAfterName(Token class_name_token);
 

@@ -484,3 +484,17 @@ prose-verified probe count and pair each constrained overload with an
 unconstrained fallback rather than with a second constrained overload.
 
 
+## Member-pointer assignment through `.*` does not store
+
+Reading through a member-object pointer works (`auto v = s.*p;`), but assigning
+through it silently does not take effect:
+
+```cpp
+struct S { int x; };
+int main() { S s{0}; int S::* p = &S::x; s.*p = 42; return s.x; }  // returns 0
+```
+
+The store is lowered without writing through the member-pointer offset, so the
+target object is unchanged. Read-only forms such as
+`test_canonical_member_pointer_binding_ret0.cpp` pass, which is why the gap went
+unnoticed; a `.* =` regression is owed.
