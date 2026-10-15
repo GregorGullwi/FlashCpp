@@ -327,7 +327,7 @@ private:
 								   ExpressionContext context = ExpressionContext::Load);
 	ExprResult generateNoexceptExprIr(const NoexceptExprNode& noexcept_node);
 	ExprResult generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor);
-	ExprResult generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode);
+	ExprResult generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode, ExpressionContext context);
 	ExprResult generateCallExprIr(const CallExprNode& callExprNode, ExpressionContext context);
 	int calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name);
 	ExprResult generateIdentifierIr(const IdentifierNode& identifierNode,

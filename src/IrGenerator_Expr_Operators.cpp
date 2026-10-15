@@ -2240,9 +2240,11 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 		const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 
-		// Check if LHS is an array subscript or member access (lvalue expressions)
+		// Check if LHS is an array subscript, member access, or pointer-to-member
+		// access (lvalue expressions)
 		if (std::holds_alternative<ArraySubscriptNode>(lhs_expr) ||
-			std::holds_alternative<MemberAccessNode>(lhs_expr)) {
+			std::holds_alternative<MemberAccessNode>(lhs_expr) ||
+			std::holds_alternative<PointerToMemberAccessNode>(lhs_expr)) {
 
 			// Evaluate LHS with LValueAddress context (no Load instruction)
 			ExprResult lhsExprResult = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
