@@ -764,6 +764,30 @@ ParseResult Parser::parse_function_declaration_with_storage_specs(
 	CallingConvention calling_convention,
 	bool is_member,
 	const FlashCpp::StorageSpecifiers& storage_specs) {
+	// An alias whose target is a function type can declare a function without a
+	// parameter list at the use site: `using F = int(int); F declared;`. The
+	// declarator type already carries the full signature, so build the parameter
+	// nodes from it instead of parsing a token list.
+	const TypeSpecifierNode declared_type = declaration_node.type_specifier_node();
+	if (declared_type.category() == TypeCategory::Function &&
+		declared_type.has_function_signature() && declared_type.pointer_depth() == 0 &&
+		declared_type.reference_qualifier() == ReferenceQualifier::None && peek() != "("_tok) {
+		const FunctionSignature signature = declared_type.function_signature();
+		declaration_node.type_specifier_node() = typeSpecifierFromFunctionType(signature.return_type());
+		auto [func_node, func_ref] = create_node_ref<FunctionDeclarationNode>(declaration_node);
+		func_ref.set_calling_convention(calling_convention);
+		func_ref.set_namespace_handle(gSymbolTable.get_current_namespace_handle());
+		if (current_linkage_ != Linkage::None) {
+			func_ref.set_linkage(current_linkage_);
+		}
+		func_ref.set_is_variadic(signature.is_variadic);
+		func_ref.set_noexcept(signature.is_noexcept);
+		for (const FunctionType& parameter : signature.parameter_types()) {
+			func_ref.add_parameter_node(emplace_node<DeclarationNode>(typeSpecifierFromFunctionType(parameter), Token{}));
+		}
+		return func_node;
+	}
+
 	// Create the function declaration first
 	auto [func_node, func_ref] =
 		create_node_ref<FunctionDeclarationNode>(declaration_node);

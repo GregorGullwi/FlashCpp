@@ -33,27 +33,6 @@ without applying the required arithmetic conversion. Boundary 4 must annotate
 aggregate element conversions in expression sema and have lowering consume
 those plans. Using a double initializer avoids this failure.
 
-## A function declared through a function-type alias crashes at codegen
-
-A declaration whose type is a function-type alias compiles and links but crashes
-at runtime (SIGSEGV), for both a plain alias and a template alias:
-
-```cpp
-using PlainFn = int (int);
-PlainFn declared;                 // declares int declared(int)
-int declared(int x) { return x + 1; }
-
-template <class T> using Fn = int (T);
-Fn<int> also_declared;
-int also_declared(int) { return 0; }
-```
-
-A direct `int declared(int);` works. The alias function type is not lowered as a
-function declaration, so codegen mishandles the declared entity. Independent of
-the alias-template function-type target parsing/substitution work (which now
-supports `Fn<int>*` pointer, parameter, and overload uses); it affects
-non-template aliases as well.
-
 ## SEH finally funclet termination is conservative in return-flow diagnostics
 
 The control-flow analysis models a Windows `SehFinallyCall` as a call that can
