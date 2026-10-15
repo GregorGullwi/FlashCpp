@@ -1357,7 +1357,11 @@ void publishPointerArrayStructuralId(CanonicalTypeDesc& desc) {
 	TypeSpecifierNode syntax = materializeTypeSpecifier(desc);
 	tryBindPublishedTypeEntity(syntax);
 	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-	const CanonicalTypeImport imported = importCanonicalType(table, syntax);
+	// A materialized descriptor cannot carry a class-template specialization's
+	// primary and argument identity, so recover the class from the descriptor's
+	// TypeIndex when the direct import reports UnmigratedNominal. Without this an
+	// array of specializations stays flat-only.
+	const CanonicalTypeImport imported = importCanonicalNominalComponent(table, syntax, CanonicalTypeImportContext::Exact);
 	if (imported.status != CanonicalTypeImportStatus::Supported) {
 		return;
 	}
@@ -6221,11 +6225,15 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		}
 		CanonicalTypeTable& canonical_types =
 			requireFrontendContext().canonicalTypes();
-		const std::optional<TypeId> imported = tryImportSupportedCanonical(canonical_types, resolved_syntax);
-		if (!imported.has_value()) {
+		// A materialized descriptor cannot stamp a class-template specialization
+		// base, so recover the class from the type index when the direct import
+		// cannot identify it.
+		const CanonicalTypeImport imported_component = importCanonicalNominalComponent(canonical_types, resolved_syntax, CanonicalTypeImportContext::Exact);
+		if (imported_component.status != CanonicalTypeImportStatus::Supported) {
 			throw InternalError(
 				"semantic canonicalization rejected ordered declarator");
 		}
+		const std::optional<TypeId> imported = imported_component.type;
 		const bool has_member_function_pointer = std::ranges::any_of(
 			resolved_syntax.declarator_components(),
 			[](const DeclaratorComponent& component) {
@@ -9492,21 +9500,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					}
 					return {};
 				}
-				// Flat projection for shapes the importer could not publish.
-				if (!array_desc.array_dimensions.empty()) {
-					CanonicalTypeDesc elem_desc = array_desc;
-					dropPublishedPointerArrayIdentity(elem_desc);
-					elem_desc.array_dimensions.clear();
-					for (size_t i = 1; i < array_desc.array_dimensions.size(); ++i)
-						elem_desc.array_dimensions.push_back(array_desc.array_dimensions[i]);
-					return type_context_.intern(elem_desc);
-				}
-				// Pointer subscript: dereference removes one pointer level.
-				if (!array_desc.pointer_levels.empty()) {
-					CanonicalTypeDesc elem_desc = array_desc;
-					dropPublishedPointerArrayIdentity(elem_desc);
-					elem_desc.pointer_levels.pop_back();
-					return type_context_.intern(elem_desc);
+				// Every projectable array/pointer shape now publishes structural
+				// identity, so a descriptor that still claims one without it is a
+				// publication defect rather than a reason to read the flat
+				// projection.
+				if (!array_desc.array_dimensions.empty() || !array_desc.pointer_levels.empty() || array_desc.pointee_array_declarator) {
+					throw InternalError("subscript operand has no published structural identity");
 				}
 				if (array_desc.category() == TypeCategory::Struct) {
 					if (auto pointer_conversion = findStructPointerConversionOperator(array_desc, nullptr, *this, 0))

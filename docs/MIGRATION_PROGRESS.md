@@ -41,8 +41,9 @@ The architecture the remaining work builds on:
   change. Conditional array decay, conditional
   pointer selection, and built-in subscript element extraction read that id and do
   not import while a descriptor reference is
-  live, and conditional array decay is structural-only: an array descriptor
-  without a published structural id fails closed. Flat pointer-level and
+  live; conditional array decay and built-in subscript element extraction are
+  structural-only and fail closed on an array/pointer descriptor without published
+  identity. Flat pointer-level and
   array-dimension fields remain for shapes the
   importer cannot represent, and as the materialization projection of a published
   pointer or array (`PublishedPointerArray`). The flat materialization projection
@@ -52,16 +53,16 @@ The architecture the remaining work builds on:
   `T[][N]` publishes `Array(?) -> Array(N) -> T`) instead of dropping the `[?]`
   bound. The nominal array importer now shares the builtin array shaping, so a
   `Record(*)[][N]`/`Enum(*)[][N]` element also publishes the same identity rather
-  than staying flat. `SemanticAnalysis::pointerToArrayShape` is the single
+  than staying flat. A materialized descriptor and the ordered-declarator import
+  recover a class-template specialization base from its type index through
+  `importCanonicalNominalComponent`, so an array whose element is a
+  specialization also publishes structural identity. `SemanticAnalysis::pointerToArrayShape` is the single
   codegen resolver for a pointer whose immediate pointee is an array; the
   dereference/array-to-pointer-decay and multi-dimensional pointer-to-array
   subscript consumers read it and fail closed when a pointer-to-array descriptor
   has no published structural identity. Exit criteria 4 and 5 are not closed:
-  built-in subscript element extraction and the remaining array/member base
-  collectors and member-access projections still keep a flat fallback for
-  unpublished shapes; the subscript fallback is load-bearing for arrays of
-  class-template specializations, which cannot yet publish structural identity
-  (see [known issues](KNOWN_ISSUES.md)). The 3A rollup remains 10/79.
+  the remaining array/member base collectors and member-access projections still
+  keep a flat fallback for unpublished shapes. The 3A rollup remains 10/79.
 - The shared type-trait evaluator classifies the structural `[meta.unary.prop]`
   family plus class/union/qualification and published record properties from
   canonical identity; the folded, constexpr, lazy-constraint, and lowered paths
@@ -438,7 +439,9 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
 - The projectable pointer/array identity path now covers an unknown outer bound
   for builtin, dependent, specialization, record, and enum elements, and the
   dereference and multi-dimensional pointer-to-array subscript codegen consumers
-  read it through one resolver. Conditional array decay is structural-only. The
+  read it through one resolver. Conditional array decay and built-in subscript
+  element extraction are structural-only, and an array of class-template
+  specializations now publishes identity. The
   remaining array/member base collectors and member-access `TypeSpecifierNode`
   projections still read the flat
   `pointee_array_declarator`/`has_unsized_outer_array_dimension` fields and are
