@@ -1630,12 +1630,14 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			}
 		}
 
-		// Expect semicolon
+		// Function type target: template <class T> using Fn = int (T);
 		if (peek() == "("_tok) {
-			return error(
-				DiagnosticId::UnsupportedAliasTemplateTargetDeclarator,
-				peek_info(),
-				"Parenthesized alias template target declarator is not supported");
+			if (!parse_type_alias_function_type(type_spec, " alias template")) {
+				return error(
+					DiagnosticId::UnsupportedAliasTemplateTargetDeclarator,
+					peek_info(),
+					"Parenthesized alias template target declarator is not supported");
+			}
 		}
 		if (!consume(";"_tok)) {
 			return error(

@@ -108,6 +108,13 @@ The architecture the remaining work builds on:
   return, and identifier paths. A template-parameter owner
   (`int* (T::*)() const`) is published as that class's canonical identity during
   substitution, before a dependent `noexcept` operand is canonicalized.
+  An alias template whose target is a parenthesized function declarator
+  (`template <class T> using Fn = int (T);`) now parses through the shared
+  `parse_type_alias_function_type` and its instantiated structured signature is
+  substituted through `substituteTemplateFunctionSignatureTypes` where the alias
+  target is rebuilt, so `Fn<int>*` pointer, parameter, and overload uses resolve
+  and mangle concretely. `tests/test_alias_template_function_type_target_ret0.cpp`
+  covers function and function-pointer alias targets.
 
 Compatibility counters and identity inventories are baselined under
 `tests/migration_counters/`; the flat classifier in `TypeTraitEvaluator.cpp`

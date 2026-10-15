@@ -2766,6 +2766,17 @@ ParseResult Parser::parse_type_specifier() {
 							if (substituted_alias_target.is<TypeSpecifierNode>()) {
 								TypeSpecifierNode& substituted_target =
 									substituted_alias_target.as<TypeSpecifierNode>();
+								if (substituted_target.has_function_signature()) {
+									// A function-type alias target keeps a structured
+									// signature whose dependent parameters must be
+									// substituted through the shared declaration-signature
+									// helper before the target can be used concretely.
+									substituted_target.set_function_signature(
+										substituteTemplateFunctionSignatureTypes(
+											substituted_target.function_signature(),
+											alias_node.template_parameters(),
+											*template_args));
+								}
 								if (alias_target_type_spec.has_ordered_declarator()) {
 									substituted_target.set_ordered_declarator(
 										std::vector<DeclaratorComponent>(
@@ -2926,6 +2937,17 @@ ParseResult Parser::parse_type_specifier() {
 							if (substituted_alias_target.is<TypeSpecifierNode>()) {
 								instantiated_type =
 									substituted_alias_target.as<TypeSpecifierNode>();
+								if (instantiated_type.has_function_signature()) {
+									// A function-type alias target keeps a structured
+									// signature whose dependent parameters must be
+									// substituted through the shared declaration-signature
+									// helper before the target can be used concretely.
+									instantiated_type.set_function_signature(
+										substituteTemplateFunctionSignatureTypes(
+											instantiated_type.function_signature(),
+											alias_node.template_parameters(),
+											*template_args));
+								}
 							}
 						}
 					}
