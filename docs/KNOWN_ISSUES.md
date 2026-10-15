@@ -33,32 +33,26 @@ without applying the required arithmetic conversion. Boundary 4 must annotate
 aggregate element conversions in expression sema and have lowering consume
 those plans. Using a double initializer avoids this failure.
 
-## Alias-template function-type targets parse but are not substituted
+## A function declared through a function-type alias crashes at codegen
 
-An alias template whose target is a parenthesized function declarator, for
-example `template <class T> using Fn = int (T);`, is not supported end to end,
-and it needs two things done together:
+A declaration whose type is a function-type alias compiles and links but crashes
+at runtime (SIGSEGV), for both a plain alias and a template alias:
 
-1. The alias-template target parser (`Parser_Templates_Class.cpp`) duplicates the
-   declarator handling that the non-template `using` form shares through
-   `Parser::parse_type_alias_function_type` (`Parser_Decl_TypedefUsing.cpp`). The
-   template form has its own `(`-probe that only recognizes pointer and
-   member-pointer targets, so a function target is rejected with
-   `UnsupportedAliasTemplateTargetDeclarator` (1816). Routing it through the
-   shared helper makes the target parse — a concrete `using F = int (long);` then
-   compiles — and lets both alias forms share one target parser.
-2. The instantiated function type keeps its dependent parameter. The parameter is
-   correctly marked (`FunctionType::template_parameter_name` is set to `T`), but
-   the alias target's function signature is not routed through the signature
-   substitution (`substitute_function_type` / `process_signature`,
-   `ParserTemplateClassShared.h`) that a declaration's signature uses. A function
-   that uses `Fn<int>` therefore fails with `Dependent function type component 'T'
-   reached name mangling`.
+```cpp
+using PlainFn = int (int);
+PlainFn declared;                 // declares int declared(int)
+int declared(int x) { return x + 1; }
 
-Because (2) is unresolved, the parser must keep rejecting the form with 1816
-rather than reach an internal mangling failure; (1) alone would regress a clean
-diagnostic into an internal error. The token-mangling target and dependent
-parameter are the reduced repro; there is no dedicated regression test yet.
+template <class T> using Fn = int (T);
+Fn<int> also_declared;
+int also_declared(int) { return 0; }
+```
+
+A direct `int declared(int);` works. The alias function type is not lowered as a
+function declaration, so codegen mishandles the declared entity. Independent of
+the alias-template function-type target parsing/substitution work (which now
+supports `Fn<int>*` pointer, parameter, and overload uses); it affects
+non-template aliases as well.
 
 ## SEH finally funclet termination is conservative in return-flow diagnostics
 
