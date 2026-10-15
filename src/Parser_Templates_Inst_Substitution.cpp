@@ -2282,6 +2282,72 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			return false;
 		}
 
+		// The call resolved to a member by name, but this deferred path can take
+		// the member's declared return type without checking the substituted
+		// arguments against its parameters. Validate them so a call with no viable
+		// overload is rejected instead of silently adopting the return type.
+		if (substituted_expr.is<ExpressionNode>() &&
+			std::holds_alternative<CallExprNode>(
+				substituted_expr.as<ExpressionNode>())) {
+			const CallExprNode& substituted_call =
+				std::get<CallExprNode>(substituted_expr.as<ExpressionNode>());
+			const FunctionDeclarationNode* resolved_callee =
+				substituted_call.callee().function_declaration_or_null();
+			const std::span<const ASTNode> parameter_nodes =
+				resolved_callee != nullptr
+					? resolved_callee->parameter_nodes()
+					: std::span<const ASTNode>{};
+			if (resolved_callee != nullptr &&
+				substituted_call.has_qualified_name() &&
+				substituted_call.arguments().size() == parameter_nodes.size() &&
+				!parameter_nodes.empty()) {
+				bool arguments_known_and_viable = true;
+				size_t argument_index = 0;
+				for (const ASTNode& argument : substituted_call.arguments()) {
+					if (argument_index >= parameter_nodes.size()) {
+						break;
+					}
+					const ASTNode& parameter = parameter_nodes[argument_index];
+					if (!parameter.is<DeclarationNode>()) {
+						arguments_known_and_viable = false;
+						break;
+					}
+					const std::optional<TypeSpecifierNode> argument_type =
+						get_expression_type(argument);
+					if (!argument_type.has_value()) {
+						arguments_known_and_viable = false;
+						break;
+					}
+					const TypeSpecifierNode& parameter_type =
+						parameter.as<DeclarationNode>().type_specifier_node();
+					const ArgumentConversionInfo conversion =
+						buildArgumentConversionInfo(
+							*argument_type,
+							parameter_type,
+							&argument);
+					if (conversion.rank == ConversionRank::NoMatch) {
+						arguments_known_and_viable = false;
+						break;
+					}
+					++argument_index;
+				}
+				if (!arguments_known_and_viable) {
+					throw makeStructuredCompileError(
+						context_.diagnostics(),
+						DiagnosticId::NoViableFunctionCall,
+						DiagnosticSeverity::Error,
+						SourceLocation::fromToken(substituted_call.called_from()),
+						std::string(
+							StringBuilder()
+								.append("No matching function for call to '")
+								.append(substituted_call.qualified_name())
+								.append("'")
+								.commit()),
+						{});
+				}
+			}
+		}
+
 		resolved_deferred_decltype_spec = *type_spec_opt;
 		const TypeSpecifierNode& resolved_type_spec =
 			*resolved_deferred_decltype_spec;
