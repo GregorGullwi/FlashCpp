@@ -1809,11 +1809,18 @@ ParseResult Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSp
 		} else if (type_specifier.category() == TypeCategory::DeclTypeAuto && initializer.has_value()) {
 			auto deduced_type_spec_opt = get_expression_type(*initializer);
 			if (!deduced_type_spec_opt.has_value()) {
-				throw CompileError(std::string(StringBuilder()
-												   .append("Could not deduce decltype(auto) from initializer for '")
-												   .append(decl_node.identifier_token().value())
-												   .append("'; use an explicit type when the initializer's exact type cannot be inferred")
-												   .commit()));
+				const std::string rejection_message = std::string(StringBuilder()
+															 .append("Could not deduce decltype(auto) from initializer for '")
+															 .append(decl_node.identifier_token().value())
+															 .append("'; use an explicit type when the initializer's exact type cannot be inferred")
+															 .commit());
+				throw makeStructuredCompileError(
+					context_.diagnostics(),
+					DiagnosticId::AutoTypeDeductionFailure,
+					DiagnosticSeverity::Error,
+					lexer_.getSourceLocation(decl_node.identifier_token()),
+					rejection_message,
+					{});
 			}
 			type_specifier = applyPlaceholderDeclaratorDeduction(
 				TypeCategory::DeclTypeAuto,
