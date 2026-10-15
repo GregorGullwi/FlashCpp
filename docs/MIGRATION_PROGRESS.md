@@ -63,14 +63,18 @@ The architecture the remaining work builds on:
   collectors read it (the member-rooted one through
   `memberPointerToArrayShape`, which interns the member descriptor first) and
   fail closed when a pointer-to-array descriptor has no published structural
-  identity. The resolver keeps one structural walker: it projects
+  identity. The member-access array-dimension helpers read
+  `CanonicalTypeTable::arrayDimensions`, the single outer-to-inner array view
+  (unknown bound as zero), so codegen no longer reads any flat
+  `pointee_array_declarator`/`has_unsized_outer_array_dimension` field. The
+  pointer resolver keeps one structural walker: it projects
   `exportCanonicalDeclarator`, the canonical declarator exporter, instead of
   re-walking node kinds. `PointerToArrayShape` is a transitional projection with
   a named deletion boundary — it is removed when lowering consumes sema-produced
   typed lowering records (architecture boundary 9) and no longer derives shape.
-  Exit criteria 4 and 5 are not closed: the member-access
-  `TypeSpecifierNode` projections still keep a flat fallback for unpublished
-  shapes. The 3A rollup remains 10/79.
+  Exit criteria 4 and 5 are not closed: semantic-internal descriptor
+  construction, equality, and decay still read the flat projection. The 3A rollup
+  remains 10/79.
 - The shared type-trait evaluator classifies the structural `[meta.unary.prop]`
   family plus class/union/qualification and published record properties from
   canonical identity; the folded, constexpr, lazy-constraint, and lowered paths
@@ -449,11 +453,12 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
   dereference and multi-dimensional pointer-to-array subscript codegen consumers
   read it through one resolver. Conditional array decay and built-in subscript
   element extraction are structural-only, an array of class-template
-  specializations now publishes identity, and the identifier- and member-rooted
-  multi-dimensional collectors read the resolver. The member-access
-  `TypeSpecifierNode` projections still read the flat
-  `pointee_array_declarator`/`has_unsized_outer_array_dimension` fields and are
-  the next consumers to migrate.
+  specializations now publishes identity, the identifier- and member-rooted
+  multi-dimensional collectors read the resolver, and the member-access
+  array-dimension helpers read `CanonicalTypeTable::arrayDimensions`. Codegen no
+  longer reads any flat `pointee_array_declarator`/
+  `has_unsized_outer_array_dimension` field; the remaining readers are
+  semantic-internal descriptor construction, equality, and decay.
 - The compatibility `TypeTraitEval::isSigned`/`isUnsigned` adapters are
   unexercised; a regression forcing an unimportable operand through them is owed.
 - The canonical record constructor schema is published for a completed record

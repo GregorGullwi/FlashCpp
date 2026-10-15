@@ -432,6 +432,7 @@ private:
 	std::optional<MultiDimPointeeDerefArrayAccess> resolveMultiDimPointeeDerefArrayBase(
 		const MultiDimSubscriptChain& chain);
 	std::vector<size_t> getEffectiveArrayDimensionsForCodegen(const DeclarationNode& decl) const;
+	size_t getEffectiveArrayDimensionCountForCodegen(const DeclarationNode& decl) const;
 	ExprResult generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 										ExpressionContext context = ExpressionContext::Load);
 	bool validateAndSetupIdentifierMemberAccess(
