@@ -189,6 +189,11 @@ public:
 	// Access the type interning context.
 	const TypeContext& typeContext() const { return type_context_; }
 
+	// Resolve the pointer-to-array shape of a descriptor from its published
+	// structural TypeId. A pointer-to-array descriptor with no published
+	// identity fails closed rather than reading the flat projection.
+	PointerToArrayShape pointerToArrayShape(const CanonicalTypeDesc& desc) const;
+
 	// Access cast info side table.
 	std::span<const ImplicitCastInfo> castInfoTable() const { return cast_info_table_; }
 	// Sema-authoritative class entities that may participate in IR. Lookup and

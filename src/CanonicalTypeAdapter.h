@@ -621,8 +621,14 @@ inline CanonicalTypeImport importCanonicalCompleteNominalArray(CanonicalTypeTabl
 	}
 	const bool has_ordinary_array = syntax.is_array() && !syntax.has_pointee_array_declarator();
 	const bool has_pointee_array = syntax.has_pointee_array_declarator();
-	if ((!has_ordinary_array && !has_pointee_array) ||
-		syntax.has_unsized_outer_array_dimension() || syntax.array_dimensions().empty()) {
+	if (!has_ordinary_array && !has_pointee_array) {
+		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+	}
+	if (has_pointee_array && syntax.pointer_levels().empty()) {
+		return {{}, CanonicalTypeImportStatus::Invalid};
+	}
+	if (has_ordinary_array && syntax.array_dimensions().empty() &&
+		!syntax.has_unsized_outer_array_dimension()) {
 		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
 	}
 	for (const size_t extent : syntax.array_dimensions()) {
@@ -630,28 +636,13 @@ inline CanonicalTypeImport importCanonicalCompleteNominalArray(CanonicalTypeTabl
 			return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
 		}
 	}
-	if (has_pointee_array && syntax.pointer_levels().empty()) {
-		return {{}, CanonicalTypeImportStatus::Invalid};
-	}
 	CanonicalTypeTransaction transaction(table);
 	auto id = is_record ? table.record(entity) : table.enumeration(entity);
 	id = table.qualify(id, syntax.cv_qualifier());
-	if (has_pointee_array) {
-		id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
-		id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
-	} else {
-		id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
-		if (context == CanonicalTypeImportContext::FunctionParameter &&
-			syntax.reference_qualifier() == ReferenceQualifier::None) {
-			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 1);
-			id = table.pointer(id);
-		} else {
-			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
-		}
-	}
-	if (syntax.reference_qualifier() != ReferenceQualifier::None) {
-		id = table.reference(id, syntax.reference_qualifier());
-	}
+	// Share the builtin/dependent array shaping so an unknown outer bound is
+	// represented for nominal elements exactly as for builtin ones.
+	id = applyCanonicalPointerArrayReference(
+		table, id, syntax, context, has_ordinary_array, has_pointee_array);
 	transaction.commit();
 	return {id, CanonicalTypeImportStatus::Supported};
 }
