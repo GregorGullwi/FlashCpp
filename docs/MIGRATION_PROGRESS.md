@@ -48,9 +48,15 @@ The architecture the remaining work builds on:
   emits the unknown-bound wrapper outside the known dimensions, so a projectable
   `T(*)[][N]` publishes `Pointer -> Array(?) -> Array(N) -> T` (and an ordinary
   `T[][N]` publishes `Array(?) -> Array(N) -> T`) instead of dropping the `[?]`
-  bound. Exit criteria 4 and 5 are not
-  closed: other semantic paths still read the flat projection. The 3A rollup
-  remains 10/79.
+  bound. The nominal array importer now shares the builtin array shaping, so a
+  `Record(*)[][N]`/`Enum(*)[][N]` element also publishes the same identity rather
+  than staying flat. `SemanticAnalysis::pointerToArrayShape` is the single
+  codegen resolver for a pointer whose immediate pointee is an array; the
+  dereference/array-to-pointer-decay and multi-dimensional pointer-to-array
+  subscript consumers read it and fail closed when a pointer-to-array descriptor
+  has no published structural identity. Exit criteria 4 and 5 are not closed:
+  the remaining array/member base collectors and member-access projections still
+  read the flat projection. The 3A rollup remains 10/79.
 - The shared type-trait evaluator classifies the structural `[meta.unary.prop]`
   family plus class/union/qualification and published record properties from
   canonical identity; the folded, constexpr, lazy-constraint, and lowered paths
@@ -424,11 +430,13 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
   pointer is unimplemented.
 - General conversion-descriptor consumption of alias wrappers (callable, array,
   reference, member-pointer) remains open.
-- A projectable pointer or array with an unknown outer bound now publishes
-  structural identity that carries every bound. The nominal array path
-  (`importCanonicalCompleteNominalArray`) still rejects an unsized outer bound, so
-  `Record(*)[][N]`/`Enum(*)[][N]` remain flat-only (unpublished) rather than
-  mismatched; extending that path is a separate slice.
+- The projectable pointer/array identity path now covers an unknown outer bound
+  for builtin, dependent, specialization, record, and enum elements, and the
+  dereference and multi-dimensional pointer-to-array subscript codegen consumers
+  read it through one resolver. The remaining array/member base collectors and
+  member-access `TypeSpecifierNode` projections still read the flat
+  `pointee_array_declarator`/`has_unsized_outer_array_dimension` fields and are
+  the next consumers to migrate.
 - The compatibility `TypeTraitEval::isSigned`/`isUnsigned` adapters are
   unexercised; a regression forcing an unimportable operand through them is owed.
 - The canonical record constructor schema is published for a completed record

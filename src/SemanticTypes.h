@@ -149,6 +149,17 @@ struct CanonicalTypeDesc {
 	}
 };
 
+// Codegen-facing shape of a single pointer whose immediate pointee is an array
+// (C++20 [dcl.ptr]/1), for example T(*)[2][4] or T(*)[][N]. It is resolved from
+// the descriptor's published structural TypeId. known_dimensions is
+// outermost-first and excludes an unknown outer bound, which is reported by
+// has_unsized_outer_array_dimension.
+struct PointerToArrayShape {
+	bool is_pointer_to_array = false;
+	bool has_unsized_outer_array_dimension = false;
+	std::vector<size_t> known_dimensions;
+};
+
 // --- Hash specialisation for CanonicalTypeDesc (enables O(1) TypeContext::intern) ---
 
 namespace std {

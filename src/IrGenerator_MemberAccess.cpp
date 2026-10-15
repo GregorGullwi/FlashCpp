@@ -328,16 +328,18 @@ std::optional<AstToIr::MultiDimPointeeDerefArrayAccess> AstToIr::resolveMultiDim
 	const CanonicalTypeDesc& desc = sema_.typeContext().get(operand_type_id);
 	// C++20 [dcl.ptr]/1: only a declarator whose bounds bind inside the
 	// pointer yields an array object on dereference, and every subscript in
-	// the chain consumes one bound.
-	if (!desc.pointee_array_declarator || desc.pointer_levels.size() != 1 ||
-		desc.array_dimensions.empty() ||
-		desc.array_dimensions.size() +
-			static_cast<size_t>(desc.has_unsized_outer_array_dimension) < chain.indices.size()) {
+	// the chain consumes one bound. The shape comes from the descriptor's
+	// published structural identity.
+	const PointerToArrayShape shape = sema_.pointerToArrayShape(desc);
+	if (!shape.is_pointer_to_array || shape.known_dimensions.empty() ||
+		shape.known_dimensions.size() +
+			static_cast<size_t>(shape.has_unsized_outer_array_dimension) < chain.indices.size()) {
 		return std::nullopt;
 	}
 
 	MultiDimPointeeDerefArrayAccess result;
 	result.pointee_desc = desc;
+	result.shape = shape;
 	result.deref_operand = &deref_operand_expr;
 	return result;
 }
@@ -426,11 +428,12 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			if (element_size_bits <= 0) {
 				throw InternalError("Pointer-to-array subscript could not resolve element size");
 			}
+			const PointerToArrayShape& shape = pointee_deref_multi_dim->shape;
 			std::vector<size_t> dim_sizes;
 			dim_sizes.reserve(
-				pointee_desc.array_dimensions.size() +
-				static_cast<size_t>(pointee_desc.has_unsized_outer_array_dimension));
-			if (pointee_desc.has_unsized_outer_array_dimension) {
+				shape.known_dimensions.size() +
+				static_cast<size_t>(shape.has_unsized_outer_array_dimension));
+			if (shape.has_unsized_outer_array_dimension) {
 				// The unknown outer extent affects the number of rows, but not the
 				// stride within a row. Zero is safe here because stride calculation
 				// only multiplies extents following the current dimension.
@@ -438,8 +441,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			}
 			dim_sizes.insert(
 				dim_sizes.end(),
-				pointee_desc.array_dimensions.begin(),
-				pointee_desc.array_dimensions.end());
+				shape.known_dimensions.begin(),
+				shape.known_dimensions.end());
 
 			// Materialize the base address: the dereferenced pointer's VALUE
 			// is the address of the pointee array object ([dcl.ptr]/1), so no

@@ -91,6 +91,7 @@ private:
 	// (*p)[i][j] with p of type T(*)[2][4] (C++20 [dcl.ptr]/1, [expr.sub]).
 	struct MultiDimPointeeDerefArrayAccess {
 		CanonicalTypeDesc pointee_desc{};
+		PointerToArrayShape shape{};
 		const ExpressionNode* deref_operand = nullptr;  // Expression yielding the pointer
 	};
 

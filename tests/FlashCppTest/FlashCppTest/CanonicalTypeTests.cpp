@@ -101,6 +101,51 @@ TEST_CASE("Pointer to unsized outer array identity carries every bound") {
 	CHECK(ordinary_inner.array_extent == 3);
 }
 
+TEST_CASE("Pointer-to-array shape prefers structural identity over the flat projection") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	CompileContext test_context;
+	test_context.setInputFile("canonical_pointer_to_array_shape.cpp");
+	SemanticAnalysis sema(test_context, gSymbolTable);
+	CanonicalTypeTable& table = context.canonicalTypes();
+
+	// A published structural id is authoritative even when the flat projection
+	// disagrees with it.
+	const TypeId int_id = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId pointer_to_unsized_rows = table.pointer(
+		table.arrayOfUnknownBound(table.array(int_id, 3)));
+	CanonicalTypeDesc structural;
+	structural.type_index = nativeTypeIndex(TypeCategory::Int);
+	structural.structural_type_id = pointer_to_unsized_rows;
+	structural.pointee_array_declarator = false;
+	structural.pointer_levels.push_back(PointerLevel{});
+	structural.array_dimensions.push_back(99);
+	const PointerToArrayShape from_structural = sema.pointerToArrayShape(structural);
+	CHECK(from_structural.is_pointer_to_array);
+	CHECK(from_structural.has_unsized_outer_array_dimension);
+	REQUIRE(from_structural.known_dimensions.size() == 1);
+	CHECK(from_structural.known_dimensions[0] == 3);
+
+	// A descriptor without a structural id is not a pointer-to-array, and a
+	// pointer-to-array descriptor that never published identity fails closed
+	// rather than reading the flat projection.
+	CanonicalTypeDesc flat;
+	flat.type_index = nativeTypeIndex(TypeCategory::Int);
+	flat.pointer_levels.push_back(PointerLevel{});
+	const PointerToArrayShape not_published = sema.pointerToArrayShape(flat);
+	CHECK(!not_published.is_pointer_to_array);
+	flat.pointee_array_declarator = true;
+	flat.array_dimensions.push_back(4);
+	CHECK_THROWS_AS(sema.pointerToArrayShape(flat), InternalError);
+
+	// An ordinary array structural id is not a pointer-to-array.
+	CanonicalTypeDesc ordinary;
+	ordinary.structural_type_id = table.arrayOfUnknownBound(table.array(int_id, 3));
+	const PointerToArrayShape not_pointer = sema.pointerToArrayShape(ordinary);
+	CHECK(!not_pointer.is_pointer_to_array);
+}
+
 TEST_CASE("Canonical TypeIds rank by-value derived-to-base conversions") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();

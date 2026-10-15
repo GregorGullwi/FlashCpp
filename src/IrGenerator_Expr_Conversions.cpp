@@ -2217,9 +2217,9 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		TypeIndex pointee_type_index{};
 		std::vector<size_t> pointee_array_dimensions;
 		// Struct identifiers carry pointer depth 0 so the type index stays
-		// available for layout. A pointer-to-array still publishes
-		// pointee_array_declarator, which is the authority for suppressing
-		// the load ([expr.unary.op]/1).
+		// available for layout. A pointer-to-array publishes structural identity
+		// whose immediate pointee is an array, which is the authority for
+		// suppressing the load ([expr.unary.op]/1).
 		if (pointer_depth <= 1 && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 				// Sema owns expression typing ([expr.unary.op]/1): the operand's
 				// canonical descriptor is the single authority for declarator
@@ -2250,11 +2250,10 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			if (operand_type_id) {
 				const CanonicalTypeDesc& operand_desc =
 					sema_.typeContext().get(operand_type_id);
-				pointee_is_array = operand_desc.pointee_array_declarator;
+				const PointerToArrayShape shape = sema_.pointerToArrayShape(operand_desc);
+				pointee_is_array = shape.is_pointer_to_array;
 				pointee_type_index = operand_desc.type_index;
-				pointee_array_dimensions.assign(
-					operand_desc.array_dimensions.begin(),
-					operand_desc.array_dimensions.end());
+				pointee_array_dimensions = shape.known_dimensions;
 			}
 		}
 		if (pointee_is_array) {

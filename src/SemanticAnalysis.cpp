@@ -6320,6 +6320,49 @@ CanonicalTypeId SemanticAnalysis::canonicalizeTypeForImplicitConversion(const Ty
 	return canonicalizeType(type);
 }
 
+PointerToArrayShape SemanticAnalysis::pointerToArrayShape(const CanonicalTypeDesc& desc) const {
+	// Every projectable pointer-to-array shape now publishes structural
+	// identity, so a pointer-to-array descriptor that reached codegen without
+	// one is a publication defect, not a reason to read the flat projection.
+	if (!desc.structural_type_id) {
+		if (desc.pointee_array_declarator) {
+			throw InternalError("pointer-to-array descriptor has no published structural identity");
+		}
+		return {};
+	}
+	PointerToArrayShape shape;
+	const CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	auto stripQualifiers = [&table](CanonicalTypeNode node) {
+		while (node.kind == CanonicalTypeKind::Qualified && node.child) {
+			node = table.node(node.child);
+		}
+		return node;
+	};
+	CanonicalTypeNode node = table.node(desc.structural_type_id);
+	while (node.child && (node.kind == CanonicalTypeKind::Qualified ||
+		node.kind == CanonicalTypeKind::LValueReference ||
+		node.kind == CanonicalTypeKind::RValueReference)) {
+		node = table.node(node.child);
+	}
+	if (node.kind != CanonicalTypeKind::Pointer || !node.child) {
+		return shape;
+	}
+	CanonicalTypeNode pointee = stripQualifiers(table.node(node.child));
+	if (pointee.kind != CanonicalTypeKind::Array) {
+		return shape;
+	}
+	shape.is_pointer_to_array = true;
+	while (pointee.kind == CanonicalTypeKind::Array && pointee.child) {
+		if (hasCanonicalTypeNodeFlag(pointee.flags, CanonicalTypeNodeFlags::KnownArrayBound)) {
+			shape.known_dimensions.push_back(static_cast<size_t>(pointee.array_extent));
+		} else {
+			shape.has_unsized_outer_array_dimension = true;
+		}
+		pointee = stripQualifiers(table.node(pointee.child));
+	}
+	return shape;
+}
+
 bool SemanticAnalysis::isMemberObjectPointerType(CanonicalTypeId type_id) const {
 	if (!type_id)
 		return false;
