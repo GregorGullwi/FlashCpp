@@ -54,8 +54,7 @@ TEST_CASE("Pointer to unsized outer array identity carries every bound") {
 	SemanticAnalysis sema(test_context, gSymbolTable);
 	const CanonicalTypeTable& table = context.canonicalTypes();
 
-	TypeSpecifierNode pointer_to_unsized_array(
-		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	TypeSpecifierNode pointer_to_unsized_array(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 	pointer_to_unsized_array.set_ordered_declarator({
 		DeclaratorComponent::pointer(CVQualifier::None),
 		DeclaratorComponent::unknownBoundArray(),
@@ -83,8 +82,7 @@ TEST_CASE("Pointer to unsized outer array identity carries every bound") {
 
 	// The same bound retention applies to an ordinary array with an unknown
 	// outer bound (int[][3]); the unknown wrap goes outside the known extent.
-	TypeSpecifierNode ordinary_unsized_array(
-		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	TypeSpecifierNode ordinary_unsized_array(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 	ordinary_unsized_array.set_array(true);
 	ordinary_unsized_array.set_array_dimensions(std::array<size_t, 1>{3});
 	ordinary_unsized_array.set_unsized_outer_array_dimension(true);
@@ -113,8 +111,7 @@ TEST_CASE("Pointer-to-array shape prefers structural identity over the flat proj
 	// A published structural id is authoritative even when the flat projection
 	// disagrees with it.
 	const TypeId int_id = table.builtin(CanonicalBuiltinKind::Int);
-	const TypeId pointer_to_unsized_rows = table.pointer(
-		table.arrayOfUnknownBound(table.array(int_id, 3)));
+	const TypeId pointer_to_unsized_rows = table.pointer(table.arrayOfUnknownBound(table.array(int_id, 3)));
 	CanonicalTypeDesc structural;
 	structural.type_index = nativeTypeIndex(TypeCategory::Int);
 	structural.structural_type_id = pointer_to_unsized_rows;

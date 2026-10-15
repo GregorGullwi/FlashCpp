@@ -430,19 +430,14 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			}
 			const PointerToArrayShape& shape = pointee_deref_multi_dim->shape;
 			std::vector<size_t> dim_sizes;
-			dim_sizes.reserve(
-				shape.known_dimensions.size() +
-				static_cast<size_t>(shape.has_unsized_outer_array_dimension));
+			dim_sizes.reserve(shape.known_dimensions.size() + static_cast<size_t>(shape.has_unsized_outer_array_dimension));
 			if (shape.has_unsized_outer_array_dimension) {
 				// The unknown outer extent affects the number of rows, but not the
 				// stride within a row. Zero is safe here because stride calculation
 				// only multiplies extents following the current dimension.
 				dim_sizes.push_back(0);
 			}
-			dim_sizes.insert(
-				dim_sizes.end(),
-				shape.known_dimensions.begin(),
-				shape.known_dimensions.end());
+			dim_sizes.insert(dim_sizes.end(), shape.known_dimensions.begin(), shape.known_dimensions.end());
 
 			// Materialize the base address: the dereferenced pointer's VALUE
 			// is the address of the pointee array object ([dcl.ptr]/1), so no

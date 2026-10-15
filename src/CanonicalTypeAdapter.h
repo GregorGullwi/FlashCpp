@@ -627,8 +627,7 @@ inline CanonicalTypeImport importCanonicalCompleteNominalArray(CanonicalTypeTabl
 	if (has_pointee_array && syntax.pointer_levels().empty()) {
 		return {{}, CanonicalTypeImportStatus::Invalid};
 	}
-	if (has_ordinary_array && syntax.array_dimensions().empty() &&
-		!syntax.has_unsized_outer_array_dimension()) {
+	if (has_ordinary_array && syntax.array_dimensions().empty() && !syntax.has_unsized_outer_array_dimension()) {
 		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
 	}
 	for (const size_t extent : syntax.array_dimensions()) {
@@ -641,8 +640,7 @@ inline CanonicalTypeImport importCanonicalCompleteNominalArray(CanonicalTypeTabl
 	id = table.qualify(id, syntax.cv_qualifier());
 	// Share the builtin/dependent array shaping so an unknown outer bound is
 	// represented for nominal elements exactly as for builtin ones.
-	id = applyCanonicalPointerArrayReference(
-		table, id, syntax, context, has_ordinary_array, has_pointee_array);
+	id = applyCanonicalPointerArrayReference(table, id, syntax, context, has_ordinary_array, has_pointee_array);
 	transaction.commit();
 	return {id, CanonicalTypeImportStatus::Supported};
 }
