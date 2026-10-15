@@ -410,10 +410,13 @@ inline TypeId applyCanonicalPointerArrayReference(CanonicalTypeTable& table, Typ
 	}
 	const auto reference = syntax.reference_qualifier();
 	if (has_pointee_array) {
-		if (syntax.array_dimensions().empty()) {
-			id = table.arrayOfUnknownBound(id);
-		} else {
+		// T (*)[N] is pointer to array of N T. T (*)[][N] adds an unknown
+		// outer bound, so the unknown wrap goes outside the known dimensions.
+		if (!syntax.array_dimensions().empty()) {
 			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
+		}
+		if (syntax.array_dimensions().empty() || syntax.has_unsized_outer_array_dimension()) {
+			id = table.arrayOfUnknownBound(id);
 		}
 		id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
 	} else {
@@ -1129,7 +1132,7 @@ inline CanonicalTypeImport importCanonicalShapedBase(CanonicalTypeTable& table,
 		!syntax.array_dimensions().empty() || syntax.has_unsized_outer_array_dimension();
 	if (has_array_shape) {
 		if ((!has_ordinary_array && !has_pointee_array) ||
-			(syntax.has_unsized_outer_array_dimension() && !has_ordinary_array) ||
+			(syntax.has_unsized_outer_array_dimension() && !has_ordinary_array && !has_pointee_array) ||
 			(has_pointee_array && syntax.pointer_levels().empty())) {
 			return {{}, CanonicalTypeImportStatus::Invalid};
 		}
@@ -1187,7 +1190,7 @@ inline CanonicalTypeImport importCanonicalTemplateSpecialization(CanonicalTypeTa
 		!syntax.array_dimensions().empty() || syntax.has_unsized_outer_array_dimension();
 	if (has_array_shape) {
 		if ((!has_ordinary_array && !has_pointee_array) ||
-			(syntax.has_unsized_outer_array_dimension() && !has_ordinary_array) ||
+			(syntax.has_unsized_outer_array_dimension() && !has_ordinary_array && !has_pointee_array) ||
 			(has_pointee_array && syntax.pointer_levels().empty())) {
 			return {{}, CanonicalTypeImportStatus::Invalid};
 		}
@@ -1402,7 +1405,7 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 		!syntax.array_dimensions().empty() || syntax.has_unsized_outer_array_dimension();
 	if (has_array_shape) {
 		if ((!has_ordinary_array && !has_pointee_array) ||
-			(syntax.has_unsized_outer_array_dimension() && !has_ordinary_array) ||
+			(syntax.has_unsized_outer_array_dimension() && !has_ordinary_array && !has_pointee_array) ||
 			(has_pointee_array && syntax.pointer_levels().empty())) {
 			return {{}, CanonicalTypeImportStatus::Invalid};
 		}
