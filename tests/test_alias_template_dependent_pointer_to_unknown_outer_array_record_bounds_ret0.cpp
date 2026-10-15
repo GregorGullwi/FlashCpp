@@ -8,9 +8,7 @@ using IncompleteRows = T(*)[][Columns];
 static_assert(__is_pointer(IncompleteRows<Cell, 3>));
 
 int main() {
-	Cell values[2][3] = {
-		{{11}, {17}, {23}},
-		{{29}, {31}, {37}}};
+	Cell values[2][3] = {{{11}, {17}, {23}}, {{29}, {31}, {37}}};
 	IncompleteRows<Cell, 3> pointer = &values;
 	if (sizeof(pointer) != sizeof(void*)) return 1;
 	if (sizeof((*pointer)[0]) != sizeof(values[0])) return 2;
