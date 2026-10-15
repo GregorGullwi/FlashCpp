@@ -86,6 +86,7 @@ private:
 		// True when the object named by object_key is a reference/pointer, so the
 		// base operand holds an address rather than inline member storage.
 		bool object_is_address = false;
+		PointerToArrayShape member_shape{};
 	};
 
 	// A subscript chain rooted at a pointer-to-array dereference, e.g.

@@ -6366,6 +6366,11 @@ PointerToArrayShape SemanticAnalysis::pointerToArrayShape(const CanonicalTypeDes
 	return shape;
 }
 
+PointerToArrayShape SemanticAnalysis::memberPointerToArrayShape(const StructMember& member) {
+	const CanonicalTypeId id = type_context_.intern(canonicalTypeDescFromStructMember(member, CVQualifier::None));
+	return pointerToArrayShape(type_context_.get(id));
+}
+
 bool SemanticAnalysis::isMemberObjectPointerType(CanonicalTypeId type_id) const {
 	if (!type_id)
 		return false;
