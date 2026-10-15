@@ -123,33 +123,27 @@ static int deriveElementStrideBitsFromType(
 	return element_stride_bits;
 }
 
-static size_t getEffectiveArrayDimensionCountForCodegen(const DeclarationNode& decl) {
-	{
-		const TypeSpecifierNode& type_node = decl.type_specifier_node();
-		if (type_node.is_array() && !type_node.array_dimensions().empty()) {
-			return type_node.array_dimension_count() +
-				static_cast<size_t>(type_node.has_unsized_outer_array_dimension());
+size_t AstToIr::getEffectiveArrayDimensionCountForCodegen(const DeclarationNode& decl) const {
+	const CanonicalTypeId type_id = sema_.canonicalizeTypeForImplicitConversion(decl.type_specifier_node());
+	if (type_id) {
+		const CanonicalTypeDesc& desc = sema_.typeContext().get(type_id);
+		if (desc.structural_type_id) {
+			if (const auto dimensions = requireFrontendContext().canonicalTypes().arrayDimensions(desc.structural_type_id)) {
+				return dimensions->size();
+			}
 		}
 	}
 	return decl.array_dimension_count();
 }
 
 std::vector<size_t> AstToIr::getEffectiveArrayDimensionsForCodegen(const DeclarationNode& decl) const {
-	{
-		const TypeSpecifierNode& type_node = decl.type_specifier_node();
-		if (type_node.is_array() && !type_node.array_dimensions().empty()) {
-			const std::span<const size_t> dimensions = type_node.array_dimensions();
-			std::vector<size_t> effective_dimensions;
-			effective_dimensions.reserve(
-				dimensions.size() +
-				static_cast<size_t>(type_node.has_unsized_outer_array_dimension()));
-			if (type_node.has_unsized_outer_array_dimension()) {
-				// Preserve the outer rank so indexing keeps the known inner-dimension strides.
-				effective_dimensions.push_back(0);
+	const CanonicalTypeId type_id = sema_.canonicalizeTypeForImplicitConversion(decl.type_specifier_node());
+	if (type_id) {
+		const CanonicalTypeDesc& desc = sema_.typeContext().get(type_id);
+		if (desc.structural_type_id) {
+			if (auto dimensions = requireFrontendContext().canonicalTypes().arrayDimensions(desc.structural_type_id)) {
+				return *dimensions;
 			}
-			effective_dimensions.insert(
-				effective_dimensions.end(), dimensions.begin(), dimensions.end());
-			return effective_dimensions;
 		}
 	}
 

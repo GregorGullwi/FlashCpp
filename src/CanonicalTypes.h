@@ -634,6 +634,12 @@ public:
 
 	CanonicalTypeNode node(TypeId id) const;
 
+	// Outer-to-inner array dimensions of a canonical type, with an unknown bound
+	// reported as zero. Returns nullopt when the type is not an array after cv
+	// and reference wrappers; an array of unknown bound returns at least one
+	// entry (zero), so nullopt and an unknown outer bound stay distinguishable.
+	std::optional<std::vector<size_t>> arrayDimensions(TypeId type) const;
+
 	TypeId functionParameterType(TypeId param_link) const;
 
 	TypeId functionParameterNext(TypeId param_link) const;

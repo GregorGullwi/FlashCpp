@@ -599,6 +599,33 @@ CanonicalTypeNode CanonicalTypeTable::node(TypeId id) const {
 	return nodeUnlocked(id);
 }
 
+std::optional<std::vector<size_t>> CanonicalTypeTable::arrayDimensions(TypeId type) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	CanonicalTypeNode node = nodeUnlocked(type);
+	while (node.child &&
+		(node.kind == CanonicalTypeKind::Qualified ||
+		 node.kind == CanonicalTypeKind::LValueReference ||
+		 node.kind == CanonicalTypeKind::RValueReference)) {
+		node = nodeUnlocked(node.child);
+	}
+	if (node.kind != CanonicalTypeKind::Array) {
+		return std::nullopt;
+	}
+	std::vector<size_t> dimensions;
+	while (node.kind == CanonicalTypeKind::Array) {
+		dimensions.push_back(hasCanonicalTypeNodeFlag(node.flags, CanonicalTypeNodeFlags::KnownArrayBound) ? static_cast<size_t>(node.array_extent) : 0);
+		if (!node.child) {
+			break;
+		}
+		node = nodeUnlocked(node.child);
+		while (node.kind == CanonicalTypeKind::Qualified && node.child) {
+			node = nodeUnlocked(node.child);
+		}
+	}
+	return dimensions;
+}
+
 TypeId CanonicalTypeTable::functionParameterType(TypeId param_link) const {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
