@@ -286,9 +286,11 @@ std::optional<AstToIr::MultiDimArrayAccess> AstToIr::resolveMultiDimIdentifierAr
 	}
 
 	const TypeSpecifierNode& base_type = result.base_decl->type_specifier_node();
-	const bool pointer_to_array_rows =
-		base_type.has_pointee_array_declarator() && base_type.runtime_pointer_depth() == 1 &&
-		base_type.array_dimensions().size() + 1 == chain.indices.size();
+	// The pointer-to-array rows shape comes from the declaration's published
+	// structural identity, not the flat declarator projection.
+	const CanonicalTypeId base_type_id = sema_.canonicalizeTypeForImplicitConversion(base_type);
+	result.base_shape = sema_.pointerToArrayShape(sema_.typeContext().get(base_type_id));
+	const bool pointer_to_array_rows = result.base_shape.is_pointer_to_array && result.base_shape.known_dimensions.size() + 1 == chain.indices.size();
 	if (getEffectiveArrayDimensionCountForCodegen(*result.base_decl) != chain.indices.size() &&
 		!pointer_to_array_rows) {
 		return std::nullopt;
@@ -746,13 +748,12 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			// Get all dimension sizes
 			std::vector<size_t> dim_sizes = getEffectiveArrayDimensionsForCodegen(*multi_dim->base_decl);
 			const bool pointer_to_array_rows =
-				type_node.has_pointee_array_declarator() && type_node.runtime_pointer_depth() == 1 &&
-				type_node.array_dimensions().size() + 1 == multi_dim_chain.indices.size();
+				multi_dim->base_shape.is_pointer_to_array &&
+				multi_dim->base_shape.known_dimensions.size() + 1 == multi_dim_chain.indices.size();
 			if (pointer_to_array_rows) {
 				dim_sizes.clear();
 				dim_sizes.push_back(1);
-				dim_sizes.insert(dim_sizes.end(),
-					type_node.array_dimensions().begin(), type_node.array_dimensions().end());
+				dim_sizes.insert(dim_sizes.end(), multi_dim->base_shape.known_dimensions.begin(), multi_dim->base_shape.known_dimensions.end());
 			}
 			// A reference bound to an array stores the array address, exactly like
 			// a pointer-to-array, so the flattened access must index through the
