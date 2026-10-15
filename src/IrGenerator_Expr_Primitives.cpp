@@ -233,7 +233,7 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 		} else if constexpr (std::is_same_v<T, PseudoDestructorCallNode>) {
 			return generatePseudoDestructorCallIr(expr);
 		} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
-			return generatePointerToMemberAccessIr(expr);
+			return generatePointerToMemberAccessIr(expr, context);
 		} else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
 				// Phase 4: unreachable after pre-sema boundary enforcement.
 			throw InternalError("PackExpansionExprNode survived into codegen after pre-sema boundary enforcement");
@@ -324,7 +324,7 @@ ExprResult AstToIr::generatePseudoDestructorCallIr(const PseudoDestructorCallNod
 	return ExprResult{};
 }
 
-ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode) {
+ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode, ExpressionContext context) {
 	ExprResult object_result = visitExpressionNode(ptmNode.object().as<ExpressionNode>(), ExpressionContext::LValueAddress);
 	if (object_result.effectiveIrType() == IrType::Void && !object_result.size_in_bits.is_set()) {
 		FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: object expression returned empty operands");
@@ -380,6 +380,24 @@ ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessN
 	TypeCategory member_type = ptr_result.typeEnum();
 	int member_size = ptr_result.size_in_bits.value;
 	TypeIndex member_type_index = ptr_result.type_index;
+
+	// As an lvalue target (for example the LHS of `obj.*pm = value`), `obj.*pm`
+	// denotes the addressed subobject itself, so return the computed address
+	// instead of the loaded value. Loading here would make the assignment store
+	// into a temporary and leave the object unchanged.
+	if (context == ExpressionContext::LValueAddress) {
+		// member_addr holds the address of the subobject, so mark it as an
+		// indirect lvalue; the unified assignment handler then stores through it
+		// instead of writing to the temp's own frame slot.
+		LValueInfo pointer_lvalue_info(LValueInfo::Kind::Indirect, member_addr, 0);
+		setTempVarMetadata(member_addr, TempVarMetadata::makeLValue(pointer_lvalue_info, TypeCategory::Invalid, 0));
+		return makeExprResult(
+			member_type_index.withCategory(member_type),
+			SizeInBits{static_cast<int>(member_size)},
+			IrOperand{member_addr},
+			PointerDepth{},
+			ValueStorage::ContainsAddress);
+	}
 
 	TempVar result_var = emitDereference(member_type, member_size, 1, member_addr, ptmNode.operator_token());
 	return makeExprResult(member_type_index.withCategory(member_type), SizeInBits{static_cast<int>(member_size)}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
