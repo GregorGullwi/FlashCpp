@@ -482,26 +482,3 @@ partial ordering and constraint-based tie-breaking need their own boundary-5
 slice; until then a constrained-overload regression must stay within the
 prose-verified probe count and pair each constrained overload with an
 unconstrained fallback rather than with a second constrained overload.
-
-
-## Deferred decltype alias overload misses are accepted
-
-A deferred `decltype` alias target that ends in a qualified member call is
-re-resolved at instantiation by member name, but the substituted arguments are
-not validated against the resolved member's parameters. When the member exists
-but no overload accepts the instantiated arguments, the alias silently takes the
-member's return type instead of being rejected:
-
-```cpp
-struct S {};
-template <typename T>
-struct Holder { static char pick(int*); };
-template <typename T>
-using PickResult = decltype(Holder<T>::pick(T{}));
-int main() { return sizeof(PickResult<S>) == 1 ? 0 : 1; }  // compiles
-```
-
-`Holder<S>::pick(S{})` has no viable overload, so the alias target is
-ill-formed. A member that does not exist at all is now rejected with
-`UndeclaredQualifiedIdentifier`; this overload-mismatch variant still needs the
-substituted call to route through overload resolution.
