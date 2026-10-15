@@ -1036,6 +1036,14 @@ struct VariableDeclOp {
 };
 
 // Global variable declaration
+// One absolute-address data relocation for an aggregate initializer element,
+// placed at a byte offset from the global symbol's start. Aggregate pointer
+// arrays (`int (*a[2])(int) = {&f,&g};`) store one relocation per element.
+struct DataRelocation {
+	uint32_t offset_in_symbol = 0;
+	StringHandle target;
+};
+
 struct GlobalVariableDeclOp {
 	TypeIndex type_index{};	// TypeCategory embedded; replaces Type type
 	SizeInBits size_in_bits = SizeInBits{0};			 // Size of one element in bits
@@ -1044,6 +1052,7 @@ struct GlobalVariableDeclOp {
 	size_t element_count = 1;		  // Number of elements (1 for scalars, N for arrays)
 	std::vector<char> init_data;	 // Raw bytes for initialized data
 	StringHandle reloc_target;	   // If valid, init_data holds zeros and a data relocation (R_X86_64_64) is emitted for this symbol
+	std::vector<DataRelocation> data_relocations;	 // Per-element absolute relocations for aggregate initializers
 	bool is_rodata = false;			// If true, init_data is emitted to .rodata (read-only) instead of .data
 	bool is_extern_only = false;	// If true, this is an extern declaration (no local storage allocation)
 	bool is_selectany = false;		// __declspec(selectany): emit as COMDAT SELECT_ANY

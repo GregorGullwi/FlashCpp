@@ -513,7 +513,7 @@ public:
 	void add_relocation(uint64_t offset, std::string_view symbol_name);
 	void add_relocation(uint64_t offset, std::string_view symbol_name, uint32_t relocation_type);
 	void add_text_relocation(uint64_t offset, const std::string& symbol_name, uint32_t relocation_type, int64_t addend = -4);
-	void add_data_relocation(std::string_view var_name, std::string_view target_name);
+	void add_data_relocation(std::string_view var_name, std::string_view target_name, uint32_t offset_in_symbol);
 	void add_pdata_relocations(uint32_t pdata_offset, std::string_view mangled_name, uint32_t xdata_offset);
 	void add_xdata_relocation(uint32_t xdata_offset, std::string_view handler_name);
 	void add_rdata_relocation(uint32_t rdata_offset, std::string_view symbol_name, uint32_t relocation_type = IMAGE_REL_AMD64_ADDR32NB);

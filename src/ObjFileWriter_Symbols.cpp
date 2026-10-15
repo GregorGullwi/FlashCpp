@@ -231,7 +231,7 @@ void ObjectFileWriter::add_text_relocation(uint64_t offset, const std::string& s
 				  << " type: 0x" << std::hex << relocation_type << std::dec << std::endl;
 }
 
-void ObjectFileWriter::add_data_relocation(std::string_view var_name, std::string_view target_name) {
+void ObjectFileWriter::add_data_relocation(std::string_view var_name, std::string_view target_name, uint32_t offset_in_symbol) {
 	// Find the variable's symbol to get its offset in the containing data section.
 	auto* var_symbol = coffi_.get_symbol(var_name);
 	if (!var_symbol)
@@ -243,7 +243,7 @@ void ObjectFileWriter::add_data_relocation(std::string_view var_name, std::strin
 		return;
 	}
 
-	uint32_t var_offset = var_symbol->get_value();
+	uint32_t var_offset = var_symbol->get_value() + offset_in_symbol;
 
 	// Get or create the target symbol
 	auto* target_symbol = coffi_.get_symbol(target_name);

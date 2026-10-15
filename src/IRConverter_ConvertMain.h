@@ -1075,6 +1075,7 @@ private:
 		bool is_initialized;
 		std::vector<char> init_data;	 // Raw bytes for initialized data
 		StringHandle reloc_target;	   // If valid, data relocation (R_X86_64_64) for this symbol
+		std::vector<DataRelocation> data_relocations;	 // Per-element absolute relocations for aggregate initializers
 		bool is_rodata = false;		// If true, emit init_data to .rodata instead of .data
 		bool is_extern_only = false;	// If true, this is an extern declaration (no local storage)
 		bool is_selectany = false;	// __declspec(selectany): COMDAT SELECT_ANY
