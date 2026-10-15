@@ -257,9 +257,8 @@ std::optional<AstToIr::MultiDimMemberArrayAccess> AstToIr::resolveMultiDimMember
 	if (member == nullptr || member->array_dimensions.empty()) {
 		return std::nullopt;
 	}
-	const bool pointer_to_array_rows =
-		member->pointee_array_declarator && member->pointer_depth == 1 &&
-		member->array_dimensions.size() + 1 == chain.indices.size();
+	result.member_shape = sema_.memberPointerToArrayShape(*member);
+	const bool pointer_to_array_rows = result.member_shape.is_pointer_to_array && result.member_shape.known_dimensions.size() + 1 == chain.indices.size();
 	if (!((member->is_array || member->is_reference()) &&
 		  member->array_dimensions.size() == chain.indices.size()) && !pointer_to_array_rows) {
 		return std::nullopt;
@@ -607,8 +606,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			// before the dimensions bound inside the pointer, e.g. p[0][i] for
 			// T (*p)[N]. The identifier path uses the same leading extent.
 			const bool pointer_to_array_rows =
-				member->pointee_array_declarator && member->pointer_depth == 1 &&
-				member->array_dimensions.size() + 1 == multi_dim_chain.indices.size();
+				member_multi_dim->member_shape.is_pointer_to_array &&
+				member_multi_dim->member_shape.known_dimensions.size() + 1 == multi_dim_chain.indices.size();
 			std::vector<size_t> dim_sizes;
 			dim_sizes.reserve(member->array_dimensions.size() + static_cast<size_t>(pointer_to_array_rows));
 			if (pointer_to_array_rows) {

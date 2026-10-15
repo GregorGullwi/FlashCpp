@@ -194,6 +194,11 @@ public:
 	// identity fails closed rather than reading the flat projection.
 	PointerToArrayShape pointerToArrayShape(const CanonicalTypeDesc& desc) const;
 
+	// Resolve the pointer-to-array shape of a non-static data member. The member
+	// carries no canonical id, so its descriptor is interned (publishing
+	// structural identity) before the shape is read.
+	PointerToArrayShape memberPointerToArrayShape(const StructMember& member);
+
 	// Access cast info side table.
 	std::span<const ImplicitCastInfo> castInfoTable() const { return cast_info_table_; }
 	// Sema-authoritative class entities that may participate in IR. Lookup and

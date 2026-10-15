@@ -59,11 +59,13 @@ The architecture the remaining work builds on:
   specialization also publishes structural identity. `SemanticAnalysis::pointerToArrayShape` is the single
   codegen resolver for a pointer whose immediate pointee is an array; the
   dereference/array-to-pointer-decay, multi-dimensional pointer-to-array
-  subscript, and identifier-rooted multi-dimensional array collectors read it and
+  subscript, and the identifier- and member-rooted multi-dimensional array
+  collectors read it (the member-rooted one through
+  `memberPointerToArrayShape`, which interns the member descriptor first) and
   fail closed when a pointer-to-array descriptor has no published structural
-  identity. Exit criteria 4 and 5 are not closed: the member-rooted multi-dim
-  collector and member-access projections still keep a flat fallback for
-  unpublished shapes. The 3A rollup remains 10/79.
+  identity. Exit criteria 4 and 5 are not closed: the member-access
+  `TypeSpecifierNode` projections still keep a flat fallback for unpublished
+  shapes. The 3A rollup remains 10/79.
 - The shared type-trait evaluator classifies the structural `[meta.unary.prop]`
   family plus class/union/qualification and published record properties from
   canonical identity; the folded, constexpr, lazy-constraint, and lowered paths
@@ -442,10 +444,9 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
   dereference and multi-dimensional pointer-to-array subscript codegen consumers
   read it through one resolver. Conditional array decay and built-in subscript
   element extraction are structural-only, an array of class-template
-  specializations now publishes identity, and the identifier-rooted
-  multi-dimensional collector reads the resolver. The member-rooted multi-dim
-  collector and member-access `TypeSpecifierNode`
-  projections still read the flat
+  specializations now publishes identity, and the identifier- and member-rooted
+  multi-dimensional collectors read the resolver. The member-access
+  `TypeSpecifierNode` projections still read the flat
   `pointee_array_declarator`/`has_unsized_outer_array_dimension` fields and are
   the next consumers to migrate.
 - The compatibility `TypeTraitEval::isSigned`/`isUnsigned` adapters are
