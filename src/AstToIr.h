@@ -75,6 +75,7 @@ private:
 	struct MultiDimArrayAccess {
 		VariableKey base_array_name;
 		const DeclarationNode* base_decl = nullptr;
+		PointerToArrayShape base_shape{};
 	};
 
 	struct MultiDimMemberArrayAccess {
