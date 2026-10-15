@@ -2501,9 +2501,21 @@ private:
 			}
 		}
 
-		size_t first_pointer = declarator_components_.size();
-		size_t first_array = declarator_components_.size();
-		for (size_t index = begin; index < declarator_components_.size(); ++index) {
+		// A single innermost Function component projects: the cold
+		// function_signature carries its parameter list while the surrounding
+		// pointer/array/reference wrappers project as usual. This covers a
+		// callable object, a function pointer, a reference to a function, and an
+		// array or pointer-to-array of callables. Two Function components still
+		// have no representation (a nested callable return) and stay
+		// non-projectable.
+		size_t projectable_end = declarator_components_.size();
+		if (!declarator_components_.empty() && declarator_components_.back().kind == DeclaratorComponentKind::Function) {
+			projectable_end = declarator_components_.size() - 1;
+		}
+
+		size_t first_pointer = projectable_end;
+		size_t first_array = projectable_end;
+		for (size_t index = begin; index < projectable_end; ++index) {
 			const DeclaratorComponent& component = declarator_components_[index];
 			if (component.kind == DeclaratorComponentKind::Pointer) {
 				first_pointer = std::min(first_pointer, index);
@@ -2516,11 +2528,10 @@ private:
 			}
 		}
 
-		const bool arrays_outside_pointers =
-			first_array < first_pointer || first_array == declarator_components_.size();
+		const bool arrays_outside_pointers = first_array < first_pointer || first_array == projectable_end;
 		bool seen_pointer = false;
 		bool seen_array = false;
-		for (size_t index = begin; index < declarator_components_.size(); ++index) {
+		for (size_t index = begin; index < projectable_end; ++index) {
 			const DeclaratorComponentKind kind = declarator_components_[index].kind;
 			if (kind == DeclaratorComponentKind::Pointer) {
 				if (!arrays_outside_pointers && seen_array) {
@@ -2537,13 +2548,13 @@ private:
 			}
 		}
 
-		for (size_t index = declarator_components_.size(); index-- > begin;) {
+		for (size_t index = projectable_end; index-- > begin;) {
 			const DeclaratorComponent& component = declarator_components_[index];
 			if (component.kind == DeclaratorComponentKind::Pointer) {
 				pointer_levels_.push_back(PointerLevel{component.cv_qualifier});
 			}
 		}
-		for (size_t index = begin; index < declarator_components_.size(); ++index) {
+		for (size_t index = begin; index < projectable_end; ++index) {
 			const DeclaratorComponent& component = declarator_components_[index];
 			if (component.kind == DeclaratorComponentKind::Array) {
 				array_dimensions_.push_back(static_cast<size_t>(component.payload));

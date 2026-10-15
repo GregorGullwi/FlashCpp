@@ -1334,15 +1334,17 @@ void publishPointerArrayStructuralId(CanonicalTypeDesc& desc) {
 	if (desc.structural_type_id || hasFlag(desc.flags, CanonicalTypeFlags::PublishedPointerArray)) {
 		return;
 	}
-	if (desc.function_signature.has_value() || hasFlag(desc.flags, CanonicalTypeFlags::IsFunctionType)) {
-		return;
-	}
 	if (desc.category() == TypeCategory::MemberFunctionPointer || desc.category() == TypeCategory::MemberObjectPointer) {
 		return;
 	}
 	if (!descriptorHasProjectablePointerOrArray(desc)) {
 		return;
 	}
+	// A cold function_signature no longer blocks publication: the flat shape
+	// here is an array or pointer-to-array whose element is a callable
+	// (`int (*a[2])(int)`), and the importer wraps the recorded bounds around
+	// the callable element. A bare function type carries neither pointer levels
+	// nor array dimensions, so it already returned above.
 	// Guard against re-entry through the import path. thread_local rather than a
 	// shared static so a multi-threaded front end cannot race on it.
 	thread_local int publish_depth = 0;

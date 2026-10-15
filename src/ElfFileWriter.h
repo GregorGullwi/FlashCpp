@@ -237,8 +237,9 @@ public:
 	 *        initialized with the address of another symbol.
 	 * @param var_name  The global variable whose .data slot should receive the address
 	 * @param target_name  The symbol whose absolute address is stored
+	 * @param offset_in_symbol  Byte offset of the slot within the global's storage
 	 */
-	void add_data_relocation(std::string_view var_name, std::string_view target_name) {
+	void add_data_relocation(std::string_view var_name, std::string_view target_name, uint32_t offset_in_symbol) {
 		// Find the variable's offset and containing section by looking up its symbol.
 		ELFIO::Elf64_Addr var_offset = 0;
 		ELFIO::Elf_Half data_section_index = 0;
@@ -254,7 +255,7 @@ public:
 				ELFIO::Elf_Half section_index;
 				sym_accessor.get_symbol(i, name, value, size, bind, type, section_index, other);
 				if (name == var_name && section_index != ELFIO::SHN_UNDEF) {
-					var_offset = value;
+					var_offset = value + offset_in_symbol;
 					data_section_index = section_index;
 					found = true;
 					break;

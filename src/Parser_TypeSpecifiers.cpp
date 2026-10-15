@@ -2866,6 +2866,17 @@ ParseResult Parser::parse_type_specifier() {
 							applyOuterDeclaratorShapeForSubstitution(
 								instantiated_type,
 								resolved_alias_target_type_spec);
+							// The ordered shape carries the alias target's callable signature, whose
+							// structured return and parameter components are still written in terms of
+							// the template parameters (for example `T(*[2])(T)`); substitute them so
+							// a direct call through the instantiated element is concrete.
+							if (instantiated_type.has_function_signature()) {
+								instantiated_type.set_function_signature(
+									substituteTemplateFunctionSignatureTypes(
+										instantiated_type.function_signature(),
+										alias_node.template_parameters(),
+										*template_args));
+							}
 						} else if (alias_target_type_spec.is_array()) {
 							// rebindDependentTemplateTypeArg merges cv/pointer/reference
 							// surface but not array dimensions, so apply the alias

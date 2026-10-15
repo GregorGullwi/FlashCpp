@@ -138,6 +138,49 @@ of being masked by a generic `OutOfLineMemberNotAttached` attachment failure.
 
 Continue boundary 3A in this order.
 
+0. **Declarator consolidation (active, branch `boundary-3a-declarator-consolidation`).**
+   A parenthesized declarator group whose direct-declarator carries a `[` suffix is
+   now routed through the recursive frame-stack grammar instead of being rejected by
+   the flat re-check, so the previously failing spellings parse to an ordered
+   `[Array, Pointer, Function]` spine:
+   `int (*a[2])(int) = {&f,&g};`, `using A = int(*[2])(int);`, and
+   `template <class T> using A = T(*[2])(T);`. The supporting layers are landed:
+   the legacy projection projects a single trailing `Function` component;
+   `importCanonicalCallable` wraps the recorded array bounds around the callable
+   element and `publishPointerArrayStructuralId` no longer bails on a callable
+   element; the IR variable-declaration guard accepts a projectable spine and sizes a
+   pointer/callable array element from the flat pointer depth; the structural callable
+   path preserves a reference return and mirror records a parameter pack on the
+   structured component; and global pointer arrays emit one `DataRelocation` per
+   element while local pointer arrays store one pointer per element. Regressions:
+   `tests/test_array_of_function_pointers_ret0.cpp` and
+   `tests/test_alias_array_of_function_pointers_ret0.cpp`.
+   Remaining, in order:
+   - **Nested callable return** (`int (*(*p)())();`). Two `Function` components still
+     have no representation: `singleFunctionComponentIndex` fails closed and
+     `int (*(*p)())();` is rejected with `Expected identifier token`. Add a
+     per-component parameter list (`FunctionType::callable_signature`, already read by
+     `typeSpecStillUsesDependentPlaceholder`) so the inner callable return carries its
+     own signature, then make projection, `applyCanonicalOrderedDeclarator` export/
+     import, signature substitution, and IR consume it. This is the last parser-side
+     gap for the grammar-faithful declarator.
+   - **Remove the transitional detection.** `tryStructuralPointerArrayDeclarator`'s
+     `(*` probe and the `parse_type_and_name` `(`-re-check dispatch are still present;
+     finish consolidating onto a single `parse_declarator` call after the base type and
+     delete the flat `(` dispatch and the old fallbacks marked with
+     `ordered_declarator_has_legacy_projection`. Keep the corpus, the migration
+     counters, and the two documented native baseline failures green.
+
+   Agent continuation prompt: "Continue the C++20 declarator consolidation on branch
+   `boundary-3a-declarator-consolidation` (stack a new branch if this one is merged).
+   Implement layer 4 (nested callable return) exactly as item 0 above, then delete the
+   transitional `(` re-check dispatch and the `(*` candidate probe so
+   `parse_type_and_name` calls `parse_declarator` once. Do not re-introduce a heuristic
+   spine when a downstream assumption breaks; fix the downstream layer under the
+   grammar. Validate with a full sharded rebuild, `tests/run_all_tests.sh`,
+   `tests/run_migration_counters.sh`, and `make test` and keep
+   `test_ordered_function_to_pointer_decay_ret42.cpp` green."
+
 1. **Make `TypeId` the conversion currency.** Continue migrating parser-side
    overload ranking and remaining syntax-facing callers to the structural
    planner, including conversions that require temporary materialization and

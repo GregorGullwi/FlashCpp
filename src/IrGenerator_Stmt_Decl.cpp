@@ -369,8 +369,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	const bool is_member_pointer_object =
 		type_node.is_member_function_pointer() ||
 		type_node.is_member_object_pointer_type();
-	if (type_node.has_ordered_declarator() && runtime_pointer_depth == 0 &&
-		!type_node.is_reference() && !is_member_pointer_object) {
+	// A projectable ordered spine lowers through the flat projection (its
+	// pointer/array fields and cold signature carry the complete shape), so only
+	// a non-projectable array/outer-callable object stays fail-closed here.
+	if (type_node.has_ordered_declarator() &&
+		!type_node.ordered_declarator_has_legacy_projection() &&
+		runtime_pointer_depth == 0 && !type_node.is_reference() && !is_member_pointer_object) {
 		throw InternalError(
 			"interleaved declarator reached unmigrated array-object IR lowering");
 	}
@@ -487,8 +491,15 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			// Create GlobalVariableDeclOp
 		GlobalVariableDeclOp op;
 		op.type_index = type_node.type_index();
-			// For pointers and references, size is sizeof(void*) regardless of base type
-		if (runtime_pointer_depth > 0 || type_node.is_reference() || type_node.is_function_pointer()) {
+		// For pointers and references, size is sizeof(void*) regardless of base type.
+		// An array object whose flat projection carries non-empty pointer levels
+		// has a pointer/callable element (for example `int (*a[2])(int)`), so its
+		// element still occupies one machine word even though the declared
+		// entity's own outermost wrapper is the array (runtime_pointer_depth()==0).
+		const bool has_pointer_element =
+			type_node.is_array() && type_node.pointer_depth() > 0;
+		if (runtime_pointer_depth > 0 || type_node.is_reference() ||
+			type_node.is_function_pointer() || has_pointer_element) {
 			op.size_in_bits = SizeInBits{static_cast<int>(sizeof(void*)) * 8};
 		} else {
 			op.size_in_bits = SizeInBits{type_node.size_in_bits()};
@@ -665,6 +676,34 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			auto it = global_variable_names_.find(reloc_simple_name_handle);
 			return (it != global_variable_names_.end()) ? it->second : reloc_simple_name_handle;
 		};
+		// Resolve one aggregate-initializer element to a symbol whose absolute
+		// address is stored. Accepts `&name`, a bare function name, `&name` for
+		// an object, and `&arr[0]`. Function targets use the mangled symbol.
+		auto resolveGlobalElementReloc = [&](const ASTNode& element) -> std::optional<StringHandle> {
+			if (!element.is<ExpressionNode>())
+				return std::nullopt;
+			const ExpressionNode& expr = element.as<ExpressionNode>();
+			const ASTNode* target = &element;
+			if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+				const auto& unary = std::get<UnaryOperatorNode>(expr);
+				if (unary.op() != "&" || !unary.get_operand().is<ExpressionNode>())
+					return std::nullopt;
+				target = &unary.get_operand();
+			}
+			if (!target->is<ExpressionNode>())
+				return std::nullopt;
+			const auto* identifier = std::get_if<IdentifierNode>(&target->as<ExpressionNode>());
+			if (identifier == nullptr)
+				return std::nullopt;
+			std::optional<ASTNode> symbol = lookupSymbol(identifier->name());
+			if (!symbol.has_value())
+				symbol = gSymbolTable.lookup(identifier->name());
+			if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
+				return StringTable::getOrInternStringHandle(
+					generateMangledNameForCall(symbol->as<FunctionDeclarationNode>(), StringHandle{}, {}));
+			}
+			return resolveGlobalRelocTarget(identifier->name());
+		};
 		auto makeStaticStorageEvalContext = [&]() {
 			ConstExpr::EvaluationContext ctx = makeEvalContext(is_static_local ? symbol_table : gSymbolTable);
 			if (is_static_local && global_symbol_table_) {
@@ -828,9 +867,31 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 					}
 				} else {
-						// Array initialization: each element is a separate value
-					bool materialized_as_constexpr_array = false;
-					if (type_node.is_array() && !type_node.array_dimensions().empty()) {
+					// Array initialization: each element is a separate value.
+					// An array whose element is a pointer or callable stores one absolute address
+					// relocation per element instead of a raw scalar value.
+					bool handled_as_pointer_array = false;
+					if (type_node.is_function_pointer() || (type_node.is_array() && type_node.pointer_depth() > 0)) {
+						std::vector<DataRelocation> element_relocations;
+						element_relocations.reserve(initializers.size());
+						bool all_resolved = !initializers.empty();
+						for (size_t elem_i = 0; elem_i < initializers.size() && all_resolved; ++elem_i) {
+							std::optional<StringHandle> target = resolveGlobalElementReloc(initializers[elem_i]);
+							if (!target.has_value()) {
+								all_resolved = false;
+								break;
+							}
+							element_relocations.push_back(DataRelocation{static_cast<uint32_t>(elem_i * element_size), *target});
+						}
+						if (all_resolved) {
+							op.is_initialized = true;
+							op.init_data.assign(op.element_count * element_size, 0);
+							op.data_relocations = std::move(element_relocations);
+							handled_as_pointer_array = true;
+						}
+					}
+					bool materialized_as_constexpr_array = handled_as_pointer_array;
+					if (!handled_as_pointer_array && type_node.is_array() && !type_node.array_dimensions().empty()) {
 						auto constexpr_ctx = makeStaticStorageEvalContext();
 						auto array_result = ConstExpr::Evaluator::materialize_array_value_with_spec(
 							type_node,
@@ -1493,8 +1554,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		return &cast_info;
 	};
 	operands.emplace_back(type_node.type());
-		// For pointers, allocate 64 bits (pointer size on x64), not the pointed-to type size
-	int size_in_bits = runtime_pointer_depth > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
+	// For pointers, allocate 64 bits (pointer size on x64), not the pointed-to type size.
+	// An array object whose flat projection carries non-empty pointer levels has a
+	// pointer/callable element even though the entity's outermost wrapper is the array.
+	const bool has_pointer_element = type_node.is_array() && type_node.pointer_depth() > 0;
+	int size_in_bits = (runtime_pointer_depth > 0 || has_pointer_element) ? 64 : static_cast<int>(type_node.size_in_bits());
 	operands.emplace_back(size_in_bits);
 	operands.emplace_back(local_var_id);
 	operands.emplace_back(static_cast<unsigned long long>(decl.custom_alignment()));

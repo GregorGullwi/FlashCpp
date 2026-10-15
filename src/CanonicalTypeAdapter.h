@@ -1092,10 +1092,27 @@ inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
 	if (syntax.reference_qualifier() != ReferenceQualifier::None) {
 		id = table.reference(id, syntax.reference_qualifier());
 	}
-	// [dcl.fct] parameter adjustment: function type becomes pointer to function.
-	if (context == CanonicalTypeImportContext::FunctionParameter &&
-		table.node(table.withoutTopLevelQualifiers(id)).kind == CanonicalTypeKind::Function) {
-		id = table.pointer(id);
+	// A projectable flat callable shape can carry array bounds around the
+	// callable element: `int (*a[2])(int)` is an array of two function
+	// pointers. The cold signature shaped the element and any pointer wrappers;
+	// wrap the recorded bounds around it ([dcl.array]).
+	if (syntax.is_array() && !syntax.has_pointee_array_declarator()) {
+		if (!syntax.array_dimensions().empty()) {
+			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
+		}
+		if (syntax.has_unsized_outer_array_dimension()) {
+			id = table.arrayOfUnknownBound(id);
+		}
+	}
+	// [dcl.fct]/5 parameter adjustment: a function type or an array type becomes
+	// a pointer to its element/function.
+	if (context == CanonicalTypeImportContext::FunctionParameter) {
+		const CanonicalTypeNode outer = table.node(table.withoutTopLevelQualifiers(id));
+		if (outer.kind == CanonicalTypeKind::Array) {
+			id = table.pointer(outer.child);
+		} else if (outer.kind == CanonicalTypeKind::Function) {
+			id = table.pointer(id);
+		}
 	}
 	return {id, CanonicalTypeImportStatus::Supported};
 }

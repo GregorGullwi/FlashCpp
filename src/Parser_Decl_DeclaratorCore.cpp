@@ -1449,13 +1449,32 @@ ParseResult Parser::parse_declarator(
 					advance();
 					[[maybe_unused]] const CVQualifier ignored_cv = parse_cv_qualifiers();
 					skip_noop_gnu_qualifiers();
-					// Nested stars such as (**)(params) are pointer wrappers
-					// around a function type and need the ordered spine; a
-					// single (*)(params) stays on the legacy flat path below.
 					candidate = peek() == "*"_tok ||
 						peek() == "("_tok ||
 						peek() == "&"_tok || peek() == "&&"_tok ||
 						(peek() == ")"_tok && peek(1) == "["_tok);
+					// A group whose direct-declarator carries a '[' suffix (`int (*a[2])(int)`,
+					// `int (*[2])(int)`) cannot be expressed by the flat pointer/array
+					// projection, so the recursive grammar owns it. Scan forward for a '['
+					// at paren depth zero before the group closes; the enclosing probe
+					// restores once, so consuming tokens here adds no extra replay.
+					if (!candidate && !peek().is_eof()) {
+						int paren_depth = 0;
+						while (!peek().is_eof()) {
+							if (peek() == "("_tok) {
+								++paren_depth;
+							} else if (peek() == ")"_tok) {
+								if (paren_depth == 0) {
+									break;
+								}
+								--paren_depth;
+							} else if (paren_depth == 0 && peek() == "["_tok) {
+								candidate = true;
+								break;
+							}
+							advance();
+						}
+					}
 				} else if (peek() == "&"_tok || peek() == "&&"_tok) {
 					advance();
 					skip_noop_gnu_qualifiers();
@@ -1583,11 +1602,13 @@ ParseResult Parser::parse_declarator(
 								group_calling_convention;
 							continue;
 						}
-						if (peek() == ")"_tok && !has_identifier && frame.delimited &&
+						// An abstract parenthesized group may have an empty direct declarator before its
+						// suffixes (`int (*[2])(int)`): after the ptr-operators the next token is a
+						// suffix `[` or the closing `)` of the group.
+						if ((peek() == ")"_tok || peek() == "["_tok) && !has_identifier && frame.delimited &&
 								!frame.prefixes.empty()) {
-							identifier =
-									Token(Token::Type::Identifier, ""sv, current_token_.line(),
-												current_token_.column(), current_token_.file_index());
+							identifier = Token(Token::Type::Identifier, ""sv, current_token_.line(),
+								current_token_.column(), current_token_.file_index());
 							has_identifier = true;
 							frame.after_direct = true;
 							continue;
@@ -1804,6 +1825,10 @@ ParseResult Parser::parse_declarator(
 								failed = true;
 								break;
 							}
+							// The base type is the callable's return type; a reference return
+							// (`Big& (*fp)()`) is not a spine component, so restore it after the
+							// declarator shape was cleared.
+							return_type.set_reference_qualifier(base_type.reference_qualifier());
 							FunctionSignature signature;
 							signature.setReturnType(
 								makeFunctionType(return_type));
@@ -1817,8 +1842,14 @@ ParseResult Parser::parse_declarator(
 									parameters_ok = false;
 									break;
 								}
-								parameter_types.push_back(makeFunctionType(
-									parameter.as<DeclarationNode>().type_specifier_node()));
+								const DeclarationNode& parameter_decl = parameter.as<DeclarationNode>();
+								FunctionType parameter_type = makeFunctionType(parameter_decl.type_specifier_node());
+								// parse_parameter_list records a pack on the declaration; mirror it
+								// onto the structured component so signature substitution expands it.
+								if (parameter_decl.is_parameter_pack()) {
+									parameter_type.is_pack_expansion = true;
+								}
+								parameter_types.push_back(std::move(parameter_type));
 							}
 							if (!parameters_ok) {
 								failed = true;
@@ -1908,10 +1939,18 @@ ParseResult Parser::parse_declarator(
 									completed_array_bound_expressions.begin(),
 									completed_array_bound_expressions.end());
 							}
+							// An array object owns inline storage; attach the parsed bound expressions so the
+							// declaration reports owns_inline_array_storage() for layout and initialization.
+							ASTNode callable_decl_node;
+							if (structural_type.is_array_object()) {
+								callable_decl_node = emplace_node<DeclarationNode>(
+									emplace_node<TypeSpecifierNode>(structural_type), identifier,
+									std::vector<ASTNode>(completed_array_bound_expressions));
+							} else {
+								callable_decl_node = emplace_node<DeclarationNode>(emplace_node<TypeSpecifierNode>(structural_type), identifier);
+							}
 							discard_saved_token(structural_start);
-							return ParseResult::success(emplace_node<DeclarationNode>(
-								emplace_node<TypeSpecifierNode>(structural_type),
-								identifier));
+							return ParseResult::success(callable_decl_node);
 						}
 						TypeSpecifierNode structural_type = base_type;
 						if (member_pointer_is_function) {
@@ -1981,9 +2020,18 @@ ParseResult Parser::parse_declarator(
 								completed_array_bound_expressions.begin(),
 								completed_array_bound_expressions.end());
 						}
+						// An array object owns inline storage; attach the parsed bound expressions so the
+						// declaration reports owns_inline_array_storage() for layout and initialization.
+						ASTNode ordered_decl_node;
+						if (structural_type.is_array_object()) {
+							ordered_decl_node = emplace_node<DeclarationNode>(
+								emplace_node<TypeSpecifierNode>(structural_type), identifier,
+								std::vector<ASTNode>(completed_array_bound_expressions));
+						} else {
+							ordered_decl_node = emplace_node<DeclarationNode>(emplace_node<TypeSpecifierNode>(structural_type), identifier);
+						}
 						discard_saved_token(structural_start);
-						return ParseResult::success(emplace_node<DeclarationNode>(
-								emplace_node<TypeSpecifierNode>(structural_type), identifier));
+						return ParseResult::success(ordered_decl_node);
 					}
 					if (!was_delimited || frames.back().after_direct) {
 						failed = true;

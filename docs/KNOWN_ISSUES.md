@@ -217,14 +217,27 @@ regression `tests/test_nested_parenthesized_declarator_ret42.cpp` pins the
 nested function-pointer object and the redundant-name function declaration,
 with and without a pointer return type.
 
+A parenthesized group whose direct-declarator carries a `[` suffix is now routed
+to the recursive grammar, so an array of function pointers declared inline
+(`int (*a[2])(int) = {&f,&g};`), through a non-template alias
+(`using A = int(*[2])(int);`), or through an alias template
+(`template <class T> using A = T(*[2])(T);`) parses to an ordered
+`[Array, Pointer, Function]` spine. The projection projects a single trailing
+`Function` component, the canonical importer wraps the recorded array bounds
+around the callable element, and global and local array initializers lower one
+element address relocation/store per element. The regressions
+`tests/test_array_of_function_pointers_ret0.cpp` and
+`tests/test_alias_array_of_function_pointers_ret0.cpp` call through the elements.
+
 The remaining parenthesized interleaving is a callable whose return is itself a
 callable, for example `int (*(*p)())()` (a pointer to a function returning a
 function pointer), still rejected with `Expected identifier token`. The ordered
 spine keeps a single cold `FunctionSignature`, so a second `Function` component
 has nowhere to store its parameter list; supporting it needs a nested callable
-return representation. Consolidating the remaining `(` re-checks (including the
-parallel ones in the typedef/using paths and the member-type-alias probe) into
-the single `parse_declarator` call closes that gap as well.
+return representation (a per-component `FunctionType::callable_signature`). The
+transitional `(*` probe in `tryStructuralPointerArrayDeclarator` and the flat
+`(`-re-check dispatch in `parse_type_and_name` also remain to be removed once the
+recursive grammar owns every interleaving.
 
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 
