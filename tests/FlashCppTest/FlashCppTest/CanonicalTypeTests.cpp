@@ -143,6 +143,23 @@ TEST_CASE("Pointer-to-array shape prefers structural identity over the flat proj
 	CHECK(!not_pointer.is_pointer_to_array);
 }
 
+TEST_CASE("Canonical identity is independent of interning and string order") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const auto build = [&table]() {
+		const TypeId param = table.templateParameter(TemplateDeclId{3}, 0);
+		const TypeId member = table.dependentName(param, "value");
+		const TypeId rows = table.arrayOfUnknownBound(table.array(member, 4));
+		return table.pointer(rows);
+	};
+	const TypeId first = build();
+	(void)table.templateSpecialization(TemplateDeclId{9}, std::span<const TypeId>(&first, 1));
+	StringTable::getOrInternStringHandle("canonical_identity_order_probe");
+	const TypeId second = build();
+	CHECK(second == first);
+	CHECK(table.node(second).child == table.node(first).child);
+}
+
 TEST_CASE("Canonical TypeIds rank by-value derived-to-base conversions") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();

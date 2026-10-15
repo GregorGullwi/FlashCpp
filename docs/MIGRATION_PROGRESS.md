@@ -80,6 +80,11 @@ The architecture the remaining work builds on:
   canonical identity; the folded, constexpr, lazy-constraint, and lowered paths
   route through it. Zero-argument constructibility variants answer from published
   record facts.
+- A canonical-table probe (`Canonical identity is independent of interning and
+  string order`) pins that a repeated structural request returns one `TypeId`
+  regardless of unrelated interning and string-table insertion order, covering
+  the interning half of exit criteria 2 and 6; parse-order coverage across two
+  parses remains open.
 - Parser-side overload ranking and semantic conversions use the structural
   planner and canonical base graph for builtin arithmetic, array decay,
   null-pointer, function decay, object-pointer, member-pointer reference
