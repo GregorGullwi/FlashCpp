@@ -114,7 +114,13 @@ The architecture the remaining work builds on:
   substituted through `substituteTemplateFunctionSignatureTypes` where the alias
   target is rebuilt, so `Fn<int>*` pointer, parameter, and overload uses resolve
   and mangle concretely. `tests/test_alias_template_function_type_target_ret0.cpp`
-  covers function and function-pointer alias targets.
+  covers function and function-pointer alias targets. A declaration whose type is
+  a function-type alias (`using F = int(int); F declared;`) now declares a
+  function: `parse_function_declaration_with_storage_specs` synthesizes the
+  return type and parameter nodes from the alias's structured signature when there
+  is no parameter list, so the declaration is no longer misregistered as a global
+  variable and `tests/test_function_type_alias_declaration_ret0.cpp` no longer
+  crashes.
 
 Compatibility counters and identity inventories are baselined under
 `tests/migration_counters/`; the flat classifier in `TypeTraitEvaluator.cpp`
