@@ -14,6 +14,7 @@
 #include "AstTraversal.h"
 #include "TemplateEnvironment.h"
 #include "ParserTemplateHelpers.h"
+#include "TemplateConstraintSubsumption.h"
 #include "CanonicalTypeAdapter.h"
 #include "FrontendContext.h"
 
@@ -196,7 +197,18 @@ void Parser::foldInstantiatedNoexceptSpecification(
 			message += ": ";
 			message += value.error_message;
 		}
-		throw CompileError(std::move(message));
+		const std::optional<Token> noexcept_token =
+			FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(
+				signature.noexcept_expression->node());
+		throw makeStructuredCompileError(
+			context_.diagnostics(),
+			DiagnosticId::NoexceptSpecifierNotConstant,
+			DiagnosticSeverity::Error,
+			noexcept_token.has_value()
+				? SourceLocation::fromToken(*noexcept_token)
+				: SourceLocation(),
+			message,
+			{});
 	}
 }
 
