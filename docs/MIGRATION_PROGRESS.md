@@ -206,12 +206,16 @@ Continue boundary 3A in this order.
    Remaining:
    - **Delete the flat `(` fallback too.** `parse_declarator` still falls back to the
      legacy flat function-pointer path when the frame-stack grammar declines. The
-     remaining blocker is a *named* projectable pointer/array declarator
-     (`int (*p)[3]`, `int *p[3]`): returning the ordered spine for those instead of the
-     flat projection regressed `test_interleaved_pointer_array_argument_ret42.cpp` and
+     remaining blocker is not a declarator-grammar bug: when the guard is removed,
+     `test_interleaved_pointer_array_argument_ret42.cpp` and
      `test_template_ool_member_template_dependent_member_template_type_param_forward_deref_ret0.cpp`
-     at runtime, so those two mismatches must be fixed before the guard and the flat
-     fallback can go.
+     regress because `sizeof(accepts_int(int_shape))` speculatively parses
+     `accepts_int(int_shape)` as a type-id, and the redundant-group declarator `(int_shape)`
+     assembles an *empty* spine that the guard previously masked by failing over to the
+     flat path. The grammar correctly parses `(int_shape)` as a redundant name group; the
+     fix belongs in the `sizeof`/type-id speculative parse (it must not keep a
+     valid-but-wrong type when the content is really an expression), after which the
+     guard and flat fallback can go.
    - **Deep nested callable call and struct-returning nested callable.** Calling three
      levels deep (`make(0)(1)(40)`) and calling through a nested callable that returns
      a struct still fail in sema/indirect-call lowering, and using a nested-callable
