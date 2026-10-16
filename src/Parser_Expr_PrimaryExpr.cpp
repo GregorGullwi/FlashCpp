@@ -7051,6 +7051,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						// Look up the member in the instantiated struct's symbol table
 						auto member_lookup = gSymbolTable.lookup_qualified(full_ns_handle, member_token.value());
 
+						// A member alias of the instantiated owner that resolves to a
+						// constructible class is itself a type: Owner<Args>::Alias{...}
+						// or Owner<Args>::Alias(...) constructs the target through the
+						// shared class-construction path instead of a member call.
+						if (current_token_.value() == "{" || current_token_.value() == "(") {
+							std::string_view member_qualified_name = buildQualifiedNameFromHandle(full_ns_handle, member_token.value());
+							Token member_type_token(Token::Type::Identifier, member_qualified_name, member_token.line(), member_token.column(), member_token.file_index());
+							if (auto resolved_member_type = tryResolveConstructibleClassAlias(member_type_token)) {
+								return parseResolvedClassConstruction(member_type_token, resolved_member_type->first, resolved_member_type->second);
+							}
+						}
+
 						// If followed by '(', handle as function call (e.g., Template<T>::method())
 						if (current_token_.value() == "(") {
 							advance(); // consume '('
@@ -10620,6 +10632,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										resolved_namespace_name.append(
 											segment_identifier.value());
 									}
+								}
+							}
+
+							if (peek() == "{"_tok || peek() == "("_tok) {
+								std::string_view member_type_name = StringBuilder().append(resolved_namespace_name).append("::"sv).append(final_identifier.value()).commit();
+								Token member_type_token(Token::Type::Identifier, member_type_name, final_identifier.line(),
+									final_identifier.column(), final_identifier.file_index());
+								if (auto resolved_member_type = tryResolveConstructibleClassAlias(member_type_token)) {
+									return parseResolvedClassConstruction(member_type_token, resolved_member_type->first, resolved_member_type->second);
 								}
 							}
 
