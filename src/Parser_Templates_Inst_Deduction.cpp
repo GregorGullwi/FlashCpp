@@ -3239,8 +3239,14 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 				auto& rt = return_type_result.node()->as<TypeSpecifierNode>();
 				consume_pointer_ref_modifiers(rt);
 				if (orig_return_type.has_function_signature()) {
-					rt.set_type_index(orig_return_type.type_index());
-					rt.set_size_in_bits(orig_return_type.sizeBits());
+					// An ordered callable return is rebuilt from the reparsed
+					// concrete base plus the original spine and substituted
+					// signature; the pattern's type_index is the dependent base and
+					// must not overwrite the substituted one.
+					if (!orig_return_type.has_ordered_declarator()) {
+						rt.set_type_index(orig_return_type.type_index());
+						rt.set_size_in_bits(orig_return_type.sizeBits());
+					}
 					if (orig_return_type.has_member_class()) {
 						rt.set_member_class_name(orig_return_type.member_class_name());
 					}

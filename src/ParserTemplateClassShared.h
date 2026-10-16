@@ -515,7 +515,9 @@ inline void materializeSubstitutedFunctionTypeMetadata(
 		? substituted_alias.typeEnum()
 		: substituted_type.type_index().category();
 	if (substituted_category != TypeCategory::FunctionPointer &&
-		substituted_category != TypeCategory::MemberFunctionPointer) {
+		substituted_category != TypeCategory::MemberFunctionPointer &&
+		!substituted_type.has_function_signature() &&
+		!original_type.has_ordered_declarator()) {
 		return;
 	}
 	TemplateParameterVector semantic_template_params;
@@ -614,6 +616,10 @@ inline void materializeSubstitutedFunctionTypeMetadata(
 			}
 		}
 		substituted_signature.class_name = substituted_owner;
+	}
+	if (original_type.has_ordered_declarator() && !substituted_type.has_ordered_declarator()) {
+		substituted_type.set_ordered_declarator(std::vector<DeclaratorComponent>(
+			original_type.declarator_components().begin(), original_type.declarator_components().end()));
 	}
 	substituted_type.set_function_signature(substituted_signature);
 }

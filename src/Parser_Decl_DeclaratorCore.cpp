@@ -1174,68 +1174,13 @@ ParseResult Parser::parse_declarator(
 	std::vector<ASTNode>* array_bound_expressions) {
 	auto tryStructuralPointerArrayDeclarator =
 			[&]() -> std::optional<ParseResult> {
-		// Parse the pointer/array-only recursive declarator grammar with an
-		// explicit frame stack. This path is selected only for a nested
-		// parenthesized group or for a pointer prefix followed by a parenthesized
-		// group; existing callable and boundary-shape handling remains below.
+		// The recursive declarator grammar owns every parenthesized group,
+		// using an explicit frame stack. The flat function-pointer handling
+		// below stays only as a fail-closed fallback for shapes the grammar
+		// declines.
 		if (peek() == "("_tok) {
 			SaveHandle structural_start = save_token_position();
-			bool candidate = base_type.pointer_depth() != 0;
-			if (!candidate) {
-				advance(); // opening group
-				skip_noop_gnu_qualifiers();
-				(void)parse_calling_convention(CallingConvention::Default);
-				if (peek() == "("_tok) {
-					// A nested parenthesized declarator such as ((*p))() or
-					// ((name))(). A pending base reference has no frame prefix
-					// yet, so leave it to the flat paths instead of dropping it.
-					candidate = !base_type.is_reference() && !base_type.is_rvalue_reference();
-				} else if (peek() == "*"_tok) {
-					advance();
-					[[maybe_unused]] const CVQualifier ignored_cv = parse_cv_qualifiers();
-					skip_noop_gnu_qualifiers();
-					candidate = peek() == "*"_tok ||
-						peek() == "("_tok ||
-						peek() == "&"_tok || peek() == "&&"_tok ||
-						(peek() == ")"_tok && peek(1) == "["_tok);
-					// A group whose direct-declarator carries a '[' suffix (`int (*a[2])(int)`,
-					// `int (*[2])(int)`) cannot be expressed by the flat pointer/array
-					// projection, so the recursive grammar owns it. Scan forward for a '['
-					// at paren depth zero before the group closes; the enclosing probe
-					// restores once, so consuming tokens here adds no extra replay.
-					if (!candidate && !peek().is_eof()) {
-						int paren_depth = 0;
-						while (!peek().is_eof()) {
-							if (peek() == "("_tok) {
-								++paren_depth;
-							} else if (peek() == ")"_tok) {
-								if (paren_depth == 0) {
-									break;
-								}
-								--paren_depth;
-							} else if (paren_depth == 0 && peek() == "["_tok) {
-								candidate = true;
-								break;
-							}
-							advance();
-						}
-					}
-				} else if (peek() == "&"_tok || peek() == "&&"_tok) {
-					advance();
-					skip_noop_gnu_qualifiers();
-					candidate = peek() == "("_tok || peek().is_identifier();
-				} else if (peek().is_identifier()) {
-					// Match the outer probe and the parse loop: owners may be
-					// template-ids (Holder<int>::*), not only bare names.
-					Token owner_token = peek_info();
-					advance();
-					(void)parseMemberPointerOwnerAfterName(owner_token);
-					candidate = consume("::"_tok) && consume("*"_tok);
-				}
-				restore_token_position(structural_start);
-			}
-
-			if (candidate) {
+			{
 				// A Function component's parameter list and qualifiers, in
 				// outermost-first order across the whole declarator. A nested callable
 				// return (`int (*(*p)())()`) has two, so each Function component needs
@@ -1902,8 +1847,6 @@ ParseResult Parser::parse_declarator(
 					frames.back().after_direct = true;
 				}
 				restore_token_position(structural_start);
-			discard_saved_token(structural_start);
-			} else {
 				discard_saved_token(structural_start);
 			}
 		}
