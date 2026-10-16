@@ -233,14 +233,17 @@ A callable whose return is itself callable now parses and lowers as a pointer
 object: `int (*(*p)())()`, `int (* (*p)(int))(int)`, and deeper nestings keep one
 signature per `Function` component, with each inner signature carried on the
 enclosing return `FunctionType`'s `callable_signature`. Calling through such a
-value (`p()()`, where the receiver is itself a call's function-pointer result)
-still fails closed with `Callable operator() receiver type could not be
-resolved`; sema must type the inner result first. A function definition whose
-return type is a three-deep nested callable is likewise not yet routed through
-the ordered declarator, and the transitional `(*` probe in
-`tryStructuralPointerArrayDeclarator` and the flat `(`-re-check dispatch in
-`parse_type_and_name` remain to be removed once the recursive grammar owns every
-interleaving.
+value (`p()(x)`, where the receiver is itself a call's function-pointer result)
+is typed by rebuilding the function-pointer return from that structured
+`callable_signature`, and a function-address global initializer (`&f`,
+`int (&r)(int) = g;`) is stored under the mangled symbol.
+
+Still open: a function *definition* whose return type is a three-deep nested
+callable is not routed through the ordered declarator (the declaration spelling
+works), a struct-returning nested callable call fails in indirect-call lowering,
+and the transitional `(*` probe in `tryStructuralPointerArrayDeclarator` and the
+flat `(`-re-check dispatch in `parse_type_and_name` remain to be removed once the
+recursive grammar owns every interleaving.
 
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 

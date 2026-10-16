@@ -670,6 +670,15 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				packLevel(packLevel, array_result);
 			};
 		auto resolveGlobalRelocTarget = [&](std::string_view name) -> StringHandle {
+			// A function target is stored under its mangled symbol; an object under
+			// its (possibly namespace-mangled global) variable name.
+			std::optional<ASTNode> symbol = lookupSymbol(name);
+			if (!symbol.has_value()) {
+				symbol = gSymbolTable.lookup(name);
+			}
+			if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
+				return StringTable::getOrInternStringHandle(generateMangledNameForCall(symbol->as<FunctionDeclarationNode>(), StringHandle{}, {}));
+			}
 			StringHandle reloc_simple_name_handle = StringTable::getOrInternStringHandle(name);
 			auto it = global_variable_names_.find(reloc_simple_name_handle);
 			return (it != global_variable_names_.end()) ? it->second : reloc_simple_name_handle;
@@ -693,12 +702,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			const auto* identifier = std::get_if<IdentifierNode>(&target->as<ExpressionNode>());
 			if (identifier == nullptr)
 				return std::nullopt;
-			std::optional<ASTNode> symbol = lookupSymbol(identifier->name());
-			if (!symbol.has_value())
-				symbol = gSymbolTable.lookup(identifier->name());
-			if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
-				return StringTable::getOrInternStringHandle(generateMangledNameForCall(symbol->as<FunctionDeclarationNode>(), StringHandle{}, {}));
-			}
 			return resolveGlobalRelocTarget(identifier->name());
 		};
 		auto makeStaticStorageEvalContext = [&]() {
