@@ -45,9 +45,24 @@ The architecture the remaining work builds on:
   structural-only and fail closed on an array/pointer descriptor without published
   identity. Flat pointer-level and
   array-dimension fields remain for shapes the
-  importer cannot represent, and as the materialization projection of a published
-  pointer or array (`PublishedPointerArray`). The flat materialization projection
-  now preserves an unknown outer array bound, and the canonical array shaper
+  importer cannot represent, and as a compatibility projection for unmigrated
+  semantic writers (`PublishedPointerArray`). Materialization now exports every
+  published pointer/array shape from its canonical `TypeId`, including unknown
+  bounds and pointer qualifiers, rather than reading those flat fields. The shared
+  `applyCanonicalDeclaratorBase` also recovers builtin and nominal bases and
+  their cv from canonical identity; static-member lookup uses the same base bridge.
+  Callable aliases therefore export their actual return base rather than treating
+  the legacy `FunctionPointer` category as that base. The marker
+  still makes `TypeContext::intern` refresh identity after a flat writer changes
+  its projection. Native fault-injection coverage verifies that stale flat fields
+  cannot change a materialized query, while re-interning refreshes the identity.
+  Native base-index publication also exposed a member-CV writer bug hidden by an
+  incomplete-constructor-argument fallback: a const receiver now qualifies the
+  outermost pointer member (or an array's pointer element), rather than its
+  pointee. Declared top-level member CV is retained. Full declared pointee and
+  intermediate pointer qualifiers still require the member-TypeId migration;
+  the legacy metadata gap is recorded in `KNOWN_ISSUES.md`.
+  The canonical array shaper
   emits the unknown-bound wrapper outside the known dimensions, so a projectable
   `T(*)[][N]` publishes `Pointer -> Array(?) -> Array(N) -> T` (and an ordinary
   `T[][N]` publishes `Array(?) -> Array(N) -> T`) instead of dropping the `[?]`
@@ -266,8 +281,19 @@ Continue boundary 3A in this order.
    unsupported callable pairs. Continue making projectable semantic descriptors
    use structural identity and replace remaining flat-field reads with a single
    compatibility materializer at each legacy boundary, preserving full callable
-   comparison, nested cv, array decay, and value-category behavior. Remaining:
-   unsupported callable conversions that still need substitution-aware canonical
+   comparison, nested cv, array decay, and value-category behavior.
+   Published pointer/array materialization now uses canonical export; remaining
+   flat-field consumers are descriptor writers and their identity refresh,
+   semantic decay/construction paths, and unsupported shapes. The
+   `test_canonical_pointer_array_materialization_ret0.cpp` regression covers
+   conditional decay and materialization with short arrays, record and template
+   elements, function-pointer arrays and references, and specialization-backed
+   callable aliases. This does not close a 3A exit criterion.
+   `test_const_object_pointer_member_copy_ret0.cpp` protects constructor selection
+   and pointer overloads through const records and const pointer-array members;
+   the existing class-template friend-by-value regression exercises the same rule
+   after dependent member substitution.
+   Remaining: unsupported callable conversions that still need substitution-aware canonical
    ranking; derived-to-base conversions through non-projectable declarators and
    callable-component conversions, which remain deferred; conversion-function
    tails for unsupported callable relations. Nominal tails use published
@@ -707,6 +733,26 @@ The recorded Clang stack-usage probe measured `parse_declarator` at 5,160 bytes
 versus 5,000 bytes on `origin/main`; repeat the comparison when changing
 recursive parser paths. The latest canonical architecture probe reports
 `TypeSpecifierNode` at 600 bytes.
+
+The pointer/array materialization continuation compared standalone clang-cl
+debug stack usage against `ffe47823`: `materializeTypeSpecifier` remains 1,704
+bytes in the baseline and uses 1,720 bytes after migration. The shared in-place
+base helper uses 248 bytes, while static-member materialization drops from 1,064
+to 872 bytes. `exportCanonicalDeclaratorUntil` remains 568 bytes. Canonical
+wrapper and base-qualifier traversal are iterative, so this migration adds no
+native frame per pointer/array wrapper. It does not establish bounded recursion
+in surrounding semantic paths. The adjacent member-CV writer uses 200 versus
+184 bytes. A native regression round-trips 4,096 pointer wrappers through the
+semantic query boundary without invoking the recursive parser. Both new native
+materialization fixtures pass in a copied test executable reduced to a 1 MB
+stack; no compiler or project stack reserve was increased.
+
+The parser-side receiver/member CV propagation changes the
+`apply_member_access_value_category` lambda frame from 72 to 104 bytes; the
+enclosing `Parser::get_expression_type` frame remains 44,856 bytes. That function
+still recursively visits nested expressions and receivers, so native stack use
+grows with expression nesting. This migration adds no new recursive walk and
+does not establish bounded parser stack usage.
 
 The nested-callable continuation compared standalone clang-cl debug frames with
 `9d2491b8`: the call-result inference visitor remains 1,896 bytes and its enclosing

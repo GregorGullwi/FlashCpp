@@ -451,6 +451,39 @@ inline TypeId applyCanonicalPointerArrayReference(CanonicalTypeTable& table, Typ
 	return id;
 }
 
+// Recover the base independently of compatibility pointer/callable categories.
+// Specialization/dependent bases retain their existing TypeIndex bridge until
+// those families have a reverse nominal materializer.
+inline void applyCanonicalDeclaratorBase(TypeSpecifierNode& type, const CanonicalTypeTable& table, TypeId base) {
+	TypeIndex compatibility_index = type.type_index();
+	CVQualifier cv = CVQualifier::None;
+	CanonicalTypeNode node = table.node(base);
+	while (node.kind == CanonicalTypeKind::Qualified) {
+		cv |= node.qualifiers;
+		base = node.child;
+		node = table.node(base);
+	}
+	EntityId entity;
+	if (node.kind == CanonicalTypeKind::Builtin) {
+		const std::optional<TypeCategory> category = canonicalBuiltinToTypeCategory(node.builtin);
+		if (!category.has_value()) {
+			throw InternalError("canonical declarator has an invalid builtin base");
+		}
+		compatibility_index = nativeTypeIndex(*category);
+	} else if (node.kind == CanonicalTypeKind::Record || node.kind == CanonicalTypeKind::Enum) {
+		entity = node.kind == CanonicalTypeKind::Record ? table.recordEntity(base) : table.enumEntity(base);
+		const TypeInfo* info = tryFindTypeInfoByEntityId(entity);
+		if (info == nullptr) {
+			throw InternalError("canonical declarator nominal base has no TypeInfo");
+		}
+		const TypeCategory category = node.kind == CanonicalTypeKind::Record ? TypeCategory::Struct : TypeCategory::Enum;
+		compatibility_index = info->registeredTypeIndex().withCategory(category);
+	}
+	type.set_type_index(compatibility_index);
+	type.set_cv_qualifier(cv);
+	type.set_type_entity(entity);
+}
+
 inline TypeSpecifierNode typeSpecifierFromFunctionType(const FunctionType& type) {
 	TypeSpecifierNode spec(type.type_index, TypeQualifier::None, 0, Token{}, type.cv_qualifier);
 	if (type.type_entity) {

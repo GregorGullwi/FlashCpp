@@ -3303,10 +3303,24 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	}
 
 	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
-	auto apply_member_access_value_category =
-		[](TypeSpecifierNode& member_type,
-		   const TypeSpecifierNode& object_type,
-		   bool is_arrow) {
+	auto apply_member_access_value_category = [](TypeSpecifierNode& member_type, const TypeSpecifierNode& object_type, bool is_arrow,
+		CVQualifier declared_cv, bool adjust_value_category) {
+			CVQualifier cv = declared_cv;
+			if (adjust_value_category && member_type.reference_qualifier() == ReferenceQualifier::None) {
+				cv |= object_type.cv_qualifier();
+			}
+			// This bridge starts from the member's flat declaration projection.
+			// [expr.ref] qualifies the pointer object, not its pointee.
+			if (member_type.pointer_depth() == 0) {
+				member_type.add_cv_qualifier(cv);
+			} else {
+				cv |= member_type.pointer_levels().back().cv_qualifier;
+				member_type.remove_pointer_level();
+				member_type.add_pointer_level(cv);
+			}
+			if (!adjust_value_category) {
+				return;
+			}
 			if (member_type.reference_qualifier() != ReferenceQualifier::None) {
 				return;
 			}
@@ -4266,11 +4280,10 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					applyMemberDeclaratorShape(member_type, *member_result.member);
 					if (member_result.member->reference_qualifier != ReferenceQualifier::None) {
 						member_type.set_reference_qualifier(member_result.member->reference_qualifier);
-					} else if (!suppress_member_access_value_category_) {
-						apply_member_access_value_category(
-							member_type,
-							object_type,
-							member_access.is_arrow());
+					}
+					apply_member_access_value_category(member_type, object_type, member_access.is_arrow(),
+						member_result.member->member_cv_qualifier, !suppress_member_access_value_category_);
+					if (!suppress_member_access_value_category_) {
 						// C++20 [expr.ref]/4: non-arrow member access on a prvalue yields an xvalue
 						if (!member_access.is_arrow() &&
 							!object_type.is_lvalue_reference() &&
@@ -4334,10 +4347,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		} else if (member_pointer_type.is_array()) {
 			result.set_array_dimensions(member_pointer_type.array_dimensions());
 		}
-		apply_member_access_value_category(
-			result,
-			*object_type_opt,
-			pointer_to_member_access.is_arrow());
+		apply_member_access_value_category(result, *object_type_opt, pointer_to_member_access.is_arrow(), CVQualifier::None, true);
 		return result;
 	} else if (std::holds_alternative<NoexceptExprNode>(expr)) {
 		return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
