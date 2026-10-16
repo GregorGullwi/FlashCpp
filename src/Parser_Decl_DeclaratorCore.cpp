@@ -1117,52 +1117,6 @@ bool Parser::tryConsumeReferenceToArrayDeclarator(
 	return true;
 }
 
-// Scans a parenthesized pointer declarator group "(" [calling-convention]
-// "*" cv-qualifier-seq? [identifier] ")" starting at the opening '('.  Shared
-// by named declarators (parse_declarator) and type-id abstract-declarators
-// (consume_type_id_abstract_declarators) so both spellings agree on CV,
-// attribute, and calling-convention handling inside the group (C++20
-// [dcl.ptr]/1).  Returns the CV-qualifiers written on the '*', or nullopt with
-// the token position restored when the tokens do not form such a group.
-std::optional<CVQualifier> Parser::scan_parenthesized_pointer_group(
-	CallingConvention& out_calling_conv,
-	Token& out_pointer_token,
-	Token& out_identifier,
-	bool& out_has_identifier) {
-	out_has_identifier = false;
-	if (peek() != "("_tok) {
-		return std::nullopt;
-	}
-	SaveHandle group_start = save_token_position();
-	advance(); // consume '('
-
-	out_calling_conv = parse_calling_convention(CallingConvention::Default);
-
-	if (peek() != "*"_tok) {
-		restore_token_position(group_start);
-		return std::nullopt;
-	}
-	out_pointer_token = peek_info();
-	advance(); // consume '*'
-
-	const CVQualifier pointer_cv = parse_cv_qualifiers();
-	skip_noop_gnu_qualifiers();
-	skip_cpp_attributes();   // Handle [[...]] / __attribute__((...)) on the pointer declarator
-
-	if (peek().is_identifier()) {
-		out_identifier = peek_info();
-		out_has_identifier = true;
-		advance();
-	}
-
-	if (peek() != ")"_tok) {
-		restore_token_position(group_start);
-		return std::nullopt;
-	}
-	advance(); // consume ')'
-	return pointer_cv;
-}
-
 // NEW: Parse declarators (handles function pointers, arrays, etc.)
 ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linkage) {
 	return parse_declarator(base_type, linkage, nullptr);
@@ -1364,6 +1318,7 @@ ParseResult Parser::parse_declarator(
 					}
 
 					while (peek() == "["_tok) {
+						const Token opening_bracket_token = peek_info();
 						advance();
 						if (peek() == "]"_tok) {
 							frame.suffixes.push_back(
@@ -1381,9 +1336,11 @@ ParseResult Parser::parse_declarator(
 						const auto value = try_evaluate_constant_expression(*bound.node());
 						const bool has_concrete_bound =
 							value.has_value() && value->value > 0;
-						if (!has_concrete_bound &&
-							(array_bound_expressions == nullptr ||
-								!isDependentTemplateContext())) {
+						// A dependent bound is retained as an unevaluated dimension
+						// (payload 0) whenever a template context can substitute it
+						// later, including a named declarator whose owner provides the
+						// bound expressions rather than the alias/type-id out-param.
+						if (!has_concrete_bound && !isDependentTemplateContext()) {
 							failed = true;
 							break;
 						}
@@ -1392,8 +1349,26 @@ ParseResult Parser::parse_declarator(
 							: DeclaratorComponent::array(0));
 						frame.suffix_array_bound_expressions.push_back(*bound.node());
 						if (!consume("]"_tok)) {
-							failed = true;
-							break;
+							// [dcl.array]/1: a bound must be closed by ']'. Report the
+							// same diagnostic and opening-bracket note the flat path did.
+							const SourceLocation opening_bracket_location = lexer_.getSourceLocation(opening_bracket_token);
+							const SourceLocation unexpected_token_location = lexer_.getSourceLocation(peek_info());
+							DiagnosticEngine& diagnostics_engine = context_.diagnostics();
+							const uint32_t bracket_diagnostic_index = diagnostics_engine.reportWithRange(
+								DiagnosticId::ExpectedCloseBracketAfterArraySize,
+								DiagnosticSeverity::Error,
+								unexpected_token_location,
+								SourceRange::fromLocations(opening_bracket_location, unexpected_token_location),
+								"Expected ']' after array size",
+								{});
+							diagnostics_engine.attachNote(
+								bracket_diagnostic_index,
+								DiagnosticId::NoteToMatchOpeningBracket,
+								opening_bracket_location,
+								"to match this '['",
+								{});
+							throw CompileError::fromStructuredDiagnostic(
+								diagnostics_engine.diagnostic(bracket_diagnostic_index));
 						}
 					}
 					if (failed) {
@@ -1627,7 +1602,7 @@ ParseResult Parser::parse_declarator(
 										completed_array_bound_expressions.begin(), completed_array_bound_expressions.end());
 								}
 								ASTNode decl_node;
-								if (structural_type.is_array_object()) {
+								if (structural_type.is_array_object() || structural_type.has_pointee_array_declarator()) {
 									decl_node = emplace_node<DeclarationNode>(
 										emplace_node<TypeSpecifierNode>(structural_type), identifier,
 										std::vector<ASTNode>(completed_array_bound_expressions));
@@ -1817,7 +1792,7 @@ ParseResult Parser::parse_declarator(
 							// An array object owns inline storage; attach the parsed bound expressions so the
 							// declaration reports owns_inline_array_storage() for layout and initialization.
 							ASTNode callable_decl_node;
-							if (structural_type.is_array_object()) {
+							if (structural_type.is_array_object() || structural_type.has_pointee_array_declarator()) {
 								callable_decl_node = emplace_node<DeclarationNode>(
 									emplace_node<TypeSpecifierNode>(structural_type), identifier,
 									std::vector<ASTNode>(completed_array_bound_expressions));
@@ -1887,7 +1862,7 @@ ParseResult Parser::parse_declarator(
 						// An array object owns inline storage; attach the parsed bound expressions so the
 						// declaration reports owns_inline_array_storage() for layout and initialization.
 						ASTNode ordered_decl_node;
-						if (structural_type.is_array_object()) {
+						if (structural_type.is_array_object() || structural_type.has_pointee_array_declarator()) {
 							ordered_decl_node = emplace_node<DeclarationNode>(
 								emplace_node<TypeSpecifierNode>(structural_type), identifier,
 								std::vector<ASTNode>(completed_array_bound_expressions));
@@ -1917,284 +1892,6 @@ ParseResult Parser::parse_declarator(
 	if (std::optional<ParseResult> structural =
 					tryStructuralPointerArrayDeclarator()) {
 		return std::move(*structural);
-	}
-
-	// Check for parenthesized declarator: '(' '*' [identifier] ')'
-	// This is the pattern for function pointers: int (*fp)(int, int)
-	if (peek() == "("_tok) {
-		// Probe for the identifier-less abstract group "(*)" (C++20 [dcl.name])
-		// first; it shares the group scanner with type-id parsing so both bind
-		// array suffixes inside the pointer identically ([dcl.ptr]/1).  Named
-		// groups rewind and take the original sequence below, whose dispatch
-		// distinguishes int(*fp)(params) from int(*func(params))[N] by token
-		// order inside the group.
-		SaveHandle group_probe = save_token_position();
-		CallingConvention probe_calling_conv = CallingConvention::Default;
-		Token probe_pointer_token;
-		Token probe_identifier;
-		bool probe_has_identifier = false;
-		std::optional<CVQualifier> abstract_group_cv = scan_parenthesized_pointer_group(
-			probe_calling_conv, probe_pointer_token, probe_identifier, probe_has_identifier);
-		if (abstract_group_cv.has_value() && !probe_has_identifier) {
-			discard_saved_token(group_probe);
-			const CVQualifier ptr_cv = *abstract_group_cv;
-
-			if (peek() == "("_tok) {
-				Token dummy_identifier(Token::Type::Identifier, ""sv, 0, 0, 0);
-				return parse_postfix_declarator(
-					base_type, dummy_identifier, linkage, probe_calling_conv);
-			}
-			if (base_type.is_reference() || base_type.is_rvalue_reference()) {
-				throw makeStructuredCompileError(
-					context_.diagnostics(),
-					DiagnosticId::PointerToReferenceType,
-					DiagnosticSeverity::Error,
-					lexer_.getSourceLocation(probe_pointer_token),
-					"Cannot form a pointer to reference type",
-					{});
-			}
-			base_type.add_pointer_level(ptr_cv);
-			if (peek() == "["_tok) {
-				consume_array_type_id_modifiers(
-					base_type,
-					array_bound_expressions);
-				// C++20 [dcl.ptr]/1: the array suffix of a parenthesized
-				// declarator binds inside the pointer.
-				base_type.set_pointee_array_declarator(true);
-			}
-			Token dummy_identifier(Token::Type::Identifier, ""sv, 0, 0, 0);
-			return ParseResult::success(
-				emplace_node<DeclarationNode>(
-					emplace_node<TypeSpecifierNode>(base_type),
-					dummy_identifier));
-		}
-		restore_token_position(group_probe);
-
-		advance(); // consume '('
-
-		CallingConvention calling_conv = parse_calling_convention(CallingConvention::Default);
-
-		// Expect '*' for function pointer
-		if (peek() != "*"_tok) {
-			return ParseResult::error("Expected '*' in function pointer declarator", current_token_);
-		}
-		advance(); // consume '*'
-
-		// Parse CV-qualifiers after the * (if any)
-		CVQualifier ptr_cv = parse_cv_qualifiers();
-		skip_noop_gnu_qualifiers();
-		skip_cpp_attributes();   // Handle [[...]] / __attribute__((...)) on the pointer declarator
-
-		// Check for unnamed function pointer parameter: type (*)(params)
-		// In this case, after '*' we immediately see ')' instead of an identifier
-		if (peek() == ")"_tok) {
-			// This is an unnamed function pointer parameter
-			advance(); // consume ')'
-
-			// Now parse the function parameters: '(' params ')'
-			// Create a dummy identifier token for the unnamed parameter
-			Token dummy_identifier(Token::Type::Identifier, ""sv, 0, 0, 0);
-
-			return parse_postfix_declarator(
-				base_type, dummy_identifier, linkage, calling_conv);
-		}
-
-		// Parse identifier
-		if (!peek().is_identifier()) {
-			return ParseResult::error("Expected identifier in function pointer declarator", current_token_);
-		}
-		Token identifier_token = peek_info();
-		advance();
-		StringHandle qualified_declarator_owner;
-		if (peek() == "::"_tok) {
-			qualified_declarator_owner = identifier_token.handle();
-			advance();
-			if (!peek().is_identifier()) {
-				return ParseResult::error("Expected member name after '::' in declarator", current_token_);
-			}
-			identifier_token = peek_info();
-			advance();
-		}
-
-		// Check what comes after the identifier:
-		// Case 1: ')' followed by '[' -> pointer-to-array variable: int (*p)[3]
-		// Case 2: '(' -> function returning pointer: int (*func(params))[array_size] or int (*func(params))
-		if (peek() == "("_tok) {
-			// Case 2: This is a function returning pointer (or pointer-to-array)
-			// Pattern: type (*func_name(params))[array_size] or type (*func_name(params))
-			// Parse function parameters using unified parse_parameter_list (Phase 1)
-			FlashCpp::ParsedParameterList params;
-			auto param_result = parse_parameter_list(params);
-			if (param_result.is_error()) {
-				return param_result;
-			}
-
-			// Now expect closing ')' for the (*func(...)) part
-			if (!consume(")"_tok)) {
-				return ParseResult::error("Expected ')' after function declarator", current_token_);
-			}
-
-			std::vector<ASTNode> return_pointee_dimensions;
-
-			// Check for function-pointer return type suffix: '(' params ')' after the
-			// parenthesized declarator. Pattern: type (*func(params))(ptr_params)
-			if (peek() == "("_tok) {
-				advance(); // consume '('
-
-				std::vector<FunctionType> return_param_types;
-				bool is_return_variadic = false;
-				auto return_params_result = parse_function_pointer_parameter_types(return_param_types, is_return_variadic);
-				if (return_params_result.is_error()) {
-					return return_params_result;
-				}
-
-				if (!consume(")"_tok)) {
-					return ParseResult::error("Expected ')' after function pointer return type parameters", current_token_);
-				}
-
-				FlashCpp::MemberQualifiers return_function_qualifiers;
-				FlashCpp::FunctionSpecifiers return_function_specifiers;
-				ParseResult return_qualifier_result = parse_function_type_qualifiers(
-					return_function_qualifiers, return_function_specifiers);
-				if (return_qualifier_result.is_error()) {
-					return return_qualifier_result;
-				}
-
-				TypeSpecifierNode function_ptr_type(TypeCategory::FunctionPointer, TypeQualifier::None, kFunctionPointerSizeBits, Token{}, CVQualifier::None);
-				FunctionSignature signature;
-				signature.setReturnType(makeFunctionType(base_type));
-				signature.return_type_index = base_type.type_index();
-				signature.return_pointer_depth = static_cast<int>(base_type.pointer_depth());
-				signature.return_reference_qualifier = base_type.reference_qualifier();
-				signature.setParameterTypes(std::move(return_param_types));
-				signature.linkage = linkage;
-				signature.calling_convention = calling_conv;
-				signature.is_variadic = is_return_variadic;
-				apply_parsed_function_type_qualifiers(
-					signature,
-					return_function_qualifiers,
-					return_function_specifiers);
-				function_ptr_type.set_function_signature(signature);
-				base_type = function_ptr_type;
-
-			// Check for array declarator: '[' size ']' after the function declarator
-			// Pattern: type (*func(params))[array_size][array_sizeN]
-			} else if (peek() == "["_tok) {
-				// C++20 [dcl.ptr]/1, [dcl.array]/1: every array suffix after
-				// the parenthesized declarator binds inside the returned
-				// pointer, so (*func(params))[2][4] returns a pointer to
-				// T[2][4].
-				while (peek() == "["_tok) {
-					advance(); // consume '['
-
-					// Parse array size expression
-					auto size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					if (size_result.is_error()) {
-						return size_result;
-					}
-					return_pointee_dimensions.push_back(*size_result.node());
-
-					if (!consume("]"_tok)) {
-						return ParseResult::error("Expected ']' after array size", current_token_);
-					}
-				}
-
-				// The return type is: base_type (*)[N][M] = pointer to array of base_type
-				base_type.add_pointer_level(ptr_cv);
-				addConstantArrayDimensionsToTypeSpec(base_type, return_pointee_dimensions);
-				// Applied last on purpose: set_pointee_array_declarator(true)
-				// resets is_array_; the returned entity stays a scalar pointer
-				// ([dcl.ptr]/1).
-				base_type.set_pointee_array_declarator(true);
-			} else {
-				// The return type is: base_type (*) = pointer to base_type
-				base_type.add_pointer_level(ptr_cv);
-			}
-
-			// Create declaration node for the function with the computed return type
-			auto decl_node = return_pointee_dimensions.empty()
-				? emplace_node<DeclarationNode>(
-					emplace_node<TypeSpecifierNode>(base_type),
-					identifier_token)
-				: emplace_node<DeclarationNode>(
-					emplace_node<TypeSpecifierNode>(base_type),
-					identifier_token,
-					std::move(return_pointee_dimensions));
-
-			// Create function declaration node
-			auto func_decl_node = emplace_node<FunctionDeclarationNode>(
-				decl_node.as<DeclarationNode>());
-
-			// Add parameters
-			FunctionDeclarationNode& func_ref = func_decl_node.as<FunctionDeclarationNode>();
-			for (const auto& param : params.parameters) {
-				func_ref.add_parameter_node(param);
-			}
-			func_ref.set_is_variadic(params.is_variadic);
-
-			return ParseResult::success(func_decl_node);
-		}
-
-		// Case 1: Expect closing ')' for function pointer variable pattern
-		if (peek() != ")"_tok) {
-			return ParseResult::error("Expected ')' after function pointer identifier", current_token_);
-		}
-		advance(); // consume ')'
-
-		// Check for pointer-to-array: (*name)[size][sizeN]
-		// The '*' inside (*name) establishes the pointer level; handle it here
-		// where ptr_cv is available, mirroring Case 2 above.
-		if (peek() == "["_tok) {
-			// C++20 [dcl.ptr]/1, [dcl.array]/1: every array suffix following
-			// the parenthesized declarator binds inside the pointer, so
-			// long (*table)[2][4] declares table as a pointer to long[2][4].
-			base_type.add_pointer_level(ptr_cv);
-			std::vector<ASTNode> pointee_dimensions;
-			while (peek() == "["_tok) {
-				advance(); // consume '['
-
-				auto size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-				if (size_result.is_error()) {
-					return size_result;
-				}
-				pointee_dimensions.push_back(*size_result.node());
-
-				if (!consume("]"_tok)) {
-					return ParseResult::error("Expected ']' after array size in pointer-to-array declarator", current_token_);
-				}
-			}
-
-			// Record every bound on the type_spec when all of them are positive
-			// constants (same shape as consume_array_type_id_modifiers); when
-			// any bound is dependent the semantic layer resolves them later from
-			// the declaration's dimension expressions.
-			addConstantArrayDimensionsToTypeSpec(base_type, pointee_dimensions);
-			// Applied last on purpose: set_pointee_array_declarator(true)
-			// resets is_array_, and the declared entity must stay a scalar
-			// pointer whose pointee carries the recorded bounds ([dcl.ptr]/1).
-			base_type.set_pointee_array_declarator(true);
-
-			auto declaration = emplace_node<DeclarationNode>(
-				emplace_node<TypeSpecifierNode>(base_type),
-				identifier_token,
-				std::move(pointee_dimensions));
-			if (qualified_declarator_owner.isValid()) {
-				declaration.as<DeclarationNode>().set_qualified_declarator_owner(
-					qualified_declarator_owner);
-			}
-			return ParseResult::success(declaration);
-		}
-
-		// Now parse the function parameters: '(' params ')'
-		ParseResult declarator_result = parse_postfix_declarator(
-			base_type, identifier_token, linkage, calling_conv);
-		if (!declarator_result.is_error() && qualified_declarator_owner.isValid() &&
-			declarator_result.node().has_value() &&
-			declarator_result.node()->is<DeclarationNode>()) {
-			declarator_result.node()->as<DeclarationNode>().set_qualified_declarator_owner(
-				qualified_declarator_owner);
-		}
-		return declarator_result;
 	}
 
 	// Handle pointer prefix: * [const] [volatile] *...

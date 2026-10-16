@@ -517,7 +517,7 @@ inline void materializeSubstitutedFunctionTypeMetadata(
 	if (substituted_category != TypeCategory::FunctionPointer &&
 		substituted_category != TypeCategory::MemberFunctionPointer &&
 		!substituted_type.has_function_signature() &&
-		!original_type.has_ordered_declarator()) {
+		!(original_type.has_ordered_declarator() && original_type.has_function_signature())) {
 		return;
 	}
 	TemplateParameterVector semantic_template_params;
