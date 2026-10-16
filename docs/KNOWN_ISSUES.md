@@ -248,10 +248,14 @@ the frame-stack grammar owns every parenthesized group, the bound-template
 instantiation reparse keeps the substituted base index for an ordered callable
 return, and `materializeSubstitutedFunctionTypeMetadata` reconstructs the spine
 and substituted signature, so a callable whose return is itself callable keeps one
-canonical identity across parse and substitution. Still open: the flat `(`
-fallback in `parse_declarator` remains; three-deep callable calls,
-struct-returning nested callable calls, and materializing a nested-callable
-function's result (`sizeof(make(0))`) also remain unsupported.
+canonical identity across parse and substitution. Every projectable declarator now
+uses the ordered spine, with [dcl.decl]/5 (an abstract-declarator has no
+declarator-id) and [dcl.ref]/5 (no pointer/array of references) checked in the
+grammar. Still open: the flat `(` fallback handles a qualified declarator-id inside
+a parenthesized group and a function returning a pointer to array with a
+reference-to-array parameter; three-deep callable calls, struct-returning nested
+callable calls, and materializing a nested-callable function's result
+(`sizeof(make(0))`) also remain unsupported.
 
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 
