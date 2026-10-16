@@ -1233,6 +1233,13 @@ ParseResult Parser::parse_declarator(
 				// Location of the first pointer declarator, for the
 				// pointer-to-reference rejection ([dcl.ref]/5).
 				Token first_pointer_token;
+				// Out-of-line declarator-id owner, for `int (*Owner::name)[N]`.
+				StringHandle qualified_declarator_owner;
+				auto attach_qualified_owner = [&](ASTNode& node) {
+					if (qualified_declarator_owner.isValid() && node.is<DeclarationNode>()) {
+						node.as<DeclarationNode>().set_qualified_declarator_owner(qualified_declarator_owner);
+					}
+				};
 				CallingConvention member_function_calling_convention =
 					CallingConvention::Default;
 				std::optional<FunctionSignature> member_function_signature;
@@ -1327,6 +1334,25 @@ ParseResult Parser::parse_declarator(
 						identifier = peek_info();
 						has_identifier = true;
 						advance();
+						// A declarator-id may be qualified (`Owner::name`), as in an
+						// out-of-line static data-member definition
+						// `int (*Registry::table)[2][4]`. The member-pointer form
+						// (`Owner::*`) was already handled above.
+						while (peek() == "::"_tok) {
+							if (!qualified_declarator_owner.isValid()) {
+								qualified_declarator_owner = identifier.handle();
+							}
+							advance();
+							if (!peek().is_identifier()) {
+								failed = true;
+								break;
+							}
+							identifier = peek_info();
+							advance();
+						}
+						if (failed) {
+							break;
+						}
 						frame.after_direct = true;
 					}
 
@@ -1568,6 +1594,7 @@ ParseResult Parser::parse_declarator(
 									TypeSpecifierNode outer_type = build_sub_spine(build_sub_spine, 0, 0);
 									TypeSpecifierNode return_type = build_sub_spine(build_sub_spine, 1, 1);
 									ASTNode decl_node = emplace_node<DeclarationNode>(emplace_node<TypeSpecifierNode>(return_type), identifier);
+									attach_qualified_owner(decl_node);
 									auto func_decl_node = emplace_node<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
 									FunctionDeclarationNode& func_ref = func_decl_node.as<FunctionDeclarationNode>();
 									for (const ASTNode& parameter : completed_functions.front().parameters.parameters) {
@@ -1594,6 +1621,7 @@ ParseResult Parser::parse_declarator(
 								} else {
 									decl_node = emplace_node<DeclarationNode>(emplace_node<TypeSpecifierNode>(structural_type), identifier);
 								}
+								attach_qualified_owner(decl_node);
 								discard_saved_token(structural_start);
 								return ParseResult::success(decl_node);
 							}
@@ -1701,6 +1729,7 @@ ParseResult Parser::parse_declarator(
 								auto decl_node = emplace_node<DeclarationNode>(
 									emplace_node<TypeSpecifierNode>(return_type),
 									identifier);
+								attach_qualified_owner(decl_node);
 								auto func_decl_node = emplace_node<FunctionDeclarationNode>(
 									decl_node.as<DeclarationNode>());
 								FunctionDeclarationNode& func_ref =
@@ -1752,10 +1781,12 @@ ParseResult Parser::parse_declarator(
 								if (identifier.value().empty()) {
 									base_type = function_pointer;
 								}
-								discard_saved_token(structural_start);
-								return ParseResult::success(emplace_node<DeclarationNode>(
+								ASTNode function_pointer_decl = emplace_node<DeclarationNode>(
 									std::move(function_pointer_node),
-									identifier));
+									identifier);
+								attach_qualified_owner(function_pointer_decl);
+								discard_saved_token(structural_start);
+								return ParseResult::success(function_pointer_decl);
 							}
 							TypeSpecifierNode structural_type = base_type;
 							structural_type.clear_declarator_shape();
@@ -1780,6 +1811,7 @@ ParseResult Parser::parse_declarator(
 							} else {
 								callable_decl_node = emplace_node<DeclarationNode>(emplace_node<TypeSpecifierNode>(structural_type), identifier);
 							}
+							attach_qualified_owner(callable_decl_node);
 							discard_saved_token(structural_start);
 							return ParseResult::success(callable_decl_node);
 						}
@@ -1849,6 +1881,7 @@ ParseResult Parser::parse_declarator(
 						} else {
 							ordered_decl_node = emplace_node<DeclarationNode>(emplace_node<TypeSpecifierNode>(structural_type), identifier);
 						}
+						attach_qualified_owner(ordered_decl_node);
 						discard_saved_token(structural_start);
 						return ParseResult::success(ordered_decl_node);
 					}
