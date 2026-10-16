@@ -1993,17 +1993,15 @@ inline CanonicalTypeImport importCanonicalFunctionParameterType(CanonicalTypeTab
 }
 
 // Iteratively decompose the canonical wrapper chain into syntax order. The
-// returned base retains base cv qualification. Callable/member-pointer export
-// remains fail-closed until their AST payloads migrate from FunctionSignature.
-// Supplying stop_at_base preserves a semantic alias as the base when nested
-// callable nodes cannot be represented by one top-level declarator signature.
+// returned base retains base cv qualification. Callable payloads remain on the
+// outer signature and its structured return signatures. Supplying stop_at_base
+// preserves a semantic alias as the base instead of decomposing its wrappers.
 inline CanonicalDeclaratorExport exportCanonicalDeclaratorUntil(
 	const CanonicalTypeTable& table,
 	TypeId type,
 	TypeId stop_at_base) {
 	CanonicalDeclaratorExport result{type, {}, CanonicalTypeImportStatus::Supported};
 	CVQualifier pending_pointer_cv = CVQualifier::None;
-	bool saw_function = false;
 	for (;;) {
 		if (stop_at_base && type == stop_at_base) {
 			result.base = type;
@@ -2050,13 +2048,8 @@ inline CanonicalDeclaratorExport exportCanonicalDeclaratorUntil(
 			type = node.child;
 			break;
 		case CanonicalTypeKind::Function:
-			// A second function type has no second cold signature to recover.
-			if (saw_function) {
-				result.base = type;
-				result.status = CanonicalTypeImportStatus::UnmigratedCallable;
-				return result;
-			}
-			saw_function = true;
+			// Nested signatures follow the enclosing return FunctionType's
+			// callable_signature, in the same outermost-first order as this spine.
 			result.components.push_back(DeclaratorComponent::function());
 			type = node.child;
 			break;

@@ -344,9 +344,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				throw InternalError("Callable operator() receiver query remained NotYetAnalyzed");
 			throw InternalError("Callable operator() receiver type could not be resolved: sema should provide callable type");
 		}
-		if (callee_type.has_value() &&
-			callee_type->category() != TypeCategory::Struct &&
-			(callee_type->is_function_pointer() || callee_type->has_function_signature())) {
+		if (callee_type.has_value() && (callee_type->is_function_pointer() || callee_type->has_function_signature())) {
 			const FunctionSignature* indirect_signature =
 				callee_type->has_function_signature() ? &callee_type->function_signature() : nullptr;
 			const bool needs_placeholder_return_deduction =

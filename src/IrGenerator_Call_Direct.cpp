@@ -4,6 +4,7 @@
 #include "InlineAlwaysAnalysis.h"
 #include "SemanticAnalysis.h"
 #include "TypeSizeQuery.h"
+#include "Parser_FunctionTypeHelpers.h"
 
 static TypeSpecifierNode normalizeCallReturnType(TypeSpecifierNode return_type);
 
@@ -53,37 +54,29 @@ void AstToIr::populateReferenceReturnInfo(VirtualCallOp& call_op, const TypeSpec
 }
 
 TypeSpecifierNode AstToIr::buildFunctionSignatureReturnType(const FunctionSignature& signature) const {
-	TypeSpecifierNode return_type(
-		signature.return_type_index.withCategory(signature.returnType()),
-		SizeInBits{get_type_size_bits(signature.returnType())},
-		Token{},
-		CVQualifier::None,
-		signature.return_reference_qualifier);
-	return_type.add_pointer_levels(signature.return_pointer_depth);
-	return_type.set_size_in_bits(getTypeSpecSizeBits(return_type));
+	TypeSpecifierNode return_type = FlashCpp::ParserFunctionTypeHelpers::getReturnTypeFromFunctionSignature(signature, Token{});
 	return normalizeCallReturnType(return_type);
 }
 
 TypeIndex AstToIr::getFunctionSignatureReturnTypeIndex(const FunctionSignature& signature) const {
-	if (!needs_type_index(signature.returnType())) {
-		TypeIndex native = nativeTypeIndex(signature.returnType());
-		return native.is_valid()
-			? native.withCategory(signature.returnType())
-			: TypeIndex{}.withCategory(signature.returnType());
+	const TypeSpecifierNode return_type = buildFunctionSignatureReturnType(signature);
+	const TypeCategory return_category = return_type.has_function_signature() && return_type.runtime_pointer_depth() > 0
+		? TypeCategory::FunctionPointer : return_type.category();
+	if (!needs_type_index(return_category)) {
+		TypeIndex native = nativeTypeIndex(return_category);
+		return native.is_valid() ? native.withCategory(return_category) : TypeIndex{}.withCategory(return_category);
 	}
 
-	if (signature.return_type_index.is_valid()) {
-		const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(signature.return_type_index);
+	if (return_type.type_index().is_valid()) {
+		const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(return_type.type_index());
 		if (resolved_alias.type_index.is_valid()) {
 			return resolved_alias.type_index.withCategory(resolved_alias.type_index.category());
 		}
-		return signature.return_type_index.withCategory(signature.returnType());
+		return return_type.type_index().withCategory(return_category);
 	}
 
-	TypeIndex fallback = nativeTypeIndex(signature.returnType());
-	return fallback.is_valid()
-		? fallback.withCategory(signature.returnType())
-		: TypeIndex{}.withCategory(signature.returnType());
+	TypeIndex fallback = nativeTypeIndex(return_category);
+	return fallback.is_valid() ? fallback.withCategory(return_category) : TypeIndex{}.withCategory(return_category);
 }
 
 int AstToIr::getFunctionSignatureReturnSizeBits(const FunctionSignature& signature) const {
@@ -101,7 +94,7 @@ void AstToIr::populateIndirectCallReturnInfo(IndirectCallOp& call_op, const Func
 	const TypeSpecifierNode return_type = buildFunctionSignatureReturnType(signature);
 	call_op.return_type_index = getFunctionSignatureReturnTypeIndex(signature);
 	call_op.return_size_in_bits = SizeInBits{getFunctionSignatureReturnSizeBits(signature)};
-	call_op.return_pointer_depth = PointerDepth{signature.return_pointer_depth};
+	call_op.return_pointer_depth = PointerDepth{static_cast<int>(return_type.runtime_pointer_depth())};
 	call_op.is_variadic = signature.is_variadic;
 	call_op.fixed_argument_count = signature.parameter_type_indices.size();
 	call_op.returns_reference = signature.returns_reference() && !return_type.has_function_signature();
@@ -665,8 +658,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		// a function signature. Free-function template parameters can instantiate into
 		// the latter form before full canonicalization.
 		// auto&& parameters in recursive lambdas need to be treated as callables
-		if (func_type.category() != TypeCategory::Struct &&
-			(func_type.is_function_pointer() || func_type.has_function_signature())) {
+		if (func_type.is_function_pointer() || func_type.has_function_signature()) {
 			// This is an indirect call through a function pointer
 			// Generate IndirectCall IR: [result_var, func_ptr_var, arg1, arg2, ...]
 			TempVar ret_var = var_counter.next();

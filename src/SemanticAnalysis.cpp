@@ -840,6 +840,12 @@ std::optional<TypeSpecifierNode> tryGetIndirectCallReturnType(const CallExprNode
 		call.called_from());
 }
 
+bool isExpressionResultCall(const CallExprNode& call) {
+	const FunctionDeclarationNode* callee = call.callee().function_declaration_or_null();
+	return call.has_receiver() && callee && callee->parent_struct_name().empty() &&
+		callee->decl_node().identifier_token().value() == "operator()"sv;
+}
+
 // Return the common pointer type for a conditional expression whose operands
 // are pointers and/or arrays.  Conversion-plan selection keeps qualification
 // and alias rules in the shared overload/conversion layer instead of copying a
@@ -9197,6 +9203,34 @@ CanonicalTypeId SemanticAnalysis::inferStaticMemberFunctionTypeFromContext(const
 
 // --- Expression type inference ---
 
+CanonicalTypeId SemanticAnalysis::inferExpressionResultCallType(const CallExprNode& call) {
+	// The parser represents calls through expression results as synthetic
+	// operator() members. Walk uncached receiver calls without native recursion;
+	// their placeholder return declarations do not describe the callable result.
+	std::vector<const CallExprNode*> pending{&call};
+	ASTNode receiver = call.receiver();
+	while (receiver.is<CallExprNode>() && isExpressionResultCall(receiver.as<CallExprNode>())) {
+		const auto slot = getSlot(getExpressionKey(receiver));
+		if (slot.has_value() && slot->has_type()) {
+			break;
+		}
+		const CallExprNode& receiver_call = receiver.as<CallExprNode>();
+		pending.push_back(&receiver_call);
+		receiver = receiver_call.receiver();
+	}
+	CanonicalTypeId result = inferExpressionType(receiver);
+	for (size_t index = pending.size(); result && index-- > 0;) {
+		const CanonicalTypeDesc& receiver_type = type_context_.get(result);
+		if (!receiver_type.function_signature.has_value()) {
+			return {};
+		}
+		const TypeSpecifierNode return_type = FlashCpp::ParserFunctionTypeHelpers::getReturnTypeFromFunctionSignature(
+			*receiver_type.function_signature, pending[index]->called_from());
+		result = canonicalizeType(return_type);
+	}
+	return result;
+}
+
 CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 	if (!node.has_value())
 		return {};
@@ -10109,6 +10143,11 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			} else if constexpr (std::is_same_v<T, CallExprNode>) {
 				const FunctionDeclarationNode* syntactic_callee =
 					e.callee().function_declaration_or_null();
+				if (isExpressionResultCall(e)) {
+					if (const CanonicalTypeId result = inferExpressionResultCallType(e)) {
+						return result;
+					}
+				}
 				if (syntactic_callee &&
 					syntactic_callee->decl_node().identifier_token().value() == "__builtin_bit_cast"sv &&
 					e.arguments().size() == 2 && e.arguments()[0].template is<TypeSpecifierNode>()) {
