@@ -189,13 +189,25 @@ Continue boundary 3A in this order.
    - **Delete the structural candidate probe.** `tryStructuralPointerArrayDeclarator`'s
      `(*`/suffix candidate scan still decides between the frame-stack grammar and the
      flat function-pointer path inside `parse_declarator`. Forcing it to `true` now
-     parses the function-definition shape above, but it changes the representation of
-     nested callables that existing identity tests pin: `test_template_nested_callable
-     _signature_ret0.cpp` and `test_canonical_dependent_nested_callable_overload_ret0
-     .cpp` start failing their `__is_same` assertions, because the ordered spine's
-     canonical import does not yet reproduce the flat function-pointer return's
-     identity. The probe can go only once the ordered import publishes the same
-     canonical identity for a callable whose return is itself callable.
+     parses the function-definition shape above, but any function whose return type is
+     itself callable then takes the ordered spine and diverges downstream. Two
+     diagnoses from a stacked attempt:
+     1. Template instantiation fails `__is_same` for
+        `test_template_nested_callable_signature_ret0.cpp` and
+        `test_canonical_dependent_nested_callable_overload_ret0.cpp`. The ordered
+        return `T (*)(const T&)` is not substituted identically to the flat function
+        pointer: `materializeSubstitutedFunctionTypeMetadata` early-returns for a spine
+        whose category is the pointee base (not `FunctionPointer`), and admitting it is
+        not enough because the reparse path reconstructs only the base type.
+     2. Flattening the single-callable sub-spine `[Pointer..., Function]` to the flat
+        `FunctionPointer` encoding fixes those two identity tests but breaks
+        `test_nested_callable_call_ret0.cpp`: the inner call's materialized callee type
+        keeps `is_function_pointer()` but loses `has_function_signature()`, so the
+        outer indirect call is emitted without a return size
+        (`IndirectCallOp is missing its return storage size`).
+     The probe can go only once the ordered spine's canonical import/materialization
+     preserves the callable signature for a function whose return is itself callable and
+     the substitution path rebuilds that return's function suffix.
    - **Deep nested callable call and struct-returning nested callable.** Calling three
      levels deep (`make(0)(1)(40)`) and calling through a nested callable that returns
      a struct still fail in sema/indirect-call lowering, and using a nested-callable
