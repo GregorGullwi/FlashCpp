@@ -2175,47 +2175,8 @@ inline TypeSpecifierNode materializeStaticMemberTypeSpecifier(
 				"static member published TypeId cannot be materialized for parser lookup");
 		}
 
-		TypeId base_type_id = exported.base;
-		CVQualifier base_cv = CVQualifier::None;
-		CanonicalTypeNode base_node = canonical_types.node(base_type_id);
-		while (base_node.kind == CanonicalTypeKind::Qualified) {
-			base_cv |= base_node.qualifiers;
-			base_type_id = base_node.child;
-			base_node = canonical_types.node(base_type_id);
-		}
-
-		TypeCategory base_category = member.memberType();
-		TypeIndex base_type_index = member.type_index.withCategory(base_category);
-		if (base_node.kind == CanonicalTypeKind::Builtin) {
-			const std::optional<TypeCategory> builtin_category =
-				canonicalBuiltinToTypeCategory(base_node.builtin);
-			if (!builtin_category.has_value()) {
-				throw InternalError("static member TypeId has an invalid builtin base");
-			}
-			base_category = *builtin_category;
-			base_type_index = nativeTypeIndex(base_category);
-		} else if (base_node.kind == CanonicalTypeKind::Record ||
-			base_node.kind == CanonicalTypeKind::Enum) {
-			const EntityId entity = base_node.kind == CanonicalTypeKind::Record
-				? canonical_types.recordEntity(base_type_id)
-				: canonical_types.enumEntity(base_type_id);
-			const TypeInfo* base_type_info = tryFindTypeInfoByEntityId(entity);
-			if (base_type_info == nullptr) {
-				throw InternalError("static member TypeId nominal base has no TypeInfo");
-			}
-			base_category = base_node.kind == CanonicalTypeKind::Record
-				? TypeCategory::Struct
-				: TypeCategory::Enum;
-			base_type_index = base_type_info->registeredTypeIndex()
-				.withCategory(base_category);
-		}
-
-		TypeSpecifierNode type(
-			base_type_index,
-			static_cast<int>(member.size * 8),
-			token,
-			base_cv,
-			ReferenceQualifier::None);
+		TypeSpecifierNode type(member.type_index, static_cast<int>(member.size * 8), token, CVQualifier::None, ReferenceQualifier::None);
+		applyCanonicalDeclaratorBase(type, canonical_types, exported.base);
 		type.set_ordered_declarator(exported.components);
 		if (const TypeSpecifierNode* declared_type = staticMemberDeclaredType(member);
 			declared_type != nullptr && declared_type->has_function_signature()) {

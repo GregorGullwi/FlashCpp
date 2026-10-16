@@ -143,6 +143,81 @@ TEST_CASE("Pointer-to-array shape prefers structural identity over the flat proj
 	CHECK(!not_pointer.is_pointer_to_array);
 }
 
+TEST_CASE("Published pointer and array materialization follows canonical identity") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	CompileContext test_context;
+	test_context.setInputFile("canonical_pointer_array_materialization.cpp");
+	SemanticAnalysis sema(test_context, gSymbolTable);
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const Token token(Token::Type::Identifier, std::string_view("materialized_cells"), 0, 0, 0);
+	const ASTNode expression = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(token));
+
+	TypeSpecifierNode cells(TypeCategory::Short, TypeQualifier::None, 16, Token{}, CVQualifier::Const);
+	cells.set_ordered_declarator({DeclaratorComponent::pointer(CVQualifier::Volatile),
+		DeclaratorComponent::unknownBoundArray(), DeclaratorComponent::array(3)});
+	const CanonicalTypeId expected_id = sema.canonicalizeTypeForImplicitConversion(cells);
+	const CanonicalTypeDesc& expected = sema.typeContext().get(expected_id);
+	REQUIRE(hasFlag(expected.flags, CanonicalTypeFlags::PublishedPointerArray));
+	const TypeId expected_type = expected.structural_type_id;
+	sema.registerCodegenSynthesizedLocalType(token.handle(), cells);
+	// Fault injection at the compatibility boundary: stale legacy fields must
+	// not override a published identity when a consumer materializes its shape.
+	// Mutate the stored value, not TypeContext's separate hash-index key, and do
+	// not re-intern it (intern deliberately refreshes flat-writer publication).
+	CanonicalTypeDesc& stale_projection = const_cast<CanonicalTypeDesc&>(sema.typeContext().get(expected_id));
+	stale_projection.type_index = nativeTypeIndex(TypeCategory::Int);
+	stale_projection.base_cv = CVQualifier::Volatile;
+	stale_projection.pointer_levels.clear();
+	stale_projection.array_dimensions.assign(1, 99);
+	stale_projection.pointee_array_declarator = false;
+	stale_projection.has_unsized_outer_array_dimension = false;
+	const TypeSpecifierQueryResult query = sema.analyzeExpressionTypeQuery(expression);
+	REQUIRE(query.hasValue());
+	CHECK(query.type->has_pointee_array_declarator());
+	CHECK(query.type->has_unsized_outer_array_dimension());
+	CHECK(query.type->cv_qualifier() == CVQualifier::Const);
+	const CanonicalTypeImport imported = importCanonicalType(table, *query.type);
+	REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+	CHECK(canonicalTypeWithoutReference(table, imported.type) == expected_type);
+
+	// A flat writer explicitly publishing its next descriptor version must
+	// still refresh that identity, rather than keeping the old pointer shape.
+	TypeContext refreshed_types;
+	const CanonicalTypeId refreshed_id = refreshed_types.intern(stale_projection);
+	const TypeId refreshed_type = refreshed_types.get(refreshed_id).structural_type_id;
+	CHECK(refreshed_type != expected_type);
+	const CanonicalTypeNode refreshed = table.node(refreshed_type);
+	CHECK(refreshed.kind == CanonicalTypeKind::Array);
+	CHECK(refreshed.array_extent == 99);
+}
+
+TEST_CASE("Published pointer materialization preserves deep declarator identity") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	CompileContext test_context;
+	test_context.setInputFile("canonical_deep_pointer_materialization.cpp");
+	SemanticAnalysis sema(test_context, gSymbolTable);
+	TypeSpecifierNode pointer(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	for (size_t depth = 0; depth < 4096; ++depth) {
+		pointer.add_pointer_level(CVQualifier::None);
+	}
+	const CanonicalTypeId expected_id = sema.canonicalizeTypeForImplicitConversion(pointer);
+	const TypeId expected_type = sema.typeContext().get(expected_id).structural_type_id;
+	REQUIRE(expected_type);
+	const Token token(Token::Type::Identifier, std::string_view("deep_materialized_pointer"), 0, 0, 0);
+	const ASTNode expression = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(token));
+	sema.registerCodegenSynthesizedLocalType(token.handle(), pointer);
+	const TypeSpecifierQueryResult query = sema.analyzeExpressionTypeQuery(expression);
+	REQUIRE(query.hasValue());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const CanonicalTypeImport imported = importCanonicalType(table, *query.type);
+	REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+	CHECK(canonicalTypeWithoutReference(table, imported.type) == expected_type);
+}
+
 TEST_CASE("Canonical identity is independent of interning and string order") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();
@@ -254,11 +329,11 @@ TEST_CASE("Canonical constructor arguments bind base references without compatib
 	const TypeId base_type = table.record(EntityId{910});
 	const TypeId derived_type = table.record(EntityId{911});
 	const TypeId consumer_type = table.record(EntityId{912});
-	const std::array<CanonicalClassBase, 1> bases{{base_type, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0}};
+	const std::array<CanonicalClassBase, 1> bases{{{base_type, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0}}};
 	table.publishClassBaseSchema(base_type, {});
 	table.publishClassBaseSchema(derived_type, bases);
 	const std::array<TypeId, 1> parameters{table.reference(base_type, ReferenceQualifier::LValueReference)};
-	const std::array<CanonicalRecordConstructorSpec, 1> constructors{{parameters, CanonicalRecordFunctionFlags::None, true}};
+	const std::array<CanonicalRecordConstructorSpec, 1> constructors{{{parameters, CanonicalRecordFunctionFlags::None, true}}};
 	table.publishRecordConstructors(consumer_type, constructors);
 	TypeSpecifierNode consumer(TypeCategory::Struct, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 	consumer.set_type_entity(EntityId{912});
@@ -544,8 +619,8 @@ TEST_CASE("Canonical direct reference binding preserves access cv and value cate
 	const TypeId base_type = table.record(EntityId{913});
 	const TypeId derived_type = table.record(EntityId{914});
 	const TypeId private_type = table.record(EntityId{915});
-	const std::array<CanonicalClassBase, 1> public_base{{base_type, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0}};
-	const std::array<CanonicalClassBase, 1> private_base{{base_type, CanonicalAccess::Private, CanonicalRecordBaseFlags::None, 0}};
+	const std::array<CanonicalClassBase, 1> public_base{{{base_type, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0}}};
+	const std::array<CanonicalClassBase, 1> private_base{{{base_type, CanonicalAccess::Private, CanonicalRecordBaseFlags::None, 0}}};
 	table.publishClassBaseSchema(base_type, {});
 	table.publishClassBaseSchema(derived_type, public_base);
 	table.publishClassBaseSchema(private_type, private_base);
@@ -574,7 +649,7 @@ TEST_CASE("Canonical direct reference binding preserves access cv and value cate
 	TypeId deepest_type = derived_type;
 	for (uint32_t depth = 0; depth < 1024; ++depth) {
 		const TypeId next_type = table.templateSpecialization(TemplateDeclId{10000 + depth}, std::span<const TypeId>{});
-		const std::array<CanonicalClassBase, 1> next_base{{deepest_type, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0}};
+		const std::array<CanonicalClassBase, 1> next_base{{{deepest_type, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0}}};
 		table.publishClassBaseSchema(next_type, next_base);
 		deepest_type = next_type;
 	}

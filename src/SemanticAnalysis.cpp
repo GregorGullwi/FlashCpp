@@ -648,9 +648,10 @@ void setMaterializedTypeSpecifierSize(TypeSpecifierNode& type_node) {
 TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 	TypeSpecifierNode type_node(desc.type_index.withCategory(desc.category()), 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
 	type_node.set_cv_qualifier(desc.base_cv);
-	// Published pointer/array ids are a second name for the flat projection.
-	// Non-projectable structural ids are the only shape materialization can export.
-	if (desc.structural_type_id && !hasFlag(desc.flags, CanonicalTypeFlags::PublishedPointerArray)) {
+	// Published shape is authoritative at this compatibility boundary, including
+	// projectable pointer/array descriptors whose flat fields are retained for
+	// semantic writers that have not migrated yet.
+	if (desc.structural_type_id) {
 		const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(
 				requireFrontendContext().canonicalTypes(),
 			desc.structural_type_id);
@@ -709,6 +710,14 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 			}
 			throw InternalError(
 				"semantic materialization rejected ordered declarator");
+		}
+		// A flat callable descriptor's category denotes the pointer object, not
+		// the return base expected below the exported Function component.
+		const bool has_function_component = std::ranges::any_of(exported.components, [](const DeclaratorComponent& component) {
+			return component.kind == DeclaratorComponentKind::Function;
+		});
+		if (hasFlag(desc.flags, CanonicalTypeFlags::PublishedPointerArray) || has_function_component) {
+			applyCanonicalDeclaratorBase(type_node, requireFrontendContext().canonicalTypes(), exported.base);
 		}
 		type_node.set_ordered_declarator(exported.components);
 		// The cold signature is declaration identity for the single Function
@@ -1207,8 +1216,13 @@ CanonicalTypeDesc canonicalTypeDescFromStructMember(const StructMember& member, 
 	for (int i = 0; i < member.pointer_depth; ++i) {
 		desc.pointer_levels.push_back(PointerLevel{});
 	}
-	if (member.reference_qualifier == ReferenceQualifier::None) {
-		desc.base_cv = object_cv;
+	// [expr.ref]: receiver qualification applies to the member object, not
+	// the pointee of a pointer member (or an array's pointer elements).
+	const CVQualifier member_cv = member.member_cv_qualifier | (member.reference_qualifier == ReferenceQualifier::None ? object_cv : CVQualifier::None);
+	if (desc.pointer_levels.empty()) {
+		desc.base_cv = member_cv;
+	} else {
+		desc.pointer_levels.back().cv_qualifier = member_cv;
 	}
 	return desc;
 }
@@ -1334,8 +1348,8 @@ bool descriptorHasProjectablePointerOrArray(const CanonicalTypeDesc& desc) {
 // Import a projectable pointer or array into structural_type_id. The descriptor
 // argument is a local copy: import can intern other descriptors, so callers must
 // not pass a TypeContext::get() reference. Shapes the importer cannot represent
-// stay flat. PublishedPointerArray tells materialization to keep the flat
-// projection instead of the non-projectable ordered-declarator export.
+// stay flat. PublishedPointerArray marks descriptors whose flat-field writers
+// still require identity refresh when TypeContext interns their next version.
 void publishPointerArrayStructuralId(CanonicalTypeDesc& desc) {
 	if (desc.structural_type_id || hasFlag(desc.flags, CanonicalTypeFlags::PublishedPointerArray)) {
 		return;
