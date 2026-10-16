@@ -577,6 +577,37 @@ inline void appendMsvcArrayExtent(OutputType& output, uint64_t value) {
 	output += '@';
 }
 
+// A projectable ordered callable declarator (`int (*)(int)`, `int (**)(int)`) is
+// equivalent to its flat FunctionPointer projection. Materialize that form so the
+// encoders' established FunctionPointer path handles it; only non-projectable
+// ordered callables (a nested callable return) still need an ordered encoder.
+inline bool tryMaterializeFlatCallableForMangling(TypeSpecifierNode& type_node) {
+	if (!type_node.has_ordered_declarator() ||
+		!type_node.ordered_declarator_has_legacy_projection() ||
+		!type_node.has_function_signature()) {
+		return false;
+	}
+	const std::span<const DeclaratorComponent> components = type_node.declarator_components();
+	if (components.empty() || components.back().kind != DeclaratorComponentKind::Function) {
+		return false;
+	}
+	for (size_t index = 0; index + 1 < components.size(); ++index) {
+		if (components[index].kind != DeclaratorComponentKind::Pointer) {
+			return false;
+		}
+	}
+	TypeSpecifierNode flat(
+		TypeCategory::FunctionPointer, TypeQualifier::None, 64, type_node.token(), CVQualifier::None);
+	flat.set_function_signature(type_node.function_signature());
+	if (components.size() - 1 > 1) {
+		for (size_t index = 0; index + 1 < components.size(); ++index) {
+			flat.add_pointer_level(components[index].cv_qualifier);
+		}
+	}
+	type_node = flat;
+	return true;
+}
+
 template <typename OutputType>
 inline void appendMsvcOrderedDeclaratorTypeCode(
 	OutputType& output,
@@ -588,22 +619,30 @@ inline void appendMsvcOrderedDeclaratorTypeCode(
 		switch (component.kind) {
 		case DeclaratorComponentKind::Pointer: {
 			if (component.cv_qualifier == CVQualifier::None) {
-				output += "PE";
+				output += 'P';
 			} else if (component.cv_qualifier == CVQualifier::Const) {
-				output += "QE";
+				output += 'Q';
 			} else if (component.cv_qualifier == CVQualifier::Volatile) {
-				output += "RE";
+				output += 'R';
 			} else if (component.cv_qualifier == CVQualifier::ConstVolatile) {
-				output += "SE";
+				output += 'S';
 			} else {
 				throw InternalError("MSVC name mangling: invalid ordered pointer qualifier");
 			}
-			const CVQualifier pointee_cv = index + 1 == components.size()
-				? normalized.cv_qualifier()
-				: components[index + 1].kind == DeclaratorComponentKind::Pointer
-					? components[index + 1].cv_qualifier
-					: CVQualifier::None;
-			appendCVQualifier(output, pointee_cv);
+			// A pointer to a function is `P6<signature>` (the Function component
+			// emits the `6`); a data pointer is `PE<pointee-cv>`.
+			const bool pointee_is_function =
+				index + 1 < components.size() &&
+				components[index + 1].kind == DeclaratorComponentKind::Function;
+			if (!pointee_is_function) {
+				output += 'E';
+				const CVQualifier pointee_cv = index + 1 == components.size()
+					? normalized.cv_qualifier()
+					: components[index + 1].kind == DeclaratorComponentKind::Pointer
+						? components[index + 1].cv_qualifier
+						: CVQualifier::None;
+				appendCVQualifier(output, pointee_cv);
+			}
 			++index;
 			break;
 		}
@@ -643,8 +682,22 @@ inline void appendMsvcOrderedDeclaratorTypeCode(
 		}
 		case DeclaratorComponentKind::UnknownBoundArray:
 			throw InternalError("MSVC name mangling: unknown-bound array cannot appear in a mangled type");
-		case DeclaratorComponentKind::Function:
-			throw InternalError("MSVC name mangling: ordered callable declarator is not materialized");
+		case DeclaratorComponentKind::Function: {
+			// The Function component is the callable itself. The components after
+			// it are its return wrappers, which the signature's structured return
+			// type carries, so encode the signature and stop iterating.
+			if (!normalized.has_function_signature()) {
+				throw InternalError("MSVC name mangling: ordered callable declarator is not materialized");
+			}
+			if (index == 0) {
+				// A bare function type, matching the flat Function encoding.
+				output += "$$A6";
+			} else {
+				output += '6';
+			}
+			appendMsvcFunctionSignatureTypeCode(output, normalized.function_signature());
+			return;
+		}
 		case DeclaratorComponentKind::MemberObjectPointer:
 		case DeclaratorComponentKind::MemberFunctionPointer: {
 			if (index + 1 != components.size() &&
@@ -723,6 +776,7 @@ inline void appendMsvcOrderedDeclaratorTypeCode(
 template <typename OutputType>
 void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 	TypeSpecifierNode normalized_type = normalizeTypeSpecifierForMangling(type_node);
+	(void)tryMaterializeFlatCallableForMangling(normalized_type);
 	const TypeSpecifierNode& normalized = normalized_type;
 	if (normalized.has_ordered_declarator()) {
 		appendMsvcOrderedDeclaratorTypeCode(output, normalized);
