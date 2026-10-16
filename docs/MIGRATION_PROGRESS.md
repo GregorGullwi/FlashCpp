@@ -201,9 +201,13 @@ Continue boundary 3A in this order.
    are green with the probe gone.
    Remaining:
    - **Delete the flat `(` fallback too.** `parse_declarator` still falls back to the
-     legacy flat function-pointer path when the frame-stack grammar declines; it should
-     go once the grammar owns the remaining shapes (`(name)` MSVC, member pointers)
-     unaided.
+     legacy flat function-pointer path when the frame-stack grammar declines, and it is
+     still load-bearing: deleting it breaks abstract parenthesized type-ids in
+     `sizeof`, `static_cast`, `decltype`, function parameters, and alias-template
+     targets (`int (*)[3]`, `int (*)(int)`, `T (*)[N]`), because
+     `consume_type_id_abstract_declarators`/`consume_cast_type_id_paren_declarator` and
+     the alias-target probe reach the flat path rather than a named declarator. Making
+     the frame-stack grammar own those abstract type-ids is the next slice.
    - **Deep nested callable call and struct-returning nested callable.** Calling three
      levels deep (`make(0)(1)(40)`) and calling through a nested callable that returns
      a struct still fail in sema/indirect-call lowering, and using a nested-callable
