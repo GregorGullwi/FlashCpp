@@ -467,7 +467,14 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 							// constants to their underlying type; use actual runtime type.
 						if (from_type == TypeCategory::Enum && from_type != operands.typeEnum())
 							from_type = operands.typeEnum();
-						operands = generateTypeConversion(operands, from_type, to_type, node.return_token());
+						// [conv.func]: function-to-pointer decay yields a pointer-sized
+						// value. The annotated target descriptor's category can be the
+						// ordered spine's base (`int (*f())(int)` has a base of `int`), so
+						// keep the function pointer representation instead of narrowing it
+						// to that base category.
+						if (cast_info.cast_kind != StandardConversionKind::FunctionToPointer) {
+							operands = generateTypeConversion(operands, from_type, to_type, node.return_token());
+						}
 						sema_applied_conversion = true;
 					}
 				}
