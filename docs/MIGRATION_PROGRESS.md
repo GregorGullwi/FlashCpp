@@ -164,15 +164,21 @@ Continue boundary 3A in this order.
    component to its signature. `int (*(*p)())();` now parses, projects, imports, and
    lowers as an 8-byte pointer object; the regression is
    `tests/test_nested_callable_return_ret0.cpp`.
+   Calling *through* a nested callable is implemented on branch
+   `boundary-3a-declarator-single-path`: `tryGetReturnTypeFromFunctionType` rebuilds a
+   function-pointer return from the structured `callable_signature` when the flat
+   return category cannot denote it, so `p()(40)` types the inner result as a function
+   pointer and the outer call lowers. The same branch stores a function-address global
+   initializer (`&f` / `int (&r)(int) = g;`) under the mangled symbol through the shared
+   `resolveGlobalRelocTarget`. The regression is
+   `tests/test_nested_callable_call_ret0.cpp`.
    Remaining, in order:
-   - **Calling through a nested callable.** `p()()` (a call whose receiver is itself a
-     call's function-pointer result) still fails closed with
-     `Callable operator() receiver type could not be resolved`; sema must type the
-     inner result before the outer `operator()`. Also a function *definition* whose
+   - **Function *definition* with a deep nested callable return.** A function whose
      return type is a three-deep nested callable
      (`int (* (*make())())(int) { ... }`) is not yet routed through the ordered
-     declarator. Neither is required by the `int (*(*p)())();` reproduction, which
-     declares and lays out only.
+     declarator (the declaration spelling works). A struct-returning nested callable
+     call (`Payload (*p)(int)` result called again) also fails in indirect-call
+     lowering. Neither is required by the `int (*(*p)())();` reproduction.
    - **Remove the transitional detection.** `tryStructuralPointerArrayDeclarator`'s
      `(*` probe and the `parse_type_and_name` `(`-re-check dispatch are still present;
      finish consolidating onto a single `parse_declarator` call after the base type and
@@ -181,15 +187,15 @@ Continue boundary 3A in this order.
      counters, and the two documented native baseline failures green.
 
    Agent continuation prompt: "Continue the C++20 declarator consolidation on branch
-   `boundary-3a-declarator-consolidation` (stack a new branch if this one is merged).
-   Item 0 above is landed except for calling through a nested callable and removing the
-   transitional detection. Next remove the transitional `(` re-check dispatch and the
-   `(*` candidate probe so `parse_type_and_name` calls `parse_declarator` once, then
-   teach sema to type `p()()` for a nested callable return. Do not re-introduce a
-   heuristic spine when a downstream assumption breaks; fix the downstream layer under
-   the grammar. Validate with a full sharded rebuild, `tests/run_all_tests.sh`,
-   `tests/run_migration_counters.sh`, and `make test` and keep
-   `test_ordered_function_to_pointer_decay_ret42.cpp` green."
+   `boundary-3a-declarator-single-path`. The declarator shapes, nested callable return,
+   and nested callable call are landed. Next remove the transitional `(` re-check
+   dispatch and the `(*` candidate probe so `parse_type_and_name` calls
+   `parse_declarator` once, and route a function definition whose return type is a deep
+   nested callable through the ordered declarator. Do not re-introduce a heuristic spine
+   when a downstream assumption breaks; fix the downstream layer under the grammar.
+   Validate with a full sharded rebuild, `tests/run_all_tests.sh`,
+   `tests/run_migration_counters.sh`, the canonical-type mutation harness, and
+   `make test`, and keep `test_ordered_function_to_pointer_decay_ret42.cpp` green."
 
 1. **Make `TypeId` the conversion currency.** Continue migrating parser-side
    overload ranking and remaining syntax-facing callers to the structural

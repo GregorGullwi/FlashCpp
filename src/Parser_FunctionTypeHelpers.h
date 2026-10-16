@@ -177,6 +177,33 @@ inline std::optional<TypeSpecifierNode> tryGetReturnTypeFromFunctionType(
 	}
 
 	const FunctionSignature& sig = function_like_type.function_signature();
+	// A return type that is itself callable is stored on the structured return
+	// FunctionType (its inner signature is `callable_signature`). When the flat
+	// return category cannot already denote that callable (it is the pointee
+	// base, not FunctionPointer/MemberFunctionPointer), the flat projections
+	// cannot carry the inner signature, so rebuild the function-pointer return
+	// from the structured component.
+	if (sig.hasStructuredTypes()) {
+		const FunctionType& structured_return = sig.return_type();
+		const TypeCategory flat_return_category = sig.returnType();
+		if (structured_return.callable_signature != nullptr &&
+			flat_return_category != TypeCategory::FunctionPointer &&
+			flat_return_category != TypeCategory::MemberFunctionPointer &&
+			flat_return_category != TypeCategory::MemberObjectPointer) {
+			TypeSpecifierNode return_type(
+				TypeCategory::FunctionPointer,
+				TypeQualifier::None,
+				64,
+				source_token,
+				structured_return.cv_qualifier);
+			return_type.set_function_signature(*structured_return.callable_signature);
+			for (const CVQualifier pointer_cv : structured_return.pointer_qualifiers) {
+				return_type.add_pointer_level(pointer_cv);
+			}
+			return_type.set_reference_qualifier(sig.return_reference_qualifier);
+			return return_type;
+		}
+	}
 	TypeIndex return_type_index = sig.return_type_index;
 	TypeCategory return_category = sig.returnType();
 	if (return_type_index.is_valid()) {
