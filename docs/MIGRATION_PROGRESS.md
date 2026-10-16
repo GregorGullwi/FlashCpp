@@ -627,9 +627,15 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
   (`tests/test_deep_nested_member_type_base_chain_ret0.cpp`); member-template
   segments and indirect alias targets remain open, and boundary 8A's AST-based
   instantiation and old-path deletion criteria are unfinished.
-- **Callable ABI mangling:** MSVC name mangling still throws for function
-  declarations with non-projectable ordered callable parameters; address at
-  boundary 3B.
+- **Callable ABI mangling:** MSVC name mangling now handles ordered callables. A
+  projectable ordered callable is materialized to its flat FunctionPointer form
+  (`tryMaterializeFlatCallableForMangling`) so the established encoder handles
+  it, and the ordered encoder emits pointer-to-function (`P`/`6`) and recurses
+  into the signature for a non-projectable nested callable return. A calling
+  convention at the head of a parenthesized declarator is likewise propagated into
+  the function-pointer signature. `test_function_pointer_calling_convention_identity_ret0.cpp`
+  pins the convention identity; MSVC-mangling smoke coverage over the callable and
+  declarator corpus is clean.
 - **Boundary 4 handoff - member-function-pointer descriptor identity:** a
   concrete member-function-pointer descriptor now reconstructs without the
   compatibility projection. `canonicalizeType` stamps the published class
