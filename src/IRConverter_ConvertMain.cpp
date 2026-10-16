@@ -17474,12 +17474,10 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 		// Emit data section relocations for pointer/reference globals initialized with &symbol
 	for (const auto& global : global_variables_) {
 		if (global.reloc_target.isValid()) {
-			writer.add_data_relocation(StringTable::getStringView(global.name),
-									   StringTable::getStringView(global.reloc_target), 0);
+			writer.add_data_relocation(StringTable::getStringView(global.name), StringTable::getStringView(global.reloc_target), 0);
 		}
 		for (const DataRelocation& element : global.data_relocations) {
-			writer.add_data_relocation(StringTable::getStringView(global.name),
-									   StringTable::getStringView(element.target), element.offset_in_symbol);
+			writer.add_data_relocation(StringTable::getStringView(global.name), StringTable::getStringView(element.target), element.offset_in_symbol);
 		}
 	}
 

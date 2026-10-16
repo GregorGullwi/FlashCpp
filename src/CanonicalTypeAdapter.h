@@ -211,27 +211,23 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 	TypeId id = base;
 	const std::span<const DeclaratorComponent> components =
 		syntax.declarator_components();
-	// Map each Function component to its signature, outermost first. A nested
-	// callable return's inner signature is the `callable_signature` of the
-	// enclosing return FunctionType.
-	std::vector<const FunctionSignature*> function_signature_by_component(
-		components.size(), nullptr);
-	if (syntax.has_function_signature()) {
+	// Resolve the signature for the Function component at `component_index`. The
+	// node's cold signature is the outermost callable; each inner callable's
+	// signature is the `callable_signature` of the enclosing return FunctionType.
+	// Computed on demand so a single-function declarator allocates nothing.
+	auto signatureForFunctionComponent = [&](size_t component_index) -> const FunctionSignature* {
+		if (components[component_index].kind != DeclaratorComponentKind::Function || !syntax.has_function_signature()) {
+			return nullptr;
+		}
 		const FunctionSignature* current = &syntax.function_signature();
-		for (size_t index = 0; index < components.size(); ++index) {
+		for (size_t index = 0; index < component_index; ++index) {
 			if (components[index].kind != DeclaratorComponentKind::Function) {
 				continue;
 			}
-			function_signature_by_component[index] = current;
-			if (current == nullptr || !current->hasStructuredTypes()) {
-				current = nullptr;
-				continue;
-			}
-			const std::shared_ptr<FunctionSignature>& nested =
-				current->return_type().callable_signature;
-			current = nested ? nested.get() : nullptr;
+			current = (current != nullptr && current->hasStructuredTypes()) ? current->return_type().callable_signature.get() : nullptr;
 		}
-	}
+		return current;
+	};
 	auto arrayElementStatus = [&table](TypeId element) {
 		const CanonicalTypeNode node = table.node(
 			table.withoutTopLevelQualifiers(element));
@@ -290,10 +286,7 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 			// Function component: the node's cold signature is the outermost
 			// callable and each inner callable's signature is the
 			// `callable_signature` of the enclosing return FunctionType.
-			const FunctionSignature* signature_ptr =
-				index < function_signature_by_component.size()
-					? function_signature_by_component[index]
-					: nullptr;
+			const FunctionSignature* signature_ptr = signatureForFunctionComponent(index);
 			if (signature_ptr == nullptr) {
 				return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
 			}

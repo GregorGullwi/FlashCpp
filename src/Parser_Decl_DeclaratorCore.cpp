@@ -1620,8 +1620,7 @@ ParseResult Parser::parse_declarator(
 						// suffix `[` or the closing `)` of the group.
 						if ((peek() == ")"_tok || peek() == "["_tok) && !has_identifier && frame.delimited &&
 								!frame.prefixes.empty()) {
-							identifier = Token(Token::Type::Identifier, ""sv, current_token_.line(),
-								current_token_.column(), current_token_.file_index());
+							identifier = Token(Token::Type::Identifier, ""sv, current_token_.line(), current_token_.column(), current_token_.file_index());
 							has_identifier = true;
 							frame.after_direct = true;
 							continue;
@@ -1701,9 +1700,7 @@ ParseResult Parser::parse_declarator(
 						ordered_function_parameters = params;
 						ordered_function_qualifiers = qualifiers;
 						ordered_function_specifiers = specifiers;
-						frame.suffix_functions.push_back(OrderedFunctionParams{
-							std::move(params), qualifiers, specifiers,
-							last_calling_convention_});
+						frame.suffix_functions.push_back(OrderedFunctionParams{std::move(params), qualifiers, specifiers, last_calling_convention_});
 						frame.suffixes.push_back(DeclaratorComponent::function());
 					}
 					if (frames.size() == 1 && has_member_pointer && peek() == "("_tok) {
@@ -1753,18 +1750,15 @@ ParseResult Parser::parse_declarator(
 					std::vector<DeclaratorComponent> completed = std::move(frame.child);
 					std::vector<ASTNode> completed_array_bound_expressions =
 						std::move(frame.child_array_bound_expressions);
-					std::vector<OrderedFunctionParams> completed_functions =
-						std::move(frame.child_functions);
+					std::vector<OrderedFunctionParams> completed_functions = std::move(frame.child_functions);
 					completed.insert(completed.end(), frame.suffixes.begin(),
 										 frame.suffixes.end());
 					completed_array_bound_expressions.insert(
 						completed_array_bound_expressions.end(),
 						frame.suffix_array_bound_expressions.begin(),
 						frame.suffix_array_bound_expressions.end());
-					completed_functions.insert(
-						completed_functions.end(),
-						std::make_move_iterator(frame.suffix_functions.begin()),
-						std::make_move_iterator(frame.suffix_functions.end()));
+					completed_functions.insert(completed_functions.end(),
+						std::make_move_iterator(frame.suffix_functions.begin()), std::make_move_iterator(frame.suffix_functions.end()));
 					for (auto pointer = frame.prefixes.rbegin();
 							 pointer != frame.prefixes.rend(); ++pointer) {
 						DeclaratorComponent component = *pointer;
@@ -1802,8 +1796,7 @@ ParseResult Parser::parse_declarator(
 									TypeSpecifierNode node = base_type;
 									node.clear_declarator_shape();
 									if (start < end) {
-										node.set_ordered_declarator(std::vector<DeclaratorComponent>(
-											completed.begin() + static_cast<std::ptrdiff_t>(start), completed.end()));
+										node.set_ordered_declarator(std::vector<DeclaratorComponent>(completed.begin() + static_cast<std::ptrdiff_t>(start), completed.end()));
 									}
 									std::optional<size_t> first_function;
 									for (size_t index = start; index < end; ++index) {
@@ -1837,8 +1830,7 @@ ParseResult Parser::parse_declarator(
 									signature.calling_convention = function.calling_convention;
 									signature.is_variadic = function.parameters.is_variadic;
 									apply_parsed_function_type_qualifiers(signature, function.qualifiers, function.specifiers);
-									node.set_ordered_declarator(std::vector<DeclaratorComponent>(
-										completed.begin() + static_cast<std::ptrdiff_t>(start), completed.end()));
+									node.set_ordered_declarator(std::vector<DeclaratorComponent>(completed.begin() + static_cast<std::ptrdiff_t>(start), completed.end()));
 									node.set_function_signature(signature);
 									return node;
 								};
@@ -1847,16 +1839,17 @@ ParseResult Parser::parse_declarator(
 									base_type = structural_type;
 								}
 								if (array_bound_expressions != nullptr) {
-									array_bound_expressions->insert(
-										array_bound_expressions->end(),
-										completed_array_bound_expressions.begin(),
-										completed_array_bound_expressions.end());
+									array_bound_expressions->insert(array_bound_expressions->end(),
+										completed_array_bound_expressions.begin(), completed_array_bound_expressions.end());
 								}
-								ASTNode decl_node = structural_type.is_array_object()
-									? emplace_node<DeclarationNode>(
+								ASTNode decl_node;
+								if (structural_type.is_array_object()) {
+									decl_node = emplace_node<DeclarationNode>(
 										emplace_node<TypeSpecifierNode>(structural_type), identifier,
-										std::vector<ASTNode>(completed_array_bound_expressions))
-									: emplace_node<DeclarationNode>(emplace_node<TypeSpecifierNode>(structural_type), identifier);
+										std::vector<ASTNode>(completed_array_bound_expressions));
+								} else {
+									decl_node = emplace_node<DeclarationNode>(emplace_node<TypeSpecifierNode>(structural_type), identifier);
+								}
 								discard_saved_token(structural_start);
 								return ParseResult::success(decl_node);
 							}
