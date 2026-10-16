@@ -603,10 +603,10 @@ def main():
              "\t\t}\n"
              "\t}"),
             ("adapter_function_param_decay", "CanonicalTypeAdapter.h",
-             "if (context == CanonicalTypeImportContext::FunctionParameter &&\n"
-             "\t\ttable.node(table.withoutTopLevelQualifiers(id)).kind == CanonicalTypeKind::Function) {",
-             "if (false && context == CanonicalTypeImportContext::FunctionParameter &&\n"
-             "\t\ttable.node(table.withoutTopLevelQualifiers(id)).kind == CanonicalTypeKind::Function) {"),
+             "if (context == CanonicalTypeImportContext::FunctionParameter) {\n"
+             "\t\tconst CanonicalTypeNode outer = table.node(table.withoutTopLevelQualifiers(id));",
+             "if (false && context == CanonicalTypeImportContext::FunctionParameter) {\n"
+             "\t\tconst CanonicalTypeNode outer = table.node(table.withoutTopLevelQualifiers(id));"),
             ("adapter_enum", "CanonicalTypeAdapter.h",
              "if (syntax.category() == TypeCategory::Struct || syntax.category() == TypeCategory::Enum) {",
              "if (syntax.category() == TypeCategory::Struct) {"),
