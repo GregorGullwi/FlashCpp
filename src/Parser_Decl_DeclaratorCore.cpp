@@ -1807,9 +1807,14 @@ ParseResult Parser::parse_declarator(
 								structural_type.set_size_in_bits(kFunctionPointerSizeBits);
 								structural_type.set_function_signature(*member_function_signature);
 							}
-							if (structural_type.ordered_declarator_has_legacy_projection() &&
-								!(array_bound_expressions != nullptr &&
-									has_unknown_bound_array)) {
+							// A named projectable pointer/array declarator keeps the
+							// legacy flat projection (unmigrated consumers still read
+							// it), while an abstract type-id group uses the ordered
+							// spine so the sequential type-id entries do not need the
+							// flat fallback.
+							if (!identifier.value().empty() &&
+								structural_type.ordered_declarator_has_legacy_projection() &&
+								!(array_bound_expressions != nullptr && has_unknown_bound_array)) {
 								failed = true;
 								break;
 							}
