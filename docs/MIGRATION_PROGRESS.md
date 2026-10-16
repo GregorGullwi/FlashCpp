@@ -185,39 +185,25 @@ Continue boundary 3A in this order.
    return sub-spine and emits a `FunctionDeclarationNode` with the entity's parameter
    list, so `int (* (*make(int))(int))(int) { ... }` parses and lowers as a function
    (the regression is `tests/test_nested_callable_function_definition_ret0.cpp`).
-   Remaining, in order:
-   - **Delete the structural candidate probe.** `tryStructuralPointerArrayDeclarator`'s
-     `(*`/suffix candidate scan still decides between the frame-stack grammar and the
-     flat function-pointer path inside `parse_declarator`. Forcing it to `true` now
-     parses the function-definition shape above, but any function whose return type is
-     itself callable then takes the ordered spine and diverges downstream. Two
-     diagnoses from a stacked attempt:
-      1. Template instantiation fails `__is_same` for
-         `test_template_nested_callable_signature_ret0.cpp` and
-         `test_canonical_dependent_nested_callable_overload_ret0.cpp`. Admitting an
-         ordered callable spine in `materializeSubstitutedFunctionTypeMetadata` and
-         carrying the original ordered components onto the substituted return type (the
-         reparse path only rebuilds the base) closes the first test and the
-         namespace-scope `choose(&make_factory<int>)` assertion, leaving the whole corpus
-         with exactly one failure. That failure is now narrowed to a reproduction
-         (`using IntFactory = int(*(*)(int))(int); template<class T> T (*mf(int))(int);
-         int main() { IntFactory p = &mf<int>; }`): the specialization node is
-         `materialized=true, has_body=true` when the function address is lowered, but no
-         definition is emitted, so `_Z...mf...` stays `UND`. With the flat return it is
-         emitted. The ordered return therefore breaks wherever address-of a function
-         template specialization registers the specialization for emission (the
-         instantiation trigger), not the type itself.
-      2. Flattening the single-callable sub-spine `[Pointer..., Function]` to the flat
-         `FunctionPointer` encoding fixes the identity tests but breaks
-         `test_nested_callable_call_ret0.cpp`: the inner call's materialized callee type
-         keeps `is_function_pointer()` but loses `has_function_signature()`, so the
-         outer indirect call is emitted without a return size
-         (`IndirectCallOp is missing its return storage size`).
-     The probe can go only once the ordered spine's canonical import/materialization
-     preserves the callable signature for a function whose return is itself callable,
-     the substitution path rebuilds that return's function suffix, and address-of a
-     function template specialization with such a return registers the specialization
-     for emission (its instantiation trigger).
+   The structural candidate probe is **deleted**: the frame-stack grammar owns every
+   parenthesized group and the flat function-pointer path stays only as a fail-closed
+   fallback. Three supporting fixes make a function whose return type is itself callable
+   work end to end:
+   - `materializeSubstitutedFunctionTypeMetadata` admits an ordered callable spine and
+     carries its components onto the substituted return type, so
+     `test_template_nested_callable_signature_ret0.cpp` passes.
+   - The bound-template instantiation reparse keeps the substituted base index for an
+     ordered return instead of overwriting it with the pattern's dependent index, which
+     had left `functionHasUnresolvedPlaceholderSignature` true and suppressed emission
+     of the specialization (`_Z...mf...` stayed `UND`), so
+     `test_canonical_dependent_nested_callable_overload_ret0.cpp` passes.
+   The whole corpus, migration counters, canonical mutation harness, and doctest suite
+   are green with the probe gone.
+   Remaining:
+   - **Delete the flat `(` fallback too.** `parse_declarator` still falls back to the
+     legacy flat function-pointer path when the frame-stack grammar declines; it should
+     go once the grammar owns the remaining shapes (`(name)` MSVC, member pointers)
+     unaided.
    - **Deep nested callable call and struct-returning nested callable.** Calling three
      levels deep (`make(0)(1)(40)`) and calling through a nested callable that returns
      a struct still fail in sema/indirect-call lowering, and using a nested-callable
@@ -227,16 +213,15 @@ Continue boundary 3A in this order.
    Agent continuation prompt: "Continue the C++20 declarator consolidation on branch
    `boundary-3a-declarator-grammar-owned` (or a branch stacked on it). The declarator
    shapes, nested callable return, nested callable call, the single `parse_declarator`
-   dispatch in `parse_type_and_name`, and function definitions returning a nested
-   callable are landed. Next make the ordered spine's canonical import reproduce the
-   flat function-pointer return's identity for a callable whose return is itself
-   callable; then `test_template_nested_callable_signature_ret0.cpp` and
-   `test_canonical_dependent_nested_callable_overload_ret0.cpp` should pass with
-   `tryStructuralPointerArrayDeclarator`'s candidate probe deleted. Do not re-introduce
-   a heuristic spine when a downstream assumption breaks; fix the downstream layer
-   under the grammar. Validate with a full sharded rebuild,
-   `tests/run_all_tests.sh`, `tests/run_migration_counters.sh`, the canonical-type
-   mutation harness, and `make test`, and keep
+   dispatch in `parse_type_and_name`, function definitions returning a nested callable,
+   and the deletion of `tryStructuralPointerArrayDeclarator`'s candidate probe are
+   landed. Next delete the flat `(` fallback in `parse_declarator` so the frame-stack
+   grammar owns every parenthesized group unaided, then take the deeper sema items
+   (three-deep callable calls, struct-returning nested callable calls,
+   `sizeof(make(0))`). Do not re-introduce a heuristic spine when a downstream
+   assumption breaks; fix the downstream layer under the grammar. Validate with a full
+   sharded rebuild, `tests/run_all_tests.sh`, `tests/run_migration_counters.sh`, the
+   canonical-type mutation harness, and `make test`, and keep
    `test_ordered_function_to_pointer_decay_ret42.cpp` green."
 
 1. **Make `TypeId` the conversion currency.** Continue migrating parser-side
