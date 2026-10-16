@@ -179,29 +179,40 @@ Continue boundary 3A in this order.
    tries reference-to-array, reference-to-function, then `parse_declarator`, leaving
    the MSVC `(name)` extension to the identifier path. Net change is about 300 removed
    lines in `Parser_Decl_DeclaratorCore.cpp`.
+   A function *definition* whose return type is a function pointer or a nested callable
+   is handled on branch `boundary-3a-declarator-grammar-owned`: when the outermost
+   `Function` component is the entity itself, the multi-function spine builds the
+   return sub-spine and emits a `FunctionDeclarationNode` with the entity's parameter
+   list, so `int (* (*make(int))(int))(int) { ... }` parses and lowers as a function
+   (the regression is `tests/test_nested_callable_function_definition_ret0.cpp`).
    Remaining, in order:
    - **Delete the structural candidate probe.** `tryStructuralPointerArrayDeclarator`'s
      `(*`/suffix candidate scan still decides between the frame-stack grammar and the
-     flat function-pointer path inside `parse_declarator`. Setting it to `true`
-     unconditionally broke a function *definition* that returns a function pointer
-     (`int (*select(int which))(int) { ... }`), whose declarator the frame parser
-     consumes as a return-type function instead of the entity's parameter list, so the
-     grammar must learn that shape before the probe can go.
-   - **Function *definition* with a deep nested callable return.** A function whose
-     return type is a three-deep nested callable
-     (`int (* (*make())())(int) { ... }`) is not yet routed through the ordered
-     declarator (the declaration spelling works). A struct-returning nested callable
-     call (`Payload (*p)(int)` result called again) also fails in indirect-call
-     lowering. Neither is required by the `int (*(*p)())();` reproduction.
+     flat function-pointer path inside `parse_declarator`. Forcing it to `true` now
+     parses the function-definition shape above, but it changes the representation of
+     nested callables that existing identity tests pin: `test_template_nested_callable
+     _signature_ret0.cpp` and `test_canonical_dependent_nested_callable_overload_ret0
+     .cpp` start failing their `__is_same` assertions, because the ordered spine's
+     canonical import does not yet reproduce the flat function-pointer return's
+     identity. The probe can go only once the ordered import publishes the same
+     canonical identity for a callable whose return is itself callable.
+   - **Deep nested callable call and struct-returning nested callable.** Calling three
+     levels deep (`make(0)(1)(40)`) and calling through a nested callable that returns
+     a struct still fail in sema/indirect-call lowering, and using a nested-callable
+     function's result (`sizeof(make(0))`) still fails semantic materialization.
+     Neither is required by the `int (*(*p)())();` reproduction.
 
    Agent continuation prompt: "Continue the C++20 declarator consolidation on branch
-   `boundary-3a-declarator-single-parse` (or a branch stacked on it). The declarator
-   shapes, nested callable return, nested callable call, and the single
-   `parse_declarator` dispatch in `parse_type_and_name` are landed. Next delete
-   `tryStructuralPointerArrayDeclarator`'s candidate probe so the frame-stack grammar
-   owns every parenthesized group with the flat path only as a fail-closed fallback.
-   Do not re-introduce a heuristic spine when a downstream assumption breaks; fix the
-   downstream layer under the grammar. Validate with a full sharded rebuild,
+   `boundary-3a-declarator-grammar-owned` (or a branch stacked on it). The declarator
+   shapes, nested callable return, nested callable call, the single `parse_declarator`
+   dispatch in `parse_type_and_name`, and function definitions returning a nested
+   callable are landed. Next make the ordered spine's canonical import reproduce the
+   flat function-pointer return's identity for a callable whose return is itself
+   callable; then `test_template_nested_callable_signature_ret0.cpp` and
+   `test_canonical_dependent_nested_callable_overload_ret0.cpp` should pass with
+   `tryStructuralPointerArrayDeclarator`'s candidate probe deleted. Do not re-introduce
+   a heuristic spine when a downstream assumption breaks; fix the downstream layer
+   under the grammar. Validate with a full sharded rebuild,
    `tests/run_all_tests.sh`, `tests/run_migration_counters.sh`, the canonical-type
    mutation harness, and `make test`, and keep
    `test_ordered_function_to_pointer_decay_ret42.cpp` green."
