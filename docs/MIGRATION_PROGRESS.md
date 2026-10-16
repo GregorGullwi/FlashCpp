@@ -6,7 +6,7 @@ authoritative for the design, boundaries, and exit criteria. This file records
 the current boundary state, the remaining work, and the validation contract;
 completed implementation history belongs in git.
 
-Last updated: 2026-10-15.
+Last updated: 2026-10-16.
 
 ## Current state
 
@@ -220,6 +220,19 @@ Continue boundary 3A in this order.
    its dimensions after class-template substitution and the subscript uses the row
    stride; and the grammar reports the [dcl.array]/1 `Expected ']' after array size`
    diagnostic with its opening-bracket note for a malformed bound like `[3 4]`.
+   A function whose return type is a function pointer (`int (*get())(int)`) no
+   longer truncates its return value. The sema cast annotation for `return
+   plus1;` is a `FunctionToPointer` decay whose target descriptor's category is
+   the ordered spine's base (`int`), so the return lowering ran
+   `generateTypeConversion` to `int` and emitted `trunc function_pointer64 to
+   int32`. The address only survived because the default corpus links `no-pie`
+   with low addresses; PIE and the MSVC target crashed dereferencing the
+   truncated pointer (0xC0000005). Since [conv.func] decay yields a
+   pointer-sized value, a `FunctionToPointer` conversion now keeps the function
+   pointer representation instead of narrowing to the annotated base category.
+   The regression is the existing `tests/test_function_returning_funcptr_direct_ret0.cpp`,
+   its `_invoke` variant, and the struct/template member `_invoke` variants, which
+   crash on the MSVC target and now pass under a `--pie` corpus run.
    Remaining:
    - **Deep nested callable call and struct-returning nested callable.** Calling three
      levels deep (`make(0)(1)(40)`) and calling through a nested callable that returns
@@ -235,8 +248,9 @@ Continue boundary 3A in this order.
    a nested callable, the deletion of `tryStructuralPointerArrayDeclarator`'s candidate
    probe, the ordered spine for every projectable declarator (with the [dcl.decl]/5
    abstract-declarator and [dcl.ref]/5 pointer-to-reference checks), a qualified
-   declarator-id in the grammar, and the **deletion of the flat `(` fallback** are
-   landed. The parser is now grammar-faithful: the frame-stack grammar owns every
+   declarator-id in the grammar, the **deletion of the flat `(` fallback**, and a
+   function-returning-function-pointer return decay that no longer narrows to the
+   ordered base category are landed. The parser is now grammar-faithful: the frame-stack grammar owns every
    parenthesized declarator. Remaining are the deeper sema items (three-deep callable
    calls, struct-returning nested callable calls, `sizeof(make(0))`) and the wider 3A
    migration (flat-field consumers). Do not re-introduce a heuristic spine when a
