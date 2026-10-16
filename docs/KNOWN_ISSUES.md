@@ -241,12 +241,16 @@ is typed by rebuilding the function-pointer return from that structured
 `parse_type_and_name` no longer re-checks `(` after each modifier group: a single
 parenthesized-declarator handler after every cv/pointer/reference modifier tries
 reference-to-array, reference-to-function, then `parse_declarator`, so the
-recursive grammar owns the interleavings. Still open: a function *definition*
-whose return type is a three-deep nested callable is not routed through the
-ordered declarator (the declaration spelling works), a struct-returning nested
-callable call fails in indirect-call lowering, and
-`tryStructuralPointerArrayDeclarator`'s candidate probe still selects between the
-frame-stack grammar and the flat function-pointer path.
+recursive grammar owns the interleavings, and a function *definition* whose
+return type is a function pointer or nested callable now emits a function
+declaration from the ordered spine. Still open: deleting
+`tryStructuralPointerArrayDeclarator`'s candidate probe changes the representation
+of nested callables that `test_template_nested_callable_signature_ret0.cpp` and
+`test_canonical_dependent_nested_callable_overload_ret0.cpp` pin, because the
+ordered spine's canonical import does not yet reproduce the flat function-pointer
+return's identity; three-deep callable calls, struct-returning nested callable
+calls, and materializing a nested-callable function's result (`sizeof(make(0))`)
+also remain unsupported.
 
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 

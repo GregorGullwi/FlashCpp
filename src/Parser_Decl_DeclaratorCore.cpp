@@ -1533,9 +1533,10 @@ ParseResult Parser::parse_declarator(
 								// Function component per callable. Build from the innermost
 								// callable outward so each inner signature is available as the
 								// return FunctionType's `callable_signature` when the enclosing
-								// signature is formed.
-								size_t function_cursor = 0;
-								auto build_sub_spine = [&](auto&& self, size_t start) -> TypeSpecifierNode {
+								// signature is formed. The explicit cursor keeps a
+								// function-definition build (return type only) independent of
+								// the full-type build.
+								auto build_sub_spine = [&](auto&& self, size_t start, size_t cursor) -> TypeSpecifierNode {
 									const size_t end = completed.size();
 									TypeSpecifierNode node = base_type;
 									node.clear_declarator_shape();
@@ -1552,8 +1553,8 @@ ParseResult Parser::parse_declarator(
 									if (!first_function.has_value()) {
 										return node;
 									}
-									TypeSpecifierNode return_type = self(self, *first_function + 1);
-									const OrderedFunctionParams& function = completed_functions[function_cursor++];
+									TypeSpecifierNode return_type = self(self, *first_function + 1, cursor + 1);
+									const OrderedFunctionParams& function = completed_functions[cursor];
 									FunctionSignature signature;
 									signature.setReturnType(makeFunctionType(return_type));
 									std::vector<FunctionType> parameter_types;
@@ -1578,7 +1579,33 @@ ParseResult Parser::parse_declarator(
 									node.set_function_signature(signature);
 									return node;
 								};
-								TypeSpecifierNode structural_type = build_sub_spine(build_sub_spine, 0);
+								std::optional<size_t> outermost_function;
+								for (size_t index = 0; index < completed.size(); ++index) {
+									if (completed[index].kind == DeclaratorComponentKind::Function) {
+										outermost_function = index;
+										break;
+									}
+								}
+								const bool declares_nested_callable_function =
+									outermost_function == 0 && !identifier.value().empty();
+								if (declares_nested_callable_function) {
+									// The entity is the outermost callable: a function definition
+									// returning a (possibly nested) callable, such as
+									// `int (*select(int which))(int) { ... }`.
+									TypeSpecifierNode outer_type = build_sub_spine(build_sub_spine, 0, 0);
+									TypeSpecifierNode return_type = build_sub_spine(build_sub_spine, 1, 1);
+									ASTNode decl_node = emplace_node<DeclarationNode>(emplace_node<TypeSpecifierNode>(return_type), identifier);
+									auto func_decl_node = emplace_node<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
+									FunctionDeclarationNode& func_ref = func_decl_node.as<FunctionDeclarationNode>();
+									for (const ASTNode& parameter : completed_functions.front().parameters.parameters) {
+										func_ref.add_parameter_node(parameter);
+									}
+									func_ref.set_is_variadic(completed_functions.front().parameters.is_variadic);
+									func_ref.set_noexcept(outer_type.function_signature().is_noexcept);
+									discard_saved_token(structural_start);
+									return ParseResult::success(func_decl_node);
+								}
+								TypeSpecifierNode structural_type = build_sub_spine(build_sub_spine, 0, 0);
 								if (identifier.value().empty()) {
 									base_type = structural_type;
 								}
