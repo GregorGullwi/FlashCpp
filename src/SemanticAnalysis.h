@@ -496,6 +496,7 @@ private:
 	// Handles: NumericLiteralNode, BoolLiteralNode, IdentifierNode (via scope stack).
 	// Returns invalid CanonicalTypeId if inference is not possible.
 	CanonicalTypeId inferExpressionType(const ASTNode& node);
+	CanonicalTypeId inferExpressionResultCallType(const CallExprNode& call);
 	CanonicalTypeId inferResolvedSymbolType(const ASTNode& symbol);
 	CanonicalTypeId inferStaticMemberTypeFromContext(const IdentifierNode& identifier);
 	CanonicalTypeId inferStaticMemberFunctionTypeFromContext(const IdentifierNode& identifier);

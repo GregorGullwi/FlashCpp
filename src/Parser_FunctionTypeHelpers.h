@@ -169,33 +169,23 @@ inline TypeSpecifierNode buildMemberFunctionPointerTypeFromFunctionDeclaration(c
 	return mfp_type;
 }
 
-inline std::optional<TypeSpecifierNode> tryGetReturnTypeFromFunctionType(
-	const TypeSpecifierNode& function_like_type,
-	const Token& source_token) {
-	if (!function_like_type.has_function_signature()) {
-		return std::nullopt;
-	}
-
-	const FunctionSignature& sig = function_like_type.function_signature();
+inline TypeSpecifierNode getReturnTypeFromFunctionSignature(const FunctionSignature& sig, const Token& source_token) {
 	// A return type that is itself callable is stored on the structured return
-	// FunctionType (its inner signature is `callable_signature`). When the flat
-	// return category cannot already denote that callable (it is the pointee
-	// base, not FunctionPointer/MemberFunctionPointer), the flat projections
-	// cannot carry the inner signature, so rebuild the function-pointer return
-	// from the structured component.
+	// FunctionType (its inner signature is `callable_signature`). Preserve an
+	// ordered return verbatim; a projectable callable uses its cold signature
+	// even when the compatibility category already says FunctionPointer.
 	if (sig.hasStructuredTypes()) {
 		const FunctionType& structured_return = sig.return_type();
+		if (!structured_return.ordered_declarator_components.empty()) {
+			TypeSpecifierNode return_type = typeSpecifierFromFunctionType(structured_return);
+			return_type.set_size_in_bits(getTypeSpecSizeBits(return_type));
+			return return_type;
+		}
 		const TypeCategory flat_return_category = sig.returnType();
 		if (structured_return.callable_signature != nullptr &&
-			flat_return_category != TypeCategory::FunctionPointer &&
 			flat_return_category != TypeCategory::MemberFunctionPointer &&
 			flat_return_category != TypeCategory::MemberObjectPointer) {
-			TypeSpecifierNode return_type(
-				TypeCategory::FunctionPointer,
-				TypeQualifier::None,
-				64,
-				source_token,
-				structured_return.cv_qualifier);
+			TypeSpecifierNode return_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, source_token, structured_return.cv_qualifier);
 			return_type.set_function_signature(*structured_return.callable_signature);
 			for (const CVQualifier pointer_cv : structured_return.pointer_qualifiers) {
 				return_type.add_pointer_level(pointer_cv);
@@ -225,24 +215,25 @@ inline std::optional<TypeSpecifierNode> tryGetReturnTypeFromFunctionType(
 			}
 		}
 	}
-	if (!return_size_bits.is_set() &&
-		return_category != TypeCategory::Invalid &&
-		return_category != TypeCategory::Void) {
+	if (!return_size_bits.is_set() && return_category != TypeCategory::Invalid && return_category != TypeCategory::Void) {
 		return_size_bits = SizeInBits{get_type_size_bits(return_category)};
 	}
 
-	TypeSpecifierNode return_type(
-		return_category,
-		TypeQualifier::None,
-		return_size_bits.is_set() ? return_size_bits.value : 0,
-		source_token,
-		CVQualifier::None);
+	TypeSpecifierNode return_type(return_category, TypeQualifier::None, return_size_bits.is_set() ? return_size_bits.value : 0,
+		source_token, CVQualifier::None);
 	if (return_type_index.is_valid()) {
 		return_type.set_type_index(return_type_index);
 	}
 	return_type.set_reference_qualifier(sig.return_reference_qualifier);
 	return_type.add_pointer_levels(sig.return_pointer_depth);
 	return return_type;
+}
+
+inline std::optional<TypeSpecifierNode> tryGetReturnTypeFromFunctionType(const TypeSpecifierNode& function_like_type, const Token& source_token) {
+	if (!function_like_type.has_function_signature()) {
+		return std::nullopt;
+	}
+	return getReturnTypeFromFunctionSignature(function_like_type.function_signature(), source_token);
 }
 
 inline std::optional<TypeSpecifierNode> tryMaterializeTypeFromOuterTemplateBindings(

@@ -233,16 +233,17 @@ Continue boundary 3A in this order.
    The regression is the existing `tests/test_function_returning_funcptr_direct_ret0.cpp`,
    its `_invoke` variant, and the struct/template member `_invoke` variants, which
    crash on the MSVC target and now pass under a `--pie` corpus run.
-   Remaining:
-   - **Deep nested callable call and struct-returning nested callable.** Calling three
-     levels deep (`make(0)(1)(40)`) and calling through a nested callable that returns
-     a struct still fail in sema/indirect-call lowering, and using a nested-callable
-     function's result (`sizeof(make(0))`) still fails semantic materialization.
-     Neither is required by the `int (*(*p)())();` reproduction.
+   Nested callable expression consumers now preserve the grammar's shape:
+   canonical export walks every Function component, sema derives calls through
+   expression results from receiver signatures with an explicit worklist, and indirect-call lowering
+   shares structured return reconstruction with parser-facing type queries. A
+   record base category no longer misclassifies an ordered callable as a record
+   object. Regressions cover three-deep integer and floating-point calls, small
+   and large record returns, and `sizeof` of nested callable results. The wider
+   3A migration of flat-field consumers remains open; no exit criterion is closed.
 
-   Agent continuation prompt: "Continue the C++20 declarator consolidation on branch
-   `boundary-3a-ordered-pointer-to-array`, stacked on
-   `boundary-3a-declarator-qualified-id` -> `boundary-3a-declarator-grammar-owned`.
+   Agent continuation prompt: "Continue the C++20 declarator consolidation from main;
+   the previous declarator branches have merged.
    The declarator shapes, nested callable return, nested callable call, the single
    `parse_declarator` dispatch in `parse_type_and_name`, function definitions returning
    a nested callable, the deletion of `tryStructuralPointerArrayDeclarator`'s candidate
@@ -251,9 +252,9 @@ Continue boundary 3A in this order.
    declarator-id in the grammar, the **deletion of the flat `(` fallback**, and a
    function-returning-function-pointer return decay that no longer narrows to the
    ordered base category are landed. The parser is now grammar-faithful: the frame-stack grammar owns every
-   parenthesized declarator. Remaining are the deeper sema items (three-deep callable
-   calls, struct-returning nested callable calls, `sizeof(make(0))`) and the wider 3A
-   migration (flat-field consumers). Do not re-introduce a heuristic spine when a
+   parenthesized declarator. Three-deep callable calls, struct-returning nested
+   callable calls, and `sizeof(make(0))` now use the retained structured signatures.
+   Remaining is the wider 3A migration (flat-field consumers). Do not re-introduce a heuristic spine when a
    downstream assumption breaks; fix the downstream layer under the grammar. Validate
    with a full sharded rebuild, `tests/run_all_tests.sh`,
    `tests/run_migration_counters.sh`, the canonical-type mutation harness, and
@@ -706,6 +707,20 @@ The recorded Clang stack-usage probe measured `parse_declarator` at 5,160 bytes
 versus 5,000 bytes on `origin/main`; repeat the comparison when changing
 recursive parser paths. The latest canonical architecture probe reports
 `TypeSpecifierNode` at 600 bytes.
+
+The nested-callable continuation compared standalone clang-cl debug frames with
+`9d2491b8`: the call-result inference visitor remains 1,896 bytes and its enclosing
+`inferExpressionType` remains 760 bytes. The new receiver-chain worklist helper
+is 888 bytes; its native frame does not grow with the number of callable results.
+The largest changed lowering helper is `buildFunctionSignatureReturnType` at
+1,224 versus 1,288 bytes; return-index reconstruction is 936 versus 376 bytes.
+The unchanged enclosing member-call lowering frame is 44,664 bytes. A 16-level
+callable-chain regression exercises the retained signatures. Existing expression
+normalization and lowering still recurse, so these measurements do not establish
+bounded native stack usage for the entire compiler or logical template depth.
+The chain passes with the shipping stack reserve unchanged; a separate 1 MB
+reduced-stack executable overflows in the existing primary-expression parser
+before reaching sema (recorded in `KNOWN_ISSUES.md`).
 
 The constructor/reference continuation compared Clang 20 debug frames against
 `e590ccc7`: constructor lowering is 27,384 versus 27,192 bytes, function-call

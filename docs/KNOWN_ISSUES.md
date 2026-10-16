@@ -10,6 +10,16 @@ assertion that a forward enum has no published layout). These need a separate
 audit of the ordered callable fixture and opaque-enum publication contract.
 Passing focused canonical tests does not make the full native suite green.
 
+## Expression parsing can overflow a 1 MB native stack before callable sema
+
+The 16-level `test_deep_callable_chain_ret0.cpp` passes with the shipping Windows
+compiler's existing stack reserve. A copy of that executable with its reserve
+reduced to 1 MB overflows in `parse_primary_expression`, reached through
+`parse_function_arguments`, before semantic analysis. The callable-result type
+inference worklist adds no native recursion for the receiver chain, but does not
+resolve these existing parser frames or recursive expression normalization and
+lowering. No stack reserve was increased for this regression.
+
 ## Bare qualified static function designators can be misparsed in parenthesized initialization
 
 For `struct Source { static int answer(); };`, an initialization such as
@@ -251,11 +261,12 @@ and substituted signature, so a callable whose return is itself callable keeps o
 canonical identity across parse and substitution. Every projectable declarator now
 uses the ordered spine, with [dcl.decl]/5 (an abstract-declarator has no
 declarator-id) and [dcl.ref]/5 (no pointer/array of references) checked in the
-grammar. Still open: the flat `(` fallback handles a qualified declarator-id inside
-a parenthesized group and a function returning a pointer to array with a
-reference-to-array parameter; three-deep callable calls, struct-returning nested
-callable calls, and materializing a nested-callable function's result
-(`sizeof(make(0))`) also remain unsupported.
+grammar. The flat `(` fallback is deleted: qualified declarator-ids and dependent
+pointer-to-array returns use the frame-stack grammar. Three-deep callable calls,
+small and large record returns through nested callables, and materializing a
+nested-callable result (`sizeof(make(0))`) now preserve the structured signatures
+through canonical export, semantic call-result typing, and indirect-call lowering.
+The wider migration of flat-field consumers remains open.
 
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 
