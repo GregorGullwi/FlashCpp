@@ -182,9 +182,11 @@ Continue boundary 3A in this order.
    Remaining, in order:
    - **Delete the structural candidate probe.** `tryStructuralPointerArrayDeclarator`'s
      `(*`/suffix candidate scan still decides between the frame-stack grammar and the
-     flat function-pointer path inside `parse_declarator`; it should not be needed once
-     the grammar owns every parenthesized group (the flat path stays only as the
-     fail-closed fallback).
+     flat function-pointer path inside `parse_declarator`. Setting it to `true`
+     unconditionally broke a function *definition* that returns a function pointer
+     (`int (*select(int which))(int) { ... }`), whose declarator the frame parser
+     consumes as a return-type function instead of the entity's parameter list, so the
+     grammar must learn that shape before the probe can go.
    - **Function *definition* with a deep nested callable return.** A function whose
      return type is a three-deep nested callable
      (`int (* (*make())())(int) { ... }`) is not yet routed through the ordered
