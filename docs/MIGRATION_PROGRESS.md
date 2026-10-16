@@ -199,15 +199,19 @@ Continue boundary 3A in this order.
      `test_canonical_dependent_nested_callable_overload_ret0.cpp` passes.
    The whole corpus, migration counters, canonical mutation harness, and doctest suite
    are green with the probe gone.
+   Abstract parenthesized type-ids now use the ordered spine: a named projectable
+   pointer/array declarator still keeps the legacy flat projection, but an abstract
+   type-id group (for example the parameter in `int(*(*)[3])[4]`) returns the spine,
+   so the type-id entry points do not fall through to the flat path.
    Remaining:
    - **Delete the flat `(` fallback too.** `parse_declarator` still falls back to the
-     legacy flat function-pointer path when the frame-stack grammar declines, and it is
-     still load-bearing: deleting it breaks abstract parenthesized type-ids in
-     `sizeof`, `static_cast`, `decltype`, function parameters, and alias-template
-     targets (`int (*)[3]`, `int (*)(int)`, `T (*)[N]`), because
-     `consume_type_id_abstract_declarators`/`consume_cast_type_id_paren_declarator` and
-     the alias-target probe reach the flat path rather than a named declarator. Making
-     the frame-stack grammar own those abstract type-ids is the next slice.
+     legacy flat function-pointer path when the frame-stack grammar declines. The
+     remaining blocker is a *named* projectable pointer/array declarator
+     (`int (*p)[3]`, `int *p[3]`): returning the ordered spine for those instead of the
+     flat projection regressed `test_interleaved_pointer_array_argument_ret42.cpp` and
+     `test_template_ool_member_template_dependent_member_template_type_param_forward_deref_ret0.cpp`
+     at runtime, so those two mismatches must be fixed before the guard and the flat
+     fallback can go.
    - **Deep nested callable call and struct-returning nested callable.** Calling three
      levels deep (`make(0)(1)(40)`) and calling through a nested callable that returns
      a struct still fail in sema/indirect-call lowering, and using a nested-callable
