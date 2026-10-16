@@ -207,18 +207,24 @@ Continue boundary 3A in this order.
    is left to the expression interpretation; and [dcl.ref]/5 rejects a pointer or array
    formed over a reference base (`using R = int&; sizeof(R(*))`), which the flat path
    checked and the ordered path did not.
+   On branch `boundary-3a-declarator-qualified-id` the grammar also consumes a
+   qualified declarator-id (`int (*Registry::table)[2][4]`, [dcl.decl]/5), recording
+   the owner on the declaration like the flat path did.
    Remaining:
    - **Delete the flat `(` fallback too.** `parse_declarator` still falls back to the
-     legacy flat function-pointer path when the frame-stack grammar declines. Three
-     shapes still reach it: a qualified declarator-id inside a parenthesized pointer
-     group (`int (*Registry::table)[2][4]`), a function returning a pointer to array
-     with a reference-to-array parameter
-     (`char (*__countof_helper(T (&a)[N]))[_SizeOfArray]`), and their member/template
-     variants (a `COMPILER_INTERNAL` in `test_template_ptr_to_array_member_subscript_ret0.cpp`
-     plus a negative-diagnostic contract in
-     `type_trait_abstract_declarator_array_bound_e1003_e1051.cpp`). Making the frame
-     grammar parse a qualified declarator-id and that pointer-to-array return shape is
-     the next slice.
+     legacy flat function-pointer path when the frame-stack grammar declines. The
+     remaining shapes are a function returning a pointer to array with a dependent
+     reference-to-array parameter (`char (*__countof_helper(T (&a)[N]))[_SizeOfArray]`)
+     and its member/template variants. The blocker is not parsing: relaxing the
+     grammar's dependent-array-bound guard so it accepts these makes the grammar own
+     them, but the ordered dependent pointer-to-array then lowers incorrectly — the
+     subscript computes each index at the element stride instead of the row stride, so
+     `test_template_ptr_to_array_member_subscript_ret0.cpp` (`T (*cells)[Rows][Columns]`
+     in a class template) crashes at runtime. Fix the ordered dependent pointer-to-array
+     subscript (substitute/lower the array dimensions, [dcl.array]/1) and the
+     `[3 4]` malformed-bound diagnostic contract
+     (`type_trait_abstract_declarator_array_bound_e1003_e1051.cpp`) before removing the
+     flat fallback.
    - **Deep nested callable call and struct-returning nested callable.** Calling three
      levels deep (`make(0)(1)(40)`) and calling through a nested callable that returns
      a struct still fail in sema/indirect-call lowering, and using a nested-callable
@@ -226,16 +232,17 @@ Continue boundary 3A in this order.
      Neither is required by the `int (*(*p)())();` reproduction.
 
    Agent continuation prompt: "Continue the C++20 declarator consolidation on branch
-   `boundary-3a-declarator-grammar-owned` (or a branch stacked on it). The declarator
-   shapes, nested callable return, nested callable call, the single `parse_declarator`
-   dispatch in `parse_type_and_name`, function definitions returning a nested callable,
-   the deletion of `tryStructuralPointerArrayDeclarator`'s candidate probe, and the
-   ordered spine for every projectable declarator (with the [dcl.decl]/5
-   abstract-declarator and [dcl.ref]/5 pointer-to-reference checks) are landed. Next
-   teach the frame grammar a qualified declarator-id inside a parenthesized group
-   (`int (*Registry::table)[2][4]`) and a function returning a pointer to array with a
-   reference-to-array parameter (`countof_test.cpp`) so the flat `(` fallback can be
-   deleted, then take the deeper sema items (three-deep callable calls,
+   `boundary-3a-declarator-qualified-id`, stacked on `boundary-3a-declarator-grammar-owned`).
+   The declarator shapes, nested callable return, nested callable call, the single
+   `parse_declarator` dispatch in `parse_type_and_name`, function definitions returning
+   a nested callable, the deletion of `tryStructuralPointerArrayDeclarator`'s candidate
+   probe, the ordered spine for every projectable declarator (with the [dcl.decl]/5
+   abstract-declarator and [dcl.ref]/5 pointer-to-reference checks), and a qualified
+   declarator-id in the grammar are landed. Next make the ordered dependent
+   pointer-to-array subscript lower correctly (substitute the array dimensions so each
+   index uses the row stride, [dcl.array]/1) and restore the `[3 4]` malformed-bound
+   diagnostic; then relax the grammar's dependent-array-bound guard and delete the flat
+   `(` fallback. After that, the deeper sema items (three-deep callable calls,
    struct-returning nested callable calls, `sizeof(make(0))`). Do not re-introduce a
    heuristic spine when a downstream assumption breaks; fix the downstream layer under
    the grammar. Validate with a full sharded rebuild, `tests/run_all_tests.sh`,
