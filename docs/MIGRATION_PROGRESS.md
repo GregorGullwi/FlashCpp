@@ -198,12 +198,15 @@ Continue boundary 3A in this order.
          ordered callable spine in `materializeSubstitutedFunctionTypeMetadata` and
          carrying the original ordered components onto the substituted return type (the
          reparse path only rebuilds the base) closes the first test and the
-         namespace-scope `choose(&make_factory<int>)` assertion, but the second still
-         fails: inside `select_factory<Type>()` the body's `choose(&make_factory<Type>)`
-         never instantiates `make_factory<int>` when its return is the ordered spine, so
-         the emitted object leaves `_Z...make_factory...` undefined and the call return
-         type reaches codegen as `Auto`. Address-of a function template specialization
-         with an ordered callable return must trigger instantiation.
+         namespace-scope `choose(&make_factory<int>)` assertion, leaving the whole corpus
+         with exactly one failure. That failure is now narrowed to a reproduction
+         (`using IntFactory = int(*(*)(int))(int); template<class T> T (*mf(int))(int);
+         int main() { IntFactory p = &mf<int>; }`): the specialization node is
+         `materialized=true, has_body=true` when the function address is lowered, but no
+         definition is emitted, so `_Z...mf...` stays `UND`. With the flat return it is
+         emitted. The ordered return therefore breaks wherever address-of a function
+         template specialization registers the specialization for emission (the
+         instantiation trigger), not the type itself.
       2. Flattening the single-callable sub-spine `[Pointer..., Function]` to the flat
          `FunctionPointer` encoding fixes the identity tests but breaks
          `test_nested_callable_call_ret0.cpp`: the inner call's materialized callee type
@@ -213,8 +216,8 @@ Continue boundary 3A in this order.
      The probe can go only once the ordered spine's canonical import/materialization
      preserves the callable signature for a function whose return is itself callable,
      the substitution path rebuilds that return's function suffix, and address-of a
-     function template specialization with such a return triggers instantiation and
-     the substitution path rebuilds that return's function suffix.
+     function template specialization with such a return registers the specialization
+     for emission (its instantiation trigger).
    - **Deep nested callable call and struct-returning nested callable.** Calling three
      levels deep (`make(0)(1)(40)`) and calling through a nested callable that returns
      a struct still fail in sema/indirect-call lowering, and using a nested-callable
