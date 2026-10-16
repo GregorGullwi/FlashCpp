@@ -192,21 +192,28 @@ Continue boundary 3A in this order.
      parses the function-definition shape above, but any function whose return type is
      itself callable then takes the ordered spine and diverges downstream. Two
      diagnoses from a stacked attempt:
-     1. Template instantiation fails `__is_same` for
-        `test_template_nested_callable_signature_ret0.cpp` and
-        `test_canonical_dependent_nested_callable_overload_ret0.cpp`. The ordered
-        return `T (*)(const T&)` is not substituted identically to the flat function
-        pointer: `materializeSubstitutedFunctionTypeMetadata` early-returns for a spine
-        whose category is the pointee base (not `FunctionPointer`), and admitting it is
-        not enough because the reparse path reconstructs only the base type.
-     2. Flattening the single-callable sub-spine `[Pointer..., Function]` to the flat
-        `FunctionPointer` encoding fixes those two identity tests but breaks
-        `test_nested_callable_call_ret0.cpp`: the inner call's materialized callee type
-        keeps `is_function_pointer()` but loses `has_function_signature()`, so the
-        outer indirect call is emitted without a return size
-        (`IndirectCallOp is missing its return storage size`).
+      1. Template instantiation fails `__is_same` for
+         `test_template_nested_callable_signature_ret0.cpp` and
+         `test_canonical_dependent_nested_callable_overload_ret0.cpp`. Admitting an
+         ordered callable spine in `materializeSubstitutedFunctionTypeMetadata` and
+         carrying the original ordered components onto the substituted return type (the
+         reparse path only rebuilds the base) closes the first test and the
+         namespace-scope `choose(&make_factory<int>)` assertion, but the second still
+         fails: inside `select_factory<Type>()` the body's `choose(&make_factory<Type>)`
+         never instantiates `make_factory<int>` when its return is the ordered spine, so
+         the emitted object leaves `_Z...make_factory...` undefined and the call return
+         type reaches codegen as `Auto`. Address-of a function template specialization
+         with an ordered callable return must trigger instantiation.
+      2. Flattening the single-callable sub-spine `[Pointer..., Function]` to the flat
+         `FunctionPointer` encoding fixes the identity tests but breaks
+         `test_nested_callable_call_ret0.cpp`: the inner call's materialized callee type
+         keeps `is_function_pointer()` but loses `has_function_signature()`, so the
+         outer indirect call is emitted without a return size
+         (`IndirectCallOp is missing its return storage size`).
      The probe can go only once the ordered spine's canonical import/materialization
-     preserves the callable signature for a function whose return is itself callable and
+     preserves the callable signature for a function whose return is itself callable,
+     the substitution path rebuilds that return's function suffix, and address-of a
+     function template specialization with such a return triggers instantiation and
      the substitution path rebuilds that return's function suffix.
    - **Deep nested callable call and struct-returning nested callable.** Calling three
      levels deep (`make(0)(1)(40)`) and calling through a nested callable that returns
