@@ -172,30 +172,37 @@ Continue boundary 3A in this order.
    initializer (`&f` / `int (&r)(int) = g;`) under the mangled symbol through the shared
    `resolveGlobalRelocTarget`. The regression is
    `tests/test_nested_callable_call_ret0.cpp`.
+   The `parse_type_and_name` `(`-re-check dispatch is removed on branch
+   `boundary-3a-declarator-single-parse`: the initial `(` block and the
+   `tryParseOrderedDeclaratorAtOpenParen` re-dispatch are gone, replaced by one
+   parenthesized-declarator handler after every cv/pointer/reference modifier that
+   tries reference-to-array, reference-to-function, then `parse_declarator`, leaving
+   the MSVC `(name)` extension to the identifier path. Net change is about 300 removed
+   lines in `Parser_Decl_DeclaratorCore.cpp`.
    Remaining, in order:
+   - **Delete the structural candidate probe.** `tryStructuralPointerArrayDeclarator`'s
+     `(*`/suffix candidate scan still decides between the frame-stack grammar and the
+     flat function-pointer path inside `parse_declarator`; it should not be needed once
+     the grammar owns every parenthesized group (the flat path stays only as the
+     fail-closed fallback).
    - **Function *definition* with a deep nested callable return.** A function whose
      return type is a three-deep nested callable
      (`int (* (*make())())(int) { ... }`) is not yet routed through the ordered
      declarator (the declaration spelling works). A struct-returning nested callable
      call (`Payload (*p)(int)` result called again) also fails in indirect-call
      lowering. Neither is required by the `int (*(*p)())();` reproduction.
-   - **Remove the transitional detection.** `tryStructuralPointerArrayDeclarator`'s
-     `(*` probe and the `parse_type_and_name` `(`-re-check dispatch are still present;
-     finish consolidating onto a single `parse_declarator` call after the base type and
-     delete the flat `(` dispatch and the old fallbacks marked with
-     `ordered_declarator_has_legacy_projection`. Keep the corpus, the migration
-     counters, and the two documented native baseline failures green.
 
    Agent continuation prompt: "Continue the C++20 declarator consolidation on branch
-   `boundary-3a-declarator-single-path`. The declarator shapes, nested callable return,
-   and nested callable call are landed. Next remove the transitional `(` re-check
-   dispatch and the `(*` candidate probe so `parse_type_and_name` calls
-   `parse_declarator` once, and route a function definition whose return type is a deep
-   nested callable through the ordered declarator. Do not re-introduce a heuristic spine
-   when a downstream assumption breaks; fix the downstream layer under the grammar.
-   Validate with a full sharded rebuild, `tests/run_all_tests.sh`,
-   `tests/run_migration_counters.sh`, the canonical-type mutation harness, and
-   `make test`, and keep `test_ordered_function_to_pointer_decay_ret42.cpp` green."
+   `boundary-3a-declarator-single-parse` (or a branch stacked on it). The declarator
+   shapes, nested callable return, nested callable call, and the single
+   `parse_declarator` dispatch in `parse_type_and_name` are landed. Next delete
+   `tryStructuralPointerArrayDeclarator`'s candidate probe so the frame-stack grammar
+   owns every parenthesized group with the flat path only as a fail-closed fallback.
+   Do not re-introduce a heuristic spine when a downstream assumption breaks; fix the
+   downstream layer under the grammar. Validate with a full sharded rebuild,
+   `tests/run_all_tests.sh`, `tests/run_migration_counters.sh`, the canonical-type
+   mutation harness, and `make test`, and keep
+   `test_ordered_function_to_pointer_decay_ret42.cpp` green."
 
 1. **Make `TypeId` the conversion currency.** Continue migrating parser-side
    overload ranking and remaining syntax-facing callers to the structural

@@ -238,12 +238,15 @@ is typed by rebuilding the function-pointer return from that structured
 `callable_signature`, and a function-address global initializer (`&f`,
 `int (&r)(int) = g;`) is stored under the mangled symbol.
 
-Still open: a function *definition* whose return type is a three-deep nested
-callable is not routed through the ordered declarator (the declaration spelling
-works), a struct-returning nested callable call fails in indirect-call lowering,
-and the transitional `(*` probe in `tryStructuralPointerArrayDeclarator` and the
-flat `(`-re-check dispatch in `parse_type_and_name` remain to be removed once the
-recursive grammar owns every interleaving.
+`parse_type_and_name` no longer re-checks `(` after each modifier group: a single
+parenthesized-declarator handler after every cv/pointer/reference modifier tries
+reference-to-array, reference-to-function, then `parse_declarator`, so the
+recursive grammar owns the interleavings. Still open: a function *definition*
+whose return type is a three-deep nested callable is not routed through the
+ordered declarator (the declaration spelling works), a struct-returning nested
+callable call fails in indirect-call lowering, and
+`tryStructuralPointerArrayDeclarator`'s candidate probe still selects between the
+frame-stack grammar and the flat function-pointer path.
 
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 
