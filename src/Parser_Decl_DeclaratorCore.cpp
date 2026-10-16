@@ -1246,6 +1246,7 @@ ParseResult Parser::parse_declarator(
 				std::optional<FlashCpp::ParsedParameterList> ordered_function_parameters;
 				FlashCpp::MemberQualifiers ordered_function_qualifiers;
 				FlashCpp::FunctionSpecifiers ordered_function_specifiers;
+				CallingConvention ordered_function_calling_convention = CallingConvention::Default;
 
 				while (!frames.empty() && !failed) {
 					DeclaratorFrame &frame = frames.back();
@@ -1311,6 +1312,12 @@ ParseResult Parser::parse_declarator(
 							advance();
 							const CallingConvention group_calling_convention =
 								parse_calling_convention(CallingConvention::Default);
+							// A calling convention written at the head of a parenthesized
+							// declarator belongs to the function-pointer type, e.g.
+							// `void (__vectorcall* p)(...)`, so it must reach the signature.
+							if (group_calling_convention != CallingConvention::Default) {
+								last_calling_convention_ = group_calling_convention;
+							}
 							frames.emplace_back();
 							frames.back().delimited = true;
 							frames.back().calling_convention =
@@ -1404,6 +1411,11 @@ ParseResult Parser::parse_declarator(
 							failed = true;
 							break;
 						}
+						// The parameter list can reset `last_calling_convention_`, so
+						// capture the suffix's calling convention first; a convention
+						// written inside the parenthesized group (`(__vectorcall* p)`)
+						// belongs to this function-pointer type.
+						const CallingConvention suffix_calling_convention = last_calling_convention_;
 						FlashCpp::ParsedParameterList params;
 						ParseResult param_result = parse_parameter_list(params);
 						if (param_result.is_error()) {
@@ -1421,7 +1433,8 @@ ParseResult Parser::parse_declarator(
 						ordered_function_parameters = params;
 						ordered_function_qualifiers = qualifiers;
 						ordered_function_specifiers = specifiers;
-						frame.suffix_functions.push_back(OrderedFunctionParams{std::move(params), qualifiers, specifiers, last_calling_convention_});
+						ordered_function_calling_convention = suffix_calling_convention;
+						frame.suffix_functions.push_back(OrderedFunctionParams{std::move(params), qualifiers, specifiers, suffix_calling_convention});
 						frame.suffixes.push_back(DeclaratorComponent::function());
 					}
 					if (frames.size() == 1 && has_member_pointer && peek() == "("_tok) {
@@ -1716,7 +1729,7 @@ ParseResult Parser::parse_declarator(
 							}
 							signature.setParameterTypes(std::move(parameter_types));
 							signature.linkage = linkage;
-							signature.calling_convention = last_calling_convention_;
+							signature.calling_convention = ordered_function_calling_convention;
 							signature.is_variadic =
 								ordered_function_parameters->is_variadic;
 							apply_parsed_function_type_qualifiers(
