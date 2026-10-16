@@ -1230,6 +1230,9 @@ ParseResult Parser::parse_declarator(
 				bool failed = false;
 				bool has_member_pointer = base_type.has_member_class();
 				bool member_pointer_is_function = false;
+				// Location of the first pointer declarator, for the
+				// pointer-to-reference rejection ([dcl.ref]/5).
+				Token first_pointer_token;
 				CallingConvention member_function_calling_convention =
 					CallingConvention::Default;
 				std::optional<FunctionSignature> member_function_signature;
@@ -1242,6 +1245,9 @@ ParseResult Parser::parse_declarator(
 					if (!frame.after_direct) {
 						while (true) {
 							if (peek() == "*"_tok) {
+								if (first_pointer_token.value().empty()) {
+									first_pointer_token = peek_info();
+								}
 								advance();
 								CVQualifier pointer_cv = parse_cv_qualifiers();
 								skip_noop_gnu_qualifiers();
@@ -1467,6 +1473,28 @@ ParseResult Parser::parse_declarator(
 						if (orderedReferenceComponentIsIllFormed(completed)) {
 							failed = true;
 							break;
+						}
+						// [dcl.ref]/5: no pointer or array of references. A reference
+						// base type is only well-formed as a function return or a
+						// reference declarator, so a pointer/array as the innermost
+						// wrapper over it is ill-formed.
+						if (base_type.is_reference() && !completed.empty()) {
+							const DeclaratorComponentKind innermost = completed.back().kind;
+							if (innermost == DeclaratorComponentKind::Pointer ||
+								innermost == DeclaratorComponentKind::Array ||
+								innermost == DeclaratorComponentKind::UnknownBoundArray) {
+								const Token error_token = first_pointer_token.value().empty()
+									? base_type.token()
+									: first_pointer_token;
+								const std::string message = "Cannot form a pointer to reference type";
+								throw makeStructuredCompileError(
+									context_.diagnostics(),
+									DiagnosticId::PointerToReferenceType,
+									DiagnosticSeverity::Error,
+									lexer_.getSourceLocation(error_token),
+									message,
+									{});
+							}
 						}
 						if (!completed_functions.empty()) {
 							if (orderedFunctionComponentIsIllFormed(completed)) {
@@ -1794,29 +1822,12 @@ ParseResult Parser::parse_declarator(
 								}
 							}
 						} else {
-							const bool has_unknown_bound_array = std::ranges::any_of(
-								completed,
-								[](const DeclaratorComponent& component) {
-									return component.kind ==
-										DeclaratorComponentKind::UnknownBoundArray;
-								});
 							structural_type.set_ordered_declarator(std::move(completed));
 							if (member_function_signature.has_value()) {
 								structural_type.set_type_index(
 									nativeTypeIndex(TypeCategory::MemberFunctionPointer));
 								structural_type.set_size_in_bits(kFunctionPointerSizeBits);
 								structural_type.set_function_signature(*member_function_signature);
-							}
-							// A named projectable pointer/array declarator keeps the
-							// legacy flat projection (unmigrated consumers still read
-							// it), while an abstract type-id group uses the ordered
-							// spine so the sequential type-id entries do not need the
-							// flat fallback.
-							if (!identifier.value().empty() &&
-								structural_type.ordered_declarator_has_legacy_projection() &&
-								!(array_bound_expressions != nullptr && has_unknown_bound_array)) {
-								failed = true;
-								break;
 							}
 						}
 						if (identifier.value().empty()) {

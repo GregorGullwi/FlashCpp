@@ -1809,7 +1809,15 @@ void Parser::consume_type_id_abstract_declarators(
 		}
 		ParseResult declarator_result = parse_declarator(
 			type_spec, Linkage::None, array_bound_expressions);
-		if (!declarator_result.is_error() && declarator_result.node().has_value()) {
+		// An abstract-declarator has no declarator-id (C++20 [dcl.decl]/5), so a
+		// group that parsed a name (for example the `(int_shape)` in a speculative
+		// `sizeof(accepts_int(int_shape))` type-id) is not a type-id and must be
+		// left to the expression interpretation.
+		const bool parsed_abstract_declarator =
+			!declarator_result.is_error() && declarator_result.node().has_value() &&
+			declarator_result.node()->is<DeclarationNode>() &&
+			declarator_result.node()->as<DeclarationNode>().identifier_token().value().empty();
+		if (parsed_abstract_declarator) {
 			discard_saved_token(group_start);
 			return;
 		}
