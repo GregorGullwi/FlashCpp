@@ -199,23 +199,26 @@ Continue boundary 3A in this order.
      `test_canonical_dependent_nested_callable_overload_ret0.cpp` passes.
    The whole corpus, migration counters, canonical mutation harness, and doctest suite
    are green with the probe gone.
-   Abstract parenthesized type-ids now use the ordered spine: a named projectable
-   pointer/array declarator still keeps the legacy flat projection, but an abstract
-   type-id group (for example the parameter in `int(*(*)[3])[4]`) returns the spine,
-   so the type-id entry points do not fall through to the flat path.
+   Every projectable declarator now uses the ordered spine: the representation guard
+   that kept a named projectable pointer/array shape on the flat projection is removed,
+   so named and abstract declarators agree. Two grammar-faithful checks came with it:
+   an abstract-declarator has no declarator-id ([dcl.decl]/5), so a type-id group that
+   parsed a name (the `(int_shape)` in a speculative `sizeof(accepts_int(int_shape))`)
+   is left to the expression interpretation; and [dcl.ref]/5 rejects a pointer or array
+   formed over a reference base (`using R = int&; sizeof(R(*))`), which the flat path
+   checked and the ordered path did not.
    Remaining:
    - **Delete the flat `(` fallback too.** `parse_declarator` still falls back to the
-     legacy flat function-pointer path when the frame-stack grammar declines. The
-     remaining blocker is not a declarator-grammar bug: when the guard is removed,
-     `test_interleaved_pointer_array_argument_ret42.cpp` and
-     `test_template_ool_member_template_dependent_member_template_type_param_forward_deref_ret0.cpp`
-     regress because `sizeof(accepts_int(int_shape))` speculatively parses
-     `accepts_int(int_shape)` as a type-id, and the redundant-group declarator `(int_shape)`
-     assembles an *empty* spine that the guard previously masked by failing over to the
-     flat path. The grammar correctly parses `(int_shape)` as a redundant name group; the
-     fix belongs in the `sizeof`/type-id speculative parse (it must not keep a
-     valid-but-wrong type when the content is really an expression), after which the
-     guard and flat fallback can go.
+     legacy flat function-pointer path when the frame-stack grammar declines. Three
+     shapes still reach it: a qualified declarator-id inside a parenthesized pointer
+     group (`int (*Registry::table)[2][4]`), a function returning a pointer to array
+     with a reference-to-array parameter
+     (`char (*__countof_helper(T (&a)[N]))[_SizeOfArray]`), and their member/template
+     variants (a `COMPILER_INTERNAL` in `test_template_ptr_to_array_member_subscript_ret0.cpp`
+     plus a negative-diagnostic contract in
+     `type_trait_abstract_declarator_array_bound_e1003_e1051.cpp`). Making the frame
+     grammar parse a qualified declarator-id and that pointer-to-array return shape is
+     the next slice.
    - **Deep nested callable call and struct-returning nested callable.** Calling three
      levels deep (`make(0)(1)(40)`) and calling through a nested callable that returns
      a struct still fail in sema/indirect-call lowering, and using a nested-callable
@@ -226,15 +229,18 @@ Continue boundary 3A in this order.
    `boundary-3a-declarator-grammar-owned` (or a branch stacked on it). The declarator
    shapes, nested callable return, nested callable call, the single `parse_declarator`
    dispatch in `parse_type_and_name`, function definitions returning a nested callable,
-   and the deletion of `tryStructuralPointerArrayDeclarator`'s candidate probe are
-   landed. Next delete the flat `(` fallback in `parse_declarator` so the frame-stack
-   grammar owns every parenthesized group unaided, then take the deeper sema items
-   (three-deep callable calls, struct-returning nested callable calls,
-   `sizeof(make(0))`). Do not re-introduce a heuristic spine when a downstream
-   assumption breaks; fix the downstream layer under the grammar. Validate with a full
-   sharded rebuild, `tests/run_all_tests.sh`, `tests/run_migration_counters.sh`, the
-   canonical-type mutation harness, and `make test`, and keep
-   `test_ordered_function_to_pointer_decay_ret42.cpp` green."
+   the deletion of `tryStructuralPointerArrayDeclarator`'s candidate probe, and the
+   ordered spine for every projectable declarator (with the [dcl.decl]/5
+   abstract-declarator and [dcl.ref]/5 pointer-to-reference checks) are landed. Next
+   teach the frame grammar a qualified declarator-id inside a parenthesized group
+   (`int (*Registry::table)[2][4]`) and a function returning a pointer to array with a
+   reference-to-array parameter (`countof_test.cpp`) so the flat `(` fallback can be
+   deleted, then take the deeper sema items (three-deep callable calls,
+   struct-returning nested callable calls, `sizeof(make(0))`). Do not re-introduce a
+   heuristic spine when a downstream assumption breaks; fix the downstream layer under
+   the grammar. Validate with a full sharded rebuild, `tests/run_all_tests.sh`,
+   `tests/run_migration_counters.sh`, the canonical-type mutation harness, and
+   `make test`, and keep `test_ordered_function_to_pointer_decay_ret42.cpp` green."
 
 1. **Make `TypeId` the conversion currency.** Continue migrating parser-side
    overload ranking and remaining syntax-facing callers to the structural
