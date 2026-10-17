@@ -111,20 +111,7 @@ CanonicalAccess canonicalAccess(AccessSpecifier access) {
 }
 
 TypeSpecifierNode makeCanonicalMemberTypeSpec(const StructMember& member) {
-	TypeSpecifierNode type_spec(
-		member.type_index,
-		TypeQualifier::None,
-		SizeInBits{static_cast<int>(member.size * 8)},
-		Token{},
-		CVQualifier::None);
-	type_spec.set_reference_qualifier(member.reference_qualifier);
-	applyMemberDeclaratorShape(type_spec, member);
-	if (member.function_signature.has_value()) {
-		type_spec.set_function_signature(*member.function_signature);
-	}
-	tryBindPublishedTypeEntity(type_spec);
-	tryBindPublishedMemberClassEntity(type_spec);
-	return type_spec;
+	return typeSpecifierFromStructMemberProjection(member);
 }
 
 EntityId resolvePublishedBaseEntity(const BaseClassSpecifier& base) {
@@ -1865,9 +1852,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 							// Add member to the anonymous type
 							StringHandle member_name_handle = member_name_token.handle();
+							const TypeId canonical_member_type_id = importCanonicalStructMemberType(requireFrontendContext().canonicalTypes(), member_type_spec);
 							anon_struct_info->members.push_back(StructMember{
 								member_name_handle,
 								member_type_spec.type_index(),
+								canonical_member_type_id,
 								0, // offset will be calculated below
 								member_size,
 								member_alignment,
@@ -2211,12 +2200,16 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						}
 
 						StringHandle member_name_handle = anon_member_name_token.handle();
+						const TypeId canonical_union_member_type_id = importCanonicalStructMemberType(
+							requireFrontendContext().canonicalTypes(), anon_member_type_spec, is_array,
+							pointee_array_declarator, array_dimensions);
 						struct_ref.add_anonymous_union_member(
 							member_name_handle,
 							anon_member_type_spec.type_index().withCategory(anon_member_type_spec.type()),
 							member_size,
 							member_alignment,
 							bitfield_width,
+							canonical_union_member_type_id,
 							anon_default_initializer,
 							referenced_size_bits,
 							ref_qual,
@@ -3782,6 +3775,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			StructMember& semantic_member = struct_info->members.emplace_back(
 				union_member.member_name,
 				union_member.type_index,
+				union_member.canonical_type_id,
 				aligned_union_start, // Same offset for all union members
 				union_member.member_size,
 				effective_alignment,
@@ -3926,9 +3920,12 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		}
 		// Phase 7B: Intern member name and use StringHandle overload
 		StringHandle member_name_handle = decl.identifier_token().handle();
+		const TypeId canonical_member_type_id = importCanonicalStructMemberType(
+			requireFrontendContext().canonicalTypes(), type_spec, is_array, pointee_array_declarator, array_dimensions);
 		struct_info->addMember(
 			member_name_handle,
 			type_spec.type_index(),
+			canonical_member_type_id,
 			member_size,
 			member_alignment,
 			member_decl.access,
@@ -5320,10 +5317,12 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member(TypeSpecif
 	constexpr size_t pointer_alignment = alignof(void*);
 
 	StringHandle funcptr_name_handle = decl.identifier_token().handle();
+	const TypeId canonical_type_id = importCanonicalStructMemberType(requireFrontendContext().canonicalTypes(), fp_type);
 
 	StructMember member{
 		funcptr_name_handle,
 		nativeTypeIndex(TypeCategory::FunctionPointer), // type_index for function pointers
+		canonical_type_id,
 		0, // offset will be calculated later
 		pointer_size,
 		pointer_alignment,
@@ -5442,9 +5441,14 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 
 				// Add member to the outer anonymous type
 				StringHandle outer_member_name_handle = outer_member_name_token.handle();
+				TypeSpecifierNode nested_member_type(
+					nested_anon_type_info.type_index_, TypeQualifier::None,
+					static_cast<int>(nested_anon_type_info.getStructInfo()->sizeInBits().value), Token{}, CVQualifier::None);
+				const TypeId canonical_nested_member_type_id = importCanonicalStructMemberType(requireFrontendContext().canonicalTypes(), nested_member_type);
 				out_struct_info->members.push_back(StructMember{
 					outer_member_name_handle,
 					nested_anon_type_info.type_index_,
+					canonical_nested_member_type_id,
 					0, // offset will be calculated later
 					nested_type_size,
 					nested_type_alignment,
@@ -5459,7 +5463,6 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 					std::nullopt, // bitfield_width
 					CVQualifier::None
 				});
-
 				// Expect semicolon
 				if (!consume(";"_tok)) {
 					return ParseResult::error("Expected ';' after nested anonymous struct/union member", current_token_);
@@ -5550,9 +5553,14 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 
 		// Add member to the anonymous type
 		StringHandle member_name_handle = member_name_token.handle();
+		const TypeId canonical_member_type_id = importCanonicalStructMemberType(
+			requireFrontendContext().canonicalTypes(), member_type_spec,
+			!resolved_array_dimensions.empty() && !pointee_array_declarator,
+			pointee_array_declarator, resolved_array_dimensions);
 		out_struct_info->members.push_back(StructMember{
 			member_name_handle,
 			member_type_spec.type_index(),
+			canonical_member_type_id,
 			0, // offset will be calculated later
 			member_size,
 			member_alignment,
@@ -5570,7 +5578,6 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 		if (member_type_spec.has_function_signature()) {
 			out_struct_info->members.back().function_signature = member_type_spec.function_signature();
 		}
-
 		// Expect semicolon
 		if (!consume(";"_tok)) {
 			return ParseResult::error("Expected ';' after member in anonymous struct/union", current_token_);

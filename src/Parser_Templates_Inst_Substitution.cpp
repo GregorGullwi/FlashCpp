@@ -6783,9 +6783,12 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				type_spec.array_dimensions().begin(),
 				type_spec.array_dimensions().end());
 		}
+		const TypeId canonical_member_type_id = importCanonicalStructMemberType(
+			requireFrontendContext().canonicalTypes(), type_spec, false, type_spec.has_pointee_array_declarator(), member_pointee_dimensions);
 		struct_info->addMember(
 			member_name_handle,
 			member_type_index,
+			canonical_member_type_id,
 			member_size,
 			member_alignment,
 			member_decl.access,

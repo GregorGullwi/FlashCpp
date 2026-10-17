@@ -1200,6 +1200,37 @@ const FunctionDeclarationNode* getCallTargetFunctionCandidate(const ASTNode& ove
 
 CanonicalTypeDesc canonicalTypeDescFromStructMember(const StructMember& member, CVQualifier object_cv) {
 	CanonicalTypeDesc desc;
+	if (member.canonical_type_id) {
+		const TypeSpecifierNode materialized = typeSpecifierFromStructMemberProjection(member);
+		desc.type_index = materialized.type_index();
+		desc.base_cv = materialized.cv_qualifier();
+		desc.ref_qualifier = materialized.reference_qualifier();
+		for (const PointerLevel& pointer : materialized.pointer_levels()) {
+			desc.pointer_levels.push_back(pointer);
+		}
+		desc.pointee_array_declarator = materialized.has_pointee_array_declarator();
+		if (materialized.is_array() || desc.pointee_array_declarator) {
+			for (const size_t dimension : materialized.array_dimensions()) {
+				desc.array_dimensions.push_back(dimension);
+			}
+		}
+		const CVQualifier receiver_cv = member.reference_qualifier == ReferenceQualifier::None ? object_cv : CVQualifier::None;
+		if (materialized.has_ordered_declarator() && !materialized.ordered_declarator_has_legacy_projection()) {
+			desc.structural_type_id = requireFrontendContext().canonicalTypes().qualify(member.canonical_type_id, receiver_cv);
+		}
+		if (materialized.has_function_signature()) {
+			desc.function_signature = materialized.function_signature();
+			desc.flags = desc.flags | CanonicalTypeFlags::IsFunctionType;
+		}
+		if (!desc.structural_type_id) {
+			if (desc.pointer_levels.empty()) {
+				desc.base_cv |= receiver_cv;
+			} else {
+				desc.pointer_levels.back().cv_qualifier |= receiver_cv;
+			}
+		}
+		return desc;
+	}
 	desc.type_index = member.type_index.withCategory(member.memberType());
 	desc.ref_qualifier = member.reference_qualifier;
 	if (member.pointee_array_declarator) {

@@ -742,9 +742,12 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 						member_type_spec.array_dimensions().begin(),
 						member_type_spec.array_dimensions().end());
 				}
+				const TypeId canonical_member_type_id = importCanonicalStructMemberType(
+					requireFrontendContext().canonicalTypes(), member_type_spec, false, member_pointee_array_declarator, member_pointee_dimensions);
 				struct_info->addMember(
 					member_name_handle,
 					member_type_spec.type_index(),
+					canonical_member_type_id,
 					member_size_in_bits,
 					member_alignment,
 					member_access,
@@ -2036,9 +2039,12 @@ ParseResult Parser::parse_typedef_declaration() {
 					member_type_spec.array_dimensions().begin(),
 					member_type_spec.array_dimensions().end());
 			}
+			const TypeId canonical_member_type_id = importCanonicalStructMemberType(
+				requireFrontendContext().canonicalTypes(), member_type_spec, false, member_pointee_array_declarator, member_pointee_dimensions);
 			struct_info->addMember(
 				member_name_handle,
 				member_type_spec.type_index(),
+				canonical_member_type_id,
 				member_size,
 				member_alignment,
 				member_decl.access,

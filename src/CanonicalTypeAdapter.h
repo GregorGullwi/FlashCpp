@@ -1501,6 +1501,68 @@ inline std::optional<TypeId> tryImportSupportedCanonical(
 	return imported.type;
 }
 
+// Commit declaration identity before storing a TypeId on persistent member metadata.
+inline TypeId importCanonicalStructMemberType(CanonicalTypeTable& table, const TypeSpecifierNode& syntax) {
+	TypeSpecifierNode bound_syntax = syntax;
+	tryBindPublishedTypeEntity(bound_syntax);
+	tryBindPublishedMemberClassEntity(bound_syntax);
+	CanonicalTypeTransaction transaction(table);
+	const std::optional<TypeId> imported = tryImportSupportedCanonical(table, bound_syntax);
+	if (!imported.has_value()) {
+		return {};
+	}
+	transaction.commit();
+	return *imported;
+}
+
+// Declarator bounds may be resolved separately from the source type during layout.
+// Import those extents with the original qualifiers and pointer/array ordering.
+inline TypeId importCanonicalStructMemberType(CanonicalTypeTable& table, const TypeSpecifierNode& syntax, bool is_array,
+	bool pointee_array_declarator, std::span<const size_t> array_dimensions) {
+	TypeSpecifierNode normalized = syntax;
+	if (normalized.has_ordered_declarator()) {
+		if (array_dimensions.empty()) {
+			return importCanonicalStructMemberType(table, normalized);
+		}
+		if (normalized.ordered_declarator_has_legacy_projection()) {
+			normalized.clear_ordered_declarator();
+		} else {
+			std::vector<DeclaratorComponent> components(normalized.declarator_components().begin(), normalized.declarator_components().end());
+			size_t array_count = 0;
+			for (const DeclaratorComponent& component : components) {
+				if (component.kind == DeclaratorComponentKind::Array || component.kind == DeclaratorComponentKind::UnknownBoundArray) {
+					++array_count;
+				}
+			}
+			if (array_count == array_dimensions.size()) {
+				size_t dimension_index = 0;
+				for (DeclaratorComponent& component : components) {
+					if (component.kind == DeclaratorComponentKind::Array || component.kind == DeclaratorComponentKind::UnknownBoundArray) {
+						component.kind = DeclaratorComponentKind::Array;
+						component.payload = array_dimensions[dimension_index++];
+					}
+				}
+				normalized.set_ordered_declarator(std::move(components));
+			}
+		}
+	}
+	if (normalized.has_ordered_declarator()) {
+		return importCanonicalStructMemberType(table, normalized);
+	}
+	if (pointee_array_declarator) {
+		normalized.set_pointee_array_declarator(true);
+		normalized.set_pointee_array_dimensions(array_dimensions);
+	} else if (is_array || (syntax.reference_qualifier() != ReferenceQualifier::None && !array_dimensions.empty())) {
+		if (array_dimensions.empty()) {
+			normalized.set_array(true, std::nullopt);
+			normalized.set_unsized_outer_array_dimension(true);
+		} else {
+			normalized.set_array_dimensions(array_dimensions);
+		}
+	}
+	return importCanonicalStructMemberType(table, normalized);
+}
+
 // Trait operands share the component reshape, so a class recovered from TypeInfo keeps its array bounds.
 // The previous reshape kept only cv, pointers, and a reference.
 inline CanonicalTypeImport importCanonicalTypeWithClassFallback(CanonicalTypeTable& table, const TypeSpecifierNode& syntax) {
@@ -1753,33 +1815,10 @@ inline bool tryPublishCanonicalRecordSubobjectTypes(CanonicalTypeTable& table, T
 	std::vector<TypeId> member_types;
 	member_types.reserve(struct_info.members.size());
 	for (const StructMember& member : struct_info.members) {
-		TypeSpecifierNode syntax(member.type_index, TypeQualifier::None, SizeInBits{static_cast<int>(member.size * 8)}, Token{}, CVQualifier::None);
-		syntax.set_reference_qualifier(member.reference_qualifier);
-		if (member.pointer_depth > 0) {
-			syntax.add_pointer_levels(member.pointer_depth);
-		}
-		if (member.pointee_array_declarator) {
-			syntax.set_pointee_array_declarator(true);
-			if (!member.array_dimensions.empty()) {
-				syntax.set_pointee_array_dimensions(member.array_dimensions);
-			}
-		} else if (member.is_array) {
-			if (!member.array_dimensions.empty()) {
-				syntax.set_array_dimensions(member.array_dimensions);
-			} else {
-				syntax.set_array(true, std::nullopt);
-			}
-		}
-		if (member.function_signature.has_value()) {
-			syntax.set_function_signature(*member.function_signature);
-		}
-		tryBindPublishedTypeEntity(syntax);
-		tryBindPublishedMemberClassEntity(syntax);
-		const std::optional<TypeId> imported = tryImportSupportedCanonical(table, syntax);
-		if (!imported.has_value()) {
+		if (!member.canonical_type_id) {
 			return false;
 		}
-		member_types.push_back(*imported);
+		member_types.push_back(member.canonical_type_id);
 	}
 	table.publishRecordSubobjectTypes(type, member_types);
 	return true;

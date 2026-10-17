@@ -1851,9 +1851,12 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		StringHandle member_name_handle = decl.identifier_token().handle();
 
 		// Add member to nested struct info
+		const TypeId canonical_member_type_id = importCanonicalStructMemberType(
+			requireFrontendContext().canonicalTypes(), substituted_type_spec, false, false, std::span<const size_t>{});
 		nested_struct_info->addMember(
 			member_name_handle,
 			substituted_type_index,
+			canonical_member_type_id,
 			member_size,
 			member_alignment,
 			member_decl.access,

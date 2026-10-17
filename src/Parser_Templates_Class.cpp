@@ -3192,9 +3192,12 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				}
 				// Phase 7B: Intern member name and use StringHandle overload
 				StringHandle member_name_handle = decl.identifier_token().handle();
+				const TypeId canonical_member_type_id = importCanonicalStructMemberType(
+					requireFrontendContext().canonicalTypes(), type_spec, false, member_pointee_array_declarator, member_pointee_dimensions);
 				struct_info_ptr->addMember(
 					member_name_handle,
 					type_spec.type_index(),
+					canonical_member_type_id,
 					member_size,
 					member_alignment,
 					member_decl.access,
@@ -4669,9 +4672,12 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				}
 				// Phase 7B: Intern member name and use StringHandle overload
 				StringHandle member_name_handle = decl.identifier_token().handle();
+				const TypeId canonical_member_type_id = importCanonicalStructMemberType(
+					requireFrontendContext().canonicalTypes(), type_spec, false, member_pointee_array_declarator, member_pointee_dimensions);
 				struct_info->addMember(
 					member_name_handle,
 					type_spec.type_index(),
+					canonical_member_type_id,
 					member_size,
 					member_alignment,
 					member_decl.access,

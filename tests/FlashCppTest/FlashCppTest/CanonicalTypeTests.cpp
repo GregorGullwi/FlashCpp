@@ -218,6 +218,25 @@ TEST_CASE("Published pointer materialization preserves deep declarator identity"
 	CHECK(canonicalTypeWithoutReference(table, imported.type) == expected_type);
 }
 
+TEST_CASE("Struct member TypeId materialization preserves deep pointer qualifiers") {
+	FrontendContext context;
+	TypeSpecifierNode full_type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::Const);
+	for (size_t index = 0; index < 4096; ++index) {
+		full_type.add_pointer_level(static_cast<CVQualifier>(index % 4));
+	}
+	const TypeId member_type = importCanonicalStructMemberType(context.canonicalTypes(), full_type);
+	REQUIRE(member_type);
+	StructMember member(StringHandle{}, nativeTypeIndex(TypeCategory::Int), member_type, 0, 8, 8,
+		AccessSpecifier::Public, std::nullopt, ReferenceQualifier::None, 64, false, {}, false, 4096,
+		std::nullopt, CVQualifier::None);
+	const TypeSpecifierNode projected = typeSpecifierFromStructMemberProjection(member);
+	CHECK(projected.cv_qualifier() == CVQualifier::Const);
+	REQUIRE(projected.pointer_levels().size() == 4096);
+	for (size_t index = 0; index < projected.pointer_levels().size(); ++index) {
+		CHECK(projected.pointer_levels()[index].cv_qualifier == static_cast<CVQualifier>(index % 4));
+	}
+}
+
 TEST_CASE("Canonical identity is independent of interning and string order") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();
@@ -1336,6 +1355,36 @@ TEST_CASE("Canonical TypeIds reject pointee qualification through mutable refere
 	CHECK(const_reference_plan->is_valid);
 	CHECK(const_reference_plan->kind ==
 		StandardConversionKind::QualificationAdjustment);
+}
+
+TEST_CASE("Canonical reference binding preserves cv on non-reference pointer sources") {
+	FrontendContext frontend;
+	TypeSpecifierNode integer_pointer(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	integer_pointer.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::Const),
+	});
+	integer_pointer.set_reference_qualifier(ReferenceQualifier::LValueReference);
+
+	TypeSpecifierNode mutable_pointer_reference(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	mutable_pointer_reference.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+	});
+	mutable_pointer_reference.prepend_ordered_declarator_component(DeclaratorComponent::lvalueReference());
+	const std::optional<ConversionPlan> mutable_plan =
+		tryBuildCanonicalReferenceBindingPlan(integer_pointer, mutable_pointer_reference, false);
+	REQUIRE(mutable_plan.has_value());
+	CHECK_FALSE(mutable_plan->is_valid);
+
+	TypeSpecifierNode const_pointer_reference = mutable_pointer_reference;
+	const_pointer_reference.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::Const),
+	});
+	const_pointer_reference.prepend_ordered_declarator_component(DeclaratorComponent::lvalueReference());
+	const std::optional<ConversionPlan> const_plan =
+		tryBuildCanonicalReferenceBindingPlan(integer_pointer, const_pointer_reference, false);
+	REQUIRE(const_plan.has_value());
+	CHECK(const_plan->is_valid);
+	CHECK(const_plan->rank == ConversionRank::ExactMatch);
 }
 
 TEST_CASE("Canonical TypeIds compare projectable function pointer pairs") {

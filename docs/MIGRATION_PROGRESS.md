@@ -777,3 +777,47 @@ qualification regression passes with a 1 MB stack. Existing nested expression
 lowering still uses native recursion, and these checks do not prove all legacy
 template paths bounded. The full native suite has the same two failures on the
 unchanged baseline; see [known issues](KNOWN_ISSUES.md).
+
+The member-type continuation publishes the complete declared canonical TypeId
+at member construction, including template specializations, anonymous records,
+union members, lambda captures, and synthetic local-array initialization
+metadata. Registration and layout rebuilds take the ID as a required argument;
+there is no follow-up write through `members.back()` to finish type identity.
+Resolved array bounds are imported together with the original declaration's
+pointee and intermediate pointer qualifiers. The shared compatibility
+materializer serves parser queries, semantic analysis, constexpr initialization,
+and member-array address sizing. Redundant constexpr projection wrappers were
+removed. `StructMember` remains 320 bytes on the measured Windows x64 build.
+
+Canonical reference binding now preserves source object qualification when
+expression value category is carried outside the canonical declarator spine.
+This selects `int* const&` for const pointer members and preserves the direct
+binding's address producer, fixing the missing temporary-storage failure without
+adding a lowering fallback. Member-array address generation also consumes the
+full element type, preserving pointer-width strides and the flattened index of
+multidimensional arrays. Regressions cover pointee/intermediate CV, arrays,
+references, inheritance, self/forward declarations, primary and partial/full
+specializations, typedef records, anonymous unions, captures, callable members,
+and mutation through references to nonzero pointer-array elements. An exact
+diagnostic regression rejects binding a const pointer member to `int*&`.
+
+This is still a staged migration. `StructMember::type_index` and the equivalent
+anonymous-union field remain compatibility handles for base category, legacy
+TypeInfo lookup, and layout consumers. Unsupported/dependent canonical imports
+can explicitly retain an empty member ID; canonical record-subobject publication
+then stays unavailable rather than reconstructing an approximate declared type.
+Reverse materialization for specialization/dependent bases and the remaining
+flat consumers must migrate before these handles and redundant shape fields
+can be removed. The [follow-up agent prompt](member-type-migration-followup.md)
+describes that work. The separate narrow nullptr-reference store and inline
+typedef-record function-pointer parser failures remain in `KNOWN_ISSUES.md`.
+
+Clang debug stack-usage comparison against `79df3ff8` reports the largest
+changed recursive frame in `try_instantiate_class_template`: 409,464 bytes
+versus 409,352. The struct parser is 125,608 versus 125,496 bytes, lambda parser
+24,776 versus 23,512, address-expression analysis 2,296 versus 1,432, and array
+subscript lowering 22,952 versus 21,672. The new member materializer is 376
+bytes; member import overloads use 664/936 bytes. Wrapper traversal stays
+iterative, but existing source/template recursion still grows native stack
+usage with logical nesting. These measurements do not establish bounded stack
+usage for the whole compiler. No stack reserve was changed.
