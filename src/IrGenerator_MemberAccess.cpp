@@ -595,6 +595,31 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			TypeCategory element_type = member->memberType();
 			TypeIndex element_type_index = member->type_index;
 			int base_element_size = deriveElementStrideBitsFromType(element_type, element_type_index, static_cast<int>(member->size * 8));
+			PointerDepth element_pointer_depth{};
+			if (member->is_array && member->canonical_type_id) {
+				TypeSpecifierNode element_spec = typeSpecifierFromStructMemberProjection(*member);
+				if (element_spec.has_ordered_declarator()) {
+					while (element_spec.has_ordered_declarator() &&
+						(element_spec.declarator_components().front().kind == DeclaratorComponentKind::Array ||
+							 element_spec.declarator_components().front().kind == DeclaratorComponentKind::UnknownBoundArray)) {
+						if (!element_spec.remove_outermost_ordered_declarator_component()) {
+							throw InternalError("Multidimensional member TypeId lost an array component");
+						}
+					}
+				} else {
+					if (!element_spec.is_array()) {
+						throw InternalError("Multidimensional member TypeId lost its array shape");
+					}
+					element_spec.set_array_dimensions({});
+				}
+				element_type = element_spec.category();
+				element_type_index = element_spec.type_index().withCategory(element_type);
+				base_element_size = queryConcreteAliasResolvedTypeSizeBits(element_spec).size_bits;
+				element_pointer_depth = PointerDepth{static_cast<int>(element_spec.runtime_pointer_depth())};
+				if (base_element_size <= 0) {
+					throw InternalError("Multidimensional member element TypeId has no concrete object size");
+				}
+			}
 
 			// A pointer-to-array member has one extra outer pointer subscript
 			// before the dimensions bound inside the pointer, e.g. p[0][i] for
@@ -665,7 +690,6 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			}
 
 			// Generate single array access with flat index
-			TempVar result_var = var_counter.next();
 			// A local object is named by its numeric id so a shadowed array member
 			// is not read from the outer object of the same spelling. Non-locals
 			// keep the object.member qualified spelling.
@@ -694,6 +718,35 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			// the flattened access indexes inline member storage.
 			const bool member_base_holds_address = member_stores_address || member_multi_dim->object_is_address;
 
+			if (context == ExpressionContext::LValueAddress) {
+				TempVar address_result = var_counter.next();
+				ComputeAddressOp compute_address;
+				compute_address.result = address_result;
+				compute_address.base = base_object;
+				compute_address.base_storage = member_base_holds_address
+					? ValueStorage::ContainsAddress
+					: ValueStorage::ContainsData;
+				ComputeAddressOp::ArrayIndex array_index;
+				array_index.index = flat_index;
+				array_index.element_size_bits = SizeInBits{base_element_size};
+				array_index.index_type_index = nativeTypeIndex(TypeCategory::UnsignedLongLong);
+				array_index.index_size_bits = SizeInBits{64};
+				compute_address.array_indices.push_back(std::move(array_index));
+				compute_address.total_member_offset = static_cast<int>(access_member_offset);
+				compute_address.result_type_index = element_type_index;
+				compute_address.result_size_bits = SizeInBits{base_element_size};
+				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(compute_address), arraySubscriptNode.bracket_token()));
+				setTempVarMetadata(address_result, TempVarMetadata::makeAddressOnly(element_type_index, SizeInBits{base_element_size}, ValueCategory::LValue));
+				return makeArrayResult(
+					element_type,
+					base_element_size,
+					IrOperand{address_result},
+					element_type_index,
+					element_pointer_depth,
+					ValueStorage::ContainsAddress);
+			}
+
+			TempVar result_var = var_counter.next();
 			LValueInfo lvalue_info(
 				LValueInfo::Kind::ArrayElement,
 				base_object,
@@ -714,12 +767,9 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			payload.index.size_in_bits = SizeInBits{64};
 			payload.index.value = flat_index;
 
-			if (context == ExpressionContext::LValueAddress) {
-				return makeArrayResult(element_type, base_element_size, IrOperand{result_var}, element_type_index, PointerDepth{}, ValueStorage::ContainsAddress);
-			}
-
 			ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
-			return makeArrayResult(element_type, base_element_size, IrOperand{result_var}, element_type_index, PointerDepth{}, ValueStorage::ContainsData);
+			return makeArrayResult(element_type, base_element_size, IrOperand{result_var}, element_type_index, element_pointer_depth,
+				ValueStorage::ContainsData);
 		}
 
 		// This could be a multidimensional array access

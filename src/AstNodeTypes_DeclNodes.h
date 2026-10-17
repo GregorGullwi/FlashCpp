@@ -194,19 +194,10 @@ struct StructTypeInfo {
 		return !isVariantMember(member) || member.default_initializer.has_value();
 	}
 
-	void addMember(StringHandle member_name, TypeIndex type_index,
-				   size_t member_size, size_t member_alignment, AccessSpecifier access,
-				   std::optional<ASTNode> default_initializer,
-				   ReferenceQualifier reference_qualifier,
-				   size_t referenced_size_bits,
-				   bool is_array,
-				   std::vector<size_t> array_dimensions,
-				   bool pointee_array_declarator,
-				   int pointer_depth,
-				   std::optional<size_t> bitfield_width,
-				   std::optional<FunctionSignature> function_sig,
-				   bool is_no_unique_address,
-				   CVQualifier member_cv_qualifier) {
+	void addMember(StringHandle member_name, TypeIndex type_index, TypeId canonical_type_id, size_t member_size, size_t member_alignment,
+		AccessSpecifier access, std::optional<ASTNode> default_initializer, ReferenceQualifier reference_qualifier, size_t referenced_size_bits,
+		bool is_array, std::vector<size_t> array_dimensions, bool pointee_array_declarator, int pointer_depth, std::optional<size_t> bitfield_width,
+		std::optional<FunctionSignature> function_sig, bool is_no_unique_address, CVQualifier member_cv_qualifier) {
 		// Apply pack alignment if specified
 		// Pack alignment limits the maximum alignment of members.
 		// Some dependent/template paths can transiently report 0 alignment; treat that as byte alignment.
@@ -313,7 +304,7 @@ struct StructTypeInfo {
 		if (isZeroWidthBitfield(bitfield_width)) {
 			effective_alignment = 1;
 		}
-		members.emplace_back(member_name, type_index, offset, member_size, effective_alignment,
+		members.emplace_back(member_name, type_index, canonical_type_id, offset, member_size, effective_alignment,
 							 access, std::move(default_initializer), reference_qualifier,
 							 referenced_size_bits, is_array, std::move(array_dimensions),
 							 pointee_array_declarator, pointer_depth, bitfield_width,
@@ -2846,20 +2837,7 @@ inline void applyOuterDeclaratorShapeForSubstitution(
 	}
 }
 
-inline TypeSpecifierNode typeSpecifierFromStructMemberProjection(
-	const StructMember& member) {
-	TypeSpecifierNode type_spec(
-		member.type_index, TypeQualifier::None, 0, Token{}, CVQualifier::None);
-	type_spec.add_pointer_levels(member.pointer_depth);
-	type_spec.set_reference_qualifier(member.reference_qualifier);
-	if (member.is_array) {
-		type_spec.set_array_dimensions(member.array_dimensions);
-	}
-	if (member.function_signature.has_value()) {
-		type_spec.set_function_signature(*member.function_signature);
-	}
-	return type_spec;
-}
+TypeSpecifierNode typeSpecifierFromStructMemberProjection(const StructMember& member);
 
 inline FunctionType makeFunctionTypeFromSpecifier(const TypeSpecifierNode& type_spec) {
 	FunctionType type;

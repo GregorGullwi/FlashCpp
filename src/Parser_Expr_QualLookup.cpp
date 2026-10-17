@@ -68,17 +68,7 @@ bool memberTypeIsDependent(
 	if (typeIndexContainsDependentPlaceholder(member_result.member->type_index)) {
 		return true;
 	}
-	TypeSpecifierNode member_type(
-		member_result.member->memberType(),
-		TypeQualifier::None,
-		member_result.member->size * 8,
-		Token{},
-		CVQualifier::None);
-	member_type.set_type_index(member_result.member->type_index);
-	applyMemberDeclaratorShape(member_type, *member_result.member);
-	if (member_result.member->reference_qualifier != ReferenceQualifier::None) {
-		member_type.set_reference_qualifier(member_result.member->reference_qualifier);
-	}
+	TypeSpecifierNode member_type = typeSpecifierFromStructMemberProjection(*member_result.member);
 	return typeSpecStillUsesDependentPlaceholder(member_type);
 }
 }
@@ -3309,7 +3299,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			if (adjust_value_category && member_type.reference_qualifier() == ReferenceQualifier::None) {
 				cv |= object_type.cv_qualifier();
 			}
-			// This bridge starts from the member's flat declaration projection.
+			// The declared member type retains its pointee qualification.
 			// [expr.ref] qualifies the pointer object, not its pointee.
 			if (member_type.pointer_depth() == 0) {
 				member_type.add_cv_qualifier(cv);
@@ -4275,12 +4265,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				if (member_result) {
 					// Return the member's type
 					// member->size is in bytes, TypeSpecifierNode expects bits
-					TypeSpecifierNode member_type(member_result.member->memberType(), TypeQualifier::None, member_result.member->size * 8, Token{}, CVQualifier::None);
-					member_type.set_type_index(member_result.member->type_index);
-					applyMemberDeclaratorShape(member_type, *member_result.member);
-					if (member_result.member->reference_qualifier != ReferenceQualifier::None) {
-						member_type.set_reference_qualifier(member_result.member->reference_qualifier);
-					}
+					TypeSpecifierNode member_type = typeSpecifierFromStructMemberProjection(*member_result.member);
 					apply_member_access_value_category(member_type, object_type, member_access.is_arrow(),
 						member_result.member->member_cv_qualifier, !suppress_member_access_value_category_);
 					if (!suppress_member_access_value_category_) {
@@ -4489,17 +4474,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 						struct_type_it->second->type_index_,
 						member_name_handle);
 					if (member_result) {
-						TypeSpecifierNode member_type(
-							member_result.member->memberType(),
-							TypeQualifier::None,
-							member_result.member->size * 8,
-							Token{},
-							CVQualifier::None);
-						member_type.set_type_index(member_result.member->type_index);
-						applyMemberDeclaratorShape(member_type, *member_result.member);
-						if (member_result.member->reference_qualifier != ReferenceQualifier::None) {
-							member_type.set_reference_qualifier(member_result.member->reference_qualifier);
-						}
+						TypeSpecifierNode member_type = typeSpecifierFromStructMemberProjection(*member_result.member);
 						if (member_result.member->function_signature.has_value()) {
 							const FunctionSignature& signature =
 								*member_result.member->function_signature;

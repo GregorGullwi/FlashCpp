@@ -1073,7 +1073,8 @@ private:
 // Anonymous union member information - stored during parsing, processed during layout
 struct AnonymousUnionMemberInfo {
 	StringHandle member_name;			  // Name of the union member
-	TypeIndex type_index;				  // Type index (category embedded via TypeIndex::category())
+	TypeIndex type_index;				  // Compatibility base/category/layout handle
+	TypeId canonical_type_id{};		  // Complete declared type when canonical import supports it
 	size_t member_size;					// Size in bytes (including array size if applicable)
 	size_t member_alignment;			 // Alignment requirement in bytes
 	std::optional<size_t> bitfield_width; // Width in bits for bitfield members
@@ -1092,16 +1093,10 @@ struct AnonymousUnionMemberInfo {
 	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
 
-	AnonymousUnionMemberInfo(StringHandle name, TypeIndex tidx, size_t size, size_t align,
-							 std::optional<size_t> bitfield_w,
-							 std::optional<ASTNode> initializer,
-							 size_t ref_size_bits, ReferenceQualifier ref_qual,
-							 bool is_arr,
-							 bool member_pointee_array_declarator,
-							 int ptr_depth,
-							 std::vector<size_t> arr_dims,
-							 CVQualifier member_cv)
-		: member_name(name), type_index(tidx), member_size(size),
+	AnonymousUnionMemberInfo(StringHandle name, TypeIndex tidx, size_t size, size_t align, TypeId canonical_id, std::optional<size_t> bitfield_w,
+		std::optional<ASTNode> initializer, size_t ref_size_bits, ReferenceQualifier ref_qual, bool is_arr, bool member_pointee_array_declarator,
+		int ptr_depth, std::vector<size_t> arr_dims, CVQualifier member_cv)
+		: member_name(name), type_index(tidx), canonical_type_id(canonical_id), member_size(size),
 		  member_alignment(align), bitfield_width(bitfield_w), default_initializer(std::move(initializer)),
 		  referenced_size_bits(ref_size_bits), reference_qualifier(ref_qual),
 		  is_array(is_arr), array_dimensions(std::move(arr_dims)), member_cv_qualifier(member_cv),
@@ -1541,19 +1536,15 @@ public:
 
 	// Add a member to the most recently created anonymous union
 	// Must be called after add_anonymous_union_marker()
-	void add_anonymous_union_member(StringHandle member_name, TypeIndex type_index,
-									size_t member_size, size_t member_alignment, std::optional<size_t> bitfield_width,
-									std::optional<ASTNode> default_initializer,
-									size_t referenced_size_bits, ReferenceQualifier reference_qualifier,
-									bool is_array,
-									bool pointee_array_declarator,
-									int pointer_depth,
-									std::vector<size_t> array_dimensions,
-									CVQualifier member_cv_qualifier) {
+	void add_anonymous_union_member(StringHandle member_name, TypeIndex type_index, size_t member_size, size_t member_alignment,
+		std::optional<size_t> bitfield_width, TypeId canonical_type_id, std::optional<ASTNode> default_initializer, size_t referenced_size_bits,
+		ReferenceQualifier reference_qualifier, bool is_array, bool pointee_array_declarator, int pointer_depth, std::vector<size_t> array_dimensions,
+		CVQualifier member_cv_qualifier) {
 		// Add to the last anonymous union that was created
 		if (!anonymous_unions_.empty()) {
 			anonymous_unions_.back().union_members.emplace_back(
 				member_name, type_index, member_size, member_alignment,
+				canonical_type_id,
 				bitfield_width, std::move(default_initializer), referenced_size_bits, reference_qualifier, is_array,
 				pointee_array_declarator,
 				pointer_depth,

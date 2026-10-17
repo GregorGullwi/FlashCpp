@@ -3590,9 +3590,8 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 	const bool source_has_reference =
 		source_node.kind == CanonicalTypeKind::LValueReference ||
 		source_node.kind == CanonicalTypeKind::RValueReference;
-	const TypeId source_referent = source_has_reference
-		? source_node.child
-		: source_unqualified;
+	// Expression value category can live outside the canonical spine; the source object's CV must still survive reference binding.
+	const TypeId source_referent = source_has_reference ? source_node.child : source_import.type;
 	const TypeId target_referent = target_node.child;
 	const auto [source_type, source_referent_cv] =
 		stripCanonicalTopCv(table, source_referent);
