@@ -834,12 +834,16 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 					 std::string(current_token_.value()),
 					 !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 	std::optional<SaveHandle> before_function_parse;
+	const bool qualified_id_initializer =
+		!preparsed_function_decl && peek() == "("_tok && parenthesizedQualifiedTerminalIsValue();
 	if (!preparsed_function_decl) {
 		before_function_parse = save_token_position();
 	}
 	ParseResult function_definition_result = preparsed_function_decl
 		? type_and_name_result
-		: parse_function_declaration(decl_node, attr_info.calling_convention);
+		: (qualified_id_initializer
+			? ParseResult::error("qualified-id initializer", current_token_)
+			: parse_function_declaration(decl_node, attr_info.calling_convention));
 	// When parse_declarator already produced a FunctionDeclarationNode (e.g. for
 	// function-pointer return types like "int (*get())(int)"), we bypassed
 	// parse_function_declaration which normally sets the calling convention.

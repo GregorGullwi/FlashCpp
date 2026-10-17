@@ -45,18 +45,23 @@ dimensions to `StructTypeInfo::addMember`. An array member can be indexed
 dimensions from the member declarator, as the named-record path does, is the
 remaining fix.
 
-## Bare qualified static function designators can be misparsed in parenthesized initialization
+## Class-template qualified designators are still ambiguous in parenthesized initialization
 
-For `struct Source { static int answer(); };`, an initialization such as
-`Receiver receiver(Source::answer);` can be parsed as a local function
-declaration. `looks_like_function_parameters` in
-`Parser_Decl_DeclaratorCore.cpp` recognizes a qualified call followed by `(`,
-but treats a bare qualified name beginning with a known class as a parameter
-type without resolving its terminal declaration. The variable is then absent
-when a later expression uses it. Braced direct initialization parses the
-designator correctly. Declaration-versus-expression classification needs to
-resolve the qualified terminal name; this is separate from canonical function
-type inference and function-to-pointer reference binding.
+`template <class T> struct Box { static int answer(); };` followed by
+`Receiver receiver(Box<int>::answer);` is still parsed as a function declaration.
+The terminal is a member of a specialization, and resolving it during
+declaration-versus-expression lookahead instantiates that specialization before
+the initializer is parsed. That instantiation references `answer` without
+emitting its definition. Non-template qualified designators are classified from
+published class and enum members.
+
+## Injected-class-name qualified function designators lose their owner in codegen
+
+`Receiver receiver(Source::Source::answer);` is parsed as direct initialization,
+but constructor-argument lowering then looks up the bare name `answer` and
+reports that it is not a variable. `Source::answer` and a typedef alias of
+`Source` lower correctly. The injected-class-name component is dropped before
+the function designator is bound.
 
 ## Local aggregate member initialization can omit numeric conversion
 
