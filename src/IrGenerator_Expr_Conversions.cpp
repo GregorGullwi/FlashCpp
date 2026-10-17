@@ -476,10 +476,43 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 		ExprResult array_operands = visitExpressionNode(arraySubscript.array_expr().as<ExpressionNode>());
 		ExprResult index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
 
-		const TypeCategory element_category = array_operands.category();
+		TypeCategory element_category = array_operands.category();
 		TypeIndex element_type_index = array_operands.type_index.withCategory(element_category);
 		int element_size_bits = array_operands.size_in_bits.value;
 		int element_pointer_depth = 0;  // Track pointer depth for pointer array elements
+		bool member_array_type_resolved = false;
+		if (const auto* member_access = std::get_if<MemberAccessNode>(&array_expr_inner)) {
+			const StructTypeInfo* owner_struct = nullptr;
+			const StructMember* member = nullptr;
+			if (resolveMemberAccessType(*member_access, owner_struct, member) && member && member->is_array && member->canonical_type_id) {
+				TypeSpecifierNode element_spec = typeSpecifierFromStructMemberProjection(*member);
+				if (element_spec.has_ordered_declarator()) {
+					const DeclaratorComponentKind outer_kind = element_spec.declarator_components().front().kind;
+					if (outer_kind != DeclaratorComponentKind::Array && outer_kind != DeclaratorComponentKind::UnknownBoundArray) {
+						throw InternalError("Array member TypeId does not begin with an array component");
+					}
+					if (!element_spec.remove_outermost_ordered_declarator_component()) {
+						throw InternalError("Array member TypeId has no outer declarator component");
+					}
+				} else {
+					const std::span<const size_t> dimensions = element_spec.array_dimensions();
+					if (!element_spec.is_array() || dimensions.empty()) {
+						throw InternalError("Array member TypeId lost its outer array shape");
+					}
+					const std::vector<size_t> element_dimensions(dimensions.begin() + 1, dimensions.end());
+					element_spec.set_array_dimensions(element_dimensions);
+				}
+				element_spec.set_reference_qualifier(ReferenceQualifier::None);
+				element_category = element_spec.category();
+				element_type_index = element_spec.type_index().withCategory(element_category);
+				element_size_bits = queryConcreteAliasResolvedTypeSizeBits(element_spec).size_bits;
+				element_pointer_depth = static_cast<int>(element_spec.runtime_pointer_depth());
+				if (element_size_bits <= 0) {
+					throw InternalError("Array member element TypeId has no concrete object size");
+				}
+				member_array_type_resolved = true;
+			}
+		}
 
 			// Calculate actual element size from array declaration
 		const DeclarationNode* array_decl = nullptr;
@@ -511,7 +544,7 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 					}
 				}
 			}
-		} else if (std::holds_alternative<TempVar>(array_operands.value)) {
+		} else if (!member_array_type_resolved && std::holds_alternative<TempVar>(array_operands.value)) {
 				// Array from expression (e.g., member access: obj.arr_member[idx])
 				// array_operands[1] contains total array size, we need element size
 				// For primitive types, use the type's size directly
@@ -527,7 +560,6 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 				element_pointer_depth = array_operands.pointer_depth.value;
 			}
 		}
-
 			// Recurse on the array expression (could be nested: arr[i][j])
 		auto base_components = analyzeAddressExpression(arraySubscript.array_expr().as<ExpressionNode>(), accumulated_offset);
 

@@ -3310,9 +3310,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Member registration consumes the canonical substituted type metadata materialized above.
 				// Phase 7B: Intern member name and use StringHandle overload
 				StringHandle member_name_handle = decl.identifier_token().handle();
+				const TypeId canonical_member_type_id = importCanonicalStructMemberType(
+					requireFrontendContext().canonicalTypes(), substituted_member_type_spec, is_array_member, member_pointee_array_declarator,
+					resolved_array_dimensions);
 				struct_info->addMember(
 					member_name_handle,
 					stored_member_type_index,
+					canonical_member_type_id,
 					member_size,
 					member_alignment,
 					member_decl.access,
@@ -8557,9 +8561,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Member registration consumes the canonical substituted type metadata materialized above.
 		// Phase 7B: Intern member name and use StringHandle overload
 		StringHandle member_name_handle = decl.identifier_token().handle();
+		const TypeId canonical_member_type_id = importCanonicalStructMemberType(
+			requireFrontendContext().canonicalTypes(), substituted_type_spec, is_array_member, member_pointee_array_declarator, resolved_array_dimensions);
 		struct_info->addMember(
 			member_name_handle,
 			stored_member_type_index,
+			canonical_member_type_id,
 			member_size,
 			member_alignment,
 			member_decl.access,
@@ -9682,9 +9689,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 																			 : std::nullopt;
 
 				StringHandle member_name_handle = decl.identifier_token().handle();
+				const TypeId canonical_member_type_id = importCanonicalStructMemberType(
+					requireFrontendContext().canonicalTypes(), substituted_type_spec, is_array_member, member_pointee_array_declarator, resolved_array_dimensions);
 				nested_struct_info->addMember(
 					member_name_handle,
 					stored_member_type_index,
+					canonical_member_type_id,
 					member_size,
 					member_alignment,
 					member_decl.access,

@@ -20,29 +20,20 @@ inference worklist adds no native recursion for the receiver chain, but does not
 resolve these existing parser frames or recursive expression normalization and
 lowering. No stack reserve was increased for this regression.
 
-## Member type metadata loses declared pointee qualification
+## Inline typedef record array members are not published as arrays
 
-`StructMember` retains pointer depth and the member object's top-level CV, but
-does not retain the declared pointee CV or intermediate pointer qualifiers.
-For example, selecting between `pick(int*)` and `pick(const int*)` for
-`struct View { const int* data; }; View view{&value}; pick(view.data);` can select
-the mutable-pointee overload. This predates canonical pointer/array
-materialization. Applying a const receiver to an `int*` member now correctly
-qualifies the pointer object, and pointer-array elements follow the same rule;
-that fix cannot recover qualifier information absent from `StructMember`.
-TODO: migrate member type reconstruction to published full member TypeIds,
-including specialization members, rather than extending the flat metadata.
-
-## Pointer-member reference overload calls can lose temporary storage metadata
-
-With overloads `int take(int*&); int take(int* const&);`, passing a pointer
-member through a const record reference can fail in code generation with
-`Temporary producer is missing its recorded storage size`. Pointer-array
-elements and declared const pointer members also reproduce it. A single
-`take(int* const&)` overload compiles. The same combined-overload reproducer
-fails with the unchanged pre-materialization compiler, so this is an existing
-overload/reference-lowering metadata defect. TODO: preserve the selected
-reference binding's producer storage metadata through lowering.
+The inline typedef record member loop in `Parser_Decl_TypedefUsing.cpp` now
+routes parenthesized declarators (function pointers, pointer to member, nested
+callables) through the shared `parse_declarator`, so
+`typedef struct { int (*function)(); } Callable;` parses and lowers. Array
+members still go through the older identifier/array path, which records the
+bounds on the member `DeclarationNode` but passes `is_array=false` and no
+dimensions to `StructTypeInfo::addMember`. An array member can be indexed
+(`t.values[0]`), but nested-brace aggregate initialization
+(`T t{{1, 2, 3}}`) and an array-of-function-pointer member are rejected with
+`Too many initializers for scalar type`. Publishing `is_array` and the folded
+dimensions from the member declarator, as the named-record path does, is the
+remaining fix.
 
 ## Bare qualified static function designators can be misparsed in parenthesized initialization
 

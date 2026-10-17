@@ -2806,9 +2806,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				if (element_size_bytes > 0 && array_count > std::numeric_limits<size_t>::max() / element_size_bytes)
 					throw InternalError("Local array initializer size overflow");
 				const std::span<const size_t> type_array_dimensions = type_node.array_dimensions();
+				const TypeId array_type_id = importCanonicalStructMemberType(
+					requireFrontendContext().canonicalTypes(), type_node, true, false, type_array_dimensions);
 				StructMember array_member(
 					declared_spelling,
 					type_node.type_index(),
+					array_type_id,
 					0,
 					element_size_bytes * array_count,
 					decl.custom_alignment(),

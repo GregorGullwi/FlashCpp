@@ -15,6 +15,13 @@ inline void emitFloatLoadFromAddressInReg(std::vector<uint8_t>& textSectionData,
 	uint8_t addr_bits = static_cast<uint8_t>(addr_reg) & 0x07;
 	bool addr_extended = static_cast<uint8_t>(addr_reg) >= static_cast<uint8_t>(X64Register::R8);
 
+	// x86-64 ModR/M encoding quirks (Intel SDM Vol 2A, Table 2-2):
+	// - r/m=100 (RSP/R12) in mod=00 requires a SIB byte to name the base register
+	// - r/m=101 (RBP/R13) in mod=00 means disp32[RIP], not [RBP/R13]; encode [RBP/R13]
+	//   as mod=01 with disp8=0
+	bool needs_sib = (addr_bits == 4);	  // RSP or R12
+	bool needs_disp0 = (addr_bits == 5);  // RBP or R13
+
 	// MOVSD xmm, [addr_reg]: F2 0F 10 modrm
 	// MOVSS xmm, [addr_reg]: F3 0F 10 modrm
 	textSectionData.push_back(is_float ? 0xF3 : 0xF2);
@@ -24,9 +31,16 @@ inline void emitFloatLoadFromAddressInReg(std::vector<uint8_t>& textSectionData,
 	textSectionData.push_back(0x0F);
 	textSectionData.push_back(0x10); // MOVSD/MOVSS xmm, m (load variant)
 
-	// ModR/M: mod=00 (indirect), reg=xmm_bits, r/m=addr_bits
-	uint8_t modrm = (xmm_bits << 3) | addr_bits;
+	// ModR/M: mod=00 (indirect) unless the base is RBP/R13, which needs mod=01 disp8=0
+	uint8_t mod = needs_disp0 ? 0x40 : 0x00;
+	uint8_t modrm = mod | (xmm_bits << 3) | addr_bits;
 	textSectionData.push_back(modrm);
+	if (needs_sib) {
+		textSectionData.push_back(0x24); // scale=00, index=100, base=100
+	}
+	if (needs_disp0) {
+		textSectionData.push_back(0x00); // disp8 = 0
+	}
 }
 
 /**
@@ -43,6 +57,7 @@ inline void emitFloatLoadFromAddressWithOffset(std::vector<uint8_t>& textSection
 	uint8_t xmm_bits = static_cast<uint8_t>(xmm_dest) & 0x07;
 	uint8_t addr_bits = static_cast<uint8_t>(addr_reg) & 0x07;
 	bool addr_extended = static_cast<uint8_t>(addr_reg) >= static_cast<uint8_t>(X64Register::R8);
+	bool needs_sib = (addr_bits == 4); // r/m=100 (RSP/R12) requires a SIB byte
 
 	// MOVSD xmm, [addr_reg + disp]: F2 0F 10 modrm [disp]
 	// MOVSS xmm, [addr_reg + disp]: F3 0F 10 modrm [disp]
@@ -58,11 +73,17 @@ inline void emitFloatLoadFromAddressWithOffset(std::vector<uint8_t>& textSection
 		// Use disp8: mod=01
 		uint8_t modrm = 0x40 | (xmm_bits << 3) | addr_bits;
 		textSectionData.push_back(modrm);
+		if (needs_sib) {
+			textSectionData.push_back(0x24); // scale=00, index=100, base=100
+		}
 		textSectionData.push_back(static_cast<uint8_t>(offset));
 	} else {
 		// Use disp32: mod=10
 		uint8_t modrm = 0x80 | (xmm_bits << 3) | addr_bits;
 		textSectionData.push_back(modrm);
+		if (needs_sib) {
+			textSectionData.push_back(0x24); // scale=00, index=100, base=100
+		}
 		textSectionData.push_back((offset >> 0) & 0xFF);
 		textSectionData.push_back((offset >> 8) & 0xFF);
 		textSectionData.push_back((offset >> 16) & 0xFF);
@@ -85,6 +106,7 @@ inline void emitFloatStoreToAddressWithOffset(std::vector<uint8_t>& textSectionD
 	uint8_t addr_bits = static_cast<uint8_t>(addr_reg) & 0x07;
 	bool addr_extended = static_cast<uint8_t>(addr_reg) >= static_cast<uint8_t>(X64Register::R8);
 	bool xmm_extended = static_cast<uint8_t>(xmm_src) >= static_cast<uint8_t>(X64Register::XMM8);
+	bool needs_sib = (addr_bits == 4); // r/m=100 (RSP/R12) requires a SIB byte
 
 	// MOVSD [addr_reg + disp], xmm: F2 [REX] 0F 11 modrm [disp]
 	// MOVSS [addr_reg + disp], xmm: F3 [REX] 0F 11 modrm [disp]
@@ -105,11 +127,17 @@ inline void emitFloatStoreToAddressWithOffset(std::vector<uint8_t>& textSectionD
 		// Use disp8: mod=01
 		uint8_t modrm = 0x40 | (xmm_bits << 3) | addr_bits;
 		textSectionData.push_back(modrm);
+		if (needs_sib) {
+			textSectionData.push_back(0x24); // scale=00, index=100, base=100
+		}
 		textSectionData.push_back(static_cast<uint8_t>(offset));
 	} else {
 		// Use disp32: mod=10
 		uint8_t modrm = 0x80 | (xmm_bits << 3) | addr_bits;
 		textSectionData.push_back(modrm);
+		if (needs_sib) {
+			textSectionData.push_back(0x24); // scale=00, index=100, base=100
+		}
 		textSectionData.push_back((offset >> 0) & 0xFF);
 		textSectionData.push_back((offset >> 8) & 0xFF);
 		textSectionData.push_back((offset >> 16) & 0xFF);

@@ -2835,7 +2835,7 @@ void StructTypeInfo::recalculateLayout() {
 
 	auto addExistingMember = [this](StructMember& member) {
 		const std::optional<size_t> anonymous_union_group_index = member.anonymous_union_group_index;
-		addMember(member.name, member.type_index, member.size, member.alignment, member.access,
+		addMember(member.name, member.type_index, member.canonical_type_id, member.size, member.alignment, member.access,
 				  std::move(member.default_initializer), member.reference_qualifier,
 				  member.referenced_size_bits, member.is_array, std::move(member.array_dimensions),
 				  member.pointee_array_declarator, member.pointer_depth, member.bitfield_width, std::move(member.function_signature),
@@ -2910,7 +2910,7 @@ bool StructTypeInfo::finalizeWithBases() {
 	active_bitfield_type = TypeCategory::Invalid;
 	for (auto& member : old_members) {
 		const std::optional<size_t> anonymous_union_group_index = member.anonymous_union_group_index;
-		addMember(member.name, member.type_index, member.size, member.alignment, member.access,
+		addMember(member.name, member.type_index, member.canonical_type_id, member.size, member.alignment, member.access,
 				  std::move(member.default_initializer), member.reference_qualifier,
 				  member.referenced_size_bits, member.is_array, std::move(member.array_dimensions),
 				  member.pointee_array_declarator, member.pointer_depth, member.bitfield_width, std::move(member.function_signature),
@@ -3196,6 +3196,47 @@ const StructTypeInfo* resolveBaseStructInfo(const BaseClassSpecifier& base) {
 	return resolved_type->getStructInfo();
 }
 
+}
+
+TypeSpecifierNode typeSpecifierFromStructMemberProjection(const StructMember& member) {
+	TypeSpecifierNode type_spec(
+		member.type_index,
+		TypeQualifier::None,
+		SizeInBits{static_cast<int>(member.reference_qualifier != ReferenceQualifier::None ? member.referenced_size_bits : member.size * 8)},
+		Token{},
+		CVQualifier::None);
+	if (member.canonical_type_id) {
+		const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(requireFrontendContext().canonicalTypes(), member.canonical_type_id);
+		if (exported.status != CanonicalTypeImportStatus::Supported) {
+			throw InternalError("published member TypeId cannot be materialized");
+		}
+		applyCanonicalDeclaratorBase(type_spec, requireFrontendContext().canonicalTypes(), exported.base);
+		type_spec.set_ordered_declarator(exported.components);
+		if (type_spec.ordered_declarator_has_legacy_projection()) {
+			type_spec.clear_ordered_declarator();
+		}
+		if (member.function_signature.has_value()) {
+			type_spec.set_function_signature(*member.function_signature);
+		}
+		return type_spec;
+	}
+	for (int pointer_index = 0; pointer_index < member.pointer_depth; ++pointer_index) {
+		type_spec.add_pointer_level(pointer_index + 1 == member.pointer_depth ? member.member_cv_qualifier : CVQualifier::None);
+	}
+	if (member.pointer_depth == 0) {
+		type_spec.set_cv_qualifier(member.member_cv_qualifier);
+	}
+	type_spec.set_reference_qualifier(member.reference_qualifier);
+	if (member.pointee_array_declarator) {
+		type_spec.set_pointee_array_declarator(true);
+		type_spec.set_pointee_array_dimensions(member.array_dimensions);
+	} else if (member.is_array) {
+		type_spec.set_array_dimensions(member.array_dimensions);
+	}
+	if (member.function_signature.has_value()) {
+		type_spec.set_function_signature(*member.function_signature);
+	}
+	return type_spec;
 }
 
 // Find member recursively through base classes

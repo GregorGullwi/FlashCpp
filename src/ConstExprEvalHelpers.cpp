@@ -773,22 +773,6 @@ const EvalResult* findConstexprObjectMemberRecursive(
 	return nullptr;
 }
 
-TypeSpecifierNode makeMemberTypeSpecForDefaultInit(const StructMember& member) {
-	TypeSpecifierNode type_spec(
-		member.type_index,
-		TypeQualifier::None,
-		SizeInBits{static_cast<int>(member.size * 8)},
-		Token{},
-		CVQualifier::None);
-	type_spec.set_reference_qualifier(member.reference_qualifier);
-	type_spec.add_pointer_levels(member.pointer_depth);
-	type_spec.set_array_dimensions(member.array_dimensions);
-	if (member.function_signature.has_value()) {
-		type_spec.set_function_signature(*member.function_signature);
-	}
-	return type_spec;
-}
-
 TypeSpecifierNode makeTypeSpecForDefaultInit(TypeIndex type_index) {
 	const TypeInfo* type_info = tryGetTypeInfo(type_index);
 	const SizeInBits size_in_bits = type_info ? type_info->sizeInBits() : SizeInBits{0};
@@ -1031,23 +1015,6 @@ EvalResult make_shift_result(const std::optional<TypeSpecifierNode>& promoted_ty
 	return result;
 }
 
-TypeSpecifierNode makeAggregateMemberTypeSpec(const StructMember& member_info) {
-	TypeSpecifierNode member_type(
-		member_info.type_index.withCategory(member_info.memberType()),
-		static_cast<int>(member_info.referenced_size_bits),
-		Token{},
-		CVQualifier::None,
-		member_info.reference_qualifier);
-	member_type.set_type_index(member_info.type_index);
-	if (member_info.is_array) {
-		member_type.set_array_dimensions(member_info.array_dimensions);
-	}
-	if (member_info.pointer_depth > 0) {
-		member_type.add_pointer_levels(member_info.pointer_depth);
-	}
-	return member_type;
-}
-
 EvalResult applyAggregateMemberScalarInitialization(
 	const StructMember& member_info,
 	EvalResult value,
@@ -1060,7 +1027,7 @@ EvalResult applyAggregateMemberScalarInitialization(
 		return value;
 	}
 
-	const TypeSpecifierNode member_type = makeAggregateMemberTypeSpec(member_info);
+	const TypeSpecifierNode member_type = typeSpecifierFromStructMemberProjection(member_info);
 	const TypeCategory target_category = member_type.category();
 	if (!(isIntegralType(target_category) ||
 		  isFloatingPointType(target_category) ||
@@ -1753,7 +1720,8 @@ EvalResult materialize_member_initializer_value(
 		const InitializerListNode& init_list = initializer.as<InitializerListNode>();
 
 		if (member_info.is_array) {
-			return Evaluator::materialize_array_value_with_spec(makeAggregateMemberTypeSpec(member_info), init_list, context, evaluation_bindings);
+			return Evaluator::materialize_array_value_with_spec(typeSpecifierFromStructMemberProjection(member_info), init_list, context,
+				evaluation_bindings);
 		}
 
 		if (is_struct_type(member_info.type_index.category())) {

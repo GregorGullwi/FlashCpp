@@ -1345,7 +1345,8 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 
 					// Return with TempVar that has lvalue metadata
 					// The type/size are for the pointee (what the reference refers to)
-				return makeExprResult(type_index.withCategory(pointee_type), SizeInBits{pointee_size}, IrOperand{lvalue_temp}, PointerDepth{}, ValueStorage::ContainsAddress);
+				return makeExprResult(type_index.withCategory(pointee_type), SizeInBits{pointee_size}, IrOperand{lvalue_temp},
+					PointerDepth{static_cast<int>(type_node.runtime_pointer_depth())}, ValueStorage::ContainsAddress);
 			}
 
 				// For non-array references in Load context, we need to dereference to get the value
@@ -1534,7 +1535,8 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					setTempVarMetadata(addr_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 					TypeIndex type_index = preserveSemanticTypeIndex(pointee_type, type_node.type_index());
-					return makeExprResult(type_index.withCategory(pointee_type), SizeInBits{pointee_size}, IrOperand{addr_temp}, PointerDepth{}, ValueStorage::ContainsAddress);
+					return makeExprResult(type_index.withCategory(pointee_type), SizeInBits{pointee_size}, IrOperand{addr_temp},
+						PointerDepth{static_cast<int>(type_node.runtime_pointer_depth())}, ValueStorage::ContainsAddress);
 				}
 
 					// For Load context (reading the value), dereference to get the value

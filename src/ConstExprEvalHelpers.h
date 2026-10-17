@@ -94,12 +94,11 @@ const StructMember* findMemberInfoRecursive(const StructTypeInfo* struct_info, S
 const EvalResult* findConstexprObjectMemberRecursive(
 	const EvalResult& object,
 	StringHandle member_name_handle);
-TypeSpecifierNode makeMemberTypeSpecForDefaultInit(const StructMember& member);
 TypeSpecifierNode makeTypeSpecForDefaultInit(TypeIndex type_index);
 EvalResult makeConstructorDefaultInitFromType(const TypeSpecifierNode& type_spec, EvaluationContext& context);
 
 inline EvalResult makeConstructorMemberDefaultInit(const StructMember& member, EvaluationContext& context) {
-	return makeConstructorDefaultInitFromType(makeMemberTypeSpecForDefaultInit(member), context);
+	return makeConstructorDefaultInitFromType(typeSpecifierFromStructMemberProjection(member), context);
 }
 
 std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult& value);
@@ -123,7 +122,6 @@ std::optional<TypeSpecifierNode> try_get_promoted_shift_operand_type(const EvalR
 ShiftEvaluationInfo get_shift_evaluation_info(const EvalResult& value);
 EvalResult make_shift_result(const std::optional<TypeSpecifierNode>& promoted_type, unsigned long long value);
 EvalResult make_shift_result(const std::optional<TypeSpecifierNode>& promoted_type, long long value);
-TypeSpecifierNode makeAggregateMemberTypeSpec(const StructMember& member_info);
 EvalResult applyAggregateMemberScalarInitialization(
 	const StructMember& member_info,
 	EvalResult value,

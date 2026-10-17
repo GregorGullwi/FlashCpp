@@ -1212,9 +1212,12 @@ ParseResult Parser::parse_lambda_expression() {
 
 				// Phase 7B: Intern special member name and use StringHandle overload
 				StringHandle this_member_handle = StringTable::getOrInternStringHandle("__this");
+				const TypeId canonical_member_type_id = importCanonicalStructMemberType(
+					requireFrontendContext().canonicalTypes(), ptr_type, false, false, std::span<const size_t>{});
 				closure_struct_info->addMember(
 					this_member_handle,	// Special member name for captured this
 					nativeTypeIndex(TypeCategory::Void),	 // Void pointer type
+					canonical_member_type_id,
 					8,				   // Pointer size on x64
 					8,				   // Alignment
 					AccessSpecifier::Public,
@@ -1246,9 +1249,14 @@ ParseResult Parser::parse_lambda_expression() {
 						const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo();
 						if (enclosing_struct) {
 							StringHandle copy_this_member_handle = StringTable::getOrInternStringHandle("__copy_this");
+							TypeSpecifierNode copy_this_type(
+								enclosing_type->type_index_, TypeQualifier::None, static_cast<int>(enclosing_struct->sizeInBits().value), Token{}, CVQualifier::None);
+							const TypeId canonical_member_type_id = importCanonicalStructMemberType(
+								requireFrontendContext().canonicalTypes(), copy_this_type, false, false, std::span<const size_t>{});
 							closure_struct_info->addMember(
 								copy_this_member_handle,			 // Special member name for copied this
 								enclosing_type->type_index_,		 // Type index of enclosing struct
+								canonical_member_type_id,
 								toSizeT(enclosing_struct->sizeInBytes()),		  // Size of the entire struct
 								enclosing_struct->alignment,		 // Alignment from enclosing struct
 								AccessSpecifier::Public,
@@ -1382,9 +1390,15 @@ ParseResult Parser::parse_lambda_expression() {
 				}
 			}
 
+			TypeSpecifierNode capture_type = var_type;
+			capture_type.set_reference_qualifier(is_ref_capture ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
+			const TypeId canonical_member_type_id = importCanonicalStructMemberType(
+				requireFrontendContext().canonicalTypes(), capture_type, var_type.is_array(), var_type.has_pointee_array_declarator(),
+				var_type.array_dimensions());
 			closure_struct_info->addMember(
 				var_name,
 				type_index,
+				canonical_member_type_id,
 				member_size,
 				member_alignment,
 				AccessSpecifier::Public,

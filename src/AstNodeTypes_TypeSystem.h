@@ -1315,7 +1315,8 @@ struct DeferredStaticAssert {
 // Struct member information
 struct StructMember {
 	StringHandle name;
-	TypeIndex type_index;	  // Index into gTypeInfo for complex types (structs, etc.); category encodes Type
+	TypeIndex type_index;	  // Compatibility base/category/layout handle; canonical_type_id owns the complete declared type
+	TypeId canonical_type_id{};	  // Complete declared member type when canonical import supports it
 	size_t offset;		   // Offset in bytes from start of struct
 	size_t size;			 // Size in bytes
 	std::optional<size_t> bitfield_width; // Width in bits for bitfield members
@@ -1343,18 +1344,10 @@ struct StructMember {
 	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
 	TypeCategory memberType() const { return type_index.category(); }
 
-	StructMember(StringHandle n, TypeIndex tidx, size_t off, size_t sz, size_t align,
-				 AccessSpecifier acc,
-				 std::optional<ASTNode> init,
-				 ReferenceQualifier ref_qual,
-				 size_t ref_size_bits,
-				 bool is_arr,
-				 std::vector<size_t> arr_dims,
-				 bool member_pointee_array_declarator,
-				 int ptr_depth,
-				 std::optional<size_t> bf_width,
-				 CVQualifier member_cv)
-		: name(n), type_index(tidx), offset(off), size(sz),
+	StructMember(StringHandle n, TypeIndex tidx, TypeId canonical_id, size_t off, size_t sz, size_t align, AccessSpecifier acc,
+		std::optional<ASTNode> init, ReferenceQualifier ref_qual, size_t ref_size_bits, bool is_arr, std::vector<size_t> arr_dims,
+		bool member_pointee_array_declarator, int ptr_depth, std::optional<size_t> bf_width, CVQualifier member_cv)
+		: name(n), type_index(tidx), canonical_type_id(canonical_id), offset(off), size(sz),
 		  bitfield_width(bf_width), referenced_size_bits(ref_size_bits ? ref_size_bits : sz * 8), alignment(align),
 		  access(acc), reference_qualifier(ref_qual),
 		  default_initializer(std::move(init)), is_array(is_arr), array_dimensions(std::move(arr_dims)),
