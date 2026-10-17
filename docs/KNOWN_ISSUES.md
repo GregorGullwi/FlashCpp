@@ -29,15 +29,6 @@ pointer prefixes and then requires an identifier instead of using the shared
 declarator parser. Reuse that parser while retaining the member declaration AST
 and layout metadata. This predates full member TypeId publication.
 
-## Assigning nullptr through a pointer reference can use a narrow store
-
-`void clear(int*& pointer) { pointer = nullptr; }` can emit a 32-bit store
-through the reference on the 64-bit target, leaving the upper half of the
-pointer unchanged. The assignment lowering must convert the null pointer
-constant to the destination pointer type before emitting the store. Assignment
-from another `int*` preserves the full width. This predates the pointer-member
-reference-overload fix and reproduces after the correct overload is selected.
-
 ## Bare qualified static function designators can be misparsed in parenthesized initialization
 
 For `struct Source { static int answer(); };`, an initialization such as
