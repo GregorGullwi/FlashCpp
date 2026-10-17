@@ -3,6 +3,7 @@
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "ParserTemplateClassShared.h"
 #include "TypeTraitEvaluator.h"
 
 namespace {
@@ -74,6 +75,291 @@ std::optional<size_t> singleFunctionComponentIndex(
 		found = index;
 	}
 	return found;
+}
+
+// [dcl.ambig.res]: `Receiver receiver(Source::answer);` is an object declaration
+// when the qualified terminal names a non-type, and a function declaration only
+// when that terminal names a type. Classification reads published member types
+// and the class member tables; it does not invent a type from the spelling.
+enum class QualifiedMemberKind : uint8_t {
+	Type,
+	Value,
+	Ambiguous,
+	Unknown
+};
+
+struct QualifiedMemberClassification {
+	QualifiedMemberKind kind = QualifiedMemberKind::Unknown;
+	const TypeInfo* type_info = nullptr;
+	const TypeInfo* declaring_type = nullptr;
+};
+
+const TypeInfo* canonicalClassOrEnumType(const TypeInfo* type_info) {
+	size_t remaining = getTypeInfoCount() + 1;
+	while (type_info != nullptr && remaining-- > 0) {
+		if (type_info->getStructInfo() != nullptr || type_info->getEnumInfo() != nullptr) {
+			return type_info;
+		}
+		if (!type_info->isTypeAlias()) {
+			return type_info;
+		}
+		const ResolvedAliasTypeInfo resolved = resolveAliasTypeInfo(
+			type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
+		const TypeInfo* next = tryGetTypeInfo(resolved.type_index);
+		if (next == nullptr || next == type_info) {
+			return type_info;
+		}
+		type_info = next;
+	}
+	return type_info;
+}
+
+bool isInjectedClassName(const TypeInfo& type_info, StringHandle member_name) {
+	const std::string_view owner_name = StringTable::getStringView(type_info.name());
+	const size_t separator = owner_name.rfind("::");
+	const std::string_view unqualified =
+		separator == std::string_view::npos ? owner_name : owner_name.substr(separator + 2);
+	return unqualified == StringTable::getStringView(member_name);
+}
+
+const TypeInfo* lookupPublishedMemberType(const TypeInfo& owner, StringHandle member_name) {
+	if (!owner.name().isValid() || !member_name.isValid()) {
+		return nullptr;
+	}
+	const StringHandle key = buildQualifiedName(StringTable::getStringView(owner.name()), StringTable::getStringView(member_name));
+	const auto found = getTypesByNameMap().find(key);
+	if (found == getTypesByNameMap().end()) {
+		return nullptr;
+	}
+	return found->second;
+}
+
+bool classDeclaresNonTypeMember(const StructTypeInfo& info, StringHandle member_name) {
+	if (const StructMemberFunction* function = info.findMemberFunction(member_name);
+		function != nullptr && !function->is_constructor && !function->is_destructor) {
+		return true;
+	}
+	if (info.findStaticMember(member_name) != nullptr) {
+		return true;
+	}
+	if (info.findMember(member_name) != nullptr) {
+		return true;
+	}
+	for (const TypeIndex enum_index : info.getNestedEnumIndices()) {
+		const TypeInfo* enum_type = tryGetTypeInfo(enum_index);
+		const EnumTypeInfo* enum_info = enum_type != nullptr ? enum_type->getEnumInfo() : nullptr;
+		if (enum_info != nullptr && !enum_info->is_scoped && enum_info->findEnumerator(member_name) != nullptr) {
+			return true;
+		}
+	}
+	return false;
+}
+
+QualifiedMemberClassification classifyDirectQualifiedMember(const TypeInfo& owner, StringHandle member_name) {
+	QualifiedMemberClassification result;
+	if (const EnumTypeInfo* enum_info = owner.getEnumInfo()) {
+		if (enum_info->findEnumerator(member_name) != nullptr) {
+			result.kind = QualifiedMemberKind::Value;
+		}
+		return result;
+	}
+	if (isInjectedClassName(owner, member_name)) {
+		result.kind = QualifiedMemberKind::Type;
+		result.type_info = &owner;
+		return result;
+	}
+	if (const TypeInfo* published = lookupPublishedMemberType(owner, member_name)) {
+		result.kind = QualifiedMemberKind::Type;
+		result.type_info = published;
+		return result;
+	}
+	if (const StructTypeInfo* info = owner.getStructInfo();
+		info != nullptr && classDeclaresNonTypeMember(*info, member_name)) {
+		result.kind = QualifiedMemberKind::Value;
+	}
+	return result;
+}
+
+void appendDirectBaseRecords(const TypeInfo& record, std::vector<const TypeInfo*>& bases) {
+	const StructTypeInfo* info = record.getStructInfo();
+	if (info == nullptr) {
+		return;
+	}
+	auto append = [&](const BaseClassSpecifier& base) {
+		const TypeInfo* base_record = canonicalClassOrEnumType(tryGetTypeInfo(base.type_index));
+		if (base_record == nullptr) {
+			return;
+		}
+		for (const TypeInfo* existing : bases) {
+			if (existing == base_record) {
+				return;
+			}
+		}
+		bases.push_back(base_record);
+	};
+	for (const BaseClassSpecifier& base : info->base_classes) {
+		append(base);
+	}
+	for (const BaseClassSpecifier& base : info->virtual_bases) {
+		append(base);
+	}
+}
+
+bool isRecordBaseOf(const TypeInfo* derived, const TypeInfo* ancestor) {
+	if (derived == nullptr || ancestor == nullptr || derived == ancestor) {
+		return false;
+	}
+	std::vector<const TypeInfo*> pending;
+	std::vector<const TypeInfo*> seen;
+	appendDirectBaseRecords(*derived, pending);
+	while (!pending.empty()) {
+		const TypeInfo* current = pending.back();
+		pending.pop_back();
+		bool already_seen = false;
+		for (const TypeInfo* previous : seen) {
+			if (previous == current) {
+				already_seen = true;
+				break;
+			}
+		}
+		if (already_seen) {
+			continue;
+		}
+		seen.push_back(current);
+		if (current == ancestor) {
+			return true;
+		}
+		appendDirectBaseRecords(*current, pending);
+	}
+	return false;
+}
+
+bool sameQualifiedDeclaration(const QualifiedMemberClassification& lhs, const QualifiedMemberClassification& rhs) {
+	return lhs.kind == rhs.kind && lhs.declaring_type == rhs.declaring_type && lhs.type_info == rhs.type_info;
+}
+
+QualifiedMemberClassification mergeQualifiedLookup(const std::vector<QualifiedMemberClassification>& found) {
+	std::vector<QualifiedMemberClassification> merged;
+	for (const QualifiedMemberClassification& candidate : found) {
+		if (candidate.kind == QualifiedMemberKind::Unknown) {
+			continue;
+		}
+		if (candidate.kind == QualifiedMemberKind::Ambiguous) {
+			return candidate;
+		}
+		bool dominated = false;
+		for (size_t index = 0; index < merged.size();) {
+			if (sameQualifiedDeclaration(merged[index], candidate)) {
+				dominated = true;
+				break;
+			}
+			if (isRecordBaseOf(candidate.declaring_type, merged[index].declaring_type)) {
+				merged.erase(merged.begin() + static_cast<std::ptrdiff_t>(index));
+				continue;
+			}
+			if (isRecordBaseOf(merged[index].declaring_type, candidate.declaring_type)) {
+				dominated = true;
+				break;
+			}
+			++index;
+		}
+		if (!dominated) {
+			merged.push_back(candidate);
+		}
+	}
+	if (merged.empty()) {
+		return {};
+	}
+	if (merged.size() == 1) {
+		return merged.front();
+	}
+	QualifiedMemberClassification ambiguous;
+	ambiguous.kind = QualifiedMemberKind::Ambiguous;
+	return ambiguous;
+}
+
+QualifiedMemberClassification classifyQualifiedMember(const TypeInfo* owner, StringHandle member_name) {
+	struct LookupTask {
+		const TypeInfo* record = nullptr;
+		bool bases_pushed = false;
+	};
+	std::vector<LookupTask> stack;
+	std::vector<const TypeInfo*> memo_records;
+	std::vector<QualifiedMemberClassification> memo_results;
+	auto find_memo = [&](const TypeInfo* record) -> const QualifiedMemberClassification* {
+		for (size_t index = 0; index < memo_records.size(); ++index) {
+			if (memo_records[index] == record) {
+				return &memo_results[index];
+			}
+		}
+		return nullptr;
+	};
+	auto remember = [&](const TypeInfo* record, QualifiedMemberClassification result) {
+		memo_records.push_back(record);
+		memo_results.push_back(result);
+	};
+	const TypeInfo* start = canonicalClassOrEnumType(owner);
+	if (start == nullptr) {
+		return {};
+	}
+	stack.push_back(LookupTask{start, false});
+	while (!stack.empty()) {
+		const size_t index = stack.size() - 1;
+		const TypeInfo* record = stack[index].record;
+		if (find_memo(record) != nullptr) {
+			stack.pop_back();
+			continue;
+		}
+		if (!stack[index].bases_pushed) {
+			QualifiedMemberClassification direct = classifyDirectQualifiedMember(*record, member_name);
+			if (direct.kind != QualifiedMemberKind::Unknown) {
+				direct.declaring_type = record;
+				remember(record, direct);
+				stack.pop_back();
+				continue;
+			}
+			stack[index].bases_pushed = true;
+			std::vector<const TypeInfo*> bases;
+			appendDirectBaseRecords(*record, bases);
+			size_t pushed = 0;
+			for (const TypeInfo* base_record : bases) {
+				if (find_memo(base_record) != nullptr) {
+					continue;
+				}
+				bool on_stack = false;
+				for (const LookupTask& task : stack) {
+					if (task.record == base_record) {
+						on_stack = true;
+						break;
+					}
+				}
+				if (on_stack) {
+					continue;
+				}
+				stack.push_back(LookupTask{base_record, false});
+				++pushed;
+			}
+			if (pushed == 0) {
+				remember(record, mergeQualifiedLookup({}));
+				stack.pop_back();
+			}
+			continue;
+		}
+		std::vector<const TypeInfo*> bases;
+		std::vector<QualifiedMemberClassification> found;
+		appendDirectBaseRecords(*record, bases);
+		for (const TypeInfo* base_record : bases) {
+			if (const QualifiedMemberClassification* base_result = find_memo(base_record)) {
+				found.push_back(*base_result);
+			}
+		}
+		remember(record, mergeQualifiedLookup(found));
+		stack.pop_back();
+	}
+	if (const QualifiedMemberClassification* result = find_memo(start)) {
+		return *result;
+	}
+	return {};
 }
 
 }
@@ -2252,6 +2538,63 @@ FlashCpp::DeclarationSpecifiers Parser::parse_declaration_specifiers() {
 // - `int x(a)` where `a` is a variable = direct init (return false)
 //
 // This uses lookahead without consuming tokens.
+bool Parser::bareQualifiedTerminalIsValue(const TypeInfo* owner) {
+	SaveHandle qualified_saved = save_token_position();
+	auto restore_before_return = [&](bool result) {
+		restore_token_position(qualified_saved);
+		return result;
+	};
+	if (owner != nullptr && owner->getEnumInfo() != nullptr && peek() == "::"_tok) {
+		return restore_before_return(true);
+	}
+	const TypeInfo* current = owner;
+	while (peek() == "::"_tok) {
+		advance();
+		if (!peek().is_identifier()) {
+			return restore_before_return(false);
+		}
+		const StringHandle member_name = StringTable::getOrInternStringHandle(peek_info().value());
+		advance();
+		// A call or member template-id stays with the qualified-call lookahead.
+		if (peek() == "("_tok || peek() == "<"_tok) {
+			return restore_before_return(false);
+		}
+		const QualifiedMemberClassification classified = classifyQualifiedMember(current, member_name);
+		if (peek() == "::"_tok) {
+			if (classified.kind != QualifiedMemberKind::Type || classified.type_info == nullptr) {
+				return restore_before_return(false);
+			}
+			current = classified.type_info;
+			continue;
+		}
+		const bool non_type = classified.kind == QualifiedMemberKind::Value || classified.kind == QualifiedMemberKind::Ambiguous;
+		return restore_before_return(non_type);
+	}
+	return restore_before_return(false);
+}
+
+bool Parser::parenthesizedQualifiedTerminalIsValue() {
+	if (peek() != "("_tok) {
+		return false;
+	}
+	SaveHandle saved = save_token_position();
+	auto restore_before_return = [&](bool result) {
+		restore_token_position(saved);
+		return result;
+	};
+	advance();
+	if (!peek().is_identifier()) {
+		return restore_before_return(false);
+	}
+	const StringHandle owner_name = StringTable::getOrInternStringHandle(peek_info().value());
+	const auto type_iter = getTypesByNameMap().find(owner_name);
+	if (type_iter == getTypesByNameMap().end() || type_iter->second == nullptr) {
+		return restore_before_return(false);
+	}
+	advance();
+	return restore_before_return(bareQualifiedTerminalIsValue(type_iter->second));
+}
+
 bool Parser::looks_like_function_parameters() {
 	// Must be at '('
 	if (peek() != "("_tok) {
@@ -2359,12 +2702,9 @@ bool Parser::looks_like_function_parameters() {
 					restore_token_position(saved);
 					return false;
 				}
-				if (peek() == "::"_tok) {
-					if (type_iter->second && type_iter->second->getEnumInfo()) {
-						// Qualified enum value access (e.g., Color::Green) = direct init argument
-						restore_token_position(saved);
-						return false;
-					}
+				if (type_iter->second != nullptr && bareQualifiedTerminalIsValue(type_iter->second)) {
+					restore_token_position(saved);
+					return false;
 				}
 
 				if (looks_like_qualified_direct_init_arg()) {
