@@ -1,6 +1,7 @@
 # Agent prompt: finish the member TypeId migration
 
-Continue the member-type migration on top of `codex/publish-full-member-type-ids`.
+Review [PR #2396](https://github.com/GregorGullwi/FlashCpp/pull/2396) and continue
+the member-type migration on top of `codex/publish-full-member-type-ids`.
 Read `AGENTS.md`, `docs/MIGRATION_PROGRESS.md`, and `docs/KNOWN_ISSUES.md` first.
 Use Luna agents for most implementation and investigation; coordinate and review
 their work. Write a todo plan before architectural edits.
@@ -11,6 +12,15 @@ source regressions passed before the final removal of redundant constexpr
 wrappers. Compare complete-native-suite failures against the two documented
 baseline failures before attributing them to this PR. Do not describe an
 incomplete or baseline-failing run as fully green.
+
+The wrap-up started the full source suite, writing
+`x64/issue-member-full.log` and `x64/issue-member-full.jsonl`. A fresh native
+build was still running when the handoff was prepared; check
+`x64/issue-member-native-status.txt` for its eventual build/focused-test result.
+Check for active processes before rerunning validation. The stack comparison
+artifacts are under `x64/issue-member-baseline/stack/final-current/`.
+Update the draft PR's validation paragraph with the final results, and mark it
+ready only after reviewing outstanding failures and required checks.
 
 The current slice publishes each supported member's full canonical `TypeId`
 before construction. It preserves declared pointee and intermediate pointer CV,
