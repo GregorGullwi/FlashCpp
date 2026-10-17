@@ -6043,6 +6043,12 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 	TypeCategory lvalue_type = lvalue_cat;
 	auto inferLValueSizeBits = [&]() {
 		int inferred_size_bits = 0;
+		if (lhs_operands.pointer_depth.is_pointer()) {
+			// The lvalue denotes a pointer object. Its width is the full pointer
+			// width, not the pointee's base category size; a base-category size
+			// would narrow the store and leave the upper half unchanged.
+			return POINTER_SIZE_BITS;
+		}
 		// Use IrType to catch both Type::Struct and Type::UserDefined, so
 		// typedef-to-struct aliases also use the struct-layout path.
 		if (isIrStructType(toIrType(lvalue_cat))) {
@@ -6323,6 +6329,12 @@ bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
 	TypeCategory lvalue_type = lvalue_cat;
 	auto inferLValueSizeBits = [&]() {
 		int inferred_size_bits = 0;
+		if (lhs_operands.pointer_depth.is_pointer()) {
+			// The lvalue denotes a pointer object. Its width is the full pointer
+			// width, not the pointee's base category size; a base-category size
+			// would narrow the store and leave the upper half unchanged.
+			return POINTER_SIZE_BITS;
+		}
 		// Use IrType to catch both Type::Struct and Type::UserDefined, so
 		// typedef-to-struct aliases also use the struct-layout path.
 		if (isIrStructType(toIrType(lvalue_cat))) {
