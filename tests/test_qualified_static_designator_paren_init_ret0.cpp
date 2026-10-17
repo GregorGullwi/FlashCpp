@@ -37,9 +37,29 @@ namespace Tools {
 
 using Alias = Source;
 
+struct AmbiguousLeft { using Value = int; };
+struct AmbiguousRight { static int Value() { return 4; } };
+struct AmbiguousDerived : AmbiguousLeft, AmbiguousRight {};
+struct AmbiguousDerivedSwapped : AmbiguousRight, AmbiguousLeft {};
+
+struct HiddenBase { using Value = int; };
+struct HidingMid : HiddenBase { static int Value() { return 37; } };
+struct HidingDerived : HidingMid, HiddenBase {};
+
+struct DiamondCommon { static int inherited() { return 41; } };
+struct DiamondLeft : virtual DiamondCommon {};
+struct DiamondRight : virtual DiamondCommon {};
+struct DiamondDerived : DiamondLeft, DiamondRight {};
+
+struct OnlyTypeBase { using Value = int; };
+struct OtherBase { static int other() { return 1; } };
+struct OnlyTypeDerived : OnlyTypeBase, OtherBase {};
+
 int pass(Source::Value value) { return value; }
 
 int accept(Source object) { return object.tag; }
+
+int take(OnlyTypeDerived::Value value) { return value; }
 
 int nested_type_still_declares_a_function() {
 	int pass(Source::Value);
@@ -51,6 +71,11 @@ int injected_class_name_still_declares_a_function() {
 	Source object;
 	object.tag = 31;
 	return accept(object);
+}
+
+int only_type_base_still_declares_a_function() {
+	int take(OnlyTypeDerived::Value);
+	return take(43);
 }
 
 int main() {
@@ -76,5 +101,14 @@ int main() {
 	if (braced.value != 7) return 10;
 	if (nested_type_still_declares_a_function() != 19) return 11;
 	if (injected_class_name_still_declares_a_function() != 31) return 12;
+	FunctionReceiver ambiguous_left(AmbiguousDerived::Value);
+	if (ambiguous_left.value != 4) return 13;
+	FunctionReceiver ambiguous_right(AmbiguousDerivedSwapped::Value);
+	if (ambiguous_right.value != 4) return 14;
+	FunctionReceiver dominating(HidingDerived::Value);
+	if (dominating.value != 37) return 15;
+	FunctionReceiver diamond(DiamondDerived::inherited);
+	if (diamond.value != 41) return 16;
+	if (only_type_base_still_declares_a_function() != 43) return 17;
 	return 0;
 }

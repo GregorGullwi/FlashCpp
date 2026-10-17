@@ -4081,7 +4081,7 @@ private:	 // Resume private methods
 	ParseResult duplicateVariableDeclarationError(const Token& identifier_token);
 	FlashCpp::DeclarationSpecifiers parse_declaration_specifiers();	//  Shared specifier parsing
 	bool looks_like_function_parameters();  // Detect if '(' starts function params vs direct init
-	// True when the qualified-id at the current token (after its owner name) denotes a non-type.
+	// True when the qualified-id at the current token denotes a non-type or an ambiguous member.
 	bool bareQualifiedTerminalIsValue(const TypeInfo* owner);
 	// True when '(' begins a qualified non-type initializer rather than a parameter list.
 	bool parenthesizedQualifiedTerminalIsValue();
