@@ -839,7 +839,6 @@ inline OpCodeWithSize generateFloatMovToMemory(X64Register sourceRegister, X64Re
 
 	// Check if we need REX prefix
 	uint8_t xmm_reg = xmm_modrm_bits(sourceRegister);
-	uint8_t ptr_reg_bits = static_cast<uint8_t>(ptr_reg) & 0x07;
 	bool need_rex = (xmm_reg >= 8) || (static_cast<uint8_t>(ptr_reg) >= 8);
 
 	if (need_rex) {
@@ -857,10 +856,9 @@ inline OpCodeWithSize generateFloatMovToMemory(X64Register sourceRegister, X64Re
 	*current_byte_ptr++ = 0x11;
 	result.size_in_bytes += 2;
 
-	// ModR/M byte: 00 xmm ptr_reg (indirect addressing, no displacement)
-	uint8_t modrm = 0x00 | ((xmm_reg & 0x07) << 3) | ptr_reg_bits;
-	*current_byte_ptr++ = modrm;
-	result.size_in_bytes++;
+	// ModR/M byte: indirect addressing through ptr_reg. Handles the RBP/R13
+	// (r/m=101 in mod=00 means disp32[RIP]) and RSP/R12 (mandatory SIB) quirks.
+	encodeRegisterBaseMemoryOperand(current_byte_ptr, result.size_in_bytes, xmm_reg & 0x07, ptr_reg, 0);
 
 	return result;
 }

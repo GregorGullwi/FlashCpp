@@ -15306,7 +15306,7 @@ void IrToObjConverter<TWriterClass>::handleDereferenceStore(const IrInstruction&
 	emitMovFromFrame(ptr_reg, pointer_slot_offset);
 
 		// Allocate a second register for the value - must be different from ptr_reg
-	X64Register value_reg = allocateRegisterWithSpilling();
+	X64Register value_reg = allocateRegisterWithSpilling(ptr_reg);
 
 	if (const auto* ull_val = std::get_if<unsigned long long>(&op.value.value)) {
 		uint64_t imm_value = *ull_val;
@@ -15332,6 +15332,9 @@ void IrToObjConverter<TWriterClass>::handleDereferenceStore(const IrInstruction&
 
 		// Store value_reg to [ptr_reg] with appropriate size
 	emitStoreToMemory(textSectionData, value_reg, ptr_reg, 0, value_size_bytes);
+
+	regAlloc.release(ptr_reg);
+	regAlloc.release(value_reg);
 }
 
 template <class TWriterClass>
