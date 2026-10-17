@@ -1892,6 +1892,28 @@ ParseResult Parser::parse_typedef_declaration() {
 				member_type_spec.add_pointer_level(ptr_cv);
 			}
 
+			// A parenthesized declarator group (function pointer, pointer to
+			// member, nested callable) is owned by the shared declarator grammar;
+			// the identifier-only inline path below cannot represent it. This
+			// mirrors the named-record member path, which calls parse_declarator
+			// through parse_type_and_name.
+			if (peek() == "("_tok) {
+				ParseResult member_declarator_result = parse_declarator(member_type_spec, Linkage::None);
+				if (member_declarator_result.is_error()) {
+					return member_declarator_result;
+				}
+				if (!member_declarator_result.node().has_value() ||
+					!member_declarator_result.node()->is<DeclarationNode>()) {
+					return ParseResult::error("Expected data member declaration in struct", peek_info());
+				}
+				members.emplace_back(*member_declarator_result.node(), current_access, std::nullopt, std::nullopt, false);
+				struct_ref.add_member(*member_declarator_result.node(), current_access, std::nullopt);
+				if (!consume(";"_tok)) {
+					return ParseResult::error("Expected ';' after struct member", current_token_);
+				}
+				continue;
+			}
+
 			// Parse member name
 			auto member_name_token = peek_info();
 			if (!member_name_token.kind().is_identifier()) {
