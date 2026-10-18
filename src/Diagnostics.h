@@ -98,6 +98,8 @@ enum class DiagnosticId : uint32_t {
 	ExpectedFunctionBodyOrSemicolon = 1029,
 	ExpectedCloseParenAfterStaticMemberInitializer = 1030,
 	OutOfLineMemberNotAttached = 1031,
+	InvalidArrayBoundForMember = 1032,
+	ArrayBoundForMemberMustBePositive = 1033,
 
 	// Notes attached to declarator-family diagnostics (1051..1079).
 	NoteToMatchOpeningBracket = 1051,
@@ -319,6 +321,10 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "ExpectedCloseParenAfterStaticMemberInitializer";
 	case DiagnosticId::OutOfLineMemberNotAttached:
 		return "OutOfLineMemberNotAttached";
+	case DiagnosticId::InvalidArrayBoundForMember:
+		return "InvalidArrayBoundForMember";
+	case DiagnosticId::ArrayBoundForMemberMustBePositive:
+		return "ArrayBoundForMemberMustBePositive";
 	case DiagnosticId::NoteToMatchOpeningBracket:
 		return "NoteToMatchOpeningBracket";
 	case DiagnosticId::HexFloatRequiresBinaryExponent:
