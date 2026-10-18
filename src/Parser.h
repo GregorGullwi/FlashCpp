@@ -4426,7 +4426,11 @@ private:	 // Resume private methods
 	};
 	ParseResult parse_cpp_cast_expression(CppCastKind kind, std::string_view cast_name, const Token& cast_token);
 
-	ParseResult parse_qualified_identifier_after_template(const Token& template_base_token, bool* had_template_keyword = nullptr);  // Parse Template<T>::member
+	ParseResult parse_qualified_identifier_after_template(const Token& template_base_token, bool* had_template_keyword);  // Parse Template<T>::member
+	std::optional<ParseResult> materializeQualifiedTemplateStaticFunctionDesignator(
+		const TypeInfo* owner_type_info,
+		const StructDeclarationNode* owner_struct_node,
+		const Token& member_token);
 
 	// Helper to parse template brace initialization: Template<Args>{}
 	// Returns ParseResult with ConstructorCallNode on success

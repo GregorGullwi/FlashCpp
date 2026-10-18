@@ -4413,6 +4413,24 @@ Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwn
 				existing_type != nullptr) {
 				result.instantiated_name = predicted_instantiated_name;
 				result.resolved_type_info = existing_type;
+				const StringHandle cache_template_name = StringTable::getOrInternStringHandle(getClassTemplateInstanceKeyStem(candidate_name));
+				const FlashCpp::TemplateInstantiationKey cache_key =
+					FlashCpp::makeInstantiationKey(cache_template_name, completed_args);
+				std::optional<ASTNode> cached_instantiation = gTemplateRegistry.getInstantiation(cache_key);
+				if (template_instantiation_mode_ != TemplateInstantiationMode::ShapeOnly &&
+					cached_instantiation.has_value() &&
+					cached_instantiation->is<StructDeclarationNode>() &&
+					cached_instantiation->as<StructDeclarationNode>().is_shape_only()) {
+					cached_instantiation = try_instantiate_class_template(candidate_name, completed_args, false);
+					if (!cached_instantiation.has_value()) {
+						cached_instantiation = gTemplateRegistry.getInstantiation(cache_key);
+					}
+					if (cached_instantiation.has_value() &&
+						cached_instantiation->is<StructDeclarationNode>() &&
+						!cached_instantiation->as<StructDeclarationNode>().is_shape_only()) {
+						result.instantiated_struct_node = cached_instantiation;
+					}
+				}
 				return result;
 			}
 		}
@@ -7199,6 +7217,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							full_qual_id,
 							member_template_args,
 							member_template_arg_nodes);
+						if (context == ExpressionContext::Normal) {
+							const TypeInfo* designator_owner_type = materialized_owner.resolved_type_info;
+							if (designator_owner_type == nullptr) {
+								designator_owner_type = findTypeByName(StringTable::getOrInternStringHandle(instantiated_name));
+							}
+							const StructDeclarationNode* designator_owner_struct = nullptr;
+							if (materialized_owner.instantiated_struct_node.has_value()) {
+								designator_owner_struct = &materialized_owner.instantiated_struct_node->as<StructDeclarationNode>();
+							}
+							const auto materialization_error = materializeQualifiedTemplateStaticFunctionDesignator(
+								designator_owner_type, designator_owner_struct, member_token);
+							if (materialization_error.has_value()) {
+								return *materialization_error;
+							}
+						}
 						result = emplace_node<ExpressionNode>(full_qual_id);
 						return ParseResult::success(*result);
 					}
@@ -8334,7 +8367,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							final_identifier.line(),
 							final_identifier.column(),
 							final_identifier.file_index());
-						auto qualified_result = parse_qualified_identifier_after_template(instantiated_token);
+						auto qualified_result = parse_qualified_identifier_after_template(instantiated_token, nullptr);
 						if (!qualified_result.is_error() && qualified_result.node().has_value()) {
 							const auto& qualified_node2 = asQualifiedIdentifier(*qualified_result.node());
 							auto member_call_result = try_parse_member_template_function_call(
@@ -10681,6 +10714,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								qual_id,
 								member_args_for_variable,
 								member_template_arg_nodes);
+							if (context == ExpressionContext::Normal) {
+								const TypeInfo* designator_owner_type = findTypeByName(StringTable::getOrInternStringHandle(resolved_namespace_name));
+								const StructDeclarationNode* designator_owner_struct = nullptr;
+								if (materialized_owner.instantiated_struct_node.has_value()) {
+									designator_owner_struct = &materialized_owner.instantiated_struct_node->as<StructDeclarationNode>();
+								}
+								const auto materialization_error = materializeQualifiedTemplateStaticFunctionDesignator(
+									designator_owner_type, designator_owner_struct, final_identifier);
+								if (materialization_error.has_value()) {
+									return *materialization_error;
+								}
+							}
 							result = emplace_node<ExpressionNode>(qual_id);
 							// Clear pending template args since they were used for this qualified identifier
 							pending_explicit_template_args_.reset();
@@ -11721,7 +11766,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											 identifier_token.line(), identifier_token.column(), identifier_token.file_index());
 
 					// Parse qualified identifier after template
-					auto qualified_result = parse_qualified_identifier_after_template(instantiated_token);
+					auto qualified_result = parse_qualified_identifier_after_template(instantiated_token, nullptr);
 					if (!qualified_result.is_error() && qualified_result.node().has_value()) {
 						const auto& qualified_node = asQualifiedIdentifier(*qualified_result.node());
 
