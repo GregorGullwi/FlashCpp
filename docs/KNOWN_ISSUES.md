@@ -42,20 +42,6 @@ directly. A future implementation should compute funclet return/throw summaries
 and use them at each invocation, preserving its individual continuation and
 exception context.
 
-## Direct list-initialization of an array prvalue is rejected
-
-An array typedef can name the array type in a C++20 functional conversion:
-
-```cpp
-using Values = int[2];
-int main() { return Values{4, 8}[1] == 8 ? 0 : 1; }
-```
-
-The functional-conversion parser currently treats this as scalar construction
-and rejects the second initializer. Array prvalues need typed array
-initialization, temporary storage, and the usual postfix/subscript semantics.
-This is separate from array members initialized inside a class aggregate.
-
 ## Construction through a class-template member alias is rejected
 
 A member alias declared by a class template cannot currently be used to

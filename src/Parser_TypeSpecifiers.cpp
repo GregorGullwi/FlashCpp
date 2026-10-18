@@ -586,6 +586,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 	Token init_token = current_token_;
 	bool is_brace_init = (current_token_.value() == "{");
 	std::string_view closing_delimiter = is_brace_init ? "}"sv : ")"sv;
+	const auto opening_delimiter = save_token_position();
 
 	advance(); // consume '(' or '{'
 
@@ -665,6 +666,24 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 			ConstructorCallNode(type_node, std::move(args), called_from_token));
 		return ParseResult::success(result);
 	};
+
+	// C++20 [expr.type.conv]: a braced functional conversion of an array type
+	// list-initializes that array. The scalar path below accepts one expression
+	// and rejects every remaining initializer.
+	if (is_brace_init && !cast_array_dimensions.empty()) {
+		restore_token_position(opening_delimiter);
+		ASTNode type_node = make_type_node();
+		const TypeSpecifierNode& array_type = type_node.as<TypeSpecifierNode>();
+		ParseResult init_result = parse_brace_initializer(array_type);
+		if (init_result.is_error()) {
+			return init_result;
+		}
+		if (!init_result.node().has_value() || !init_result.node()->is<InitializerListNode>()) {
+			return ParseResult::error("Expected array initializer list", init_token);
+		}
+		ASTNode construction = emplace_node<ExpressionNode>(ConstructorCallNode(array_type, *init_result.node(), init_token));
+		return ParseResult::success(construction);
+	}
 
 	// Check for empty constructor syntax: Type() / Type{} value-initializes to zero.
 	if (current_token_.value() == closing_delimiter) {
