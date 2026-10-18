@@ -1,5 +1,15 @@
 # Known Issues
 
+## Contextual bool conversion of `double*&` reads the wrong value
+
+On Linux, `int nonnull(double*& value) { return value ? 1 : 0; }` returns the
+wrong result for a null pointer passed by reference. The generated code loads
+the pointer storage through an XMM register, then compares an unrelated GP
+register against null. A minimal program checking both non-null and null
+`double*` references exits 1 with FlashCpp and 0 with native clang. An explicit
+`value != nullptr` comparison avoids this code path. This is separate from
+Itanium mangling and pointer-reference overload selection.
+
 ## Full native canonical suite has two baseline failures
 
 The unchanged constructor-initializer commit (`e590ccc7`) and its continuation
@@ -48,15 +58,27 @@ designator correctly. Declaration-versus-expression classification needs to
 resolve the qualified terminal name; this is separate from canonical function
 type inference and function-to-pointer reference binding.
 
-## Aggregate scalar member initialization can omit numeric conversion
+## Local aggregate member initialization can omit numeric conversion
 
-`struct Record { double value; }; Record record{9};` writes integer bits into
-the double member, so `record.value == 9.0` is false. The local aggregate path
-in `IrGenerator_Stmt_Decl.cpp` and shared nested/default-member paths in
-`IrGenerator_Visitors_TypeInit.cpp` relabel values with the target category
-without applying the required arithmetic conversion. Boundary 4 must annotate
-aggregate element conversions in expression sema and have lowering consume
-those plans. Using a double initializer avoids this failure.
+`struct Record { double value; }; Record record{9};` can write integer bits
+into the double member, so `record.value == 9.0` is false. The local aggregate
+path in `IrGenerator_Stmt_Decl.cpp` still relabels the initializer with the
+target category without applying the arithmetic conversion. Shared nested
+member, array-member, default-member, and synthesized default-constructor paths
+in `IrGenerator_Visitors_TypeInit.cpp` now apply arithmetic conversions before
+storing. Local aggregate initialization remains the known gap.
+
+## Nested braced aggregate initialization can fail code generation
+
+Runtime expressions inside nested aggregate braces can reach overload-resolution
+argument lowering as initializer-list nodes without sema-owned argument metadata.
+The compiler then reports a missing sema-owned overload-resolution argument
+type. This reproduces with a four-level runtime-expression initializer as well
+as deeper brace initialization, so there is no known shallow-depth workaround.
+A 24-layer aggregate whose leaf has an omitted default member initializer also
+produces the wrong value at runtime, even after arithmetic conversion is applied
+to that initializer. These nested-initialization lowering gaps remain unresolved
+and are separate from the local scalar member-conversion gap above.
 
 ## SEH finally funclet termination is conservative in return-flow diagnostics
 

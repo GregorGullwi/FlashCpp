@@ -1387,6 +1387,90 @@ TEST_CASE("Canonical reference binding preserves cv on non-reference pointer sou
 	CHECK(const_plan->rank == ConversionRank::ExactMatch);
 }
 
+TEST_CASE("Itanium parameter mangling preserves pointer CV through references") {
+	const auto encode = [](const TypeSpecifierNode& type) {
+		std::string result;
+		NameMangling::appendItaniumTypeCode(result, type, true);
+		return result;
+	};
+	TypeSpecifierNode mutable_pointer_reference(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	mutable_pointer_reference.set_ordered_declarator({DeclaratorComponent::lvalueReference(), DeclaratorComponent::pointer(CVQualifier::None)});
+	CHECK(encode(mutable_pointer_reference) == "RPi");
+	TypeSpecifierNode const_pointer_reference = mutable_pointer_reference;
+	const_pointer_reference.set_ordered_declarator({DeclaratorComponent::lvalueReference(), DeclaratorComponent::pointer(CVQualifier::Const)});
+	CHECK(encode(const_pointer_reference) == "RKPi");
+	TypeSpecifierNode volatile_pointer_reference = mutable_pointer_reference;
+	volatile_pointer_reference.set_ordered_declarator({DeclaratorComponent::lvalueReference(), DeclaratorComponent::pointer(CVQualifier::Volatile)});
+	CHECK(encode(volatile_pointer_reference) == "RVPi");
+	TypeSpecifierNode const_volatile_pointer_reference = mutable_pointer_reference;
+	const_volatile_pointer_reference.set_ordered_declarator({
+		DeclaratorComponent::lvalueReference(), DeclaratorComponent::pointer(CVQualifier::ConstVolatile)});
+	CHECK(encode(const_volatile_pointer_reference) == "RVKPi");
+	TypeSpecifierNode pointer_rvalue_reference = mutable_pointer_reference;
+	pointer_rvalue_reference.set_ordered_declarator({DeclaratorComponent::rvalueReference(), DeclaratorComponent::pointer(CVQualifier::None)});
+	CHECK(encode(pointer_rvalue_reference) == "OPi");
+	TypeSpecifierNode pointer_pointer_reference = mutable_pointer_reference;
+	pointer_pointer_reference.set_ordered_declarator({
+		DeclaratorComponent::lvalueReference(), DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::pointer(CVQualifier::None)});
+	CHECK(encode(pointer_pointer_reference) == "RPPi");
+	TypeSpecifierNode const_pointer_pointer_reference = pointer_pointer_reference;
+	const_pointer_pointer_reference.set_ordered_declarator({
+		DeclaratorComponent::lvalueReference(), DeclaratorComponent::pointer(CVQualifier::Const),
+		DeclaratorComponent::pointer(CVQualifier::None)});
+	CHECK(encode(const_pointer_pointer_reference) == "RKPPi");
+	TypeSpecifierNode pointer_to_const_pointer_reference = pointer_pointer_reference;
+	pointer_to_const_pointer_reference.set_ordered_declarator({
+		DeclaratorComponent::lvalueReference(), DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::pointer(CVQualifier::Const)});
+	CHECK(encode(pointer_to_const_pointer_reference) == "RPKPi");
+	TypeSpecifierNode const_pointer_by_value = mutable_pointer_reference;
+	const_pointer_by_value.set_ordered_declarator({DeclaratorComponent::pointer(CVQualifier::Const)});
+	CHECK(encode(const_pointer_by_value) == "Pi");
+	const auto encodeLegacy = [&encode](std::initializer_list<CVQualifier> pointer_cv, ReferenceQualifier reference) {
+		TypeSpecifierNode type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		for (const CVQualifier cv : pointer_cv) {
+			type.add_pointer_level(cv);
+		}
+		type.set_reference_qualifier(reference);
+		return encode(type);
+	};
+	CHECK(encodeLegacy({CVQualifier::None}, ReferenceQualifier::LValueReference) == "RPi");
+	CHECK(encodeLegacy({CVQualifier::Const}, ReferenceQualifier::LValueReference) == "RKPi");
+	CHECK(encodeLegacy({CVQualifier::None, CVQualifier::None}, ReferenceQualifier::LValueReference) == "RPPi");
+	CHECK(encodeLegacy({CVQualifier::None, CVQualifier::Const}, ReferenceQualifier::LValueReference) == "RKPPi");
+	CHECK(encodeLegacy({CVQualifier::Const, CVQualifier::None}, ReferenceQualifier::LValueReference) == "RPKPi");
+	CHECK(encodeLegacy({CVQualifier::ConstVolatile}, ReferenceQualifier::LValueReference) == "RVKPi");
+	CHECK(encodeLegacy({CVQualifier::Const}, ReferenceQualifier::None) == "Pi");
+	std::vector<CVQualifier> pointer_cv_levels;
+	pointer_cv_levels.reserve(4096);
+	TypeSpecifierNode deep_legacy(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	const std::array<CVQualifier, 4> cv_pattern{
+		CVQualifier::None, CVQualifier::Const, CVQualifier::Volatile, CVQualifier::ConstVolatile};
+	for (size_t index = 0; index < 4096; ++index) {
+		const CVQualifier cv = cv_pattern[index % cv_pattern.size()];
+		pointer_cv_levels.push_back(cv);
+		deep_legacy.add_pointer_level(cv);
+	}
+	deep_legacy.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	std::string expected_deep = "R";
+	expected_deep.reserve(8194);
+	for (size_t cycle = 0; cycle < 1024; ++cycle) {
+		expected_deep += "VKPVPKPP";
+	}
+	expected_deep += 'i';
+	CHECK(encode(deep_legacy) == expected_deep);
+	std::vector<DeclaratorComponent> ordered_components;
+	ordered_components.reserve(pointer_cv_levels.size() + 1);
+	ordered_components.push_back(DeclaratorComponent::lvalueReference());
+	for (auto level = pointer_cv_levels.rbegin(); level != pointer_cv_levels.rend(); ++level) {
+		ordered_components.push_back(DeclaratorComponent::pointer(*level));
+	}
+	TypeSpecifierNode deep_ordered(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	deep_ordered.set_ordered_declarator(std::move(ordered_components));
+	CHECK(encode(deep_ordered) == expected_deep);
+}
+
 TEST_CASE("Canonical TypeIds compare projectable function pointer pairs") {
 	FrontendContext frontend;
 	TypeSpecifierNode int_type(
