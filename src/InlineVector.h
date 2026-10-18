@@ -36,6 +36,7 @@ enum class InlineVectorSpillFamily : uint8_t {
 	Unknown = 0,
 	OverloadResolution = 1,
 	TemplateArgument = 2,
+	QualifiedLookup = 3,
 	Count,
 };
 
@@ -47,6 +48,8 @@ inline std::string_view inlineVectorSpillFamilyLabel(InlineVectorSpillFamily fam
 		return "overload-resolution";
 	case InlineVectorSpillFamily::TemplateArgument:
 		return "template-argument";
+	case InlineVectorSpillFamily::QualifiedLookup:
+		return "qualified-lookup";
 	case InlineVectorSpillFamily::Count:
 		break;
 	}
@@ -674,6 +677,9 @@ using OverloadVector = InlineVector<T, InlineVectorSpillFamily::OverloadResoluti
 
 template <typename T, size_t N = 4>
 using TemplateVector = InlineVector<T, InlineVectorSpillFamily::TemplateArgument, N>;
+
+template <typename T, size_t N = 4>
+using QualifiedLookupVector = InlineVector<T, InlineVectorSpillFamily::QualifiedLookup, N>;
 
 } // namespace FlashCpp
 

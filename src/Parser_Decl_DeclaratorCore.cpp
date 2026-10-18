@@ -180,7 +180,8 @@ QualifiedMemberClassification classifyDirectQualifiedMember(const TypeInfo& owne
 	return result;
 }
 
-void appendDirectBaseRecords(const TypeInfo& record, std::vector<const TypeInfo*>& bases) {
+template <typename BaseRecordList>
+void appendDirectBaseRecords(const TypeInfo& record, BaseRecordList& bases) {
 	const StructTypeInfo* info = record.getStructInfo();
 	if (info == nullptr) {
 		return;
@@ -238,8 +239,8 @@ bool sameQualifiedDeclaration(const QualifiedMemberClassification& lhs, const Qu
 	return lhs.kind == rhs.kind && lhs.declaring_type == rhs.declaring_type && lhs.type_info == rhs.type_info;
 }
 
-QualifiedMemberClassification mergeQualifiedLookup(const std::vector<QualifiedMemberClassification>& found) {
-	std::vector<QualifiedMemberClassification> merged;
+QualifiedMemberClassification mergeQualifiedLookup(std::span<const QualifiedMemberClassification> found) {
+	FlashCpp::QualifiedLookupVector<QualifiedMemberClassification> merged;
 	for (const QualifiedMemberClassification& candidate : found) {
 		if (candidate.kind == QualifiedMemberKind::Unknown) {
 			continue;
@@ -319,7 +320,7 @@ QualifiedMemberClassification classifyQualifiedMember(const TypeInfo* owner, Str
 				continue;
 			}
 			stack[index].bases_pushed = true;
-			std::vector<const TypeInfo*> bases;
+			FlashCpp::QualifiedLookupVector<const TypeInfo*> bases;
 			appendDirectBaseRecords(*record, bases);
 			size_t pushed = 0;
 			for (const TypeInfo* base_record : bases) {
@@ -340,13 +341,13 @@ QualifiedMemberClassification classifyQualifiedMember(const TypeInfo* owner, Str
 				++pushed;
 			}
 			if (pushed == 0) {
-				remember(record, mergeQualifiedLookup({}));
+				remember(record, QualifiedMemberClassification{});
 				stack.pop_back();
 			}
 			continue;
 		}
-		std::vector<const TypeInfo*> bases;
-		std::vector<QualifiedMemberClassification> found;
+		FlashCpp::QualifiedLookupVector<const TypeInfo*> bases;
+		FlashCpp::QualifiedLookupVector<QualifiedMemberClassification> found;
 		appendDirectBaseRecords(*record, bases);
 		for (const TypeInfo* base_record : bases) {
 			if (const QualifiedMemberClassification* base_result = find_memo(base_record)) {
