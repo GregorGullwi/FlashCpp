@@ -8762,6 +8762,14 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 
 			owner_type_info = resolve_alias_target(owner_type_info);
 			for (size_t i = 1; i < components.size() && owner_type_info != nullptr; ++i) {
+				const StructTypeInfo* owner_struct_info = owner_type_info->getStructInfo();
+				if (!owner_struct_info) {
+					owner_struct_info = tryGetStructTypeInfo(owner_type_info->registeredTypeIndex());
+				}
+				if (owner_struct_info && owner_struct_info->name == components[i]) {
+					// An injected-class-name names the current class in a nested-name-specifier.
+					continue;
+				}
 				StringHandle nested_type_name = StringTable::getOrInternStringHandle(
 					StringBuilder()
 						.append(owner_type_info->name())

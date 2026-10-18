@@ -30,14 +30,6 @@ the initializer is parsed. That instantiation references `answer` without
 emitting its definition. Non-template qualified designators are classified from
 published class and enum members.
 
-## Injected-class-name qualified function designators lose their owner in codegen
-
-`Receiver receiver(Source::Source::answer);` is parsed as direct initialization,
-but constructor-argument lowering then looks up the bare name `answer` and
-reports that it is not a variable. `Source::answer` and a typedef alias of
-`Source` lower correctly. The injected-class-name component is dropped before
-the function designator is bound.
-
 ## SEH finally funclet termination is conservative in return-flow diagnostics
 
 The control-flow analysis models a Windows `SehFinallyCall` as a call that can
