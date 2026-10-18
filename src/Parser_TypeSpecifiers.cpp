@@ -1585,6 +1585,10 @@ ParseResult Parser::parse_type_specifier() {
 			}
 		}
 
+		if (qualifiedTypeNameDenotesNonType(type_name)) {
+			return ParseResult::error("Qualified name denotes a non-type", type_name_token);
+		}
+
 		// Not found - create a placeholder type (forward declaration)
 		TypeInfo& forward_decl_type = add_struct_type(type_name_handle, gSymbolTable.get_current_namespace_handle());
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
@@ -5132,6 +5136,10 @@ ParseResult Parser::parse_type_specifier() {
 			}
 			return ParseResult::success(emplace_node<TypeSpecifierNode>(
 				enum_type_info->type_index_.withCategory(TypeCategory::Enum), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
+		}
+
+		if (type_info_ctx == nullptr && qualifiedTypeNameDenotesNonType(type_name)) {
+			return ParseResult::error("Qualified name denotes a non-type", last_qualified_token);
 		}
 
 		// Otherwise, treat as generic user-defined type or typedef
