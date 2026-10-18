@@ -3668,6 +3668,101 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 	return makeExprResult(init_list_type_index.withCategory(TypeCategory::Struct), SizeInBits{static_cast<int>(init_list_size_bits)}, IrOperand{init_list_name}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
+ExprResult AstToIr::generateArrayAggregatePrvalueIr(const ConstructorCallNode& constructorCallNode) {
+	const TypeSpecifierNode& type_spec = constructorCallNode.type_node();
+	const InitializerListNode* initializer = constructorCallNode.aggregateInitializer();
+	if (initializer == nullptr || initializer->has_any_designated() || type_spec.array_dimensions().empty()) {
+		throw InternalError("Array prvalue initialization requires a positional initializer list");
+	}
+	const TypeCategory element_category = type_spec.category();
+	if (!is_standard_arithmetic_type(element_category)) {
+		throw InternalError("Array prvalue initialization requires an arithmetic element type");
+	}
+	size_t element_count = 1;
+	for (size_t dimension : type_spec.array_dimensions()) {
+		if (dimension == 0 || element_count > (static_cast<size_t>(-1) / dimension)) {
+			throw InternalError("Array prvalue dimensions do not form a finite element count");
+		}
+		element_count *= dimension;
+	}
+	const int element_size_bits = get_type_size_bits(element_category);
+	if (element_size_bits <= 0 || element_count > (static_cast<size_t>(0x7fffffff) / static_cast<size_t>(element_size_bits))) {
+		throw InternalError("Array prvalue element size is not representable");
+	}
+
+	struct InitializerFrame {
+		const InitializerListNode* list;
+		size_t next;
+	};
+	std::vector<InitializerFrame> frames;
+	std::vector<const ExpressionNode*> scalar_initializers;
+	frames.push_back(InitializerFrame{initializer, 0});
+	while (!frames.empty()) {
+		InitializerFrame& frame = frames.back();
+		const std::span<const ASTNode> elements = frame.list->initializers();
+		if (frame.next >= elements.size()) {
+			frames.pop_back();
+			continue;
+		}
+		const ASTNode& element = elements[frame.next++];
+		if (element.is<InitializerListNode>()) {
+			const InitializerListNode* nested = &element.as<InitializerListNode>();
+			frames.push_back(InitializerFrame{nested, 0});
+			continue;
+		}
+		if (!element.is<ExpressionNode>()) {
+			throw InternalError("Array prvalue initializer element is not an expression");
+		}
+		scalar_initializers.push_back(&element.as<ExpressionNode>());
+	}
+	if (scalar_initializers.size() > element_count) {
+		throw InternalError("Array prvalue has more initializers than elements");
+	}
+
+	TempVar array_var = var_counter.next();
+	StringBuilder array_name_builder;
+	array_name_builder.append("__array_prvalue_"sv).append(array_var.var_number);
+	const StringHandle array_name = StringTable::getOrInternStringHandle(array_name_builder.commit());
+	const TypeIndex element_type_index = nativeTypeIndex(element_category);
+	VariableDeclOp array_decl;
+	array_decl.var_name = array_name;
+	array_decl.declared_name = array_name;
+	array_decl.type_index = element_type_index;
+	array_decl.size_in_bits = SizeInBits{element_size_bits * static_cast<int>(element_count)};
+	array_decl.is_array = true;
+	array_decl.array_element_type_index = element_type_index;
+	array_decl.array_element_size = element_size_bits;
+	array_decl.array_count = element_count;
+	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(array_decl), constructorCallNode.called_from()));
+
+	const ExprResult zero_source = makeExprResult(nativeTypeIndex(TypeCategory::Int), SizeInBits{32}, IrOperand{0ULL},
+		PointerDepth{}, ValueStorage::ContainsData);
+	for (size_t index = 0; index < element_count; ++index) {
+		ExprResult stored = zero_source;
+		if (index < scalar_initializers.size()) {
+			stored = visitExpressionNode(*scalar_initializers[index]);
+		}
+		stored = generateTypeConversion(stored, stored.category(), element_category, constructorCallNode.called_from());
+		ArrayStoreOp store_op;
+		store_op.element_type_index = element_type_index;
+		store_op.element_size_in_bits = element_size_bits;
+		store_op.array = array_name;
+		store_op.index = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(index));
+		store_op.value = toTypedValue(stored);
+		store_op.value.setType(element_category);
+		store_op.value.size_in_bits = SizeInBits{element_size_bits};
+		store_op.member_offset = 0;
+		store_op.base_holds_address = false;
+		ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op), constructorCallNode.called_from()));
+	}
+
+	// Subscript treats a TempVar base as an address. Hand it the address of the
+	// temporary and the element stride, not the array object's name.
+	const int array_size_bits = element_size_bits * static_cast<int>(element_count);
+	const TempVar array_address = emitAddressOf(element_category, array_size_bits, IrValue(array_name), constructorCallNode.called_from());
+	return makeExprResult(element_type_index, SizeInBits{element_size_bits}, IrOperand{array_address}, PointerDepth{1}, ValueStorage::ContainsAddress);
+}
+
 ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constructorCallNode) {
 	// Get the type being constructed
 	const TypeSpecifierNode& type_spec = constructorCallNode.type_node();
@@ -3729,6 +3824,10 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			return arg_result;
 		}
 		throw InternalError("Pointer constructor call must have 0 or 1 arguments");
+	}
+
+	if (type_spec.is_array() && constructorCallNode.isAggregateInitialization()) {
+		return generateArrayAggregatePrvalueIr(constructorCallNode);
 	}
 
 	if (!is_struct_type(constructor_type_category) &&

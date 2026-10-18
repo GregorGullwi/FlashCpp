@@ -1677,5 +1677,6 @@ private:
 	// and constructs an initializer_list pointing to it
 	ExprResult generateInitializerListConstructionIr(const InitializerListConstructionNode& init_list);
 
+	ExprResult generateArrayAggregatePrvalueIr(const ConstructorCallNode& constructorCallNode);
 	ExprResult generateConstructorCallIr(const ConstructorCallNode& constructorCallNode);
 };
