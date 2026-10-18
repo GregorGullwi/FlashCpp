@@ -454,6 +454,55 @@ ParseResult Parser::parse_qualified_identifier_after_template(const Token& templ
 	return ParseResult::success(result);
 }
 
+std::optional<ParseResult> Parser::materializeQualifiedTemplateStaticFunctionDesignator(
+	const TypeInfo* owner_type_info,
+	const StructDeclarationNode* owner_struct_node,
+	const Token& member_token) {
+	if (!isHardUseLikeInstantiationMode() || owner_type_info == nullptr || !owner_type_info->isTemplateInstantiation()) {
+		return std::nullopt;
+	}
+	const StringHandle owner_name = owner_type_info->name();
+	bool found_static_function = false;
+	auto materialize_candidate = [&](const FunctionDeclarationNode* function_decl) -> std::optional<ParseResult> {
+		if (function_decl == nullptr || function_decl->decl_node().identifier_token().handle() != member_token.handle() || !function_decl->is_static()) {
+			return std::nullopt;
+		}
+		found_static_function = true;
+		if (!function_decl->lazy_member_registry_key().isValid()) {
+			return std::nullopt;
+		}
+		const LazyMemberKey member_key = LazyMemberKey::exact(owner_name, *function_decl);
+		if (!LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
+			return std::nullopt;
+		}
+		auto instantiated_function = instantiateLazyMemberIfNeeded(member_key);
+		if (!instantiated_function.has_value() || !instantiated_function->is<FunctionDeclarationNode>()) {
+			return ParseResult::error("Failed to materialize lazy member function '" + std::string(member_token.value()) + "'", member_token);
+		}
+		return std::nullopt;
+	};
+	if (owner_struct_node != nullptr) {
+		for (const StructMemberFunctionDecl& member_function : owner_struct_node->member_functions()) {
+			if (auto materialization_error = materialize_candidate(get_function_decl_node(member_function.function_declaration));
+				materialization_error.has_value()) {
+				return *materialization_error;
+			}
+		}
+	}
+	if (const StructTypeInfo* owner_struct_info = owner_type_info->getStructInfo(); owner_struct_info != nullptr) {
+		for (const StructMemberFunction& member_function : owner_struct_info->member_functions) {
+			if (auto materialization_error = materialize_candidate(get_function_decl_node(member_function.function_decl));
+				materialization_error.has_value()) {
+				return *materialization_error;
+			}
+		}
+	}
+	if (found_static_function && owner_struct_node != nullptr && !owner_struct_node->is_shape_only()) {
+		registerAndNormalizeLateMaterializedTopLevelNode(ASTNode(owner_struct_node));
+	}
+	return std::nullopt;
+}
+
 std::optional<ParseResult> Parser::try_parse_instantiated_owner_member_variable_template(
 	std::string_view instantiated_owner_name,
 	std::string_view member_name,

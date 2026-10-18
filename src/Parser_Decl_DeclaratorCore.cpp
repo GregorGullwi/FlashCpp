@@ -2545,6 +2545,38 @@ bool Parser::bareQualifiedTerminalIsValue(const TypeInfo* owner) {
 		restore_token_position(qualified_saved);
 		return result;
 	};
+	if (owner != nullptr && peek() == "<"_tok) {
+		const std::string_view template_name = StringTable::getStringView(owner->name());
+		const auto template_declaration = gTemplateRegistry.lookupTemplate(template_name);
+		const bool is_class_template = template_declaration.has_value() && template_declaration->is<TemplateClassDeclarationNode>();
+		if (!is_class_template && !gTemplateRegistry.lookup_alias_template(template_name).has_value()) {
+			return restore_before_return(false);
+		}
+
+		ScopedParserInstantiationContext shape_probe(*this, TemplateInstantiationMode::ShapeOnly, StringHandle{});
+		auto template_args = parse_explicit_template_arguments();
+		if (!template_args.has_value() || peek() != "::"_tok) {
+			return restore_before_return(false);
+		}
+
+		std::optional<ASTNode> instantiated = try_instantiate_class_template(template_name, *template_args, false);
+		const TypeInfo* instantiated_owner = nullptr;
+		if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
+			const StructDeclarationNode& instantiated_struct = instantiated->as<StructDeclarationNode>();
+			instantiated_owner = findTypeByName(instantiated_struct.semantic_name());
+			if (instantiated_owner == nullptr) {
+				instantiated_owner = findTypeByName(instantiated_struct.name());
+			}
+		}
+		if (instantiated_owner == nullptr) {
+			const StringHandle instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, *template_args));
+			instantiated_owner = findTypeByName(instantiated_name);
+		}
+		if (instantiated_owner == nullptr) {
+			return restore_before_return(false);
+		}
+		owner = instantiated_owner;
+	}
 	if (owner != nullptr && owner->getEnumInfo() != nullptr && peek() == "::"_tok) {
 		return restore_before_return(true);
 	}
@@ -2710,7 +2742,7 @@ bool Parser::looks_like_function_parameters() {
 					restore_token_position(saved);
 					return false;
 				}
-				if (type_iter->second != nullptr && peek() == "::"_tok && bareQualifiedTerminalIsValue(type_iter->second)) {
+				if (type_iter->second != nullptr && (peek() == "::"_tok || peek() == "<"_tok) && bareQualifiedTerminalIsValue(type_iter->second)) {
 					restore_token_position(saved);
 					return false;
 				}

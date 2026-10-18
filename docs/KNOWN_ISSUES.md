@@ -20,15 +20,13 @@ inference worklist adds no native recursion for the receiver chain, but does not
 resolve these existing parser frames or recursive expression normalization and
 lowering. No stack reserve was increased for this regression.
 
-## Class-template qualified designators are still ambiguous in parenthesized initialization
+## Injected-class-name qualified function designators lose their owner in codegen
 
-`template <class T> struct Box { static int answer(); };` followed by
-`Receiver receiver(Box<int>::answer);` is still parsed as a function declaration.
-The terminal is a member of a specialization, and resolving it during
-declaration-versus-expression lookahead instantiates that specialization before
-the initializer is parsed. That instantiation references `answer` without
-emitting its definition. Non-template qualified designators are classified from
-published class and enum members.
+`Receiver receiver(Source::Source::answer);` is parsed as direct initialization,
+but constructor-argument lowering then looks up the bare name `answer` and
+reports that it is not a variable. `Source::answer` and a typedef alias of
+`Source` lower correctly. The injected-class-name component is dropped before
+the function designator is bound.
 
 ## SEH finally funclet termination is conservative in return-flow diagnostics
 
