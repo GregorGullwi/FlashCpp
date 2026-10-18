@@ -143,6 +143,57 @@ bool functionSignatureCanLowerForCodegen(const FunctionDeclarationNode& func_dec
 
 } // namespace
 
+void AstToIr::emitUnionObjectRepresentationCopy(
+	const StructTypeInfo& struct_info,
+	StringHandle source_object,
+	StringHandle destination_object,
+	const Token& token) {
+	if (!struct_info.is_union) {
+		throw InternalError("Union object representation copy requires union metadata");
+	}
+	const int size_in_bits = struct_info.sizeInBits().value;
+	if (size_in_bits < 0) {
+		throw InternalError("Union object representation copy has a negative size");
+	}
+	const size_t object_size = (static_cast<size_t>(size_in_bits) + 7) / 8;
+	const StringHandle member_name = struct_info.members.empty() ? struct_info.name : struct_info.members.front().getName();
+	size_t copied_bytes = 0;
+	while (copied_bytes < object_size) {
+		const size_t remaining_bytes = object_size - copied_bytes;
+		const size_t chunk_bytes = remaining_bytes >= 8 ? 8 : remaining_bytes >= 4 ? 4 : remaining_bytes >= 2 ? 2 : 1;
+		const TypeCategory chunk_type = chunk_bytes == 8 ? TypeCategory::UnsignedLongLong
+			: chunk_bytes == 4 ? TypeCategory::UnsignedInt
+			: chunk_bytes == 2 ? TypeCategory::UnsignedShort
+			: TypeCategory::UnsignedChar;
+		const TypeIndex chunk_type_index = nativeTypeIndex(chunk_type);
+		const SizeInBits chunk_size{static_cast<int>(chunk_bytes * 8)};
+
+		TempVar member_value = var_counter.next();
+		MemberLoadOp member_load;
+		member_load.result.value = member_value;
+		member_load.result.type_index = chunk_type_index;
+		member_load.result.setType(chunk_type);
+		member_load.result.size_in_bits = chunk_size;
+		member_load.object = source_object;
+		member_load.member_name = member_name;
+		member_load.offset = static_cast<int>(copied_bytes);
+		member_load.struct_type_info = nullptr;
+		ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), token));
+
+		MemberStoreOp member_store;
+		member_store.value.type_index = chunk_type_index;
+		member_store.value.setType(chunk_type);
+		member_store.value.size_in_bits = chunk_size;
+		member_store.value.value = member_value;
+		member_store.object = destination_object;
+		member_store.member_name = member_name;
+		member_store.offset = static_cast<int>(copied_bytes);
+		member_store.struct_type_info = nullptr;
+		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+		copied_bytes += chunk_bytes;
+	}
+}
+
 void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
 	if (node.is_template_pattern()) {
 		return;
@@ -1237,35 +1288,46 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 				const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
 				if (struct_info) {
-					// Generate memberwise assignment
-					for (const auto& member : struct_info->members) {
-						// First, load the member from source parameter
-						TempVar member_value = var_counter.next();
-						MemberLoadOp member_load;
-						member_load.result.value = member_value;
-						member_load.result.setType(member.type_index.category());
-						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
-						member_load.object = source_param_name_handle;  // Load from source parameter
-						member_load.member_name = member.getName();
-						member_load.offset = static_cast<int>(member.offset);
-						member_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-						member_load.struct_type_info = nullptr;
+					if (struct_info->is_union) {
+						emitUnionObjectRepresentationCopy(
+							*struct_info,
+							source_param_name_handle,
+							StringTable::getOrInternStringHandle("this"),
+							func_decl.identifier_token());
+					} else {
+						// Generate memberwise assignment
+						for (const auto& member : struct_info->members) {
+							// First, load the member from source parameter
+							TempVar member_value = var_counter.next();
+							const CVReferenceQualifier member_ref_qualifier =
+								member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference
+								: member.is_reference() ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None;
+							MemberLoadOp member_load;
+							member_load.result.value = member_value;
+							member_load.result.setType(member.type_index.category());
+							member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
+							member_load.object = source_param_name_handle;  // Load from source parameter
+							member_load.member_name = member.getName();
+							member_load.offset = static_cast<int>(member.offset);
+							member_load.ref_qualifier = member_ref_qualifier;
+							member_load.struct_type_info = nullptr;
 
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), func_decl.identifier_token()));
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), func_decl.identifier_token()));
 
-						// Then, store the member to 'this'
-						// Format: [member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, ref_size_bits, value]
-						MemberStoreOp member_store;
-						member_store.value.setType(member.type_index.category());
-						member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
-						member_store.value.value = member_value;
-						member_store.object = StringTable::getOrInternStringHandle("this");
-						member_store.member_name = member.getName();
-						member_store.offset = static_cast<int>(member.offset);
-						member_store.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-						member_store.struct_type_info = nullptr;
+							// Then, store the member to 'this'
+							// Format: [member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, ref_size_bits, value]
+							MemberStoreOp member_store;
+							member_store.value.setType(member.type_index.category());
+							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
+							member_store.value.value = member_value;
+							member_store.object = StringTable::getOrInternStringHandle("this");
+							member_store.member_name = member.getName();
+							member_store.offset = static_cast<int>(member.offset);
+							member_store.ref_qualifier = member_ref_qualifier;
+							member_store.struct_type_info = nullptr;
 
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), func_decl.identifier_token()));
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), func_decl.identifier_token()));
+						}
 					}
 
 					// operator= returns 'Type&', so 'return *this' yields a reference
@@ -2513,79 +2575,90 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 					}
 
-					// Step 2: Memberwise copy/move from 'other' to 'this'
-					for (const auto& member : struct_info->members) {
-						if (member.type_index.category() == TypeCategory::Struct) {
-							const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
-							const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr;
-							if (member_struct_info && member_struct_info->findPreferredSameTypeConstructor(is_implicit_move_constructor)) {
-								TempVar member_source_addr = var_counter.next();
-								AddressOfMemberOp addr_member_op;
-								addr_member_op.result = member_source_addr;
-								addr_member_op.base_object = StringTable::getOrInternStringHandle("other"sv);
-								addr_member_op.member_offset = static_cast<int>(member.offset);
-								addr_member_op.member_type_index = member.type_index;
-								addr_member_op.member_size_in_bits = static_cast<int>(member.size * 8);
-								ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.name_token()));
+					if (struct_info->is_union) {
+						emitUnionObjectRepresentationCopy(
+							*struct_info,
+							StringTable::getOrInternStringHandle("other"sv),
+							StringTable::getOrInternStringHandle("this"sv),
+							node.name_token());
+					} else {
+						// Step 2: Memberwise copy/move from 'other' to 'this'
+						for (const auto& member : struct_info->members) {
+							if (member.type_index.category() == TypeCategory::Struct) {
+								const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
+								const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr;
+								if (member_struct_info && member_struct_info->findPreferredSameTypeConstructor(is_implicit_move_constructor)) {
+									TempVar member_source_addr = var_counter.next();
+									AddressOfMemberOp addr_member_op;
+									addr_member_op.result = member_source_addr;
+									addr_member_op.base_object = StringTable::getOrInternStringHandle("other"sv);
+									addr_member_op.member_offset = static_cast<int>(member.offset);
+									addr_member_op.member_type_index = member.type_index;
+									addr_member_op.member_size_in_bits = static_cast<int>(member.size * 8);
+									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.name_token()));
 
-								ConstructorCallOp ctor_op;
-								ctor_op.object = StringTable::getOrInternStringHandle("this");
-								if (const StructMemberFunction* member_same_type_ctor =
-										member_struct_info->findPreferredSameTypeConstructor(is_implicit_move_constructor, true);
-									member_same_type_ctor && member_same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-									ctor_op.resolved_constructor =
-										&member_same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+									ConstructorCallOp ctor_op;
+									ctor_op.object = StringTable::getOrInternStringHandle("this");
+									if (const StructMemberFunction* member_same_type_ctor =
+											member_struct_info->findPreferredSameTypeConstructor(is_implicit_move_constructor, true);
+										member_same_type_ctor && member_same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+										ctor_op.resolved_constructor =
+											&member_same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+									}
+									assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Member offset exceeds int range");
+									ctor_op.base_class_offset = static_cast<int>(member.offset);
+
+									TypedValue other_arg;
+									other_arg.setType(TypeCategory::Struct);
+									other_arg.ir_type = IrType::Struct;
+									other_arg.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
+									other_arg.value = member_source_addr;
+									other_arg.type_index = member.type_index;
+									if (is_implicit_copy_constructor) {
+										other_arg.ref_qualifier = ReferenceQualifier::LValueReference;
+										other_arg.cv_qualifier = CVQualifier::Const;
+									} else {
+										other_arg.ref_qualifier = ReferenceQualifier::RValueReference;
+									}
+									ctor_op.arguments.push_back(std::move(other_arg));
+									finalizeConstructorCallOp(ctor_op, *member_struct_info, node.name_token());
+
+									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+									continue;
 								}
-								assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Member offset exceeds int range");
-								ctor_op.base_class_offset = static_cast<int>(member.offset);
-
-								TypedValue other_arg;
-								other_arg.setType(TypeCategory::Struct);
-								other_arg.ir_type = IrType::Struct;
-								other_arg.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
-								other_arg.value = member_source_addr;
-								other_arg.type_index = member.type_index;
-								if (is_implicit_copy_constructor) {
-									other_arg.ref_qualifier = ReferenceQualifier::LValueReference;
-									other_arg.cv_qualifier = CVQualifier::Const;
-								} else {
-									other_arg.ref_qualifier = ReferenceQualifier::RValueReference;
-								}
-								ctor_op.arguments.push_back(std::move(other_arg));
-								finalizeConstructorCallOp(ctor_op, *member_struct_info, node.name_token());
-
-								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
-								continue;
 							}
+
+							// First, load the member from 'other'
+							TempVar member_value = var_counter.next();
+							const CVReferenceQualifier member_ref_qualifier =
+								member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference
+								: member.is_reference() ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None;
+							MemberLoadOp member_load;
+							member_load.result.value = member_value;
+							member_load.result.setType(member.type_index.category());
+							member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
+							member_load.object = StringTable::getOrInternStringHandle("other"sv);  // Load from 'other' parameter
+							member_load.member_name = member.getName();
+							member_load.offset = static_cast<int>(member.offset);
+							member_load.ref_qualifier = member_ref_qualifier;
+							member_load.struct_type_info = nullptr;
+
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), node.name_token()));
+
+							// Then, store the member to 'this'
+							// Format: [member_type, member_size, object_name, member_name, offset, value]
+							MemberStoreOp member_store;
+							member_store.value.setType(member.type_index.category());
+							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
+							member_store.value.value = member_value;
+							member_store.object = StringTable::getOrInternStringHandle("this"sv);
+							member_store.member_name = member.getName();
+							member_store.offset = static_cast<int>(member.offset);
+							member_store.ref_qualifier = member_ref_qualifier;
+							member_store.struct_type_info = nullptr;
+
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), node.name_token()));
 						}
-
-						// First, load the member from 'other'
-						TempVar member_value = var_counter.next();
-						MemberLoadOp member_load;
-						member_load.result.value = member_value;
-						member_load.result.setType(member.type_index.category());
-						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
-						member_load.object = StringTable::getOrInternStringHandle("other"sv);  // Load from 'other' parameter
-						member_load.member_name = member.getName();
-						member_load.offset = static_cast<int>(member.offset);
-						member_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-						member_load.struct_type_info = nullptr;
-
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), node.name_token()));
-
-						// Then, store the member to 'this'
-						// Format: [member_type, member_size, object_name, member_name, offset, value]
-						MemberStoreOp member_store;
-						member_store.value.setType(member.type_index.category());
-						member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
-						member_store.value.value = member_value;
-						member_store.object = StringTable::getOrInternStringHandle("this"sv);
-						member_store.member_name = member.getName();
-						member_store.offset = static_cast<int>(member.offset);
-						member_store.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-						member_store.struct_type_info = nullptr;
-
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), node.name_token()));
 					}
 					emitVptrStores(struct_info, struct_type_info, !emit_split_ctor_variants);
 				} else {

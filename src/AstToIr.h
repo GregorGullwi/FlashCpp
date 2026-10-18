@@ -282,6 +282,11 @@ private:
 	bool function_has_typed_catch_ = false;
 
 	void visitFunctionDeclarationNode(const FunctionDeclarationNode& node);
+	void emitUnionObjectRepresentationCopy(
+		const StructTypeInfo& struct_info,
+		StringHandle source_object,
+		StringHandle destination_object,
+		const Token& token);
 	bool beginStructDeclarationCodegen(const StructDeclarationNode& node);
 	void endStructDeclarationCodegen(const StructDeclarationNode& node);
 	void visitStructDeclarationNode(const StructDeclarationNode& node);

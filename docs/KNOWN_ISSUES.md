@@ -30,21 +30,6 @@ inference worklist adds no native recursion for the receiver chain, but does not
 resolve these existing parser frames or recursive expression normalization and
 lowering. No stack reserve was increased for this regression.
 
-## Inline typedef record array members are not published as arrays
-
-The inline typedef record member loop in `Parser_Decl_TypedefUsing.cpp` now
-routes parenthesized declarators (function pointers, pointer to member, nested
-callables) through the shared `parse_declarator`, so
-`typedef struct { int (*function)(); } Callable;` parses and lowers. Array
-members still go through the older identifier/array path, which records the
-bounds on the member `DeclarationNode` but passes `is_array=false` and no
-dimensions to `StructTypeInfo::addMember`. An array member can be indexed
-(`t.values[0]`), but nested-brace aggregate initialization
-(`T t{{1, 2, 3}}`) and an array-of-function-pointer member are rejected with
-`Too many initializers for scalar type`. Publishing `is_array` and the folded
-dimensions from the member declarator, as the named-record path does, is the
-remaining fix.
-
 ## Class-template qualified designators are still ambiguous in parenthesized initialization
 
 `template <class T> struct Box { static int answer(); };` followed by

@@ -2049,20 +2049,67 @@ ParseResult Parser::parse_typedef_declaration() {
 				// Size and alignment were already set correctly above for references
 				referenced_size_bits = referenced_size_bits ? referenced_size_bits : member_type_spec.size_in_bits();
 			}
+			bool member_is_array = false;
+			std::vector<size_t> member_array_dimensions;
+			bool member_pointee_array_declarator = false;
+			if (decl.owns_inline_array_storage()) {
+				member_is_array = true;
+				for (const ASTNode& dimension_expression : decl.array_dimensions()) {
+					ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
+					auto eval_result = ConstExpr::Evaluator::evaluate(dimension_expression, ctx);
+					if (!eval_result.success()) {
+						const bool can_defer_dependent_bound =
+							eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression &&
+							isDependentTemplateContext();
+						if (can_defer_dependent_bound) {
+							continue;
+						}
+
+						return errorf(DiagnosticId::InvalidArrayBoundForMember, decl.identifier_token(),
+							"Invalid array bound for member '{}': {}", decl.identifier_token().value(), eval_result.error_message);
+					}
+
+					if (eval_result.as_int() <= 0) {
+						return errorf(DiagnosticId::ArrayBoundForMemberMustBePositive, decl.identifier_token(),
+							"Array bound for member '{}' must be greater than 0", decl.identifier_token().value());
+					}
+
+					const size_t dimension = static_cast<size_t>(eval_result.as_int());
+					member_array_dimensions.push_back(dimension);
+					member_size *= dimension;
+					referenced_size_bits *= dimension;
+				}
+			} else if (member_type_spec.is_reference_to_array()) {
+				if (!member_type_spec.array_dimensions().empty()) {
+					member_array_dimensions.assign(member_type_spec.array_dimensions().begin(), member_type_spec.array_dimensions().end());
+				} else {
+					for (const ASTNode& dimension_expression : decl.array_dimensions()) {
+						ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
+						auto eval_result = ConstExpr::Evaluator::evaluate(dimension_expression, ctx);
+						if (eval_result.success() && eval_result.as_int() > 0) {
+							member_array_dimensions.push_back(static_cast<size_t>(eval_result.as_int()));
+						}
+					}
+				}
+			} else if (member_type_spec.has_pointee_array_declarator()) {
+				member_pointee_array_declarator = true;
+				if (!member_type_spec.array_dimensions().empty()) {
+					member_array_dimensions.assign(member_type_spec.array_dimensions().begin(), member_type_spec.array_dimensions().end());
+				} else {
+					for (const ASTNode& dimension_expression : decl.array_dimensions()) {
+						ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
+						auto eval_result = ConstExpr::Evaluator::evaluate(dimension_expression, ctx);
+						if (eval_result.success() && eval_result.as_int() > 0) {
+							member_array_dimensions.push_back(static_cast<size_t>(eval_result.as_int()));
+						}
+					}
+				}
+			}
 			// Phase 7B: Intern member name and use StringHandle overload
 			StringHandle member_name_handle = decl.identifier_token().handle();
-			// C++20 [dcl.ptr]/1: preserve pointee bounds bound by a
-			// parenthesized declarator without scaling storage.
-			std::vector<size_t> member_pointee_dimensions;
-			const bool member_pointee_array_declarator =
-				member_type_spec.has_pointee_array_declarator();
-			if (member_pointee_array_declarator && !member_type_spec.array_dimensions().empty()) {
-				member_pointee_dimensions.assign(
-					member_type_spec.array_dimensions().begin(),
-					member_type_spec.array_dimensions().end());
-			}
 			const TypeId canonical_member_type_id = importCanonicalStructMemberType(
-				requireFrontendContext().canonicalTypes(), member_type_spec, false, member_pointee_array_declarator, member_pointee_dimensions);
+				requireFrontendContext().canonicalTypes(), member_type_spec, member_is_array, member_pointee_array_declarator,
+				member_array_dimensions);
 			struct_info->addMember(
 				member_name_handle,
 				member_type_spec.type_index(),
@@ -2073,8 +2120,8 @@ ParseResult Parser::parse_typedef_declaration() {
 				member_decl.default_initializer,
 				ref_qual,
 				referenced_size_bits,
-				false,
-				member_pointee_dimensions,
+				member_is_array,
+				member_array_dimensions,
 				member_pointee_array_declarator,
 				static_cast<int>(member_type_spec.pointer_depth()),
 				member_decl.bitfield_width,

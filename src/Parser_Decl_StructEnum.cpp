@@ -3857,17 +3857,13 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						continue;
 					}
 
-					return ParseResult::error(
-						"Invalid array bound for member '" + std::string(decl.identifier_token().value()) +
-						"': " + eval_result.error_message,
-						decl.identifier_token());
+					return errorf(DiagnosticId::InvalidArrayBoundForMember, decl.identifier_token(),
+						"Invalid array bound for member '{}': {}", decl.identifier_token().value(), eval_result.error_message);
 				}
 
 				if (eval_result.as_int() <= 0) {
-					return ParseResult::error(
-						"Array bound for member '" + std::string(decl.identifier_token().value()) +
-						"' must be greater than 0",
-						decl.identifier_token());
+					return errorf(DiagnosticId::ArrayBoundForMemberMustBePositive, decl.identifier_token(),
+						"Array bound for member '{}' must be greater than 0", decl.identifier_token().value());
 				}
 
 				size_t dim_size = static_cast<size_t>(eval_result.as_int());
