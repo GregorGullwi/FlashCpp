@@ -2192,6 +2192,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										ExprResult init_operands;
 										if (init_expr.is<ExpressionNode>()) {
 											init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+											init_operands = convertAggregateMemberInitializer(member, init_operands, decl.identifier_token());
 										} else {
 											throw InternalError("Initializer must be an ExpressionNode or InitializerListNode");
 										}
@@ -2257,6 +2258,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											member_value = 0ULL;	 // fallback
 										}
 
+									} else if (member.default_initializer.has_value() && member.default_initializer->is<ExpressionNode>() && member.pointer_depth == 0 &&
+										!member.is_reference() && is_standard_arithmetic_type(member.memberType())) {
+										ExprResult default_operands = visitExpressionNode(member.default_initializer->as<ExpressionNode>());
+										default_operands = convertAggregateMemberInitializer(member, default_operands, decl.identifier_token());
+										member_value = toIrValue(default_operands.value);
 									} else {
 										// Use default member initializer if available, otherwise zero-initialize
 										if (member.default_initializer.has_value()) {

@@ -106,6 +106,21 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			// Generate initialization code similar to variable declarations
 			const InitializerListNode& init_list = expr_opt->as<InitializerListNode>();
 
+			// Braced return of an aggregate is aggregate initialization. The return
+			// type index is the class being initialized; matching another class by
+			// size drops nested braces and leaves the result zero.
+			if (current_function_return_type_index_.category() == TypeCategory::Struct) {
+				const StructTypeInfo* return_struct = tryGetStructTypeInfo(current_function_return_type_index_);
+				if (return_struct && return_struct->isAggregate()) {
+					generateNestedMemberStores(*return_struct, init_list, temp_var, 0, false, node.return_token());
+					emitSehFinallyCallsBeforeReturn(node.return_token());
+					emitAndClearFullExpressionTempDestructors();
+					emitDestructorsForNonLocalExit(0);
+					emitReturn(temp_var, currentFunctionReturnTypeIndex(), current_function_return_size_, node.return_token(), ValueStorage::ContainsData);
+					return;
+				}
+			}
+
 			// Get struct type information
 			TypeCategory return_category = current_function_return_type_index_.category();
 			int return_size = current_function_return_size_;

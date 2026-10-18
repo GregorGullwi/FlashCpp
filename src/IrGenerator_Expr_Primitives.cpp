@@ -1356,15 +1356,23 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 
 			TypeCategory semantic_pointee_type = type_node.type();
 
-				// For enum references, lower the dereferenced value to its runtime
-				// representation so arithmetic/bitwise operations consume the
-				// underlying integer type.
+			// For enum references, lower the dereferenced value to its runtime
+			// representation so arithmetic/bitwise operations consume the
+			// underlying integer type. Pointer depth stays on the result:
+			// passing it here would skip that lowering for a referenced enum.
 			pointee_type = getRuntimeValueType(type_node.type_index().withCategory(semantic_pointee_type), PointerDepth{});
 			pointee_size = getRuntimeValueSizeBits(
 				type_node.type_index(), pointee_size, PointerDepth{});
 
-			int ptr_depth = type_node.runtime_pointer_depth() > 0 ? static_cast<int>(type_node.runtime_pointer_depth()) : 1;
-			TempVar result_temp = emitDereference(pointee_type, pointee_size, ptr_depth,
+			// A reference is one address above the referenced object. Depth 1
+			// loads a scalar (double&). A referenced pointer (double*&) is still
+			// a pointer after that load, so its dereference depth is one greater.
+			// Depth 1 with a floating-point pointee category emits movsd/movss
+			// and leaves contextual bool conversion comparing an unrelated GPR.
+			assert(type_node.runtime_pointer_depth() <= static_cast<size_t>(std::numeric_limits<int>::max()) &&
+				"Pointer depth exceeds maximum int value for PointerDepth construction");
+			const int referenced_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());
+			TempVar result_temp = emitDereference(pointee_type, pointee_size, referenced_pointer_depth + 1,
 												  toIrValue(identifier_frame_name));
 
 				// Mark as lvalue with Indirect metadata for unified assignment handler
@@ -1377,7 +1385,8 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 			TypeIndex type_index = preserveSemanticTypeIndex(type_node.type(), type_node.type_index());
-			return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index);
+			const PointerDepth result_pointer_depth{isIrStructType(toIrType(type_node.type())) ? 0 : referenced_pointer_depth};
+			return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index, result_pointer_depth);
 		}
 
 			// Regular local variable
@@ -1544,8 +1553,12 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				TypeCategory pointee_type = type_node.type();
 				int pointee_size = requireConcreteAliasResolvedCodegenSizeBits(type_node, "reference variable load lowering");
 
-				int ptr_depth = type_node.runtime_pointer_depth() > 0 ? static_cast<int>(type_node.runtime_pointer_depth()) : 1;
-				TempVar result_temp = emitDereference(pointee_type, pointee_size, ptr_depth,
+				// Same reference-depth rule as parameter loads: a referenced pointer
+				// stays a pointer. Depth 1 would load a float/double pointee instead.
+				assert(type_node.runtime_pointer_depth() <= static_cast<size_t>(std::numeric_limits<int>::max()) &&
+					"Pointer depth exceeds maximum int value for PointerDepth construction");
+				const int referenced_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());
+				TempVar result_temp = emitDereference(pointee_type, pointee_size, referenced_pointer_depth + 1,
 													  toIrValue(identifier_frame_name));
 
 					// Mark as lvalue with ReferenceDeref metadata for unified assignment handler
@@ -1558,7 +1571,8 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 				TypeIndex type_index = preserveSemanticTypeIndex(type_node.type(), type_node.type_index());
-				return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index);
+				const PointerDepth result_pointer_depth{isIrStructType(toIrType(type_node.type())) ? 0 : referenced_pointer_depth};
+				return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index, result_pointer_depth);
 			}
 
 				// Regular local variable (not a reference) - return variable name.

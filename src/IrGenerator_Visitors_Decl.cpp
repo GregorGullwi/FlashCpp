@@ -2667,8 +2667,12 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 							if (member.default_initializer.has_value()) {
 								const ASTNode& init_node = member.default_initializer.value();
 								if (init_node.has_value() && init_node.is<ExpressionNode>()) {
-									// Use the default member initializer
+									// Use the default member initializer. This implicit constructor body is
+									// the one ODR-used for a default member initializer; convert to the
+									// member type before the store. The synthetic default-constructor
+									// plan is a separate emission path.
 									ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+									init_operands = convertAggregateMemberInitializer(member, init_operands, node.name_token());
 									// Extract just the value (third element of init_operands)
 									if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
 										member_value = *temp_var;
