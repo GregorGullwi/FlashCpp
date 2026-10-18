@@ -339,6 +339,99 @@ std::optional<AstToIr::MultiDimPointeeDerefArrayAccess> AstToIr::resolveMultiDim
 	return result;
 }
 
+ExprResult AstToIr::emitRowMajorArrayElementAccess(std::span<const ASTNode> indices, std::span<const size_t> dimensions,
+	TypeCategory element_type, int element_size_bits, TypeIndex element_type_index,
+	std::variant<StringHandle, TempVar, LocalVarId> array_base, bool base_holds_address, const Token& token,
+	ExpressionContext context) {
+	if (indices.size() != dimensions.size() || indices.empty() || element_size_bits <= 0) {
+		throw InternalError("Row-major array access requires one index per dimension");
+	}
+	std::vector<size_t> strides(dimensions.size());
+	strides.back() = 1;
+	for (int dimension = static_cast<int>(dimensions.size()) - 2; dimension >= 0; --dimension) {
+		const size_t next_stride = strides[static_cast<size_t>(dimension) + 1];
+		const size_t extent = dimensions[static_cast<size_t>(dimension) + 1];
+		if (extent != 0 && next_stride > (static_cast<size_t>(-1) / extent)) {
+			throw InternalError("Row-major array stride is not representable");
+		}
+		strides[static_cast<size_t>(dimension)] = next_stride * extent;
+	}
+
+	auto visitIndex = [&](const ASTNode& index) -> ExprResult {
+		if (!index.is<ExpressionNode>()) {
+			throw InternalError("Array subscript index is not an expression");
+		}
+		return visitExpressionNode(index.as<ExpressionNode>());
+	};
+	const ExprResult first_index = visitIndex(indices[0]);
+	TempVar flat_index = var_counter.next();
+	if (strides[0] == 1) {
+		BinaryOp add_op;
+		add_op.lhs = toTypedValue(first_index);
+		add_op.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, 0ULL);
+		add_op.result = IrValue{flat_index};
+		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), token));
+	} else {
+		BinaryOp mul_op;
+		mul_op.lhs = toTypedValue(first_index);
+		mul_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[0]));
+		mul_op.result = IrValue{flat_index};
+		ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), token));
+	}
+	for (size_t index = 1; index < indices.size(); ++index) {
+		const ExprResult next_index = visitIndex(indices[index]);
+		if (strides[index] == 1) {
+			TempVar new_flat = var_counter.next();
+			BinaryOp add_op;
+			add_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, flat_index);
+			add_op.rhs = toTypedValue(next_index);
+			add_op.result = IrValue{new_flat};
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), token));
+			flat_index = new_flat;
+			continue;
+		}
+		TempVar product = var_counter.next();
+		BinaryOp mul_op;
+		mul_op.lhs = toTypedValue(next_index);
+		mul_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[index]));
+		mul_op.result = IrValue{product};
+		ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), token));
+		TempVar new_flat = var_counter.next();
+		BinaryOp add_op;
+		add_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, flat_index);
+		add_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, product);
+		add_op.result = IrValue{new_flat};
+		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), token));
+		flat_index = new_flat;
+	}
+
+	TempVar result_var = var_counter.next();
+	LValueInfo lvalue_info(LValueInfo::Kind::ArrayElement, array_base, 0);
+	lvalue_info.array_index = IrValue{flat_index};
+	lvalue_info.base_holds_address = base_holds_address;
+	setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
+
+	ArrayAccessOp payload;
+	payload.result = result_var;
+	payload.element_type_index = element_type_index.withCategory(element_type);
+	payload.element_size_in_bits = element_size_bits;
+	payload.member_offset = 0;
+	payload.base_holds_address = base_holds_address;
+	payload.array = array_base;
+	payload.index.setType(TypeCategory::UnsignedLongLong);
+	payload.index.ir_type = IrType::Integer;
+	payload.index.size_in_bits = SizeInBits{64};
+	payload.index.value = flat_index;
+	if (context == ExpressionContext::LValueAddress) {
+		ExprResult address_result = makeExprResult(element_type_index.withCategory(element_type), SizeInBits{element_size_bits},
+			IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsAddress);
+		return address_result;
+	}
+	ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), token));
+	return makeExprResult(element_type_index.withCategory(element_type), SizeInBits{element_size_bits}, IrOperand{result_var},
+		PointerDepth{}, ValueStorage::ContainsData);
+}
+
 ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 											 ExpressionContext context) {
 	// If sema resolved this subscript to operator[], dispatch to member function call IR.
@@ -908,6 +1001,30 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
 				return makeArrayResult(element_type, element_size_bits, result_var, element_type_index, PointerDepth{}, ValueStorage::ContainsData);
+			}
+		}
+
+		// A braced array prvalue has no declaration. Its type carries the bounds,
+		// and the temporary's address is indexed with the same row-major strides
+		// as a declared array of that type.
+		if (multi_dim_chain.root_expression != nullptr && std::holds_alternative<ConstructorCallNode>(*multi_dim_chain.root_expression)) {
+			const ConstructorCallNode& constructed_array = std::get<ConstructorCallNode>(*multi_dim_chain.root_expression);
+			const TypeSpecifierNode& array_type = constructed_array.type_node();
+			const std::span<const size_t> dimensions = array_type.array_dimensions();
+			if (constructed_array.isAggregateInitialization() && array_type.is_array() && dimensions.size() == multi_dim_chain.indices.size()) {
+				const TypeCategory element_type = array_type.category();
+				const int element_size_bits = get_type_size_bits(element_type);
+				if (element_size_bits <= 0) {
+					throw InternalError("Array prvalue subscript could not resolve the element size");
+				}
+				const ExprResult array_address = visitExpressionNode(*multi_dim_chain.root_expression);
+				const TempVar* address_temp = std::get_if<TempVar>(&array_address.value);
+				if (address_temp == nullptr) {
+					throw InternalError("Array prvalue subscript did not receive the temporary address");
+				}
+				const TypeIndex element_type_index = nativeTypeIndex(element_type);
+				return emitRowMajorArrayElementAccess(multi_dim_chain.indices, dimensions, element_type, element_size_bits, element_type_index,
+					*address_temp, true, arraySubscriptNode.bracket_token(), context);
 			}
 		}
 	}
