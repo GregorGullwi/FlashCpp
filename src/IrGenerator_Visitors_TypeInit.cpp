@@ -2748,6 +2748,18 @@ ExprResult AstToIr::convertAggregateMemberInitializer(const StructMember& member
 	if (member.pointer_depth != 0 || member.is_reference() || !is_standard_arithmetic_type(source_type) || !is_standard_arithmetic_type(target_type)) {
 		return initializer;
 	}
+	// An array lvalue is lowered with its element category and pointer width.
+	// That is not an arithmetic value: converting it would truncate the array
+	// into the member and hide ArrayToNonPointerMemberInitializer.
+	const DeclarationNode* source_decl = nullptr;
+	if (const auto* local_id = std::get_if<LocalVarId>(&initializer.value)) {
+		source_decl = declarationForVariableKey(VariableKey{*local_id});
+	} else if (const auto* name = std::get_if<StringHandle>(&initializer.value)) {
+		source_decl = declarationForVariableKey(VariableKey{*name});
+	}
+	if (source_decl != nullptr && (source_decl->is_array_object() || source_decl->type_specifier_node().is_array())) {
+		return initializer;
+	}
 	return generateTypeConversion(initializer, source_type, target_type, token);
 }
 
@@ -3272,7 +3284,12 @@ void AstToIr::generateNestedMemberStores(
 					ctor_args.push_back(nested_arg);
 				}
 
-				if (!resolved_ctor) {
+				// A nested brace of an aggregate is aggregate initialization. Sema did not
+				// select a constructor, and codegen must not type the brace elements as
+				// overload arguments: a deeper brace is not an expression and has no
+				// sema-owned argument type. Non-aggregates still resolve only when sema
+				// left the constructor unset.
+				if (!resolved_ctor && !member_struct_info->isAggregate()) {
 					resolved_ctor = resolveCodegenConstructorFromArgs(*member_struct_info, ctor_args);
 				}
 
