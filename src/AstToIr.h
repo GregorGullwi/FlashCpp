@@ -815,6 +815,7 @@ private:
 		int base_offset,
 		bool base_object_is_pointer,
 		const Token& token);
+	ExprResult convertAggregateMemberInitializer(const StructMember& member, const ExprResult& initializer, const Token& token);
 
 	// Helper function to route a misparsed member-call syntax through ordinary free-call lowering.
 	// When available, the original unified CallExprNode is preferred so the fallback preserves

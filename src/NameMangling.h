@@ -1537,6 +1537,18 @@ inline void populateSubstitutionsFromClassContext(
 
 // Append Itanium-style type encoding for basic types
 // Reference: https://itanium-cxx-abi.github.io/cxx-abi/abi.html#mangling-type
+inline void appendItaniumCVQualifier(auto& output, CVQualifier cv) {
+	if (!isValidCVQualifier(cv)) {
+		throw InternalError("Itanium name mangling: invalid type qualifier");
+	}
+	if (hasCVQualifier(cv, CVQualifier::Volatile)) {
+		output += 'V';
+	}
+	if (hasCVQualifier(cv, CVQualifier::Const)) {
+		output += 'K';
+	}
+}
+
 template <typename OutputType>
 inline void appendItaniumOrderedDeclaratorTypeCode(
 	OutputType& output,
@@ -1549,15 +1561,7 @@ inline void appendItaniumOrderedDeclaratorTypeCode(
 		switch (component.kind) {
 		case DeclaratorComponentKind::Pointer:
 			if (!(is_function_parameter && index == 0)) {
-				if (component.cv_qualifier == CVQualifier::Const) {
-					output += 'K';
-				} else if (component.cv_qualifier == CVQualifier::Volatile) {
-					output += 'V';
-				} else if (component.cv_qualifier == CVQualifier::ConstVolatile) {
-					output += "KV";
-				} else if (component.cv_qualifier != CVQualifier::None) {
-					throw InternalError("Itanium name mangling: invalid ordered pointer qualifier");
-				}
+				appendItaniumCVQualifier(output, component.cv_qualifier);
 			}
 			output += 'P';
 			break;
@@ -1591,15 +1595,7 @@ inline void appendItaniumOrderedDeclaratorTypeCode(
 			if (class_name.empty()) {
 				throw InternalError("Itanium name mangling: ordered member pointer missing declaring class");
 			}
-			if (component.cv_qualifier == CVQualifier::Const) {
-				output += 'K';
-			} else if (component.cv_qualifier == CVQualifier::Volatile) {
-				output += 'V';
-			} else if (component.cv_qualifier == CVQualifier::ConstVolatile) {
-				output += "KV";
-			} else if (component.cv_qualifier != CVQualifier::None) {
-				throw InternalError("Itanium name mangling: invalid ordered member pointer qualifier");
-			}
+			appendItaniumCVQualifier(output, component.cv_qualifier);
 			if (component.kind == DeclaratorComponentKind::MemberObjectPointer) {
 				output += 'M';
 				appendItaniumTypeNameWithSubstitution(output, class_name);
@@ -1635,13 +1631,7 @@ inline void appendItaniumOrderedDeclaratorTypeCode(
 
 	const bool is_by_value = components.empty();
 	if (!(is_function_parameter && is_by_value)) {
-		if (normalized.cv_qualifier() == CVQualifier::Const) {
-			output += 'K';
-		} else if (normalized.cv_qualifier() == CVQualifier::Volatile) {
-			output += 'V';
-		} else if (normalized.cv_qualifier() == CVQualifier::ConstVolatile) {
-			output += "KV";
-		}
+		appendItaniumCVQualifier(output, normalized.cv_qualifier());
 	}
 
 	TypeSpecifierNode base = normalized;
@@ -1652,64 +1642,39 @@ inline void appendItaniumOrderedDeclaratorTypeCode(
 
 template <typename OutputType>
 inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& type_node, bool is_function_parameter) {
-	TypeSpecifierNode parameter_adjusted_type =
-		is_function_parameter ? type_node.adjusted_function_parameter_type() : type_node;
+	TypeSpecifierNode parameter_adjusted_type = is_function_parameter ? type_node.adjusted_function_parameter_type() : type_node;
 	TypeSpecifierNode normalized_type = normalizeTypeSpecifierForMangling(parameter_adjusted_type);
 	const TypeSpecifierNode& normalized = normalized_type;
 	if (normalized.has_ordered_declarator()) {
-		appendItaniumOrderedDeclaratorTypeCode(
-			output, normalized, is_function_parameter);
+		appendItaniumOrderedDeclaratorTypeCode(output, normalized, is_function_parameter);
 		return;
 	}
 
-	// Handle pointers first (they modify what comes after)
-	const auto pointer_wrappers = normalized.legacy_declarator_pointer_wrappers();
-	for (size_t i = 0; i < pointer_wrappers.size(); ++i) {
-		output += 'P';
-		const auto& ptr_level = pointer_wrappers[i];
-		// CV-qualifiers on the pointer itself
-		// NOTE: For function parameters, top-level const on the pointer (i == 0) is ignored
-		// per C++ standard [dcl.fct]p5. Examples:
-		//   int* const p → int* p (top-level const ignored)
-		//   const int* const p → const int* p (top-level const ignored, inner const preserved)
-		bool skip_pointer_cv = is_function_parameter && (i == 0);
-		if (!skip_pointer_cv) {
-			if (ptr_level.cv_qualifier == CVQualifier::Const) {
-				output += 'K';
-			} else if (ptr_level.cv_qualifier == CVQualifier::Volatile) {
-				output += 'V';
-			} else if (ptr_level.cv_qualifier == CVQualifier::ConstVolatile) {
-				output += 'K';  // const first
-				output += 'V';  // then volatile
-			}
-		}
-	}
-
-	// Handle references (also modify what comes after)
+	// Type constructors are encoded from outermost to innermost. A reference
+	// preserves its referent's pointer CV, even in a function parameter.
 	if (normalized.is_lvalue_reference()) {
 		output += 'R';
 	} else if (normalized.is_rvalue_reference()) {
-		output += 'O';  // rvalue reference
+		output += 'O';
+	}
+	const auto pointer_wrappers = normalized.legacy_declarator_pointer_wrappers();
+	for (size_t index = pointer_wrappers.size(); index-- > 0;) {
+		const bool skip_pointer_cv = is_function_parameter && !normalized.is_reference() && index + 1 == pointer_wrappers.size();
+		if (!skip_pointer_cv) {
+			appendItaniumCVQualifier(output, pointer_wrappers[index].cv_qualifier);
+		}
+		output += 'P';
 	}
 
 	// CV-qualifiers on the base type (come after pointer/reference)
 	// According to Itanium ABI: K = const, V = volatile
 	// NOTE: For function parameters passed by value (not pointer/reference),
 	// top-level const is ignored per C++ standard [dcl.fct]p5
-	bool is_by_value = pointer_wrappers.empty() &&
-					   !normalized.is_lvalue_reference() &&
-					   !normalized.is_rvalue_reference();
-	bool skip_cv = is_function_parameter && is_by_value;
+	const bool is_by_value = pointer_wrappers.empty() && !normalized.is_reference();
+	const bool skip_cv = is_function_parameter && is_by_value;
 
 	if (!skip_cv) {
-		if (normalized.cv_qualifier() == CVQualifier::Const) {
-			output += 'K';
-		} else if (normalized.cv_qualifier() == CVQualifier::Volatile) {
-			output += 'V';
-		} else if (normalized.cv_qualifier() == CVQualifier::ConstVolatile) {
-			output += 'K';  // const first
-			output += 'V';  // then volatile
-		}
+		appendItaniumCVQualifier(output, normalized.cv_qualifier());
 	}
 
 	// Basic type codes (Itanium ABI section 5.1.5)

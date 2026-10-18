@@ -2435,6 +2435,7 @@ void AstToIr::generateTrivialDefaultConstructors() {
 					if (init_node.has_value() && init_node.is<ExpressionNode>()) {
 						// Use the default member initializer
 						ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+						init_operands = convertAggregateMemberInitializer(member, init_operands, Token());
 						// Extract just the value (third element of init_operands)
 						// Verify we have at least 3 elements before accessing
 
@@ -2741,6 +2742,15 @@ void AstToIr::emitZeroInitializedMember(
 	ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
 }
 
+ExprResult AstToIr::convertAggregateMemberInitializer(const StructMember& member, const ExprResult& initializer, const Token& token) {
+	const TypeCategory source_type = initializer.typeEnum();
+	const TypeCategory target_type = member.memberType();
+	if (member.pointer_depth != 0 || member.is_reference() || !is_standard_arithmetic_type(source_type) || !is_standard_arithmetic_type(target_type)) {
+		return initializer;
+	}
+	return generateTypeConversion(initializer, source_type, target_type, token);
+}
+
 // Implementation of recursive nested member store generation
 bool AstToIr::tryEmitArrayMemberStores(
 	const StructMember& member,
@@ -2853,6 +2863,7 @@ bool AstToIr::tryEmitArrayMemberStores(
 						token);
 				} else if (element.is<ExpressionNode>()) {
 					ExprResult init_operands = visitExpressionNode(element.as<ExpressionNode>());
+					init_operands = convertAggregateMemberInitializer(member, init_operands, token);
 					emitArrayStore(
 						member.memberType(),
 						element_size_bits,
@@ -2929,6 +2940,7 @@ bool AstToIr::tryEmitArrayMemberStores(
 	const size_t emit_count = std::min(element_count, flat_initializers.size());
 	for (size_t i = 0; i < emit_count; ++i) {
 		ExprResult init_operands = visitExpressionNode(*flat_initializers[i]);
+		init_operands = convertAggregateMemberInitializer(member, init_operands, token);
 
 		emitArrayStore(
 			member.memberType(),
@@ -3220,6 +3232,7 @@ void AstToIr::generateNestedMemberStores(
 			}
 
 			ExprResult init_operands = visitExpressionNode(*default_expression);
+			init_operands = convertAggregateMemberInitializer(member, init_operands, token);
 			MemberStoreOp member_store;
 			member_store.value = toTypedValue(init_operands);
 			member_store.value.setType(member.memberType());
@@ -3293,6 +3306,7 @@ void AstToIr::generateNestedMemberStores(
 			const auto& nested_initializers = nested_init_list.initializers();
 			if (nested_initializers.size() == 1 && nested_initializers[0].is<ExpressionNode>()) {
 				ExprResult init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
+				init_operands = convertAggregateMemberInitializer(member, init_operands, token);
 				IrValue member_value = 0ULL;
 				bool member_value_overridden = false;
 				if (member.pointer_depth > 0 &&
@@ -3349,6 +3363,7 @@ void AstToIr::generateNestedMemberStores(
 		} else if (init_expr.is<ExpressionNode>()) {
 			// Direct expression initializer
 			ExprResult init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+			init_operands = convertAggregateMemberInitializer(member, init_operands, token);
 			IrValue member_value = 0ULL;
 			bool member_value_overridden = false;
 			if (member.pointer_depth > 0 &&

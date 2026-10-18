@@ -6,21 +6,20 @@ Read `AGENTS.md`, `docs/MIGRATION_PROGRESS.md`, and `docs/KNOWN_ISSUES.md` first
 Use Luna agents for most implementation and investigation; coordinate and review
 their work. Write a todo plan before architectural edits.
 
-First inspect the PR's final validation status and finish any outstanding full
-source-suite, native-suite, and standalone architecture checks. The six focused
-source regressions passed before the final removal of redundant constexpr
-wrappers. Compare complete-native-suite failures against the two documented
-baseline failures before attributing them to this PR. Do not describe an
-incomplete or baseline-failing run as fully green.
+First inspect the PR's latest validation status. Compare complete-native-suite
+failures against the two documented baseline failures before attributing them
+to this PR. Do not describe an incomplete or baseline-failing run as fully green.
 
-The wrap-up started the full source suite, writing
-`x64/issue-member-full.log` and `x64/issue-member-full.jsonl`. A fresh native
-build was still running when the handoff was prepared; check
-`x64/issue-member-native-status.txt` for its eventual build/focused-test result.
-Check for active processes before rerunning validation. The stack comparison
-artifacts are under `x64/issue-member-baseline/stack/final-current/`.
-Update the draft PR's validation paragraph with the final results, and mark it
-ready only after reviewing outstanding failures and required checks.
+The Linux continuation fixes the two reported CI return mismatches: Itanium
+symbols now distinguish pointer-reference qualification, and shared aggregate
+member stores convert arithmetic values before storing the destination width.
+Keep the source regressions for both cases and the native exact-encoding checks,
+including their 4,096-level ordered and legacy pointer types.
+
+The continuation's build, focused/full-suite, native, and stack artifacts are
+under `x64/linux-takeover/`; the original stack comparison artifacts remain under
+`x64/issue-member-baseline/stack/final-current/`. Check for active processes
+before rerunning validation, and consult the PR for the final CI results.
 
 The current slice publishes each supported member's full canonical `TypeId`
 before construction. It preserves declared pointee and intermediate pointer CV,
@@ -69,16 +68,12 @@ any complete-native-suite failures with the documented baseline. Update the
 migration documentation and create a PR describing the corrected behavior and
 what the added regressions protect against.
 
-The separately documented narrow `nullptr` store through `int*&` and inline
-typedef-record function-pointer parser bug are not prerequisites for deleting
-member TypeIndex storage. Keep their investigation separate unless a migrated
-consumer directly requires a fix.
-
-If investigating these final bugs first, add a regression before implementation:
-the null-pointer assignment needs a destination-typed, full-width store rather
-than a zero-literal width guess; inline typedef records should reuse the normal
-declarator parser while preserving their declaration AST and layout. Avoid
-reintroducing the rejected post-registration member-TypeId assignment pattern.
+The narrow `nullptr` store through `int*&` and inline typedef-record
+function-pointer parser bugs are already fixed. Remaining nearby issues are
+documented in `KNOWN_ISSUES.md`: local aggregate numeric conversion, nested
+aggregate initialization, contextual bool conversion of `double*&`, and inline
+typedef array-member publication. Keep these investigations separate from
+deleting member TypeIndex storage unless a migrated consumer requires a fix.
 
 ## Reviewable TypeIndex consumer migration slices
 

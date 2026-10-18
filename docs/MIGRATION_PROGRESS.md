@@ -821,3 +821,34 @@ bytes; member import overloads use 664/936 bytes. Wrapper traversal stays
 iterative, but existing source/template recursion still grows native stack
 usage with logical nesting. These measurements do not establish bounded stack
 usage for the whole compiler. No stack reserve was changed.
+
+### Linux member-type CI continuation
+
+The Linux pointer-reference overload failure also exposed an Itanium mangling
+collision: the legacy encoder emitted pointer constructors before references
+and discarded referent pointer CV as if it were a by-value parameter qualifier.
+It now emits outer constructors first, traverses legacy pointer levels from
+outermost to innermost, and retains CV through references. Ordered and legacy
+encoders share the ABI qualifier ordering. Native exact-encoding checks include
+4,096 pointer levels in both representations, under the normal test stack.
+
+The callable-array regression's aggregate result exposed a separate missing
+arithmetic conversion. `Holder<long long>{int_value}` tagged the source as a
+64-bit member store while leaving its producer 32-bit, reading uninitialized
+upper bytes. Shared nested, array-member, default-member, and synthesized
+default-constructor stores now use the existing numeric conversion helper.
+The regression covers signed and unsigned widening, template records, mixed
+member widths, scalar braces, arrays, float-to-double, and default initializers.
+The local aggregate store boundary still needs migration, as documented in
+`KNOWN_ISSUES.md`; nested aggregate and contextual-bool gaps found during the
+continuation are recorded there too.
+
+Clang 18 Linux stack probes against `bdf4411f` measure the largest changed
+recursive frame, `generateNestedMemberStores`, at 7,368 bytes versus 7,192
+(+176). Its existing native recursion still grows with aggregate nesting;
+attempted deep runtime aggregate coverage encountered the documented preexisting
+initialization gaps. The nonrecursive default-constructor emitter is 10,008
+versus 9,864 bytes; the new conversion helper is 72 bytes. Legacy Itanium
+encoding grows by 16 bytes to 2,040 bytes for `std::string`, while the ordered
+encoder stays at 3,272. Pointer-wrapper traversal remains iterative, and no
+stack limit or reserve was changed.
