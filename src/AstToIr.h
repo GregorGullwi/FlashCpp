@@ -438,6 +438,10 @@ private:
 		const MultiDimSubscriptChain& chain);
 	std::vector<size_t> getEffectiveArrayDimensionsForCodegen(const DeclarationNode& decl) const;
 	size_t getEffectiveArrayDimensionCountForCodegen(const DeclarationNode& decl) const;
+	ExprResult emitRowMajorArrayElementAccess(std::span<const ASTNode> indices, std::span<const size_t> dimensions,
+		TypeCategory element_type, int element_size_bits, TypeIndex element_type_index,
+		std::variant<StringHandle, TempVar, LocalVarId> array_base, bool base_holds_address, const Token& token,
+		ExpressionContext context);
 	ExprResult generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 										ExpressionContext context = ExpressionContext::Load);
 	bool validateAndSetupIdentifierMemberAccess(
