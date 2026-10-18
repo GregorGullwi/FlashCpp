@@ -4083,8 +4083,7 @@ private:	 // Resume private methods
 	bool looks_like_function_parameters();  // Detect if '(' starts function params vs direct init
 	// True when the qualified-id at the current token denotes a non-type or an ambiguous member.
 	bool bareQualifiedTerminalIsValue(const TypeInfo* owner);
-	// True when '(' begins a qualified non-type initializer rather than a parameter list.
-	bool parenthesizedQualifiedTerminalIsValue();
+	bool qualifiedTypeNameDenotesNonType(std::string_view type_name) const;
 	bool looks_like_elaborated_type_variable_declaration();  // Disambiguate 'struct Foo f = ...' from 'struct Foo { ... }'
 
 	ParseResult parse_direct_initialization();  // Parse Type var(args) - returns initializer node

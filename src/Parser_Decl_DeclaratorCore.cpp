@@ -2573,26 +2573,33 @@ bool Parser::bareQualifiedTerminalIsValue(const TypeInfo* owner) {
 	return restore_before_return(false);
 }
 
-bool Parser::parenthesizedQualifiedTerminalIsValue() {
-	if (peek() != "("_tok) {
+bool Parser::qualifiedTypeNameDenotesNonType(std::string_view type_name) const {
+	const size_t first_scope = type_name.find("::");
+	if (first_scope == std::string_view::npos) {
 		return false;
 	}
-	SaveHandle saved = save_token_position();
-	auto restore_before_return = [&](bool result) {
-		restore_token_position(saved);
-		return result;
-	};
-	advance();
-	if (!peek().is_identifier()) {
-		return restore_before_return(false);
+	const StringHandle owner_name = StringTable::getOrInternStringHandle(type_name.substr(0, first_scope));
+	const auto owner_iter = getTypesByNameMap().find(owner_name);
+	if (owner_iter == getTypesByNameMap().end() || owner_iter->second == nullptr) {
+		return false;
 	}
-	const StringHandle owner_name = StringTable::getOrInternStringHandle(peek_info().value());
-	const auto type_iter = getTypesByNameMap().find(owner_name);
-	if (type_iter == getTypesByNameMap().end() || type_iter->second == nullptr) {
-		return restore_before_return(false);
+	const TypeInfo* owner = owner_iter->second;
+	size_t member_start = first_scope + 2;
+	while (member_start < type_name.size()) {
+		const size_t next_scope = type_name.find("::", member_start);
+		const size_t member_length = next_scope == std::string_view::npos ? std::string_view::npos : next_scope - member_start;
+		const std::string_view member_spelling = type_name.substr(member_start, member_length);
+		const QualifiedMemberClassification member = classifyQualifiedMember(owner, StringTable::getOrInternStringHandle(member_spelling));
+		if (member.kind == QualifiedMemberKind::Value || member.kind == QualifiedMemberKind::Ambiguous) {
+			return true;
+		}
+		if (member.kind != QualifiedMemberKind::Type || member.type_info == nullptr || next_scope == std::string_view::npos) {
+			return false;
+		}
+		owner = member.type_info;
+		member_start = next_scope + 2;
 	}
-	advance();
-	return restore_before_return(bareQualifiedTerminalIsValue(type_iter->second));
+	return false;
 }
 
 bool Parser::looks_like_function_parameters() {
@@ -2702,7 +2709,7 @@ bool Parser::looks_like_function_parameters() {
 					restore_token_position(saved);
 					return false;
 				}
-				if (type_iter->second != nullptr && bareQualifiedTerminalIsValue(type_iter->second)) {
+				if (type_iter->second != nullptr && peek() == "::"_tok && bareQualifiedTerminalIsValue(type_iter->second)) {
 					restore_token_position(saved);
 					return false;
 				}
