@@ -783,6 +783,16 @@ inline CanonicalTypeImport importCanonicalFunctionSignature(
 	}
 
 	std::vector<TypeId> parameters;
+	auto appendFunctionParameter = [&table, &parameters](TypeId parameter_type) {
+		const CanonicalTypeNode parameter = table.node(parameter_type);
+		if (parameter.kind == CanonicalTypeKind::Array) {
+			parameter_type = table.pointer(parameter.child);
+		} else if (parameter.kind == CanonicalTypeKind::Function) {
+			parameter_type = table.pointer(parameter_type);
+		}
+		// [dcl.fct]/5 removes top-level cv after array and function adjustment.
+		parameters.push_back(table.withoutTopLevelQualifiers(parameter_type));
+	};
 	const std::span<const FunctionType> structured_parameters = signature.parameter_types();
 	if (!structured_parameters.empty()) {
 		parameters.reserve(structured_parameters.size());
@@ -792,11 +802,7 @@ inline CanonicalTypeImport importCanonicalFunctionSignature(
 			if (imported_parameter.status != CanonicalTypeImportStatus::Supported) {
 				return imported_parameter;
 			}
-			TypeId parameter_type = imported_parameter.type;
-			if (table.node(parameter_type).kind == CanonicalTypeKind::Function) {
-				parameter_type = table.pointer(parameter_type);
-			}
-			parameters.push_back(parameter_type);
+			appendFunctionParameter(imported_parameter.type);
 		}
 	} else {
 		parameters.reserve(signature.parameter_type_indices.size());
@@ -810,11 +816,7 @@ inline CanonicalTypeImport importCanonicalFunctionSignature(
 			if (imported_parameter.status != CanonicalTypeImportStatus::Supported) {
 				return imported_parameter;
 			}
-			TypeId parameter_type = imported_parameter.type;
-			if (table.node(parameter_type).kind == CanonicalTypeKind::Function) {
-				parameter_type = table.pointer(parameter_type);
-			}
-			parameters.push_back(parameter_type);
+			appendFunctionParameter(imported_parameter.type);
 		}
 	}
 

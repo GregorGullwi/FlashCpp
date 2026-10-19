@@ -6,7 +6,7 @@ authoritative for the design, boundaries, and exit criteria. This file records
 the current boundary state, the remaining work, and the validation contract;
 completed implementation history belongs in git.
 
-Last updated: 2026-10-16.
+Last updated: 2026-10-19.
 
 ## Current state
 
@@ -300,6 +300,13 @@ Continue boundary 3A in this order.
    class-base schemas to rank unique base paths regardless of access, and an
    evaluated call now records the selected conversion operator (with its
    derived-to-base or member-pointer tail) so codegen materializes it.
+   Canonical function-signature import now centralizes [dcl.fct]/5 parameter
+   adjustment and removes top-level cv for structured and projection-only
+   parameter types. A dependent callable alias with const by-value `int` and
+   record parameters now selects the equivalent unqualified function-pointer
+   overload over ellipsis; `tests/test_canonical_template_function_pointer_parameter_cv_ranking_ret0.cpp`
+   protects this ranking case. This closes no explicit 3A exit criterion; the
+   rollup remains 10/79.
    Post-selection access is applied to the selected conversion function and to
    its derived-to-base step.
    The ordered canonical planner handles supported non-nominal tails. Array
