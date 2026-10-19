@@ -358,6 +358,12 @@ std::optional<TypeId> CanonicalTypeTable::aliasTemplateTarget(TemplateDeclId pri
 	return it == alias_template_targets_.end() ? std::nullopt : std::optional<TypeId>(it->second.target);
 }
 
+TypeId CanonicalTypeTable::resolveAliasTemplateSpecializations(TypeId type) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	return resolveNestedAliasGraphUnlocked(type);
+}
+
 TypeId CanonicalTypeTable::templateSpecialization(TemplateDeclId primary, std::span<const TypeId> arguments) {
 	std::vector<CanonicalTemplateArgument> mixed;
 	mixed.reserve(arguments.size());

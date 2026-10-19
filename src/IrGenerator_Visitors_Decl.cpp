@@ -3162,6 +3162,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								} else if (!is_struct_type(member.type_index.category()) && init_list.size() == 1 &&
 										   init_list.initializers()[0].is<ExpressionNode>()) {
 									ExprResult init_operands = visitExpressionNode(init_list.initializers()[0].as<ExpressionNode>());
+									init_operands = convertAggregateMemberInitializer(member, init_operands, node.name_token());
 									if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
 										member_value = *temp_var;
 									} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
@@ -3226,15 +3227,11 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								// non-reference scalar member would copy the address instead of the
 								// pointee value, so load through it first. Reference members keep the
 								// pointer (they bind to the address), so they are left untouched.
-								init_operands = materializeAddressResultForValueContext(
-									init_operands,
-									member.type_index,
-									member.type_index.category(),
-									SizeInBits{static_cast<int>(member.size * 8)},
-									PointerDepth{},
+								init_operands = materializeAddressResultForValueContext(init_operands, member.type_index, member.type_index.category(),
+									SizeInBits{static_cast<int>(member.size * 8)}, PointerDepth{},
 									member.is_rvalue_reference() ? ReferenceQualifier::RValueReference
-										: (member.is_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None),
-									node.name_token());
+										: (member.is_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None), node.name_token());
+								init_operands = convertAggregateMemberInitializer(member, init_operands, node.name_token());
 								// Extract just the value (third element of init_operands)
 								if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
 									member_value = *temp_var;
@@ -3276,9 +3273,10 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 					} else if (member.default_initializer.has_value()) {
 						const ASTNode& init_node = member.default_initializer.value();
 						if (init_node.has_value() && init_node.is<ExpressionNode>()) {
-								// Use default member initializer (C++11 feature)
+							// Use default member initializer (C++11 feature)
 							ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
-								// Extract just the value (third element of init_operands)
+							init_operands = convertAggregateMemberInitializer(member, init_operands, node.name_token());
+							// Extract just the value (third element of init_operands)
 							if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
 								member_value = *temp_var;
 							} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {

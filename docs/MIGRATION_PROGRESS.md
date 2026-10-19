@@ -6,7 +6,7 @@ authoritative for the design, boundaries, and exit criteria. This file records
 the current boundary state, the remaining work, and the validation contract;
 completed implementation history belongs in git.
 
-Last updated: 2026-10-19.
+Last updated: 2026-10-20.
 
 ## Current state
 
@@ -157,235 +157,36 @@ of being masked by a generic `OutOfLineMemberNotAttached` attachment failure.
 
 Continue boundary 3A in this order.
 
-0. **Declarator consolidation (active, branch `codex/declarator-consolidation`).**
-   A parenthesized declarator group whose direct-declarator carries a `[` suffix is
-   now routed through the recursive frame-stack grammar instead of being rejected by
-   the flat re-check, so the previously failing spellings parse to an ordered
-   `[Array, Pointer, Function]` spine:
-   `int (*a[2])(int) = {&f,&g};`, `using A = int(*[2])(int);`, and
-   `template <class T> using A = T(*[2])(T);`. The supporting layers are landed:
-   the legacy projection projects a single trailing `Function` component;
-   `importCanonicalCallable` wraps the recorded array bounds around the callable
-   element and `publishPointerArrayStructuralId` no longer bails on a callable
-   element; the IR variable-declaration guard accepts a projectable spine and sizes a
-   pointer/callable array element from the flat pointer depth; the structural callable
-   path preserves a reference return and mirror records a parameter pack on the
-   structured component; and global pointer arrays emit one `DataRelocation` per
-   element while local pointer arrays store one pointer per element. Regressions:
-   `tests/test_array_of_function_pointers_ret0.cpp` and
-   `tests/test_alias_array_of_function_pointers_ret0.cpp`.
-   The nested callable return is implemented: a declarator with more than one
-   `Function` component keeps one signature per component. The frame parser stores
-   each frame's parameter list and the outermost-first function list travels with the
-   assembled spine; `build_sub_spine` builds the signatures from the innermost callable
-   outward, so each inner signature becomes the enclosing return `FunctionType`'s
-   `callable_signature`, and `applyCanonicalOrderedDeclarator` maps every Function
-   component to its signature. `int (*(*p)())();` now parses, projects, imports, and
-   lowers as an 8-byte pointer object; the regression is
-   `tests/test_nested_callable_return_ret0.cpp`.
-   Calling *through* a nested callable is implemented on branch
-   `boundary-3a-declarator-single-path`: `tryGetReturnTypeFromFunctionType` rebuilds a
-   function-pointer return from the structured `callable_signature` when the flat
-   return category cannot denote it, so `p()(40)` types the inner result as a function
-   pointer and the outer call lowers. The same branch stores a function-address global
-   initializer (`&f` / `int (&r)(int) = g;`) under the mangled symbol through the shared
-   `resolveGlobalRelocTarget`. The regression is
-   `tests/test_nested_callable_call_ret0.cpp`.
-   The `parse_type_and_name` `(`-re-check dispatch is removed on branch
-   `boundary-3a-declarator-single-parse`: the initial `(` block and the
-   `tryParseOrderedDeclaratorAtOpenParen` re-dispatch are gone, replaced by one
-   parenthesized-declarator handler after every cv/pointer/reference modifier that
-   tries reference-to-array then `parse_declarator`, leaving the MSVC `(name)` extension
-   to the identifier path. Function-reference declarations now use that same
-   recursive parser: the bespoke `tryParseReferenceToFunctionDeclarator` projection is
-   deleted, and `[LValueReference, Function]` remains on the ordered spine. The parser
-   AST regression is in `tests/FlashCppTest/FlashCppTest/FrontendContextTests.cpp`;
-   `tests/test_function_ref_type_ret0.cpp`,
-   `tests/test_reference_to_function_pointer_return_ret42.cpp`, and
-   `tests/test_requires_funcref_ret0.cpp` protect callable references and parameter
-   forms. The consolidation removes about 100 lines of duplicate parsing from
-   `Parser_Decl_DeclaratorCore.cpp`.
-   A function *definition* whose return type is a function pointer or a nested callable
-   is handled on branch `boundary-3a-declarator-grammar-owned`: when the outermost
-   `Function` component is the entity itself, the multi-function spine builds the
-   return sub-spine and emits a `FunctionDeclarationNode` with the entity's parameter
-   list, so `int (* (*make(int))(int))(int) { ... }` parses and lowers as a function
-   (the regression is `tests/test_nested_callable_function_definition_ret0.cpp`).
-   The structural candidate probe is **deleted**: the frame-stack grammar owns every
-   parenthesized group and the flat function-pointer path stays only as a fail-closed
-   fallback. Three supporting fixes make a function whose return type is itself callable
-   work end to end:
-   - `materializeSubstitutedFunctionTypeMetadata` admits an ordered callable spine and
-     carries its components onto the substituted return type, so
-     `test_template_nested_callable_signature_ret0.cpp` passes.
-   - The bound-template instantiation reparse keeps the substituted base index for an
-     ordered return instead of overwriting it with the pattern's dependent index, which
-     had left `functionHasUnresolvedPlaceholderSignature` true and suppressed emission
-     of the specialization (`_Z...mf...` stayed `UND`), so
-     `test_canonical_dependent_nested_callable_overload_ret0.cpp` passes.
-   The whole corpus, migration counters, canonical mutation harness, and doctest suite
-   are green with the probe gone.
-   Every projectable declarator now uses the ordered spine: the representation guard
-   that kept a named projectable pointer/array shape on the flat projection is removed,
-   so named and abstract declarators agree. Two grammar-faithful checks came with it:
-   an abstract-declarator has no declarator-id ([dcl.decl]/5), so a type-id group that
-   parsed a name (the `(int_shape)` in a speculative `sizeof(accepts_int(int_shape))`)
-   is left to the expression interpretation; and [dcl.ref]/5 rejects a pointer or array
-   formed over a reference base (`using R = int&; sizeof(R(*))`), which the flat path
-   checked and the ordered path did not.
-   On branch `boundary-3a-declarator-qualified-id` the grammar also consumes a
-   qualified declarator-id (`int (*Registry::table)[2][4]`, [dcl.decl]/5), recording
-   the owner on the declaration like the flat path did.
-   On branch `boundary-3a-ordered-pointer-to-array` the **flat `(` fallback is
-   deleted** (about 300 lines plus the dead `scan_parenthesized_pointer_group`
-   scanner), so the frame-stack grammar owns every parenthesized declarator. Three
-   fixes made the last flat-only shapes work on the ordered path: a dependent array
-   bound is retained as an unevaluated dimension in any template context (so
-   `char (*__countof_helper(T (&a)[N]))[_SizeOfArray]` parses); a pointee-array
-   declaration attaches its bound expressions so `T (*cells)[Rows][Columns]` resolves
-   its dimensions after class-template substitution and the subscript uses the row
-   stride; and the grammar reports the [dcl.array]/1 `Expected ']' after array size`
-   diagnostic with its opening-bracket note for a malformed bound like `[3 4]`.
-   A function whose return type is a function pointer (`int (*get())(int)`) no
-   longer truncates its return value. The sema cast annotation for `return
-   plus1;` is a `FunctionToPointer` decay whose target descriptor's category is
-   the ordered spine's base (`int`), so the return lowering ran
-   `generateTypeConversion` to `int` and emitted `trunc function_pointer64 to
-   int32`. The address only survived because the default corpus links `no-pie`
-   with low addresses; PIE and the MSVC target crashed dereferencing the
-   truncated pointer (0xC0000005). Since [conv.func] decay yields a
-   pointer-sized value, a `FunctionToPointer` conversion now keeps the function
-   pointer representation instead of narrowing to the annotated base category.
-   The regression is the existing `tests/test_function_returning_funcptr_direct_ret0.cpp`,
-   its `_invoke` variant, and the struct/template member `_invoke` variants, which
-   crash on the MSVC target and now pass under a `--pie` corpus run.
-   Nested callable expression consumers now preserve the grammar's shape:
-   canonical export walks every Function component, sema derives calls through
-   expression results from receiver signatures with an explicit worklist, and indirect-call lowering
-   shares structured return reconstruction with parser-facing type queries. A
-   record base category no longer misclassifies an ordered callable as a record
-   object. Regressions cover three-deep integer and floating-point calls, small
-   and large record returns, and `sizeof` of nested callable results. The wider
-   3A migration of flat-field consumers remains open; no exit criterion is closed.
+0. **Declarator consolidation: complete.**
 
-   Agent continuation prompt: "Continue the C++20 declarator consolidation from main;
-   the previous declarator branches have merged.
-   The declarator shapes, nested callable return, nested callable call, the single
-   `parse_declarator` dispatch in `parse_type_and_name`, function definitions returning
-   a nested callable, the deletion of `tryStructuralPointerArrayDeclarator`'s candidate
-   probe, the ordered spine for every projectable declarator (with the [dcl.decl]/5
-   abstract-declarator and [dcl.ref]/5 pointer-to-reference checks), a qualified
-   declarator-id in the grammar, the **deletion of the flat `(` fallback**, and a
-   function-returning-function-pointer return decay that no longer narrows to the
-   ordered base category are landed. The parser is now grammar-faithful: the frame-stack grammar owns every
-   parenthesized declarator. Three-deep callable calls, struct-returning nested
-   callable calls, and `sizeof(make(0))` now use the retained structured signatures.
-   Remaining is the wider 3A migration (flat-field consumers). Do not re-introduce a heuristic spine when a
-   downstream assumption breaks; fix the downstream layer under the grammar. Validate
-   with a full sharded rebuild, `tests/run_all_tests.sh`,
-   `tests/run_migration_counters.sh`, the canonical-type mutation harness, and
-   `make test`, and keep `test_ordered_function_to_pointer_decay_ret42.cpp` green."
+1. **Make `TypeId` the conversion currency (in progress).** Finish replacing
+   syntax-facing conversion ranking with structural planning. Put remaining flat
+   descriptor reads behind compatibility boundaries that preserve callable identity,
+   nested cv, array decay, and value category.
 
-1. **Make `TypeId` the conversion currency.** Continue migrating parser-side
-   overload ranking and remaining syntax-facing callers to the structural
-   planner, including conversions that require temporary materialization and
-   unsupported callable pairs. Continue making projectable semantic descriptors
-   use structural identity and replace remaining flat-field reads with a single
-   compatibility materializer at each legacy boundary, preserving full callable
-   comparison, nested cv, array decay, and value-category behavior.
-   Published pointer/array materialization now uses canonical export; remaining
-   flat-field consumers are descriptor writers and their identity refresh,
-   semantic decay/construction paths, and unsupported shapes. The
-   `test_canonical_pointer_array_materialization_ret0.cpp` regression covers
-   conditional decay and materialization with short arrays, record and template
-   elements, function-pointer arrays and references, and specialization-backed
-   callable aliases. This does not close a 3A exit criterion.
-   `test_const_object_pointer_member_copy_ret0.cpp` protects constructor selection
-   and pointer overloads through const records and const pointer-array members;
-   the existing class-template friend-by-value regression exercises the same rule
-   after dependent member substitution.
-   Remaining: unsupported callable conversions that still need substitution-aware canonical
-   ranking; derived-to-base conversions through non-projectable declarators and
-   callable-component conversions, which remain deferred; conversion-function
-   tails for unsupported callable relations. Nominal tails use published
-   class-base schemas to rank unique base paths regardless of access, and an
-   evaluated call now records the selected conversion operator (with its
-   derived-to-base or member-pointer tail) so codegen materializes it.
-   Canonical function-signature import now centralizes [dcl.fct]/5 parameter
-   adjustment and removes top-level cv for structured and projection-only
-   parameter types. A dependent callable alias with const by-value `int` and
-   record parameters now selects the equivalent unqualified function-pointer
-   overload over ellipsis; `tests/test_canonical_template_function_pointer_parameter_cv_ranking_ret0.cpp`
-   protects this ranking case. This closes no explicit 3A exit criterion; the
-   rollup remains 10/79.
-   Post-selection access is applied to the selected conversion function and to
-   its derived-to-base step.
-   The ordered canonical planner handles supported non-nominal tails. Array
-   and callable outer wrappers stay guarded where their consumers are not
-   migrated.
-   `FunctionDeclarationNode` now retains the `explicit` specifier for conversion
-   functions, so an explicit conversion function is excluded from implicit
-   viability (an argument or copy-initialization no longer selects it) while a
-   `static_cast` or direct-initialization still considers it, and both forms now
-   lower by calling the selected operator rather than reinterpreting the object.
-   Conversion-operator selection uses the sema-owned canonical `TypeId` path
-   first for `static_cast`, initialization, returns, ordinary call arguments,
-   assignment, arithmetic promotions, conditional branches, contextual `bool`,
-   constructor arguments, and builtin subscript conversions. It traverses
-   canonical class-base identities while reading candidate declarations through
-   a `StructTypeInfo` compatibility bridge. Candidate hiding now keys on the
-   full return `TypeId`, preserving pointer and callable target shape, and
-   selected canonical candidates carry their declaring class `TypeId` through
-   access checking. The explicitly named
-   `trySelectCompatibilityUserDefinedConversionOperator` remains available
-   only when source import or the declaration bridge cannot resolve the class.
-   Constructor-conversion probes now take source and target syntax and consult
-   the published constructor schema by canonical `TypeId` for supported builtin
-   and pointer conversions, including explicit-constructor filtering. Direct
-   reference bindings now share a TypeId planner with the constructor trait
-   query, including same-referent and public derived-to-base bindings, cv and
-   value-category checks, and rejection of inaccessible or ambiguous bases.
-   Class values, non-builtin reference conversion temporaries, dependent types,
-   and unsupported callable argument shapes still use the compatibility
-   resolver when the schema cannot prove the answer. Member
-   pointer owner conversions now publish and query canonical class-base schemas
-   before using the legacy TypeIndex owner bridge.
-   Shared unary and binary operator ranking now traverses class and base
-   identities with canonical `TypeId`s; candidate declarations still come from
-   the `StructTypeInfo` compatibility bridge. Parser and IR entry points that
-   only have a `TypeIndex` adapt at the boundary. TypeId-driven operator ranking
-   now matches current-instantiation self references by canonical class identity
-   and `TemplateDeclId`, then projects the owner through `TypeInfo` for the
-   existing `TypeSpecifierNode` conversion descriptor. TypeIndex self-reference
-   entry points now adapt through canonical owner identities when importable;
-   TypeInfo-based matching remains only as a compatibility fallback.
-   The selected function is recorded in `ImplicitCastInfo`; call arguments,
-   returns, variable initialization, assignment, contextual `bool`, constructor
-   arguments, and builtin subscripting now lower that declaration without
-   codegen-side overload lookup. `findConversionOperator` and its recursive
-   TypeIndex search are removed. `static_cast` and direct-initialization both
-   select through the TypeId path and fail closed in codegen when the annotation
-   is absent. IR operands still use TypeIndex projections where existing backend
-   call and storage operations require them. The compatibility path is still
-   needed for source shapes the canonical importer or declaration bridge cannot
-   yet represent:
-   `tryAnnotateConversionByTypeId` now backs all shared implicit-conversion
-   annotations. Its generic residual tail selects and records the conversion
-   function, including the cv-ranked choice for a reference-qualified source.
-   Its residual tail also handles class aliases by value, and its
-   reference-stripped path records the selected operator for class aliases.
-   Ordered declarator compatibility ranking now compares base identities with
-   canonical `TypeId`s whenever both bases import, retaining `TypeIndex` only
-   when the canonical importer cannot identify a base. The TypeId selector
-   still reads candidate declarations from `StructTypeInfo`; remaining work is
-   to remove compatibility selection where canonical import and declaration
-   publication can cover the source, and finish unsupported callable and
-   user-defined constructor ranking. Class-target
-   variable initialization now consumes exact prvalue conversion selections
-   for copy-initialization and parenthesized direct-initialization, constructing
-   into the declared object.
+   **Remaining:** remove compatibility selection where canonical import and declaration
+   publication cover the source; implement substitution-aware ranking for unsupported
+   callable conversions and user-defined constructor paths; complete derived-to-base
+   and callable-component tails. Keep compatibility for shapes the canonical importer
+   or declaration bridge cannot yet represent.
 
-2. **Migrate remaining flat consumers.**
+   **Next slice: dependent-alias parameter ownership inside callable signatures.**
+   Inspect `Parser::makeFunctionType` in `src/Parser_Decl_DeclaratorCore.cpp` and
+   alias-target publication in `Parser::parse_template_declaration_impl` in
+   `src/Parser_Templates_Class.cpp`. Preserve the enclosing alias's parameter owner
+   when retaining structured signature components. Done when a conversion operator
+   returning `Callback<T> = long (*)(Parameter<T>)`, with `Parameter<T> = T`, selects
+   the matching function-pointer overload over ellipsis for native and record
+   parameters. Keep valid member-pointer alias publication enabled; a blanket
+   `dependsOnlyOnTemplateParameters` publication gate breaks those declarations.
+   See `docs/KNOWN_ISSUES.md` for the ownership failure.
+
+   **Following slice:** use the canonical planner for alias-normalized callable
+   tails beyond identity, starting with `noexcept` relaxation. Verify exact-match
+   preference and reject incompatible signatures and pointer depths. Stop after
+   each bounded slice; neither closes boundary 3A by itself.
+
+2. **Migrate remaining flat consumers (independent parallel track).**
    1. **The constructibility family.** The zero-argument variants and published
       record facts are canonical; the argument-bearing record query still reads
       `StructTypeInfo` through constructor overload resolution. Default member
@@ -699,15 +500,11 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
   (`tests/test_deep_nested_member_type_base_chain_ret0.cpp`); member-template
   segments and indirect alias targets remain open, and boundary 8A's AST-based
   instantiation and old-path deletion criteria are unfinished.
-- **Callable ABI mangling:** MSVC name mangling now handles ordered callables. A
-  projectable ordered callable is materialized to its flat FunctionPointer form
-  (`tryMaterializeFlatCallableForMangling`) so the established encoder handles
-  it, and the ordered encoder emits pointer-to-function (`P`/`6`) and recurses
-  into the signature for a non-projectable nested callable return. A calling
-  convention at the head of a parenthesized declarator is likewise propagated into
-  the function-pointer signature. `test_function_pointer_calling_convention_identity_ret0.cpp`
-  pins the convention identity; MSVC-mangling smoke coverage over the callable and
-  declarator corpus is clean.
+- **Callable ABI mangling:** MSVC and Itanium encode ordered callable wrappers
+  and structured signatures, including function references and pointer returns.
+  MSVC retains `tryMaterializeFlatCallableForMangling` for projectable shapes.
+  Full ABI conformance remains boundary 3B; preserve calling-convention identity
+  while completing that audit.
 - **Boundary 4 handoff - member-function-pointer descriptor identity:** a
   concrete member-function-pointer descriptor now reconstructs without the
   compatibility projection. `canonicalizeType` stamps the published class

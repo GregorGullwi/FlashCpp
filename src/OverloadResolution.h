@@ -2821,8 +2821,7 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 			source_type = source_node.child;
 		}
 		source_type = stripCanonicalTopCv(table, source_type).first;
-		const TypeId target_type =
-			stripCanonicalTopCv(table, to_import.type).first;
+		const TypeId target_type = stripCanonicalTopCv(table, to_import.type).first;
 		auto functionPointerDepth = [&table](TypeId type) -> std::optional<size_t> {
 			size_t depth = 0;
 			TypeId current = stripCanonicalTopCv(table, type).first;
@@ -3946,15 +3945,14 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 
 inline std::optional<ConversionPlan> tryBuildCanonicalConversionFunctionTailPlan(const TypeSpecifierNode& return_type,
 	const TypeSpecifierNode& target_type) {
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
 	if (target_type.is_reference() || target_type.is_rvalue_reference() || orderedDeclaratorIsReference(target_type)) {
 		return tryBuildCanonicalReferenceBindingPlan(return_type, target_type, true);
 	}
 	if (const std::optional<ConversionPlan> plan = tryBuildCanonicalProjectableConversionPlan(return_type, target_type); plan.has_value()) {
 		return plan;
 	}
-	FrontendContext* const context = FrontendContext::active();
-	if (context != nullptr) {
-		CanonicalTypeTable& table = context->canonicalTypes();
+	{
 		CanonicalTypeTransaction transaction(table);
 		TypeSpecifierNode canonical_return_type = return_type;
 		TypeSpecifierNode canonical_target_type = target_type;
@@ -3963,8 +3961,10 @@ inline std::optional<ConversionPlan> tryBuildCanonicalConversionFunctionTailPlan
 		const CanonicalTypeImport source_import = importCanonicalOverloadNominalType(table, canonical_return_type);
 		const CanonicalTypeImport target_import = importCanonicalOverloadNominalType(table, canonical_target_type);
 		if (source_import.status == CanonicalTypeImportStatus::Supported && target_import.status == CanonicalTypeImportStatus::Supported) {
-			const TypeId source = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, source_import.type)).first;
-			const TypeId target = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, target_import.type)).first;
+			const TypeId source_type = table.resolveAliasTemplateSpecializations(source_import.type);
+			const TypeId target_type_id = table.resolveAliasTemplateSpecializations(target_import.type);
+			const TypeId source = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, source_type)).first;
+			const TypeId target = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, target_type_id)).first;
 			if (source == target) {
 				return ConversionPlan::exact_match();
 			}
@@ -3976,8 +3976,7 @@ inline std::optional<ConversionPlan> tryBuildCanonicalConversionFunctionTailPlan
 				tryPublishCanonicalOverloadBaseSchema(table, source, canonical_return_type);
 				tryPublishCanonicalOverloadBaseSchema(table, target, canonical_target_type);
 				const std::optional<DerivedBaseConversionKind> base_conversion = classifyCanonicalDerivedBaseConversion(table, source, target);
-				if (base_conversion == DerivedBaseConversionKind::UniquePublicNonVirtual ||
-					base_conversion == DerivedBaseConversionKind::PublicVirtual ||
+				if (base_conversion == DerivedBaseConversionKind::UniquePublicNonVirtual || base_conversion == DerivedBaseConversionKind::PublicVirtual ||
 					base_conversion == DerivedBaseConversionKind::Inaccessible) {
 					// [class.access.general] applies accessibility after overload
 					// selection, so inaccessible base paths still rank as conversions.
@@ -4157,10 +4156,7 @@ inline ConversionPlan buildOrderedDeclaratorConversionPlan(
 // IMPORTANT: For correct lvalue-vs-rvalue-reference matching the caller must:
 //   • Set is_lvalue_reference(true) on 'from' for lvalue expressions (named variables, etc.)
 //   • Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
-inline ConversionPlan buildConversionPlan(
-	const TypeSpecifierNode& from,
-	const TypeSpecifierNode& to,
-	const ASTNode* argument_node) {
+inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to, const ASTNode* argument_node) {
 	if (const std::optional<ConversionPlan> reference_plan =
 			tryBuildCanonicalReferenceBindingPlan(from, to, false);
 		reference_plan.has_value()) {
@@ -4212,6 +4208,11 @@ inline ConversionPlan buildConversionPlan(
 		}
 		return category;
 	};
+	auto isCompatibilityClassObject = [&effectiveCategory](const TypeSpecifierNode& spec) {
+		return !spec.is_pointer() && !spec.is_function_pointer() && !spec.is_member_function_pointer() && !spec.is_member_object_pointer() &&
+			!spec.is_array() && (effectiveCategory(spec) == TypeCategory::Struct || spec.type_index().isStruct() ||
+				(spec.has_template_specialization() && !spec.is_alias_template_specialization()));
+	};
 	auto hasCompleteStructInfo = [](TypeIndex type_index) -> bool {
 		if (!type_index.is_valid() || type_index.index() >= getTypeInfoCount()) {
 			return false;
@@ -4252,9 +4253,10 @@ inline ConversionPlan buildConversionPlan(
 		return {ConversionRank::Conversion, StandardConversionKind::BooleanConversion, true};
 	}
 
-	if (from.is_function_pointer() || to.is_function_pointer()) {
-		if (!from.is_function_pointer() || !to.is_function_pointer() ||
-			!from.has_function_signature() || !to.has_function_signature()) {
+	const bool source_is_struct = isCompatibilityClassObject(from);
+	const bool class_to_function_pointer_conversion = source_is_struct && to.is_function_pointer();
+	if ((from.is_function_pointer() || to.is_function_pointer()) && !class_to_function_pointer_conversion) {
+		if (!from.is_function_pointer() || !to.is_function_pointer() || !from.has_function_signature() || !to.has_function_signature()) {
 			return ConversionPlan::no_match();
 		}
 		// Nested function pointers such as int (**)(int) keep their outer
@@ -4262,11 +4264,9 @@ inline ConversionPlan buildConversionPlan(
 		if (from.pointer_depth() != to.pointer_depth()) {
 			return ConversionPlan::no_match();
 		}
-		const size_t shared_pointer_depth =
-			std::min(from.pointer_levels().size(), to.pointer_levels().size());
+		const size_t shared_pointer_depth = std::min(from.pointer_levels().size(), to.pointer_levels().size());
 		for (size_t index = 0; index < shared_pointer_depth; ++index) {
-			if (from.pointer_levels()[index].cv_qualifier !=
-				to.pointer_levels()[index].cv_qualifier) {
+			if (from.pointer_levels()[index].cv_qualifier != to.pointer_levels()[index].cv_qualifier) {
 				return ConversionPlan::no_match();
 			}
 		}
@@ -4618,76 +4618,49 @@ inline ConversionPlan buildConversionPlan(
 	// For concrete struct/scalar conversions, require a real conversion path once
 	// the relevant type metadata exists. Keep optimistic acceptance only for
 	// genuinely incomplete parse-time types.
-	const TypeCategory effective_from_category = effectiveCategory(from);
-	const TypeCategory effective_to_category = effectiveCategory(to);
 	std::optional<CanonicalTypeKind> canonical_to_kind;
 	bool is_distinct_canonical_nominal_target = false;
 	// Use canonical shape when the target imports; parser-time unresolved forms
 	// still need the compatibility projection below.
-	if (effective_from_category == TypeCategory::Struct) {
-		if (FrontendContext* const context = FrontendContext::active();
-			context != nullptr) {
-			CanonicalTypeTable& table = context->canonicalTypes();
-			CanonicalTypeTransaction transaction(table);
-			const CanonicalTypeImport imported_target =
-				importCanonicalOverloadNominalType(table, to);
-			if (imported_target.status == CanonicalTypeImportStatus::Supported) {
-				const TypeId target_type = canonicalTypeWithoutReference(
-					table, imported_target.type);
-				canonical_to_kind = table.node(
-					stripCanonicalTopCv(table, target_type).first).kind;
-				if (*canonical_to_kind == CanonicalTypeKind::Record || *canonical_to_kind == CanonicalTypeKind::TemplateSpecialization) {
-					const CanonicalTypeImport imported_source =
-						importCanonicalOverloadNominalType(table, from);
-					if (imported_source.status == CanonicalTypeImportStatus::Supported) {
-						const TypeId source_type = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, imported_source.type)).first;
-						const TypeId target_nominal_type = stripCanonicalTopCv(table, target_type).first;
-						is_distinct_canonical_nominal_target = source_type != target_nominal_type;
-					}
+	{
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		CanonicalTypeTransaction transaction(table);
+		const CanonicalTypeImport imported_target = importCanonicalOverloadNominalType(table, to);
+		if (imported_target.status == CanonicalTypeImportStatus::Supported) {
+			const TypeId target_type = canonicalTypeWithoutReference(table, table.resolveAliasTemplateSpecializations(imported_target.type));
+			canonical_to_kind = table.node(stripCanonicalTopCv(table, target_type).first).kind;
+			if (source_is_struct && (*canonical_to_kind == CanonicalTypeKind::Record || *canonical_to_kind == CanonicalTypeKind::TemplateSpecialization)) {
+				const CanonicalTypeImport imported_source = importCanonicalOverloadNominalType(table, from);
+				if (imported_source.status == CanonicalTypeImportStatus::Supported) {
+					const TypeId resolved_source_type = table.resolveAliasTemplateSpecializations(imported_source.type);
+					const TypeId source_type = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, resolved_source_type)).first;
+					const TypeId target_nominal_type = stripCanonicalTopCv(table, target_type).first;
+					is_distinct_canonical_nominal_target = source_type != target_nominal_type;
 				}
 			}
 		}
 	}
-	const bool target_is_pointer = canonical_to_kind.has_value()
-		? *canonical_to_kind == CanonicalTypeKind::Pointer
-		: to.is_pointer();
 	const bool target_is_nominal = canonical_to_kind == CanonicalTypeKind::Record || canonical_to_kind == CanonicalTypeKind::TemplateSpecialization;
-	const bool has_nominal_conversion_target =
-		target_is_nominal && is_distinct_canonical_nominal_target;
-	if (effective_from_category == TypeCategory::Struct &&
-		(effective_to_category != TypeCategory::Struct ||
-		 target_is_pointer || has_nominal_conversion_target)) {
+	const bool target_is_struct = canonical_to_kind.has_value() ? target_is_nominal : isCompatibilityClassObject(to);
+	const bool has_nominal_conversion_target = target_is_nominal && is_distinct_canonical_nominal_target;
+	if (source_is_struct && (!target_is_struct || has_nominal_conversion_target)) {
 		if (from.type_index().is_valid()) {
-			const bool has_canonical_conversion_target = canonical_to_kind.has_value()
-				? (*canonical_to_kind == CanonicalTypeKind::Builtin ||
-					*canonical_to_kind == CanonicalTypeKind::Enum ||
-					*canonical_to_kind == CanonicalTypeKind::Pointer ||
-					*canonical_to_kind == CanonicalTypeKind::MemberObjectPointer ||
-					*canonical_to_kind == CanonicalTypeKind::MemberFunctionPointer ||
-					*canonical_to_kind == CanonicalTypeKind::Record ||
-					*canonical_to_kind == CanonicalTypeKind::TemplateSpecialization)
-				: (is_builtin_type(effective_to_category) ||
-					effective_to_category == TypeCategory::Enum ||
-					to.is_pointer() ||
-					to.is_function_pointer() ||
-					to.is_member_object_pointer_type() ||
-					to.is_member_function_pointer());
+			const bool has_canonical_conversion_target = canonical_to_kind.has_value() ? (*canonical_to_kind == CanonicalTypeKind::Builtin ||
+				*canonical_to_kind == CanonicalTypeKind::Enum || *canonical_to_kind == CanonicalTypeKind::Pointer ||
+				*canonical_to_kind == CanonicalTypeKind::MemberObjectPointer || *canonical_to_kind == CanonicalTypeKind::MemberFunctionPointer ||
+				*canonical_to_kind == CanonicalTypeKind::Record || *canonical_to_kind == CanonicalTypeKind::TemplateSpecialization)
+				: (is_builtin_type(effectiveCategory(to)) || effectiveCategory(to) == TypeCategory::Enum || to.is_pointer() || to.is_function_pointer() ||
+					to.is_member_object_pointer_type() || to.is_member_function_pointer());
 			if (has_canonical_conversion_target) {
-				if (const auto selected_conversion = trySelectUserDefinedConversionOperator(from, to, false);
-					selected_conversion.has_value()) {
+				if (const auto selected_conversion = trySelectUserDefinedConversionOperator(from, to, false); selected_conversion.has_value()) {
 					if (selected_conversion->ambiguous) {
 						return ConversionPlan::no_match();
 					}
-					return {ConversionRank::UserDefined,
-						StandardConversionKind::UserDefined,
-						true,
-						selected_conversion->trailing_standard_rank};
+					return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true, selected_conversion->trailing_standard_rank};
 				}
 			}
 		}
-		if (effective_to_category == TypeCategory::Struct &&
-			to.type_index().is_valid() &&
-			hasImplicitConvertingConstructorForArgument(to, from, argument_node)) {
+		if (target_is_struct && to.type_index().is_valid() && hasImplicitConvertingConstructorForArgument(to, from, argument_node)) {
 			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 		}
 		if (!hasCompleteStructInfo(from.type_index())) {
@@ -4698,10 +4671,8 @@ inline ConversionPlan buildConversionPlan(
 
 	// Check for user-defined conversions in reverse: if 'to' is Struct and 'from' is not
 	// This handles constructor conversions (not conversion operators, but similar concept).
-	if (effective_to_category == TypeCategory::Struct &&
-		effective_from_category != TypeCategory::Struct) {
-		if (to.type_index().is_valid() &&
-			hasImplicitConvertingConstructorForArgument(to, from, argument_node)) {
+	if (target_is_struct && !source_is_struct) {
+		if (to.type_index().is_valid() && hasImplicitConvertingConstructorForArgument(to, from, argument_node)) {
 			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 		}
 		if (!hasCompleteStructInfo(to.type_index())) {

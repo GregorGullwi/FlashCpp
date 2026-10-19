@@ -2091,16 +2091,34 @@ inline void checkNestedAliasGraph() {
 
 	// Identity<T> = T, used as a nested argument in several shapes.
 	const TemplateDeclId identity{201};
-	table.publishAliasTemplateTarget(identity,
-		table.templateParameter(identity, 0), type_kind);
+	table.publishAliasTemplateTarget(identity, table.templateParameter(identity, 0), type_kind);
 	const CanonicalTemplateArgument identity_int[] = {
 		CanonicalTemplateArgument::makeType(integer),
 	};
 	const TypeId identity_use = table.aliasTemplateSpecialization(identity, identity_int);
+	require(table.resolveAliasTemplateSpecializations(table.pointer(identity_use)) == table.pointer(integer));
+	TypeId deep_alias = identity_use;
+	TypeId expected_deep_alias = integer;
+	for (size_t depth = 0; depth < 65536; ++depth) {
+		deep_alias = table.pointer(deep_alias);
+		expected_deep_alias = table.pointer(expected_deep_alias);
+	}
+	require(table.resolveAliasTemplateSpecializations(deep_alias) == expected_deep_alias);
+
+	// Callable alias targets preserve the substituted function signature.
+	const TemplateDeclId callable_alias{208};
+	const TypeId callable_parameter_alias_args[] = {table.templateParameter(callable_alias, 0)};
+	const TypeId callable_parameter[] = {table.aliasTemplateSpecialization(identity, callable_parameter_alias_args)};
+	const TypeId callable_target = table.pointer(table.function(integer, callable_parameter, false, CVQualifier::None, ReferenceQualifier::None, false,
+		CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{}));
+	table.publishAliasTemplateTarget(callable_alias, callable_target, type_kind);
+	const TypeId callable_use = table.aliasTemplateSpecialization(callable_alias, identity_int);
+	const TypeId expected_callable = table.pointer(table.function(integer, std::array<TypeId, 1>{integer}, false, CVQualifier::None,
+		ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{}));
+	require(table.resolveAliasTemplateSpecializations(callable_use) == expected_callable);
 
 	// Nested inside a pointer collapses to pointer(int).
-	require(table.substitute(table.pointer(identity_use), identity, dummy_args) ==
-		table.pointer(integer));
+	require(table.substitute(table.pointer(identity_use), identity, dummy_args) == table.pointer(integer));
 
 	// Nested as a class-template type argument collapses to int.
 	const TypeId nested_argument = table.templateSpecialization(TemplateDeclId{202},
