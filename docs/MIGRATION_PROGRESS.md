@@ -88,8 +88,12 @@ The architecture the remaining work builds on:
   a named deletion boundary — it is removed when lowering consumes sema-produced
   typed lowering records (architecture boundary 9) and no longer derives shape.
   Exit criteria 4 and 5 are not closed: semantic-internal descriptor
-  construction, equality, and decay still read the flat projection. The 3A rollup
-  remains 10/79.
+  construction and equality still read the flat projection. Conditional array
+  decay does not. `decayArrayForConditional` takes `CanonicalTypeTable::pointer`
+  of the array element and re-exports that pointer through
+  `materializeTypeSpecifier`, so interning cannot republish the operand's flat
+  dimensions over the decayed identity. The in-place flat dimension rewrite is
+  gone. The 3A rollup remains 10/79.
 - The shared type-trait evaluator classifies the structural `[meta.unary.prop]`
   family plus class/union/qualification and published record properties from
   canonical identity; the folded, constexpr, lazy-constraint, and lowered paths
@@ -587,6 +591,22 @@ Continue boundary 3A in this order.
       a 3A exit criterion; the 3A rollup remains 10/79.
       Non-projectable function/member-pointer shapes remain deferred until
       canonical substitution and export coverage is available.
+   4. **Conditional array decay.** `decayArrayForConditional` no longer rewrites
+      `array_dimensions`, `pointer_levels`, or `has_unsized_outer_array_dimension`
+      to describe the decay. The result identity is the canonical pointer to the
+      array element. `materializeTypeSpecifier` re-exports that pointer into the
+      compatibility projection, because `TypeContext::intern` still refreshes a
+      `PublishedPointerArray` descriptor from those fields. Descriptor
+      construction and equality remain on the flat projection. This does not
+      close a 3A exit criterion.
+      `tests/test_conditional_multidim_array_decay_ret0.cpp` protects
+      `[conv.array]` for `int[2][3]`, `int[][2]`, a const array, `long` and
+      `Cell` rows, a `short` matrix, and a class-template array member. The old
+      rewrite selected an element pointer or an array of pointers, so the row
+      stride was wrong. The decay helper is not recursive. It runs after child
+      expression inference returns and calls the existing iterative materializer
+      once, so native stack use does not grow with array rank or nested
+      conditional depth. No stack reserve was changed.
 
 3. **Complete importer and declarator coverage.** Add canonical import support
    for remaining valid ordered forms still rejected at a boundary, including
@@ -638,7 +658,8 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
   array-dimension helpers read `CanonicalTypeTable::arrayDimensions`. Codegen no
   longer reads any flat `pointee_array_declarator`/
   `has_unsized_outer_array_dimension` field; the remaining readers are
-  semantic-internal descriptor construction, equality, and decay.
+  semantic-internal descriptor construction and equality. Conditional array
+  decay exports the decayed pointer instead of editing the operand projection.
 - The compatibility `TypeTraitEval::isSigned`/`isUnsigned` adapters are
   unexercised; a regression forcing an unimportable operand through them is owed.
 - The canonical record constructor schema is published for a completed record
