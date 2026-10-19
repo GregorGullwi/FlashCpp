@@ -1550,12 +1550,8 @@ inline void appendItaniumCVQualifier(auto& output, CVQualifier cv) {
 }
 
 template <typename OutputType>
-inline void appendItaniumOrderedDeclaratorTypeCode(
-	OutputType& output,
-	const TypeSpecifierNode& normalized,
-	bool is_function_parameter) {
-	const std::span<const DeclaratorComponent> components =
-		normalized.declarator_components();
+inline void appendItaniumOrderedDeclaratorTypeCode(OutputType& output, const TypeSpecifierNode& normalized, bool is_function_parameter) {
+	const std::span<const DeclaratorComponent> components = normalized.declarator_components();
 	for (size_t index = 0; index < components.size(); ++index) {
 		const DeclaratorComponent& component = components[index];
 		switch (component.kind) {
@@ -1583,15 +1579,19 @@ inline void appendItaniumOrderedDeclaratorTypeCode(
 			output += "A_";
 			break;
 		case DeclaratorComponentKind::Function:
-			throw InternalError("Itanium name mangling: ordered callable declarator is not materialized");
+			if (!normalized.has_function_signature()) {
+				throw InternalError("Itanium name mangling: ordered callable declarator is not materialized");
+			}
+			// The signature owns the structured return type; outer wrappers have
+			// already been emitted, including references directly to the function.
+			appendItaniumFunctionTypeCode(output, normalized.function_signature());
+			return;
 		case DeclaratorComponentKind::MemberObjectPointer:
 		case DeclaratorComponentKind::MemberFunctionPointer: {
-			if (index + 1 != components.size() &&
-				component.kind != DeclaratorComponentKind::MemberFunctionPointer) {
+			if (index + 1 != components.size() && component.kind != DeclaratorComponentKind::MemberFunctionPointer) {
 				throw InternalError("Itanium name mangling: ordered member object pointer is not innermost");
 			}
-			const std::string_view class_name =
-				getItaniumMemberPointerClassName(output, normalized);
+			const std::string_view class_name = getItaniumMemberPointerClassName(output, normalized);
 			if (class_name.empty()) {
 				throw InternalError("Itanium name mangling: ordered member pointer missing declaring class");
 			}
@@ -1616,14 +1616,11 @@ inline void appendItaniumOrderedDeclaratorTypeCode(
 			}
 			FunctionSignature signature = normalized.function_signature();
 			if (index + 1 != components.size()) {
-				TypeSpecifierNode return_type =
-					buildFunctionSignatureReturnTypeForMangling(signature);
-				return_type = applyOrderedReturnComponentsForMangling(
-					return_type, components.subspan(index + 1));
+				TypeSpecifierNode return_type = buildFunctionSignatureReturnTypeForMangling(signature);
+				return_type = applyOrderedReturnComponentsForMangling(return_type, components.subspan(index + 1));
 				signature.setReturnType(makeFunctionTypeFromSpecifier(return_type));
 			}
-			appendItaniumMemberFunctionPointerTypeCode(
-				output, class_name, signature);
+			appendItaniumMemberFunctionPointerTypeCode(output, class_name, signature);
 			return;
 		}
 		}

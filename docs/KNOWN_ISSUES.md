@@ -1,5 +1,12 @@
 # Known Issues
 
+## An rvalue reference to a function rejects a function lvalue argument
+
+Overload resolution rejects `invoke(function)` when the parameter is `int* (&&)(short)`
+and `function` names a matching function. C++20 [dcl.init.ref] permits this binding.
+An explicit cast to the function rvalue-reference type works; fix the canonical
+reference-binding planner to accept the direct function lvalue as well.
+
 ## Template `T (*)[N]` parameters carry a repeated array bound
 
 Instantiating `template <class T> int f(T (*)[2])` with `T = int` published
@@ -8,6 +15,17 @@ Instantiating `template <class T> int f(T (*)[2])` with `T = int` published
 argument then fails internally as a missing call-argument conversion. The
 conditional-decay regression uses a non-template overload and a class-template
 array member instead of this parameter form.
+
+## Alias template parameters inside callable signatures can keep the wrong owner
+
+A namespace-scope callable alias whose function parameter is itself a dependent
+alias specialization can retain that nested alias's `TemplateDeclId` instead of
+the enclosing callable alias's parameter identity. Substitution then leaves the
+foreign parameter dependent, so conversion-function tail ranking cannot match
+the concrete signature and an ellipsis overload may win. Preserve the original
+dependent type identity in the structured callable component and add a reduced
+overload-ranking regression. Chaining aliases around the whole callable type is
+covered separately.
 
 ## Full native canonical suite has two baseline failures
 

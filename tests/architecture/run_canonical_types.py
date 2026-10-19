@@ -388,6 +388,9 @@ def main():
             "lost_substitute_parameter": (
                 "memo.emplace(frame.id.value, args[index].type);",
                 "memo.emplace(frame.id.value, frame.id);"),
+            "lost_explicit_alias_resolution": (
+                "return resolveNestedAliasGraphUnlocked(type);",
+                "return type;"),
             "lost_alias_parameter_kind_check": (
                 "\t\t\t\t\tfor (size_t index = 0; index < arguments.size(); ++index) {\n"
                 "\t\t\t\t\t\tif (arguments[index].kind != target->second.parameter_kinds[index]) {\n"

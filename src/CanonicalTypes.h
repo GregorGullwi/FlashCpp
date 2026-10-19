@@ -570,6 +570,11 @@ public:
 
 	std::optional<TypeId> aliasTemplateTarget(TemplateDeclId primary) const;
 
+	// Redirect concrete direct alias-template specializations anywhere in a type
+	// graph using the published alias targets. Dependent or unsupported aliases
+	// keep their declaration identity; traversal is iterative and stack-bounded.
+	TypeId resolveAliasTemplateSpecializations(TypeId type);
+
 	// Type-only convenience overload for Spec identity.
 	TypeId templateSpecialization(TemplateDeclId primary, std::span<const TypeId> arguments);
 
