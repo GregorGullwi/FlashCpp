@@ -1,5 +1,14 @@
 # Known Issues
 
+## Template `T (*)[N]` parameters carry a repeated array bound
+
+Instantiating `template <class T> int f(T (*)[2])` with `T = int` published
+`Pointer -> Array(2) -> Array(2) -> int`. The same non-template parameter
+`int (*)[2]` publishes one array bound. A correctly decayed `int (*)[2]`
+argument then fails internally as a missing call-argument conversion. The
+conditional-decay regression uses a non-template overload and a class-template
+array member instead of this parameter form.
+
 ## Full native canonical suite has two baseline failures
 
 The unchanged constructor-initializer commit (`e590ccc7`) and its continuation

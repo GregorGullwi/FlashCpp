@@ -825,18 +825,37 @@ std::optional<CanonicalTypeDesc> decayArrayForConditional(const CanonicalTypeDes
 		node = table.node(node.child);
 	}
 	// [conv.array] replaces the outermost array with a pointer to its element.
-	// A pointer-to-array is a Pointer node and must not decay.
+	// A pointer-to-array is a Pointer node and must not decay. The decayed
+	// TypeId is that pointer. Do not rewrite the operand's flat dimensions:
+	// erasing the first stored bound turned int[2][3] into an array of
+	// pointers and int[][N] into a pointer to the scalar, and interning then
+	// republished that projection over the decayed identity.
 	if (node.kind != CanonicalTypeKind::Array || !node.child) {
 		return std::nullopt;
 	}
 	CanonicalTypeDesc decayed = desc;
 	decayed.structural_type_id = table.pointer(node.child);
 	decayed.ref_qualifier = ReferenceQualifier::None;
-	if (!decayed.pointee_array_declarator && !decayed.array_dimensions.empty()) {
-		decayed.array_dimensions.erase(decayed.array_dimensions.begin());
-		decayed.pointer_levels.push_back(PointerLevel{});
-		decayed.has_unsized_outer_array_dimension = false;
+	// Export the decayed pointer once. Intern still refreshes a published
+	// pointer/array id from the flat projection, so that projection has to be
+	// the decayed shape rather than the operand array. Descriptor construction
+	// and equality still read the projection on other paths.
+	decayed.flags = decayed.flags | CanonicalTypeFlags::PublishedPointerArray;
+	const TypeSpecifierNode projected = materializeTypeSpecifier(decayed);
+	decayed.type_index = projected.type_index();
+	decayed.base_cv = projected.cv_qualifier();
+	decayed.pointer_levels.clear();
+	for (const PointerLevel& level : projected.pointer_levels()) {
+		decayed.pointer_levels.push_back(level);
 	}
+	decayed.array_dimensions.clear();
+	decayed.pointee_array_declarator = projected.has_pointee_array_declarator();
+	if (projected.is_array() || decayed.pointee_array_declarator) {
+		for (const size_t dimension : projected.array_dimensions()) {
+			decayed.array_dimensions.push_back(dimension);
+		}
+	}
+	decayed.has_unsized_outer_array_dimension = projected.has_unsized_outer_array_dimension();
 	return decayed;
 }
 
