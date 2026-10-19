@@ -20,14 +20,6 @@ inference worklist adds no native recursion for the receiver chain, but does not
 resolve these existing parser frames or recursive expression normalization and
 lowering. No stack reserve was increased for this regression.
 
-## Injected-class-name qualified function designators lose their owner in codegen
-
-`Receiver receiver(Source::Source::answer);` is parsed as direct initialization,
-but constructor-argument lowering then looks up the bare name `answer` and
-reports that it is not a variable. `Source::answer` and a typedef alias of
-`Source` lower correctly. The injected-class-name component is dropped before
-the function designator is bound.
-
 ## SEH finally funclet termination is conservative in return-flow diagnostics
 
 The control-flow analysis models a Windows `SehFinallyCall` as a call that can
@@ -39,23 +31,6 @@ target extension, separate from the C++20 try/catch paths that are analyzed
 directly. A future implementation should compute funclet return/throw summaries
 and use them at each invocation, preserving its individual continuation and
 exception context.
-
-## Construction through a class-template member alias is rejected
-
-A member alias declared by a class template cannot currently be used to
-construct its resolved class type:
-
-```cpp
-template <typename T>
-struct Names { using Type = T; };
-struct Box { int value; };
-int main() { return Names<Box>::Type{1}.value; }
-```
-
-The parser does not materialize the template owner and complete member-type
-lookup for this qualified construction. A fix should resolve the instantiated
-owner, perform ordinary member lookup for its alias, and then construct the
-resulting type through the shared class-construction path.
 
 ## Deep aggregate initialization still uses native recursion
 
