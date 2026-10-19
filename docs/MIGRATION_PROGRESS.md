@@ -153,7 +153,7 @@ of being masked by a generic `OutOfLineMemberNotAttached` attachment failure.
 
 Continue boundary 3A in this order.
 
-0. **Declarator consolidation (active, branch `boundary-3a-declarator-consolidation`).**
+0. **Declarator consolidation (active, branch `codex/declarator-consolidation`).**
    A parenthesized declarator group whose direct-declarator carries a `[` suffix is
    now routed through the recursive frame-stack grammar instead of being rejected by
    the flat re-check, so the previously failing spellings parse to an ordered
@@ -191,9 +191,16 @@ Continue boundary 3A in this order.
    `boundary-3a-declarator-single-parse`: the initial `(` block and the
    `tryParseOrderedDeclaratorAtOpenParen` re-dispatch are gone, replaced by one
    parenthesized-declarator handler after every cv/pointer/reference modifier that
-   tries reference-to-array, reference-to-function, then `parse_declarator`, leaving
-   the MSVC `(name)` extension to the identifier path. Net change is about 300 removed
-   lines in `Parser_Decl_DeclaratorCore.cpp`.
+   tries reference-to-array then `parse_declarator`, leaving the MSVC `(name)` extension
+   to the identifier path. Function-reference declarations now use that same
+   recursive parser: the bespoke `tryParseReferenceToFunctionDeclarator` projection is
+   deleted, and `[LValueReference, Function]` remains on the ordered spine. The parser
+   AST regression is in `tests/FlashCppTest/FlashCppTest/FrontendContextTests.cpp`;
+   `tests/test_function_ref_type_ret0.cpp`,
+   `tests/test_reference_to_function_pointer_return_ret42.cpp`, and
+   `tests/test_requires_funcref_ret0.cpp` protect callable references and parameter
+   forms. The consolidation removes about 100 lines of duplicate parsing from
+   `Parser_Decl_DeclaratorCore.cpp`.
    A function *definition* whose return type is a function pointer or a nested callable
    is handled on branch `boundary-3a-declarator-grammar-owned`: when the outermost
    `Function` component is the entity itself, the multi-function spine builds the

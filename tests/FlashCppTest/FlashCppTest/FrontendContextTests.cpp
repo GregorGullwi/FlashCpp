@@ -2713,6 +2713,49 @@ int main() {
 		CHECK(parsed_typedef->lexical_scope_id().value != 0u);
 	}
 
+	TEST_CASE("Parser retains function-reference declarators in ordered form") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"void ordered_function_reference_scope(int (&lvalue_parameter)(short), "
+			"int (&&rvalue_parameter)(long long));";
+		CompileContext test_context;
+		test_context.setInputFile("ordered_function_reference_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const std::vector<ASTNode> declarations =
+			gSymbolTable.lookup_all("ordered_function_reference_scope");
+		REQUIRE(declarations.size() == 1u);
+		REQUIRE(declarations[0].is<FunctionDeclarationNode>());
+		const std::span<const ASTNode> parameters =
+			declarations[0].as<FunctionDeclarationNode>().parameter_nodes();
+		REQUIRE(parameters.size() == 2u);
+		REQUIRE(parameters[0].is<DeclarationNode>());
+		const TypeSpecifierNode& type =
+			parameters[0].as<DeclarationNode>().type_specifier_node();
+		REQUIRE(type.has_ordered_declarator());
+		const std::span<const DeclaratorComponent> components =
+			type.declarator_components();
+		REQUIRE(components.size() == 2u);
+		CHECK(components[0].kind == DeclaratorComponentKind::LValueReference);
+		CHECK(components[1].kind == DeclaratorComponentKind::Function);
+		REQUIRE(parameters[1].is<DeclarationNode>());
+		const TypeSpecifierNode& rvalue_type =
+			parameters[1].as<DeclarationNode>().type_specifier_node();
+		REQUIRE(rvalue_type.has_ordered_declarator());
+		const std::span<const DeclaratorComponent> rvalue_components =
+			rvalue_type.declarator_components();
+		REQUIRE(rvalue_components.size() == 2u);
+		CHECK(rvalue_components[0].kind == DeclaratorComponentKind::RValueReference);
+		CHECK(rvalue_components[1].kind == DeclaratorComponentKind::Function);
+	}
+
 	static void requireScopeRecordMatches(
 		const FrontendContext& context,
 		const SymbolTable& table,

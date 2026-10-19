@@ -1836,12 +1836,6 @@ private:
 	ParseResult parse_top_level_node();
 	ParseResult parse_pragma_pack_inner();   // NEW: Parse the contents of pragma pack()
 	ParseResult parse_type_and_name(CVQualifier leading_cv_qualifier);
-	// Parse a reference-to-function declarator `(&name)(Params)` / `(&&name)(Params)`
-	// with the current token at the opening '('. The signature carries the
-	// return type; the declared entity stores the referred-to function's
-	// address. Returns nullopt with the token position restored when the tokens
-	// are not this shape.
-	std::optional<ParseResult> tryParseReferenceToFunctionDeclarator(TypeSpecifierNode& type_spec, const std::optional<size_t>& custom_alignment);
 	ParseResult parse_structured_binding(CVQualifier cv_qualifiers, ReferenceQualifier ref_qualifier);  // NEW: Parse structured bindings: auto [a, b] = expr; auto& [x, y] = pair;
 	ParseResult parse_declarator(TypeSpecifierNode& base_type, Linkage linkage = Linkage::None);	 // NEW: Parse declarators (function pointers, arrays, etc.)
 	ParseResult parse_declarator(
