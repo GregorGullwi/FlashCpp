@@ -3011,8 +3011,7 @@ ParseResult Parser::parse_type_specifier() {
 										component.kind ==
 											DeclaratorComponentKind::MemberFunctionPointer;
 									});
-							if (has_dependent_nttp || has_deferred_decltype_target ||
-								has_dependent_callable_target) {
+							if (has_dependent_nttp || has_deferred_decltype_target || has_dependent_callable_target || alias_target.is_alias_template_specialization()) {
 								return ParseResult::success(emplace_node<TypeSpecifierNode>(
 									buildDependentAliasTemplateTypeSpecifier(
 										type_name,

@@ -2886,6 +2886,76 @@ TEST_CASE("Canonical adapter imports the source corpus at publication") {
 	CHECK(found_enum);
 }
 
+TEST_CASE("Callable alias parameters retain their enclosing declaration identity") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+template<class Value> using Parameter = Value;
+template<class Argument> using Callback = long (*)(Parameter<Argument>);
+template<class Element> using ChainedCallback = Callback<Element>;
+)";
+	CompileContext test_context;
+	test_context.setInputFile("callable_alias_parameter_owner.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(test_context, gSymbolTable);
+	Parser parser(lexer, test_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	const OwnerId owner = ownerIdFromNamespaceHandle(gSymbolTable.get_current_namespace_handle());
+	const auto parameter = context.templateDecls().findPrimaryAliasTemplate(owner, StringTable::getOrInternStringHandle("Parameter"));
+	const auto callback = context.templateDecls().findPrimaryAliasTemplate(owner, StringTable::getOrInternStringHandle("Callback"));
+	const auto chained = context.templateDecls().findPrimaryAliasTemplate(owner, StringTable::getOrInternStringHandle("ChainedCallback"));
+	REQUIRE(parameter.has_value());
+	REQUIRE(callback.has_value());
+	REQUIRE(chained.has_value());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto callback_target = table.aliasTemplateTarget(*callback);
+	REQUIRE(callback_target.has_value());
+	CHECK(table.dependsOnlyOnTemplateParameters(*callback_target, *callback));
+	REQUIRE(table.node(*callback_target).kind == CanonicalTypeKind::Pointer);
+	const TypeId function = table.node(*callback_target).child;
+	REQUIRE(table.node(function).kind == CanonicalTypeKind::Function);
+	const TypeId nested_alias = table.functionParameterType(table.functionParameters(function));
+	REQUIRE(table.node(nested_alias).kind == CanonicalTypeKind::AliasTemplateSpecialization);
+	CHECK(table.templateSpecializationDecl(nested_alias) == *parameter);
+	const TypeId argument = table.templateArgumentType(table.templateSpecializationArguments(nested_alias));
+	REQUIRE(table.node(argument).kind == CanonicalTypeKind::TemplateParameter);
+	CHECK(table.templateParameterDecl(argument) == *callback);
+	CHECK(table.templateParameterIndex(argument) == 0u);
+	const auto pattern = context.templateDecls().primaryAliasPattern(*callback);
+	REQUIRE(pattern.has_value());
+	const FunctionSignature& signature = pattern->as<TemplateAliasNode>().target_type_node().function_signature();
+	REQUIRE(!signature.parameter_types().empty());
+	FunctionType corrupted_projection = signature.parameter_types().front();
+	corrupted_projection.template_parameter_decl = *parameter;
+	corrupted_projection.template_parameter_index = 0;
+	corrupted_projection.type_index = nativeTypeIndex(TypeCategory::Double);
+	const auto authoritative = importCanonicalFunctionTypeComponent(table, corrupted_projection, CanonicalTypeImportContext::Exact);
+	CHECK(authoritative.status == CanonicalTypeImportStatus::Supported);
+	CHECK(authoritative.type == nested_alias);
+	corrupted_projection.canonical_type_id = {};
+	const auto mutated = importCanonicalFunctionTypeComponent(table, corrupted_projection, CanonicalTypeImportContext::Exact);
+	CHECK(mutated.type != nested_alias);
+	TypeId deep_argument = table.builtin(CanonicalBuiltinKind::Int);
+	for (size_t depth = 0; depth < 4096; ++depth) {
+		deep_argument = table.pointer(deep_argument);
+	}
+	const std::vector<TypeId> concrete_types{
+		table.builtin(CanonicalBuiltinKind::Short), table.builtin(CanonicalBuiltinKind::Int), table.record(EntityId{901}), deep_argument};
+	for (const TemplateDeclId alias : {*callback, *chained}) {
+		const auto target = table.aliasTemplateTarget(alias);
+		REQUIRE(target.has_value());
+		CHECK(table.dependsOnlyOnTemplateParameters(*target, alias));
+		for (const TypeId concrete : concrete_types) {
+			const std::span<const TypeId> arguments(&concrete, 1);
+			const TypeId resolved = table.resolveAliasTemplateSpecializations(table.substitute(*target, alias, arguments));
+			const TypeId expected_function = table.function(table.builtin(CanonicalBuiltinKind::Long), arguments, false, CVQualifier::None,
+				ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+			CHECK(resolved == table.pointer(expected_function));
+		}
+	}
+}
+
 TEST_CASE("DeclarationBuilder distinguishes nested function parameter signatures") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
