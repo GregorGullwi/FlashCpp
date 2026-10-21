@@ -1,11 +1,13 @@
 # Known Issues
 
-## An rvalue reference to a function rejects a function lvalue argument
+## Alias-template function types lose their function component
 
-Overload resolution rejects `invoke(function)` when the parameter is `int* (&&)(short)`
-and `function` names a matching function. C++20 [dcl.init.ref] permits this binding.
-An explicit cast to the function rvalue-reference type works; fix the canonical
-reference-binding planner to accept the direct function lvalue as well.
+`template <class Result> using Callback = Result(short);` should make
+`Callback<long>` a function type, but materializing the alias-template
+specialization drops its function component. Consequently,
+`__is_constructible(Callback<long>&&, Callback<long>&)` fails. Preserve the
+function type when materializing alias-template specializations; keep this
+separate from dependent alias-parameter ownership inside callable signatures.
 
 ## Template `T (*)[N]` parameters carry a repeated array bound
 

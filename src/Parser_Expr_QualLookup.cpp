@@ -3399,7 +3399,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		if (symbol.has_value()) {
 			if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
 				if (const FunctionDeclarationNode* func_decl = FlashCpp::ParserFunctionTypeHelpers::findFunctionDeclarationForSymbol(*symbol)) {
-					return FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(*func_decl);
+					return FlashCpp::ParserFunctionTypeHelpers::buildFunctionTypeFromFunctionDeclaration(*func_decl);
 				}
 
 				TypeSpecifierNode type = decl->type_specifier_node();
@@ -3416,7 +3416,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			}
 			if (symbol->is<FunctionDeclarationNode>()) {
 				const auto& func = symbol->as<FunctionDeclarationNode>();
-				return FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(func);
+				return FlashCpp::ParserFunctionTypeHelpers::buildFunctionTypeFromFunctionDeclaration(func);
 			}
 		}
 		// Body substitution pushes member context without injecting `this` into the
@@ -4566,7 +4566,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			qualified_symbol.has_value()) {
 			if (const FunctionDeclarationNode* func_decl =
 					FlashCpp::ParserFunctionTypeHelpers::findFunctionDeclarationForSymbol(*qualified_symbol)) {
-				return FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(*func_decl);
+				return FlashCpp::ParserFunctionTypeHelpers::buildFunctionTypeFromFunctionDeclaration(*func_decl);
 			}
 			if (const DeclarationNode* decl = get_decl_from_symbol(*qualified_symbol)) {
 				TypeSpecifierNode type = decl->type_specifier_node();

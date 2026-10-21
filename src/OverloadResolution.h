@@ -1598,9 +1598,25 @@ inline std::optional<ConversionPlan> tryBuildCanonicalDirectReferenceBindingPlan
 	const TypeId source_referent = source_has_reference ? source_node.child : source_type;
 	const auto [source_base, source_cv] = stripCanonicalTopCv(table, source_referent);
 	const auto [target_base, target_cv] = stripCanonicalTopCv(table, target_node.child);
+	const CanonicalTypeKind source_kind = table.node(source_base).kind;
+	const CanonicalTypeKind target_kind = table.node(target_base).kind;
+	if (target_kind == CanonicalTypeKind::Function) {
+		if (source_kind != CanonicalTypeKind::Function) {
+			const bool can_defer = source_kind == CanonicalTypeKind::Record || source_kind == CanonicalTypeKind::TemplateSpecialization ||
+				source_kind == CanonicalTypeKind::TemplateParameter || source_kind == CanonicalTypeKind::AliasTemplateSpecialization ||
+				source_kind == CanonicalTypeKind::DependentName || source_kind == CanonicalTypeKind::DependentTemplateMember ||
+				source_kind == CanonicalTypeKind::DependentMemberAlias;
+			return can_defer ? std::nullopt : std::optional<ConversionPlan>(ConversionPlan::no_match());
+		}
+		// [dcl.init.ref]/5.3.1 permits a function lvalue to bind directly to either reference kind.
+		if (source_base == target_base) {
+			return ConversionPlan::exact_match();
+		}
+		const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, table.pointer(source_referent), table.pointer(target_node.child));
+		return conversion.is_valid ? ConversionPlan::exact_match() : ConversionPlan::no_match();
+	}
 	bool qualification_binding = false;
 	if (source_base != target_base) {
-		const CanonicalTypeKind source_kind = table.node(source_base).kind;
 		if ((source_kind == CanonicalTypeKind::Pointer || source_kind == CanonicalTypeKind::MemberObjectPointer ||
 			source_kind == CanonicalTypeKind::MemberFunctionPointer) && areCanonicalReferenceReferentsSimilar(table, source_base, target_base)) {
 			if (source_is_lvalue && target_is_rvalue_reference) {
@@ -3533,25 +3549,18 @@ trySelectUserDefinedConversionOperator(const TypeSpecifierNode& source_type, con
 // Use canonical TypeIds for reference binding. Value category remains expression
 // metadata; same-shape binding preserves qualification ranking, while supported
 // standard conversions may materialize a temporary for an eligible reference.
-inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
-	const TypeSpecifierNode& from, const TypeSpecifierNode& to, bool allow_same_record_binding) {
-	const bool to_has_lvalue_reference = to.is_lvalue_reference() ||
-		orderedDeclaratorIsLvalueReference(to);
-	const bool to_has_rvalue_reference = to.is_rvalue_reference() ||
-		orderedDeclaratorIsRvalueReference(to);
+inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to,
+	bool allow_same_record_binding) {
+	const bool to_has_lvalue_reference = to.is_lvalue_reference() || orderedDeclaratorIsLvalueReference(to);
+	const bool to_has_rvalue_reference = to.is_rvalue_reference() || orderedDeclaratorIsRvalueReference(to);
 	if (!to_has_lvalue_reference && !to_has_rvalue_reference) {
 		return std::nullopt;
 	}
-	FrontendContext* const context = FrontendContext::active();
-	if (context == nullptr) {
-		return std::nullopt;
-	}
-	CanonicalTypeTable& table = context->canonicalTypes();
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
 	TypeSpecifierNode canonical_source = from;
 	tryBindPublishedTypeEntity(canonical_source);
-	const CanonicalTypeImport source_import =
-		importCanonicalType(table, canonical_source);
+	const CanonicalTypeImport source_import = importCanonicalType(table, canonical_source);
 	if (source_import.status == CanonicalTypeImportStatus::Invalid) {
 		return ConversionPlan::no_match();
 	}
@@ -3567,35 +3576,28 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 	if (target_import.status != CanonicalTypeImportStatus::Supported) {
 		return std::nullopt;
 	}
-	const TypeId source_unqualified =
-		stripCanonicalTopCv(table, source_import.type).first;
-	const TypeId target_unqualified =
-		stripCanonicalTopCv(table, target_import.type).first;
+	const TypeId source_unqualified = stripCanonicalTopCv(table, source_import.type).first;
+	const TypeId target_unqualified = stripCanonicalTopCv(table, target_import.type).first;
 	const CanonicalTypeNode source_node = table.node(source_unqualified);
 	const CanonicalTypeNode target_node = table.node(target_unqualified);
-	const bool target_is_lvalue_reference =
-		target_node.kind == CanonicalTypeKind::LValueReference;
-	const bool target_is_rvalue_reference =
-		target_node.kind == CanonicalTypeKind::RValueReference;
+	const bool target_is_lvalue_reference = target_node.kind == CanonicalTypeKind::LValueReference;
+	const bool target_is_rvalue_reference = target_node.kind == CanonicalTypeKind::RValueReference;
 	if (!target_is_lvalue_reference && !target_is_rvalue_reference) {
 		return std::nullopt;
 	}
-	const bool source_is_lvalue = from.is_lvalue_reference() ||
-		orderedDeclaratorIsLvalueReference(from) ||
+	const bool source_is_lvalue = from.is_lvalue_reference() || orderedDeclaratorIsLvalueReference(from) ||
 		source_node.kind == CanonicalTypeKind::LValueReference;
-	const bool source_is_rvalue = from.is_rvalue_reference() ||
-		orderedDeclaratorIsRvalueReference(from) ||
+	const bool source_is_rvalue = from.is_rvalue_reference() || orderedDeclaratorIsRvalueReference(from) ||
 		source_node.kind == CanonicalTypeKind::RValueReference;
-	const bool source_has_reference =
-		source_node.kind == CanonicalTypeKind::LValueReference ||
-		source_node.kind == CanonicalTypeKind::RValueReference;
+	const bool source_has_reference = source_node.kind == CanonicalTypeKind::LValueReference || source_node.kind == CanonicalTypeKind::RValueReference;
 	// Expression value category can live outside the canonical spine; the source object's CV must still survive reference binding.
 	const TypeId source_referent = source_has_reference ? source_node.child : source_import.type;
 	const TypeId target_referent = target_node.child;
-	const auto [source_type, source_referent_cv] =
-		stripCanonicalTopCv(table, source_referent);
-	const auto [target_type, target_referent_cv] =
-		stripCanonicalTopCv(table, target_referent);
+	const auto [source_type, source_referent_cv] = stripCanonicalTopCv(table, source_referent);
+	const auto [target_type, target_referent_cv] = stripCanonicalTopCv(table, target_referent);
+	if (table.node(source_type).kind == CanonicalTypeKind::Function && table.node(target_type).kind == CanonicalTypeKind::Function) {
+		return tryBuildCanonicalDirectReferenceBindingPlan(table, source_import.type, target_import.type);
+	}
 	const bool same_record_kind = table.node(source_type).kind == CanonicalTypeKind::Record && table.node(target_type).kind == CanonicalTypeKind::Record;
 	if (!allow_same_record_binding && same_record_kind && source_type == target_type) {
 		// Keep same-record reference ranking on the established path; the
