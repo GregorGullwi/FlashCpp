@@ -140,6 +140,8 @@ The architecture the remaining work builds on:
   identities. Chained aliases keep their use-site arguments through substitution;
   substituted nominal arguments bind their published entities before import.
   A retained component `TypeId` remains authoritative over its flat projection.
+  Concrete materialization supplies callable signatures, member-pointer owners,
+  and scalar projections before lowering.
 - `decltype` implements the `[dcl.type.decltype]` value-category rule for
   parenthesized id-expressions, the last comma operand, dereference, member
   access, built-in subscripting, and callable-object calls.

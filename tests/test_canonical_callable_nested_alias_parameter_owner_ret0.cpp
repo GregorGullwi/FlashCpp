@@ -30,8 +30,15 @@ static_assert(sizeof(decltype(choose(Source<short>{}))) == sizeof(ShortSelection
 static_assert(sizeof(decltype(choose(Source<Record>{}))) == sizeof(RecordSelection));
 static_assert(sizeof(decltype(choose(Source<double>{}))) == sizeof(long long));
 
+template <class LocalType>
+bool materializesLocalAlias() {
+	Parameter<LocalType> value = 7;
+	return value == 7;
+}
+
 int main() {
 	return sizeof(decltype(choose(Source<int>{}))) == sizeof(IntSelection) &&
 		sizeof(decltype(choose(Source<short>{}))) == sizeof(ShortSelection) &&
-		sizeof(decltype(choose(Source<Record>{}))) == sizeof(RecordSelection) ? 0 : 1;
+		sizeof(decltype(choose(Source<Record>{}))) == sizeof(RecordSelection) &&
+		materializesLocalAlias<short>() && materializesLocalAlias<long long>() ? 0 : 1;
 }
