@@ -2805,16 +2805,22 @@ FunctionType Parser::makeFunctionType(const TypeSpecifierNode& type_spec) const 
 	TypeSpecifierNode bound_type = type_spec;
 	tryBindPublishedTypeEntity(bound_type);
 	FunctionType type = makeFunctionTypeFromSpecifier(bound_type);
-	if (!type.template_parameter_name.isValid() &&
-		typeIndexContainsDependentPlaceholder(type_spec.type_index())) {
-		const std::optional<TemplateParameterKind> parameter_kind =
-			currentTemplateParamKind(type_spec.token().handle());
-		if (parameter_kind == TemplateParameterKind::Type ||
-			parameter_kind == TemplateParameterKind::Template) {
+	// The compatibility component cannot retain an alias's argument graph.
+	// Preserve its declaration and parameter identities before that projection.
+	if (bound_type.is_alias_template_specialization()) {
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		CanonicalTypeTransaction transaction(table);
+		const CanonicalTypeImport imported = importCanonicalType(table, bound_type);
+		if (imported.status == CanonicalTypeImportStatus::Supported) {
+			type.canonical_type_id = imported.type;
+			transaction.commit();
+		}
+	}
+	if (!type.template_parameter_name.isValid() && typeIndexContainsDependentPlaceholder(type_spec.type_index())) {
+		const std::optional<TemplateParameterKind> parameter_kind = currentTemplateParamKind(type_spec.token().handle());
+		if (parameter_kind == TemplateParameterKind::Type || parameter_kind == TemplateParameterKind::Template) {
 			type.template_parameter_name = type_spec.token().handle();
-		} else if (std::ranges::find(
-				   currentTemplateParamNames(), type_spec.token().handle()) !=
-			   currentTemplateParamNames().end()) {
+		} else if (std::ranges::find(currentTemplateParamNames(), type_spec.token().handle()) != currentTemplateParamNames().end()) {
 			type.template_parameter_name = type_spec.token().handle();
 		} else {
 			type.template_parameter_name = getStructuredTypeName(type_spec);

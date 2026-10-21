@@ -576,6 +576,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 					throw InternalError("template substitution: specialization type argument did not remain a type");
 				}
 				type.specialization_arg_type(index) = substituted_argument.as<TypeSpecifierNode>();
+				tryBindPublishedTypeEntity(type.specialization_arg_type(index));
 			}
 		};
 		const auto makeTypeSpecifier = [&](const TypeInfo& target_type_info) -> ASTNode {
@@ -669,6 +670,14 @@ ASTNode Parser::substituteTemplateParametersWithState(
 					return emplace_node<TypeSpecifierNode>(substituted_spec);
 				}
 			}
+		}
+
+		if (type_spec.is_alias_template_specialization()) {
+			// Preserve the alias declaration and substitute its use-site arguments
+			// before legacy materialization can expand a different parameter owner.
+			ASTNode substituted_specialization = emplace_node<TypeSpecifierNode>(type_spec);
+			substituteSpecializationTypeArgs(substituted_specialization.as<TypeSpecifierNode>());
+			return substituted_specialization;
 		}
 
 		if (std::optional<TypeSpecifierNode> materialized_alias_type =

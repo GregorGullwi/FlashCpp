@@ -14,7 +14,7 @@ Boundary **3A (canonical types)** is active and incomplete. The explicit-criteri
 rollup is **10/79 complete**; the only completed 3A exit criterion is that
 pointer-to-member overloads distinguish owner and pointee types. Passing tests or
 the breadth of landed code do not complete the boundary.
-The next bounded 3A slice remains dependent-alias parameter ownership inside callable signatures.
+The next bounded 3A slice is alias-normalized callable conversion tails beyond identity, starting with `noexcept` relaxation.
 
 The architecture the remaining work builds on:
 
@@ -136,6 +136,10 @@ The architecture the remaining work builds on:
   Named function expressions retain their function type until reference binding
   or value decay is selected. Call lowering preserves the pointer-sized address
   for function-to-pointer decay, including callable aliases with a function base.
+  Structured callable components retain dependent alias declaration and argument
+  identities. Chained aliases keep their use-site arguments through substitution;
+  substituted nominal arguments bind their published entities before import.
+  A retained component `TypeId` remains authoritative over its flat projection.
 - `decltype` implements the `[dcl.type.decltype]` value-category rule for
   parenthesized id-expressions, the last comma operand, dereference, member
   access, built-in subscripting, and callable-object calls.
@@ -193,21 +197,13 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Next slice: dependent-alias parameter ownership inside callable signatures.**
-   Inspect `Parser::makeFunctionType` in `src/Parser_Decl_DeclaratorCore.cpp` and
-   alias-target publication in `Parser::parse_template_declaration_impl` in
-   `src/Parser_Templates_Class.cpp`. Preserve the enclosing alias's parameter owner
-   when retaining structured signature components. Done when a conversion operator
-   returning `Callback<T> = long (*)(Parameter<T>)`, with `Parameter<T> = T`, selects
-   the matching function-pointer overload over ellipsis for native and record
-   parameters. Keep valid member-pointer alias publication enabled; a blanket
-   `dependsOnlyOnTemplateParameters` publication gate breaks those declarations.
-   See `docs/KNOWN_ISSUES.md` for the ownership failure.
-
-   **Following slice:** use the canonical planner for alias-normalized callable
-   tails beyond identity, starting with `noexcept` relaxation. Verify exact-match
-   preference and reject incompatible signatures and pointer depths. Stop after
-   each bounded slice; neither closes boundary 3A by itself.
+   **Next slice: alias-normalized callable tails beyond identity.** Extend
+   `tryBuildCanonicalConversionFunctionTailPlan` in `src/OverloadResolution.h`
+   to plan structural conversions after resolving alias specializations, starting
+   with `noexcept` relaxation. Verify exact-match preference, reject incompatible
+   signatures and pointer depths, and cover nested dependent aliases with distinct
+   parameter names. Preserve dependent alias identity until its arguments become
+   concrete. Stop after this bounded slice; it does not close boundary 3A.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    1. **The constructibility family.** The zero-argument variants and published

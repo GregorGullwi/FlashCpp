@@ -18,17 +18,6 @@ argument then fails internally as a missing call-argument conversion. The
 conditional-decay regression uses a non-template overload and a class-template
 array member instead of this parameter form.
 
-## Alias template parameters inside callable signatures can keep the wrong owner
-
-A namespace-scope callable alias whose function parameter is itself a dependent
-alias specialization can retain that nested alias's `TemplateDeclId` instead of
-the enclosing callable alias's parameter identity. Substitution then leaves the
-foreign parameter dependent, so conversion-function tail ranking cannot match
-the concrete signature and an ellipsis overload may win. Preserve the original
-dependent type identity in the structured callable component and add a reduced
-overload-ranking regression. Chaining aliases around the whole callable type is
-covered separately.
-
 ## Full native canonical suite has two baseline failures
 
 The unchanged constructor-initializer commit (`e590ccc7`) and its continuation
@@ -48,6 +37,9 @@ reduced to 1 MB overflows in `parse_primary_expression`, reached through
 inference worklist adds no native recursion for the receiver chain, but does not
 resolve these existing parser frames or recursive expression normalization and
 lowering. No stack reserve was increased for this regression.
+The native `Canonical adapter imports the source corpus at publication` fixture
+also overflows at 1 MB, including in a pre-change binary. Reduce parser frames
+and replace recursive syntax processing before expecting that corpus to fit.
 
 ## SEH finally funclet termination is conservative in return-flow diagnostics
 
