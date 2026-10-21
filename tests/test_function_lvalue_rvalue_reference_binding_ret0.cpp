@@ -52,6 +52,10 @@ Record invoke_record(Record (&&callback)(short), short input) {
 	return callback(input);
 }
 
+long invoke_pointer(LongCallback* callback, short input) {
+	return callback(input);
+}
+
 int select(LongCallback&&) {
 	return 1;
 }
@@ -66,5 +70,5 @@ int main() {
 	if (result.value != 31 || select(widen) != 1 || select(&widen) != 2 || select(api::qualified) != 1) return 2;
 	Receiver receiver(widen);
 	if (receiver.function_pointer != &widen) return 3;
-	return invoke<long>(widen, 23) == 23 ? 0 : 4;
+	return invoke<long>(widen, 23) == 23 && invoke_pointer(widen, -19) == -19 && invoke_pointer(safe, 0) == 17 ? 0 : 4;
 }

@@ -2838,6 +2838,9 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 		}
 		source_type = stripCanonicalTopCv(table, source_type).first;
 		const TypeId target_type = stripCanonicalTopCv(table, to_import.type).first;
+		if (table.node(source_type).kind == CanonicalTypeKind::Function && table.node(target_type).kind == CanonicalTypeKind::Pointer) {
+			return buildCanonicalStructuralConversionPlan(table, source_type, target_type);
+		}
 		auto functionPointerDepth = [&table](TypeId type) -> std::optional<size_t> {
 			size_t depth = 0;
 			TypeId current = stripCanonicalTopCv(table, type).first;

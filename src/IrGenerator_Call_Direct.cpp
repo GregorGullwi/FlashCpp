@@ -1562,11 +1562,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 							from_type != argumentIrOperands.typeEnum()) {
 							from_type = argumentIrOperands.typeEnum();
 						}
-						argumentIrOperands = generateTypeConversion(
-							argumentIrOperands,
-							from_type,
-							to_type,
-							callExprNode.called_from());
+						// A function designator already lowers to its address. The target's
+						// category may be the ordered callable's base, which has no object size.
+						if (cast_info.cast_kind != StandardConversionKind::FunctionToPointer) {
+							argumentIrOperands = generateTypeConversion(argumentIrOperands, from_type, to_type, callExprNode.called_from());
+						}
 						arg_type = argumentIrOperands.typeEnum();
 						arg_type_index = argumentIrOperands.type_index;
 						return true;

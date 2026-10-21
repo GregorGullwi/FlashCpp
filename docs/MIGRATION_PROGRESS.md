@@ -114,6 +114,9 @@ The architecture the remaining work builds on:
   derived-to-base tails (including template-specialization bases when their
   class-base schemas are available), conversion-operator results bound to
   const lvalue references and rvalue references, and the member-pointer owner graph.
+  Named function expressions retain their function type until reference binding
+  or value decay is selected. Call lowering preserves the pointer-sized address
+  for function-to-pointer decay, including callable aliases with a function base.
 - `decltype` implements the `[dcl.type.decltype]` value-category rule for
   parenthesized id-expressions, the last comma operand, dereference, member
   access, built-in subscripting, and callable-object calls.
