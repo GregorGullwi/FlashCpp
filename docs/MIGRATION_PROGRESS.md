@@ -40,11 +40,14 @@ The architecture the remaining work builds on:
   after copying off any `get()` reference, and re-derives the id from the
   descriptor's current flat projection so a stale id cannot survive a projection
   change. Conditional array decay, conditional
-  pointer selection, and built-in subscript element extraction read that id and do
+  pointer selection, built-in subscript element extraction, and builtin unary
+  `*` and `&` read that id and do
   not import while a descriptor reference is
   live; conditional array decay and built-in subscript element extraction are
   structural-only and fail closed on an array/pointer descriptor without published
-  identity. Flat pointer-level and
+  identity. Builtin unary `*` and `&` do the same for an array object. They
+  import a local copy first, and a nested class of an instantiation still
+  peels one flat pointer level. Flat pointer-level and
   array-dimension fields remain for shapes the
   importer cannot represent, and as a compatibility projection for unmigrated
   semantic writers (`PublishedPointerArray`). Materialization now exports every
@@ -94,7 +97,23 @@ The architecture the remaining work builds on:
   of the array element and re-exports that pointer through
   `materializeTypeSpecifier`, so interning cannot republish the operand's flat
   dimensions over the decayed identity. The in-place flat dimension rewrite is
-  gone. The 3A rollup remains 10/79.
+  gone. Builtin unary `*` and `&` take the canonical pointee, or
+  `CanonicalTypeTable::pointer` of the undecayed operand, when that operand
+  has a published id or its local copy imports. `*` of an array removes one
+  outermost bound, which is `[conv.array]` followed by indirection, and array
+  cv stays on the element. `&` of an array lvalue is a pointer to that array.
+  A projectable result is re-exported through `materializeTypeSpecifier`.
+  An interleaved pointer/array has no legacy projection, so the result keeps
+  its structural id and does not set `PublishedPointerArray`. An implicit
+  class-template specialization records the primary `TemplateDeclId` and its
+  published arguments, so `*this` there is that specialization. A nested class
+  of an instantiation has no per-specialization entity yet, and a dependent
+  class-template pattern is not a concrete specialization, so those pointers
+  still pop one flat pointer level. An array object without a
+  published id fails closed. User-defined `operator*` and `operator&` stay on
+  their resolved-function paths. The arrow peel in
+  `resolveMemberAccessObjectInfo` still drops published identity.
+  The 3A rollup remains 10/79.
 - The shared type-trait evaluator classifies the structural `[meta.unary.prop]`
   family plus class/union/qualification and published record properties from
   canonical identity; the folded, constexpr, lazy-constraint, and lowered paths
@@ -412,6 +431,36 @@ Continue boundary 3A in this order.
       expression inference returns and calls the existing iterative materializer
       once, so native stack use does not grow with array rank or nested
       conditional depth. No stack reserve was changed.
+   5. **Builtin unary `*` and `&`.** Published pointer and array operands no
+      longer pop `pointer_levels` or erase `array_dimensions`. The result
+      identity is the canonical pointee, or `CanonicalTypeTable::pointer` of
+      the undecayed operand. `[expr.unary.op]` and `[conv.array]` remove one
+      outermost array on `*` and do not decay the operand of `&`. Cv on a
+      pointer object does not qualify the pointee; cv on an array stays on the
+      element. A projectable result is re-exported so intern's flat refresh
+      cannot republish the operand. An interleaved result keeps its structural
+      id because it has no legacy projection. An implicit class-template
+      specialization records the primary `TemplateDeclId` and the arguments
+      already published on its `TypeInfo`, so `*this` is that specialization
+      without replacing the pattern bindings used for substitution. A nested
+      class of an instantiation, and a dependent class-template pattern, still
+      pop one flat pointer level. An array object without a published id fails
+      closed. This does not close a 3A exit criterion.
+      `tests/test_unary_pointer_array_identity_ret0.cpp` protects `*` of
+      `int[2][3]`, `int[][2]`, a pointer to an array, `int**`, a const pointee,
+      a const pointer object, a const array, `long` and `Cell` rows, a `short`
+      matrix, and a class-template array member, plus `&` of those arrays,
+      overloaded `operator*`/`operator&`, and a function address. The old `*`
+      of an array object loaded the array bytes as a pointer.
+      `tests/test_const_member_overload_on_const_param_ret0.cpp` exercises
+      `*this` inside a partial specialization, which is now the canonical
+      specialization rather than a popped pointer level. The class import uses
+      its existing iterative worklist. The unary helpers are not recursive. They
+      run after child expression inference returns and call the existing
+      iterative materializer once. Codegen of `*` on an array
+      object takes that element's address with one `AddressOf` or pointer copy,
+      then loads only when the element is not itself an array. Native stack use
+      does not grow with array rank or pointer depth. No stack reserve was changed.
 
 3. **Complete importer and declarator coverage.** Add canonical import support
    for remaining valid ordered forms still rejected at a boundary, including
@@ -464,7 +513,11 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
   longer reads any flat `pointee_array_declarator`/
   `has_unsized_outer_array_dimension` field; the remaining readers are
   semantic-internal descriptor construction and equality. Conditional array
-  decay exports the decayed pointer instead of editing the operand projection.
+  decay and published unary `*` and `&` export the canonical result instead of
+  editing the operand projection. An implicit class-template specialization's
+  `*this` uses that specialization. A nested class of an instantiation still
+  pops one flat pointer level, and an array object without a published id
+  fails closed. The arrow peel still drops published identity.
 - The compatibility `TypeTraitEval::isSigned`/`isUnsigned` adapters are
   unexercised; a regression forcing an unimportable operand through them is owed.
 - The canonical record constructor schema is published for a completed record

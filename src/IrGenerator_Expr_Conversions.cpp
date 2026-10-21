@@ -2280,8 +2280,102 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 				}
 			}
 			if (operand_type_id) {
-				const CanonicalTypeDesc& operand_desc =
-					sema_.typeContext().get(operand_type_id);
+				const CanonicalTypeDesc& operand_desc = sema_.typeContext().get(operand_type_id);
+				// [conv.array] then [expr.unary.op]: * on an array object designates
+				// the first element. The array's address is that element; loading
+				// the array's bytes as a pointer is not a dereference.
+				if (operand_desc.structural_type_id) {
+					CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+					TypeId array_id = operand_desc.structural_type_id;
+					while (array_id) {
+						const CanonicalTypeNode array_node = canonical_types.node(array_id);
+						if ((array_node.kind == CanonicalTypeKind::LValueReference || array_node.kind == CanonicalTypeKind::RValueReference ||
+							array_node.kind == CanonicalTypeKind::Qualified) && array_node.child) {
+							array_id = array_node.child;
+							continue;
+						}
+						break;
+					}
+					const CanonicalTypeNode array_node = canonical_types.node(array_id);
+					if (array_node.kind == CanonicalTypeKind::Array && array_node.child) {
+						TempVar array_address = var_counter.next();
+						std::variant<StringHandle, TempVar, LocalVarId> address_base;
+						if (operandIrOperands.storage == ValueStorage::ContainsAddress) {
+							IrValue address_value;
+							if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
+								address_base = *string;
+								address_value = *string;
+							} else if (const auto* local_id = std::get_if<LocalVarId>(&operandIrOperands.value)) {
+								address_base = *local_id;
+								address_value = *local_id;
+							} else if (const auto* temp_var = std::get_if<TempVar>(&operandIrOperands.value)) {
+								address_base = *temp_var;
+								address_value = *temp_var;
+							} else {
+								throw InternalError("Array dereference address has unsupported operand value kind");
+							}
+							AssignmentOp copy_address;
+							copy_address.result = array_address;
+							copy_address.lhs = makeTypedValue(operandType, SizeInBits{POINTER_SIZE_BITS}, array_address);
+							copy_address.rhs = makeTypedValue(operandType, SizeInBits{POINTER_SIZE_BITS}, address_value);
+							copy_address.is_pointer_store = false;
+							copy_address.dereference_rhs_references = false;
+							ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(copy_address), unaryOperatorNode.get_token()));
+						} else {
+							AddressOfOp address_op;
+							address_op.result = array_address;
+							address_op.operand.setType(operandType);
+							address_op.operand.size_in_bits = operandIrOperands.size_in_bits;
+							address_op.operand.pointer_depth = operandIrOperands.pointer_depth;
+							if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
+								address_base = *string;
+								address_op.operand.value = *string;
+							} else if (const auto* local_id = std::get_if<LocalVarId>(&operandIrOperands.value)) {
+								address_base = *local_id;
+								address_op.operand.value = *local_id;
+							} else if (const auto* temp_var = std::get_if<TempVar>(&operandIrOperands.value)) {
+								address_base = *temp_var;
+								address_op.operand.value = *temp_var;
+							} else {
+								throw InternalError("Array dereference operand must be a local variable or temporary");
+							}
+							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(address_op), unaryOperatorNode.get_token()));
+						}
+						int element_bits = getRuntimeValueSizeBits(
+							operandIrOperands.type_index.withCategory(operandType), get_type_size_bits(operandType), PointerDepth{});
+						if (element_bits <= 0) {
+							throw InternalError("Dereference requires a complete array element size");
+						}
+						const std::optional<std::vector<size_t>> element_dimensions = canonical_types.arrayDimensions(array_node.child);
+						if (element_dimensions.has_value()) {
+							for (const size_t dimension : *element_dimensions) {
+								if (dimension == 0) {
+									continue;
+								}
+								if (static_cast<size_t>(element_bits) > static_cast<size_t>(SIZE_MAX) / dimension) {
+									throw InternalError("Array dereference element bounds overflow object size");
+								}
+								element_bits *= static_cast<int>(dimension);
+							}
+							LValueInfo element_lvalue(LValueInfo::Kind::Indirect, address_base, 0);
+							setTempVarMetadata(array_address, TempVarMetadata::makeLValue(element_lvalue, TypeCategory::Invalid, 0));
+							return makeExprResult(operand_desc.type_index.withCategory(operandType), SizeInBits{element_bits}, IrOperand{array_address},
+								PointerDepth{}, ValueStorage::ContainsAddress);
+						}
+						DereferenceOp element_load;
+						element_load.result = result_var;
+						element_load.pointer.setType(operandType);
+						element_load.pointer.type_index = operandIrOperands.type_index.withCategory(operandType);
+						element_load.pointer.size_in_bits = SizeInBits{element_bits};
+						element_load.pointer.pointer_depth = PointerDepth{1};
+						element_load.pointer.value = array_address;
+						ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(element_load), unaryOperatorNode.get_token()));
+						LValueInfo element_lvalue(LValueInfo::Kind::Indirect, array_address, 0);
+						setTempVarMetadata(result_var, TempVarMetadata::makeLValue(element_lvalue, TypeCategory::Invalid, 0));
+						return makeExprResult(operandIrOperands.type_index.withCategory(operandType), SizeInBits{element_bits}, IrOperand{result_var},
+							PointerDepth{}, ValueStorage::ContainsData);
+					}
+				}
 				const PointerToArrayShape shape = sema_.pointerToArrayShape(operand_desc);
 				pointee_is_array = shape.is_pointer_to_array;
 				pointee_type_index = operand_desc.type_index;
