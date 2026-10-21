@@ -1619,6 +1619,11 @@ inline CanonicalTypeImport importCanonicalClassSource(
 		size_t next_argument = 0;
 		size_t waiting_argument = std::numeric_limits<size_t>::max();
 		std::vector<CanonicalTemplateArgument> arguments;
+		// Implicit instantiations keep pattern bindings in outer_template_args for
+		// substitution. The specialization's canonical arguments are the published
+		// primary arguments on the TypeInfo.
+		TemplateArgInfoVector published_arguments;
+		bool use_published_arguments = false;
 	};
 
 	CanonicalTypeTransaction transaction(table);
@@ -1666,9 +1671,18 @@ inline CanonicalTypeImport importCanonicalClassSource(
 		PendingClassImport pending{};
 		pending.declaration = declaration;
 		pending.specialization_owner = specialization_owner;
-		pending.arguments.reserve(declaration->outer_template_args().size());
+		const bool pattern_owns_template = pattern != nullptr && pattern->has_template_decl_id();
+		if (!pattern_owns_template && declaration->has_canonical_specialization_owner() &&
+			type_info != nullptr && type_info->baseTemplateName().isValid()) {
+			pending.published_arguments = type_info->templateArgs();
+			pending.use_published_arguments = true;
+		}
+		pending.arguments.reserve(pending.use_published_arguments ? pending.published_arguments.size() : declaration->outer_template_args().size());
 		worklist.push_back(std::move(pending));
 		return std::nullopt;
+	};
+	const auto specialization_arguments = [](const PendingClassImport& pending) -> const TemplateArgInfoVector& {
+		return pending.use_published_arguments ? pending.published_arguments : pending.declaration->outer_template_args();
 	};
 
 	std::optional<CanonicalTypeImport> completed =
@@ -1696,7 +1710,7 @@ inline CanonicalTypeImport importCanonicalClassSource(
 				return *completed;
 			}
 			const TypeInfo::TemplateArgInfo& argument =
-				parent.declaration->outer_template_args()[parent.waiting_argument];
+				specialization_arguments(parent)[parent.waiting_argument];
 			const CanonicalTypeImport imported_argument =
 				shapeCanonicalTemplateTypeArgument(
 					table, argument, completed->type);
@@ -1715,7 +1729,7 @@ inline CanonicalTypeImport importCanonicalClassSource(
 			throw InternalError("canonical type adapter: class import worklist ended early");
 		}
 		PendingClassImport& current = worklist.back();
-		const auto& source_arguments = current.declaration->outer_template_args();
+		const TemplateArgInfoVector& source_arguments = specialization_arguments(current);
 		if (current.next_argument < source_arguments.size()) {
 			const size_t argument_index = current.next_argument;
 			const TypeInfo::TemplateArgInfo& argument =

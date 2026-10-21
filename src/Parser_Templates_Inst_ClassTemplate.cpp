@@ -4663,6 +4663,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				instantiated_struct_ref,
 				effective_pattern_template_params,
 				effective_pattern_template_args);
+			// The pattern bindings above stay the substitution environment. The
+			// canonical type is templateSpecialization(primary, published arguments),
+			// the same identity an explicit specialization already records.
+			if (const std::optional<ASTNode> primary_template = gTemplateRegistry.lookupTemplate(template_name);
+				primary_template.has_value() && primary_template->is<TemplateClassDeclarationNode>() &&
+				primary_template->as<TemplateClassDeclarationNode>().has_template_decl_id()) {
+				instantiated_struct_ref.set_canonical_specialization_owner_template_decl_id(
+					primary_template->as<TemplateClassDeclarationNode>().template_decl_id());
+			}
 
 			// Copy data members
 			for (const auto& member_decl : pattern_struct.members()) {
