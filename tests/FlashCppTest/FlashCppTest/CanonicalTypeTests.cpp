@@ -678,6 +678,44 @@ TEST_CASE("Canonical direct reference binding preserves access cv and value cate
 	CHECK(deep_binding->kind == StandardConversionKind::DerivedToBase);
 }
 
+TEST_CASE("Canonical function references bind function lvalues directly") {
+	CanonicalTypeTable table;
+	TypeId parameter = table.builtin(CanonicalBuiltinKind::Short);
+	for (size_t depth = 0; depth < 4096; ++depth) {
+		parameter = table.pointer(parameter);
+	}
+	const std::array<TypeId, 1> parameters{parameter};
+	const TypeId result = table.builtin(CanonicalBuiltinKind::Long);
+	const auto function_type = [&table, &parameters](TypeId return_type, bool is_noexcept) {
+		return table.function(return_type, parameters, false, CVQualifier::None, ReferenceQualifier::None, is_noexcept,
+			CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	};
+	const TypeId function = function_type(result, false);
+	const TypeId safe_function = function_type(result, true);
+	const TypeId wrong_function = function_type(table.builtin(CanonicalBuiltinKind::Char), false);
+	const TypeId lvalue = table.reference(function, ReferenceQualifier::LValueReference);
+	const TypeId rvalue = table.reference(function, ReferenceQualifier::RValueReference);
+	const auto check_binding = [&table](TypeId source, TypeId target, bool expected) {
+		const auto binding = tryBuildCanonicalDirectReferenceBindingPlan(table, source, target);
+		REQUIRE(binding.has_value());
+		CHECK(binding->is_valid == expected);
+		if (expected) {
+			CHECK(binding->rank == ConversionRank::ExactMatch);
+			CHECK(binding->kind == StandardConversionKind::None);
+		}
+	};
+	for (const TypeId source : {function, lvalue, rvalue}) {
+		check_binding(source, lvalue, true);
+		check_binding(source, rvalue, true);
+	}
+	check_binding(table.reference(safe_function, ReferenceQualifier::LValueReference), rvalue, true);
+	check_binding(lvalue, table.reference(safe_function, ReferenceQualifier::RValueReference), false);
+	check_binding(table.reference(wrong_function, ReferenceQualifier::LValueReference), rvalue, false);
+	const TypeId pointer = table.pointer(function);
+	check_binding(table.reference(pointer, ReferenceQualifier::LValueReference), rvalue, false);
+	check_binding(table.reference(pointer, ReferenceQualifier::LValueReference), table.reference(pointer, ReferenceQualifier::RValueReference), false);
+}
+
 TEST_CASE("Canonical record constructor schema is independent of the field schema") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();

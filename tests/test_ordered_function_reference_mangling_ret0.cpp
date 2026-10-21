@@ -15,5 +15,5 @@ int invoke(int* (&&function)(short), short index) {
 
 int main() {
 	Receiver receiver(element, 1);
-	return receiver.value == 29 && invoke(static_cast<int* (&&)(short)>(element), 0) == 17 ? 0 : 1;
+	return receiver.value == 29 && invoke(element, 0) == 17 ? 0 : 1;
 }

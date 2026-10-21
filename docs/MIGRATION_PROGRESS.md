@@ -6,7 +6,7 @@ authoritative for the design, boundaries, and exit criteria. This file records
 the current boundary state, the remaining work, and the validation contract;
 completed implementation history belongs in git.
 
-Last updated: 2026-10-20.
+Last updated: 2026-10-21.
 
 ## Current state
 
@@ -14,6 +14,7 @@ Boundary **3A (canonical types)** is active and incomplete. The explicit-criteri
 rollup is **10/79 complete**; the only completed 3A exit criterion is that
 pointer-to-member overloads distinguish owner and pointee types. Passing tests or
 the breadth of landed code do not complete the boundary.
+The next bounded 3A slice remains dependent-alias parameter ownership inside callable signatures.
 
 The architecture the remaining work builds on:
 
