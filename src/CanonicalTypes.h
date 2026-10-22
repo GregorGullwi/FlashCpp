@@ -634,6 +634,9 @@ public:
 	// argument layouts are interpreted positionally against the target's published
 	// parameter kinds.
 	TypeId substitute(TypeId type, TemplateDeclId env, std::span<const TypeId> args);
+	// Preserve declaration parameter positions across type/value environments;
+	// non-type expressions remain opaque and are not evaluated here.
+	TypeId substitute(TypeId type, TemplateDeclId env, std::span<const CanonicalTemplateArgument> args);
 
 	TypeId memberObjectPointer(TypeId owner, TypeId pointee);
 

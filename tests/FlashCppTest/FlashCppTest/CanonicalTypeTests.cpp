@@ -3057,6 +3057,92 @@ TEST_CASE("Callable alias return binding walks deep canonical wrappers iterative
 	CHECK(imported.type == expected_result);
 }
 
+TEST_CASE("Mixed callable alias bindings retain value positions and canonical component authority") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+template<class T> using Parameter = T;
+template<int N, class R, bool B, class A> using Callback = R (*)(Parameter<A>) noexcept;
+)";
+	CompileContext test_context;
+	test_context.setInputFile("mixed_callable_alias.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(test_context, gSymbolTable);
+	Parser parser(lexer, test_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const TypeSpecifierNode long_spec(TypeCategory::Long, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	const TypeSpecifierNode short_spec(TypeCategory::Short, TypeQualifier::None, 16, Token{}, CVQualifier::None);
+	TemplateTypeArg count(7);
+	count.nttp_expr = context.dependentExpressions().intern(ASTNode::emplace_node<ExpressionNode>(
+		NumericLiteralNode(Token{}, 7ull, TypeCategory::Int, TypeQualifier::None, 32)));
+	TemplateTypeArg flag(1, TypeCategory::Bool);
+	flag.nttp_expr = context.dependentExpressions().intern(ASTNode::emplace_node<ExpressionNode>(BoolLiteralNode(Token{}, true)));
+	const std::array<TemplateTypeArg, 4> arguments{count, TemplateTypeArg(long_spec), flag, TemplateTypeArg(short_spec)};
+	const auto materialized = parser.templateEngine().materializeAliasTemplateInstantiation("Callback", arguments);
+	REQUIRE(materialized.resolved_type_specifier.has_value());
+	const TypeSpecifierNode& concrete = *materialized.resolved_type_specifier;
+	REQUIRE(concrete.has_function_signature());
+	const std::array<TypeId, 1> parameter_types{table.builtin(CanonicalBuiltinKind::Short)};
+	const TypeId expected_function = table.function(table.builtin(CanonicalBuiltinKind::Long), parameter_types, false, CVQualifier::None,
+		ReferenceQualifier::None, true, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	const TypeId expected = table.pointer(expected_function);
+	const auto imported = importCanonicalType(table, concrete);
+	REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+	CHECK(imported.type == expected);
+	FunctionSignature corrupted = concrete.function_signature();
+	corrupted.updateParameterTypes([](auto& parameters) { parameters.front().type_index = nativeTypeIndex(TypeCategory::Double); });
+	TypeSpecifierNode stale = concrete;
+	stale.set_function_signature(corrupted);
+	CHECK(importCanonicalType(table, stale).type == expected);
+	corrupted.updateParameterTypes([](auto& parameters) { parameters.front().canonical_type_id = {}; });
+	stale.set_function_signature(corrupted);
+	CHECK(importCanonicalType(table, stale).type != expected);
+	const OwnerId namespace_owner = ownerIdFromNamespaceHandle(gSymbolTable.get_current_namespace_handle());
+	const auto alias = context.templateDecls().findPrimaryAliasTemplate(namespace_owner, StringTable::getOrInternStringHandle("Callback"));
+	REQUIRE(alias.has_value());
+	const auto pattern = context.templateDecls().primaryAliasPattern(*alias);
+	REQUIRE(pattern.has_value());
+	const TemplateAliasNode& alias_node = pattern->as<TemplateAliasNode>();
+	for (bool unexpanded_pack : {false, true}) {
+		auto deferred_arguments = arguments;
+		if (unexpanded_pack) {
+			deferred_arguments.front().is_pack = true;
+		} else {
+			deferred_arguments.front().nttp_expr = {};
+		}
+		const FunctionSignature deferred = substituteTemplateFunctionSignatureTypes(alias_node.target_type_node().function_signature(),
+			alias_node.template_parameters(), deferred_arguments, table, *alias);
+		CHECK(table.hasDependentTypeComponents(deferred.parameter_types().front().canonical_type_id));
+	}
+	FunctionSignature deep = alias_node.target_type_node().function_signature();
+	TypeId expected_parameter = parameter_types.front();
+	deep.updateParameterTypes([&](auto& parameters) {
+		REQUIRE(parameters.front().canonical_type_id);
+		for (size_t depth = 0; depth < 4096; ++depth) {
+			parameters.front().canonical_type_id = table.pointer(parameters.front().canonical_type_id);
+			expected_parameter = table.pointer(expected_parameter);
+		}
+	});
+	const FunctionSignature substituted = substituteTemplateFunctionSignatureTypes(deep, alias_node.template_parameters(), arguments, table, *alias);
+	CHECK(substituted.parameter_types().front().canonical_type_id == expected_parameter);
+	const auto imported_parameter = importCanonicalFunctionTypeComponent(table, substituted.parameter_types().front(),
+		CanonicalTypeImportContext::Exact);
+	REQUIRE(imported_parameter.status == CanonicalTypeImportStatus::Supported);
+	CHECK(imported_parameter.type == expected_parameter);
+	const std::array<CanonicalTemplateArgument, 4> canonical_arguments{
+		CanonicalTemplateArgument::makeNonType(count.nttp_expr), CanonicalTemplateArgument::makeType(table.builtin(CanonicalBuiltinKind::Long)),
+		CanonicalTemplateArgument::makeNonType(flag.nttp_expr), CanonicalTemplateArgument::makeType(parameter_types.front())};
+	CHECK(table.substitute(table.templateParameter(*alias, 3), *alias, canonical_arguments) == parameter_types.front());
+	CHECK_THROWS_AS(table.substitute(table.templateParameter(*alias, 0), *alias, canonical_arguments), InternalError);
+	std::array<CanonicalTemplateArgument, 4> invalid = canonical_arguments;
+	invalid.front().expr = {};
+	CHECK_THROWS_AS(table.substitute(table.templateParameter(*alias, 3), *alias, invalid), InternalError);
+}
+
 TEST_CASE("Canonical adapter imports the source corpus at publication") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

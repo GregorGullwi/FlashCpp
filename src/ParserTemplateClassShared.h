@@ -231,18 +231,22 @@ inline TypeId substituteCanonicalFunctionTypeComponent(CanonicalTypeTable& table
 template <typename ParamContainer, typename ArgContainer>
 inline FunctionSignature substituteTemplateFunctionSignatureTypesImpl(FunctionSignature signature, const ParamContainer& template_params,
 	const ArgContainer& template_args, CanonicalTypeTable* canonical_types, TemplateDeclId canonical_environment) {
-	std::vector<TypeId> canonical_arguments;
+	std::vector<CanonicalTemplateArgument> canonical_arguments;
 	if (canonical_types != nullptr && canonical_environment) {
 		canonical_arguments.reserve(template_args.size());
-		// Whole-graph binding covers fixed type arguments. Mixed/pack environments
-		// retain the existing component substitution and deferred canonical stamps.
+		// Keep every argument position, including opaque non-type expression IDs.
+		// Unsupported packs and unpublished argument identities remain deferred.
 		for (const TemplateTypeArg& argument : template_args) {
+			if (!argument.is_pack && argument.is_value && argument.nttp_expr) {
+				canonical_arguments.push_back(CanonicalTemplateArgument::makeNonType(argument.nttp_expr));
+				continue;
+			}
 			const auto imported = tryImportCanonicalTemplateTypeArgument(*canonical_types, argument);
 			if (!imported.has_value()) {
 				canonical_environment = {};
 				break;
 			}
-			canonical_arguments.push_back(*imported);
+			canonical_arguments.push_back(CanonicalTemplateArgument::makeType(*imported));
 		}
 	}
 	auto apply_template_argument = [&](FunctionType& type, const TemplateTypeArg& arg) {

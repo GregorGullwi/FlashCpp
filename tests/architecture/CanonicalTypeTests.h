@@ -1529,7 +1529,7 @@ inline void checkSubstitution() {
 
 	rejects([&] { table.substitute(TypeId{}, env, args); });
 	rejects([&] { table.substitute(param0, TemplateDeclId{}, args); });
-	rejects([&] { table.substitute(param0, env, {}); });
+	rejects([&] { table.substitute(param0, env, std::span<const TypeId>{}); });
 	const TypeId bytes{static_cast<uint32_t>(table.node(member).array_extent)};
 	rejects([&] { table.substitute(bytes, env, args); });
 	// A callable with no matching environment parameter is returned unchanged and

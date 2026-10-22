@@ -560,6 +560,12 @@ TypeId CanonicalTypeTable::substitute(TypeId type, TemplateDeclId env, std::span
 		std::span<const CanonicalTemplateArgument>(arguments.data(), arguments.size())));
 }
 
+TypeId CanonicalTypeTable::substitute(TypeId type, TemplateDeclId env, std::span<const CanonicalTemplateArgument> args) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	return resolveNestedAliasGraphUnlocked(substituteArgumentsUnlocked(type, env, args));
+}
+
 TypeId CanonicalTypeTable::memberObjectPointer(TypeId owner, TypeId pointee) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
