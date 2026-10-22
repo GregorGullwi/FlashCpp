@@ -1,36 +1,28 @@
 # Known Issues
 
-## Alias-template function types lose their function component
+## Mixed-argument callable aliases need canonical component binding
 
-`template <class Result> using Callback = Result(short);` should make
-`Callback<long>` a function type, but materializing the alias-template
-specialization drops its function component. Consequently,
-`__is_constructible(Callback<long>&&, Callback<long>&)` fails. Preserve the
-function type when materializing alias-template specializations; keep this
-separate from dependent alias-parameter ownership inside callable signatures.
-The same direct-parameter shortcut can discard a callable-pointer target:
-`template<class R> using Callback = R (*)(short) noexcept;` does not materialize
-`Callback<long>` as `long (*)(short) noexcept`. Replacing that shortcut alone
-still leaves alias components captured under another template's parameter owner
-unsubstituted. Preserve the callable target and bind each alias's own arguments;
-do not substitute its raw target with the enclosing class template's name map.
-
-## Lowering an alias-returning conversion operator can create a zero-size temporary
-
-This reduced program reaches code generation but fails in `invoke` because
-temporary 4 has a zero-bit IR size:
+Whole-graph callable substitution currently accepts fixed type arguments. An
+unrelated non-type parameter still disables it for the entire environment:
 
 ```cpp
-template<class T> using P = long (*)(T) noexcept;
-template<class U> using Q = P<U>;
-template<class V> struct S { operator Q<V>() const { return nullptr; } };
-int invoke(long (*p)(int)) { return p == nullptr ? 0 : 1; }
-int main() { return invoke(S<int>{}); }
+template<class T> using Parameter = T;
+template<class R, int N> using Callback = R (*)(Parameter<R>);
+static_assert(__is_same(Callback<short, 7>, short (*)(short)));
 ```
 
-Canonical tail ranking accepts the conversion. Carry the concrete callable type
-through conversion-result lowering and temporary sizing before adding execution
-coverage that calls through this conversion path.
+The assertion fails because the nested parameter alias remains unsubstituted.
+Build a kind-preserving canonical argument environment before extending this
+path to mixed arguments; keep unsupported pack bindings explicitly deferred.
+
+## Member callable alias syntax and captured outer arguments remain incomplete
+
+A member alias such as `template<class R> using F = R(T);` inside `Holder<T>`
+is rejected with an expected-semicolon diagnostic. Routing through a namespace
+alias (`template<class R, class A> using Callback = R (*)(A) noexcept;` and a
+member `template<class R> using F = Callback<R, T>;`) parses, but
+`Holder<short>::F<long>` remains dependent. Parse the complete member callable
+target and preserve its enclosing binding through member-alias materialization.
 
 ## Template `T (*)[N]` parameters carry a repeated array bound
 

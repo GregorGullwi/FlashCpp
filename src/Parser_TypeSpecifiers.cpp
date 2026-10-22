@@ -2794,11 +2794,8 @@ ParseResult Parser::parse_type_specifier() {
 									// signature whose dependent parameters must be
 									// substituted through the shared declaration-signature
 									// helper before the target can be used concretely.
-									substituted_target.set_function_signature(
-										substituteTemplateFunctionSignatureTypes(
-											substituted_target.function_signature(),
-											alias_node.template_parameters(),
-											*template_args));
+									substituted_target.set_function_signature(substituteTemplateFunctionSignatureTypes(substituted_target.function_signature(),
+										alias_node.template_parameters(), *template_args, requireFrontendContext().canonicalTypes(), alias_node.template_decl_id()));
 								}
 								if (alias_target_type_spec.has_ordered_declarator()) {
 									substituted_target.set_ordered_declarator(
@@ -2894,8 +2891,8 @@ ParseResult Parser::parse_type_specifier() {
 							// the template parameters (for example `T(*[2])(T)`); substitute them so
 							// a direct call through the instantiated element is concrete.
 							if (instantiated_type.has_function_signature()) {
-								instantiated_type.set_function_signature(substituteTemplateFunctionSignatureTypes(
-									instantiated_type.function_signature(), alias_node.template_parameters(), *template_args));
+								instantiated_type.set_function_signature(substituteTemplateFunctionSignatureTypes(instantiated_type.function_signature(),
+									alias_node.template_parameters(), *template_args, requireFrontendContext().canonicalTypes(), alias_node.template_decl_id()));
 							}
 						} else if (alias_target_type_spec.is_array()) {
 							// rebindDependentTemplateTypeArg merges cv/pointer/reference
@@ -2973,11 +2970,8 @@ ParseResult Parser::parse_type_specifier() {
 									// signature whose dependent parameters must be
 									// substituted through the shared declaration-signature
 									// helper before the target can be used concretely.
-									instantiated_type.set_function_signature(
-										substituteTemplateFunctionSignatureTypes(
-											instantiated_type.function_signature(),
-											alias_node.template_parameters(),
-											*template_args));
+									instantiated_type.set_function_signature(substituteTemplateFunctionSignatureTypes(instantiated_type.function_signature(),
+										alias_node.template_parameters(), *template_args, requireFrontendContext().canonicalTypes(), alias_node.template_decl_id()));
 								}
 							}
 						}

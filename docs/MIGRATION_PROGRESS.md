@@ -14,7 +14,7 @@ Boundary **3A (canonical types)** is active and incomplete. The explicit-criteri
 rollup is **10/79 complete**; the only completed 3A exit criterion is that
 pointer-to-member overloads distinguish owner and pointee types. Passing tests or
 the breadth of landed code do not complete the boundary.
-The next bounded 3A slice is preserving callable structure when an alias target has a template-parameter return type.
+The next bounded 3A slice is mixed-argument callable component binding, preserving non-type argument positions.
 
 The architecture the remaining work builds on:
 
@@ -213,16 +213,20 @@ Continue boundary 3A in this order.
    tails now use structural planning before compatibility projection, including
    directional `noexcept` relaxation. Unresolved nonidentity callable tails defer.
 
-   **Next slice: callable alias-target materialization.** Preserve the entire
-   function or function-pointer target when its return type is a template parameter:
-   `template<class R> using Callback = R(short);` and `R (*)(short) noexcept` must
-   retain their callable structure after substituting `R`. Audit the direct-alias
-   parameter shortcut; bind each alias's own arguments before substituting its body.
-   Cover nested aliases with distinct parameter names and canonical callable
-   components. Check the existing exchange/default-alias regression when changing
-   materialization. Keep conversion-result lowering separate: a reduced chained
-   alias conversion currently creates a zero-size temporary (see `KNOWN_ISSUES.md`).
-   Stop after this bounded slice; it does not close boundary 3A.
+   Callable aliases with fixed type arguments preserve their complete targets
+   and bind captured canonical components under their owning `TemplateDeclId`.
+
+   **Next slice: mixed-argument callable component binding.** Extend the shared
+   signature helper's canonical argument environment beyond fixed type arguments.
+   Preserve type/NTTP argument-kind positions with `CanonicalTemplateArgument`
+   and `FrontendContext`-owned expression identities. An unrelated NTTP must not
+   prevent substitution of a nested type alias: with `Parameter<T> = T` and
+   `Callback<R, int N> = R (*)(Parameter<R>)`, `Callback<short, 7>` must be
+   `short (*)(short)`. Cover interleaved type/value positions and nested aliases;
+   keep pack bindings and member-alias parser gaps separately deferred (see
+   `KNOWN_ISSUES.md`). Recheck exchange/default aliases, exact/noexcept ranking,
+   and executed conversion-result calls. Stop after this bounded slice; it does
+   not close boundary 3A.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    1. **The constructibility family.** The zero-argument variants and published
@@ -661,15 +665,22 @@ For recursive-path changes, report the largest changed native stack frame and
 whether stack use stays bounded as logical depth grows; do not raise the stack
 limit to make a regression pass.
 
-The callable-tail probe compares clang-cl debug frames with `e7c7342f`: the
-largest changed frame is `tryBuildCanonicalConversionFunctionTailPlan` at 1,480
-versus 1,400 bytes; the shared dependency walker is 344 versus 312 bytes. Alias
-normalization and dependency traversal remain iterative. The native guard covers
-4,096 alias layers at a 1 MiB stack, stale-projection mutation, exact identity,
-`noexcept` direction, incompatible signatures/depths, and deferred dependencies.
-The source regression checks ranking; it does not execute the separately blocked
-conversion-result lowering. The fixed adapter corpus remains 26 supported and
-zero deferred, and the migration-counter and dollar inventories stay within baseline.
+Callable-alias validation compares clang-cl debug frames with `bf419d31`.
+The largest changed recursive frame is `parse_type_specifier` at 226,104 versus
+226,024 bytes. `substituteInTypeCore` is 15,816 versus 15,528 bytes and the direct
+alias helper is 2,824 versus 1,352 bytes. Temporary substitution contexts live in
+`FrontendContext` scratch storage, are populated in place, and are reclaimed on
+return or exception; no fields or semantic record types were added. The existing
+context factory falls from 2,872 to 168 bytes after removing its environment
+return temporary. The native guard checks scratch reclamation, result lifetime,
+stale-projection mutation, dependent alias identity, and a 4,096-wrapper callable
+return on a 1 MiB stack. Canonical component traversal is iterative; surrounding
+parser/substitution paths still recurse and alias materialization retains its
+existing 128-level limit. These checks do not establish bounded native stack use
+for the whole template pipeline. Source regressions cover complete callable
+shapes, ranking, executed callback calls, and nested conversion results. The
+fixed adapter corpus remains 26 supported and zero deferred; migration counters
+and the dollar inventory remain within baseline.
 
 Constructibility has one shared authority: `evaluateConstructibility` in
 `TypeTraitEvaluator.cpp` answers the zero-argument and argument-bearing questions

@@ -5620,8 +5620,18 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 							}
 						}
 						if (!has_deferred_decltype_target) {
-							TypeSpecifierNode substituted_type =
-								substituteInType(alias_node.target_type_node());
+							MonotonicScratchArena& scratch = requireFrontendContext().scratchArena();
+							const ScratchArenaState scratch_mark = scratch.mark();
+							auto scratch_scope = ScopeGuard([&scratch, scratch_mark]() { scratch.rollbackTo(scratch_mark); });
+							TemplateInstantiationContext* alias_context = scratch.allocateObject<TemplateInstantiationContext>();
+							populateTemplateInstantiationContext(*alias_context, alias_node.template_parameters(), materialized_args.args, &environment_,
+								parser_.currentTemplateSubstitutionFailurePolicy());
+							ASTNode substituted_target = parser_.substituteTemplateParameters(
+								ASTNode::emplace_node<TypeSpecifierNode>(alias_node.target_type_node()), *alias_context);
+							if (!substituted_target.is<TypeSpecifierNode>()) {
+								throw InternalError("Alias target substitution did not produce a type specifier");
+							}
+							TypeSpecifierNode substituted_type = substituted_target.as<TypeSpecifierNode>();
 							if (substituted_type.category() != TypeCategory::Invalid &&
 								substituted_type.category() != TypeCategory::Template &&
 								!isPlaceholderAutoType(substituted_type.category())) {

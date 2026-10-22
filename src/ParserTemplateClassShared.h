@@ -189,6 +189,16 @@ inline const TemplateTypeArg* findTemplateArgByRegisteredTypeIndex(
 	return matched_arg;
 }
 
+inline std::optional<TypeId> tryImportCanonicalTemplateTypeArgument(CanonicalTypeTable& table, const TemplateTypeArg& argument) {
+	if (!argument.isTypeArgument() || argument.is_pack) {
+		return std::nullopt;
+	}
+	TypeSpecifierNode syntax = typeSpecifierFromTemplateTypeArgProjection(argument);
+	syntax.set_type_index(canonicalizeConcreteTemplateArgumentTypeIndex(argument));
+	tryBindPublishedTypeEntity(syntax);
+	return tryImportSupportedCanonical(table, syntax);
+}
+
 inline TypeId substituteCanonicalFunctionTypeComponent(CanonicalTypeTable& table, const FunctionType& pattern, const TemplateTypeArg& argument) {
 	if (!pattern.template_parameter_decl || !argument.isTypeArgument() || argument.is_pack || pattern.is_pack_expansion) {
 		return {};
@@ -198,10 +208,7 @@ inline TypeId substituteCanonicalFunctionTypeComponent(CanonicalTypeTable& table
 	if (!imported_pattern.has_value()) {
 		return {};
 	}
-	TypeSpecifierNode argument_type = typeSpecifierFromTemplateTypeArgProjection(argument);
-	argument_type.set_type_index(canonicalizeConcreteTemplateArgumentTypeIndex(argument));
-	tryBindPublishedTypeEntity(argument_type);
-	const std::optional<TypeId> imported_argument = tryImportSupportedCanonical(table, argument_type);
+	const std::optional<TypeId> imported_argument = tryImportCanonicalTemplateTypeArgument(table, argument);
 	if (!imported_argument.has_value()) {
 		return {};
 	}
@@ -215,9 +222,22 @@ inline TypeId substituteCanonicalFunctionTypeComponent(CanonicalTypeTable& table
 }
 
 template <typename ParamContainer, typename ArgContainer>
-inline FunctionSignature substituteTemplateFunctionSignatureTypesImpl(
-	FunctionSignature signature, const ParamContainer& template_params,
-	const ArgContainer& template_args, CanonicalTypeTable* canonical_types) {
+inline FunctionSignature substituteTemplateFunctionSignatureTypesImpl(FunctionSignature signature, const ParamContainer& template_params,
+	const ArgContainer& template_args, CanonicalTypeTable* canonical_types, TemplateDeclId canonical_environment) {
+	std::vector<TypeId> canonical_arguments;
+	if (canonical_types != nullptr && canonical_environment) {
+		canonical_arguments.reserve(template_args.size());
+		// Whole-graph binding covers fixed type arguments. Mixed/pack environments
+		// retain the existing component substitution and deferred canonical stamps.
+		for (const TemplateTypeArg& argument : template_args) {
+			const auto imported = tryImportCanonicalTemplateTypeArgument(*canonical_types, argument);
+			if (!imported.has_value()) {
+				canonical_environment = {};
+				break;
+			}
+			canonical_arguments.push_back(*imported);
+		}
+	}
 	auto apply_template_argument = [&](FunctionType& type, const TemplateTypeArg& arg) {
 		const TypeId canonical_substitution = canonical_types != nullptr ? substituteCanonicalFunctionTypeComponent(*canonical_types, type, arg) : TypeId{};
 		TypeSpecifierNode substituted_type = typeSpecifierFromTemplateTypeArgProjection(arg);
@@ -256,6 +276,32 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypesImpl(
 		}
 	};
 	auto substitute_function_type = [&](FunctionType& type) {
+		if (canonical_environment && type.canonical_type_id) {
+			const TypeId substituted = canonical_types->resolveAliasTemplateSpecializations(
+				canonical_types->substitute(type.canonical_type_id, canonical_environment, canonical_arguments));
+			const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(*canonical_types, substituted);
+			TypeId base = exported.base;
+			while (canonical_types->node(base).kind == CanonicalTypeKind::Qualified) {
+				base = canonical_types->node(base).child;
+			}
+			const CanonicalTypeKind base_kind = canonical_types->node(base).kind;
+			const bool has_callable_wrapper = std::ranges::any_of(exported.components, [](const DeclaratorComponent& component) {
+				return component.kind == DeclaratorComponentKind::Function || component.kind == DeclaratorComponentKind::MemberFunctionPointer ||
+					component.kind == DeclaratorComponentKind::MemberObjectPointer;
+			});
+			if (exported.status == CanonicalTypeImportStatus::Supported && !has_callable_wrapper &&
+				(base_kind == CanonicalTypeKind::Builtin || base_kind == CanonicalTypeKind::Record || base_kind == CanonicalTypeKind::Enum)) {
+				TypeSpecifierNode concrete = typeSpecifierFromFunctionType(type);
+				concrete.clear_template_parameter_identity();
+				concrete.clear_declarator_shape();
+				applyCanonicalDeclaratorBase(concrete, *canonical_types, exported.base);
+				concrete.set_ordered_declarator(exported.components);
+				const bool is_pack_expansion = type.is_pack_expansion;
+				type = makeFunctionTypeFromSpecifier(concrete);
+				type.is_pack_expansion = is_pack_expansion;
+			}
+			type.canonical_type_id = substituted;
+		}
 		if (type.template_parameter_name.isValid()) {
 			bool substituted = false;
 			forEachNonPackTemplateParamArgBinding(template_params, template_args, [&](const TemplateParameterNode& param,
@@ -350,13 +396,19 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypesImpl(
 template <typename ParamContainer, typename ArgContainer>
 inline FunctionSignature substituteTemplateFunctionSignatureTypes(FunctionSignature signature, const ParamContainer& template_params,
 	const ArgContainer& template_args) {
-	return substituteTemplateFunctionSignatureTypesImpl(std::move(signature), template_params, template_args, nullptr);
+	return substituteTemplateFunctionSignatureTypesImpl(std::move(signature), template_params, template_args, nullptr, TemplateDeclId{});
 }
 
 template <typename ParamContainer, typename ArgContainer>
 inline FunctionSignature substituteTemplateFunctionSignatureTypes(FunctionSignature signature, const ParamContainer& template_params,
 	const ArgContainer& template_args, CanonicalTypeTable& canonical_types) {
-	return substituteTemplateFunctionSignatureTypesImpl(std::move(signature), template_params, template_args, &canonical_types);
+	return substituteTemplateFunctionSignatureTypesImpl(std::move(signature), template_params, template_args, &canonical_types, TemplateDeclId{});
+}
+
+template <typename ParamContainer, typename ArgContainer>
+inline FunctionSignature substituteTemplateFunctionSignatureTypes(FunctionSignature signature, const ParamContainer& template_params,
+	const ArgContainer& template_args, CanonicalTypeTable& canonical_types, TemplateDeclId canonical_environment) {
+	return substituteTemplateFunctionSignatureTypesImpl(std::move(signature), template_params, template_args, &canonical_types, canonical_environment);
 }
 
 template <typename ParamContainer, typename ArgContainer>

@@ -1,7 +1,8 @@
-#include "CompilerIncludes.h"
 #include <fstream>
+#include "CompilerIncludes.h"
 #include "doctest.h"
 #include "CanonicalTypeAdapter.h"
+#include "ExpressionSubstitutor.h"
 #include "ParserTemplateClassShared.h"
 #include "../../architecture/CanonicalTypeTests.h"
 
@@ -2935,6 +2936,125 @@ TEST_CASE("Semantic peak excludes nonoverlapping allocations") {
 
 TEST_CASE("Canonical type core identity contract") {
 	CHECK(CanonicalTypeTests::run() == 0);
+}
+
+TEST_CASE("Callable alias materialization retains its own return binding") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+template<class Content> using Parameter = Content;
+template<class Result, class Input> using Component = Result (*)(Parameter<Input>) noexcept;
+template<class Result> using Bare = Result(short);
+template<class Output> using Pointer = Output (*)(short) noexcept;
+template<class Value> using Forwarded = Pointer<Value>;
+template<class Yield> using Nested = Forwarded<Yield>;
+template<class Outer> using Use = Nested<Outer>;
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("callable_alias_return_binding.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const TypeId long_type = table.builtin(CanonicalBuiltinKind::Long);
+	const std::array<TypeId, 1> parameters{table.builtin(CanonicalBuiltinKind::Short)};
+	const TypeSpecifierNode long_spec(TypeCategory::Long, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	const std::array<TemplateTypeArg, 1> arguments{TemplateTypeArg(long_spec)};
+	const TypeSpecifierNode short_spec(TypeCategory::Short, TypeQualifier::None, 16, Token{}, CVQualifier::None);
+	const std::array<TemplateTypeArg, 2> component_arguments{TemplateTypeArg(long_spec), TemplateTypeArg(short_spec)};
+	for (std::string_view name : {"Bare", "Pointer", "Nested", "Component"}) {
+		CAPTURE(name);
+		const std::span<const TemplateTypeArg> bindings = name == "Component" ? std::span<const TemplateTypeArg>(component_arguments) : arguments;
+		const auto materialized = parser.templateEngine().materializeAliasTemplateInstantiation(name, bindings);
+		REQUIRE(materialized.resolved_type_specifier.has_value());
+		const TypeSpecifierNode& concrete = *materialized.resolved_type_specifier;
+		REQUIRE(concrete.has_function_signature());
+		CHECK_FALSE(concrete.has_template_parameter_identity());
+		const bool is_pointer = name != "Bare";
+		TypeId expected = table.function(long_type, parameters, false, CVQualifier::None, ReferenceQualifier::None, is_pointer,
+			CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+		if (is_pointer) {
+			expected = table.pointer(expected);
+		}
+		const auto imported = importCanonicalType(table, concrete);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		CHECK(imported.type == expected);
+		CHECK_FALSE(concrete.function_signature().parameter_types().front().template_parameter_name.isValid());
+		FunctionSignature corrupted = concrete.function_signature();
+		corrupted.updateReturnType([](FunctionType& result) { result.type_index = nativeTypeIndex(TypeCategory::Double); });
+		TypeSpecifierNode stale = concrete;
+		stale.set_function_signature(corrupted);
+		CHECK(importCanonicalType(table, stale).type == expected);
+		corrupted.updateReturnType([](FunctionType& result) { result.canonical_type_id = {}; });
+		stale.set_function_signature(corrupted);
+		CHECK(importCanonicalType(table, stale).type != expected);
+	}
+	const OwnerId namespace_owner = ownerIdFromNamespaceHandle(gSymbolTable.get_current_namespace_handle());
+	const auto pointer_alias = context.templateDecls().findPrimaryAliasTemplate(namespace_owner, StringTable::getOrInternStringHandle("Pointer"));
+	REQUIRE(pointer_alias.has_value());
+	TypeSpecifierNode dependent(TypeCategory::Template, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	dependent.set_template_parameter_identity(StringTable::getOrInternStringHandle("Foreign"));
+	TemplateTypeArg dependent_argument(dependent);
+	dependent_argument.is_dependent = true;
+	dependent_argument.dependent_name = dependent.template_parameter_name();
+	const std::array<TemplateTypeArg, 1> dependent_arguments{dependent_argument};
+	const auto deferred = parser.templateEngine().materializeAliasTemplateInstantiation("Pointer", dependent_arguments);
+	REQUIRE(deferred.resolved_type_specifier.has_value());
+	CHECK(deferred.resolved_type_specifier->is_alias_template_specialization());
+	CHECK(deferred.resolved_type_specifier->specialization_template_decl() == *pointer_alias);
+	CHECK_FALSE(deferred.resolved_type_specifier->has_function_signature());
+	const auto use_alias = context.templateDecls().findPrimaryAliasTemplate(namespace_owner, StringTable::getOrInternStringHandle("Use"));
+	REQUIRE(use_alias.has_value());
+	const auto use_pattern = context.templateDecls().primaryAliasPattern(*use_alias);
+	REQUIRE(use_pattern.has_value());
+	const std::unordered_map<std::string_view, TemplateTypeArg> bindings{{"Outer", TemplateTypeArg(long_spec)}};
+	ExpressionSubstitutor substitutor(bindings, parser);
+	const uint64_t scratch_before = context.scratchArena().currentBytes();
+	const uint64_t discarded_before = context.scratchArena().discardedBytes();
+	const ASTNode substituted_node = substitutor.substitute(ASTNode::emplace_node<TypeSpecifierNode>(
+		use_pattern->as<TemplateAliasNode>().target_type_node()));
+	REQUIRE(substituted_node.is<TypeSpecifierNode>());
+	const TypeSpecifierNode& substituted = substituted_node.as<TypeSpecifierNode>();
+	CHECK(context.scratchArena().currentBytes() == scratch_before);
+	CHECK(context.scratchArena().discardedBytes() > discarded_before);
+	const auto imported_substitution = importCanonicalType(table, substituted);
+	REQUIRE(imported_substitution.status == CanonicalTypeImportStatus::Supported);
+	const TypeId expected_function = table.function(long_type, parameters, false, CVQualifier::None, ReferenceQualifier::None, true,
+		CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	CHECK(imported_substitution.type == table.pointer(expected_function));
+
+}
+
+TEST_CASE("Callable alias return binding walks deep canonical wrappers iteratively") {
+	FrontendContext context;
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const TemplateDeclId owner{711};
+	const StringHandle result_name = StringTable::getOrInternStringHandle("Result");
+	FunctionType result;
+	result.type_index = TypeIndex{0, TypeCategory::Template};
+	result.template_parameter_name = result_name;
+	result.template_parameter_decl = owner;
+	result.template_parameter_index = 0;
+	result.canonical_type_id = table.templateParameter(owner, 0);
+	TypeId expected_result = table.builtin(CanonicalBuiltinKind::Long);
+	for (size_t depth = 0; depth < 4096; ++depth) {
+		result.canonical_type_id = table.pointer(result.canonical_type_id);
+		expected_result = table.pointer(expected_result);
+	}
+	FunctionSignature signature;
+	signature.setReturnType(result);
+	const std::array<TemplateParameterNode, 1> parameters{TemplateParameterNode(result_name, Token{})};
+	const TypeSpecifierNode long_spec(TypeCategory::Long, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	const std::array<TemplateTypeArg, 1> arguments{TemplateTypeArg(long_spec)};
+	const FunctionSignature substituted = substituteTemplateFunctionSignatureTypes(signature, parameters, arguments, table, owner);
+	CHECK(substituted.return_type().canonical_type_id == expected_result);
+	const auto imported = importCanonicalFunctionTypeComponent(table, substituted.return_type(), CanonicalTypeImportContext::Exact);
+	CHECK(imported.status == CanonicalTypeImportStatus::Supported);
+	CHECK(imported.type == expected_result);
 }
 
 TEST_CASE("Canonical adapter imports the source corpus at publication") {

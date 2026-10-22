@@ -3718,6 +3718,7 @@ private:
 		const TypeInfo* resolved_type_info = nullptr;
 		std::optional<TypeSpecifierNode> resolved_type_specifier;
 		std::optional<ASTNode> instantiated_struct_node{};  // Set when try_instantiate_class_template returns a StructDeclarationNode
+		bool hasTarget() const { return resolved_type_specifier.has_value() || resolved_type_info != nullptr || !instantiated_name.empty(); }
 		StringHandle canonicalNameHandle() const {
 			if (resolved_type_info != nullptr &&
 				resolved_type_info->name().isValid()) {
