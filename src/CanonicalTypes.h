@@ -575,6 +575,10 @@ public:
 	// keep their declaration identity; traversal is iterative and stack-bounded.
 	TypeId resolveAliasTemplateSpecializations(TypeId type);
 
+	// Template parameters, dependent member types, and non-folded noexcept
+	// expressions remain unresolved even when their surrounding shape imports.
+	bool hasDependentTypeComponents(TypeId type) const;
+
 	// Type-only convenience overload for Spec identity.
 	TypeId templateSpecialization(TemplateDeclId primary, std::span<const TypeId> arguments);
 
@@ -882,6 +886,7 @@ private:
 	// specialization argument links are walked iteratively; no parser or AST
 	// state participates.
 	bool isDependentAliasArgumentUnlocked(TypeId type) const;
+	bool hasDependentTypeComponentsUnlocked(TypeId type, bool include_dependent_noexcept) const;
 
 	// Every TemplateParameter / dependent template-template reference in `type`
 	// that belongs to `env` must have an index below `argument_count`. This is

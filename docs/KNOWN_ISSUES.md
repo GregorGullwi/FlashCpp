@@ -8,6 +8,29 @@ specialization drops its function component. Consequently,
 `__is_constructible(Callback<long>&&, Callback<long>&)` fails. Preserve the
 function type when materializing alias-template specializations; keep this
 separate from dependent alias-parameter ownership inside callable signatures.
+The same direct-parameter shortcut can discard a callable-pointer target:
+`template<class R> using Callback = R (*)(short) noexcept;` does not materialize
+`Callback<long>` as `long (*)(short) noexcept`. Replacing that shortcut alone
+still leaves alias components captured under another template's parameter owner
+unsubstituted. Preserve the callable target and bind each alias's own arguments;
+do not substitute its raw target with the enclosing class template's name map.
+
+## Lowering an alias-returning conversion operator can create a zero-size temporary
+
+This reduced program reaches code generation but fails in `invoke` because
+temporary 4 has a zero-bit IR size:
+
+```cpp
+template<class T> using P = long (*)(T) noexcept;
+template<class U> using Q = P<U>;
+template<class V> struct S { operator Q<V>() const { return nullptr; } };
+int invoke(long (*p)(int)) { return p == nullptr ? 0 : 1; }
+int main() { return invoke(S<int>{}); }
+```
+
+Canonical tail ranking accepts the conversion. Carry the concrete callable type
+through conversion-result lowering and temporary sizing before adding execution
+coverage that calls through this conversion path.
 
 ## Template `T (*)[N]` parameters carry a repeated array bound
 

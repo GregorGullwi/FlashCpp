@@ -6,7 +6,7 @@ authoritative for the design, boundaries, and exit criteria. This file records
 the current boundary state, the remaining work, and the validation contract;
 completed implementation history belongs in git.
 
-Last updated: 2026-10-21.
+Last updated: 2026-10-22.
 
 ## Current state
 
@@ -14,7 +14,7 @@ Boundary **3A (canonical types)** is active and incomplete. The explicit-criteri
 rollup is **10/79 complete**; the only completed 3A exit criterion is that
 pointer-to-member overloads distinguish owner and pointee types. Passing tests or
 the breadth of landed code do not complete the boundary.
-The next bounded 3A slice is alias-normalized callable conversion tails beyond identity, starting with `noexcept` relaxation.
+The next bounded 3A slice is preserving callable structure when an alias target has a template-parameter return type.
 
 The architecture the remaining work builds on:
 
@@ -199,13 +199,20 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Next slice: alias-normalized callable tails beyond identity.** Extend
-   `tryBuildCanonicalConversionFunctionTailPlan` in `src/OverloadResolution.h`
-   to plan structural conversions after resolving alias specializations, starting
-   with `noexcept` relaxation. Verify exact-match preference, reject incompatible
-   signatures and pointer depths, and cover nested dependent aliases with distinct
-   parameter names. Preserve dependent alias identity until its arguments become
-   concrete. Stop after this bounded slice; it does not close boundary 3A.
+   Alias-normalized free-function-pointer and same-owner member-function-pointer
+   tails now use structural planning before compatibility projection, including
+   directional `noexcept` relaxation. Unresolved nonidentity callable tails defer.
+
+   **Next slice: callable alias-target materialization.** Preserve the entire
+   function or function-pointer target when its return type is a template parameter:
+   `template<class R> using Callback = R(short);` and `R (*)(short) noexcept` must
+   retain their callable structure after substituting `R`. Audit the direct-alias
+   parameter shortcut; bind each alias's own arguments before substituting its body.
+   Cover nested aliases with distinct parameter names and canonical callable
+   components. Check the existing exchange/default-alias regression when changing
+   materialization. Keep conversion-result lowering separate: a reduced chained
+   alias conversion currently creates a zero-size temporary (see `KNOWN_ISSUES.md`).
+   Stop after this bounded slice; it does not close boundary 3A.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    1. **The constructibility family.** The zero-argument variants and published
@@ -602,6 +609,16 @@ plan for complete boundary-specific validation.
 For recursive-path changes, report the largest changed native stack frame and
 whether stack use stays bounded as logical depth grows; do not raise the stack
 limit to make a regression pass.
+
+The callable-tail probe compares clang-cl debug frames with `e7c7342f`: the
+largest changed frame is `tryBuildCanonicalConversionFunctionTailPlan` at 1,480
+versus 1,400 bytes; the shared dependency walker is 344 versus 312 bytes. Alias
+normalization and dependency traversal remain iterative. The native guard covers
+4,096 alias layers at a 1 MiB stack, stale-projection mutation, exact identity,
+`noexcept` direction, incompatible signatures/depths, and deferred dependencies.
+The source regression checks ranking; it does not execute the separately blocked
+conversion-result lowering. The fixed adapter corpus remains 26 supported and
+zero deferred, and the migration-counter and dollar inventories stay within baseline.
 
 Constructibility has one shared authority: `evaluateConstructibility` in
 `TypeTraitEvaluator.cpp` answers the zero-argument and argument-bearing questions

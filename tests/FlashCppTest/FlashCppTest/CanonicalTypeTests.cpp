@@ -1580,6 +1580,87 @@ TEST_CASE("Canonical TypeIds compare projectable function pointer pairs") {
 	CHECK_FALSE(mismatched_signature_plan->is_valid);
 }
 
+TEST_CASE("Alias-normalized callable tails use canonical noexcept compatibility") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId short_type = table.builtin(CanonicalBuiltinKind::Short);
+	const TypeId record_type = table.record(EntityId{941});
+	const std::array<CanonicalTemplateArgKind, 1> parameter_kinds{CanonicalTemplateArgKind::Type};
+	const TypeSpecifierNode int_spec(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	auto make_function = [&](TypeId result, TypeId argument, bool is_noexcept) {
+		const std::array<TypeId, 1> parameters{argument};
+		return table.function(result, parameters, false, CVQualifier::None, ReferenceQualifier::None, is_noexcept,
+			CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	};
+	auto make_alias = [&](std::string_view name, TypeId target) {
+		const TemplateDeclId declaration = frontend.templateDecls().publishPrimaryAliasTemplate(OwnerId{1}, StringTable::getOrInternStringHandle(name));
+		table.publishAliasTemplateTarget(declaration, target, parameter_kinds);
+		TypeSpecifierNode spec(TypeCategory::Template, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+		spec.set_alias_template_specialization(declaration, {int_spec});
+		return spec;
+	};
+	const TypeId safe_function = make_function(int_type, short_type, true);
+	const TypeId throwing_function = make_function(int_type, short_type, false);
+	const TypeSpecifierNode safe = make_alias("native_tail_safe", table.pointer(safe_function));
+	const TypeSpecifierNode throwing = make_alias("native_tail_throwing", table.pointer(throwing_function));
+	auto check_plan = [&](const TypeSpecifierNode& source, const TypeSpecifierNode& target, bool valid, ConversionRank rank) {
+		const auto plan = tryBuildCanonicalConversionFunctionTailPlan(source, target);
+		REQUIRE(plan.has_value());
+		CHECK(plan->is_valid == valid);
+		if (valid) {
+			CHECK(plan->rank == rank);
+		}
+	};
+	check_plan(safe, safe, true, ConversionRank::ExactMatch);
+	check_plan(safe, throwing, true, ConversionRank::QualificationAdjustment);
+	check_plan(throwing, safe, false, ConversionRank::NoMatch);
+	check_plan(safe, make_alias("native_tail_argument", table.pointer(make_function(int_type, int_type, false))), false, ConversionRank::NoMatch);
+	check_plan(safe, make_alias("native_tail_result", table.pointer(make_function(record_type, short_type, false))), false, ConversionRank::NoMatch);
+	check_plan(safe, make_alias("native_tail_depth", table.pointer(table.pointer(throwing_function))), false, ConversionRank::NoMatch);
+	const TypeId owner = table.record(EntityId{942});
+	const TypeSpecifierNode safe_member = make_alias("native_tail_safe_member", table.memberFunctionPointer(owner, safe_function));
+	const TypeSpecifierNode throwing_member = make_alias("native_tail_throwing_member", table.memberFunctionPointer(owner, throwing_function));
+	check_plan(safe_member, safe_member, true, ConversionRank::ExactMatch);
+	check_plan(safe_member, throwing_member, true, ConversionRank::QualificationAdjustment);
+	check_plan(throwing_member, safe_member, false, ConversionRank::NoMatch);
+	check_plan(safe_member, make_alias("native_tail_member_argument", table.memberFunctionPointer(owner, make_function(int_type, int_type, false))),
+		false, ConversionRank::NoMatch);
+	TypeSpecifierNode corrupted = safe;
+	corrupted.set_type_index(nativeTypeIndex(TypeCategory::Double));
+	FunctionSignature stale_signature;
+	stale_signature.setReturnType(makeFunctionTypeFromSpecifier(int_spec));
+	corrupted.set_function_signature(stale_signature);
+	check_plan(corrupted, throwing, true, ConversionRank::QualificationAdjustment);
+	corrupted.clear_template_specialization();
+	const auto mutated = tryBuildCanonicalConversionFunctionTailPlan(corrupted, throwing);
+	CHECK((!mutated.has_value() || !mutated->is_valid));
+	TypeSpecifierNode dependent_argument(TypeCategory::Template, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	dependent_argument.set_template_parameter_decl(safe.specialization_template_decl(), 0);
+	TypeSpecifierNode dependent = safe;
+	dependent.set_alias_template_specialization(safe.specialization_template_decl(), {dependent_argument});
+	CHECK_FALSE(tryBuildCanonicalConversionFunctionTailPlan(dependent, throwing).has_value());
+	const TypeId dependent_result = table.templateParameter(safe.specialization_template_decl(), 0);
+	const TypeSpecifierNode dependent_signature = make_alias("native_tail_dependent", table.pointer(make_function(dependent_result, short_type, true)));
+	CHECK_FALSE(tryBuildCanonicalConversionFunctionTailPlan(dependent_signature, throwing).has_value());
+	check_plan(dependent_signature, dependent_signature, true, ConversionRank::ExactMatch);
+	const std::array<TypeId, 1> short_parameters{short_type};
+	const TypeId opaque_function = table.function(int_type, short_parameters, false, CVQualifier::None, ReferenceQualifier::None, false,
+		CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{701});
+	CHECK_FALSE(tryBuildCanonicalConversionFunctionTailPlan(make_alias("native_tail_opaque", table.pointer(opaque_function)), throwing).has_value());
+	TemplateDeclId previous = safe.specialization_template_decl();
+	for (size_t depth = 0; depth < 4096; ++depth) {
+		const StringHandle layer_name = StringTable::getOrInternStringHandle(StringBuilder().append("Layer").append(depth).commit());
+		const TemplateDeclId layer = frontend.templateDecls().publishPrimaryAliasTemplate(OwnerId{1}, layer_name);
+		const std::array<TypeId, 1> arguments{table.templateParameter(layer, 0)};
+		table.publishAliasTemplateTarget(layer, table.aliasTemplateSpecialization(previous, arguments), parameter_kinds);
+		previous = layer;
+	}
+	TypeSpecifierNode deep = safe;
+	deep.set_alias_template_specialization(previous, {int_spec});
+	check_plan(deep, throwing, true, ConversionRank::QualificationAdjustment);
+}
+
 TEST_CASE("Canonical TypeIds bind function pointer conversions to references") {
 	FrontendContext frontend;
 	TypeSpecifierNode int_type(
