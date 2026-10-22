@@ -1,5 +1,15 @@
 # Known Issues
 
+## Aliases to dependent members can drop outer pointer/reference shape
+
+With `template<class T, class U> struct Pair { using type = T; };` and
+`template<class T, class U> using First = typename Pair<T, U>::type;`,
+`Pair<Record*, long>::type` retains the pointer but `First<Record*, long>`
+does not compare equal to `Record*`. The equivalent const-reference alias also
+fails. This occurs without parameter/record spelling collisions. Preserve the
+complete member alias specifier through namespace alias materialization rather
+than returning only the terminal nominal `TypeInfo`.
+
 ## Mixed-argument callable aliases need canonical component binding
 
 Whole-graph callable substitution currently accepts fixed type arguments. An

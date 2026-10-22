@@ -1432,11 +1432,11 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 
 				std::string_view arg_type_name = StringTable::getStringView(arg_type_info->name());
 				auto type_subst_it = param_map_.find(arg_type_name);
-				if (type_subst_it != param_map_.end()) {
+				if (templateArgIsStructurallyDependent(materialized_arg) && type_subst_it != param_map_.end()) {
 					materialized_arg = rebindDependentTemplateTypeArg(type_subst_it->second, materialized_arg);
 					result.had_substitution = true;
 					substituted = true;
-				} else if (arg_type_info->name().isValid()) {
+				} else if (templateArgIsStructurallyDependent(materialized_arg) && arg_type_info->name().isValid()) {
 					// Alias-target stored template args may carry intermediate
 					// dependent parameter names (e.g. Type -> Head). If direct
 					// param_map_ lookup misses, resolve via the full environment so
@@ -1589,8 +1589,7 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 					}
 				}
 				std::string_view arg_type_name = StringTable::getStringView(arg_type_info->name());
-				if (auto subst_it = param_map_.find(arg_type_name);
-					subst_it != param_map_.end()) {
+				if (auto subst_it = param_map_.find(arg_type_name); templateArgIsStructurallyDependent(arg) && subst_it != param_map_.end()) {
 					arg = rebindDependentTemplateTypeArg(subst_it->second, arg);
 				}
 			}
