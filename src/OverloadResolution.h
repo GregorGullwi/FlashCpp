@@ -645,6 +645,17 @@ inline std::pair<TypeId, CVQualifier> stripCanonicalTopCv(
 	return {type, qualifiers};
 }
 
+inline TypeId canonicalFunctionPointerTarget(const CanonicalTypeTable& table, TypeId type) {
+	TypeId current = stripCanonicalTopCv(table, type).first;
+	if (table.node(current).kind != CanonicalTypeKind::Pointer) {
+		return {};
+	}
+	while (table.node(current).kind == CanonicalTypeKind::Pointer) {
+		current = stripCanonicalTopCv(table, table.node(current).child).first;
+	}
+	return table.node(current).kind == CanonicalTypeKind::Function ? current : TypeId{};
+}
+
 inline ConversionPlan buildCanonicalStructuralConversionPlan(
 	CanonicalTypeTable& table,
 	TypeId source_type,
@@ -2841,48 +2852,18 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 		if (table.node(source_type).kind == CanonicalTypeKind::Function && table.node(target_type).kind == CanonicalTypeKind::Pointer) {
 			return buildCanonicalStructuralConversionPlan(table, source_type, target_type);
 		}
-		auto functionPointerDepth = [&table](TypeId type) -> std::optional<size_t> {
-			size_t depth = 0;
-			TypeId current = stripCanonicalTopCv(table, type).first;
-			while (table.node(current).kind == CanonicalTypeKind::Pointer) {
-				++depth;
-				current = stripCanonicalTopCv(table, table.node(current).child).first;
-			}
-			if (table.node(current).kind != CanonicalTypeKind::Function || depth == 0) {
-				return std::nullopt;
-			}
-			return depth;
-		};
 		auto isMemberFunctionPointer = [&table](TypeId type) {
-			return table.node(
-				stripCanonicalTopCv(table, type).first).kind ==
-				CanonicalTypeKind::MemberFunctionPointer;
+			return table.node(stripCanonicalTopCv(table, type).first).kind == CanonicalTypeKind::MemberFunctionPointer;
 		};
-		const std::optional<size_t> source_function_pointer_depth =
-			functionPointerDepth(source_type);
-		const std::optional<size_t> target_function_pointer_depth =
-			functionPointerDepth(target_type);
-		const bool is_function_pointer_pair =
-			source_function_pointer_depth.has_value() &&
-			target_function_pointer_depth.has_value();
-		const bool is_member_function_pointer_pair =
-			isMemberFunctionPointer(source_type) &&
-			isMemberFunctionPointer(target_type);
+		const bool is_function_pointer_pair = canonicalFunctionPointerTarget(table, source_type) && canonicalFunctionPointerTarget(table, target_type);
+		const bool is_member_function_pointer_pair = isMemberFunctionPointer(source_type) && isMemberFunctionPointer(target_type);
 		if (!is_function_pointer_pair && !is_member_function_pointer_pair) {
 			return std::nullopt;
-		}
-		if (is_function_pointer_pair &&
-			*source_function_pointer_depth != *target_function_pointer_depth) {
-			// int (*)(Args) and int (**)(Args) are distinct pointer types; a
-			// depth mismatch is an authoritative no-match, not a reason to fall
-			// through to the category-only FunctionPointer compatibility arm.
-			return ConversionPlan::no_match();
 		}
 		if (is_member_function_pointer_pair) {
 			return tryBuildCanonicalMemberPointerConversionPlan(table, source_type, target_type, from, to);
 		}
-		return buildCanonicalStructuralConversionPlan(
-			table, source_type, target_type);
+		return buildCanonicalStructuralConversionPlan(table, source_type, target_type);
 	}
 	auto hasNonRecursiveBaseType = [](const TypeSpecifierNode& type) {
 		if (type.has_function_signature() || type.has_template_specialization() ||
@@ -3954,9 +3935,7 @@ inline std::optional<ConversionPlan> tryBuildCanonicalConversionFunctionTailPlan
 	if (target_type.is_reference() || target_type.is_rvalue_reference() || orderedDeclaratorIsReference(target_type)) {
 		return tryBuildCanonicalReferenceBindingPlan(return_type, target_type, true);
 	}
-	if (const std::optional<ConversionPlan> plan = tryBuildCanonicalProjectableConversionPlan(return_type, target_type); plan.has_value()) {
-		return plan;
-	}
+	// Resolve aliases before a compatibility projection can erase callable facts.
 	{
 		CanonicalTypeTransaction transaction(table);
 		TypeSpecifierNode canonical_return_type = return_type;
@@ -3975,6 +3954,18 @@ inline std::optional<ConversionPlan> tryBuildCanonicalConversionFunctionTailPlan
 			}
 			const CanonicalTypeKind source_kind = table.node(source).kind;
 			const CanonicalTypeKind target_kind = table.node(target).kind;
+			if (source_kind == CanonicalTypeKind::AliasTemplateSpecialization || target_kind == CanonicalTypeKind::AliasTemplateSpecialization) {
+				return std::nullopt;
+			}
+			const bool is_function_pointer_pair = canonicalFunctionPointerTarget(table, source) && canonicalFunctionPointerTarget(table, target);
+			const bool is_same_owner_member_pair = source_kind == CanonicalTypeKind::MemberFunctionPointer &&
+				target_kind == CanonicalTypeKind::MemberFunctionPointer && table.memberPointerOwner(source) == table.memberPointerOwner(target);
+			if (is_function_pointer_pair || is_same_owner_member_pair) {
+				if (table.hasDependentTypeComponents(source) || table.hasDependentTypeComponents(target)) {
+					return std::nullopt;
+				}
+				return buildCanonicalStructuralConversionPlan(table, source, target);
+			}
 			const bool source_is_nominal = source_kind == CanonicalTypeKind::Record || source_kind == CanonicalTypeKind::TemplateSpecialization;
 			const bool target_is_nominal = target_kind == CanonicalTypeKind::Record || target_kind == CanonicalTypeKind::TemplateSpecialization;
 			if (source_is_nominal && target_is_nominal && source != target) {
@@ -3990,6 +3981,9 @@ inline std::optional<ConversionPlan> tryBuildCanonicalConversionFunctionTailPlan
 				return ConversionPlan::no_match();
 			}
 		}
+	}
+	if (const std::optional<ConversionPlan> plan = tryBuildCanonicalProjectableConversionPlan(return_type, target_type); plan.has_value()) {
+		return plan;
 	}
 	return tryBuildCanonicalOrderedConversionPlan(return_type, target_type);
 }

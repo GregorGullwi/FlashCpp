@@ -364,6 +364,12 @@ TypeId CanonicalTypeTable::resolveAliasTemplateSpecializations(TypeId type) {
 	return resolveNestedAliasGraphUnlocked(type);
 }
 
+bool CanonicalTypeTable::hasDependentTypeComponents(TypeId type) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	return hasDependentTypeComponentsUnlocked(type, true);
+}
+
 TypeId CanonicalTypeTable::templateSpecialization(TemplateDeclId primary, std::span<const TypeId> arguments) {
 	std::vector<CanonicalTemplateArgument> mixed;
 	mixed.reserve(arguments.size());
@@ -1656,6 +1662,10 @@ bool CanonicalTypeTable::isDependentNameFamily(CanonicalTypeKind kind) {
 }
 
 bool CanonicalTypeTable::isDependentAliasArgumentUnlocked(TypeId type) const {
+	return hasDependentTypeComponentsUnlocked(type, false);
+}
+
+bool CanonicalTypeTable::hasDependentTypeComponentsUnlocked(TypeId type, bool include_dependent_noexcept) const {
 	TemplateVector<TypeId, 8> pending;
 	pending.push_back(type);
 	while (!pending.empty()) {
@@ -1675,11 +1685,12 @@ bool CanonicalTypeTable::isDependentAliasArgumentUnlocked(TypeId type) const {
 			pending.push_back(node.child);
 			break;
 		case CanonicalTypeKind::Function: {
+			if (include_dependent_noexcept && unpackFunctionDependentNoexcept(node.array_extent)) {
+				return true;
+			}
 			pending.push_back(node.child);
-			for (TypeId link = unpackFunctionParamLink(node.array_extent); link;
-				 link = nodeUnlocked(link).child) {
-				pending.push_back(
-					TypeId{static_cast<uint32_t>(nodeUnlocked(link).array_extent)});
+			for (TypeId link = unpackFunctionParamLink(node.array_extent); link; link = nodeUnlocked(link).child) {
+				pending.push_back(TypeId{static_cast<uint32_t>(nodeUnlocked(link).array_extent)});
 			}
 			break;
 		}
@@ -1694,8 +1705,7 @@ bool CanonicalTypeTable::isDependentAliasArgumentUnlocked(TypeId type) const {
 				const CanonicalTypeNode argument = nodeUnlocked(link);
 				if (argument.kind == CanonicalTypeKind::TemplateArg) {
 					pending.push_back(TypeId{static_cast<uint32_t>(argument.array_extent)});
-				} else if (argument.kind ==
-					CanonicalTypeKind::DependentTemplateTemplateArg) {
+				} else if (argument.kind == CanonicalTypeKind::DependentTemplateTemplateArg) {
 					return true;
 				}
 			}
