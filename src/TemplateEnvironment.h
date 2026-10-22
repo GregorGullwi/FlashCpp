@@ -128,6 +128,9 @@ TemplateEnvironment buildTemplateEnvironment(const TemplateEnvironmentSnapshot& 
 TemplateEnvironment buildTemplateEnvironment(const OuterTemplateBinding& binding);
 TemplateEnvironment buildTemplateEnvironment(const TypeInfo::InstantiationContext& context);
 
+void populateTemplateInstantiationContext(TemplateInstantiationContext& context, std::span<const TemplateParameterNode> params,
+	std::span<const TemplateTypeArg> args, const TemplateEnvironment* parent, TemplateSubstitutionFailurePolicy failure_policy);
+
 TemplateInstantiationContext buildTemplateInstantiationContext(
 	std::span<const TemplateParameterNode> params,
 	std::span<const TemplateTypeArg> args,

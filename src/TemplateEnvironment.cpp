@@ -379,11 +379,9 @@ void populateTemplateEnvironmentLegacyViews(
 		});
 }
 
-TemplateEnvironment buildTemplateEnvironment(
-	std::span<const TemplateParameterNode> params,
-	std::span<const TemplateTypeArg> args,
-	const TemplateEnvironment* parent) {
-	TemplateEnvironment environment;
+static void populateTemplateEnvironment(TemplateEnvironment& environment, std::span<const TemplateParameterNode> params,
+	std::span<const TemplateTypeArg> args, const TemplateEnvironment* parent) {
+	environment.bindings.clear();
 	environment.parent = parent;
 	environment.bindings.reserve(params.size());
 
@@ -396,11 +394,7 @@ TemplateEnvironment buildTemplateEnvironment(
 		binding.is_pack = param.is_variadic();
 
 		if (binding.is_pack) {
-			const size_t pack_size = countTemplatePackArguments(
-				params,
-				args,
-				i,
-				arg_index);
+			const size_t pack_size = countTemplatePackArguments(params, args, i, arg_index);
 			binding.args.reserve(pack_size);
 			for (size_t pack_index = 0; pack_index < pack_size && (arg_index + pack_index) < args.size(); ++pack_index) {
 				binding.args.push_back(args[arg_index + pack_index]);
@@ -416,7 +410,12 @@ TemplateEnvironment buildTemplateEnvironment(
 		}
 		environment.bindings.push_back(std::move(binding));
 	}
+}
 
+TemplateEnvironment buildTemplateEnvironment(std::span<const TemplateParameterNode> params, std::span<const TemplateTypeArg> args,
+	const TemplateEnvironment* parent) {
+	TemplateEnvironment environment;
+	populateTemplateEnvironment(environment, params, args, parent);
 	return environment;
 }
 
@@ -498,15 +497,12 @@ TemplateEnvironment buildTemplateEnvironment(const TypeInfo::InstantiationContex
 	return environment;
 }
 
-TemplateInstantiationContext buildTemplateInstantiationContext(
-	std::span<const TemplateParameterNode> params,
-	std::span<const TemplateTypeArg> args,
-	const TemplateEnvironment* parent,
-	TemplateSubstitutionFailurePolicy failure_policy) {
-	TemplateInstantiationContext context;
+void populateTemplateInstantiationContext(TemplateInstantiationContext& context, std::span<const TemplateParameterNode> params,
+	std::span<const TemplateTypeArg> args, const TemplateEnvironment* parent, TemplateSubstitutionFailurePolicy failure_policy) {
 	context.template_parameters = params;
 	context.template_arguments = args;
-	context.environment = buildTemplateEnvironment(params, args, parent);
+	populateTemplateEnvironment(context.environment, params, args, parent);
+	context.pack_state.clear();
 	context.failure_policy = failure_policy;
 
 	for (const TemplateBinding& binding : context.environment.bindings) {
@@ -519,7 +515,12 @@ TemplateInstantiationContext buildTemplateInstantiationContext(
 		pack_state.expanding = true;
 		context.pack_state.push_back(pack_state);
 	}
+}
 
+TemplateInstantiationContext buildTemplateInstantiationContext(std::span<const TemplateParameterNode> params,
+	std::span<const TemplateTypeArg> args, const TemplateEnvironment* parent, TemplateSubstitutionFailurePolicy failure_policy) {
+	TemplateInstantiationContext context;
+	populateTemplateInstantiationContext(context, params, args, parent, failure_policy);
 	return context;
 }
 
