@@ -10,21 +10,6 @@ fails. This occurs without parameter/record spelling collisions. Preserve the
 complete member alias specifier through namespace alias materialization rather
 than returning only the terminal nominal `TypeInfo`.
 
-## Mixed-argument callable aliases need canonical component binding
-
-Whole-graph callable substitution currently accepts fixed type arguments. An
-unrelated non-type parameter still disables it for the entire environment:
-
-```cpp
-template<class T> using Parameter = T;
-template<class R, int N> using Callback = R (*)(Parameter<R>);
-static_assert(__is_same(Callback<short, 7>, short (*)(short)));
-```
-
-The assertion fails because the nested parameter alias remains unsubstituted.
-Build a kind-preserving canonical argument environment before extending this
-path to mixed arguments; keep unsupported pack bindings explicitly deferred.
-
 ## Member callable alias syntax and captured outer arguments remain incomplete
 
 A member alias such as `template<class R> using F = R(T);` inside `Holder<T>`
