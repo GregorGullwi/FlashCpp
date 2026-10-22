@@ -111,8 +111,18 @@ The architecture the remaining work builds on:
   class-template pattern is not a concrete specialization, so those pointers
   still pop one flat pointer level. An array object without a
   published id fails closed. User-defined `operator*` and `operator&` stay on
-  their resolved-function paths. Builtin `->` uses that same canonical `*`
+  their resolved-function paths.   Builtin `->` uses that same canonical `*`
   pointee and re-exports it, including that flat peel; the dot path is unchanged.
+  Builtin `new` and `new[]` take `CanonicalTypeTable::pointer` of the allocated
+  type, or of its initial element when that object is an array, and re-export
+  it. An array typedef decays one outermost bound. The runtime `new T[n]` bound
+  is not stored in the type node, so it is not peeled again. A projectable
+  pointer or array without a published id fails closed. An unmigrated
+  non-projectable type still pushes one flat pointer level. This slice does not
+  publish nested class entities, so nested-instantiation and dependent-pattern
+  pointers are unchanged. Parser typing of a new-expression follows the same
+  `[expr.new]` result, and a ptr-operator in the new-type-id belongs to the
+  allocated type.
   The 3A rollup remains 10/79.
 - The shared type-trait evaluator classifies the structural `[meta.unary.prop]`
   family plus class/union/qualification and published record properties from
@@ -485,6 +495,25 @@ Continue boundary 3A in this order.
       and class-import worklist. Native stack use does not grow with array rank
       or pointer depth. No stack reserve was changed. The sharded build is
       `/Od`, so there is no `-fstack-usage` number.
+   7. **Builtin `new` and `new[]`.** The result is no longer a flat pointer
+      pushed onto the allocated type. `[expr.new]` makes it
+      `CanonicalTypeTable::pointer` of that type, or of the initial element when
+      the allocated object is an array, re-exported through
+      `materializeTypeSpecifier`. An array typedef loses one outermost bound.
+      The runtime bound in `new T[n]` is not part of the type node, so `new
+      Row[2]` stays a pointer to `Row`. A projectable pointer or array without
+      a published id fails closed. An unmigrated non-projectable type still
+      pushes one flat pointer level. Nested classes of an instantiation are not
+      published here. This does not close a 3A exit criterion; the 3A rollup
+      remains 10/79.
+      `tests/test_new_pointer_array_identity_ret0.cpp` protects `new int`,
+      `new const int`, `new int[n]`, `new Row` versus `new Row[2]`, `new Grid`
+      versus `new const Grid`, `new int* const`, `new int*[n]`, `new Cell[n]`,
+      `new Holder<long>`, and placement new. The helper is not recursive. It
+      runs after the allocated type is canonicalized and uses the existing
+      iterative materializer and class-import worklist. Native stack use does
+      not grow with array rank or pointer depth. No stack reserve was changed.
+      The sharded build is `/Od`, so there is no `-fstack-usage` number.
 
 3. **Complete importer and declarator coverage.** Add canonical import support
    for remaining valid ordered forms still rejected at a boundary, including
@@ -542,7 +571,9 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
   `*this` uses that specialization. A nested class of an instantiation still
   pops one flat pointer level, and an array object without a published id
   fails closed. Builtin `->` re-exports that same canonical pointee; the dot
-  path is unchanged.
+  path is unchanged. Builtin `new` and `new[]` re-export
+  `CanonicalTypeTable::pointer` of the allocated type, or of its initial
+  element when that object is an array.
 - The compatibility `TypeTraitEval::isSigned`/`isUnsigned` adapters are
   unexercised; a regression forcing an unimportable operand through them is owed.
 - The canonical record constructor schema is published for a completed record
