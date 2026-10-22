@@ -152,6 +152,11 @@ The architecture the remaining work builds on:
   A retained component `TypeId` remains authoritative over its flat projection.
   Concrete materialization supplies callable signatures, member-pointer owners,
   and scalar projections before lowering.
+  Once a stored type argument resolves, later alias-argument passes preserve its
+  nominal identity even if its spelling matches another template parameter.
+  Keep the reduced record/enum collision and default-NTTP trait regressions;
+  dependent-member alias pointer/reference projection remains a separate gap in
+  `KNOWN_ISSUES.md`.
 - `decltype` implements the `[dcl.type.decltype]` value-category rule for
   parenthesized id-expressions, the last comma operand, dereference, member
   access, built-in subscripting, and callable-object calls.
@@ -664,6 +669,15 @@ plan for complete boundary-specific validation.
 For recursive-path changes, report the largest changed native stack frame and
 whether stack use stays bounded as logical depth grows; do not raise the stack
 limit to make a regression pass.
+
+The concrete-argument rebinding guard compares clang-cl debug frames with
+`5f86b217`: the largest changed recursive-path frame is
+`materializeStoredTemplateArgs`, 17,128 versus 17,112 bytes.
+`materializeDependentRecordTemplateArgs` is 6,632 versus 6,616; recursive alias
+argument materialization remains 3,944 bytes and alias materialization 12,616.
+The guards add no recursive traversal. Existing native recursion still grows
+with logical depth; the 128-level alias and existing argument-depth limits
+remain. Retain the 1 MiB native callable and canonical worklist guards.
 
 Callable-alias validation compares clang-cl debug frames with `bf419d31`.
 The largest changed recursive frame is `parse_type_specifier` at 226,104 versus

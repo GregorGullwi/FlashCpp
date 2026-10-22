@@ -707,8 +707,9 @@ namespace {
 			return concrete_arg;
 		}
 
-		if (concrete_type_info->name().isValid() &&
-			tryRebindByName(concrete_type_info->name())) {
+		// A resolved argument keeps its type identity even when its spelling names
+		// another parameter in this alias environment. Only unresolved arguments bind.
+		if (templateArgIsStructurallyDependent(concrete_arg) && concrete_type_info->name().isValid() && tryRebindByName(concrete_type_info->name())) {
 			if (concrete_arg.is_value || !concrete_arg.type_index.is_valid()) {
 				return concrete_arg;
 			}
