@@ -1536,6 +1536,49 @@ void dropPublishedPointerArrayIdentity(CanonicalTypeDesc& desc) {
 	desc.structural_type_id = {};
 	desc.flags = clearFlag(desc.flags, CanonicalTypeFlags::PublishedPointerArray);
 }
+
+// [expr.unary.op] result of builtin *, not yet interned. Arrow uses this same
+// pointee: one pointer peel, or array decay plus one indirection. The operand
+// is a local copy, so the import inside cannot see a live get() reference.
+std::optional<CanonicalTypeDesc> canonicalBuiltinIndirection(CanonicalTypeDesc operand) {
+	const TypeId operand_type = resolveUnaryOperandStructuralType(operand);
+	if (!operand_type) {
+		// A nested class of a class-template instantiation has no per-specialization
+		// entity yet, and a dependent class-template pattern is not a concrete
+		// specialization. Those pointers still denote one pointer object, so pop
+		// that level. An array object has no pointer level; its element identity
+		// is the canonical peel, so a missing id stays a publication defect.
+		if (!operand.pointer_levels.empty()) {
+			operand.ref_qualifier = ReferenceQualifier::None;
+			dropPublishedPointerArrayIdentity(operand);
+			operand.pointer_levels.pop_back();
+			if (operand.pointer_levels.empty()) {
+				operand.pointee_array_declarator = false;
+			}
+			return operand;
+		}
+		if (descriptorHasProjectablePointerOrArray(operand)) {
+			throw InternalError("dereference operand has no published structural identity");
+		}
+		return std::nullopt;
+	}
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	const std::optional<TypeId> dereferenced = canonicalUnaryDereference(table, operand_type);
+	if (!dereferenced.has_value()) {
+		return std::nullopt;
+	}
+	TypeId pointee = *dereferenced;
+	const CanonicalTypeNode pointee_node = table.node(pointee);
+	// A pointer result already carries pointee cv inside that pointer. An array
+	// or object result takes the operand base cv, which is how a const array
+	// publishes the element qualification.
+	if (operand.base_cv != CVQualifier::None && pointee_node.kind != CanonicalTypeKind::Pointer &&
+		pointee_node.kind != CanonicalTypeKind::MemberObjectPointer && pointee_node.kind != CanonicalTypeKind::MemberFunctionPointer &&
+		pointee_node.kind != CanonicalTypeKind::Qualified) {
+		pointee = table.qualify(pointee, operand.base_cv);
+	}
+	return adoptPublishedStructuralType(operand, pointee);
+}
 } // namespace
 
 // --- CanonicalTypeDesc::operator== ---
@@ -9209,11 +9252,25 @@ std::optional<SemanticAnalysis::ResolvedMemberAccessObjectInfo> SemanticAnalysis
 	ResolvedMemberAccessObjectInfo result;
 	result.object_desc = type_context_.get(object_type_id);
 	if (member_access.is_arrow()) {
-		if (result.object_desc.pointer_levels.empty()) {
+		// [expr.ref]: E1->E2 is (*(E1)).E2. The object type is the builtin *
+		// pointee, re-exported so a later intern cannot republish the operand
+		// pointer or array. A remaining pointer or array is not a class.
+		const std::optional<CanonicalTypeDesc> peeled = canonicalBuiltinIndirection(result.object_desc);
+		if (!peeled.has_value()) {
 			return std::nullopt;
 		}
-		result.object_desc.pointer_levels.pop_back();
-		dropPublishedPointerArrayIdentity(result.object_desc);
+		result.object_desc = *peeled;
+		if (result.object_desc.structural_type_id) {
+			CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+			const CanonicalTypeNode node = nodeUnderQualifiersAndReferences(table, result.object_desc.structural_type_id);
+			if (node.kind == CanonicalTypeKind::Pointer || node.kind == CanonicalTypeKind::Array ||
+				node.kind == CanonicalTypeKind::MemberObjectPointer || node.kind == CanonicalTypeKind::MemberFunctionPointer) {
+				return std::nullopt;
+			}
+		} else if (!result.object_desc.pointer_levels.empty() || !result.object_desc.array_dimensions.empty() ||
+			result.object_desc.pointee_array_declarator || result.object_desc.has_unsized_outer_array_dimension) {
+			return std::nullopt;
+		}
 	}
 
 	if (result.object_desc.category() != TypeCategory::Struct &&
@@ -9857,46 +9914,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					const CanonicalTypeId operand_id = inferExpressionType(e.get_operand());
 					if (!operand_id)
 						return {};
-					CanonicalTypeDesc result_desc = type_context_.get(operand_id);
-					const TypeId operand_type = resolveUnaryOperandStructuralType(result_desc);
-					if (!operand_type) {
-						// A nested class of a class-template instantiation has no per-specialization
-						// entity yet, and a dependent class-template pattern is not a
-						// concrete specialization. Those pointers still denote one pointer
-						// object, so pop that level. An array object has no pointer level;
-						// its element identity is the canonical peel, so a missing id stays
-						// a publication defect.
-						if (!result_desc.pointer_levels.empty()) {
-							result_desc.ref_qualifier = ReferenceQualifier::None;
-							dropPublishedPointerArrayIdentity(result_desc);
-							result_desc.pointer_levels.pop_back();
-							if (result_desc.pointer_levels.empty()) {
-								result_desc.pointee_array_declarator = false;
-							}
-							return type_context_.intern(result_desc);
-						}
-						if (descriptorHasProjectablePointerOrArray(result_desc)) {
-							throw InternalError("dereference operand has no published structural identity");
-						}
-						return {};
-					}
-					const std::optional<TypeId> dereferenced = canonicalUnaryDereference(
-						requireFrontendContext().canonicalTypes(), operand_type);
+					// Copy off get() before indirection imports the operand.
+					const std::optional<CanonicalTypeDesc> dereferenced = canonicalBuiltinIndirection(type_context_.get(operand_id));
 					if (!dereferenced.has_value()) {
 						return {};
 					}
-					CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-					TypeId pointee = *dereferenced;
-					const CanonicalTypeNode pointee_node = table.node(pointee);
-					// A pointer result already carries pointee cv inside that pointer.
-					// An array or object result takes the operand base cv, which is how
-					// a const array publishes the element qualification.
-					if (result_desc.base_cv != CVQualifier::None && pointee_node.kind != CanonicalTypeKind::Pointer &&
-						pointee_node.kind != CanonicalTypeKind::MemberObjectPointer && pointee_node.kind != CanonicalTypeKind::MemberFunctionPointer &&
-						pointee_node.kind != CanonicalTypeKind::Qualified) {
-						pointee = table.qualify(pointee, result_desc.base_cv);
-					}
-					return type_context_.intern(adoptPublishedStructuralType(result_desc, pointee));
+					return type_context_.intern(*dereferenced);
 				}
 				return {};
 			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {

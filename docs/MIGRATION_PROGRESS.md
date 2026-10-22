@@ -6,7 +6,7 @@ authoritative for the design, boundaries, and exit criteria. This file records
 the current boundary state, the remaining work, and the validation contract;
 completed implementation history belongs in git.
 
-Last updated: 2026-10-21.
+Last updated: 2026-10-22.
 
 ## Current state
 
@@ -111,8 +111,8 @@ The architecture the remaining work builds on:
   class-template pattern is not a concrete specialization, so those pointers
   still pop one flat pointer level. An array object without a
   published id fails closed. User-defined `operator*` and `operator&` stay on
-  their resolved-function paths. The arrow peel in
-  `resolveMemberAccessObjectInfo` still drops published identity.
+  their resolved-function paths. Builtin `->` uses that same canonical `*`
+  pointee and re-exports it, including that flat peel; the dot path is unchanged.
   The 3A rollup remains 10/79.
 - The shared type-trait evaluator classifies the structural `[meta.unary.prop]`
   family plus class/union/qualification and published record properties from
@@ -459,6 +459,25 @@ Continue boundary 3A in this order.
       object takes that element's address with one `AddressOf` or pointer copy,
       then loads only when the element is not itself an array. Native stack use
       does not grow with array rank or pointer depth. No stack reserve was changed.
+   6. **Builtin `->`.** `resolveMemberAccessObjectInfo` no longer pops
+      `pointer_levels` for arrow. `[expr.ref]` defines `E1->E2` as `(*(E1)).E2`,
+      so the object type is the canonical builtin `*` pointee and is re-exported
+      through `materializeTypeSpecifier`. One peel that still leaves a pointer
+      or an array is not a class, so member lookup does not run. The dot path
+      is unchanged. A nested class of an instantiation, and a dependent
+      class-template pattern, still pop one flat pointer level. An array object
+      without a published id fails closed. User-defined `operator->` stays on
+      its existing lowering path. This does not close a 3A exit criterion; the
+      3A rollup remains 10/79.
+      `tests/test_arrow_pointer_class_identity_ret0.cpp` protects `Cell*` and
+      `const Cell*` against `Cell* const`, arrow on `Cell[2]` reaching the first
+      element, a pointer to a `Cell[3]` row, `long` and `short`, a class-template
+      specialization, `this->` in a partial specialization, and an overloaded
+      `operator->`. The helper is not recursive. Arrow runs after the object
+      expression's type is inferred and uses the existing iterative materializer
+      and class-import worklist. Native stack use does not grow with array rank
+      or pointer depth. No stack reserve was changed. The sharded build is
+      `/Od`, so there is no `-fstack-usage` number.
 
 3. **Complete importer and declarator coverage.** Add canonical import support
    for remaining valid ordered forms still rejected at a boundary, including
@@ -515,7 +534,8 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
   editing the operand projection. An implicit class-template specialization's
   `*this` uses that specialization. A nested class of an instantiation still
   pops one flat pointer level, and an array object without a published id
-  fails closed. The arrow peel still drops published identity.
+  fails closed. Builtin `->` re-exports that same canonical pointee; the dot
+  path is unchanged.
 - The compatibility `TypeTraitEval::isSigned`/`isUnsigned` adapters are
   unexercised; a regression forcing an unimportable operand through them is owed.
 - The canonical record constructor schema is published for a completed record
