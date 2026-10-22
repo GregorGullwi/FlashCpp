@@ -1579,6 +1579,58 @@ std::optional<CanonicalTypeDesc> canonicalBuiltinIndirection(CanonicalTypeDesc o
 	}
 	return adoptPublishedStructuralType(operand, pointee);
 }
+
+// [expr.new]: the result is a pointer to the allocated object, or to its initial
+// element when that object is an array. array_new's bound is not part of this
+// type. A typedef of an array still allocates that array, so one bound is removed.
+// The descriptor is a local copy, so the import cannot see a live get() reference.
+std::optional<CanonicalTypeDesc> canonicalNewExpressionType(CanonicalTypeDesc allocated, bool array_new) {
+	const TypeId allocated_type = resolveUnaryOperandStructuralType(allocated);
+	if (!allocated_type) {
+		if (descriptorHasProjectablePointerOrArray(allocated)) {
+			throw InternalError("new type has no published structural identity");
+		}
+		allocated.ref_qualifier = ReferenceQualifier::None;
+		allocated.pointer_levels.push_back(PointerLevel{CVQualifier::None});
+		return allocated;
+	}
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	const TypeId referent = canonicalReferentType(table, allocated_type);
+	if (!referent) {
+		return std::nullopt;
+	}
+	const CanonicalTypeNode referent_node = table.node(referent);
+	if (referent_node.kind == CanonicalTypeKind::LValueReference || referent_node.kind == CanonicalTypeKind::RValueReference) {
+		return std::nullopt;
+	}
+	// base_cv is the allocated object's cv. On a pointer it already qualifies
+	// that pointer; on an array or scalar it belongs to the element [dcl.array].
+	TypeId pointed_to = referent;
+	if (allocated.base_cv != CVQualifier::None && referent_node.kind != CanonicalTypeKind::Pointer &&
+		referent_node.kind != CanonicalTypeKind::MemberObjectPointer && referent_node.kind != CanonicalTypeKind::MemberFunctionPointer) {
+		pointed_to = table.qualify(pointed_to, allocated.base_cv);
+	}
+	if (!array_new) {
+		CVQualifier array_cv = CVQualifier::None;
+		for (;;) {
+			const CanonicalTypeNode node = table.node(pointed_to);
+			if (node.kind == CanonicalTypeKind::Qualified && node.child) {
+				const CanonicalTypeNode inner = table.node(node.child);
+				if (inner.kind != CanonicalTypeKind::Array && inner.kind != CanonicalTypeKind::Qualified) {
+					break;
+				}
+				array_cv |= node.qualifiers;
+				pointed_to = node.child;
+				continue;
+			}
+			if (node.kind == CanonicalTypeKind::Array && node.child) {
+				pointed_to = array_cv == CVQualifier::None ? node.child : table.qualify(node.child, array_cv);
+			}
+			break;
+		}
+	}
+	return adoptPublishedStructuralType(allocated, table.pointer(pointed_to));
+}
 } // namespace
 
 // --- CanonicalTypeDesc::operator== ---
@@ -10290,19 +10342,17 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				desc.type_index = nativeTypeIndex(TypeCategory::Bool);
 				return type_context_.intern(desc);
 			} else if constexpr (std::is_same_v<T, NewExpressionNode>) {
-				// C++20 [expr.new]: new T returns T*; new T[n] returns T*.
+				// [expr.new]: new T is T*. An array allocation points at the initial
+				// element. Copy off get() before the helper imports the allocated type.
 				const ASTNode& type_node = e.type_node();
 				if (type_node.has_value() && type_node.template is<TypeSpecifierNode>()) {
 					CanonicalTypeId base_id = canonicalizeType(type_node.template as<TypeSpecifierNode>());
 					if (base_id) {
-						CanonicalTypeDesc ptr_desc = type_context_.get(base_id);
-						if (ptr_desc.structural_type_id && !hasFlag(ptr_desc.flags, CanonicalTypeFlags::PublishedPointerArray)) {
-							ptr_desc.structural_type_id = requireFrontendContext().canonicalTypes().pointer(ptr_desc.structural_type_id);
-							return type_context_.intern(ptr_desc);
+						const std::optional<CanonicalTypeDesc> result = canonicalNewExpressionType(type_context_.get(base_id), e.is_array());
+						if (!result.has_value()) {
+							return {};
 						}
-						dropPublishedPointerArrayIdentity(ptr_desc);
-						ptr_desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
-						return type_context_.intern(ptr_desc);
+						return type_context_.intern(*result);
 					}
 				}
 				return {};

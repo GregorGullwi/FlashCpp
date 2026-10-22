@@ -623,6 +623,16 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 			return ParseResult::error("Expected type after 'new'", current_token_);
 		}
 
+		// [expr.new] new-type-id: ptr-operators belong to the allocated type.
+		// new int* is one int*, and new int*[n] is an array of int*.
+		if (type_node->is<TypeSpecifierNode>()) {
+			TypeSpecifierNode& allocated_type = type_node->as<TypeSpecifierNode>();
+			while (peek() == "*"_tok) {
+				advance();
+				allocated_type.add_pointer_level(parse_cv_qualifiers());
+			}
+		}
+
 		std::optional<ParseResult> initializer_parse_error;
 		auto parse_new_initializer_args = [&](TokenKind closing_token_kind, std::string_view expected_closing_error, bool allow_trailing_comma) -> std::optional<ChunkedVector<ASTNode, 128, 256>> {
 			ChunkedVector<ASTNode, 128, 256> args;

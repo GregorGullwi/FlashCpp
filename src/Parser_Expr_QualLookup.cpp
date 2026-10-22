@@ -3294,6 +3294,8 @@ std::optional<TypeSpecifierNode> Parser::tryBuildFunctionTemplateAddressType(
 }
 
 // Helper to extract type from an expression for overload resolution
+std::optional<TypeSpecifierNode> newExpressionResultType(const NewExpressionNode& new_expr);
+
 std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr_node) {
 #if WITH_PARSER_RUNTIME_STATS
 	FLASHCPP_PARSER_RUNTIME_PHASE(ExpressionTypeResolution);
@@ -4577,9 +4579,47 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			}
 		}
 	}
+	if (std::holds_alternative<NewExpressionNode>(expr)) {
+		return newExpressionResultType(std::get<NewExpressionNode>(expr));
+	}
 	// Add more cases as needed
 
 	return std::nullopt;
+}
+
+// [expr.new]: new T is T*. The runtime bound of new T[n] is outside the type
+// specifier, so that result points at T. A typedef of an array allocates the
+// array, and the result points at its initial element: one outermost bound is
+// removed. Cv on the allocated object stays on that object.
+std::optional<TypeSpecifierNode> newExpressionResultType(const NewExpressionNode& new_expr) {
+	if (!new_expr.type_node().is<TypeSpecifierNode>()) {
+		return std::nullopt;
+	}
+	TypeSpecifierNode result = new_expr.type_node().as<TypeSpecifierNode>();
+	if (result.is_reference() || !result.ordered_declarator_has_legacy_projection()) {
+		return std::nullopt;
+	}
+	result.clear_ordered_declarator();
+	result.set_reference_qualifier(ReferenceQualifier::None);
+	const bool allocated_object_is_array = !new_expr.is_array() && result.is_array() && !result.has_pointee_array_declarator();
+	if (allocated_object_is_array) {
+		std::vector<size_t> inner_extents;
+		const std::span<const size_t> dimensions = result.array_dimensions();
+		if (dimensions.size() > 1) {
+			inner_extents.assign(dimensions.begin() + 1, dimensions.end());
+		}
+		result.set_array(false);
+		if (!inner_extents.empty()) {
+			result.set_array_dimensions(inner_extents);
+		}
+	}
+	if (result.is_array() && !result.has_pointee_array_declarator()) {
+		const std::vector<size_t> extents(result.array_dimensions().begin(), result.array_dimensions().end());
+		result.set_pointee_array_declarator(true);
+		result.set_pointee_array_dimensions(extents);
+	}
+	result.add_pointer_level(CVQualifier::None);
+	return result;
 }
 
 // Helper function to deduce the type of an expression for auto type deduction
