@@ -26,6 +26,7 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 ///  • surviving dependent_name (belt-and-suspenders guard)
 ///  • dependent NTTP expressions that still carry AST-backed unresolved identity
 ///  • Auto / DeclTypeAuto placeholder categories
+///  • TypeIndex values whose TypeInfo is a dependent placeholder
 ///
 /// Does NOT include is_pack — call sites that need pack-deferral must check
 /// arg.is_pack separately (e.g. explicitTemplateArgsRequireDeferredInstantiation).
@@ -33,7 +34,13 @@ inline bool templateArgIsStructurallyDependent(const TemplateTypeArg& arg) {
 	if (arg.is_dependent || arg.dependent_name.isValid() || arg.dependent_expr.has_value())
 		return true;
 	const TypeCategory cat = arg.category();
-	return cat == TypeCategory::Auto || cat == TypeCategory::DeclTypeAuto;
+	if (cat == TypeCategory::Auto || cat == TypeCategory::DeclTypeAuto)
+		return true;
+	if (arg.type_index.is_valid()) {
+		const TypeInfo* type_info = tryGetTypeInfo(arg.type_index);
+		return type_info != nullptr && type_info->isDependentPlaceholder();
+	}
+	return false;
 }
 
 /// Returns true when *any* argument in \p args is structurally dependent.
