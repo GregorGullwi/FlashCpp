@@ -3126,6 +3126,11 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 	std::optional<TemplateTypeArg> tryRebindAliasTargetTemplateArg(
 		const TemplateAliasNode& alias_node,
 		std::span<const TemplateTypeArg> concrete_args) const;
+	std::optional<TemplateTypeArg> tryRebindAliasTargetTemplateArg(
+		const TemplateAliasNode& alias_node,
+		std::span<const TemplateTypeArg> concrete_args,
+		std::span<const TemplateParameterNode> substitution_params,
+		std::span<const TemplateTypeArg> substitution_args) const;
 	TypeSpecifierNode buildDependentDirectAliasTypeSpecifier(
 		std::string_view alias_name,
 		const TemplateAliasNode& alias_node,

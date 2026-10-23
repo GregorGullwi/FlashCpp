@@ -6,7 +6,7 @@ authoritative for the design, boundaries, and exit criteria. This file records
 the current boundary state, the remaining work, and the validation contract;
 completed implementation history belongs in git.
 
-Last updated: 2026-10-22.
+Last updated: 2026-10-23.
 
 ## Current state
 
@@ -14,7 +14,7 @@ Boundary **3A (canonical types)** is active and incomplete. The explicit-criteri
 rollup is **10/79 complete**; the only completed 3A exit criterion is that
 pointer-to-member overloads distinguish owner and pointee types. Passing tests or
 the breadth of landed code do not complete the boundary.
-The next bounded 3A slice is parsing complete callable targets in member alias templates.
+Member alias templates now parse complete callable targets and retain enclosing class-template bindings during materialization. The next bounded 3A slice remains to be selected from the remaining conversion-currency work below.
 
 The architecture the remaining work builds on:
 
@@ -221,20 +221,16 @@ Continue boundary 3A in this order.
    Callable aliases preserve complete targets and bind canonical components
    under their owning declaration, including mixed type/value argument positions.
 
-   **Next slice: member callable-alias target parsing.** A member declaration
-   `template<class R> using F = R(T);` inside `Holder<T>` currently rejects the
-   callable suffix with an expected-semicolon diagnostic. Route the complete
-   target through the shared callable-alias declarator parser and retain its
-   structured signature and declaration identities. Start with a reduced source
-   regression and native inspection of the published member alias target; cover
-   function/reference/noexcept-pointer targets and parameter-name shadowing.
-   Keep the separately documented captured outer-argument materialization gap
-   deferred; a namespace alias routed through `Holder<short>::F<long>` can still
-   retain a dependent outer binding. Preserve explicit deferral for packs,
-   unpublished argument identities, and template-template environments. Recheck
-   namespace callable aliases, exchange/default aliases, exact/noexcept ranking,
-   and executed conversion-result calls. Stop after the parser slice; it does
-   not close boundary 3A. See `KNOWN_ISSUES.md` for both member-alias reproducers.
+   **Completed slice: member callable-alias target parsing.** A member declaration
+   such as `template<class R> using F = R(T);` inside `Holder<T>` now routes the
+   complete target through the shared callable-alias declarator parser. Direct
+   function, function-pointer, function-reference, and `noexcept`-pointer targets
+   retain their structured signatures. Materialization substitutes the alias's
+   parameters together with the enclosing class-template binding, and an inner
+   alias parameter shadows an outer parameter with the same spelling.
+   `tests/test_member_callable_alias_target_ret0.cpp` covers those forms plus a
+   namespace alias forwarded through the member target. This slice does not
+   close boundary 3A.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    1. **The constructibility family.** The zero-argument variants and published

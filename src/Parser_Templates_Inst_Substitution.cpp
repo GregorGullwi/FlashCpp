@@ -67,9 +67,18 @@ static const TypeInfo* resolveBuiltinTypeInfoByName(std::string_view builtin_nam
 template <typename TemplateParamStorage, typename TemplateArgStorage, typename OnOuterParam>
 static bool appendOuterAliasTemplateSubstitutionInputs(
 	const OuterTemplateBinding& outer_binding,
+	std::span<const TemplateParameterNode> shadowing_params,
 	TemplateParamStorage& effective_template_params_storage,
 	TemplateArgStorage& effective_template_args_storage,
 	OnOuterParam on_outer_param) {
+	const auto isShadowed = [shadowing_params](StringHandle param_name) {
+		for (const TemplateParameterNode& shadowing_param : shadowing_params) {
+			if (shadowing_param.nameHandle() == param_name) {
+				return true;
+			}
+		}
+		return false;
+	};
 	if (!outer_binding.params.empty()) {
 		const size_t pair_count = std::min(
 			outer_binding.params.size(),
@@ -77,7 +86,7 @@ static bool appendOuterAliasTemplateSubstitutionInputs(
 		for (size_t i = 0; i < pair_count; ++i) {
 			const TemplateParameterNode* outer_param =
 				tryGetTemplateParameterNode(outer_binding.params[i]);
-			if (outer_param == nullptr) {
+			if (outer_param == nullptr || isShadowed(outer_param->nameHandle())) {
 				continue;
 			}
 			effective_template_params_storage.push_back(*outer_param);
@@ -93,6 +102,9 @@ static bool appendOuterAliasTemplateSubstitutionInputs(
 		outer_binding.param_names.size(),
 		outer_binding.param_args.size());
 	for (size_t i = 0; i < fallback_pair_count; ++i) {
+		if (isShadowed(outer_binding.param_names[i])) {
+			continue;
+		}
 		Token param_token(
 			Token::Type::Identifier,
 			StringTable::getStringView(outer_binding.param_names[i]),
@@ -130,6 +142,7 @@ static void buildEffectiveAliasTemplateSubstitutionInputs(
 			pair_count + template_args.size());
 		if (!appendOuterAliasTemplateSubstitutionInputs(
 				*outer_binding,
+				alias_node.template_parameters(),
 				effective_template_params_storage,
 				effective_template_args_storage,
 				[](const TemplateParameterNode&) {})) {
@@ -1452,6 +1465,7 @@ std::optional<TemplateArgumentVector> Parser::materializeDeferredAliasTemplateAr
 		effective_template_args.reserve(pair_count + template_args.size());
 		if (!appendOuterAliasTemplateSubstitutionInputs(
 				*outer_binding,
+				alias_node.template_parameters(),
 				effective_template_parameters,
 				effective_template_args,
 				[&](const TemplateParameterNode& outer_param) {
@@ -1776,7 +1790,26 @@ std::optional<size_t> Parser::findDirectAliasTargetParameterIndex(
 		return std::nullopt;
 	}
 
-	StringHandle alias_target_name = getAliasTargetNameHandle(alias_target);
+	StringHandle alias_target_name;
+	const TypeCategory alias_target_category = alias_target.category();
+	if ((alias_target_category == TypeCategory::Function ||
+		 alias_target_category == TypeCategory::FunctionPointer) &&
+		alias_target.has_function_signature() &&
+		!alias_target.has_ordered_declarator()) {
+		const FunctionType& return_type =
+			alias_target.function_signature().return_type();
+		if (return_type.template_parameter_name.isValid()) {
+			alias_target_name = return_type.template_parameter_name;
+		} else if (return_type.type_index.is_valid()) {
+			if (const TypeInfo* return_type_info =
+					tryGetTypeInfo(return_type.type_index)) {
+				alias_target_name = return_type_info->name();
+			}
+		}
+	}
+	if (!alias_target_name.isValid()) {
+		alias_target_name = getAliasTargetNameHandle(alias_target);
+	}
 	if (!alias_target_name.isValid()) {
 		return std::nullopt;
 	}
@@ -1806,6 +1839,17 @@ std::optional<size_t> Parser::findAliasTargetTemplateParamIndex(
 
 std::optional<TemplateTypeArg> Parser::tryRebindAliasTargetTemplateArg(const TemplateAliasNode& alias_node,
 	std::span<const TemplateTypeArg> concrete_args) const {
+	return tryRebindAliasTargetTemplateArg(
+		alias_node,
+		concrete_args,
+		alias_node.template_parameters(),
+		concrete_args);
+}
+
+std::optional<TemplateTypeArg> Parser::tryRebindAliasTargetTemplateArg(const TemplateAliasNode& alias_node,
+	std::span<const TemplateTypeArg> concrete_args,
+	std::span<const TemplateParameterNode> substitution_params,
+	std::span<const TemplateTypeArg> substitution_args) const {
 	std::optional<size_t> alias_param_index = findAliasTargetTemplateParamIndex(alias_node, concrete_args);
 	if (!alias_param_index.has_value()) {
 		return std::nullopt;
@@ -1815,8 +1859,11 @@ std::optional<TemplateTypeArg> Parser::tryRebindAliasTargetTemplateArg(const Tem
 	if (target.has_function_signature() && !target.has_ordered_declarator()) {
 		TypeSpecifierNode callable = target;
 		callable.clear_template_parameter_identity();
-		callable.set_function_signature(substituteTemplateFunctionSignatureTypes(target.function_signature(), alias_node.template_parameters(),
-			concrete_args, requireFrontendContext().canonicalTypes(), alias_node.template_decl_id()));
+		callable.set_function_signature(substituteTemplateFunctionSignatureTypes(target.function_signature(), substitution_params,
+			substitution_args, requireFrontendContext().canonicalTypes(), alias_node.template_decl_id()));
+		if (typeSpecStillUsesDependentPlaceholder(callable)) {
+			return std::nullopt;
+		}
 		return TemplateTypeArg(callable);
 	}
 	return rebindDependentTemplateTypeArg(concrete_args[*alias_param_index], TemplateTypeArg(alias_node.target_type_node()));
@@ -2392,7 +2439,11 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			return false;
 		}
 		std::optional<TemplateTypeArg> rebound_arg =
-			tryRebindAliasTargetTemplateArg(*alias_node, template_args);
+			tryRebindAliasTargetTemplateArg(
+				*alias_node,
+				template_args,
+				effective_template_params,
+				effective_template_args);
 		// If rebinding via the alias's own template params failed, the alias target
 		// may be an *outer* template parameter (e.g. `template<typename U> using Apply = T`
 		// where T comes from an enclosing class template's outer binding T=int).

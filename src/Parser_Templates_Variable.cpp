@@ -340,6 +340,16 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 	consume_pointer_ref_modifiers(type_spec);
 
+	// Function, function-pointer, and function-reference targets:
+	// template<class R> using F = R(T); / R (*)(T); / R (&)(T);
+	if (peek() == "("_tok &&
+		!parse_type_alias_function_type(type_spec, " member alias template")) {
+		return error(
+			DiagnosticId::UnsupportedAliasTemplateTargetDeclarator,
+			peek_info(),
+			"Parenthesized member alias template target declarator is not supported");
+	}
+
 	bool has_deferred_target = false;
 	StringHandle target_template_name;
 	TemplateAstNodeVector target_template_arg_nodes;

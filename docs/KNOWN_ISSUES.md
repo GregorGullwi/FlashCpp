@@ -10,15 +10,6 @@ fails. This occurs without parameter/record spelling collisions. Preserve the
 complete member alias specifier through namespace alias materialization rather
 than returning only the terminal nominal `TypeInfo`.
 
-## Member callable alias syntax and captured outer arguments remain incomplete
-
-A member alias such as `template<class R> using F = R(T);` inside `Holder<T>`
-is rejected with an expected-semicolon diagnostic. Routing through a namespace
-alias (`template<class R, class A> using Callback = R (*)(A) noexcept;` and a
-member `template<class R> using F = Callback<R, T>;`) parses, but
-`Holder<short>::F<long>` remains dependent. Parse the complete member callable
-target and preserve its enclosing binding through member-alias materialization.
-
 ## Template `T (*)[N]` parameters carry a repeated array bound
 
 Instantiating `template <class T> int f(T (*)[2])` with `T = int` published

@@ -2816,6 +2816,8 @@ ParseResult Parser::parse_type_specifier() {
 							materialized_alias.resolved_type_specifier.has_value() &&
 							materialized_alias.resolved_type_specifier->has_function_signature() &&
 							(materialized_alias.resolved_type_specifier->category() ==
+								 TypeCategory::Function ||
+							 materialized_alias.resolved_type_specifier->category() ==
 								 TypeCategory::FunctionPointer ||
 							 materialized_alias.resolved_type_specifier->category() ==
 								 TypeCategory::MemberFunctionPointer);
@@ -4404,6 +4406,14 @@ ParseResult Parser::parse_type_specifier() {
 								materializeAliasTemplateInstantiation(
 									StringTable::getStringView(member_alias_name),
 									*member_template_args);
+							if (materialized_alias.resolved_type_specifier.has_value() &&
+								(materialized_alias.resolved_type_specifier->has_ordered_declarator() ||
+								 materialized_alias.resolved_type_specifier->has_member_class() ||
+								 materialized_alias.resolved_type_specifier->has_function_signature()) &&
+								!typeSpecStillUsesDependentPlaceholder(*materialized_alias.resolved_type_specifier)) {
+								return ParseResult::success(
+									emplace_node<TypeSpecifierNode>(*materialized_alias.resolved_type_specifier));
+							}
 							if (materialized_alias.resolved_type_info != nullptr) {
 								return ParseResult::success(emplace_node<TypeSpecifierNode>(
 									resolveTypeInfoToTypeSpec(
