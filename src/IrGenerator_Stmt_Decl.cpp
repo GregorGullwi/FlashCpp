@@ -892,10 +892,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					std::vector<DataRelocation> element_relocations;
 					element_relocations.reserve(initializers.size());
 					for (size_t elem_i = 0; elem_i < initializers.size(); ++elem_i) {
-						if (const std::optional<StringHandle> target = resolveGlobalElementReloc(initializers[elem_i]);
-							target.has_value()) {
-							element_relocations.push_back(DataRelocation{
-								static_cast<uint32_t>(elem_i * element_bytes), *target});
+						if (const std::optional<StringHandle> target = resolveGlobalElementReloc(initializers[elem_i]); target.has_value()) {
+							element_relocations.push_back(DataRelocation{static_cast<uint32_t>(elem_i * element_bytes), *target});
 							continue;
 						}
 						const unsigned long long value = evalToValue(initializers[elem_i], TypeCategory::UnsignedLongLong);
@@ -2962,8 +2960,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					store_op.value = makeTypedValue(TypeCategory::Nullptr, SizeInBits{size_in_bits}, 0ULL);
 					store_op.member_offset = 0;
 					store_op.base_holds_address = false;
-					ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op),
-						node.declaration().identifier_token()));
+					ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op), node.declaration().identifier_token()));
 				}
 			}
 		}
