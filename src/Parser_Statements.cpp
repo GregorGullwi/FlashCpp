@@ -2005,8 +2005,12 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	// Create an InitializerListNode to hold the initializer expressions
 	auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
 
-	// Handle array brace initialization
-	if (type_specifier.is_array()) {
+	// Handle array brace initialization. A non-projectable ordered array object
+	// has no flat is_array() projection, but [dcl.init.aggr] still initializes
+	// one outermost element at a time.
+	const bool ordered_array_object =
+		orderedDeclaratorIsArrayObject(type_specifier) && !type_specifier.is_array();
+	if (type_specifier.is_array() || ordered_array_object) {
 		// Get the array size if specified
 		const bool has_unsized_outer_dimension = type_specifier.has_unsized_outer_array_dimension();
 		std::optional<size_t> array_size;
@@ -2035,7 +2039,13 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		// array type (int[3]), not a plain scalar.  For single-dimension arrays, clear the
 		// array flag so nested {…} is parsed as a struct (aggregate) initializer.
 		TypeSpecifierNode element_type_spec = type_specifier;
-		if (has_unsized_outer_dimension) {
+		if (ordered_array_object) {
+			const DeclaratorComponent& outer = type_specifier.declarator_components().front();
+			if (outer.kind == DeclaratorComponentKind::Array && outer.payload != 0) {
+				array_size = static_cast<size_t>(outer.payload);
+			}
+			element_type_spec.remove_outermost_ordered_declarator_component();
+		} else if (has_unsized_outer_dimension) {
 			element_type_spec.set_unsized_outer_array_dimension(false);
 		} else if (type_specifier.array_dimension_count() > 1) {
 			// Multi-dimensional: element type has the remaining dimensions
