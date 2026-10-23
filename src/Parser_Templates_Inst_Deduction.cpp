@@ -2140,7 +2140,15 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		if (func_param_decl.is_array() && ca_type.is_array()) {
 			const size_t pattern_dim_count = func_param_decl.array_dimension_count();
 			const size_t concrete_dim_count = ca_type.array_dimension_count();
-			if (pattern_dim_count <= concrete_dim_count) {
+			// A pointer-to-array parameter such as `T (*)[N]` decays its array
+			// argument one level before matching the pointee bounds. The removed
+			// outermost argument bound is not part of T.
+			const bool parameter_is_pointer_to_array =
+				fp_type.has_pointee_array_declarator() ||
+				fp_type.pointer_depth() > 0;
+			const size_t concrete_dim_offset =
+				parameter_is_pointer_to_array ? 1 : 0;
+			if (pattern_dim_count + concrete_dim_offset <= concrete_dim_count) {
 				bool slot_produced_deduction = false;
 
 				TypeIndex array_fp_idx = fp_type.type_index();
@@ -2153,11 +2161,14 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 						TypeSpecifierNode deduced_element_type = ca_type;
 						deduced_element_type.set_reference_qualifier(ReferenceQualifier::None);
 						const auto& concrete_dims = ca_type.array_dimensions();
-						if (pattern_dim_count <= concrete_dims.size()) {
+						const size_t remaining_start =
+							concrete_dim_offset + pattern_dim_count;
+						if (remaining_start <= concrete_dims.size()) {
 							std::vector<size_t> remaining_dims(
-								concrete_dims.begin() + pattern_dim_count,
+								concrete_dims.begin() + remaining_start,
 								concrete_dims.end());
 							deduced_element_type.set_array_dimensions(remaining_dims);
+							deduced_element_type.set_pointee_array_declarator(false);
 							TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(deduced_element_type);
 							if (!recordPreDeducedArg(fp_name, new_arg, "type", new_arg.toString())) {
 								return std::nullopt;
@@ -2171,7 +2182,9 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 				const auto& pattern_dims = func_param_decl.array_dimensions();
 				const auto& concrete_dims = ca_type.array_dimensions();
 				for (size_t dim_index = 0; dim_index < pattern_dim_count; ++dim_index) {
-					if (!tryMatchArrayBoundExpression(pattern_dims[dim_index], concrete_dims[dim_index])) {
+					if (!tryMatchArrayBoundExpression(
+							pattern_dims[dim_index],
+							concrete_dims[concrete_dim_offset + dim_index])) {
 						all_dims_matched = false;
 						break;
 					}
