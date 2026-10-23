@@ -97,10 +97,17 @@ The architecture the remaining work builds on:
   a short list value-initializes the rest. An extra clause is
   `TooManyInitializers` (1510).
   `tests/test_interleaved_pointer_array_initializer_ret0.cpp` covers global and
-  local `int (*a[N])[4]` lists, including a null tail. This slice adds no new
-  recursive helper. Brace lists still use the existing `parse_brace_initializer`
-  recursion for nested clauses only. No stack reserve was changed. The sharded
-  build is `/Od`, so there is no `-fstack-usage` number.
+  local `int (*a[N])[4]` lists, including a null tail. An array of unknown
+  bound is completed from that same list: n > 0 clauses define an array of n
+  elements, so `int (*a[])[4]` becomes `int (*a[n])[4]`. A trailing comma does
+  not add an element, and an empty list is
+  `EmptyUnknownBoundArrayInitializer` (1513).
+  `tests/test_interleaved_pointer_array_unknown_bound_ret0.cpp` covers global
+  and local copy-list and direct-list initialization, including a null clause.
+  The bound helper is not recursive. Brace lists still use the existing
+  `parse_brace_initializer` recursion for nested clauses only. No stack reserve
+  was changed. The sharded build is `/Od`, so there is no `-fstack-usage`
+  number.
   `SemanticAnalysis::pointerToArrayShape` is the single
   codegen resolver for a pointer whose immediate pointee is an array; the
   dereference/array-to-pointer-decay, multi-dimensional pointer-to-array
