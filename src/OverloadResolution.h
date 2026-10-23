@@ -3103,11 +3103,13 @@ trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const Typ
 	}
 	FrontendContext& context = requireFrontendContext();
 	CanonicalTypeTable& table = context.canonicalTypes();
-	TypeId source_type = canonicalTypeWithoutReference(table, source_type_id);
-	const auto [source_class_type, source_cv_qualifier] =
-		stripCanonicalTopCv(table, source_type);
+	const TypeId source_type = canonicalTypeWithoutReference(table, source_type_id);
+	const auto [source_class_type, source_cv_qualifier] = stripCanonicalTopCv(table, source_type);
 	const CanonicalTypeKind source_kind = table.node(source_class_type).kind;
 	if (source_kind != CanonicalTypeKind::Record && source_kind != CanonicalTypeKind::TemplateSpecialization) {
+		return std::nullopt;
+	}
+	if (!table.hasClassBaseSchema(source_class_type)) {
 		return std::nullopt;
 	}
 	std::unordered_map<uint32_t, const TypeInfo*> class_type_info_cache;
@@ -3120,12 +3122,6 @@ trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const Typ
 		class_type_info_cache.emplace(class_type.value, type_info);
 		return type_info;
 	};
-	const TypeInfo* const source_type_info = find_class_type_info(source_class_type);
-	if (source_type_info == nullptr ||
-		!tryPublishCanonicalClassBaseSchema(table, source_class_type, *source_type_info) ||
-		!table.hasClassBaseSchema(source_class_type)) {
-		return std::nullopt;
-	}
 	CanonicalTypeTransaction conversion_candidate_transaction(table);
 	struct PendingType {
 		TypeId type;
@@ -3152,6 +3148,9 @@ trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const Typ
 			continue;
 		}
 		visited_types.push_back(pending_type.type);
+		if (!table.hasClassBaseSchema(pending_type.type)) {
+			return std::nullopt;
+		}
 		const TypeInfo* const type_info = find_class_type_info(pending_type.type);
 		if (type_info == nullptr) {
 			continue;
@@ -3472,9 +3471,8 @@ trySelectUserDefinedConversionOperator(const TypeSpecifierNode& source_type, con
 	if (imported_source.status == CanonicalTypeImportStatus::Supported) {
 		const TypeId source_type_without_reference = canonicalTypeWithoutReference(table, imported_source.type);
 		const TypeId source_class_type = stripCanonicalTopCv(table, source_type_without_reference).first;
-		const TypeInfo* const source_type_info = tryFindCanonicalOverloadClassTypeInfo(table, source_class_type);
-		if (source_type_info != nullptr && tryPublishCanonicalClassBaseSchema(table, source_class_type, *source_type_info) &&
-			table.hasClassBaseSchema(source_class_type)) {
+		const CanonicalTypeKind source_kind = table.node(source_class_type).kind;
+		if (source_kind == CanonicalTypeKind::Record || source_kind == CanonicalTypeKind::TemplateSpecialization) {
 			const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(imported_source.type, target_type, allow_explicit);
 			if (selected_conversion.has_value()) {
 				transaction.commit();
