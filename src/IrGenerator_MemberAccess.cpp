@@ -43,6 +43,44 @@ static std::optional<size_t> tryGetTypeSizeForSizeof(const TypeSpecifierNode& ty
 	return static_cast<size_t>(size_bits) / 8;
 }
 
+static bool orderedSpecifierIsArrayObject(const TypeSpecifierNode& type_spec) {
+	if (!type_spec.has_ordered_declarator() || type_spec.declarator_components().empty()) {
+		return false;
+	}
+	const DeclaratorComponentKind kind =
+		type_spec.declarator_components().front().kind;
+	return kind == DeclaratorComponentKind::Array ||
+		kind == DeclaratorComponentKind::UnknownBoundArray;
+}
+
+// Size of the object selected by one subscript. Ordered interleaved arrays have
+// no flat projection, so walk their outermost array components explicitly.
+static std::optional<size_t> tryGetOrderedAwareTypeSize(const TypeSpecifierNode& type_spec) {
+	if (orderedSpecifierIsArrayObject(type_spec)) {
+		const DeclaratorComponent& outer = type_spec.declarator_components().front();
+		if (outer.kind == DeclaratorComponentKind::UnknownBoundArray ||
+			outer.payload == 0) {
+			return std::nullopt;
+		}
+		TypeSpecifierNode element_type = type_spec;
+		element_type.remove_outermost_ordered_declarator_component();
+		const std::optional<size_t> element_size = tryGetOrderedAwareTypeSize(element_type);
+		if (!element_size.has_value()) {
+			return std::nullopt;
+		}
+		return static_cast<size_t>(outer.payload) * *element_size;
+	}
+	return tryGetTypeSizeForSizeof(type_spec);
+}
+
+static TypeSpecifierNode orderedArrayElementType(const TypeSpecifierNode& type_spec) {
+	TypeSpecifierNode element_type = type_spec;
+	while (orderedSpecifierIsArrayObject(element_type)) {
+		element_type.remove_outermost_ordered_declarator_component();
+	}
+	return element_type;
+}
+
 static std::optional<size_t> tryGetTypeAlignmentForAlignof(const TypeSpecifierNode& type_spec) {
 	TypeSpecifierNode aligned_type = type_spec;
 	if (aligned_type.is_array()) {
@@ -279,6 +317,14 @@ std::optional<AstToIr::MultiDimArrayAccess> AstToIr::resolveMultiDimIdentifierAr
 	}
 
 	const TypeSpecifierNode& base_type = result.base_decl->type_specifier_node();
+	// Interleaved pointer/array objects have no single row-major dimension list;
+	// an array of pointers followed by pointer-to-array steps is not contiguous.
+	// Leave those chains to the stepwise built-in subscript lowering, which
+	// resolves each selected type from canonical identity.
+	if (base_type.has_ordered_declarator() &&
+		!base_type.ordered_declarator_has_legacy_projection()) {
+		return std::nullopt;
+	}
 	// The pointer-to-array rows shape comes from the declaration's published
 	// structural identity, not the flat declarator projection.
 	const CanonicalTypeId base_type_id = sema_.canonicalizeTypeForImplicitConversion(base_type);
@@ -1413,6 +1459,62 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			element_type, element_type_index, element_size_bits);
 	}
 
+	// Built-in subscripting selects one pointer/array step. For an ordered
+	// interleaved declarator the flat projection cannot describe that step, so
+	// derive the selected object from the sema-published canonical type. The
+	// selected object's size is the pointer stride; an array result decays to a
+	// pointer to its element for the enclosing expression.
+	std::optional<TypeSpecifierNode> subscript_result_type;
+	if (const std::optional<SemanticSlot> result_slot = sema_.getSlot(&arraySubscriptNode);
+		result_slot.has_value() && result_slot->has_type()) {
+		TypeSpecifierNode result_type = materializeCanonicalTypeSpecifier(
+			sema_.typeContext().get(result_slot->type_id));
+		if (result_type.has_ordered_declarator()) {
+			subscript_result_type = std::move(result_type);
+		}
+	}
+	bool subscript_result_is_array = false;
+	if (subscript_result_type.has_value()) {
+		if (const std::optional<size_t> selected_size =
+				tryGetOrderedAwareTypeSize(*subscript_result_type);
+			selected_size.has_value()) {
+			element_size_bits = static_cast<int>(*selected_size * 8);
+		}
+		subscript_result_is_array = orderedSpecifierIsArrayObject(*subscript_result_type);
+	}
+
+	TypeCategory result_type = element_type;
+	TypeIndex result_type_index = element_type_index;
+	int result_size_bits = element_size_bits;
+	int result_pointer_depth = element_pointer_depth;
+	if (subscript_result_type.has_value()) {
+		if (subscript_result_is_array) {
+			const TypeSpecifierNode element_type_spec =
+				orderedArrayElementType(*subscript_result_type);
+			if (const std::optional<size_t> element_size =
+					tryGetOrderedAwareTypeSize(element_type_spec);
+				element_size.has_value()) {
+				result_type = element_type_spec.category();
+				result_type_index = element_type_spec.type_index().withCategory(
+					element_type_spec.category());
+				result_size_bits = static_cast<int>(*element_size * 8);
+				result_pointer_depth = static_cast<int>(
+					element_type_spec.runtime_pointer_depth());
+			}
+		} else {
+			result_type = subscript_result_type->category();
+			result_type_index = subscript_result_type->type_index().withCategory(
+				subscript_result_type->category());
+			if (const std::optional<size_t> selected_size =
+					tryGetOrderedAwareTypeSize(*subscript_result_type);
+				selected_size.has_value()) {
+				result_size_bits = static_cast<int>(*selected_size * 8);
+			}
+			result_pointer_depth = static_cast<int>(
+				subscript_result_type->runtime_pointer_depth());
+		}
+	}
+
 	// Create a temporary variable for the result
 	TempVar result_var = var_counter.next();
 
@@ -1555,17 +1657,41 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 		payload.index.value = *local_id;
 	}
 
-	// When context is LValueAddress, skip the load and return address/metadata only
+	// An array result decays to a pointer to its element even in value context.
+	// The enclosing subscript needs the actual row address, so compute it here
+	// instead of loading array bytes into the result temporary.
+	if (subscript_result_is_array) {
+		ArrayElementAddressOp address_payload;
+		address_payload.result = result_var;
+		address_payload.element_type_index = result_type_index;
+		address_payload.element_size_in_bits = element_size_bits;
+		address_payload.array = base_variant;
+		address_payload.base_holds_address = array_base_holds_address;
+		address_payload.index = payload.index;
+		ir_.addInstruction(IrInstruction(
+			IrOpcode::ArrayElementAddress,
+			std::move(address_payload),
+			arraySubscriptNode.bracket_token()));
+		return makeArrayResult(
+			result_type,
+			result_size_bits,
+			result_var,
+			result_type_index,
+			PointerDepth{result_pointer_depth},
+			ValueStorage::ContainsAddress);
+	}
+
+	// When context is LValueAddress, skip the load and return address/metadata only.
 	if (context == ExpressionContext::LValueAddress) {
 		// Don't emit ArrayAccess instruction (no load)
 		// Just return the metadata with the result temp var
 		// The metadata contains all information needed for store operations
 		return makeArrayResult(
-			element_type,
-			element_size_bits,
+			result_type,
+			result_size_bits,
 			result_var,
-			element_type_index,
-			PointerDepth{element_pointer_depth},
+			result_type_index,
+			PointerDepth{result_pointer_depth},
 			ValueStorage::ContainsAddress);
 	}
 
@@ -1573,11 +1699,11 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 	ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
 	return makeArrayResult(
-		element_type,
-		element_size_bits,
+		result_type,
+		result_size_bits,
 		result_var,
-		element_type_index,
-		PointerDepth{element_pointer_depth},
+		result_type_index,
+		PointerDepth{result_pointer_depth},
 		ValueStorage::ContainsData);
 }
 

@@ -80,7 +80,14 @@ The architecture the remaining work builds on:
   pointee bound is rejected during deduction. A materialized descriptor and the ordered-declarator import
   recover a class-template specialization base from its type index through
   `importCanonicalNominalComponent`, so an array whose element is a
-  specialization also publishes structural identity. `SemanticAnalysis::pointerToArrayShape` is the single
+  specialization also publishes structural identity. Built-in subscripting on an
+  interleaved pointer/array object now resolves each selected step from the
+  sema-published canonical result type instead of flattening all array bounds
+  into one row-major shape. An array of pointers followed by a pointer-to-array
+  therefore uses the pointer stride for the array step and the row stride for the
+  pointer-to-array step;
+  `tests/test_interleaved_pointer_array_subscript_identity_ret42.cpp` pins the
+  address and element read. `SemanticAnalysis::pointerToArrayShape` is the single
   codegen resolver for a pointer whose immediate pointee is an array; the
   dereference/array-to-pointer-decay, multi-dimensional pointer-to-array
   subscript, and the identifier- and member-rooted multi-dimensional array
