@@ -2612,18 +2612,7 @@ inline std::optional<ConversionPlan> tryBuildCanonicalMemberPointerConversionPla
 	if (source_owner == target_owner) {
 		return buildCanonicalStructuralConversionPlan(table, source_member, target_member);
 	}
-	std::optional<DerivedBaseConversionKind> owner_conversion = classifyCanonicalDerivedBaseConversion(table, target_owner, source_owner);
-	if (!owner_conversion.has_value()) {
-		const TypeInfo* const source_owner_info = tryFindCanonicalOverloadClassTypeInfo(table, source_owner);
-		const TypeInfo* const target_owner_info = tryFindCanonicalOverloadClassTypeInfo(table, target_owner);
-		if (source_owner_info != nullptr) {
-			(void)tryPublishCanonicalClassBaseSchema(table, source_owner, *source_owner_info);
-		}
-		if (target_owner_info != nullptr) {
-			(void)tryPublishCanonicalClassBaseSchema(table, target_owner, *target_owner_info);
-		}
-		owner_conversion = classifyCanonicalDerivedBaseConversion(table, target_owner, source_owner);
-	}
+	const std::optional<DerivedBaseConversionKind> owner_conversion = classifyCanonicalDerivedBaseConversion(table, target_owner, source_owner);
 	if (!owner_conversion.has_value()) {
 		// The owner conversion is unavailable until its canonical relation is
 		// published. A syntax retry cannot prove that relation for these TypeIds.

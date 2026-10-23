@@ -5959,6 +5959,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						template_params.size()),
 					template_args_for_member_copy);
 				instantiated_struct.as<StructDeclarationNode>().mark_materialized();
+				CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+				const CanonicalTypeImport imported_specialization = importCanonicalClassTypeInfo(canonical_types, struct_type_info);
+				if (imported_specialization.status == CanonicalTypeImportStatus::Supported) {
+					(void)tryPublishCanonicalClassBaseSchema(canonical_types, imported_specialization.type, *struct_info);
+				}
 			}
 
 			// Register in cache for O(1) lookup on future instantiations
