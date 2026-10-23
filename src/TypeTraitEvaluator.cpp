@@ -2420,7 +2420,8 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalScalarConstructionFrom
 				}
 			}
 		}
-		const std::optional<ConversionPlan> binding = tryBuildCanonicalReferenceBindingPlan(argument, target, true);
+		const std::optional<ConversionPlan> binding =
+			tryBuildCanonicalReferenceBindingPlan(argument, target, CanonicalReferenceBindingContext::Initialization);
 		if (binding.has_value()) {
 			return binding->is_valid ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
 		}

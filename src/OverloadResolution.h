@@ -3504,8 +3504,10 @@ trySelectUserDefinedConversionOperator(const TypeSpecifierNode& source_type, con
 // Use canonical TypeIds for reference binding. Value category remains expression
 // metadata; same-shape binding preserves qualification ranking, while supported
 // standard conversions may materialize a temporary for an eligible reference.
+enum class CanonicalReferenceBindingContext : uint8_t { Argument, Initialization, ConversionFunctionTail };
+
 inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to,
-	bool allow_same_record_binding) {
+	CanonicalReferenceBindingContext context) {
 	const bool to_has_lvalue_reference = to.is_lvalue_reference() || orderedDeclaratorIsLvalueReference(to);
 	const bool to_has_rvalue_reference = to.is_rvalue_reference() || orderedDeclaratorIsRvalueReference(to);
 	if (!to_has_lvalue_reference && !to_has_rvalue_reference) {
@@ -3554,7 +3556,7 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(const
 		return tryBuildCanonicalDirectReferenceBindingPlan(table, source_import.type, target_import.type);
 	}
 	const bool same_record_kind = table.node(source_type).kind == CanonicalTypeKind::Record && table.node(target_type).kind == CanonicalTypeKind::Record;
-	if (!allow_same_record_binding && same_record_kind && source_type == target_type) {
+	if (context == CanonicalReferenceBindingContext::Argument && same_record_kind && source_type == target_type) {
 		// Keep same-record reference ranking on the established path; the
 		// canonical planner is needed here only for a distinct conversion tail.
 		return std::nullopt;
@@ -3717,45 +3719,31 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(const
 			unqualified_target_node.kind == CanonicalTypeKind::Record ||
 			unqualified_target_node.kind == CanonicalTypeKind::TemplateSpecialization;
 		if (source_is_nominal_class && target_is_nominal_class) {
-			std::optional<DerivedBaseConversionKind> base_conversion;
-			if (unqualified_source_node.kind == CanonicalTypeKind::Record &&
-				unqualified_target_node.kind == CanonicalTypeKind::Record) {
-				const EntityId source_entity = table.recordEntity(source_type);
-				const EntityId target_entity = table.recordEntity(target_type);
-				// Resolve the relationship from canonical base edges; do not round-trip
-				// nominal TypeIds through the compatibility TypeIndex registry.
-				base_conversion = classifyCanonicalDerivedBaseConversion(
-					table, source_entity, target_entity);
-			} else {
-				// Template specializations publish their base schema on the class
-				// TypeId. The entity schema used for ordinary records is empty here.
-				tryPublishCanonicalOverloadBaseSchema(table, source_type, from);
-				tryPublishCanonicalOverloadBaseSchema(table, target_type, to);
-				base_conversion = classifyCanonicalDerivedBaseConversion(
-					table, source_type, target_type);
+			if (!table.hasClassBaseSchema(source_type) || !table.hasClassBaseSchema(target_type)) {
+				return std::nullopt;
 			}
+			const auto base_conversion = classifyCanonicalDerivedBaseConversion(table, source_type, target_type);
 			// Unrelated classes are not a reference-binding result. Returning
 			// no-match here would hide a conversion operator that materializes
 			// a temporary for a const lvalue reference or an rvalue reference.
-			if (!base_conversion.has_value() ||
-				*base_conversion == DerivedBaseConversionKind::NotRelated) {
+			if (!base_conversion.has_value()) {
 				return std::nullopt;
 			}
-			if (target_is_rvalue_reference && source_is_lvalue &&
-				!source_is_rvalue) {
+			if (*base_conversion == DerivedBaseConversionKind::NotRelated) {
+				return context == CanonicalReferenceBindingContext::ConversionFunctionTail ?
+					std::optional<ConversionPlan>(ConversionPlan::no_match()) : std::nullopt;
+			}
+			if (target_is_rvalue_reference && source_is_lvalue && !source_is_rvalue) {
 				return ConversionPlan::no_match();
 			}
-			if ((static_cast<uint8_t>(source_referent_cv) &
-				~static_cast<uint8_t>(target_referent_cv)) != 0) {
+			if ((static_cast<uint8_t>(source_referent_cv) & ~static_cast<uint8_t>(target_referent_cv)) != 0) {
 				return ConversionPlan::no_match();
 			}
-			if (*base_conversion == DerivedBaseConversionKind::UniquePublicNonVirtual ||
-				*base_conversion == DerivedBaseConversionKind::PublicVirtual) {
-				return ConversionPlan{ConversionRank::Conversion,
-					StandardConversionKind::DerivedToBase, true};
+			if (*base_conversion == DerivedBaseConversionKind::UniquePublicNonVirtual || *base_conversion == DerivedBaseConversionKind::PublicVirtual ||
+				(context == CanonicalReferenceBindingContext::ConversionFunctionTail && *base_conversion == DerivedBaseConversionKind::Inaccessible)) {
+				return ConversionPlan{ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
 			}
-			if (*base_conversion == DerivedBaseConversionKind::Inaccessible ||
-				*base_conversion == DerivedBaseConversionKind::Ambiguous) {
+			if (*base_conversion == DerivedBaseConversionKind::Inaccessible || *base_conversion == DerivedBaseConversionKind::Ambiguous) {
 				return ConversionPlan::no_match();
 			}
 			return std::nullopt;
@@ -3904,7 +3892,7 @@ inline std::optional<ConversionPlan> tryBuildCanonicalConversionFunctionTailPlan
 	const TypeSpecifierNode& target_type) {
 	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
 	if (target_type.is_reference() || target_type.is_rvalue_reference() || orderedDeclaratorIsReference(target_type)) {
-		return tryBuildCanonicalReferenceBindingPlan(return_type, target_type, true);
+		return tryBuildCanonicalReferenceBindingPlan(return_type, target_type, CanonicalReferenceBindingContext::ConversionFunctionTail);
 	}
 	// Resolve aliases before a compatibility projection can erase callable facts.
 	{
@@ -3940,9 +3928,13 @@ inline std::optional<ConversionPlan> tryBuildCanonicalConversionFunctionTailPlan
 			const bool source_is_nominal = source_kind == CanonicalTypeKind::Record || source_kind == CanonicalTypeKind::TemplateSpecialization;
 			const bool target_is_nominal = target_kind == CanonicalTypeKind::Record || target_kind == CanonicalTypeKind::TemplateSpecialization;
 			if (source_is_nominal && target_is_nominal && source != target) {
-				tryPublishCanonicalOverloadBaseSchema(table, source, canonical_return_type);
-				tryPublishCanonicalOverloadBaseSchema(table, target, canonical_target_type);
+				if (!table.hasClassBaseSchema(source) || !table.hasClassBaseSchema(target)) {
+					return std::nullopt;
+				}
 				const std::optional<DerivedBaseConversionKind> base_conversion = classifyCanonicalDerivedBaseConversion(table, source, target);
+				if (!base_conversion.has_value()) {
+					return std::nullopt;
+				}
 				if (base_conversion == DerivedBaseConversionKind::UniquePublicNonVirtual || base_conversion == DerivedBaseConversionKind::PublicVirtual ||
 					base_conversion == DerivedBaseConversionKind::Inaccessible) {
 					// [class.access.general] applies accessibility after overload
@@ -4128,7 +4120,7 @@ inline ConversionPlan buildOrderedDeclaratorConversionPlan(
 //   • Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
 inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to, const ASTNode* argument_node) {
 	if (const std::optional<ConversionPlan> reference_plan =
-			tryBuildCanonicalReferenceBindingPlan(from, to, false);
+			tryBuildCanonicalReferenceBindingPlan(from, to, CanonicalReferenceBindingContext::Argument);
 		reference_plan.has_value()) {
 		return *reference_plan;
 	}

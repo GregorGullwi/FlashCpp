@@ -1,5 +1,28 @@
 # Known Issues
 
+## Conversion-function value base tails need base-object materialization
+
+A conversion function returning `Derived` can rank a trailing conversion to a
+by-value `Base` parameter, but lowering does not materialize the selected base
+copy/move construction. For example, with `struct Base { long long value; };`,
+`struct Derived : Base { short tag; };` and an operator returning a `Derived`
+whose `value` is 42, passing that conversion result to `long long read(Base b)`
+can lose the value. Reference targets preserve it. The conversion-operator call
+helper currently routes the tail through `generateTypeConversion`, which lacks
+class-value slicing. Boundary 9 must carry the selected base constructor into
+lowering and reuse the base-object materialization path; a raw byte copy would
+incorrectly bypass nontrivial copy/move semantics.
+
+## Reference binding can bypass conversion-function access checks
+
+Reference-variable initialization and call arguments can bypass the sema-selected
+conversion path when `source` offers `operator Derived&()`. For example,
+`const Base& reference = source;` or `take(source)` with `take(const Base&)` can
+accept a private `Derived`-to-`Base` tail without its access diagnostic. The
+standard-tail planner retains inaccessible candidates for access checking after
+selection; these reference-binding consumers still need one authoritative
+conversion annotation before lowering (boundary 4).
+
 ## Expression parsing can overflow a 1 MB native stack before callable sema
 
 The 16-level `test_deep_callable_chain_ret0.cpp` passes with the shipping Windows

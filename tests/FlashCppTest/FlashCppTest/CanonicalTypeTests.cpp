@@ -343,6 +343,135 @@ TEST_CASE("Canonical record constructor schema requires a class type") {
 		std::span<const CanonicalRecordConstructorSpec>{}));
 }
 
+TEST_CASE("Conversion function base tails consume published TypeId graphs") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	CompileContext compile_context;
+	compile_context.setInputFile("canonical_conversion_tail_graph.cpp");
+	Lexer lexer("struct Base {}; struct Derived : Base {};");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	{
+		CanonicalTypeTransaction publication(table);
+		REQUIRE(!parser.parse().is_error());
+	}
+	auto class_spec = [](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		TypeSpecifierNode spec(TypeCategory::Struct, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+		spec.set_type_index(info->registeredTypeIndex());
+		tryBindPublishedTypeEntity(spec);
+		REQUIRE(spec.has_type_entity());
+		return spec;
+	};
+	const TypeSpecifierNode base_spec = class_spec("Base");
+	const TypeSpecifierNode derived_spec = class_spec("Derived");
+	const TypeId base = importCanonicalType(table, base_spec).type;
+	const TypeId derived = importCanonicalType(table, derived_spec).type;
+	TypeSpecifierNode reference_target = base_spec;
+	reference_target.set_cv_qualifier(CVQualifier::Const);
+	reference_target.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	auto check_plan = [](const std::optional<ConversionPlan>& plan, bool valid) {
+		REQUIRE(plan.has_value());
+		CHECK(plan->is_valid == valid);
+		if (valid) {
+			CHECK(plan->kind == StandardConversionKind::DerivedToBase);
+		}
+	};
+	auto publish_entity_graph = [&]() {
+		const EntityId base_entity = table.recordEntity(base);
+		const EntityId derived_entity = table.recordEntity(derived);
+		table.publishRecordLayout(CanonicalRecordLayout{base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None, 0});
+		table.publishRecordFieldSchema(base_entity, {}, {});
+		table.publishRecordLayout(CanonicalRecordLayout{derived_entity, 1, 1, 1, 1, 0, 1, CanonicalRecordLayoutFlags::None, 0});
+		const std::array<CanonicalRecordBase, 1> bases{{{base_entity, 0, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+		table.publishRecordFieldSchema(derived_entity, {}, bases);
+	};
+	SUBCASE("Missing class schemas defer despite legacy declarations") {
+		CHECK_FALSE(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, base_spec).has_value());
+		CHECK_FALSE(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, reference_target).has_value());
+		CHECK_FALSE(table.hasClassBaseSchema(derived));
+	}
+	SUBCASE("Entity schemas cannot substitute for missing class schemas") {
+		publish_entity_graph();
+		CHECK_FALSE(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, base_spec).has_value());
+		CHECK_FALSE(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, reference_target).has_value());
+	}
+	SUBCASE("A published unrelated graph overrides a contradictory entity graph") {
+		publish_entity_graph();
+		table.publishClassBaseSchema(base, {});
+		table.publishClassBaseSchema(derived, {});
+		check_plan(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, base_spec), false);
+		check_plan(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, reference_target), false);
+		CHECK_FALSE(tryBuildCanonicalReferenceBindingPlan(derived_spec, reference_target, CanonicalReferenceBindingContext::Initialization).has_value());
+	}
+	SUBCASE("Published public and virtual graphs support values and references") {
+		CanonicalRecordBaseFlags flags = CanonicalRecordBaseFlags::None;
+		SUBCASE("Nonvirtual") {}
+		SUBCASE("Virtual") { flags = CanonicalRecordBaseFlags::Virtual; }
+		table.publishClassBaseSchema(base, {});
+		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, flags, 0, 0}}};
+		table.publishClassBaseSchema(derived, bases);
+		check_plan(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, base_spec), true);
+		check_plan(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, reference_target), true);
+		reference_target.set_reference_qualifier(ReferenceQualifier::RValueReference);
+		check_plan(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, reference_target), true);
+		TypeSpecifierNode lvalue_source = derived_spec;
+		lvalue_source.set_reference_qualifier(ReferenceQualifier::LValueReference);
+		check_plan(tryBuildCanonicalConversionFunctionTailPlan(lvalue_source, reference_target), false);
+		reference_target.set_cv_qualifier(CVQualifier::None);
+		reference_target.set_reference_qualifier(ReferenceQualifier::LValueReference);
+		lvalue_source.set_cv_qualifier(CVQualifier::Const);
+		check_plan(tryBuildCanonicalConversionFunctionTailPlan(lvalue_source, reference_target), false);
+	}
+	SUBCASE("Inaccessible tails rank before access checks") {
+		table.publishClassBaseSchema(base, {});
+		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Private, CanonicalRecordBaseFlags::None, 0, 0}}};
+		table.publishClassBaseSchema(derived, bases);
+		check_plan(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, base_spec), true);
+		check_plan(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, reference_target), true);
+		check_plan(tryBuildCanonicalReferenceBindingPlan(derived_spec, reference_target, CanonicalReferenceBindingContext::Initialization), false);
+	}
+	SUBCASE("A missing intermediate schema defers") {
+		table.publishClassBaseSchema(base, {});
+		const TypeId middle = table.record(EntityId{98401});
+		const std::array<CanonicalClassBase, 1> bases{{{middle, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+		table.publishClassBaseSchema(derived, bases);
+		CHECK_FALSE(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, base_spec).has_value());
+		CHECK_FALSE(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, reference_target).has_value());
+	}
+	SUBCASE("Published ambiguous graphs reject values and references") {
+		table.publishClassBaseSchema(base, {});
+		const TypeId left = table.record(EntityId{98402});
+		const TypeId right = table.record(EntityId{98403});
+		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+		table.publishClassBaseSchema(left, bases);
+		table.publishClassBaseSchema(right, bases);
+		const std::array<CanonicalClassBase, 2> paths{{
+			{left, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0},
+			{right, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+		table.publishClassBaseSchema(derived, paths);
+		check_plan(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, base_spec), false);
+		check_plan(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, reference_target), false);
+	}
+	SUBCASE("Deep class graphs use the existing iterative classifier") {
+		table.publishClassBaseSchema(base, {});
+		TypeId previous = base;
+		for (uint32_t depth = 0; depth < 4096; ++depth) {
+			const TypeId next = table.record(EntityId{110000 + depth});
+			const std::array<CanonicalClassBase, 1> bases{{{previous, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+			table.publishClassBaseSchema(next, bases);
+			previous = next;
+		}
+		TypeSpecifierNode deep_source = derived_spec;
+		deep_source.set_type_entity(table.recordEntity(previous));
+		check_plan(tryBuildCanonicalConversionFunctionTailPlan(deep_source, base_spec), true);
+		check_plan(tryBuildCanonicalConversionFunctionTailPlan(deep_source, reference_target), true);
+	}
+}
+
 TEST_CASE("Conversion function lookup consumes the published inheritance graph") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
@@ -1125,7 +1254,7 @@ TEST_CASE("Ordered references bind to ordered pointer objects") {
 	CHECK(lvalue_plan.is_valid);
 	CHECK(lvalue_plan.rank == ConversionRank::ExactMatch);
 	const std::optional<ConversionPlan> canonical_lvalue_plan =
-		tryBuildCanonicalReferenceBindingPlan(lvalue_argument, lvalue_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(lvalue_argument, lvalue_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(canonical_lvalue_plan.has_value());
 	CHECK(canonical_lvalue_plan->is_valid);
 	CHECK(canonical_lvalue_plan->rank == ConversionRank::ExactMatch);
@@ -1133,7 +1262,7 @@ TEST_CASE("Ordered references bind to ordered pointer objects") {
 	TypeSpecifierNode prvalue = pointer_object;
 	CHECK_FALSE(buildConversionPlan(prvalue, lvalue_reference).is_valid);
 	const std::optional<ConversionPlan> canonical_prvalue_plan =
-		tryBuildCanonicalReferenceBindingPlan(prvalue, lvalue_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(prvalue, lvalue_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(canonical_prvalue_plan.has_value());
 	CHECK_FALSE(canonical_prvalue_plan->is_valid);
 
@@ -1150,8 +1279,7 @@ TEST_CASE("Ordered references bind to ordered pointer objects") {
 	CHECK(const_plan.is_valid);
 	CHECK(const_plan.rank == ConversionRank::ExactMatch);
 	const std::optional<ConversionPlan> canonical_const_plan =
-		tryBuildCanonicalReferenceBindingPlan(
-			const_lvalue_argument, const_lvalue_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(const_lvalue_argument, const_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(canonical_const_plan.has_value());
 	CHECK(canonical_const_plan->is_valid);
 	CHECK(canonical_const_plan->rank == ConversionRank::ExactMatch);
@@ -1175,7 +1303,7 @@ TEST_CASE("Ordered references bind to ordered pointer objects") {
 	// cv-qualification is the identity conversion, so this stays ExactMatch.
 	CHECK(qualified_plan.rank == ConversionRank::ExactMatch);
 	const std::optional<ConversionPlan> canonical_qualified_plan =
-		tryBuildCanonicalReferenceBindingPlan(lvalue_argument, qualified_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(lvalue_argument, qualified_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(canonical_qualified_plan.has_value());
 	CHECK(canonical_qualified_plan->is_valid);
 	CHECK(canonical_qualified_plan->rank == ConversionRank::ExactMatch);
@@ -1189,13 +1317,12 @@ TEST_CASE("Ordered references bind to ordered pointer objects") {
 	CHECK(rvalue_plan.rank == ConversionRank::ExactMatch);
 	CHECK_FALSE(buildConversionPlan(lvalue_argument, rvalue_reference).is_valid);
 	const std::optional<ConversionPlan> canonical_rvalue_plan =
-		tryBuildCanonicalReferenceBindingPlan(prvalue, rvalue_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(prvalue, rvalue_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(canonical_rvalue_plan.has_value());
 	CHECK(canonical_rvalue_plan->is_valid);
 	CHECK(canonical_rvalue_plan->rank == ConversionRank::ExactMatch);
 	const std::optional<ConversionPlan> canonical_lvalue_to_rvalue_plan =
-		tryBuildCanonicalReferenceBindingPlan(
-			lvalue_argument, rvalue_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(lvalue_argument, rvalue_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(canonical_lvalue_to_rvalue_plan.has_value());
 	CHECK_FALSE(canonical_lvalue_to_rvalue_plan->is_valid);
 
@@ -1220,7 +1347,7 @@ TEST_CASE("Canonical TypeIds plan prvalue materialization for const references")
 		ReferenceQualifier::LValueReference);
 
 	const std::optional<ConversionPlan> canonical_plan =
-		tryBuildCanonicalReferenceBindingPlan(prvalue, const_lvalue_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(prvalue, const_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(canonical_plan.has_value());
 	CHECK(canonical_plan->is_valid);
 	CHECK(canonical_plan->rank == ConversionRank::ExactMatch);
@@ -1230,7 +1357,7 @@ TEST_CASE("Canonical TypeIds plan prvalue materialization for const references")
 	nonconst_lvalue_reference.set_reference_qualifier(
 		ReferenceQualifier::LValueReference);
 	const std::optional<ConversionPlan> rejected_plan =
-		tryBuildCanonicalReferenceBindingPlan(prvalue, nonconst_lvalue_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(prvalue, nonconst_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(rejected_plan.has_value());
 	CHECK_FALSE(rejected_plan->is_valid);
 
@@ -1241,7 +1368,7 @@ TEST_CASE("Canonical TypeIds plan prvalue materialization for const references")
 	const_double_lvalue_reference.set_reference_qualifier(
 		ReferenceQualifier::LValueReference);
 	const std::optional<ConversionPlan> converting_prvalue_plan =
-		tryBuildCanonicalReferenceBindingPlan(prvalue, const_double_lvalue_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(prvalue, const_double_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(converting_prvalue_plan.has_value());
 	CHECK(converting_prvalue_plan->is_valid);
 	CHECK(converting_prvalue_plan->rank == ConversionRank::Conversion);
@@ -1251,15 +1378,14 @@ TEST_CASE("Canonical TypeIds plan prvalue materialization for const references")
 	nonconst_double_lvalue_reference.set_reference_qualifier(
 		ReferenceQualifier::LValueReference);
 	const std::optional<ConversionPlan> nonconst_conversion_plan =
-		tryBuildCanonicalReferenceBindingPlan(
-			prvalue, nonconst_double_lvalue_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(prvalue, nonconst_double_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(nonconst_conversion_plan.has_value());
 	CHECK_FALSE(nonconst_conversion_plan->is_valid);
 
 	TypeSpecifierNode lvalue = prvalue;
 	lvalue.set_reference_qualifier(ReferenceQualifier::LValueReference);
 	const std::optional<ConversionPlan> converting_lvalue_plan =
-		tryBuildCanonicalReferenceBindingPlan(lvalue, const_double_lvalue_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(lvalue, const_double_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(converting_lvalue_plan.has_value());
 	CHECK(converting_lvalue_plan->is_valid);
 	CHECK(converting_lvalue_plan->rank == ConversionRank::Conversion);
@@ -1268,12 +1394,12 @@ TEST_CASE("Canonical TypeIds plan prvalue materialization for const references")
 	double_rvalue_reference.set_reference_qualifier(
 		ReferenceQualifier::RValueReference);
 	const std::optional<ConversionPlan> converting_rvalue_reference_plan =
-		tryBuildCanonicalReferenceBindingPlan(prvalue, double_rvalue_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(prvalue, double_rvalue_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(converting_rvalue_reference_plan.has_value());
 	CHECK(converting_rvalue_reference_plan->is_valid);
 	CHECK(converting_rvalue_reference_plan->rank == ConversionRank::Conversion);
 	const std::optional<ConversionPlan> lvalue_to_rvalue_reference_plan =
-		tryBuildCanonicalReferenceBindingPlan(lvalue, double_rvalue_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(lvalue, double_rvalue_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(lvalue_to_rvalue_reference_plan.has_value());
 	CHECK(lvalue_to_rvalue_reference_plan->is_valid);
 	CHECK(lvalue_to_rvalue_reference_plan->rank == ConversionRank::Conversion);
@@ -1293,7 +1419,7 @@ TEST_CASE("Canonical TypeIds bind pointer-to-bool conversion temporaries") {
 	const_bool_reference.set_reference_qualifier(
 		ReferenceQualifier::LValueReference);
 	const std::optional<ConversionPlan> const_reference_plan =
-		tryBuildCanonicalReferenceBindingPlan(int_pointer, const_bool_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(int_pointer, const_bool_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(const_reference_plan.has_value());
 	CHECK(const_reference_plan->is_valid);
 	CHECK(const_reference_plan->rank == ConversionRank::Conversion);
@@ -1305,7 +1431,7 @@ TEST_CASE("Canonical TypeIds bind pointer-to-bool conversion temporaries") {
 	bool_rvalue_reference.set_reference_qualifier(
 		ReferenceQualifier::RValueReference);
 	const std::optional<ConversionPlan> rvalue_reference_plan =
-		tryBuildCanonicalReferenceBindingPlan(int_pointer, bool_rvalue_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(int_pointer, bool_rvalue_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(rvalue_reference_plan.has_value());
 	CHECK(rvalue_reference_plan->is_valid);
 	CHECK(rvalue_reference_plan->rank == ConversionRank::Conversion);
@@ -1317,7 +1443,7 @@ TEST_CASE("Canonical TypeIds bind pointer-to-bool conversion temporaries") {
 	bool_lvalue_reference.set_reference_qualifier(
 		ReferenceQualifier::LValueReference);
 	const std::optional<ConversionPlan> mutable_reference_plan =
-		tryBuildCanonicalReferenceBindingPlan(int_pointer, bool_lvalue_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(int_pointer, bool_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(mutable_reference_plan.has_value());
 	CHECK_FALSE(mutable_reference_plan->is_valid);
 }
@@ -1334,7 +1460,7 @@ TEST_CASE("Canonical TypeIds bind array references without decay") {
 		DeclaratorComponent::lvalueReference());
 
 	const std::optional<ConversionPlan> exact_array_plan =
-		tryBuildCanonicalReferenceBindingPlan(array_lvalue, array_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(array_lvalue, array_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(exact_array_plan.has_value());
 	CHECK(exact_array_plan->is_valid);
 	CHECK(exact_array_plan->rank == ConversionRank::ExactMatch);
@@ -1346,7 +1472,7 @@ TEST_CASE("Canonical TypeIds bind array references without decay") {
 	const_array_reference.prepend_ordered_declarator_component(
 		DeclaratorComponent::lvalueReference());
 	const std::optional<ConversionPlan> qualified_array_plan =
-		tryBuildCanonicalReferenceBindingPlan(array_lvalue, const_array_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(array_lvalue, const_array_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(qualified_array_plan.has_value());
 	CHECK(qualified_array_plan->is_valid);
 	// The referenced array differs only by top-level element cv-qualification,
@@ -1355,7 +1481,7 @@ TEST_CASE("Canonical TypeIds bind array references without decay") {
 	CHECK(qualified_array_plan->rank == ConversionRank::ExactMatch);
 	CHECK(qualified_array_plan->kind == StandardConversionKind::None);
 	const std::optional<ConversionPlan> const_array_xvalue_plan =
-		tryBuildCanonicalReferenceBindingPlan(array_type, const_array_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(array_type, const_array_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(const_array_xvalue_plan.has_value());
 	CHECK(const_array_xvalue_plan->is_valid);
 	CHECK(const_array_xvalue_plan->rank == ConversionRank::ExactMatch);
@@ -1374,8 +1500,7 @@ TEST_CASE("Canonical TypeIds bind array references without decay") {
 	const_pointee_array_type.prepend_ordered_declarator_component(
 		DeclaratorComponent::lvalueReference());
 	const std::optional<ConversionPlan> const_pointee_array_plan =
-		tryBuildCanonicalReferenceBindingPlan(
-			pointer_array_lvalue, const_pointee_array_type, false);
+		tryBuildCanonicalReferenceBindingPlan(pointer_array_lvalue, const_pointee_array_type, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(const_pointee_array_plan.has_value());
 	CHECK(const_pointee_array_plan->is_valid);
 	CHECK(const_pointee_array_plan->rank ==
@@ -1400,7 +1525,7 @@ TEST_CASE("Canonical TypeIds bind array references without decay") {
 	const std::optional<ConversionPlan> const_nested_pointee_array_plan =
 		tryBuildCanonicalReferenceBindingPlan(
 			pointer_to_pointer_array_lvalue,
-			const_nested_pointee_array_type, false);
+			const_nested_pointee_array_type, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(const_nested_pointee_array_plan.has_value());
 	CHECK_FALSE(const_nested_pointee_array_plan->is_valid);
 
@@ -1409,7 +1534,7 @@ TEST_CASE("Canonical TypeIds bind array references without decay") {
 	different_extent.prepend_ordered_declarator_component(
 		DeclaratorComponent::lvalueReference());
 	const std::optional<ConversionPlan> extent_mismatch_plan =
-		tryBuildCanonicalReferenceBindingPlan(array_lvalue, different_extent, false);
+		tryBuildCanonicalReferenceBindingPlan(array_lvalue, different_extent, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(extent_mismatch_plan.has_value());
 	CHECK_FALSE(extent_mismatch_plan->is_valid);
 }
@@ -1447,8 +1572,7 @@ TEST_CASE("Canonical TypeIds bind function decay temporaries to pointer referenc
 	const_pointer_lvalue_reference.prepend_ordered_declarator_component(
 		DeclaratorComponent::lvalueReference());
 	const std::optional<ConversionPlan> const_lvalue_plan =
-		tryBuildCanonicalReferenceBindingPlan(
-			function_lvalue, const_pointer_lvalue_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(function_lvalue, const_pointer_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(const_lvalue_plan.has_value());
 	CHECK(const_lvalue_plan->is_valid);
 	CHECK(const_lvalue_plan->kind == StandardConversionKind::FunctionToPointer);
@@ -1462,8 +1586,7 @@ TEST_CASE("Canonical TypeIds bind function decay temporaries to pointer referenc
 	nonconst_pointer_lvalue_reference.prepend_ordered_declarator_component(
 		DeclaratorComponent::lvalueReference());
 	const std::optional<ConversionPlan> nonconst_lvalue_plan =
-		tryBuildCanonicalReferenceBindingPlan(
-			function_lvalue, nonconst_pointer_lvalue_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(function_lvalue, nonconst_pointer_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(nonconst_lvalue_plan.has_value());
 	CHECK_FALSE(nonconst_lvalue_plan->is_valid);
 
@@ -1475,8 +1598,7 @@ TEST_CASE("Canonical TypeIds bind function decay temporaries to pointer referenc
 	});
 	pointer_rvalue_reference.set_function_signature(signature);
 	const std::optional<ConversionPlan> rvalue_plan =
-		tryBuildCanonicalReferenceBindingPlan(
-			function_lvalue, pointer_rvalue_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(function_lvalue, pointer_rvalue_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(rvalue_plan.has_value());
 	CHECK(rvalue_plan->is_valid);
 	CHECK(rvalue_plan->kind == StandardConversionKind::FunctionToPointer);
@@ -1485,8 +1607,7 @@ TEST_CASE("Canonical TypeIds bind function decay temporaries to pointer referenc
 		const_pointer_lvalue_reference;
 	mismatched_pointer_reference.set_function_signature(mismatched_signature);
 	const std::optional<ConversionPlan> mismatched_signature_plan =
-		tryBuildCanonicalReferenceBindingPlan(
-			function_lvalue, mismatched_pointer_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(function_lvalue, mismatched_pointer_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(mismatched_signature_plan.has_value());
 	CHECK_FALSE(mismatched_signature_plan->is_valid);
 }
@@ -1526,8 +1647,7 @@ TEST_CASE("Canonical TypeIds bind pointer conversion temporaries to references")
 	const_base_pointer.set_reference_qualifier(
 		ReferenceQualifier::LValueReference);
 	const std::optional<ConversionPlan> derived_to_base_plan =
-		tryBuildCanonicalReferenceBindingPlan(
-			derived_pointer_lvalue, const_base_pointer, false);
+		tryBuildCanonicalReferenceBindingPlan(derived_pointer_lvalue, const_base_pointer, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(derived_to_base_plan.has_value());
 	CHECK(derived_to_base_plan->is_valid);
 	CHECK(derived_to_base_plan->rank == ConversionRank::Conversion);
@@ -1539,8 +1659,7 @@ TEST_CASE("Canonical TypeIds bind pointer conversion temporaries to references")
 	const_void_pointer.set_reference_qualifier(
 		ReferenceQualifier::LValueReference);
 	const std::optional<ConversionPlan> object_to_void_plan =
-		tryBuildCanonicalReferenceBindingPlan(
-			derived_pointer_lvalue, const_void_pointer, false);
+		tryBuildCanonicalReferenceBindingPlan(derived_pointer_lvalue, const_void_pointer, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(object_to_void_plan.has_value());
 	CHECK(object_to_void_plan->is_valid);
 	CHECK(object_to_void_plan->rank == ConversionRank::Conversion);
@@ -1553,8 +1672,7 @@ TEST_CASE("Canonical TypeIds bind pointer conversion temporaries to references")
 	mutable_base_pointer.set_reference_qualifier(
 		ReferenceQualifier::LValueReference);
 	const std::optional<ConversionPlan> nonconst_lvalue_plan =
-		tryBuildCanonicalReferenceBindingPlan(
-			derived_pointer_lvalue, mutable_base_pointer, false);
+		tryBuildCanonicalReferenceBindingPlan(derived_pointer_lvalue, mutable_base_pointer, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(nonconst_lvalue_plan.has_value());
 	CHECK_FALSE(nonconst_lvalue_plan->is_valid);
 
@@ -1562,8 +1680,7 @@ TEST_CASE("Canonical TypeIds bind pointer conversion temporaries to references")
 	base_pointer_rvalue_reference.set_reference_qualifier(
 		ReferenceQualifier::RValueReference);
 	const std::optional<ConversionPlan> rvalue_reference_plan =
-		tryBuildCanonicalReferenceBindingPlan(
-			derived_pointer_lvalue, base_pointer_rvalue_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(derived_pointer_lvalue, base_pointer_rvalue_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(rvalue_reference_plan.has_value());
 	CHECK(rvalue_reference_plan->is_valid);
 	CHECK(rvalue_reference_plan->rank == ConversionRank::Conversion);
@@ -1585,8 +1702,7 @@ TEST_CASE("Canonical TypeIds reject pointee qualification through mutable refere
 	const_pointee_reference.set_reference_qualifier(
 		ReferenceQualifier::LValueReference);
 	const std::optional<ConversionPlan> mutable_reference_plan =
-		tryBuildCanonicalReferenceBindingPlan(
-			integer_pointer_lvalue, const_pointee_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(integer_pointer_lvalue, const_pointee_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(mutable_reference_plan.has_value());
 	CHECK_FALSE(mutable_reference_plan->is_valid);
 
@@ -1596,8 +1712,7 @@ TEST_CASE("Canonical TypeIds reject pointee qualification through mutable refere
 	const_pointer_reference.set_reference_qualifier(
 		ReferenceQualifier::LValueReference);
 	const std::optional<ConversionPlan> const_reference_plan =
-		tryBuildCanonicalReferenceBindingPlan(
-			integer_pointer_lvalue, const_pointer_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(integer_pointer_lvalue, const_pointer_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(const_reference_plan.has_value());
 	CHECK(const_reference_plan->is_valid);
 	CHECK(const_reference_plan->kind ==
@@ -1618,7 +1733,7 @@ TEST_CASE("Canonical reference binding preserves cv on non-reference pointer sou
 	});
 	mutable_pointer_reference.prepend_ordered_declarator_component(DeclaratorComponent::lvalueReference());
 	const std::optional<ConversionPlan> mutable_plan =
-		tryBuildCanonicalReferenceBindingPlan(integer_pointer, mutable_pointer_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(integer_pointer, mutable_pointer_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(mutable_plan.has_value());
 	CHECK_FALSE(mutable_plan->is_valid);
 
@@ -1628,7 +1743,7 @@ TEST_CASE("Canonical reference binding preserves cv on non-reference pointer sou
 	});
 	const_pointer_reference.prepend_ordered_declarator_component(DeclaratorComponent::lvalueReference());
 	const std::optional<ConversionPlan> const_plan =
-		tryBuildCanonicalReferenceBindingPlan(integer_pointer, const_pointer_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(integer_pointer, const_pointer_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(const_plan.has_value());
 	CHECK(const_plan->is_valid);
 	CHECK(const_plan->rank == ConversionRank::ExactMatch);
@@ -1897,8 +2012,7 @@ TEST_CASE("Canonical TypeIds bind function pointer conversions to references") {
 	const_throwing_reference.set_reference_qualifier(
 		ReferenceQualifier::LValueReference);
 	const std::optional<ConversionPlan> relaxation_plan =
-		tryBuildCanonicalReferenceBindingPlan(
-			noexcept_pointer, const_throwing_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(noexcept_pointer, const_throwing_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(relaxation_plan.has_value());
 	CHECK(relaxation_plan->is_valid);
 	CHECK(relaxation_plan->kind ==
@@ -1909,8 +2023,7 @@ TEST_CASE("Canonical TypeIds bind function pointer conversions to references") {
 	nonconst_throwing_reference.set_reference_qualifier(
 		ReferenceQualifier::LValueReference);
 	const std::optional<ConversionPlan> nonconst_reference_plan =
-		tryBuildCanonicalReferenceBindingPlan(
-			noexcept_pointer, nonconst_throwing_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(noexcept_pointer, nonconst_throwing_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(nonconst_reference_plan.has_value());
 	CHECK_FALSE(nonconst_reference_plan->is_valid);
 
@@ -1920,8 +2033,7 @@ TEST_CASE("Canonical TypeIds bind function pointer conversions to references") {
 	noexcept_reference.set_reference_qualifier(
 		ReferenceQualifier::LValueReference);
 	const std::optional<ConversionPlan> reverse_plan =
-		tryBuildCanonicalReferenceBindingPlan(
-			make_function_pointer(throwing_signature), noexcept_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(make_function_pointer(throwing_signature), noexcept_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(reverse_plan.has_value());
 	CHECK_FALSE(reverse_plan->is_valid);
 
@@ -1930,8 +2042,7 @@ TEST_CASE("Canonical TypeIds bind function pointer conversions to references") {
 	throwing_rvalue_reference.set_reference_qualifier(
 		ReferenceQualifier::RValueReference);
 	const std::optional<ConversionPlan> rvalue_reference_plan =
-		tryBuildCanonicalReferenceBindingPlan(
-			noexcept_pointer, throwing_rvalue_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(noexcept_pointer, throwing_rvalue_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(rvalue_reference_plan.has_value());
 	CHECK(rvalue_reference_plan->is_valid);
 	CHECK(rvalue_reference_plan->kind ==
@@ -2866,8 +2977,7 @@ TEST_CASE("Canonical TypeIds bind member-pointer conversion temporaries to refer
 	const_derived_member_reference.set_reference_qualifier(
 		ReferenceQualifier::LValueReference);
 	const std::optional<ConversionPlan> member_object_plan =
-		tryBuildCanonicalReferenceBindingPlan(
-			base_member_pointer, const_derived_member_reference, false);
+		tryBuildCanonicalReferenceBindingPlan(base_member_pointer, const_derived_member_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(member_object_plan.has_value());
 	CHECK(member_object_plan->is_valid);
 	CHECK(member_object_plan->rank == ConversionRank::Conversion);
@@ -2898,7 +3008,7 @@ TEST_CASE("Canonical TypeIds bind member-pointer conversion temporaries to refer
 	const std::optional<ConversionPlan> member_function_plan =
 		tryBuildCanonicalReferenceBindingPlan(
 			base_member_function_pointer,
-			const_derived_member_function_reference, false);
+			const_derived_member_function_reference, CanonicalReferenceBindingContext::Argument);
 	REQUIRE(member_function_plan.has_value());
 	CHECK(member_function_plan->is_valid);
 	CHECK(member_function_plan->rank == ConversionRank::Conversion);
