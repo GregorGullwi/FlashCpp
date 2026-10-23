@@ -343,6 +343,106 @@ TEST_CASE("Canonical record constructor schema requires a class type") {
 		std::span<const CanonicalRecordConstructorSpec>{}));
 }
 
+TEST_CASE("Converting constructor class checks cannot recover unpublished inheritance") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	CompileContext compile_context;
+	compile_context.setInputFile("canonical_constructor_base_proof.cpp");
+	Lexer lexer("struct Base {}; struct Derived : Base {}; struct Receiver { Receiver(const Derived&); };");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	{
+		// Retain the legacy proof while deliberately withholding canonical publication.
+		CanonicalTypeTransaction publication(table);
+		REQUIRE(!parser.parse().is_error());
+	}
+	auto class_spec = [](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		TypeSpecifierNode spec(TypeCategory::Struct, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+		spec.set_type_index(info->registeredTypeIndex());
+		tryBindPublishedTypeEntity(spec);
+		REQUIRE(spec.has_type_entity());
+		return spec;
+	};
+	const TypeSpecifierNode base_spec = class_spec("Base");
+	TypeSpecifierNode derived_spec = class_spec("Derived");
+	const TypeSpecifierNode receiver_spec = class_spec("Receiver");
+	const TypeId base = importCanonicalType(table, base_spec).type;
+	const TypeId derived = importCanonicalType(table, derived_spec).type;
+	const TypeId receiver = importCanonicalType(table, receiver_spec).type;
+	REQUIRE(base);
+	REQUIRE(derived);
+	REQUIRE(receiver);
+	REQUIRE(hasUsablePublicDerivedBaseConversion(derived_spec.type_index(), base_spec.type_index()));
+	REQUIRE_FALSE(table.hasClassBaseSchema(base));
+	REQUIRE_FALSE(table.hasClassBaseSchema(derived));
+	SUBCASE("Absent constructor and base schemas cannot use legacy inheritance") {
+		CHECK_FALSE(tryHasCanonicalImplicitConvertingConstructorForArgument(base_spec, derived_spec, nullptr).has_value());
+		CHECK_FALSE(hasConvertingConstructorFrom(base_spec, derived_spec));
+	}
+	SUBCASE("A complete constructor answer cannot trigger base publication") {
+		table.publishRecordConstructors(base, {});
+		CHECK_FALSE(hasConvertingConstructorFrom(base_spec, derived_spec));
+	}
+	SUBCASE("Published unrelated graphs override legacy inheritance without constructor facts") {
+		table.publishClassBaseSchema(base, {});
+		table.publishClassBaseSchema(derived, {});
+		CHECK_FALSE(hasConvertingConstructorFrom(base_spec, derived_spec));
+	}
+	SUBCASE("Published public inheritance needs no constructor facts") {
+		table.publishClassBaseSchema(base, {});
+		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+		table.publishClassBaseSchema(derived, bases);
+		CHECK(hasConvertingConstructorFrom(base_spec, derived_spec));
+	}
+	SUBCASE("Published private inheritance overrides legacy public inheritance") {
+		table.publishClassBaseSchema(base, {});
+		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Private, CanonicalRecordBaseFlags::None, 0, 0}}};
+		table.publishClassBaseSchema(derived, bases);
+		CHECK_FALSE(hasConvertingConstructorFrom(base_spec, derived_spec));
+	}
+	SUBCASE("Published virtual inheritance remains viable") {
+		table.publishClassBaseSchema(base, {});
+		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::Virtual, 0, 0}}};
+		table.publishClassBaseSchema(derived, bases);
+		CHECK(hasConvertingConstructorFrom(base_spec, derived_spec));
+	}
+	SUBCASE("Published ambiguous inheritance overrides legacy public inheritance") {
+		table.publishClassBaseSchema(base, {});
+		const TypeId left = table.record(EntityId{98301});
+		const TypeId right = table.record(EntityId{98302});
+		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+		table.publishClassBaseSchema(left, bases);
+		table.publishClassBaseSchema(right, bases);
+		const std::array<CanonicalClassBase, 2> paths{{
+			{left, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0},
+			{right, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+		table.publishClassBaseSchema(derived, paths);
+		CHECK_FALSE(hasConvertingConstructorFrom(base_spec, derived_spec));
+	}
+	SUBCASE("A published converting constructor needs no inheritance proof") {
+		const std::array<TypeId, 1> parameters{derived};
+		const std::array<CanonicalRecordConstructorSpec, 1> constructors{{{parameters, CanonicalRecordFunctionFlags::None, false}}};
+		table.publishRecordConstructors(receiver, constructors);
+		CHECK(hasConvertingConstructorFrom(receiver_spec, derived_spec));
+	}
+	SUBCASE("A complete constructor rejection overrides compatibility declarations") {
+		table.publishRecordConstructors(receiver, {});
+		CHECK_FALSE(hasConvertingConstructorFrom(receiver_spec, derived_spec));
+	}
+	SUBCASE("Incomplete constructor schemas retain compatibility selection") {
+		const std::array<CanonicalRecordConstructorSpec, 1> constructors{{{{}, CanonicalRecordFunctionFlags::SchemaIncomplete, false}}};
+		table.publishRecordConstructors(receiver, constructors);
+		derived_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);
+		CHECK_FALSE(tryHasCanonicalImplicitConvertingConstructorForArgument(receiver_spec, derived_spec, nullptr).has_value());
+		CHECK(hasConvertingConstructorFrom(receiver_spec, derived_spec));
+	}
+	CHECK_FALSE(table.hasRecordProperties(derived));
+}
+
 TEST_CASE("Canonical constructor arguments bind base references without compatibility types") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();

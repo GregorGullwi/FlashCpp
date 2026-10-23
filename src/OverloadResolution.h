@@ -1879,14 +1879,14 @@ inline std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgume
 // accepts source_type and whose remaining parameters are all defaulted, OR if source
 // derives from target (implicit derived-to-base conversion).
 // Used to determine if struct-to-struct conversions are viable.
-// Only checks gTypeInfo (populated at or before IR-gen time).
-// Returns false both when struct info is genuinely absent (caller should then check
-// getStructInfo() separately and fall back to UserDefined) and when no constructor is found.
+// Published canonical class-base relations are authoritative for supported class pairs.
+// Unsupported constructor schemas retain compatibility declaration selection.
 inline bool hasConvertingConstructorFrom(const TypeSpecifierNode& target_type_spec, const TypeSpecifierNode& source_type_spec) {
 	const auto canonical_constructor_result = tryHasCanonicalImplicitConvertingConstructorForArgument(target_type_spec, source_type_spec, nullptr);
 	if (canonical_constructor_result.has_value() && *canonical_constructor_result) {
 		return true;
 	}
+	bool has_canonical_class_pair = false;
 	FrontendContext* const context = FrontendContext::active();
 	if (context != nullptr) {
 		CanonicalTypeTable& table = context->canonicalTypes();
@@ -1905,22 +1905,15 @@ inline bool hasConvertingConstructorFrom(const TypeSpecifierNode& target_type_sp
 			const bool both_are_classes = (target_kind == CanonicalTypeKind::Record || target_kind == CanonicalTypeKind::TemplateSpecialization) &&
 				(source_kind == CanonicalTypeKind::Record || source_kind == CanonicalTypeKind::TemplateSpecialization);
 			if (both_are_classes) {
+				has_canonical_class_pair = true;
 				if (source_class == target_class) {
 					return true;
-				}
-				const TypeInfo* const target_type_info = tryFindCanonicalOverloadClassTypeInfo(table, target_class);
-				const TypeInfo* const source_type_info = tryFindCanonicalOverloadClassTypeInfo(table, source_class);
-				if (target_type_info != nullptr) {
-					(void)tryPublishCanonicalClassBaseSchema(table, target_class, *target_type_info);
-				}
-				if (source_type_info != nullptr) {
-					(void)tryPublishCanonicalClassBaseSchema(table, source_class, *source_type_info);
 				}
 				const auto base_conversion = classifyCanonicalDerivedBaseConversion(table, source_class, target_class);
 				if (base_conversion == DerivedBaseConversionKind::UniquePublicNonVirtual || base_conversion == DerivedBaseConversionKind::PublicVirtual) {
 					return true;
 				}
-				if (canonical_constructor_result.has_value() && base_conversion.has_value()) {
+				if (canonical_constructor_result.has_value()) {
 					return *canonical_constructor_result;
 				}
 			}
@@ -1936,8 +1929,8 @@ inline bool hasConvertingConstructorFrom(const TypeSpecifierNode& target_type_sp
 	const StructTypeInfo* target = target_type->getStructInfo();
 	if (!target)
 		return false;
-	// Check if source is a (transitively) derived class of target (derived-to-base conversion)
-	if (hasUsablePublicDerivedBaseConversion(source_idx, target_idx))
+	// Only unimportable class pairs may use the compatibility inheritance graph.
+	if (!has_canonical_class_pair && hasUsablePublicDerivedBaseConversion(source_idx, target_idx))
 		return true;
 	// Check constructors whose first argument consumes the source and whose
 	// remaining arguments are defaulted.
