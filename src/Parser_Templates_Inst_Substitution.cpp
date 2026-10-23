@@ -1791,11 +1791,10 @@ std::optional<size_t> Parser::findDirectAliasTargetParameterIndex(
 	}
 
 	StringHandle alias_target_name;
-	const TypeCategory alias_target_category = alias_target.category();
-	if ((alias_target_category == TypeCategory::Function ||
-		 alias_target_category == TypeCategory::FunctionPointer) &&
-		alias_target.has_function_signature() &&
-		!alias_target.has_ordered_declarator()) {
+	if (alias_target.has_function_signature() &&
+		!alias_target.has_ordered_declarator() &&
+		!alias_target.has_member_class() &&
+		!alias_target.function_signature().class_name.isValid()) {
 		const FunctionType& return_type =
 			alias_target.function_signature().return_type();
 		if (return_type.template_parameter_name.isValid()) {
@@ -3009,12 +3008,14 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 					effective_template_args);
 			concrete_deferred_target != nullptr) {
 			const TypeInfo* resolved_deferred_target = concrete_deferred_target;
-			ResolvedAliasTypeInfo resolved_deferred_alias = resolveAliasTypeInfo(
-				concrete_deferred_target->registeredTypeIndex().withCategory(
-					concrete_deferred_target->typeEnum()));
-			if (resolved_deferred_alias.terminal_type_info != nullptr &&
-				isConcreteAliasSemanticSource(resolved_deferred_alias.terminal_type_info)) {
-				resolved_deferred_target = resolved_deferred_alias.terminal_type_info;
+			if (!typeAliasPreservesSurfaceModifiers(*concrete_deferred_target)) {
+				ResolvedAliasTypeInfo resolved_deferred_alias = resolveAliasTypeInfo(
+					concrete_deferred_target->registeredTypeIndex().withCategory(
+						concrete_deferred_target->typeEnum()));
+				if (resolved_deferred_alias.terminal_type_info != nullptr &&
+					isConcreteAliasSemanticSource(resolved_deferred_alias.terminal_type_info)) {
+					resolved_deferred_target = resolved_deferred_alias.terminal_type_info;
+				}
 			}
 			if (isConcreteAliasSemanticSource(resolved_deferred_target)) {
 				result.resolved_type_info = resolved_deferred_target;
@@ -3094,12 +3095,14 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			}
 			if (!member_alias_has_dependent_args) {
 				const TypeInfo* resolved_member_info = concrete_member_alias;
-				ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(
-					concrete_member_alias->registeredTypeIndex().withCategory(
-						concrete_member_alias->typeEnum()));
-				if (resolved_member_alias.terminal_type_info != nullptr &&
-					isConcreteAliasSemanticSource(resolved_member_alias.terminal_type_info)) {
-					resolved_member_info = resolved_member_alias.terminal_type_info;
+				if (!typeAliasPreservesSurfaceModifiers(*concrete_member_alias)) {
+					ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(
+						concrete_member_alias->registeredTypeIndex().withCategory(
+							concrete_member_alias->typeEnum()));
+					if (resolved_member_alias.terminal_type_info != nullptr &&
+						isConcreteAliasSemanticSource(resolved_member_alias.terminal_type_info)) {
+						resolved_member_info = resolved_member_alias.terminal_type_info;
+					}
 				}
 				result.resolved_type_info = resolved_member_info;
 				result.instantiated_name =
