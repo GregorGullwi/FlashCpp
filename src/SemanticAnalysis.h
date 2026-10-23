@@ -233,6 +233,7 @@ public:
 	std::optional<TypeSpecifierNode> getOverloadResolutionArgType(const ASTNode& arg);
 	void registerCodegenSynthesizedOverloadArgType(const ASTNode& arg, const TypeSpecifierNode& type);
 	void registerCodegenSynthesizedLocalType(StringHandle name, const TypeSpecifierNode& type);
+	void markCodegenSynthesizedSubscript(const ArraySubscriptNode& subscript_node, const TypeSpecifierNode& element_type);
 	void ensureCallArgConversionsAnnotated(const CallExprNode& call_node);
 	const FunctionDeclarationNode* resolveSharedDirectCallTarget(
 		const CallInfo& call_info,

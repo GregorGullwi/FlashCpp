@@ -104,10 +104,14 @@ The architecture the remaining work builds on:
   `EmptyUnknownBoundArrayInitializer` (1513).
   `tests/test_interleaved_pointer_array_unknown_bound_ret0.cpp` covers global
   and local copy-list and direct-list initialization, including a null clause.
-  The bound helper is not recursive. Brace lists still use the existing
-  `parse_brace_initializer` recursion for nested clauses only. No stack reserve
-  was changed. The sharded build is `/Od`, so there is no `-fstack-usage`
-  number.
+  Range-for over a known outermost bound visits one outermost element, so
+  `int (*cells[N])[4]` yields `int (*)[4]`, including a bound completed from
+  the brace list. `tests/test_interleaved_pointer_array_range_for_ret0.cpp`
+  covers a value, a reference, and `auto`, on a global and a local array.
+  The bound helper and the range-for helper are not recursive. Brace lists
+  still use the existing `parse_brace_initializer` recursion for nested
+  clauses only. No stack reserve was changed. The sharded build is `/Od`, so
+  there is no `-fstack-usage` number.
   `SemanticAnalysis::pointerToArrayShape` is the single
   codegen resolver for a pointer whose immediate pointee is an array; the
   dereference/array-to-pointer-decay, multi-dimensional pointer-to-array
