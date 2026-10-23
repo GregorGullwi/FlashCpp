@@ -1087,7 +1087,8 @@ inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
 		bool has_function_component = false;
 		for (const DeclaratorComponent& component : syntax.declarator_components()) {
 			has_function_component = has_function_component ||
-				component.kind == DeclaratorComponentKind::Function;
+				component.kind == DeclaratorComponentKind::Function ||
+				component.kind == DeclaratorComponentKind::MemberFunctionPointer;
 		}
 		TypeSpecifierNode base = syntax;
 		base.clear_declarator_shape();

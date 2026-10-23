@@ -4230,7 +4230,19 @@ int main() {
 
 		CanonicalTypeTable& table = context.canonicalTypes();
 		CHECK_FALSE(table.hasRecordLayout(record_entity));
-		CHECK_FALSE(table.hasEnumLayout(enum_entity));
+		// An opaque scoped enum with a fixed underlying type is complete: its
+		// size and underlying type are known even though no enumerators exist.
+		// Keep that fact distinct from a complete enum definition with the
+		// ForwardDeclaration flag instead of hiding it from canonical queries.
+		REQUIRE(table.hasEnumLayout(enum_entity));
+		const CanonicalEnumLayout enum_layout = table.enumLayout(enum_entity);
+		CHECK(enum_layout.size_bytes == 2u);
+		CHECK(hasCanonicalEnumLayoutFlag(
+			enum_layout.flags, CanonicalEnumLayoutFlags::ForwardDeclaration));
+		CHECK(hasCanonicalEnumLayoutFlag(
+			enum_layout.flags, CanonicalEnumLayoutFlags::FixedUnderlying));
+		CHECK(table.node(enum_layout.underlying_type).builtin ==
+			CanonicalBuiltinKind::UnsignedShort);
 
 		const uint64_t canonical_requests_before_import =
 			context.declarationBuilder().canonicalDeclaratorRequests();

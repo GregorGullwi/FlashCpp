@@ -172,12 +172,18 @@ The architecture the remaining work builds on:
   An ordered member-function-pointer declarator whose callable return carries its
   own declarator (for example `int* (Owner::*)() const`) imports structurally:
   the spine's return components fold into the canonical function signature and
-  the owner `TypeId` is preserved. MSVC and Itanium mangling fold the same spine
-  components into the callable's return type instead of rejecting the form, and
-  IR lowers the value as a fixed-size scalar through the declaration, parameter,
-  return, and identifier paths. A template-parameter owner
-  (`int* (T::*)() const`) is published as that class's canonical identity during
-  substitution, before a dependent `noexcept` operand is canonicalized.
+  the owner `TypeId` is preserved. A member-function-pointer spine whose callable
+  is represented only by the member component suppresses base-level signature
+  import before applying that component, so the signature is not folded twice.
+  MSVC and Itanium mangling fold the same spine components into the callable's
+  return type instead of rejecting the form, and IR lowers the value as a
+  fixed-size scalar through the declaration, parameter, return, and identifier
+  paths. A template-parameter owner (`int* (T::*)() const`) is published as that
+  class's canonical identity during substitution, before a dependent `noexcept`
+  operand is canonicalized. An opaque scoped enum with a fixed underlying type
+  keeps its complete forward-declaration layout with explicit
+  `ForwardDeclaration` and `FixedUnderlying` flags; the native suite asserts that
+  contract alongside by-EntityId pointer and reference import.
   An alias template whose target is a parenthesized function declarator
   (`template <class T> using Fn = int (T);`) now parses through the shared
   `parse_type_alias_function_type` and its instantiated structured signature is

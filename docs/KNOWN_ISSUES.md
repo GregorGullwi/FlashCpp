@@ -1,15 +1,5 @@
 # Known Issues
 
-## Full native canonical suite has two baseline failures
-
-The unchanged constructor-initializer commit (`e590ccc7`) and its continuation
-both fail the native cases `Canonical TypeIds convert non-projectable ordered
-member-pointer owners` (an exception reporting an invalid function return type)
-and `Forward-declared published nominal parameters import by EntityId` (its
-assertion that a forward enum has no published layout). These need a separate
-audit of the ordered callable fixture and opaque-enum publication contract.
-Passing focused canonical tests does not make the full native suite green.
-
 ## Expression parsing can overflow a 1 MB native stack before callable sema
 
 The 16-level `test_deep_callable_chain_ret0.cpp` passes with the shipping Windows
