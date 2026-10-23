@@ -1571,9 +1571,41 @@ void Parser::prepareArrayTypeForBraceInitializer(const DeclarationNode& decl_nod
 	type_specifier.set_array(true, array_size_val);
 }
 
+// [dcl.init.aggr]: n brace clauses complete an array of unknown bound as an
+// array of n elements. The element type is the spine under that bound, so
+// int (*a[])[4] becomes int (*a[n])[4]. A further unknown bound would leave
+// the element type incomplete, so that declarator stays untouched.
+static bool completeOrderedUnknownBoundArrayFromInitializer(
+	TypeSpecifierNode& type_specifier,
+	const InitializerListNode& init_list) {
+	if (!orderedDeclaratorIsArrayObject(type_specifier) || type_specifier.declarator_components().empty()) {
+		return false;
+	}
+	if (type_specifier.declarator_components().front().kind != DeclaratorComponentKind::UnknownBoundArray) {
+		return false;
+	}
+	const size_t element_count = init_list.initializers().size();
+	if (element_count == 0) {
+		return false;
+	}
+	std::vector<DeclaratorComponent> components(
+		type_specifier.declarator_components().begin(),
+		type_specifier.declarator_components().end());
+	if (components.size() > 1 && components[1].kind == DeclaratorComponentKind::UnknownBoundArray) {
+		return false;
+	}
+	components.front() = DeclaratorComponent::array(element_count);
+	type_specifier.set_ordered_declarator(std::move(components));
+	return true;
+}
+
 void Parser::inferUnsizedArraySizeFromInitializer(const DeclarationNode& decl_node,
 												  TypeSpecifierNode& type_specifier,
 												  const std::optional<ASTNode>& initializer) {
+	if (initializer.has_value() && initializer->is<InitializerListNode>() &&
+		completeOrderedUnknownBoundArrayFromInitializer(type_specifier, initializer->as<InitializerListNode>())) {
+		return;
+	}
 	if (!decl_node.is_unsized_array() || !initializer.has_value()) {
 		return;
 	}
@@ -2131,6 +2163,15 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 		if (!consume("}"_tok)) {
 			return ParseResult::error("Expected '}' to close brace initializer", current_token_);
+		}
+
+		// [dcl.init.aggr]: an array of unknown bound is defined as having n
+		// elements only when the brace list contains n > 0 clauses.
+		if (ordered_array_object && element_count == 0 &&
+			!type_specifier.declarator_components().empty() &&
+			type_specifier.declarator_components().front().kind == DeclaratorComponentKind::UnknownBoundArray) {
+			return error(DiagnosticId::EmptyUnknownBoundArrayInitializer, brace_token,
+				"An array of unknown bound requires at least one initializer clause");
 		}
 
 		return ParseResult::success(init_list_node);
