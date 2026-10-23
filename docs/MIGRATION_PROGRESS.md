@@ -154,9 +154,11 @@ The architecture the remaining work builds on:
   and scalar projections before lowering.
   Once a stored type argument resolves, later alias-argument passes preserve its
   nominal identity even if its spelling matches another template parameter.
-  Keep the reduced record/enum collision and default-NTTP trait regressions;
-  dependent-member alias pointer/reference projection remains a separate gap in
-  `KNOWN_ISSUES.md`.
+  Keep the reduced record/enum collision and default-NTTP trait regressions.
+  A namespace alias whose target is a dependent member alias now keeps the
+  concrete member alias as the semantic source instead of collapsing it to the
+  terminal nominal `TypeInfo`, so an instantiated `using type = T` retains the
+  pointer or reference shape carried by `T`.
 - `decltype` implements the `[dcl.type.decltype]` value-category rule for
   parenthesized id-expressions, the last comma operand, dereference, member
   access, built-in subscripting, and callable-object calls.

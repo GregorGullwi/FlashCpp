@@ -2812,19 +2812,9 @@ ParseResult Parser::parse_type_specifier() {
 								}
 							}
 						}
-						const bool has_resolved_callable_type =
-							materialized_alias.resolved_type_specifier.has_value() &&
-							materialized_alias.resolved_type_specifier->has_function_signature() &&
-							(materialized_alias.resolved_type_specifier->category() ==
-								 TypeCategory::Function ||
-							 materialized_alias.resolved_type_specifier->category() ==
-								 TypeCategory::FunctionPointer ||
-							 materialized_alias.resolved_type_specifier->category() ==
-								 TypeCategory::MemberFunctionPointer);
 						if (materialized_alias.resolved_type_specifier.has_value() &&
-							(materialized_alias.resolved_type_specifier->has_ordered_declarator() ||
-							 materialized_alias.resolved_type_specifier->has_member_class() ||
-							 has_resolved_callable_type) &&
+							typeSpecifierPreservesSurfaceModifiers(
+								*materialized_alias.resolved_type_specifier) &&
 							peek() != "::"_tok) {
 							TypeSpecifierNode resolved_alias_type =
 								*materialized_alias.resolved_type_specifier;
