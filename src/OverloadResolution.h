@@ -2410,6 +2410,24 @@ inline bool orderedDeclaratorIsArrayObject(const TypeSpecifierNode& type) {
 		kind == DeclaratorComponentKind::UnknownBoundArray;
 }
 
+// [stmt.ranged]: one outermost element of a non-projectable array object.
+// int (*a[N])[4] yields int (*)[4]. An unknown or empty bound is not a range.
+inline bool tryGetOrderedArrayObjectElement(const TypeSpecifierNode& type, TypeSpecifierNode& element, size_t& element_count) {
+	if (!orderedDeclaratorIsArrayObject(type) || type.is_array() || type.declarator_components().empty()) {
+		return false;
+	}
+	const DeclaratorComponent& outer = type.declarator_components().front();
+	if (outer.kind != DeclaratorComponentKind::Array || outer.payload == 0) {
+		return false;
+	}
+	element = type;
+	if (!element.remove_outermost_ordered_declarator_component()) {
+		return false;
+	}
+	element_count = static_cast<size_t>(outer.payload);
+	return true;
+}
+
 // C++20 [conv.array]/1 for a non-projectable array: the outermost bound becomes
 // a pointer and the element type, including further interleaving, stays put.
 inline void decayOrderedArrayToPointer(TypeSpecifierNode& spec) {

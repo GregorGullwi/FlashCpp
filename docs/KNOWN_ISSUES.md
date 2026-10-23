@@ -85,7 +85,8 @@ storage, identifier lowering, and initializer-list lowering now accept
 non-projectable interleaved array declarations with a known outermost bound.
 Each brace clause initializes one outermost element, and a short list
 value-initializes the rest. An unknown outermost bound is completed from a
-brace list of n > 0 clauses as an array of n elements. The remaining flat
+brace list of n > 0 clauses as an array of n elements. A range-for over that
+array visits one outermost element. The remaining flat
 readers still fail closed.
 Ordered declarators over alias array, reference, function, or member-pointer
 wrappers remain unsupported. An ordered member-function-pointer declarator whose

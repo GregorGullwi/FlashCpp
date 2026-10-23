@@ -3172,6 +3172,17 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 	if (range_type->is_array()) {
 		return resolveRangedForLoopDeclNode(original_var_decl, *range_type);
 	}
+	{
+		TypeSpecifierNode element_type;
+		size_t element_count = 0;
+		if (tryGetOrderedArrayObjectElement(*range_type, element_type, element_count) && element_count > 0) {
+			const int element_size_bits = getTypeSpecSizeBits(element_type);
+			if (element_size_bits > 0) {
+				element_type.set_size_in_bits(element_size_bits);
+			}
+			return resolveRangedForLoopDeclNode(original_var_decl, element_type);
+		}
+	}
 
 	if (range_type->category() != TypeCategory::Struct) {
 		return original_var_decl.declaration_node();
@@ -6886,6 +6897,19 @@ void SemanticAnalysis::registerCodegenSynthesizedOverloadArgType(const ASTNode& 
 		overload_resolution_arg_types_[key] = type;
 		analyzed_overload_resolution_arg_queries_.insert(key);
 	}
+}
+
+void SemanticAnalysis::markCodegenSynthesizedSubscript(const ArraySubscriptNode& subscript_node, const TypeSpecifierNode& element_type) {
+	analyzed_op_subscript_queries_.insert(&subscript_node);
+	op_subscript_table_.erase(&subscript_node);
+	const CanonicalTypeId element_type_id = canonicalizeType(element_type);
+	if (!element_type_id) {
+		return;
+	}
+	SemanticSlot slot = getSlot(&subscript_node).value_or(SemanticSlot{});
+	slot.type_id = element_type_id;
+	slot.value_category = ValueCategory::LValue;
+	setSlot(&subscript_node, slot);
 }
 
 void SemanticAnalysis::registerCodegenSynthesizedLocalType(StringHandle name, const TypeSpecifierNode& type) {
