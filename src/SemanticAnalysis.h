@@ -11,6 +11,9 @@
 class Parser;
 class CompileContext;
 class SymbolTable;
+
+TypeSpecifierNode materializeCanonicalTypeSpecifier(const CanonicalTypeDesc& desc);
+
 class StructDeclarationNode;
 struct UserDefinedConversionOperatorSelection;
 class FunctionDeclarationNode;

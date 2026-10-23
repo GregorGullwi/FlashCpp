@@ -76,8 +76,13 @@ Boundary 3A is not complete: descriptors carry authoritative
 `structural_type_id` identity where canonical import is supported and retain
 flat fields as compatibility projections, but unmigrated consumers still read
 those fields directly. Template argument and substitution storage and general
-IR layout/subscript consumers still read parallel flat pointer/array fields, so
-they remain vulnerable to projection drift.
+IR object-storage consumers still read parallel flat pointer/array fields, so
+they remain vulnerable to projection drift. Built-in subscripting no longer
+flattens an interleaved chain: each selected step is materialized from the
+sema-published canonical result type, so an array of pointers followed by a
+pointer-to-array uses the correct pointer/row strides. Inline array-object
+storage, local/global initializer lowering, and the remaining readers still keep
+interleaved array declarations fail-closed.
 Ordered declarators over alias array, reference, function, or member-pointer
 wrappers remain unsupported. An ordered member-function-pointer declarator whose
 callable return carries its own declarator (for example

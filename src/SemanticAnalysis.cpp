@@ -1633,6 +1633,10 @@ std::optional<CanonicalTypeDesc> canonicalNewExpressionType(CanonicalTypeDesc al
 }
 } // namespace
 
+TypeSpecifierNode materializeCanonicalTypeSpecifier(const CanonicalTypeDesc& desc) {
+	return materializeTypeSpecifier(desc);
+}
+
 // --- CanonicalTypeDesc::operator== ---
 
 bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
