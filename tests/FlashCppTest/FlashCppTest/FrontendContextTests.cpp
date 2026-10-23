@@ -3587,8 +3587,7 @@ int main() {
 			*base_type_info->second, CVQualifier::None,
 			ReferenceQualifier::LValueReference);
 		const std::optional<ConversionPlan> public_lvalue_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				derived_lvalue, base_lvalue_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(derived_lvalue, base_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(public_lvalue_plan.has_value());
 		CHECK(public_lvalue_plan->is_valid);
 		CHECK(public_lvalue_plan->rank == ConversionRank::Conversion);
@@ -3601,15 +3600,13 @@ int main() {
 			*base_type_info->second, CVQualifier::None,
 			ReferenceQualifier::RValueReference);
 		const std::optional<ConversionPlan> public_rvalue_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				derived_rvalue, base_rvalue_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(derived_rvalue, base_rvalue_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(public_rvalue_plan.has_value());
 		CHECK(public_rvalue_plan->is_valid);
 		CHECK(public_rvalue_plan->rank == ConversionRank::Conversion);
 		CHECK(public_rvalue_plan->kind == StandardConversionKind::DerivedToBase);
 		const std::optional<ConversionPlan> lvalue_to_base_rvalue_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				derived_lvalue, base_rvalue_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(derived_lvalue, base_rvalue_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(lvalue_to_base_rvalue_plan.has_value());
 		CHECK_FALSE(lvalue_to_base_rvalue_plan->is_valid);
 
@@ -3617,8 +3614,7 @@ int main() {
 			*private_derived_type_info->second, CVQualifier::None,
 			ReferenceQualifier::LValueReference);
 		const std::optional<ConversionPlan> private_base_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				private_derived_lvalue, base_lvalue_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(private_derived_lvalue, base_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(private_base_plan.has_value());
 		CHECK_FALSE(private_base_plan->is_valid);
 
@@ -3626,8 +3622,7 @@ int main() {
 			*ambiguous_derived_type_info->second, CVQualifier::None,
 			ReferenceQualifier::LValueReference);
 		const std::optional<ConversionPlan> ambiguous_base_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				ambiguous_derived_lvalue, base_lvalue_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(ambiguous_derived_lvalue, base_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(ambiguous_base_plan.has_value());
 		CHECK_FALSE(ambiguous_base_plan->is_valid);
 
@@ -3635,8 +3630,7 @@ int main() {
 			*derived_type_info->second, CVQualifier::Const,
 			ReferenceQualifier::LValueReference);
 		const std::optional<ConversionPlan> cv_removal_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				const_derived_lvalue, base_lvalue_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(const_derived_lvalue, base_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(cv_removal_plan.has_value());
 		CHECK_FALSE(cv_removal_plan->is_valid);
 	}
@@ -3659,8 +3653,7 @@ int main() {
 		mutable_pointer_lvalue_reference.set_reference_qualifier(
 			ReferenceQualifier::LValueReference);
 		const std::optional<ConversionPlan> mutable_pointer_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				source_array, mutable_pointer_lvalue_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(source_array, mutable_pointer_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(mutable_pointer_plan.has_value());
 		CHECK(mutable_pointer_plan->is_valid);
 		CHECK(mutable_pointer_plan->rank == ConversionRank::ExactMatch);
@@ -3672,8 +3665,7 @@ int main() {
 		const_pointer_lvalue_reference.set_reference_qualifier(
 			ReferenceQualifier::LValueReference);
 		const std::optional<ConversionPlan> const_pointer_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				source_array, const_pointer_lvalue_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(source_array, const_pointer_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(const_pointer_plan.has_value());
 		CHECK(const_pointer_plan->is_valid);
 		CHECK(const_pointer_plan->rank == ConversionRank::QualificationAdjustment);
@@ -3693,8 +3685,7 @@ int main() {
 		pointer_to_row_reference.set_reference_qualifier(
 			ReferenceQualifier::LValueReference);
 		const std::optional<ConversionPlan> matrix_decay_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				source_matrix, pointer_to_row_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(source_matrix, pointer_to_row_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(matrix_decay_plan.has_value());
 		CHECK(matrix_decay_plan->is_valid);
 		CHECK(matrix_decay_plan->rank == ConversionRank::ExactMatch);
@@ -3709,8 +3700,7 @@ int main() {
 		wrong_row_reference.set_reference_qualifier(
 			ReferenceQualifier::LValueReference);
 		const std::optional<ConversionPlan> wrong_matrix_decay_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				source_matrix, wrong_row_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(source_matrix, wrong_row_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(wrong_matrix_decay_plan.has_value());
 		CHECK_FALSE(wrong_matrix_decay_plan->is_valid);
 
@@ -3720,8 +3710,7 @@ int main() {
 		rvalue_pointer_reference.set_reference_qualifier(
 			ReferenceQualifier::RValueReference);
 		const std::optional<ConversionPlan> rvalue_pointer_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				source_array, rvalue_pointer_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(source_array, rvalue_pointer_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(rvalue_pointer_plan.has_value());
 		CHECK(rvalue_pointer_plan->is_valid);
 		CHECK(rvalue_pointer_plan->rank == ConversionRank::ExactMatch);
@@ -3733,8 +3722,7 @@ int main() {
 		nonconst_pointer_lvalue_reference.set_reference_qualifier(
 			ReferenceQualifier::LValueReference);
 		const std::optional<ConversionPlan> nonconst_pointer_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				source_array, nonconst_pointer_lvalue_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(source_array, nonconst_pointer_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(nonconst_pointer_plan.has_value());
 		CHECK_FALSE(nonconst_pointer_plan->is_valid);
 
@@ -3744,8 +3732,7 @@ int main() {
 		const_source_array.set_reference_qualifier(
 			ReferenceQualifier::LValueReference);
 		const std::optional<ConversionPlan> cv_removal_array_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				const_source_array, mutable_pointer_lvalue_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(const_source_array, mutable_pointer_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(cv_removal_array_plan.has_value());
 		CHECK_FALSE(cv_removal_array_plan->is_valid);
 
@@ -3758,8 +3745,7 @@ int main() {
 		direct_integer_rvalue_reference.set_reference_qualifier(
 			ReferenceQualifier::RValueReference);
 		const std::optional<ConversionPlan> direct_rvalue_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				direct_integer_lvalue, direct_integer_rvalue_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(direct_integer_lvalue, direct_integer_rvalue_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(direct_rvalue_plan.has_value());
 		CHECK_FALSE(direct_rvalue_plan->is_valid);
 
@@ -3771,8 +3757,7 @@ int main() {
 		double_rvalue_reference.set_reference_qualifier(
 			ReferenceQualifier::RValueReference);
 		const std::optional<ConversionPlan> numeric_rvalue_temporary_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				integer_lvalue, double_rvalue_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(integer_lvalue, double_rvalue_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(numeric_rvalue_temporary_plan.has_value());
 		CHECK(numeric_rvalue_temporary_plan->is_valid);
 		CHECK(numeric_rvalue_temporary_plan->rank == ConversionRank::Conversion);
@@ -3803,8 +3788,7 @@ int main() {
 		pointer_lvalue_reference.set_reference_qualifier(
 			ReferenceQualifier::LValueReference);
 		const std::optional<ConversionPlan> pointer_lvalue_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				source_nullptr, pointer_lvalue_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(source_nullptr, pointer_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(pointer_lvalue_plan.has_value());
 		CHECK(pointer_lvalue_plan->is_valid);
 		CHECK(pointer_lvalue_plan->rank == ConversionRank::Conversion);
@@ -3816,8 +3800,7 @@ int main() {
 		pointer_rvalue_reference.set_reference_qualifier(
 			ReferenceQualifier::RValueReference);
 		const std::optional<ConversionPlan> pointer_rvalue_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				source_nullptr, pointer_rvalue_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(source_nullptr, pointer_rvalue_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(pointer_rvalue_plan.has_value());
 		CHECK(pointer_rvalue_plan->is_valid);
 		CHECK(pointer_rvalue_plan->rank == ConversionRank::Conversion);
@@ -3829,8 +3812,7 @@ int main() {
 		pointer_nonconst_lvalue_reference.set_reference_qualifier(
 			ReferenceQualifier::LValueReference);
 		const std::optional<ConversionPlan> pointer_nonconst_lvalue_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				source_nullptr, pointer_nonconst_lvalue_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(source_nullptr, pointer_nonconst_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(pointer_nonconst_lvalue_plan.has_value());
 		CHECK_FALSE(pointer_nonconst_lvalue_plan->is_valid);
 
@@ -3847,8 +3829,7 @@ int main() {
 		member_pointer_lvalue_reference.set_reference_qualifier(
 			ReferenceQualifier::LValueReference);
 		const std::optional<ConversionPlan> member_pointer_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				source_nullptr, member_pointer_lvalue_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(source_nullptr, member_pointer_lvalue_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(member_pointer_plan.has_value());
 		CHECK(member_pointer_plan->is_valid);
 		CHECK(member_pointer_plan->rank == ConversionRank::Conversion);
@@ -3886,8 +3867,7 @@ int main() {
 			CanonicalBuiltinKind::Int);
 		CHECK(parsed_member_pointee_cv == CVQualifier::None);
 		const std::optional<ConversionPlan> parsed_member_pointer_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				source_nullptr, parsed_member_pointer_type, false);
+			tryBuildCanonicalReferenceBindingPlan(source_nullptr, parsed_member_pointer_type, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(parsed_member_pointer_plan.has_value());
 		CHECK(parsed_member_pointer_plan->is_valid);
 		CHECK(parsed_member_pointer_plan->kind ==
@@ -3918,7 +3898,7 @@ int main() {
 		CHECK((static_cast<uint8_t>(const_pointee_cv) &
 			static_cast<uint8_t>(CVQualifier::Const)) != 0);
 		const std::optional<ConversionPlan> const_pointee_plan =
-			tryBuildCanonicalReferenceBindingPlan(source_nullptr, const_pointee_type, false);
+			tryBuildCanonicalReferenceBindingPlan(source_nullptr, const_pointee_type, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(const_pointee_plan.has_value());
 		CHECK_FALSE(const_pointee_plan->is_valid);
 
@@ -3935,8 +3915,7 @@ int main() {
 			context.canonicalTypes(), function_pointer_reference);
 		REQUIRE(function_pointer_import.status == CanonicalTypeImportStatus::Supported);
 		const std::optional<ConversionPlan> function_pointer_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				source_nullptr, function_pointer_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(source_nullptr, function_pointer_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(function_pointer_plan.has_value());
 		CHECK(function_pointer_plan->is_valid);
 		CHECK(function_pointer_plan->kind ==
@@ -3960,8 +3939,7 @@ int main() {
 		REQUIRE(member_function_pointer_import.status ==
 			CanonicalTypeImportStatus::Supported);
 		const std::optional<ConversionPlan> member_function_pointer_plan =
-			tryBuildCanonicalReferenceBindingPlan(
-				source_nullptr, member_function_pointer_reference, false);
+			tryBuildCanonicalReferenceBindingPlan(source_nullptr, member_function_pointer_reference, CanonicalReferenceBindingContext::Argument);
 		REQUIRE(member_function_pointer_plan.has_value());
 		CHECK(member_function_pointer_plan->is_valid);
 		CHECK(member_function_pointer_plan->kind ==

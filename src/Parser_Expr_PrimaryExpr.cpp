@@ -948,10 +948,7 @@ ArgumentConversionInfo buildQualifiedMemberFunctionAddressArgumentConversion(
 		parameter_type.is_rvalue_reference() ||
 		orderedDeclaratorIsReference(parameter_type);
 	const std::optional<ConversionPlan> conversion = parameter_is_reference
-		? tryBuildCanonicalReferenceBindingPlan(
-			  selected_function_type,
-			  canonical_parameter_type,
-			  false)
+		? tryBuildCanonicalReferenceBindingPlan(selected_function_type, canonical_parameter_type, CanonicalReferenceBindingContext::Argument)
 		: tryBuildCanonicalProjectableConversionPlan(
 			  selected_function_type,
 			  canonical_parameter_type);

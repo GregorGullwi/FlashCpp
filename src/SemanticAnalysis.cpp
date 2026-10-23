@@ -10989,17 +10989,14 @@ bool SemanticAnalysis::annotateSelectedConversionOperator(
 		// must itself be accessible. Ranking keeps inaccessible paths viable so
 		// access applies after selection; diagnose an inaccessible base here.
 		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-		const TypeSpecifierNode return_type =
-			selected_conversion.function->decl_node().type_specifier_node();
+		const TypeSpecifierNode return_type = selected_conversion.function->decl_node().type_specifier_node();
 		const TypeSpecifierNode target_type = materializeTypeSpecifier(type_context_.get(target_type_id));
 		const CanonicalTypeImport return_import = importCanonicalOverloadNominalType(table, return_type);
 		const CanonicalTypeImport target_import = importCanonicalOverloadNominalType(table, target_type);
-		if (return_import.status == CanonicalTypeImportStatus::Supported &&
-			target_import.status == CanonicalTypeImportStatus::Supported) {
-			tryPublishCanonicalOverloadBaseSchema(table, return_import.type, return_type);
-			tryPublishCanonicalOverloadBaseSchema(table, target_import.type, target_type);
-			const std::optional<DerivedBaseConversionKind> base_conversion =
-				classifyCanonicalDerivedBaseConversion(table, return_import.type, target_import.type);
+		if (return_import.status == CanonicalTypeImportStatus::Supported && target_import.status == CanonicalTypeImportStatus::Supported) {
+			const TypeId return_class = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, return_import.type)).first;
+			const TypeId target_class = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, target_import.type)).first;
+			const std::optional<DerivedBaseConversionKind> base_conversion = classifyCanonicalDerivedBaseConversion(table, return_class, target_class);
 			if (base_conversion == DerivedBaseConversionKind::Inaccessible) {
 				throw makeStructuredCompileError(
 					context_.diagnostics(),
