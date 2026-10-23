@@ -106,7 +106,8 @@ The architecture the remaining work builds on:
   and local copy-list and direct-list initialization, including a null clause.
   Range-for over a known outermost bound visits one outermost element, so
   `int (*cells[N])[4]` yields `int (*)[4]`, including a bound completed from
-  the brace list. `tests/test_interleaved_pointer_array_range_for_ret0.cpp`
+  the brace list. The hidden iterator is that array decayed to a pointer to
+  the element, `int (*(*)[4])`. `tests/test_interleaved_pointer_array_range_for_ret0.cpp`
   covers a value, a reference, and `auto`, on a global and a local array.
   The bound helper and the range-for helper are not recursive. Brace lists
   still use the existing `parse_brace_initializer` recursion for nested

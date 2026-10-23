@@ -788,30 +788,22 @@ void AstToIr::visitRangedForOrderedArray(const RangedForStatementNode& node, std
 	Token begin_token(Token::Type::Identifier, begin_var_name, 0, 0, 0);
 	Token end_token(Token::Type::Identifier, end_var_name, 0, 0, 0);
 
-	// Builtin ++ on a one-level pointer steps by the pointee category size.
-	// A pointer element is therefore a pointer-to-pointer, so the step is a
-	// pointer and not the int under the inner array.
-	const bool element_is_pointer = element_type.runtime_pointer_depth() > 0 || (!element_type.declarator_components().empty() &&
-		element_type.declarator_components().front().kind == DeclaratorComponentKind::Pointer);
-	const int iterator_pointee_bits = element_is_pointer ? 64 : element_size_bits;
-	auto begin_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-		element_type.type_index().withCategory(element_type.type()), iterator_pointee_bits, Token(), CVQualifier::None, ReferenceQualifier::None);
-	begin_type_node.as<TypeSpecifierNode>().add_pointer_level();
-	if (element_is_pointer) {
-		begin_type_node.as<TypeSpecifierNode>().add_pointer_level();
+	// [stmt.ranged] and [conv.array]/1: the iterator is one pointer outside the
+	// element. int (*a[N])[4] decays to int (*(*)[4]). ++ and * use that type.
+	TypeSpecifierNode iterator_type = array_decl.type_specifier_node();
+	decayOrderedArrayToPointer(iterator_type);
+	const int iterator_size_bits = getTypeSpecSizeBits(iterator_type);
+	if (iterator_size_bits <= 0) {
+		FLASH_LOG(Codegen, Error, "Array must have a known size for range-based for loop");
+		return;
 	}
-	const TypeSpecifierNode begin_type_spec = begin_type_node.as<TypeSpecifierNode>();
+	iterator_type.set_size_in_bits(iterator_size_bits);
+	auto begin_type_node = ASTNode::emplace_node<TypeSpecifierNode>(iterator_type);
 	auto begin_decl_node = ASTNode::emplace_node<DeclarationNode>(begin_type_node, begin_token);
-	auto end_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-		element_type.type_index().withCategory(element_type.type()), iterator_pointee_bits, Token(), CVQualifier::None, ReferenceQualifier::None);
-	end_type_node.as<TypeSpecifierNode>().add_pointer_level();
-	if (element_is_pointer) {
-		end_type_node.as<TypeSpecifierNode>().add_pointer_level();
-	}
-	const TypeSpecifierNode end_type_spec = end_type_node.as<TypeSpecifierNode>();
+	auto end_type_node = ASTNode::emplace_node<TypeSpecifierNode>(iterator_type);
 	auto end_decl_node = ASTNode::emplace_node<DeclarationNode>(end_type_node, end_token);
-	sema_.registerCodegenSynthesizedLocalType(begin_token.handle(), begin_type_spec);
-	sema_.registerCodegenSynthesizedLocalType(end_token.handle(), end_type_spec);
+	sema_.registerCodegenSynthesizedLocalType(begin_token.handle(), iterator_type);
+	sema_.registerCodegenSynthesizedLocalType(end_token.handle(), iterator_type);
 
 	StringBuilder count_text;
 	count_text.append(element_count);
@@ -826,14 +818,14 @@ void AstToIr::visitRangedForOrderedArray(const RangedForStatementNode& node, std
 	auto first_element = ASTNode::emplace_node<ExpressionNode>(ArraySubscriptNode(array_expr_begin, zero_literal, subscript_token));
 	sema_.markCodegenSynthesizedSubscript(std::get<ArraySubscriptNode>(first_element.as<ExpressionNode>()), element_type);
 	auto begin_init = ASTNode::emplace_node<ExpressionNode>(UnaryOperatorNode(Token(Token::Type::Operator, "&"sv, 0, 0, 0), first_element, true));
-	sema_.registerCodegenSynthesizedOverloadArgType(begin_init, begin_type_spec);
+	sema_.registerCodegenSynthesizedOverloadArgType(begin_init, iterator_type);
 	visit(ASTNode::emplace_node<VariableDeclarationNode>(begin_decl_node, begin_init));
 
 	auto array_expr_end = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(Token(Token::Type::Identifier, array_name, 0, 0, 0)));
 	auto past_end_element = ASTNode::emplace_node<ExpressionNode>(ArraySubscriptNode(array_expr_end, count_literal, subscript_token));
 	sema_.markCodegenSynthesizedSubscript(std::get<ArraySubscriptNode>(past_end_element.as<ExpressionNode>()), element_type);
 	auto end_init = ASTNode::emplace_node<ExpressionNode>(UnaryOperatorNode(Token(Token::Type::Operator, "&"sv, 0, 0, 0), past_end_element, true));
-	sema_.registerCodegenSynthesizedOverloadArgType(end_init, end_type_spec);
+	sema_.registerCodegenSynthesizedOverloadArgType(end_init, iterator_type);
 	visit(ASTNode::emplace_node<VariableDeclarationNode>(end_decl_node, end_init));
 
 	pushLoopSehDepth();
@@ -846,8 +838,8 @@ void AstToIr::visitRangedForOrderedArray(const RangedForStatementNode& node, std
 
 	auto begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 	auto end_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(end_token));
-	sema_.registerCodegenSynthesizedOverloadArgType(begin_ident_expr, begin_type_spec);
-	sema_.registerCodegenSynthesizedOverloadArgType(end_ident_expr, end_type_spec);
+	sema_.registerCodegenSynthesizedOverloadArgType(begin_ident_expr, iterator_type);
+	sema_.registerCodegenSynthesizedOverloadArgType(end_ident_expr, iterator_type);
 	auto condition_expr = ASTNode::emplace_node<ExpressionNode>(
 		BinaryOperatorNode(Token(Token::Type::Operator, "!="sv, 0, 0, 0), begin_ident_expr, end_ident_expr));
 	ExprResult condition_result = visitExpressionNode(condition_expr.as<ExpressionNode>());
@@ -862,7 +854,7 @@ void AstToIr::visitRangedForOrderedArray(const RangedForStatementNode& node, std
 	ASTNode loop_decl_node = sema_.normalizeRangedForLoopDecl(original_var_decl, element_type);
 	auto begin_deref_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 	ASTNode init_expr = ASTNode::emplace_node<ExpressionNode>(UnaryOperatorNode(Token(Token::Type::Operator, "*"sv, 0, 0, 0), begin_deref_expr, true));
-	sema_.registerCodegenSynthesizedOverloadArgType(begin_deref_expr, begin_type_spec);
+	sema_.registerCodegenSynthesizedOverloadArgType(begin_deref_expr, iterator_type);
 	sema_.registerCodegenSynthesizedOverloadArgType(init_expr, makeLValueType(element_type));
 	{
 		IrScopeGuard loop_var_scope_guard{*this, node.for_token()};
@@ -873,7 +865,7 @@ void AstToIr::visitRangedForOrderedArray(const RangedForStatementNode& node, std
 
 	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_increment_label}, Token()));
 	auto increment_begin = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
-	sema_.registerCodegenSynthesizedOverloadArgType(increment_begin, begin_type_spec);
+	sema_.registerCodegenSynthesizedOverloadArgType(increment_begin, iterator_type);
 	auto increment_expr = ASTNode::emplace_node<ExpressionNode>(
 		UnaryOperatorNode(Token(Token::Type::Operator, "++"sv, 0, 0, 0), increment_begin, true));
 	visitExpressionNode(increment_expr.as<ExpressionNode>());
