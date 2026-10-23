@@ -2214,7 +2214,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 						type_node = &symbol->as<VariableDeclarationNode>().declaration().type_specifier_node();
 					}
 					if (type_node) {
-						pointer_depth = static_cast<int>(type_node->pointer_depth());
+						pointer_depth = static_cast<int>(type_node->runtime_pointer_depth());
 					}
 				}
 			}
@@ -2723,6 +2723,21 @@ ExprResult AstToIr::generateBuiltinIncDec(
 		}
 	}
 	auto applyPointerTypeInfo = [&](const TypeSpecifierNode& type_node, size_t consumed_dereferences = 0) {
+		// [expr.pre.incr] and [expr.add]/4: an ordered pointer steps by its
+		// pointee. int (*(*)[4]) steps by sizeof(int (*)[4]).
+		if (type_node.has_ordered_declarator() && type_node.runtime_pointer_depth() > consumed_dereferences) {
+			TypeSpecifierNode pointee = type_node;
+			for (size_t index = 0; index < consumed_dereferences + 1; ++index) {
+				if (!pointee.remove_outermost_ordered_declarator_component()) {
+					return;
+				}
+			}
+			is_pointer = true;
+			operand_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth() - consumed_dereferences);
+			const int pointee_bits = getTypeSpecSizeBits(pointee);
+			element_size = pointee_bits > 0 ? pointee_bits / 8 : 1;
+			return;
+		}
 		if (type_node.pointer_depth() <= consumed_dereferences) {
 			return;
 		}
