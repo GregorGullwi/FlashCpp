@@ -12030,13 +12030,12 @@ void SemanticAnalysis::tryAnnotateVariableInitializationConversion(
 		return;
 	}
 
-	tryAnnotateConversionByTypeId(init_expr, target_type_id, init_type_id);
+	const bool annotated_conversion = tryAnnotateConversionByTypeId(init_expr, target_type_id, init_type_id);
 	const CanonicalTypeDesc& source_desc = type_context_.get(init_type_id);
 	const CanonicalTypeDesc& target_desc = type_context_.get(target_type_id);
-	if (source_desc.category() == TypeCategory::Struct &&
-		source_desc.pointer_levels.empty() && source_desc.array_dimensions.empty() &&
-		target_desc.category() != TypeCategory::Struct &&
-		target_desc.pointer_levels.empty() && target_desc.array_dimensions.empty()) {
+	if (!annotated_conversion && source_desc.category() == TypeCategory::Struct && source_desc.pointer_levels.empty() &&
+		source_desc.array_dimensions.empty() && target_desc.category() != TypeCategory::Struct && target_desc.pointer_levels.empty() &&
+		target_desc.array_dimensions.empty()) {
 		const TypeSpecifierNode source_type = materializeTypeSpecifier(source_desc);
 		const TypeSpecifierNode target_type = materializeTypeSpecifier(target_desc);
 		const auto explicit_conversion = trySelectUserDefinedConversionOperator(source_type, target_type, true);

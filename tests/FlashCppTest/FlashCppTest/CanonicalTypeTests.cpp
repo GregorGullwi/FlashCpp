@@ -343,6 +343,114 @@ TEST_CASE("Canonical record constructor schema requires a class type") {
 		std::span<const CanonicalRecordConstructorSpec>{}));
 }
 
+TEST_CASE("Conversion function lookup consumes the published inheritance graph") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	CompileContext compile_context;
+	compile_context.setInputFile("canonical_conversion_function_graph.cpp");
+	Lexer lexer(R"(
+struct Base { operator int() const; };
+struct Other { operator int() const; };
+struct Derived : Base {};
+struct Hidden : Base { operator int(); };
+)");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	{
+		CanonicalTypeTransaction publication(table);
+		REQUIRE(!parser.parse().is_error());
+	}
+	auto class_spec = [](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		TypeSpecifierNode spec(TypeCategory::Struct, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+		spec.set_type_index(info->registeredTypeIndex());
+		tryBindPublishedTypeEntity(spec);
+		REQUIRE(spec.has_type_entity());
+		return spec;
+	};
+	const TypeSpecifierNode base_spec = class_spec("Base");
+	const TypeSpecifierNode derived_spec = class_spec("Derived");
+	const TypeSpecifierNode hidden_spec = class_spec("Hidden");
+	const TypeSpecifierNode other_spec = class_spec("Other");
+	const TypeId base = importCanonicalType(table, base_spec).type;
+	const TypeId derived = importCanonicalType(table, derived_spec).type;
+	const TypeId hidden = importCanonicalType(table, hidden_spec).type;
+	const TypeId other = importCanonicalType(table, other_spec).type;
+	const TypeSpecifierNode integer(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+	SUBCASE("Canonical lookup cannot publish an absent graph") {
+		CHECK_FALSE(trySelectCanonicalUserDefinedConversionOperator(derived, integer, false).has_value());
+		CHECK_FALSE(table.hasClassBaseSchema(base));
+		CHECK_FALSE(table.hasClassBaseSchema(derived));
+	}
+	SUBCASE("The wrapper cannot retry an absent graph through compatibility") {
+		CHECK_FALSE(trySelectUserDefinedConversionOperator(derived_spec, integer, false).has_value());
+		CHECK_FALSE(table.hasClassBaseSchema(base));
+		CHECK_FALSE(table.hasClassBaseSchema(derived));
+	}
+	SUBCASE("A published graph without the legacy base has no candidate") {
+		table.publishClassBaseSchema(base, {});
+		table.publishClassBaseSchema(derived, {});
+		CHECK_FALSE(trySelectCanonicalUserDefinedConversionOperator(derived, integer, false).has_value());
+		CHECK_FALSE(trySelectUserDefinedConversionOperator(derived_spec, integer, false).has_value());
+		CHECK(table.classBaseCount(derived) == 0);
+	}
+	SUBCASE("A missing reachable base schema remains unavailable") {
+		table.publishClassBaseSchema(hidden, bases);
+		CHECK_FALSE(trySelectCanonicalUserDefinedConversionOperator(hidden, integer, false).has_value());
+		CHECK_FALSE(trySelectUserDefinedConversionOperator(hidden_spec, integer, false).has_value());
+		CHECK_FALSE(table.hasClassBaseSchema(base));
+	}
+	SUBCASE("A published inherited operator retains its declaration owner") {
+		table.publishClassBaseSchema(base, {});
+		table.publishClassBaseSchema(derived, bases);
+		const auto selected = trySelectUserDefinedConversionOperator(derived_spec, integer, false);
+		REQUIRE(selected.has_value());
+		CHECK(selected->declaring_type == base);
+		CHECK_FALSE(selected->ambiguous);
+	}
+	SUBCASE("A nearer declaration hides the inherited operator of the same target") {
+		table.publishClassBaseSchema(base, {});
+		table.publishClassBaseSchema(hidden, bases);
+		const auto selected = trySelectUserDefinedConversionOperator(hidden_spec, integer, false);
+		REQUIRE(selected.has_value());
+		CHECK(selected->declaring_type == hidden);
+		CHECK_FALSE(selected->ambiguous);
+	}
+	SUBCASE("A private base retains its candidate for access checking after selection") {
+		table.publishClassBaseSchema(base, {});
+		const std::array<CanonicalClassBase, 1> private_bases{{{base, CanonicalAccess::Private, CanonicalRecordBaseFlags::None, 0, 0}}};
+		table.publishClassBaseSchema(derived, private_bases);
+		const auto selected = trySelectUserDefinedConversionOperator(derived_spec, integer, false);
+		REQUIRE(selected.has_value());
+		CHECK(selected->declaring_type == base);
+		CHECK(table.classBaseAt(derived, 0).access == CanonicalAccess::Private);
+	}
+	SUBCASE("A virtual base retains its candidate") {
+		table.publishClassBaseSchema(base, {});
+		const std::array<CanonicalClassBase, 1> virtual_bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::Virtual, 0, 0}}};
+		table.publishClassBaseSchema(derived, virtual_bases);
+		const auto selected = trySelectUserDefinedConversionOperator(derived_spec, integer, false);
+		REQUIRE(selected.has_value());
+		CHECK(selected->declaring_type == base);
+	}
+	SUBCASE("Two published base operators are ambiguous despite a single legacy base") {
+		table.publishClassBaseSchema(base, {});
+		table.publishClassBaseSchema(other, {});
+		const std::array<CanonicalClassBase, 2> ambiguous_bases{{
+			{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0},
+			{other, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+		table.publishClassBaseSchema(derived, ambiguous_bases);
+		const auto selected = trySelectUserDefinedConversionOperator(derived_spec, integer, false);
+		REQUIRE(selected.has_value());
+		CHECK(selected->ambiguous);
+		CHECK(table.classBaseCount(derived) == 2);
+	}
+}
+
 TEST_CASE("Converting constructor class checks cannot recover unpublished inheritance") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
