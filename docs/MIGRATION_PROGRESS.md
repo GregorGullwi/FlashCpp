@@ -72,7 +72,12 @@ The architecture the remaining work builds on:
   `T[][N]` publishes `Array(?) -> Array(N) -> T`) instead of dropping the `[?]`
   bound. The nominal array importer now shares the builtin array shaping, so a
   `Record(*)[][N]`/`Enum(*)[][N]` element also publishes the same identity rather
-  than staying flat. A materialized descriptor and the ordered-declarator import
+  than staying flat. Template argument deduction for a pointer-to-array
+  parameter consumes the decayed argument dimension before matching the declared
+  pointee bounds, so `template<class T> void f(T (*)[N])` binds `T` to the element
+  type instead of the remaining subarray. Substitution then publishes one
+  pointee array bound and accepts the matching call argument; a mismatched
+  pointee bound is rejected during deduction. A materialized descriptor and the ordered-declarator import
   recover a class-template specialization base from its type index through
   `importCanonicalNominalComponent`, so an array whose element is a
   specialization also publishes structural identity. `SemanticAnalysis::pointerToArrayShape` is the single
