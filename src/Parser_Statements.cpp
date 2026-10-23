@@ -1586,10 +1586,11 @@ static bool completeOrderedUnknownBoundArrayFromInitializer(TypeSpecifierNode& t
 	if (element_count == 0) {
 		return false;
 	}
-	std::vector<DeclaratorComponent> components(type_specifier.declarator_components().begin(), type_specifier.declarator_components().end());
-	if (components.size() > 1 && components[1].kind == DeclaratorComponentKind::UnknownBoundArray) {
+	const auto declarator = type_specifier.declarator_components();
+	if (declarator.size() > 1 && declarator[1].kind == DeclaratorComponentKind::UnknownBoundArray) {
 		return false;
 	}
+	std::vector<DeclaratorComponent> components(declarator.begin(), declarator.end());
 	components.front() = DeclaratorComponent::array(element_count);
 	type_specifier.set_ordered_declarator(std::move(components));
 	return true;
