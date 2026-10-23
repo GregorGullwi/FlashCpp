@@ -1859,6 +1859,93 @@ TEST_CASE("Canonical TypeIds preserve dependent noexcept member pointer identity
 	CHECK_FALSE(unresolved_relaxation_plan.has_value());
 }
 
+TEST_CASE("Canonical member pointer owner planning rejects absent schemas despite unrelated legacy proof") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	CompileContext compile_context;
+	compile_context.setInputFile("canonical_member_owner_proof.cpp");
+	Lexer lexer("struct LegacyBase {}; struct LegacyDerived : LegacyBase {};");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId base = table.record(EntityId{98201});
+	const TypeId derived = table.record(EntityId{98202});
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId source = table.memberObjectPointer(base, integer);
+	const TypeId target = table.memberObjectPointer(derived, integer);
+	const TypeInfo* legacy_base = findTypeByName(StringTable::getOrInternStringHandle("LegacyBase"));
+	const TypeInfo* legacy_derived = findTypeByName(StringTable::getOrInternStringHandle("LegacyDerived"));
+	REQUIRE(legacy_base != nullptr);
+	REQUIRE(legacy_derived != nullptr);
+	CHECK(hasUsablePublicDerivedBaseConversion(legacy_derived->registeredTypeIndex(), legacy_base->registeredTypeIndex()));
+	const auto unavailable = tryBuildCanonicalMemberPointerConversionPlan(table, source, target);
+	REQUIRE(unavailable.has_value());
+	CHECK_FALSE(unavailable->is_valid);
+	auto stale_owner_spec = [](EntityId owner, std::string_view name) {
+		TypeSpecifierNode spec(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		spec.add_pointer_level(CVQualifier::None);
+		spec.set_member_class_name(StringTable::getOrInternStringHandle(name));
+		spec.set_member_class_entity(owner);
+		return spec;
+	};
+	TypeSpecifierNode source_spec = stale_owner_spec(table.recordEntity(base), "LegacyBase");
+	TypeSpecifierNode target_spec = stale_owner_spec(table.recordEntity(derived), "LegacyDerived");
+	CHECK(importCanonicalType(table, source_spec).type == source);
+	CHECK(importCanonicalType(table, target_spec).type == target);
+	const auto projectable = tryBuildCanonicalProjectableConversionPlan(source_spec, target_spec);
+	REQUIRE(projectable.has_value());
+	CHECK_FALSE(projectable->is_valid);
+	CHECK_FALSE(buildConversionPlan(source_spec, target_spec).is_valid);
+	source_spec.set_ordered_declarator({DeclaratorComponent::memberPointer(table.recordEntity(base), false, CVQualifier::None)});
+	target_spec.set_ordered_declarator({DeclaratorComponent::memberPointer(table.recordEntity(derived), false, CVQualifier::None)});
+	const auto ordered = tryBuildCanonicalOrderedConversionPlan(source_spec, target_spec);
+	REQUIRE(ordered.has_value());
+	CHECK_FALSE(ordered->is_valid);
+	CHECK_FALSE(buildOrderedDeclaratorConversionPlan(source_spec, target_spec).is_valid);
+	FunctionSignature signature;
+	const TypeSpecifierNode int_spec(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	signature.setReturnType(makeFunctionTypeFromSpecifier(int_spec));
+	auto stale_function_owner_spec = [&](EntityId owner, std::string_view name) {
+		TypeSpecifierNode spec(TypeCategory::MemberFunctionPointer, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		spec.set_member_class_name(StringTable::getOrInternStringHandle(name));
+		spec.set_member_class_entity(owner);
+		spec.set_function_signature(signature);
+		return spec;
+	};
+	const TypeSpecifierNode source_function = stale_function_owner_spec(table.recordEntity(base), "LegacyBase");
+	const TypeSpecifierNode target_function = stale_function_owner_spec(table.recordEntity(derived), "LegacyDerived");
+	const auto function_plan = tryBuildCanonicalProjectableConversionPlan(source_function, target_function);
+	REQUIRE(function_plan.has_value());
+	CHECK_FALSE(function_plan->is_valid);
+	CHECK_FALSE(buildConversionPlan(source_function, target_function).is_valid);
+	table.publishClassBaseSchema(base, {});
+	const std::array<CanonicalClassBase, 1> bases{CanonicalClassBase{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+	table.publishClassBaseSchema(derived, bases);
+	const auto published = tryBuildCanonicalMemberPointerConversionPlan(table, source, target);
+	REQUIRE(published.has_value());
+	CHECK(published->is_valid);
+	CHECK(published->rank == ConversionRank::Conversion);
+	const TypeId unrelated = table.record(EntityId{98203});
+	table.publishClassBaseSchema(unrelated, {});
+	const auto rejected = tryBuildCanonicalMemberPointerConversionPlan(table, source, table.memberObjectPointer(unrelated, integer));
+	REQUIRE(rejected.has_value());
+	CHECK_FALSE(rejected->is_valid);
+	TypeId deep_owner = derived;
+	for (uint32_t depth = 0; depth < 4096; ++depth) {
+		const TypeId next = table.record(EntityId{100000 + depth});
+		const std::array<CanonicalClassBase, 1> next_bases{CanonicalClassBase{deep_owner, CanonicalAccess::Public,
+			CanonicalRecordBaseFlags::None, 0, 0}};
+		table.publishClassBaseSchema(next, next_bases);
+		deep_owner = next;
+	}
+	const auto deep = tryBuildCanonicalMemberPointerConversionPlan(table, source, table.memberObjectPointer(deep_owner, integer));
+	REQUIRE(deep.has_value());
+	CHECK(deep->is_valid);
+	CHECK(deep->rank == ConversionRank::Conversion);
+}
+
 TEST_CASE("Canonical TypeIds plan member function pointer base conversions") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();

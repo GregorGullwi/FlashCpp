@@ -2587,25 +2587,7 @@ inline EntityId resolveOverloadRecordEntity(const TypeSpecifierNode& type) {
 // Plan the C++20 pointer-to-member conversions from canonical identities. A
 // member pointer conversion may change only the owner; a member-function
 // pointer may additionally relax a noexcept function type.
-inline TypeIndex tryGetMemberPointerOwnerTypeIndex(const TypeSpecifierNode& type) {
-	StringHandle owner_name;
-	if (type.has_member_class()) {
-		owner_name = type.member_class_name();
-	} else if (type.has_function_signature()) {
-		owner_name = type.function_signature().class_name;
-	}
-	if (!owner_name.isValid()) {
-		return {};
-	}
-	const auto owner_it = getTypesByNameMap().find(owner_name);
-	return owner_it != getTypesByNameMap().end() && owner_it->second != nullptr
-		? owner_it->second->type_index_
-		: TypeIndex{};
-}
-
-inline std::optional<ConversionPlan> tryBuildCanonicalMemberPointerConversionPlan(
-	CanonicalTypeTable& table, TypeId source_type, TypeId target_type,
-	const TypeSpecifierNode& source_spec, const TypeSpecifierNode& target_spec) {
+inline std::optional<ConversionPlan> tryBuildCanonicalMemberPointerConversionPlan(CanonicalTypeTable& table, TypeId source_type, TypeId target_type) {
 	const TypeId source_member = stripCanonicalTopCv(table, source_type).first;
 	const TypeId target_member = stripCanonicalTopCv(table, target_type).first;
 	const CanonicalTypeNode source_node = table.node(source_member);
@@ -2643,18 +2625,9 @@ inline std::optional<ConversionPlan> tryBuildCanonicalMemberPointerConversionPla
 		owner_conversion = classifyCanonicalDerivedBaseConversion(table, target_owner, source_owner);
 	}
 	if (!owner_conversion.has_value()) {
-		// Use the legacy class graph only as a proof bridge until the canonical
-		// specialization graph is published; never fall back by category alone.
-		const TypeIndex source_owner_index = tryGetMemberPointerOwnerTypeIndex(source_spec);
-		const TypeIndex target_owner_index = tryGetMemberPointerOwnerTypeIndex(target_spec);
-		if (!source_owner_index.is_valid() || !target_owner_index.is_valid()) {
-			return ConversionPlan::no_match();
-		}
-		const DerivedBaseConversionKind legacy_owner_conversion = classifyDerivedBaseConversion(target_owner_index, source_owner_index).kind;
-		if (legacy_owner_conversion != DerivedBaseConversionKind::UniquePublicNonVirtual) {
-			return ConversionPlan::no_match();
-		}
-		owner_conversion = legacy_owner_conversion;
+		// The owner conversion is unavailable until its canonical relation is
+		// published. A syntax retry cannot prove that relation for these TypeIds.
+		return ConversionPlan::no_match();
 	}
 	if (*owner_conversion != DerivedBaseConversionKind::UniquePublicNonVirtual) {
 		return ConversionPlan::no_match();
@@ -2722,7 +2695,7 @@ inline std::optional<ConversionPlan> tryBuildCanonicalOrderedConversionPlan(cons
 		return std::nullopt;
 	}
 	if ((from_kind == CanonicalTypeKind::MemberObjectPointer || from_kind == CanonicalTypeKind::MemberFunctionPointer) && from_kind == to_kind) {
-		return tryBuildCanonicalMemberPointerConversionPlan(table, from_import.type, to_import.type, source_value, to);
+		return tryBuildCanonicalMemberPointerConversionPlan(table, from_import.type, to_import.type);
 	}
 	return buildCanonicalStructuralConversionPlan(
 		table, from_import.type, to_import.type);
@@ -2811,7 +2784,7 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 			target_kind == CanonicalTypeKind::RValueReference) {
 			return std::nullopt;
 		}
-		return tryBuildCanonicalMemberPointerConversionPlan(table, source_type, to_import.type, from, to);
+		return tryBuildCanonicalMemberPointerConversionPlan(table, source_type, to_import.type);
 	}
 	if (from.has_function_signature() && to.has_function_signature()) {
 		if (to.is_reference() || to.is_rvalue_reference() ||
@@ -2861,7 +2834,7 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 			return std::nullopt;
 		}
 		if (is_member_function_pointer_pair) {
-			return tryBuildCanonicalMemberPointerConversionPlan(table, source_type, target_type, from, to);
+			return tryBuildCanonicalMemberPointerConversionPlan(table, source_type, target_type);
 		}
 		return buildCanonicalStructuralConversionPlan(table, source_type, target_type);
 	}
