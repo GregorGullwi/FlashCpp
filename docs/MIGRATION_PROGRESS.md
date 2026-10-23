@@ -14,10 +14,10 @@ Boundary **3A (canonical types)** is active and incomplete. The explicit-criteri
 rollup is **10/79 complete**; the only completed 3A exit criterion is that
 pointer-to-member overloads distinguish owner and pointee types. Passing tests or
 the breadth of landed code do not complete the boundary.
-Member-pointer owner conversion planning reads the published canonical inheritance
-relation; materialized partial specializations now publish their owner schemas.
+Member-pointer owner planning and the class-base check in
+`hasConvertingConstructorFrom` consume published canonical inheritance.
 The next bounded 3A slice removes query-time base-schema publication from
-`hasConvertingConstructorFrom`.
+conversion-function selection.
 
 The architecture the remaining work builds on:
 
@@ -252,19 +252,21 @@ Continue boundary 3A in this order.
    Member callable aliases retain complete targets and enclosing bindings.
    Member-pointer owner conversions no longer prove inheritance from syntax spelling.
 
-   **Next slice: make the class-base check in `hasConvertingConstructorFrom`
-   consume published schemas.** Remove its `tryFindCanonicalOverloadClassTypeInfo`
-   lookups and `tryPublishCanonicalClassBaseSchema` calls for the source and target
-   classes. Keep canonical derived-to-base viability authoritative when the graph
-   is published; distinguish an unavailable graph from a published unrelated graph.
-   Preserve constructor viability and deferral for unsupported or incomplete
-   constructor schemas through `tryHasCanonicalImplicitConvertingConstructorForArgument`.
-   Add native tests that cannot repair missing schemas during a query, plus source
-   cases combining public/private/ambiguous/virtual inheritance with converting
-   constructors and template-specialization owners. Keep the completed-owner,
-   incomplete-owner, dependent member-pointer tail and ShapeOnly upgrade guards.
-   Stop after this consumer; general constructor/conversion-operator declaration
-   publication and removal of other compatibility paths remain separate.
+   **Next slice: make conversion-function selection consume published base schemas.**
+   Remove `tryPublishCanonicalClassBaseSchema` from
+   `trySelectCanonicalUserDefinedConversionOperator` and its
+   `trySelectUserDefinedConversionOperator` wrapper. Audit completion producers for
+   the supported source classes before removing the retries. Distinguish unavailable
+   graphs from published graphs with no viable conversion; do not let a legacy
+   inheritance traversal replace an available canonical answer. Keep declaration
+   lookup through `tryFindCanonicalOverloadClassTypeInfo` until conversion-function
+   declarations have a published schema. Cover inherited operators, hiding by the
+   same target type, public/private/ambiguous/virtual paths, source CV and explicit
+   filtering, template-specialization sources and standard conversion tails. Native
+   tests must withhold or contradict the legacy graph without query-time repair.
+   Retain incomplete-owner, constructor-deferral, dependent member-pointer tail and
+   ShapeOnly upgrade guards. Stop after graph consumption; conversion-function
+   declaration publication and other compatibility deletion remain separate.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    1. **The constructibility family.** The zero-argument variants and published
