@@ -92,8 +92,15 @@ The architecture the remaining work builds on:
   address and element read. Global and local interleaved array objects with a
   known outermost bound now own inline storage with pointer-sized elements and
   lower identifiers as array addresses, covered by
-  `tests/test_interleaved_pointer_array_object_storage_ret42.cpp`. Initializer
-  lowering for those declarations is still fail-closed.
+  `tests/test_interleaved_pointer_array_object_storage_ret42.cpp`. Brace
+  initialization of those objects stores one outermost element per clause, and
+  a short list value-initializes the rest. An extra clause is
+  `TooManyInitializers` (1510).
+  `tests/test_interleaved_pointer_array_initializer_ret0.cpp` covers global and
+  local `int (*a[N])[4]` lists, including a null tail. This slice adds no new
+  recursive helper. Brace lists still use the existing `parse_brace_initializer`
+  recursion for nested clauses only. No stack reserve was changed. The sharded
+  build is `/Od`, so there is no `-fstack-usage` number.
   `SemanticAnalysis::pointerToArrayShape` is the single
   codegen resolver for a pointer whose immediate pointee is an array; the
   dereference/array-to-pointer-decay, multi-dimensional pointer-to-array

@@ -387,8 +387,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	const auto& decl = node.declaration();
 	const auto& type_node = decl.type_specifier_node();
 	// This slice migrates storage for an outer pointer object, reference, or a
-	// member pointer (which lowers as a fixed-size scalar). An ordered spine
-	// whose outermost wrapper is an array or bare callable stays fail-closed.
+	// member pointer (which lowers as a fixed-size scalar). An ordered array
+	// object owns inline storage and its brace initializer is lowered below.
+	// An ordered bare callable stays fail-closed.
 	const size_t runtime_pointer_depth = type_node.runtime_pointer_depth();
 	const bool is_member_pointer_object =
 		type_node.is_member_function_pointer() ||
@@ -871,7 +872,37 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				op.is_initialized = true;
 
 					// Check if this is struct aggregate initialization (vs. array element initialization)
-				if ((is_struct_type(type_node.category())) && !decl.is_array() && !type_node.is_array()) {
+				if (has_ordered_array_storage) {
+					// [dcl.init.aggr]: each clause initializes one outermost element.
+					// Removing that array leaves the element type, so a pointer-to-array
+					// element stays pointer-sized. A short list value-initializes the rest.
+					if (initializers.size() > ordered_array_element_count) {
+						throw makeStructuredCompileError(
+							context_->diagnostics(),
+							DiagnosticId::TooManyInitializers,
+							DiagnosticSeverity::Error,
+							SourceLocation::fromToken(decl.identifier_token()),
+							"Too many initializers for array",
+							{});
+					}
+					const size_t element_bytes = static_cast<size_t>(ordered_array_element_bits / 8);
+					op.is_initialized = true;
+					op.element_count = ordered_array_element_count;
+					op.init_data.assign(ordered_array_element_count * element_bytes, 0);
+					std::vector<DataRelocation> element_relocations;
+					element_relocations.reserve(initializers.size());
+					for (size_t elem_i = 0; elem_i < initializers.size(); ++elem_i) {
+						if (const std::optional<StringHandle> target = resolveGlobalElementReloc(initializers[elem_i]);
+							target.has_value()) {
+							element_relocations.push_back(DataRelocation{
+								static_cast<uint32_t>(elem_i * element_bytes), *target});
+							continue;
+						}
+						const unsigned long long value = evalToValue(initializers[elem_i], TypeCategory::UnsignedLongLong);
+						writeRawValueAtOffset(op.init_data, elem_i * element_bytes, element_bytes, value);
+					}
+					op.data_relocations = std::move(element_relocations);
+				} else if ((is_struct_type(type_node.category())) && !decl.is_array() && !type_node.is_array()) {
 					const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
 					const StructTypeInfo* struct_info_ptr = type_info ? type_info->getStructInfo() : nullptr;
 					if (struct_info_ptr) {
@@ -1666,7 +1697,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	}
 
 		// Add initializer if present (for non-arrays)
-	if (node.initializer() && !decl.owns_inline_array_storage()) {
+	if (node.initializer() && !owns_inline_array_storage) {
 		const ASTNode& init_node = *node.initializer();
 
 				// Check if this is a brace initializer (InitializerListNode)
@@ -2780,7 +2811,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
 
 	// Handle array initialization with initializer list
-	if (decl.owns_inline_array_storage() && node.initializer().has_value()) {
+	if (owns_inline_array_storage && node.initializer().has_value()) {
 		const ASTNode& init_node = *node.initializer();
 		if (init_node.is<ExpressionNode>() &&
 			std::holds_alternative<StringLiteralNode>(init_node.as<ExpressionNode>()) &&
@@ -2878,6 +2909,15 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					return;
 			}
 			int element_size_bytes = struct_info_ptr ? static_cast<int>(toSizeT(struct_info_ptr->sizeInBytes())) : (size_in_bits / 8);
+			if (has_ordered_array_storage && initializers.size() > array_count) {
+				throw makeStructuredCompileError(
+					context_->diagnostics(),
+					DiagnosticId::TooManyInitializers,
+					DiagnosticSeverity::Error,
+					SourceLocation::fromToken(decl.identifier_token()),
+					"Too many initializers for array",
+					{});
+			}
 
 				// Generate store for each element
 			for (size_t i = 0; i < initializers.size(); i++) {
@@ -2909,6 +2949,22 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op),
 												 node.declaration().identifier_token()));
+			}
+			// [dcl.init.aggr]: clauses that were not supplied value-initialize the
+			// remaining outermost elements. A pointer element becomes null.
+			if (has_ordered_array_storage) {
+				for (size_t i = initializers.size(); i < array_count; ++i) {
+					ArrayStoreOp store_op;
+					store_op.element_type_index = type_node.type_index();
+					store_op.element_size_in_bits = size_in_bits;
+					store_op.array = local_var_id;
+					store_op.index = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
+					store_op.value = makeTypedValue(TypeCategory::Nullptr, SizeInBits{size_in_bits}, 0ULL);
+					store_op.member_offset = 0;
+					store_op.base_holds_address = false;
+					ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op),
+						node.declaration().identifier_token()));
+				}
 			}
 		}
 	}
