@@ -7,6 +7,30 @@
 #include "TypeSizeQuery.h"
 
 namespace {
+static bool tryGetOrderedArrayObjectStorage(
+	const TypeSpecifierNode& type_node,
+	size_t& element_count,
+	int& element_size_bits) {
+	if (!orderedDeclaratorIsArrayObject(type_node) ||
+		type_node.declarator_components().empty()) {
+		return false;
+	}
+	const DeclaratorComponent& outer = type_node.declarator_components().front();
+	if (outer.kind == DeclaratorComponentKind::UnknownBoundArray ||
+		outer.payload == 0) {
+		return false;
+	}
+	TypeSpecifierNode element_type = type_node;
+	element_type.remove_outermost_ordered_declarator_component();
+	element_size_bits = requireConcreteAliasResolvedCodegenSizeBits(
+		element_type, "ordered array-object element storage");
+	if (element_size_bits <= 0) {
+		return false;
+	}
+	element_count = static_cast<size_t>(outer.payload);
+	return true;
+}
+
 [[noreturn]] void throwAmbiguousConstructorCallDiagnostic(CompileContext& context) {
 	throw makeStructuredCompileError(
 		context.diagnostics(),
@@ -372,12 +396,25 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	// A projectable ordered spine lowers through the flat projection (its
 	// pointer/array fields and cold signature carry the complete shape), so only
 	// a non-projectable array/outer-callable object stays fail-closed here.
+	const bool ordered_array_object =
+		type_node.has_ordered_declarator() &&
+		!type_node.ordered_declarator_has_legacy_projection() &&
+		orderedDeclaratorIsArrayObject(type_node);
 	if (type_node.has_ordered_declarator() &&
 		!type_node.ordered_declarator_has_legacy_projection() &&
-		runtime_pointer_depth == 0 && !type_node.is_reference() && !is_member_pointer_object) {
+		runtime_pointer_depth == 0 && !type_node.is_reference() &&
+		!is_member_pointer_object && !ordered_array_object) {
 		throw InternalError(
 			"interleaved declarator reached unmigrated array-object IR lowering");
 	}
+	size_t ordered_array_element_count = 0;
+	int ordered_array_element_bits = 0;
+	const bool has_ordered_array_storage =
+		ordered_array_object &&
+		tryGetOrderedArrayObjectStorage(
+			type_node,
+			ordered_array_element_count,
+			ordered_array_element_bits);
 	auto flushFullExpressionTemps = [this]() {
 		emitAndClearFullExpressionTempDestructors();
 	};
@@ -497,13 +534,15 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		// element still occupies one machine word even though the declared
 		// entity's own outermost wrapper is the array (runtime_pointer_depth()==0).
 		const bool has_pointer_element = type_node.is_array() && type_node.pointer_depth() > 0;
-		if (runtime_pointer_depth > 0 || type_node.is_reference() || type_node.is_function_pointer() || has_pointer_element) {
+		if (has_ordered_array_storage) {
+			op.size_in_bits = SizeInBits{ordered_array_element_bits};
+		} else if (runtime_pointer_depth > 0 || type_node.is_reference() || type_node.is_function_pointer() || has_pointer_element) {
 			op.size_in_bits = SizeInBits{static_cast<int>(sizeof(void*)) * 8};
 		} else {
 			op.size_in_bits = SizeInBits{type_node.size_in_bits()};
 		}
 		op.var_name = var_name;	// Phase 3: Now using StringHandle
-		op.element_count = 1;  // Default for scalars
+		op.element_count = has_ordered_array_storage ? ordered_array_element_count : 1;
 
 			// Helper to append a value as raw bytes in little-endian format
 		auto appendValueAsBytes = [](std::vector<char>& data, unsigned long long value, size_t byte_count) {
@@ -1558,17 +1597,21 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	// An array object whose flat projection carries non-empty pointer levels has a
 	// pointer/callable element even though the entity's outermost wrapper is the array.
 	const bool has_pointer_element = type_node.is_array() && type_node.pointer_depth() > 0;
-	int size_in_bits = (runtime_pointer_depth > 0 || has_pointer_element) ? 64 : static_cast<int>(type_node.size_in_bits());
+	int size_in_bits = has_ordered_array_storage
+		? ordered_array_element_bits
+		: ((runtime_pointer_depth > 0 || has_pointer_element) ? 64 : static_cast<int>(type_node.size_in_bits()));
+	const bool owns_inline_array_storage =
+		decl.owns_inline_array_storage() || has_ordered_array_storage;
 	operands.emplace_back(size_in_bits);
 	operands.emplace_back(local_var_id);
 	operands.emplace_back(static_cast<unsigned long long>(decl.custom_alignment()));
 	operands.emplace_back(type_node.is_reference());
 	operands.emplace_back(type_node.is_rvalue_reference());
-	operands.emplace_back(decl.owns_inline_array_storage());	// Add is_array flag
+	operands.emplace_back(owns_inline_array_storage);	// Add is_array flag
 
 		// For arrays, calculate total element count (product of all dimensions for multidimensional arrays)
-	size_t array_count = 0;
-	if (decl.owns_inline_array_storage()) {
+	size_t array_count = has_ordered_array_storage ? ordered_array_element_count : 0;
+	if (owns_inline_array_storage && !has_ordered_array_storage) {
 		if (type_node.is_array() && !type_node.array_dimensions().empty()) {
 			array_count = 1;
 			for (size_t dim_size : type_node.array_dimensions()) {

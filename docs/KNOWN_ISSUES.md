@@ -81,8 +81,10 @@ they remain vulnerable to projection drift. Built-in subscripting no longer
 flattens an interleaved chain: each selected step is materialized from the
 sema-published canonical result type, so an array of pointers followed by a
 pointer-to-array uses the correct pointer/row strides. Inline array-object
-storage, local/global initializer lowering, and the remaining readers still keep
-interleaved array declarations fail-closed.
+storage and identifier lowering now accept non-projectable interleaved array
+declarations with a known outermost bound, allocating pointer-sized elements for
+global and local objects. Initializer-list lowering for those declarations and
+the remaining readers still fail closed.
 Ordered declarators over alias array, reference, function, or member-pointer
 wrappers remain unsupported. An ordered member-function-pointer declarator whose
 callable return carries its own declarator (for example

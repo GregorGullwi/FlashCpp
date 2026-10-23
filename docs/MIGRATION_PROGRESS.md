@@ -87,7 +87,12 @@ The architecture the remaining work builds on:
   therefore uses the pointer stride for the array step and the row stride for the
   pointer-to-array step;
   `tests/test_interleaved_pointer_array_subscript_identity_ret42.cpp` pins the
-  address and element read. `SemanticAnalysis::pointerToArrayShape` is the single
+  address and element read. Global and local interleaved array objects with a
+  known outermost bound now own inline storage with pointer-sized elements and
+  lower identifiers as array addresses, covered by
+  `tests/test_interleaved_pointer_array_object_storage_ret42.cpp`. Initializer
+  lowering for those declarations is still fail-closed.
+  `SemanticAnalysis::pointerToArrayShape` is the single
   codegen resolver for a pointer whose immediate pointee is an array; the
   dereference/array-to-pointer-decay, multi-dimensional pointer-to-array
   subscript, and the identifier- and member-rooted multi-dimensional array
