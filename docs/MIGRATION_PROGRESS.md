@@ -14,9 +14,10 @@ Boundary **3A (canonical types)** is active and incomplete. The explicit-criteri
 rollup is **10/79 complete**; the only completed 3A exit criterion is that
 pointer-to-member overloads distinguish owner and pointee types. Passing tests or
 the breadth of landed code do not complete the boundary.
-Member-pointer owner conversion planning now takes canonical `TypeId`s and
-requires a published canonical inheritance relation. The next bounded 3A slice
-is publishing complete owner base schemas before conversion ranking.
+Member-pointer owner conversion planning reads the published canonical inheritance
+relation; materialized partial specializations now publish their owner schemas.
+The next bounded 3A slice removes query-time base-schema publication from
+`hasConvertingConstructorFrom`.
 
 The architecture the remaining work builds on:
 
@@ -251,20 +252,19 @@ Continue boundary 3A in this order.
    Member callable aliases retain complete targets and enclosing bindings.
    Member-pointer owner conversions no longer prove inheritance from syntax spelling.
 
-   **Next slice: publish owner base schemas before member-pointer ranking.**
-   Complete record and class-template-specialization owners should publish their
-   canonical class-base graph before conversion queries run. Audit the existing
-   `tryPublishCanonicalClassBaseSchema` declaration/instantiation producers and
-   cover late completion and dependent specialization owners. Then delete the
-   `tryFindCanonicalOverloadClassTypeInfo`/publication retry from
-   `tryBuildCanonicalMemberPointerConversionPlan`. Reuse the existing schema API;
-   incomplete owners remain unavailable until completion. Keep private,
-   ambiguous, virtual-base, reverse, and mismatched-signature conversions rejected,
-   while dependent `noexcept` comparisons retain their deferred result. Native
-   tests must distinguish absent schemas from published unrelated/public graphs
-   without a syntax or `TypeInfo` proof. Recheck indirect template owners and
-   member-pointer conversion-function tails. Stop after this publication slice;
-   general constructor/conversion-operator publication remains separate.
+   **Next slice: make the class-base check in `hasConvertingConstructorFrom`
+   consume published schemas.** Remove its `tryFindCanonicalOverloadClassTypeInfo`
+   lookups and `tryPublishCanonicalClassBaseSchema` calls for the source and target
+   classes. Keep canonical derived-to-base viability authoritative when the graph
+   is published; distinguish an unavailable graph from a published unrelated graph.
+   Preserve constructor viability and deferral for unsupported or incomplete
+   constructor schemas through `tryHasCanonicalImplicitConvertingConstructorForArgument`.
+   Add native tests that cannot repair missing schemas during a query, plus source
+   cases combining public/private/ambiguous/virtual inheritance with converting
+   constructors and template-specialization owners. Keep the completed-owner,
+   incomplete-owner, dependent member-pointer tail and ShapeOnly upgrade guards.
+   Stop after this consumer; general constructor/conversion-operator declaration
+   publication and removal of other compatibility paths remain separate.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    1. **The constructibility family.** The zero-argument variants and published

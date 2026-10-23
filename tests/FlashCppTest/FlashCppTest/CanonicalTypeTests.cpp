@@ -1859,6 +1859,69 @@ TEST_CASE("Canonical TypeIds preserve dependent noexcept member pointer identity
 	CHECK_FALSE(unresolved_relaxation_plan.has_value());
 }
 
+TEST_CASE("Completed member pointer owners publish base schemas before ranking") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	const std::string code = R"(
+struct Base { int member; };
+struct Unfinished;
+template<class T> struct Primary : Base { T payload; };
+template<class T> struct Partial;
+template<class T> struct Partial<T*> : Base { T payload; };
+template<> struct Partial<int> : Base {};
+struct Late;
+using EarlyMember = int Late::*;
+struct Late : Base {};
+using PartialOwner = Partial<long long*>;
+using PrimaryOwner = Primary<long long>;
+using FullOwner = Partial<int>;
+static_assert(sizeof(PartialOwner) > 0);
+static_assert(sizeof(PrimaryOwner) > 0);
+static_assert(sizeof(FullOwner) > 0);
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("member_owner_schema_completion.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	auto owner_type = [&](std::string_view name) {
+		const TypeInfo* type_info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(type_info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *type_info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const TypeId base = owner_type("Base");
+	const TypeId primary = owner_type("PrimaryOwner");
+	const TypeId partial = owner_type("PartialOwner");
+	const TypeId full = owner_type("FullOwner");
+	const TypeId late = owner_type("Late");
+	for (TypeId owner : {base, primary, partial, full, late}) {
+		CAPTURE(owner.value);
+		CHECK(table.hasClassBaseSchema(owner));
+	}
+	CHECK(classifyCanonicalDerivedBaseConversion(table, partial, base) == DerivedBaseConversionKind::UniquePublicNonVirtual);
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId source = table.memberObjectPointer(base, integer);
+	const TypeId target = table.memberObjectPointer(partial, integer);
+	const size_t types_before = table.size();
+	const auto plan = tryBuildCanonicalMemberPointerConversionPlan(table, source, target);
+	REQUIRE(plan.has_value());
+	CHECK(plan->is_valid);
+	CHECK(table.size() == types_before);
+	const TypeId unfinished = owner_type("Unfinished");
+	CHECK_FALSE(table.hasClassBaseSchema(unfinished));
+	const auto unavailable = tryBuildCanonicalMemberPointerConversionPlan(table, source, table.memberObjectPointer(unfinished, integer));
+	REQUIRE(unavailable.has_value());
+	CHECK_FALSE(unavailable->is_valid);
+	CHECK_FALSE(table.hasClassBaseSchema(unfinished));
+}
+
 TEST_CASE("Canonical member pointer owner planning rejects absent schemas despite unrelated legacy proof") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
