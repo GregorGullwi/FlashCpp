@@ -273,6 +273,9 @@ TEST_CASE("Canonical TypeIds rank by-value derived-to-base conversions") {
 		derived_entity, 1, 1, 1, 1, 0, 1, CanonicalRecordLayoutFlags::None, 0});
 	table.publishRecordFieldSchema(derived_entity,
 		std::span<const CanonicalRecordMember>{}, derived_bases);
+	table.publishClassBaseSchema(table.record(base_entity), {});
+	const std::array<CanonicalClassBase, 1> class_bases{{{table.record(base_entity), CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+	table.publishClassBaseSchema(table.record(derived_entity), class_bases);
 
 	TypeSpecifierNode derived(
 		TypeCategory::Struct, TypeQualifier::None, 32, Token{}, CVQualifier::None);
@@ -293,6 +296,140 @@ TEST_CASE("Canonical TypeIds rank by-value derived-to-base conversions") {
 	REQUIRE(exact_conversion.has_value());
 	CHECK(exact_conversion->is_valid);
 	CHECK(exact_conversion->rank == ConversionRank::ExactMatch);
+}
+
+TEST_CASE("Constructor cloning retains declaration flags independently of noexcept") {
+	FrontendContext frontend;
+	const StringHandle pattern_name = StringTable::getOrInternStringHandle("Pattern");
+	const StringHandle instance_name = StringTable::getOrInternStringHandle("Instance");
+	ConstructorDeclarationNode pattern(pattern_name, pattern_name);
+	ConstructorDeclarationNode instance(instance_name, instance_name);
+	pattern.set_explicit(true);
+	pattern.set_constexpr(true);
+	pattern.set_is_inline(true);
+	pattern.set_noexcept(true);
+	instance.set_is_implicit(true);
+	instance.set_is_explicitly_defaulted(true);
+	instance.set_was_defaulted_on_first_declaration(true);
+	copyConstructorDeclarationFlags(pattern, instance);
+	CHECK(instance.is_explicit());
+	CHECK(instance.is_constexpr());
+	CHECK(instance.is_inline());
+	CHECK_FALSE(instance.is_implicit());
+	CHECK_FALSE(instance.is_explicitly_defaulted());
+	CHECK_FALSE(instance.was_defaulted_on_first_declaration());
+	CHECK_FALSE(instance.is_noexcept());
+	CHECK(instance.struct_name() == instance_name);
+}
+
+TEST_CASE("Nominal object conversion queries require published class graphs") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const EntityId base_entity{98501};
+	const EntityId derived_entity{98502};
+	const TypeId base = table.record(base_entity);
+	const TypeId derived = table.record(derived_entity);
+	TypeSpecifierNode source(TypeCategory::Struct, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	source.set_type_entity(derived_entity);
+	TypeSpecifierNode target(TypeCategory::Struct, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	target.set_type_entity(base_entity);
+	auto check_standard = [&]() {
+		const size_t types_before = table.size();
+		const auto plan = tryBuildCanonicalProjectableConversionPlan(source, target);
+		REQUIRE(plan.has_value());
+		CHECK(plan->is_valid);
+		CHECK(plan->rank == ConversionRank::Conversion);
+		CHECK(plan->kind == StandardConversionKind::DerivedToBase);
+		CHECK(table.size() == types_before);
+	};
+	SUBCASE("Absent schemas stay deferred") {
+		CHECK_FALSE(tryBuildCanonicalProjectableConversionPlan(source, target).has_value());
+		CHECK_FALSE(table.hasClassBaseSchema(derived));
+	}
+	SUBCASE("Entity-only graphs cannot stand in for class schemas") {
+		table.publishRecordLayout(CanonicalRecordLayout{base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None, 0});
+		table.publishRecordFieldSchema(base_entity, {}, {});
+		table.publishRecordLayout(CanonicalRecordLayout{derived_entity, 1, 1, 1, 1, 0, 1, CanonicalRecordLayoutFlags::None, 0});
+		const std::array<CanonicalRecordBase, 1> bases{{{base_entity, 0, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+		table.publishRecordFieldSchema(derived_entity, {}, bases);
+		CHECK_FALSE(tryBuildCanonicalProjectableConversionPlan(source, target).has_value());
+		CHECK_FALSE(table.hasClassBaseSchema(derived));
+	}
+	SUBCASE("Public and virtual class graphs produce standard conversions") {
+		CanonicalRecordBaseFlags flags = CanonicalRecordBaseFlags::None;
+		SUBCASE("Nonvirtual") {}
+		SUBCASE("Virtual") { flags = CanonicalRecordBaseFlags::Virtual; }
+		table.publishClassBaseSchema(base, {});
+		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, flags, 0, 0}}};
+		table.publishClassBaseSchema(derived, bases);
+		check_standard();
+	}
+	SUBCASE("Unrelated and private relations defer to user-defined selection") {
+		table.publishClassBaseSchema(base, {});
+		SUBCASE("Unrelated") { table.publishClassBaseSchema(derived, {}); }
+		SUBCASE("Private") {
+			const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Private, CanonicalRecordBaseFlags::None, 0, 0}}};
+			table.publishClassBaseSchema(derived, bases);
+		}
+		CHECK_FALSE(tryBuildCanonicalProjectableConversionPlan(source, target).has_value());
+	}
+	SUBCASE("Deep published class graphs use the iterative classifier") {
+		table.publishClassBaseSchema(base, {});
+		TypeId previous = base;
+		for (uint32_t depth = 0; depth < 4096; ++depth) {
+			const TypeId next = table.record(EntityId{120000 + depth});
+			const std::array<CanonicalClassBase, 1> bases{{{previous, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+			table.publishClassBaseSchema(next, bases);
+			previous = next;
+		}
+		source.set_type_entity(table.recordEntity(previous));
+		check_standard();
+	}
+}
+
+TEST_CASE("Specialization object conversion queries cannot publish missing base schemas") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	CompileContext compile_context;
+	compile_context.setInputFile("canonical_nominal_object_graph.cpp");
+	Lexer lexer("struct Base {}; template<class T> struct Derived : Base {}; using Owner = Derived<long long>; static_assert(sizeof(Owner) > 0);");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	{
+		CanonicalTypeTransaction publication(table);
+		REQUIRE(!parser.parse().is_error());
+	}
+	const TypeInfo* owner_info = findTypeByName(StringTable::getOrInternStringHandle("Owner"));
+	const TypeInfo* base_info = findTypeByName(StringTable::getOrInternStringHandle("Base"));
+	REQUIRE(owner_info != nullptr);
+	REQUIRE(base_info != nullptr);
+	const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *owner_info);
+	REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+	REQUIRE(table.node(imported.type).kind == CanonicalTypeKind::TemplateSpecialization);
+	TypeSpecifierNode source(TypeCategory::Struct, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	source.set_type_index(canonicalize_type_alias(owner_info->registeredTypeIndex()).resolvedTypeIndex());
+	REQUIRE(source.category() == TypeCategory::Struct);
+	const TypeSpecifierNode argument(TypeCategory::LongLong, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	source.set_template_specialization(table.templateSpecializationDecl(imported.type), {argument});
+	TypeSpecifierNode target(TypeCategory::Struct, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	target.set_type_index(base_info->registeredTypeIndex());
+	tryBindPublishedTypeEntity(target);
+	CHECK_FALSE(table.hasClassBaseSchema(imported.type));
+	CHECK_FALSE(tryBuildCanonicalProjectableConversionPlan(source, target).has_value());
+	CHECK_FALSE(table.hasClassBaseSchema(imported.type));
+	REQUIRE(importCanonicalOverloadNominalType(table, source).type == imported.type);
+	const TypeId base = importCanonicalType(table, target).type;
+	table.publishClassBaseSchema(base, {});
+	const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+	table.publishClassBaseSchema(imported.type, bases);
+	const auto plan = tryBuildCanonicalProjectableConversionPlan(source, target);
+	REQUIRE(plan.has_value());
+	CHECK(plan->is_valid);
+	CHECK(plan->kind == StandardConversionKind::DerivedToBase);
 }
 
 TEST_CASE("Canonical record constructor schema publishes by TypeId") {

@@ -2128,6 +2128,7 @@ void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
 	} else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
 		const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
 		mf.is_noexcept = ctor.is_noexcept();
+		mf.is_explicit = ctor.is_explicit();
 	} else if (mf.function_decl.is<DestructorDeclarationNode>()) {
 		const auto& dtor = mf.function_decl.as<DestructorDeclarationNode>();
 		mf.is_noexcept = dtor.is_noexcept();
