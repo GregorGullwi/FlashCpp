@@ -2961,35 +2961,23 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 		return std::nullopt;
 	}
 	if (is_pointer_pair) {
-		const CanonicalTypeNode source_pointer = table.node(
-			stripCanonicalTopCv(table, from_import.type).first);
-		const CanonicalTypeNode target_pointer = table.node(
-			stripCanonicalTopCv(table, to_import.type).first);
-		const auto [source_pointee, source_pointee_cv] =
-			stripCanonicalTopCv(table, source_pointer.child);
-		const auto [target_pointee, target_pointee_cv] =
-			stripCanonicalTopCv(table, target_pointer.child);
+		const CanonicalTypeNode source_pointer = table.node(stripCanonicalTopCv(table, from_import.type).first);
+		const CanonicalTypeNode target_pointer = table.node(stripCanonicalTopCv(table, to_import.type).first);
+		const auto [source_pointee, source_pointee_cv] = stripCanonicalTopCv(table, source_pointer.child);
+		const auto [target_pointee, target_pointee_cv] = stripCanonicalTopCv(table, target_pointer.child);
 		const CanonicalTypeNode source_pointee_node = table.node(source_pointee);
 		const CanonicalTypeNode target_pointee_node = table.node(target_pointee);
-		if (source_pointee_node.kind == CanonicalTypeKind::Record &&
-			target_pointee_node.kind == CanonicalTypeKind::Record &&
+		if (source_pointee_node.kind == CanonicalTypeKind::Record && target_pointee_node.kind == CanonicalTypeKind::Record &&
 			source_pointee != target_pointee) {
-			if ((static_cast<uint8_t>(source_pointee_cv) &
-				~static_cast<uint8_t>(target_pointee_cv)) != 0) {
+			if ((static_cast<uint8_t>(source_pointee_cv) & ~static_cast<uint8_t>(target_pointee_cv)) != 0) {
 				return ConversionPlan::no_match();
 			}
-			const EntityId source_entity = table.recordEntity(source_pointee);
-			const EntityId target_entity = table.recordEntity(target_pointee);
-			const std::optional<DerivedBaseConversionKind> base_conversion =
-				classifyCanonicalDerivedBaseConversion(
-					table, source_entity, target_entity);
-			if (base_conversion == DerivedBaseConversionKind::UniquePublicNonVirtual ||
-				base_conversion == DerivedBaseConversionKind::PublicVirtual) {
-				return ConversionPlan{ConversionRank::Conversion,
-					StandardConversionKind::DerivedToBase, true};
+			const auto base_conversion = classifyCanonicalDerivedBaseConversion(table, source_pointee, target_pointee);
+			if (base_conversion == DerivedBaseConversionKind::UniquePublicNonVirtual || base_conversion == DerivedBaseConversionKind::PublicVirtual) {
+				return ConversionPlan{ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
 			}
-			// A direct pointer-to-record pair has enough canonical identity to
-			// decide viability. Missing hierarchy metadata is fail-closed too.
+			// Distinct record pointees require published class-base facts.
+			// Missing schemas, inaccessible and ambiguous paths fail closed.
 			return ConversionPlan::no_match();
 		}
 	}

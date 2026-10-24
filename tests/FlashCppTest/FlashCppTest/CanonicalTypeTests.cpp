@@ -496,6 +496,144 @@ TEST_CASE("Nominal object conversion queries require published class graphs") {
 	}
 }
 
+TEST_CASE("Record pointer conversion queries consume published TypeId class graphs") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const EntityId base_entity{98601};
+	const EntityId derived_entity{98602};
+	const TypeId base = table.record(base_entity);
+	const TypeId derived = table.record(derived_entity);
+	const TypeId intermediate = table.record(EntityId{98603});
+	TypeSpecifierNode source(TypeCategory::Struct, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	source.set_type_entity(derived_entity);
+	source.add_pointer_level(CVQualifier::None);
+	TypeSpecifierNode target(TypeCategory::Struct, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	target.set_type_entity(base_entity);
+	target.add_pointer_level(CVQualifier::None);
+	const std::array<CanonicalClassBase, 1> public_bases{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+	auto check_plan = [&](bool valid) {
+		const size_t types_before = table.size();
+		const auto plan = tryBuildCanonicalProjectableConversionPlan(source, target);
+		REQUIRE(plan.has_value());
+		CHECK(plan->is_valid == valid);
+		CHECK(buildConversionPlan(source, target).is_valid == valid);
+		if (valid) {
+			CHECK(plan->rank == ConversionRank::Conversion);
+			CHECK(plan->kind == StandardConversionKind::DerivedToBase);
+		}
+		CHECK(table.size() == types_before);
+	};
+	auto publish_entity_graph = [&](bool related) {
+		table.publishRecordLayout({base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None, 0});
+		table.publishRecordFieldSchema(base_entity, {}, {});
+		table.publishRecordLayout({derived_entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(related), CanonicalRecordLayoutFlags::None, 0});
+		const std::array<CanonicalRecordBase, 1> bases{{base_entity, 0, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+		table.publishRecordFieldSchema(derived_entity, {},
+			related ? std::span<const CanonicalRecordBase>(bases) : std::span<const CanonicalRecordBase>{});
+	};
+	SUBCASE("Absent class graph fails closed despite EntityId proof") {
+		publish_entity_graph(true);
+		check_plan(false);
+		CHECK_FALSE(table.hasClassBaseSchema(base));
+		CHECK_FALSE(table.hasClassBaseSchema(derived));
+	}
+	SUBCASE("Published public graph overrides absent or contradictory EntityId facts") {
+		SUBCASE("No EntityId schemas") {}
+		SUBCASE("EntityId says unrelated") { publish_entity_graph(false); }
+		table.publishClassBaseSchema(base, {});
+		table.publishClassBaseSchema(derived, public_bases);
+		check_plan(true);
+	}
+	SUBCASE("Public virtual base uses the TypeId graph") {
+		table.publishClassBaseSchema(base, {});
+		const std::array<CanonicalClassBase, 1> bases{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::Virtual, 0, 0}};
+		table.publishClassBaseSchema(derived, bases);
+		check_plan(true);
+	}
+	SUBCASE("Private protected and unrelated TypeId graphs override EntityId proof") {
+		publish_entity_graph(true);
+		table.publishClassBaseSchema(base, {});
+		SUBCASE("Private") {
+			const std::array<CanonicalClassBase, 1> bases{{base, CanonicalAccess::Private, CanonicalRecordBaseFlags::None, 0, 0}};
+			table.publishClassBaseSchema(derived, bases);
+		}
+		SUBCASE("Protected") {
+			const std::array<CanonicalClassBase, 1> bases{{base, CanonicalAccess::Protected, CanonicalRecordBaseFlags::None, 0, 0}};
+			table.publishClassBaseSchema(derived, bases);
+		}
+		SUBCASE("Unrelated") { table.publishClassBaseSchema(derived, {}); }
+		check_plan(false);
+	}
+	SUBCASE("Missing endpoint or intermediate class facts cannot recover EntityId proof") {
+		publish_entity_graph(true);
+		SUBCASE("Root") { table.publishClassBaseSchema(base, {}); }
+		SUBCASE("Target") { table.publishClassBaseSchema(derived, public_bases); }
+		SUBCASE("Intermediate") {
+			table.publishClassBaseSchema(base, {});
+			const std::array<CanonicalClassBase, 1> bases{{intermediate, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+			table.publishClassBaseSchema(derived, bases);
+		}
+		check_plan(false);
+	}
+	SUBCASE("Ambiguous graph cannot use the unique EntityId path") {
+		publish_entity_graph(true);
+		table.publishClassBaseSchema(base, {});
+		table.publishClassBaseSchema(intermediate, public_bases);
+		const std::array<CanonicalClassBase, 2> bases{{public_bases[0],
+			{intermediate, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+		table.publishClassBaseSchema(derived, bases);
+		check_plan(false);
+	}
+	SUBCASE("Pointee qualification is preserved") {
+		table.publishClassBaseSchema(base, {});
+		table.publishClassBaseSchema(derived, public_bases);
+		SUBCASE("Add const") { target.set_cv_qualifier(CVQualifier::Const); check_plan(true); }
+		SUBCASE("Drop const") { source.set_cv_qualifier(CVQualifier::Const); check_plan(false); }
+		SUBCASE("Drop volatile") { source.set_cv_qualifier(CVQualifier::Volatile); check_plan(false); }
+		SUBCASE("Keep const volatile") {
+			source.set_cv_qualifier(CVQualifier::Const | CVQualifier::Volatile);
+			target.set_cv_qualifier(CVQualifier::Const | CVQualifier::Volatile);
+			check_plan(true);
+		}
+	}
+	SUBCASE("Identical record pointers require no class schema") {
+		target.set_type_entity(derived_entity);
+		const auto plan = tryBuildCanonicalProjectableConversionPlan(source, target);
+		REQUIRE(plan.has_value());
+		CHECK(plan->is_valid);
+		CHECK(plan->rank == ConversionRank::ExactMatch);
+		CHECK_FALSE(table.hasClassBaseSchema(derived));
+	}
+	SUBCASE("Class conversion cannot change nested pointer pointees") {
+		table.publishClassBaseSchema(base, {});
+		table.publishClassBaseSchema(derived, public_bases);
+		source.add_pointer_level(CVQualifier::None);
+		target.add_pointer_level(CVQualifier::None);
+		check_plan(false);
+	}
+	SUBCASE("A specialization intermediate retains its TypeId identity") {
+		const std::array<CanonicalTemplateArgument, 1> arguments{{CanonicalTemplateArgument::makeType(table.builtin(CanonicalBuiltinKind::Double))}};
+		const TypeId specialization = table.templateSpecialization(TemplateDeclId{98604}, arguments);
+		const std::array<CanonicalClassBase, 1> bases{{specialization, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+		table.publishClassBaseSchema(base, {});
+		table.publishClassBaseSchema(specialization, public_bases);
+		table.publishClassBaseSchema(derived, bases);
+		check_plan(true);
+	}
+	SUBCASE("Deep TypeId inheritance retains bounded native stack") {
+		table.publishClassBaseSchema(base, {});
+		TypeId previous = base;
+		for (uint32_t depth = 0; depth < 4096; ++depth) {
+			const TypeId next = table.record(EntityId{130000 + depth});
+			const std::array<CanonicalClassBase, 1> bases{{previous, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+			table.publishClassBaseSchema(next, bases);
+			previous = next;
+		}
+		source.set_type_entity(table.recordEntity(previous));
+		check_plan(true);
+	}
+}
+
 TEST_CASE("Specialization object conversion queries cannot publish missing base schemas") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
