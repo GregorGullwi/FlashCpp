@@ -7233,6 +7233,10 @@ inline FlashCpp::TypeIndexArg makeTypeIndexArgFromSpec(const TypeSpecifierNode& 
 	arg.is_array = spec.is_array();
 	arg.pointee_array_declarator = spec.has_pointee_array_declarator();
 	arg.array_sizes.assign(spec.array_dimensions().begin(), spec.array_dimensions().end());
+	if (spec.has_ordered_declarator() && !spec.ordered_declarator_has_legacy_projection()) {
+		const std::span<const DeclaratorComponent> components = spec.declarator_components();
+		arg.ordered_declarator.assign(components.begin(), components.end());
+	}
 	return arg;
 }
 

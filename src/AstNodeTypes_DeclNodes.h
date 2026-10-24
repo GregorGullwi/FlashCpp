@@ -1162,6 +1162,7 @@ struct TypeInfo {
 		bool pointee_array_declarator = false;
 		TemplateVector<size_t, 2> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
 		TemplateVector<StringHandle, 2> array_dimension_parameter_names; // Direct dependent bound for each dimension, if any
+		std::vector<DeclaratorComponent> ordered_declarator;
 		StringHandle dependent_name;	 // Name of the dependent template parameter (for inner deduction)
 		bool is_template_template_arg;  // true if this is a template template argument
 		StringHandle template_name;  // Name of the template for template-template arguments

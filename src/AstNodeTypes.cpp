@@ -441,6 +441,7 @@ void copyTemplateArgInfoScalarFields(TypeInfo::TemplateArgInfo& dst, const TypeI
 	dst.pointee_array_declarator = src.pointee_array_declarator;
 	dst.array_dimensions = src.array_dimensions;
 	dst.array_dimension_parameter_names = src.array_dimension_parameter_names;
+	dst.ordered_declarator = src.ordered_declarator;
 	dst.dependent_name = src.dependent_name;
 	dst.is_template_template_arg = src.is_template_template_arg;
 	dst.template_name = src.template_name;
@@ -487,6 +488,7 @@ TypeInfo::TemplateArgInfo::TemplateArgInfo(const TemplateArgInfo& other)
 	  pointee_array_declarator(other.pointee_array_declarator),
 	  array_dimensions(other.array_dimensions),
 	  array_dimension_parameter_names(other.array_dimension_parameter_names),
+	  ordered_declarator(other.ordered_declarator),
 	  dependent_name(other.dependent_name),
 	  is_template_template_arg(other.is_template_template_arg),
 	  template_name(other.template_name),
@@ -514,6 +516,7 @@ TypeInfo::TemplateArgInfo::TemplateArgInfo(TemplateArgInfo&& other) noexcept
 	  pointee_array_declarator(other.pointee_array_declarator),
 	  array_dimensions(std::move(other.array_dimensions)),
 	  array_dimension_parameter_names(std::move(other.array_dimension_parameter_names)),
+	  ordered_declarator(std::move(other.ordered_declarator)),
 	  dependent_name(other.dependent_name),
 	  is_template_template_arg(other.is_template_template_arg),
 	  template_name(other.template_name),

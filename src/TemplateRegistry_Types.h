@@ -168,6 +168,9 @@ struct TemplateTypeArg {
 	bool pointee_array_declarator = false;
 	std::vector<size_t> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
 	TemplateParamNameVector array_dimension_parameter_names; // Direct dependent bound for each dimension, if any
+	// [temp.arg.type]: a non-projectable pointer/array type-id has no flat
+	// projection. The ordered spine is the stored type.
+	std::vector<DeclaratorComponent> ordered_declarator;
 	MemberPointerKind member_pointer_kind;
 	StringHandle member_class_name;
 	const StructDeclarationNode* injected_class_declaration;
@@ -273,6 +276,10 @@ struct TemplateTypeArg {
 		: type_index(makeTypeIndex(type_spec.type_index().withCategory(type_spec.type()))), ref_qualifier(type_spec.reference_qualifier()), pointer_depth(type_spec.pointer_depth()), pointer_cv_qualifiers(), cv_qualifier(type_spec.cv_qualifier()), is_array(type_spec.is_array()), pointee_array_declarator(type_spec.has_pointee_array_declarator()), array_dimensions(type_spec.array_dimensions().begin(), type_spec.array_dimensions().end()), member_pointer_kind(MemberPointerKind::None), member_class_name(type_spec.has_member_class() ? type_spec.member_class_name() : StringHandle{}), injected_class_declaration(type_spec.injected_class_declaration()), is_value(false), value(0), has_typed_value_identity(false), typed_value_identity(), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle(), function_signature(type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt) {
 		for (const auto& level : type_spec.pointer_levels()) {
 			pointer_cv_qualifiers.push_back(level.cv_qualifier);
+		}
+		if (type_spec.has_ordered_declarator() && !type_spec.ordered_declarator_has_legacy_projection()) {
+			const std::span<const DeclaratorComponent> components = type_spec.declarator_components();
+			ordered_declarator.assign(components.begin(), components.end());
 		}
 		auto isDependentTypeIndex = [](TypeIndex idx) -> bool {
 			if (idx.category() == TypeCategory::Auto ||
@@ -428,6 +435,14 @@ struct TemplateTypeArg {
 		for (size_t dim : array_dimensions) {
 			h ^= std::hash<size_t>{}(dim) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
+		if (!ordered_declarator.empty()) {
+			h ^= std::hash<size_t>{}(ordered_declarator.size()) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			for (const DeclaratorComponent& component : ordered_declarator) {
+				h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(component.kind)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+				h ^= std::hash<uint64_t>{}(component.payload) + 0x9e3779b9 + (h << 6) + (h >> 2);
+				h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(component.cv_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			}
+		}
 		if (is_dependent) {
 			for (StringHandle dimension_parameter_name : array_dimension_parameter_names) {
 				h ^= std::hash<StringHandle>{}(dimension_parameter_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
@@ -483,6 +498,7 @@ struct TemplateTypeArg {
 			  is_array == other.is_array &&
 			  pointee_array_declarator == other.pointee_array_declarator &&
 			  array_dimensions == other.array_dimensions &&
+			  ordered_declarator == other.ordered_declarator &&
 			  (!is_dependent || array_dimension_parameter_names == other.array_dimension_parameter_names) &&
 			  member_pointer_kind == other.member_pointer_kind &&
 			  member_class_name == other.member_class_name &&
@@ -628,6 +644,15 @@ struct TemplateTypeArg {
 				}
 			}
 		}
+		if (!ordered_declarator.empty()) {
+			result += "O";
+			for (const DeclaratorComponent& component : ordered_declarator) {
+				result += std::to_string(static_cast<unsigned>(component.kind));
+				result += ":";
+				result += std::to_string(component.payload);
+				result += ".";
+			}
+		}
 
 		if (member_pointer_kind == MemberPointerKind::Object) {
 			result += "MPO";
@@ -664,11 +689,28 @@ inline TemplateTypeArg makeConcreteNttpArg(const FlashCpp::NonTypeValueIdentity&
 	return result;
 }
 
+inline bool restoreOrderedTemplateArgDeclarator(TypeSpecifierNode& spec, const std::vector<DeclaratorComponent>& components) {
+	if (components.empty()) {
+		return false;
+	}
+	spec.set_ordered_declarator(components);
+	return true;
+}
+
 inline TypeSpecifierNode typeSpecifierFromTemplateTypeArgProjection(
 	const TemplateTypeArg& arg) {
 	TypeSpecifierNode type_spec(
 		arg.type_index, TypeQualifier::None, 0, Token{}, arg.cv_qualifier);
 	type_spec.set_reference_qualifier(arg.ref_qualifier);
+	if (restoreOrderedTemplateArgDeclarator(type_spec, arg.ordered_declarator)) {
+		if (arg.injected_class_declaration != nullptr) {
+			type_spec.set_injected_class_declaration(arg.injected_class_declaration);
+		}
+		if (arg.function_signature.has_value()) {
+			type_spec.set_function_signature(*arg.function_signature);
+		}
+		return type_spec;
+	}
 	for (const CVQualifier pointer_qualifier : arg.pointer_cv_qualifiers) {
 		type_spec.add_pointer_level(pointer_qualifier);
 	}
@@ -1062,6 +1104,7 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	result.is_array = arg.is_array;
 	result.pointee_array_declarator = arg.pointee_array_declarator;
 	result.array_sizes.assign(arg.array_dimensions.begin(), arg.array_dimensions.end());
+	result.ordered_declarator = arg.ordered_declarator;
 	result.function_signature = arg.function_signature;
 	result.is_dependent =
 		arg.is_dependent &&
@@ -1214,6 +1257,11 @@ inline ReferenceQualifier collapseReferenceQualifiers(
 }
 
 inline int computeTemplateTypeArgSizeBits(const TemplateTypeArg& arg) {
+	if (!arg.ordered_declarator.empty()) {
+		TypeSpecifierNode spec(arg.type_index, TypeQualifier::None, 0, Token{}, arg.cv_qualifier);
+		spec.set_ordered_declarator(arg.ordered_declarator);
+		return getTypeSpecSizeBits(spec);
+	}
 	if (arg.pointer_depth > 0 || arg.ref_qualifier != ReferenceQualifier::None) {
 		return 64;
 	}
@@ -1255,6 +1303,16 @@ inline TypeSpecifierNode makeTypeSpecifierFromTemplateTypeArg(
 		token,
 		arg.cv_qualifier,
 		arg.ref_qualifier);
+	if (restoreOrderedTemplateArgDeclarator(substituted_spec, arg.ordered_declarator)) {
+		if (arg.member_class_name.isValid()) {
+			substituted_spec.set_member_class_name(arg.member_class_name);
+		}
+		if (arg.function_signature.has_value()) {
+			substituted_spec.set_function_signature(*arg.function_signature);
+		}
+		substituted_spec.set_injected_class_declaration(arg.injected_class_declaration);
+		return substituted_spec;
+	}
 	for (size_t pointer_index = 0; pointer_index < arg.pointer_depth; ++pointer_index) {
 		CVQualifier pointer_cv = pointer_index < arg.pointer_cv_qualifiers.size()
 			? arg.pointer_cv_qualifiers[pointer_index]
@@ -1305,6 +1363,7 @@ inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 	materialized.pointee_array_declarator =
 		arg_info.pointee_array_declarator;
 	materialized.array_dimensions.assign(arg_info.array_dimensions.begin(), arg_info.array_dimensions.end());
+	materialized.ordered_declarator = arg_info.ordered_declarator;
 	materialized.function_signature = arg_info.function_signature();
 
 	TypeSpecifierNode substituted_spec(
@@ -1313,6 +1372,16 @@ inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 		token,
 		arg_info.cv_qualifier,
 		arg_info.ref_qualifier);
+	if (restoreOrderedTemplateArgDeclarator(substituted_spec, arg_info.ordered_declarator)) {
+		if (arg_info.member_class_name.isValid()) {
+			substituted_spec.set_member_class_name(arg_info.member_class_name);
+		}
+		if (arg_info.function_signature().has_value()) {
+			substituted_spec.set_function_signature(*arg_info.function_signature());
+		}
+		substituted_spec.set_injected_class_declaration(arg_info.injected_class_declaration);
+		return substituted_spec;
+	}
 	for (size_t pointer_index = 0; pointer_index < arg_info.pointer_depth; ++pointer_index) {
 		CVQualifier pointer_cv = pointer_index < arg_info.pointer_cv_qualifiers.size()
 			? arg_info.pointer_cv_qualifiers[pointer_index]
