@@ -125,8 +125,9 @@ value-initializes the rest. An unknown outermost bound is completed from a
 brace list of n > 0 clauses as an array of n elements. A range-for over that
 array visits one outermost element through a pointer to that element. The remaining flat
 readers still fail closed.
-Ordered declarators over alias array, reference, function, or member-pointer
-wrappers remain unsupported. An ordered member-function-pointer declarator whose
+An ordered declarator around an alias that is an array, a reference, or a
+member pointer keeps that wrapper as the inner type. A free-function alias
+remains unsupported. An ordered member-function-pointer declarator whose
 callable return carries its own declarator (for example
 `int* (Owner::*)() const`) is now supported end to end: it imports structurally
 with the owner `TypeId`, ABI-mangles in both the MSVC and Itanium styles, and

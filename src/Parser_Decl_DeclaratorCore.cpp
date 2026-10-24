@@ -1620,6 +1620,44 @@ ParseResult Parser::parse_declarator(
 					const bool was_delimited = frame.delimited;
 					frames.pop_back();
 					if (frames.empty()) {
+						// The base type may already be an alias. [dcl.typedef]:
+						// that alias is the type this declarator wraps, so its
+						// array and reference stay inside the new spine.
+						// [dcl.array] puts cv on the element; [dcl.ref] keeps a
+						// reference return inside a function. Pointers from the
+						// base are already the trailing prefixes.
+						if (!completed.empty() && base_type.has_ordered_declarator()) {
+							completed.insert(completed.end(), base_type.declarator_components().begin(), base_type.declarator_components().end());
+						} else if (!completed.empty()) {
+							std::vector<DeclaratorComponent> alias_inner;
+							if (base_type.reference_qualifier() == ReferenceQualifier::LValueReference) {
+								alias_inner.push_back(DeclaratorComponent::lvalueReference());
+							} else if (base_type.reference_qualifier() == ReferenceQualifier::RValueReference) {
+								alias_inner.push_back(DeclaratorComponent::rvalueReference());
+							}
+							const bool base_has_array = base_type.is_array() || base_type.has_pointee_array_declarator() ||
+								base_type.has_unsized_outer_array_dimension();
+							auto append_base_arrays = [&](std::vector<DeclaratorComponent>& dest) {
+								if (base_type.array_dimensions().empty()) {
+									dest.push_back(DeclaratorComponent::unknownBoundArray());
+									return;
+								}
+								for (const size_t extent : base_type.array_dimensions()) {
+									dest.push_back(extent == 0 ? DeclaratorComponent::unknownBoundArray() : DeclaratorComponent::array(extent));
+								}
+							};
+							if (base_has_array && !base_type.has_pointee_array_declarator()) {
+								append_base_arrays(alias_inner);
+							}
+							if (!alias_inner.empty()) {
+								const size_t base_prefix_count = base_type.has_member_class() ? 1u : base_type.pointer_levels().size();
+								const size_t insert_at = completed.size() >= base_prefix_count ? completed.size() - base_prefix_count : completed.size();
+								completed.insert(completed.begin() + static_cast<std::ptrdiff_t>(insert_at), alias_inner.begin(), alias_inner.end());
+							}
+							if (base_has_array && base_type.has_pointee_array_declarator()) {
+								append_base_arrays(completed);
+							}
+						}
 						if (!has_identifier || peek() == "("_tok) {
 							failed = true;
 							break;

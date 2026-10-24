@@ -6419,13 +6419,11 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		}
 	}
 	if (type.has_ordered_declarator()) {
-		if (resolved_alias_available &&
-			(!resolved_alias.array_dimensions.empty() ||
-			 resolved_alias.reference_qualifier != ReferenceQualifier::None ||
-			 resolved_alias.function_signature.has_value() ||
-			 resolved_alias.has_member_class_owner())) {
-			throw InternalError(
-				"ordered declarator over a non-pointer alias wrapper is not migrated");
+		// A free-function alias still has no component for its signature.
+		// Array, reference, and member-pointer aliases fold into the spine below.
+		if (resolved_alias_available && resolved_alias.function_signature.has_value() && !resolved_alias.has_member_class_owner() &&
+			!resolved_alias.has_ordered_declarator) {
+			throw InternalError("ordered declarator over a function alias is not migrated");
 		}
 		TypeSpecifierNode resolved_syntax = type;
 		resolved_syntax.set_type_index(desc.type_index);
@@ -6439,27 +6437,35 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 				break;
 			}
 			const TypeSpecifierNode* alias_spec = alias_type->aliasTypeSpecifier();
-			if (!alias_spec || alias_spec->has_ordered_declarator()) {
+			if (alias_spec == nullptr) {
 				throw InternalError("ordered declarator over unsupported alias shape");
 			}
-			appendOrderedAliasPointerLevels(alias_components,
-				alias_spec->pointer_levels(), alias_spec->cv_qualifier(), pending_cv);
-			alias_index = alias_spec->type_index().is_valid()
-				? alias_spec->type_index()
-				: alias_type->type_index_;
+			appendOrderedAliasDeclaratorShape(alias_components, *alias_spec, pending_cv);
+			alias_index = alias_spec->type_index().is_valid() ? alias_spec->type_index() : alias_type->type_index_;
 		}
-		if (alias_components.size() !=
-			(resolved_alias_available ? resolved_alias.pointer_depth : 0)) {
+		const size_t alias_pointer_components = static_cast<size_t>(std::ranges::count_if(alias_components, [](const DeclaratorComponent& component) {
+			return component.kind == DeclaratorComponentKind::Pointer || component.kind == DeclaratorComponentKind::MemberObjectPointer ||
+				component.kind == DeclaratorComponentKind::MemberFunctionPointer;
+		}));
+		if (resolved_alias_available && !resolved_alias.has_ordered_declarator && alias_pointer_components != resolved_alias.pointer_depth) {
 			throw InternalError("ordered declarator alias pointer levels are inconsistent");
 		}
 		resolved_syntax.set_cv_qualifier(pending_cv);
-		std::vector<DeclaratorComponent> composed_components(
-			type.declarator_components().begin(),
-			type.declarator_components().end());
-		composed_components.insert(composed_components.end(),
-			alias_components.begin(), alias_components.end());
-		resolved_syntax.set_ordered_declarator(
-			std::move(composed_components));
+		std::vector<DeclaratorComponent> composed_components(type.declarator_components().begin(), type.declarator_components().end());
+		composed_components.insert(composed_components.end(), alias_components.begin(), alias_components.end());
+		resolved_syntax.set_ordered_declarator(std::move(composed_components));
+		if (resolved_alias_available) {
+			applyResolvedAliasMemberOwner(resolved_syntax, resolved_alias);
+		}
+		const bool alias_brings_callable = std::ranges::any_of(alias_components, [](const DeclaratorComponent& component) {
+			return component.kind == DeclaratorComponentKind::Function || component.kind == DeclaratorComponentKind::MemberFunctionPointer;
+		});
+		if (alias_brings_callable && resolved_syntax.has_function_signature()) {
+			throw InternalError("ordered declarator over a callable alias wrapper is not migrated");
+		}
+		if (alias_brings_callable && resolved_alias_available && resolved_alias.function_signature.has_value()) {
+			resolved_syntax.set_function_signature(*resolved_alias.function_signature);
+		}
 		// Parser-time owner publication can precede the class declaration's
 		// EntityId assignment. Refresh the bridge before importing the ordered
 		// spine, then copy the published identity into its member components.
@@ -6505,7 +6511,25 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 			[](const DeclaratorComponent& component) {
 				return component.kind == DeclaratorComponentKind::MemberFunctionPointer;
 			});
-		if (!resolved_syntax.ordered_declarator_has_legacy_projection() || has_member_function_pointer) {
+		if (resolved_syntax.ordered_declarator_has_legacy_projection() && !has_member_function_pointer) {
+			// Projectable shapes are reimported from these flat fields. The alias
+			// wrappers are only in the composed spine, so the descriptor must
+			// carry that projection or the publisher rebuilds the outer declarator.
+			desc.pointer_levels.clear();
+			for (const PointerLevel& pointer : resolved_syntax.pointer_levels()) {
+				desc.pointer_levels.push_back(pointer);
+			}
+			desc.array_dimensions.clear();
+			if (resolved_syntax.is_array() || resolved_syntax.has_pointee_array_declarator()) {
+				for (const size_t extent : resolved_syntax.array_dimensions()) {
+					desc.array_dimensions.push_back(extent);
+				}
+			}
+			desc.pointee_array_declarator = resolved_syntax.has_pointee_array_declarator();
+			desc.has_unsized_outer_array_dimension = resolved_syntax.has_unsized_outer_array_dimension();
+			desc.ref_qualifier = resolved_syntax.reference_qualifier();
+			desc.base_cv = resolved_syntax.cv_qualifier();
+		} else {
 			desc.structural_type_id = *imported;
 		}
 		// [dcl.ptr]/1: a pointer whose immediate pointee is an array designates
