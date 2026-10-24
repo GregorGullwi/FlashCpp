@@ -180,8 +180,12 @@ parenthesized direct-declarators and suffixes. `parse_type_and_name` does not
 call `parse_declarator` once after the base type; it re-checks for `(` at
 several points (right after the type, after pointer levels, and after reference
 modifiers). The fix is a single `parse_declarator` call after the base type so
-the recursive declarator grammar owns every interleaving. The re-check probe is
-still marked temporary at its dispatch site.
+the recursive declarator grammar owns every interleaving. A cast type-id now
+does that for a nested parenthesized abstract-declarator: the token after `(`
+need not be a ptr-operator, and a group that contains a declarator-id stays an
+expression ([dcl.decl]/5).
+`tests/test_nested_abstract_declarator_cast_ret0.cpp` checks `int ((*)())`,
+`int ((*)(int))`, and `int ((*)[4])`.
 
 Reference interleavings are now owned by the shared entry point
 `tryParseReferenceToFunctionDeclarator`, invoked both right after the type and

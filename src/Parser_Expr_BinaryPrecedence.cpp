@@ -1754,31 +1754,26 @@ void Parser::consume_cast_type_id_postfix_modifiers(TypeSpecifierNode& type_spec
 	consume_pointer_ref_modifiers(type_spec);
 }
 
-// A cast type-id is a type-id (C++20 [expr.static.cast], [expr.cast]), so it may
-// contain a parenthesized abstract-declarator group such as int(*)[3]. The group
-// is only attempted when the token after '(' is a ptr-operator, which no
-// parenthesized expression or functional-cast argument list can start with; that
-// keeps (f)(a) and (T)(x) on their existing expression paths. The group itself is
-// routed through parse_declarator so the pointee shape is derived by the same
-// machinery as the named spelling int(*p)[3].
+// A cast type-id is a type-id (C++20 [expr.static.cast], [expr.cast], [dcl.decl]).
+// A parenthesized abstract-declarator may itself be parenthesized, so the token
+// after '(' is not required to be a ptr-operator. parse_declarator owns the
+// group. [dcl.decl]/5: an abstract-declarator has no declarator-id, so a named
+// group such as (f)(a) or (T)(x) stays an expression.
 bool Parser::consume_cast_type_id_paren_declarator(TypeSpecifierNode& type_spec) {
 	if (peek() != "("_tok) {
-		return false;
-	}
-	TokenKind after_paren = peek(1);
-	if (after_paren != "*"_tok && after_paren != "&"_tok && after_paren != "&&"_tok) {
 		return false;
 	}
 	SaveHandle group_start = save_token_position();
 	// A reference-to-array type-id such as `int (&)[3]` is not produced by the
 	// pointer declarator machinery, so recognize its abstract spelling here.
-	if ((after_paren == "&"_tok || after_paren == "&&"_tok) &&
-		tryConsumeReferenceToArrayDeclarator(type_spec, nullptr, nullptr, nullptr)) {
+	if (tryConsumeReferenceToArrayDeclarator(type_spec, nullptr, nullptr, nullptr)) {
 		discard_saved_token(group_start);
 		return true;
 	}
 	ParseResult declarator_result = parse_declarator(type_spec, Linkage::None);
-	if (!declarator_result.is_error() && declarator_result.node().has_value()) {
+	const bool parsed_abstract_declarator = !declarator_result.is_error() && declarator_result.node().has_value() &&
+		declarator_result.node()->is<DeclarationNode>() && declarator_result.node()->as<DeclarationNode>().identifier_token().value().empty();
+	if (parsed_abstract_declarator) {
 		discard_saved_token(group_start);
 		return true;
 	}
