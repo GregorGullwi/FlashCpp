@@ -411,8 +411,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		// Both orderings are valid: 'explicit constexpr' and 'constexpr explicit'
 		parse_declaration_specifiers();
 
-		// Also skip 'explicit' which is constructor-specific and not in parse_declaration_specifiers
-		// C++20 explicit(condition) - also skip the condition expression
+		// Skip explicit(condition) during lookahead; the constructor parse below retains its operand.
 		while (peek() == "explicit"_tok) {
 			advance();
 			if (peek() == "("_tok) {
@@ -476,14 +475,11 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				auto specs = parse_declaration_specifiers();
 
 				// Track 'explicit' separately (constructor-specific, not in DeclarationSpecifiers)
-				// C++20 explicit(condition) - also skip the condition expression
+				// Retain dependent explicit(condition) operands for constructor instantiation.
 				bool is_explicit = false;
+				ExprId explicit_condition{};
 				while (peek() == "explicit"_tok) {
-					is_explicit = true;
-					advance();
-					if (peek() == "("_tok) {
-						skip_balanced_parens();
-					}
+					is_explicit = parseExplicitSpecifier(explicit_condition);
 				}
 
 				// Parse any remaining declaration specifiers after 'explicit'
@@ -523,6 +519,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 				// Apply specifiers to constructor
 				ctor_ref.set_explicit(is_explicit);
+				ctor_ref.set_explicit_condition(explicit_condition);
 				ctor_ref.set_constexpr(header.storage.is_constexpr());
 
 				// Apply parsed parameters to the constructor

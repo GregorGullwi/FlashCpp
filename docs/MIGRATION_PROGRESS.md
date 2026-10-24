@@ -6,8 +6,6 @@ authoritative for the design, boundaries, and exit criteria. This file records
 the current boundary state, the remaining work, and the validation contract;
 completed implementation history belongs in git.
 
-Last updated: 2026-10-24.
-
 ## Current state
 
 Boundary **3A (canonical types)** is active and incomplete. The explicit-criteria
@@ -272,7 +270,8 @@ Continue boundary 3A in this order.
    Identity remains independent of inheritance publication. Add direct classifier
    controls for missing and contradictory EntityId/TypeId graphs, then recheck member
    pointers, reference binding, constructor ranking and nominal object overloads.
-   Retain explicit-constructor primary/partial, direct/list/copy-init and nested
+   Retain conditional-explicit specialization and located-diagnostic guards alongside
+   explicit-constructor primary/partial, direct/list/copy-init and nested
    template-construction argument-isolation guards, plus dependent callable and
    ShapeOnly coverage. Stop after this classifier and necessary caller/fixture
    migration; EntityId API deletion and conversion-function declaration schemas

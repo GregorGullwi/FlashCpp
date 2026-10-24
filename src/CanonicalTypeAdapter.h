@@ -1862,6 +1862,10 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 			continue;
 		}
 		const ConstructorDeclarationNode& constructor = member.function_declaration.as<ConstructorDeclarationNode>();
+		if (constructor.explicit_condition()) {
+			has_incomplete_candidates = true;
+			continue;
+		}
 		if (constructor.parameter_nodes().size() > std::numeric_limits<uint16_t>::max()) {
 			has_incomplete_candidates = true;
 			continue;

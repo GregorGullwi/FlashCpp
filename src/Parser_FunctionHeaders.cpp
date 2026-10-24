@@ -4,6 +4,8 @@
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "Parser_FunctionTypeHelpers.h"
+#include "ParserTemplateClassShared.h"
+#include "TemplateConstraintSubsumption.h"
 #include "TypeTraitEvaluator.h"
 
 namespace {
@@ -625,9 +627,37 @@ std::vector<TypeSpecifierNode> Parser::apply_lvalue_reference_deduction(
 	return result;
 }
 
-// Consume leading specifiers (constexpr, consteval, inline, explicit, virtual) before a member declaration.
+// Parse the actual operand once; dependent conditions keep structural identity
+// until the constructor specialization supplies its template arguments.
+bool Parser::parseExplicitSpecifier(ExprId& retained_condition) {
+	const Token token = peek_info();
+	retained_condition = {};
+	if (!consume("explicit"_tok)) {
+		throw InternalError("explicit specifier parser requires the explicit keyword");
+	}
+	if (!consume("("_tok)) {
+		return true;
+	}
+	ParseResult expression = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+	if (expression.is_error() || !expression.node().has_value() || !consume(")"_tok)) {
+		throw makeStructuredCompileError(diagnostics(), DiagnosticId::ExplicitSpecifierNotConstant, DiagnosticSeverity::Error,
+			SourceLocation::fromToken(token), "explicit specifier requires a parenthesized constant expression", {});
+	}
+	const ASTNode operand = *expression.node();
+	if (ParserExpressionDependency::nodeHasDeferredTemplateDependency(operand, currentTemplateParamNames())) {
+		retained_condition = requireFrontendContext().dependentExpressions().intern(operand);
+		return true;
+	}
+	const auto evaluated = try_evaluate_constant_expression(operand);
+	if (evaluated.has_value()) {
+		return evaluated->value != 0;
+	}
+	throw makeStructuredCompileError(diagnostics(), DiagnosticId::ExplicitSpecifierNotConstant, DiagnosticSeverity::Error,
+		SourceLocation::fromToken(token), "explicit specifier is not a constant expression", {});
+}
+
 // Handles explicit(condition) syntax. Returns a bitmask of MemberLeadingSpecifiers flags.
-FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers() {
+FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers(ExprId* retained_explicit_condition) {
 	using enum FlashCpp::MemberLeadingSpecifiers;
 	FlashCpp::MemberLeadingSpecifiers specs = MLS_None;
 	while (true) {
@@ -647,44 +677,12 @@ FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers() {
 			specs |= MLS_Inline;
 			advance();
 		} else if (k == "explicit"_tok) {
-			advance();
-			if (peek() == "("_tok) {
-				// explicit(condition) - parse and evaluate the condition using constexpr evaluator
-				advance(); // consume '('
-
-				// Parse the condition expression
-				ParseResult condition_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-				bool explicit_value = true;	// Default to true if evaluation fails
-
-				if (!condition_result.is_error() && condition_result.node().has_value()) {
-					// Evaluate the constant expression using ConstExprEvaluator
-					ConstExpr::EvaluationContext ctx(gSymbolTable, *this);  // Enable template function instantiation if needed
-
-					auto eval_result = ConstExpr::Evaluator::evaluate(*condition_result.node(), ctx);
-
-					if (eval_result.success()) {
-						// Convert result to bool - any non-zero value is true
-						explicit_value = eval_result.as_bool();
-					} else {
-						// If evaluation fails (e.g., template-dependent expression),
-						// default to true for safety (explicit is the safer default)
-						FLASH_LOG(Parser, Debug, "explicit(condition) evaluation failed: ",
-								  eval_result.error_message, " - defaulting to explicit=true");
-						explicit_value = true;
-					}
-				}
-
-				if (!consume(")"_tok)) {
-					// Error: expected closing paren
-				}
-
-				// Only set MLS_Explicit if the condition is true
-				if (explicit_value) {
-					specs |= MLS_Explicit;
-				}
-			} else {
-				// Plain explicit (no condition) - always true
+			ExprId condition{};
+			if (parseExplicitSpecifier(condition)) {
 				specs |= MLS_Explicit;
+			}
+			if (retained_explicit_condition != nullptr) {
+				*retained_explicit_condition = condition;
 			}
 		} else if (k == "virtual"_tok) {
 			specs |= MLS_Virtual;
@@ -874,6 +872,34 @@ Parser::ParsedNoexceptResolution Parser::resolveParsedNoexcept(const FlashCpp::F
 		return resolved;
 	}
 	throwNoexceptSpecifierNotConstant(diagnostics(), specifiers.noexcept_keyword_location);
+}
+
+void Parser::copyInstantiatedConstructorDeclarationFlags(const ConstructorDeclarationNode& pattern, ConstructorDeclarationNode& target,
+	std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args) {
+	copyConstructorDeclarationFlags(pattern, target);
+	if (!pattern.explicit_condition()) {
+		return;
+	}
+	DependentExpressionTable& expressions = requireFrontendContext().dependentExpressions();
+	const ASTNode substituted = substituteTemplateParameters(expressions.node(pattern.explicit_condition()), template_params, template_args);
+	ConstExpr::EvaluationContext context(gSymbolTable, *this);
+	context.template_args = template_args;
+	for (const TemplateParameterNode& parameter : template_params) {
+		context.template_param_names.push_back(parameter.name());
+	}
+	const ConstExpr::EvalResult evaluated = ConstExpr::Evaluator::evaluate(substituted, context);
+	if (evaluated.success()) {
+		target.set_explicit(evaluated.as_bool());
+		target.set_explicit_condition({});
+		return;
+	}
+	if (ParserExpressionDependency::nodeHasDeferredTemplateDependency(substituted, currentTemplateParamNames())) {
+		target.set_explicit_condition(expressions.intern(substituted));
+		return;
+	}
+	const Token token = FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(substituted).value_or(pattern.name_token());
+	throw makeStructuredCompileError(diagnostics(), DiagnosticId::ExplicitSpecifierNotConstant, DiagnosticSeverity::Error,
+		SourceLocation::fromToken(token), "explicit specifier is not a constant expression", {});
 }
 
 void Parser::materializeInstantiatedConstructorNoexcept(ConstructorDeclarationNode& target, const ConstructorDeclarationNode& pattern,
