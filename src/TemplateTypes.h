@@ -463,6 +463,7 @@ struct TypeIndexArg {
 	bool is_array = false;
 	bool pointee_array_declarator = false;
 	TemplateVector<size_t, 2> array_sizes;  // Empty for T, full dimension list for arrays
+	std::vector<DeclaratorComponent> ordered_declarator;
 	std::optional<FunctionSignature> function_signature; // Needed for function pointer identity
 	bool is_dependent = false;
 	StringHandle dependent_name{};
@@ -480,6 +481,7 @@ struct TypeIndexArg {
 			   is_array == other.is_array &&
 			   pointee_array_declarator == other.pointee_array_declarator &&
 			   array_sizes == other.array_sizes &&
+			   ordered_declarator == other.ordered_declarator &&
 			   function_signature.has_value() == other.function_signature.has_value() &&
 			   (!function_signature.has_value() ||
 				equalFunctionSignatureIdentity(*function_signature, *other.function_signature)) &&
@@ -504,6 +506,14 @@ struct TypeIndexArg {
 		}
 		for (size_t array_size : array_sizes) {
 			h ^= std::hash<size_t>{}(array_size) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		if (!ordered_declarator.empty()) {
+			h ^= std::hash<size_t>{}(ordered_declarator.size()) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			for (const DeclaratorComponent& component : ordered_declarator) {
+				h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(component.kind)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+				h ^= std::hash<uint64_t>{}(component.payload) + 0x9e3779b9 + (h << 6) + (h >> 2);
+				h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(component.cv_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			}
 		}
 		if (function_signature.has_value()) {
 			h ^= hashFunctionSignatureIdentity(*function_signature) + 0x9e3779b9 + (h << 6) + (h >> 2);

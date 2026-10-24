@@ -6,7 +6,7 @@ authoritative for the design, boundaries, and exit criteria. This file records
 the current boundary state, the remaining work, and the validation contract;
 completed implementation history belongs in git.
 
-Last updated: 2026-10-23.
+Last updated: 2026-10-24.
 
 ## Current state
 
@@ -490,8 +490,13 @@ Continue boundary 3A in this order.
       `test_member_alias_static_memberptr_nttp_identity_ret0.cpp` protects the
       specialization lookup. This extends the NTTP follow-up without completing
       a 3A exit criterion; the 3A rollup remains 10/79.
-      Non-projectable function/member-pointer shapes remain deferred until
-      canonical substitution and export coverage is available.
+      A non-projectable pointer/array type-id is stored with its ordered
+      declarator and restored when the argument is materialized.
+      `tests/test_template_arg_interleaved_pointer_array_ret0.cpp` checks
+      `int (*[2])[4]` and a pointer to that array. Substitution of a declarator
+      written on the pattern, and IR storage of the resulting member, still
+      fail closed. Non-projectable function/member-pointer shapes remain
+      deferred until canonical substitution and export coverage is available.
    4. **Conditional array decay.** `decayArrayForConditional` no longer rewrites
       `array_dimensions`, `pointer_levels`, or `has_unsized_outer_array_dimension`
       to describe the decay. The result identity is the canonical pointer to the
