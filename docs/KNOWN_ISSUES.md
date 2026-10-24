@@ -99,9 +99,10 @@ Boundary 3A is not complete: descriptors carry authoritative
 `structural_type_id` identity where canonical import is supported and retain
 flat fields as compatibility projections, but unmigrated consumers still read
 those fields directly. A non-projectable pointer/array type-id is kept on the
-stored template argument as its ordered declarator. Substitution storage and
-general IR object-storage consumers still read parallel flat pointer/array
-fields, so they remain fail-closed. Built-in subscripting no longer
+stored template argument as its ordered declarator, and a declarator written
+around a template parameter is kept on substitution. General IR object-storage
+consumers still read parallel flat pointer/array fields, so member storage of
+an interleaved declarator remains fail-closed. Built-in subscripting no longer
 flattens an interleaved chain: each selected step is materialized from the
 sema-published canonical result type, so an array of pointers followed by a
 pointer-to-array uses the correct pointer/row strides. Inline array-object

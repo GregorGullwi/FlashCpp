@@ -1213,9 +1213,26 @@ inline std::string_view generateInstantiatedNameFromArgs(
 
 } // namespace FlashCpp
 
+inline TypeSpecifierNode makeTypeSpecifierFromTemplateTypeArg(
+	const TemplateTypeArg& arg,
+	const Token& token);
+
 inline TemplateTypeArg rebindDependentTemplateTypeArg(
 	const TemplateTypeArg& substituted_arg,
 	const TemplateTypeArg& dependent_pattern) {
+	// [temp.type]: a declarator written on the dependent argument is part of
+	// the substituted type. Flat pointer depth cannot carry int (*[2])[4].
+	if (!substituted_arg.is_value && !dependent_pattern.is_value && (!substituted_arg.ordered_declarator.empty() || !dependent_pattern.ordered_declarator
+		.empty())) {
+		TypeSpecifierNode substituted_type = makeTypeSpecifierFromTemplateTypeArg(substituted_arg, Token{});
+		TypeSpecifierNode pattern_type = makeTypeSpecifierFromTemplateTypeArg(dependent_pattern, Token{});
+		applyOuterDeclaratorShapeForSubstitution(substituted_type, pattern_type);
+		TemplateTypeArg rebound(substituted_type);
+		rebound.is_pack = substituted_arg.is_pack;
+		rebound.is_dependent = false;
+		rebound.dependent_name = {};
+		return rebound;
+	}
 	TemplateTypeArg rebound_arg = substituted_arg;
 	if (dependent_pattern.injected_class_declaration != nullptr) {
 		rebound_arg.injected_class_declaration =
@@ -1446,6 +1463,9 @@ inline TemplateTypeArg makeTemplateTypeArgFromResolvedAlias(
 	resolved_arg.pointee_array_declarator =
 		resolved_alias.pointee_array_declarator;
 	resolved_arg.array_dimensions = resolved_alias.array_dimensions;
+	if (resolved_alias.has_ordered_declarator) {
+		resolved_arg.ordered_declarator = resolved_alias.ordered_declarator;
+	}
 	resolved_arg.function_signature = resolved_alias.function_signature;
 	return resolved_arg;
 }
@@ -1470,6 +1490,7 @@ inline TemplateTypeArg rebindDependentTemplateTypeArg(
 	pattern_arg.is_array = dependent_pattern.is_array;
 	pattern_arg.pointee_array_declarator =
 		dependent_pattern.pointee_array_declarator;
+	pattern_arg.ordered_declarator = dependent_pattern.ordered_declarator;
 	pattern_arg.function_signature = dependent_pattern.function_signature();
 	pattern_arg.injected_class_declaration =
 		dependent_pattern.injected_class_declaration;

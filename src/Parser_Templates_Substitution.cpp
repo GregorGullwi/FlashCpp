@@ -521,7 +521,9 @@ ASTNode Parser::substituteTemplateParametersWithState(
 			}
 			TypeSpecifierNode substituted_spec =
 				makeTypeSpecifierFromTemplateTypeArg(arg, substituted_token);
-			if (type_spec.has_ordered_declarator()) {
+			// [temp.type]: T* around a non-projectable argument is a pointer to
+			// that argument. Flat pointer levels do not wrap an ordered spine.
+			if (type_spec.has_ordered_declarator() || substituted_spec.has_ordered_declarator()) {
 				applyOuterDeclaratorShapeForSubstitution(
 					substituted_spec,
 					type_spec);

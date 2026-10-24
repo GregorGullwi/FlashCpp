@@ -176,7 +176,7 @@ void applyResolvedAliasModifiers(TypeSpecifierNode& target, const ResolvedAliasT
 
 // Reapply modifiers that were written on the outer alias spelling after the alias target is substituted.
 void applyOuterTypeModifiers(TypeSpecifierNode& target, const TypeSpecifierNode& source) {
-	if (source.has_ordered_declarator()) {
+	if (source.has_ordered_declarator() || target.has_ordered_declarator()) {
 		applyOuterDeclaratorShapeForSubstitution(target, source);
 	} else {
 		if (source.has_injected_class_declaration()) {
