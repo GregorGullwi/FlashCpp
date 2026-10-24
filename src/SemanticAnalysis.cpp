@@ -10847,7 +10847,8 @@ bool SemanticAnalysis::tryResolveLateBinaryOperatorOverload(
 	if (overload_result.is_free_function) {
 		bin_op.set_resolved_free_function_operator_overload(overload_result.free_function_overload);
 	} else {
-		bin_op.set_resolved_member_operator_overload(overload_result.member_overload);
+		bin_op.set_resolved_member_operator_overload(overload_result.member_overload,
+			overload_result.declaring_type, overload_result.compatibility_declaring_type_index);
 	}
 	bin_op.set_recorded_equality_rewrite_negate(equality_rewrite_negate);
 	return true;

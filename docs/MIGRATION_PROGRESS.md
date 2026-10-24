@@ -12,9 +12,10 @@ Boundary **3A (canonical types)** is active and incomplete. The explicit-criteri
 rollup is **10/79 complete**; the only completed 3A exit criterion is that
 pointer-to-member overloads distinguish owner and pointee types. Passing tests or
 the breadth of landed code do not complete the boundary.
-Canonical inheritance classification accepts only TypeIds and consumes published
-class-base schemas. The next bounded 3A slice makes inherited operator traversal
-consume those facts without query-time schema repair.
+Canonical inheritance classification and inherited operator traversal consume
+published TypeId class-base schemas. Binary operators retain their selected
+declaring owner through lowering; the remaining owner TypeIndex is an explicit
+ABI/layout bridge with the deletion prerequisites below.
 
 The architecture the remaining work builds on:
 
@@ -258,20 +259,27 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Next slice: require published base graphs for inherited operator traversal.**
-   In `appendCanonicalOverloadBaseTypes`, remove query-time class-base publication
-   and the fallback walk over `StructTypeInfo::base_classes`. Take a const canonical
-   table and drop the TypeInfo parameter so callers cannot supply a second base
-   authority. Audit completion producers and migrate necessary fixtures; missing
-   schemas must fail closed without rebuilding facts during lookup. Preserve
-   inherited unary/binary/call-operator candidate discovery for published record and
-   specialization graphs. Add absent/contradictory-schema controls and verify that
-   lookup leaves schemas unchanged, then recheck operator overloads and the existing
-   pointer/reference, nominal/constructor, conditional-explicit and ShapeOnly guards.
-   Stop at this traversal and necessary caller/producer changes; conversion-function
-   declaration schemas and unsupported importer shapes remain separate. Reference
-   annotation and larger class-value tail materialization gaps remain assigned to
-   their sema/lowering boundaries in `KNOWN_ISSUES.md`.
+   **Next slice: record binary-operator call targets and signatures in sema.**
+   Start removing `compatibility_declaring_type_index`: retain the selected call
+   symbol and fully resolved return/parameter identities at selection, then make
+   binary-operator lowering consume them instead of owner-index mangling or
+   self-type resolution. Keep the declaring TypeId as identity and the declaration
+   pointer only as the existing emission bridge; use a FrontendContext-owned typed
+   plan/ID if the payload outgrows the current annotation. Measure record sizes and
+   keep native stack bounded. Add ordinary/template, namespace, cv/ref-qualified,
+   inherited and equality-rewrite controls. Stop after this call-target/signature
+   prerequisite; preserve the existing object adjustment in this slice.
+
+   **Owner-index deletion gates:** publish the virtual-base ABI adjustment facts
+   keyed by class TypeIds and make implicit-object lowering consume a sema-selected
+   conversion plan. Nonvirtual offsets already exist in the canonical class graph;
+   the current virtual adjustment IR/helper still uses TypeIndexes. Delete the
+   bridge field only after symbol generation, self types and both nonvirtual/virtual
+   adjustments no longer require it. Reconstructing a TypeIndex in codegen would
+   hide the dependency. Retain graph-authority, metadata copy/reset and nonzero/
+   virtual-base regression guards. Conversion-function declaration schemas and
+   unsupported importer shapes remain separate. Remaining unary short-base and
+   reference/value-tail lowering gaps are recorded in `KNOWN_ISSUES.md`.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    1. **The constructibility family.** The zero-argument variants and published

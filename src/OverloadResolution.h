@@ -1001,8 +1001,8 @@ inline std::optional<ConversionPlan> tryBuildCanonicalConversionFunctionTailPlan
 
 struct UserDefinedConversionOperatorSelection {
 	const FunctionDeclarationNode* function = nullptr;
-	TypeId declaring_type{};
 	TypeIndex compatibility_declaring_type_index{};
+	TypeId declaring_type{};
 	StandardConversionKind trailing_standard_kind = StandardConversionKind::None;
 	ConversionRank trailing_standard_rank = ConversionRank::NoMatch;
 	CVQualifier member_cv_qualifier = CVQualifier::None;
@@ -1518,7 +1518,6 @@ inline const TypeSpecifierNode* getImplicitCtorFirstParamType(const StructMember
 }
 
 inline const TypeInfo* tryFindCanonicalOverloadClassTypeInfo(CanonicalTypeTable& table, TypeId class_type);
-inline bool tryPublishCanonicalClassBaseSchema(CanonicalTypeTable& table, TypeId root_type, const TypeInfo& root_type_info);
 
 inline bool isIntegerLiteralZeroNullPointerConstant(const ASTNode& arg_node);
 
@@ -5688,6 +5687,8 @@ inline OverloadResolutionResult resolve_member_overload_with_argument_nodes(
 struct OperatorOverloadResult {
 	const StructMemberFunction* member_overload = nullptr;
 	const FunctionDeclarationNode* free_function_overload = nullptr; // For free-function operators
+	TypeIndex compatibility_declaring_type_index{};
+	TypeId declaring_type{};
 	bool is_ambiguous = false;
 	bool has_match = false;
 	bool is_free_function = false; // True when free_function_overload is the active match
@@ -5695,6 +5696,9 @@ struct OperatorOverloadResult {
 	OperatorOverloadResult() = default;
 	explicit OperatorOverloadResult(const StructMemberFunction* overload)
 		: member_overload(overload), has_match(overload != nullptr) {}
+	explicit OperatorOverloadResult(const StructMemberFunction* overload, TypeId declaring_type, TypeIndex compatibility_declaring_type_index)
+		: member_overload(overload), compatibility_declaring_type_index(compatibility_declaring_type_index),
+		declaring_type(declaring_type), has_match(overload != nullptr) {}
 	explicit OperatorOverloadResult(const FunctionDeclarationNode* free_func)
 		: free_function_overload(free_func), has_match(free_func != nullptr), is_free_function(free_func != nullptr) {}
 
@@ -5902,40 +5906,14 @@ inline TypeId tryGetCanonicalOverloadClassTypeId(CanonicalTypeTable& table, cons
 	return kind == CanonicalTypeKind::Record || kind == CanonicalTypeKind::TemplateSpecialization ? class_type : TypeId{};
 }
 
-inline bool appendCanonicalOverloadBaseTypes(CanonicalTypeTable& table, TypeId class_type,
-	const TypeInfo& type_info, std::vector<TypeId>& pending_types) {
+// Inherited operator lookup consumes completion-time class-base publication.
+inline bool appendCanonicalOverloadBaseTypes(const CanonicalTypeTable& table, TypeId class_type, std::vector<TypeId>& pending_types) {
 	if (!table.hasClassBaseSchema(class_type)) {
-		(void)tryPublishCanonicalClassBaseSchema(table, class_type, type_info);
+		return false;
 	}
-	if (table.hasClassBaseSchema(class_type)) {
-		const size_t base_count = table.classBaseCount(class_type);
-		for (size_t index = 0; index < base_count; ++index) {
-			pending_types.push_back(table.classBaseAt(class_type, index).type);
-		}
-		return true;
-	}
-	const StructTypeInfo* const struct_info = type_info.getStructInfo();
-	if (struct_info == nullptr) {
-		return true;
-	}
-	for (const BaseClassSpecifier& base : struct_info->base_classes) {
-		if (!base.type_index.is_valid()) {
-			continue;
-		}
-		const TypeInfo* const base_type_info = tryGetTypeInfo(base.type_index);
-		if (base_type_info == nullptr) {
-			return false;
-		}
-		const CanonicalTypeImport imported_base = importCanonicalClassTypeInfo(table, *base_type_info);
-		if (imported_base.status != CanonicalTypeImportStatus::Supported) {
-			return false;
-		}
-		const CanonicalTypeKind kind = table.node(imported_base.type).kind;
-		if (kind == CanonicalTypeKind::Record || kind == CanonicalTypeKind::TemplateSpecialization) {
-			pending_types.push_back(imported_base.type);
-		} else {
-			return false;
-		}
+	const size_t base_count = table.classBaseCount(class_type);
+	for (size_t index = 0; index < base_count; ++index) {
+		pending_types.push_back(table.classBaseAt(class_type, index).type);
 	}
 	return true;
 }
@@ -6338,6 +6316,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadCompatibility(const Type
 		ConversionRank rhs_rank;
 		const StructMemberFunction* member_func;
 		const TypeSpecifierNode* rhs_param_type;
+		TypeIndex owner_type_index;
 	};
 	std::vector<OperatorCandidate> candidates;
 	std::vector<TypeIndex> pending_types{left_type_index};
@@ -6377,7 +6356,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadCompatibility(const Type
 			const TypeSpecifierNode& rhs_param_spec = param_type_node.as<TypeSpecifierNode>();
 			const ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(right_type_spec, rhs_param_spec, owner_type_index, right_argument);
 			if (rhs_rank != ConversionRank::NoMatch) {
-				candidates.push_back({lhs_rank, rhs_rank, &member_func, &rhs_param_spec});
+				candidates.push_back({lhs_rank, rhs_rank, &member_func, &rhs_param_spec, owner_type_index});
 			}
 		}
 		for (const BaseClassSpecifier& base : struct_info->base_classes) {
@@ -6411,7 +6390,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadCompatibility(const Type
 			? OperatorOverloadResult::no_match()
 			: OperatorOverloadResult::ambiguous();
 	}
-	return OperatorOverloadResult(best_candidate->member_func);
+	return OperatorOverloadResult(best_candidate->member_func, TypeId{}, best_candidate->owner_type_index);
 }
 
 inline OperatorOverloadResult findUnaryOperatorOverloadCompatibility(const TypeSpecifierNode& operand_type_spec, OverloadableOperator operator_kind) {
@@ -6452,13 +6431,15 @@ inline OperatorOverloadResult findUnaryOperatorOverload(const TypeSpecifierNode&
 	CanonicalTypeTable& table = context->canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
 	const TypeId root_type = tryGetCanonicalOverloadClassTypeId(table, operand_type_spec);
-	if (!root_type || tryFindCanonicalOverloadClassTypeInfo(table, root_type) == nullptr) {
+	if (!root_type) {
 		return findUnaryOperatorOverloadCompatibility(operand_type_spec, operator_kind);
 	}
 	std::vector<TypeId> pending_types{root_type};
-	bool canonical_traversal_supported = true;
 	for (size_t pending_index = 0; pending_index < pending_types.size(); ++pending_index) {
 		const TypeId current_type = pending_types[pending_index];
+		if (!appendCanonicalOverloadBaseTypes(table, current_type, pending_types)) {
+			return OperatorOverloadResult::no_overload();
+		}
 		const TypeInfo* const type_info = tryFindCanonicalOverloadClassTypeInfo(table, current_type);
 		if (type_info == nullptr) {
 			continue;
@@ -6472,13 +6453,6 @@ inline OperatorOverloadResult findUnaryOperatorOverload(const TypeSpecifierNode&
 				return OperatorOverloadResult(&member_func);
 			}
 		}
-		if (!appendCanonicalOverloadBaseTypes(table, current_type, *type_info, pending_types)) {
-			canonical_traversal_supported = false;
-			break;
-		}
-	}
-	if (!canonical_traversal_supported) {
-		return findUnaryOperatorOverloadCompatibility(operand_type_spec, operator_kind);
 	}
 	return OperatorOverloadResult::no_overload();
 }
@@ -6549,14 +6523,15 @@ inline OperatorOverloadResult findUnaryOperatorOverloadWithFreeFunction(
 		CanonicalTypeTable& table = context->canonicalTypes();
 		canonical_transaction.emplace(table);
 		operand_type_id = tryGetCanonicalOverloadClassTypeId(table, operand_type_spec);
-		const TypeInfo* const root_type_info = operand_type_id ? tryFindCanonicalOverloadClassTypeInfo(table, operand_type_id) : nullptr;
-		if (root_type_info == nullptr) {
+		if (!operand_type_id) {
 			gatherCompatibilityMembers();
 		} else {
 			std::vector<TypeId> pending_types{operand_type_id};
-			bool canonical_traversal_supported = true;
 			for (size_t pending_index = 0; pending_index < pending_types.size(); ++pending_index) {
 				const TypeId owner_type_id = pending_types[pending_index];
+				if (!appendCanonicalOverloadBaseTypes(table, owner_type_id, pending_types)) {
+					return OperatorOverloadResult::no_overload();
+				}
 				const TypeInfo* const type_info = tryFindCanonicalOverloadClassTypeInfo(table, owner_type_id);
 				if (type_info == nullptr) {
 					continue;
@@ -6578,14 +6553,6 @@ inline OperatorOverloadResult findUnaryOperatorOverloadWithFreeFunction(
 						candidates.push_back({rank, &member_function, nullptr});
 					}
 				}
-				if (!appendCanonicalOverloadBaseTypes(table, owner_type_id, *type_info, pending_types)) {
-					canonical_traversal_supported = false;
-					break;
-				}
-			}
-			if (!canonical_traversal_supported) {
-				candidates.clear();
-				gatherCompatibilityMembers();
 			}
 		}
 	}
@@ -6649,7 +6616,7 @@ inline OperatorOverloadResult findBinaryOperatorOverload(const TypeSpecifierNode
 	CanonicalTypeTable& table = context->canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
 	const TypeId left_type_id = tryGetCanonicalOverloadClassTypeId(table, left_type_spec);
-	if (!left_type_id || tryFindCanonicalOverloadClassTypeInfo(table, left_type_id) == nullptr) {
+	if (!left_type_id) {
 		return findBinaryOperatorOverloadCompatibility(left_type_spec, right_type_spec, operator_kind, right_argument);
 	}
 
@@ -6658,12 +6625,16 @@ inline OperatorOverloadResult findBinaryOperatorOverload(const TypeSpecifierNode
 		ConversionRank rhs_rank;
 		const StructMemberFunction* member_func = nullptr;
 		const TypeSpecifierNode* rhs_param_type = nullptr;
+		TypeId owner_type_id{};
+		TypeIndex compatibility_owner_type_index{};
 	};
 	std::vector<OperatorCandidate> candidates;
 	std::vector<TypeId> pending_types{left_type_id};
-	bool canonical_traversal_supported = true;
 	for (size_t pending_index = 0; pending_index < pending_types.size(); ++pending_index) {
 		const TypeId owner_type_id = pending_types[pending_index];
+		if (!appendCanonicalOverloadBaseTypes(table, owner_type_id, pending_types)) {
+			return OperatorOverloadResult::no_overload();
+		}
 		const TypeInfo* const type_info = tryFindCanonicalOverloadClassTypeInfo(table, owner_type_id);
 		if (type_info == nullptr) {
 			continue;
@@ -6702,15 +6673,9 @@ inline OperatorOverloadResult findBinaryOperatorOverload(const TypeSpecifierNode
 			if (rhs_rank == ConversionRank::NoMatch)
 				continue;
 
-			candidates.push_back({lhs_rank, rhs_rank, &member_func, &rhs_param_spec});
+			candidates.push_back({lhs_rank, rhs_rank, &member_func, &rhs_param_spec, owner_type_id,
+				type_info->registeredTypeIndex().withCategory(TypeCategory::Struct)});
 		}
-		if (!appendCanonicalOverloadBaseTypes(table, owner_type_id, *type_info, pending_types)) {
-			canonical_traversal_supported = false;
-			break;
-		}
-	}
-	if (!canonical_traversal_supported) {
-			return findBinaryOperatorOverloadCompatibility(left_type_spec, right_type_spec, operator_kind, right_argument);
 	}
 
 	if (candidates.empty()) {
@@ -6754,7 +6719,10 @@ inline OperatorOverloadResult findBinaryOperatorOverload(const TypeSpecifierNode
 		return OperatorOverloadResult::ambiguous();
 	}
 
-	return OperatorOverloadResult(best_candidate->member_func);
+	return OperatorOverloadResult(
+		best_candidate->member_func,
+		best_candidate->owner_type_id,
+		best_candidate->compatibility_owner_type_index);
 }
 
 inline OperatorOverloadResult findBinaryOperatorOverload(
@@ -6827,6 +6795,8 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(const T
 		const FunctionDeclarationNode* free_func = nullptr;
 		bool is_free_function = false;
 		const TypeSpecifierNode* rhs_param_type = nullptr;
+		TypeId owner_type_id{};
+		TypeIndex compatibility_owner_type_index{};
 	};
 	std::vector<OperatorCandidate> candidates;
 	auto gatherCompatibilityMembers = [&]() {
@@ -6870,7 +6840,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(const T
 				const TypeSpecifierNode& rhs_param_spec = param_type_node.as<TypeSpecifierNode>();
 				const ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(right_type_spec, rhs_param_spec, owner_type_index, right_argument);
 				if (rhs_rank != ConversionRank::NoMatch) {
-					candidates.push_back({lhs_rank, rhs_rank, &member_func, nullptr, false, &rhs_param_spec});
+					candidates.push_back({lhs_rank, rhs_rank, &member_func, nullptr, false, &rhs_param_spec, TypeId{}, owner_type_index});
 				}
 			}
 			for (const BaseClassSpecifier& base : struct_info->base_classes) {
@@ -6887,14 +6857,15 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(const T
 		canonical_transaction.emplace(table);
 		left_type_id = tryGetCanonicalOverloadClassTypeId(table, left_type_spec);
 		right_type_id = tryGetCanonicalOverloadClassTypeId(table, right_type_spec);
-		const TypeInfo* const root_type_info = left_type_id ? tryFindCanonicalOverloadClassTypeInfo(table, left_type_id) : nullptr;
-		if (root_type_info == nullptr) {
+		if (!left_type_id) {
 			gatherCompatibilityMembers();
 		} else {
 			std::vector<TypeId> pending_types{left_type_id};
-			bool canonical_traversal_supported = true;
 			for (size_t pending_index = 0; pending_index < pending_types.size(); ++pending_index) {
 				const TypeId owner_type_id = pending_types[pending_index];
+				if (!appendCanonicalOverloadBaseTypes(table, owner_type_id, pending_types)) {
+					return OperatorOverloadResult::no_overload();
+				}
 				const TypeInfo* const type_info = tryFindCanonicalOverloadClassTypeInfo(table, owner_type_id);
 				if (type_info == nullptr) {
 					continue;
@@ -6930,17 +6901,10 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(const T
 					const TypeSpecifierNode& rhs_param_spec = param_type_node.as<TypeSpecifierNode>();
 					const ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(right_type_spec, rhs_param_spec, owner_type_id, right_argument);
 					if (rhs_rank != ConversionRank::NoMatch) {
-						candidates.push_back({lhs_rank, rhs_rank, &member_func, nullptr, false, &rhs_param_spec});
+					candidates.push_back({lhs_rank, rhs_rank, &member_func, nullptr, false, &rhs_param_spec, owner_type_id,
+						type_info->registeredTypeIndex().withCategory(TypeCategory::Struct)});
 					}
 				}
-				if (!appendCanonicalOverloadBaseTypes(table, owner_type_id, *type_info, pending_types)) {
-					canonical_traversal_supported = false;
-					break;
-				}
-			}
-			if (!canonical_traversal_supported) {
-				candidates.clear();
-				gatherCompatibilityMembers();
 			}
 		}
 	}
@@ -6984,7 +6948,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(const T
 		if (rhs_rank == ConversionRank::NoMatch)
 			continue;
 
-		candidates.push_back({lhs_rank, rhs_rank, nullptr, &func_decl, true, &p1_spec});
+		candidates.push_back({lhs_rank, rhs_rank, nullptr, &func_decl, true, &p1_spec, TypeId{}, TypeIndex{}});
 	}
 
 	// --- 3. Rank all candidates per [over.match.best]/2 ---
@@ -7035,7 +6999,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(const T
 	if (best->is_free_function) {
 		return OperatorOverloadResult(best->free_func);
 	} else {
-		return OperatorOverloadResult(best->member_func);
+		return OperatorOverloadResult(best->member_func, best->owner_type_id, best->compatibility_owner_type_index);
 	}
 }
 

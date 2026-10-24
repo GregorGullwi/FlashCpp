@@ -968,6 +968,109 @@ struct Hidden : Base { operator int(); };
 	}
 }
 
+TEST_CASE("Inherited operator lookup requires published class-base graphs") {
+	static_assert(std::is_invocable_r_v<bool, decltype(&appendCanonicalOverloadBaseTypes), const CanonicalTypeTable&, TypeId,
+		std::vector<TypeId>&>);
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	std::cout << "operator owner metadata: binary=" << sizeof(BinaryOperatorNode) << " selection=" << sizeof(OperatorOverloadResult) << '\n';
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	CompileContext compile_context;
+	compile_context.setInputFile("canonical_operator_base_graph.cpp");
+	Lexer lexer(R"(
+struct Base { int operator-() const; int operator+(int) const; };
+struct Other { long long operator-() const; long long operator+(int) const; };
+struct Derived : Base {};
+)");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	{
+		CanonicalTypeTransaction publication(table);
+		REQUIRE(!parser.parse().is_error());
+	}
+	auto class_spec = [](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		TypeSpecifierNode spec(TypeCategory::Struct, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+		spec.set_type_index(info->registeredTypeIndex());
+		tryBindPublishedTypeEntity(spec);
+		REQUIRE(spec.has_type_entity());
+		return spec;
+	};
+	const TypeSpecifierNode base_spec = class_spec("Base");
+	const TypeSpecifierNode other_spec = class_spec("Other");
+	TypeSpecifierNode derived_spec = class_spec("Derived");
+	const TypeId base = importCanonicalType(table, base_spec).type;
+	const TypeId other = importCanonicalType(table, other_spec).type;
+	const TypeId derived = importCanonicalType(table, derived_spec).type;
+	const TypeSpecifierNode integer(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	const std::array<CanonicalClassBase, 1> bases{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+	auto check_lookup = [&](const TypeInfo* expected_owner) {
+		const size_t types_before = table.size();
+		const std::array<bool, 3> schemas_before{table.hasClassBaseSchema(base), table.hasClassBaseSchema(other), table.hasClassBaseSchema(derived)};
+		const std::array<OperatorOverloadResult, 4> results{
+			findUnaryOperatorOverload(derived_spec, OverloadableOperator::Minus),
+			findUnaryOperatorOverloadWithFreeFunction(derived_spec, OverloadableOperator::Minus, gSymbolTable),
+			findBinaryOperatorOverload(derived_spec, integer, OverloadableOperator::Plus, nullptr),
+			findBinaryOperatorOverloadWithFreeFunction(derived_spec, integer, OverloadableOperator::Plus, gSymbolTable, nullptr, nullptr)};
+		for (const OperatorOverloadResult& result : results) {
+			CHECK(result.has_match == (expected_owner != nullptr));
+			if (expected_owner != nullptr) {
+				REQUIRE(result.member_overload != nullptr);
+				const auto& members = expected_owner->getStructInfo()->member_functions;
+				CHECK(std::any_of(members.begin(), members.end(), [&](const auto& member) { return &member == result.member_overload; }));
+			}
+		}
+		if (expected_owner != nullptr) {
+			for (size_t index = 2; index < results.size(); ++index) {
+				const auto& result = results[index];
+				CHECK(result.declaring_type == importCanonicalClassTypeInfo(table, *expected_owner).type);
+				CHECK(result.compatibility_declaring_type_index == expected_owner->registeredTypeIndex().withCategory(TypeCategory::Struct));
+				BinaryOperatorNode annotated(Token{}, ASTNode{}, ASTNode{});
+				annotated.set_resolved_member_operator_overload(result.member_overload, result.declaring_type,
+					result.compatibility_declaring_type_index);
+				BinaryOperatorNode copied(Token{}, ASTNode{}, ASTNode{});
+				copied.copy_semantic_operator_resolution_from(annotated);
+				CHECK(copied.resolved_member_operator_owner() == result.declaring_type);
+				CHECK(copied.resolved_member_operator_owner_index() == result.compatibility_declaring_type_index);
+				copied.set_no_match_operator_overload();
+				CHECK_FALSE(copied.resolved_member_operator_owner());
+				CHECK_FALSE(copied.resolved_member_operator_owner_index().is_valid());
+			}
+		}
+		CHECK(table.size() == types_before);
+		CHECK(table.hasClassBaseSchema(base) == schemas_before[0]);
+		CHECK(table.hasClassBaseSchema(other) == schemas_before[1]);
+		CHECK(table.hasClassBaseSchema(derived) == schemas_before[2]);
+	};
+	SUBCASE("Absent graph cannot be repaired or retried through compatibility") { check_lookup(nullptr); }
+	SUBCASE("A canonical root without a declaration bridge cannot retry legacy identity") {
+		derived_spec.set_type_entity(EntityId{98701});
+		check_lookup(nullptr);
+	}
+	SUBCASE("Missing reachable schema cannot retry legacy bases") {
+		table.publishClassBaseSchema(derived, bases);
+		check_lookup(nullptr);
+	}
+	SUBCASE("Published graph can withhold a legacy base") {
+		table.publishClassBaseSchema(base, {});
+		table.publishClassBaseSchema(derived, {});
+		check_lookup(nullptr);
+	}
+	SUBCASE("Published graph retains inherited declarations") {
+		table.publishClassBaseSchema(base, {});
+		table.publishClassBaseSchema(derived, bases);
+		check_lookup(tryGetTypeInfo(base_spec.type_index()));
+	}
+	SUBCASE("Published graph can select a different declaration owner") {
+		table.publishClassBaseSchema(other, {});
+		const std::array<CanonicalClassBase, 1> other_bases{{other, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+		table.publishClassBaseSchema(derived, other_bases);
+		check_lookup(tryGetTypeInfo(other_spec.type_index()));
+	}
+}
+
 TEST_CASE("Converting constructor class checks cannot recover unpublished inheritance") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
