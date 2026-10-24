@@ -1410,31 +1410,21 @@ inline std::optional<DerivedBaseConversionKind> classifyCanonicalDerivedBaseConv
 		has_schema, direct_base_count, direct_base_at);
 }
 
-// Class TypeIds keep template-specialization base identity through inheritance.
-// Complete records can use the type graph when one is published; legacy native
-// tests and partial callers retain the EntityId schema path otherwise.
-inline std::optional<DerivedBaseConversionKind> classifyCanonicalDerivedBaseConversion(
-	const CanonicalTypeTable& table,
-	TypeId derived_type,
-	TypeId base_type) {
+// Class TypeIds use only published class-base schemas, retaining specialization
+// identity throughout the graph. Identity needs no schema; distinct types do.
+inline std::optional<DerivedBaseConversionKind> classifyCanonicalDerivedBaseConversion(const CanonicalTypeTable& table,
+	TypeId derived_type, TypeId base_type) {
 	if (!derived_type || !base_type) {
 		return std::nullopt;
 	}
 	const CanonicalTypeKind derived_kind = table.node(derived_type).kind;
 	const CanonicalTypeKind base_kind = table.node(base_type).kind;
-	if ((derived_kind != CanonicalTypeKind::Record &&
-			derived_kind != CanonicalTypeKind::TemplateSpecialization) ||
-		(base_kind != CanonicalTypeKind::Record &&
-			base_kind != CanonicalTypeKind::TemplateSpecialization)) {
+	if ((derived_kind != CanonicalTypeKind::Record && derived_kind != CanonicalTypeKind::TemplateSpecialization) ||
+		(base_kind != CanonicalTypeKind::Record && base_kind != CanonicalTypeKind::TemplateSpecialization)) {
 		return std::nullopt;
 	}
-	if (derived_kind == CanonicalTypeKind::Record &&
-		base_kind == CanonicalTypeKind::Record &&
-		!table.hasClassBaseSchema(derived_type)) {
-		return classifyCanonicalDerivedBaseConversion(
-			table,
-			table.recordEntity(derived_type),
-			table.recordEntity(base_type));
+	if (derived_type != base_type && (!table.hasClassBaseSchema(derived_type) || !table.hasClassBaseSchema(base_type))) {
+		return std::nullopt;
 	}
 	const auto has_schema = [&table](uint32_t type_value) {
 		return table.hasClassBaseSchema(TypeId{type_value});
@@ -1443,13 +1433,10 @@ inline std::optional<DerivedBaseConversionKind> classifyCanonicalDerivedBaseConv
 		return table.classBaseCount(TypeId{type_value});
 	};
 	const auto direct_base_at = [&table](uint32_t type_value, size_t index) {
-		const CanonicalClassBase base =
-			table.classBaseAt(TypeId{type_value}, index);
+		const CanonicalClassBase base = table.classBaseAt(TypeId{type_value}, index);
 		return CanonicalBaseGraphEdgeView{base.type.value, base.access, base.flags};
 	};
-	return classifyCanonicalBaseSubobjectGraph(
-		derived_type.value, base_type.value,
-		has_schema, direct_base_count, direct_base_at);
+	return classifyCanonicalBaseSubobjectGraph(derived_type.value, base_type.value, has_schema, direct_base_count, direct_base_at);
 }
 
 // Resolve the ABI byte offset for a unique public non-virtual TypeId base path.
