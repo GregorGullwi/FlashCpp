@@ -1764,8 +1764,6 @@ bool Parser::consume_cast_type_id_paren_declarator(TypeSpecifierNode& type_spec)
 		return false;
 	}
 	SaveHandle group_start = save_token_position();
-	// A reference-to-array type-id such as `int (&)[3]` is not produced by the
-	// pointer declarator machinery, so recognize its abstract spelling here.
 	if (tryConsumeReferenceToArrayDeclarator(type_spec, nullptr, nullptr, nullptr)) {
 		discard_saved_token(group_start);
 		return true;
@@ -1793,9 +1791,6 @@ void Parser::consume_type_id_abstract_declarators(
 	// int(*)[3] binds its array suffix inside the pointer exactly like the
 	// named form int(*p)[3] (C++20 [dcl.name], [dcl.ptr]/1).
 	if (peek() == "("_tok) {
-		// A reference-to-array abstract spelling (int (&)[3]) is not produced by
-		// the pointer declarator machinery, so recognize it directly. The
-		// wrapper restores the position to '(' on failure.
 		SaveHandle group_start = save_token_position();
 		if (tryConsumeReferenceToArrayDeclarator(
 			type_spec, nullptr, nullptr, array_bound_expressions)) {

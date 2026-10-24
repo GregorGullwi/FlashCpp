@@ -713,11 +713,8 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 		}
 	}
 
-	// A parenthesized declarator group after the base type and every cv/pointer/
-	// reference modifier is owned by the recursive declarator grammar. The
-	// reference-to-array helper handles its distinct bound-expression output;
-	// function references and every other shape use parse_declarator. The MSVC
-	// `(name)` extension is left for the identifier handling below.
+	// [dcl.decl]: after the decl-specifier-seq, one declarator owns every
+	// parenthesized ptr-declarator. A failure is not retried as an identifier.
 	if (peek() == "("_tok) {
 		// Reference-to-array: T (&name)[N][M]...
 		Token ref_identifier;
@@ -734,20 +731,19 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 			}
 			return ParseResult::success(ref_array_decl);
 		}
-		SaveHandle paren_pos = save_token_position();
 		ParseResult declarator_result = parse_declarator(type_spec, Linkage::None);
-		if (!declarator_result.is_error() && declarator_result.node().has_value()) {
-			if (auto decl_node = declarator_result.node(); custom_alignment.has_value() && decl_node.has_value()) {
-				if (decl_node->is<DeclarationNode>()) {
-					decl_node->as<DeclarationNode>().set_custom_alignment(*custom_alignment);
-				} else if (decl_node->is<FunctionDeclarationNode>()) {
-					decl_node->as<FunctionDeclarationNode>().decl_node().set_custom_alignment(*custom_alignment);
-				}
-			}
-			discard_saved_token(paren_pos);
-			return declarator_result;
+		if (declarator_result.is_error() || !declarator_result.node().has_value()) {
+			return declarator_result.is_error() ? std::move(declarator_result) : ParseResult::error("Expected declarator", current_token_);
 		}
-		restore_token_position(paren_pos);
+		if (custom_alignment.has_value()) {
+			std::optional<ASTNode> declarator_node = declarator_result.node();
+			if (DeclarationNode* declaration = declarator_node->get_if<DeclarationNode>()) {
+				declaration->set_custom_alignment(*custom_alignment);
+			} else if (FunctionDeclarationNode* function = declarator_node->get_if<FunctionDeclarationNode>()) {
+				function->decl_node().set_custom_alignment(*custom_alignment);
+			}
+		}
+		return declarator_result;
 	}
 
 	// Check for parameter pack: Type... identifier
@@ -831,40 +827,7 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 			identifier_token = Token(Token::Type::Identifier, operator_name,
 									 operator_keyword_token.line(), operator_keyword_token.column(),
 									 operator_keyword_token.file_index());
-		} else if (peek() == "("_tok) {
-			// MSVC extension: ReturnType (function_name) (params)
-			// e.g., const T&(max)(int x) - the function name 'max' is in parentheses after return type
-			// Save position in case this is actually a parenthesized type or cast expression
-			SaveHandle paren_pos = save_token_position();
-			advance(); // consume '('
-
-			last_calling_convention_ = parse_calling_convention(last_calling_convention_);
-
-			// Check if the next token is an identifier (the function name)
-			if (peek().is_identifier()) {
-				// This is the MSVC extension - extract the function name
-				identifier_token = peek_info();
-				advance(); // consume the identifier
-
-				// Expect closing ')' after the function name
-				if (peek() == ")"_tok) {
-					advance(); // consume ')'
-					FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: MSVC extension detected, function name={}",
-										 std::string(identifier_token.value()));
-					// Success - identifier_token now holds the function name like "max"
-					// The next token should be '(' starting the actual parameter list
-				} else {
-					// Not the expected pattern - restore and fall through to normal handling
-					restore_token_position(paren_pos);
-					goto parse_identifier_normal;
-				}
-			} else {
-				// Not an identifier after '(' - restore and fall through
-				restore_token_position(paren_pos);
-				goto parse_identifier_normal;
-			}
 		} else {
-		parse_identifier_normal:
 			// Check if this might be an unnamed parameter (next token is ',', ')', '=', or '[')
 			FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Parsing identifier. current_token={}, peek={}",
 							 std::string(current_token_.value()),
@@ -1306,10 +1269,9 @@ ParseResult Parser::parse_declarator(
 	std::vector<ASTNode>* array_bound_expressions) {
 	auto tryStructuralPointerArrayDeclarator =
 			[&]() -> std::optional<ParseResult> {
-		// The recursive declarator grammar owns every parenthesized group,
-		// using an explicit frame stack. The flat function-pointer handling
-		// below stays only as a fail-closed fallback for shapes the grammar
-		// declines.
+		// The recursive declarator grammar owns every parenthesized group.
+		// A group that does not match is an error; it is not retried as a
+		// flat identifier declarator.
 		if (peek() == "("_tok) {
 			SaveHandle structural_start = save_token_position();
 			{
@@ -1981,6 +1943,15 @@ ParseResult Parser::parse_declarator(
 							discard_saved_token(structural_start);
 							return ParseResult::success(callable_decl_node);
 						}
+						// Redundant parentheses around a declarator-id, as in
+						// `int& (r) = x`, add no component. Keep the decl-specifier
+						// shape; an empty ordered spine would clear its reference.
+						if (completed.empty() && !has_member_pointer) {
+							ASTNode plain_decl = emplace_node<DeclarationNode>(emplace_node<TypeSpecifierNode>(base_type), identifier);
+							attach_qualified_owner(plain_decl);
+							discard_saved_token(structural_start);
+							return ParseResult::success(plain_decl);
+						}
 						TypeSpecifierNode structural_type = base_type;
 						if (member_pointer_is_function) {
 							for (DeclaratorComponent& component : completed) {
@@ -2070,6 +2041,11 @@ ParseResult Parser::parse_declarator(
 	if (std::optional<ParseResult> structural =
 					tryStructuralPointerArrayDeclarator()) {
 		return std::move(*structural);
+	}
+	// [dcl.decl] noptr-declarator: ( ptr-declarator ). The frame-stack grammar
+	// owns that group. Do not parse the parenthesis as a flat function suffix.
+	if (peek() == "("_tok) {
+		return ParseResult::error("Expected declarator", current_token_);
 	}
 
 	// Handle pointer prefix: * [const] [volatile] *...
@@ -2277,52 +2253,21 @@ ParseResult Parser::parse_function_pointer_parameter_types(std::vector<FunctionT
 
 ParseResult Parser::parse_nested_function_pointer_type(
 	TypeSpecifierNode& type_spec) {
-	if (peek() != "("_tok || peek(1) != "*"_tok) {
+	if (peek() != "("_tok) {
 		return ParseResult::success();
 	}
-	advance(); // consume '('
-	advance(); // consume '*'
-	if (peek().is_identifier()) {
-		advance();
+	// [dcl.decl]: a nested declarator is a parenthesized ptr-declarator, not
+	// only the `(*` spelling. parse_declarator owns the group.
+	SaveHandle nested_start = save_token_position();
+	ParseResult declarator_result = parse_declarator(type_spec, Linkage::None);
+	std::optional<ASTNode> declarator_node = declarator_result.node();
+	const DeclarationNode* declaration = declarator_node ? declarator_node->get_if<DeclarationNode>() : nullptr;
+	if (declarator_result.is_error() || declaration == nullptr) {
+		restore_token_position(nested_start);
+		return declarator_result.is_error() ? std::move(declarator_result) : ParseResult::error("Expected declarator", current_token_);
 	}
-	if (!consume(")"_tok) || !consume("("_tok)) {
-		return ParseResult::error(
-			"Expected nested function pointer declarator",
-			current_token_);
-	}
-
-	std::vector<FunctionType> parameter_types;
-	bool is_variadic = false;
-	ParseResult parameter_result = parse_function_pointer_parameter_types(
-		parameter_types, is_variadic);
-	if (parameter_result.is_error()) {
-		return parameter_result;
-	}
-	if (!consume(")"_tok)) {
-		return ParseResult::error(
-			"Expected ')' after nested function pointer parameter list",
-			current_token_);
-	}
-
-	FlashCpp::MemberQualifiers qualifiers;
-	FlashCpp::FunctionSpecifiers specifiers;
-	ParseResult qualifier_result =
-		parse_function_type_qualifiers(qualifiers, specifiers);
-	if (qualifier_result.is_error()) {
-		return qualifier_result;
-	}
-
-	FunctionSignature signature;
-	signature.setReturnType(makeFunctionType(type_spec));
-	signature.setParameterTypes(std::move(parameter_types));
-	signature.calling_convention = last_calling_convention_;
-	signature.is_variadic = is_variadic;
-	apply_parsed_function_type_qualifiers(signature, qualifiers, specifiers);
-	type_spec.set_type_index(nativeTypeIndex(TypeCategory::FunctionPointer));
-	type_spec.set_size_in_bits(kFunctionPointerSizeBits);
-	type_spec.limit_pointer_depth(0);
-	type_spec.set_reference_qualifier(ReferenceQualifier::None);
-	type_spec.set_function_signature(signature);
+	type_spec = declaration->type_specifier_node();
+	discard_saved_token(nested_start);
 	return ParseResult::success();
 }
 
