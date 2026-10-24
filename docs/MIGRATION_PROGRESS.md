@@ -12,9 +12,9 @@ Boundary **3A (canonical types)** is active and incomplete. The explicit-criteri
 rollup is **10/79 complete**; the only completed 3A exit criterion is that
 pointer-to-member overloads distinguish owner and pointee types. Passing tests or
 the breadth of landed code do not complete the boundary.
-TypeId inheritance classification and projectable record-pointer conversion
-planning consume published class-base schemas. The next bounded 3A slice removes
-the EntityId inheritance classifier, which has no remaining production callers.
+Canonical inheritance classification accepts only TypeIds and consumes published
+class-base schemas. The next bounded 3A slice makes inherited operator traversal
+consume those facts without query-time schema repair.
 
 The architecture the remaining work builds on:
 
@@ -258,18 +258,20 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Next slice: remove the unused EntityId inheritance classifier.**
-   Delete the EntityId overload of `classifyCanonicalDerivedBaseConversion`;
-   production callers now pass TypeIds. Keep the TypeId API and shared iterative
-   graph walker. Use compilation to expose missed callers, and migrate the native
-   EntityId proof controls to inspect their published legacy fixtures directly while
-   retaining contradictory-graph and missing-schema assertions. Keep record layout,
-   field and base schemas for their remaining consumers. Recheck record pointers,
-   member pointers, reference binding, nominal/constructor ranking, conditional
-   explicit conditions, source locations and ShapeOnly completion. Stop at this API
-   deletion; conversion-function declaration schemas and unsupported importer shapes
-   remain separate. Reference annotation and larger class-value tail materialization
-   gaps remain assigned to their sema/lowering boundaries in `KNOWN_ISSUES.md`.
+   **Next slice: require published base graphs for inherited operator traversal.**
+   In `appendCanonicalOverloadBaseTypes`, remove query-time class-base publication
+   and the fallback walk over `StructTypeInfo::base_classes`. Take a const canonical
+   table and drop the TypeInfo parameter so callers cannot supply a second base
+   authority. Audit completion producers and migrate necessary fixtures; missing
+   schemas must fail closed without rebuilding facts during lookup. Preserve
+   inherited unary/binary/call-operator candidate discovery for published record and
+   specialization graphs. Add absent/contradictory-schema controls and verify that
+   lookup leaves schemas unchanged, then recheck operator overloads and the existing
+   pointer/reference, nominal/constructor, conditional-explicit and ShapeOnly guards.
+   Stop at this traversal and necessary caller/producer changes; conversion-function
+   declaration schemas and unsupported importer shapes remain separate. Reference
+   annotation and larger class-value tail materialization gaps remain assigned to
+   their sema/lowering boundaries in `KNOWN_ISSUES.md`.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    1. **The constructibility family.** The zero-argument variants and published
