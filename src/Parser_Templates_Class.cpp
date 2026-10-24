@@ -3941,7 +3941,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				}
 
 				// Check for constexpr, consteval, inline, explicit specifiers (can appear on constructors and member functions)
-				[[maybe_unused]] auto partial_member_specs = parse_member_leading_specifiers();
+				auto partial_member_specs = parse_member_leading_specifiers();
 
 				// Check for constructor (identifier matching template name followed by '('
 				// In partial specializations, the constructor uses the base template name (e.g., "Calculator"),
@@ -3962,6 +3962,8 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 						// This is a constructor - use instantiated_name as the struct name
 						auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(instantiated_name, StringTable::getOrInternStringHandle(ctor_name));
+						ctor_ref.set_explicit(partial_member_specs & FlashCpp::MLS_Explicit);
+						ctor_ref.set_constexpr(partial_member_specs & FlashCpp::MLS_Constexpr);
 
 						// Collect constructor header data into ParsedFunctionHeader (Priority 5)
 						FlashCpp::ParsedFunctionHeader header;

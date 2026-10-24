@@ -4948,6 +4948,8 @@ ParseResult Parser::parseExplicitTemplateTypeConstruction(
 				: "Expected '(' for template type construction",
 			identifier_token);
 	}
+	// This template-id belongs to the constructed type, not an enclosing call.
+	pending_explicit_template_args_.reset();
 
 	bool has_dependent_args = false;
 	for (const TemplateTypeArg& arg : explicit_template_args) {

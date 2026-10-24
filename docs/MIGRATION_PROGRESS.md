@@ -14,9 +14,9 @@ Boundary **3A (canonical types)** is active and incomplete. The explicit-criteri
 rollup is **10/79 complete**; the only completed 3A exit criterion is that
 pointer-to-member overloads distinguish owner and pointee types. Passing tests or
 the breadth of landed code do not complete the boundary.
-Member-pointer owner planning, constructor class-base checks, conversion-function
-lookup and standard tails consume published canonical inheritance. The next bounded
-3A slice removes query-time publication from generic nominal object conversions.
+Nominal object conversion planning consumes published class-base graphs. The next
+bounded 3A slice removes the EntityId-schema fallback from TypeId inheritance
+classification.
 
 The architecture the remaining work builds on:
 
@@ -260,31 +260,24 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   Alias-normalized free-function-pointer and same-owner member-function-pointer
-   tails now use structural planning before compatibility projection, including
-   directional `noexcept` relaxation. Unresolved nonidentity callable tails defer.
-
-   Callable aliases preserve complete targets and bind canonical components
-   under their owning declaration, including mixed type/value argument positions.
-
-   Member callable aliases retain complete targets and enclosing bindings.
-   Member-pointer owner conversions no longer prove inheritance from syntax spelling.
-
-   **Next slice: make generic nominal object conversion planning consume published graphs.**
-   Remove the final `tryPublishCanonicalOverloadBaseSchema` calls from
-   `tryBuildCanonicalProjectableConversionPlan`, then delete that helper. Ordinary
-   records and class-template specializations should use the same published
-   `TypeId` relation. Missing inheritance facts must not be repaired from syntax or
-   `TypeInfo`; keep constructor/conversion-function viability distinct from the
-   standard base relation so an unrelated class pair can still use a user-defined
-   conversion. Cover overload ranking against converting constructors, public and
-   virtual bases, inaccessible/ambiguous paths, aliases and specialization owners.
-   Native tests must withhold or contradict the compatibility inheritance proof.
-   Retain standard-tail, reference-context, constructor-deferral, dependent callable
-   and ShapeOnly guards. Stop after this consumer and helper deletion;
-   conversion-function declaration schemas remain separate. Reference annotation
-   and larger class-value tail materialization gaps are recorded in `KNOWN_ISSUES.md`
-   for their sema/lowering boundaries; planner success does not close those gaps.
+   **Next slice: make TypeId inheritance classification require class-base schemas.**
+   Remove the EntityId-schema fallback from the `TypeId` overload of
+   `classifyCanonicalDerivedBaseConversion`. Audit its callers and completion
+   producers before removing the branch. Migrate native fixtures that intentionally
+   publish only record layout/field schemas to publish equivalent class-base facts;
+   queries must not repair missing schemas from syntax or `TypeInfo`. Keep the
+   explicit EntityId overload and record layout/field schemas for their remaining
+   consumers. Distinct types with missing root, target or intermediate facts defer;
+   published graphs retain public/virtual, unrelated, private and ambiguous results.
+   Identity remains independent of inheritance publication. Add direct classifier
+   controls for missing and contradictory EntityId/TypeId graphs, then recheck member
+   pointers, reference binding, constructor ranking and nominal object overloads.
+   Retain explicit-constructor primary/partial, direct/list/copy-init and nested
+   template-construction argument-isolation guards, plus dependent callable and
+   ShapeOnly coverage. Stop after this classifier and necessary caller/fixture
+   migration; EntityId API deletion and conversion-function declaration schemas
+   remain separate. Reference annotation and larger class-value tail materialization
+   gaps remain assigned to their sema/lowering boundaries in `KNOWN_ISSUES.md`.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    1. **The constructibility family.** The zero-argument variants and published
