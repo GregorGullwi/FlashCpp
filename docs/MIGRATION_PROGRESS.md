@@ -12,9 +12,9 @@ Boundary **3A (canonical types)** is active and incomplete. The explicit-criteri
 rollup is **10/79 complete**; the only completed 3A exit criterion is that
 pointer-to-member overloads distinguish owner and pointee types. Passing tests or
 the breadth of landed code do not complete the boundary.
-TypeId inheritance classification requires published class-base schemas for
-distinct types. The next bounded 3A slice migrates projectable record-pointer
-conversion planning from the EntityId graph to those TypeId facts.
+TypeId inheritance classification and projectable record-pointer conversion
+planning consume published class-base schemas. The next bounded 3A slice removes
+the EntityId inheritance classifier, which has no remaining production callers.
 
 The architecture the remaining work builds on:
 
@@ -258,21 +258,18 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Next slice: use TypeId inheritance for projectable record-pointer conversions.**
-   In `tryBuildCanonicalProjectableConversionPlan`, replace the record-pointer
-   branch's EntityId extraction/classification with its imported pointee TypeIds.
-   Require published class-base facts; missing schemas must not trigger query-time
-   publication or syntax/TypeInfo recovery. Audit completion producers and preserve
-   pointee cv, public/virtual ranking, inaccessible/ambiguous rejection and fail-closed
-   behavior. Add native controls with contradictory EntityId/TypeId graphs and
-   missing root/target/intermediate schemas, then recheck pointer overloads and
-   pointer conversion temporaries bound to references. Keep the current importer
-   boundary for unsupported specialization/dependent shapes. Retain member-pointer,
-   nominal/constructor, conditional-explicit, source-location and ShapeOnly guards.
-   Stop after this pointer branch and necessary caller/fixture migration; EntityId
-   API deletion and conversion-function declaration schemas remain separate.
-   Reference annotation and larger class-value tail materialization gaps remain
-   assigned to their sema/lowering boundaries in `KNOWN_ISSUES.md`.
+   **Next slice: remove the unused EntityId inheritance classifier.**
+   Delete the EntityId overload of `classifyCanonicalDerivedBaseConversion`;
+   production callers now pass TypeIds. Keep the TypeId API and shared iterative
+   graph walker. Use compilation to expose missed callers, and migrate the native
+   EntityId proof controls to inspect their published legacy fixtures directly while
+   retaining contradictory-graph and missing-schema assertions. Keep record layout,
+   field and base schemas for their remaining consumers. Recheck record pointers,
+   member pointers, reference binding, nominal/constructor ranking, conditional
+   explicit conditions, source locations and ShapeOnly completion. Stop at this API
+   deletion; conversion-function declaration schemas and unsupported importer shapes
+   remain separate. Reference annotation and larger class-value tail materialization
+   gaps remain assigned to their sema/lowering boundaries in `KNOWN_ISSUES.md`.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    1. **The constructibility family.** The zero-argument variants and published
