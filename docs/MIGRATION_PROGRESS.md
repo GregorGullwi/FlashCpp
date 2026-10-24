@@ -12,9 +12,9 @@ Boundary **3A (canonical types)** is active and incomplete. The explicit-criteri
 rollup is **10/79 complete**; the only completed 3A exit criterion is that
 pointer-to-member overloads distinguish owner and pointee types. Passing tests or
 the breadth of landed code do not complete the boundary.
-Nominal object conversion planning consumes published class-base graphs. The next
-bounded 3A slice removes the EntityId-schema fallback from TypeId inheritance
-classification.
+TypeId inheritance classification requires published class-base schemas for
+distinct types. The next bounded 3A slice migrates projectable record-pointer
+conversion planning from the EntityId graph to those TypeId facts.
 
 The architecture the remaining work builds on:
 
@@ -258,25 +258,21 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Next slice: make TypeId inheritance classification require class-base schemas.**
-   Remove the EntityId-schema fallback from the `TypeId` overload of
-   `classifyCanonicalDerivedBaseConversion`. Audit its callers and completion
-   producers before removing the branch. Migrate native fixtures that intentionally
-   publish only record layout/field schemas to publish equivalent class-base facts;
-   queries must not repair missing schemas from syntax or `TypeInfo`. Keep the
-   explicit EntityId overload and record layout/field schemas for their remaining
-   consumers. Distinct types with missing root, target or intermediate facts defer;
-   published graphs retain public/virtual, unrelated, private and ambiguous results.
-   Identity remains independent of inheritance publication. Add direct classifier
-   controls for missing and contradictory EntityId/TypeId graphs, then recheck member
-   pointers, reference binding, constructor ranking and nominal object overloads.
-   Retain conditional-explicit specialization and located-diagnostic guards alongside
-   explicit-constructor primary/partial, direct/list/copy-init and nested
-   template-construction argument-isolation guards, plus dependent callable and
-   ShapeOnly coverage. Stop after this classifier and necessary caller/fixture
-   migration; EntityId API deletion and conversion-function declaration schemas
-   remain separate. Reference annotation and larger class-value tail materialization
-   gaps remain assigned to their sema/lowering boundaries in `KNOWN_ISSUES.md`.
+   **Next slice: use TypeId inheritance for projectable record-pointer conversions.**
+   In `tryBuildCanonicalProjectableConversionPlan`, replace the record-pointer
+   branch's EntityId extraction/classification with its imported pointee TypeIds.
+   Require published class-base facts; missing schemas must not trigger query-time
+   publication or syntax/TypeInfo recovery. Audit completion producers and preserve
+   pointee cv, public/virtual ranking, inaccessible/ambiguous rejection and fail-closed
+   behavior. Add native controls with contradictory EntityId/TypeId graphs and
+   missing root/target/intermediate schemas, then recheck pointer overloads and
+   pointer conversion temporaries bound to references. Keep the current importer
+   boundary for unsupported specialization/dependent shapes. Retain member-pointer,
+   nominal/constructor, conditional-explicit, source-location and ShapeOnly guards.
+   Stop after this pointer branch and necessary caller/fixture migration; EntityId
+   API deletion and conversion-function declaration schemas remain separate.
+   Reference annotation and larger class-value tail materialization gaps remain
+   assigned to their sema/lowering boundaries in `KNOWN_ISSUES.md`.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    1. **The constructibility family.** The zero-argument variants and published

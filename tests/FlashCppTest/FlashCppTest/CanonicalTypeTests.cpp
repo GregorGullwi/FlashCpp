@@ -6,6 +6,16 @@
 #include "ParserTemplateClassShared.h"
 #include "../../architecture/CanonicalTypeTests.h"
 
+namespace {
+void publishTestClassBases(CanonicalTypeTable& table, EntityId entity, std::span<const CanonicalRecordBase> record_bases) {
+	std::vector<CanonicalClassBase> bases;
+	for (const CanonicalRecordBase& base : record_bases) {
+		bases.push_back({table.record(base.entity), base.access, base.flags, 0, base.offset_bytes});
+	}
+	table.publishClassBaseSchema(table.record(entity), bases);
+}
+}
+
 TEST_CASE("Canonical types participate in scratch rollback") {
 	FrontendContext context;
 	const auto before = context.canonicalTypes().size();
@@ -296,6 +306,83 @@ TEST_CASE("Canonical TypeIds rank by-value derived-to-base conversions") {
 	REQUIRE(exact_conversion.has_value());
 	CHECK(exact_conversion->is_valid);
 	CHECK(exact_conversion->rank == ConversionRank::ExactMatch);
+}
+
+TEST_CASE("TypeId inheritance classification requires published class-base schemas") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const EntityId base_entity{98501};
+	const EntityId derived_entity{98502};
+	const TypeId base = table.record(base_entity);
+	const TypeId derived = table.record(derived_entity);
+	const TypeId intermediate = table.record(EntityId{98503});
+	const std::array<CanonicalClassBase, 1> base_link{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+	const std::array<CanonicalClassBase, 1> intermediate_link{{intermediate, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+	auto publish_entity_schema = [&](bool related) {
+		table.publishRecordLayout({base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None, 0});
+		table.publishRecordFieldSchema(base_entity, {}, {});
+		table.publishRecordLayout({derived_entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(related), CanonicalRecordLayoutFlags::None, 0});
+		const std::array<CanonicalRecordBase, 1> bases{{base_entity, 0, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+		table.publishRecordFieldSchema(derived_entity, {},
+			related ? std::span<const CanonicalRecordBase>(bases) : std::span<const CanonicalRecordBase>{});
+	};
+	CHECK(classifyCanonicalDerivedBaseConversion(table, base, base) == DerivedBaseConversionKind::UniquePublicNonVirtual);
+	CHECK_FALSE(classifyCanonicalDerivedBaseConversion(table, TypeId{}, base).has_value());
+	CHECK_FALSE(classifyCanonicalDerivedBaseConversion(table, table.builtin(CanonicalBuiltinKind::Int), base).has_value());
+	SUBCASE("Absent graphs defer") {
+		CHECK_FALSE(classifyCanonicalDerivedBaseConversion(table, derived, base).has_value());
+	}
+	SUBCASE("EntityId-only proof cannot classify a TypeId pair") {
+		publish_entity_schema(true);
+		CHECK(classifyCanonicalDerivedBaseConversion(table, derived_entity, base_entity) == DerivedBaseConversionKind::UniquePublicNonVirtual);
+		CHECK_FALSE(classifyCanonicalDerivedBaseConversion(table, derived, base).has_value());
+	}
+	SUBCASE("Missing root defers despite EntityId proof") {
+		publish_entity_schema(true);
+		table.publishClassBaseSchema(base, {});
+		CHECK_FALSE(classifyCanonicalDerivedBaseConversion(table, derived, base).has_value());
+	}
+	SUBCASE("Missing target defers despite a published direct edge") {
+		table.publishClassBaseSchema(derived, base_link);
+		CHECK_FALSE(classifyCanonicalDerivedBaseConversion(table, derived, base).has_value());
+	}
+	SUBCASE("Missing target defers before declaring types unrelated") {
+		table.publishClassBaseSchema(derived, {});
+		CHECK_FALSE(classifyCanonicalDerivedBaseConversion(table, derived, base).has_value());
+	}
+	SUBCASE("Specialization targets require their own schema") {
+		const std::array<CanonicalTemplateArgument, 1> arguments{{CanonicalTemplateArgument::makeType(table.builtin(CanonicalBuiltinKind::Int))}};
+		const TypeId specialized_base = table.templateSpecialization(TemplateDeclId{98504}, arguments);
+		const std::array<CanonicalClassBase, 1> bases{{specialized_base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+		table.publishClassBaseSchema(derived, bases);
+		CHECK(classifyCanonicalDerivedBaseConversion(table, specialized_base, specialized_base) == DerivedBaseConversionKind::UniquePublicNonVirtual);
+		CHECK_FALSE(classifyCanonicalDerivedBaseConversion(table, derived, specialized_base).has_value());
+		table.publishClassBaseSchema(specialized_base, {});
+		CHECK(classifyCanonicalDerivedBaseConversion(table, derived, specialized_base) == DerivedBaseConversionKind::UniquePublicNonVirtual);
+	}
+	SUBCASE("Missing intermediate defers") {
+		table.publishClassBaseSchema(base, {});
+		table.publishClassBaseSchema(derived, intermediate_link);
+		CHECK_FALSE(classifyCanonicalDerivedBaseConversion(table, derived, base).has_value());
+		table.publishClassBaseSchema(intermediate, base_link);
+		CHECK(classifyCanonicalDerivedBaseConversion(table, derived, base) == DerivedBaseConversionKind::UniquePublicNonVirtual);
+	}
+	SUBCASE("Published unrelated graph overrides contradictory EntityId proof") {
+		publish_entity_schema(true);
+		table.publishClassBaseSchema(base, {});
+		table.publishClassBaseSchema(derived, {});
+		CHECK(classifyCanonicalDerivedBaseConversion(table, derived, base) == DerivedBaseConversionKind::NotRelated);
+	}
+	SUBCASE("Published relation overrides unrelated EntityId graph") {
+		publish_entity_schema(false);
+		table.publishClassBaseSchema(base, {});
+		table.publishClassBaseSchema(derived, base_link);
+		CHECK(classifyCanonicalDerivedBaseConversion(table, derived_entity, base_entity) == DerivedBaseConversionKind::NotRelated);
+		CHECK(classifyCanonicalDerivedBaseConversion(table, derived, base) == DerivedBaseConversionKind::UniquePublicNonVirtual);
+	}
+	const size_t types_before = table.size();
+	(void)classifyCanonicalDerivedBaseConversion(table, derived, base);
+	CHECK(table.size() == types_before);
 }
 
 TEST_CASE("Explicit copy initialization diagnostics retain the initializer location") {
@@ -1780,13 +1867,12 @@ TEST_CASE("Canonical TypeIds bind pointer conversion temporaries to references")
 		CanonicalRecordBase{
 			base_entity, 0, CanonicalAccess::Public,
 			CanonicalRecordBaseFlags::None, 0, 0}};
-	auto publish_record = [&table](EntityId entity,
-		std::span<const CanonicalRecordBase> bases) {
+	auto publish_record = [&table](EntityId entity, std::span<const CanonicalRecordBase> bases) {
 		table.publishRecordLayout(CanonicalRecordLayout{
 			entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(bases.size()),
 			CanonicalRecordLayoutFlags::None, 0});
-		table.publishRecordFieldSchema(entity,
-			std::span<const CanonicalRecordMember>{}, bases);
+		table.publishRecordFieldSchema(entity, std::span<const CanonicalRecordMember>{}, bases);
+		publishTestClassBases(table, entity, bases);
 	};
 	publish_record(base_entity, {});
 	publish_record(derived_entity, derived_bases);
@@ -2499,13 +2585,12 @@ TEST_CASE("Canonical TypeIds plan member function pointer base conversions") {
 	const EntityId ambiguous_derived_owner{826};
 	const EntityId unrelated_owner{827};
 
-	auto publish_record = [&table](EntityId entity,
-		std::span<const CanonicalRecordBase> bases) {
+	auto publish_record = [&table](EntityId entity, std::span<const CanonicalRecordBase> bases) {
 		table.publishRecordLayout(CanonicalRecordLayout{
 			entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(bases.size()),
 			CanonicalRecordLayoutFlags::None, 0});
-		table.publishRecordFieldSchema(entity,
-			std::span<const CanonicalRecordMember>{}, bases);
+		table.publishRecordFieldSchema(entity, std::span<const CanonicalRecordMember>{}, bases);
+		publishTestClassBases(table, entity, bases);
 	};
 	auto public_base = [](EntityId entity, CanonicalRecordBaseFlags flags) {
 		return CanonicalRecordBase{
@@ -2635,6 +2720,7 @@ TEST_CASE("Canonical TypeIds convert non-projectable ordered member-pointer owne
 			entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(bases.size()),
 			CanonicalRecordLayoutFlags::None, 0});
 		table.publishRecordFieldSchema(entity, std::span<const CanonicalRecordMember>{}, bases);
+		publishTestClassBases(table, entity, bases);
 	};
 	publish_record(base_owner, {});
 	publish_record(derived_owner, std::span<const CanonicalRecordBase>(&public_base, 1));
@@ -3106,13 +3192,12 @@ TEST_CASE("Canonical TypeIds bind member-pointer conversion temporaries to refer
 		CanonicalRecordBase{
 			base_owner, 0, CanonicalAccess::Public,
 			CanonicalRecordBaseFlags::None, 0, 0}};
-	auto publish_record = [&table](EntityId entity,
-		std::span<const CanonicalRecordBase> bases) {
+	auto publish_record = [&table](EntityId entity, std::span<const CanonicalRecordBase> bases) {
 		table.publishRecordLayout(CanonicalRecordLayout{
 			entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(bases.size()),
 			CanonicalRecordLayoutFlags::None, 0});
-		table.publishRecordFieldSchema(entity,
-			std::span<const CanonicalRecordMember>{}, bases);
+		table.publishRecordFieldSchema(entity, std::span<const CanonicalRecordMember>{}, bases);
+		publishTestClassBases(table, entity, bases);
 	};
 	publish_record(base_owner, {});
 	publish_record(derived_owner, derived_bases);
