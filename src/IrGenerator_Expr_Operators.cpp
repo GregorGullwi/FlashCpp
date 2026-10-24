@@ -2500,7 +2500,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			if (binaryOperatorNode.has_ambiguous_operator_overload()) {
 				overload_result = OperatorOverloadResult::ambiguous();
 			} else if (binaryOperatorNode.has_resolved_member_operator_overload()) {
-				overload_result = OperatorOverloadResult(binaryOperatorNode.resolved_member_operator_overload());
+				overload_result = OperatorOverloadResult(binaryOperatorNode.resolved_member_operator_overload(),
+					binaryOperatorNode.resolved_member_operator_owner(), binaryOperatorNode.resolved_member_operator_owner_index());
 			} else if (binaryOperatorNode.has_no_match_operator_overload()) {
 				overload_result = OperatorOverloadResult::no_overload();
 			} else {
@@ -2851,7 +2852,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		} else if (binaryOperatorNode.has_resolved_free_function_operator_overload()) {
 			overload_result = OperatorOverloadResult(binaryOperatorNode.resolved_free_function_operator_overload());
 		} else if (binaryOperatorNode.has_resolved_member_operator_overload()) {
-			overload_result = OperatorOverloadResult(binaryOperatorNode.resolved_member_operator_overload());
+			overload_result = OperatorOverloadResult(binaryOperatorNode.resolved_member_operator_overload(),
+				binaryOperatorNode.resolved_member_operator_owner(), binaryOperatorNode.resolved_member_operator_owner_index());
 		} else if (binaryOperatorNode.has_no_match_operator_overload() && !can_recompute_recorded_failure) {
 			overload_result = OperatorOverloadResult::no_overload();
 		} else {
@@ -3117,12 +3119,14 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				throwDeletedOperatorFunctionDiagnostic(*context_, binaryOperatorNode.get_token(), op);
 			}
 
-			// Get struct name for mangling
-			std::string_view struct_name = StringTable::getStringView(getTypeInfo(lhs_type_index).name());
+			const TypeIndex owner_type_index = overload_result.compatibility_declaring_type_index;
+			if (!owner_type_index.is_valid()) {
+				throw InternalError("Selected binary operator is missing its declaration owner");
+			}
 
 			// Get the return type from the function declaration
 			TypeSpecifierNode return_type = func_decl.decl_node().type_specifier_node();
-			resolveSelfReferentialType(return_type, lhs_type_index);
+			resolveSelfReferentialType(return_type, owner_type_index);
 
 			// Get the parameter types for mangling
 			std::vector<TypeSpecifierNode> param_types;
@@ -3130,26 +3134,14 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				if (param_node.is<DeclarationNode>()) {
 					const auto& param_decl = param_node.as<DeclarationNode>();
 					TypeSpecifierNode param_type = param_decl.type_specifier_node();
-					resolveSelfReferentialType(param_type, lhs_type_index);
+					resolveSelfReferentialType(param_type, owner_type_index);
 					param_types.push_back(param_type);
 				}
 			}
 
-			// Generate mangled name for the operator
-			// When doing C++20 equality rewrite (!= -> !(==)), use "==" for the function name
-			std::string operator_func_name = "operator";
-			std::string_view mangle_op_member = equality_rewrite_negate ? std::string_view("==") : op;
-			operator_func_name += mangle_op_member;
-			std::vector<std::string_view> empty_namespace;
-			auto mangled_name = NameMangling::generateMangledName(
-				operator_func_name,
-				return_type,
-				param_types,
-				false, // not variadic
-				StringTable::getOrInternStringHandle(struct_name),
-				empty_namespace,
-				Linkage::CPlusPlus,
-				member_func.is_const());
+			const StringHandle owner_name = getTypeInfo(owner_type_index).name();
+			const StringHandle mangled_name = StringTable::getOrInternStringHandle(func_decl.has_mangled_name() ? func_decl.mangled_name() :
+				generateMangledNameForCall(func_decl, owner_name, buildNamespaceHandleForStructName(owner_name)));
 
 			// Generate the call to the operator overload
 			// For member function: a.operator+(b) where 'a' is 'this' and 'b' is the parameter
@@ -3228,10 +3220,14 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 								 actual_return_size);
 			}
 
-			// Add 'this' pointer as first argument
-			call_op.args.push_back(makeMemberThisCallArgument(
-				lhs_type_index.withCategory(lhsCat),
-				IrValue(lhs_addr)));
+			// Adjust the object to the selected declaration's base subobject.
+			ExprResult this_pointer = makeExprResult(lhs_type_index.withCategory(TypeCategory::Struct), SizeInBits{POINTER_SIZE_BITS},
+				IrOperand{lhs_addr}, PointerDepth{1}, ValueStorage::ContainsData);
+			if (owner_type_index != lhs_type_index) {
+				this_pointer = adjustDerivedToBasePointer(this_pointer, lhs_type_index.withCategory(TypeCategory::Struct),
+					owner_type_index.withCategory(TypeCategory::Struct), PointerDepth{1}, binaryOperatorNode.get_token());
+			}
+			call_op.args.push_back(makeMemberThisCallArgument(owner_type_index, toIrValue(this_pointer.value)));
 
 			// Add RHS as the second argument
 			// Check if the parameter is a reference - if so, we need to pass the address

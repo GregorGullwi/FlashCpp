@@ -1,5 +1,17 @@
 # Known Issues
 
+## Inherited unary minus on a short-backed class can return the wrong value
+
+`struct Base { short value; int operator-() const { return -value; } };`
+followed by `struct Derived : Base {};` and
+`int main() { Derived x; x.value = 7; return -x == -7 ? 0 : 1; }`
+returns 1 instead of 0. The same operator declared directly on the operand's
+class, and a named member function returning `-value`, both pass. Using an int
+field in the inherited case also passes. This is separate from inherited binary
+operator call-target ownership, which now preserves the selected declaring owner.
+Investigate inherited unary member-call lowering and small-base receiver/result
+metadata at the sema/lowering boundaries; do not change overload ranking to hide it.
+
 ## Conversion-function value base tails need base-object materialization
 
 A conversion function returning `Derived` can rank a trailing conversion to a

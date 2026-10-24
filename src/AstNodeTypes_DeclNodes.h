@@ -3897,7 +3897,12 @@ public:
 	const StructMemberFunction* resolved_member_operator_overload() const { return resolved_member_operator_overload_; }
 	const FunctionDeclarationNode* resolved_free_function_operator_overload() const { return resolved_free_function_operator_overload_; }
 
-	void set_resolved_member_operator_overload(const StructMemberFunction* overload) {
+	TypeId resolved_member_operator_owner() const { return resolved_member_operator_owner_; }
+	TypeIndex resolved_member_operator_owner_index() const { return resolved_member_operator_owner_index_; }
+
+	void set_resolved_member_operator_overload(const StructMemberFunction* overload, TypeId owner, TypeIndex owner_index) {
+		resolved_member_operator_owner_ = owner;
+		resolved_member_operator_owner_index_ = owner_index;
 		resolved_member_operator_overload_ = overload;
 		resolved_free_function_operator_overload_ = nullptr;
 		semantic_operator_resolution_state_ = overload != nullptr
@@ -3909,6 +3914,8 @@ public:
 	void set_resolved_free_function_operator_overload(const FunctionDeclarationNode* overload) {
 		resolved_free_function_operator_overload_ = overload;
 		resolved_member_operator_overload_ = nullptr;
+		resolved_member_operator_owner_ = {};
+		resolved_member_operator_owner_index_ = {};
 		semantic_operator_resolution_state_ = overload != nullptr
 												  ? BinaryOperatorSemanticResolutionState::FreeFunctionMatch
 												  : BinaryOperatorSemanticResolutionState::NoMatch;
@@ -3921,6 +3928,8 @@ public:
 
 	void set_no_match_operator_overload() {
 		resolved_member_operator_overload_ = nullptr;
+		resolved_member_operator_owner_ = {};
+		resolved_member_operator_owner_index_ = {};
 		resolved_free_function_operator_overload_ = nullptr;
 		semantic_operator_resolution_state_ = BinaryOperatorSemanticResolutionState::NoMatch;
 		semantic_rewrite_neq_to_eq_ = false;
@@ -3928,6 +3937,8 @@ public:
 
 	void set_ambiguous_operator_overload() {
 		resolved_member_operator_overload_ = nullptr;
+		resolved_member_operator_owner_ = {};
+		resolved_member_operator_owner_index_ = {};
 		resolved_free_function_operator_overload_ = nullptr;
 		semantic_operator_resolution_state_ = BinaryOperatorSemanticResolutionState::Ambiguous;
 		semantic_rewrite_neq_to_eq_ = false;
@@ -3935,6 +3946,8 @@ public:
 
 	void clear_semantic_operator_resolution() {
 		resolved_member_operator_overload_ = nullptr;
+		resolved_member_operator_owner_ = {};
+		resolved_member_operator_owner_index_ = {};
 		resolved_free_function_operator_overload_ = nullptr;
 		semantic_operator_resolution_state_ = BinaryOperatorSemanticResolutionState::Unresolved;
 		semantic_rewrite_neq_to_eq_ = false;
@@ -3942,6 +3955,8 @@ public:
 
 	void copy_semantic_operator_resolution_from(const BinaryOperatorNode& other) {
 		resolved_member_operator_overload_ = other.resolved_member_operator_overload_;
+		resolved_member_operator_owner_ = other.resolved_member_operator_owner_;
+		resolved_member_operator_owner_index_ = other.resolved_member_operator_owner_index_;
 		resolved_free_function_operator_overload_ = other.resolved_free_function_operator_overload_;
 		semantic_operator_resolution_state_ = other.semantic_operator_resolution_state_;
 		semantic_rewrite_neq_to_eq_ = other.semantic_rewrite_neq_to_eq_;
@@ -3952,7 +3967,9 @@ private:
 	ASTNode lhs_node_;
 	ASTNode rhs_node_;
 	OverloadableOperator operator_kind_ = OverloadableOperator::None;
+	TypeId resolved_member_operator_owner_{};
 	const StructMemberFunction* resolved_member_operator_overload_ = nullptr;
+	TypeIndex resolved_member_operator_owner_index_{};
 	const FunctionDeclarationNode* resolved_free_function_operator_overload_ = nullptr;
 	BinaryOperatorSemanticResolutionState semantic_operator_resolution_state_ = BinaryOperatorSemanticResolutionState::Unresolved;
 	bool semantic_rewrite_neq_to_eq_ = false;
