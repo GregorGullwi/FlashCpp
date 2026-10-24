@@ -309,6 +309,9 @@ TEST_CASE("Canonical TypeIds rank by-value derived-to-base conversions") {
 }
 
 TEST_CASE("TypeId inheritance classification requires published class-base schemas") {
+	using Classifier = decltype(&classifyCanonicalDerivedBaseConversion);
+	static_assert(std::is_invocable_v<Classifier, const CanonicalTypeTable&, TypeId, TypeId>);
+	static_assert(!std::is_invocable_v<Classifier, const CanonicalTypeTable&, EntityId, EntityId>);
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();
 	const EntityId base_entity{98501};
@@ -334,7 +337,8 @@ TEST_CASE("TypeId inheritance classification requires published class-base schem
 	}
 	SUBCASE("EntityId-only proof cannot classify a TypeId pair") {
 		publish_entity_schema(true);
-		CHECK(classifyCanonicalDerivedBaseConversion(table, derived_entity, base_entity) == DerivedBaseConversionKind::UniquePublicNonVirtual);
+		CHECK(table.recordLayout(derived_entity).direct_base_count == 1);
+		CHECK(table.recordBaseAt(derived_entity, 0).entity == base_entity);
 		CHECK_FALSE(classifyCanonicalDerivedBaseConversion(table, derived, base).has_value());
 	}
 	SUBCASE("Missing root defers despite EntityId proof") {
@@ -377,7 +381,7 @@ TEST_CASE("TypeId inheritance classification requires published class-base schem
 		publish_entity_schema(false);
 		table.publishClassBaseSchema(base, {});
 		table.publishClassBaseSchema(derived, base_link);
-		CHECK(classifyCanonicalDerivedBaseConversion(table, derived_entity, base_entity) == DerivedBaseConversionKind::NotRelated);
+		CHECK(table.recordLayout(derived_entity).direct_base_count == 0);
 		CHECK(classifyCanonicalDerivedBaseConversion(table, derived, base) == DerivedBaseConversionKind::UniquePublicNonVirtual);
 	}
 	const size_t types_before = table.size();

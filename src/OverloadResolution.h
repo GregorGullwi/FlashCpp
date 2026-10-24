@@ -1387,29 +1387,6 @@ inline std::optional<DerivedBaseConversionKind> classifyCanonicalBaseSubobjectGr
 		: DerivedBaseConversionKind::UniquePublicNonVirtual;
 }
 
-// Classify a derived-to-base relation in the EntityId-keyed record schema.
-// Virtual subobjects are shared by record identity. The shared worklist avoids
-// using native call depth for source inheritance depth.
-inline std::optional<DerivedBaseConversionKind> classifyCanonicalDerivedBaseConversion(
-	const CanonicalTypeTable& table,
-	EntityId derived_entity,
-	EntityId base_entity) {
-	const auto has_schema = [&table](uint32_t entity_value) {
-		const EntityId entity{entity_value};
-		return table.hasRecordLayout(entity) && table.hasRecordFieldSchema(entity);
-	};
-	const auto direct_base_count = [&table](uint32_t entity_value) {
-		return table.recordLayout(EntityId{entity_value}).direct_base_count;
-	};
-	const auto direct_base_at = [&table](uint32_t entity_value, size_t index) {
-		const CanonicalRecordBase base = table.recordBaseAt(EntityId{entity_value}, index);
-		return CanonicalBaseGraphEdgeView{base.entity.value, base.access, base.flags};
-	};
-	return classifyCanonicalBaseSubobjectGraph(
-		derived_entity.value, base_entity.value,
-		has_schema, direct_base_count, direct_base_at);
-}
-
 // Class TypeIds use only published class-base schemas, retaining specialization
 // identity throughout the graph. Identity needs no schema; distinct types do.
 inline std::optional<DerivedBaseConversionKind> classifyCanonicalDerivedBaseConversion(const CanonicalTypeTable& table,
