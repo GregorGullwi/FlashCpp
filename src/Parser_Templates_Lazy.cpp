@@ -446,7 +446,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 		// data for every specialization; out-of-line stubs simply contribute an empty
 		// list here and receive their initializers during delayed replay below.
 		substituteConstructorInitializers(ctor_decl, new_ctor_ref);
-		copyConstructorDeclarationFlags(ctor_decl, new_ctor_ref);
+		copyInstantiatedConstructorDeclarationFlags(ctor_decl, new_ctor_ref,
+			std::span<const TemplateParameterNode>(lazy_info.template_params.data(), lazy_info.template_params.size()),
+			std::span<const TemplateTypeArg>(lazy_info.template_args.data(), lazy_info.template_args.size()));
 		materializeInstantiatedConstructorNoexcept(new_ctor_ref, ctor_decl,
 			std::span<const TemplateParameterNode>(lazy_info.template_params.data(), lazy_info.template_params.size()),
 			std::span<const TemplateTypeArg>(lazy_info.template_args.data(), lazy_info.template_args.size()));

@@ -10,6 +10,7 @@ inline void copyConstructorDeclarationFlags(const ConstructorDeclarationNode& so
 	target.set_was_defaulted_on_first_declaration(source.was_defaulted_on_first_declaration());
 	target.set_is_inline(source.is_inline());
 	target.set_explicit(source.is_explicit());
+	target.set_explicit_condition(source.explicit_condition());
 	target.set_constexpr(source.is_constexpr());
 }
 

@@ -3395,7 +3395,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							true});
 					}
 					pack_param_info_.resize(saved_pack_info);
-					copyConstructorDeclarationFlags(orig_ctor, new_ctor_ref);
+					copyInstantiatedConstructorDeclarationFlags(orig_ctor, new_ctor_ref, template_params, template_args_for_member_copy);
 					materializeInstantiatedConstructorNoexcept(new_ctor_ref, orig_ctor, template_params, template_args_for_member_copy);
 					struct_info->addConstructor(new_ctor_node, mem_func.access);
 					registerSourceMemberStructInfoIndex(
@@ -4794,7 +4794,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							true));
 					}
 					pack_param_info_.resize(saved_pack_info);
-					copyConstructorDeclarationFlags(orig_ctor, new_ctor_ref);
+					copyInstantiatedConstructorDeclarationFlags(orig_ctor, new_ctor_ref, template_params, template_args_for_pattern);
 
 					instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
 					registerSourceMemberStubIdentity(
@@ -9872,7 +9872,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 					pack_param_info_.resize(saved_pack_info);
 
-					copyConstructorDeclarationFlags(original_ctor, substituted_ctor);
+					copyInstantiatedConstructorDeclarationFlags(original_ctor, substituted_ctor, template_params, template_args_to_use);
 					substituted_ctor.set_noexcept(original_ctor.is_noexcept());
 					if (original_ctor.has_requires_clause()) {
 						substituted_ctor.set_requires_clause(substituteTemplateParameters(
@@ -11929,7 +11929,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						std::span<const PackParamInfo>(
 							ctor_pack_param_info.data(),
 							ctor_pack_param_info.size()));
-					copyConstructorDeclarationFlags(ctor_decl, new_ctor_ref);
+					copyInstantiatedConstructorDeclarationFlags(ctor_decl, new_ctor_ref, template_params, template_args_to_use);
 					materializeInstantiatedConstructorNoexcept(new_ctor_ref, ctor_decl, template_params, template_args_to_use);
 					if (substituted_body.has_value()) {
 						new_ctor_ref.set_definition(*substituted_body);
@@ -12010,7 +12010,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct)));
 					pack_param_info_.resize(saved_pack_info);
 
-					copyConstructorDeclarationFlags(ctor_decl, new_ctor_ref);
+					copyInstantiatedConstructorDeclarationFlags(ctor_decl, new_ctor_ref, template_params, template_args_to_use);
 					materializeInstantiatedConstructorNoexcept(new_ctor_ref, ctor_decl, template_params, template_args_to_use);
 					if (ctor_decl.has_requires_clause()) {
 						new_ctor_ref.set_requires_clause(*ctor_decl.requires_clause());

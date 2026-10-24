@@ -298,6 +298,28 @@ TEST_CASE("Canonical TypeIds rank by-value derived-to-base conversions") {
 	CHECK(exact_conversion->rank == ConversionRank::ExactMatch);
 }
 
+TEST_CASE("Explicit copy initialization diagnostics retain the initializer location") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	CompileContext compile_context;
+	compile_context.setInputFile("explicit_constructor_location.cpp");
+	Lexer lexer("struct Box { explicit Box(int); };\nint main() { Box object = 7; return 0; }\n");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	try {
+		sema.run();
+		FAIL("copy initialization must reject the explicit constructor");
+	} catch (const CompileError& error) {
+		const Diagnostic* diagnostic = error.structuredDiagnostic();
+		REQUIRE(diagnostic != nullptr);
+		CHECK(diagnostic->id == DiagnosticId::ExplicitConstructorCopyInitialization);
+		CHECK(diagnostic->location.line == 2);
+		CHECK(diagnostic->location.column > 0);
+	}
+}
+
 TEST_CASE("Constructor cloning retains declaration flags independently of noexcept") {
 	FrontendContext frontend;
 	const StringHandle pattern_name = StringTable::getOrInternStringHandle("Pattern");

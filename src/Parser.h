@@ -1928,7 +1928,8 @@ private:
 		bool has_no_unique_address = false;
 		bool has_noreturn = false;
 	};
-	FlashCpp::MemberLeadingSpecifiers parse_member_leading_specifiers();	 // Consume constexpr/consteval/inline/explicit/virtual before a member
+	bool parseExplicitSpecifier(ExprId& retained_condition);
+	FlashCpp::MemberLeadingSpecifiers parse_member_leading_specifiers(ExprId* retained_explicit_condition);
 	CppAttributeInfo consume_cpp_attribute_blocks();	 // Consume consecutive [[...]] blocks and return detected flags
 	ParseResult parse_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs);	// Phase 2: Unified trailing specifiers
 	ParseResult parse_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs, std::span<const ASTNode> params);
@@ -3996,6 +3997,8 @@ public:	// Public methods for template instantiation
 	// Re-evaluate a class-template constructor's retained dependent noexcept
 	// operand under a specialization's arguments and set the effective value.
 	void materializeInstantiatedConstructorNoexcept(ConstructorDeclarationNode& target, const ConstructorDeclarationNode& pattern,
+		std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args);
+	void copyInstantiatedConstructorDeclarationFlags(const ConstructorDeclarationNode& pattern, ConstructorDeclarationNode& target,
 		std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args);
 	// Re-evaluate a class-template member function's retained dependent noexcept
 	// operand under a specialization's arguments and set the effective value.

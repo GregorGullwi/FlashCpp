@@ -2329,7 +2329,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Check for constexpr, consteval, inline, explicit specifiers (can appear on constructors and member functions)
 		// This also handles cases where specifiers precede 'static' or 'friend' in any order,
 		// e.g., "constexpr static int x = 42;" or "inline friend void foo() {}"
-		auto member_specs = parse_member_leading_specifiers();
+		ExprId member_explicit_condition{};
+		auto member_specs = parse_member_leading_specifiers(&member_explicit_condition);
 		if (leading_cpp_attributes.has_noreturn) {
 			member_specs |= FlashCpp::MLS_NoReturn;
 		}
@@ -2673,6 +2674,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 				// Apply specifiers from member_specs
 				ctor_ref.set_explicit(member_specs & FlashCpp::MLS_Explicit);
+				ctor_ref.set_explicit_condition(member_explicit_condition);
 				ctor_ref.set_constexpr(member_specs & FlashCpp::MLS_Constexpr);
 				ctor_ref.set_is_inline(member_specs & FlashCpp::MLS_Inline);
 

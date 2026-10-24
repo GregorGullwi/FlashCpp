@@ -2424,17 +2424,14 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				bool found_constructor = false;
 				bool ctor_is_constexpr = false;
 				bool ctor_is_explicit = false;
+				ExprId ctor_explicit_condition{};
 				{
 					// Skip declaration specifiers (constexpr, inline, etc.)
 					auto specs = parse_declaration_specifiers();
 					ctor_is_constexpr = specs.is_constexpr();
 					// Also skip 'explicit' which is constructor-specific
 					while (peek() == "explicit"_tok) {
-						ctor_is_explicit = true;
-						advance();
-						if (peek() == "("_tok) {
-							skip_balanced_parens(); // explicit(condition)
-						}
+						ctor_is_explicit = parseExplicitSpecifier(ctor_explicit_condition);
 					}
 				}
 				if (!peek().is_eof() && peek().is_identifier() &&
@@ -2454,6 +2451,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						// Apply specifiers detected during lookahead
 						ctor_ref.set_constexpr(ctor_is_constexpr);
 						ctor_ref.set_explicit(ctor_is_explicit);
+						ctor_ref.set_explicit_condition(ctor_explicit_condition);
 
 						// Collect constructor header data into ParsedFunctionHeader (Priority 5)
 						FlashCpp::ParsedFunctionHeader header;
@@ -2748,7 +2746,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				// Use save/restore so specifiers are not lost if this is NOT a destructor
 				{
 					SaveHandle dtor_saved_pos = save_token_position();
-					auto dtor_leading_specs = parse_member_leading_specifiers();
+					auto dtor_leading_specs = parse_member_leading_specifiers(nullptr);
 					bool dtor_is_virtual = !!(dtor_leading_specs & FlashCpp::MLS_Virtual);
 					if (peek() == "~"_tok) {
 						discard_saved_token(dtor_saved_pos);
@@ -2852,7 +2850,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				{
 					SaveHandle conv_saved = save_token_position();
 					bool found_conversion_op = false;
-					conv_specs = parse_member_leading_specifiers();
+					conv_specs = parse_member_leading_specifiers(nullptr);
 					if (peek() == "operator"_tok) {
 						// Check if this is a conversion operator (not operator() or operator<< etc.)
 						// Conversion operators have: operator type-name ()
@@ -3941,7 +3939,8 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				}
 
 				// Check for constexpr, consteval, inline, explicit specifiers (can appear on constructors and member functions)
-				auto partial_member_specs = parse_member_leading_specifiers();
+				ExprId partial_explicit_condition{};
+				auto partial_member_specs = parse_member_leading_specifiers(&partial_explicit_condition);
 
 				// Check for constructor (identifier matching template name followed by '('
 				// In partial specializations, the constructor uses the base template name (e.g., "Calculator"),
@@ -3963,6 +3962,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						// This is a constructor - use instantiated_name as the struct name
 						auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(instantiated_name, StringTable::getOrInternStringHandle(ctor_name));
 						ctor_ref.set_explicit(partial_member_specs & FlashCpp::MLS_Explicit);
+						ctor_ref.set_explicit_condition(partial_explicit_condition);
 						ctor_ref.set_constexpr(partial_member_specs & FlashCpp::MLS_Constexpr);
 
 						// Collect constructor header data into ParsedFunctionHeader (Priority 5)
@@ -4332,7 +4332,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				{
 					SaveHandle conv_saved = save_token_position();
 					bool found_conversion_op = false;
-					conv_specs = parse_member_leading_specifiers();
+					conv_specs = parse_member_leading_specifiers(nullptr);
 					if (leading_cpp_attributes.has_noreturn) {
 						conv_specs |= FlashCpp::MLS_NoReturn;
 					}
@@ -6469,14 +6469,11 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			[[maybe_unused]] auto member_specs = parse_declaration_specifiers();
 
 			// Handle 'explicit' keyword separately (constructor-specific, not in parse_declaration_specifiers)
-			// C++20 explicit(condition) - also skip the condition expression
-			[[maybe_unused]] bool is_member_explicit = false;
+			// Retain dependent explicit(condition) operands for constructor instantiation.
+			bool is_member_explicit = false;
+			ExprId member_explicit_condition{};
 			if (peek() == "explicit"_tok) {
-				is_member_explicit = true;
-				advance();
-				if (peek() == "("_tok) {
-					skip_balanced_parens();
-				}
+				is_member_explicit = parseExplicitSpecifier(member_explicit_condition);
 			}
 
 			// Check for constructor (identifier matching struct name followed by '(')
@@ -6516,6 +6513,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						return specs_result;
 					}
 					constructor_ref.set_explicit(is_member_explicit);
+					constructor_ref.set_explicit_condition(member_explicit_condition);
 					constructor_ref.set_constexpr(member_specs.is_constexpr());
 					applyParsedNoexcept(constructor_ref, constructor_specs);
 					if (constructor_specs.is_deleted()) {
@@ -7117,14 +7115,11 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		[[maybe_unused]] auto member_specs2 = parse_declaration_specifiers();
 
 		// Handle 'explicit' keyword separately (constructor-specific, not in parse_declaration_specifiers)
-		// C++20 explicit(condition) - also skip the condition expression
-		[[maybe_unused]] bool is_member_explicit2 = false;
+		// Retain dependent explicit(condition) operands for constructor instantiation.
+		bool is_member_explicit2 = false;
+		ExprId member_explicit_condition2{};
 		if (peek() == "explicit"_tok) {
-			is_member_explicit2 = true;
-			advance();
-			if (peek() == "("_tok) {
-				skip_balanced_parens();
-			}
+			is_member_explicit2 = parseExplicitSpecifier(member_explicit_condition2);
 		}
 
 		// Check for constructor (identifier matching struct name followed by '(')
@@ -7163,6 +7158,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					return specs_result;
 				}
 				constructor_ref.set_explicit(is_member_explicit2);
+				constructor_ref.set_explicit_condition(member_explicit_condition2);
 				constructor_ref.set_constexpr(member_specs2.is_constexpr());
 				applyParsedNoexcept(constructor_ref, constructor_specs);
 				if (constructor_specs.is_deleted()) {

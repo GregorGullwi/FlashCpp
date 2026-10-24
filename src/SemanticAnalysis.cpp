@@ -11880,7 +11880,7 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 				context_.diagnostics(),
 				DiagnosticId::ExplicitConstructorCopyInitialization,
 				DiagnosticSeverity::Error,
-				SourceLocation(),
+				SourceLocation::fromToken(FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(expr_node).value_or(Token{})),
 				"Cannot use copy initialization with explicit constructor",
 				{});
 		}

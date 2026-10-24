@@ -7010,7 +7010,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			if (orig_ctor.is_materialized()) {
 				new_ctor_ref.set_definition(*orig_ctor.get_definition());
 			}
-			copyConstructorDeclarationFlags(orig_ctor, new_ctor_ref);
+			copyInstantiatedConstructorDeclarationFlags(orig_ctor, new_ctor_ref, no_template_params, template_args);
 
 			// Add the constructor to struct_info
 			struct_info->addConstructor(new_ctor_node, mem_func.access);

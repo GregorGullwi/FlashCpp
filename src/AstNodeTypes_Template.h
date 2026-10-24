@@ -726,6 +726,8 @@ public:
 	// explicit specifier support (for future use)
 	void set_explicit(bool is_explicit) { is_explicit_ = is_explicit; }
 	bool is_explicit() const { return is_explicit_; }
+	void set_explicit_condition(ExprId condition) { explicit_condition_ = condition; }
+	ExprId explicit_condition() const { return explicit_condition_; }
 
 	// constexpr specifier support (for future use)
 	void set_constexpr(bool is_constexpr) { is_constexpr_ = is_constexpr; }
@@ -872,6 +874,7 @@ private:
 	bool was_defaulted_on_first_declaration_ : 1 = false;
 	bool is_noexcept_ = false;  // noexcept specifier
 	bool is_explicit_ = false;  // explicit specifier
+	ExprId explicit_condition_{}; // Dependent operand, owned by FrontendContext::dependentExpressions
 	bool is_constexpr_ = false;	// constexpr specifier
 	bool is_inline_ = false;  // True if the constructor has C++ inline semantics
 	std::string_view mangled_name_;	// Pre-computed mangled name (points to ChunkedStringAllocator storage)
