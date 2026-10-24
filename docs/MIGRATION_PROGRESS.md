@@ -581,9 +581,12 @@ Continue boundary 3A in this order.
       not grow with array rank or pointer depth. No stack reserve was changed.
       The sharded build is `/Od`, so there is no `-fstack-usage` number.
 
-3. **Complete importer and declarator coverage.** Add canonical import support
-   for remaining valid ordered forms still rejected at a boundary, including
-   alias array, reference, and member-pointer wrappers, and keep member `TypeId`s
+3. **Complete importer and declarator coverage.** An ordered declarator around
+   an alias that is an array, a reference, or a member pointer keeps that
+   wrapper as the inner type.
+   `tests/test_ordered_alias_wrapper_declarator_ret0.cpp` checks `Row (*p)[2]`,
+   `Field (*p)[2]`, `Ref (*p)()`, and an ordered array alias under another
+   declarator. A free-function alias stays rejected. Keep member `TypeId`s
    preserved through every AST copy and substitution route. Remaining: a fully
    non-projectable ordered-spine `decltype` dereference (deferred to sema) and a
    call or xvalue operand whose value category the parser does not know at parse

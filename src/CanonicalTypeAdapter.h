@@ -154,6 +154,77 @@ inline void appendOrderedAliasPointerLevels(
 		: alias_base_cv;
 }
 
+// Cv written on an alias sinks to its first pointer or member pointer.
+// Arrays let it through. Cv written on a reference alias is ignored, and the
+// alias's own cv stays with the referred type.
+inline void appendOrderedAliasDeclaratorShape(std::vector<DeclaratorComponent>& components, const TypeSpecifierNode& alias,
+	CVQualifier& pending_cv) {
+	if (alias.has_ordered_declarator()) {
+		bool applied_cv = false;
+		for (DeclaratorComponent component : alias.declarator_components()) {
+			const bool is_pointer_like = component.kind == DeclaratorComponentKind::Pointer ||
+				component.kind == DeclaratorComponentKind::MemberObjectPointer || component.kind == DeclaratorComponentKind::MemberFunctionPointer;
+			const bool is_reference = component.kind == DeclaratorComponentKind::LValueReference ||
+				component.kind == DeclaratorComponentKind::RValueReference;
+			if (!applied_cv && is_pointer_like) {
+				component.cv_qualifier |= pending_cv;
+				applied_cv = true;
+			} else if (!applied_cv && is_reference) {
+				applied_cv = true;
+				pending_cv = CVQualifier::None;
+			}
+			components.push_back(component);
+		}
+		pending_cv = applied_cv ? alias.cv_qualifier() : static_cast<CVQualifier>(pending_cv | alias.cv_qualifier());
+		return;
+	}
+	if (alias.reference_qualifier() == ReferenceQualifier::LValueReference) {
+		components.push_back(DeclaratorComponent::lvalueReference());
+		pending_cv = CVQualifier::None;
+	} else if (alias.reference_qualifier() == ReferenceQualifier::RValueReference) {
+		components.push_back(DeclaratorComponent::rvalueReference());
+		pending_cv = CVQualifier::None;
+	}
+	auto append_arrays = [&]() {
+		if (alias.array_dimensions().empty()) {
+			if (alias.is_array() || alias.has_pointee_array_declarator() || alias.has_unsized_outer_array_dimension()) {
+				components.push_back(DeclaratorComponent::unknownBoundArray());
+			}
+			return;
+		}
+		for (const size_t extent : alias.array_dimensions()) {
+			components.push_back(extent == 0 ? DeclaratorComponent::unknownBoundArray() : DeclaratorComponent::array(extent));
+		}
+	};
+	auto append_pointers = [&]() {
+		if (alias.has_member_class() && alias.pointer_depth() != 0) {
+			TypeSpecifierNode member_pointer_type = alias;
+			tryBindPublishedMemberClassEntity(member_pointer_type);
+			CVQualifier member_cv = member_pointer_type.pointer_levels().empty() ?
+				CVQualifier::None : member_pointer_type.pointer_levels().front().cv_qualifier;
+			member_cv |= pending_cv;
+			const bool is_function = member_pointer_type.category() == TypeCategory::MemberFunctionPointer;
+			if (member_pointer_type.has_member_class_type_id()) {
+				components.push_back(DeclaratorComponent::memberPointer(member_pointer_type.member_class_type_id(), is_function, member_cv));
+			} else {
+				components.push_back(DeclaratorComponent::memberPointer(EntityId{}, is_function, member_cv));
+			}
+			pending_cv = alias.cv_qualifier();
+			return;
+		}
+		appendOrderedAliasPointerLevels(components, alias.pointer_levels(), alias.cv_qualifier(), pending_cv);
+	};
+	if (alias.has_pointee_array_declarator()) {
+		append_pointers();
+		append_arrays();
+	} else {
+		if (alias.is_array() || alias.has_unsized_outer_array_dimension()) {
+			append_arrays();
+		}
+		append_pointers();
+	}
+}
+
 inline TypeId addCanonicalPointerLevels(CanonicalTypeTable& table, TypeId id,
 	std::span<const PointerLevel> pointers) {
 	for (const auto& pointer : pointers) {
