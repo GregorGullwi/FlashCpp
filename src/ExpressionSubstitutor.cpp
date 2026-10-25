@@ -4108,16 +4108,21 @@ ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
 						if (parser_.tryCollectFunctionCallArgTypes(
 								substituted_args,
 								substituted_arg_types)) {
+							std::optional<ValueCategory> receiver_value_category;
+							if (auto receiver_type = parser_.semanticAnalysis().getOverloadResolutionArgType(substituted_receiver);
+								receiver_type.has_value()) {
+								receiver_value_category = receiver_type->pointer_depth() > 0 || receiver_type->is_lvalue_reference() ||
+									orderedDeclaratorIsLvalueReference(*receiver_type)
+									? ValueCategory::LValue
+									: receiver_type->is_rvalue_reference()
+										? ValueCategory::XValue
+										: ValueCategory::PRValue;
+							}
 							if (std::optional<ASTNode>
 									instantiated_member =
 										parser_.templateEngine()
-											.tryInstantiateMemberFunctionTemplateCall(
-												materialized_owner_name,
-												member_name,
-												explicit_member_template_args,
-												substituted_arg_types,
-												!substituted_args.empty(),
-												false);
+											.tryInstantiateMemberFunctionTemplateCall(materialized_owner_name, member_name, explicit_member_template_args, substituted_arg_types,
+												!substituted_args.empty(), false, receiver_value_category);
 								instantiated_member.has_value() &&
 								instantiated_member->is<
 									FunctionDeclarationNode>()) {

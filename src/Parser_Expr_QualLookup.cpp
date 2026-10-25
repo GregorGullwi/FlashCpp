@@ -732,13 +732,8 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 			});
 	const bool has_deferred_template_call_args =
 		has_dependent_call_arg || has_dependent_template_args;
-	std::optional<ASTNode> instantiated_func = tryInstantiateMemberFunctionTemplateCall(
-		instantiated_class_name,
-		member_name,
-		member_template_args,
-		deduced_arg_types,
-		!args.empty(),
-		has_dependent_call_arg);
+	std::optional<ASTNode> instantiated_func = tryInstantiateMemberFunctionTemplateCall(instantiated_class_name, member_name, member_template_args,
+		deduced_arg_types, !args.empty(), has_dependent_call_arg, std::nullopt);
 
 	// Trigger lazy member function instantiation if needed
 	if (!instantiated_func.has_value() &&
@@ -3433,9 +3428,9 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					type_info->type_index_.withCategory(TypeCategory::Struct),
 					64,
 					Token{},
-					CVQualifier::None,
+					currentMemberFunctionThisCv(),
 					ReferenceQualifier::None);
-				this_type.add_pointer_level(currentMemberFunctionThisCv());
+				this_type.add_pointer_level(CVQualifier::None);
 				return this_type;
 			}
 		}
@@ -3802,8 +3797,8 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 										return std::nullopt;
 									}
 									const std::optional<ASTNode> instantiated_function =
-										try_instantiate_member_function_template_explicit_candidate(
-											struct_name, qualified_identifier->name(), *explicit_template_args, false, nullptr);
+										try_instantiate_member_function_template_explicit_candidate(struct_name,
+											qualified_identifier->name(), *explicit_template_args, false, nullptr, std::nullopt);
 									const FunctionDeclarationNode* function =
 										get_function_decl_node(instantiated_function);
 									if (function == nullptr) {

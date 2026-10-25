@@ -46,6 +46,30 @@ bool typeSpecifierObjectIsConst(const TypeSpecifierNode& type) {
 	return memberObjectTypeIsConst(type);
 }
 
+std::optional<ValueCategory> inferPostfixExpressionValueCategory(Parser& parser, const ASTNode& expression) {
+	const std::optional<TypeSpecifierNode> type = parser.semanticAnalysis().getOverloadResolutionArgType(expression);
+	if (!type.has_value()) {
+		return std::nullopt;
+	}
+	if (type->pointer_depth() > 0 || type->is_lvalue_reference() || orderedDeclaratorIsLvalueReference(*type)) {
+		return ValueCategory::LValue;
+	}
+	return type->is_rvalue_reference() ? ValueCategory::XValue : ValueCategory::PRValue;
+}
+
+std::optional<ValueCategory> inferPostfixMemberReceiverValueCategory(Parser& parser, const ASTNode& member_expression) {
+	if (member_expression.is<ExpressionNode>()) {
+		const ExpressionNode& expression = member_expression.as<ExpressionNode>();
+		if (const MemberAccessNode* member_access = std::get_if<MemberAccessNode>(&expression)) {
+			if (member_access->is_arrow()) {
+				return ValueCategory::LValue;
+			}
+			return inferPostfixExpressionValueCategory(parser, member_access->object());
+		}
+	}
+	return inferPostfixExpressionValueCategory(parser, member_expression);
+}
+
 bool concreteStructHasConstIncompatibleNamedMember(
 	const StructTypeInfo* struct_info,
 	StringHandle member_name_handle,
@@ -315,9 +339,11 @@ std::optional<ASTNode> Parser::tryResolveMemberFunctionTemplate(
 		if (!arg_types.empty()) {
 			current_explicit_call_arg_types_ = &arg_types;
 		}
-		return try_instantiate_member_function_template_explicit(struct_name, member_name, *explicit_template_args);
+		return try_instantiate_member_function_template_explicit(struct_name, member_name, *explicit_template_args,
+			object_expr.has_value() ? inferPostfixExpressionValueCategory(*this, *object_expr) : std::nullopt);
 	} else if (!arg_types.empty()) {
-		return try_instantiate_member_function_template(struct_name, member_name, arg_types);
+		return try_instantiate_member_function_template(struct_name, member_name, arg_types,
+			object_expr.has_value() ? inferPostfixExpressionValueCategory(*this, *object_expr) : std::nullopt);
 	}
 	return std::nullopt;
 }
@@ -573,10 +599,7 @@ Parser::tryResolveQualifiedCallableObjectTemplateOperator(
 	}
 
 	std::optional<ASTNode> instantiated_operator =
-		try_instantiate_member_function_template(
-			callable_struct_name,
-			"operator()"sv,
-			arg_types);
+		try_instantiate_member_function_template(callable_struct_name, "operator()"sv, arg_types, ValueCategory::LValue);
 	if (!instantiated_operator.has_value() ||
 		!instantiated_operator->is<FunctionDeclarationNode>()) {
 		return nullptr;
@@ -801,13 +824,9 @@ ParseResult Parser::finalizePostfixCallExpression(
 	return ParseResult::success(*result);
 }
 
-std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
-	std::string_view struct_name,
-	std::string_view member_name,
-	const std::optional<TemplateArgumentVector>& explicit_template_args,
-	std::span<const TypeSpecifierNode> call_arg_types,
-	bool has_call_args,
-	bool has_dependent_call_args) {
+std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(std::string_view struct_name, std::string_view member_name,
+	const std::optional<TemplateArgumentVector>& explicit_template_args, std::span<const TypeSpecifierNode> call_arg_types, bool has_call_args,
+	bool has_dependent_call_args, std::optional<ValueCategory> receiver_value_category) {
 	// `has_call_args` tracks whether the parser saw any call arguments syntactically,
 	// while `call_arg_types` tracks only the arguments whose types are already known
 	// at this parse point and may therefore be only a partial subset.  If a
@@ -823,16 +842,10 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
 		if (!call_arg_types.empty()) {
 			current_explicit_call_arg_types_ = &call_arg_types;
 		}
-		return try_instantiate_member_function_template_explicit(
-			struct_name,
-			member_name,
-			*explicit_template_args);
+		return try_instantiate_member_function_template_explicit(struct_name, member_name, *explicit_template_args, receiver_value_category);
 	}
 	if (!has_call_args) {
-		return try_instantiate_member_function_template_explicit(
-			struct_name,
-			member_name,
-			{});
+		return try_instantiate_member_function_template_explicit(struct_name, member_name, {}, receiver_value_category);
 	}
 	if (has_dependent_call_args) {
 		return std::nullopt;
@@ -848,10 +861,7 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
 		FLASH_LOG(Templates, Trace, failure_reason);
 		return failTemplateInstantiation(failure_reason, nullptr, std::nullopt);
 	}
-	return try_instantiate_member_function_template(
-		struct_name,
-		member_name,
-		call_arg_types);
+	return try_instantiate_member_function_template(struct_name, member_name, call_arg_types, receiver_value_category);
 }
 
 bool Parser::callArgumentsRequireDelayedOverloadResolution(
@@ -1255,13 +1265,8 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 		const bool delay_overload_resolution =
 			callArgumentsRequireDelayedOverloadResolution(args);
 		if (!qualified_owner_name.empty()) {
-			instantiated_func = tryInstantiateMemberFunctionTemplateCall(
-				qualified_owner_name,
-				qualified_member_token.value(),
-				member_template_args,
-				arg_types,
-				!args.empty(),
-				delay_overload_resolution);
+			instantiated_func = tryInstantiateMemberFunctionTemplateCall(qualified_owner_name, qualified_member_token.value(), member_template_args, arg_types,
+				!args.empty(), delay_overload_resolution, inferPostfixMemberReceiverValueCategory(*this, *result));
 		}
 
 		if (instantiated_func.has_value() &&
@@ -1462,7 +1467,8 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 				!args.empty(),
 				// parse_function_arguments already produced the concrete arg-type list used
 				// by this postfix path; keep the existing "no extra dependent deferral" behavior.
-				false);
+				false,
+				inferPostfixMemberReceiverValueCategory(*this, *result));
 		}
 
 		if (object_struct_name.has_value() && !instantiating_lazy_member_ &&
@@ -2215,13 +2221,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			if (!canonical_owner_name.has_value()) {
 				return std::nullopt;
 			}
-			return tryInstantiateMemberFunctionTemplateCall(
-				*canonical_owner_name,
-				member_name,
-				explicit_template_args,
-				arg_types,
-				has_call_args,
-				has_dependent_call_args);
+			return tryInstantiateMemberFunctionTemplateCall(*canonical_owner_name, member_name, explicit_template_args, arg_types, has_call_args,
+				has_dependent_call_args, inferPostfixExpressionValueCategory(*this, object_expr));
 		};
 	auto buildDeferredQualifiedMemberTemplatePlaceholder =
 		[&](const ASTNode& object_expr,

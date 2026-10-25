@@ -1950,7 +1950,10 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 	return true;
 }
 
-inline bool tryPublishCanonicalClassBaseSchema(CanonicalTypeTable& table, TypeId root_type, const StructTypeInfo& root_struct_info) {
+enum class CanonicalClassSchemaPublication : uint8_t { BasesOnly, WithObjectFacts };
+
+inline bool tryPublishCanonicalClassBaseSchema(CanonicalTypeTable& table, TypeId root_type, const StructTypeInfo& root_struct_info,
+	CanonicalClassSchemaPublication publication) {
 	const auto is_class_type = [&table](TypeId type) {
 		const CanonicalTypeKind kind = table.node(type).kind;
 		return kind == CanonicalTypeKind::Record || kind == CanonicalTypeKind::TemplateSpecialization;
@@ -1976,11 +1979,13 @@ inline bool tryPublishCanonicalClassBaseSchema(CanonicalTypeTable& table, TypeId
 		if (current.struct_info == nullptr || !current.struct_info->layout_is_complete || current.struct_info->has_deferred_base_classes) {
 			return false;
 		}
-		(void)tryPublishCanonicalRecordSubobjectTypes(table, current.type, *current.struct_info);
-		if (!tryPublishCanonicalRecordProperties(table, current.type, *current.struct_info)) {
-			return false;
+		if (publication == CanonicalClassSchemaPublication::WithObjectFacts) {
+			(void)tryPublishCanonicalRecordSubobjectTypes(table, current.type, *current.struct_info);
+			if (!tryPublishCanonicalRecordProperties(table, current.type, *current.struct_info)) {
+				return false;
+			}
 		}
-		if (table.hasRecordSubobjectTypes(current.type)) {
+		if (publication == CanonicalClassSchemaPublication::WithObjectFacts && table.hasRecordSubobjectTypes(current.type)) {
 			const size_t member_count = table.recordSubobjectMemberCount(current.type);
 			if (member_count != current.struct_info->members.size()) {
 				throw InternalError("canonical type: record subobject type schema count mismatch");
@@ -2011,9 +2016,7 @@ inline bool tryPublishCanonicalClassBaseSchema(CanonicalTypeTable& table, TypeId
 				}
 			}
 		}
-		if (table.hasClassBaseSchema(current.type)) {
-			continue;
-		}
+		const bool has_base_schema = table.hasClassBaseSchema(current.type);
 
 		std::vector<CanonicalClassBase> bases;
 		bases.reserve(current.struct_info->base_classes.size());
@@ -2055,19 +2058,26 @@ inline bool tryPublishCanonicalClassBaseSchema(CanonicalTypeTable& table, TypeId
 				0,
 				static_cast<uint32_t>(base.offset)});
 
-			if (!table.hasClassBaseSchema(imported_base.type)) {
-				const StructTypeInfo* base_struct_info =
-					canonicalClassStructInfoFromTypeInfo(*base_type_info);
+			const bool has_base_object_facts = table.hasRecordProperties(imported_base.type) && table.hasRecordSubobjectTypes(imported_base.type);
+			if (!table.hasClassBaseSchema(imported_base.type) ||
+				(publication == CanonicalClassSchemaPublication::WithObjectFacts && !has_base_object_facts)) {
+				const StructTypeInfo* base_struct_info = canonicalClassStructInfoFromTypeInfo(*base_type_info);
 				if (base_struct_info == nullptr) {
 					return false;
 				}
 				worklist.push_back({imported_base.type, base_struct_info});
 			}
 		}
-		table.publishClassBaseSchema(current.type, bases);
+		if (!has_base_schema) {
+			table.publishClassBaseSchema(current.type, bases);
+		}
 	}
 	transaction.commit();
 	return true;
+}
+
+inline bool tryPublishCanonicalClassBaseSchema(CanonicalTypeTable& table, TypeId root_type, const StructTypeInfo& root_struct_info) {
+	return tryPublishCanonicalClassBaseSchema(table, root_type, root_struct_info, CanonicalClassSchemaPublication::WithObjectFacts);
 }
 
 inline bool tryPublishCanonicalClassBaseSchema(

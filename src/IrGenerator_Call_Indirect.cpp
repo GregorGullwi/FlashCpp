@@ -1075,7 +1075,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		// Receiver cv is part of the member function type; matching parameters alone
 		// would let a const-method body call rematch onto a non-const overload.
 		if (candidate.is_const_member_function() != func_decl.is_const_member_function() ||
-			candidate.is_volatile_member_function() != func_decl.is_volatile_member_function()) {
+			candidate.is_volatile_member_function() != func_decl.is_volatile_member_function() ||
+			candidate.function_reference_qualifier() != func_decl.function_reference_qualifier()) {
 			return false;
 		}
 		if (candidate.has_mangled_name() && func_decl.has_mangled_name()) {
@@ -1104,7 +1105,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 	const size_t explicit_arg_count = callExprNode.arguments().size();
 	auto isViableMemberOverload = [&](const FunctionDeclarationNode& candidate) {
 		if (candidate.is_const_member_function() != func_decl.is_const_member_function() ||
-			candidate.is_volatile_member_function() != func_decl.is_volatile_member_function()) {
+			candidate.is_volatile_member_function() != func_decl.is_volatile_member_function() ||
+			candidate.function_reference_qualifier() != func_decl.function_reference_qualifier()) {
 			return false;
 		}
 		const auto& params = candidate.parameter_nodes();
@@ -1786,14 +1788,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				}
 
 				// Generate proper mangled name including parameter types
-				std::string_view mangled = generateMangledNameForCall(
-					func_name,
-					resolved_mangling_return_type,
-					param_types,
-					func_for_mangling->is_variadic(),
-					owner_info.owner_name_for_mangling,
-					owner_info.owner_namespace_handle,
-					func_for_mangling->is_const_member_function());
+				std::string_view mangled = NameMangling::generateMangledName(func_name, resolved_mangling_return_type, param_types,
+					func_for_mangling->is_variadic(), owner_info.owner_name_for_mangling, owner_info.owner_namespace_handle,
+					func_for_mangling->linkage(), func_for_mangling->is_const_member_function(), func_for_mangling->is_static(),
+					func_for_mangling->function_reference_qualifier()).view();
 				function_name = StringTable::getOrInternStringHandle(mangled);
 			}
 		} else if (!function_name.isValid()) {

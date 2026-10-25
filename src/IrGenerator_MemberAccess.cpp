@@ -1932,15 +1932,8 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 		std::string_view operator_func_name = "operator->";
 		std::vector<TypeSpecifierNode> empty_params;
 		std::vector<std::string_view> empty_namespace;
-		return NameMangling::generateMangledName(
-			operator_func_name,
-			return_type,
-			empty_params,
-			false,
-			struct_name,
-			empty_namespace,
-			Linkage::CPlusPlus,
-			func_decl.is_const_member_function());
+		return NameMangling::generateMangledName(operator_func_name, return_type, empty_params, false, struct_name, empty_namespace, Linkage::CPlusPlus,
+			func_decl.is_const_member_function(), func_decl.function_reference_qualifier(), false, NameMangling::ConstructorVariant::Complete);
 	};
 
 	auto getStructObjectSizeBits = [&](TypeIndex object_type_index) -> int {

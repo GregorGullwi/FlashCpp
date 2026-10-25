@@ -257,27 +257,26 @@ struct MemberOverloadResolutionByArgTypesResult {
 	bool ambiguous = false;
 };
 
-inline MemberOverloadResolutionByArgTypesResult resolveConstAwareMemberOverloadByArgTypes(
-	std::span<const ASTNode> preferred_overloads,
-	std::span<const ASTNode> compatible_overloads,
-	std::span<const TypeSpecifierNode> arg_types) {
+inline MemberOverloadResolutionByArgTypesResult resolveConstAwareMemberOverloadByArgTypes(std::span<const ASTNode> preferred_overloads,
+	std::span<const ASTNode> compatible_overloads, const TypeSpecifierNode& receiver_type, std::span<const TypeSpecifierNode> arg_types) {
 	MemberOverloadResolutionByArgTypesResult result;
-	bool preferred_ambiguous = false;
-	result.function = tryResolveUniqueOverloadByArgTypes(
-		preferred_overloads,
-		arg_types,
-		&preferred_ambiguous);
-	if (result.function != nullptr || preferred_ambiguous) {
-		result.ambiguous = preferred_ambiguous;
+	const OverloadResolutionResult preferred_result = resolve_member_overload_with_argument_nodes(preferred_overloads, receiver_type,
+		arg_types, std::span<const ASTNode>{});
+	if (preferred_result.has_match && preferred_result.selected_overload != nullptr) {
+		result.function = getCallTargetFunctionCandidate(*preferred_result.selected_overload);
+		return result;
+	}
+	if (preferred_result.is_ambiguous) {
+		result.ambiguous = true;
 		return result;
 	}
 	if (!sameOverloadSet(preferred_overloads, compatible_overloads)) {
-		bool compatible_ambiguous = false;
-		result.function = tryResolveUniqueOverloadByArgTypes(
-			compatible_overloads,
-			arg_types,
-			&compatible_ambiguous);
-		result.ambiguous = compatible_ambiguous;
+		const OverloadResolutionResult compatible_result = resolve_member_overload_with_argument_nodes(compatible_overloads, receiver_type,
+			arg_types, std::span<const ASTNode>{});
+		if (compatible_result.has_match && compatible_result.selected_overload != nullptr) {
+			result.function = getCallTargetFunctionCandidate(*compatible_result.selected_overload);
+		}
+		result.ambiguous = compatible_result.is_ambiguous;
 	}
 	return result;
 }
@@ -5654,9 +5653,8 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 			struct_name_for_mangle = gNamespaceRegistry.getQualifiedNameHandle(get_func->namespace_handle());
 		}
 		bool is_const_method = get_func->is_const_member_function();
-		auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
-			decl_node.identifier_token().value(), return_type, param_types, template_args,
-			get_func->is_variadic(), struct_name_for_mangle, get_func->namespace_handle(), is_const_method);
+		auto mangled = NameMangling::generateMangledNameWithTemplateArgs(decl_node.identifier_token().value(), return_type, param_types, template_args,
+			get_func->is_variadic(), struct_name_for_mangle, get_func->namespace_handle(), is_const_method, get_func->function_reference_qualifier());
 
 		TypeCategory element_type = element_type_spec->type();
 		TypeIndex element_type_index = element_type_spec->type_index();
@@ -7213,6 +7211,7 @@ void SemanticAnalysis::ensureUnaryAddressOfOperatorResolved(const UnaryOperatorN
 
 void SemanticAnalysis::ensureUnaryArithmeticOperatorResolved(const UnaryOperatorNode& unary_node) {
 	if (unary_node.has_arithmetic_operator_resolution()) {
+		checkUnaryArithmeticOperator(unary_node);
 		return;
 	}
 	const CanonicalTypeId operand_id = inferExpressionType(unary_node.get_operand());
@@ -7258,7 +7257,40 @@ void SemanticAnalysis::ensureUnaryArithmeticOperatorResolved(const UnaryOperator
 		annotateResolvedCallArgConversions(&unary_node, arguments, *function, " in unary arithmetic operator");
 	}
 	unary_node.set_resolved_arithmetic_operator(function, !selected.is_free_function);
+	checkUnaryArithmeticOperator(unary_node);
 	stats_.op_calls_resolved++;
+}
+
+void SemanticAnalysis::checkUnaryArithmeticOperator(const UnaryOperatorNode& unary_node) {
+	if (unary_node.arithmetic_operator_is_validated()) {
+		return;
+	}
+	const FunctionDeclarationNode* function = unary_node.resolved_arithmetic_operator();
+	if (function == nullptr) {
+		return;
+	}
+	if (function->is_deleted()) {
+		throw makeStructuredCompileError(context_.diagnostics(), DiagnosticId::DeletedOperatorFunction,
+			DiagnosticSeverity::Error, SourceLocation::fromToken(unary_node.get_token()),
+			"Call to deleted unary operator function", {});
+	}
+	if (!unary_node.arithmetic_operator_is_member()) {
+		unary_node.mark_arithmetic_operator_validated();
+		return;
+	}
+	const bool restore_parser_function = current_function_stack_.empty() && isParserAttached() && parser().current_function_ != nullptr;
+	if (restore_parser_function) {
+		current_function_stack_.push_back(parser().current_function_);
+	}
+	ScopeGuard function_scope([this, restore_parser_function]() {
+		if (restore_parser_function) {
+			current_function_stack_.pop_back();
+		}
+	});
+	ChunkedVector<ASTNode> arguments;
+	CallExprNode selected_call = makeResolvedMemberCallExpr(unary_node.get_operand(), *function, std::move(arguments), unary_node.get_token());
+	checkMemberFunctionAccess(selected_call);
+	unary_node.mark_arithmetic_operator_validated();
 }
 
 ResolvedFunctionQueryResult SemanticAnalysis::getResolvedOpSubscriptQuery(const ArraySubscriptNode* key) const {
@@ -7435,7 +7467,10 @@ bool SemanticAnalysis::sameFunctionDeclarationEntity(
 		lhs.decl_node().identifier_token().handle() !=
 			rhs.decl_node().identifier_token().handle() ||
 		lhs.parameter_nodes().size() != rhs.parameter_nodes().size() ||
-		lhs.is_variadic() != rhs.is_variadic()) {
+		lhs.is_variadic() != rhs.is_variadic() || lhs.is_static() != rhs.is_static() ||
+		lhs.is_const_member_function() != rhs.is_const_member_function() ||
+		lhs.is_volatile_member_function() != rhs.is_volatile_member_function() ||
+		lhs.function_reference_qualifier() != rhs.function_reference_qualifier()) {
 		return false;
 	}
 
@@ -13640,8 +13675,10 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 				callee_decl.identifier_token().handle();
 			const std::optional<TypeSpecifierNode> receiver_arg_type =
 				buildOverloadResolutionArgType(call_info.receiver, nullptr);
-			const bool receiver_is_const =
-				receiver_arg_type.has_value() && receiver_arg_type->is_const();
+			if (!receiver_arg_type.has_value()) {
+				return nullptr;
+			}
+			const bool receiver_is_const = receiver_arg_type->is_const();
 			const ConstAwareMemberCandidateSet member_candidates =
 				collectConstAwareVisibleMemberFunctionCandidates(
 					receiver_struct_info,
@@ -13665,10 +13702,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 					tryCollectOverloadResolutionArgTypes(arguments, member_arg_types);
 				if (has_member_arg_types) {
 					const MemberOverloadResolutionByArgTypesResult overload_resolution =
-						resolveConstAwareMemberOverloadByArgTypes(
-							preferred_member_overloads,
-							compatible_member_overloads,
-							member_arg_types);
+						resolveConstAwareMemberOverloadByArgTypes(preferred_member_overloads, compatible_member_overloads, *receiver_arg_type, member_arg_types);
 					if (overload_resolution.function != nullptr) {
 						return overload_resolution.function;
 					}
@@ -14390,8 +14424,10 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 			}
 			const std::optional<TypeSpecifierNode> receiver_arg_type =
 				buildOverloadResolutionArgType(call_info.receiver, nullptr);
-			const bool receiver_is_const =
-				receiver_arg_type.has_value() && receiver_arg_type->is_const();
+			if (!receiver_arg_type.has_value()) {
+				return false;
+			}
+			const bool receiver_is_const = receiver_arg_type->is_const();
 			const ConstAwareMemberCandidateSet member_candidates =
 				collectConstAwareVisibleMemberFunctionCandidates(
 					receiver_owner_type_info->getStructInfo(),
@@ -14417,10 +14453,7 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 				compatible_member_overloads,
 				member_candidates.compatible);
 			const MemberOverloadResolutionByArgTypesResult overload_resolution =
-				resolveConstAwareMemberOverloadByArgTypes(
-					preferred_member_overloads,
-					compatible_member_overloads,
-					member_arg_types);
+				resolveConstAwareMemberOverloadByArgTypes(preferred_member_overloads, compatible_member_overloads, *receiver_arg_type, member_arg_types);
 			return overload_resolution.ambiguous;
 		};
 		if (hasDiagnosableLocalCallableMiss()) {

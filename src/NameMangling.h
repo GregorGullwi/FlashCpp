@@ -356,6 +356,17 @@ inline void appendMsvcFunctionSignatureTypeCode(
 }
 
 template <typename OutputType>
+inline void appendMsvcMemberFunctionNameQualifierCode(OutputType& output, bool is_const_method, ReferenceQualifier function_ref_qualifier) {
+	output += "@@QE";
+	if (function_ref_qualifier == ReferenceQualifier::LValueReference) {
+		output += 'G';
+	} else if (function_ref_qualifier == ReferenceQualifier::RValueReference) {
+		output += 'H';
+	}
+	output += is_const_method ? "BA" : "AA";
+}
+
+template <typename OutputType>
 inline void appendMsvcMemberFunctionPointerQualifierCode(
 	OutputType& output,
 	const FunctionSignature& sig) {
@@ -1805,16 +1816,9 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 // For namespaced functions: _ZN<namespace-parts><function-name>E<parameter-types>
 // For member functions: _ZN<class-name><function-name>E<parameter-types>
 template <typename OutputType>
-inline void generateItaniumMangledName(
-	OutputType& output,
-	std::string_view func_name,
-	[[maybe_unused]] const TypeSpecifierNode& return_type,
-	std::span<const TypeSpecifierNode> param_types,
-	bool is_variadic,
-	StringHandle struct_name,
-	std::span<const std::string_view> namespace_path,
-	bool is_const_method,
-	ConstructorVariant constructor_variant) {
+inline void generateItaniumMangledName(OutputType& output, std::string_view func_name, [[maybe_unused]] const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, bool is_variadic, StringHandle struct_name, std::span<const std::string_view> namespace_path,
+	bool is_const_method, ReferenceQualifier function_ref_qualifier, ConstructorVariant constructor_variant) {
 	std::string_view struct_name_sv = StringTable::getStringView(struct_name);
 	// Start with _Z prefix
 	output += "_Z";
@@ -1831,6 +1835,10 @@ inline void generateItaniumMangledName(
 		// Const member function: emit 'K' CV-qualifier right after 'N' (Itanium ABI §5.1.8)
 		if (is_const_method)
 			output += 'K';
+		if (function_ref_qualifier == ReferenceQualifier::LValueReference)
+			output += 'R';
+		else if (function_ref_qualifier == ReferenceQualifier::RValueReference)
+			output += 'O';
 
 		// Add namespace parts first (in order)
 		for (const auto& ns : namespace_path) {
@@ -2216,16 +2224,10 @@ inline void appendItaniumTypeTemplateArgs(
 // Generate Itanium mangled name with TYPE template arguments
 // Used for template specializations like sum<int>, sum<int, int>
 template <typename OutputType>
-inline void generateItaniumMangledNameWithTypeTemplateArgs(
-	OutputType& output,
-	std::string_view func_name,
-	[[maybe_unused]] const TypeSpecifierNode& return_type,
-	std::span<const TypeSpecifierNode> param_types,
-	std::span<const TemplateTypeArg> type_template_args,
-	bool is_variadic,
-	StringHandle struct_name,
-	std::span<const std::string_view> namespace_path,
-	bool is_const_method) {
+inline void generateItaniumMangledNameWithTypeTemplateArgs(OutputType& output, std::string_view func_name,
+	[[maybe_unused]] const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> param_types,
+	std::span<const TemplateTypeArg> type_template_args, bool is_variadic, StringHandle struct_name, std::span<const std::string_view> namespace_path,
+	bool is_const_method, ReferenceQualifier function_ref_qualifier) {
 	std::string_view struct_name_sv = StringTable::getStringView(struct_name);
 	// Start with _Z prefix
 	output += "_Z";
@@ -2239,6 +2241,10 @@ inline void generateItaniumMangledNameWithTypeTemplateArgs(
 		output += 'N';
 		if (is_const_method)
 			output += 'K';
+		if (function_ref_qualifier == ReferenceQualifier::LValueReference)
+			output += 'R';
+		else if (function_ref_qualifier == ReferenceQualifier::RValueReference)
+			output += 'O';
 
 		// Add namespace parts
 		for (const auto& ns : namespace_path) {
@@ -2310,16 +2316,10 @@ inline void generateItaniumMangledNameWithTypeTemplateArgs(
 // Generate Itanium mangled name with non-type template arguments
 // Used for template specializations like get<0>, get<1>
 template <typename OutputType>
-inline void generateItaniumMangledNameWithTemplateArgs(
-	OutputType& output,
-	std::string_view func_name,
-	[[maybe_unused]] const TypeSpecifierNode& return_type,
-	std::span<const TypeSpecifierNode> param_types,
-	std::span<const int64_t> non_type_template_args,
-	bool is_variadic,
-	StringHandle struct_name,
-	std::span<const std::string_view> namespace_path,
-	bool is_const_method) {
+inline void generateItaniumMangledNameWithTemplateArgs(OutputType& output, std::string_view func_name,
+	[[maybe_unused]] const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> param_types,
+	std::span<const int64_t> non_type_template_args, bool is_variadic, StringHandle struct_name, std::span<const std::string_view> namespace_path,
+	bool is_const_method, ReferenceQualifier function_ref_qualifier) {
 	std::string_view struct_name_sv = StringTable::getStringView(struct_name);
 	// Start with _Z prefix
 	output += "_Z";
@@ -2333,6 +2333,10 @@ inline void generateItaniumMangledNameWithTemplateArgs(
 		output += 'N';
 		if (is_const_method)
 			output += 'K';
+		if (function_ref_qualifier == ReferenceQualifier::LValueReference)
+			output += 'R';
+		else if (function_ref_qualifier == ReferenceQualifier::RValueReference)
+			output += 'O';
 
 		// Add namespace parts
 		for (const auto& ns : namespace_path) {
@@ -2401,18 +2405,35 @@ inline void generateItaniumMangledNameWithTemplateArgs(
 	}
 }
 
+template <typename OutputType>
+inline void generateItaniumMangledName(OutputType& output, std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, bool is_variadic, StringHandle struct_name, std::span<const std::string_view> namespace_path,
+	bool is_const_method, ConstructorVariant constructor_variant) {
+	generateItaniumMangledName(output, func_name, return_type, param_types, is_variadic, struct_name, namespace_path,
+		is_const_method, ReferenceQualifier::None, constructor_variant);
+}
+
+template <typename OutputType>
+inline void generateItaniumMangledNameWithTemplateArgs(OutputType& output, std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, std::span<const int64_t> non_type_template_args, bool is_variadic, StringHandle struct_name,
+	std::span<const std::string_view> namespace_path, bool is_const_method) {
+	generateItaniumMangledNameWithTemplateArgs(output, func_name, return_type, param_types, non_type_template_args, is_variadic,
+		struct_name, namespace_path, is_const_method, ReferenceQualifier::None);
+}
+
+template <typename OutputType>
+inline void generateItaniumMangledNameWithTypeTemplateArgs(OutputType& output, std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, std::span<const TemplateTypeArg> type_template_args, bool is_variadic, StringHandle struct_name,
+	std::span<const std::string_view> namespace_path, bool is_const_method) {
+	generateItaniumMangledNameWithTypeTemplateArgs(output, func_name, return_type, param_types,
+		type_template_args, is_variadic, struct_name, namespace_path, is_const_method, ReferenceQualifier::None);
+}
+
 // Overload for param_nodes (extracts types from DeclarationNodes)
 template <typename OutputType>
-inline void generateItaniumMangledName(
-	OutputType& output,
-	std::string_view func_name,
-	const TypeSpecifierNode& return_type,
-	std::span<const ASTNode> param_nodes,
-	bool is_variadic,
-	StringHandle struct_name,
-	std::span<const std::string_view> namespace_path,
-	bool is_const_method,
-	ConstructorVariant constructor_variant) {
+inline void generateItaniumMangledName(OutputType& output, std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const ASTNode> param_nodes, bool is_variadic, StringHandle struct_name, std::span<const std::string_view> namespace_path,
+	bool is_const_method, ReferenceQualifier function_ref_qualifier, ConstructorVariant constructor_variant) {
 	// Extract parameter types from param_nodes
 	std::vector<TypeSpecifierNode> param_types;
 	param_types.reserve(param_nodes.size());
@@ -2422,8 +2443,16 @@ inline void generateItaniumMangledName(
 	}
 
 	// Use the main implementation
-	generateItaniumMangledName(output, func_name, return_type, param_types,
-							   is_variadic, struct_name, namespace_path, is_const_method, constructor_variant);
+	generateItaniumMangledName(output, func_name, return_type, param_types, is_variadic, struct_name,
+		namespace_path, is_const_method, function_ref_qualifier, constructor_variant);
+}
+
+template <typename OutputType>
+inline void generateItaniumMangledName(OutputType& output, std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const ASTNode> param_nodes, bool is_variadic, StringHandle struct_name, std::span<const std::string_view> namespace_path,
+	bool is_const_method, ConstructorVariant constructor_variant) {
+	generateItaniumMangledName(output, func_name, return_type, param_nodes, is_variadic, struct_name, namespace_path,
+		is_const_method, ReferenceQualifier::None, constructor_variant);
 }
 
 // Generate MSVC mangled name for a function
@@ -2436,63 +2465,24 @@ inline void generateItaniumMangledName(
 //   struct_name: Class/struct name for member functions (empty for free functions)
 //   namespace_path: Namespace components for namespace-scoped functions
 // Returns: MangledName containing the committed string_view
-inline MangledName generateMangledName(
-	std::string_view func_name,
-	const TypeSpecifierNode& return_type,
-	std::span<const TypeSpecifierNode> param_types,
-	bool is_variadic,
-	StringHandle struct_name,
-	std::span<const std::string_view> namespace_path,
-	Linkage linkage,
-	bool is_const_method,
-	bool is_static_member,
-	ConstructorVariant constructor_variant);
+inline MangledName generateMangledName(std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, bool is_variadic, StringHandle struct_name, std::span<const std::string_view> namespace_path,
+	Linkage linkage, bool is_const_method, ReferenceQualifier function_ref_qualifier, bool is_static_member, ConstructorVariant constructor_variant);
 
-inline MangledName generateMangledName(
-	std::string_view func_name,
-	const TypeSpecifierNode& return_type,
-	std::span<const ASTNode> param_nodes,
-	bool is_variadic,
-	StringHandle struct_name,
-	std::span<const std::string_view> namespace_path,
-	Linkage linkage,
-	bool is_const_method,
-	bool is_static_member,
-	ConstructorVariant constructor_variant);
+inline MangledName generateMangledName(std::string_view func_name, const TypeSpecifierNode& return_type, std::span<const ASTNode> param_nodes,
+	bool is_variadic, StringHandle struct_name, std::span<const std::string_view> namespace_path, Linkage linkage, bool is_const_method,
+	ReferenceQualifier function_ref_qualifier, bool is_static_member, ConstructorVariant constructor_variant);
 
-inline MangledName generateMangledName(
-	std::string_view func_name,
-	const TypeSpecifierNode& return_type,
-	std::span<const TypeSpecifierNode> param_types,
-	bool is_variadic,
-	StringHandle struct_name,
-	std::span<const std::string_view> namespace_path,
-	Linkage linkage,
-	bool is_const_method) {
-	return generateMangledName(
-		func_name,
-		return_type,
-		param_types,
-		is_variadic,
-		struct_name,
-		namespace_path,
-		linkage,
-		is_const_method,
-		false,
-		ConstructorVariant::Complete);
+inline MangledName generateMangledName(std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, bool is_variadic, StringHandle struct_name, std::span<const std::string_view> namespace_path,
+	Linkage linkage, bool is_const_method) {
+	return generateMangledName(func_name, return_type, param_types, is_variadic, struct_name, namespace_path, linkage, is_const_method,
+		ReferenceQualifier::None, false, ConstructorVariant::Complete);
 }
 
-inline MangledName generateMangledName(
-	std::string_view func_name,
-	const TypeSpecifierNode& return_type,
-	std::span<const TypeSpecifierNode> param_types,
-	bool is_variadic,
-	StringHandle struct_name,
-	std::span<const std::string_view> namespace_path,
-	Linkage linkage,
-	bool is_const_method,
-	bool is_static_member,
-	ConstructorVariant constructor_variant) {
+inline MangledName generateMangledName(std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, bool is_variadic, StringHandle struct_name, std::span<const std::string_view> namespace_path,
+	Linkage linkage, bool is_const_method, ReferenceQualifier function_ref_qualifier, bool is_static_member, ConstructorVariant constructor_variant) {
 	StringBuilder builder;
 	std::string_view struct_name_sv = StringTable::getStringView(struct_name);
 
@@ -2518,8 +2508,8 @@ inline MangledName generateMangledName(
 		if (struct_name.isValid() || !namespace_path.empty()) {
 			populateSubstitutionsFromClassContext(ctx, struct_name, namespace_path);
 		}
-		generateItaniumMangledName(ctx, func_name, return_type, param_types,
-								   is_variadic, struct_name, namespace_path, is_const_method, constructor_variant);
+		generateItaniumMangledName(ctx, func_name, return_type, param_types, is_variadic, struct_name, namespace_path,
+			is_const_method, function_ref_qualifier, constructor_variant);
 		return MangledName(builder.commit());
 	}
 
@@ -2553,7 +2543,7 @@ inline MangledName generateMangledName(
 		if (is_static_member) {
 			builder.append("@@SA");
 		} else {
-			builder.append(is_const_method ? "@@QEBA" : "@@QEAA");
+			appendMsvcMemberFunctionNameQualifierCode(builder, is_const_method, function_ref_qualifier);
 		}
 	} else if (!namespace_path.empty()) {
 		// Namespace-scoped free function: ?name@Namespace@@YA...
@@ -2594,6 +2584,13 @@ inline MangledName generateMangledName(
 	return MangledName(builder.commit());
 }
 
+inline MangledName generateMangledName(std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, bool is_variadic, StringHandle struct_name, std::span<const std::string_view> namespace_path,
+	Linkage linkage, bool is_const_method, bool is_static_member, ConstructorVariant constructor_variant) {
+	return generateMangledName(func_name, return_type, param_types, is_variadic, struct_name, namespace_path, linkage, is_const_method,
+		ReferenceQualifier::None, is_static_member, constructor_variant);
+}
+
 // Overload that accepts parameter nodes directly to avoid creating a temporary vector
 inline MangledName generateMangledName(
 	std::string_view func_name,
@@ -2604,30 +2601,13 @@ inline MangledName generateMangledName(
 	std::span<const std::string_view> namespace_path,
 	Linkage linkage,
 	bool is_const_method) {
-	return generateMangledName(
-		func_name,
-		return_type,
-		param_nodes,
-		is_variadic,
-		struct_name,
-		namespace_path,
-		linkage,
-		is_const_method,
-		false,
-		ConstructorVariant::Complete);
+	return generateMangledName(func_name, return_type, param_nodes, is_variadic, struct_name, namespace_path, linkage, is_const_method,
+		ReferenceQualifier::None, false, ConstructorVariant::Complete);
 }
 
-inline MangledName generateMangledName(
-	std::string_view func_name,
-	const TypeSpecifierNode& return_type,
-	std::span<const ASTNode> param_nodes,
-	bool is_variadic,
-	StringHandle struct_name,
-	std::span<const std::string_view> namespace_path,
-	Linkage linkage,
-	bool is_const_method,
-	bool is_static_member,
-	ConstructorVariant constructor_variant) {
+inline MangledName generateMangledName(std::string_view func_name, const TypeSpecifierNode& return_type, std::span<const ASTNode> param_nodes,
+	bool is_variadic, StringHandle struct_name, std::span<const std::string_view> namespace_path, Linkage linkage, bool is_const_method,
+	ReferenceQualifier function_ref_qualifier, bool is_static_member, ConstructorVariant constructor_variant) {
 	StringBuilder builder;
 	std::string_view struct_name_sv = StringTable::getStringView(struct_name);
 
@@ -2651,8 +2631,8 @@ inline MangledName generateMangledName(
 		if (struct_name.isValid() || !namespace_path.empty()) {
 			populateSubstitutionsFromClassContext(ctx, struct_name, namespace_path);
 		}
-		generateItaniumMangledName(ctx, func_name, return_type, param_nodes,
-								   is_variadic, struct_name, namespace_path, is_const_method, constructor_variant);
+		generateItaniumMangledName(ctx, func_name, return_type, param_nodes, is_variadic, struct_name, namespace_path,
+			is_const_method, function_ref_qualifier, constructor_variant);
 		return MangledName(builder.commit());
 	}
 
@@ -2682,7 +2662,7 @@ inline MangledName generateMangledName(
 		if (is_static_member) {
 			builder.append("@@SA");
 		} else {
-			builder.append(is_const_method ? "@@QEBA" : "@@QEAA");
+			appendMsvcMemberFunctionNameQualifierCode(builder, is_const_method, function_ref_qualifier);
 		}
 	} else if (!namespace_path.empty()) {
 		builder.append(func_name);
@@ -2719,17 +2699,18 @@ inline MangledName generateMangledName(
 	return MangledName(builder.commit());
 }
 
+inline MangledName generateMangledName(std::string_view func_name, const TypeSpecifierNode& return_type, std::span<const ASTNode> param_nodes,
+	bool is_variadic, StringHandle struct_name, std::span<const std::string_view> namespace_path, Linkage linkage, bool is_const_method,
+	bool is_static_member, ConstructorVariant constructor_variant) {
+	return generateMangledName(func_name, return_type, param_nodes, is_variadic, struct_name, namespace_path, linkage, is_const_method,
+		ReferenceQualifier::None, is_static_member, constructor_variant);
+}
+
 // Generate mangled name with non-type template arguments
 // Used for template specializations like get<0>, get<1>
-inline MangledName generateMangledNameWithTemplateArgs(
-	std::string_view func_name,
-	const TypeSpecifierNode& return_type,
-	std::span<const TypeSpecifierNode> param_types,
-	std::span<const int64_t> non_type_template_args,
-	bool is_variadic,
-	StringHandle struct_name,
-	std::span<const std::string_view> namespace_path,
-	bool is_const_method) {
+inline MangledName generateMangledNameWithTemplateArgs(std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, std::span<const int64_t> non_type_template_args, bool is_variadic, StringHandle struct_name,
+	std::span<const std::string_view> namespace_path, bool is_const_method, ReferenceQualifier function_ref_qualifier) {
 	if (func_name == "main" && !struct_name.isValid() && namespace_path.empty()) {
 		StringBuilder builder;
 		builder.append("main");
@@ -2740,7 +2721,7 @@ inline MangledName generateMangledNameWithTemplateArgs(
 	if (g_mangling_style == ManglingStyle::Itanium) {
 		StringBuilder builder;
 		generateItaniumMangledNameWithTemplateArgs(builder, func_name, return_type, param_types,
-												   non_type_template_args, is_variadic, struct_name, namespace_path, is_const_method);
+												   non_type_template_args, is_variadic, struct_name, namespace_path, is_const_method, function_ref_qualifier);
 		return MangledName(builder.commit());
 	}
 
@@ -2759,38 +2740,38 @@ inline MangledName generateMangledNameWithTemplateArgs(
 	}
 
 	// Fall back to regular mangling with modified name
-	return generateMangledName(name_with_args.commit(), return_type, param_types,
-							   is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, is_const_method,
-							   false, ConstructorVariant::Complete);
+	return generateMangledName(name_with_args.commit(), return_type, param_types, is_variadic, struct_name, namespace_path, Linkage::CPlusPlus,
+		is_const_method, function_ref_qualifier, false, ConstructorVariant::Complete);
+}
+
+inline MangledName generateMangledNameWithTemplateArgs(std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, std::span<const int64_t> non_type_template_args, bool is_variadic, StringHandle struct_name,
+	std::span<const std::string_view> namespace_path, bool is_const_method) {
+	return generateMangledNameWithTemplateArgs(func_name, return_type, param_types, non_type_template_args, is_variadic, struct_name, namespace_path,
+		is_const_method, ReferenceQualifier::None);
 }
 
 // Overload accepting NamespaceHandle so callers can pass declaration-site namespace metadata
 // directly without rebuilding a namespace component vector.
-inline MangledName generateMangledNameWithTemplateArgs(
-	std::string_view func_name,
-	const TypeSpecifierNode& return_type,
-	std::span<const TypeSpecifierNode> param_types,
-	std::span<const int64_t> non_type_template_args,
-	bool is_variadic,
-	StringHandle struct_name,
-	NamespaceHandle namespace_handle,
-	bool is_const_method) {
-	return generateMangledNameWithTemplateArgs(func_name, return_type, param_types,
-											   non_type_template_args, is_variadic, struct_name,
-											   buildNamespacePathFromHandle(namespace_handle), is_const_method);
+inline MangledName generateMangledNameWithTemplateArgs(std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, std::span<const int64_t> non_type_template_args, bool is_variadic, StringHandle struct_name,
+	NamespaceHandle namespace_handle, bool is_const_method, ReferenceQualifier function_ref_qualifier) {
+	return generateMangledNameWithTemplateArgs(func_name, return_type, param_types, non_type_template_args, is_variadic, struct_name,
+		buildNamespacePathFromHandle(namespace_handle), is_const_method, function_ref_qualifier);
+}
+
+inline MangledName generateMangledNameWithTemplateArgs(std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, std::span<const int64_t> non_type_template_args, bool is_variadic, StringHandle struct_name,
+	NamespaceHandle namespace_handle, bool is_const_method) {
+	return generateMangledNameWithTemplateArgs(func_name, return_type, param_types, non_type_template_args, is_variadic, struct_name, namespace_handle,
+		is_const_method, ReferenceQualifier::None);
 }
 
 // Generate mangled name with TYPE template arguments (e.g., sum<int>, sum<int, int>)
 // Used for function template specializations with type parameters
-inline MangledName generateMangledNameWithTypeTemplateArgs(
-	std::string_view func_name,
-	const TypeSpecifierNode& return_type,
-	std::span<const TypeSpecifierNode> param_types,
-	std::span<const TemplateTypeArg> type_template_args,
-	bool is_variadic,
-	StringHandle struct_name,
-	std::span<const std::string_view> namespace_path,
-	bool is_const_method) {
+inline MangledName generateMangledNameWithTypeTemplateArgs(std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, std::span<const TemplateTypeArg> type_template_args, bool is_variadic, StringHandle struct_name,
+	std::span<const std::string_view> namespace_path, bool is_const_method, ReferenceQualifier function_ref_qualifier) {
 	if (func_name == "main" && !struct_name.isValid() && namespace_path.empty()) {
 		StringBuilder builder;
 		builder.append("main");
@@ -2801,7 +2782,7 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 	if (g_mangling_style == ManglingStyle::Itanium) {
 		StringBuilder builder;
 		generateItaniumMangledNameWithTypeTemplateArgs(builder, func_name, return_type, param_types,
-													   type_template_args, is_variadic, struct_name, namespace_path, is_const_method);
+													   type_template_args, is_variadic, struct_name, namespace_path, is_const_method, function_ref_qualifier);
 		return MangledName(builder.commit());
 	}
 
@@ -2831,29 +2812,29 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 	}
 
 	// Fall back to regular mangling with modified name
-	return generateMangledName(name_with_args.commit(), return_type, param_types,
-							   is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, is_const_method,
-							   false, ConstructorVariant::Complete);
+	return generateMangledName(name_with_args.commit(), return_type, param_types, is_variadic, struct_name, namespace_path, Linkage::CPlusPlus,
+		is_const_method, function_ref_qualifier, false, ConstructorVariant::Complete);
 }
 
-inline MangledName generateMangledNameWithTypeTemplateArgs(
-	std::string_view func_name,
-	const TypeSpecifierNode& return_type,
-	std::span<const TypeSpecifierNode> param_types,
-	std::span<const TemplateTypeArg> type_template_args,
-	bool is_variadic,
-	StringHandle struct_name,
-	NamespaceHandle namespace_handle,
-	bool is_const_method) {
-	return generateMangledNameWithTypeTemplateArgs(
-		func_name,
-		return_type,
-		param_types,
-		type_template_args,
-		is_variadic,
-		struct_name,
-		buildNamespacePathFromHandle(namespace_handle),
-		is_const_method);
+inline MangledName generateMangledNameWithTypeTemplateArgs(std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, std::span<const TemplateTypeArg> type_template_args, bool is_variadic, StringHandle struct_name,
+	std::span<const std::string_view> namespace_path, bool is_const_method) {
+	return generateMangledNameWithTypeTemplateArgs(func_name, return_type, param_types, type_template_args, is_variadic, struct_name, namespace_path,
+		is_const_method, ReferenceQualifier::None);
+}
+
+inline MangledName generateMangledNameWithTypeTemplateArgs(std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, std::span<const TemplateTypeArg> type_template_args, bool is_variadic, StringHandle struct_name,
+	NamespaceHandle namespace_handle, bool is_const_method, ReferenceQualifier function_ref_qualifier) {
+	return generateMangledNameWithTypeTemplateArgs(func_name, return_type, param_types, type_template_args, is_variadic, struct_name,
+		buildNamespacePathFromHandle(namespace_handle), is_const_method, function_ref_qualifier);
+}
+
+inline MangledName generateMangledNameWithTypeTemplateArgs(std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, std::span<const TemplateTypeArg> type_template_args, bool is_variadic, StringHandle struct_name,
+	NamespaceHandle namespace_handle, bool is_const_method) {
+	return generateMangledNameWithTypeTemplateArgs(func_name, return_type, param_types, type_template_args, is_variadic, struct_name, namespace_handle,
+		is_const_method, ReferenceQualifier::None);
 }
 
 // Unified dispatch helper for function-template explicit specializations.
@@ -2866,15 +2847,9 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 //
 // Throws CompileError for mixed type/non-type argument lists, and InternalError
 // if the list is unexpectedly empty.
-inline MangledName generateMangledNameForSpecialization(
-	std::string_view func_name,
-	const TypeSpecifierNode& return_type,
-	std::span<const TypeSpecifierNode> param_types,
-	std::span<const TemplateTypeArg> all_template_args,
-	bool is_variadic,
-	StringHandle struct_name,
-	NamespaceHandle namespace_handle,
-	bool is_const_method) {
+inline MangledName generateMangledNameForSpecialization(std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, std::span<const TemplateTypeArg> all_template_args, bool is_variadic, StringHandle struct_name,
+	NamespaceHandle namespace_handle, bool is_const_method, ReferenceQualifier function_ref_qualifier) {
 	std::vector<int64_t> non_type_values;
 	size_t num_type_args = 0;
 	for (const auto& arg : all_template_args) {
@@ -2892,15 +2867,13 @@ inline MangledName generateMangledNameForSpecialization(
 	}
 
 	if (!non_type_values.empty()) {
-		return generateMangledNameWithTemplateArgs(
-			func_name, return_type, param_types, non_type_values,
-			is_variadic, struct_name, namespace_handle, is_const_method);
+		return generateMangledNameWithTemplateArgs(func_name, return_type, param_types, non_type_values, is_variadic, struct_name, namespace_handle,
+			is_const_method, function_ref_qualifier);
 	}
 
 	if (!all_template_args.empty()) {
-		return generateMangledNameWithTypeTemplateArgs(
-			func_name, return_type, param_types, all_template_args,
-			is_variadic, struct_name, namespace_handle, is_const_method);
+		return generateMangledNameWithTypeTemplateArgs(func_name, return_type, param_types, all_template_args, is_variadic, struct_name, namespace_handle,
+			is_const_method, function_ref_qualifier);
 	}
 
 	throw InternalError(std::string("function-template specialization '")
@@ -2908,6 +2881,13 @@ inline MangledName generateMangledNameForSpecialization(
 						+ "' has no template arguments");
 }
 
+inline MangledName generateMangledNameForSpecialization(std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, std::span<const TemplateTypeArg> all_template_args, bool is_variadic, StringHandle struct_name,
+	NamespaceHandle namespace_handle, bool is_const_method) {
+	return generateMangledNameForSpecialization(func_name, return_type, param_types, all_template_args, is_variadic, struct_name, namespace_handle,
+		is_const_method, ReferenceQualifier::None);
+}
+
 inline MangledName generateMangledName(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
@@ -2917,17 +2897,8 @@ inline MangledName generateMangledName(
 	NamespaceHandle namespace_handle,
 	Linkage linkage,
 	bool is_const_method) {
-	return generateMangledName(
-		func_name,
-		return_type,
-		param_types,
-		is_variadic,
-		struct_name,
-		buildNamespacePathFromHandle(namespace_handle),
-		linkage,
-		is_const_method,
-		false,
-		ConstructorVariant::Complete);
+	return generateMangledName(func_name, return_type, param_types, is_variadic, struct_name, buildNamespacePathFromHandle(namespace_handle), linkage,
+		is_const_method, ReferenceQualifier::None, false, ConstructorVariant::Complete);
 }
 
 inline MangledName generateMangledName(
@@ -2940,17 +2911,8 @@ inline MangledName generateMangledName(
 	Linkage linkage,
 	bool is_const_method,
 	bool is_static_member) {
-	return generateMangledName(
-		func_name,
-		return_type,
-		param_types,
-		is_variadic,
-		struct_name,
-		buildNamespacePathFromHandle(namespace_handle),
-		linkage,
-		is_const_method,
-		is_static_member,
-		ConstructorVariant::Complete);
+	return generateMangledName(func_name, return_type, param_types, is_variadic, struct_name, buildNamespacePathFromHandle(namespace_handle), linkage,
+		is_const_method, ReferenceQualifier::None, is_static_member, ConstructorVariant::Complete);
 }
 
 inline MangledName generateMangledName(
@@ -2962,17 +2924,8 @@ inline MangledName generateMangledName(
 	NamespaceHandle namespace_handle,
 	Linkage linkage,
 	bool is_const_method) {
-	return generateMangledName(
-		func_name,
-		return_type,
-		param_nodes,
-		is_variadic,
-		struct_name,
-		buildNamespacePathFromHandle(namespace_handle),
-		linkage,
-		is_const_method,
-		false,
-		ConstructorVariant::Complete);
+	return generateMangledName(func_name, return_type, param_nodes, is_variadic, struct_name, buildNamespacePathFromHandle(namespace_handle), linkage,
+		is_const_method, ReferenceQualifier::None, false, ConstructorVariant::Complete);
 }
 
 inline MangledName generateMangledName(
@@ -2985,24 +2938,41 @@ inline MangledName generateMangledName(
 	Linkage linkage,
 	bool is_const_method,
 	bool is_static_member) {
-	return generateMangledName(
-		func_name,
-		return_type,
-		param_nodes,
-		is_variadic,
-		struct_name,
-		buildNamespacePathFromHandle(namespace_handle),
-		linkage,
-		is_const_method,
-		is_static_member,
-		ConstructorVariant::Complete);
+	return generateMangledName(func_name, return_type, param_nodes, is_variadic, struct_name, buildNamespacePathFromHandle(namespace_handle), linkage,
+		is_const_method, ReferenceQualifier::None, is_static_member, ConstructorVariant::Complete);
 }
+inline MangledName generateMangledName(std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, bool is_variadic, StringHandle struct_name, NamespaceHandle namespace_handle, Linkage linkage,
+	bool is_const_method, ReferenceQualifier function_ref_qualifier, bool is_static_member, ConstructorVariant constructor_variant) {
+	return generateMangledName(func_name, return_type, param_types, is_variadic, struct_name, buildNamespacePathFromHandle(namespace_handle), linkage,
+		is_const_method, function_ref_qualifier, is_static_member, constructor_variant);
+}
+
+inline MangledName generateMangledName(std::string_view func_name, const TypeSpecifierNode& return_type, std::span<const ASTNode> param_nodes,
+	bool is_variadic, StringHandle struct_name, NamespaceHandle namespace_handle, Linkage linkage, bool is_const_method,
+	ReferenceQualifier function_ref_qualifier, bool is_static_member, ConstructorVariant constructor_variant) {
+	return generateMangledName(func_name, return_type, param_nodes, is_variadic, struct_name, buildNamespacePathFromHandle(namespace_handle), linkage,
+		is_const_method, function_ref_qualifier, is_static_member, constructor_variant);
+}
+
+inline MangledName generateMangledName(std::string_view func_name, const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types, bool is_variadic, StringHandle struct_name, NamespaceHandle namespace_handle, Linkage linkage,
+	bool is_const_method, bool is_static_member, ReferenceQualifier function_ref_qualifier) {
+	return generateMangledName(func_name, return_type, param_types, is_variadic, struct_name, namespace_handle, linkage, is_const_method,
+		function_ref_qualifier, is_static_member, ConstructorVariant::Complete);
+}
+
+inline MangledName generateMangledName(std::string_view func_name, const TypeSpecifierNode& return_type, std::span<const ASTNode> param_nodes,
+	bool is_variadic, StringHandle struct_name, NamespaceHandle namespace_handle, Linkage linkage, bool is_const_method, bool is_static_member,
+	ReferenceQualifier function_ref_qualifier) {
+	return generateMangledName(func_name, return_type, param_nodes, is_variadic, struct_name, namespace_handle, linkage, is_const_method,
+		function_ref_qualifier, is_static_member, ConstructorVariant::Complete);
+}
+
 // Generate mangled name from a FunctionDeclarationNode
 // This is the main entry point for generating mangled names during parsing
 // The function extracts all necessary information from the AST node
-inline MangledName generateMangledNameFromNode(
-	const FunctionDeclarationNode& func_node,
-	std::span<const std::string_view> namespace_path = {}) {
+inline MangledName generateMangledNameFromNode(const FunctionDeclarationNode& func_node, std::span<const std::string_view> namespace_path) {
 	const DeclarationNode& decl_node = func_node.decl_node();
 	const TypeSpecifierNode& return_type = decl_node.type_specifier_node();
 	std::string_view func_name = decl_node.identifier_token().value();
@@ -3014,10 +2984,9 @@ inline MangledName generateMangledNameFromNode(
 
 	// Use the overload that accepts parameter nodes directly
 	// Pass linkage from the function node
-	return generateMangledName(func_name, return_type, func_node.parameter_nodes(),
-							   func_node.is_variadic(), struct_name, namespace_path, func_node.linkage(),
-							   func_node.is_const_member_function(), func_node.is_static(),
-							   ConstructorVariant::Complete);
+	return generateMangledName(func_name, return_type, func_node.parameter_nodes(), func_node.is_variadic(), struct_name, namespace_path,
+		func_node.linkage(), func_node.is_const_member_function(), func_node.function_reference_qualifier(), func_node.is_static(),
+		ConstructorVariant::Complete);
 }
 
 inline MangledName generateMangledNameFromNode(

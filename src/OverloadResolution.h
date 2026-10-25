@@ -5547,20 +5547,13 @@ inline OverloadResolutionResult resolve_overload_with_argument_nodes(
 		});
 }
 
-// Receiver object const/volatile for member overload ranking. Pointer receivers
-// (including `this`) store cv on the last pointer level; non-pointer receivers
-// use the type's base cv. Matches typeSpecifierObjectIsConst in the parser.
+// Receiver object const/volatile for member overload ranking. Pointer levels
+// qualify the pointer itself; base cv qualifies the referred-to class object.
 inline bool memberObjectTypeIsConst(const TypeSpecifierNode& type) {
-	if (!type.pointer_levels().empty()) {
-		return hasCVQualifier(type.pointer_levels().back().cv_qualifier, CVQualifier::Const);
-	}
 	return type.is_const();
 }
 
 inline bool memberObjectTypeIsVolatile(const TypeSpecifierNode& type) {
-	if (!type.pointer_levels().empty()) {
-		return hasCVQualifier(type.pointer_levels().back().cv_qualifier, CVQualifier::Volatile);
-	}
 	return type.is_volatile();
 }
 
@@ -5577,6 +5570,8 @@ inline OverloadResolutionResult resolve_member_overload_with_argument_nodes(
 	struct ViableMemberCandidate {
 		const ASTNode* overload = nullptr;
 		ArgumentConversionInfoVector conversion_infos;
+		ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
+		bool is_static = false;
 	};
 
 	OverloadResolutionTypeSpecifierVector comparison_argument_types;
@@ -5590,14 +5585,24 @@ inline OverloadResolutionResult resolve_member_overload_with_argument_nodes(
 
 	const bool object_is_const = memberObjectTypeIsConst(object_type);
 	const bool object_is_volatile = memberObjectTypeIsVolatile(object_type);
+	const bool object_is_lvalue = object_type.pointer_depth() > 0 || object_type.is_lvalue_reference() ||
+		orderedDeclaratorIsLvalueReference(object_type);
 
 	for (const ASTNode& overload : overloads) {
 		if (!overload.is<FunctionDeclarationNode>()) {
 			continue;
 		}
 		const FunctionDeclarationNode& function = overload.as<FunctionDeclarationNode>();
-		if ((object_is_const && !function.is_const_member_function()) ||
-			(object_is_volatile && !function.is_volatile_member_function())) {
+		if (!function.is_static() && ((object_is_const && !function.is_const_member_function()) ||
+			(object_is_volatile && !function.is_volatile_member_function()))) {
+			continue;
+		}
+		const ReferenceQualifier ref_qualifier = function.function_reference_qualifier();
+		if (ref_qualifier == ReferenceQualifier::RValueReference && object_is_lvalue) {
+			continue;
+		}
+		if (ref_qualifier == ReferenceQualifier::LValueReference && !object_is_lvalue &&
+			!(function.is_const_member_function() && !function.is_volatile_member_function())) {
 			continue;
 		}
 
@@ -5610,6 +5615,8 @@ inline OverloadResolutionResult resolve_member_overload_with_argument_nodes(
 
 		ViableMemberCandidate candidate;
 		candidate.overload = &overload;
+		candidate.ref_qualifier = ref_qualifier;
+		candidate.is_static = function.is_static();
 		const bool adds_object_qualification =
 			(!object_is_const && function.is_const_member_function()) ||
 			(!object_is_volatile && function.is_volatile_member_function());
@@ -5660,11 +5667,25 @@ inline OverloadResolutionResult resolve_member_overload_with_argument_nodes(
 			if (i == j) {
 				continue;
 			}
+			// A static member has no implicit object conversion to compare.
+			const size_t object_offset = viable_candidates[j].is_static || viable_candidates[i].is_static ? 1 : 0;
 			const ConversionInfoComparison comparison = compareConversionInfoLists(
-				comparison_argument_types,
-				viable_candidates[j].conversion_infos,
-				viable_candidates[i].conversion_infos);
-			if (comparison.lhs_is_better && !comparison.lhs_is_worse) {
+				std::span<const TypeSpecifierNode>(comparison_argument_types.data(), comparison_argument_types.size()).subspan(object_offset),
+				std::span<const ArgumentConversionInfo>(viable_candidates[j].conversion_infos.data(),
+					viable_candidates[j].conversion_infos.size()).subspan(object_offset),
+				std::span<const ArgumentConversionInfo>(viable_candidates[i].conversion_infos.data(),
+					viable_candidates[i].conversion_infos.size()).subspan(object_offset));
+			const ReferenceQualifier lhs_ref_qualifier = viable_candidates[j].ref_qualifier;
+			const ReferenceQualifier rhs_ref_qualifier = viable_candidates[i].ref_qualifier;
+			const bool lhs_has_object_ref_preference = object_is_lvalue
+				? lhs_ref_qualifier == ReferenceQualifier::LValueReference
+				: lhs_ref_qualifier == ReferenceQualifier::RValueReference;
+			const bool rhs_has_object_ref_preference = object_is_lvalue
+				? rhs_ref_qualifier == ReferenceQualifier::LValueReference
+				: rhs_ref_qualifier == ReferenceQualifier::RValueReference;
+			if ((comparison.lhs_is_better && !comparison.lhs_is_worse) ||
+				(object_offset == 0 && !comparison.lhs_is_better && !comparison.lhs_is_worse &&
+					lhs_has_object_ref_preference && !rhs_has_object_ref_preference)) {
 				is_dominated = true;
 				break;
 			}

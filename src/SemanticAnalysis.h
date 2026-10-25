@@ -437,6 +437,7 @@ public:
 private:
 	friend class ParserSemanticServices;
 	friend class PostParseSemanticNormalizer;
+	void checkUnaryArithmeticOperator(const UnaryOperatorNode& unary_node);
 
 	enum class LifecycleState : uint8_t {
 		ParserDetached,

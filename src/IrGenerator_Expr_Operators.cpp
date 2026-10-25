@@ -2577,7 +2577,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 							StringTable::getOrInternStringHandle(struct_name),
 							empty_namespace,
 							Linkage::CPlusPlus,
-							member_func.is_const());
+							member_func.is_const(), func_decl.function_reference_qualifier(), false, NameMangling::ConstructorVariant::Complete);
 
 						TempVar result_var = var_counter.next();
 
@@ -3383,14 +3383,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 						}
 					}
 
-					std::string_view mangled_name = generateMangledNameForCall(
-						"operator<=>",
-						resolved_return_type_node,
-						param_types,
-						false, // not variadic
-						spaceship_struct->name,
-						{}, // namespace_path
-						func_decl.is_const_member_function());
+					std::string_view mangled_name = NameMangling::generateMangledName("operator<=>", resolved_return_type_node, param_types,
+						false, spaceship_struct->name, NamespaceHandle{}, func_decl.linkage(), func_decl.is_const_member_function(),
+						func_decl.is_static(), func_decl.function_reference_qualifier()).view();
 
 					// Create the call operation
 					CallOp call_op = createCallOp(
@@ -4734,18 +4729,16 @@ std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNo
 			resolved_self_reference = resolved_self_reference ||
 				resolved_return_type_copy.type_index() != return_type.type_index();
 			if (resolved_self_reference) {
-				return NameMangling::generateMangledName(func_name, resolved_return_type_copy, resolved_params,
-												 func_node.is_variadic(), struct_name, namespace_handle, func_node.linkage(),
-												 func_node.is_const_member_function(), func_node.is_static())
+				return NameMangling::generateMangledName(func_name, resolved_return_type_copy, resolved_params, func_node.is_variadic(), struct_name,
+					namespace_handle, func_node.linkage(), func_node.is_const_member_function(), func_node.is_static(), func_node.function_reference_qualifier())
 					.view();
 			}
 		}
 	}
 
 	// Pass linkage from the function node to ensure extern "C" functions aren't mangled
-	return NameMangling::generateMangledName(func_name, return_type, func_node.parameter_nodes(),
-											 func_node.is_variadic(), struct_name, namespace_handle, func_node.linkage(),
-											 func_node.is_const_member_function(), func_node.is_static())
+	return NameMangling::generateMangledName(func_name, return_type, func_node.parameter_nodes(), func_node.is_variadic(), struct_name, namespace_handle,
+		func_node.linkage(), func_node.is_const_member_function(), func_node.is_static(), func_node.function_reference_qualifier())
 		.view();
 }
 

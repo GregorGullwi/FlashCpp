@@ -3207,16 +3207,13 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 			std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
 			std::span<const TemplateTypeArg>(template_args.data(), template_args.size()));
 	}
-	std::optional<ASTNode> try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name, std::span<const TypeSpecifierNode> arg_types);  // NEW: Instantiate member function template
-	std::optional<ASTNode> try_instantiate_member_function_template_explicit(
-		std::string_view struct_name,
-		std::string_view member_name,
-		std::span<const TemplateTypeArg> template_type_args);
-	std::optional<ASTNode> try_instantiate_member_function_template_explicit_candidate(
-		std::string_view struct_name,
-		std::string_view member_name,
-		std::span<const TemplateTypeArg> template_type_args,
-		bool materialize_body, const TemplateFunctionDeclarationNode* selected_template);
+	std::optional<ASTNode> try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name,
+		std::span<const TypeSpecifierNode> arg_types, std::optional<ValueCategory> receiver_value_category);
+	std::optional<ASTNode> try_instantiate_member_function_template_explicit(std::string_view struct_name, std::string_view member_name,
+		std::span<const TemplateTypeArg> template_type_args, std::optional<ValueCategory> receiver_value_category);
+	std::optional<ASTNode> try_instantiate_member_function_template_explicit_candidate(std::string_view struct_name, std::string_view member_name,
+		std::span<const TemplateTypeArg> template_type_args, bool materialize_body, const TemplateFunctionDeclarationNode* selected_template,
+		std::optional<ValueCategory> receiver_value_category);
 		// Core logic shared by both try_instantiate_member_function_template and _explicit.
 		// Given a resolved template node and template arguments, performs type substitution,
 		// body parsing, scope management, and AST registration.
@@ -4391,13 +4388,9 @@ private:	 // Resume private methods
 		const std::optional<TemplateArgumentVector>& explicit_template_args, std::span<const TypeSpecifierNode> arg_types);
 	// Shared member-template call dispatch once the caller knows whether arguments were
 	// syntactically present and whether any of them stayed dependent while collecting types.
-	std::optional<ASTNode> tryInstantiateMemberFunctionTemplateCall(
-		std::string_view struct_name,
-		std::string_view member_name,
-		const std::optional<TemplateArgumentVector>& explicit_template_args,
-		std::span<const TypeSpecifierNode> call_arg_types,
-		bool has_call_args,
-		bool has_dependent_call_args);
+	std::optional<ASTNode> tryInstantiateMemberFunctionTemplateCall(std::string_view struct_name, std::string_view member_name,
+		const std::optional<TemplateArgumentVector>& explicit_template_args, std::span<const TypeSpecifierNode> call_arg_types, bool has_call_args,
+		bool has_dependent_call_args, std::optional<ValueCategory> receiver_value_category);
 	ParseResult parse_member_postfix(std::optional<ASTNode>& result, const Token& operator_start_token);
 	ASTNode makeUnresolvedMemberCallExpr(
 		ASTNode receiver,

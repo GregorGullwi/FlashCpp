@@ -683,6 +683,42 @@ TEST_CASE("Specialization object conversion queries cannot publish missing base 
 	CHECK(plan->kind == StandardConversionKind::DerivedToBase);
 }
 
+TEST_CASE("Canonical class base publication defers and later fills object facts") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	CompileContext compile_context;
+	compile_context.setInputFile("canonical_deferred_class_object_facts.cpp");
+	Lexer lexer("struct Base {}; struct Derived : Base {};");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	const TypeInfo* derived_info = findTypeByName(StringTable::getOrInternStringHandle("Derived"));
+	REQUIRE(derived_info != nullptr);
+	const StructTypeInfo* derived_struct_info = canonicalClassStructInfoFromTypeInfo(*derived_info);
+	REQUIRE(derived_struct_info != nullptr);
+
+	CanonicalTypeTable deferred_table;
+	const CanonicalTypeImport imported = importCanonicalClassTypeInfo(deferred_table, *derived_info);
+	REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+	REQUIRE(tryPublishCanonicalClassBaseSchema(deferred_table, imported.type, *derived_struct_info, CanonicalClassSchemaPublication::BasesOnly));
+	REQUIRE(deferred_table.hasClassBaseSchema(imported.type));
+	REQUIRE(deferred_table.classBaseCount(imported.type) == 1);
+	const TypeId base_type = deferred_table.classBaseAt(imported.type, 0).type;
+	CHECK_FALSE(deferred_table.hasRecordProperties(imported.type));
+	CHECK_FALSE(deferred_table.hasRecordSubobjectTypes(imported.type));
+	CHECK_FALSE(deferred_table.hasRecordProperties(base_type));
+	CHECK_FALSE(deferred_table.hasRecordSubobjectTypes(base_type));
+
+	REQUIRE(tryPublishCanonicalClassBaseSchema(deferred_table, imported.type, *derived_struct_info));
+	CHECK(deferred_table.hasRecordProperties(imported.type));
+	CHECK(deferred_table.hasRecordSubobjectTypes(imported.type));
+	CHECK(deferred_table.hasRecordProperties(base_type));
+	CHECK(deferred_table.hasRecordSubobjectTypes(base_type));
+	CHECK(deferred_table.classBaseCount(imported.type) == 1);
+	CHECK(deferred_table.classBaseAt(imported.type, 0).type == base_type);
+}
+
 TEST_CASE("Canonical record constructor schema publishes by TypeId") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();
@@ -4367,4 +4403,56 @@ TEST_CASE("Frontend scratch rolls back nested declaration and canonical registri
 	CHECK(context.canonicalTypes().size() == 1);
 	CHECK(context.canonicalTypes().builtin(CanonicalBuiltinKind::Double) == stable);
 	CHECK(builder.internDeclaratorType(integer).value == 1);
+}
+
+TEST_CASE("Member function ref qualifiers are retained by ABI mangling") {
+	struct ManglingStyleGuard {
+		NameMangling::ManglingStyle original = NameMangling::g_mangling_style;
+		~ManglingStyleGuard() { NameMangling::g_mangling_style = original; }
+	} style_guard;
+	const TypeSpecifierNode return_type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	const std::array<TypeSpecifierNode, 0> param_types{};
+	const std::array<ASTNode, 0> param_nodes{};
+	const StringHandle struct_name = StringTable::getOrInternStringHandle("A");
+	const std::array<std::string_view, 0> namespace_path{};
+	auto mangle_types = [&](bool is_const, ReferenceQualifier ref_qualifier) {
+		return NameMangling::generateMangledName("g", return_type, param_types, false, struct_name, namespace_path,
+			Linkage::CPlusPlus, is_const, ref_qualifier, false, NameMangling::ConstructorVariant::Complete).view();
+	};
+	auto mangle_nodes = [&](bool is_const, ReferenceQualifier ref_qualifier) {
+		return NameMangling::generateMangledName("g", return_type, param_nodes, false, struct_name, namespace_path,
+			Linkage::CPlusPlus, is_const, ref_qualifier, false, NameMangling::ConstructorVariant::Complete).view();
+	};
+	NameMangling::g_mangling_style = NameMangling::ManglingStyle::MSVC;
+	CHECK(mangle_types(false, ReferenceQualifier::None) == "?g@A@@QEAAHXZ");
+	CHECK(mangle_nodes(false, ReferenceQualifier::None) == "?g@A@@QEAAHXZ");
+	CHECK(mangle_types(true, ReferenceQualifier::None) == "?g@A@@QEBAHXZ");
+	CHECK(mangle_nodes(true, ReferenceQualifier::None) == "?g@A@@QEBAHXZ");
+	CHECK(mangle_types(false, ReferenceQualifier::LValueReference) == "?g@A@@QEGAAHXZ");
+	CHECK(mangle_nodes(false, ReferenceQualifier::LValueReference) == "?g@A@@QEGAAHXZ");
+	CHECK(mangle_types(false, ReferenceQualifier::RValueReference) == "?g@A@@QEHAAHXZ");
+	CHECK(mangle_nodes(false, ReferenceQualifier::RValueReference) == "?g@A@@QEHAAHXZ");
+	CHECK(mangle_types(true, ReferenceQualifier::LValueReference) == "?g@A@@QEGBAHXZ");
+	CHECK(mangle_nodes(true, ReferenceQualifier::LValueReference) == "?g@A@@QEGBAHXZ");
+	CHECK(mangle_types(true, ReferenceQualifier::RValueReference) == "?g@A@@QEHBAHXZ");
+	CHECK(mangle_nodes(true, ReferenceQualifier::RValueReference) == "?g@A@@QEHBAHXZ");
+	CHECK(NameMangling::generateMangledName("g", return_type, param_types, false, StringHandle{}, namespace_path,
+		Linkage::CPlusPlus, false, ReferenceQualifier::None, false, NameMangling::ConstructorVariant::Complete).view() ==
+		"?g@@YAHXZ");
+	NameMangling::g_mangling_style = NameMangling::ManglingStyle::Itanium;
+	CHECK(mangle_types(false, ReferenceQualifier::None) == "_ZN1A1gEv");
+	CHECK(mangle_nodes(false, ReferenceQualifier::None) == "_ZN1A1gEv");
+	CHECK(mangle_types(true, ReferenceQualifier::None) == "_ZNK1A1gEv");
+	CHECK(mangle_nodes(true, ReferenceQualifier::None) == "_ZNK1A1gEv");
+	CHECK(mangle_types(false, ReferenceQualifier::LValueReference) == "_ZNR1A1gEv");
+	CHECK(mangle_nodes(false, ReferenceQualifier::LValueReference) == "_ZNR1A1gEv");
+	CHECK(mangle_types(false, ReferenceQualifier::RValueReference) == "_ZNO1A1gEv");
+	CHECK(mangle_nodes(false, ReferenceQualifier::RValueReference) == "_ZNO1A1gEv");
+	CHECK(mangle_types(true, ReferenceQualifier::LValueReference) == "_ZNKR1A1gEv");
+	CHECK(mangle_nodes(true, ReferenceQualifier::LValueReference) == "_ZNKR1A1gEv");
+	CHECK(mangle_types(true, ReferenceQualifier::RValueReference) == "_ZNKO1A1gEv");
+	CHECK(mangle_nodes(true, ReferenceQualifier::RValueReference) == "_ZNKO1A1gEv");
+	CHECK(NameMangling::generateMangledName("g", return_type, param_types, false, StringHandle{}, namespace_path,
+		Linkage::CPlusPlus, false, ReferenceQualifier::None, false, NameMangling::ConstructorVariant::Complete).view() ==
+		"_Z1gv");
 }

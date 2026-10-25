@@ -108,9 +108,9 @@ void Parser::setup_member_function_context(StructDeclarationNode* struct_node, S
 			struct_type_index.withCategory(TypeCategory::Struct),
 			64,	// Pointer size in bits
 			Token(),
-			CVQualifier::None,
+			currentMemberFunctionThisCv(),
 			ReferenceQualifier::None);
-		this_type_ref.add_pointer_level(currentMemberFunctionThisCv());
+		this_type_ref.add_pointer_level(CVQualifier::None);
 
 		Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);
 		auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);

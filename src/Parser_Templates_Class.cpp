@@ -418,10 +418,7 @@ ParseResult Parser::parse_explicit_function_or_member_instantiation(bool is_exte
 		std::string_view owner_name = StringTable::getStringView(owner_handle);
 		bool instantiated_member = false;
 		if (last.template_args.has_value()) {
-			if (try_instantiate_member_function_template_explicit(
-					owner_name,
-					last.name.value(),
-					*last.template_args).has_value()) {
+			if (try_instantiate_member_function_template_explicit(owner_name, last.name.value(), *last.template_args, std::nullopt).has_value()) {
 				instantiated_member = true;
 			}
 		}

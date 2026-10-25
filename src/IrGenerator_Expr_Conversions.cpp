@@ -2506,11 +2506,8 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	const OwnerManglingInfo owner_info =
 		resolveOwnerManglingInfoForMangling(struct_name, func_decl.namespace_handle());
 	auto op_func_name = StringBuilder().append("operator").append(overloadableOperatorToString(op_kind)).commit();
-	auto mangled_name = NameMangling::generateMangledName(
-		op_func_name, return_type, param_types, false,
-		owner_info.owner_name_for_mangling,
-		owner_info.owner_namespace_handle, Linkage::CPlusPlus,
-		member_func.is_const());
+	auto mangled_name = NameMangling::generateMangledName(op_func_name, return_type, param_types, false, owner_info.owner_name_for_mangling,
+		owner_info.owner_namespace_handle, Linkage::CPlusPlus, member_func.is_const(), func_decl.is_static(), func_decl.function_reference_qualifier());
 
 	TempVar ret_var = var_counter.next();
 	CallOp call_op = createCallOp(ret_var, mangled_name, return_type, true, false);
