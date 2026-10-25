@@ -431,6 +431,8 @@ private:
 	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context);
 	ExprResult generateFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key);
 	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key);
+	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key,
+		TypeIndex receiver_owner_type_index);
 	MultiDimSubscriptChain collectMultiDimSubscriptChain(const ArraySubscriptNode& subscript);
 	std::optional<MultiDimMemberArrayAccess> resolveMultiDimMemberArrayBase(
 		const MultiDimSubscriptChain& chain);

@@ -1248,6 +1248,21 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 
 	// For UnaryOperatorNode
 	if (const auto* unary_op = std::get_if<UnaryOperatorNode>(&expr)) {
+		if (unary_op->op() == "+" || unary_op->op() == "-" || unary_op->op() == "~") {
+			if (context.parser != nullptr) {
+				context.parser->semanticAnalysis().ensureUnaryArithmeticOperatorResolved(*unary_op);
+			}
+			if (const FunctionDeclarationNode* function = unary_op->resolved_arithmetic_operator()) {
+				ChunkedVector<ASTNode> arguments;
+				if (unary_op->arithmetic_operator_is_member()) {
+					CallExprNode call = makeResolvedMemberCallExpr(unary_op->get_operand(), *function, std::move(arguments), unary_op->get_token());
+					return evaluate_member_function_call(call, context);
+				}
+				arguments.push_back(unary_op->get_operand());
+				CallExprNode call = makeResolvedCallExpr(*function, std::move(arguments), unary_op->get_token());
+				return evaluate_function_call(call, context);
+			}
+		}
 		return evaluate_unary_operator(unary_op->get_operand(), unary_op->op(), context);
 	}
 

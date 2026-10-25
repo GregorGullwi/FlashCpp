@@ -5862,7 +5862,10 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				// C++20 [expr.unary.op]: the operand of unary +, -, ~ undergoes
 				// integral promotion (bool/char/short -> int).
 				else if (e.op() == "+" || e.op() == "-" || e.op() == "~") {
-					tryAnnotateUnaryOperandPromotion(e);
+					ensureUnaryArithmeticOperatorResolved(e);
+					if (e.resolved_arithmetic_operator() == nullptr) {
+						tryAnnotateUnaryOperandPromotion(e);
+					}
 				}
 				normalizeExpression(e.get_operand(), ctx);
 				if (e.op() == "&" && !e.is_builtin_addressof()) {
@@ -7206,6 +7209,56 @@ void SemanticAnalysis::ensureUnaryAddressOfOperatorResolved(const UnaryOperatorN
 	if (analyzed_op_unary_address_queries_.count(&unary_node) == 0) {
 		tryResolveUnaryAddressOfOperator(unary_node);
 	}
+}
+
+void SemanticAnalysis::ensureUnaryArithmeticOperatorResolved(const UnaryOperatorNode& unary_node) {
+	if (unary_node.has_arithmetic_operator_resolution()) {
+		return;
+	}
+	const CanonicalTypeId operand_id = inferExpressionType(unary_node.get_operand());
+	if (!operand_id) {
+		return;
+	}
+	const CanonicalTypeDesc& operand = type_context_.get(operand_id);
+	if ((operand.category() != TypeCategory::Struct && operand.category() != TypeCategory::Enum) ||
+		!operand.pointer_levels.empty() || !operand.array_dimensions.empty()) {
+		unary_node.set_resolved_arithmetic_operator(nullptr, false);
+		return;
+	}
+	const auto operand_type = getOverloadResolutionArgType(unary_node.get_operand());
+	if (!operand_type.has_value()) {
+		return;
+	}
+	const OverloadableOperator kind = unary_node.op() == "+" ? OverloadableOperator::Plus :
+		(unary_node.op() == "-" ? OverloadableOperator::Minus : OverloadableOperator::BitwiseNot);
+	const OperatorOverloadResult selected = findUnaryOperatorOverloadWithFreeFunction(*operand_type, kind, symbols_);
+	if (selected.is_ambiguous) {
+		throw makeStructuredCompileError(context_.diagnostics(), DiagnosticId::AmbiguousOperatorOverload, DiagnosticSeverity::Error,
+			SourceLocation::fromToken(unary_node.get_token()), "Ambiguous unary arithmetic operator", {});
+	}
+	if (!selected.has_match) {
+		// A class queried during parsing may not have published its completed
+		// base graph yet. Do not freeze an unavailable lookup as a builtin.
+		return;
+	}
+	const FunctionDeclarationNode* function = selected.free_function_overload;
+	if (!selected.is_free_function) {
+		if (selected.member_overload == nullptr || !selected.member_overload->function_decl.is<FunctionDeclarationNode>()) {
+			throw InternalError("Selected unary arithmetic operator lacks its member declaration");
+		}
+		markResolvedOperatorOverloadOdrUsed(*selected.member_overload);
+		function = &selected.member_overload->function_decl.as<FunctionDeclarationNode>();
+	}
+	if (function == nullptr) {
+		throw InternalError("Selected unary arithmetic operator lacks its function declaration");
+	}
+	if (selected.is_free_function) {
+		ChunkedVector<ASTNode> arguments;
+		arguments.push_back(unary_node.get_operand());
+		annotateResolvedCallArgConversions(&unary_node, arguments, *function, " in unary arithmetic operator");
+	}
+	unary_node.set_resolved_arithmetic_operator(function, !selected.is_free_function);
+	stats_.op_calls_resolved++;
 }
 
 ResolvedFunctionQueryResult SemanticAnalysis::getResolvedOpSubscriptQuery(const ArraySubscriptNode* key) const {
@@ -9854,6 +9907,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				const std::string_view op = e.op();
 				// Unary +, - and ~ apply integral promotion: types with rank < int become int.
 				if (op == "+" || op == "-" || op == "~") {
+					ensureUnaryArithmeticOperatorResolved(e);
+					if (const FunctionDeclarationNode* function = e.resolved_arithmetic_operator()) {
+						const TypeSpecifierNode return_type = resolveTypeSpecifierForSelfReference(function->decl_node().type_specifier_node(),
+							function->access_owner_type_index());
+						return canonicalizeType(return_type);
+					}
 					const CanonicalTypeId operand_id = inferExpressionType(e.get_operand());
 					if (!operand_id)
 						return {};

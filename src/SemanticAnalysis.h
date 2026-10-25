@@ -302,6 +302,7 @@ public:
 	};
 	const ResolvedUnaryOperatorCall* getResolvedUnaryAddressOfOperator(const UnaryOperatorNode* key) const;
 	void ensureUnaryAddressOfOperatorResolved(const UnaryOperatorNode& unary_node);
+	void ensureUnaryArithmeticOperatorResolved(const UnaryOperatorNode& unary_node);
 	// Lower a `&Owner::member` address whose target type was resolved during
 	// semantic analysis. Instantiation is deferred to this call because the
 	// address may be seen while the parser is still normalizing a pattern body.
