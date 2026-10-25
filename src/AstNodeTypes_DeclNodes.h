@@ -2007,12 +2007,24 @@ public:
 	void clear_function_signature() { function_signature_.reset(); }
 	void set_function_signature(const FunctionSignature& sig) {
 		function_signature_ = sig;
-		if (type_index_.category() == TypeCategory::MemberFunctionPointer &&
-			member_class_name_.has_value() &&
-			member_class_name_->isValid() &&
-			!function_signature_->class_name.isValid()) {
-			function_signature_->class_name = *member_class_name_;
+		if (type_index_.category() != TypeCategory::MemberFunctionPointer ||
+			!member_class_name_.has_value() ||
+			!member_class_name_->isValid() ||
+			function_signature_->class_name.isValid()) {
+			return;
 		}
+		// An outer Function component wraps the member pointer as its return
+		// type, so its signature is a free-function signature even though the
+		// compatibility category still comes from the base alias.
+		for (const DeclaratorComponent& component : declarator_components_) {
+			if (component.kind == DeclaratorComponentKind::Function) {
+				return;
+			}
+			if (component.kind == DeclaratorComponentKind::MemberFunctionPointer) {
+				break;
+			}
+		}
+		function_signature_->class_name = *member_class_name_;
 	}
 	const FunctionSignature& function_signature() const { return *function_signature_; }
 	bool has_function_signature() const { return function_signature_.has_value(); }

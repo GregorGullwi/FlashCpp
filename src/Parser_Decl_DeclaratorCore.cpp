@@ -1314,15 +1314,16 @@ ParseResult Parser::parse_declarator(
 				// here, before this declarator can add its own member pointer.
 				const size_t denoted_prefix_count = base_type.has_member_class() ? 1u : base_type.pointer_levels().size();
 				if (base_type.has_member_class()) {
+					const bool base_member_pointer_is_function = base_type.category() == TypeCategory::MemberFunctionPointer;
 					frames.front().prefixes.push_back(
 						base_type.has_member_class_type_id()
 							? DeclaratorComponent::memberPointer(
-								base_type.member_class_type_id(), false,
+								base_type.member_class_type_id(), base_member_pointer_is_function,
 								base_type.pointer_levels().empty()
 									? CVQualifier::None
 									: base_type.pointer_levels().front().cv_qualifier)
 							: DeclaratorComponent::memberPointer(
-								base_type.member_class_entity(), false,
+								base_type.member_class_entity(), base_member_pointer_is_function,
 								base_type.pointer_levels().empty()
 									? CVQualifier::None
 									: base_type.pointer_levels().front().cv_qualifier));
@@ -1336,6 +1337,7 @@ ParseResult Parser::parse_declarator(
 				bool has_identifier = false;
 				bool failed = false;
 				bool has_member_pointer = base_type.has_member_class();
+				bool has_declared_member_pointer = false;
 				bool member_pointer_is_function = false;
 				// Location of the first pointer declarator, for the
 				// pointer-to-reference rejection ([dcl.ref]/5).
@@ -1409,6 +1411,7 @@ ParseResult Parser::parse_declarator(
 								member_function_calling_convention =
 									frame.calling_convention;
 								has_member_pointer = true;
+								has_declared_member_pointer = true;
 								discard_saved_token(member_pointer_start);
 								continue;
 							} else {
@@ -1531,7 +1534,7 @@ ParseResult Parser::parse_declarator(
 					// declarator: the type has a single cold FunctionSignature.
 					// Arrays of functions and functions returning arrays are
 					// rejected after the spine is assembled.
-					if (!has_member_pointer && peek() == "("_tok) {
+					if (!has_declared_member_pointer && peek() == "("_tok) {
 						// A direct-declarator has at most one function suffix; a second
 						// one in the same frame is `f()()` (a function returning a
 						// function), which is ill-formed.
@@ -1565,7 +1568,7 @@ ParseResult Parser::parse_declarator(
 						frame.suffix_functions.push_back(OrderedFunctionParams{std::move(params), qualifiers, specifiers, suffix_calling_convention});
 						frame.suffixes.push_back(DeclaratorComponent::function());
 					}
-					if (frames.size() == 1 && has_member_pointer && peek() == "("_tok) {
+					if (frames.size() == 1 && has_declared_member_pointer && peek() == "("_tok) {
 						advance();
 						std::vector<FunctionType> parameter_types;
 						bool is_variadic = false;
