@@ -274,6 +274,24 @@ inline CanonicalCallingConvention toCanonicalCallingConvention(CallingConvention
 
 inline CanonicalDllLinkage toCanonicalDllLinkage(Linkage linkage);
 
+// The cold signature is the outermost callable. A nested Function component's
+// signature is the `callable_signature` of the enclosing return FunctionType,
+// so descend through every preceding wrapper before selecting it.
+inline const FunctionSignature* orderedDeclaratorCallableSignature(const TypeSpecifierNode& syntax,
+	std::span<const DeclaratorComponent> components, size_t component_index) {
+	if (!syntax.has_function_signature()) {
+		return nullptr;
+	}
+	const FunctionSignature* current = &syntax.function_signature();
+	for (size_t index = 0; index < component_index; ++index) {
+		if (components[index].kind != DeclaratorComponentKind::Function) {
+			continue;
+		}
+		current = current != nullptr && current->hasStructuredTypes() ? current->return_type().callable_signature.get() : nullptr;
+	}
+	return current;
+}
+
 inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 	CanonicalTypeTable& table,
 	TypeId base,
@@ -282,23 +300,6 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 	TypeId id = base;
 	const std::span<const DeclaratorComponent> components =
 		syntax.declarator_components();
-	// Resolve the signature for the Function component at `component_index`. The
-	// node's cold signature is the outermost callable; each inner callable's
-	// signature is the `callable_signature` of the enclosing return FunctionType.
-	// Computed on demand so a single-function declarator allocates nothing.
-	auto signatureForFunctionComponent = [&](size_t component_index) -> const FunctionSignature* {
-		if (components[component_index].kind != DeclaratorComponentKind::Function || !syntax.has_function_signature()) {
-			return nullptr;
-		}
-		const FunctionSignature* current = &syntax.function_signature();
-		for (size_t index = 0; index < component_index; ++index) {
-			if (components[index].kind != DeclaratorComponentKind::Function) {
-				continue;
-			}
-			current = (current != nullptr && current->hasStructuredTypes()) ? current->return_type().callable_signature.get() : nullptr;
-		}
-		return current;
-	};
 	auto arrayElementStatus = [&table](TypeId element) {
 		const CanonicalTypeNode node = table.node(
 			table.withoutTopLevelQualifiers(element));
@@ -357,7 +358,7 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 			// Function component: the node's cold signature is the outermost
 			// callable and each inner callable's signature is the
 			// `callable_signature` of the enclosing return FunctionType.
-			const FunctionSignature* signature_ptr = signatureForFunctionComponent(index);
+			const FunctionSignature* signature_ptr = orderedDeclaratorCallableSignature(syntax, components, index);
 			if (signature_ptr == nullptr) {
 				return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
 			}
@@ -439,9 +440,10 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 			}
 			break;
 		case DeclaratorComponentKind::MemberFunctionPointer: {
+			const FunctionSignature* signature_ptr = orderedDeclaratorCallableSignature(syntax, components, index);
 			if (!component.hasMemberOwner() ||
 				!isValidCVQualifier(component.cv_qualifier) ||
-				!syntax.has_function_signature()) {
+				signature_ptr == nullptr) {
 				return {{}, CanonicalTypeImportStatus::Invalid};
 			}
 			// Components at higher indices were already folded into `id`, so
@@ -449,7 +451,7 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 			// complete return shape and overrides the flat signature
 			// projection, which cannot represent an interleaved return (for
 			// example `int* (Owner::*)()`).
-			FunctionSignature signature = syntax.function_signature();
+			FunctionSignature signature = *signature_ptr;
 			signature.class_name = {};
 			const CanonicalTypeImport imported_function =
 				importCanonicalFunctionSignature(table, signature, id);
@@ -1022,10 +1024,11 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 			}
 		}
 		if (has_member_function_pointer) {
-			if (!syntax.has_function_signature()) {
+			const FunctionSignature* signature_ptr = orderedDeclaratorCallableSignature(syntax, components, member_function_pointer_index);
+			if (signature_ptr == nullptr) {
 				return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
 			}
-			FunctionSignature signature = syntax.function_signature();
+			FunctionSignature signature = *signature_ptr;
 			signature.class_name = {};
 			const bool has_trailing_return_declarator =
 				member_function_pointer_index + 1 < components.size();
