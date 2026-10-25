@@ -1146,6 +1146,7 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 	sb_end.append(counter);
 	std::string_view end_var_name = sb_end.commit();
 	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_specifier_node();
+	const TypeSpecifierNode& end_return_type = end_func_decl.decl_node().type_specifier_node();
 
 		// Standard C++20 range-for with begin()/end() desugars to:
 		//   auto __begin = range.begin();
@@ -1163,8 +1164,9 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 	auto begin_decl_node = ASTNode::emplace_node<DeclarationNode>(begin_type_node, begin_token);
 
 	auto end_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-		begin_return_type.type_index().withCategory(begin_return_type.type()), begin_return_type.size_in_bits(), Token(), CVQualifier::None, ReferenceQualifier::None);
-	end_type_node.as<TypeSpecifierNode>().copy_indirection_from(begin_return_type);
+		end_return_type.type_index().withCategory(end_return_type.type()), end_return_type.size_in_bits(), Token(), CVQualifier::None,
+		ReferenceQualifier::None);
+	end_type_node.as<TypeSpecifierNode>().copy_indirection_from(end_return_type);
 	const TypeSpecifierNode end_type_spec = end_type_node.as<TypeSpecifierNode>();
 	auto end_decl_node = ASTNode::emplace_node<DeclarationNode>(end_type_node, end_token);
 	sema_.registerCodegenSynthesizedLocalType(begin_token.handle(), begin_type_spec);
@@ -1231,6 +1233,17 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 	sema_.registerCodegenSynthesizedOverloadArgType(end_ident_expr, end_type_spec);
 	auto condition_expr = ASTNode::emplace_node<ExpressionNode>(
 		BinaryOperatorNode(Token(Token::Type::Operator, "!="sv, 0, 0, 0), begin_ident_expr, end_ident_expr));
+	if (node.resolved_comparison_target()) {
+		BinaryOperatorNode& comparison = std::get<BinaryOperatorNode>(condition_expr.as<ExpressionNode>());
+		const BinaryOperatorCallTarget target = requireFrontendContext().binaryOperatorCallTarget(node.resolved_comparison_target());
+		if (target.declaring_type) {
+			comparison.set_resolved_member_operator_overload(target.member_overload, target.declaring_type, node.resolved_comparison_owner_index());
+		} else {
+			comparison.set_resolved_free_function_operator_overload(target.free_function_overload);
+		}
+		comparison.set_recorded_equality_rewrite_negate(node.resolved_comparison_negates_equality());
+		comparison.set_resolved_operator_call_target(node.resolved_comparison_target());
+	}
 	ExprResult condition_result = visitExpressionNode(condition_expr.as<ExpressionNode>());
 
 		// Generate conditional branch

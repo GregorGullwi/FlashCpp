@@ -2481,158 +2481,6 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		return finishReferenceArg(emitAddressOf(operand_type, operand_size, IrValue(temp_var)));
 	};
 
-	// Special handling for struct assignment with user-defined operator=(non-struct)
-	// This handles patterns like: struct_var = primitive_value
-	// where struct has operator=(int), operator=(double), etc.
-	if (op == "=" && lhsCat == TypeCategory::Struct &&
-		rhsCat != TypeCategory::Struct &&
-		!rhsExprResult.type_index.is_valid() &&
-		lhsExprResult.type_index.is_valid()) {
-		// Get the type index of the struct
-		TypeIndex lhs_type_index = lhsExprResult.type_index;
-		TypeIndex rhs_type_index = carriesSemanticTypeIndex(rhsCat)
-									   ? rhsExprResult.type_index
-									   : TypeIndex{};
-
-		if (lhs_type_index.is_valid()) {
-			// Check for user-defined operator= that takes the RHS type
-			OperatorOverloadResult overload_result;
-			if (binaryOperatorNode.has_ambiguous_operator_overload()) {
-				overload_result = OperatorOverloadResult::ambiguous();
-			} else if (binaryOperatorNode.has_resolved_member_operator_overload()) {
-				overload_result = OperatorOverloadResult(binaryOperatorNode.resolved_member_operator_overload(),
-					binaryOperatorNode.resolved_member_operator_owner(), binaryOperatorNode.resolved_member_operator_owner_index());
-			} else if (binaryOperatorNode.has_no_match_operator_overload()) {
-				overload_result = OperatorOverloadResult::no_overload();
-			} else {
-				if (auto type_specs = tryGetBinaryOperatorTypeSpecs(); type_specs.has_value()) {
-					overload_result = findBinaryOperatorOverload(
-						type_specs->first,
-						type_specs->second,
-						OverloadableOperator::Assign,
-						&binaryOperatorNode.get_rhs());
-				} else {
-					overload_result = findBinaryOperatorOverload(
-						lhs_type_index,
-						rhs_type_index,
-						OverloadableOperator::Assign,
-						rhsCat,
-						&binaryOperatorNode.get_rhs());
-				}
-			}
-
-			if (overload_result.is_ambiguous) {
-				throwAmbiguousOperatorOverloadDiagnostic(*context_, binaryOperatorNode.get_token(), op);
-			}
-
-			if (overload_result.has_match) {
-				const StructMemberFunction& member_func = *overload_result.member_overload;
-				const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-				if (op == "=" &&
-					shouldDeferImplicitAssignmentCodegen(*getTypeInfo(lhs_type_index).getStructInfo(), func_decl)) {
-					StringHandle owner_struct_name = getTypeInfo(lhs_type_index).name();
-					queueDeferredMemberFunctionFromNode(
-						owner_struct_name,
-						member_func.function_decl,
-						buildNamespaceHandleForStructName(owner_struct_name));
-				}
-				if (lhs_type_index.is_valid()) {
-					if (const StructTypeInfo* struct_info = getTypeInfo(lhs_type_index).getStructInfo()) {
-						if (auto same_type_assignment_kind = getSameTypeAssignmentKind(*struct_info, func_decl);
-							same_type_assignment_kind.has_value()) {
-							diagnoseDeletedSameTypeAssignmentUsage(
-								*context_, *struct_info, *same_type_assignment_kind, binaryOperatorNode.get_token());
-						}
-					}
-				}
-				if (func_decl.is_deleted()) {
-					throwDeletedOperatorFunctionDiagnostic(*context_, binaryOperatorNode.get_token(), "="sv);
-				}
-
-				// Check if the parameter type matches RHS type
-				const auto& param_nodes = func_decl.parameter_nodes();
-				if (!param_nodes.empty() && param_nodes[0].is<DeclarationNode>()) {
-					const auto& param_decl = param_nodes[0].as<DeclarationNode>();
-					const auto& param_type = param_decl.type_specifier_node();
-
-					// Check if parameter is a primitive type matching RHS
-					if (!isIrStructType(toIrType(param_type.type()))) {
-						// Found matching operator=(primitive_type)! Generate function call
-						FLASH_LOG_FORMAT(Codegen, Debug, "Found operator= with primitive param for struct type index {}", lhs_type_index);
-
-						std::string_view struct_name = StringTable::getStringView(getTypeInfo(lhs_type_index).name());
-						const TypeSpecifierNode& return_type = func_decl.decl_node().type_specifier_node();
-
-						// Get parameter types for mangling
-						std::vector<TypeSpecifierNode> param_types;
-						param_types.push_back(param_type);
-
-						// Generate mangled name for operator=
-						std::vector<std::string_view> empty_namespace;
-						auto mangled_name = NameMangling::generateMangledName(
-							"operator=",
-							return_type,
-							param_types,
-							false, // not variadic
-							StringTable::getOrInternStringHandle(struct_name),
-							empty_namespace,
-							Linkage::CPlusPlus,
-							member_func.is_const(), func_decl.function_reference_qualifier(), false, NameMangling::ConstructorVariant::Complete);
-
-						TempVar result_var = var_counter.next();
-
-						// Take address of LHS to pass as 'this' pointer
-						std::variant<StringHandle, TempVar, LocalVarId> lhs_value;
-						if (const auto* string = std::get_if<StringHandle>(&lhsExprResult.value)) {
-							lhs_value = *string;
-						} else if (const auto* temp_var = std::get_if<TempVar>(&lhsExprResult.value)) {
-							if (auto global_name = tryGetGlobalLValueName(lhsExprResult); global_name.has_value()) {
-								lhs_value = *global_name;
-							} else {
-								lhs_value = *temp_var;
-							}
-						} else {
-							FLASH_LOG(Codegen, Error, "Cannot take address of operator= LHS - not an lvalue");
-							return ExprResult{};
-						}
-
-						TempVar lhs_addr = var_counter.next();
-						AddressOfOp addr_op;
-						addr_op.result = lhs_addr;
-						addr_op.operand.setType(lhsCat);
-						addr_op.operand.ir_type = toIrType(lhsCat);
-						addr_op.operand.size_in_bits = SizeInBits{lhsSize};
-						addr_op.operand.pointer_depth = PointerDepth{};
-						std::visit([&addr_op](auto&& val) { addr_op.operand.value = val; }, lhs_value);
-						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), binaryOperatorNode.get_token()));
-
-						// Generate function call
-						CallOp call_op = createCallOp(
-							result_var,
-							mangled_name,
-							return_type,
-							true,
-							false);
-						call_op.applyFunctionControlFlow(func_decl);
-
-						// Pass 'this' pointer as first argument
-						call_op.args.push_back(makeMemberThisCallArgument(
-							lhs_type_index.withCategory(lhsCat),
-							IrValue(lhs_addr)));
-
-						// Pass RHS value as second argument
-						call_op.args.push_back(toTypedValue(rhsExprResult));
-
-						ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
-
-						// Return result
-						return makeExprResult(nativeTypeIndex(return_type.type()), SizeInBits{static_cast<int>(return_type.size_in_bits())}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
-					}
-				}
-			}
-		}
-	}
-
 	// Check for binary operator overloads when either operand carries a user-defined type identity
 	// Binary operators like +, -, *, etc. can be overloaded as member or free functions
 	// This should be checked before trying to generate built-in arithmetic operations
@@ -2951,6 +2799,19 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			throwOperatorOverloadNotFoundDiagnostic(*context_, binaryOperatorNode.get_token(), op);
 		}
 
+		BinaryOperatorCallTarget selected_target;
+		std::vector<TypeSpecifierNode> selected_parameters;
+		if (overload_result.has_match) {
+			if (!binaryOperatorNode.resolved_operator_call_target()) {
+				throw InternalError("selected binary operator reached lowering without its semantic call target");
+			}
+			selected_target = requireFrontendContext().binaryOperatorCallTarget(binaryOperatorNode.resolved_operator_call_target());
+			for (const CanonicalTypeId parameter : selected_target.parameter_types) {
+				if (parameter) {
+					selected_parameters.push_back(materializeCanonicalTypeSpecifier(sema_.typeContext().get(parameter)));
+				}
+			}
+		}
 		if (overload_result.has_match && overload_result.is_free_function) {
 			// Found a free-function operator overload: operator+(LHSType, RHSType)
 			FLASH_LOG_FORMAT(Codegen, Debug, "Resolving free-function operator{} overload", op);
@@ -2959,58 +2820,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			if (func_decl.is_deleted()) {
 				throwDeletedOperatorFunctionDiagnostic(*context_, binaryOperatorNode.get_token(), op);
 			}
-			TypeSpecifierNode return_type = func_decl.decl_node().type_specifier_node();
-
-			// Get parameter types for mangling
-			std::vector<TypeSpecifierNode> param_types;
-			for (const auto& param_node : func_decl.parameter_nodes()) {
-				if (param_node.is<DeclarationNode>()) {
-					param_types.push_back(param_node.as<DeclarationNode>().type_specifier_node());
-				}
-			}
-
-			std::string mangled_name;
-			if (func_decl.has_mangled_name()) {
-				mangled_name = std::string(func_decl.mangled_name());
-			} else {
-				// Get namespace path for mangling (only needed when no pre-computed name)
-				std::vector<std::string_view> namespace_path;
-				if (global_symbol_table_) {
-					auto ns_handle_opt = global_symbol_table_->find_namespace_of_function(func_decl);
-					if (ns_handle_opt.has_value()) {
-						NamespaceHandle nh = *ns_handle_opt;
-						while (nh.isValid() && !nh.isGlobal()) {
-							const NamespaceEntry& entry = gNamespaceRegistry.getEntry(nh);
-							namespace_path.insert(namespace_path.begin(), StringTable::getStringView(entry.name));
-							nh = gNamespaceRegistry.getParent(nh);
-						}
-					}
-				}
-
-				StringBuilder op_name_sb;
-				// When doing C++20 equality rewrite (!=  -> !(==)), use "==" for the function name
-				std::string_view mangle_op = equality_rewrite_negate ? std::string_view("==") : op;
-				op_name_sb.append("operator").append(mangle_op);
-				std::string_view operator_func_name = op_name_sb.commit();
-				mangled_name = NameMangling::generateMangledName(
-					operator_func_name,
-					return_type,
-					param_types,
-					false, // not variadic
-					StringHandle{}, // no struct (free function)
-					namespace_path,
-					Linkage::CPlusPlus,
-					false // free function, never const
-				);
-			}
+			const TypeSpecifierNode return_type = materializeCanonicalTypeSpecifier(sema_.typeContext().get(selected_target.return_type));
+			const auto& param_types = selected_parameters;
+			const StringHandle mangled_name = selected_target.symbol;
 
 			TempVar result_var = var_counter.next();
-			CallOp call_op = createCallOp(
-				result_var,
-				StringTable::getOrInternStringHandle(mangled_name),
-				return_type,
-				false,
-				false);
+			CallOp call_op = createCallOp(result_var, mangled_name, return_type, false, false);
 			call_op.applyFunctionControlFlow(func_decl);
 
 			bool needs_hidden_return = needsHiddenReturnParam(return_type, context_->isLLP64());
@@ -3124,24 +2939,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				throw InternalError("Selected binary operator is missing its declaration owner");
 			}
 
-			// Get the return type from the function declaration
-			TypeSpecifierNode return_type = func_decl.decl_node().type_specifier_node();
-			resolveSelfReferentialType(return_type, owner_type_index);
-
-			// Get the parameter types for mangling
-			std::vector<TypeSpecifierNode> param_types;
-			for (const auto& param_node : func_decl.parameter_nodes()) {
-				if (param_node.is<DeclarationNode>()) {
-					const auto& param_decl = param_node.as<DeclarationNode>();
-					TypeSpecifierNode param_type = param_decl.type_specifier_node();
-					resolveSelfReferentialType(param_type, owner_type_index);
-					param_types.push_back(param_type);
-				}
-			}
-
-			const StringHandle owner_name = getTypeInfo(owner_type_index).name();
-			const StringHandle mangled_name = StringTable::getOrInternStringHandle(func_decl.has_mangled_name() ? func_decl.mangled_name() :
-				generateMangledNameForCall(func_decl, owner_name, buildNamespaceHandleForStructName(owner_name)));
+			const TypeSpecifierNode resolved_return_type_spec = materializeCanonicalTypeSpecifier(sema_.typeContext().get(selected_target.return_type));
+			const auto& param_types = selected_parameters;
+			const StringHandle mangled_name = selected_target.symbol;
 
 			// Generate the call to the operator overload
 			// For member function: a.operator+(b) where 'a' is 'this' and 'b' is the parameter
@@ -3183,21 +2983,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			}
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), binaryOperatorNode.get_token()));
 
-			// Resolve actual return type - defaulted operator<=> has 'auto' return type
-			// that is deduced to int (returning -1/0/1).
-			// Must resolve this before createCallOp so populateCallReturnInfo sees the real type.
-			TypeSpecifierNode resolved_return_type_spec = return_type;
-			if (isPlaceholderAutoType(return_type.category()) && op == "<=>") {
-				resolved_return_type_spec = TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, SizeInBits{32}, return_type.token(), CVQualifier::None);
-			}
-
 			// Create the call operation
-			CallOp call_op = createCallOp(
-				result_var,
-				mangled_name,
-				resolved_return_type_spec,
-				true,
-				false);
+			CallOp call_op = createCallOp(result_var, mangled_name, resolved_return_type_spec, true, false);
 			call_op.applyFunctionControlFlow(func_decl);
 
 			int actual_return_size = call_op.return_size_in_bits.value;

@@ -7047,11 +7047,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 
-	// Resolve the namespace where the template was DECLARED, not where it's being instantiated.
-	// For "std::vector", this returns the NamespaceHandle for "std".
-	// For unqualified names like "Vec", derive from class_decl.name() which may be "math::Vec".
+	// The persistent declaration scope owns the specialization's namespace,
+	// including an unqualified base template instantiated outside that namespace.
 	NamespaceHandle decl_ns = gSymbolTable.get_current_namespace_handle();
-	{
+	if (class_decl.has_lexical_scope_id()) {
+		const NamespaceHandle declared_namespace = requireFrontendContext().scopeRecord(class_decl.lexical_scope_id()).namespace_handle;
+		decl_ns = declared_namespace.isValid() ? declared_namespace : NamespaceRegistry::GLOBAL_NAMESPACE;
+	} else {
 		if (template_name.find("::") != std::string_view::npos) {
 			decl_ns = QualifiedIdentifier::fromQualifiedName(template_name, NamespaceRegistry::GLOBAL_NAMESPACE).namespace_handle;
 		} else {

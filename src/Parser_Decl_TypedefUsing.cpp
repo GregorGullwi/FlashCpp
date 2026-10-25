@@ -1517,6 +1517,20 @@ ParseResult Parser::parse_typedef_declaration() {
 
 		// Create StructTypeInfo in the cold arena
 		StructTypeInfo* struct_info = &struct_type_info.createStructInfo(struct_name_for_typedef, AccessSpecifier::Public, is_inline_union, gSymbolTable.get_current_namespace_handle());
+		struct_info->declaration_node = &struct_ref;
+		SymbolTableDetail::stampLexicalScopeOnDeclaration(struct_node, gSymbolTable.currentScopeId());
+		const bool local_class = current_function_ != nullptr;
+		struct_ref.set_is_local_class(local_class);
+		const bool publish_local = local_class && !parsing_template_class_ && !current_function_->is_template_pattern() &&
+			!current_function_->has_outer_template_bindings() && struct_parsing_context_stack_.size() == 1;
+		if (publish_local || shouldPublishParserClass(struct_ref, gSymbolTable.get_current_scope_type(), parsing_template_class_)) {
+			const OwnerId owner = publish_local ? ownerIdFromLocalScope(gSymbolTable.currentScopeId()) : OwnerId{};
+			const PublishResult published = commitParserClassPublication(requireFrontendContext().declarationBuilder(), struct_ref,
+				gSymbolTable.currentScopeId(), owner, true, gSymbolTable);
+			if (published.status == PublishStatus::Created || published.status == PublishStatus::MergedRedeclaration) {
+				recordDeclarationBuilderPublish();
+			}
+		}
 
 		// Update the struct parsing context with the local_struct_info for static member lookup
 		if (!struct_parsing_context_stack_.empty()) {
@@ -2157,6 +2171,11 @@ ParseResult Parser::parse_typedef_declaration() {
 			struct_type_index,
 			struct_name_for_typedef,
 			struct_name_token);
+		if (struct_ref.has_entity_id()) {
+			CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+			(void)tryPublishCanonicalClassBaseSchema(table, table.record(struct_ref.entity_id()), *struct_info,
+				CanonicalClassSchemaPublication::BasesOnly);
+		}
 
 		// Create type specifier for the struct
 		// Note: Use struct_type_info.getStructInfo() — payload already attached via createStructInfo

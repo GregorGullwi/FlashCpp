@@ -33,12 +33,6 @@ enum class StandardConversionKind : uint8_t {
 
 // --- Canonical type identity (interned handle) ---
 
-struct CanonicalTypeId {
-	uint32_t value = 0;
-	explicit constexpr operator bool() const { return value != 0; }
-	friend constexpr bool operator==(CanonicalTypeId, CanonicalTypeId) = default;
-};
-
 // --- Cast-info side-table index ---
 
 struct CastInfoIndex {

@@ -26,6 +26,7 @@ class NamespaceDeclarationNode;
 class ArraySubscriptNode;
 class MemberAccessNode;
 class BinaryOperatorNode;
+struct BinaryOperatorCallTarget;
 class UnaryOperatorNode;
 class StructuredBindingNode;
 
@@ -191,6 +192,7 @@ public:
 
 	// Access the type interning context.
 	const TypeContext& typeContext() const { return type_context_; }
+	BinaryOperatorCallTarget ensureBinaryOperatorCallTarget(BinaryOperatorNode& binary);
 
 	// Resolve the pointer-to-array shape of a descriptor from its published
 	// structural TypeId. A pointer-to-array descriptor with no published
