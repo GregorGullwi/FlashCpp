@@ -11,7 +11,7 @@ struct DomainByteStats {
 	uint64_t peak_reserved_bytes = 0;
 };
 
-enum class SemanticArenaComponent : uint8_t { Declarations, Types, Descriptors, Count };
+enum class SemanticArenaComponent : uint8_t { Declarations, Types, Descriptors, BinaryOperatorCalls, Count };
 
 // Updated at mutation time, including rollback. Component peaks cannot be
 // added: their allocations need not have coexisted. No lock here calls an arena.

@@ -2,6 +2,19 @@
 
 #include <cstdint>
 
+// Interned descriptor identity, scoped to the translation unit's semantic pass.
+struct CanonicalTypeId {
+	uint32_t value = 0;
+	explicit constexpr operator bool() const { return value != 0; }
+	friend constexpr bool operator==(CanonicalTypeId, CanonicalTypeId) = default;
+};
+
+struct BinaryOperatorCallTargetId {
+	uint32_t value = 0;
+	explicit constexpr operator bool() const { return value != 0; }
+	friend constexpr bool operator==(BinaryOperatorCallTargetId, BinaryOperatorCallTargetId) = default;
+};
+
 // Strong semantic identities for architecture boundary 1. Numeric handles only;
 // never construct from raw pointers or arena addresses.
 
@@ -154,6 +167,8 @@ static_assert(sizeof(DeclId) == 4);
 static_assert(sizeof(EntityId) == 4);
 static_assert(sizeof(ExprId) == 4);
 static_assert(sizeof(TypeId) == 4);
+static_assert(sizeof(CanonicalTypeId) == 4);
+static_assert(sizeof(BinaryOperatorCallTargetId) == 4);
 static_assert(sizeof(TelemetryTypeId) == 4);
 static_assert(sizeof(TemplateDeclId) == 4);
 static_assert(isLocalScopeOwnedOwnerId(ownerIdFromLocalScope(ScopeId{1})));

@@ -27,6 +27,50 @@ TEST_CASE("Canonical types participate in scratch rollback") {
 	CHECK(context.canonicalTypes().size() == before);
 }
 
+TEST_CASE("Binary operator call targets remain stable across context growth") {
+	static_assert(sizeof(BinaryOperatorCallTarget) == 32);
+	FrontendContext context;
+	const DomainByteStats before = context.semanticAccounting().snapshot();
+	const BinaryOperatorCallTarget first_target{StringTable::getOrInternStringHandle("operator_plus_probe"), CanonicalTypeId{17},
+		{CanonicalTypeId{18}, CanonicalTypeId{19}}};
+	const BinaryOperatorCallTargetId first_id = context.publishBinaryOperatorCallTarget(first_target);
+	for (uint32_t index = 0; index < 2048; ++index) {
+		context.publishBinaryOperatorCallTarget({StringTable::getOrInternStringHandle("operator_growth_probe"), CanonicalTypeId{20},
+			{CanonicalTypeId{21}, CanonicalTypeId{22}}});
+	}
+	const BinaryOperatorCallTarget copied_target = context.binaryOperatorCallTarget(first_id);
+	CHECK(copied_target.symbol == first_target.symbol);
+	CHECK(copied_target.return_type == first_target.return_type);
+	CHECK(copied_target.parameter_types == first_target.parameter_types);
+	CHECK(context.semanticAccounting().snapshot().current_bytes == before.current_bytes + 2049 * sizeof(BinaryOperatorCallTarget));
+	CHECK_THROWS_AS(context.binaryOperatorCallTarget(BinaryOperatorCallTargetId{}), InternalError);
+	CHECK_THROWS_AS(context.binaryOperatorCallTarget(BinaryOperatorCallTargetId{2050}), InternalError);
+}
+
+TEST_CASE("Binary operator resolution copies call target IDs and clears them on selection changes") {
+	const BinaryOperatorCallTargetId target_id{41};
+	BinaryOperatorNode annotated(Token{}, ASTNode{}, ASTNode{});
+	annotated.set_resolved_operator_call_target(target_id);
+	BinaryOperatorNode copied(Token{}, ASTNode{}, ASTNode{});
+	copied.copy_semantic_operator_resolution_from(annotated);
+	CHECK(copied.resolved_operator_call_target() == target_id);
+
+	annotated.set_no_match_operator_overload();
+	CHECK_FALSE(annotated.resolved_operator_call_target());
+	annotated.set_resolved_operator_call_target(target_id);
+	annotated.set_ambiguous_operator_overload();
+	CHECK_FALSE(annotated.resolved_operator_call_target());
+	annotated.set_resolved_operator_call_target(target_id);
+	annotated.set_resolved_member_operator_overload(nullptr, TypeId{}, TypeIndex{});
+	CHECK_FALSE(annotated.resolved_operator_call_target());
+	annotated.set_resolved_operator_call_target(target_id);
+	annotated.set_resolved_free_function_operator_overload(nullptr);
+	CHECK_FALSE(annotated.resolved_operator_call_target());
+	annotated.set_resolved_operator_call_target(target_id);
+	annotated.clear_semantic_operator_resolution();
+	CHECK_FALSE(annotated.resolved_operator_call_target());
+}
+
 TEST_CASE("Structural TypeId controls semantic type descriptor identity") {
 	FrontendContext frontend;
 	CanonicalTypeTable& canonical_types = frontend.canonicalTypes();
@@ -4455,4 +4499,108 @@ TEST_CASE("Member function ref qualifiers are retained by ABI mangling") {
 	CHECK(NameMangling::generateMangledName("g", return_type, param_types, false, StringHandle{}, namespace_path,
 		Linkage::CPlusPlus, false, ReferenceQualifier::None, false, NameMangling::ConstructorVariant::Complete).view() ==
 		"_Z1gv");
+}
+
+TEST_CASE("Native binary operator publication owns its symbol and canonical signature") {
+	MESSAGE("native publication node sizes: binary=" << sizeof(BinaryOperatorNode) << " target=" << sizeof(BinaryOperatorCallTarget));
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear();
+	gConceptRegistry.clear();
+	gSymbolTable.clear();
+	FrontendContext frontend;
+	CompileContext compile_context;
+	compile_context.setInputFile("canonical_binary_operator_publication.cpp");
+	Lexer lexer("struct Value { long long operator+(short&) const; };");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	const TypeInfo* value_info = findTypeByName(StringTable::getOrInternStringHandle("Value"));
+	REQUIRE(value_info != nullptr);
+	TypeSpecifierNode value(TypeCategory::Struct, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	value.set_type_index(value_info->registeredTypeIndex());
+	tryBindPublishedTypeEntity(value);
+	REQUIRE(value.has_type_entity());
+	TypeSpecifierNode short_ref(TypeCategory::Short, TypeQualifier::None, 16, Token{}, CVQualifier::None);
+	short_ref.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	const OperatorOverloadResult overload = findBinaryOperatorOverload(value, short_ref, OverloadableOperator::Plus, nullptr);
+	REQUIRE(overload.has_match);
+	REQUIRE(overload.member_overload != nullptr);
+	BinaryOperatorNode binary(Token{}, ASTNode{}, ASTNode{});
+	binary.set_resolved_member_operator_overload(overload.member_overload, overload.declaring_type, overload.compatibility_declaring_type_index);
+	const BinaryOperatorCallTarget first = sema.ensureBinaryOperatorCallTarget(binary);
+	REQUIRE(first.symbol.isValid());
+	const TypeSpecifierNode published_return = materializeCanonicalTypeSpecifier(sema.typeContext().get(first.return_type));
+	CHECK(published_return.category() == TypeCategory::LongLong);
+	const TypeSpecifierNode published_parameter = materializeCanonicalTypeSpecifier(sema.typeContext().get(first.parameter_types[0]));
+	CHECK(published_parameter.category() == TypeCategory::Short);
+	CHECK(published_parameter.reference_qualifier() == ReferenceQualifier::LValueReference);
+	FunctionDeclarationNode& function = const_cast<FunctionDeclarationNode&>(
+		overload.member_overload->function_decl.as<FunctionDeclarationNode>());
+	function.decl_node().type_specifier_node() = TypeSpecifierNode(TypeCategory::Double, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	function.parameter_nodes()[0].as<DeclarationNode>().type_specifier_node() =
+		TypeSpecifierNode(TypeCategory::Long, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	function.set_mangled_name("poisoned_operator_symbol");
+	const BinaryOperatorCallTarget second = sema.ensureBinaryOperatorCallTarget(binary);
+	CHECK(second.symbol == first.symbol);
+	CHECK(second.return_type == first.return_type);
+	CHECK(second.parameter_types == first.parameter_types);
+	CHECK(frontend.binaryOperatorCallTarget(binary.resolved_operator_call_target()).symbol == first.symbol);
+}
+
+TEST_CASE("Inline typedef records publish canonical declaration owners before assignment selection") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	CompileContext compile_context;
+	compile_context.setInputFile("canonical_typedef_record_owners.cpp");
+	Lexer lexer("typedef struct Named { short value; } Named; typedef union { long long value; char byte; } Choice;");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	for (const std::string_view name : {"Named", "Choice"}) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const StructTypeInfo* record = canonicalClassStructInfoFromTypeInfo(*info);
+		REQUIRE(record != nullptr);
+		REQUIRE(record->declaration_node != nullptr);
+		REQUIRE(record->declaration_node->has_entity_id());
+		const CanonicalTypeImport imported = importCanonicalClassDeclaration(frontend.canonicalTypes(), *record->declaration_node);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		CHECK(frontend.canonicalTypes().recordEntity(imported.type) == record->declaration_node->entity_id());
+		CHECK(frontend.canonicalTypes().hasClassBaseSchema(imported.type));
+	}
+}
+
+TEST_CASE("Unqualified base template instantiation retains the persistent declaration namespace") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	CompileContext compile_context;
+	compile_context.setInputFile("canonical_template_owner_namespace.cpp");
+	Lexer lexer(R"(
+namespace home {
+	template<class T> struct Base { T value; };
+	template<class T> struct Derived : Base<T> {};
+}
+home::Derived<short> object;
+)");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	const std::optional<ASTNode> object_symbol = gSymbolTable.lookup("object");
+	REQUIRE(object_symbol.has_value());
+	const DeclarationNode* object = get_decl_from_symbol(*object_symbol);
+	REQUIRE(object != nullptr);
+	const TypeInfo* derived_info = tryGetTypeInfo(object->type_specifier_node().type_index());
+	REQUIRE(derived_info != nullptr);
+	const StructTypeInfo* derived = derived_info->getStructInfo();
+	REQUIRE(derived != nullptr);
+	REQUIRE(derived->base_classes.size() == 1);
+	const TypeInfo* base = tryGetTypeInfo(derived->base_classes[0].type_index);
+	REQUIRE(base != nullptr);
+	const NamespaceHandle home = gNamespaceRegistry.lookupNamespace(NamespaceRegistry::GLOBAL_NAMESPACE,
+		StringTable::getOrInternStringHandle("home"));
+	REQUIRE(home.isValid());
+	CHECK(base->namespaceHandle() == home);
+	CHECK(base->sourceNamespace() == home);
 }

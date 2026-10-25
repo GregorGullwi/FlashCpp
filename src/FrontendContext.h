@@ -22,6 +22,24 @@
 class SymbolTable;
 class FrontendContext;
 
+// Type IDs share the semantic pass lifetime of expression SemanticSlots. The
+// symbol is an emission key, not declaration identity. Declaring TypeId selects
+// the declaration bridge; no reference into the growable record arena escapes.
+struct BinaryOperatorCallTarget {
+	StringHandle symbol;
+	CanonicalTypeId return_type;
+	std::array<CanonicalTypeId, 2> parameter_types{};
+	// Provisional AST selections and synthesized range comparisons share the
+	// same emission bridge. A nonzero declaring type selects the member arm.
+	union {
+		const StructMemberFunction* member_overload = nullptr;
+		const FunctionDeclarationNode* free_function_overload;
+	};
+	TypeId declaring_type{};
+};
+
+static_assert(sizeof(BinaryOperatorCallTarget) == 32);
+
 struct FrontendPublicationJournalMark {
 	size_t context_depth = 0;
 	size_t namespace_depth = 0;
@@ -277,6 +295,23 @@ public:
 		return semantic_accounting_;
 	}
 
+	BinaryOperatorCallTargetId publishBinaryOperatorCallTarget(const BinaryOperatorCallTarget& target) {
+		if (!target.symbol.isValid() || !target.return_type || binary_operator_calls_.size() == UINT32_MAX) {
+			throw InternalError("binary operator call target: invalid publication");
+		}
+		binary_operator_calls_.push_back(target);
+		semantic_accounting_.update(SemanticArenaComponent::BinaryOperatorCalls,
+			binary_operator_calls_.size() * sizeof(BinaryOperatorCallTarget), binary_operator_calls_.capacity() * sizeof(BinaryOperatorCallTarget));
+		return BinaryOperatorCallTargetId{static_cast<uint32_t>(binary_operator_calls_.size())};
+	}
+
+	BinaryOperatorCallTarget binaryOperatorCallTarget(BinaryOperatorCallTargetId id) const {
+		if (!id || id.value > binary_operator_calls_.size()) {
+			throw InternalError("binary operator call target: invalid ID");
+		}
+		return binary_operator_calls_[id.value - 1];
+	}
+
 	DependentExpressionTable& dependentExpressions() {
 		return dependent_expressions_;
 	}
@@ -522,6 +557,7 @@ private:
 	MonotonicScratchArena scratch_arena_{diagnostics_, kScratchByteLimit};
 	ScratchProbeRegistry scratch_registry_;
 	SemanticArenaAccounting semantic_accounting_;
+	std::vector<BinaryOperatorCallTarget> binary_operator_calls_;
 	CanonicalTypeTable canonical_types_{semantic_accounting_};
 	DependentExpressionTable dependent_expressions_;
 	TemplateDeclTable template_decls_;

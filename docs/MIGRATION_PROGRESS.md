@@ -13,9 +13,10 @@ rollup is **10/79 complete**; the only completed 3A exit criterion is that
 pointer-to-member overloads distinguish owner and pointee types. Passing tests or
 the breadth of landed code do not complete the boundary.
 Canonical inheritance classification and inherited operator traversal consume
-published TypeId class-base schemas. Binary operators retain their selected
-declaring owner through lowering; the remaining owner TypeIndex is an explicit
-ABI/layout bridge with the deletion prerequisites below.
+published TypeId class-base schemas. Selected binary calls, including range
+comparisons, consume context-owned call symbols and resolved descriptor IDs.
+Declaring TypeId remains identity; owner TypeIndex remains only an ABI bridge
+for object adjustment, with the deletion prerequisites below.
 Unary arithmetic `+`, `-`, and `~` share selected member/free targets across
 typing, constant evaluation, and lowering, including inherited receiver adjustment.
 Selected unary targets retain lexical access/deletion validation; member calls
@@ -264,23 +265,20 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Next slice: record binary-operator call targets and signatures in sema.**
-   Start removing `compatibility_declaring_type_index`: retain the selected call
-   symbol and fully resolved return/parameter identities at selection, then make
-   binary-operator lowering consume them instead of owner-index mangling or
-   self-type resolution. Keep the declaring TypeId as identity and the declaration
-   pointer only as the existing emission bridge; use a FrontendContext-owned typed
-   plan/ID if the payload outgrows the current annotation. Measure record sizes and
-   keep native stack bounded. Add ordinary/template, namespace, cv/ref-qualified,
-   inherited and equality-rewrite controls. Stop after this call-target/signature
-   prerequisite; preserve the existing object adjustment in this slice.
+   **Next slice: publish virtual-base ABI adjustment facts by class TypeId.**
+   The class-base graph carries nonvirtual offsets, but runtime virtual-base table
+   indices still come from the legacy layout classifier. Publish those finalized
+   ABI facts with source/target TypeIds, covering ordinary and template virtual
+   inheritance plus nonzero/nonvirtual controls. Stop after publication and its
+   query contract; keep existing adjustment IR until the implicit-object plan
+   consumer can replace it.
 
    **Owner-index deletion gates:** publish the virtual-base ABI adjustment facts
    keyed by class TypeIds and make implicit-object lowering consume a sema-selected
    conversion plan. Nonvirtual offsets already exist in the canonical class graph;
    the current virtual adjustment IR/helper still uses TypeIndexes. Delete the
-   bridge field only after symbol generation, self types and both nonvirtual/virtual
-   adjustments no longer require it. Reconstructing a TypeIndex in codegen would
+   binary/range owner-index fields only after both nonvirtual/virtual adjustments
+   consume the selected plan. Reconstructing a TypeIndex in codegen would
    hide the dependency. Retain graph-authority, metadata copy/reset and nonzero/
    virtual-base regression guards. Conversion-function declaration schemas and
    unsupported importer shapes remain separate. Reference/value-tail lowering

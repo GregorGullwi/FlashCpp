@@ -3899,8 +3899,11 @@ public:
 
 	TypeId resolved_member_operator_owner() const { return resolved_member_operator_owner_; }
 	TypeIndex resolved_member_operator_owner_index() const { return resolved_member_operator_owner_index_; }
+	BinaryOperatorCallTargetId resolved_operator_call_target() const { return resolved_operator_call_target_; }
+	void set_resolved_operator_call_target(BinaryOperatorCallTargetId target) const { resolved_operator_call_target_ = target; }
 
 	void set_resolved_member_operator_overload(const StructMemberFunction* overload, TypeId owner, TypeIndex owner_index) {
+		resolved_operator_call_target_ = {};
 		resolved_member_operator_owner_ = owner;
 		resolved_member_operator_owner_index_ = owner_index;
 		resolved_member_operator_overload_ = overload;
@@ -3912,6 +3915,7 @@ public:
 	}
 
 	void set_resolved_free_function_operator_overload(const FunctionDeclarationNode* overload) {
+		resolved_operator_call_target_ = {};
 		resolved_free_function_operator_overload_ = overload;
 		resolved_member_operator_overload_ = nullptr;
 		resolved_member_operator_owner_ = {};
@@ -3927,6 +3931,7 @@ public:
 	}
 
 	void set_no_match_operator_overload() {
+		resolved_operator_call_target_ = {};
 		resolved_member_operator_overload_ = nullptr;
 		resolved_member_operator_owner_ = {};
 		resolved_member_operator_owner_index_ = {};
@@ -3936,6 +3941,7 @@ public:
 	}
 
 	void set_ambiguous_operator_overload() {
+		resolved_operator_call_target_ = {};
 		resolved_member_operator_overload_ = nullptr;
 		resolved_member_operator_owner_ = {};
 		resolved_member_operator_owner_index_ = {};
@@ -3945,6 +3951,7 @@ public:
 	}
 
 	void clear_semantic_operator_resolution() {
+		resolved_operator_call_target_ = {};
 		resolved_member_operator_overload_ = nullptr;
 		resolved_member_operator_owner_ = {};
 		resolved_member_operator_owner_index_ = {};
@@ -3954,6 +3961,7 @@ public:
 	}
 
 	void copy_semantic_operator_resolution_from(const BinaryOperatorNode& other) {
+		resolved_operator_call_target_ = other.resolved_operator_call_target_;
 		resolved_member_operator_overload_ = other.resolved_member_operator_overload_;
 		resolved_member_operator_owner_ = other.resolved_member_operator_owner_;
 		resolved_member_operator_owner_index_ = other.resolved_member_operator_owner_index_;
@@ -3971,6 +3979,7 @@ private:
 	const StructMemberFunction* resolved_member_operator_overload_ = nullptr;
 	TypeIndex resolved_member_operator_owner_index_{};
 	const FunctionDeclarationNode* resolved_free_function_operator_overload_ = nullptr;
+	mutable BinaryOperatorCallTargetId resolved_operator_call_target_{};
 	BinaryOperatorSemanticResolutionState semantic_operator_resolution_state_ = BinaryOperatorSemanticResolutionState::Unresolved;
 	bool semantic_rewrite_neq_to_eq_ = false;
 };
