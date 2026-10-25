@@ -1819,6 +1819,16 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 
 							const auto& initializers = init_list.initializers();
+							if (!init_list.is_paren_init() && struct_info.isAggregate() && !struct_info.base_classes.empty()) {
+								const bool copies_same_type = initializers.size() == 1 && initializers.front().is<ExpressionNode>() &&
+									getSameTypeConstructorPreference(initializers.front(), type_node).has_value();
+								if (!copies_same_type) {
+									generateNestedMemberStores(struct_info, init_list, std::variant<StringHandle, TempVar, LocalVarId>{local_var_id}, 0,
+										decl.identifier_token());
+									register_destructor_if_needed(type_info);
+									return;
+								}
+							}
 							if (init_list.is_paren_init() && !init_list.resolved_constructor() && initializers.size() == 1 && initializers[0].is<ExpressionNode>()) {
 								if (const ImplicitCastInfo* cast_info = getExactClassConversion(initializers[0], type_node)) {
 									ExprResult source = visitVariableInitializer(initializers[0].as<ExpressionNode>());
@@ -2249,13 +2259,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											if (const TypeInfo* nested_member_type_info = tryGetTypeInfo(nested_member_type_index)) {
 
 												// If this is a struct type, use the recursive helper
-												if (nested_member_type_info->getStructInfo() && !nested_member_type_info->getStructInfo()->members.empty()) {
-													generateNestedMemberStores(
-														*nested_member_type_info->getStructInfo(),
-														nested_init_list,
-														std::variant<StringHandle, TempVar, LocalVarId>{local_var_id},
-														static_cast<int>(member.offset),
-														decl.identifier_token());
+												const StructTypeInfo* nested_struct_info = nested_member_type_info->getStructInfo();
+												if (nested_struct_info && (!nested_struct_info->members.empty() || !nested_struct_info->base_classes.empty())) {
+													generateNestedMemberStores(*nested_struct_info, nested_init_list, std::variant<StringHandle, TempVar, LocalVarId>{local_var_id},
+														static_cast<int>(member.offset), decl.identifier_token());
 													continue;  // Skip the outer member store
 												}
 											}

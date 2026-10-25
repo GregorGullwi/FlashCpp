@@ -1858,6 +1858,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		bool this_arg_is_pointer_value = false;
 		ValueStorage this_arg_storage = ValueStorage::ContainsData;
 		bool object_is_pointer_like = object_type.runtime_pointer_depth() > 0 || object_type.is_reference() || object_type.is_rvalue_reference();
+		const UnaryOperatorNode* dereferenced_receiver = object_expr ? std::get_if<UnaryOperatorNode>(object_expr) : nullptr;
 		bool object_is_lambda_captured_this = false;
 		bool object_is_lambda_capture = false;
 		bool object_is_lambda_capture_by_reference = false;
@@ -1968,6 +1969,15 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				this_arg_is_pointer_value = true;
 				this_arg_storage = ValueStorage::ContainsAddress;
 			}
+		} else if (dereferenced_receiver && dereferenced_receiver->op() == "*" && !sema_.getResolvedUnaryDereferenceOperator(dereferenced_receiver)) {
+			// A dereference names the pointee, not the frame slot holding its pointer.
+			const ExprResult receiver = visitExpressionNode(*object_expr, ExpressionContext::LValueAddress);
+			if (receiver.storage != ValueStorage::ContainsAddress) {
+				throw InternalError("Dereferenced member-call receiver did not produce an object address");
+			}
+			this_arg_value = toIrValue(receiver.value);
+			this_arg_is_pointer_value = true;
+			this_arg_storage = ValueStorage::ContainsAddress;
 		} else if (object_name.empty()) {
 			// Object is a temporary expression result (e.g., getContainer().method())
 			// Evaluate the expression to get a TempVar, then take its address for the this pointer
