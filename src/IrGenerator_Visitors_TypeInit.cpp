@@ -3199,6 +3199,9 @@ void AstToIr::generateNestedMemberStores(
 			}
 
 			const ASTNode& default_initializer = *member.default_initializer;
+			const StringHandle saved_struct_name = current_struct_name_;
+			current_struct_name_ = struct_info.name;
+			ScopeGuard restore_struct_name([this, saved_struct_name]() { current_struct_name_ = saved_struct_name; });
 			const ExpressionNode* default_expression = nullptr;
 			if (member.is_array && default_initializer.is<InitializerListNode>()) {
 				if (!tryEmitArrayMemberStores(member, default_initializer.as<InitializerListNode>(), base_object, base_offset, base_object_is_pointer, token)) {
@@ -3306,15 +3309,10 @@ void AstToIr::generateNestedMemberStores(
 						std::string(StringTable::getStringView(member_name)) + "'");
 				}
 
-				if (!member_struct_info->members.empty()) {
+				if (!member_struct_info->members.empty() || !member_struct_info->base_classes.empty()) {
 					// RECURSIVE CALL for nested struct
-					generateNestedMemberStores(
-						*member_struct_info,
-						nested_init_list,
-						base_object,
-						base_offset + static_cast<int>(member.offset),
-						base_object_is_pointer,
-						token);
+					generateNestedMemberStores(*member_struct_info, nested_init_list, base_object, base_offset + static_cast<int>(member.offset),
+						base_object_is_pointer, token);
 					continue;
 				}
 			}
@@ -3333,10 +3331,7 @@ void AstToIr::generateNestedMemberStores(
 					const DeclarationNode* decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
 					if (decl && decl->is_array()) {
 						const TypeSpecifierNode& type_node = decl->type_specifier_node();
-						member_value = emitArrayToPointerDecay(
-							type_node,
-							IrValue(StringTable::getOrInternStringHandle(ident.name())),
-							token);
+						member_value = emitArrayToPointerDecay(type_node, toIrValue(init_operands.value), token);
 						member_value_overridden = true;
 					}
 				}
@@ -3390,10 +3385,7 @@ void AstToIr::generateNestedMemberStores(
 				const DeclarationNode* decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
 				if (decl && decl->is_array()) {
 					const TypeSpecifierNode& type_node = decl->type_specifier_node();
-					member_value = emitArrayToPointerDecay(
-						type_node,
-						IrValue(StringTable::getOrInternStringHandle(ident.name())),
-						token);
+					member_value = emitArrayToPointerDecay(type_node, toIrValue(init_operands.value), token);
 					member_value_overridden = true;
 				}
 			}

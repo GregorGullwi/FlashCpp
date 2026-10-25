@@ -22,6 +22,9 @@ typing, constant evaluation, and lowering, including inherited receiver adjustme
 Selected unary targets retain lexical access/deletion validation; member calls
 and symbols preserve ref qualifiers. Complete-class body queries receive base
 graphs before typing; constructor-dependent object facts publish after resolution.
+Named derived aggregates initialize bases and members through the shared emitter;
+array decay retains local identity. Builtin dereference receivers preserve the
+pointee address before inherited object adjustment.
 
 The architecture the remaining work builds on:
 

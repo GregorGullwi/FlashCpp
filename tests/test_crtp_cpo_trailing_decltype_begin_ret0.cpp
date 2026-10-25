@@ -63,7 +63,7 @@ auto std_end(C& c) -> decltype(c.end()) {
 
 int main() {
 	int xs[2] = {1, 2};
-	access::subrange<int*> s{xs, xs + 2};
+	access::subrange<int*> s{{}, xs, xs + 2};
 	int* first = std_begin(s);
 	int* last = std_end(s);
 	return first == xs && last == xs + 2 ? 0 : 1;
