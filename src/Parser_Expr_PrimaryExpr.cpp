@@ -1000,19 +1000,12 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateForAddress(
 		if (!explicit_arguments.has_value()) {
 			return std::nullopt;
 		}
-		return try_instantiate_member_function_template_explicit(
-			owner_name,
-			member_name,
-			std::span<const TemplateTypeArg>(
-				explicit_arguments->data(),
-				explicit_arguments->size()));
+		return try_instantiate_member_function_template_explicit(owner_name, member_name,
+			std::span<const TemplateTypeArg>(explicit_arguments->data(), explicit_arguments->size()), std::nullopt);
 	}
 
 	if (!target_return_type_id && !target_return_type.type_index().is_valid()) {
-		return try_instantiate_member_function_template(
-			owner_name,
-			member_name,
-			target_parameter_types);
+		return try_instantiate_member_function_template(owner_name, member_name, target_parameter_types, std::nullopt);
 	}
 
 	const TemplateFunctionDeclarationNode* function_template = nullptr;
@@ -1023,19 +1016,13 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateForAddress(
 			continue;
 		}
 		if (function_template != nullptr) {
-			return try_instantiate_member_function_template(
-				owner_name,
-				member_name,
-				target_parameter_types);
+			return try_instantiate_member_function_template(owner_name, member_name, target_parameter_types, std::nullopt);
 		}
 		function_template =
 			&member_function.function_decl.as<TemplateFunctionDeclarationNode>();
 	}
 	if (function_template == nullptr) {
-		return try_instantiate_member_function_template(
-			owner_name,
-			member_name,
-			target_parameter_types);
+		return try_instantiate_member_function_template(owner_name, member_name, target_parameter_types, std::nullopt);
 	}
 
 	bool deduced_from_return_type = false;
@@ -1047,30 +1034,20 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateForAddress(
 			target_return_type_id,
 			deduced_from_return_type);
 	if (!template_args.has_value()) {
-		return try_instantiate_member_function_template(
-			owner_name,
-			member_name,
-			target_parameter_types);
+		return try_instantiate_member_function_template(owner_name, member_name, target_parameter_types, std::nullopt);
 	}
 
 	FlashCpp::ScopedState guard_explicit_call_arg_types(
 		current_explicit_call_arg_types_);
 	current_explicit_call_arg_types_ = &target_parameter_types;
 	std::optional<ASTNode> return_deduced =
-		try_instantiate_member_function_template_explicit(
-			owner_name,
-			member_name,
-			std::span<const TemplateTypeArg>(
-				template_args->data(),
-				template_args->size()));
+		try_instantiate_member_function_template_explicit(owner_name, member_name,
+			std::span<const TemplateTypeArg>(template_args->data(), template_args->size()), std::nullopt);
 	if (return_deduced.has_value()) {
 		return_type_deduced = deduced_from_return_type;
 		return return_deduced;
 	}
-	return try_instantiate_member_function_template(
-		owner_name,
-		member_name,
-		target_parameter_types);
+	return try_instantiate_member_function_template(owner_name, member_name, target_parameter_types, std::nullopt);
 }
 
 std::optional<ASTNode>
@@ -1105,8 +1082,8 @@ Parser::tryInstantiateMemberFunctionTemplateCandidateForAddress(
 	FlashCpp::ScopedState guard_explicit_call_arg_types(
 		current_explicit_call_arg_types_);
 	current_explicit_call_arg_types_ = &target_parameter_types;
-	std::optional<ASTNode> instantiated = try_instantiate_member_function_template_explicit_candidate(
-		owner_name, member_name, std::span<const TemplateTypeArg>(template_args->data(), template_args->size()), true, &function_template);
+	std::optional<ASTNode> instantiated = try_instantiate_member_function_template_explicit_candidate(owner_name, member_name,
+		std::span<const TemplateTypeArg>(template_args->data(), template_args->size()), true, &function_template, std::nullopt);
 	if (instantiated.has_value()) {
 		return_type_deduced = deduced_from_return_type;
 	}
@@ -2405,13 +2382,7 @@ std::optional<ASTNode> Parser::resolveDeferredQualifiedTemplateCall(
 		if (owner_type_info != nullptr &&
 			owner_type_info->getStructInfo() != nullptr) {
 			if (std::optional<ASTNode> resolved_member =
-					tryInstantiateMemberFunctionTemplateCall(
-						owner_name,
-						member_name,
-						explicit_template_args,
-						arg_types,
-						!arguments.empty(),
-						false);
+					tryInstantiateMemberFunctionTemplateCall(owner_name, member_name, explicit_template_args, arg_types, !arguments.empty(), false, std::nullopt);
 				resolved_member.has_value()) {
 				return resolved_member;
 			}
@@ -7108,13 +7079,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									currentTemplateParamNames());
 							if (member_template_args.has_value()) {
 								instantiated_member_lookup =
-									tryInstantiateMemberFunctionTemplateCall(
-										gNamespaceRegistry.getQualifiedName(full_ns_handle),
-										member_token.value(),
-										member_template_args,
-										deduced_arg_types,
-										!args.empty(),
-										has_dependent_call_arg);
+									tryInstantiateMemberFunctionTemplateCall(gNamespaceRegistry.getQualifiedName(full_ns_handle), member_token.value(), member_template_args,
+										deduced_arg_types, !args.empty(), has_dependent_call_arg, std::nullopt);
 								if (instantiated_member_lookup.has_value() &&
 									instantiated_member_lookup->is<FunctionDeclarationNode>()) {
 									member_lookup = *instantiated_member_lookup;
@@ -12654,10 +12620,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												defer_struct_member_template_instantiation = true;
 											} else {
 												instantiated_func =
-													try_instantiate_member_function_template_explicit(
-														member_template_context.struct_name,
-														identifier_token.value(),
-														*effective_template_args);
+													try_instantiate_member_function_template_explicit(member_template_context.struct_name, identifier_token.value(),
+														*effective_template_args, std::nullopt);
 											}
 										}
 										resolved_as_struct_member =

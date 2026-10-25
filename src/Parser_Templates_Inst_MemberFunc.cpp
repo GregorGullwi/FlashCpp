@@ -644,10 +644,8 @@ TemplateNameLookupCandidateVector Parser::lookupMemberFunctionTemplateCandidates
 	return candidates;
 }
 
-std::optional<ASTNode> Parser::try_instantiate_member_function_template(
-	std::string_view struct_name,
-	std::string_view member_name,
-	std::span<const TypeSpecifierNode> arg_types) {
+std::optional<ASTNode> Parser::try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name,
+	std::span<const TypeSpecifierNode> arg_types, std::optional<ValueCategory> receiver_value_category) {
 
 	ScopedInjectedClassOwnerContext owner_context(*this, struct_name);
 
@@ -692,6 +690,14 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		const TemplateFunctionDeclarationNode& template_func =
 			template_node_cand.as<TemplateFunctionDeclarationNode>();
 		const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+		if (receiver_value_category.has_value() &&
+			((func_decl.function_reference_qualifier() == ReferenceQualifier::LValueReference &&
+				*receiver_value_category != ValueCategory::LValue &&
+				(!func_decl.is_const_member_function() || func_decl.is_volatile_member_function())) ||
+				(func_decl.function_reference_qualifier() == ReferenceQualifier::RValueReference &&
+					*receiver_value_category == ValueCategory::LValue))) {
+			return std::nullopt;
+		}
 		const auto& template_params = template_func.template_parameters();
 		const OuterTemplateBinding* candidate_outer_binding =
 			gTemplateRegistry.getOuterTemplateBinding(
@@ -886,7 +892,30 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			continue;
 		}
 		candidate->overload_index = i;
-		if (candidate->specificity > best_specificity) {
+		const ReferenceQualifier candidate_ref_qualifier =
+			candidate->template_node->as<TemplateFunctionDeclarationNode>()
+				.function_decl_node()
+				.function_reference_qualifier();
+		const ReferenceQualifier best_ref_qualifier = best_idx == std::numeric_limits<size_t>::max()
+			? ReferenceQualifier::None
+			: viable[best_idx].template_node->as<TemplateFunctionDeclarationNode>()
+					.function_decl_node()
+					.function_reference_qualifier();
+		auto receiver_rank = [&](ReferenceQualifier qualifier) {
+			if (!receiver_value_category.has_value()) {
+				return 0;
+			}
+			return (*receiver_value_category == ValueCategory::LValue &&
+					qualifier == ReferenceQualifier::LValueReference) ||
+				(*receiver_value_category != ValueCategory::LValue &&
+					qualifier == ReferenceQualifier::RValueReference)
+				? 1
+				: 0;
+		};
+		const int candidate_receiver_rank = receiver_rank(candidate_ref_qualifier);
+		const int best_receiver_rank = receiver_rank(best_ref_qualifier);
+		if (candidate->specificity > best_specificity ||
+			(candidate->specificity == best_specificity && candidate_receiver_rank > best_receiver_rank)) {
 			best_specificity = candidate->specificity;
 			best_idx = viable.size();
 		}
@@ -1551,18 +1580,15 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 
 // Instantiate member function template with explicit template arguments
 // Example: obj.convert<int>(42)
-std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit(
-	std::string_view struct_name,
-	std::string_view member_name,
-	std::span<const TemplateTypeArg> template_type_args) {
-	return try_instantiate_member_function_template_explicit_candidate(struct_name, member_name, template_type_args, true, nullptr);
+std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit(std::string_view struct_name, std::string_view member_name,
+	std::span<const TemplateTypeArg> template_type_args, std::optional<ValueCategory> receiver_value_category) {
+	return try_instantiate_member_function_template_explicit_candidate(struct_name, member_name, template_type_args, true, nullptr,
+		receiver_value_category);
 }
 
-std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit_candidate(
-	std::string_view struct_name,
-	std::string_view member_name,
-	std::span<const TemplateTypeArg> template_type_args,
-	bool materialize_body, const TemplateFunctionDeclarationNode* selected_template) {
+std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit_candidate(std::string_view struct_name, std::string_view member_name,
+	std::span<const TemplateTypeArg> template_type_args, bool materialize_body, const TemplateFunctionDeclarationNode* selected_template,
+	std::optional<ValueCategory> receiver_value_category) {
 
 	ScopedInjectedClassOwnerContext owner_context(*this, struct_name);
 
@@ -1572,18 +1598,18 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	StringHandle qualified_name = StringTable::getOrInternStringHandle(qualified_name_sb);
 	StringHandle specialization_lookup_name = qualified_name;
 	StringHandle struct_name_handle = StringTable::getOrInternStringHandle(struct_name);
-	const auto discriminated_instantiation_name = [selected_template](StringHandle base_name) {
-		if (selected_template == nullptr) {
+	const auto discriminated_instantiation_name = [](StringHandle base_name, const TemplateFunctionDeclarationNode* declaration) {
+		if (declaration == nullptr) {
 			return base_name;
 		}
 		// Key instantiation caches by reproducible declaration identity rather than a
 		// raw address: overloads that share a TemplateDeclId (same name and function
 		// signature) are separated by the declaration's source position.
-		const Token& declaration_token = selected_template->function_decl_node().decl_node().identifier_token();
+		const Token& declaration_token = declaration->function_decl_node().decl_node().identifier_token();
 		StringBuilder discriminated_name;
 		discriminated_name.append(base_name.view())
 			.append("$mfp")
-			.append(static_cast<uint64_t>(selected_template->template_decl_id().value))
+			.append(static_cast<uint64_t>(declaration->template_decl_id().value))
 			.append("_")
 			.append(static_cast<uint64_t>(declaration_token.line()))
 			.append("_")
@@ -1592,11 +1618,12 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			.append(static_cast<uint64_t>(declaration_token.file_index()));
 		return StringTable::getOrInternStringHandle(discriminated_name);
 	};
-	StringHandle requested_instantiation_name = discriminated_instantiation_name(qualified_name);
+	StringHandle requested_instantiation_name = discriminated_instantiation_name(qualified_name, selected_template);
 	auto requested_key = FlashCpp::makeInstantiationKey(requested_instantiation_name, template_type_args);
-	if (auto existing_inst = gTemplateRegistry.getInstantiation(requested_key);
-		existing_inst.has_value()) {
-		return *existing_inst;
+	if (selected_template != nullptr || !receiver_value_category.has_value()) {
+		if (auto existing_inst = gTemplateRegistry.getInstantiation(requested_key); existing_inst.has_value()) {
+			return *existing_inst;
+		}
 	}
 	TypeInfo* struct_type_info = nullptr;
 	if (auto struct_type_it = getTypesByNameMap().find(struct_name_handle);
@@ -1791,6 +1818,14 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		}
 		const auto& template_params = template_func.template_parameters();
 		const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+		if (receiver_value_category.has_value() &&
+			((func_decl.function_reference_qualifier() == ReferenceQualifier::LValueReference &&
+				*receiver_value_category != ValueCategory::LValue &&
+				(!func_decl.is_const_member_function() || func_decl.is_volatile_member_function())) ||
+				(func_decl.function_reference_qualifier() == ReferenceQualifier::RValueReference &&
+					*receiver_value_category == ValueCategory::LValue))) {
+			continue;
+		}
 		if (template_type_args.size() > template_params.size()) {
 			continue;
 		}
@@ -1817,7 +1852,11 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			continue;
 		}
 		const auto& template_args = completed_template_args;
-		StringHandle candidate_instantiation_name = discriminated_instantiation_name(candidate_qualified_name);
+		const TemplateFunctionDeclarationNode* candidate_identity =
+			selected_template != nullptr || receiver_value_category.has_value()
+				? &template_func
+				: nullptr;
+		StringHandle candidate_instantiation_name = discriminated_instantiation_name(candidate_qualified_name, candidate_identity);
 		auto key = FlashCpp::makeInstantiationKey(candidate_instantiation_name, template_args);
 
 		// Determine call arg types for this explicit call path.  Do this before
@@ -3300,9 +3339,9 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		struct_type_index.withCategory(TypeCategory::Struct),
 		64,	// Pointer size
 		Token(),
-		CVQualifier::None,
+		currentMemberFunctionThisCv(),
 		ReferenceQualifier::None);
-	this_type_ref.add_pointer_level(currentMemberFunctionThisCv());
+	this_type_ref.add_pointer_level(CVQualifier::None);
 
 	Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);
 	auto this_decl = emplace_node<DeclarationNode>(this_type_node, this_token);

@@ -3231,6 +3231,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			bool is_pure_virtual = func_specs.is_pure_virtual();
 			bool is_defaulted = func_specs.is_defaulted();
 			bool is_deleted = func_specs.is_deleted();
+			member_func_ref.set_is_deleted(is_deleted);
 
 			// Propagate cv/ref qualifiers and noexcept to the function declaration node immediately
 			// so that all downstream code (codegen, mangling, propagateAstProperties) sees
@@ -3265,7 +3266,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				finalize_function_after_definition(member_func_ref);
 			}
 
-			// Handle deleted functions: skip adding to struct (they cannot be called)
+			// Deleted functions remain in the overload set so overload resolution can
+			// select them and diagnose the call after ranking.
 			if (is_deleted) {
 				// Expect ';'
 				if (!consume(";"_tok)) {
@@ -3301,9 +3303,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					struct_info->markAssignmentDeleted(is_move_assign);
 				}
 
-				// Deleted functions are not added to the struct - they exist only to prevent
-				// implicit generation of special member functions or to disable certain overloads
-				continue;
 			}
 
 			// Validate pure virtual functions must be declared with 'virtual'
@@ -3996,10 +3995,12 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					if (!params.empty() &&
 						computeMinRequiredArgs(params) <= 1 &&
 						params[0].is<DeclarationNode>()) {
-						const auto& param_type = params[0].as<DeclarationNode>().type_specifier_node();
-						if (param_type.is_lvalue_reference() && param_type.category() == TypeCategory::Struct) {
+						const auto& declared_param_type = params[0].as<DeclarationNode>().type_specifier_node();
+						const TypeSpecifierNode param_type = resolveTypeSpecifierForSelfReference(declared_param_type, struct_type_info.type_index_);
+						const bool is_same_class = param_type.category() == TypeCategory::Struct && param_type.type_index() == struct_type_info.type_index_;
+						if (is_same_class && param_type.is_lvalue_reference()) {
 							refined_kind = OverloadableOperator::CopyAssign;
-						} else if (param_type.is_rvalue_reference() && param_type.category() == TypeCategory::Struct) {
+						} else if (is_same_class && param_type.is_rvalue_reference()) {
 							refined_kind = OverloadableOperator::MoveAssign;
 						}
 					}
@@ -4380,8 +4381,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// Generate move assignment operator if no user-defined special member functions exist
 	// According to C++ rules, move assignment operator is implicitly generated unless:
 	// - User declared a copy constructor, copy assignment, move constructor, or destructor
+	// - A move assignment operator is not already user-declared
 	// Skip implicit function generation for template classes (they'll be generated during instantiation)
-	if (!has_user_defined_copy_constructor && !has_user_defined_copy_assignment &&
+	if (!has_user_defined_copy_constructor && !has_user_defined_copy_assignment && !has_user_defined_move_assignment &&
 		!has_user_defined_move_constructor && !has_user_defined_destructor && !parsing_template_class_) {
 		// Create a move assignment operator node: Type& operator=(Type&& other)
 
@@ -4712,6 +4714,15 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// We'll restore this after parsing all delayed bodies
 	SaveHandle position_after_struct = save_token_position();
 
+	// Complete-class body queries need the authoritative base graph before they
+	// deduce types such as decltype of an inherited operator call.
+	stampStructLexicalScope();
+	if (struct_ref.has_entity_id() && struct_info->hasCompleteObjectLayout()) {
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		(void)tryPublishCanonicalClassBaseSchema(table, table.record(struct_ref.entity_id()), *struct_info,
+			CanonicalClassSchemaPublication::BasesOnly);
+	}
+
 	// Parse all delayed function bodies using unified helper (Phase 5)
 	for (auto& delayed : delayed_function_bodies_) {
 		// Keep the token-backed definition for every class-template member. The
@@ -4854,7 +4865,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		}
 	}
 
-	stampStructLexicalScope();
 	if (struct_ref.has_entity_id() && struct_info->hasCompleteObjectLayout()) {
 		FrontendContext& front_end = requireFrontendContext();
 		CanonicalTypeTable& canonical_types = front_end.canonicalTypes();

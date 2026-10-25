@@ -527,11 +527,9 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		for (const auto& param : node.parameter_nodes()) {
 			param_types.push_back(resolve_param_type_for_codegen(param.as<DeclarationNode>()));
 		}
-		auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
-			func_decl.identifier_token().value(), return_type, param_types,
-			node.non_type_template_args(), node.is_variadic(),
-			mangling_struct_name, namespace_for_mangling,
-			node.is_const_member_function());
+		auto mangled = NameMangling::generateMangledNameWithTemplateArgs(func_decl.identifier_token().value(), return_type, param_types,
+			node.non_type_template_args(), node.is_variadic(), mangling_struct_name, namespace_for_mangling, node.is_const_member_function(),
+			node.function_reference_qualifier());
 		mangled_name = mangled.view();
 	} else {
 		// Generate mangled name using the FunctionDeclarationNode overload

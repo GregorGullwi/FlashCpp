@@ -3989,9 +3989,12 @@ public:
 	bool is_builtin_addressof() const { return is_builtin_addressof_; }
 	bool has_arithmetic_operator_resolution() const { return arithmetic_operator_state_ != ArithmeticOperatorResolution::Unresolved; }
 	bool arithmetic_operator_is_member() const { return arithmetic_operator_state_ == ArithmeticOperatorResolution::Member; }
+	bool arithmetic_operator_is_validated() const { return arithmetic_operator_validated_; }
+	void mark_arithmetic_operator_validated() const { arithmetic_operator_validated_ = true; }
 	const FunctionDeclarationNode* resolved_arithmetic_operator() const { return resolved_arithmetic_operator_; }
 	void set_resolved_arithmetic_operator(const FunctionDeclarationNode* function, bool is_member) const {
 		resolved_arithmetic_operator_ = function;
+		arithmetic_operator_validated_ = false;
 		arithmetic_operator_state_ = function == nullptr ? ArithmeticOperatorResolution::Builtin :
 			(is_member ? ArithmeticOperatorResolution::Member : ArithmeticOperatorResolution::Free);
 	}
@@ -4009,6 +4012,8 @@ private:
 	bool is_prefix_;
 	bool is_builtin_addressof_; // True if created from __builtin_addressof intrinsic
 	mutable ArithmeticOperatorResolution arithmetic_operator_state_ = ArithmeticOperatorResolution::Unresolved;
+	// Access belongs to this source expression; later lowering queries have no lexical access context.
+	mutable bool arithmetic_operator_validated_ = false;
 	// Contextual overload resolution records the selected function specialization.
 	const FunctionDeclarationNode* resolved_addressed_function_ = nullptr;
 	mutable const FunctionDeclarationNode* resolved_arithmetic_operator_ = nullptr;

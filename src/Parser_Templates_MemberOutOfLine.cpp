@@ -888,9 +888,8 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 					param_types.push_back(param_node.as<DeclarationNode>().type_specifier_node());
 				}
 			}
-			auto specialization_mangled_name = NameMangling::generateMangledNameForSpecialization(
-				function_name_token.value(), return_type, param_types, function_template_args,
-				func_ref.is_variadic(), struct_name_handle, ns_handle, member_quals.is_const());
+			auto specialization_mangled_name = NameMangling::generateMangledNameForSpecialization(function_name_token.value(), return_type, param_types,
+				function_template_args, func_ref.is_variadic(), struct_name_handle, ns_handle, member_quals.is_const(), func_ref.function_reference_qualifier());
 			func_ref.set_mangled_name(specialization_mangled_name.view());
 		}
 

@@ -54,13 +54,9 @@ public:
 		std::string_view member_name,
 		std::span<const TemplateTypeArg> template_type_args);
 
-	std::optional<ASTNode> tryInstantiateMemberFunctionTemplateCall(
-		std::string_view struct_name,
-		std::string_view member_name,
-		const std::optional<TemplateArgumentVector>& explicit_template_args,
-		std::span<const TypeSpecifierNode> call_arg_types,
-		bool has_call_args,
-		bool has_dependent_call_args);
+	std::optional<ASTNode> tryInstantiateMemberFunctionTemplateCall(std::string_view struct_name, std::string_view member_name,
+		const std::optional<TemplateArgumentVector>& explicit_template_args, std::span<const TypeSpecifierNode> call_arg_types, bool has_call_args,
+		bool has_dependent_call_args, std::optional<ValueCategory> receiver_value_category);
 
 	Parser::AliasTemplateMaterializationResult materializeTemplateInstantiationForLookup(
 		std::string_view template_name,
@@ -241,7 +237,7 @@ inline std::optional<ASTNode> TemplateEngine::tryInstantiateMemberFunctionTempla
 	std::string_view member_name,
 	std::span<const TypeSpecifierNode> arg_types) {
 	recordTemplateEngineOldEngineRoute();
-	return parser().try_instantiate_member_function_template(struct_name, member_name, arg_types);
+	return parser().try_instantiate_member_function_template(struct_name, member_name, arg_types, std::nullopt);
 }
 
 inline std::optional<ASTNode> TemplateEngine::tryInstantiateMemberFunctionTemplateExplicit(
@@ -249,27 +245,15 @@ inline std::optional<ASTNode> TemplateEngine::tryInstantiateMemberFunctionTempla
 	std::string_view member_name,
 	std::span<const TemplateTypeArg> template_type_args) {
 	recordTemplateEngineOldEngineRoute();
-	return parser().try_instantiate_member_function_template_explicit(
-		struct_name,
-		member_name,
-		template_type_args);
+	return parser().try_instantiate_member_function_template_explicit(struct_name, member_name, template_type_args, std::nullopt);
 }
 
-inline std::optional<ASTNode> TemplateEngine::tryInstantiateMemberFunctionTemplateCall(
-	std::string_view struct_name,
-	std::string_view member_name,
-	const std::optional<TemplateArgumentVector>& explicit_template_args,
-	std::span<const TypeSpecifierNode> call_arg_types,
-	bool has_call_args,
-	bool has_dependent_call_args) {
+inline std::optional<ASTNode> TemplateEngine::tryInstantiateMemberFunctionTemplateCall(std::string_view struct_name, std::string_view member_name,
+	const std::optional<TemplateArgumentVector>& explicit_template_args, std::span<const TypeSpecifierNode> call_arg_types, bool has_call_args,
+	bool has_dependent_call_args, std::optional<ValueCategory> receiver_value_category) {
 	recordTemplateEngineOldEngineRoute();
-	return parser().tryInstantiateMemberFunctionTemplateCall(
-		struct_name,
-		member_name,
-		explicit_template_args,
-		call_arg_types,
-		has_call_args,
-		has_dependent_call_args);
+	return parser().tryInstantiateMemberFunctionTemplateCall(struct_name, member_name, explicit_template_args, call_arg_types, has_call_args,
+		has_dependent_call_args, receiver_value_category);
 }
 
 inline Parser::AliasTemplateMaterializationResult TemplateEngine::materializeTemplateInstantiationForLookup(
