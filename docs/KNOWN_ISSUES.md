@@ -168,10 +168,11 @@ specializations, and lazy concept constraints. By contrast,
 unsupported sema-owned trait still receives an explicit unknown outcome: not
 proof of satisfaction, and not inverted into a failure by `!`, `&&`, or `||`.
 
-The general flat conversion-descriptor path also rejects ordered declarators
-over aliases with callable, array, reference, or member-pointer wrappers. Static
-member semantic identity must remain canonical and must not be flattened to
-bypass this consumer migration gap.
+Ordered declarators over aliases with callable, array, reference, or
+member-object-pointer wrappers now convert as the spelled type: copy
+initialization, parameter passing, and overload ranking consume the ordered
+spine. Static member semantic identity must remain canonical and must not be
+flattened.
 
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 

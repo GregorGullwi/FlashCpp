@@ -631,8 +631,6 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
 - Virtual member-function addresses and multiple-inheritance member-pointer
   adjustment are unsupported, and calling through a materialized member-function
   pointer is unimplemented.
-- General conversion-descriptor consumption of alias wrappers (callable, array,
-  reference, member-pointer) remains open.
 - The projectable pointer/array identity path now covers an unknown outer bound
   for builtin, dependent, specialization, record, and enum elements, and the
   dereference and multi-dimensional pointer-to-array subscript codegen consumers
