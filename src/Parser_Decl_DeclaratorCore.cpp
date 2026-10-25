@@ -1300,6 +1300,9 @@ ParseResult Parser::parse_declarator(
 				};
 				std::vector<DeclaratorFrame> frames;
 				frames.push_back({});
+				// Pointers of the denoted type are trailing prefixes. Captured
+				// here, before this declarator can add its own member pointer.
+				const size_t denoted_prefix_count = base_type.has_member_class() ? 1u : base_type.pointer_levels().size();
 				if (base_type.has_member_class()) {
 					frames.front().prefixes.push_back(
 						base_type.has_member_class_type_id()
@@ -1620,13 +1623,16 @@ ParseResult Parser::parse_declarator(
 					const bool was_delimited = frame.delimited;
 					frames.pop_back();
 					if (frames.empty()) {
-						// The base type may already be an alias. [dcl.typedef]:
-						// that alias is the type this declarator wraps, so its
-						// array and reference stay inside the new spine.
-						// [dcl.array] puts cv on the element; [dcl.ref] keeps a
-						// reference return inside a function. Pointers from the
-						// base are already the trailing prefixes.
+						// [dcl.typedef]: the type-specifier denotes the type this
+						// declarator wraps. Its pointer levels are already the
+						// trailing prefixes. Its array or reference is not, so
+						// it stays inside this spine. [dcl.array] puts cv on the
+						// element; [dcl.ref] keeps a reference return inside a
+						// function.
 						if (!completed.empty() && base_type.has_ordered_declarator()) {
+							if (completed.size() >= denoted_prefix_count) {
+								completed.erase(completed.end() - static_cast<std::ptrdiff_t>(denoted_prefix_count), completed.end());
+							}
 							completed.insert(completed.end(), base_type.declarator_components().begin(), base_type.declarator_components().end());
 						} else if (!completed.empty()) {
 							std::vector<DeclaratorComponent> alias_inner;
@@ -1650,8 +1656,7 @@ ParseResult Parser::parse_declarator(
 								append_base_arrays(alias_inner);
 							}
 							if (!alias_inner.empty()) {
-								const size_t base_prefix_count = base_type.has_member_class() ? 1u : base_type.pointer_levels().size();
-								const size_t insert_at = completed.size() >= base_prefix_count ? completed.size() - base_prefix_count : completed.size();
+								const size_t insert_at = completed.size() >= denoted_prefix_count ? completed.size() - denoted_prefix_count : completed.size();
 								completed.insert(completed.begin() + static_cast<std::ptrdiff_t>(insert_at), alias_inner.begin(), alias_inner.end());
 							}
 							if (base_has_array && base_type.has_pointee_array_declarator()) {
