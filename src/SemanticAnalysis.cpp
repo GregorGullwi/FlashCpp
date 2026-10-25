@@ -6419,12 +6419,9 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		}
 	}
 	if (type.has_ordered_declarator()) {
-		// A free-function alias still has no component for its signature.
-		// Array, reference, and member-pointer aliases fold into the spine below.
-		if (resolved_alias_available && resolved_alias.function_signature.has_value() && !resolved_alias.has_member_class_owner() &&
-			!resolved_alias.has_ordered_declarator) {
-			throw InternalError("ordered declarator over a function alias is not migrated");
-		}
+		// A free-function alias keeps its signature as the denoted type. The
+		// ordered spine wraps that signature; it does not need a second
+		// Function component unless the alias itself is already ordered.
 		TypeSpecifierNode resolved_syntax = type;
 		resolved_syntax.set_type_index(desc.type_index);
 		CVQualifier pending_cv = type.cv_qualifier();
