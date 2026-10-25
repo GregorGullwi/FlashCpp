@@ -101,6 +101,7 @@ enum class DiagnosticId : uint32_t {
 	InvalidArrayBoundForMember = 1032,
 	ArrayBoundForMemberMustBePositive = 1033,
 	ExplicitSpecifierNotConstant = 1034,
+	FunctionTypeDeclarator = 1035,
 
 	// Notes attached to declarator-family diagnostics (1051..1079).
 	NoteToMatchOpeningBracket = 1051,
@@ -305,6 +306,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "NoexceptSpecifierNotConstant";
 	case DiagnosticId::ExplicitSpecifierNotConstant:
 		return "ExplicitSpecifierNotConstant";
+	case DiagnosticId::FunctionTypeDeclarator:
+		return "FunctionTypeDeclarator";
 	case DiagnosticId::OutOfLineDefinitionMismatch:
 		return "OutOfLineDefinitionMismatch";
 	case DiagnosticId::OutOfLineDefinitionMalformedTarget:

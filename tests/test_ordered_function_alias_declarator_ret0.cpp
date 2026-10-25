@@ -26,5 +26,12 @@ int main() {
 	if (sizeof(*page) != 2 * sizeof(PF)) {
 		return 4;
 	}
+	F* table[2] = {id, id};
+	if (table[1](41) != 42) {
+		return 5;
+	}
 	return 0;
 }
+
+// A typedef of a function type may declare a function.
+F declared;

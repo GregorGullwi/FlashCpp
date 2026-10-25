@@ -769,9 +769,20 @@ ParseResult Parser::parse_function_declaration_with_storage_specs(
 	// declarator type already carries the full signature, so build the parameter
 	// nodes from it instead of parsing a token list.
 	const TypeSpecifierNode declared_type = declaration_node.type_specifier_node();
-	if (declared_type.category() == TypeCategory::Function &&
-		declared_type.has_function_signature() && declared_type.pointer_depth() == 0 &&
-		declared_type.reference_qualifier() == ReferenceQualifier::None && peek() != "("_tok) {
+	const bool bare_function = declared_type.category() == TypeCategory::Function && declared_type.has_function_signature() &&
+		declared_type.pointer_depth() == 0 && declared_type.reference_qualifier() == ReferenceQualifier::None &&
+		!declared_type.has_member_class();
+	// [dcl.fct]: `using F = int(int); F fv;` declares int fv(int). A parameter
+	// list makes the return type a function, and the typedef cannot define it.
+	if (bare_function && peek() == "("_tok) {
+		return error(DiagnosticId::FunctionTypeDeclarator, declaration_node.identifier_token(),
+			"A function cannot have a function type as its return type");
+	}
+	if (bare_function && (peek() == "{"_tok || peek() == "try"_tok)) {
+		return error(DiagnosticId::FunctionTypeDeclarator, declaration_node.identifier_token(),
+			"A typedef of a function type cannot define a function");
+	}
+	if (bare_function && peek() != "("_tok) {
 		const FunctionSignature signature = declared_type.function_signature();
 		declaration_node.type_specifier_node() = typeSpecifierFromFunctionType(signature.return_type());
 		auto [func_node, func_ref] = create_node_ref<FunctionDeclarationNode>(declaration_node);

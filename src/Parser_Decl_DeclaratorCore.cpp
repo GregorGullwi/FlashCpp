@@ -868,6 +868,16 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 	// Check for array declaration: identifier[size] or identifier[size1][size2]...
 	std::vector<ASTNode> array_dimensions;
 	bool is_unsized_array = false;
+	if (peek() == "["_tok) {
+		if (std::optional<ASTNode> type_node = type_specifier_result.node()) {
+			const TypeSpecifierNode& spec = type_node->as<TypeSpecifierNode>();
+			if (spec.category() == TypeCategory::Function && spec.has_function_signature() && spec.pointer_depth() == 0 &&
+				!spec.is_reference() && !spec.has_member_class()) {
+				return error(DiagnosticId::FunctionTypeDeclarator, identifier_token,
+					"An array cannot have a function type as its element type");
+			}
+		}
+	}
 	while (peek() == "["_tok) {
 		advance(); // consume '['
 
@@ -2150,6 +2160,13 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 											 Linkage linkage,
 											 CallingConvention calling_convention) {
 	std::optional<std::string_view> asm_symbol_name;
+	// [dcl.fct]: a function type may be named by a typedef and then pointed or
+	// referred to. It cannot be a function's return type or an array element.
+	const bool bare_function = base_type.category() == TypeCategory::Function && base_type.has_function_signature() &&
+		base_type.pointer_depth() == 0 && !base_type.is_reference() && !base_type.has_member_class();
+	if (bare_function && peek() == "("_tok) {
+		return error(DiagnosticId::FunctionTypeDeclarator, identifier, "A function cannot have a function type as its return type");
+	}
 	// Check for function declarator: '(' params ')'
 	if (peek() == "("_tok) {
 		advance(); // consume '('
@@ -2204,6 +2221,9 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 
 	std::vector<ASTNode> array_dimensions;
 	bool is_unsized_array = false;
+	if (bare_function && peek() == "["_tok) {
+		return error(DiagnosticId::FunctionTypeDeclarator, identifier, "An array cannot have a function type as its element type");
+	}
 	while (peek() == "["_tok) {
 		advance(); // consume '['
 
