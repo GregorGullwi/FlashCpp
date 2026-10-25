@@ -969,6 +969,8 @@ struct Hidden : Base { operator int(); };
 }
 
 TEST_CASE("Inherited operator lookup requires published class-base graphs") {
+	static_assert(!std::is_constructible_v<OperatorOverloadResult, const StructMemberFunction*>);
+	std::cout << "unary operator metadata: node=" << sizeof(UnaryOperatorNode) << '\n';
 	static_assert(std::is_invocable_r_v<bool, decltype(&appendCanonicalOverloadBaseTypes), const CanonicalTypeTable&, TypeId,
 		std::vector<TypeId>&>);
 	clearLegacyTypeTablesForTesting();
@@ -1023,7 +1025,7 @@ struct Derived : Base {};
 			}
 		}
 		if (expected_owner != nullptr) {
-			for (size_t index = 2; index < results.size(); ++index) {
+			for (size_t index = 0; index < results.size(); ++index) {
 				const auto& result = results[index];
 				CHECK(result.declaring_type == importCanonicalClassTypeInfo(table, *expected_owner).type);
 				CHECK(result.compatibility_declaring_type_index == expected_owner->registeredTypeIndex().withCategory(TypeCategory::Struct));
@@ -1069,6 +1071,36 @@ struct Derived : Base {};
 		table.publishClassBaseSchema(derived, other_bases);
 		check_lookup(tryGetTypeInfo(other_spec.type_index()));
 	}
+}
+
+TEST_CASE("Unary operator selection preserves member reference qualification") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	CompileContext compile_context;
+	compile_context.setInputFile("unary_operator_ref_qualification.cpp");
+	Lexer lexer("struct Value { int operator-() &; int operator-() &&; };");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle("Value"));
+	REQUIRE(info != nullptr);
+	TypeSpecifierNode object(TypeCategory::Struct, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	object.set_type_index(info->registeredTypeIndex());
+	tryBindPublishedTypeEntity(object);
+	object.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	const auto lvalue = findUnaryOperatorOverloadWithFreeFunction(object, OverloadableOperator::Minus, gSymbolTable);
+	REQUIRE(lvalue.has_match);
+	REQUIRE(lvalue.member_overload != nullptr);
+	CHECK(lvalue.member_overload->ref_qualifier == ReferenceQualifier::LValueReference);
+	object.set_reference_qualifier(ReferenceQualifier::None);
+	const auto rvalue = findUnaryOperatorOverloadWithFreeFunction(object, OverloadableOperator::Minus, gSymbolTable);
+	REQUIRE(rvalue.has_match);
+	REQUIRE(rvalue.member_overload != nullptr);
+	CHECK(rvalue.member_overload->ref_qualifier == ReferenceQualifier::RValueReference);
+	CHECK(lvalue.member_overload != rvalue.member_overload);
+	CHECK(lvalue.declaring_type == rvalue.declaring_type);
+	CHECK(lvalue.compatibility_declaring_type_index == rvalue.compatibility_declaring_type_index);
 }
 
 TEST_CASE("Converting constructor class checks cannot recover unpublished inheritance") {

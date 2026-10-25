@@ -5694,8 +5694,6 @@ struct OperatorOverloadResult {
 	bool is_free_function = false; // True when free_function_overload is the active match
 
 	OperatorOverloadResult() = default;
-	explicit OperatorOverloadResult(const StructMemberFunction* overload)
-		: member_overload(overload), has_match(overload != nullptr) {}
 	explicit OperatorOverloadResult(const StructMemberFunction* overload, TypeId declaring_type, TypeIndex compatibility_declaring_type_index)
 		: member_overload(overload), compatibility_declaring_type_index(compatibility_declaring_type_index),
 		declaring_type(declaring_type), has_match(overload != nullptr) {}
@@ -6152,8 +6150,18 @@ inline TypeId canonicalSelfReferenceClassType(CanonicalTypeTable& table, TypeId 
 	return {};
 }
 
+inline bool isOperatorObjectReferenceViable(const TypeSpecifierNode& object_spec, const StructMemberFunction& member_func) {
+	const bool is_lvalue = object_spec.is_lvalue_reference() || orderedDeclaratorIsLvalueReference(object_spec);
+	return member_func.ref_qualifier == ReferenceQualifier::None ||
+		(member_func.ref_qualifier == ReferenceQualifier::LValueReference ?
+			(is_lvalue || (member_func.is_const() && !member_func.is_volatile())) : !is_lvalue);
+}
+
 inline ConversionRank rankImplicitObjectToOperator(const TypeSpecifierNode& object_spec, const StructMemberFunction& member_func,
 	TypeId actual_object_type_id, TypeId member_owner_type_id) {
+	if (!isOperatorObjectReferenceViable(object_spec, member_func)) {
+		return ConversionRank::NoMatch;
+	}
 	if (object_spec.is_const() && !member_func.is_const()) {
 		return ConversionRank::NoMatch;
 	}
@@ -6182,6 +6190,9 @@ inline ConversionRank rankBinaryOperatorOperandMatch(const TypeSpecifierNode& ar
 
 inline ConversionRank rankImplicitObjectToOperator(const TypeSpecifierNode& object_spec, const StructMemberFunction& member_func,
 	TypeIndex actual_object_type_index, TypeIndex member_owner_type_index) {
+	if (!isOperatorObjectReferenceViable(object_spec, member_func)) {
+		return ConversionRank::NoMatch;
+	}
 	if (object_spec.is_const() && !member_func.is_const()) {
 		return ConversionRank::NoMatch;
 	}
@@ -6410,7 +6421,7 @@ inline OperatorOverloadResult findUnaryOperatorOverloadCompatibility(const TypeS
 		}
 		for (const StructMemberFunction& member_func : struct_info->member_functions) {
 			if (member_func.operator_kind == operator_kind) {
-				return OperatorOverloadResult(&member_func);
+				return OperatorOverloadResult(&member_func, TypeId{}, owner_type_index.withCategory(TypeCategory::Struct));
 			}
 		}
 		for (const BaseClassSpecifier& base : struct_info->base_classes) {
@@ -6450,7 +6461,7 @@ inline OperatorOverloadResult findUnaryOperatorOverload(const TypeSpecifierNode&
 		}
 		for (const StructMemberFunction& member_func : struct_info->member_functions) {
 			if (member_func.operator_kind == operator_kind) {
-				return OperatorOverloadResult(&member_func);
+				return OperatorOverloadResult(&member_func, current_type, type_info->registeredTypeIndex().withCategory(TypeCategory::Struct));
 			}
 		}
 	}
@@ -6476,6 +6487,8 @@ inline OperatorOverloadResult findUnaryOperatorOverloadWithFreeFunction(
 		ConversionRank rank = ConversionRank::NoMatch;
 		const StructMemberFunction* member_function = nullptr;
 		const FunctionDeclarationNode* free_function = nullptr;
+		TypeId owner_type_id{};
+		TypeIndex compatibility_owner_type_index{};
 	};
 	std::vector<UnaryOperatorCandidate> candidates;
 
@@ -6505,7 +6518,7 @@ inline OperatorOverloadResult findUnaryOperatorOverloadWithFreeFunction(
 				}
 				const ConversionRank rank = rankImplicitObjectToOperator(operand_type_spec, member_function, operand_type_index, owner_type_index);
 				if (rank != ConversionRank::NoMatch) {
-					candidates.push_back({rank, &member_function, nullptr});
+					candidates.push_back({rank, &member_function, nullptr, TypeId{}, owner_type_index.withCategory(TypeCategory::Struct)});
 				}
 			}
 			for (const BaseClassSpecifier& base : struct_info->base_classes) {
@@ -6550,7 +6563,8 @@ inline OperatorOverloadResult findUnaryOperatorOverloadWithFreeFunction(
 					}
 					const ConversionRank rank = rankImplicitObjectToOperator(operand_type_spec, member_function, operand_type_id, owner_type_id);
 					if (rank != ConversionRank::NoMatch) {
-						candidates.push_back({rank, &member_function, nullptr});
+						candidates.push_back({rank, &member_function, nullptr, owner_type_id,
+							type_info->registeredTypeIndex().withCategory(TypeCategory::Struct)});
 					}
 				}
 			}
@@ -6578,7 +6592,7 @@ inline OperatorOverloadResult findUnaryOperatorOverloadWithFreeFunction(
 			? rankBinaryOperatorOperandMatch(operand_type_spec, parameter_type_node.as<TypeSpecifierNode>(), operand_type_id)
 			: rankBinaryOperatorOperandMatch(operand_type_spec, parameter_type_node.as<TypeSpecifierNode>(), operand_type_index, nullptr);
 		if (rank != ConversionRank::NoMatch) {
-			candidates.push_back({rank, nullptr, &function});
+			candidates.push_back({rank, nullptr, &function, TypeId{}, TypeIndex{}});
 		}
 	}
 
@@ -6600,7 +6614,7 @@ inline OperatorOverloadResult findUnaryOperatorOverloadWithFreeFunction(
 		return OperatorOverloadResult::no_overload();
 	}
 	return best_candidate->free_function != nullptr ? OperatorOverloadResult(best_candidate->free_function)
-		: OperatorOverloadResult(best_candidate->member_function);
+		: OperatorOverloadResult(best_candidate->member_function, best_candidate->owner_type_id, best_candidate->compatibility_owner_type_index);
 }
 
 // Find binary operator overload in a struct type (member function form)

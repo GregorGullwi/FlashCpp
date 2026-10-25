@@ -3729,6 +3729,12 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const auto& unary = std::get<UnaryOperatorNode>(expr);
 		std::string_view op = unary.op();
 		const ASTNode& operand_node = unary.get_operand();
+		if (op == "+" || op == "-" || op == "~") {
+			semantic_analysis_.ensureUnaryArithmeticOperatorResolved(unary);
+			if (const FunctionDeclarationNode* function = unary.resolved_arithmetic_operator()) {
+				return resolveTypeSpecifierForSelfReference(function->decl_node().type_specifier_node(), function->access_owner_type_index());
+			}
+		}
 
 		if (op == "&") {
 			if (const FunctionDeclarationNode* addressed_function =

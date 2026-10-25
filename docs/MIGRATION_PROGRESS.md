@@ -16,6 +16,10 @@ Canonical inheritance classification and inherited operator traversal consume
 published TypeId class-base schemas. Binary operators retain their selected
 declaring owner through lowering; the remaining owner TypeIndex is an explicit
 ABI/layout bridge with the deletion prerequisites below.
+Unary arithmetic `+`, `-`, and `~` share selected member/free targets across
+typing, constant evaluation, and lowering, including inherited receiver adjustment.
+Post-selection access/deletion checks and ref-qualifier mangling remain in
+`KNOWN_ISSUES.md`.
 
 The architecture the remaining work builds on:
 
@@ -278,8 +282,13 @@ Continue boundary 3A in this order.
    adjustments no longer require it. Reconstructing a TypeIndex in codegen would
    hide the dependency. Retain graph-authority, metadata copy/reset and nonzero/
    virtual-base regression guards. Conversion-function declaration schemas and
-   unsupported importer shapes remain separate. Remaining unary short-base and
-   reference/value-tail lowering gaps are recorded in `KNOWN_ISSUES.md`.
+   unsupported importer shapes remain separate. Unary validation, ref-qualifier
+   mangling, and reference/value-tail lowering gaps are in `KNOWN_ISSUES.md`.
+
+   **Unary compatibility deletion:** audit no-context and unimportable operand
+   roots before removing `findUnaryOperatorOverloadCompatibility`. Also migrate
+   the separate compatibility candidate gathering in the mixed member/free
+   selector; deleting the named helper alone does not remove that dependency.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    1. **The constructibility family.** The zero-argument variants and published

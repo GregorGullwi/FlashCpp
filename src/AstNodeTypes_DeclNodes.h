@@ -3976,6 +3976,8 @@ private:
 };
 
 class UnaryOperatorNode {
+	enum class ArithmeticOperatorResolution : uint8_t { Unresolved, Builtin, Member, Free };
+
 public:
 	explicit UnaryOperatorNode(Token identifier, ASTNode operand_node, bool is_prefix = true, bool is_builtin_addressof = false)
 		: identifier_(identifier), operand_node_(operand_node), is_prefix_(is_prefix), is_builtin_addressof_(is_builtin_addressof) {}
@@ -3985,6 +3987,14 @@ public:
 	const ASTNode& get_operand() const { return operand_node_; }
 	bool is_prefix() const { return is_prefix_; }
 	bool is_builtin_addressof() const { return is_builtin_addressof_; }
+	bool has_arithmetic_operator_resolution() const { return arithmetic_operator_state_ != ArithmeticOperatorResolution::Unresolved; }
+	bool arithmetic_operator_is_member() const { return arithmetic_operator_state_ == ArithmeticOperatorResolution::Member; }
+	const FunctionDeclarationNode* resolved_arithmetic_operator() const { return resolved_arithmetic_operator_; }
+	void set_resolved_arithmetic_operator(const FunctionDeclarationNode* function, bool is_member) const {
+		resolved_arithmetic_operator_ = function;
+		arithmetic_operator_state_ = function == nullptr ? ArithmeticOperatorResolution::Builtin :
+			(is_member ? ArithmeticOperatorResolution::Member : ArithmeticOperatorResolution::Free);
+	}
 	const FunctionDeclarationNode* resolved_addressed_function() const {
 		return resolved_addressed_function_;
 	}
@@ -3998,8 +4008,10 @@ private:
 	ASTNode operand_node_;
 	bool is_prefix_;
 	bool is_builtin_addressof_; // True if created from __builtin_addressof intrinsic
+	mutable ArithmeticOperatorResolution arithmetic_operator_state_ = ArithmeticOperatorResolution::Unresolved;
 	// Contextual overload resolution records the selected function specialization.
 	const FunctionDeclarationNode* resolved_addressed_function_ = nullptr;
+	mutable const FunctionDeclarationNode* resolved_arithmetic_operator_ = nullptr;
 };
 
 class TernaryOperatorNode {

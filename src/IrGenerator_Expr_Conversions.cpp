@@ -1109,6 +1109,23 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		}
 	}
 
+	if (unaryOperatorNode.op() == "+" || unaryOperatorNode.op() == "-" || unaryOperatorNode.op() == "~") {
+		sema_.ensureUnaryArithmeticOperatorResolved(unaryOperatorNode);
+		if (const FunctionDeclarationNode* function = unaryOperatorNode.resolved_arithmetic_operator()) {
+			ChunkedVector<ASTNode> arguments;
+			if (unaryOperatorNode.arithmetic_operator_is_member()) {
+				if (!function->access_owner_type_index().is_valid()) {
+					throw InternalError("Selected unary operator lacks its declaration owner");
+				}
+				CallExprNode call = makeResolvedMemberCallExpr(unaryOperatorNode.get_operand(), *function, std::move(arguments), unaryOperatorNode.get_token());
+				return generateMemberFunctionCallIr(call, context, nullptr, function->access_owner_type_index());
+			}
+			arguments.push_back(unaryOperatorNode.get_operand());
+			CallExprNode call = makeResolvedCallExpr(*function, std::move(arguments), unaryOperatorNode.get_token());
+			return generateFunctionCallIr(call, context, &unaryOperatorNode);
+		}
+	}
+
 	auto tryBuildIdentifierOperand = [&](const IdentifierNode& identifier, ExprResult& out) -> bool {
 			// Phase 4: Using StringHandle for lookup
 		StringHandle identifier_handle = StringTable::getOrInternStringHandle(identifier.name());
@@ -1864,97 +1881,6 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 				if (auto fp_operands = decayLambdaStructToFunctionPointer(*struct_info, unaryOperatorNode.get_token())) {
 					return *fp_operands;
 				}
-			}
-		}
-	}
-
-	if (operandType == TypeCategory::Struct &&
-		(unaryOperatorNode.op() == "+" || unaryOperatorNode.op() == "-" || unaryOperatorNode.op() == "~")) {
-		TypeIndex operand_type_index = operandIrOperands.type_index;
-		if (!operand_type_index.is_valid() && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
-			TypeSpecifierQueryResult operand_type_query =
-				sema_.parserSemanticServices().getExpressionTypeQueryFromLowering(unaryOperatorNode.get_operand());
-			if (operand_type_query.state == TypeSpecifierQueryResult::State::Available &&
-				operand_type_query.type.has_value()) {
-				operand_type_index = operand_type_query.type->type_index();
-			}
-		}
-
-		if (operand_type_index.is_valid()) {
-			OverloadableOperator op_kind = OverloadableOperator::None;
-			if (unaryOperatorNode.op() == "+") {
-				op_kind = OverloadableOperator::Plus;
-			} else if (unaryOperatorNode.op() == "-") {
-				op_kind = OverloadableOperator::Minus;
-			} else {
-				op_kind = OverloadableOperator::BitwiseNot;
-			}
-
-			const StructMemberFunction* matched_func = nullptr;
-			if (const TypeInfo* operand_type_info = tryGetTypeInfo(operand_type_index)) {
-				if (const StructTypeInfo* struct_info = operand_type_info->getStructInfo()) {
-					for (const auto& member_func : struct_info->member_functions) {
-						if (member_func.operator_kind != op_kind ||
-							!member_func.function_decl.is<FunctionDeclarationNode>()) {
-							continue;
-						}
-						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-						if (func_decl.parameter_nodes().empty()) {
-							matched_func = &member_func;
-							break;
-						}
-					}
-				}
-			}
-
-			if (matched_func) {
-				const auto& func_decl = matched_func->function_decl.as<FunctionDeclarationNode>();
-				TypeSpecifierNode return_type = func_decl.decl_node().type_specifier_node();
-				resolveSelfReferentialType(return_type, operand_type_index);
-				std::string_view struct_name =
-					StringTable::getStringView(getTypeInfo(operand_type_index).name());
-				const OwnerManglingInfo owner_info =
-					resolveOwnerManglingInfoForMangling(struct_name, func_decl.namespace_handle());
-				auto op_func_name =
-					StringBuilder().append("operator").append(overloadableOperatorToString(op_kind)).commit();
-				auto mangled_name = NameMangling::generateMangledName(
-					op_func_name,
-					return_type,
-					std::vector<TypeSpecifierNode>{},
-					false,
-					owner_info.owner_name_for_mangling,
-					owner_info.owner_namespace_handle,
-					Linkage::CPlusPlus,
-					matched_func->is_const());
-
-				TempVar ret_var = var_counter.next();
-				CallOp call_op = createCallOp(ret_var, mangled_name, return_type, true, false);
-				call_op.applyFunctionControlFlow(func_decl);
-				if (needsHiddenReturnParam(return_type, context_->isLLP64())) {
-					call_op.return_slot = ret_var;
-				}
-
-				TempVar this_addr = var_counter.next();
-				AddressOfOp addr_op;
-				addr_op.result = this_addr;
-				addr_op.operand = toTypedValue(operandIrOperands);
-				addr_op.operand.pointer_depth = PointerDepth{};
-				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), unaryOperatorNode.get_token()));
-
-				TypedValue this_arg = makeMemberThisCallArgument(
-					operand_type_index.withCategory(operandType),
-					IrValue(this_addr));
-				call_op.args.push_back(std::move(this_arg));
-
-				const int result_size = call_op.return_size_in_bits.value;
-				const TypeIndex result_type_index = call_op.return_type_index;
-				const TypeCategory result_type = call_op.returnType();
-				ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), unaryOperatorNode.get_token()));
-				return makeExprResult(result_type_index.withCategory(result_type),
-									  SizeInBits{result_size},
-									  ret_var,
-									  PointerDepth{},
-									  ValueStorage::ContainsData);
 			}
 		}
 	}

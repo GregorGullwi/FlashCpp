@@ -10,6 +10,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 }
 
 ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key) {
+	return generateMemberFunctionCallIr(callExprNode, context, sema_call_key, TypeIndex{});
+}
+
+ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key,
+	TypeIndex receiver_owner_type_index) {
 	std::vector<IrOperand> irOperands;
 	irOperands.reserve(5 + callExprNode.arguments().size() * 4); // ret + name + this + ~4 per arg
 
@@ -25,8 +30,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		sema_resolved_direct_query.state == ResolvedFunctionQueryResult::State::Available
 			? sema_resolved_direct_query.function
 			: nullptr;
-	const bool has_sema_resolved_member_target =
-		sema_resolved_member_func != nullptr;
+	const bool has_sema_resolved_member_target = sema_resolved_member_func != nullptr || receiver_owner_type_index.is_valid();
 	if (sema_call_key != nullptr &&
 		sema_normalized_current_function_ &&
 		parser_member_func_decl == nullptr &&
@@ -2048,6 +2052,20 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		// 'this' is always passed as a pointer in the ABI, never as a by-value aggregate.
 		if (!object_type.type_index().is_valid()) {
 			throw InternalError("Member function 'this' argument requires canonical class type identity");
+		}
+		if (receiver_owner_type_index.is_valid() && receiver_owner_type_index != object_type.type_index()) {
+			if ((object_type.is_reference() || object_type.is_rvalue_reference()) &&
+				(std::holds_alternative<LocalVarId>(this_arg_value) || std::holds_alternative<StringHandle>(this_arg_value))) {
+				this_arg_value = emitAddressOf(TypeCategory::Struct, object_type.size_in_bits(), this_arg_value, callExprNode.called_from());
+			}
+			const IrOperand pointer_value = std::visit([](const auto& value) -> IrOperand { return value; }, this_arg_value);
+			ExprResult pointer = makeExprResult(object_type.type_index().withCategory(TypeCategory::Struct), SizeInBits{POINTER_SIZE_BITS},
+				pointer_value, PointerDepth{1}, ValueStorage::ContainsData);
+			pointer = adjustDerivedToBasePointer(pointer, object_type.type_index().withCategory(TypeCategory::Struct),
+				receiver_owner_type_index.withCategory(TypeCategory::Struct), PointerDepth{1}, callExprNode.called_from());
+			this_arg_value = toIrValue(pointer.value);
+			this_arg_is_pointer_value = true;
+			this_arg_storage = ValueStorage::ContainsAddress;
 		}
 		TypedValue this_arg = makeMemberThisCallArgument(
 			object_type.type_index().withCategory(object_type.type()),

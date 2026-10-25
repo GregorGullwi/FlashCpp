@@ -1,16 +1,28 @@
 # Known Issues
 
-## Inherited unary minus on a short-backed class can return the wrong value
+## Selected unary arithmetic operators need access and deletion validation
 
-`struct Base { short value; int operator-() const { return -value; } };`
-followed by `struct Derived : Base {};` and
-`int main() { Derived x; x.value = 7; return -x == -7 ? 0 : 1; }`
-returns 1 instead of 0. The same operator declared directly on the operand's
-class, and a named member function returning `-value`, both pass. Using an int
-field in the inherited case also passes. This is separate from inherited binary
-operator call-target ownership, which now preserves the selected declaring owner.
-Investigate inherited unary member-call lowering and small-base receiver/result
-metadata at the sema/lowering boundaries; do not change overload ranking to hide it.
+The shared selection path for overloaded unary `+`, `-`, and `~` does not yet
+perform all post-selection checks for deleted functions and member access.
+Its synthetic member calls can bypass ordinary call validation. For example,
+`class Value { int operator-() const { return 1; } };` must reject `-object`
+outside the class; a selected `operator-() = delete` must also be diagnosed.
+Free deleted operators need the same consistent post-selection diagnostic.
+Add these checks after overload selection, preserving legal member and friend
+access and reporting the unary expression's source token. Cover deleted member
+and free operators, private/protected rejection, and permitted member/friend
+uses before treating unary operator validation as complete.
+
+## Member-function ref qualifiers are missing from mangled names
+
+Two member overloads with identical names, cv, parameter and return types but
+opposite `&`/`&&` qualifiers receive the same generated symbol. For example,
+`struct Value { int operator-() & { return 17; } int operator-() && { return 91; } };`
+should let `Value x;` satisfy `-x == 17 && -Value{} == 91`. Selection can distinguish
+the ref qualifiers, but codegen treats one definition as a duplicate and both calls
+reach the same body. Distinct return types currently yield distinct symbols and
+avoid the collision. The ABI/mangling boundary must encode the function reference
+qualifier for definitions and calls; do not change overload ranking to hide it.
 
 ## Conversion-function value base tails need base-object materialization
 
