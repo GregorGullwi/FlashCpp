@@ -582,11 +582,12 @@ Continue boundary 3A in this order.
       The sharded build is `/Od`, so there is no `-fstack-usage` number.
 
 3. **Complete importer and declarator coverage.** An ordered declarator around
-   an alias that is an array, a reference, or a member pointer keeps that
-   wrapper as the inner type.
+   an alias that is an array, a reference, a member pointer, or a function
+   keeps that wrapper as the inner type.
    `tests/test_ordered_alias_wrapper_declarator_ret0.cpp` checks `Row (*p)[2]`,
    `Field (*p)[2]`, `Ref (*p)()`, and an ordered array alias under another
-   declarator. A free-function alias stays rejected. Keep member `TypeId`s
+   declarator. `tests/test_ordered_function_alias_declarator_ret0.cpp` checks
+   `F (*p)`, `const F*`, and a pointer to an array of function pointers. Keep member `TypeId`s
    preserved through every AST copy and substitution route. Remaining: a fully
    non-projectable ordered-spine `decltype` dereference (deferred to sema) and a
    call or xvalue operand whose value category the parser does not know at parse

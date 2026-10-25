@@ -1693,6 +1693,19 @@ ParseResult Parser::parse_declarator(
 									{});
 							}
 						}
+						// [dcl.fct]: the denoted type may be a function. A pointer or
+						// reference to it is well-formed. An array of that function,
+						// or a function returning it, is not.
+						if (base_type.has_function_signature() && base_type.category() == TypeCategory::Function &&
+							!base_type.has_member_class() && base_type.pointer_depth() == 0 &&
+							base_type.reference_qualifier() == ReferenceQualifier::None && !completed.empty()) {
+							const DeclaratorComponentKind innermost = completed.back().kind;
+							if (innermost == DeclaratorComponentKind::Array || innermost == DeclaratorComponentKind::UnknownBoundArray ||
+								innermost == DeclaratorComponentKind::Function) {
+								failed = true;
+								break;
+							}
+						}
 						if (!completed_functions.empty()) {
 							if (orderedFunctionComponentIsIllFormed(completed)) {
 								failed = true;
