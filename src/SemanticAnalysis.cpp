@@ -6511,7 +6511,7 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 			[](const DeclaratorComponent& component) {
 				return component.kind == DeclaratorComponentKind::MemberFunctionPointer;
 			});
-		if (resolved_syntax.ordered_declarator_has_legacy_projection() && !has_member_function_pointer) {
+		if (!alias_components.empty() && resolved_syntax.ordered_declarator_has_legacy_projection() && !has_member_function_pointer) {
 			// Projectable shapes are reimported from these flat fields. The alias
 			// wrappers are only in the composed spine, so the descriptor must
 			// carry that projection or the publisher rebuilds the outer declarator.
@@ -6529,7 +6529,7 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 			desc.has_unsized_outer_array_dimension = resolved_syntax.has_unsized_outer_array_dimension();
 			desc.ref_qualifier = resolved_syntax.reference_qualifier();
 			desc.base_cv = resolved_syntax.cv_qualifier();
-		} else {
+		} else if (!resolved_syntax.ordered_declarator_has_legacy_projection() || has_member_function_pointer) {
 			desc.structural_type_id = *imported;
 		}
 		// [dcl.ptr]/1: a pointer whose immediate pointee is an array designates
