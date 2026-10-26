@@ -3061,8 +3061,10 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 						throw InternalError("Sema missed the selected base copy/move constructor");
 					TypeSpecifierNode target_object_type = param_type;
 					target_object_type.set_reference_qualifier(ReferenceQualifier::None);
+					const int64_t published_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
+						from_desc.type_index, to_desc.type_index).value_or(base_conversion.offset);
 					auto materialized = materializeSelectedConvertingConstructor(arg_result, arg_expr, target_object_type,
-						*ci.selected_constructor, source_token, false, base_conversion.offset);
+						*ci.selected_constructor, source_token, false, published_offset);
 					if (!materialized)
 						throw InternalError("Failed to materialize derived-to-base constructor argument");
 					arg_result = *materialized;
@@ -3391,6 +3393,8 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 
 			TypeSpecifierNode target_object_type = param_type;
 			target_object_type.set_reference_qualifier(ReferenceQualifier::None);
+			const int64_t published_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
+				from_desc.type_index, to_desc.type_index).value_or(base_conversion.offset);
 			auto materialized = materializeSelectedConvertingConstructor(
 				arg_result,
 				arg_expr,
@@ -3398,7 +3402,7 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 				*cast_info.selected_constructor,
 				source_token,
 				false,
-				base_conversion.offset);
+				published_offset);
 			if (!materialized)
 				throw InternalError("Failed to materialize derived-to-base reference temporary");
 			registerStructTempDestructorIfNeeded(*materialized);
@@ -3531,7 +3535,8 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 			virtual_base_conversion = base_conversion;
 			effective_source_base_class_offset.reset();
 		} else if (!effective_source_base_class_offset.has_value()) {
-			effective_source_base_class_offset = base_conversion.offset;
+			effective_source_base_class_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
+				source_result.type_index, target_type.type_index()).value_or(base_conversion.offset);
 		}
 	}
 
@@ -3692,7 +3697,8 @@ std::optional<ExprResult> AstToIr::tryMaterializeSemaSelectedConvertingConstruct
 		if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
 			base_conversion.kind != DerivedBaseConversionKind::PublicVirtual)
 			throw InternalError("Sema selected a derived-to-base constructor for unrelated types");
-		source_base_class_offset = base_conversion.offset;
+		source_base_class_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
+			source_desc.type_index, target_desc.type_index).value_or(base_conversion.offset);
 	}
 
 	return materializeSelectedConvertingConstructor(

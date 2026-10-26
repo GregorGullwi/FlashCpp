@@ -23,10 +23,10 @@ adjustment/validation now take virtual-base table indices from
 `tryFindPublishedVirtualBaseIndex`, so all runtime virtual adjustments consume
 the published TypeId facts and fail closed when a virtual conversion has no
 published entry. `DerivedBaseConversionInfo` no longer carries a legacy
-`virtual_base_index`. Runtime nonvirtual and complete-object static offsets now
-prefer `tryFindPublishedDerivedBaseOffset` and fall back to the classifier only
-when the canonical importer cannot represent a specialization base; constructor
-paths still consume the legacy offset field.
+`virtual_base_index`. Runtime and constructor derived-to-base offsets now prefer
+`tryFindPublishedDerivedBaseOffset`; the classifier offset remains only as a
+compatibility fallback when the canonical importer cannot represent a
+specialization base.
 `StructTypeInfo::isAggregate` now excludes
 classes with any reachable virtual base, not only direct virtual bases, so an
 indirectly virtual diamond follows its most-derived constructor and installs the
@@ -302,25 +302,25 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Next slice: migrate constructor-path derived-to-base offsets and the
-   binary/range owner-index fields.** Runtime adjustment consumers now prefer
-   the canonical class-base graph, with a compatibility fallback for
-   specialization bases the importer cannot represent. Constructor
-   normalization/lowering still reads `DerivedBaseConversionInfo.offset`, and
-   binary/range call selection still carries TypeIndex owners. Move those
-   consumers onto the selected plan, then delete the remaining owner-index
-   fields.
+   **Next slice: migrate the binary/range owner-index fields.** Runtime and
+   constructor derived-to-base offsets now prefer the canonical class-base
+   graph, with a compatibility fallback for specialization bases the importer
+   cannot represent. Binary and range call selection still carries TypeIndex
+   owners. Move those selections onto the published plan, then remove the
+   fallback and the remaining owner-index fields once the importer covers the
+   specialization bases.
 
    **Owner-index deletion gates:** virtual-base ABI facts are published by class
-   TypeIds and consumed by AstToIr, explicit-cast, and IRConverter adjustments;
-   the legacy virtual index field is deleted. Runtime nonvirtual offsets prefer
-   canonical graph offsets, while constructor paths and binary/range call
-   selection still use TypeIndex owners. Delete the remaining owner-index
-   fields only after those consumers select the plan. Reconstructing a TypeIndex
-   in codegen would hide the dependency. Retain graph-authority, metadata
-   copy/reset and nonzero/virtual-base regression guards. Conversion-function
-   declaration schemas and unsupported importer shapes remain separate.
-   Reference/value-tail lowering gaps are in `KNOWN_ISSUES.md`.
+   TypeIds and consumed by AstToIr, explicit-cast, IRConverter, and constructor
+   adjustments; the legacy virtual index field is deleted. Nonvirtual offsets
+   prefer canonical graph offsets, with the classifier retained only as a
+   compatibility fallback. Binary/range call selection still uses TypeIndex
+   owners. Delete the remaining owner-index fields only after those consumers
+   select the plan. Reconstructing a TypeIndex in codegen would hide the
+   dependency. Retain graph-authority, metadata copy/reset and nonzero/virtual-
+   base regression guards. Conversion-function declaration schemas and
+   unsupported importer shapes remain separate. Reference/value-tail lowering
+   gaps are in `KNOWN_ISSUES.md`.
 
    **Unary compatibility deletion:** audit no-context and unimportable operand
    roots before removing `findUnaryOperatorOverloadCompatibility`. Also migrate
