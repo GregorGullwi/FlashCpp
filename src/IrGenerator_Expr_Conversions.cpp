@@ -693,16 +693,19 @@ ExprResult AstToIr::adjustDerivedToBaseAddress(
 		adjust_op.virtual_base_index = *published_virtual_base_index;
 		ir_.addInstruction(IrInstruction(IrOpcode::VirtualBaseAdjust, std::move(adjust_op), source_token));
 	} else {
-		const int64_t published_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
-			source_type_index, target_type_index).value_or(base_conversion.offset);
-		if (published_offset > std::numeric_limits<int>::max()) {
+		const std::optional<int64_t> published_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
+			source_type_index, target_type_index);
+		if (!published_offset.has_value()) {
+			throw InternalError("Finalized derived-to-base conversion is missing its published offset");
+		}
+		if (*published_offset > std::numeric_limits<int>::max()) {
 			throw InternalError("Derived-to-base subobject offset exceeds IR range");
 		}
 		ComputeAddressOp address_op;
 		address_op.result = adjusted_address;
 		address_op.base = source;
 		address_op.base_storage = ValueStorage::ContainsAddress;
-		address_op.total_member_offset = static_cast<int>(published_offset);
+		address_op.total_member_offset = static_cast<int>(*published_offset);
 		address_op.result_type_index = target_type_index;
 		address_op.result_size_bits = target_size_bits;
 		ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(address_op), source_token));
@@ -774,9 +777,12 @@ ExprResult AstToIr::adjustDerivedToBasePointer(
 		ir_.addInstruction(IrInstruction(IrOpcode::VirtualBaseAdjust, std::move(adjust_op), source_token));
 		adjusted_value = adjusted_pointer;
 	} else {
-		const int64_t published_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
-			source_type_index, target_type_index).value_or(base_conversion.offset);
-		if (published_offset != 0) {
+		const std::optional<int64_t> published_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
+			source_type_index, target_type_index);
+		if (!published_offset.has_value()) {
+			throw InternalError("Finalized derived-to-base pointer conversion is missing its published offset");
+		}
+		if (*published_offset != 0) {
 			if (!std::holds_alternative<TempVar>(source_pointer.value) &&
 				!std::holds_alternative<StringHandle>(source_pointer.value) &&
 				!std::holds_alternative<unsigned long long>(source_pointer.value)) {
@@ -790,7 +796,7 @@ ExprResult AstToIr::adjustDerivedToBasePointer(
 			add_offset.rhs = makeTypedValue(
 				TypeCategory::UnsignedLongLong,
 				SizeInBits{POINTER_SIZE_BITS},
-				static_cast<unsigned long long>(published_offset));
+				static_cast<unsigned long long>(*published_offset));
 			add_offset.result = var_counter.next();
 			const TempVar adjusted_pointer = std::get<TempVar>(add_offset.result);
 			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), source_token));
@@ -3061,10 +3067,13 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 						throw InternalError("Sema missed the selected base copy/move constructor");
 					TypeSpecifierNode target_object_type = param_type;
 					target_object_type.set_reference_qualifier(ReferenceQualifier::None);
-					const int64_t published_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
-						from_desc.type_index, to_desc.type_index).value_or(base_conversion.offset);
+					const std::optional<int64_t> published_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
+						from_desc.type_index, to_desc.type_index);
+					if (!published_offset.has_value()) {
+						throw InternalError("Derived-to-base constructor argument is missing its published offset");
+					}
 					auto materialized = materializeSelectedConvertingConstructor(arg_result, arg_expr, target_object_type,
-						*ci.selected_constructor, source_token, false, published_offset);
+						*ci.selected_constructor, source_token, false, *published_offset);
 					if (!materialized)
 						throw InternalError("Failed to materialize derived-to-base constructor argument");
 					arg_result = *materialized;
@@ -3393,8 +3402,11 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 
 			TypeSpecifierNode target_object_type = param_type;
 			target_object_type.set_reference_qualifier(ReferenceQualifier::None);
-			const int64_t published_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
-				from_desc.type_index, to_desc.type_index).value_or(base_conversion.offset);
+			const std::optional<int64_t> published_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
+				from_desc.type_index, to_desc.type_index);
+			if (!published_offset.has_value()) {
+				throw InternalError("Derived-to-base reference temporary is missing its published offset");
+			}
 			auto materialized = materializeSelectedConvertingConstructor(
 				arg_result,
 				arg_expr,
@@ -3402,7 +3414,7 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 				*cast_info.selected_constructor,
 				source_token,
 				false,
-				published_offset);
+				*published_offset);
 			if (!materialized)
 				throw InternalError("Failed to materialize derived-to-base reference temporary");
 			registerStructTempDestructorIfNeeded(*materialized);
@@ -3535,8 +3547,12 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 			virtual_base_conversion = base_conversion;
 			effective_source_base_class_offset.reset();
 		} else if (!effective_source_base_class_offset.has_value()) {
-			effective_source_base_class_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
-				source_result.type_index, target_type.type_index()).value_or(base_conversion.offset);
+			const std::optional<int64_t> published_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
+				source_result.type_index, target_type.type_index());
+			if (!published_offset.has_value()) {
+				throw InternalError("Selected derived-to-base constructor is missing its published offset");
+			}
+			effective_source_base_class_offset = *published_offset;
 		}
 	}
 
@@ -3697,8 +3713,12 @@ std::optional<ExprResult> AstToIr::tryMaterializeSemaSelectedConvertingConstruct
 		if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
 			base_conversion.kind != DerivedBaseConversionKind::PublicVirtual)
 			throw InternalError("Sema selected a derived-to-base constructor for unrelated types");
-		source_base_class_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
-			source_desc.type_index, target_desc.type_index).value_or(base_conversion.offset);
+		const std::optional<int64_t> published_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
+			source_desc.type_index, target_desc.type_index);
+		if (!published_offset.has_value()) {
+			throw InternalError("Sema-selected derived-to-base constructor is missing its published offset");
+		}
+		source_base_class_offset = *published_offset;
 	}
 
 	return materializeSelectedConvertingConstructor(

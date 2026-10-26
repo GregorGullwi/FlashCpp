@@ -1079,13 +1079,16 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 				return makeExprResult(target_type_index, SizeInBits{64}, IrOperand{adjusted_ptr}, PointerDepth{static_cast<int>(target_pointer_depth)}, ValueStorage::ContainsData);
 			}
 			if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual) {
-				const int64_t published_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
-					source_type_index, target_type_index).value_or(base_conversion.offset);
-				if (published_offset > 0) {
+				const std::optional<int64_t> published_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
+					source_type_index, target_type_index);
+				if (!published_offset.has_value()) {
+					throw InternalError("Finalized derived-to-base pointer cast is missing its published offset");
+				}
+				if (*published_offset > 0) {
 					TempVar adjusted_ptr = var_counter.next();
 					BinaryOp add_offset;
 					add_offset.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, toIrValue(expr_operands.value));
-					add_offset.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(published_offset));
+					add_offset.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(*published_offset));
 					add_offset.result = adjusted_ptr;
 					ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), staticCastNode.cast_token()));
 					return makeExprResult(target_type_index, SizeInBits{64}, IrOperand{adjusted_ptr},

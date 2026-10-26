@@ -7046,7 +7046,12 @@ std::optional<int64_t> IrToObjConverter<TWriterClass>::findBaseOffsetWithinDeriv
 		classifyDerivedBaseConversion(derived_type, base_type);
 	if (conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual)
 		return std::nullopt;
-	return tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(), derived_type, base_type).value_or(conversion.offset);
+	const std::optional<int64_t> published_offset =
+		tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(), derived_type, base_type);
+	if (!published_offset.has_value()) {
+		throw InternalError("Derived-to-base pointer adjustment is missing its published offset");
+	}
+	return published_offset;
 }
 
 template <class TWriterClass>
