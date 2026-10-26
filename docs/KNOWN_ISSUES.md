@@ -33,19 +33,6 @@ class-value slicing. Boundary 9 must carry the selected base constructor into
 lowering and reuse the base-object materialization path; a raw byte copy would
 incorrectly bypass nontrivial copy/move semantics.
 
-## Const lvalue reference binding through a conversion-operator base tail reads the wrong object
-
-A conversion operator returning `Derived&` followed by a derived-to-base tail can
-bind a `const Base&` reference argument or variable to a temporary that does not
-hold the converted subobject. With `struct Base { int value; }; struct Derived :
-Base {}; struct Source { Derived derived; operator Derived&() { return derived;
-} }; int take(const Base& value) { return value.value; }`, setting
-`source.derived.value = 41` and calling `take(source)` returns an unrelated value,
-while `take(Base&)` preserves it. The binding lowering must take the address of
-the converted lvalue subobject instead of materializing a temporary from the
-converted result. Access checking is separate and now applies to all
-reference-binding consumers.
-
 ## Expression parsing can overflow a 1 MB native stack before callable sema
 
 The 16-level `test_deep_callable_chain_ret0.cpp` passes with the shipping Windows

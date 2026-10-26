@@ -3536,6 +3536,11 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCallInternal(
 		false);
 	call_op.applyFunctionControlFlow(func_decl);
 	call_op.result_destination = result_destination;
+	const bool conversion_returns_reference = conversion_return_type.is_reference() || conversion_return_type.is_rvalue_reference();
+	if (conversion_returns_reference) {
+		populateReferenceReturnInfo(call_op, conversion_return_type);
+		call_op.return_size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+	}
 	if (needsHiddenReturnParam(conversion_return_type, context_->isLLP64())) {
 		call_op.return_slot = result_var;
 	}
@@ -3632,6 +3637,12 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCallInternal(
 
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), token));
 
+	if (conversion_returns_reference && !result_destination.has_value()) {
+		// A reference-returning conversion call produced a 64-bit object address in
+		// RAX. Keep it as an lvalue address instead of treating the pointer bits as
+		// the referred-to object value.
+		return buildCallReturnResult(conversion_return_type, result_var, ExpressionContext::Load, token);
+	}
 	const IrOperand result_value = result_destination.has_value() ? IrOperand{*result_destination} : IrOperand{result_var};
 	return makeExprResult(target_type_index, SizeInBits{target_size_bits}, result_value, PointerDepth{}, ValueStorage::ContainsData);
 }
@@ -3662,6 +3673,7 @@ std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCallInterna
 		conversion_return_type_index = nativeTypeIndex(conversion_return_type.category());
 	}
 	const CanonicalTypeId conversion_return_type_id = sema_.canonicalizeTypeForImplicitConversion(conversion_return_type);
+	const bool conversion_returns_reference = conversion_return_type.is_reference() || conversion_return_type.is_rvalue_reference();
 	const bool conversion_returns_member_object_pointer = sema_.isMemberObjectPointerType(conversion_return_type_id);
 	const TypeIndex conversion_result_type_index = conversion_returns_member_object_pointer
 		? conversion_return_type_index.withCategory(TypeCategory::MemberObjectPointer) : conversion_return_type_index;
@@ -3684,6 +3696,24 @@ std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCallInterna
 	}
 	if (!result.has_value() || cast_info.trailing_standard_conversion == StandardConversionKind::None) {
 		return result;
+	}
+	if (cast_info.trailing_standard_conversion == StandardConversionKind::DerivedToBase &&
+		conversion_returns_reference &&
+		conversion_return_type.category() == TypeCategory::Struct &&
+		result->storage == ValueStorage::ContainsAddress) {
+		const CanonicalTypeDesc& destination_desc = sema_.typeContext().get(cast_info.target_type_id);
+		int target_size_bits = 0;
+		if (const TypeInfo* target_info = destination_desc.type_index.is_valid() ? tryGetTypeInfo(destination_desc.type_index) : nullptr) {
+			if (const StructTypeInfo* target_struct_info = target_info->getStructInfo();
+				target_struct_info != nullptr && target_struct_info->sizeInBits().is_set()) {
+				target_size_bits = static_cast<int>(target_struct_info->sizeInBits().value);
+			}
+		}
+		if (target_size_bits <= 0) {
+			throw InternalError("Reference conversion tail is missing the target object size");
+		}
+		return adjustDerivedToBaseAddress(std::move(*result), conversion_return_type_index, destination_desc.type_index,
+			SizeInBits{target_size_bits}, token);
 	}
 	if (cast_info.trailing_standard_conversion == StandardConversionKind::PointerConversion) {
 		const CanonicalTypeDesc& conversion_return_desc = sema_.typeContext().get(conversion_return_type_id);

@@ -202,8 +202,12 @@ The architecture the remaining work builds on:
   Selected conversion-operator access and base-tail checks share
   `checkSelectedConversionOperatorAccess`; call-argument reference bindings and
   brace reference initialization apply it, covered by
-  `test_private_conversion_reference_*_e1617.cpp`. The remaining const-lvalue
-  conversion-tail value gap is in `KNOWN_ISSUES.md`.
+  `test_private_conversion_reference_*_e1617.cpp`. A reference-returning
+  conversion operator now uses reference-return call ABI, and its
+  derived-to-base tail adjusts the converted lvalue address instead of
+  materializing a temporary from the result value. Copy-initialization and call
+  arguments for a nonzero base offset are covered by
+  `test_conversion_operator_const_reference_base_tail_ret0.cpp`.
   Named function expressions retain their function type until reference binding
   or value decay is selected. Call lowering preserves the pointer-sized address
   for function-to-pointer decay, including callable aliases with a function base.
