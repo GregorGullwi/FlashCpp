@@ -3690,6 +3690,36 @@ TEST_CASE("Canonical function-template ordering handles trailing type packs") {
 	CHECK(ordering == CanonicalTemplatePartialOrdering::SecondMoreSpecialized);
 }
 
+TEST_CASE("Canonical function-template ordering binds typed integral values") {
+	CanonicalTypeTable table;
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TemplateDeclId owner{965};
+	const TemplateDeclId environment{966};
+	const auto function = [&](CanonicalTemplateArgument argument) {
+		const CanonicalTemplateArgument arguments[] = {argument};
+		const TypeId parameters[] = {table.templateSpecialization(owner, arguments)};
+		return table.function(integer, parameters, false, CVQualifier::None, ReferenceQualifier::None, false,
+			CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	};
+	const TypeId one = table.integralValue(integer, 1);
+	const TypeId two = table.integralValue(integer, 2);
+	const CanonicalFunctionTemplateTypePattern parameter{
+		function(CanonicalTemplateArgument::makeNonType(ExprId{967})), std::nullopt, std::nullopt,
+		{{ExprId{967}, CanonicalTemplateNonTypeArgumentKind::TemplateParameter, environment, 0, integer}}};
+	const CanonicalFunctionTemplateTypePattern first{
+		function(CanonicalTemplateArgument::makeIntegral(one)), std::nullopt, std::nullopt, {}};
+	const CanonicalFunctionTemplateTypePattern second{
+		function(CanonicalTemplateArgument::makeIntegral(two)), std::nullopt, std::nullopt, {}};
+	const auto deduction = deduceCanonicalFunctionTemplateType(table, parameter, first, environment);
+	REQUIRE(deduction.status == CanonicalTemplateDeductionStatus::Match);
+	REQUIRE(deduction.non_type_bindings.size() == 1);
+	CHECK(deduction.non_type_bindings.front().argument.is_integral);
+	CHECK(deduction.non_type_bindings.front().argument.integral_value == one);
+	CHECK(deduceCanonicalFunctionTemplateType(table, first, first, environment).status == CanonicalTemplateDeductionStatus::Match);
+	CHECK(deduceCanonicalFunctionTemplateType(table, first, second, environment).status == CanonicalTemplateDeductionStatus::Mismatch);
+	CHECK(deduceCanonicalFunctionTemplateType(table, first, parameter, environment).status == CanonicalTemplateDeductionStatus::Mismatch);
+}
+
 TEST_CASE("Canonical function-template ordering binds direct integral NTTPs by identity") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();
@@ -4476,7 +4506,11 @@ template<int N, class R, bool B, class A> using Callback = R (*)(Parameter<A>) n
 		}
 		const FunctionSignature deferred = substituteTemplateFunctionSignatureTypes(alias_node.target_type_node().function_signature(),
 			alias_node.template_parameters(), deferred_arguments, table, *alias);
-		CHECK(table.hasDependentTypeComponents(deferred.parameter_types().front().canonical_type_id));
+		if (unexpanded_pack) {
+			CHECK(table.hasDependentTypeComponents(deferred.parameter_types().front().canonical_type_id));
+		} else {
+			CHECK(deferred.parameter_types().front().canonical_type_id == table.builtin(CanonicalBuiltinKind::Short));
+		}
 	}
 	FunctionSignature deep = alias_node.target_type_node().function_signature();
 	TypeId expected_parameter = parameter_types.front();
@@ -4501,6 +4535,75 @@ template<int N, class R, bool B, class A> using Callback = R (*)(Parameter<A>) n
 	std::array<CanonicalTemplateArgument, 4> invalid = canonical_arguments;
 	invalid.front().expr = {};
 	CHECK_THROWS_AS(table.substitute(table.templateParameter(*alias, 3), *alias, invalid), InternalError);
+}
+
+TEST_CASE("Integral NTTP syntax and declaration imports share converted identity") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+template<unsigned I> struct Cell { short value; };
+struct Padding { long long guard; };
+template<unsigned I> struct Next : Padding, Cell<I + 1> {};
+template<auto Value> struct Deduced {};
+template<int Value> struct Fixed {};
+template<bool Value> struct Flag {};
+template<unsigned Value = 1> struct Defaulted {};
+enum class Code : unsigned short { chosen = 7 };
+template<Code Value> struct EnumFixed {};
+using Spelled = Cell<1u>;
+using Derived = Next<0u>;
+using Signed = Deduced<1>;
+using Unsigned = Deduced<1u>;
+using FixedSigned = Fixed<1>;
+using FixedUnsigned = Fixed<1u>;
+using Boolean = Flag<true>;
+using Default = Defaulted<>;
+using ExplicitDefault = Defaulted<1u>;
+using Enumeration = EnumFixed<Code::chosen>;
+int main() { Derived object; object.value = 41; return object.value; }
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("integral_nttp_import.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto import_alias = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const TypeId spelled = import_alias("Spelled");
+	const TypeId derived = import_alias("Derived");
+	const TypeId link = table.templateSpecializationArguments(spelled);
+	REQUIRE(table.templateArgumentKind(link) == CanonicalTemplateArgKind::Integral);
+	const TypeId value = table.templateArgumentIntegral(link);
+	CHECK(table.node(value).child == table.builtin(CanonicalBuiltinKind::UnsignedInt));
+	CHECK(table.node(value).array_extent == 1);
+	CHECK(import_alias("Signed") != import_alias("Unsigned"));
+	CHECK(import_alias("FixedSigned") == import_alias("FixedUnsigned"));
+	CHECK(import_alias("Default") == import_alias("ExplicitDefault"));
+	const TypeId boolean = table.templateArgumentIntegral(table.templateSpecializationArguments(import_alias("Boolean")));
+	CHECK(table.node(boolean).child == table.builtin(CanonicalBuiltinKind::Bool));
+	CHECK(table.node(boolean).array_extent == 1);
+	const TypeId enumeration = table.templateArgumentIntegral(table.templateSpecializationArguments(import_alias("Enumeration")));
+	CHECK(table.node(table.node(enumeration).child).kind == CanonicalTypeKind::Enum);
+	CHECK(table.node(enumeration).array_extent == 7);
+	const TypeInfo* derived_alias = findTypeByName(StringTable::getOrInternStringHandle("Derived"));
+	REQUIRE(derived_alias != nullptr);
+	const TypeInfo* derived_info = resolveAliasTypeInfo(derived_alias->type_index_).terminal_type_info;
+	REQUIRE(derived_info != nullptr);
+	const StructTypeInfo* record = derived_info->getStructInfo();
+	REQUIRE(record != nullptr);
+	REQUIRE(record->declaration_node != nullptr);
+	const CanonicalTypeImport declaration = importCanonicalClassDeclaration(table, *record->declaration_node);
+	REQUIRE(declaration.status == CanonicalTypeImportStatus::Supported);
+	CHECK(declaration.type == derived);
+	CHECK(tryFindPublishedDerivedBaseOffset(table, derived, spelled) == 8);
 }
 
 TEST_CASE("Canonical adapter imports the source corpus at publication") {

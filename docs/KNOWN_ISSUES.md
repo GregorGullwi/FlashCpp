@@ -33,25 +33,28 @@ class-value slicing. Boundary 9 must carry the selected base constructor into
 lowering and reuse the base-object materialization path; a raw byte copy would
 incorrectly bypass nontrivial copy/move semantics.
 
-## Declaration-based specialization NTTPs lack canonical value identity
+## Structural NTTP bases still need matching canonical graph publication
 
-`importCanonicalClassSource` imports a value template argument only when
-`TemplateArgInfo::nttp_expr` carries an opaque `ExprId`. An instantiated
-specialization base can instead carry an integral value argument with
-`is_value == true`, no `nttp_expr`, and no valid `type_index`, for example the
-recursive `TupleImpl<I + 1, Tail...>` base in
-`tests/test_member_function_overload_in_ctor_init_ret0.cpp`. Its canonical
-import returns `Unresolved`, so `tryFindPublishedDerivedBaseOffset` still needs
-the centralized compatibility walk for that specialization base.
+With `struct Key { int value; }; constexpr Key key{1};`, a base such as
+`template<Key Value> struct Base { short member; };` can lack matching canonical
+base facts. A conversion from `Derived : Padding, Base<key>` to `Base<key>*`
+still needs `legacyDerivedBaseOffset`; removing it reports a missing published
+offset. `test_canonical_structural_nttp_base_source_ret0.cpp` guards this case.
+Define structural-value identity from canonical class/subobject types and values,
+then make syntax and declaration imports agree before deleting the walk.
+Equivalent values spelled `key` and `Key{1}` must agree; source-expression
+stamping alone cannot provide that identity. Integral NTTPs already use their
+converted canonical type and value in both import paths.
 
-Stamping the dependent source expression is not sufficient: the base value can
-come from `I + 1` while an explicit reference to the same specialization uses
-`1u`, so expression-based `ExprId`s would create two canonical `TypeId`s for one
-C++ specialization. The canonical table has a typed `IntegralValue` representation,
-but neither production import path uses it yet. Preserve the declared or deduced
-NTTP type, evaluate and convert the argument, then use that type and converted
-value in both syntax-based and declaration-based import before removing the offset
-fallback. Dependent and non-integral expressions retain their opaque identities.
+## Ordinary calls can prefer a generic NTTP function template
+
+For `template<unsigned N> struct Cell {};`, ordinary call selection can prefer
+`choose(Cell<N>*, T*)` over `choose(Cell<1u>*, T*)` when passed a `Cell<1u>*` and
+another pointer. Both are function templates; the fixed-value overload should
+win. This path still uses `computeFunctionTemplateSpecificity`, which does not
+order the constant and dependent NTTP patterns. The canonical function-template
+address-query path supports typed integral ordering, but ordinary calls need
+that deduction-based comparison in place of the specificity score.
 
 ## Expression parsing can overflow a 1 MB native stack before callable sema
 

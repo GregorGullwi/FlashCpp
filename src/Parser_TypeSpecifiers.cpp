@@ -206,10 +206,10 @@ bool appendTypeOnlyArgSpecifiers(
 struct ClassTemplateArgSpecs {
 	TemplateDeclId primary;
 	// Joint syntax list (TypeSpecifierNode vs ExpressionNode ASTNode vs published
-	// primary class TemplateDeclId vs active template-template parameter identity).
+	// primary class TemplateDeclId, active template-template parameter, or integral value TypeId).
 	// Stamp storage on TypeSpecifierNode stays parallel until type args are TypeIds;
 	// then collapse it to CanonicalTemplateArgument.
-	std::vector<std::variant<TypeSpecifierNode, ASTNode, TemplateDeclId, SpecDependentTemplateArg>> args;
+	std::vector<std::variant<TypeSpecifierNode, ASTNode, TemplateDeclId, SpecDependentTemplateArg, TypeId>> args;
 };
 
 bool isStampableDependentNttpArgument(const TemplateTypeArg& arg) {
@@ -238,7 +238,7 @@ void applyCollectedClassTemplateArgSpecs(
 	}
 	std::vector<SpecTemplateArgKind> arg_kinds;
 	std::vector<TypeSpecifierNode> type_args;
-	std::vector<ExprId> nttp_ids;
+	std::vector<SpecNonTypeArgument> nttp_ids;
 	std::vector<TemplateDeclId> template_ids;
 	std::vector<SpecDependentTemplateArg> dependent_template_ids;
 	arg_kinds.reserve(collected.args.size());
@@ -263,6 +263,11 @@ void applyCollectedClassTemplateArgSpecs(
 				std::get_if<SpecDependentTemplateArg>(&arg)) {
 			arg_kinds.push_back(SpecTemplateArgKind::DependentTemplate);
 			dependent_template_ids.push_back(*template_arg);
+			continue;
+		}
+		if (const TypeId* integral = std::get_if<TypeId>(&arg)) {
+			arg_kinds.push_back(SpecTemplateArgKind::Integral);
+			nttp_ids.emplace_back(*integral);
 			continue;
 		}
 		arg_kinds.push_back(SpecTemplateArgKind::NonType);
@@ -427,9 +432,15 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 			collected.args.push_back(template_arg.template_decl_id());
 			continue;
 		}
-		// NonType: explicit literal syntax and explicit dependent expressions are
-		// representable as opaque ExprIds. Other values stay deferred because their
-		// semantic identity cannot be recovered from TemplateTypeArg alone.
+		if (arg.is_value && !arg.is_dependent && arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Integral) {
+			const auto integral = tryImportCanonicalIntegralValue(requireFrontendContext().canonicalTypes(), arg.type_index, arg.value);
+			if (integral.has_value()) {
+				collected.args.push_back(*integral);
+				continue;
+			}
+		}
+		// Dependent and supported non-integral source expressions keep opaque IDs.
+		// Unsupported concrete value kinds remain deferred.
 		if (index >= argument_syntax_nodes.size()) {
 			return std::nullopt;
 		}
@@ -5899,6 +5910,10 @@ void Parser::tryStampDependentInstantiationMemberChain(
 			argument_ids.push_back(CanonicalTemplateArgument::makeDependentTemplate(
 				template_arg->template_decl,
 				template_arg->parameter_index));
+			continue;
+		}
+		if (const TypeId* integral = std::get_if<TypeId>(&arg)) {
+			argument_ids.push_back(CanonicalTemplateArgument::makeIntegral(*integral));
 			continue;
 		}
 		const ExprId expr_id = exprs.intern(std::get<ASTNode>(arg));

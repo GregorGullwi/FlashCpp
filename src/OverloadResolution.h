@@ -7326,14 +7326,24 @@ struct CanonicalTemplateNonTypeArgumentPattern {
 };
 
 struct CanonicalTemplateNonTypeArgumentIdentity {
-	ExprId expression;
+	union { ExprId expression{}; TypeId integral_value; };
 	TemplateDeclId parameter_decl;
 	uint32_t parameter_index;
 	bool is_template_parameter;
-	friend bool operator==(
-		CanonicalTemplateNonTypeArgumentIdentity,
-		CanonicalTemplateNonTypeArgumentIdentity) = default;
+	bool is_integral = false;
+	static CanonicalTemplateNonTypeArgumentIdentity makeIntegral(TypeId value) {
+		CanonicalTemplateNonTypeArgumentIdentity identity{};
+		identity.integral_value = value;
+		identity.is_integral = true;
+		return identity;
+	}
+	friend bool operator==(const CanonicalTemplateNonTypeArgumentIdentity& left, const CanonicalTemplateNonTypeArgumentIdentity& right) {
+		return left.is_template_parameter == right.is_template_parameter && left.is_integral == right.is_integral &&
+			left.parameter_decl == right.parameter_decl && left.parameter_index == right.parameter_index &&
+			(left.is_integral ? left.integral_value == right.integral_value : left.expression == right.expression);
+	}
 };
+static_assert(sizeof(CanonicalTemplateNonTypeArgumentIdentity) == 16);
 
 struct CanonicalTemplateNonTypeBinding {
 	uint32_t parameter_index;
@@ -7397,6 +7407,16 @@ inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
 	std::vector<TypePair> pending;
 	std::vector<CanonicalTemplateTypeBinding> bindings;
 	std::vector<CanonicalTemplateNonTypeBinding> non_type_bindings;
+	const auto bind_non_type = [&](uint32_t index, const CanonicalTemplateNonTypeArgumentIdentity& identity) {
+		const auto existing = std::ranges::find_if(non_type_bindings,
+			[index](const CanonicalTemplateNonTypeBinding& binding) { return binding.parameter_index == index; });
+		if (existing == non_type_bindings.end()) {
+			non_type_bindings.push_back(CanonicalTemplateNonTypeBinding{index, identity});
+			return true;
+		}
+		return existing->argument == identity;
+	};
+
 	auto find_non_type_argument_pattern = [](
 		const CanonicalFunctionTemplateTypePattern& function,
 		ExprId expression) -> const CanonicalTemplateNonTypeArgumentPattern* {
@@ -7633,6 +7653,34 @@ inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
 					table.templateArgumentKind(pattern_arg);
 				const CanonicalTemplateArgKind argument_kind =
 					table.templateArgumentKind(argument_arg);
+				if (pattern_kind == CanonicalTemplateArgKind::Integral || argument_kind == CanonicalTemplateArgKind::Integral) {
+					bool matches = false;
+					if (pattern_kind == CanonicalTemplateArgKind::Integral && argument_kind == CanonicalTemplateArgKind::Integral) {
+						matches = table.templateArgumentIntegral(pattern_arg) == table.templateArgumentIntegral(argument_arg);
+					} else if (pattern_kind == CanonicalTemplateArgKind::NonType && argument_kind == CanonicalTemplateArgKind::Integral) {
+						const auto* pattern_value = find_non_type_argument_pattern(pattern_function, table.templateArgumentExpr(pattern_arg));
+						if (pattern_value == nullptr || pattern_value->kind != CanonicalTemplateNonTypeArgumentKind::TemplateParameter) {
+							result.status = CanonicalTemplateDeductionStatus::Unsupported;
+							return result;
+						}
+						const TypeId value = table.templateArgumentIntegral(argument_arg);
+						matches = pattern_value->parameter_type == table.node(value).child &&
+							bind_non_type(pattern_value->parameter_index, CanonicalTemplateNonTypeArgumentIdentity::makeIntegral(value));
+					} else if (pattern_kind == CanonicalTemplateArgKind::Integral && argument_kind == CanonicalTemplateArgKind::NonType) {
+						const auto* argument_value = find_non_type_argument_pattern(argument_function, table.templateArgumentExpr(argument_arg));
+						if (argument_value == nullptr || argument_value->kind != CanonicalTemplateNonTypeArgumentKind::TemplateParameter) {
+							result.status = CanonicalTemplateDeductionStatus::Unsupported;
+							return result;
+						}
+					}
+					if (!matches) {
+						result.status = CanonicalTemplateDeductionStatus::Mismatch;
+						return result;
+					}
+					pattern_arg = table.templateArgumentNext(pattern_arg);
+					argument_arg = table.templateArgumentNext(argument_arg);
+					continue;
+				}
 				if (pattern_kind != argument_kind) {
 					result.status = CanonicalTemplateDeductionStatus::Mismatch;
 					return result;
@@ -7669,33 +7717,16 @@ inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
 								result.status = CanonicalTemplateDeductionStatus::Unsupported;
 								return result;
 							}
-							identity = CanonicalTemplateNonTypeArgumentIdentity{
-								ExprId{},
-								argument_pattern->parameter_decl,
-								argument_pattern->parameter_index,
-								true};
+							identity = CanonicalTemplateNonTypeArgumentIdentity{{ExprId{}}, argument_pattern->parameter_decl,
+								argument_pattern->parameter_index, true};
 						} else if (argument_pattern->kind ==
 							CanonicalTemplateNonTypeArgumentKind::Literal) {
-							identity = CanonicalTemplateNonTypeArgumentIdentity{
-								argument_expression,
-								TemplateDeclId{},
-								0,
-								false};
+							identity = CanonicalTemplateNonTypeArgumentIdentity{{argument_expression}, TemplateDeclId{}, 0, false};
 						} else {
 							result.status = CanonicalTemplateDeductionStatus::Unsupported;
 							return result;
 						}
-						const auto existing = std::ranges::find_if(
-							non_type_bindings,
-							[pattern_argument](const CanonicalTemplateNonTypeBinding& binding) {
-								return binding.parameter_index ==
-									pattern_argument->parameter_index;
-							});
-						if (existing == non_type_bindings.end()) {
-							non_type_bindings.push_back(CanonicalTemplateNonTypeBinding{
-								pattern_argument->parameter_index,
-								identity});
-						} else if (existing->argument != identity) {
+						if (!bind_non_type(pattern_argument->parameter_index, identity)) {
 							result.status = CanonicalTemplateDeductionStatus::Mismatch;
 							return result;
 						}
@@ -7744,6 +7775,8 @@ inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
 		case CanonicalTypeKind::DependentTemplateMember:
 		case CanonicalTypeKind::DependentMemberAlias:
 		case CanonicalTypeKind::TemplateArg:
+		case CanonicalTypeKind::IntegralValue:
+		case CanonicalTypeKind::IntegralTemplateArg:
 		case CanonicalTypeKind::NonTypeTemplateArg:
 		case CanonicalTypeKind::TemplateTemplateArg:
 		case CanonicalTypeKind::DependentTemplateTemplateArg:

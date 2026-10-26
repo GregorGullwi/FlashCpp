@@ -8133,7 +8133,7 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 					pending.push_back(&current.specialization_arg_type(index));
 					continue;
 				}
-				if (current.specialization_arg_is_template(index) ||
+				if (current.specialization_arg_is_integral(index) || current.specialization_arg_is_template(index) ||
 					current.specialization_arg_is_dependent_template(index)) {
 					continue;
 				}

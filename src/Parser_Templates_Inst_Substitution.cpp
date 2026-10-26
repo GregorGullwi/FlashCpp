@@ -1993,7 +1993,7 @@ TypeSpecifierNode Parser::buildDependentAliasTemplateTypeSpecifier(
 			const TemplateParameterVector& alias_params = alias_node.template_parameters();
 			std::vector<SpecTemplateArgKind> argument_kinds;
 			std::vector<TypeSpecifierNode> type_args;
-			std::vector<ExprId> nttp_args;
+			std::vector<SpecNonTypeArgument> nttp_args;
 			std::vector<TemplateDeclId> template_decl_args;
 			std::vector<SpecDependentTemplateArg> dependent_template_args;
 			argument_kinds.reserve(template_args.size());
@@ -2062,13 +2062,19 @@ TypeSpecifierNode Parser::buildDependentAliasTemplateTypeSpecifier(
 					template_decl_args.push_back(class_template.template_decl_id());
 					continue;
 				}
-				// A non-type argument needs a published ExprId. A dependent
-				// expression carries its original AST; a bool/unsigned-integral
-				// literal carries its matching call-site syntax node. Other NTTP
-				// forms keep the whole call site deferred.
+				// Concrete integral arguments use converted type/value identity.
+				// Dependent and non-integral arguments retain their source ExprId.
 				if (!argument.is_value) {
 					stamped = false;
 					break;
+				}
+				if (!argument.is_dependent && argument.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Integral) {
+					const auto integral = tryImportCanonicalIntegralValue(requireFrontendContext().canonicalTypes(), argument.type_index, argument.value);
+					if (integral.has_value()) {
+						argument_kinds.push_back(SpecTemplateArgKind::Integral);
+						nttp_args.emplace_back(*integral);
+						continue;
+					}
 				}
 				ExprId nttp_expr = argument.nttp_expr;
 				const ASTNode* nttp_syntax = argument.dependent_expr.has_value() ? &*argument.dependent_expr : nullptr;
