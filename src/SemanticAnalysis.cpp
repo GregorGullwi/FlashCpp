@@ -5007,6 +5007,16 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			if (init->is<InitializerListNode>() && vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& declared_type = vtype.as<TypeSpecifierNode>();
 				const InitializerListNode& init_list = init->as<InitializerListNode>();
+				if (decl_type_id &&
+					(declared_type.is_reference() || declared_type.is_rvalue_reference()) &&
+					init_list.initializers().size() == 1 &&
+					init_list.initializers()[0].is<ExpressionNode>()) {
+					tryAnnotateVariableInitializationConversion(
+						init_list.initializers()[0],
+						decl_type_id,
+						" in reference initialization",
+						true);
+				}
 				if (declared_type.category() != TypeCategory::Struct && init_list.initializers().size() == 1) {
 					tryAnnotateExplicitConversionByTypeId(
 						init_list.initializers()[0], init_list.initializers()[0], declared_type);
@@ -11235,9 +11245,8 @@ static void materializeExactTargetLazyConversionOperators(TypeIndex source_type_
 
 // --- Core conversion annotation helper ---
 
-bool SemanticAnalysis::annotateSelectedConversionOperator(
+bool SemanticAnalysis::checkSelectedConversionOperatorAccess(
 	const ASTNode& expr_node,
-	CanonicalTypeId expr_type_id,
 	CanonicalTypeId target_type_id,
 	const UserDefinedConversionOperatorSelection& selected_conversion) {
 	if (selected_conversion.function == nullptr) {
@@ -11296,6 +11305,17 @@ bool SemanticAnalysis::annotateSelectedConversionOperator(
 	}
 	if (selected_conversion.function->needs_body_materialization()) {
 		ensureMemberFunctionMaterialized(declaring_struct_info->name, *selected_conversion.function);
+	}
+	return true;
+}
+
+bool SemanticAnalysis::annotateSelectedConversionOperator(
+	const ASTNode& expr_node,
+	CanonicalTypeId expr_type_id,
+	CanonicalTypeId target_type_id,
+	const UserDefinedConversionOperatorSelection& selected_conversion) {
+	if (!checkSelectedConversionOperatorAccess(expr_node, target_type_id, selected_conversion)) {
+		return false;
 	}
 	ImplicitCastInfo cast_info;
 	cast_info.source_type_id = expr_type_id;
@@ -13153,6 +13173,9 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 			type_context_.get(arg_value_type_id), param_value_type);
 		if (!selected_conversion.has_value() || selected_conversion->ambiguous ||
 			selected_conversion->function == nullptr) {
+			return std::nullopt;
+		}
+		if (!checkSelectedConversionOperatorAccess(arg, param_value_type_id, *selected_conversion)) {
 			return std::nullopt;
 		}
 		ImplicitCastInfo cast_info;

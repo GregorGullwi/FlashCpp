@@ -33,15 +33,18 @@ class-value slicing. Boundary 9 must carry the selected base constructor into
 lowering and reuse the base-object materialization path; a raw byte copy would
 incorrectly bypass nontrivial copy/move semantics.
 
-## Reference binding can bypass conversion-function access checks
+## Const lvalue reference binding through a conversion-operator base tail reads the wrong object
 
-Reference-variable initialization and call arguments can bypass the sema-selected
-conversion path when `source` offers `operator Derived&()`. For example,
-`const Base& reference = source;` or `take(source)` with `take(const Base&)` can
-accept a private `Derived`-to-`Base` tail without its access diagnostic. The
-standard-tail planner retains inaccessible candidates for access checking after
-selection; these reference-binding consumers still need one authoritative
-conversion annotation before lowering (boundary 4).
+A conversion operator returning `Derived&` followed by a derived-to-base tail can
+bind a `const Base&` reference argument or variable to a temporary that does not
+hold the converted subobject. With `struct Base { int value; }; struct Derived :
+Base {}; struct Source { Derived derived; operator Derived&() { return derived;
+} }; int take(const Base& value) { return value.value; }`, setting
+`source.derived.value = 41` and calling `take(source)` returns an unrelated value,
+while `take(Base&)` preserves it. The binding lowering must take the address of
+the converted lvalue subobject instead of materializing a temporary from the
+converted result. Access checking is separate and now applies to all
+reference-binding consumers.
 
 ## Expression parsing can overflow a 1 MB native stack before callable sema
 

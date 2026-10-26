@@ -199,6 +199,11 @@ The architecture the remaining work builds on:
   derived-to-base tails (including template-specialization bases when their
   class-base schemas are available), conversion-operator results bound to
   const lvalue references and rvalue references, and the member-pointer owner graph.
+  Selected conversion-operator access and base-tail checks share
+  `checkSelectedConversionOperatorAccess`; call-argument reference bindings and
+  brace reference initialization apply it, covered by
+  `test_private_conversion_reference_*_e1617.cpp`. The remaining const-lvalue
+  conversion-tail value gap is in `KNOWN_ISSUES.md`.
   Named function expressions retain their function type until reference binding
   or value decay is selected. Call lowering preserves the pointer-sized address
   for function-to-pointer decay, including callable aliases with a function base.
