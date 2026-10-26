@@ -5,6 +5,79 @@
 #include "TypeSizeQuery.h"
 
 
+std::optional<ExprResult> AstToIr::tryGenerateMemberPointerCallIr(const CallExprNode& callExprNode, const PointerToMemberAccessNode& access) {
+	auto sema_services = sema_.parserSemanticServices();
+	const TypeSpecifierQueryResult member_pointer_query = sema_services.getExpressionTypeQueryFromLowering(access.member_pointer());
+	if (member_pointer_query.state != TypeSpecifierQueryResult::State::Available || !member_pointer_query.type.has_value()) {
+		return std::nullopt;
+	}
+	const TypeSpecifierNode& member_pointer_type = *member_pointer_query.type;
+	if (!member_pointer_type.is_member_function_pointer() || !member_pointer_type.has_function_signature()) {
+		return std::nullopt;
+	}
+	const ASTNode& object_node = access.object();
+	const ExpressionNode* object_expr = object_node.get_if<ExpressionNode>();
+	const ExpressionNode* member_pointer_expr = access.member_pointer().get_if<ExpressionNode>();
+	if (object_expr == nullptr || member_pointer_expr == nullptr) {
+		return std::nullopt;
+	}
+	const TypeSpecifierQueryResult object_query = sema_services.getExpressionTypeQueryFromLowering(object_node);
+	const TypeSpecifierNode* object_type =
+		object_query.state == TypeSpecifierQueryResult::State::Available && object_query.type.has_value()
+			? &*object_query.type
+			: nullptr;
+	const StringHandle member_owner_name = member_pointer_type.function_signature().class_name;
+	if (member_owner_name.isValid() && object_type != nullptr && object_type->type_index().is_valid()) {
+		const TypeInfo* object_type_info = tryGetTypeInfo(object_type->type_index());
+		if (object_type_info != nullptr && object_type_info->name() != member_owner_name) {
+			// A different owner needs this-adjustment or virtual dispatch; keep
+			// the existing fail-closed path instead of calling with a wrong this.
+			return std::nullopt;
+		}
+	}
+	ExprResult object_result = access.is_arrow()
+		? visitExpressionNode(*object_expr)
+		: visitExpressionNode(*object_expr, ExpressionContext::LValueAddress);
+	TypeIndex object_type_index = object_type != nullptr ? object_type->type_index() : object_result.type_index;
+	if (!object_type_index.is_valid()) {
+		throw InternalError("Member-function-pointer call requires canonical object type identity");
+	}
+	const TypeCategory object_category = object_type != nullptr ? object_type->type() : object_result.typeEnum();
+	const int object_size_bits = object_type != nullptr ? static_cast<int>(object_type->size_in_bits()) : object_result.size_in_bits.value;
+	IrValue this_value;
+	if (access.is_arrow() || object_result.storage == ValueStorage::ContainsAddress) {
+		this_value = toIrValue(object_result.value);
+	} else {
+		TempVar this_address = emitAddressOf(object_category, object_size_bits, toIrValue(object_result.value), callExprNode.called_from());
+		this_value = IrValue(this_address);
+	}
+
+	ExprResult member_pointer_result = visitExpressionNode(*member_pointer_expr);
+	std::variant<StringHandle, TempVar, LocalVarId> function_pointer;
+	if (const TempVar* temp = std::get_if<TempVar>(&member_pointer_result.value)) {
+		function_pointer = *temp;
+	} else if (const LocalVarId* local = std::get_if<LocalVarId>(&member_pointer_result.value)) {
+		function_pointer = *local;
+	} else if (const StringHandle* name = std::get_if<StringHandle>(&member_pointer_result.value)) {
+		function_pointer = *name;
+	} else {
+		throw InternalError("Member-function-pointer call target did not produce an indirect call operand");
+	}
+
+	const FunctionSignature& signature = member_pointer_type.function_signature();
+	std::vector<TypedValue> arguments;
+	arguments.push_back(makeMemberThisCallArgument(object_type_index.withCategory(object_category), this_value));
+	appendIndirectCallArguments(arguments, callExprNode, &signature);
+	TempVar ret_var = var_counter.next();
+	IndirectCallOp op{
+		.result = ret_var,
+		.function_pointer = std::move(function_pointer),
+		.arguments = std::move(arguments)};
+	populateIndirectCallReturnInfo(op, signature);
+	ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from()));
+	return buildIndirectCallReturnResult(signature, ret_var);
+}
+
 ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context) {
 	return generateMemberFunctionCallIr(callExprNode, context, nullptr);
 }
@@ -19,6 +92,17 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 	irOperands.reserve(5 + callExprNode.arguments().size() * 4); // ret + name + this + ~4 per arg
 
 	auto sema_services = sema_.parserSemanticServices();
+	if (callExprNode.has_receiver()) {
+		if (const ExpressionNode* receiver = callExprNode.receiver().get_if<ExpressionNode>()) {
+			if (const PointerToMemberAccessNode* access = std::get_if<PointerToMemberAccessNode>(receiver)) {
+				if (std::optional<ExprResult> member_pointer_call =
+						tryGenerateMemberPointerCallIr(callExprNode, *access);
+					member_pointer_call.has_value()) {
+					return std::move(*member_pointer_call);
+				}
+			}
+		}
+	}
 	const FunctionDeclarationNode* parser_member_func_decl =
 		callExprNode.callee().function_declaration_or_null();
 	ResolvedFunctionQueryResult sema_resolved_direct_query;
