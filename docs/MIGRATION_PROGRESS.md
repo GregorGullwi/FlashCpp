@@ -13,7 +13,13 @@ rollup is **10/79 complete**; the only completed 3A exit criterion is that
 pointer-to-member overloads distinguish owner and pointee types. Passing tests or
 the breadth of landed code do not complete the boundary.
 Canonical inheritance classification and inherited operator traversal consume
-published TypeId class-base schemas. Selected binary calls, including range
+published TypeId class-base schemas. Completed-class publication also records the
+finalized ABI virtual-base table as an ordered per-class `TypeId` schema; the
+list position is the runtime table index and `findVirtualBaseIndex(source,
+target)` is the query contract. Publication is transactional and rejects
+conflicting order, duplicate targets, and self edges. Existing virtual-base
+adjustment IR still classifies through the legacy layout walk; consuming the
+published facts is the next slice. Selected binary calls, including range
 comparisons, consume context-owned call symbols and resolved descriptor IDs.
 Declaring TypeId remains identity; owner TypeIndex remains only an ABI bridge
 for object adjustment, with the deletion prerequisites below.
@@ -268,16 +274,27 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Next slice: publish virtual-base ABI adjustment facts by class TypeId.**
-   The class-base graph carries nonvirtual offsets, but runtime virtual-base table
-   indices still come from the legacy layout classifier. Publish those finalized
-   ABI facts with source/target TypeIds, covering ordinary and template virtual
-   inheritance plus nonzero/nonvirtual controls. Stop after publication and its
-   query contract; keep existing adjustment IR until the implicit-object plan
-   consumer can replace it.
+   **Previous slice (complete): publish virtual-base ABI adjustment facts by
+   class TypeId.** `CanonicalTypeTable` now stores the finalized ABI virtual-base
+   order per class `TypeId`; `virtualBaseAt` returns the target `TypeId` and
+   complete-object offset, and `findVirtualBaseIndex(source, target)` returns
+   the runtime table index. Ordinary, multi-virtual, class-template, and
+   nonzero-offset non-virtual control cases are covered, and transaction
+   rollback discards a publication. The native cases
+   `Completed classes publish finalized virtual-base ABI facts by TypeId` and
+   `Virtual-base ABI publication is transactional and rejects conflicting order`
+   pin the contract; `tests/test_virtual_base_abi_facts_ret0.cpp` keeps the
+   existing adjustment lowering intact. The legacy adjustment IR is unchanged.
 
-   **Owner-index deletion gates:** publish the virtual-base ABI adjustment facts
-   keyed by class TypeIds and make implicit-object lowering consume a sema-selected
+   **Next slice: consume the published virtual-base ABI facts in
+   implicit-object lowering.** Replace the legacy construction of
+   `DerivedBaseConversionInfo::virtual_base_index` from
+   `StructTypeInfo::virtual_bases` with the canonical `TypeId` query, then let
+   the implicit-object conversion plan select the adjustment. Keep the existing
+   `VirtualBaseAdjust` IR payload until that consumer is authoritative.
+
+   **Owner-index deletion gates:** the virtual-base ABI adjustment facts are
+   published by class TypeIds; make implicit-object lowering consume a sema-selected
    conversion plan. Nonvirtual offsets already exist in the canonical class graph;
    the current virtual adjustment IR/helper still uses TypeIndexes. Delete the
    binary/range owner-index fields only after both nonvirtual/virtual adjustments

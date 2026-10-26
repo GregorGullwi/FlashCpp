@@ -371,6 +371,17 @@ struct CanonicalClassBase {
 	friend bool operator==(CanonicalClassBase, CanonicalClassBase) = default;
 };
 
+// Finalized virtual-base subobject in ABI table order. The owning schema's
+// list position is the runtime virtual-base table index, so no index is stored
+// per entry. `offset_bytes` is the complete-object offset published by layout.
+// Keying stays structural: the source is the owning class TypeId and the target
+// is this entry's TypeId.
+struct CanonicalVirtualBase {
+	TypeId type;
+	uint32_t offset_bytes;
+	friend bool operator==(CanonicalVirtualBase, CanonicalVirtualBase) = default;
+};
+
 // Nested type-member schema entry for tip lookup after substitution.
 // Identifier content is a NameBytes link (structural content), never StringHandle.
 struct CanonicalNamedTypeMember {
@@ -470,6 +481,8 @@ static_assert(sizeof(CanonicalRecordMember) == 16);
 static_assert(sizeof(CanonicalRecordBase) == 16);
 static_assert(sizeof(CanonicalRecordProperties) == 8);
 static_assert(sizeof(CanonicalClassBase) == 12);
+static_assert(sizeof(CanonicalVirtualBase) == 8);
+static_assert(std::is_trivially_copyable_v<CanonicalVirtualBase>);
 static_assert(sizeof(CanonicalNamedTypeMember) == 16);
 
 class CanonicalTypeTransaction;
@@ -730,6 +743,23 @@ public:
 
 	CanonicalClassBase classBaseAt(TypeId class_type, size_t index) const;
 
+	// Finalized runtime virtual-base table for a completed class, keyed by the
+	// owning class TypeId. Entries keep ABI order so the list index is the
+	// virtual-base table index used by the runtime adjustment.
+	void publishVirtualBaseSchema(TypeId class_type,
+		std::span<const CanonicalVirtualBase> virtual_bases);
+
+	bool hasVirtualBaseSchema(TypeId class_type) const;
+
+	size_t virtualBaseCount(TypeId class_type) const;
+
+	CanonicalVirtualBase virtualBaseAt(TypeId class_type, size_t index) const;
+
+	// Query the ABI table index for one source/target class TypeId pair. Empty
+	// means the target is not a published virtual base of the source.
+	std::optional<uint32_t> findVirtualBaseIndex(TypeId class_type,
+		TypeId base_type) const;
+
 	void publishRecordSubobjectTypes(TypeId type, std::span<const TypeId> member_types);
 
 	bool hasRecordSubobjectTypes(TypeId type) const;
@@ -805,6 +835,17 @@ private:
 	};
 	static_assert(sizeof(CanonicalClassBaseSchemaHeader) == 16);
 
+	struct CanonicalVirtualBaseSchemaHeader {
+		TypeId class_type;
+		uint32_t base_begin;
+		uint16_t base_count;
+		uint16_t reserved;
+		uint32_t reserved2;
+		friend bool operator==(CanonicalVirtualBaseSchemaHeader,
+			CanonicalVirtualBaseSchemaHeader) = default;
+	};
+	static_assert(sizeof(CanonicalVirtualBaseSchemaHeader) == 16);
+
 	struct CanonicalRecordSubobjectTypeSchemaHeader {
 		TypeId type;
 		uint32_t member_begin;
@@ -848,6 +889,8 @@ private:
 		size_t record_base_count;
 		size_t class_base_schema_count;
 		size_t class_base_count;
+		size_t virtual_base_schema_count;
+		size_t virtual_base_count;
 		size_t record_subobject_schema_count;
 		size_t record_subobject_member_count;
 		size_t named_type_member_schema_count;
@@ -1005,6 +1048,14 @@ private:
 		return class_base_schema_headers_[found->second];
 	}
 
+	CanonicalVirtualBaseSchemaHeader virtualBaseSchemaHeaderUnlocked(TypeId class_type) const {
+		const auto found = virtual_base_schema_ids_.find(class_type.value);
+		if (!class_type || found == virtual_base_schema_ids_.end()) {
+			throw InternalError("canonical type: class has no virtual base schema");
+		}
+		return virtual_base_schema_headers_[found->second];
+	}
+
 	CanonicalRecordSubobjectTypeSchemaHeader recordSubobjectTypeSchemaHeaderUnlocked(TypeId type) const {
 		const auto found = record_subobject_type_schema_ids_.find(type.value);
 		if (!type || found == record_subobject_type_schema_ids_.end()) {
@@ -1063,6 +1114,8 @@ private:
 	size_t live_record_base_count_ = 0;
 	size_t live_class_base_schema_count_ = 0;
 	size_t live_class_base_count_ = 0;
+	size_t live_virtual_base_schema_count_ = 0;
+	size_t live_virtual_base_count_ = 0;
 	size_t live_record_subobject_schema_count_ = 0;
 	size_t live_record_subobject_member_count_ = 0;
 	size_t live_named_type_member_schema_count_ = 0;
@@ -1098,6 +1151,10 @@ private:
 	ChunkedVector<CanonicalClassBaseSchemaHeader, 16> class_base_schema_headers_;
 	ChunkedVector<CanonicalClassBase, 16> class_bases_;
 	std::unordered_map<uint32_t, size_t> class_base_schema_ids_;
+	// Virtual-base ABI facts: 16 headers / 16 ordered entries per chunk.
+	ChunkedVector<CanonicalVirtualBaseSchemaHeader, 16> virtual_base_schema_headers_;
+	ChunkedVector<CanonicalVirtualBase, 16> virtual_bases_;
+	std::unordered_map<uint32_t, size_t> virtual_base_schema_ids_;
 	// Subobject walk samples: 16 class headers / 32 direct member TypeIds.
 	ChunkedVector<CanonicalRecordSubobjectTypeSchemaHeader, 16> record_subobject_type_schema_headers_;
 	ChunkedVector<TypeId, 32> record_subobject_member_types_;
