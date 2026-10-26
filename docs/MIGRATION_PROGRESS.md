@@ -766,6 +766,9 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
 After compiler-source changes, build with `.\build_flashcpp.bat`; run focused
 regressions while iterating, then `pwsh tests/run_all_tests.ps1` when ready.
 Never run the full suite concurrently with the build.
+After canonical identity changes, run
+`python tests/architecture/run_canonical_types.py --mutations`; update changed
+anchors while preserving each mutation's required rejection.
 
 Run the host-native migration-counter and identity-inventory scripts under
 `tests/migration_counters/` after compiler changes and keep every fixed-corpus
