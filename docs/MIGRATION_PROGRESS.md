@@ -17,9 +17,13 @@ published TypeId class-base schemas. Completed-class publication also records th
 finalized ABI virtual-base table as an ordered per-class `TypeId` schema; the
 list position is the runtime table index and `findVirtualBaseIndex(source,
 target)` is the query contract. Publication is transactional and rejects
-conflicting order, duplicate targets, and self edges. Existing virtual-base
-adjustment IR still classifies through the legacy layout walk; consuming the
-published facts is the next slice. `StructTypeInfo::isAggregate` now excludes
+conflicting order, duplicate targets, and self edges. AstToIr's derived-to-base
+address and pointer adjustments now take virtual-base table indices from
+`tryFindPublishedVirtualBaseIndex`, so implicit-object receiver and
+reference/pointer adjustments consume the published TypeId facts and fail closed
+when a virtual conversion has no published entry. Explicit static_cast lowering
+and IRConverter-side validation still classify through TypeIndexes.
+`StructTypeInfo::isAggregate` now excludes
 classes with any reachable virtual base, not only direct virtual bases, so an
 indirectly virtual diamond follows its most-derived constructor and installs the
 completed-object virtual-base tables; `tests/test_indirect_virtual_base_aggregate_ret0.cpp`
@@ -287,23 +291,23 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Next slice: consume the published virtual-base ABI facts in
-   implicit-object lowering.** Replace the legacy construction of
-   `DerivedBaseConversionInfo::virtual_base_index` from
-   `StructTypeInfo::virtual_bases` with the canonical `TypeId` query, then let
-   the implicit-object conversion plan select the adjustment. Keep the existing
-   `VirtualBaseAdjust` IR payload until that consumer is authoritative.
+   **Next slice: migrate the remaining derived-to-base adjustment consumers to
+   the selected conversion plan.** The AstToIr address and pointer adjustment
+   helpers now read virtual-base table indices from published TypeId facts and
+   keep the existing `VirtualBaseAdjust` IR payload. Explicit static_cast
+   lowering and the IRConverter-side adjustment/validation path still classify
+   through TypeIndexes. Migrate those consumers, including nonvirtual offsets,
+   before deleting the binary/range owner-index fields.
 
-   **Owner-index deletion gates:** the virtual-base ABI adjustment facts are
-   published by class TypeIds; make implicit-object lowering consume a sema-selected
-   conversion plan. Nonvirtual offsets already exist in the canonical class graph;
-   the current virtual adjustment IR/helper still uses TypeIndexes. Delete the
-   binary/range owner-index fields only after both nonvirtual/virtual adjustments
-   consume the selected plan. Reconstructing a TypeIndex in codegen would
-   hide the dependency. Retain graph-authority, metadata copy/reset and nonzero/
-   virtual-base regression guards. Conversion-function declaration schemas and
-   unsupported importer shapes remain separate. Reference/value-tail lowering
-   gaps are in `KNOWN_ISSUES.md`.
+   **Owner-index deletion gates:** virtual-base ABI facts are published by class
+   TypeIds and consumed by the AstToIr adjustment helpers; the remaining
+   explicit-cast and IRConverter consumers still use TypeIndexes. Delete the
+   binary/range owner-index fields only after all nonvirtual and virtual
+   adjustments consume the selected plan. Reconstructing a TypeIndex in codegen
+   would hide the dependency. Retain graph-authority, metadata copy/reset and
+   nonzero/virtual-base regression guards. Conversion-function declaration
+   schemas and unsupported importer shapes remain separate. Reference/value-tail
+   lowering gaps are in `KNOWN_ISSUES.md`.
 
    **Unary compatibility deletion:** audit no-context and unimportable operand
    roots before removing `findUnaryOperatorOverloadCompatibility`. Also migrate
