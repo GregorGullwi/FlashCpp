@@ -393,13 +393,14 @@ def main():
                 "return type;"),
             "lost_alias_parameter_kind_check": (
                 "\t\t\t\t\tfor (size_t index = 0; index < arguments.size(); ++index) {\n"
-                "\t\t\t\t\t\tif (arguments[index].kind != target->second.parameter_kinds[index]) {\n"
+                "\t\t\t\t\t\tif (arguments[index].kind != target->second.parameter_kinds[index] &&\n"
+                "\t\t\t\t\t\t\t!(arguments[index].kind == CanonicalTemplateArgKind::Integral && "
+                "target->second.parameter_kinds[index] == CanonicalTemplateArgKind::NonType)) {\n"
                 "\t\t\t\t\t\t\texpand = false;\n"
                 "\t\t\t\t\t\t\tbreak;\n"
                 "\t\t\t\t\t\t}",
                 "\t\t\t\t\tfor (size_t index = 0; index < arguments.size(); ++index) {\n"
-                "\t\t\t\t\t\tif (false &&\n"
-                "\t\t\t\t\t\t\targuments[index].kind != target->second.parameter_kinds[index]) {\n"
+                "\t\t\t\t\t\tif (false) {\n"
                 "\t\t\t\t\t\t\texpand = false;\n"
                 "\t\t\t\t\t\t\tbreak;\n"
                 "\t\t\t\t\t\t}"),
