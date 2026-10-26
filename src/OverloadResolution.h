@@ -1067,11 +1067,6 @@ enum class DerivedBaseConversionKind : uint8_t {
 struct DerivedBaseConversionInfo {
 	DerivedBaseConversionKind kind = DerivedBaseConversionKind::NotRelated;
 	int64_t offset = 0;
-	// Index in the derived type's finalized virtual_bases collection.  The
-	// offset of a virtual base is object-dependent, so callers must use this
-	// index with the runtime virtual-base table/vtable rather than treating
-	// offset as a fixed adjustment.
-	std::optional<size_t> virtual_base_index;
 };
 
 // Classify all inheritance paths from derived_idx to base_idx.  A virtual base
@@ -1085,7 +1080,7 @@ inline DerivedBaseConversionInfo classifyDerivedBaseConversion(
 	if (!derived_idx.is_valid() || !base_idx.is_valid())
 		return {};
 	if (derived_idx == base_idx)
-		return {DerivedBaseConversionKind::UniquePublicNonVirtual, 0, std::nullopt};
+		return {DerivedBaseConversionKind::UniquePublicNonVirtual, 0};
 
 	const TypeInfo* derived_type_info = tryGetTypeInfo(derived_idx);
 	const StructTypeInfo* derived_struct =
@@ -1219,25 +1214,23 @@ inline DerivedBaseConversionInfo classifyDerivedBaseConversion(
 	if (non_virtual_path_count > 1 ||
 		(!public_virtual_subobjects.empty() &&
 		 (non_virtual_path_count != 0 || !inaccessible_virtual_subobjects.empty()))) {
-		return {DerivedBaseConversionKind::Ambiguous, 0, std::nullopt};
+		return {DerivedBaseConversionKind::Ambiguous, 0};
 	}
 	if (public_non_virtual_path_count == 1 && non_virtual_path_count == 1)
-		return {DerivedBaseConversionKind::UniquePublicNonVirtual, public_non_virtual_offset, std::nullopt};
+		return {DerivedBaseConversionKind::UniquePublicNonVirtual, public_non_virtual_offset};
 	if (!public_virtual_subobjects.empty()) {
-		DerivedBaseConversionInfo result{DerivedBaseConversionKind::PublicVirtual, 0, std::nullopt};
+		int64_t public_virtual_offset = 0;
 		const auto virtual_base_it = std::find_if(
 			derived_struct->virtual_bases.begin(),
 			derived_struct->virtual_bases.end(),
 			[&](const BaseClassSpecifier& base) { return base.type_index == base_idx; });
 		if (virtual_base_it != derived_struct->virtual_bases.end()) {
-			result.virtual_base_index = static_cast<size_t>(
-				std::distance(derived_struct->virtual_bases.begin(), virtual_base_it));
-			result.offset = static_cast<int64_t>(virtual_base_it->offset);
+			public_virtual_offset = static_cast<int64_t>(virtual_base_it->offset);
 		}
-		return result;
+		return {DerivedBaseConversionKind::PublicVirtual, public_virtual_offset};
 	}
 	if (saw_inaccessible)
-		return {DerivedBaseConversionKind::Inaccessible, 0, std::nullopt};
+		return {DerivedBaseConversionKind::Inaccessible, 0};
 	return {};
 }
 

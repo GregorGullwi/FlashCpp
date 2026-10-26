@@ -3535,9 +3535,6 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 	}
 
 	if (virtual_base_conversion.has_value()) {
-		if (!virtual_base_conversion->virtual_base_index.has_value()) {
-			throw InternalError("Finalized virtual-base conversion is missing its runtime table index");
-		}
 		ExprResult source_address = source_result;
 		if (source_address.storage != ValueStorage::ContainsAddress) {
 			if (source_expr.is<ExpressionNode>()) {
