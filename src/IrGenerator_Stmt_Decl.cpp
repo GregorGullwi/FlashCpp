@@ -3385,8 +3385,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 													base_conversion.kind != DerivedBaseConversionKind::PublicVirtual)
 													throw InternalError("Sema selected an unrelated derived-to-base constructor");
 												if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual) {
-													sema_source_base_class_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
-														source_desc.type_index, target_desc.type_index).value_or(base_conversion.offset);
+													const std::optional<int64_t> published_offset = tryFindPublishedDerivedBaseOffset(
+														requireFrontendContext().canonicalTypes(), source_desc.type_index, target_desc.type_index);
+													if (!published_offset.has_value()) {
+														throw InternalError("Sema-selected derived-to-base initializer is missing its published offset");
+													}
+													sema_source_base_class_offset = *published_offset;
 												}
 											}
 											const auto& ctor_params = sema_selected_converting_ctor->parameter_nodes();

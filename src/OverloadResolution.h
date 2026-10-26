@@ -1066,7 +1066,6 @@ enum class DerivedBaseConversionKind : uint8_t {
 
 struct DerivedBaseConversionInfo {
 	DerivedBaseConversionKind kind = DerivedBaseConversionKind::NotRelated;
-	int64_t offset = 0;
 };
 
 // Classify all inheritance paths from derived_idx to base_idx.  A virtual base
@@ -1080,7 +1079,7 @@ inline DerivedBaseConversionInfo classifyDerivedBaseConversion(
 	if (!derived_idx.is_valid() || !base_idx.is_valid())
 		return {};
 	if (derived_idx == base_idx)
-		return {DerivedBaseConversionKind::UniquePublicNonVirtual, 0};
+		return {DerivedBaseConversionKind::UniquePublicNonVirtual};
 
 	const TypeInfo* derived_type_info = tryGetTypeInfo(derived_idx);
 	const StructTypeInfo* derived_struct =
@@ -1091,7 +1090,6 @@ inline DerivedBaseConversionInfo classifyDerivedBaseConversion(
 	bool saw_inaccessible = false;
 	uint32_t non_virtual_path_count = 0;
 	uint32_t public_non_virtual_path_count = 0;
-	int64_t public_non_virtual_offset = 0;
 	std::vector<TypeIndex> public_virtual_subobjects;
 	std::vector<TypeIndex> inaccessible_virtual_subobjects;
 	auto grants_friend_access = [access_context_idx](const StructTypeInfo& owner) {
@@ -1198,7 +1196,6 @@ inline DerivedBaseConversionInfo classifyDerivedBaseConversion(
 				} else {
 					++non_virtual_path_count;
 					++public_non_virtual_path_count;
-					public_non_virtual_offset = base_offset;
 				}
 			}
 
@@ -1214,23 +1211,14 @@ inline DerivedBaseConversionInfo classifyDerivedBaseConversion(
 	if (non_virtual_path_count > 1 ||
 		(!public_virtual_subobjects.empty() &&
 		 (non_virtual_path_count != 0 || !inaccessible_virtual_subobjects.empty()))) {
-		return {DerivedBaseConversionKind::Ambiguous, 0};
+		return {DerivedBaseConversionKind::Ambiguous};
 	}
 	if (public_non_virtual_path_count == 1 && non_virtual_path_count == 1)
-		return {DerivedBaseConversionKind::UniquePublicNonVirtual, public_non_virtual_offset};
-	if (!public_virtual_subobjects.empty()) {
-		int64_t public_virtual_offset = 0;
-		const auto virtual_base_it = std::find_if(
-			derived_struct->virtual_bases.begin(),
-			derived_struct->virtual_bases.end(),
-			[&](const BaseClassSpecifier& base) { return base.type_index == base_idx; });
-		if (virtual_base_it != derived_struct->virtual_bases.end()) {
-			public_virtual_offset = static_cast<int64_t>(virtual_base_it->offset);
-		}
-		return {DerivedBaseConversionKind::PublicVirtual, public_virtual_offset};
-	}
+		return {DerivedBaseConversionKind::UniquePublicNonVirtual};
+	if (!public_virtual_subobjects.empty())
+		return {DerivedBaseConversionKind::PublicVirtual};
 	if (saw_inaccessible)
-		return {DerivedBaseConversionKind::Inaccessible, 0};
+		return {DerivedBaseConversionKind::Inaccessible};
 	return {};
 }
 
@@ -1498,22 +1486,84 @@ inline std::optional<int64_t> tryFindPublishedDerivedBaseOffset(
 	return tryFindPublishedDerivedBaseOffset(table, derived_import.type, base_import.type);
 }
 
-inline std::optional<int64_t> tryFindPublishedDerivedBaseOffset(CanonicalTypeTable& table, TypeIndex derived_type_index, TypeIndex base_type_index) {
-	const TypeInfo* derived_type_info = tryGetTypeInfo(derived_type_index);
-	const TypeInfo* base_type_info = tryGetTypeInfo(base_type_index);
+// Compatibility offset walk for a specialization base whose canonical type
+// cannot yet be imported. This keeps the fallback behind the offset query
+// instead of leaving a TypeIndex-derived value in the conversion plan.
+inline std::optional<int64_t> legacyDerivedBaseOffset(TypeIndex derived_type_index, TypeIndex base_type_index) {
+	const TypeInfo* derived_type_info = resolveAliasTypeInfo(derived_type_index).terminal_type_info;
+	const TypeInfo* base_type_info = resolveAliasTypeInfo(base_type_index).terminal_type_info;
 	if (derived_type_info == nullptr || base_type_info == nullptr) {
 		return std::nullopt;
 	}
-	return tryFindPublishedDerivedBaseOffset(table, *derived_type_info, *base_type_info);
+	const StructTypeInfo* derived_struct_info = derived_type_info->getStructInfo();
+	const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
+	if (derived_struct_info == nullptr || base_struct_info == nullptr) {
+		return std::nullopt;
+	}
+	const DerivedBaseConversionInfo conversion =
+		classifyDerivedBaseConversion(derived_type_index, base_type_index);
+	if (conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
+		const auto virtual_base_it = std::find_if(
+			derived_struct_info->virtual_bases.begin(),
+			derived_struct_info->virtual_bases.end(),
+			[&](const BaseClassSpecifier& base) { return base.type_index == base_type_index; });
+		if (virtual_base_it == derived_struct_info->virtual_bases.end()) {
+			return std::nullopt;
+		}
+		return static_cast<int64_t>(virtual_base_it->offset);
+	}
+	if (conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual) {
+		return std::nullopt;
+	}
+	struct PendingBase {
+		const StructTypeInfo* type;
+		int64_t offset;
+	};
+	std::vector<PendingBase> pending{{derived_struct_info, 0}};
+	std::vector<const StructTypeInfo*> visited;
+	for (size_t pending_index = 0; pending_index < pending.size(); ++pending_index) {
+		const PendingBase current = pending[pending_index];
+		if (current.type == base_struct_info) {
+			return current.offset;
+		}
+		if (std::find(visited.begin(), visited.end(), current.type) != visited.end()) {
+			continue;
+		}
+		visited.push_back(current.type);
+		for (const BaseClassSpecifier& base : current.type->base_classes) {
+			if (base.is_virtual || base.access != AccessSpecifier::Public || !base.type_index.is_valid()) {
+				continue;
+			}
+			const TypeInfo* base_type_info_for_walk = tryGetTypeInfo(base.type_index);
+			const StructTypeInfo* base_struct = base_type_info_for_walk ? base_type_info_for_walk->getStructInfo() : nullptr;
+			if (base_struct == nullptr) {
+				continue;
+			}
+			pending.push_back({
+				base_struct,
+				current.offset + static_cast<int64_t>(base.offset)});
+		}
+	}
+	return std::nullopt;
 }
 
-// Return the byte offset only for a unique, public, non-virtual base.  Callers
-// that need diagnostics must use classifyDerivedBaseConversion() first.
+inline std::optional<int64_t> tryFindPublishedDerivedBaseOffset(CanonicalTypeTable& table, TypeIndex derived_type_index, TypeIndex base_type_index) {
+	const TypeInfo* derived_type_info = resolveAliasTypeInfo(derived_type_index).terminal_type_info;
+	const TypeInfo* base_type_info = resolveAliasTypeInfo(base_type_index).terminal_type_info;
+	if (derived_type_info != nullptr && base_type_info != nullptr) {
+		const std::optional<int64_t> published =
+			tryFindPublishedDerivedBaseOffset(table, *derived_type_info, *base_type_info);
+		if (published.has_value()) {
+			return published;
+		}
+	}
+	return legacyDerivedBaseOffset(derived_type_index, base_type_index);
+}
+
+// Return the finalized byte offset for a public base subobject.  Callers that
+// need diagnostics must use classifyDerivedBaseConversion() first.
 inline std::optional<int64_t> findPublicBaseSubobjectOffset(TypeIndex base_idx, TypeIndex derived_idx) {
-	const DerivedBaseConversionInfo info = classifyDerivedBaseConversion(derived_idx, base_idx);
-	if (info.kind != DerivedBaseConversionKind::UniquePublicNonVirtual)
-		return std::nullopt;
-	return info.offset;
+	return tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(), derived_idx, base_idx);
 }
 
 inline size_t countMinRequiredParameters(std::span<const ASTNode> params) {

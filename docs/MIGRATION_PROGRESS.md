@@ -22,11 +22,12 @@ address and pointer adjustments, explicit static_cast lowering, and IRConverter
 adjustment/validation now take virtual-base table indices from
 `tryFindPublishedVirtualBaseIndex`, so all runtime virtual adjustments consume
 the published TypeId facts and fail closed when a virtual conversion has no
-published entry. `DerivedBaseConversionInfo` no longer carries a legacy
-`virtual_base_index`. Runtime and constructor derived-to-base offsets now prefer
-`tryFindPublishedDerivedBaseOffset`; the classifier offset remains only as a
-compatibility fallback when the canonical importer cannot represent a
-specialization base. Binary and range call selection no longer store AST owner
+published entry. `DerivedBaseConversionInfo` now carries only the relation kind:
+neither a legacy virtual index nor a legacy offset remains in the conversion
+plan. Runtime and constructor derived-to-base offsets both use
+`tryFindPublishedDerivedBaseOffset`; the compatibility fallback is centralized
+behind that query for specialization bases the canonical importer cannot yet
+represent. Binary and range call selection no longer store AST owner
 TypeIndexes: the published `BinaryOperatorCallTarget.declaring_type` is the
 authority, and codegen derives its ABI owner handle at that boundary.
 `StructTypeInfo::isAggregate` now excludes
@@ -304,21 +305,22 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Next slice: close the specialization-base importer gap and remove the
-   derived-to-base offset fallback.** Runtime and constructor offset consumers
-   now share the canonical graph; binary/range AST owner indexes are gone.
-   `DerivedBaseConversionInfo.offset` survives only for specialization bases the
-   canonical importer cannot represent. Publish those remaining specialization
-   base graphs, delete the fallback field, then audit the 3A exit criteria.
+   **Next slice: close the specialization-base importer gap and delete the
+   centralized offset fallback.** Runtime and constructor offset consumers now
+   share the canonical graph, binary/range AST owner indexes are gone, and the
+   conversion plan carries only the relation kind. `legacyDerivedBaseOffset`
+   remains solely for specialization bases the canonical importer cannot yet
+   represent. Publish those remaining specialization base graphs, delete the
+   fallback walk, then audit the 3A exit criteria.
 
    **Owner-index deletion gates:** virtual-base ABI facts are published by class
    TypeIds and consumed by AstToIr, explicit-cast, IRConverter, and constructor
-   adjustments. Nonvirtual offsets prefer canonical graph offsets, and
-   binary/range AST owner-index fields are deleted. The remaining TypeIndex
-   uses are explicit ABI bridges plus the legacy offset fallback. Delete
-   `DerivedBaseConversionInfo.offset` after the importer covers the remaining
-   specialization bases. Retain graph-authority, metadata copy/reset and
-   nonzero/virtual-base regression guards. Conversion-function declaration
+   adjustments. Nonvirtual offsets prefer canonical graph offsets, binary/range
+   AST owner-index fields are deleted, and the plan struct retains only the
+   relation kind. The remaining TypeIndex uses are explicit ABI bridges plus the
+   centralized importer-fallback walk. Delete that walk after the importer covers
+   the remaining specialization bases. Retain graph-authority, metadata copy/reset
+   and nonzero/virtual-base regression guards. Conversion-function declaration
    schemas and unsupported importer shapes remain separate. Reference/value-tail
    lowering gaps are in `KNOWN_ISSUES.md`.
 
