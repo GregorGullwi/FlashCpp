@@ -3140,7 +3140,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 	mutable_stmt.set_resolved_begin_is_const(false);
 	mutable_stmt.set_resolved_adl_begin_function(nullptr);
 	mutable_stmt.set_resolved_adl_end_function(nullptr);
-	mutable_stmt.set_resolved_comparison_target({}, false, {});
+	mutable_stmt.set_resolved_comparison_target({}, false);
 	auto prepare_comparison = [&](const FunctionDeclarationNode& begin_decl, const FunctionDeclarationNode& end_decl) {
 		auto iterator_object_type = [](const TypeSpecifierNode& return_type) {
 			TypeSpecifierNode object = return_type;
@@ -3172,13 +3172,12 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 		if (overload.is_free_function) {
 			comparison.set_resolved_free_function_operator_overload(overload.free_function_overload);
 		} else {
-			comparison.set_resolved_member_operator_overload(overload.member_overload, overload.declaring_type, overload.compatibility_declaring_type_index);
+			comparison.set_resolved_member_operator_overload(overload.member_overload, overload.declaring_type);
 			markResolvedOperatorOverloadOdrUsed(*overload.member_overload);
 		}
 		comparison.set_recorded_equality_rewrite_negate(negate_equality);
 		(void)ensureBinaryOperatorCallTarget(comparison);
-		mutable_stmt.set_resolved_comparison_target(comparison.resolved_operator_call_target(), negate_equality,
-			comparison.resolved_member_operator_owner_index());
+		mutable_stmt.set_resolved_comparison_target(comparison.resolved_operator_call_target(), negate_equality);
 	};
 
 	const ASTNode loop_var_decl = stmt.get_loop_variable_decl();
@@ -10953,7 +10952,9 @@ BinaryOperatorCallTarget SemanticAnalysis::ensureBinaryOperatorCallTarget(Binary
 	if (is_member && !owner) {
 		// Compatibility operand selection can predate canonical alias publication.
 		// Publish the exact selected declaring class here, before lowering.
-		const TypeIndex owner_index = binary.resolved_member_operator_owner_index();
+		const FunctionDeclarationNode& owner_declaration =
+			binary.resolved_member_operator_overload()->function_decl.as<FunctionDeclarationNode>();
+		const TypeIndex owner_index = owner_declaration.access_owner_type_index();
 		const TypeInfo* owner_info = tryGetTypeInfo(owner_index);
 		if (owner_info == nullptr) {
 			throw InternalError("binary operator call target: missing declaration owner");
@@ -10964,11 +10965,11 @@ BinaryOperatorCallTarget SemanticAnalysis::ensureBinaryOperatorCallTarget(Binary
 		}
 		owner = imported.type;
 		const bool negate_equality = binary.has_recorded_equality_rewrite_negate();
-		binary.set_resolved_member_operator_overload(binary.resolved_member_operator_overload(), owner, owner_index);
+		binary.set_resolved_member_operator_overload(binary.resolved_member_operator_overload(), owner);
 		binary.set_recorded_equality_rewrite_negate(negate_equality);
 	}
-	// Resolve injected self types once in the semantic context. The owner index
-	// retained on the expression reaches lowering only as an object-adjustment ABI bridge.
+	// Resolve injected self types once in the semantic context. The published owner
+	// TypeId is authoritative; lowering derives its ABI TypeIndex at the call boundary.
 	auto resolve_type = [&](const TypeSpecifierNode& original) {
 		if (is_member) {
 			return resolveBinaryOperatorTypeForSelfReference(original, owner);
@@ -11113,8 +11114,7 @@ bool SemanticAnalysis::tryResolveLateBinaryOperatorOverload(
 	if (overload_result.is_free_function) {
 		bin_op.set_resolved_free_function_operator_overload(overload_result.free_function_overload);
 	} else {
-		bin_op.set_resolved_member_operator_overload(overload_result.member_overload,
-			overload_result.declaring_type, overload_result.compatibility_declaring_type_index);
+		bin_op.set_resolved_member_operator_overload(overload_result.member_overload, overload_result.declaring_type);
 	}
 	bin_op.set_recorded_equality_rewrite_negate(equality_rewrite_negate);
 	return true;

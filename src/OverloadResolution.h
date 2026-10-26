@@ -5754,6 +5754,8 @@ struct OperatorOverloadResult {
 	explicit OperatorOverloadResult(const StructMemberFunction* overload, TypeId declaring_type, TypeIndex compatibility_declaring_type_index)
 		: member_overload(overload), compatibility_declaring_type_index(compatibility_declaring_type_index),
 		declaring_type(declaring_type), has_match(overload != nullptr) {}
+	explicit OperatorOverloadResult(const StructMemberFunction* overload, TypeId declaring_type)
+		: member_overload(overload), declaring_type(declaring_type), has_match(overload != nullptr) {}
 	explicit OperatorOverloadResult(const FunctionDeclarationNode* free_func)
 		: free_function_overload(free_func), has_match(free_func != nullptr), is_free_function(free_func != nullptr) {}
 

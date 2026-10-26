@@ -61,7 +61,7 @@ TEST_CASE("Binary operator resolution copies call target IDs and clears them on 
 	annotated.set_ambiguous_operator_overload();
 	CHECK_FALSE(annotated.resolved_operator_call_target());
 	annotated.set_resolved_operator_call_target(target_id);
-	annotated.set_resolved_member_operator_overload(nullptr, TypeId{}, TypeIndex{});
+	annotated.set_resolved_member_operator_overload(nullptr, TypeId{});
 	CHECK_FALSE(annotated.resolved_operator_call_target());
 	annotated.set_resolved_operator_call_target(target_id);
 	annotated.set_resolved_free_function_operator_overload(nullptr);
@@ -1110,15 +1110,12 @@ struct Derived : Base {};
 				CHECK(result.declaring_type == importCanonicalClassTypeInfo(table, *expected_owner).type);
 				CHECK(result.compatibility_declaring_type_index == expected_owner->registeredTypeIndex().withCategory(TypeCategory::Struct));
 				BinaryOperatorNode annotated(Token{}, ASTNode{}, ASTNode{});
-				annotated.set_resolved_member_operator_overload(result.member_overload, result.declaring_type,
-					result.compatibility_declaring_type_index);
+				annotated.set_resolved_member_operator_overload(result.member_overload, result.declaring_type);
 				BinaryOperatorNode copied(Token{}, ASTNode{}, ASTNode{});
 				copied.copy_semantic_operator_resolution_from(annotated);
 				CHECK(copied.resolved_member_operator_owner() == result.declaring_type);
-				CHECK(copied.resolved_member_operator_owner_index() == result.compatibility_declaring_type_index);
 				copied.set_no_match_operator_overload();
 				CHECK_FALSE(copied.resolved_member_operator_owner());
-				CHECK_FALSE(copied.resolved_member_operator_owner_index().is_valid());
 			}
 		}
 		CHECK(table.size() == types_before);
@@ -4681,7 +4678,7 @@ TEST_CASE("Native binary operator publication owns its symbol and canonical sign
 	REQUIRE(overload.has_match);
 	REQUIRE(overload.member_overload != nullptr);
 	BinaryOperatorNode binary(Token{}, ASTNode{}, ASTNode{});
-	binary.set_resolved_member_operator_overload(overload.member_overload, overload.declaring_type, overload.compatibility_declaring_type_index);
+	binary.set_resolved_member_operator_overload(overload.member_overload, overload.declaring_type);
 	const BinaryOperatorCallTarget first = sema.ensureBinaryOperatorCallTarget(binary);
 	REQUIRE(first.symbol.isValid());
 	const TypeSpecifierNode published_return = materializeCanonicalTypeSpecifier(sema.typeContext().get(first.return_type));

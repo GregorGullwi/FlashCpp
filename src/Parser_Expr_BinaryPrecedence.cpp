@@ -376,8 +376,7 @@ void Parser::annotateConcreteBinaryOperatorOverload(BinaryOperatorNode& binary_o
 		if (overload_result.is_free_function) {
 			binary_operator_node.set_resolved_free_function_operator_overload(overload_result.free_function_overload);
 		} else {
-			binary_operator_node.set_resolved_member_operator_overload(overload_result.member_overload,
-				overload_result.declaring_type, overload_result.compatibility_declaring_type_index);
+			binary_operator_node.set_resolved_member_operator_overload(overload_result.member_overload, overload_result.declaring_type);
 		}
 		binary_operator_node.set_recorded_equality_rewrite_negate(equality_rewrite_negate);
 	} else {

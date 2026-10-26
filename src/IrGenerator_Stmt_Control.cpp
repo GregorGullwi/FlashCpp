@@ -1237,7 +1237,7 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 		BinaryOperatorNode& comparison = std::get<BinaryOperatorNode>(condition_expr.as<ExpressionNode>());
 		const BinaryOperatorCallTarget target = requireFrontendContext().binaryOperatorCallTarget(node.resolved_comparison_target());
 		if (target.declaring_type) {
-			comparison.set_resolved_member_operator_overload(target.member_overload, target.declaring_type, node.resolved_comparison_owner_index());
+			comparison.set_resolved_member_operator_overload(target.member_overload, target.declaring_type);
 		} else {
 			comparison.set_resolved_free_function_operator_overload(target.free_function_overload);
 		}
