@@ -2061,16 +2061,15 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		if (!object_type.type_index().is_valid()) {
 			throw InternalError("Member function 'this' argument requires canonical class type identity");
 		}
-		const bool explicit_owner_type = receiver_owner_type_index.is_valid();
 		TypeIndex call_owner_type_index = receiver_owner_type_index;
-		if (!call_owner_type_index.is_valid() && object_is_pointer_like && struct_info != nullptr) {
+		if (!call_owner_type_index.is_valid() && struct_info != nullptr) {
 			call_owner_type_index = struct_info->own_type_index_.value_or(TypeIndex{});
 		}
-		const bool needs_owner_adjustment = call_owner_type_index.is_valid() && call_owner_type_index != object_type.type_index() &&
-			(explicit_owner_type || object_is_pointer_like);
+		const bool needs_owner_adjustment = call_owner_type_index.is_valid() && call_owner_type_index != object_type.type_index();
+		DerivedBaseConversionInfo owner_conversion;
 		bool owner_is_adjustable = false;
 		if (needs_owner_adjustment) {
-			const DerivedBaseConversionInfo owner_conversion = classifyDerivedBaseConversion(object_type.type_index(), call_owner_type_index);
+			owner_conversion = classifyDerivedBaseConversion(object_type.type_index(), call_owner_type_index);
 			owner_is_adjustable = owner_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual ||
 				owner_conversion.kind == DerivedBaseConversionKind::PublicVirtual;
 		}
@@ -2082,8 +2081,23 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			const IrOperand pointer_value = std::visit([](const auto& value) -> IrOperand { return value; }, this_arg_value);
 			ExprResult pointer = makeExprResult(object_type.type_index().withCategory(TypeCategory::Struct), SizeInBits{POINTER_SIZE_BITS},
 				pointer_value, PointerDepth{1}, ValueStorage::ContainsData);
-			pointer = adjustDerivedToBasePointer(pointer, object_type.type_index().withCategory(TypeCategory::Struct),
-				call_owner_type_index.withCategory(TypeCategory::Struct), PointerDepth{1}, callExprNode.called_from());
+			if (object_is_pointer_like) {
+				pointer = adjustDerivedToBasePointer(pointer, object_type.type_index().withCategory(TypeCategory::Struct),
+					call_owner_type_index.withCategory(TypeCategory::Struct), PointerDepth{1}, callExprNode.called_from());
+			} else if (owner_conversion.offset != 0) {
+				// A complete object value uses its own finalized static base
+				// offset; some implicit template specializations do not publish a
+				// hidden virtual-base table for the runtime path.
+				BinaryOp add_offset;
+				add_offset.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, toIrValue(pointer.value));
+				add_offset.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS},
+					static_cast<unsigned long long>(owner_conversion.offset));
+				add_offset.result = var_counter.next();
+				const TempVar adjusted_pointer = std::get<TempVar>(add_offset.result);
+				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), callExprNode.called_from()));
+				pointer = makeExprResult(object_type.type_index().withCategory(TypeCategory::Struct), SizeInBits{POINTER_SIZE_BITS},
+					IrOperand{adjusted_pointer}, PointerDepth{1}, ValueStorage::ContainsData);
+			}
 			this_arg_value = toIrValue(pointer.value);
 			this_arg_is_pointer_value = true;
 			this_arg_storage = ValueStorage::ContainsAddress;

@@ -51,14 +51,16 @@ int main() {
 		return 6;
 	if (left_reference.read() != 41)
 		return 7;
+	if (diamond.read() != 41)
+		return 8;
 
 	DirectDerived direct{};
 	direct.value = 43;
 	direct.tail = 11;
 	DirectDerived* direct_pointer = &direct;
 	if (direct_pointer->read() != 43)
-		return 8;
-	if (direct_pointer->value != 43)
 		return 9;
+	if (direct_pointer->value != 43)
+		return 10;
 	return 0;
 }
