@@ -3384,8 +3384,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 												if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
 													base_conversion.kind != DerivedBaseConversionKind::PublicVirtual)
 													throw InternalError("Sema selected an unrelated derived-to-base constructor");
-												if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual)
-													sema_source_base_class_offset = base_conversion.offset;
+												if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual) {
+													sema_source_base_class_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
+														source_desc.type_index, target_desc.type_index).value_or(base_conversion.offset);
+												}
 											}
 											const auto& ctor_params = sema_selected_converting_ctor->parameter_nodes();
 												if (!ctor_params.empty() && ctor_params[0].is<DeclarationNode>()) {
