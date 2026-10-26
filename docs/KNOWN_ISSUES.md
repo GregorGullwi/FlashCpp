@@ -227,7 +227,10 @@ the common case: sema records the selected overload on the address expression
 and IR lowers it to the member's code symbol. The representation is the
 compiler's existing 64-bit member pointer, so this covers non-virtual members
 whose address needs no `this` adjustment (single-inheritance, no virtual
-dispatch).
+dispatch). Calling through such a pointer with `obj.*p` or `ptr->*p` lowers as
+an indirect call that passes the object as `this` followed by the explicit
+arguments. `tests/test_member_function_pointer_call_ret0.cpp` covers mutable and
+const members, both access forms, and reassigning the pointer.
 
 The following remain unsupported and are rejected or left unresolved:
 
@@ -241,8 +244,6 @@ The following remain unsupported and are rejected or left unresolved:
   root. `ensureMemberFunctionAddressMaterialized` logs a warning and leaves the
   address unresolved in that case rather than failing the translation unit, so
   the old uninitialized-slot behavior can still appear there.
-- Calling through a materialized member-function pointer is a separate,
-  still-unimplemented path (it emits an ``.()`` symbol).
 
 ## Static-member template initializer replay still re-parses source text
 
