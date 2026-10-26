@@ -845,7 +845,7 @@ struct StructTypeInfo {
 	}
 
 	bool isAggregate() const {
-		if (hasUserDeclaredConstructor() || has_vtable) {
+		if (hasUserDeclaredConstructor() || has_vtable || !virtual_bases.empty()) {
 			return false;
 		}
 		for (const auto& member : members) {

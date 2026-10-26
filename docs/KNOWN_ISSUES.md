@@ -20,18 +20,6 @@ false. Materialize or plan the implicit base copy/move operation before
 lowering, preserving nontrivial member construction and base offsets rather
 than replacing the operation with an unconditional byte copy.
 
-## Implicit default construction leaves virtual-base pointer conversion without a runtime table
-
-A non-polymorphic virtual-base hierarchy whose classes use only implicit default
-constructors can convert through an uninitialized virtual-base table. With
-`struct Root { long long value; }; struct Left : virtual Root { int left; };
-struct Right : virtual Root { int right; }; struct Diamond : Left, Right { short
-tail; };`, `Diamond value{}; value.value = 41;` reads `value.value` correctly,
-but `Left*` and `Right*` to `Root*` conversions disagree and read the wrong
-address. Giving the converted classes user-provided constructors avoids the
-defect. The implicit default-constructor path must initialize the hidden
-virtual-base table pointer before adjustment lowering consults it.
-
 ## Conversion-function value base tails need base-object materialization
 
 A conversion function returning `Derived` can rank a trailing conversion to a
