@@ -1049,8 +1049,10 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 					{});
 			}
 			if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
-				if (!base_conversion.virtual_base_index.has_value()) {
-					throw InternalError("Finalized virtual-base pointer cast is missing its runtime table index");
+				const std::optional<uint32_t> published_virtual_base_index = tryFindPublishedVirtualBaseIndex(
+					requireFrontendContext().canonicalTypes(), source_type_index, target_type_index);
+				if (!published_virtual_base_index.has_value()) {
+					throw InternalError("Finalized virtual-base pointer cast is missing its published ABI index");
 				}
 				if (!std::holds_alternative<TempVar>(expr_operands.value) &&
 					!std::holds_alternative<StringHandle>(expr_operands.value) &&
@@ -1072,7 +1074,7 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 				adjust_op.source_is_address = false;
 				adjust_op.source_type_index = source_type_index;
 				adjust_op.target_type_index = target_type_index;
-				adjust_op.virtual_base_index = *base_conversion.virtual_base_index;
+				adjust_op.virtual_base_index = *published_virtual_base_index;
 				ir_.addInstruction(IrInstruction(IrOpcode::VirtualBaseAdjust, std::move(adjust_op), staticCastNode.cast_token()));
 				return makeExprResult(target_type_index, SizeInBits{64}, IrOperand{adjusted_ptr}, PointerDepth{static_cast<int>(target_pointer_depth)}, ValueStorage::ContainsData);
 			}

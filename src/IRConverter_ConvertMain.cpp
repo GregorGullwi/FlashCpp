@@ -7060,10 +7060,12 @@ void IrToObjConverter<TWriterClass>::emitDerivedToBasePointerAdjust(X64Register 
 	if (conversion.kind == DerivedBaseConversionKind::Inaccessible)
 		throw InternalError("Cannot convert to an inaccessible base class");
 	if (conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
-		if (!conversion.virtual_base_index.has_value()) {
-			throw InternalError("Finalized virtual-base pointer conversion is missing its runtime table index");
+		const std::optional<uint32_t> published_virtual_base_index = tryFindPublishedVirtualBaseIndex(
+			requireFrontendContext().canonicalTypes(), derived_type, base_type);
+		if (!published_virtual_base_index.has_value()) {
+			throw InternalError("Finalized virtual-base pointer conversion is missing its published ABI index");
 		}
-		emitVirtualBasePointerAdjust(ptr_reg, base_type, derived_type, *conversion.virtual_base_index);
+		emitVirtualBasePointerAdjust(ptr_reg, base_type, derived_type, *published_virtual_base_index);
 		return;
 	}
 	if (auto offset = findBaseOffsetWithinDerived(base_type, derived_type)) {
@@ -7101,9 +7103,10 @@ void IrToObjConverter<TWriterClass>::emitVirtualBasePointerAdjust(
 	if (!derived_struct_info) {
 		throw InternalError("Virtual-base pointer adjustment is missing derived struct metadata");
 	}
-	if (virtual_base_index >= derived_struct_info->virtual_bases.size() ||
-		derived_struct_info->virtual_bases[virtual_base_index].type_index != base_type) {
-		throw InternalError("Virtual-base pointer adjustment has an invalid runtime table index");
+	const std::optional<uint32_t> published_virtual_base_index = tryFindPublishedVirtualBaseIndex(
+		requireFrontendContext().canonicalTypes(), derived_type, base_type);
+	if (!published_virtual_base_index.has_value() || *published_virtual_base_index != virtual_base_index) {
+		throw InternalError("Virtual-base pointer adjustment has an invalid published ABI index");
 	}
 
 	// [conv.ptr] preserves a null pointer during a derived-to-base conversion.
