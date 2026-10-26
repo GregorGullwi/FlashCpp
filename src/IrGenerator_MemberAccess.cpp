@@ -2389,11 +2389,35 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 
 	const StructMember* member = member_result.member;
 
+	// A member found through a virtual base needs the complete object's runtime
+	// virtual-base adjustment. The resolver's adjusted offset is only valid for a
+	// standalone object of the static base type; it is wrong for a pointer to an
+	// intermediate subobject of a different most-derived object.
+	int resolved_member_offset = static_cast<int>(member_result.adjusted_offset);
+	const bool owner_is_virtual_base =
+		is_pointer_dereference &&
+		member_result.owner_type_index.is_valid() &&
+		member_result.owner_type_index != base_type_index &&
+		std::any_of(struct_info->virtual_bases.begin(), struct_info->virtual_bases.end(),
+			[&](const BaseClassSpecifier& virtual_base) {
+				return virtual_base.type_index == member_result.owner_type_index;
+			});
+	if (owner_is_virtual_base) {
+		const IrOperand pointer_value = std::visit([](const auto& value) -> IrOperand { return value; }, base_object);
+		ExprResult object_pointer = makeExprResult(base_type_index.withCategory(TypeCategory::Struct), SizeInBits{POINTER_SIZE_BITS},
+			pointer_value, PointerDepth{1}, ValueStorage::ContainsData);
+		const ExprResult adjusted_pointer = adjustDerivedToBasePointer(std::move(object_pointer), base_type_index.withCategory(TypeCategory::Struct),
+			member_result.owner_type_index.withCategory(TypeCategory::Struct), PointerDepth{1}, Token());
+		base_object = std::get<TempVar>(adjusted_pointer.value);
+		is_pointer_dereference = true;
+		resolved_member_offset = static_cast<int>(member->offset);
+	}
+
 	// Check if base_object is a TempVar with lvalue metadata
 	// If so, we can unwrap it to get the ultimate base and combine offsets
 	// This optimization is ONLY applied in LValueAddress context (for stores)
 	// In Load context, we keep the chain of member_access instructions
-	int accumulated_offset = static_cast<int>(member_result.adjusted_offset);
+	int accumulated_offset = resolved_member_offset;
 	std::variant<StringHandle, TempVar, LocalVarId> ultimate_base = base_object;
 	StringHandle ultimate_member_name = StringTable::getOrInternStringHandle(member_name);
 	bool did_unwrap = false;
@@ -2434,7 +2458,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	LValueInfo lvalue_info(
 		LValueInfo::Kind::Member,
 		did_unwrap ? ultimate_base : base_object,
-		did_unwrap ? accumulated_offset : static_cast<int>(member_result.adjusted_offset));
+		did_unwrap ? accumulated_offset : resolved_member_offset);
 	// Store member name for unified assignment handler
 	lvalue_info.member_name = ultimate_member_name;
 	lvalue_info.is_pointer_to_member = is_pointer_dereference; // Mark if accessing through pointer
@@ -2457,7 +2481,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	auto& effective_base = did_unwrap ? ultimate_base : base_object;
 	std::visit([&](auto& base_value) { member_load.object = base_value; }, effective_base);
 	member_load.member_name = did_unwrap ? ultimate_member_name : StringTable::getOrInternStringHandle(member_name);
-	member_load.offset = did_unwrap ? accumulated_offset : static_cast<int>(member_result.adjusted_offset);
+	member_load.offset = did_unwrap ? accumulated_offset : resolved_member_offset;
 
 	// Add reference metadata (required for proper handling of reference members)
 	member_load.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));

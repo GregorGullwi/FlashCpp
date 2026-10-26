@@ -2061,7 +2061,20 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		if (!object_type.type_index().is_valid()) {
 			throw InternalError("Member function 'this' argument requires canonical class type identity");
 		}
-		if (receiver_owner_type_index.is_valid() && receiver_owner_type_index != object_type.type_index()) {
+		const bool explicit_owner_type = receiver_owner_type_index.is_valid();
+		TypeIndex call_owner_type_index = receiver_owner_type_index;
+		if (!call_owner_type_index.is_valid() && object_is_pointer_like && struct_info != nullptr) {
+			call_owner_type_index = struct_info->own_type_index_.value_or(TypeIndex{});
+		}
+		const bool needs_owner_adjustment = call_owner_type_index.is_valid() && call_owner_type_index != object_type.type_index() &&
+			(explicit_owner_type || object_is_pointer_like);
+		bool owner_is_adjustable = false;
+		if (needs_owner_adjustment) {
+			const DerivedBaseConversionInfo owner_conversion = classifyDerivedBaseConversion(object_type.type_index(), call_owner_type_index);
+			owner_is_adjustable = owner_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual ||
+				owner_conversion.kind == DerivedBaseConversionKind::PublicVirtual;
+		}
+		if (owner_is_adjustable) {
 			if ((object_type.is_reference() || object_type.is_rvalue_reference()) &&
 				(std::holds_alternative<LocalVarId>(this_arg_value) || std::holds_alternative<StringHandle>(this_arg_value))) {
 				this_arg_value = emitAddressOf(TypeCategory::Struct, object_type.size_in_bits(), this_arg_value, callExprNode.called_from());
@@ -2070,7 +2083,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			ExprResult pointer = makeExprResult(object_type.type_index().withCategory(TypeCategory::Struct), SizeInBits{POINTER_SIZE_BITS},
 				pointer_value, PointerDepth{1}, ValueStorage::ContainsData);
 			pointer = adjustDerivedToBasePointer(pointer, object_type.type_index().withCategory(TypeCategory::Struct),
-				receiver_owner_type_index.withCategory(TypeCategory::Struct), PointerDepth{1}, callExprNode.called_from());
+				call_owner_type_index.withCategory(TypeCategory::Struct), PointerDepth{1}, callExprNode.called_from());
 			this_arg_value = toIrValue(pointer.value);
 			this_arg_is_pointer_value = true;
 			this_arg_storage = ValueStorage::ContainsAddress;

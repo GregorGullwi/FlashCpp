@@ -33,17 +33,6 @@ class-value slicing. Boundary 9 must carry the selected base constructor into
 lowering and reuse the base-object materialization path; a raw byte copy would
 incorrectly bypass nontrivial copy/move semantics.
 
-## Member access through an intermediate virtual-base base reads the wrong subobject
-
-With `struct Root { long long value; }; struct Left : virtual Root { int left; };
-struct Right : virtual Root { int right; }; struct Diamond : Left, Right { short
-tail; };`, a `Left*` pointing at a `Diamond` reads an unrelated `Root::value`
-for `left->value` and for calls to `Root` members, while converting that same
-pointer to `Root*` first is correct. The member-access and member-call receiver
-paths must apply the same complete-object virtual-base adjustment as the pointer
-conversion path; the static intermediate type alone does not locate the shared
-subobject during access.
-
 ## Expression parsing can overflow a 1 MB native stack before callable sema
 
 The 16-level `test_deep_callable_chain_ret0.cpp` passes with the shipping Windows
