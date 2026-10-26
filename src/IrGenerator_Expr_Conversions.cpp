@@ -693,14 +693,16 @@ ExprResult AstToIr::adjustDerivedToBaseAddress(
 		adjust_op.virtual_base_index = *published_virtual_base_index;
 		ir_.addInstruction(IrInstruction(IrOpcode::VirtualBaseAdjust, std::move(adjust_op), source_token));
 	} else {
-		if (base_conversion.offset > std::numeric_limits<int>::max()) {
+		const int64_t published_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
+			source_type_index, target_type_index).value_or(base_conversion.offset);
+		if (published_offset > std::numeric_limits<int>::max()) {
 			throw InternalError("Derived-to-base subobject offset exceeds IR range");
 		}
 		ComputeAddressOp address_op;
 		address_op.result = adjusted_address;
 		address_op.base = source;
 		address_op.base_storage = ValueStorage::ContainsAddress;
-		address_op.total_member_offset = static_cast<int>(base_conversion.offset);
+		address_op.total_member_offset = static_cast<int>(published_offset);
 		address_op.result_type_index = target_type_index;
 		address_op.result_size_bits = target_size_bits;
 		ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(address_op), source_token));
@@ -771,25 +773,29 @@ ExprResult AstToIr::adjustDerivedToBasePointer(
 		const TempVar adjusted_pointer = adjust_op.result;
 		ir_.addInstruction(IrInstruction(IrOpcode::VirtualBaseAdjust, std::move(adjust_op), source_token));
 		adjusted_value = adjusted_pointer;
-	} else if (base_conversion.offset != 0) {
-		if (!std::holds_alternative<TempVar>(source_pointer.value) &&
-			!std::holds_alternative<StringHandle>(source_pointer.value) &&
-			!std::holds_alternative<unsigned long long>(source_pointer.value)) {
-			throw InternalError("Derived-to-base pointer conversion has an unsupported pointer value");
+	} else {
+		const int64_t published_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
+			source_type_index, target_type_index).value_or(base_conversion.offset);
+		if (published_offset != 0) {
+			if (!std::holds_alternative<TempVar>(source_pointer.value) &&
+				!std::holds_alternative<StringHandle>(source_pointer.value) &&
+				!std::holds_alternative<unsigned long long>(source_pointer.value)) {
+				throw InternalError("Derived-to-base pointer conversion has an unsupported pointer value");
+			}
+			BinaryOp add_offset;
+			add_offset.lhs = makeTypedValue(
+				TypeCategory::UnsignedLongLong,
+				SizeInBits{POINTER_SIZE_BITS},
+				toIrValue(source_pointer.value));
+			add_offset.rhs = makeTypedValue(
+				TypeCategory::UnsignedLongLong,
+				SizeInBits{POINTER_SIZE_BITS},
+				static_cast<unsigned long long>(published_offset));
+			add_offset.result = var_counter.next();
+			const TempVar adjusted_pointer = std::get<TempVar>(add_offset.result);
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), source_token));
+			adjusted_value = adjusted_pointer;
 		}
-		BinaryOp add_offset;
-		add_offset.lhs = makeTypedValue(
-			TypeCategory::UnsignedLongLong,
-			SizeInBits{POINTER_SIZE_BITS},
-			toIrValue(source_pointer.value));
-		add_offset.rhs = makeTypedValue(
-			TypeCategory::UnsignedLongLong,
-			SizeInBits{POINTER_SIZE_BITS},
-			static_cast<unsigned long long>(base_conversion.offset));
-		add_offset.result = var_counter.next();
-		const TempVar adjusted_pointer = std::get<TempVar>(add_offset.result);
-		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), source_token));
-		adjusted_value = adjusted_pointer;
 	}
 
 	return makeExprResult(

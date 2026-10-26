@@ -2908,6 +2908,9 @@ static_assert(sizeof(TemplateOwner) > 0);
 		tryFindPublishedVirtualBaseIndex(table, *ordinary_type_info, *root_type_info);
 	REQUIRE(ordinary_bridge_index.has_value());
 	CHECK(*ordinary_bridge_index == *ordinary_index);
+	const std::optional<int64_t> ordinary_bridge_offset = tryFindPublishedDerivedBaseOffset(table, *ordinary_type_info, *root_type_info);
+	REQUIRE(ordinary_bridge_offset.has_value());
+	CHECK(*ordinary_bridge_offset == ordinary_info->virtual_bases[0].offset);
 
 	const TypeId multi = class_type("MultiVirtual");
 	const StructTypeInfo* multi_info = legacy_struct("MultiVirtual");
@@ -2940,6 +2943,10 @@ static_assert(sizeof(TemplateOwner) > 0);
 	REQUIRE(nonvirtual_derived_type_info != nullptr);
 	REQUIRE(nonvirtual_base_type_info != nullptr);
 	CHECK_FALSE(tryFindPublishedVirtualBaseIndex(table, *nonvirtual_derived_type_info, *nonvirtual_base_type_info).has_value());
+	const std::optional<int64_t> nonvirtual_bridge_offset =
+		tryFindPublishedDerivedBaseOffset(table, *nonvirtual_derived_type_info, *nonvirtual_base_type_info);
+	REQUIRE(nonvirtual_bridge_offset.has_value());
+	CHECK(*nonvirtual_bridge_offset == nonvirtual_info->base_classes[1].offset);
 
 	const TypeId template_base = class_type("TemplateBaseOwner");
 	const TypeId template_owner = class_type("TemplateOwner");

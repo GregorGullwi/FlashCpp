@@ -2078,20 +2078,22 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				(std::holds_alternative<LocalVarId>(this_arg_value) || std::holds_alternative<StringHandle>(this_arg_value))) {
 				this_arg_value = emitAddressOf(TypeCategory::Struct, object_type.size_in_bits(), this_arg_value, callExprNode.called_from());
 			}
+			const int64_t published_owner_offset = tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(),
+				object_type.type_index(), call_owner_type_index).value_or(owner_conversion.offset);
 			const IrOperand pointer_value = std::visit([](const auto& value) -> IrOperand { return value; }, this_arg_value);
 			ExprResult pointer = makeExprResult(object_type.type_index().withCategory(TypeCategory::Struct), SizeInBits{POINTER_SIZE_BITS},
 				pointer_value, PointerDepth{1}, ValueStorage::ContainsData);
 			if (object_is_pointer_like) {
 				pointer = adjustDerivedToBasePointer(pointer, object_type.type_index().withCategory(TypeCategory::Struct),
 					call_owner_type_index.withCategory(TypeCategory::Struct), PointerDepth{1}, callExprNode.called_from());
-			} else if (owner_conversion.offset != 0) {
+			} else if (published_owner_offset != 0) {
 				// A complete object value uses its own finalized static base
 				// offset; some implicit template specializations do not publish a
 				// hidden virtual-base table for the runtime path.
 				BinaryOp add_offset;
 				add_offset.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, toIrValue(pointer.value));
 				add_offset.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS},
-					static_cast<unsigned long long>(owner_conversion.offset));
+					static_cast<unsigned long long>(published_owner_offset));
 				add_offset.result = var_counter.next();
 				const TempVar adjusted_pointer = std::get<TempVar>(add_offset.result);
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), callExprNode.called_from()));
