@@ -305,15 +305,17 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Next slice: publish declaration-based specialization NTTP identities and
+   **Next slice: define value-based canonical identity for integral NTTPs, then
    delete the centralized offset fallback.** Runtime and constructor offset
    consumers now share the canonical graph, binary/range AST owner indexes are
    gone, and the conversion plan carries only the relation kind.
    `legacyDerivedBaseOffset` remains solely for specialization bases whose value
    template argument has no opaque `nttp_expr`, so canonical import returns
-   `Unresolved` (see `KNOWN_ISSUES.md`). Stamp the value identity at
-   instantiation so declaration-based and syntax-based imports agree, delete the
-   fallback walk, then audit the 3A exit criteria.
+   `Unresolved` (see `KNOWN_ISSUES.md`). Source-expression stamping is
+   insufficient because equivalent values such as `I + 1` and `1u` must intern
+   to one canonical identity. Define the value/type-based NTTP identity used by
+   both syntax and declaration paths, delete the fallback walk, then audit the
+   3A exit criteria.
 
    **Owner-index deletion gates:** virtual-base ABI facts are published by class
    TypeIds and consumed by AstToIr, explicit-cast, IRConverter, and constructor
