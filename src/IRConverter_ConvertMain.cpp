@@ -7046,7 +7046,7 @@ std::optional<int64_t> IrToObjConverter<TWriterClass>::findBaseOffsetWithinDeriv
 		classifyDerivedBaseConversion(derived_type, base_type);
 	if (conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual)
 		return std::nullopt;
-	return conversion.offset;
+	return tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(), derived_type, base_type).value_or(conversion.offset);
 }
 
 template <class TWriterClass>

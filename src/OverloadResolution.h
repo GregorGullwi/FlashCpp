@@ -1464,6 +1464,49 @@ inline std::optional<int64_t> findCanonicalPublicNonVirtualBaseOffset(
 	return std::nullopt;
 }
 
+// Resolve a complete-object derived-to-base offset through the published
+// canonical class graph. Virtual bases use their finalized ABI offset; ordinary
+// public bases use the nonvirtual graph walk.
+inline std::optional<int64_t> tryFindPublishedDerivedBaseOffset(const CanonicalTypeTable& table, TypeId derived_type, TypeId base_type) {
+	const std::optional<DerivedBaseConversionKind> kind = classifyCanonicalDerivedBaseConversion(table, derived_type, base_type);
+	if (!kind.has_value()) {
+		return std::nullopt;
+	}
+	if (*kind == DerivedBaseConversionKind::PublicVirtual) {
+		const std::optional<uint32_t> index = table.findVirtualBaseIndex(derived_type, base_type);
+		if (!index.has_value()) {
+			return std::nullopt;
+		}
+		return static_cast<int64_t>(table.virtualBaseAt(derived_type, *index).offset_bytes);
+	}
+	if (*kind == DerivedBaseConversionKind::UniquePublicNonVirtual) {
+		return findCanonicalPublicNonVirtualBaseOffset(table, derived_type, base_type);
+	}
+	return std::nullopt;
+}
+
+inline std::optional<int64_t> tryFindPublishedDerivedBaseOffset(
+	CanonicalTypeTable& table,
+	const TypeInfo& derived_type_info,
+	const TypeInfo& base_type_info) {
+	const CanonicalTypeImport derived_import = importCanonicalClassTypeInfo(table, derived_type_info);
+	const CanonicalTypeImport base_import = importCanonicalClassTypeInfo(table, base_type_info);
+	if (derived_import.status != CanonicalTypeImportStatus::Supported ||
+		base_import.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	return tryFindPublishedDerivedBaseOffset(table, derived_import.type, base_import.type);
+}
+
+inline std::optional<int64_t> tryFindPublishedDerivedBaseOffset(CanonicalTypeTable& table, TypeIndex derived_type_index, TypeIndex base_type_index) {
+	const TypeInfo* derived_type_info = tryGetTypeInfo(derived_type_index);
+	const TypeInfo* base_type_info = tryGetTypeInfo(base_type_index);
+	if (derived_type_info == nullptr || base_type_info == nullptr) {
+		return std::nullopt;
+	}
+	return tryFindPublishedDerivedBaseOffset(table, *derived_type_info, *base_type_info);
+}
+
 // Return the byte offset only for a unique, public, non-virtual base.  Callers
 // that need diagnostics must use classifyDerivedBaseConversion() first.
 inline std::optional<int64_t> findPublicBaseSubobjectOffset(TypeIndex base_idx, TypeIndex derived_idx) {
