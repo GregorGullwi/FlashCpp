@@ -2701,7 +2701,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			overload_result = OperatorOverloadResult(binaryOperatorNode.resolved_free_function_operator_overload());
 		} else if (binaryOperatorNode.has_resolved_member_operator_overload()) {
 			overload_result = OperatorOverloadResult(binaryOperatorNode.resolved_member_operator_overload(),
-				binaryOperatorNode.resolved_member_operator_owner(), binaryOperatorNode.resolved_member_operator_owner_index());
+				binaryOperatorNode.resolved_member_operator_owner());
 		} else if (binaryOperatorNode.has_no_match_operator_overload() && !can_recompute_recorded_failure) {
 			overload_result = OperatorOverloadResult::no_overload();
 		} else {
@@ -2934,7 +2934,14 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				throwDeletedOperatorFunctionDiagnostic(*context_, binaryOperatorNode.get_token(), op);
 			}
 
-			const TypeIndex owner_type_index = overload_result.compatibility_declaring_type_index;
+			TypeIndex owner_type_index = overload_result.compatibility_declaring_type_index;
+			if (!owner_type_index.is_valid() && overload_result.declaring_type) {
+				const TypeInfo* owner_type_info = tryFindCanonicalOverloadClassTypeInfo(
+					requireFrontendContext().canonicalTypes(), overload_result.declaring_type);
+				if (owner_type_info != nullptr) {
+					owner_type_index = owner_type_info->registeredTypeIndex();
+				}
+			}
 			if (!owner_type_index.is_valid()) {
 				throw InternalError("Selected binary operator is missing its declaration owner");
 			}

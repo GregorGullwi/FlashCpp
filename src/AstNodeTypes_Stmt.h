@@ -277,12 +277,10 @@ public:
 	}
 	const FunctionDeclarationNode* resolved_dereference_function() const { return resolved_dereference_function_; }
 	BinaryOperatorCallTargetId resolved_comparison_target() const { return resolved_comparison_target_; }
-	TypeIndex resolved_comparison_owner_index() const { return resolved_comparison_owner_index_; }
 	bool resolved_comparison_negates_equality() const { return resolved_comparison_negates_equality_; }
-	void set_resolved_comparison_target(BinaryOperatorCallTargetId target, bool negate_equality, TypeIndex owner_index) {
+	void set_resolved_comparison_target(BinaryOperatorCallTargetId target, bool negate_equality) {
 		resolved_comparison_target_ = target;
 		resolved_comparison_negates_equality_ = negate_equality;
-		resolved_comparison_owner_index_ = owner_index;
 	}
 	void set_resolved_dereference_function(const FunctionDeclarationNode* func) {
 		resolved_dereference_function_ = func;
@@ -324,7 +322,6 @@ private:
 	const FunctionDeclarationNode* resolved_member_end_function_ = nullptr;
 	const FunctionDeclarationNode* resolved_adl_begin_function_ = nullptr;
 	const FunctionDeclarationNode* resolved_adl_end_function_ = nullptr;
-	TypeIndex resolved_comparison_owner_index_{};
 	BinaryOperatorCallTargetId resolved_comparison_target_{};
 	bool resolved_begin_is_const_ = false;
 	bool resolved_comparison_negates_equality_ = false;
