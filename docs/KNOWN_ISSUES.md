@@ -47,9 +47,11 @@ the centralized compatibility walk for that specialization base.
 Stamping the dependent source expression is not sufficient: the base value can
 come from `I + 1` while an explicit reference to the same specialization uses
 `1u`, so expression-based `ExprId`s would create two canonical `TypeId`s for one
-C++ specialization. Integral NTTP identity needs a value/type-based canonical
-form, or both paths must normalize equivalent values before stamping, so
-declaration-based and syntax-based imports agree.
+C++ specialization. The canonical table has a typed `IntegralValue` representation,
+but neither production import path uses it yet. Preserve the declared or deduced
+NTTP type, evaluate and convert the argument, then use that type and converted
+value in both syntax-based and declaration-based import before removing the offset
+fallback. Dependent and non-integral expressions retain their opaque identities.
 
 ## Expression parsing can overflow a 1 MB native stack before callable sema
 

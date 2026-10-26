@@ -16,6 +16,143 @@ void publishTestClassBases(CanonicalTypeTable& table, EntityId entity, std::span
 }
 }
 
+TEST_CASE("Canonical integral arguments use converted value and canonical type identity") {
+	static_assert(sizeof(CanonicalTypeNode) == 16);
+	static_assert(sizeof(CanonicalTemplateArgument) == 20);
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId unsigned_integer = table.builtin(CanonicalBuiltinKind::UnsignedInt);
+	const TypeId one = table.integralValue(integer, 1);
+	CHECK(one == table.integralValue(integer, 0 + 1));
+	CHECK(one != table.integralValue(unsigned_integer, 1));
+	CHECK(one != table.integralValue(integer, 2));
+	const TypeId wide = table.integralValue(table.builtin(CanonicalBuiltinKind::UnsignedLongLong), 0xfedcba9876543210ULL);
+	CHECK(table.node(wide).array_extent == 0xfedcba9876543210ULL);
+	CHECK(table.node(one).child == integer);
+	CHECK(table.node(one).kind == CanonicalTypeKind::IntegralValue);
+	const TypeId enum_type = table.enumeration(EntityId{9181});
+	CHECK(one != table.integralValue(enum_type, 1));
+	const CanonicalTemplateArgument arguments[] = {CanonicalTemplateArgument::makeIntegral(one), CanonicalTemplateArgument::makeType(integer)};
+	const TypeId specialization = table.templateSpecialization(TemplateDeclId{9182}, arguments);
+	const TypeId link = table.templateSpecializationArguments(specialization);
+	CHECK(table.templateArgumentKind(link) == CanonicalTemplateArgKind::Integral);
+	CHECK_FALSE(table.templateArgumentIsType(link));
+	CHECK(table.templateArgumentIntegral(link) == one);
+	CHECK(table.templateArgumentType(table.templateArgumentNext(link)) == integer);
+	CHECK_THROWS_AS(table.templateArgumentExpr(link), InternalError);
+	CHECK_THROWS_AS(table.templateArgumentType(link), InternalError);
+	CHECK_THROWS_AS(table.pointer(one), InternalError);
+	CHECK_THROWS_AS(table.qualify(one, CVQualifier::Const), InternalError);
+	CHECK_THROWS_AS(table.array(one, 2), InternalError);
+	CHECK_THROWS_AS(table.reference(one, ReferenceQualifier::LValueReference), InternalError);
+	CHECK_THROWS_AS(table.integralValue(table.builtin(CanonicalBuiltinKind::Bool), 2), InternalError);
+	CHECK_THROWS_AS(table.integralValue(table.builtin(CanonicalBuiltinKind::Double), 1), InternalError);
+	CHECK_THROWS_AS(table.integralValue(table.templateParameter(TemplateDeclId{9183}, 0), 1), InternalError);
+	const CanonicalTemplateArgument invalid_type[] = {CanonicalTemplateArgument::makeType(one)};
+	CHECK_THROWS_AS(table.templateSpecialization(TemplateDeclId{9182}, invalid_type), InternalError);
+	const CanonicalTemplateArgument invalid_value[] = {CanonicalTemplateArgument::makeIntegral(integer)};
+	CHECK_THROWS_AS(table.templateSpecialization(TemplateDeclId{9182}, invalid_value), InternalError);
+}
+
+TEST_CASE("Canonical integral arguments survive substitution and nested alias rebuilding") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TemplateDeclId environment{9191};
+	const TemplateDeclId primary{9192};
+	const TypeId parameter = table.templateParameter(environment, 0);
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId negative = table.integralValue(integer, static_cast<uint64_t>(-7));
+	const CanonicalTemplateArgument pattern_arguments[] = {
+		CanonicalTemplateArgument::makeType(parameter), CanonicalTemplateArgument::makeIntegral(negative),
+		CanonicalTemplateArgument::makeNonType(ExprId{91}), CanonicalTemplateArgument::makeTemplate(TemplateDeclId{9193}),
+	};
+	const CanonicalTemplateArgument concrete_arguments[] = {
+		CanonicalTemplateArgument::makeType(integer), CanonicalTemplateArgument::makeIntegral(negative),
+		CanonicalTemplateArgument::makeNonType(ExprId{91}), CanonicalTemplateArgument::makeTemplate(TemplateDeclId{9193}),
+	};
+	const TypeId pattern = table.templateSpecialization(primary, pattern_arguments);
+	const TypeId concrete = table.templateSpecialization(primary, concrete_arguments);
+	const TypeId substitutions[] = {integer};
+	CHECK(table.substitute(pattern, environment, substitutions) == concrete);
+	const TemplateDeclId alias{9194};
+	const TypeId alias_parameter = table.templateParameter(alias, 0);
+	const CanonicalTemplateArgKind parameter_kinds[] = {CanonicalTemplateArgKind::Type};
+	table.publishAliasTemplateTarget(alias, table.pointer(alias_parameter), parameter_kinds);
+	const TypeId alias_arguments[] = {integer};
+	const TypeId nested_alias = table.aliasTemplateSpecialization(alias, alias_arguments);
+	const CanonicalTemplateArgument nested_arguments[] = {
+		CanonicalTemplateArgument::makeType(nested_alias), CanonicalTemplateArgument::makeIntegral(negative),
+	};
+	const CanonicalTemplateArgument resolved_arguments[] = {
+		CanonicalTemplateArgument::makeType(table.pointer(integer)), CanonicalTemplateArgument::makeIntegral(negative),
+	};
+	CHECK(table.resolveAliasTemplateSpecializations(table.templateSpecialization(primary, nested_arguments)) ==
+		table.templateSpecialization(primary, resolved_arguments));
+	TypeId deep_pattern = pattern;
+	TypeId deep_concrete = concrete;
+	for (size_t depth = 0; depth < 2048; ++depth) {
+		const CanonicalTemplateArgument pattern_level[] = {
+			CanonicalTemplateArgument::makeType(deep_pattern), CanonicalTemplateArgument::makeIntegral(negative),
+		};
+		const CanonicalTemplateArgument concrete_level[] = {
+			CanonicalTemplateArgument::makeType(deep_concrete), CanonicalTemplateArgument::makeIntegral(negative),
+		};
+		deep_pattern = table.templateSpecialization(primary, pattern_level);
+		deep_concrete = table.templateSpecialization(primary, concrete_level);
+	}
+	CHECK(table.substitute(deep_pattern, environment, substitutions) == deep_concrete);
+}
+
+TEST_CASE("Canonical integral argument traces contain value structure instead of arena slots") {
+	CanonicalTypeTable first;
+	CanonicalTypeTable reordered;
+	const TypeId integer = first.builtin(CanonicalBuiltinKind::Int);
+	reordered.builtin(CanonicalBuiltinKind::Double);
+	reordered.pointer(reordered.builtin(CanonicalBuiltinKind::Float));
+	const TypeId reordered_integer = reordered.builtin(CanonicalBuiltinKind::Int);
+	const TypeId one = first.integralValue(integer, 1);
+	const TypeId reordered_one = reordered.integralValue(reordered_integer, 1);
+	const TypeId two = reordered.integralValue(reordered_integer, 2);
+	const auto capture = [](CanonicalTypeTable& table, TypeId value) {
+		std::ostringstream trace;
+		auto* saved_output = FlashCpp::LogConfig::output_stream;
+		const auto saved_level = FlashCpp::LogConfig::getLevelForCategory(FlashCpp::LogCategory::Types);
+		FlashCpp::LogConfig::setOutputStream(&trace);
+		FlashCpp::LogConfig::setLevel(FlashCpp::LogCategory::Types, FlashCpp::LogLevel::Trace);
+		ScopeGuard restore([&]() {
+			FlashCpp::LogConfig::setOutputStream(saved_output);
+			FlashCpp::LogConfig::setLevel(FlashCpp::LogCategory::Types, saved_level);
+		});
+		const CanonicalTemplateArgument arguments[] = {CanonicalTemplateArgument::makeIntegral(value)};
+		table.templateSpecialization(TemplateDeclId{9202}, arguments);
+		table.aliasTemplateSpecialization(TemplateDeclId{9203}, arguments);
+		return trace.str();
+	};
+	const std::string trace = capture(first, one);
+	CHECK_FALSE(trace.empty());
+	CHECK(trace == capture(reordered, reordered_one));
+	CHECK(trace != capture(reordered, two));
+}
+
+TEST_CASE("Canonical integral values share the canonical transaction and accounting lifetime") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const size_t baseline = table.size();
+	{
+		CanonicalTypeTransaction transaction(table);
+		const TypeId value = table.integralValue(integer, 712);
+		const CanonicalTemplateArgument arguments[] = {CanonicalTemplateArgument::makeIntegral(value)};
+		table.templateSpecialization(TemplateDeclId{9201}, arguments);
+		CHECK(table.size() > baseline);
+	}
+	CHECK(table.size() == baseline);
+	const TypeId value = table.integralValue(integer, 712);
+	CHECK(value == table.integralValue(integer, 712));
+	CHECK(table.size() == baseline + 1);
+}
+
 TEST_CASE("Canonical types participate in scratch rollback") {
 	FrontendContext context;
 	const auto before = context.canonicalTypes().size();
@@ -1779,6 +1916,7 @@ TEST_CASE("Qualification ranking reads pointee cv from canonical pointer-to-arra
 }
 
 TEST_CASE("Ordered declarator array conversion preserves the element spine") {
+	FrontendContext context;
 	TypeSpecifierNode source(
 		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 	source.set_ordered_declarator({
@@ -4073,6 +4211,7 @@ TEST_CASE("Ordered pointer and array conversions reach bool") {
 }
 
 TEST_CASE("Projectable pointer and array conversions reach bool") {
+	FrontendContext context;
 	TypeSpecifierNode bool_target(
 		TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
 
