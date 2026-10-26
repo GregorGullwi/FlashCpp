@@ -4087,6 +4087,24 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 		return std::nullopt;
 	};
 
+	const auto normalize_integral_argument = [](TemplateTypeArg& argument, const TemplateParameterNode& parameter) {
+		if (parameter.kind() != TemplateParameterKind::NonType || !parameter.has_type() || !argument.is_value || argument.is_dependent ||
+			argument.valueIdentity().kind != FlashCpp::NonTypeValueIdentityKind::Integral) {
+			return;
+		}
+		const TypeSpecifierNode& target = parameter.type_specifier_node();
+		if ((!is_integer_type(target.type()) && target.type() != TypeCategory::Bool) || target.pointer_depth() != 0 ||
+			target.reference_qualifier() != ReferenceQualifier::None) {
+			return;
+		}
+		argument.value = static_cast<int64_t>(normalizeIntegralImmediateValue(static_cast<uint64_t>(argument.value), target.type(),
+			get_type_size_bits(target.type())));
+		argument.type_index = target.type_index().is_valid() ? target.type_index() : nativeTypeIndex(target.type());
+		if (argument.has_typed_value_identity) {
+			argument.typed_value_identity.value = argument.value;
+			argument.typed_value_identity.value_type_index = argument.type_index;
+		}
+	};
 	size_t arg_index = 0;
 	for (size_t param_index = 0;
 		 param_index < target_template_params.size() && arg_index < template_args.size();
@@ -4121,6 +4139,7 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 					reclassified->nttp_expr = arg.nttp_expr;
 					arg = *reclassified;
 				}
+				normalize_integral_argument(arg, param);
 				++arg_index;
 			}
 			break;
@@ -4153,6 +4172,7 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 			reclassified->nttp_expr = arg.nttp_expr;
 			arg = *reclassified;
 		}
+		normalize_integral_argument(arg, param);
 		++arg_index;
 	}
 }

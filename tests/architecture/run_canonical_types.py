@@ -551,6 +551,9 @@ def main():
             write_text(directory / IMPL.name, original.replace(before, after))
             jobs.append((name, directory, 1))
         for name, header, before, after in (
+            ("adapter_integral_spec_arg", "CanonicalTypeAdapter.h",
+             "if (syntax.specialization_arg_is_integral(index)) {",
+             "if (false && syntax.specialization_arg_is_integral(index)) {"),
             ("adapter_dependent_name", "CanonicalTypeAdapter.h",
              "if (syntax.has_dependent_name_type()) {",
              "if (false && syntax.has_dependent_name_type()) {"),

@@ -765,7 +765,7 @@ inline void checkAdapter() {
 		TemplateDeclId{11},
 		std::vector<SpecTemplateArgKind>{SpecTemplateArgKind::Type, SpecTemplateArgKind::NonType},
 		std::vector<TypeSpecifierNode>{int_arg},
-		std::vector<ExprId>{ExprId{21}},
+		std::vector<SpecNonTypeArgument>{ExprId{21}},
 		std::vector<TemplateDeclId>{},
 		std::vector<SpecDependentTemplateArg>{});
 	const auto imported_nttp_spec = importCanonicalType(table, nttp_specialization);
@@ -782,13 +782,27 @@ inline void checkAdapter() {
 	};
 	require(imported_nttp_spec.type !=
 		table.templateSpecialization(TemplateDeclId{11}, other_nttp_args));
+	const TypeId integral_one = table.integralValue(table.builtin(CanonicalBuiltinKind::UnsignedInt), 1);
+	const TypeId integral_two = table.integralValue(table.builtin(CanonicalBuiltinKind::UnsignedInt), 2);
+	TypeSpecifierNode mixed_values(TypeCategory::Template, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	mixed_values.set_template_specialization_mixed(TemplateDeclId{12},
+		{SpecTemplateArgKind::Integral, SpecTemplateArgKind::NonType, SpecTemplateArgKind::Integral}, {},
+		{SpecNonTypeArgument{integral_one}, SpecNonTypeArgument{ExprId{21}}, SpecNonTypeArgument{integral_two}}, {}, {});
+	const CanonicalTemplateArgument expected_values[] = {
+		CanonicalTemplateArgument::makeIntegral(integral_one), CanonicalTemplateArgument::makeNonType(ExprId{21}),
+		CanonicalTemplateArgument::makeIntegral(integral_two),
+	};
+	require(importCanonicalType(table, mixed_values).type == table.templateSpecialization(TemplateDeclId{12}, expected_values));
+	require(mixed_values.specialization_arg_integral(0) == integral_one);
+	require(mixed_values.specialization_arg_expr(1) == ExprId{21});
+	require(mixed_values.specialization_arg_integral(2) == integral_two);
 	TypeSpecifierNode template_specialization(TypeCategory::Template, TypeQualifier::None, 0, Token{},
 		CVQualifier::None);
 	template_specialization.set_template_specialization_mixed(
 		TemplateDeclId{11},
 		std::vector<SpecTemplateArgKind>{SpecTemplateArgKind::Template, SpecTemplateArgKind::Type},
 		std::vector<TypeSpecifierNode>{int_arg},
-		std::vector<ExprId>{},
+		std::vector<SpecNonTypeArgument>{},
 		std::vector<TemplateDeclId>{TemplateDeclId{12}},
 		std::vector<SpecDependentTemplateArg>{});
 	const auto imported_template_spec = importCanonicalType(table, template_specialization);
@@ -836,7 +850,7 @@ inline void checkAdapter() {
 			SpecTemplateArgKind::DependentTemplate,
 			SpecTemplateArgKind::Type},
 		std::vector<TypeSpecifierNode>{int_arg},
-		std::vector<ExprId>{},
+		std::vector<SpecNonTypeArgument>{},
 		std::vector<TemplateDeclId>{},
 		std::vector<SpecDependentTemplateArg>{{TemplateDeclId{4}, 1}});
 	const auto imported_dependent_template_spec =
@@ -870,7 +884,7 @@ inline void checkAdapter() {
 			TemplateDeclId{11},
 			std::vector<SpecTemplateArgKind>{SpecTemplateArgKind::NonType},
 			std::vector<TypeSpecifierNode>{},
-			std::vector<ExprId>{ExprId{}},
+			std::vector<SpecNonTypeArgument>{ExprId{}},
 			std::vector<TemplateDeclId>{},
 			std::vector<SpecDependentTemplateArg>{});
 	});

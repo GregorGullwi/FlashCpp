@@ -1365,6 +1365,10 @@ inline CanonicalTypeImport importCanonicalTemplateSpecialization(CanonicalTypeTa
 				template_parameter.parameter_index));
 			continue;
 		}
+		if (syntax.specialization_arg_is_integral(index)) {
+			argument_ids.push_back(CanonicalTemplateArgument::makeIntegral(syntax.specialization_arg_integral(index)));
+			continue;
+		}
 		const ExprId expr = syntax.specialization_arg_expr(index);
 		if (!expr) {
 			return {{}, CanonicalTypeImportStatus::Unresolved};
@@ -1665,6 +1669,20 @@ inline CanonicalTypeImport importCanonicalTemplateTypeArgumentDirect(
 	return importCanonicalType(table, *argument_type);
 }
 
+inline std::optional<TypeId> tryImportCanonicalIntegralValue(CanonicalTypeTable& table, TypeIndex value_type, int64_t converted_value) {
+	const TypeCategory category = value_type.category();
+	if (!is_integer_type(category) && category != TypeCategory::Bool && category != TypeCategory::Enum) {
+		return std::nullopt;
+	}
+	TypeSpecifierNode syntax(value_type, 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
+	tryBindPublishedTypeEntity(syntax);
+	const CanonicalTypeImport imported = importCanonicalType(table, syntax);
+	if (imported.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	return table.integralValue(imported.type, static_cast<uint64_t>(converted_value));
+}
+
 inline CanonicalTypeImport shapeCanonicalTemplateTypeArgument(
 	CanonicalTypeTable& table,
 	const TypeInfo::TemplateArgInfo& argument,
@@ -1809,8 +1827,16 @@ inline CanonicalTypeImport importCanonicalClassSource(
 			const size_t argument_index = current.next_argument;
 			const TypeInfo::TemplateArgInfo& argument =
 				source_arguments[argument_index];
-			// A non-type argument keeps its published opaque expression identity,
-			// matching the syntax-based specialization import.
+			if (argument.is_value && !argument.is_pack && argument.nttp_kind == FlashCpp::NonTypeValueIdentityKind::Integral &&
+				!argument.dependent_name.isValid() && !argument.dependent_expr().has_value()) {
+				const std::optional<TypeId> integral = tryImportCanonicalIntegralValue(table, argument.type_index, argument.intValue());
+				if (integral.has_value()) {
+					current.arguments.push_back(CanonicalTemplateArgument::makeIntegral(*integral));
+					++current.next_argument;
+					continue;
+				}
+			}
+			// Dependent and non-integral arguments retain opaque source identity.
 			if (argument.is_value && argument.nttp_expr) {
 				current.arguments.push_back(
 					CanonicalTemplateArgument::makeNonType(argument.nttp_expr));
