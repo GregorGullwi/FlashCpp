@@ -2843,6 +2843,142 @@ static_assert(sizeof(FullOwner) > 0);
 	CHECK_FALSE(table.hasClassBaseSchema(unfinished));
 }
 
+TEST_CASE("Completed classes publish finalized virtual-base ABI facts by TypeId") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	const std::string code = R"(
+struct VirtualRoot { long long value; };
+struct VirtualFirst { int first; };
+struct VirtualSecond { long long second; };
+struct OrdinaryDerived : virtual VirtualRoot { int tag; };
+struct MultiVirtual : virtual VirtualFirst, virtual VirtualSecond { short tag; };
+struct Padding { char byte; };
+struct NonVirtualBase { long long value; };
+struct NonVirtualDerived : Padding, NonVirtualBase { int tag; };
+template<class T> struct TemplateBase { T value; };
+template<class T> struct TemplateDerived : virtual TemplateBase<T> { short tag; };
+using TemplateBaseOwner = TemplateBase<long long>;
+using TemplateOwner = TemplateDerived<long long>;
+static_assert(sizeof(OrdinaryDerived) > 0);
+static_assert(sizeof(MultiVirtual) > 0);
+static_assert(sizeof(NonVirtualDerived) > 0);
+static_assert(sizeof(TemplateOwner) > 0);
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("virtual_base_abi_facts.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	auto class_type = [&](std::string_view name) {
+		const TypeInfo* type_info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(type_info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *type_info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	auto legacy_struct = [](std::string_view name) -> const StructTypeInfo* {
+		const TypeInfo* type_info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(type_info != nullptr);
+		const StructTypeInfo* struct_info = canonicalClassStructInfoFromTypeInfo(*type_info);
+		REQUIRE(struct_info != nullptr);
+		return struct_info;
+	};
+
+	const TypeId root = class_type("VirtualRoot");
+	const TypeId ordinary = class_type("OrdinaryDerived");
+	const StructTypeInfo* ordinary_info = legacy_struct("OrdinaryDerived");
+	REQUIRE(ordinary_info->virtual_bases.size() == 1);
+	REQUIRE(table.hasVirtualBaseSchema(ordinary));
+	REQUIRE(table.virtualBaseCount(ordinary) == 1);
+	CHECK(table.virtualBaseAt(ordinary, 0).type == root);
+	CHECK(table.virtualBaseAt(ordinary, 0).offset_bytes == ordinary_info->virtual_bases[0].offset);
+	const std::optional<uint32_t> ordinary_index = table.findVirtualBaseIndex(ordinary, root);
+	REQUIRE(ordinary_index.has_value());
+	CHECK(*ordinary_index == 0);
+
+	const TypeId multi = class_type("MultiVirtual");
+	const StructTypeInfo* multi_info = legacy_struct("MultiVirtual");
+	REQUIRE(multi_info->virtual_bases.size() == 2);
+	REQUIRE(table.virtualBaseCount(multi) == multi_info->virtual_bases.size());
+	for (size_t index = 0; index < multi_info->virtual_bases.size(); ++index) {
+		const TypeInfo* base_info = tryGetTypeInfo(multi_info->virtual_bases[index].type_index);
+		REQUIRE(base_info != nullptr);
+		const CanonicalTypeImport imported_base = importCanonicalClassTypeInfo(table, *base_info);
+		REQUIRE(imported_base.status == CanonicalTypeImportStatus::Supported);
+		const CanonicalVirtualBase entry = table.virtualBaseAt(multi, index);
+		CHECK(entry.type == imported_base.type);
+		CHECK(entry.offset_bytes == multi_info->virtual_bases[index].offset);
+		const std::optional<uint32_t> entry_index = table.findVirtualBaseIndex(multi, imported_base.type);
+		REQUIRE(entry_index.has_value());
+		CHECK(*entry_index == index);
+	}
+
+	const TypeId nonvirtual_base = class_type("NonVirtualBase");
+	const TypeId nonvirtual_derived = class_type("NonVirtualDerived");
+	const StructTypeInfo* nonvirtual_info = legacy_struct("NonVirtualDerived");
+	REQUIRE(nonvirtual_info->base_classes.size() == 2);
+	CHECK(nonvirtual_info->base_classes[1].offset > 0);
+	REQUIRE(table.hasVirtualBaseSchema(nonvirtual_derived));
+	CHECK(table.virtualBaseCount(nonvirtual_derived) == 0);
+	CHECK_FALSE(table.findVirtualBaseIndex(nonvirtual_derived, nonvirtual_base).has_value());
+	CHECK_FALSE(table.findVirtualBaseIndex(nonvirtual_derived, nonvirtual_derived).has_value());
+
+	const TypeId template_base = class_type("TemplateBaseOwner");
+	const TypeId template_owner = class_type("TemplateOwner");
+	REQUIRE(table.hasVirtualBaseSchema(template_owner));
+	REQUIRE(table.virtualBaseCount(template_owner) == 1);
+	CHECK(table.virtualBaseAt(template_owner, 0).type == template_base);
+	CHECK(table.virtualBaseAt(template_owner, 0).offset_bytes > 0);
+	const std::optional<uint32_t> template_index = table.findVirtualBaseIndex(template_owner, template_base);
+	REQUIRE(template_index.has_value());
+	CHECK(*template_index == 0);
+}
+
+TEST_CASE("Virtual-base ABI publication is transactional and rejects conflicting order") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId first = table.record(EntityId{98301});
+	const TypeId second = table.record(EntityId{98302});
+	const TypeId derived = table.record(EntityId{98303});
+	for (TypeId base : {first, second}) {
+		table.publishClassBaseSchema(base, {});
+	}
+	const std::array<CanonicalVirtualBase, 2> ordered{{
+		CanonicalVirtualBase{second, 24},
+		CanonicalVirtualBase{first, 0},
+	}};
+	table.publishVirtualBaseSchema(derived, ordered);
+	REQUIRE(table.hasVirtualBaseSchema(derived));
+	REQUIRE(table.virtualBaseCount(derived) == 2);
+	CHECK(table.virtualBaseAt(derived, 0).type == second);
+	CHECK(table.virtualBaseAt(derived, 1).type == first);
+	CHECK(table.findVirtualBaseIndex(derived, second) == std::optional<uint32_t>{0});
+	CHECK(table.findVirtualBaseIndex(derived, first) == std::optional<uint32_t>{1});
+	table.publishVirtualBaseSchema(derived, ordered);
+	const std::array<CanonicalVirtualBase, 2> reversed{{
+		CanonicalVirtualBase{first, 0},
+		CanonicalVirtualBase{second, 24},
+	}};
+	CHECK_THROWS_AS(table.publishVirtualBaseSchema(derived, reversed), InternalError);
+	const std::array<CanonicalVirtualBase, 2> duplicate{{
+		CanonicalVirtualBase{first, 0},
+		CanonicalVirtualBase{first, 8},
+	}};
+	CHECK_THROWS_AS(table.publishVirtualBaseSchema(derived, duplicate), InternalError);
+	const TypeId rolled_back = table.record(EntityId{98304});
+	{
+		CanonicalTypeTransaction transaction(table);
+		table.publishVirtualBaseSchema(rolled_back, ordered);
+		REQUIRE(table.hasVirtualBaseSchema(rolled_back));
+	}
+	CHECK_FALSE(table.hasVirtualBaseSchema(rolled_back));
+}
+
 TEST_CASE("Canonical member pointer owner planning rejects absent schemas despite unrelated legacy proof") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

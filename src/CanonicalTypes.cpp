@@ -1463,6 +1463,121 @@ CanonicalClassBase CanonicalTypeTable::classBaseAt(TypeId class_type, size_t ind
 	return class_bases_[header.base_begin + index];
 }
 
+void CanonicalTypeTable::publishVirtualBaseSchema(TypeId class_type,
+	std::span<const CanonicalVirtualBase> virtual_bases) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	if (!class_type || virtual_bases.size() > std::numeric_limits<uint16_t>::max()) {
+		throw InternalError("canonical type: invalid virtual base schema");
+	}
+	const CanonicalTypeKind owner_kind = nodeUnlocked(class_type).kind;
+	if (owner_kind != CanonicalTypeKind::Record &&
+		owner_kind != CanonicalTypeKind::TemplateSpecialization) {
+		throw InternalError("canonical type: virtual base schema owner is not a class type");
+	}
+	for (size_t index = 0; index < virtual_bases.size(); ++index) {
+		const CanonicalVirtualBase& base = virtual_bases[index];
+		if (!base.type || base.type == class_type) {
+			throw InternalError("canonical type: invalid virtual base schema entry");
+		}
+		const CanonicalTypeKind base_kind = nodeUnlocked(base.type).kind;
+		if (base_kind != CanonicalTypeKind::Record &&
+			base_kind != CanonicalTypeKind::TemplateSpecialization) {
+			throw InternalError("canonical type: virtual base entry does not name a class type");
+		}
+		for (size_t previous = 0; previous < index; ++previous) {
+			if (virtual_bases[previous].type == base.type) {
+				throw InternalError("canonical type: duplicate virtual base in ABI schema");
+			}
+		}
+	}
+	const auto existing = virtual_base_schema_ids_.find(class_type.value);
+	if (existing != virtual_base_schema_ids_.end()) {
+		const CanonicalVirtualBaseSchemaHeader header =
+			virtual_base_schema_headers_[existing->second];
+		if (header.base_count != virtual_bases.size()) {
+			throw InternalError("canonical type: conflicting virtual base schema publication");
+		}
+		for (size_t index = 0; index < virtual_bases.size(); ++index) {
+			if (virtual_bases_[header.base_begin + index] != virtual_bases[index]) {
+				throw InternalError("canonical type: conflicting virtual base schema publication");
+			}
+		}
+		return;
+	}
+	const uint32_t base_begin = static_cast<uint32_t>(live_virtual_base_count_);
+	if (static_cast<uint64_t>(base_begin) + virtual_bases.size() >
+		std::numeric_limits<uint32_t>::max()) {
+		throw InternalError("canonical type: virtual base schema arena exhausted");
+	}
+	for (const CanonicalVirtualBase& base : virtual_bases) {
+		appendSchemaEntryUnlocked(virtual_bases_, live_virtual_base_count_, base);
+	}
+	const CanonicalVirtualBaseSchemaHeader header{
+		.class_type = class_type,
+		.base_begin = base_begin,
+		.base_count = static_cast<uint16_t>(virtual_bases.size()),
+		.reserved = 0,
+		.reserved2 = 0,
+	};
+	const size_t header_index = live_virtual_base_schema_count_;
+	appendSchemaEntryUnlocked(
+		virtual_base_schema_headers_, live_virtual_base_schema_count_, header);
+	try {
+		virtual_base_schema_ids_.emplace(class_type.value, header_index);
+	} catch (...) {
+		live_virtual_base_schema_count_ = header_index;
+		live_virtual_base_count_ = base_begin;
+		noteArenaBytes();
+		throw;
+	}
+	noteArenaBytes();
+}
+
+bool CanonicalTypeTable::hasVirtualBaseSchema(TypeId class_type) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	return class_type && virtual_base_schema_ids_.contains(class_type.value);
+}
+
+size_t CanonicalTypeTable::virtualBaseCount(TypeId class_type) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	return virtualBaseSchemaHeaderUnlocked(class_type).base_count;
+}
+
+CanonicalVirtualBase CanonicalTypeTable::virtualBaseAt(TypeId class_type, size_t index) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const CanonicalVirtualBaseSchemaHeader header =
+		virtualBaseSchemaHeaderUnlocked(class_type);
+	if (index >= header.base_count) {
+		throw InternalError("canonical type: virtual base schema index out of range");
+	}
+	return virtual_bases_[header.base_begin + index];
+}
+
+std::optional<uint32_t> CanonicalTypeTable::findVirtualBaseIndex(TypeId class_type,
+	TypeId base_type) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	if (!class_type || !base_type) {
+		return std::nullopt;
+	}
+	const auto found = virtual_base_schema_ids_.find(class_type.value);
+	if (found == virtual_base_schema_ids_.end()) {
+		return std::nullopt;
+	}
+	const CanonicalVirtualBaseSchemaHeader header =
+		virtual_base_schema_headers_[found->second];
+	for (uint16_t index = 0; index < header.base_count; ++index) {
+		if (virtual_bases_[header.base_begin + index].type == base_type) {
+			return static_cast<uint32_t>(index);
+		}
+	}
+	return std::nullopt;
+}
+
 void CanonicalTypeTable::publishRecordSubobjectTypes(TypeId type, std::span<const TypeId> member_types) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
@@ -3145,6 +3260,9 @@ uint64_t CanonicalTypeTable::usedBytesUnlocked() const {
 		static_cast<uint64_t>(live_class_base_schema_count_) *
 			sizeof(CanonicalClassBaseSchemaHeader) +
 		static_cast<uint64_t>(live_class_base_count_) * sizeof(CanonicalClassBase) +
+		static_cast<uint64_t>(live_virtual_base_schema_count_) *
+			sizeof(CanonicalVirtualBaseSchemaHeader) +
+		static_cast<uint64_t>(live_virtual_base_count_) * sizeof(CanonicalVirtualBase) +
 		static_cast<uint64_t>(live_record_subobject_schema_count_) * sizeof(CanonicalRecordSubobjectTypeSchemaHeader) +
 		static_cast<uint64_t>(live_record_subobject_member_count_) * sizeof(TypeId) +
 		static_cast<uint64_t>(live_named_type_member_schema_count_) *
@@ -3161,6 +3279,7 @@ uint64_t CanonicalTypeTable::reservedBytesUnlocked() const {
 		enum_layouts_.reservedBytes() + record_field_schema_headers_.reservedBytes() +
 		record_members_.reservedBytes() + record_bases_.reservedBytes() +
 		class_base_schema_headers_.reservedBytes() + class_bases_.reservedBytes() +
+		virtual_base_schema_headers_.reservedBytes() + virtual_bases_.reservedBytes() +
 		record_subobject_type_schema_headers_.reservedBytes() + record_subobject_member_types_.reservedBytes() +
 		named_type_member_schema_headers_.reservedBytes() +
 		named_type_members_.reservedBytes() +
@@ -3195,6 +3314,8 @@ size_t CanonicalTypeTable::beginTransaction() {
 		live_record_base_count_,
 		live_class_base_schema_count_,
 		live_class_base_count_,
+		live_virtual_base_schema_count_,
+		live_virtual_base_count_,
 		live_record_subobject_schema_count_,
 		live_record_subobject_member_count_,
 		live_named_type_member_schema_count_,
@@ -3251,6 +3372,13 @@ void CanonicalTypeTable::finishTransaction(size_t depth, bool commit) {
 			--live_class_base_schema_count_;
 		}
 		live_class_base_count_ = mark.class_base_count;
+		while (live_virtual_base_schema_count_ > mark.virtual_base_schema_count) {
+			virtual_base_schema_ids_.erase(
+				virtual_base_schema_headers_[live_virtual_base_schema_count_ - 1]
+					.class_type.value);
+			--live_virtual_base_schema_count_;
+		}
+		live_virtual_base_count_ = mark.virtual_base_count;
 		while (live_record_subobject_schema_count_ > mark.record_subobject_schema_count) {
 			record_subobject_type_schema_ids_.erase(
 				record_subobject_type_schema_headers_[live_record_subobject_schema_count_ - 1]
