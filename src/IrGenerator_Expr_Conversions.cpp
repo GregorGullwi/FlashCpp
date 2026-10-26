@@ -785,6 +785,7 @@ ExprResult AstToIr::adjustDerivedToBasePointer(
 		if (*published_offset != 0) {
 			if (!std::holds_alternative<TempVar>(source_pointer.value) &&
 				!std::holds_alternative<StringHandle>(source_pointer.value) &&
+				!std::holds_alternative<LocalVarId>(source_pointer.value) &&
 				!std::holds_alternative<unsigned long long>(source_pointer.value)) {
 				throw InternalError("Derived-to-base pointer conversion has an unsupported pointer value");
 			}

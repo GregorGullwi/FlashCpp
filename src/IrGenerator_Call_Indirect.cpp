@@ -26,17 +26,28 @@ std::optional<ExprResult> AstToIr::tryGenerateMemberPointerCallIr(const CallExpr
 		object_query.state == TypeSpecifierQueryResult::State::Available && object_query.type.has_value()
 			? &*object_query.type
 			: nullptr;
-	const StringHandle member_owner_name = member_pointer_type.function_signature().class_name;
-	if (member_owner_name.isValid() && object_type != nullptr && object_type->type_index().is_valid()) {
-		const TypeInfo* object_type_info = tryGetTypeInfo(object_type->type_index());
-		if (object_type_info != nullptr && object_type_info->name() != member_owner_name) {
-			// A different owner needs this-adjustment or virtual dispatch; keep
-			// the existing fail-closed path instead of calling with a wrong this.
-			return std::nullopt;
-		}
+	const TypeId member_pointer_id = sema_.canonicalStructuralTypeId(member_pointer_type);
+	if (!member_pointer_id) {
+		return std::nullopt;
 	}
+	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+	const CanonicalTypeNode member_pointer_node = canonical_types.node(member_pointer_id);
+	if (member_pointer_node.kind != CanonicalTypeKind::MemberFunctionPointer) {
+		return std::nullopt;
+	}
+	const TypeId member_owner_id = canonical_types.memberPointerOwner(member_pointer_id);
+	const EntityId member_owner_entity = canonical_types.recordEntity(member_owner_id);
+	if (!member_owner_entity) {
+		return std::nullopt;
+	}
+	const TypeInfo* member_owner_info = tryFindTypeInfoByEntityId(member_owner_entity);
+	if (member_owner_info == nullptr) {
+		return std::nullopt;
+	}
+	const TypeIndex member_owner_type_index = member_owner_info->registeredTypeIndex().withCategory(TypeCategory::Struct);
+
 	ExprResult object_result = access.is_arrow()
-		? visitExpressionNode(*object_expr)
+		? visitExpressionNode(*object_expr, ExpressionContext::Load)
 		: visitExpressionNode(*object_expr, ExpressionContext::LValueAddress);
 	TypeIndex object_type_index = object_type != nullptr ? object_type->type_index() : object_result.type_index;
 	if (!object_type_index.is_valid()) {
@@ -50,6 +61,30 @@ std::optional<ExprResult> AstToIr::tryGenerateMemberPointerCallIr(const CallExpr
 	} else {
 		TempVar this_address = emitAddressOf(object_category, object_size_bits, toIrValue(object_result.value), callExprNode.called_from());
 		this_value = IrValue(this_address);
+	}
+	if (object_type_index != member_owner_type_index) {
+		if (!access.is_arrow() && std::holds_alternative<LocalVarId>(this_value)) {
+			const LocalVarId object_key = std::get<LocalVarId>(this_value);
+			TempVar this_address = emitAddressOf(object_category, object_size_bits, IrValue(object_key), callExprNode.called_from());
+			this_value = IrValue(this_address);
+		}
+		const IrOperand object_pointer_value = std::visit(
+			[](const auto& value) -> IrOperand { return value; },
+			this_value);
+		ExprResult object_pointer = makeExprResult(
+			object_type_index.withCategory(TypeCategory::Struct),
+			SizeInBits{POINTER_SIZE_BITS},
+			object_pointer_value,
+			PointerDepth{1},
+			ValueStorage::ContainsAddress);
+		object_pointer = adjustDerivedToBasePointer(
+			object_pointer,
+			object_type_index.withCategory(TypeCategory::Struct),
+			member_owner_type_index,
+			PointerDepth{1},
+			callExprNode.called_from());
+		this_value = toIrValue(object_pointer.value);
+		object_type_index = member_owner_type_index;
 	}
 
 	ExprResult member_pointer_result = visitExpressionNode(*member_pointer_expr);
@@ -66,7 +101,7 @@ std::optional<ExprResult> AstToIr::tryGenerateMemberPointerCallIr(const CallExpr
 
 	const FunctionSignature& signature = member_pointer_type.function_signature();
 	std::vector<TypedValue> arguments;
-	arguments.push_back(makeMemberThisCallArgument(object_type_index.withCategory(object_category), this_value));
+	arguments.push_back(makeMemberThisCallArgument(member_owner_type_index, this_value));
 	appendIndirectCallArguments(arguments, callExprNode, &signature);
 	TempVar ret_var = var_counter.next();
 	IndirectCallOp op{
