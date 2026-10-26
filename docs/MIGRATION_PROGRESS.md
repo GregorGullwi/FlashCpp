@@ -29,10 +29,12 @@ indirectly virtual diamond follows its most-derived constructor and installs the
 completed-object virtual-base tables; `tests/test_indirect_virtual_base_aggregate_ret0.cpp`
 covers the trait and the pointer conversion. Member access and member calls
 through a pointer or reference to an intermediate base now apply the same
-runtime virtual-base adjustment before using a member offset, while complete
-object values retain their static offsets;
-`tests/test_virtual_base_intermediate_member_access_ret0.cpp` covers pointers,
-references, calls, and a non-virtual control. Selected binary calls, including
+runtime virtual-base adjustment before using a member offset. Member calls on
+complete object values use the finalized static base offset instead, so
+implicit-template specializations without a hidden table work without a runtime
+lookup. `tests/test_virtual_base_intermediate_member_access_ret0.cpp` covers
+pointers, references, complete-object calls, and a non-virtual control.
+Selected binary calls, including
 range comparisons, consume context-owned call symbols and resolved descriptor IDs.
 Declaring TypeId remains identity; owner TypeIndex remains only an ABI bridge
 for object adjustment, with the deletion prerequisites below.
