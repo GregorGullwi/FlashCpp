@@ -42,10 +42,14 @@ specialization base can instead carry an integral value argument with
 recursive `TupleImpl<I + 1, Tail...>` base in
 `tests/test_member_function_overload_in_ctor_init_ret0.cpp`. Its canonical
 import returns `Unresolved`, so `tryFindPublishedDerivedBaseOffset` still needs
-the centralized compatibility walk for that specialization base. Stamp the value
-identity at instantiation, or intern an equivalent source expression, so the
-declaration-based and syntax-based specialization imports produce the same
-canonical `TypeId`.
+the centralized compatibility walk for that specialization base.
+
+Stamping the dependent source expression is not sufficient: the base value can
+come from `I + 1` while an explicit reference to the same specialization uses
+`1u`, so expression-based `ExprId`s would create two canonical `TypeId`s for one
+C++ specialization. Integral NTTP identity needs a value/type-based canonical
+form, or both paths must normalize equivalent values before stamping, so
+declaration-based and syntax-based imports agree.
 
 ## Expression parsing can overflow a 1 MB native stack before callable sema
 
