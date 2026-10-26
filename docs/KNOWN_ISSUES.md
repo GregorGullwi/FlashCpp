@@ -229,15 +229,22 @@ compiler's existing 64-bit member pointer, so this covers non-virtual members
 whose address needs no `this` adjustment (single-inheritance, no virtual
 dispatch). Calling through such a pointer with `obj.*p` or `ptr->*p` lowers as
 an indirect call that passes the object as `this` followed by the explicit
-arguments. `tests/test_member_function_pointer_call_ret0.cpp` covers mutable and
-const members, both access forms, and reassigning the pointer.
+arguments. The call reads the member pointer's canonical owner `TypeId`; when
+that owner is a base of the object, it applies the published non-virtual or
+virtual-base adjustment before the call.
+`tests/test_member_function_pointer_call_ret0.cpp` covers mutable and const
+members, both access forms, and reassigning the pointer, while
+`tests/test_member_function_pointer_call_base_adjustment_ret0.cpp` covers a
+non-primary base and a virtual base.
 
 The following remain unsupported and are rejected or left unresolved:
 
 - Taking the address of a **virtual** member function throws
   `CompileError`; the 64-bit representation cannot carry the vtable-index
   encoding the ABI requires.
-- Multiple-inheritance adjustment of a member-function pointer is not applied.
+- Address-of does not encode a `this` adjustment for a member pointer whose
+  target owner is a non-primary base. Calls adjust only when the pointer's
+  canonical owner is already a base of the object.
 - Instantiating a member template address whose signature contains a class
   template in both the return and parameter (or that shares a name with a
   non-template overload) can still route instantiation through a parser-owned

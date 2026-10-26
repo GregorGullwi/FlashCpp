@@ -6665,6 +6665,11 @@ CanonicalTypeId SemanticAnalysis::canonicalizeTypeForImplicitConversion(const Ty
 	return canonicalizeType(type);
 }
 
+TypeId SemanticAnalysis::canonicalStructuralTypeId(const TypeSpecifierNode& type) {
+	const CanonicalTypeId id = canonicalizeType(type);
+	return type_context_.get(id).structural_type_id;
+}
+
 PointerToArrayShape SemanticAnalysis::pointerToArrayShape(const CanonicalTypeDesc& desc) const {
 	// Every projectable pointer-to-array shape now publishes structural
 	// identity, so a pointer-to-array descriptor that reached codegen without
