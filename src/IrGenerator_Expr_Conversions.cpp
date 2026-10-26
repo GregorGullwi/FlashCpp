@@ -679,8 +679,10 @@ ExprResult AstToIr::adjustDerivedToBaseAddress(
 		},
 		source_address.value);
 	if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
-		if (!base_conversion.virtual_base_index.has_value()) {
-			throw InternalError("Finalized virtual-base conversion is missing its runtime table index");
+		const std::optional<uint32_t> published_virtual_base_index = tryFindPublishedVirtualBaseIndex(
+			requireFrontendContext().canonicalTypes(), source_type_index, target_type_index);
+		if (!published_virtual_base_index.has_value()) {
+			throw InternalError("Finalized virtual-base conversion is missing its published ABI index");
 		}
 		VirtualBaseAdjustOp adjust_op;
 		adjust_op.result = adjusted_address;
@@ -688,7 +690,7 @@ ExprResult AstToIr::adjustDerivedToBaseAddress(
 		adjust_op.source_is_address = true;
 		adjust_op.source_type_index = source_type_index;
 		adjust_op.target_type_index = target_type_index;
-		adjust_op.virtual_base_index = *base_conversion.virtual_base_index;
+		adjust_op.virtual_base_index = *published_virtual_base_index;
 		ir_.addInstruction(IrInstruction(IrOpcode::VirtualBaseAdjust, std::move(adjust_op), source_token));
 	} else {
 		if (base_conversion.offset > std::numeric_limits<int>::max()) {
@@ -745,8 +747,10 @@ ExprResult AstToIr::adjustDerivedToBasePointer(
 
 	IrOperand adjusted_value = source_pointer.value;
 	if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
-		if (!base_conversion.virtual_base_index.has_value()) {
-			throw InternalError("Finalized virtual-base pointer conversion is missing its runtime table index");
+		const std::optional<uint32_t> published_virtual_base_index = tryFindPublishedVirtualBaseIndex(
+			requireFrontendContext().canonicalTypes(), source_type_index, target_type_index);
+		if (!published_virtual_base_index.has_value()) {
+			throw InternalError("Finalized virtual-base pointer conversion is missing its published ABI index");
 		}
 		const std::variant<StringHandle, TempVar, LocalVarId> source = std::visit(
 			[](const auto& value) -> std::variant<StringHandle, TempVar, LocalVarId> {
@@ -763,7 +767,7 @@ ExprResult AstToIr::adjustDerivedToBasePointer(
 		adjust_op.source_is_address = false;
 		adjust_op.source_type_index = source_type_index;
 		adjust_op.target_type_index = target_type_index;
-		adjust_op.virtual_base_index = *base_conversion.virtual_base_index;
+		adjust_op.virtual_base_index = *published_virtual_base_index;
 		const TempVar adjusted_pointer = adjust_op.result;
 		ir_.addInstruction(IrInstruction(IrOpcode::VirtualBaseAdjust, std::move(adjust_op), source_token));
 		adjusted_value = adjusted_pointer;

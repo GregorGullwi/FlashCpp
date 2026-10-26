@@ -1865,6 +1865,32 @@ inline CanonicalTypeImport importCanonicalClassTypeInfo(
 	return importCanonicalClassSource(table, &type_info, nullptr);
 }
 
+// Resolve a derived-to-virtual-base adjustment through the published class
+// TypeIds. The returned value is the runtime table index from the derived
+// class's finalized ABI schema. Empty means either endpoint cannot be imported
+// canonically or the target is not a published virtual base.
+inline std::optional<uint32_t> tryFindPublishedVirtualBaseIndex(
+	CanonicalTypeTable& table,
+	const TypeInfo& derived_type_info,
+	const TypeInfo& base_type_info) {
+	const CanonicalTypeImport derived_import = importCanonicalClassTypeInfo(table, derived_type_info);
+	const CanonicalTypeImport base_import = importCanonicalClassTypeInfo(table, base_type_info);
+	if (derived_import.status != CanonicalTypeImportStatus::Supported ||
+		base_import.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	return table.findVirtualBaseIndex(derived_import.type, base_import.type);
+}
+
+inline std::optional<uint32_t> tryFindPublishedVirtualBaseIndex(CanonicalTypeTable& table, TypeIndex derived_type_index, TypeIndex base_type_index) {
+	const TypeInfo* derived_type_info = tryGetTypeInfo(derived_type_index);
+	const TypeInfo* base_type_info = tryGetTypeInfo(base_type_index);
+	if (derived_type_info == nullptr || base_type_info == nullptr) {
+		return std::nullopt;
+	}
+	return tryFindPublishedVirtualBaseIndex(table, *derived_type_info, *base_type_info);
+}
+
 inline const StructTypeInfo* canonicalClassStructInfoFromTypeInfo(
 	const TypeInfo& type_info) {
 	const TypeInfo* current = &type_info;

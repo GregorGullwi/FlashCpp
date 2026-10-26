@@ -2900,6 +2900,14 @@ static_assert(sizeof(TemplateOwner) > 0);
 	const std::optional<uint32_t> ordinary_index = table.findVirtualBaseIndex(ordinary, root);
 	REQUIRE(ordinary_index.has_value());
 	CHECK(*ordinary_index == 0);
+	const TypeInfo* ordinary_type_info = findTypeByName(StringTable::getOrInternStringHandle("OrdinaryDerived"));
+	const TypeInfo* root_type_info = findTypeByName(StringTable::getOrInternStringHandle("VirtualRoot"));
+	REQUIRE(ordinary_type_info != nullptr);
+	REQUIRE(root_type_info != nullptr);
+	const std::optional<uint32_t> ordinary_bridge_index =
+		tryFindPublishedVirtualBaseIndex(table, *ordinary_type_info, *root_type_info);
+	REQUIRE(ordinary_bridge_index.has_value());
+	CHECK(*ordinary_bridge_index == *ordinary_index);
 
 	const TypeId multi = class_type("MultiVirtual");
 	const StructTypeInfo* multi_info = legacy_struct("MultiVirtual");
@@ -2927,6 +2935,11 @@ static_assert(sizeof(TemplateOwner) > 0);
 	CHECK(table.virtualBaseCount(nonvirtual_derived) == 0);
 	CHECK_FALSE(table.findVirtualBaseIndex(nonvirtual_derived, nonvirtual_base).has_value());
 	CHECK_FALSE(table.findVirtualBaseIndex(nonvirtual_derived, nonvirtual_derived).has_value());
+	const TypeInfo* nonvirtual_derived_type_info = findTypeByName(StringTable::getOrInternStringHandle("NonVirtualDerived"));
+	const TypeInfo* nonvirtual_base_type_info = findTypeByName(StringTable::getOrInternStringHandle("NonVirtualBase"));
+	REQUIRE(nonvirtual_derived_type_info != nullptr);
+	REQUIRE(nonvirtual_base_type_info != nullptr);
+	CHECK_FALSE(tryFindPublishedVirtualBaseIndex(table, *nonvirtual_derived_type_info, *nonvirtual_base_type_info).has_value());
 
 	const TypeId template_base = class_type("TemplateBaseOwner");
 	const TypeId template_owner = class_type("TemplateOwner");
@@ -2937,6 +2950,14 @@ static_assert(sizeof(TemplateOwner) > 0);
 	const std::optional<uint32_t> template_index = table.findVirtualBaseIndex(template_owner, template_base);
 	REQUIRE(template_index.has_value());
 	CHECK(*template_index == 0);
+	const TypeInfo* template_owner_type_info = findTypeByName(StringTable::getOrInternStringHandle("TemplateOwner"));
+	const TypeInfo* template_base_type_info = findTypeByName(StringTable::getOrInternStringHandle("TemplateBaseOwner"));
+	REQUIRE(template_owner_type_info != nullptr);
+	REQUIRE(template_base_type_info != nullptr);
+	const std::optional<uint32_t> template_bridge_index =
+		tryFindPublishedVirtualBaseIndex(table, *template_owner_type_info, *template_base_type_info);
+	REQUIRE(template_bridge_index.has_value());
+	CHECK(*template_bridge_index == *template_index);
 }
 
 TEST_CASE("Virtual-base ABI publication is transactional and rejects conflicting order") {
