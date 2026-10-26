@@ -33,6 +33,20 @@ class-value slicing. Boundary 9 must carry the selected base constructor into
 lowering and reuse the base-object materialization path; a raw byte copy would
 incorrectly bypass nontrivial copy/move semantics.
 
+## Declaration-based specialization NTTPs lack canonical value identity
+
+`importCanonicalClassSource` imports a value template argument only when
+`TemplateArgInfo::nttp_expr` carries an opaque `ExprId`. An instantiated
+specialization base can instead carry an integral value argument with
+`is_value == true`, no `nttp_expr`, and no valid `type_index`, for example the
+recursive `TupleImpl<I + 1, Tail...>` base in
+`tests/test_member_function_overload_in_ctor_init_ret0.cpp`. Its canonical
+import returns `Unresolved`, so `tryFindPublishedDerivedBaseOffset` still needs
+the centralized compatibility walk for that specialization base. Stamp the value
+identity at instantiation, or intern an equivalent source expression, so the
+declaration-based and syntax-based specialization imports produce the same
+canonical `TypeId`.
+
 ## Expression parsing can overflow a 1 MB native stack before callable sema
 
 The 16-level `test_deep_callable_chain_ret0.cpp` passes with the shipping Windows

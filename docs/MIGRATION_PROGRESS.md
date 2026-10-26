@@ -305,12 +305,14 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Next slice: close the specialization-base importer gap and delete the
-   centralized offset fallback.** Runtime and constructor offset consumers now
-   share the canonical graph, binary/range AST owner indexes are gone, and the
-   conversion plan carries only the relation kind. `legacyDerivedBaseOffset`
-   remains solely for specialization bases the canonical importer cannot yet
-   represent. Publish those remaining specialization base graphs, delete the
+   **Next slice: publish declaration-based specialization NTTP identities and
+   delete the centralized offset fallback.** Runtime and constructor offset
+   consumers now share the canonical graph, binary/range AST owner indexes are
+   gone, and the conversion plan carries only the relation kind.
+   `legacyDerivedBaseOffset` remains solely for specialization bases whose value
+   template argument has no opaque `nttp_expr`, so canonical import returns
+   `Unresolved` (see `KNOWN_ISSUES.md`). Stamp the value identity at
+   instantiation so declaration-based and syntax-based imports agree, delete the
    fallback walk, then audit the 3A exit criteria.
 
    **Owner-index deletion gates:** virtual-base ABI facts are published by class
