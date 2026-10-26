@@ -37,6 +37,7 @@ enum class InlineVectorSpillFamily : uint8_t {
 	OverloadResolution = 1,
 	TemplateArgument = 2,
 	QualifiedLookup = 3,
+	ClassLayout = 4,
 	Count,
 };
 
@@ -50,6 +51,8 @@ inline std::string_view inlineVectorSpillFamilyLabel(InlineVectorSpillFamily fam
 		return "template-argument";
 	case InlineVectorSpillFamily::QualifiedLookup:
 		return "qualified-lookup";
+	case InlineVectorSpillFamily::ClassLayout:
+		return "class-layout";
 	case InlineVectorSpillFamily::Count:
 		break;
 	}

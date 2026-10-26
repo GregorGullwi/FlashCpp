@@ -1463,16 +1463,14 @@ CanonicalClassBase CanonicalTypeTable::classBaseAt(TypeId class_type, size_t ind
 	return class_bases_[header.base_begin + index];
 }
 
-void CanonicalTypeTable::publishVirtualBaseSchema(TypeId class_type,
-	std::span<const CanonicalVirtualBase> virtual_bases) {
+void CanonicalTypeTable::publishVirtualBaseSchema(TypeId class_type, std::span<const CanonicalVirtualBase> virtual_bases) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
 	if (!class_type || virtual_bases.size() > std::numeric_limits<uint16_t>::max()) {
 		throw InternalError("canonical type: invalid virtual base schema");
 	}
 	const CanonicalTypeKind owner_kind = nodeUnlocked(class_type).kind;
-	if (owner_kind != CanonicalTypeKind::Record &&
-		owner_kind != CanonicalTypeKind::TemplateSpecialization) {
+	if (owner_kind != CanonicalTypeKind::Record && owner_kind != CanonicalTypeKind::TemplateSpecialization) {
 		throw InternalError("canonical type: virtual base schema owner is not a class type");
 	}
 	for (size_t index = 0; index < virtual_bases.size(); ++index) {
@@ -1481,8 +1479,7 @@ void CanonicalTypeTable::publishVirtualBaseSchema(TypeId class_type,
 			throw InternalError("canonical type: invalid virtual base schema entry");
 		}
 		const CanonicalTypeKind base_kind = nodeUnlocked(base.type).kind;
-		if (base_kind != CanonicalTypeKind::Record &&
-			base_kind != CanonicalTypeKind::TemplateSpecialization) {
+		if (base_kind != CanonicalTypeKind::Record && base_kind != CanonicalTypeKind::TemplateSpecialization) {
 			throw InternalError("canonical type: virtual base entry does not name a class type");
 		}
 		for (size_t previous = 0; previous < index; ++previous) {
@@ -1493,8 +1490,7 @@ void CanonicalTypeTable::publishVirtualBaseSchema(TypeId class_type,
 	}
 	const auto existing = virtual_base_schema_ids_.find(class_type.value);
 	if (existing != virtual_base_schema_ids_.end()) {
-		const CanonicalVirtualBaseSchemaHeader header =
-			virtual_base_schema_headers_[existing->second];
+		const CanonicalVirtualBaseSchemaHeader header = virtual_base_schema_headers_[existing->second];
 		if (header.base_count != virtual_bases.size()) {
 			throw InternalError("canonical type: conflicting virtual base schema publication");
 		}
@@ -1506,8 +1502,7 @@ void CanonicalTypeTable::publishVirtualBaseSchema(TypeId class_type,
 		return;
 	}
 	const uint32_t base_begin = static_cast<uint32_t>(live_virtual_base_count_);
-	if (static_cast<uint64_t>(base_begin) + virtual_bases.size() >
-		std::numeric_limits<uint32_t>::max()) {
+	if (static_cast<uint64_t>(base_begin) + virtual_bases.size() > std::numeric_limits<uint32_t>::max()) {
 		throw InternalError("canonical type: virtual base schema arena exhausted");
 	}
 	for (const CanonicalVirtualBase& base : virtual_bases) {
@@ -1521,8 +1516,7 @@ void CanonicalTypeTable::publishVirtualBaseSchema(TypeId class_type,
 		.reserved2 = 0,
 	};
 	const size_t header_index = live_virtual_base_schema_count_;
-	appendSchemaEntryUnlocked(
-		virtual_base_schema_headers_, live_virtual_base_schema_count_, header);
+	appendSchemaEntryUnlocked(virtual_base_schema_headers_, live_virtual_base_schema_count_, header);
 	try {
 		virtual_base_schema_ids_.emplace(class_type.value, header_index);
 	} catch (...) {
@@ -1549,16 +1543,14 @@ size_t CanonicalTypeTable::virtualBaseCount(TypeId class_type) const {
 CanonicalVirtualBase CanonicalTypeTable::virtualBaseAt(TypeId class_type, size_t index) const {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
-	const CanonicalVirtualBaseSchemaHeader header =
-		virtualBaseSchemaHeaderUnlocked(class_type);
+	const CanonicalVirtualBaseSchemaHeader header = virtualBaseSchemaHeaderUnlocked(class_type);
 	if (index >= header.base_count) {
 		throw InternalError("canonical type: virtual base schema index out of range");
 	}
 	return virtual_bases_[header.base_begin + index];
 }
 
-std::optional<uint32_t> CanonicalTypeTable::findVirtualBaseIndex(TypeId class_type,
-	TypeId base_type) const {
+std::optional<uint32_t> CanonicalTypeTable::findVirtualBaseIndex(TypeId class_type, TypeId base_type) const {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
 	if (!class_type || !base_type) {
@@ -1568,8 +1560,7 @@ std::optional<uint32_t> CanonicalTypeTable::findVirtualBaseIndex(TypeId class_ty
 	if (found == virtual_base_schema_ids_.end()) {
 		return std::nullopt;
 	}
-	const CanonicalVirtualBaseSchemaHeader header =
-		virtual_base_schema_headers_[found->second];
+	const CanonicalVirtualBaseSchemaHeader header = virtual_base_schema_headers_[found->second];
 	for (uint16_t index = 0; index < header.base_count; ++index) {
 		if (virtual_bases_[header.base_begin + index].type == base_type) {
 			return static_cast<uint32_t>(index);
@@ -3373,9 +3364,7 @@ void CanonicalTypeTable::finishTransaction(size_t depth, bool commit) {
 		}
 		live_class_base_count_ = mark.class_base_count;
 		while (live_virtual_base_schema_count_ > mark.virtual_base_schema_count) {
-			virtual_base_schema_ids_.erase(
-				virtual_base_schema_headers_[live_virtual_base_schema_count_ - 1]
-					.class_type.value);
+			virtual_base_schema_ids_.erase(virtual_base_schema_headers_[live_virtual_base_schema_count_ - 1].class_type.value);
 			--live_virtual_base_schema_count_;
 		}
 		live_virtual_base_count_ = mark.virtual_base_count;

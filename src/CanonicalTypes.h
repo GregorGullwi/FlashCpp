@@ -746,8 +746,7 @@ public:
 	// Finalized runtime virtual-base table for a completed class, keyed by the
 	// owning class TypeId. Entries keep ABI order so the list index is the
 	// virtual-base table index used by the runtime adjustment.
-	void publishVirtualBaseSchema(TypeId class_type,
-		std::span<const CanonicalVirtualBase> virtual_bases);
+	void publishVirtualBaseSchema(TypeId class_type, std::span<const CanonicalVirtualBase> virtual_bases);
 
 	bool hasVirtualBaseSchema(TypeId class_type) const;
 
@@ -757,8 +756,7 @@ public:
 
 	// Query the ABI table index for one source/target class TypeId pair. Empty
 	// means the target is not a published virtual base of the source.
-	std::optional<uint32_t> findVirtualBaseIndex(TypeId class_type,
-		TypeId base_type) const;
+	std::optional<uint32_t> findVirtualBaseIndex(TypeId class_type, TypeId base_type) const;
 
 	void publishRecordSubobjectTypes(TypeId type, std::span<const TypeId> member_types);
 
