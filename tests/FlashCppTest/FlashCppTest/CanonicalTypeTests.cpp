@@ -2948,10 +2948,7 @@ TEST_CASE("Virtual-base ABI publication is transactional and rejects conflicting
 	for (TypeId base : {first, second}) {
 		table.publishClassBaseSchema(base, {});
 	}
-	const std::array<CanonicalVirtualBase, 2> ordered{{
-		CanonicalVirtualBase{second, 24},
-		CanonicalVirtualBase{first, 0},
-	}};
+	const std::array<CanonicalVirtualBase, 2> ordered{{CanonicalVirtualBase{second, 24}, CanonicalVirtualBase{first, 0}}};
 	table.publishVirtualBaseSchema(derived, ordered);
 	REQUIRE(table.hasVirtualBaseSchema(derived));
 	REQUIRE(table.virtualBaseCount(derived) == 2);
@@ -2960,15 +2957,9 @@ TEST_CASE("Virtual-base ABI publication is transactional and rejects conflicting
 	CHECK(table.findVirtualBaseIndex(derived, second) == std::optional<uint32_t>{0});
 	CHECK(table.findVirtualBaseIndex(derived, first) == std::optional<uint32_t>{1});
 	table.publishVirtualBaseSchema(derived, ordered);
-	const std::array<CanonicalVirtualBase, 2> reversed{{
-		CanonicalVirtualBase{first, 0},
-		CanonicalVirtualBase{second, 24},
-	}};
+	const std::array<CanonicalVirtualBase, 2> reversed{{CanonicalVirtualBase{first, 0}, CanonicalVirtualBase{second, 24}}};
 	CHECK_THROWS_AS(table.publishVirtualBaseSchema(derived, reversed), InternalError);
-	const std::array<CanonicalVirtualBase, 2> duplicate{{
-		CanonicalVirtualBase{first, 0},
-		CanonicalVirtualBase{first, 8},
-	}};
+	const std::array<CanonicalVirtualBase, 2> duplicate{{CanonicalVirtualBase{first, 0}, CanonicalVirtualBase{first, 8}}};
 	CHECK_THROWS_AS(table.publishVirtualBaseSchema(derived, duplicate), InternalError);
 	const TypeId rolled_back = table.record(EntityId{98304});
 	{

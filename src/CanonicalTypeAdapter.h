@@ -2148,33 +2148,27 @@ inline bool tryPublishCanonicalClassBaseSchema(CanonicalTypeTable& table, TypeId
 
 		const bool has_virtual_base_schema = table.hasVirtualBaseSchema(current.type);
 		if (!has_virtual_base_schema) {
-			std::vector<CanonicalVirtualBase> virtual_bases;
+			InlineVector<CanonicalVirtualBase, FlashCpp::InlineVectorSpillFamily::ClassLayout, 4> virtual_bases;
 			virtual_bases.reserve(current.struct_info->virtual_bases.size());
 			for (const BaseClassSpecifier& virtual_base : current.struct_info->virtual_bases) {
-				if (virtual_base.is_deferred || !virtual_base.type_index.is_valid() ||
-					virtual_base.offset > std::numeric_limits<uint32_t>::max()) {
+				if (virtual_base.is_deferred || !virtual_base.type_index.is_valid() || virtual_base.offset > std::numeric_limits<uint32_t>::max()) {
 					return false;
 				}
 				const TypeInfo* virtual_base_type_info = tryGetTypeInfo(virtual_base.type_index);
 				if (virtual_base_type_info == nullptr) {
 					return false;
 				}
-				const CanonicalTypeImport imported_virtual_base =
-					importCanonicalClassTypeInfo(table, *virtual_base_type_info);
-				if (imported_virtual_base.status != CanonicalTypeImportStatus::Supported ||
-					!is_class_type(imported_virtual_base.type)) {
+				const CanonicalTypeImport imported_virtual_base = importCanonicalClassTypeInfo(table, *virtual_base_type_info);
+				if (imported_virtual_base.status != CanonicalTypeImportStatus::Supported || !is_class_type(imported_virtual_base.type)) {
 					return false;
 				}
-				virtual_bases.push_back({
-					imported_virtual_base.type,
-					static_cast<uint32_t>(virtual_base.offset)});
+				virtual_bases.push_back({imported_virtual_base.type, static_cast<uint32_t>(virtual_base.offset)});
 
 				const bool has_base_object_facts = table.hasRecordProperties(imported_virtual_base.type) &&
 					table.hasRecordSubobjectTypes(imported_virtual_base.type);
 				if (!table.hasClassBaseSchema(imported_virtual_base.type) ||
 					(publication == CanonicalClassSchemaPublication::WithObjectFacts && !has_base_object_facts)) {
-					const StructTypeInfo* base_struct_info =
-						canonicalClassStructInfoFromTypeInfo(*virtual_base_type_info);
+					const StructTypeInfo* base_struct_info = canonicalClassStructInfoFromTypeInfo(*virtual_base_type_info);
 					if (base_struct_info == nullptr) {
 						return false;
 					}
