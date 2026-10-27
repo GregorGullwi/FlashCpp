@@ -885,7 +885,9 @@ TypeId CanonicalTypeTable::structuralValue(TypeId class_type, std::span<const Ty
 	for (size_t index = 0; index < subobject_values.size(); ++index) {
 		const TypeId value = subobject_values[index];
 		const CanonicalTypeKind kind = nodeUnlocked(value).kind;
-		if (kind != CanonicalTypeKind::StructuralValue && (kind != CanonicalTypeKind::IntegralValue || index < base_count)) {
+		if (kind != CanonicalTypeKind::StructuralValue &&
+			(kind != CanonicalTypeKind::StructuralArrayValue || index < base_count) &&
+			(kind != CanonicalTypeKind::IntegralValue || index < base_count)) {
 			throw InternalError("canonical type: structural value requires typed subobjects and structural bases");
 		}
 		arguments.push_back(CanonicalTemplateArgument::makeValue(value));
@@ -893,6 +895,34 @@ TypeId CanonicalTypeTable::structuralValue(TypeId class_type, std::span<const Ty
 	const TypeId members = rebuildMixedTemplateArgListUnlocked(arguments);
 	return internUnlocked({.child = class_type, .kind = CanonicalTypeKind::StructuralValue, .builtin = CanonicalBuiltinKind::Void,
 		.qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None, .array_extent = packStructuralValueExtent(members, base_count)});
+}
+
+TypeId CanonicalTypeTable::structuralArrayValue(TypeId array_type, std::span<const TypeId> element_values) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const CanonicalTypeNode array = nodeUnlocked(array_type);
+	if (array.kind != CanonicalTypeKind::Array ||
+		!hasCanonicalTypeNodeFlag(array.flags, CanonicalTypeNodeFlags::KnownArrayBound)) {
+		throw InternalError("canonical type: structural array value requires a complete array type");
+	}
+	if (array.array_extent == 0 || array.array_extent > UINT32_MAX ||
+		element_values.size() != static_cast<size_t>(array.array_extent)) {
+		throw InternalError("canonical type: structural array value element count does not match its bound");
+	}
+	std::vector<CanonicalTemplateArgument> arguments;
+	arguments.reserve(element_values.size());
+	for (const TypeId value : element_values) {
+		const CanonicalTypeKind kind = nodeUnlocked(value).kind;
+		if (kind != CanonicalTypeKind::IntegralValue && kind != CanonicalTypeKind::StructuralValue &&
+			kind != CanonicalTypeKind::StructuralArrayValue) {
+			throw InternalError("canonical type: structural array value requires typed elements");
+		}
+		arguments.push_back(CanonicalTemplateArgument::makeValue(value));
+	}
+	const TypeId elements = rebuildMixedTemplateArgListUnlocked(arguments);
+	return internUnlocked({.child = array_type, .kind = CanonicalTypeKind::StructuralArrayValue,
+		.builtin = CanonicalBuiltinKind::Void, .qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None,
+		.array_extent = packStructuralArrayExtent(elements, static_cast<uint32_t>(element_values.size()))});
 }
 
 TypeId CanonicalTypeTable::templateArgumentValue(TypeId arg_link) const {
@@ -1804,7 +1834,8 @@ bool CanonicalTypeTable::isReference(CanonicalTypeKind kind) {
 }
 
 bool CanonicalTypeTable::isInternalLink(CanonicalTypeKind kind) {
-	return kind == CanonicalTypeKind::StructuralValue || kind == CanonicalTypeKind::FunctionParam || kind == CanonicalTypeKind::TemplateArg ||
+	return kind == CanonicalTypeKind::StructuralValue || kind == CanonicalTypeKind::StructuralArrayValue ||
+		kind == CanonicalTypeKind::FunctionParam || kind == CanonicalTypeKind::TemplateArg ||
 		kind == CanonicalTypeKind::IntegralValue || kind == CanonicalTypeKind::ValueTemplateArg || kind == CanonicalTypeKind::NonTypeTemplateArg ||
 		kind == CanonicalTypeKind::TemplateTemplateArg || kind == CanonicalTypeKind::DependentTemplateTemplateArg || kind == CanonicalTypeKind::NameBytes;
 }
@@ -2551,8 +2582,9 @@ TypeId CanonicalTypeTable::rebuildMixedTemplateArgListUnlocked(std::span<const C
 			continue;
 		}
 		if (argument.kind == CanonicalTemplateArgKind::Value) {
-			if (!argument.type || (nodeUnlocked(argument.type).kind != CanonicalTypeKind::IntegralValue &&
-				nodeUnlocked(argument.type).kind != CanonicalTypeKind::StructuralValue)) {
+			const CanonicalTypeKind value_kind = argument.type ? nodeUnlocked(argument.type).kind : CanonicalTypeKind::Builtin;
+			if (!argument.type || (value_kind != CanonicalTypeKind::IntegralValue && value_kind != CanonicalTypeKind::StructuralValue &&
+				value_kind != CanonicalTypeKind::StructuralArrayValue)) {
 				throw InternalError("canonical type: invalid typed specialization value");
 			}
 			arg_link = internUnlocked({.child = arg_link, .kind = CanonicalTypeKind::ValueTemplateArg, .builtin = CanonicalBuiltinKind::Void,
@@ -2626,8 +2658,9 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 				throw InternalError("canonical type: substitute argument is an internal link");
 			}
 		} else if (argument.kind == CanonicalTemplateArgKind::Value) {
-			if (!argument.type || (nodeUnlocked(argument.type).kind != CanonicalTypeKind::IntegralValue &&
-				nodeUnlocked(argument.type).kind != CanonicalTypeKind::StructuralValue)) {
+			const CanonicalTypeKind value_kind = argument.type ? nodeUnlocked(argument.type).kind : CanonicalTypeKind::Builtin;
+			if (!argument.type || (value_kind != CanonicalTypeKind::IntegralValue && value_kind != CanonicalTypeKind::StructuralValue &&
+				value_kind != CanonicalTypeKind::StructuralArrayValue)) {
 				throw InternalError("canonical type: invalid substitute typed value");
 			}
 		} else if (argument.kind == CanonicalTemplateArgKind::NonType) {
@@ -2710,6 +2743,7 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 			case CanonicalTypeKind::FunctionParam:
 			case CanonicalTypeKind::TemplateArg:
 			case CanonicalTypeKind::StructuralValue:
+			case CanonicalTypeKind::StructuralArrayValue:
 			case CanonicalTypeKind::IntegralValue:
 			case CanonicalTypeKind::ValueTemplateArg:
 			case CanonicalTypeKind::NonTypeTemplateArg:
@@ -3644,9 +3678,15 @@ void CanonicalTypeTable::appendNodeTrace(StringBuilder& shape, CanonicalTypeNode
 		appendNodeTraceFields(shape, node, node.array_extent);
 		return;
 	}
-	if (node.kind == CanonicalTypeKind::StructuralValue) {
+	const auto is_structural_value = [](CanonicalTypeKind kind) {
+		return kind == CanonicalTypeKind::StructuralValue || kind == CanonicalTypeKind::StructuralArrayValue;
+	};
+	if (is_structural_value(node.kind)) {
 		const auto append_header = [&](CanonicalTypeNode value) {
-			appendNodeTraceFields(shape, value, unpackStructuralValueBaseCount(value.array_extent));
+			const uint32_t count = value.kind == CanonicalTypeKind::StructuralArrayValue
+				? unpackStructuralArrayElementCount(value.array_extent)
+				: unpackStructuralValueBaseCount(value.array_extent);
+			appendNodeTraceFields(shape, value, count);
 			shape.append('/');
 			appendTypeIdTrace(shape, value.child);
 			shape.append('(');
@@ -3665,7 +3705,7 @@ void CanonicalTypeTable::appendNodeTrace(StringBuilder& shape, CanonicalTypeNode
 			const TypeId value_id{static_cast<uint32_t>(argument.array_extent)};
 			const CanonicalTypeNode value = nodeUnlocked(value_id);
 			shape.append('/');
-			if (value.kind == CanonicalTypeKind::StructuralValue) {
+			if (is_structural_value(value.kind)) {
 				append_header(value);
 				pending.push_back(unpackStructuralValueSubobjects(value.array_extent));
 			} else {

@@ -45,6 +45,11 @@ enum class CanonicalTypeKind : uint8_t {
 	// Converted structural-class value: child is the class type, extent is an
 	// ordered ValueTemplateArg chain (low 32) and direct base count (high 32).
 	StructuralValue,
+	// Converted structural-array value: child is the published array type,
+	// extent is an ordered ValueTemplateArg chain (low 32) and element count
+	// (high 32). Element nodes are IntegralValue, StructuralValue, or another
+	// StructuralArrayValue.
+	StructuralArrayValue,
 };
 
 enum class CanonicalTemplateArgKind : uint8_t {
@@ -169,6 +174,14 @@ inline uint64_t packStructuralValueExtent(TypeId subobjects, uint32_t base_count
 
 inline TypeId unpackStructuralValueSubobjects(uint64_t extent) { return TypeId{static_cast<uint32_t>(extent)}; }
 inline uint32_t unpackStructuralValueBaseCount(uint64_t extent) { return static_cast<uint32_t>(extent >> 32); }
+
+inline uint64_t packStructuralArrayExtent(TypeId elements, uint32_t element_count) {
+	return packStructuralValueExtent(elements, element_count);
+}
+
+inline uint32_t unpackStructuralArrayElementCount(uint64_t extent) {
+	return unpackStructuralValueBaseCount(extent);
+}
 
 inline uint64_t packDependentTemplateMemberExtent(TypeId name_link, TypeId arg_link) {
 	return static_cast<uint64_t>(name_link.value) |
@@ -563,6 +576,11 @@ public:
 	// No expression evaluation, target-width conversion, or source stamping occurs here.
 	TypeId integralValue(TypeId value_type, uint64_t converted_bits);
 	TypeId structuralValue(TypeId class_type, std::span<const TypeId> subobject_values, uint32_t base_count);
+
+	// Converted array value keyed by its published array TypeId. The element
+	// count must equal the published outer bound; each element must be a typed
+	// integral/class/array value.
+	TypeId structuralArrayValue(TypeId array_type, std::span<const TypeId> element_values);
 
 	// Opaque type-template-parameter identity. Spelling is never part of this
 	// key; callers publish TemplateDeclId + parameter index separately from the

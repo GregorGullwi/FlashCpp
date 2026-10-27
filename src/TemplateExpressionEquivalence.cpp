@@ -964,7 +964,7 @@ size_t hashDependentExpressionIdentityImpl(const ASTNode& node) {
 } // namespace
 
 bool StructuralClassValue::operator==(const StructuralClassValue& other) const {
-	if (!equalTypeIndexIdentity(type_index, other.type_index) ||
+	if (!equalTypeIndexIdentity(type_index, other.type_index) || is_array != other.is_array ||
 		base_values.size() != other.base_values.size() ||
 		members.size() != other.members.size()) {
 		return false;
@@ -997,6 +997,7 @@ bool StructuralClassValue::operator==(const StructuralClassValue& other) const {
 
 size_t StructuralClassValue::hash() const {
 	size_t seed = hashTypeIndexIdentity(type_index);
+	hashCombine(seed, std::hash<bool>{}(is_array));
 	for (const StructuralClassValue* base_value : base_values) {
 		hashCombine(seed, base_value != nullptr ? base_value->hash() : 0);
 	}

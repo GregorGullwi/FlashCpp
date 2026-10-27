@@ -574,8 +574,8 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 			if (member_info->is_array && initializer.is<InitializerListNode>()) {
 				// Nested InitializerListNode for array member (e.g., `return {{1,2,3}}`)
 				const InitializerListNode& member_init_list = initializer.as<InitializerListNode>();
-				val = Evaluator::materialize_array_value(
-					member_info->type_index,
+				val = Evaluator::materialize_array_value_with_spec(
+					typeSpecifierFromStructMemberProjection(*member_info),
 					member_init_list,
 					context,
 					evaluation_bindings);

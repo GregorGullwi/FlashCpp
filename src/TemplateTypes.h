@@ -755,6 +755,9 @@ struct StructuralClassValue {
 	TypeIndex type_index{};
 	TemplateVector<StructuralClassValue*, 2> base_values;
 	TemplateVector<StructuralClassValueMember, 4> members;
+	// An array value reuses members as its ordered elements; nested arrays and
+	// records live in nested_value. Elements have no names.
+	bool is_array = false;
 
 	bool operator==(const StructuralClassValue& other) const;
 	size_t hash() const;

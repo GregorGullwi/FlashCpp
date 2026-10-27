@@ -41,7 +41,15 @@ subobjects. Constant-byte materialization extracts a bit-field from its declared
 offset and width before scalar conversion, so static/global initializers agree with the
 aggregate path. `tests/test_canonical_structural_nttp_bitfields_ret0.cpp` and the canonical
 adapter scalar probe pin signed/unsigned/bool/enum conversion, padding, and nonzero base
-offsets. Class values retain ordered base/member values with an explicit base count;
+offsets. Array members are ordered canonical array values keyed by their published element
+type and outer bound; `StructuralArrayValue` keeps the published array TypeId as its child
+and fails closed on bound, element-kind, or count mismatches. Nested arrays and record
+elements recurse through the same value worklist, and element values are converted to the
+declared element type before identity. Short array initializers zero-fill omitted elements
+through the spec-aware materializer before structural value construction.
+`tests/test_canonical_structural_nttp_arrays_ret0.cpp` covers nested arrays, record, bool,
+enum, and scalar elements, equivalent named/braced values, and nonzero base offsets. Class
+values retain ordered base/member values with an explicit base count;
 import and tracing use worklists. Retain the 4,096-level import/trace guard on a
 1 MiB stack; existing evaluator recursion is separate. Dependent and unmigrated
 value shapes retain opaque expression identity.
@@ -320,15 +328,15 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Next slice: canonicalize array-member subobjects in structural NTTPs.**
-   Represent array members as ordered nested values from the declared canonical
-   element type and published bounds, reusing the structural value import/trace
-   worklists. Cover nested arrays, base subobjects, equivalent named/braced
-   values, distinct element values, and nonzero derived-to-base offsets.
-   Union variants, other scalar field kinds, and unpublished value-class
+   **Next slice: canonicalize union-variant subobjects in structural NTTPs.**
+   Publish anonymous-union member groups as canonical union values instead of
+   rejecting them at field-schema publication. Cover active-member values,
+   equivalent named/braced values, distinct variants, nested records, base
+   subobjects, and nonzero derived-to-base offsets. Other scalar field kinds
+   (floating, pointer, and member-pointer values) and unpublished value-class
    identities remain separate import work. Keep the worklist guard and the
    nonzero-offset guards in
-   `test_canonical_structural_nttp_{base_source,equivalence,subobjects,bitfields}_ret0.cpp`.
+   `test_canonical_structural_nttp_{base_source,equivalence,subobjects,bitfields,arrays}_ret0.cpp`.
    `legacyDerivedBaseOffset` remains necessary for unsupported
    value-specialization roots; audit these and dependent roots before deleting it
    or closing a 3A exit criterion. See `KNOWN_ISSUES.md`.
