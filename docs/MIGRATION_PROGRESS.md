@@ -30,9 +30,10 @@ behind that query for specialization bases the canonical importer cannot yet
 represent. Binary and range call selection no longer store AST owner
 TypeIndexes: the published `BinaryOperatorCallTarget.declaring_type` is the
 authority, and codegen derives its ABI owner handle at that boundary.
-Concrete integral NTTPs use converted canonical type/value identity in syntax
-and declaration imports, including bools, enums, defaults, and callable-alias
-bindings. Dependent and non-integral arguments retain opaque expression identity.
+Concrete integral and scalar integral-field class NTTPs share converted canonical
+type/value identity in syntax and declaration imports, including equivalent
+named and braced class values and their published base offsets. Dependent and
+unmigrated value shapes retain opaque expression identity.
 `StructTypeInfo::isAggregate` now excludes
 classes with any reachable virtual base, not only direct virtual bases, so an
 indirectly virtual diamond follows its most-derived constructor and installs the
@@ -308,15 +309,18 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Next slice: canonicalize structural-class NTTP specialization identity.**
-   Start with scalar-field structural values: syntax and declaration imports
-   must agree for equivalent `Base<key>` and `Base<Key{1}>` arguments, keyed by
-   canonical class/subobject types and values rather than source expressions.
-   Publish matching class-base facts and retain the nonzero-offset guard in
-   `test_canonical_structural_nttp_base_source_ret0.cpp`. `legacyDerivedBaseOffset`
-   remains necessary for unsupported value-specialization roots, including this
-   case; audit other dependent/non-integral roots before deleting the walk and
-   closing any 3A exit criterion. See `KNOWN_ISSUES.md`.
+   **Next slice: canonicalize nested and base-bearing structural NTTP values.**
+   Extend the typed-value graph and importer with an explicit subobject worklist,
+   preserving canonical class identity, ordered base/member values, and declared
+   scalar types. Syntax and declaration imports must agree for equivalent named
+   and braced values and publish matching class-base facts. Retain both
+   `test_canonical_structural_nttp_base_source_ret0.cpp` and
+   `test_canonical_structural_nttp_equivalence_ret0.cpp` as nonzero-offset guards.
+   Union variants, arrays, bitfields, enums/non-integral fields, and unpublished
+   value-class identities remain separate import work. `legacyDerivedBaseOffset`
+   remains necessary for unsupported value-specialization roots; audit these and
+   dependent roots before deleting it or closing a 3A exit criterion. See
+   `KNOWN_ISSUES.md`.
 
    **Owner-index deletion gates:** virtual-base ABI facts are published by class
    TypeIds and consumed by AstToIr, explicit-cast, IRConverter, and constructor

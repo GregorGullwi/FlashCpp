@@ -391,6 +391,7 @@ bool isSupportedDependentExpressionIdentityNode(const ASTNode& node) {
 		   tryGetNode<FoldExpressionNode>(node) != nullptr ||
 		   tryGetNode<PackExpansionExprNode>(node) != nullptr ||
 		   tryGetNode<InitializerListConstructionNode>(node) != nullptr ||
+		   node.is<InitializerListNode>() ||
 		   tryGetNode<ThrowExpressionNode>(node) != nullptr ||
 		   tryGetNode<CallExprNode>(node) != nullptr ||
 		   tryGetNode<ConstructorCallNode>(node) != nullptr;
@@ -412,6 +413,30 @@ bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs
 		return lhs.is<TypeSpecifierNode>() &&
 			   rhs.is<TypeSpecifierNode>() &&
 			   equalTypeSpecifierIdentityImpl(lhs.as<TypeSpecifierNode>(), rhs.as<TypeSpecifierNode>());
+	}
+	if (const InitializerListNode* lhs_list = (lhs.is<InitializerListNode>() ? &lhs.as<InitializerListNode>() : nullptr)) {
+		const InitializerListNode* rhs_list = (rhs.is<InitializerListNode>() ? &rhs.as<InitializerListNode>() : nullptr);
+		if (rhs_list == nullptr) return false;
+		std::vector<std::pair<const InitializerListNode*, const InitializerListNode*>> pending{{lhs_list, rhs_list}};
+		while (!pending.empty()) {
+			const auto [left, right] = pending.back();
+			pending.pop_back();
+			if (left->is_brace_init() != right->is_brace_init() || left->size() != right->size()) return false;
+			for (size_t i = 0; i < left->size(); ++i) {
+				if (left->is_designated(i) != right->is_designated(i)) return false;
+				if (left->is_designated(i) && StringTable::getStringView(left->member_name(i)) !=
+					StringTable::getStringView(right->member_name(i))) return false;
+				const ASTNode& left_child = left->initializers()[i];
+				const ASTNode& right_child = right->initializers()[i];
+				const InitializerListNode* left_nested = (left_child.is<InitializerListNode>() ? &left_child.as<InitializerListNode>() : nullptr);
+				const InitializerListNode* right_nested = (right_child.is<InitializerListNode>() ? &right_child.as<InitializerListNode>() : nullptr);
+				if (left_nested != nullptr || right_nested != nullptr) {
+					if (left_nested == nullptr || right_nested == nullptr) return false;
+					pending.emplace_back(left_nested, right_nested);
+				} else if (!equalDependentExpressionIdentityImpl(left_child, right_child)) return false;
+			}
+		}
+		return true;
 	}
 	if (const IdentifierNode* lhs_identifier = tryGetIdentifier(lhs)) {
 		const IdentifierNode* rhs_identifier = tryGetIdentifier(rhs);
@@ -667,6 +692,34 @@ bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs
 size_t hashDependentExpressionIdentityImpl(const ASTNode& node) {
 	if (!node.has_value()) {
 		return std::hash<uint8_t>{}(0);
+	}
+	if (const InitializerListNode* root = (node.is<InitializerListNode>() ? &node.as<InitializerListNode>() : nullptr)) {
+		std::vector<std::pair<const InitializerListNode*, size_t>> pending{{root, 0}};
+		size_t seed = std::hash<uint8_t>{}(35);
+		while (!pending.empty()) {
+			const auto [list, index] = pending.back();
+			if (index == 0) {
+				hashCombine(seed, std::hash<bool>{}(list->is_brace_init()));
+				hashCombine(seed, std::hash<size_t>{}(list->size()));
+			}
+			if (index == list->size()) {
+				hashCombine(seed, std::hash<uint8_t>{}(37));
+				pending.pop_back();
+				continue;
+			}
+			pending.back().second++;
+			const size_t i = index;
+			hashCombine(seed, std::hash<bool>{}(list->is_designated(i)));
+			if (list->is_designated(i)) hashCombineStringView(seed, StringTable::getStringView(list->member_name(i)));
+			const ASTNode& child = list->initializers()[i];
+			if (const InitializerListNode* nested = (child.is<InitializerListNode>() ? &child.as<InitializerListNode>() : nullptr)) {
+				hashCombine(seed, std::hash<uint8_t>{}(36));
+				pending.emplace_back(nested, 0);
+			} else {
+				hashCombine(seed, hashDependentExpressionIdentityImpl(child));
+			}
+		}
+		return seed;
 	}
 	if (node.is<TypeSpecifierNode>()) {
 		size_t seed = std::hash<uint8_t>{}(1);

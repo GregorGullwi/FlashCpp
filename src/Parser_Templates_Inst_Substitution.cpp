@@ -2062,17 +2062,17 @@ TypeSpecifierNode Parser::buildDependentAliasTemplateTypeSpecifier(
 					template_decl_args.push_back(class_template.template_decl_id());
 					continue;
 				}
-				// Concrete integral arguments use converted type/value identity.
-				// Dependent and non-integral arguments retain their source ExprId.
+				// Concrete supported arguments use converted type/value identity.
+				// Dependent and unsupported arguments retain their source ExprId.
 				if (!argument.is_value) {
 					stamped = false;
 					break;
 				}
-				if (!argument.is_dependent && argument.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Integral) {
-					const auto integral = tryImportCanonicalIntegralValue(requireFrontendContext().canonicalTypes(), argument.type_index, argument.value);
-					if (integral.has_value()) {
-						argument_kinds.push_back(SpecTemplateArgKind::Integral);
-						nttp_args.emplace_back(*integral);
+				if (!argument.is_dependent) {
+					const auto value_id = tryImportCanonicalValue(requireFrontendContext().canonicalTypes(), argument.valueIdentity());
+					if (value_id.has_value()) {
+						argument_kinds.push_back(SpecTemplateArgKind::Value);
+						nttp_args.emplace_back(*value_id);
 						continue;
 					}
 				}

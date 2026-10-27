@@ -40,8 +40,11 @@ enum class CanonicalTypeKind : uint8_t {
 	// (low 32) with a type-only TemplateArg chain head (high 32). Appended last
 	// so the numeric identities of the existing kinds are unchanged.
 	DependentMemberAlias,
-	// Internal converted integral value and specialization argument link.
-	IntegralValue, IntegralTemplateArg,
+	// Internal converted integral value and typed-value specialization argument link.
+	IntegralValue, ValueTemplateArg,
+	// Converted structural-class value: child is the class type, extent is an
+	// ordered ValueTemplateArg chain of subobject values. Never a source ExprId.
+	StructuralValue,
 };
 
 enum class CanonicalTemplateArgKind : uint8_t {
@@ -49,11 +52,11 @@ enum class CanonicalTemplateArgKind : uint8_t {
 	NonType = 1,
 	Template = 2,
 	DependentTemplate = 3,
-	Integral = 4,
+	Value = 4,
 };
 
 // Mixed specialization argument. Type uses TypeId, NonType uses opaque ExprId
-// identity (no constant folding here), Integral uses an internal IntegralValue
+// identity (no constant folding here), Value uses an internal IntegralValue or StructuralValue
 // TypeId, and Template uses a published primary
 // class TemplateDeclId. DependentTemplate uses the owning published class
 // TemplateDeclId plus its template-parameter index. Concrete packs expand into
@@ -73,8 +76,8 @@ struct CanonicalTemplateArgument {
 		return CanonicalTemplateArgument{
 			CanonicalTemplateArgKind::NonType, TypeId{}, expr_id, TemplateDeclId{}, 0};
 	}
-	static CanonicalTemplateArgument makeIntegral(TypeId value_id) {
-		return CanonicalTemplateArgument{CanonicalTemplateArgKind::Integral, value_id, ExprId{}, TemplateDeclId{}, 0};
+	static CanonicalTemplateArgument makeValue(TypeId value_id) {
+		return CanonicalTemplateArgument{CanonicalTemplateArgKind::Value, value_id, ExprId{}, TemplateDeclId{}, 0};
 	}
 	static CanonicalTemplateArgument makeTemplate(TemplateDeclId template_decl_id) {
 		return CanonicalTemplateArgument{
@@ -214,8 +217,8 @@ inline TypeId unpackDependentMemberAliasArgs(uint64_t array_extent) {
 // the byte count (1..8), and array_extent packs identifier bytes little-endian.
 // It is not a type or a spelling-handle identity. All links share node rollback.
 // IntegralValue is internal: child is its converted integral/enum type and
-// array_extent is its converted 64-bit value representation. IntegralTemplateArg
-// stores the IntegralValue TypeId in array_extent and the next link in child.
+// array_extent is its converted 64-bit value representation. ValueTemplateArg
+// stores the converted value TypeId in array_extent and the next link in child.
 struct CanonicalTypeNode {
 	TypeId child;
 	CanonicalTypeKind kind;
@@ -552,6 +555,7 @@ public:
 	// deduced NTTP type: sign-extended for signed values, zero-extended otherwise.
 	// No expression evaluation, target-width conversion, or source stamping occurs here.
 	TypeId integralValue(TypeId value_type, uint64_t converted_bits);
+	TypeId structuralValue(TypeId class_type, std::span<const TypeId> member_values);
 
 	// Opaque type-template-parameter identity. Spelling is never part of this
 	// key; callers publish TemplateDeclId + parameter index separately from the
@@ -717,7 +721,7 @@ public:
 
 	ExprId templateArgumentExpr(TypeId arg_link) const;
 
-	TypeId templateArgumentIntegral(TypeId arg_link) const;
+	TypeId templateArgumentValue(TypeId arg_link) const;
 
 	TemplateDeclId templateArgumentTemplate(TypeId arg_link) const;
 

@@ -871,12 +871,31 @@ TypeId CanonicalTypeTable::integralValue(TypeId value_type, uint64_t converted_b
 		.qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None, .array_extent = converted_bits});
 }
 
-TypeId CanonicalTypeTable::templateArgumentIntegral(TypeId arg_link) const {
+TypeId CanonicalTypeTable::structuralValue(TypeId class_type, std::span<const TypeId> member_values) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	if (nodeUnlocked(class_type).kind != CanonicalTypeKind::Record) {
+		throw InternalError("canonical type: structural value requires a published record type");
+	}
+	std::vector<CanonicalTemplateArgument> arguments;
+	arguments.reserve(member_values.size());
+	for (const TypeId value : member_values) {
+		if (nodeUnlocked(value).kind != CanonicalTypeKind::IntegralValue) {
+			throw InternalError("canonical type: structural value requires typed integral members");
+		}
+		arguments.push_back(CanonicalTemplateArgument::makeValue(value));
+	}
+	const TypeId members = rebuildMixedTemplateArgListUnlocked(arguments);
+	return internUnlocked({.child = class_type, .kind = CanonicalTypeKind::StructuralValue, .builtin = CanonicalBuiltinKind::Void,
+		.qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None, .array_extent = members.value});
+}
+
+TypeId CanonicalTypeTable::templateArgumentValue(TypeId arg_link) const {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
 	const CanonicalTypeNode input = nodeUnlocked(arg_link);
-	if (input.kind != CanonicalTypeKind::IntegralTemplateArg) {
-		throw InternalError("canonical type: TypeId is not an integral template argument link");
+	if (input.kind != CanonicalTypeKind::ValueTemplateArg) {
+		throw InternalError("canonical type: TypeId is not a typed-value template argument link");
 	}
 	return TypeId{static_cast<uint32_t>(input.array_extent)};
 }
@@ -921,8 +940,8 @@ CanonicalTemplateArgKind CanonicalTypeTable::templateArgumentKind(TypeId arg_lin
 	if (input.kind == CanonicalTypeKind::NonTypeTemplateArg) {
 		return CanonicalTemplateArgKind::NonType;
 	}
-	if (input.kind == CanonicalTypeKind::IntegralTemplateArg) {
-		return CanonicalTemplateArgKind::Integral;
+	if (input.kind == CanonicalTypeKind::ValueTemplateArg) {
+		return CanonicalTemplateArgKind::Value;
 	}
 	if (input.kind == CanonicalTypeKind::TemplateTemplateArg) {
 		return CanonicalTemplateArgKind::Template;
@@ -940,7 +959,7 @@ bool CanonicalTypeTable::templateArgumentIsType(TypeId arg_link) const {
 	if (input.kind == CanonicalTypeKind::TemplateArg) {
 		return true;
 	}
-	if (input.kind == CanonicalTypeKind::NonTypeTemplateArg || input.kind == CanonicalTypeKind::IntegralTemplateArg) {
+	if (input.kind == CanonicalTypeKind::NonTypeTemplateArg || input.kind == CanonicalTypeKind::ValueTemplateArg) {
 		return false;
 	}
 	if (input.kind == CanonicalTypeKind::TemplateTemplateArg) {
@@ -957,7 +976,7 @@ TypeId CanonicalTypeTable::templateArgumentNext(TypeId arg_link) const {
 	checkTransactionThread();
 	const auto input = nodeUnlocked(arg_link);
 	if (input.kind != CanonicalTypeKind::TemplateArg && input.kind != CanonicalTypeKind::NonTypeTemplateArg && input.kind !=
-		CanonicalTypeKind::IntegralTemplateArg && input.kind != CanonicalTypeKind::TemplateTemplateArg && input.kind !=
+		CanonicalTypeKind::ValueTemplateArg && input.kind != CanonicalTypeKind::TemplateTemplateArg && input.kind !=
 		CanonicalTypeKind::DependentTemplateTemplateArg) {
 		throw InternalError("canonical type: TypeId is not a template argument link");
 	}
@@ -1780,9 +1799,9 @@ bool CanonicalTypeTable::isReference(CanonicalTypeKind kind) {
 }
 
 bool CanonicalTypeTable::isInternalLink(CanonicalTypeKind kind) {
-	return kind == CanonicalTypeKind::FunctionParam || kind == CanonicalTypeKind::TemplateArg || kind == CanonicalTypeKind::IntegralValue || kind ==
-		CanonicalTypeKind::IntegralTemplateArg || kind == CanonicalTypeKind::NonTypeTemplateArg || kind == CanonicalTypeKind::TemplateTemplateArg || kind ==
-		CanonicalTypeKind::DependentTemplateTemplateArg || kind == CanonicalTypeKind::NameBytes;
+	return kind == CanonicalTypeKind::StructuralValue || kind == CanonicalTypeKind::FunctionParam || kind == CanonicalTypeKind::TemplateArg ||
+		kind == CanonicalTypeKind::IntegralValue || kind == CanonicalTypeKind::ValueTemplateArg || kind == CanonicalTypeKind::NonTypeTemplateArg ||
+		kind == CanonicalTypeKind::TemplateTemplateArg || kind == CanonicalTypeKind::DependentTemplateTemplateArg || kind == CanonicalTypeKind::NameBytes;
 }
 
 bool CanonicalTypeTable::isDependentQualifierKind(CanonicalTypeKind kind) {
@@ -1938,7 +1957,7 @@ bool CanonicalTypeTable::containsNonTypeTemplateArgUnlocked(TypeId type) const {
 		const CanonicalTypeNode node = nodeUnlocked(pending.back());
 		pending.pop_back();
 		switch (node.kind) {
-		case CanonicalTypeKind::IntegralTemplateArg:
+		case CanonicalTypeKind::ValueTemplateArg:
 		case CanonicalTypeKind::NonTypeTemplateArg:
 			return true;
 		case CanonicalTypeKind::DependentMemberAlias:
@@ -1970,7 +1989,7 @@ bool CanonicalTypeTable::containsNonTypeTemplateArgUnlocked(TypeId type) const {
 		case CanonicalTypeKind::AliasTemplateSpecialization: {
 			for (TypeId link = node.child; link; link = nodeUnlocked(link).child) {
 				const CanonicalTypeNode argument = nodeUnlocked(link);
-				if (argument.kind == CanonicalTypeKind::NonTypeTemplateArg || argument.kind == CanonicalTypeKind::IntegralTemplateArg) {
+				if (argument.kind == CanonicalTypeKind::NonTypeTemplateArg || argument.kind == CanonicalTypeKind::ValueTemplateArg) {
 					return true;
 				}
 				if (argument.kind == CanonicalTypeKind::TemplateArg) {
@@ -2141,8 +2160,8 @@ TypeId CanonicalTypeTable::resolveNestedAliasGraphUnlocked(TypeId type) {
 						break;
 					}
 					arguments.push_back(CanonicalTemplateArgument::makeType(value));
-				} else if (argument.kind == CanonicalTypeKind::IntegralTemplateArg) {
-					arguments.push_back(CanonicalTemplateArgument::makeIntegral(TypeId{static_cast<uint32_t>(argument.array_extent)}));
+				} else if (argument.kind == CanonicalTypeKind::ValueTemplateArg) {
+					arguments.push_back(CanonicalTemplateArgument::makeValue(TypeId{static_cast<uint32_t>(argument.array_extent)}));
 				} else if (argument.kind == CanonicalTypeKind::NonTypeTemplateArg) {
 					arguments.push_back(CanonicalTemplateArgument::makeNonType(
 						ExprId{static_cast<uint32_t>(argument.array_extent)}));
@@ -2163,7 +2182,7 @@ TypeId CanonicalTypeTable::resolveNestedAliasGraphUnlocked(TypeId type) {
 			if (expand) {
 				for (size_t index = 0; index < arguments.size(); ++index) {
 					if (arguments[index].kind != target->second.parameter_kinds[index] &&
-						!(arguments[index].kind == CanonicalTemplateArgKind::Integral && target->second.parameter_kinds[index] == CanonicalTemplateArgKind::NonType)) {
+						!(arguments[index].kind == CanonicalTemplateArgKind::Value && target->second.parameter_kinds[index] == CanonicalTemplateArgKind::NonType)) {
 						expand = false;
 						break;
 					}
@@ -2300,8 +2319,8 @@ TypeId CanonicalTypeTable::resolveNestedAliasGraphUnlocked(TypeId type) {
 					const TypeId value = memo.at(memoKey(frame.scope, original));
 					unchanged = unchanged && value == original;
 					rebuilt_mixed.push_back(CanonicalTemplateArgument::makeType(value));
-				} else if (argument.kind == CanonicalTypeKind::IntegralTemplateArg) {
-					rebuilt_mixed.push_back(CanonicalTemplateArgument::makeIntegral(TypeId{static_cast<uint32_t>(argument.array_extent)}));
+				} else if (argument.kind == CanonicalTypeKind::ValueTemplateArg) {
+					rebuilt_mixed.push_back(CanonicalTemplateArgument::makeValue(TypeId{static_cast<uint32_t>(argument.array_extent)}));
 				} else if (argument.kind == CanonicalTypeKind::NonTypeTemplateArg) {
 					rebuilt_mixed.push_back(CanonicalTemplateArgument::makeNonType(
 						ExprId{static_cast<uint32_t>(argument.array_extent)}));
@@ -2526,11 +2545,12 @@ TypeId CanonicalTypeTable::rebuildMixedTemplateArgListUnlocked(std::span<const C
 			});
 			continue;
 		}
-		if (argument.kind == CanonicalTemplateArgKind::Integral) {
-			if (!argument.type || nodeUnlocked(argument.type).kind != CanonicalTypeKind::IntegralValue) {
-				throw InternalError("canonical type: invalid integral specialization value");
+		if (argument.kind == CanonicalTemplateArgKind::Value) {
+			if (!argument.type || (nodeUnlocked(argument.type).kind != CanonicalTypeKind::IntegralValue &&
+				nodeUnlocked(argument.type).kind != CanonicalTypeKind::StructuralValue)) {
+				throw InternalError("canonical type: invalid typed specialization value");
 			}
-			arg_link = internUnlocked({.child = arg_link, .kind = CanonicalTypeKind::IntegralTemplateArg, .builtin = CanonicalBuiltinKind::Void,
+			arg_link = internUnlocked({.child = arg_link, .kind = CanonicalTypeKind::ValueTemplateArg, .builtin = CanonicalBuiltinKind::Void,
 				.qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None, .array_extent = argument.type.value});
 			continue;
 		}
@@ -2600,9 +2620,10 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 			if (isInternalLink(argument_kind)) {
 				throw InternalError("canonical type: substitute argument is an internal link");
 			}
-		} else if (argument.kind == CanonicalTemplateArgKind::Integral) {
-			if (!argument.type || nodeUnlocked(argument.type).kind != CanonicalTypeKind::IntegralValue) {
-				throw InternalError("canonical type: invalid substitute integral value");
+		} else if (argument.kind == CanonicalTemplateArgKind::Value) {
+			if (!argument.type || (nodeUnlocked(argument.type).kind != CanonicalTypeKind::IntegralValue &&
+				nodeUnlocked(argument.type).kind != CanonicalTypeKind::StructuralValue)) {
+				throw InternalError("canonical type: invalid substitute typed value");
 			}
 		} else if (argument.kind == CanonicalTemplateArgKind::NonType) {
 			if (!argument.expr) {
@@ -2683,8 +2704,9 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 			}
 			case CanonicalTypeKind::FunctionParam:
 			case CanonicalTypeKind::TemplateArg:
+			case CanonicalTypeKind::StructuralValue:
 			case CanonicalTypeKind::IntegralValue:
-			case CanonicalTypeKind::IntegralTemplateArg:
+			case CanonicalTypeKind::ValueTemplateArg:
 			case CanonicalTypeKind::NonTypeTemplateArg:
 			case CanonicalTypeKind::TemplateTemplateArg:
 			case CanonicalTypeKind::DependentTemplateTemplateArg:
@@ -2717,7 +2739,7 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 					const CanonicalTypeNode arg_node = nodeUnlocked(arg_link);
 					if (arg_node.kind == CanonicalTypeKind::TemplateArg) {
 						stack.push_back({TypeId{static_cast<uint32_t>(arg_node.array_extent)}, false});
-					} else if (arg_node.kind == CanonicalTypeKind::IntegralTemplateArg || arg_node.kind == CanonicalTypeKind::NonTypeTemplateArg ||
+					} else if (arg_node.kind == CanonicalTypeKind::ValueTemplateArg || arg_node.kind == CanonicalTypeKind::NonTypeTemplateArg ||
 						arg_node.kind == CanonicalTypeKind::TemplateTemplateArg ||
 						arg_node.kind == CanonicalTypeKind::DependentTemplateTemplateArg) {
 						if (node.kind == CanonicalTypeKind::DependentTemplateMember) {
@@ -2852,8 +2874,8 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 					unchanged = unchanged && substituted == original;
 					rebuilt_mixed.push_back(CanonicalTemplateArgument::makeType(substituted));
 					rebuilt_args.push_back(substituted);
-				} else if (arg_node.kind == CanonicalTypeKind::IntegralTemplateArg) {
-					rebuilt_mixed.push_back(CanonicalTemplateArgument::makeIntegral(TypeId{static_cast<uint32_t>(arg_node.array_extent)}));
+				} else if (arg_node.kind == CanonicalTypeKind::ValueTemplateArg) {
+					rebuilt_mixed.push_back(CanonicalTemplateArgument::makeValue(TypeId{static_cast<uint32_t>(arg_node.array_extent)}));
 				} else if (arg_node.kind == CanonicalTypeKind::NonTypeTemplateArg) {
 					rebuilt_mixed.push_back(CanonicalTemplateArgument::makeNonType(
 						ExprId{static_cast<uint32_t>(arg_node.array_extent)}));
@@ -3605,7 +3627,7 @@ void CanonicalTypeTable::appendNodeTrace(StringBuilder& shape, CanonicalTypeNode
 		return;
 	}
 	if (node.kind == CanonicalTypeKind::FunctionParam || node.kind == CanonicalTypeKind::TemplateArg ||
-		node.kind == CanonicalTypeKind::IntegralTemplateArg) {
+		node.kind == CanonicalTypeKind::ValueTemplateArg) {
 		appendNodeTraceFields(shape, node, 0);
 		shape.append('/');
 		appendTypeIdTrace(shape, TypeId{static_cast<uint32_t>(node.array_extent)});
@@ -3615,6 +3637,16 @@ void CanonicalTypeTable::appendNodeTrace(StringBuilder& shape, CanonicalTypeNode
 		node.kind == CanonicalTypeKind::TemplateTemplateArg ||
 		node.kind == CanonicalTypeKind::DependentTemplateTemplateArg) {
 		appendNodeTraceFields(shape, node, node.array_extent);
+		return;
+	}
+	if (node.kind == CanonicalTypeKind::StructuralValue) {
+		appendNodeTraceFields(shape, node, 0);
+		shape.append('/');
+		appendTypeIdTrace(shape, node.child);
+		for (TypeId link{static_cast<uint32_t>(node.array_extent)}; link; link = nodeUnlocked(link).child) {
+			shape.append('/');
+			appendTypeIdTrace(shape, TypeId{static_cast<uint32_t>(nodeUnlocked(link).array_extent)});
+		}
 		return;
 	}
 	if (isMemberPointer(node.kind)) {
