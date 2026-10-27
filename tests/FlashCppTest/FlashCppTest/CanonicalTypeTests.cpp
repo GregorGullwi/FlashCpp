@@ -7,6 +7,65 @@
 #include "ParserTemplateClassShared.h"
 #include "../../architecture/CanonicalTypeTests.h"
 
+TEST_CASE("Anonymous union groups publish canonical declaration boundaries") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	CompileContext compile_context;
+	compile_context.setInputFile("anonymous_union_groups.cpp");
+	Lexer lexer(R"(
+struct Variants {
+	union { short small; int integer; };
+	long long ordinary;
+	union { unsigned narrow; long long wide; };
+};
+union Choice { short small; int integer; };
+struct Padding { long long guard; };
+struct Derived : Padding, Variants {};
+)");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle("Variants"));
+	REQUIRE(info != nullptr);
+	const StructTypeInfo* record = info->getStructInfo();
+	REQUIRE(record != nullptr);
+	REQUIRE(record->declaration_node != nullptr);
+	REQUIRE(record->declaration_node->has_entity_id());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const EntityId entity = record->declaration_node->entity_id();
+	REQUIRE(table.hasRecordFieldSchema(entity));
+	CHECK(table.recordMemberAt(entity, 0).offset_bytes == table.recordMemberAt(entity, 1).offset_bytes);
+	CHECK(table.recordMemberAt(entity, 3).offset_bytes == table.recordMemberAt(entity, 4).offset_bytes);
+	for (const size_t index : {size_t{0}, size_t{3}}) {
+		CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(entity, index).flags, CanonicalRecordMemberFlags::UnionGroupStart));
+		CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(entity, index + 1).flags, CanonicalRecordMemberFlags::UnionGroupEnd));
+		CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(entity, index).flags, CanonicalRecordMemberFlags::UnionVariant));
+	}
+	CHECK(table.recordMemberAt(entity, 2).flags == CanonicalRecordMemberFlags::None);
+	const TypeId owner = table.record(entity);
+	CHECK(table.structuralUnionValue(owner, 0, uint16_t{1}, table.integralValue(table.builtin(CanonicalBuiltinKind::Int), 42)) !=
+		table.structuralUnionValue(owner, 0, std::nullopt, TypeId{}));
+	const TypeInfo* choice_info = findTypeByName(StringTable::getOrInternStringHandle("Choice"));
+	REQUIRE(choice_info != nullptr);
+	const EntityId choice_entity = choice_info->getStructInfo()->declaration_node->entity_id();
+	REQUIRE(table.hasRecordFieldSchema(choice_entity));
+	CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(choice_entity, 0).flags, CanonicalRecordMemberFlags::UnionGroupStart));
+	CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(choice_entity, 1).flags, CanonicalRecordMemberFlags::UnionGroupEnd));
+	CHECK(table.structuralUnionValue(table.record(choice_entity), 0, uint16_t{1},
+		table.integralValue(table.builtin(CanonicalBuiltinKind::Int), 42)) != table.structuralUnionValue(owner, 0, std::nullopt, TypeId{}));
+	// The legacy payload has no reliable active-member discriminator yet.
+	FlashCpp::StructuralClassValue unresolved;
+	unresolved.type_index = info->registeredTypeIndex();
+	for (const StructMember& field : record->members) {
+		FlashCpp::StructuralClassValueMember member;
+		member.name = field.getName();
+		member.scalar_value = FlashCpp::NonTypeValueIdentity::makeConcrete(0, field.type_index);
+		unresolved.members.push_back(std::move(member));
+	}
+	CHECK_FALSE(tryImportCanonicalStructuralValue(table, &unresolved).has_value());
+}
+
 TEST_CASE("Enum structural NTTP fields preserve canonical types values and published offsets") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
@@ -2235,8 +2294,7 @@ TEST_CASE("Canonical record constructor schema is independent of the field schem
 	const EntityId entity{903};
 	table.publishRecordLayout(CanonicalRecordLayout{
 		entity, 4, 4, 4, 4, 0, 0, CanonicalRecordLayoutFlags::None, 0});
-	// No field schema is published (as for an anonymous-union / unimportable
-	// member record); the constructor schema still publishes from the type node.
+	// No field schema is published (as for an unimportable member record); the constructor schema still publishes from the type node.
 	CHECK_FALSE(table.hasRecordFieldSchema(entity));
 	const TypeId record_type = table.record(entity);
 	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
@@ -5530,5 +5588,44 @@ TEST_CASE("Structural value importer bounds native stack across deep subobject g
 	(void)table.templateSpecialization(TemplateDeclId{490000}, arguments);
 	FlashCpp::LogConfig::setLevel(FlashCpp::LogCategory::Types, previous_level);
 	FlashCpp::LogConfig::output_stream = previous_output;
+	CHECK(trace.str().find("canonical-request-v2") != std::string::npos);
+}
+
+TEST_CASE("Canonical union value tracing bounds native stack across deep variants") {
+	FrontendContext context;
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	TypeId payload = table.integralValue(integer, 42);
+	TypeId member_type = integer;
+	const auto flags = CanonicalRecordMemberFlags::UnionVariant | CanonicalRecordMemberFlags::UnionGroupStart |
+		CanonicalRecordMemberFlags::UnionGroupEnd;
+	constexpr uint32_t depth = 4096;
+	for (uint32_t index = 0; index < depth; ++index) {
+		const EntityId entity{500000 + index};
+		const TypeId owner = table.record(entity);
+		table.publishRecordLayout({entity, 4, 4, 4, 4, 1, 0, CanonicalRecordLayoutFlags::Union, 0});
+		const CanonicalRecordMember member{member_type, 0, 4, 0, 0, CanonicalAccess::Public, flags};
+		table.publishRecordFieldSchema(entity, std::span<const CanonicalRecordMember>(&member, 1), {});
+		payload = table.structuralUnionValue(owner, 0, uint16_t{0}, payload);
+		member_type = owner;
+	}
+	TypeId cursor = payload;
+	for (uint32_t index = depth; index-- > 0;) {
+		const CanonicalTypeNode node = table.node(cursor);
+		REQUIRE(node.kind == CanonicalTypeKind::StructuralUnionValue);
+		CHECK(node.child == table.record(EntityId{500000 + index}));
+		CHECK(unpackStructuralUnionActiveVariant(node.array_extent) == 0);
+		cursor = table.templateArgumentValue(unpackStructuralValueSubobjects(node.array_extent));
+	}
+	CHECK(table.node(cursor).array_extent == 42);
+	std::ostringstream trace;
+	const FlashCpp::LogLevel level = FlashCpp::LogConfig::getLevelForCategory(FlashCpp::LogCategory::Types);
+	std::ostream* output = FlashCpp::LogConfig::output_stream;
+	FlashCpp::LogConfig::output_stream = &trace;
+	FlashCpp::LogConfig::setLevel(FlashCpp::LogCategory::Types, FlashCpp::LogLevel::Trace);
+	const CanonicalTemplateArgument argument[] = {CanonicalTemplateArgument::makeValue(payload)};
+	(void)table.templateSpecialization(TemplateDeclId{504100}, argument);
+	FlashCpp::LogConfig::setLevel(FlashCpp::LogCategory::Types, level);
+	FlashCpp::LogConfig::output_stream = output;
 	CHECK(trace.str().find("canonical-request-v2") != std::string::npos);
 }

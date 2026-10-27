@@ -518,6 +518,21 @@ def main():
                 "\t\t\t\t\t.qualifiers = CVQualifier::None,\n"
                 "\t\t\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
                 "\t\t\t\t\t.array_extent = 0,"),
+            "lost_union_variant_selector": (
+                "static_cast<uint64_t>(selector) << 48",
+                "static_cast<uint64_t>(selector & 0u) << 48"),
+            "lost_union_group_identity": (
+                "static_cast<uint64_t>(first_variant) << 32",
+                "static_cast<uint64_t>(first_variant & 0u) << 32"),
+            "lost_union_payload_identity": (
+                "static_cast<uint64_t>(link.value) |",
+                "static_cast<uint64_t>(link.value & 0u) |"),
+            "lost_union_variant_type_check": (
+                "if (payload.child != expected) throw InternalError",
+                "if (false && payload.child != expected) throw InternalError"),
+            "lost_union_group_end_check": (
+                "if (in_union) throw InternalError",
+                "if (false && in_union) throw InternalError"),
             "lost_structural_value_class": (
                 ".child = class_type, .kind = CanonicalTypeKind::StructuralValue",
                 ".child = TypeId{}, .kind = CanonicalTypeKind::StructuralValue"),

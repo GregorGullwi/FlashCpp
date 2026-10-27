@@ -35,6 +35,24 @@ incorrectly bypass nontrivial copy/move semantics.
 
 ## Remaining structural NTTP shapes need canonical value import
 
+Union declaration groups and explicit active-member/no-active canonical values
+are published, but the constexpr payload still serializes all variants without
+a reliable active-member selector. This can merge distinct template arguments:
+
+```cpp
+struct Key { union { int first; int second; }; };
+constexpr Key left{.first = 0};
+constexpr Key right{.second = 0};
+template<Key Value> struct Tag {};
+```
+
+`Tag<left>` and `Tag<right>` must be distinct; FlashCpp currently considers them
+the same. Preserve active state through initialization, assignment, copying,
+serialization, and rehydration before connecting the live canonical importer.
+Nested anonymous-union hierarchy also needs an explicit representation; flat
+layout groups alone cannot distinguish an inactive outer union from an active
+outer variant containing an inactive inner union.
+
 Union variants, remaining scalar field kinds (floating, pointer, and member
 pointer values), and structural values of class-template types still need
 canonical subobject identity and matching specialization base facts.

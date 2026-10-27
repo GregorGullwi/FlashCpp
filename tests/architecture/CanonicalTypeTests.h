@@ -2558,7 +2558,108 @@ inline void checkStructuralArrayValues() {
 	rejects([&] { (void)table.structuralValue(record, record_values, 1); });
 }
 
+inline void checkUnionValues() {
+	static_assert(sizeof(CanonicalTypeNode) == 16);
+	static_assert(sizeof(CanonicalRecordMember) == 16);
+	CanonicalTypeTable table;
+	const EntityId entity{40201};
+	const TypeId owner = table.record(entity);
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId short_type = table.builtin(CanonicalBuiltinKind::Short);
+	const auto variant = CanonicalRecordMemberFlags::UnionVariant;
+	const auto start = variant | CanonicalRecordMemberFlags::UnionGroupStart;
+	const auto end = variant | CanonicalRecordMemberFlags::UnionGroupEnd;
+	std::array<CanonicalRecordMember, 5> members{{
+		{integer, 0, 4, 0, 0, CanonicalAccess::Public, start},
+		{integer, 0, 4, 0, 0, CanonicalAccess::Public, end},
+		{short_type, 4, 2, 0, 0, CanonicalAccess::Public, CanonicalRecordMemberFlags::None},
+		{integer, 8, 4, 0, 0, CanonicalAccess::Public, start},
+		{integer, 8, 4, 0, 0, CanonicalAccess::Public, end},
+	}};
+	table.publishRecordLayout({entity, 12, 12, 12, 4, 5, 0, CanonicalRecordLayoutFlags::None, 0});
+	table.publishRecordFieldSchema(entity, members, {});
+	const TypeId zero = table.integralValue(integer, 0);
+	const TypeId one = table.integralValue(integer, 1);
+	const TypeId inactive = table.structuralUnionValue(owner, 0, std::nullopt, TypeId{});
+	const TypeId first = table.structuralUnionValue(owner, 0, uint16_t{0}, zero);
+	const TypeId second = table.structuralUnionValue(owner, 0, uint16_t{1}, zero);
+	require(first == table.structuralUnionValue(owner, 0, uint16_t{0}, zero));
+	require(first != inactive && first != second);
+	require(first != table.structuralUnionValue(owner, 0, uint16_t{0}, one));
+	require(first != table.structuralUnionValue(owner, 3, uint16_t{3}, zero));
+	require(inactive != table.structuralUnionValue(owner, 3, std::nullopt, TypeId{}));
+	require(unpackStructuralUnionFirstVariant(table.node(second).array_extent) == 0);
+	require(unpackStructuralUnionActiveVariant(table.node(second).array_extent) == 1);
+	require(!unpackStructuralUnionActiveVariant(table.node(inactive).array_extent));
+	require(table.templateArgumentValue(unpackStructuralValueSubobjects(table.node(first).array_extent)) == zero);
+	const auto rejects = [&](uint16_t group, std::optional<uint16_t> active, TypeId value) {
+		try { (void)table.structuralUnionValue(owner, group, active, value); } catch (const InternalError&) { return true; }
+		return false;
+	};
+	require(rejects(1, uint16_t{1}, zero));
+	require(rejects(0, uint16_t{3}, zero));
+	require(rejects(0, std::nullopt, zero));
+	require(rejects(0, uint16_t{0}, TypeId{}));
+	require(rejects(0, uint16_t{0}, table.integralValue(short_type, 0)));
+	require(rejects(0, uint16_t{0}, integer));
+	const CanonicalTemplateArgument argument[] = {CanonicalTemplateArgument::makeValue(first)};
+	const TypeId specialization = table.templateSpecialization(TemplateDeclId{40202}, argument);
+	require(table.templateArgumentValue(table.templateSpecializationArguments(specialization)) == first);
+	const TypeId parameter = table.templateParameter(TemplateDeclId{40203}, 0);
+	const CanonicalTemplateArgument mixed[] = {CanonicalTemplateArgument::makeType(parameter), argument[0]};
+	const TypeId pattern = table.templateSpecialization(TemplateDeclId{40202}, mixed);
+	const TypeId substitutions[] = {integer};
+	const CanonicalTemplateArgument concrete[] = {CanonicalTemplateArgument::makeType(integer), argument[0]};
+	require(table.substitute(pattern, TemplateDeclId{40203}, substitutions) == table.templateSpecialization(TemplateDeclId{40202}, concrete));
+	bool type_rejected = false;
+	try { (void)table.pointer(first); } catch (const InternalError&) { type_rejected = true; }
+	require(type_rejected);
+	const TypeId array_type = table.array(integer, 2);
+	const TypeId elements[] = {zero, one};
+	const TypeId array_value = table.structuralArrayValue(array_type, elements);
+	const EntityId array_entity{40205};
+	const TypeId array_owner = table.record(array_entity);
+	table.publishRecordLayout({array_entity, 8, 8, 8, 4, 1, 0, CanonicalRecordLayoutFlags::Union, 0});
+	const CanonicalRecordMember array_member{array_type, 0, 8, 0, 0, CanonicalAccess::Public, start | CanonicalRecordMemberFlags::UnionGroupEnd};
+	table.publishRecordFieldSchema(array_entity, std::span<const CanonicalRecordMember>(&array_member, 1), {});
+	const TypeId active_array = table.structuralUnionValue(array_owner, 0, uint16_t{0}, array_value);
+	const TypeId compound[] = {active_array};
+	require(table.node(table.structuralValue(owner, compound, 0)).kind == CanonicalTypeKind::StructuralValue);
+	require(table.node(table.structuralArrayValue(table.array(array_owner, 1), compound)).kind == CanonicalTypeKind::StructuralArrayValue);
+	uint32_t invalid_entity = 40210;
+	const auto invalid_schema = [&](std::array<CanonicalRecordMember, 5> invalid) {
+		const EntityId target{invalid_entity++};
+		table.publishRecordLayout({target, 12, 12, 12, 4, 5, 0, CanonicalRecordLayoutFlags::None, 0});
+		try { table.publishRecordFieldSchema(target, invalid, {}); } catch (const InternalError&) { return true; }
+		return false;
+	};
+	auto invalid = members;
+	invalid[0].flags = variant;
+	require(invalid_schema(invalid));
+	invalid = members;
+	invalid[1].flags = variant;
+	require(invalid_schema(invalid));
+	invalid = members;
+	invalid[1].offset_bytes = 4;
+	require(invalid_schema(invalid));
+	invalid = members;
+	invalid[4].flags = variant;
+	require(invalid_schema(invalid));
+	// A failed transaction must not publish a union value or its declaration schema.
+	const size_t before = table.size();
+	{
+		CanonicalTypeTransaction transaction(table);
+		const EntityId temporary{40204};
+		table.publishRecordLayout({temporary, 12, 12, 12, 4, 5, 0, CanonicalRecordLayoutFlags::None, 0});
+		table.publishRecordFieldSchema(temporary, members, {});
+		(void)table.structuralUnionValue(table.record(temporary), 0, uint16_t{1}, one);
+	}
+	require(table.size() == before);
+	require(!table.hasRecordFieldSchema(EntityId{40204}));
+}
+
 inline int run() {
+	checkUnionValues();
 	checkStructuralEnumScalars();
 	checkStructuralBitfieldScalars();
 	checkStructuralArrayValues();

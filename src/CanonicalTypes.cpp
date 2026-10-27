@@ -885,9 +885,7 @@ TypeId CanonicalTypeTable::structuralValue(TypeId class_type, std::span<const Ty
 	for (size_t index = 0; index < subobject_values.size(); ++index) {
 		const TypeId value = subobject_values[index];
 		const CanonicalTypeKind kind = nodeUnlocked(value).kind;
-		if (kind != CanonicalTypeKind::StructuralValue &&
-			(kind != CanonicalTypeKind::StructuralArrayValue || index < base_count) &&
-			(kind != CanonicalTypeKind::IntegralValue || index < base_count)) {
+		if (!isValueKind(kind) || (index < base_count && kind != CanonicalTypeKind::StructuralValue)) {
 			throw InternalError("canonical type: structural value requires typed subobjects and structural bases");
 		}
 		arguments.push_back(CanonicalTemplateArgument::makeValue(value));
@@ -895,6 +893,46 @@ TypeId CanonicalTypeTable::structuralValue(TypeId class_type, std::span<const Ty
 	const TypeId members = rebuildMixedTemplateArgListUnlocked(arguments);
 	return internUnlocked({.child = class_type, .kind = CanonicalTypeKind::StructuralValue, .builtin = CanonicalBuiltinKind::Void,
 		.qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None, .array_extent = packStructuralValueExtent(members, base_count)});
+}
+
+TypeId CanonicalTypeTable::structuralUnionValue(TypeId owner_type, uint16_t first_variant, std::optional<uint16_t> active_variant, TypeId value) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const CanonicalTypeNode owner = nodeUnlocked(owner_type);
+	if (owner.kind != CanonicalTypeKind::Record) {
+		throw InternalError("canonical type: union value requires a nominal record owner");
+	}
+	const CanonicalRecordFieldSchemaHeader header = fieldSchemaHeaderUnlocked(EntityId{static_cast<uint32_t>(owner.array_extent)});
+	if (first_variant >= header.member_count || !hasCanonicalRecordMemberFlag(record_members_[header.member_begin + first_variant].flags,
+		CanonicalRecordMemberFlags::UnionGroupStart)) {
+		throw InternalError("canonical type: union value requires a published group start");
+	}
+	uint32_t end = first_variant;
+	while (end < header.member_count &&
+		!hasCanonicalRecordMemberFlag(record_members_[header.member_begin + end].flags, CanonicalRecordMemberFlags::UnionGroupEnd)) ++end;
+	if (end == header.member_count) throw InternalError("canonical type: union group has no published end");
+	if (active_variant.has_value() != static_cast<bool>(value) ||
+		(active_variant.has_value() && (*active_variant < first_variant || *active_variant > end))) {
+		throw InternalError("canonical type: union active member does not match its payload");
+	}
+	TypeId link{};
+	uint32_t selector = 0;
+	if (active_variant.has_value()) {
+		const CanonicalTypeNode payload = nodeUnlocked(value);
+		if (!isValueKind(payload.kind)) {
+			throw InternalError("canonical type: invalid union variant value");
+		}
+		TypeId expected = record_members_[header.member_begin + *active_variant].type;
+		while (nodeUnlocked(expected).kind == CanonicalTypeKind::Qualified) expected = nodeUnlocked(expected).child;
+		if (payload.child != expected) throw InternalError("canonical type: union variant value has the wrong declared type");
+		const CanonicalTemplateArgument argument = CanonicalTemplateArgument::makeValue(value);
+		link = rebuildMixedTemplateArgListUnlocked(std::span<const CanonicalTemplateArgument>(&argument, 1));
+		selector = static_cast<uint32_t>(*active_variant) - first_variant + 1;
+	}
+	const uint64_t extent = static_cast<uint64_t>(link.value) | (static_cast<uint64_t>(first_variant) << 32) |
+		(static_cast<uint64_t>(selector) << 48);
+	return internUnlocked({.child = owner_type, .kind = CanonicalTypeKind::StructuralUnionValue, .builtin = CanonicalBuiltinKind::Void,
+		.qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None, .array_extent = extent});
 }
 
 TypeId CanonicalTypeTable::structuralArrayValue(TypeId array_type, std::span<const TypeId> element_values) {
@@ -913,8 +951,7 @@ TypeId CanonicalTypeTable::structuralArrayValue(TypeId array_type, std::span<con
 	arguments.reserve(element_values.size());
 	for (const TypeId value : element_values) {
 		const CanonicalTypeKind kind = nodeUnlocked(value).kind;
-		if (kind != CanonicalTypeKind::IntegralValue && kind != CanonicalTypeKind::StructuralValue &&
-			kind != CanonicalTypeKind::StructuralArrayValue) {
+		if (!isValueKind(kind)) {
 			throw InternalError("canonical type: structural array value requires typed elements");
 		}
 		arguments.push_back(CanonicalTemplateArgument::makeValue(value));
@@ -1230,9 +1267,24 @@ void CanonicalTypeTable::publishRecordFieldSchema(EntityId entity,
 	if (members.size() != layout.member_count || bases.size() != layout.direct_base_count) {
 		throw InternalError("canonical type: record field schema count mismatch");
 	}
+	bool in_union = false;
+	uint32_t union_offset = 0;
 	for (const CanonicalRecordMember& member : members) {
 		validateRecordMemberUnlocked(member);
+		const bool variant = hasCanonicalRecordMemberFlag(member.flags, CanonicalRecordMemberFlags::UnionVariant);
+		const bool starts = hasCanonicalRecordMemberFlag(member.flags, CanonicalRecordMemberFlags::UnionGroupStart);
+		const bool ends = hasCanonicalRecordMemberFlag(member.flags, CanonicalRecordMemberFlags::UnionGroupEnd);
+		if (starts) {
+			if (in_union || !variant) throw InternalError("canonical type: invalid union group start");
+			in_union = true;
+			union_offset = member.offset_bytes;
+		}
+		if ((variant != in_union) || (ends && !in_union) || (variant && member.offset_bytes != union_offset)) {
+			throw InternalError("canonical type: inconsistent union variant group");
+		}
+		if (ends) in_union = false;
 	}
+	if (in_union) throw InternalError("canonical type: unterminated union variant group");
 	for (const CanonicalRecordBase& base : bases) {
 		validateRecordBaseUnlocked(base);
 	}
@@ -1833,10 +1885,14 @@ bool CanonicalTypeTable::isReference(CanonicalTypeKind kind) {
 	return kind == CanonicalTypeKind::LValueReference || kind == CanonicalTypeKind::RValueReference;
 }
 
+bool CanonicalTypeTable::isValueKind(CanonicalTypeKind kind) {
+	return kind == CanonicalTypeKind::IntegralValue || kind == CanonicalTypeKind::StructuralValue ||
+		kind == CanonicalTypeKind::StructuralArrayValue || kind == CanonicalTypeKind::StructuralUnionValue;
+}
+
 bool CanonicalTypeTable::isInternalLink(CanonicalTypeKind kind) {
-	return kind == CanonicalTypeKind::StructuralValue || kind == CanonicalTypeKind::StructuralArrayValue ||
-		kind == CanonicalTypeKind::FunctionParam || kind == CanonicalTypeKind::TemplateArg ||
-		kind == CanonicalTypeKind::IntegralValue || kind == CanonicalTypeKind::ValueTemplateArg || kind == CanonicalTypeKind::NonTypeTemplateArg ||
+	return isValueKind(kind) || kind == CanonicalTypeKind::FunctionParam || kind == CanonicalTypeKind::TemplateArg ||
+		kind == CanonicalTypeKind::ValueTemplateArg || kind == CanonicalTypeKind::NonTypeTemplateArg ||
 		kind == CanonicalTypeKind::TemplateTemplateArg || kind == CanonicalTypeKind::DependentTemplateTemplateArg || kind == CanonicalTypeKind::NameBytes;
 }
 
@@ -2583,8 +2639,7 @@ TypeId CanonicalTypeTable::rebuildMixedTemplateArgListUnlocked(std::span<const C
 		}
 		if (argument.kind == CanonicalTemplateArgKind::Value) {
 			const CanonicalTypeKind value_kind = argument.type ? nodeUnlocked(argument.type).kind : CanonicalTypeKind::Builtin;
-			if (!argument.type || (value_kind != CanonicalTypeKind::IntegralValue && value_kind != CanonicalTypeKind::StructuralValue &&
-				value_kind != CanonicalTypeKind::StructuralArrayValue)) {
+			if (!argument.type || !isValueKind(value_kind)) {
 				throw InternalError("canonical type: invalid typed specialization value");
 			}
 			arg_link = internUnlocked({.child = arg_link, .kind = CanonicalTypeKind::ValueTemplateArg, .builtin = CanonicalBuiltinKind::Void,
@@ -2659,8 +2714,7 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 			}
 		} else if (argument.kind == CanonicalTemplateArgKind::Value) {
 			const CanonicalTypeKind value_kind = argument.type ? nodeUnlocked(argument.type).kind : CanonicalTypeKind::Builtin;
-			if (!argument.type || (value_kind != CanonicalTypeKind::IntegralValue && value_kind != CanonicalTypeKind::StructuralValue &&
-				value_kind != CanonicalTypeKind::StructuralArrayValue)) {
+			if (!argument.type || !isValueKind(value_kind)) {
 				throw InternalError("canonical type: invalid substitute typed value");
 			}
 		} else if (argument.kind == CanonicalTemplateArgKind::NonType) {
@@ -2743,6 +2797,7 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 			case CanonicalTypeKind::FunctionParam:
 			case CanonicalTypeKind::TemplateArg:
 			case CanonicalTypeKind::StructuralValue:
+			case CanonicalTypeKind::StructuralUnionValue:
 			case CanonicalTypeKind::StructuralArrayValue:
 			case CanonicalTypeKind::IntegralValue:
 			case CanonicalTypeKind::ValueTemplateArg:
@@ -3679,14 +3734,17 @@ void CanonicalTypeTable::appendNodeTrace(StringBuilder& shape, CanonicalTypeNode
 		return;
 	}
 	const auto is_structural_value = [](CanonicalTypeKind kind) {
-		return kind == CanonicalTypeKind::StructuralValue || kind == CanonicalTypeKind::StructuralArrayValue;
+		return kind == CanonicalTypeKind::StructuralValue || kind == CanonicalTypeKind::StructuralArrayValue ||
+			kind == CanonicalTypeKind::StructuralUnionValue;
 	};
 	if (is_structural_value(node.kind)) {
 		const auto append_header = [&](CanonicalTypeNode value) {
-			const uint32_t count = value.kind == CanonicalTypeKind::StructuralArrayValue
-				? unpackStructuralArrayElementCount(value.array_extent)
-				: unpackStructuralValueBaseCount(value.array_extent);
-			appendNodeTraceFields(shape, value, count);
+			// Union metadata consists of declaration ordinals and the active selector;
+			// the value-link TypeId in the low half must never enter the trace key.
+			const uint32_t semantic_extent = value.kind == CanonicalTypeKind::StructuralUnionValue
+				? static_cast<uint32_t>(value.array_extent >> 32) : value.kind == CanonicalTypeKind::StructuralArrayValue
+				? unpackStructuralArrayElementCount(value.array_extent) : unpackStructuralValueBaseCount(value.array_extent);
+			appendNodeTraceFields(shape, value, semantic_extent);
 			shape.append('/');
 			appendTypeIdTrace(shape, value.child);
 			shape.append('(');

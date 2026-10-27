@@ -134,16 +134,23 @@ bool tryPublishCanonicalRecordFieldSchema(CanonicalTypeTable& table, EntityId en
 	const StructTypeInfo& struct_info) {
 	std::vector<CanonicalRecordMember> members;
 	members.reserve(struct_info.members.size());
-	for (const StructMember& member : struct_info.members) {
-		if (member.anonymous_union_group_index.has_value()) {
-			return false;
-		}
+	for (size_t index = 0; index < struct_info.members.size(); ++index) {
+		const StructMember& member = struct_info.members[index];
 		TypeSpecifierNode member_syntax = makeCanonicalMemberTypeSpec(member);
 		const std::optional<TypeId> imported = tryImportSupportedCanonical(table, member_syntax);
 		if (!imported.has_value()) {
 			return false;
 		}
 		CanonicalRecordMemberFlags flags = CanonicalRecordMemberFlags::None;
+		if (member.anonymous_union_group_index.has_value() || struct_info.is_union) {
+			const auto group = member.anonymous_union_group_index;
+			const bool starts = index == 0 || (!struct_info.is_union && struct_info.members[index - 1].anonymous_union_group_index != group);
+			const bool ends = index + 1 == struct_info.members.size() ||
+				(!struct_info.is_union && struct_info.members[index + 1].anonymous_union_group_index != group);
+			flags = flags | CanonicalRecordMemberFlags::UnionVariant;
+			if (starts) flags = flags | CanonicalRecordMemberFlags::UnionGroupStart;
+			if (ends) flags = flags | CanonicalRecordMemberFlags::UnionGroupEnd;
+		}
 		uint8_t bit_width = 0;
 		uint8_t bit_offset = 0;
 		if (member.bitfield_width.has_value()) {
