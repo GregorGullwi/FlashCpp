@@ -1683,32 +1683,87 @@ inline std::optional<TypeId> tryImportCanonicalIntegralValue(CanonicalTypeTable&
 	return table.integralValue(imported.type, static_cast<uint64_t>(converted_value));
 }
 
-// The evaluator's structural payload is an input bridge only. Canonical identity
-// uses the declared class and the declaration-order, converted member values.
-// Nested/base-bearing values and non-integral members remain unmigrated.
+// The evaluator's payload is an input bridge only. Identity uses canonical class
+// types and ordered base/member values. Frames and completed subobjects live on
+// worklists; logical value nesting does not add native importer call frames.
 inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTable& table, const FlashCpp::StructuralClassValue* value) {
-	if (value == nullptr || !value->base_values.empty()) {
+	struct Frame {
+		const FlashCpp::StructuralClassValue* source;
+		const StructTypeInfo* record;
+		TypeId type;
+		uint32_t next;
+		uint32_t begin;
+	};
+	static_assert(sizeof(Frame) == 32);
+	std::vector<Frame> pending;
+	std::vector<TypeId> subobjects;
+	// An active declared class cannot contain itself by value. This detects
+	// malformed bridge cycles without making payload addresses semantic keys.
+	std::unordered_set<uint32_t> active_classes;
+	const auto enqueue = [&](const FlashCpp::StructuralClassValue* source, TypeId expected) {
+		if (source == nullptr) {
+			return false;
+		}
+		const TypeInfo* info = tryGetTypeInfo(source->type_index);
+		const StructTypeInfo* record = info != nullptr ? info->getStructInfo() : nullptr;
+		if (record == nullptr || record->is_union || record->has_deferred_base_classes || record->members.size() != source->members.size() ||
+			record->base_classes.size() != source->base_values.size()) {
+			return false;
+		}
+		if (source->base_values.size() > UINT32_MAX || source->members.size() > UINT32_MAX - source->base_values.size() ||
+			subobjects.size() > UINT32_MAX) {
+			throw InternalError("canonical value importer: subobject count exceeds worklist capacity");
+		}
+		TypeSpecifierNode syntax(source->type_index, 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
+		tryBindPublishedTypeEntity(syntax);
+		const CanonicalTypeImport imported = importCanonicalType(table, syntax);
+		if (imported.status != CanonicalTypeImportStatus::Supported || table.node(imported.type).kind != CanonicalTypeKind::Record ||
+			(expected && imported.type != expected)) {
+			return false;
+		}
+		if (!record->base_classes.empty() && (!table.hasClassBaseSchema(imported.type) ||
+			table.classBaseCount(imported.type) != record->base_classes.size())) {
+			return false;
+		}
+		if (!active_classes.insert(imported.type.value).second) {
+			return false;
+		}
+		pending.push_back({source, record, imported.type, 0, static_cast<uint32_t>(subobjects.size())});
+		return true;
+	};
+	if (!enqueue(value, TypeId{})) {
 		return std::nullopt;
 	}
-	const TypeInfo* info = tryGetTypeInfo(value->type_index);
-	const StructTypeInfo* record = info != nullptr ? info->getStructInfo() : nullptr;
-	if (record == nullptr || record->is_union || !record->base_classes.empty() || record->members.size() != value->members.size()) {
-		return std::nullopt;
-	}
-	TypeSpecifierNode syntax(value->type_index, 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
-	tryBindPublishedTypeEntity(syntax);
-	const CanonicalTypeImport imported = importCanonicalType(table, syntax);
-	if (imported.status != CanonicalTypeImportStatus::Supported || table.node(imported.type).kind != CanonicalTypeKind::Record) {
-		return std::nullopt;
-	}
-	std::vector<TypeId> members;
-	members.reserve(value->members.size());
-	for (size_t index = 0; index < value->members.size(); ++index) {
-		const StructMember& field = record->members[index];
-		const FlashCpp::StructuralClassValueMember& member = value->members[index];
-		if (member.name != field.getName() || member.nested_value != nullptr || !field.canonical_type_id || field.bitfield_width.has_value() ||
-			field.anonymous_union_group_index.has_value() || member.scalar_value.kind != FlashCpp::NonTypeValueIdentityKind::Integral ||
-			member.scalar_value.is_dependent) {
+	while (!pending.empty()) {
+		Frame& frame = pending.back();
+		const size_t base_count = frame.source->base_values.size();
+		if (frame.next == base_count + frame.source->members.size()) {
+			const std::span<const TypeId> values = std::span<const TypeId>(subobjects).subspan(frame.begin);
+			const TypeId completed = table.structuralValue(frame.type, values, static_cast<uint32_t>(base_count));
+			subobjects.resize(frame.begin);
+			active_classes.erase(frame.type.value);
+			pending.pop_back();
+			if (pending.empty()) {
+				return completed;
+			}
+			subobjects.push_back(completed);
+			continue;
+		}
+		const size_t index = frame.next++;
+		if (index < base_count) {
+			const BaseClassSpecifier& base = frame.record->base_classes[index];
+			const TypeId expected = table.classBaseAt(frame.type, index).type;
+			const FlashCpp::StructuralClassValue* source = frame.source->base_values[index];
+			if (base.is_virtual || base.is_deferred || !enqueue(source, expected)) {
+				return std::nullopt;
+			}
+			continue;
+		}
+		const size_t member_index = index - base_count;
+		const StructMember& field = frame.record->members[member_index];
+		const FlashCpp::StructuralClassValueMember& member = frame.source->members[member_index];
+		if (member.name != field.getName() || !field.canonical_type_id || field.bitfield_width.has_value() ||
+			field.anonymous_union_group_index.has_value()) {
 			return std::nullopt;
 		}
 		TypeId field_type = field.canonical_type_id;
@@ -1717,8 +1772,14 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 			field_type = node.child;
 			node = table.node(field_type);
 		}
-		if (node.kind != CanonicalTypeKind::Builtin || node.builtin < CanonicalBuiltinKind::Bool ||
-			node.builtin > CanonicalBuiltinKind::UnsignedLongLong) {
+		if (member.nested_value != nullptr) {
+			if (node.kind != CanonicalTypeKind::Record || !enqueue(member.nested_value, field_type)) {
+				return std::nullopt;
+			}
+			continue;
+		}
+		if (member.scalar_value.kind != FlashCpp::NonTypeValueIdentityKind::Integral || member.scalar_value.is_dependent ||
+			node.kind != CanonicalTypeKind::Builtin || node.builtin < CanonicalBuiltinKind::Bool || node.builtin > CanonicalBuiltinKind::UnsignedLongLong) {
 			return std::nullopt;
 		}
 		const auto category = canonicalBuiltinToTypeCategory(node.builtin);
@@ -1727,9 +1788,9 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 		}
 		const uint64_t bits = normalizeIntegralImmediateValue(static_cast<uint64_t>(member.scalar_value.value), *category,
 			static_cast<int>(field.size * 8));
-		members.push_back(table.integralValue(field_type, bits));
+		subobjects.push_back(table.integralValue(field_type, bits));
 	}
-	return table.structuralValue(imported.type, members);
+	throw InternalError("canonical value importer: worklist ended without a result");
 }
 
 inline std::optional<TypeId> tryImportCanonicalValue(CanonicalTypeTable& table, const FlashCpp::NonTypeValueIdentity& value) {

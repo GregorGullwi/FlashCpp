@@ -43,7 +43,7 @@ enum class CanonicalTypeKind : uint8_t {
 	// Internal converted integral value and typed-value specialization argument link.
 	IntegralValue, ValueTemplateArg,
 	// Converted structural-class value: child is the class type, extent is an
-	// ordered ValueTemplateArg chain of subobject values. Never a source ExprId.
+	// ordered ValueTemplateArg chain (low 32) and direct base count (high 32).
 	StructuralValue,
 };
 
@@ -162,6 +162,13 @@ inline TemplateDeclId unpackTemplateParameterDecl(uint64_t array_extent) {
 inline uint32_t unpackTemplateParameterIndex(uint64_t array_extent) {
 	return static_cast<uint32_t>(array_extent >> 32);
 }
+
+inline uint64_t packStructuralValueExtent(TypeId subobjects, uint32_t base_count) {
+	return static_cast<uint64_t>(subobjects.value) | (static_cast<uint64_t>(base_count) << 32);
+}
+
+inline TypeId unpackStructuralValueSubobjects(uint64_t extent) { return TypeId{static_cast<uint32_t>(extent)}; }
+inline uint32_t unpackStructuralValueBaseCount(uint64_t extent) { return static_cast<uint32_t>(extent >> 32); }
 
 inline uint64_t packDependentTemplateMemberExtent(TypeId name_link, TypeId arg_link) {
 	return static_cast<uint64_t>(name_link.value) |
@@ -555,7 +562,7 @@ public:
 	// deduced NTTP type: sign-extended for signed values, zero-extended otherwise.
 	// No expression evaluation, target-width conversion, or source stamping occurs here.
 	TypeId integralValue(TypeId value_type, uint64_t converted_bits);
-	TypeId structuralValue(TypeId class_type, std::span<const TypeId> member_values);
+	TypeId structuralValue(TypeId class_type, std::span<const TypeId> subobject_values, uint32_t base_count);
 
 	// Opaque type-template-parameter identity. Spelling is never part of this
 	// key; callers publish TemplateDeclId + parameter index separately from the
