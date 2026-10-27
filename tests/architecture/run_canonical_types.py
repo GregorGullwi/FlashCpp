@@ -394,7 +394,7 @@ def main():
             "lost_alias_parameter_kind_check": (
                 "\t\t\t\t\tfor (size_t index = 0; index < arguments.size(); ++index) {\n"
                 "\t\t\t\t\t\tif (arguments[index].kind != target->second.parameter_kinds[index] &&\n"
-                "\t\t\t\t\t\t\t!(arguments[index].kind == CanonicalTemplateArgKind::Integral && "
+                "\t\t\t\t\t\t\t!(arguments[index].kind == CanonicalTemplateArgKind::Value && "
                 "target->second.parameter_kinds[index] == CanonicalTemplateArgKind::NonType)) {\n"
                 "\t\t\t\t\t\t\texpand = false;\n"
                 "\t\t\t\t\t\t\tbreak;\n"
@@ -518,6 +518,12 @@ def main():
                 "\t\t\t\t\t.qualifiers = CVQualifier::None,\n"
                 "\t\t\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
                 "\t\t\t\t\t.array_extent = 0,"),
+            "lost_structural_value_class": (
+                ".child = class_type, .kind = CanonicalTypeKind::StructuralValue",
+                ".child = TypeId{}, .kind = CanonicalTypeKind::StructuralValue"),
+            "lost_structural_value_members": (
+                ".array_extent = members.value",
+                ".array_extent = members.value & 0u"),
             "lost_record_layout": (
                 "return entity && record_layout_ids_.contains(entity.value);",
                 "return entity && false;"),
@@ -552,8 +558,8 @@ def main():
             jobs.append((name, directory, 1))
         for name, header, before, after in (
             ("adapter_integral_spec_arg", "CanonicalTypeAdapter.h",
-             "if (syntax.specialization_arg_is_integral(index)) {",
-             "if (false && syntax.specialization_arg_is_integral(index)) {"),
+             "if (syntax.specialization_arg_is_value(index)) {",
+             "if (false && syntax.specialization_arg_is_value(index)) {"),
             ("adapter_dependent_name", "CanonicalTypeAdapter.h",
              "if (syntax.has_dependent_name_type()) {",
              "if (false && syntax.has_dependent_name_type()) {"),

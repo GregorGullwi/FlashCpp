@@ -786,16 +786,16 @@ inline void checkAdapter() {
 	const TypeId integral_two = table.integralValue(table.builtin(CanonicalBuiltinKind::UnsignedInt), 2);
 	TypeSpecifierNode mixed_values(TypeCategory::Template, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 	mixed_values.set_template_specialization_mixed(TemplateDeclId{12},
-		{SpecTemplateArgKind::Integral, SpecTemplateArgKind::NonType, SpecTemplateArgKind::Integral}, {},
+		{SpecTemplateArgKind::Value, SpecTemplateArgKind::NonType, SpecTemplateArgKind::Value}, {},
 		{SpecNonTypeArgument{integral_one}, SpecNonTypeArgument{ExprId{21}}, SpecNonTypeArgument{integral_two}}, {}, {});
 	const CanonicalTemplateArgument expected_values[] = {
-		CanonicalTemplateArgument::makeIntegral(integral_one), CanonicalTemplateArgument::makeNonType(ExprId{21}),
-		CanonicalTemplateArgument::makeIntegral(integral_two),
+		CanonicalTemplateArgument::makeValue(integral_one), CanonicalTemplateArgument::makeNonType(ExprId{21}),
+		CanonicalTemplateArgument::makeValue(integral_two),
 	};
 	require(importCanonicalType(table, mixed_values).type == table.templateSpecialization(TemplateDeclId{12}, expected_values));
-	require(mixed_values.specialization_arg_integral(0) == integral_one);
+	require(mixed_values.specialization_arg_value(0) == integral_one);
 	require(mixed_values.specialization_arg_expr(1) == ExprId{21});
-	require(mixed_values.specialization_arg_integral(2) == integral_two);
+	require(mixed_values.specialization_arg_value(2) == integral_two);
 	TypeSpecifierNode template_specialization(TypeCategory::Template, TypeQualifier::None, 0, Token{},
 		CVQualifier::None);
 	template_specialization.set_template_specialization_mixed(
@@ -2433,6 +2433,36 @@ inline void checkAliasRedirection() {
 }
 
 inline int run() {
+	{
+		CanonicalTypeTable table;
+		const TypeId record = table.record(EntityId{40001});
+		const TypeId other_record = table.record(EntityId{40002});
+		const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+		const TypeId one = table.integralValue(integer, 1);
+		const TypeId two = table.integralValue(integer, 2);
+		const TypeId values[] = {one, two};
+		const TypeId reversed[] = {two, one};
+		const TypeId structural = table.structuralValue(record, values);
+		require(structural == table.structuralValue(record, values));
+		require(structural != table.structuralValue(record, reversed));
+		require(structural != table.structuralValue(other_record, values));
+		const TypeId fewer[] = {one};
+		require(structural != table.structuralValue(record, fewer));
+		const TypeId unsigned_values[] = {table.integralValue(table.builtin(CanonicalBuiltinKind::UnsignedInt), 1), two};
+		require(structural != table.structuralValue(record, unsigned_values));
+		const CanonicalTemplateArgument arguments[] = {CanonicalTemplateArgument::makeValue(structural)};
+		const TypeId specialization = table.templateSpecialization(TemplateDeclId{40003}, arguments);
+		require(table.templateArgumentValue(table.templateSpecializationArguments(specialization)) == structural);
+		const TypeId parameter = table.templateParameter(TemplateDeclId{40004}, 0);
+		const CanonicalTemplateArgument mixed[] = {CanonicalTemplateArgument::makeType(parameter), arguments[0]};
+		const TypeId pattern = table.templateSpecialization(TemplateDeclId{40003}, mixed);
+		const CanonicalTemplateArgument concrete[] = {CanonicalTemplateArgument::makeType(integer), arguments[0]};
+		const TypeId substitution[] = {integer};
+		require(table.substitute(pattern, TemplateDeclId{40004}, substitution) == table.templateSpecialization(TemplateDeclId{40003}, concrete));
+		bool rejected = false;
+		try { (void)table.pointer(structural); } catch (const InternalError&) { rejected = true; }
+		require(rejected);
+	}
 	checkDependentNames();
 	checkSubstitution();
 	checkCallableSubstitution();

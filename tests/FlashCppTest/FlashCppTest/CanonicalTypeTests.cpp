@@ -1,10 +1,66 @@
 #include <fstream>
 #include "CompilerIncludes.h"
+#include "TemplateExpressionEquivalence.h"
 #include "doctest.h"
 #include "CanonicalTypeAdapter.h"
 #include "ExpressionSubstitutor.h"
 #include "ParserTemplateClassShared.h"
 #include "../../architecture/CanonicalTypeTests.h"
+
+TEST_CASE("Structural NTTP imports share typed values and published base offsets") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+struct Key { short code; unsigned count; bool enabled; };
+constexpr Key key{7, 4000000000u, true};
+template<Key Value> struct Base { short member; };
+struct Padding { long long guard; };
+struct Derived : Padding, Base<key> {};
+using Named = Base<key>;
+using Literal = Base<Key{7, 4000000000u, true}>;
+using Different = Base<Key{8, 4000000000u, true}>;
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("structural_nttp_import.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto import_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		if (const TypeSpecifierNode* syntax = info->aliasTypeSpecifier()) {
+			const CanonicalTypeImport syntax_import = importCanonicalType(table, *syntax);
+			REQUIRE(syntax_import.status == CanonicalTypeImportStatus::Supported);
+			CHECK(syntax_import.type == imported.type);
+		}
+		return imported.type;
+	};
+	const TypeId named = import_type("Named");
+	CHECK(named == import_type("Literal"));
+	CHECK(named != import_type("Different"));
+	const TypeId value_id = table.templateArgumentValue(table.templateSpecializationArguments(named));
+	const CanonicalTypeNode value = table.node(value_id);
+	REQUIRE(value.kind == CanonicalTypeKind::StructuralValue);
+	TypeId member_link{static_cast<uint32_t>(value.array_extent)};
+	const CanonicalBuiltinKind types[] = {CanonicalBuiltinKind::Short, CanonicalBuiltinKind::UnsignedInt, CanonicalBuiltinKind::Bool};
+	const uint64_t bits[] = {7, 4000000000u, 1};
+	for (size_t index = 0; index < 3; ++index) {
+		const CanonicalTypeNode member = table.node(table.templateArgumentValue(member_link));
+		CHECK(member.child == table.builtin(types[index]));
+		CHECK(member.array_extent == bits[index]);
+		member_link = table.templateArgumentNext(member_link);
+	}
+	CHECK_FALSE(member_link);
+	const TypeId derived = import_type("Derived");
+	REQUIRE(table.hasClassBaseSchema(derived));
+	CHECK(table.classBaseAt(derived, 1).type == named);
+	CHECK(table.classBaseAt(derived, 1).offset_bytes == 8);
+}
 
 namespace {
 void publishTestClassBases(CanonicalTypeTable& table, EntityId entity, std::span<const CanonicalRecordBase> record_bases) {
@@ -33,12 +89,12 @@ TEST_CASE("Canonical integral arguments use converted value and canonical type i
 	CHECK(table.node(one).kind == CanonicalTypeKind::IntegralValue);
 	const TypeId enum_type = table.enumeration(EntityId{9181});
 	CHECK(one != table.integralValue(enum_type, 1));
-	const CanonicalTemplateArgument arguments[] = {CanonicalTemplateArgument::makeIntegral(one), CanonicalTemplateArgument::makeType(integer)};
+	const CanonicalTemplateArgument arguments[] = {CanonicalTemplateArgument::makeValue(one), CanonicalTemplateArgument::makeType(integer)};
 	const TypeId specialization = table.templateSpecialization(TemplateDeclId{9182}, arguments);
 	const TypeId link = table.templateSpecializationArguments(specialization);
-	CHECK(table.templateArgumentKind(link) == CanonicalTemplateArgKind::Integral);
+	CHECK(table.templateArgumentKind(link) == CanonicalTemplateArgKind::Value);
 	CHECK_FALSE(table.templateArgumentIsType(link));
-	CHECK(table.templateArgumentIntegral(link) == one);
+	CHECK(table.templateArgumentValue(link) == one);
 	CHECK(table.templateArgumentType(table.templateArgumentNext(link)) == integer);
 	CHECK_THROWS_AS(table.templateArgumentExpr(link), InternalError);
 	CHECK_THROWS_AS(table.templateArgumentType(link), InternalError);
@@ -51,7 +107,7 @@ TEST_CASE("Canonical integral arguments use converted value and canonical type i
 	CHECK_THROWS_AS(table.integralValue(table.templateParameter(TemplateDeclId{9183}, 0), 1), InternalError);
 	const CanonicalTemplateArgument invalid_type[] = {CanonicalTemplateArgument::makeType(one)};
 	CHECK_THROWS_AS(table.templateSpecialization(TemplateDeclId{9182}, invalid_type), InternalError);
-	const CanonicalTemplateArgument invalid_value[] = {CanonicalTemplateArgument::makeIntegral(integer)};
+	const CanonicalTemplateArgument invalid_value[] = {CanonicalTemplateArgument::makeValue(integer)};
 	CHECK_THROWS_AS(table.templateSpecialization(TemplateDeclId{9182}, invalid_value), InternalError);
 }
 
@@ -64,11 +120,11 @@ TEST_CASE("Canonical integral arguments survive substitution and nested alias re
 	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
 	const TypeId negative = table.integralValue(integer, static_cast<uint64_t>(-7));
 	const CanonicalTemplateArgument pattern_arguments[] = {
-		CanonicalTemplateArgument::makeType(parameter), CanonicalTemplateArgument::makeIntegral(negative),
+		CanonicalTemplateArgument::makeType(parameter), CanonicalTemplateArgument::makeValue(negative),
 		CanonicalTemplateArgument::makeNonType(ExprId{91}), CanonicalTemplateArgument::makeTemplate(TemplateDeclId{9193}),
 	};
 	const CanonicalTemplateArgument concrete_arguments[] = {
-		CanonicalTemplateArgument::makeType(integer), CanonicalTemplateArgument::makeIntegral(negative),
+		CanonicalTemplateArgument::makeType(integer), CanonicalTemplateArgument::makeValue(negative),
 		CanonicalTemplateArgument::makeNonType(ExprId{91}), CanonicalTemplateArgument::makeTemplate(TemplateDeclId{9193}),
 	};
 	const TypeId pattern = table.templateSpecialization(primary, pattern_arguments);
@@ -82,10 +138,10 @@ TEST_CASE("Canonical integral arguments survive substitution and nested alias re
 	const TypeId alias_arguments[] = {integer};
 	const TypeId nested_alias = table.aliasTemplateSpecialization(alias, alias_arguments);
 	const CanonicalTemplateArgument nested_arguments[] = {
-		CanonicalTemplateArgument::makeType(nested_alias), CanonicalTemplateArgument::makeIntegral(negative),
+		CanonicalTemplateArgument::makeType(nested_alias), CanonicalTemplateArgument::makeValue(negative),
 	};
 	const CanonicalTemplateArgument resolved_arguments[] = {
-		CanonicalTemplateArgument::makeType(table.pointer(integer)), CanonicalTemplateArgument::makeIntegral(negative),
+		CanonicalTemplateArgument::makeType(table.pointer(integer)), CanonicalTemplateArgument::makeValue(negative),
 	};
 	CHECK(table.resolveAliasTemplateSpecializations(table.templateSpecialization(primary, nested_arguments)) ==
 		table.templateSpecialization(primary, resolved_arguments));
@@ -93,10 +149,10 @@ TEST_CASE("Canonical integral arguments survive substitution and nested alias re
 	TypeId deep_concrete = concrete;
 	for (size_t depth = 0; depth < 2048; ++depth) {
 		const CanonicalTemplateArgument pattern_level[] = {
-			CanonicalTemplateArgument::makeType(deep_pattern), CanonicalTemplateArgument::makeIntegral(negative),
+			CanonicalTemplateArgument::makeType(deep_pattern), CanonicalTemplateArgument::makeValue(negative),
 		};
 		const CanonicalTemplateArgument concrete_level[] = {
-			CanonicalTemplateArgument::makeType(deep_concrete), CanonicalTemplateArgument::makeIntegral(negative),
+			CanonicalTemplateArgument::makeType(deep_concrete), CanonicalTemplateArgument::makeValue(negative),
 		};
 		deep_pattern = table.templateSpecialization(primary, pattern_level);
 		deep_concrete = table.templateSpecialization(primary, concrete_level);
@@ -124,7 +180,7 @@ TEST_CASE("Canonical integral argument traces contain value structure instead of
 			FlashCpp::LogConfig::setOutputStream(saved_output);
 			FlashCpp::LogConfig::setLevel(FlashCpp::LogCategory::Types, saved_level);
 		});
-		const CanonicalTemplateArgument arguments[] = {CanonicalTemplateArgument::makeIntegral(value)};
+		const CanonicalTemplateArgument arguments[] = {CanonicalTemplateArgument::makeValue(value)};
 		table.templateSpecialization(TemplateDeclId{9202}, arguments);
 		table.aliasTemplateSpecialization(TemplateDeclId{9203}, arguments);
 		return trace.str();
@@ -143,7 +199,7 @@ TEST_CASE("Canonical integral values share the canonical transaction and account
 	{
 		CanonicalTypeTransaction transaction(table);
 		const TypeId value = table.integralValue(integer, 712);
-		const CanonicalTemplateArgument arguments[] = {CanonicalTemplateArgument::makeIntegral(value)};
+		const CanonicalTemplateArgument arguments[] = {CanonicalTemplateArgument::makeValue(value)};
 		table.templateSpecialization(TemplateDeclId{9201}, arguments);
 		CHECK(table.size() > baseline);
 	}
@@ -3707,14 +3763,14 @@ TEST_CASE("Canonical function-template ordering binds typed integral values") {
 		function(CanonicalTemplateArgument::makeNonType(ExprId{967})), std::nullopt, std::nullopt,
 		{{ExprId{967}, CanonicalTemplateNonTypeArgumentKind::TemplateParameter, environment, 0, integer}}};
 	const CanonicalFunctionTemplateTypePattern first{
-		function(CanonicalTemplateArgument::makeIntegral(one)), std::nullopt, std::nullopt, {}};
+		function(CanonicalTemplateArgument::makeValue(one)), std::nullopt, std::nullopt, {}};
 	const CanonicalFunctionTemplateTypePattern second{
-		function(CanonicalTemplateArgument::makeIntegral(two)), std::nullopt, std::nullopt, {}};
+		function(CanonicalTemplateArgument::makeValue(two)), std::nullopt, std::nullopt, {}};
 	const auto deduction = deduceCanonicalFunctionTemplateType(table, parameter, first, environment);
 	REQUIRE(deduction.status == CanonicalTemplateDeductionStatus::Match);
 	REQUIRE(deduction.non_type_bindings.size() == 1);
-	CHECK(deduction.non_type_bindings.front().argument.is_integral);
-	CHECK(deduction.non_type_bindings.front().argument.integral_value == one);
+	CHECK(deduction.non_type_bindings.front().argument.is_typed_value);
+	CHECK(deduction.non_type_bindings.front().argument.typed_value == one);
 	CHECK(deduceCanonicalFunctionTemplateType(table, first, first, environment).status == CanonicalTemplateDeductionStatus::Match);
 	CHECK(deduceCanonicalFunctionTemplateType(table, first, second, environment).status == CanonicalTemplateDeductionStatus::Mismatch);
 	CHECK(deduceCanonicalFunctionTemplateType(table, first, parameter, environment).status == CanonicalTemplateDeductionStatus::Mismatch);
@@ -4580,17 +4636,17 @@ int main() { Derived object; object.value = 41; return object.value; }
 	const TypeId spelled = import_alias("Spelled");
 	const TypeId derived = import_alias("Derived");
 	const TypeId link = table.templateSpecializationArguments(spelled);
-	REQUIRE(table.templateArgumentKind(link) == CanonicalTemplateArgKind::Integral);
-	const TypeId value = table.templateArgumentIntegral(link);
+	REQUIRE(table.templateArgumentKind(link) == CanonicalTemplateArgKind::Value);
+	const TypeId value = table.templateArgumentValue(link);
 	CHECK(table.node(value).child == table.builtin(CanonicalBuiltinKind::UnsignedInt));
 	CHECK(table.node(value).array_extent == 1);
 	CHECK(import_alias("Signed") != import_alias("Unsigned"));
 	CHECK(import_alias("FixedSigned") == import_alias("FixedUnsigned"));
 	CHECK(import_alias("Default") == import_alias("ExplicitDefault"));
-	const TypeId boolean = table.templateArgumentIntegral(table.templateSpecializationArguments(import_alias("Boolean")));
+	const TypeId boolean = table.templateArgumentValue(table.templateSpecializationArguments(import_alias("Boolean")));
 	CHECK(table.node(boolean).child == table.builtin(CanonicalBuiltinKind::Bool));
 	CHECK(table.node(boolean).array_extent == 1);
-	const TypeId enumeration = table.templateArgumentIntegral(table.templateSpecializationArguments(import_alias("Enumeration")));
+	const TypeId enumeration = table.templateArgumentValue(table.templateSpecializationArguments(import_alias("Enumeration")));
 	CHECK(table.node(table.node(enumeration).child).kind == CanonicalTypeKind::Enum);
 	CHECK(table.node(enumeration).array_extent == 7);
 	const TypeInfo* derived_alias = findTypeByName(StringTable::getOrInternStringHandle("Derived"));
@@ -4997,4 +5053,42 @@ home::Derived<short> object;
 	REQUIRE(home.isValid());
 	CHECK(base->namespaceHandle() == home);
 	CHECK(base->sourceNamespace() == home);
+}
+
+TEST_CASE("Dependent initializer list identity preserves style designators and nested elements") {
+	using Style = InitializerListNode::InitializationStyle;
+	const auto value = [] { return ASTNode::emplace_node<NumericLiteralNode>(Token{}, 7ULL, TypeCategory::Int, TypeQualifier::None, 32); };
+	auto make_list = [&](Style style, bool designated, std::string_view name) {
+		InitializerListNode list(style);
+		if (designated) list.add_designated_initializer(StringTable::getOrInternStringHandle(name), value());
+		else list.add_initializer(value());
+		return ASTNode::emplace_node<InitializerListNode>(std::move(list));
+	};
+	const ASTNode brace = make_list(Style::Brace, true, "key");
+	const ASTNode equal = make_list(Style::Brace, true, "key");
+	CHECK(FlashCpp::equalDependentExpressionIdentity(brace, equal));
+	CHECK(FlashCpp::hashDependentExpressionIdentity(brace) == FlashCpp::hashDependentExpressionIdentity(equal));
+	CHECK_FALSE(FlashCpp::equalDependentExpressionIdentity(brace, make_list(Style::Paren, true, "key")));
+	CHECK_FALSE(FlashCpp::equalDependentExpressionIdentity(brace, make_list(Style::Brace, false, "key")));
+	CHECK_FALSE(FlashCpp::equalDependentExpressionIdentity(brace, make_list(Style::Brace, true, "other")));
+	InitializerListNode nested_a;
+	nested_a.add_initializer(make_list(Style::Brace, true, "key"));
+	InitializerListNode nested_b;
+	nested_b.add_initializer(make_list(Style::Brace, true, "key"));
+	const ASTNode nested_left = ASTNode::emplace_node<InitializerListNode>(std::move(nested_a));
+	const ASTNode nested_right = ASTNode::emplace_node<InitializerListNode>(std::move(nested_b));
+	CHECK(FlashCpp::equalDependentExpressionIdentity(nested_left, nested_right));
+	CHECK(FlashCpp::hashDependentExpressionIdentity(nested_left) == FlashCpp::hashDependentExpressionIdentity(nested_right));
+	ASTNode deep_left = brace;
+	ASTNode deep_right = equal;
+	for (size_t depth = 0; depth < 4096; ++depth) {
+		InitializerListNode left;
+		InitializerListNode right;
+		left.add_initializer(deep_left);
+		right.add_initializer(deep_right);
+		deep_left = ASTNode::emplace_node<InitializerListNode>(std::move(left));
+		deep_right = ASTNode::emplace_node<InitializerListNode>(std::move(right));
+	}
+	CHECK(FlashCpp::equalDependentExpressionIdentity(deep_left, deep_right));
+	CHECK(FlashCpp::hashDependentExpressionIdentity(deep_left) == FlashCpp::hashDependentExpressionIdentity(deep_right));
 }

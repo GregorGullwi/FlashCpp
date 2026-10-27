@@ -248,11 +248,10 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypesImpl(FunctionSi
 		// Keep every argument position, including opaque non-type expression IDs.
 		// Unsupported packs and unpublished argument identities remain deferred.
 		for (const TemplateTypeArg& argument : template_args) {
-			if (!argument.is_pack && argument.is_value && !argument.is_dependent &&
-				argument.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Integral) {
-				const auto integral = tryImportCanonicalIntegralValue(*canonical_types, argument.type_index, argument.value);
-				if (integral.has_value()) {
-					canonical_arguments.push_back(CanonicalTemplateArgument::makeIntegral(*integral));
+			if (!argument.is_pack && argument.is_value && !argument.is_dependent) {
+				const auto value_id = tryImportCanonicalValue(*canonical_types, argument.valueIdentity());
+				if (value_id.has_value()) {
+					canonical_arguments.push_back(CanonicalTemplateArgument::makeValue(*value_id));
 					continue;
 				}
 			}

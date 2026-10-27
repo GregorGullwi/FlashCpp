@@ -1365,8 +1365,8 @@ inline CanonicalTypeImport importCanonicalTemplateSpecialization(CanonicalTypeTa
 				template_parameter.parameter_index));
 			continue;
 		}
-		if (syntax.specialization_arg_is_integral(index)) {
-			argument_ids.push_back(CanonicalTemplateArgument::makeIntegral(syntax.specialization_arg_integral(index)));
+		if (syntax.specialization_arg_is_value(index)) {
+			argument_ids.push_back(CanonicalTemplateArgument::makeValue(syntax.specialization_arg_value(index)));
 			continue;
 		}
 		const ExprId expr = syntax.specialization_arg_expr(index);
@@ -1683,6 +1683,68 @@ inline std::optional<TypeId> tryImportCanonicalIntegralValue(CanonicalTypeTable&
 	return table.integralValue(imported.type, static_cast<uint64_t>(converted_value));
 }
 
+// The evaluator's structural payload is an input bridge only. Canonical identity
+// uses the declared class and the declaration-order, converted member values.
+// Nested/base-bearing values and non-integral members remain unmigrated.
+inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTable& table, const FlashCpp::StructuralClassValue* value) {
+	if (value == nullptr || !value->base_values.empty()) {
+		return std::nullopt;
+	}
+	const TypeInfo* info = tryGetTypeInfo(value->type_index);
+	const StructTypeInfo* record = info != nullptr ? info->getStructInfo() : nullptr;
+	if (record == nullptr || record->is_union || !record->base_classes.empty() || record->members.size() != value->members.size()) {
+		return std::nullopt;
+	}
+	TypeSpecifierNode syntax(value->type_index, 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
+	tryBindPublishedTypeEntity(syntax);
+	const CanonicalTypeImport imported = importCanonicalType(table, syntax);
+	if (imported.status != CanonicalTypeImportStatus::Supported || table.node(imported.type).kind != CanonicalTypeKind::Record) {
+		return std::nullopt;
+	}
+	std::vector<TypeId> members;
+	members.reserve(value->members.size());
+	for (size_t index = 0; index < value->members.size(); ++index) {
+		const StructMember& field = record->members[index];
+		const FlashCpp::StructuralClassValueMember& member = value->members[index];
+		if (member.name != field.getName() || member.nested_value != nullptr || !field.canonical_type_id || field.bitfield_width.has_value() ||
+			field.anonymous_union_group_index.has_value() || member.scalar_value.kind != FlashCpp::NonTypeValueIdentityKind::Integral ||
+			member.scalar_value.is_dependent) {
+			return std::nullopt;
+		}
+		TypeId field_type = field.canonical_type_id;
+		CanonicalTypeNode node = table.node(field_type);
+		if (node.kind == CanonicalTypeKind::Qualified) {
+			field_type = node.child;
+			node = table.node(field_type);
+		}
+		if (node.kind != CanonicalTypeKind::Builtin || node.builtin < CanonicalBuiltinKind::Bool ||
+			node.builtin > CanonicalBuiltinKind::UnsignedLongLong) {
+			return std::nullopt;
+		}
+		const auto category = canonicalBuiltinToTypeCategory(node.builtin);
+		if (!category.has_value() || field.size == 0 || field.size > sizeof(uint64_t)) {
+			return std::nullopt;
+		}
+		const uint64_t bits = normalizeIntegralImmediateValue(static_cast<uint64_t>(member.scalar_value.value), *category,
+			static_cast<int>(field.size * 8));
+		members.push_back(table.integralValue(field_type, bits));
+	}
+	return table.structuralValue(imported.type, members);
+}
+
+inline std::optional<TypeId> tryImportCanonicalValue(CanonicalTypeTable& table, const FlashCpp::NonTypeValueIdentity& value) {
+	if (value.is_dependent) {
+		return std::nullopt;
+	}
+	if (value.kind == FlashCpp::NonTypeValueIdentityKind::Integral) {
+		return tryImportCanonicalIntegralValue(table, value.value_type_index, value.value);
+	}
+	if (value.kind == FlashCpp::NonTypeValueIdentityKind::StructuralClass) {
+		return tryImportCanonicalStructuralValue(table, value.structural_value);
+	}
+	return std::nullopt;
+}
+
 inline CanonicalTypeImport shapeCanonicalTemplateTypeArgument(
 	CanonicalTypeTable& table,
 	const TypeInfo::TemplateArgInfo& argument,
@@ -1827,16 +1889,19 @@ inline CanonicalTypeImport importCanonicalClassSource(
 			const size_t argument_index = current.next_argument;
 			const TypeInfo::TemplateArgInfo& argument =
 				source_arguments[argument_index];
-			if (argument.is_value && !argument.is_pack && argument.nttp_kind == FlashCpp::NonTypeValueIdentityKind::Integral &&
+			if (argument.is_value && !argument.is_pack && (argument.nttp_kind == FlashCpp::NonTypeValueIdentityKind::Integral ||
+				argument.nttp_kind == FlashCpp::NonTypeValueIdentityKind::StructuralClass) &&
 				!argument.dependent_name.isValid() && !argument.dependent_expr().has_value()) {
-				const std::optional<TypeId> integral = tryImportCanonicalIntegralValue(table, argument.type_index, argument.intValue());
-				if (integral.has_value()) {
-					current.arguments.push_back(CanonicalTemplateArgument::makeIntegral(*integral));
+				const std::optional<TypeId> value_id = argument.nttp_kind == FlashCpp::NonTypeValueIdentityKind::Integral
+					? tryImportCanonicalIntegralValue(table, argument.type_index, argument.intValue())
+					: tryImportCanonicalStructuralValue(table, argument.structural_value);
+				if (value_id.has_value()) {
+					current.arguments.push_back(CanonicalTemplateArgument::makeValue(*value_id));
 					++current.next_argument;
 					continue;
 				}
 			}
-			// Dependent and non-integral arguments retain opaque source identity.
+			// Dependent and unsupported arguments retain opaque source identity.
 			if (argument.is_value && argument.nttp_expr) {
 				current.arguments.push_back(
 					CanonicalTemplateArgument::makeNonType(argument.nttp_expr));

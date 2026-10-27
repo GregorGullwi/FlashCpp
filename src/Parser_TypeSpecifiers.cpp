@@ -206,7 +206,7 @@ bool appendTypeOnlyArgSpecifiers(
 struct ClassTemplateArgSpecs {
 	TemplateDeclId primary;
 	// Joint syntax list (TypeSpecifierNode vs ExpressionNode ASTNode vs published
-	// primary class TemplateDeclId, active template-template parameter, or integral value TypeId).
+	// primary class TemplateDeclId, active template-template parameter, or typed value TypeId).
 	// Stamp storage on TypeSpecifierNode stays parallel until type args are TypeIds;
 	// then collapse it to CanonicalTemplateArgument.
 	std::vector<std::variant<TypeSpecifierNode, ASTNode, TemplateDeclId, SpecDependentTemplateArg, TypeId>> args;
@@ -265,9 +265,9 @@ void applyCollectedClassTemplateArgSpecs(
 			dependent_template_ids.push_back(*template_arg);
 			continue;
 		}
-		if (const TypeId* integral = std::get_if<TypeId>(&arg)) {
-			arg_kinds.push_back(SpecTemplateArgKind::Integral);
-			nttp_ids.emplace_back(*integral);
+		if (const TypeId* value_id = std::get_if<TypeId>(&arg)) {
+			arg_kinds.push_back(SpecTemplateArgKind::Value);
+			nttp_ids.emplace_back(*value_id);
 			continue;
 		}
 		arg_kinds.push_back(SpecTemplateArgKind::NonType);
@@ -432,14 +432,14 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 			collected.args.push_back(template_arg.template_decl_id());
 			continue;
 		}
-		if (arg.is_value && !arg.is_dependent && arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Integral) {
-			const auto integral = tryImportCanonicalIntegralValue(requireFrontendContext().canonicalTypes(), arg.type_index, arg.value);
-			if (integral.has_value()) {
-				collected.args.push_back(*integral);
+		if (arg.is_value && !arg.is_dependent) {
+			const auto value_id = tryImportCanonicalValue(requireFrontendContext().canonicalTypes(), arg.valueIdentity());
+			if (value_id.has_value()) {
+				collected.args.push_back(*value_id);
 				continue;
 			}
 		}
-		// Dependent and supported non-integral source expressions keep opaque IDs.
+		// Dependent and unsupported source expressions keep opaque IDs.
 		// Unsupported concrete value kinds remain deferred.
 		if (index >= argument_syntax_nodes.size()) {
 			return std::nullopt;
@@ -5912,8 +5912,8 @@ void Parser::tryStampDependentInstantiationMemberChain(
 				template_arg->parameter_index));
 			continue;
 		}
-		if (const TypeId* integral = std::get_if<TypeId>(&arg)) {
-			argument_ids.push_back(CanonicalTemplateArgument::makeIntegral(*integral));
+		if (const TypeId* value_id = std::get_if<TypeId>(&arg)) {
+			argument_ids.push_back(CanonicalTemplateArgument::makeValue(*value_id));
 			continue;
 		}
 		const ExprId expr_id = exprs.intern(std::get<ASTNode>(arg));

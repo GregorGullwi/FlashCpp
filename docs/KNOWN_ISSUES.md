@@ -33,18 +33,17 @@ class-value slicing. Boundary 9 must carry the selected base constructor into
 lowering and reuse the base-object materialization path; a raw byte copy would
 incorrectly bypass nontrivial copy/move semantics.
 
-## Structural NTTP bases still need matching canonical graph publication
+## Remaining structural NTTP shapes need canonical value import
 
-With `struct Key { int value; }; constexpr Key key{1};`, a base such as
-`template<Key Value> struct Base { short member; };` can lack matching canonical
-base facts. A conversion from `Derived : Padding, Base<key>` to `Base<key>*`
-still needs `legacyDerivedBaseOffset`; removing it reports a missing published
-offset. `test_canonical_structural_nttp_base_source_ret0.cpp` guards this case.
-Define structural-value identity from canonical class/subobject types and values,
-then make syntax and declaration imports agree before deleting the walk.
-Equivalent values spelled `key` and `Key{1}` must agree; source-expression
-stamping alone cannot provide that identity. Integral NTTPs already use their
-converted canonical type and value in both import paths.
+Nested and base-bearing structural values, union variants, arrays, bitfields,
+enum and non-integral fields, and structural values of class-template types
+still need canonical subobject identity and matching specialization base facts.
+Extend the typed-value importer before deleting `legacyDerivedBaseOffset`;
+audit dependent and other non-integral specialization roots as well.
+The scalar integral-field case now shares class/type/value identity between
+syntax and declaration imports, including equivalent named and braced values.
+Retain `test_canonical_structural_nttp_base_source_ret0.cpp` and
+`test_canonical_structural_nttp_equivalence_ret0.cpp` as nonzero-offset guards.
 
 ## Ordinary calls can prefer a generic NTTP function template
 

@@ -37,16 +37,16 @@ enum class SpecTemplateArgKind : uint8_t {
 	NonType = 1,
 	Template = 2,
 	DependentTemplate = 3,
-	Integral = 4,
+	Value = 4,
 };
 
 // The parallel SpecTemplateArgKind selects the active payload. Both identities
-// occupy one slot; an integral value is never reinterpreted as an ExprId.
+// occupy one slot; a typed value is never reinterpreted as an ExprId.
 class SpecNonTypeArgument {
 	friend class TypeSpecifierNode;
 	uint32_t value_;
 	ExprId expression() const { return ExprId{value_}; }
-	TypeId integral() const { return TypeId{value_}; }
+	TypeId value() const { return TypeId{value_}; }
 public:
 	SpecNonTypeArgument(ExprId id) : value_(id.value) {}
 	SpecNonTypeArgument(TypeId id) : value_(id.value) {}
@@ -2151,7 +2151,7 @@ public:
 	}
 
 	// Class-template specialization stamp: published primary TemplateDeclId plus
-	// ordered Type / converted-integral or expression NTTP / published-primary-template / active
+	// ordered Type / converted-value or expression NTTP / published-primary-template / active
 	// template-template-parameter arguments.
 	// Adapter imports these into CanonicalTemplateArgument lists. Packs stay unstamped.
 	// Persistent storage is an ordered kind vector plus dense TypeSpecifierNode,
@@ -2179,11 +2179,11 @@ public:
 		}
 		return specialization_arg_kinds_[index] == SpecTemplateArgKind::Type;
 	}
-	bool specialization_arg_is_integral(size_t index) const {
+	bool specialization_arg_is_value(size_t index) const {
 		if (index >= specialization_arg_kinds_.size()) {
 			throw InternalError("type specifier: specialization arg index out of range");
 		}
-		return specialization_arg_kinds_[index] == SpecTemplateArgKind::Integral;
+		return specialization_arg_kinds_[index] == SpecTemplateArgKind::Value;
 	}
 	bool specialization_arg_is_template(size_t index) const {
 		if (index >= specialization_arg_kinds_.size()) {
@@ -2227,11 +2227,11 @@ public:
 		}
 		return specializationNttpPayload(index).expression();
 	}
-	TypeId specialization_arg_integral(size_t index) const {
-		if (!specialization_arg_is_integral(index)) {
-			throw InternalError("type specifier: expected integral specialization argument");
+	TypeId specialization_arg_value(size_t index) const {
+		if (!specialization_arg_is_value(index)) {
+			throw InternalError("type specifier: expected typed-value specialization argument");
 		}
-		return specializationNttpPayload(index).integral();
+		return specializationNttpPayload(index).value();
 	}
 	TemplateDeclId specialization_arg_template(size_t index) const {
 		if (!specialization_arg_is_template(index)) {
@@ -2317,7 +2317,7 @@ public:
 		for (const SpecTemplateArgKind kind : arg_kinds) {
 			if (kind == SpecTemplateArgKind::Type) {
 				++type_count;
-			} else if (kind == SpecTemplateArgKind::NonType || kind == SpecTemplateArgKind::Integral) {
+			} else if (kind == SpecTemplateArgKind::NonType || kind == SpecTemplateArgKind::Value) {
 				++nttp_count;
 			} else if (kind == SpecTemplateArgKind::Template) {
 				++template_count;
@@ -2337,8 +2337,8 @@ public:
 			if (kind == SpecTemplateArgKind::NonType && !nttp_args[value_index++].expression()) {
 				throw InternalError("type specifier: empty specialization NTTP ExprId");
 			}
-			if (kind == SpecTemplateArgKind::Integral && !nttp_args[value_index++].integral()) {
-				throw InternalError("type specifier: empty specialization integral value");
+			if (kind == SpecTemplateArgKind::Value && !nttp_args[value_index++].value()) {
+				throw InternalError("type specifier: empty specialization typed value");
 			}
 		}
 		for (const TemplateDeclId template_decl : template_args) {
@@ -2627,13 +2627,13 @@ private:
 		size_t offset = 0;
 		for (size_t previous = 0; previous < index; ++previous) {
 			const SpecTemplateArgKind kind = specialization_arg_kinds_[previous];
-			offset += kind == SpecTemplateArgKind::NonType || kind == SpecTemplateArgKind::Integral;
+			offset += kind == SpecTemplateArgKind::NonType || kind == SpecTemplateArgKind::Value;
 		}
 		return specialization_nttp_args_[offset];
 	}
 	std::vector<SpecTemplateArgKind> specialization_arg_kinds_; // parallel to arg order
 	std::vector<TypeSpecifierNode> specialization_type_args_; // Type payloads only
-	std::vector<SpecNonTypeArgument> specialization_nttp_args_; // Expression or typed integral value identities
+	std::vector<SpecNonTypeArgument> specialization_nttp_args_; // Expression or typed value identities
 	std::vector<TemplateDeclId> specialization_template_args_; // Template payloads only
 	std::vector<SpecDependentTemplateArg> specialization_dependent_template_args_; // Dependent template payloads only
 	const StructDeclarationNode* injected_class_declaration_ = nullptr;
