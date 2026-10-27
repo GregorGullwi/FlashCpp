@@ -53,6 +53,11 @@ values retain ordered base/member values with an explicit base count;
 import and tracing use worklists. Retain the 4,096-level import/trace guard on a
 1 MiB stack; existing evaluator recursion is separate. Dependent and unmigrated
 value shapes retain opaque expression identity.
+Union groups publish variant/start/end flags in the existing member schema.
+`StructuralUnionValue` keys an explicit active variant or no-active state by
+record TypeId and group ordinal; live constexpr import remains deferred until
+its payload preserves active-member identity. Retain the 4,096-level union-value
+trace guard on a 1 MiB stack.
 `StructTypeInfo::isAggregate` now excludes
 classes with any reachable virtual base, not only direct virtual bases, so an
 indirectly virtual diamond follows its most-derived constructor and installs the
@@ -328,11 +333,16 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Next slice: canonicalize union-variant subobjects in structural NTTPs.**
-   Publish anonymous-union member groups as canonical union values instead of
-   rejecting them at field-schema publication. Cover active-member values,
-   equivalent named/braced values, distinct variants, nested records, base
-   subobjects, and nonzero derived-to-base offsets. Other scalar field kinds
+   **Next slice: preserve active-union state through constexpr values and import.**
+   Carry the selected declaration ordinal or explicit no-active state through
+   initialization, assignment, copies, serialization, and rehydration. Connect
+   that state to the published group schema and `structuralUnionValue` API;
+   never infer activity from scalar bits or default-filled bindings. The reduced
+   `Key{.first=0}` / `Key{.second=0}` case in `KNOWN_ISSUES.md` must produce
+   distinct template arguments. Preserve nested anonymous-union hierarchy rather
+   than treating flattened layout groups as a complete value schema. Cover
+   equivalent named/braced values, nested records, bases, and nonzero offsets.
+   Other scalar field kinds
    (floating, pointer, and member-pointer values) and unpublished value-class
    identities remain separate import work. Keep the worklist guard and the
    nonzero-offset guards in

@@ -50,6 +50,10 @@ enum class CanonicalTypeKind : uint8_t {
 	// (high 32). Element nodes are IntegralValue, StructuralValue, or another
 	// StructuralArrayValue.
 	StructuralArrayValue,
+	// Anonymous union value: child is its containing record type. The extent
+	// packs a value link (low 32), first variant ordinal (next 16), and selected
+	// relative variant plus one (high 16); zero selection means no active member.
+	StructuralUnionValue,
 };
 
 enum class CanonicalTemplateArgKind : uint8_t {
@@ -174,6 +178,12 @@ inline uint64_t packStructuralValueExtent(TypeId subobjects, uint32_t base_count
 
 inline TypeId unpackStructuralValueSubobjects(uint64_t extent) { return TypeId{static_cast<uint32_t>(extent)}; }
 inline uint32_t unpackStructuralValueBaseCount(uint64_t extent) { return static_cast<uint32_t>(extent >> 32); }
+
+inline uint16_t unpackStructuralUnionFirstVariant(uint64_t extent) { return static_cast<uint16_t>(extent >> 32); }
+inline std::optional<uint16_t> unpackStructuralUnionActiveVariant(uint64_t extent) {
+	const uint16_t selected = static_cast<uint16_t>(extent >> 48);
+	return selected == 0 ? std::nullopt : std::optional<uint16_t>{static_cast<uint16_t>(unpackStructuralUnionFirstVariant(extent) + selected - 1)};
+}
 
 inline uint64_t packStructuralArrayExtent(TypeId elements, uint32_t element_count) {
 	return packStructuralValueExtent(elements, element_count);
@@ -323,6 +333,9 @@ enum class CanonicalRecordMemberFlags : uint8_t {
 	None = 0,
 	Bitfield = 1 << 0,
 	NoUniqueAddress = 1 << 1,
+	UnionVariant = 1 << 2,
+	UnionGroupStart = 1 << 3,
+	UnionGroupEnd = 1 << 4,
 };
 
 enum class CanonicalRecordBaseFlags : uint8_t {
@@ -576,6 +589,7 @@ public:
 	// No expression evaluation, target-width conversion, or source stamping occurs here.
 	TypeId integralValue(TypeId value_type, uint64_t converted_bits);
 	TypeId structuralValue(TypeId class_type, std::span<const TypeId> subobject_values, uint32_t base_count);
+	TypeId structuralUnionValue(TypeId owner_type, uint16_t first_variant, std::optional<uint16_t> active_variant, TypeId value);
 
 	// Converted array value keyed by its published array TypeId. The element
 	// count must equal the published outer bound; each element must be a typed
@@ -966,6 +980,7 @@ private:
 
 	static bool isReference(CanonicalTypeKind kind);
 
+	static bool isValueKind(CanonicalTypeKind kind);
 	static bool isInternalLink(CanonicalTypeKind kind);
 
 	static bool isDependentQualifierKind(CanonicalTypeKind kind);
