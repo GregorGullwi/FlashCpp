@@ -1253,6 +1253,8 @@ struct PublishedRecordFactsLookup {
 	mutable std::unordered_map<TypeIndex, std::optional<CanonicalRecordFacts>> cache;
 
 	explicit PublishedRecordFactsLookup(CanonicalTypeTable& table_reference) : table(table_reference) {}
+	PublishedRecordFactsLookup(const PublishedRecordFactsLookup&) = delete;
+	PublishedRecordFactsLookup& operator=(const PublishedRecordFactsLookup&) = delete;
 
 	std::optional<CanonicalRecordFacts> forType(TypeIndex type_index) const {
 		if (const auto cached = cache.find(type_index); cached != cache.end()) {
@@ -1319,7 +1321,7 @@ bool recordSubobjectsSatisfyDefaultConstruction(
 	const StructTypeInfo& root,
 	ClassProperty class_property,
 	bool recurse_default_initialized_members,
-	FactsLookup facts_lookup,
+	const FactsLookup& facts_lookup,
 	CanonicalRecordFacts cached_fact) {
 	std::vector<const StructTypeInfo*> pending{&root};
 	std::unordered_set<const StructTypeInfo*> visited;
@@ -1865,7 +1867,7 @@ bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
 }
 
 template <typename FactsLookup>
-CanonicalRecordFacts computeCanonicalRecordFactsWithLookup(const StructTypeInfo& struct_info, FactsLookup facts_lookup) {
+CanonicalRecordFacts computeCanonicalRecordFactsWithLookup(const StructTypeInfo& struct_info, const FactsLookup& facts_lookup) {
 	CanonicalRecordFacts facts = CanonicalRecordFacts::None;
 	const bool is_standard_layout = isStructStandardLayoutWithPublishedFacts(facts_lookup, &struct_info);
 	if (struct_info.has_deleted_destructor) {
