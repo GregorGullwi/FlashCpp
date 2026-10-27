@@ -180,6 +180,114 @@ using Different = Base<Key{8, 4000000000u, true}>;
 	CHECK(table.classBaseAt(derived, 1).offset_bytes == 8);
 }
 
+TEST_CASE("Bit-field structural NTTPs canonicalize widths padding and enum identity") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+enum class Code : signed char { negative = -3, other = 2 };
+struct Inner { unsigned low : 3; int signed_value : 3; bool flag : 1; Code code : 3; };
+struct Key : Inner { unsigned upper : 5; unsigned : 2; unsigned : 0; unsigned tail : 4; };
+constexpr Key key{{9u, 7, true, Code::negative}, 33u, 17u};
+template<Key Value> struct Base { short member; };
+struct Padding { long long guard; };
+struct Derived : Padding, Base<key> {};
+using Named = Base<key>;
+using Literal = Base<Key{{9u, 7, true, Code::negative}, 33u, 17u}>;
+using Converted = Base<Key{{1u, -1, true, Code::negative}, 1u, 1u}>;
+using OtherLow = Base<Key{{2u, 7, true, Code::negative}, 33u, 17u}>;
+using OtherSigned = Base<Key{{9u, -2, true, Code::negative}, 33u, 17u}>;
+using OtherBool = Base<Key{{9u, 7, false, Code::negative}, 33u, 17u}>;
+using OtherEnum = Base<Key{{9u, 7, true, Code::other}, 33u, 17u}>;
+using OtherTail = Base<Key{{9u, 7, true, Code::negative}, 33u, 18u}>;
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("structural_nttp_bitfields.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto import_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		if (const TypeSpecifierNode* syntax = info->aliasTypeSpecifier()) {
+			const CanonicalTypeImport syntax_import = importCanonicalType(table, *syntax);
+			REQUIRE(syntax_import.status == CanonicalTypeImportStatus::Supported);
+			CHECK(syntax_import.type == imported.type);
+		}
+		return imported.type;
+	};
+	const TypeId named = import_type("Named");
+	CHECK(named == import_type("Literal"));
+	CHECK(named == import_type("Converted"));
+	CHECK(named != import_type("OtherLow"));
+	CHECK(named != import_type("OtherSigned"));
+	CHECK(named != import_type("OtherBool"));
+	CHECK(named != import_type("OtherEnum"));
+	CHECK(named != import_type("OtherTail"));
+	const TypeInfo* key_info = findTypeByName(StringTable::getOrInternStringHandle("Key"));
+	REQUIRE(key_info != nullptr);
+	const StructTypeInfo* key_record = key_info->getStructInfo();
+	REQUIRE(key_record != nullptr);
+	REQUIRE(key_record->declaration_node != nullptr);
+	const EntityId key_entity = key_record->declaration_node->entity_id();
+	REQUIRE(table.hasRecordFieldSchema(key_entity));
+	const CanonicalRecordMember upper = table.recordMemberAt(key_entity, 0);
+	CHECK(hasCanonicalRecordMemberFlag(upper.flags, CanonicalRecordMemberFlags::Bitfield));
+	CHECK(upper.bit_width == 5);
+	CHECK(upper.type == table.builtin(CanonicalBuiltinKind::UnsignedInt));
+	CHECK(table.recordMemberAt(key_entity, 1).bit_width == 2);
+	CHECK(table.recordMemberAt(key_entity, 2).bit_width == 0);
+	CHECK(table.recordMemberAt(key_entity, 3).bit_width == 4);
+	const TypeId derived = import_type("Derived");
+	REQUIRE(table.hasClassBaseSchema(derived));
+	CHECK(table.classBaseAt(derived, 1).type == named);
+	CHECK(table.classBaseAt(derived, 1).offset_bytes == 8);
+	const TypeInfo* derived_alias = findTypeByName(StringTable::getOrInternStringHandle("Derived"));
+	REQUIRE(derived_alias != nullptr);
+	const TypeInfo* derived_info = resolveAliasTypeInfo(derived_alias->type_index_).terminal_type_info;
+	REQUIRE(derived_info != nullptr);
+	const StructTypeInfo* derived_record = derived_info->getStructInfo();
+	REQUIRE(derived_record != nullptr);
+	REQUIRE(derived_record->declaration_node != nullptr);
+	const CanonicalTypeImport declaration = importCanonicalClassDeclaration(table, *derived_record->declaration_node);
+	REQUIRE(declaration.status == CanonicalTypeImportStatus::Supported);
+	CHECK(declaration.type == derived);
+	const TypeId value_id = table.templateArgumentValue(table.templateSpecializationArguments(named));
+	const CanonicalTypeNode value = table.node(value_id);
+	REQUIRE(value.kind == CanonicalTypeKind::StructuralValue);
+	CHECK(unpackStructuralValueBaseCount(value.array_extent) == 1);
+	TypeId link = unpackStructuralValueSubobjects(value.array_extent);
+	const TypeId inner_id = table.templateArgumentValue(link);
+	const CanonicalTypeNode inner = table.node(inner_id);
+	REQUIRE(inner.kind == CanonicalTypeKind::StructuralValue);
+	TypeId inner_link = unpackStructuralValueSubobjects(inner.array_extent);
+	const uint64_t inner_values[] = {1, static_cast<uint64_t>(-1), 1};
+	const CanonicalBuiltinKind inner_types[] = {CanonicalBuiltinKind::UnsignedInt, CanonicalBuiltinKind::Int,
+		CanonicalBuiltinKind::Bool};
+	for (size_t index = 0; index < 3; ++index) {
+		const CanonicalTypeNode field = table.node(table.templateArgumentValue(inner_link));
+		CHECK(field.child == table.builtin(inner_types[index]));
+		CHECK(field.array_extent == inner_values[index]);
+		inner_link = table.templateArgumentNext(inner_link);
+	}
+	const CanonicalTypeNode code_field = table.node(table.templateArgumentValue(inner_link));
+	CHECK(table.node(code_field.child).kind == CanonicalTypeKind::Enum);
+	CHECK(code_field.array_extent == static_cast<uint64_t>(-3));
+	CHECK_FALSE(table.templateArgumentNext(inner_link));
+	link = table.templateArgumentNext(link);
+	for (size_t index = 0; index < 2; ++index) {
+		const CanonicalTypeNode field = table.node(table.templateArgumentValue(link));
+		CHECK(field.child == table.builtin(CanonicalBuiltinKind::UnsignedInt));
+		CHECK(field.array_extent == 1);
+		link = table.templateArgumentNext(link);
+	}
+	CHECK_FALSE(link);
+}
+
 namespace {
 void publishTestClassBases(CanonicalTypeTable& table, EntityId entity, std::span<const CanonicalRecordBase> record_bases) {
 	std::vector<CanonicalClassBase> bases;

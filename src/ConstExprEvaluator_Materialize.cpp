@@ -534,21 +534,35 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 	std::unordered_map<std::string_view, EvalResult>& bindings,
 	EvaluationContext& context,
 	const std::unordered_map<std::string_view, EvalResult>* evaluation_bindings) {
-	// Bind members covered by the initializer list.
-	for (size_t mi = 0; mi < struct_info->members.size() && mi < init_list.size(); ++mi) {
+	// Bind members covered by the initializer list. Unnamed and zero-width
+	// bit-fields are padding, not aggregate elements, so positional clauses
+	// advance over them without consuming a value.
+	size_t member_cursor = 0;
+	for (size_t clause = 0; clause < init_list.size(); ++clause) {
 		std::string_view mname;
 		const StructMember* member_info = nullptr;
-		if (init_list.is_designated(mi)) {
+		if (init_list.is_designated(clause)) {
 			// Designated initializer: use the member name from the designator
-			mname = StringTable::getStringView(init_list.member_name(mi));
+			mname = StringTable::getStringView(init_list.member_name(clause));
 			member_info = struct_info->findMember(mname);
+			if (member_info != nullptr) {
+				member_cursor = static_cast<size_t>(member_info - struct_info->members.data()) + 1;
+			}
 		} else {
-			// Positional initializer: use the struct member at this index
-			mname = StringTable::getStringView(struct_info->members[mi].getName());
-			member_info = &struct_info->members[mi];
+			while (member_cursor < struct_info->members.size() && struct_info->members[member_cursor].isUnnamedOrZeroWidthBitfield()) {
+				++member_cursor;
+			}
+			if (member_cursor >= struct_info->members.size()) {
+				return EvalResult::error(
+					"Excess or unrecognized initializer in aggregate initialization "
+					"(no matching member for positional initializer)");
+			}
+			member_info = &struct_info->members[member_cursor];
+			mname = StringTable::getStringView(member_info->getName());
+			++member_cursor;
 		}
 
-		const ASTNode& initializer = init_list.initializers()[mi];
+		const ASTNode& initializer = init_list.initializers()[clause];
 		if (member_info) {
 			EvalResult val;
 			const TypeInfo* member_type_info = tryGetTypeInfo(member_info->type_index);
@@ -635,6 +649,9 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 	// Omitted aggregate elements use their default member initializer or empty-list initialization.
 	for (size_t mi = 0; mi < struct_info->members.size(); ++mi) {
 		const auto& member = struct_info->members[mi];
+		if (member.isUnnamedOrZeroWidthBitfield()) {
+			continue;
+		}
 		std::string_view mname = StringTable::getStringView(member.getName());
 		if (bindings.find(mname) == bindings.end() && member.default_initializer.has_value()) {
 			EvalResult default_result;

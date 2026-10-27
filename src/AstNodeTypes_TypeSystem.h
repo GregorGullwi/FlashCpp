@@ -1344,6 +1344,12 @@ struct StructMember {
 	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
 	TypeCategory memberType() const { return type_index.category(); }
 
+	// C++20 [class.bit]: an unnamed bit-field is padding, not an element, and a
+	// zero-width bit-field only advances layout. Neither owns a value subobject.
+	bool isUnnamedOrZeroWidthBitfield() const {
+		return bitfield_width.has_value() && (*bitfield_width == 0 || name.view().empty());
+	}
+
 	StructMember(StringHandle n, TypeIndex tidx, TypeId canonical_id, size_t off, size_t sz, size_t align, AccessSpecifier acc,
 		std::optional<ASTNode> init, ReferenceQualifier ref_qual, size_t ref_size_bits, bool is_arr, std::vector<size_t> arr_dims,
 		bool member_pointee_array_declarator, int ptr_depth, std::optional<size_t> bf_width, CVQualifier member_cv)

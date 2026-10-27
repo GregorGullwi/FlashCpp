@@ -30,11 +30,18 @@ behind that query for specialization bases the canonical importer cannot yet
 represent. Binary and range call selection no longer store AST owner
 TypeIndexes: the published `BinaryOperatorCallTarget.declaring_type` is the
 authority, and codegen derives its ABI owner handle at that boundary.
-Concrete integral and integral/enum-field class NTTPs share converted canonical
-type/value identity in syntax and declaration imports, including nested members,
-nonvirtual bases, equivalent named/braced values, and published base offsets.
-Enum fields retain their declared enum TypeId and normalize through the published
-underlying layout. Class values retain ordered base/member values with an explicit base count;
+Concrete integral, bool, enum, and named bit-field class NTTPs share converted
+canonical type/value identity in syntax and declaration imports, including nested
+members, nonvirtual bases, equivalent named/braced values, and published base offsets.
+Bit-fields normalize through the declared canonical type and published width, so signed
+fields sign-extend, unsigned fields truncate, and bool stays 0/1. Enum fields retain
+their declared enum TypeId and normalize through the published underlying layout.
+Unnamed and zero-width bit-fields stay declaration/layout padding and add no value
+subobjects. Constant-byte materialization extracts a bit-field from its declared storage
+offset and width before scalar conversion, so static/global initializers agree with the
+aggregate path. `tests/test_canonical_structural_nttp_bitfields_ret0.cpp` and the canonical
+adapter scalar probe pin signed/unsigned/bool/enum conversion, padding, and nonzero base
+offsets. Class values retain ordered base/member values with an explicit base count;
 import and tracing use worklists. Retain the 4,096-level import/trace guard on a
 1 MiB stack; existing evaluator recursion is separate. Dependent and unmigrated
 value shapes retain opaque expression identity.
@@ -313,19 +320,18 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Next slice: canonicalize bit-field values in structural NTTPs.**
-   Start with named integral/bool/enum fields. Use the declared canonical type
-   and published bit-field width to preserve converted values, including signed
-   extension and unsigned truncation. Respect unnamed/zero-width padding when
-   aligning declarations with value subobjects. Cover nested/base values,
-   syntax/declaration agreement, and matching specialization base facts.
-   Keep the structural value import/trace worklists and nonzero-offset
-   guards in `test_canonical_structural_nttp_{base_source,equivalence,subobjects}_ret0.cpp`.
-   Union variants, arrays, other scalar field kinds, and unpublished
-   value-class identities remain separate import work. `legacyDerivedBaseOffset`
-   remains necessary for unsupported value-specialization roots; audit these and
-   dependent roots before deleting it or closing a 3A exit criterion. See
-   `KNOWN_ISSUES.md`.
+   **Next slice: canonicalize array-member subobjects in structural NTTPs.**
+   Represent array members as ordered nested values from the declared canonical
+   element type and published bounds, reusing the structural value import/trace
+   worklists. Cover nested arrays, base subobjects, equivalent named/braced
+   values, distinct element values, and nonzero derived-to-base offsets.
+   Union variants, other scalar field kinds, and unpublished value-class
+   identities remain separate import work. Keep the worklist guard and the
+   nonzero-offset guards in
+   `test_canonical_structural_nttp_{base_source,equivalence,subobjects,bitfields}_ret0.cpp`.
+   `legacyDerivedBaseOffset` remains necessary for unsupported
+   value-specialization roots; audit these and dependent roots before deleting it
+   or closing a 3A exit criterion. See `KNOWN_ISSUES.md`.
 
    **Owner-index deletion gates:** virtual-base ABI facts are published by class
    TypeIds and consumed by AstToIr, explicit-cast, IRConverter, and constructor
@@ -768,6 +774,10 @@ authoritative inventory is [known issues](KNOWN_ISSUES.md).
 ## Active findings
 
 - The top-level expression fallback can mask declaration-parse errors; see
+  [known issues](KNOWN_ISSUES.md).
+- Bit-field declarations still accept non-integral types, widths larger than
+  the declared type, and named zero-width fields; static constexpr data-member
+  NTTP arguments also fail outer specialization matching. Both are recorded in
   [known issues](KNOWN_ISSUES.md).
 
 ## Validation handoff

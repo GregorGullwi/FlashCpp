@@ -1685,7 +1685,10 @@ inline std::optional<TypeId> tryImportCanonicalIntegralValue(CanonicalTypeTable&
 
 // Scalar field identity retains the declared type. Enum representation comes
 // from its published layout, independent of legacy member storage metadata.
-inline std::optional<TypeId> tryImportCanonicalStructuralScalar(CanonicalTypeTable& table, TypeId field_type, uint64_t bits, size_t storage_size) {
+// A bit-field narrows that representation to its published width before the
+// signed sign-extension or unsigned truncation is folded into the value.
+inline std::optional<TypeId> tryImportCanonicalStructuralScalar(CanonicalTypeTable& table, TypeId field_type, uint64_t bits,
+	size_t storage_size, std::optional<uint8_t> bit_width) {
 	CanonicalTypeNode representation = table.node(field_type);
 	if (representation.kind == CanonicalTypeKind::Enum) {
 		const EntityId entity = table.enumEntity(field_type);
@@ -1700,11 +1703,15 @@ inline std::optional<TypeId> tryImportCanonicalStructuralScalar(CanonicalTypeTab
 		representation.builtin > CanonicalBuiltinKind::UnsignedLongLong || storage_size == 0 || storage_size > sizeof(uint64_t)) {
 		return std::nullopt;
 	}
+	if (bit_width.has_value() && (*bit_width == 0 || *bit_width > 64 || *bit_width > storage_size * 8)) {
+		return std::nullopt;
+	}
 	const auto category = canonicalBuiltinToTypeCategory(representation.builtin);
 	if (!category.has_value()) {
 		return std::nullopt;
 	}
-	const uint64_t converted_bits = normalizeIntegralImmediateValue(bits, *category, static_cast<int>(storage_size * 8));
+	const int converted_width = bit_width.has_value() ? static_cast<int>(*bit_width) : static_cast<int>(storage_size * 8);
+	const uint64_t converted_bits = normalizeIntegralImmediateValue(bits, *category, converted_width);
 	return table.integralValue(field_type, converted_bits);
 }
 
@@ -1718,6 +1725,7 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 		TypeId type;
 		uint32_t next;
 		uint32_t begin;
+		uint32_t source_member;
 	};
 	static_assert(sizeof(Frame) == 32);
 	std::vector<Frame> pending;
@@ -1731,8 +1739,8 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 		}
 		const TypeInfo* info = tryGetTypeInfo(source->type_index);
 		const StructTypeInfo* record = info != nullptr ? info->getStructInfo() : nullptr;
-		if (record == nullptr || record->is_union || record->has_deferred_base_classes || record->members.size() != source->members.size() ||
-			record->base_classes.size() != source->base_values.size()) {
+		if (record == nullptr || record->is_union || record->has_deferred_base_classes ||
+			source->members.size() > record->members.size() || record->base_classes.size() != source->base_values.size()) {
 			return false;
 		}
 		if (source->base_values.size() > UINT32_MAX || source->members.size() > UINT32_MAX - source->base_values.size() ||
@@ -1753,7 +1761,7 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 		if (!active_classes.insert(imported.type.value).second) {
 			return false;
 		}
-		pending.push_back({source, record, imported.type, 0, static_cast<uint32_t>(subobjects.size())});
+		pending.push_back({source, record, imported.type, 0, static_cast<uint32_t>(subobjects.size()), 0});
 		return true;
 	};
 	if (!enqueue(value, TypeId{})) {
@@ -1762,7 +1770,10 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 	while (!pending.empty()) {
 		Frame& frame = pending.back();
 		const size_t base_count = frame.source->base_values.size();
-		if (frame.next == base_count + frame.source->members.size()) {
+		if (frame.next == base_count + frame.record->members.size()) {
+			if (frame.source_member != frame.source->members.size()) {
+				return std::nullopt;
+			}
 			const std::span<const TypeId> values = std::span<const TypeId>(subobjects).subspan(frame.begin);
 			const TypeId completed = table.structuralValue(frame.type, values, static_cast<uint32_t>(base_count));
 			subobjects.resize(frame.begin);
@@ -1786,19 +1797,44 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 		}
 		const size_t member_index = index - base_count;
 		const StructMember& field = frame.record->members[member_index];
-		const FlashCpp::StructuralClassValueMember& member = frame.source->members[member_index];
-		if (member.name != field.getName() || !field.canonical_type_id || field.bitfield_width.has_value() ||
-			field.anonymous_union_group_index.has_value()) {
+		if (field.isUnnamedOrZeroWidthBitfield()) {
+			continue;
+		}
+		if (frame.source_member >= frame.source->members.size()) {
+			return std::nullopt;
+		}
+		const FlashCpp::StructuralClassValueMember& member = frame.source->members[frame.source_member++];
+		if (member.name != field.getName() || !field.canonical_type_id || field.anonymous_union_group_index.has_value()) {
 			return std::nullopt;
 		}
 		TypeId field_type = field.canonical_type_id;
+		size_t scalar_storage_size = field.size;
+		std::optional<uint8_t> bit_width;
+		if (field.bitfield_width.has_value()) {
+			const StructDeclarationNode* declaration = frame.record->declaration_node;
+			if (declaration == nullptr || !declaration->has_entity_id()) {
+				return std::nullopt;
+			}
+			const EntityId entity = declaration->entity_id();
+			if (!table.hasRecordFieldSchema(entity)) {
+				return std::nullopt;
+			}
+			const CanonicalRecordMember published = table.recordMemberAt(entity, member_index);
+			if (!hasCanonicalRecordMemberFlag(published.flags, CanonicalRecordMemberFlags::Bitfield) || published.bit_width == 0 ||
+				*field.bitfield_width != published.bit_width || !published.type) {
+				return std::nullopt;
+			}
+			field_type = published.type;
+			scalar_storage_size = published.size_bytes;
+			bit_width = published.bit_width;
+		}
 		CanonicalTypeNode node = table.node(field_type);
 		if (node.kind == CanonicalTypeKind::Qualified) {
 			field_type = node.child;
 			node = table.node(field_type);
 		}
 		if (member.nested_value != nullptr) {
-			if (node.kind != CanonicalTypeKind::Record || !enqueue(member.nested_value, field_type)) {
+			if (bit_width.has_value() || node.kind != CanonicalTypeKind::Record || !enqueue(member.nested_value, field_type)) {
 				return std::nullopt;
 			}
 			continue;
@@ -1806,7 +1842,8 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 		if (member.scalar_value.kind != FlashCpp::NonTypeValueIdentityKind::Integral || member.scalar_value.is_dependent) {
 			return std::nullopt;
 		}
-		const auto scalar = tryImportCanonicalStructuralScalar(table, field_type, static_cast<uint64_t>(member.scalar_value.value), field.size);
+		const auto scalar = tryImportCanonicalStructuralScalar(
+			table, field_type, static_cast<uint64_t>(member.scalar_value.value), scalar_storage_size, bit_width);
 		if (!scalar.has_value()) {
 			return std::nullopt;
 		}

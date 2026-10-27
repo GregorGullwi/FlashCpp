@@ -35,18 +35,58 @@ incorrectly bypass nontrivial copy/move semantics.
 
 ## Remaining structural NTTP shapes need canonical value import
 
-Union variants, arrays, bitfields, remaining scalar field kinds, and structural
-values of class-template types still need canonical subobject identity and
-matching specialization base facts.
+Union variants, arrays, remaining scalar field kinds, and structural values of
+class-template types still need canonical subobject identity and matching
+specialization base facts.
 Extend the typed-value importer before deleting `legacyDerivedBaseOffset`;
 audit dependent and other non-integral specialization roots as well.
-Integral and enum fields, including nested members and nonvirtual bases, share
-class/type/value identity between syntax and declaration imports for equivalent
-named and braced values. Enum values use their published underlying layout.
+Integral, bool, and enum fields, including named bit-fields with signed
+extension or unsigned truncation, share class/type/value identity between
+syntax and declaration imports for equivalent named and braced values. Enum
+values use their published underlying layout. Unnamed and zero-width bit-fields
+remain declaration/layout padding and never add value subobjects.
 Retain `test_canonical_structural_nttp_base_source_ret0.cpp`,
 `test_canonical_structural_nttp_equivalence_ret0.cpp`,
-`test_canonical_structural_nttp_subobjects_ret0.cpp`, and
-`test_canonical_structural_nttp_enum_fields_ret0.cpp` as nonzero-offset guards.
+`test_canonical_structural_nttp_subobjects_ret0.cpp`,
+`test_canonical_structural_nttp_enum_fields_ret0.cpp`, and
+`test_canonical_structural_nttp_bitfields_ret0.cpp` as nonzero-offset guards.
+
+## Bit-field declarations accept ill-formed forms
+
+The parser validates only that a bit-field width is a non-negative constant
+expression. It accepts declarations that C++20 [class.bit] requires to be
+diagnosed:
+
+- a non-integral, non-enumeration declared type, such as `float value : 3;`;
+- a width larger than the declared type can represent, such as `int value : 40;`;
+- a named zero-width field, such as `int value : 0;` (zero width is reserved
+  for unnamed alignment padding).
+
+The large-width case is additionally clamped by layout, so declaration and
+layout facts disagree while structural value import fails closed. Reject all
+three forms while parsing the member declaration, before layout publication.
+
+## Static constexpr data-member NTTP arguments fail specialization matching
+
+A static constexpr data member used directly as a template argument can be
+imported, but using it as an argument to another class template does not
+participate correctly in specialization matching. For example:
+
+```cpp
+struct Key { int value; };
+struct Holder { static constexpr Key key{5}; };
+template<Key Value> struct Base {};
+template<class A, class B> struct Same { static constexpr bool value = false; };
+template<class A> struct Same<A, A> { static constexpr bool value = true; };
+static_assert(Same<Base<Holder::key>, Base<Key{5}>>::value);
+```
+
+The direct `Base<Holder::key>` instantiation succeeds, but the `Same`
+comparison fails to resolve the selected specialization and reports an
+undefined qualified identifier. This affects scalar and bit-field members
+equally and is independent of the bit-field value conversion. Materialize the
+static member's typed value identity before building the outer specialization
+key.
 
 ## Ordinary calls can prefer a generic NTTP function template
 
