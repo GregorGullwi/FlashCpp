@@ -885,6 +885,30 @@ const StructTypeInfo* structuralClassStructInfo(TypeIndex type_index) {
 	return type_info ? type_info->getStructInfo() : nullptr;
 }
 
+// C++20 [class.bit]: a bit-field value keeps only its declared width, and a
+// signed field is interpreted in two's complement. Store the converted value so
+// structural equality and canonical import agree even when the enclosing list
+// used an out-of-range spelling.
+int64_t normalizeStructuralBitfieldScalar(const StructMember& member_info, int64_t value) {
+	if (!member_info.bitfield_width.has_value()) {
+		return value;
+	}
+	const size_t width = *member_info.bitfield_width;
+	if (width == 0 || width > 64) {
+		return value;
+	}
+	TypeCategory category = member_info.memberType();
+	if (category == TypeCategory::Enum) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(member_info.type_index)) {
+			if (const EnumTypeInfo* enum_info = type_info->getEnumInfo()) {
+				category = enum_info->underlying_type;
+			}
+		}
+	}
+	return static_cast<int64_t>(
+		normalizeIntegralImmediateValue(static_cast<uint64_t>(value), category, static_cast<int>(width)));
+}
+
 std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentityImpl(
 	const EvalResult& result) {
 	if (!result.object_type_index.is_valid()) {
@@ -909,6 +933,9 @@ std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentityIm
 	}
 	structural_value.members.reserve(struct_info->members.size());
 	for (const StructMember& member_info : struct_info->members) {
+		if (member_info.isUnnamedOrZeroWidthBitfield()) {
+			continue;
+		}
 		const std::string_view member_name = StringTable::getStringView(member_info.getName());
 		auto member_it = result.object_member_bindings.find(member_name);
 		if (member_it == result.object_member_bindings.end()) {
@@ -941,8 +968,8 @@ std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentityIm
 				member.scalar_value = FlashCpp::NonTypeValueIdentity::makeFloating(
 					std::get<double>(member_result.value), type_index);
 			} else {
-				member.scalar_value = FlashCpp::NonTypeValueIdentity::makeConcrete(
-					member_result.as_int(), type_index);
+				const int64_t converted = normalizeStructuralBitfieldScalar(member_info, member_result.as_int());
+				member.scalar_value = FlashCpp::NonTypeValueIdentity::makeConcrete(converted, type_index);
 			}
 		}
 		structural_value.members.push_back(std::move(member));
@@ -7597,13 +7624,22 @@ EvalResult Evaluator::materializeFromConstantBytes(
 	};
 
 	auto materializeLeaf = [&](std::span<const char> leaf_bytes) -> EvalResult {
-		auto extractLeafScalar = [&leaf_bytes](size_t offset, size_t size, TypeCategory cat) -> EvalResult {
+		auto extractLeafScalar = [&leaf_bytes](size_t offset, size_t size, TypeCategory cat, const StructMember* bitfield) -> EvalResult {
 			if (offset + size > leaf_bytes.size()) {
 				return EvalResult::error("NormalizedInitializer: offset out of range");
 			}
 			unsigned long long raw = 0;
 			for (size_t i = 0; i < size && i < 8; ++i) {
 				raw |= static_cast<unsigned long long>(static_cast<unsigned char>(leaf_bytes[offset + i])) << (i * 8);
+			}
+			if (bitfield != nullptr && bitfield->bitfield_width.has_value()) {
+				const size_t width = *bitfield->bitfield_width;
+				if (width == 0 || width > 64 || bitfield->bitfield_bit_offset + width > size * 8) {
+					return EvalResult::error("NormalizedInitializer: invalid bit-field range");
+				}
+				raw >>= bitfield->bitfield_bit_offset;
+				raw = static_cast<unsigned long long>(
+					normalizeStructuralBitfieldScalar(*bitfield, static_cast<int64_t>(raw)));
 			}
 			if (cat == TypeCategory::Float) {
 				float f;
@@ -7638,17 +7674,17 @@ EvalResult Evaluator::materializeFromConstantBytes(
 			EvalResult result = EvalResult::from_int(0);
 			result.object_type_index = type_index;
 			for (const auto& member : si->members) {
-				if (member.is_array || is_struct_type(member.memberType())) {
+				if (member.isUnnamedOrZeroWidthBitfield() || member.is_array || is_struct_type(member.memberType())) {
 					continue;
 				}
 				std::string_view member_name = StringTable::getStringView(member.getName());
 				result.object_member_bindings[member_name] =
-					extractLeafScalar(member.offset, member.size, member.memberType());
+					extractLeafScalar(member.offset, member.size, member.memberType(), &member);
 			}
 			return result;
 		}
 
-		return extractLeafScalar(0, leaf_bytes.size(), type_index.category());
+		return extractLeafScalar(0, leaf_bytes.size(), type_index.category(), nullptr);
 	};
 
 	if (!array_dimensions.empty()) {
