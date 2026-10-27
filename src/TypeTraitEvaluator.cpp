@@ -1255,17 +1255,16 @@ bool recordSubobjectsSatisfyDefaultConstruction(
 	ClassProperty class_property,
 	bool recurse_default_initialized_members) {
 	std::vector<const StructTypeInfo*> pending{&root};
-	std::vector<const StructTypeInfo*> visited;
+	std::unordered_set<const StructTypeInfo*> visited;
 	while (!pending.empty()) {
 		const StructTypeInfo* info = pending.back();
 		pending.pop_back();
 		if (info == nullptr) {
 			return false;
 		}
-		if (std::find(visited.begin(), visited.end(), info) != visited.end()) {
+		if (!visited.insert(info).second) {
 			continue;
 		}
-		visited.push_back(info);
 		if (info->is_abstract || info->isDefaultConstructorDeleted()) {
 			return false;
 		}
@@ -1644,7 +1643,7 @@ bool isStructNothrowDestructibleImpl(const StructTypeInfo* struct_info) {
 
 bool hasBaseTypeAmongZeroOffsetMembers(
 	const StructTypeInfo* struct_info,
-	const std::vector<TypeIndex>& base_subobject_types) {
+	const std::unordered_set<TypeIndex>& base_subobject_types) {
 	std::vector<const StructTypeInfo*> pending{struct_info};
 	std::unordered_set<const StructTypeInfo*> visited;
 	std::vector<TypeIndex> zero_offset_member_types;
@@ -1672,7 +1671,7 @@ bool hasBaseTypeAmongZeroOffsetMembers(
 		}
 	}
 	for (TypeIndex member_type : zero_offset_member_types) {
-		if (std::ranges::find(base_subobject_types, member_type) != base_subobject_types.end())
+		if (base_subobject_types.contains(member_type))
 			return true;
 	}
 	return false;
@@ -1691,7 +1690,7 @@ bool isStructStandardLayoutImpl(const StructTypeInfo* struct_info) {
 			continue;
 
 		std::vector<const StructTypeInfo*> inheritance_worklist{root};
-		std::vector<TypeIndex> base_subobject_types;
+		std::unordered_set<TypeIndex> base_subobject_types;
 		const StructTypeInfo* data_member_owner = nullptr;
 		std::optional<AccessSpecifier> data_member_access;
 		while (!inheritance_worklist.empty()) {
@@ -1725,11 +1724,9 @@ bool isStructStandardLayoutImpl(const StructTypeInfo* struct_info) {
 			}
 
 			for (const BaseClassSpecifier& base : current->base_classes) {
-				if (base.is_deferred || base.is_virtual ||
-					std::ranges::find(base_subobject_types, base.type_index) != base_subobject_types.end()) {
+				if (base.is_deferred || base.is_virtual || !base_subobject_types.insert(base.type_index).second) {
 					return false;
 				}
-				base_subobject_types.push_back(base.type_index);
 				const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
 				const StructTypeInfo* base_struct = base_type ? base_type->getStructInfo() : nullptr;
 				if (!base_struct)
