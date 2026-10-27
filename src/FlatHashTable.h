@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -8,18 +9,21 @@
 namespace FlashCpp {
 
 // Vector-backed open addressing keeps entries contiguous and avoids the
-// per-entry allocations made by node-based unordered containers.
-template<typename Key, typename Value, typename Hash, typename Equal>
+// per-entry allocations made by node-based unordered containers. A non-zero
+// InlineSlotCapacity keeps small tables entirely in the object.
+template<typename Key, typename Value, typename Hash, typename Equal, size_t InlineSlotCapacity = 0>
 class FlatHashTable {
 public:
 	template<typename Callback>
 	bool forEachValue(const Key& key, Callback&& callback) const {
-		if (slots_.empty()) {
+		const size_t count = slotCount();
+		if (count == 0) {
 			return false;
 		}
-		size_t index = hash_(key) & (slots_.size() - 1);
-		for (size_t probes = 0; probes < slots_.size(); ++probes) {
-			const Slot& slot = slots_[index];
+		const Slot* slots = slotData();
+		size_t index = hash_(key) & (count - 1);
+		for (size_t probes = 0; probes < count; ++probes) {
+			const Slot& slot = slots[index];
 			if (slot.state == SlotState::Empty) {
 				return false;
 			}
@@ -27,7 +31,7 @@ public:
 				callback(slot.value)) {
 				return true;
 			}
-			index = (index + 1) & (slots_.size() - 1);
+			index = (index + 1) & (count - 1);
 		}
 		return false;
 	}
@@ -38,7 +42,7 @@ public:
 
 	void insert(const Key& key, const Value& value) {
 		ensureCapacity();
-		insertInto(slots_, key, value);
+		insertInto(slotData(), slotCount(), key, value);
 		++size_;
 	}
 
@@ -51,12 +55,14 @@ public:
 	}
 
 	bool eraseOne(const Key& key) {
-		if (slots_.empty()) {
+		const size_t count = slotCount();
+		if (count == 0) {
 			return false;
 		}
-		size_t index = hash_(key) & (slots_.size() - 1);
-		for (size_t probes = 0; probes < slots_.size(); ++probes) {
-			Slot& slot = slots_[index];
+		Slot* slots = slotData();
+		size_t index = hash_(key) & (count - 1);
+		for (size_t probes = 0; probes < count; ++probes) {
+			Slot& slot = slots[index];
 			if (slot.state == SlotState::Empty) {
 				return false;
 			}
@@ -66,7 +72,7 @@ public:
 				++tombstone_count_;
 				return true;
 			}
-			index = (index + 1) & (slots_.size() - 1);
+			index = (index + 1) & (count - 1);
 		}
 		return false;
 	}
@@ -87,62 +93,107 @@ private:
 		SlotState state = SlotState::Empty;
 	};
 
-	void insertInto(std::vector<Slot>& slots, const Key& key, const Value& value) {
-		size_t index = hash_(key) & (slots.size() - 1);
-		size_t first_tombstone = slots.size();
+	static constexpr size_t initialSlotCount() {
+		return InlineSlotCapacity >= 8 ? 8 : 16;
+	}
+
+	Slot* slotData() {
+		return using_inline_slots_ ? inline_slots_.data() : heap_slots_.data();
+	}
+
+	const Slot* slotData() const {
+		return using_inline_slots_ ? inline_slots_.data() : heap_slots_.data();
+	}
+
+	size_t slotCount() const {
+		return using_inline_slots_ ? inline_slot_count_ : heap_slots_.size();
+	}
+
+	void insertInto(Slot* slots, size_t slot_count, const Key& key, const Value& value) {
+		size_t index = hash_(key) & (slot_count - 1);
+		size_t first_tombstone = slot_count;
 		while (true) {
 			Slot& slot = slots[index];
-			if (slot.state == SlotState::Tombstone && first_tombstone == slots.size()) {
+			if (slot.state == SlotState::Tombstone && first_tombstone == slot_count) {
 				first_tombstone = index;
 			} else if (slot.state == SlotState::Empty) {
-				if (first_tombstone != slots.size()) {
+				if (first_tombstone != slot_count) {
 					index = first_tombstone;
-					--tombstone_count_;
-			}
+				}
 				slots[index] = Slot{key, value, SlotState::Occupied};
 				return;
 			}
-			index = (index + 1) & (slots.size() - 1);
+			index = (index + 1) & (slot_count - 1);
 		}
 	}
 
+	void initializeSlots(size_t capacity) {
+		if constexpr (InlineSlotCapacity > 0) {
+			if (capacity <= InlineSlotCapacity) {
+				using_inline_slots_ = true;
+				inline_slot_count_ = capacity;
+				for (size_t index = 0; index < capacity; ++index) {
+					inline_slots_[index] = Slot{};
+				}
+				heap_slots_.clear();
+				return;
+			}
+		}
+		using_inline_slots_ = false;
+		heap_slots_.assign(capacity, Slot{});
+	}
+
 	void ensureCapacity() {
-		if (slots_.empty()) {
-			rehash(16);
+		const size_t count = slotCount();
+		if (count == 0) {
+			initializeSlots(initialSlotCount());
 			return;
 		}
-		if ((size_ + tombstone_count_ + 1) * 2 <= slots_.size()) {
+		if ((size_ + tombstone_count_ + 1) * 2 <= count) {
 			return;
 		}
-		const size_t capacity =
-			(size_ + 1) * 2 > slots_.size()
-				? slots_.size() * 2
-				: slots_.size();
+		const size_t capacity = (size_ + 1) * 2 > count ? count * 2 : count;
 		rehash(capacity);
 	}
 
 	void rehash(size_t capacity) {
-		replacement_slots_.clear();
-		replacement_slots_.resize(capacity);
-		for (const Slot& slot : slots_) {
+		std::vector<Slot> replacement(capacity);
+		const Slot* old_slots = slotData();
+		const size_t old_count = slotCount();
+		for (size_t index = 0; index < old_count; ++index) {
+			const Slot& slot = old_slots[index];
 			if (slot.state == SlotState::Occupied) {
-				insertInto(replacement_slots_, slot.key, slot.value);
+				insertInto(replacement.data(), replacement.size(), slot.key, slot.value);
 			}
 		}
-		slots_.swap(replacement_slots_);
-		replacement_slots_.clear();
+		if constexpr (InlineSlotCapacity > 0) {
+			if (capacity <= InlineSlotCapacity) {
+				using_inline_slots_ = true;
+				inline_slot_count_ = capacity;
+				for (size_t index = 0; index < capacity; ++index) {
+					inline_slots_[index] = replacement[index];
+				}
+				heap_slots_.clear();
+				tombstone_count_ = 0;
+				return;
+			}
+		}
+		using_inline_slots_ = false;
+		heap_slots_ = std::move(replacement);
 		tombstone_count_ = 0;
 	}
 
 	Hash hash_{};
 	Equal equal_{};
-	std::vector<Slot> slots_;
-	std::vector<Slot> replacement_slots_;
+	std::array<Slot, InlineSlotCapacity> inline_slots_{};
+	std::vector<Slot> heap_slots_;
+	size_t inline_slot_count_ = 0;
+	bool using_inline_slots_ = false;
 	size_t size_ = 0;
 	size_t tombstone_count_ = 0;
 };
 
-template<typename Key, typename Hash, typename Equal>
+template<typename Key, typename Hash, typename Equal, size_t InlineSlotCapacity = 0>
 class FlatHashSet {
 public:
 	bool contains(const Key& key) const {
@@ -158,7 +209,7 @@ public:
 	}
 
 private:
-	FlatHashTable<Key, uint8_t, Hash, Equal> entries_;
+	FlatHashTable<Key, uint8_t, Hash, Equal, InlineSlotCapacity> entries_;
 };
 
 } // namespace FlashCpp
