@@ -962,8 +962,8 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTra
 
 namespace {
 
-using StructInfoSet = FlashCpp::FlatHashSet<const StructTypeInfo*, std::hash<const StructTypeInfo*>, std::equal_to<const StructTypeInfo*>>;
-using TypeIndexSet = FlashCpp::FlatHashSet<TypeIndex, std::hash<TypeIndex>, std::equal_to<TypeIndex>>;
+using StructInfoSet = FlashCpp::FlatHashSet<const StructTypeInfo*, std::hash<const StructTypeInfo*>, std::equal_to<const StructTypeInfo*>, 8>;
+using TypeIndexSet = FlashCpp::FlatHashSet<TypeIndex, std::hash<TypeIndex>, std::equal_to<TypeIndex>, 8>;
 
 struct CachedRecordFactsEntry {
 	CanonicalRecordFacts facts = CanonicalRecordFacts::None;
@@ -1258,7 +1258,7 @@ bool defaultInitializerArrayElementThrows(
 // classified direct subobject instead of walking its whole ancestry again.
 struct PublishedRecordFactsLookup {
 	CanonicalTypeTable& table;
-	mutable FlashCpp::FlatHashTable<TypeIndex, CachedRecordFactsEntry, std::hash<TypeIndex>, std::equal_to<TypeIndex>> cache;
+	mutable FlashCpp::FlatHashTable<TypeIndex, CachedRecordFactsEntry, std::hash<TypeIndex>, std::equal_to<TypeIndex>, 8> cache;
 
 	explicit PublishedRecordFactsLookup(CanonicalTypeTable& table_reference) : table(table_reference) {}
 	PublishedRecordFactsLookup(const PublishedRecordFactsLookup&) = delete;
