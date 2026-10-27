@@ -824,6 +824,67 @@ std::optional<size_t> resolveSizeofPackCount(
 
 EvalResult evalResultFromStructuralValue(
 	const FlashCpp::StructuralClassValue& structural_value) {
+	const auto decode_scalar = [](const FlashCpp::NonTypeValueIdentity& scalar) -> EvalResult {
+		if (scalar.kind == FlashCpp::NonTypeValueIdentityKind::Floating) {
+			if (scalar.valueTypeCategory() == TypeCategory::Float) {
+				const uint32_t bits = static_cast<uint32_t>(scalar.value);
+				float float_value = 0.0f;
+				std::memcpy(&float_value, &bits, sizeof(float_value));
+				return EvalResult::from_double(static_cast<double>(float_value));
+			}
+			return EvalResult::from_double(
+				std::bit_cast<double>(static_cast<uint64_t>(scalar.value)));
+		}
+		if (scalar.valueTypeCategory() == TypeCategory::Bool) {
+			return EvalResult::from_bool(scalar.value != 0);
+		}
+		if (is_unsigned_integer_type(scalar.valueTypeCategory())) {
+			return EvalResult::from_uint(static_cast<unsigned long long>(scalar.value));
+		}
+		return EvalResult::from_int(scalar.value);
+	};
+	const auto attach_scalar_type = [](EvalResult& result, const FlashCpp::NonTypeValueIdentity& scalar) {
+		const TypeIndex scalar_type = scalar.value_type_index;
+		if (!scalar_type.is_valid()) {
+			return;
+		}
+		const TypeInfo* scalar_type_info = tryGetTypeInfo(scalar_type);
+		const int size_bits = scalar_type_info
+			? scalar_type_info->sizeInBits().value
+			: get_type_size_bits(scalar_type.category());
+		result.set_exact_type(TypeSpecifierNode(
+			scalar_type, TypeQualifier::None, SizeInBits{size_bits}, Token{}, CVQualifier::None));
+	};
+	if (structural_value.is_array) {
+		EvalResult result = EvalResult::from_int(0);
+		result.is_array = true;
+		result.array_elements.reserve(structural_value.members.size());
+		std::vector<int64_t> array_values;
+		bool all_scalar = true;
+		for (const FlashCpp::StructuralClassValueMember& member : structural_value.members) {
+			EvalResult element_result;
+			if (member.nested_value != nullptr) {
+				element_result = evalResultFromStructuralValue(*member.nested_value);
+			} else {
+				element_result = decode_scalar(member.scalar_value);
+				attach_scalar_type(element_result, member.scalar_value);
+			}
+			if (!element_result.success()) {
+				return element_result;
+			}
+			if (element_result.is_array || element_result.object_type_index.is_valid() ||
+				std::holds_alternative<double>(element_result.value)) {
+				all_scalar = false;
+			} else {
+				array_values.push_back(element_result.as_int());
+			}
+			result.array_elements.push_back(std::move(element_result));
+		}
+		if (all_scalar) {
+			result.array_values = std::move(array_values);
+		}
+		return result;
+	}
 	EvalResult result = EvalResult::from_int(0);
 	result.object_type_index = structural_value.type_index;
 	result.object_base_values.reserve(structural_value.base_values.size());
@@ -842,38 +903,8 @@ EvalResult evalResultFromStructuralValue(
 		if (member.nested_value != nullptr) {
 			member_result = evalResultFromStructuralValue(*member.nested_value);
 		} else {
-			const FlashCpp::NonTypeValueIdentity& scalar = member.scalar_value;
-			if (scalar.kind == FlashCpp::NonTypeValueIdentityKind::Floating) {
-				if (scalar.valueTypeCategory() == TypeCategory::Float) {
-					const uint32_t bits = static_cast<uint32_t>(scalar.value);
-					float float_value = 0.0f;
-					std::memcpy(&float_value, &bits, sizeof(float_value));
-					member_result = EvalResult::from_double(static_cast<double>(float_value));
-				} else {
-					member_result = EvalResult::from_double(
-						std::bit_cast<double>(static_cast<uint64_t>(scalar.value)));
-				}
-			} else if (scalar.valueTypeCategory() == TypeCategory::Bool) {
-				member_result = EvalResult::from_bool(scalar.value != 0);
-			} else if (is_unsigned_integer_type(scalar.valueTypeCategory())) {
-				member_result = EvalResult::from_uint(static_cast<unsigned long long>(scalar.value));
-			} else {
-				member_result = EvalResult::from_int(scalar.value);
-			}
-		}
-		if (member.scalar_value.value_type_index.is_valid() &&
-			member.nested_value == nullptr) {
-			const TypeIndex scalar_type = member.scalar_value.value_type_index;
-			const TypeInfo* scalar_type_info = tryGetTypeInfo(scalar_type);
-			const int size_bits = scalar_type_info
-				? scalar_type_info->sizeInBits().value
-				: get_type_size_bits(scalar_type.category());
-			member_result.set_exact_type(TypeSpecifierNode(
-				scalar_type,
-				TypeQualifier::None,
-				SizeInBits{size_bits},
-				Token{},
-				CVQualifier::None));
+			member_result = decode_scalar(member.scalar_value);
+			attach_scalar_type(member_result, member.scalar_value);
 		}
 		result.object_member_bindings[StringTable::getStringView(member.name)] = std::move(member_result);
 	}
@@ -910,6 +941,71 @@ int64_t normalizeStructuralBitfieldScalar(const StructMember& member_info, int64
 }
 
 std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentityImpl(
+	const EvalResult& result);
+
+std::optional<FlashCpp::StructuralClassValue*> makeStructuralArrayValueIdentityImpl(
+	const EvalResult& result, TypeIndex element_type, std::span<const size_t> dimensions) {
+	if (!result.is_array || dimensions.empty() || dimensions.front() == 0 ||
+		result.array_elements.size() != dimensions.front()) {
+		return std::nullopt;
+	}
+	SizeInBits element_bits{get_type_size_bits(element_type.category())};
+	if (const TypeInfo* type_info = tryGetTypeInfo(element_type)) {
+		const SizeInBits declared_size = type_info->sizeInBits();
+		if (declared_size.is_set()) {
+			element_bits = declared_size;
+		}
+	}
+	const TypeSpecifierNode element_spec(
+		element_type, TypeQualifier::None, element_bits, Token{}, CVQualifier::None);
+	FlashCpp::StructuralClassValue& array_value = FlashCpp::gStructuralClassValues.emplace_back();
+	array_value.is_array = true;
+	array_value.type_index = element_type;
+	array_value.members.reserve(result.array_elements.size());
+	for (const EvalResult& element : result.array_elements) {
+		FlashCpp::StructuralClassValueMember member;
+		if (dimensions.size() > 1) {
+			if (!element.is_array) {
+				return std::nullopt;
+			}
+			const auto nested = makeStructuralArrayValueIdentityImpl(element, element_type, dimensions.subspan(1));
+			if (!nested.has_value()) {
+				return std::nullopt;
+			}
+			member.nested_value = *nested;
+		} else if (!element.is_array && element.object_type_index.is_valid()) {
+			const auto nested = makeStructuralClassValueIdentityImpl(element);
+			if (!nested.has_value() || nested->structural_value == nullptr) {
+				return std::nullopt;
+			}
+			member.nested_value = nested->structural_value;
+		} else if (element.is_array) {
+			return std::nullopt;
+		} else {
+			EvalResult converted = Evaluator::convertEvalResultToTargetType(
+				element_spec, element, "Unsupported array element type in structural value");
+			if (!converted.success()) {
+				return std::nullopt;
+			}
+			TypeCategory category = converted.exact_type.has_value()
+				? converted.exact_type->category()
+				: element_type.category();
+			TypeIndex value_type = converted.exact_type.has_value()
+				? converted.exact_type->type_index().withCategory(category)
+				: element_type;
+			if (std::holds_alternative<double>(converted.value)) {
+				member.scalar_value = FlashCpp::NonTypeValueIdentity::makeFloating(
+					std::get<double>(converted.value), value_type);
+			} else {
+				member.scalar_value = FlashCpp::NonTypeValueIdentity::makeConcrete(converted.as_int(), value_type);
+			}
+		}
+		array_value.members.push_back(std::move(member));
+	}
+	return &array_value;
+}
+
+std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentityImpl(
 	const EvalResult& result) {
 	if (!result.object_type_index.is_valid()) {
 		return std::nullopt;
@@ -942,9 +1038,22 @@ std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentityIm
 			return std::nullopt;
 		}
 		const EvalResult& member_result = member_it->second;
+		if (member_info.is_array != member_result.is_array) {
+			return std::nullopt;
+		}
 		FlashCpp::StructuralClassValueMember member;
 		member.name = member_info.getName();
-		if (member_result.object_type_index.is_valid()) {
+		if (member_result.is_array) {
+			if (!member_info.is_array || member_info.array_dimensions.empty()) {
+				return std::nullopt;
+			}
+			const auto array_value =
+				makeStructuralArrayValueIdentityImpl(member_result, member_info.type_index, member_info.array_dimensions);
+			if (!array_value.has_value()) {
+				return std::nullopt;
+			}
+			member.nested_value = *array_value;
+		} else if (member_result.object_type_index.is_valid()) {
 			std::optional<FlashCpp::NonTypeValueIdentity> nested_identity =
 				makeStructuralClassValueIdentityImpl(member_result);
 			if (!nested_identity.has_value() || nested_identity->structural_value == nullptr) {

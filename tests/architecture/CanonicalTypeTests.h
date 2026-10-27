@@ -2523,9 +2523,45 @@ inline void checkStructuralBitfieldScalars() {
 	require(!tryImportCanonicalStructuralScalar(table, signed_int, 7, 4, 65));
 }
 
+inline void checkStructuralArrayValues() {
+	CanonicalTypeTable table;
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId array = table.array(integer, 2);
+	const TypeId values[] = {table.integralValue(integer, 1), table.integralValue(integer, 2)};
+	const TypeId value = table.structuralArrayValue(array, values);
+	require(table.node(value).kind == CanonicalTypeKind::StructuralArrayValue);
+	require(table.node(value).child == array);
+	require(unpackStructuralArrayElementCount(table.node(value).array_extent) == 2);
+	require(value == table.structuralArrayValue(array, values));
+	const TypeId reversed[] = {values[1], values[0]};
+	require(value != table.structuralArrayValue(array, reversed));
+	rejects([&] { (void)table.structuralArrayValue(array, std::span<const TypeId>(values, 1)); });
+	rejects([&] { (void)table.structuralArrayValue(integer, values); });
+	const TypeId unknown = table.arrayOfUnknownBound(integer);
+	rejects([&] { (void)table.structuralArrayValue(unknown, values); });
+	const TypeId bad_elements[] = {integer, integer};
+	rejects([&] { (void)table.structuralArrayValue(array, bad_elements); });
+	const TypeId nested_array = table.array(array, 2);
+	const TypeId nested_values[] = {value, value};
+	const TypeId nested = table.structuralArrayValue(nested_array, nested_values);
+	require(table.node(nested).kind == CanonicalTypeKind::StructuralArrayValue);
+	require(table.node(nested).child == nested_array);
+	TypeId link = unpackStructuralValueSubobjects(table.node(nested).array_extent);
+	require(table.templateArgumentValue(link) == value);
+	link = table.templateArgumentNext(link);
+	require(table.templateArgumentValue(link) == value);
+	require(!table.templateArgumentNext(link));
+	const TypeId record = table.record(EntityId{40112});
+	const TypeId record_values[] = {nested};
+	const TypeId record_value = table.structuralValue(record, record_values, 0);
+	require(table.node(record_value).kind == CanonicalTypeKind::StructuralValue);
+	rejects([&] { (void)table.structuralValue(record, record_values, 1); });
+}
+
 inline int run() {
 	checkStructuralEnumScalars();
 	checkStructuralBitfieldScalars();
+	checkStructuralArrayValues();
 	{
 		CanonicalTypeTable table;
 		const TypeId record = table.record(EntityId{40001});

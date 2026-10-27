@@ -527,6 +527,12 @@ def main():
             "lost_structural_base_boundary": (
                 "packStructuralValueExtent(members, base_count)",
                 "packStructuralValueExtent(members, base_count & 0u)"),
+            "lost_structural_array_elements": (
+                "packStructuralArrayExtent(elements, static_cast<uint32_t>(element_values.size()))",
+                "packStructuralArrayExtent(TypeId{elements.value & 0u}, static_cast<uint32_t>(element_values.size()))"),
+            "lost_structural_array_count": (
+                "packStructuralArrayExtent(elements, static_cast<uint32_t>(element_values.size()))",
+                "packStructuralArrayExtent(elements, 0)"),
             "lost_record_layout": (
                 "return entity && record_layout_ids_.contains(entity.value);",
                 "return entity && false;"),

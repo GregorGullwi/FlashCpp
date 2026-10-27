@@ -288,6 +288,162 @@ using OtherTail = Base<Key{{9u, 7, true, Code::negative}, 33u, 18u}>;
 	CHECK_FALSE(link);
 }
 
+TEST_CASE("Array structural NTTP members share canonical value identity") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+enum class Code : signed char { negative = -3, other = 2 };
+struct Element { short value; };
+struct Key { unsigned values[3]; Element elements[2]; int matrix[2][2]; bool flags[2]; Code codes[2]; };
+constexpr Key key{{1u, 2u, 3u}, {{4}, {5}}, {{6, 7}, {8, 9}}, {true, false}, {Code::negative, Code::other}};
+template<Key Value> struct Base { short member; };
+struct Padding { long long guard; };
+struct Derived : Padding, Base<key> {};
+using Named = Base<key>;
+using Literal = Base<Key{{1u, 2u, 3u}, {{4}, {5}}, {{6, 7}, {8, 9}}, {true, false}, {Code::negative, Code::other}}>;
+using OtherScalar = Base<Key{{1u, 2u, 4u}, {{4}, {5}}, {{6, 7}, {8, 9}}, {true, false}, {Code::negative, Code::other}}>;
+using OtherRecord = Base<Key{{1u, 2u, 3u}, {{4}, {6}}, {{6, 7}, {8, 9}}, {true, false}, {Code::negative, Code::other}}>;
+using OtherNested = Base<Key{{1u, 2u, 3u}, {{4}, {5}}, {{6, 7}, {8, 10}}, {true, false}, {Code::negative, Code::other}}>;
+using OtherBool = Base<Key{{1u, 2u, 3u}, {{4}, {5}}, {{6, 7}, {8, 9}}, {false, true}, {Code::negative, Code::other}}>;
+using OtherEnum = Base<Key{{1u, 2u, 3u}, {{4}, {5}}, {{6, 7}, {8, 9}}, {true, false}, {Code::other, Code::negative}}>;
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("structural_nttp_arrays.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto import_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		if (const TypeSpecifierNode* syntax = info->aliasTypeSpecifier()) {
+			const CanonicalTypeImport syntax_import = importCanonicalType(table, *syntax);
+			REQUIRE(syntax_import.status == CanonicalTypeImportStatus::Supported);
+			CHECK(syntax_import.type == imported.type);
+		}
+		return imported.type;
+	};
+	const TypeId named = import_type("Named");
+	CHECK(named == import_type("Literal"));
+	CHECK(named != import_type("OtherScalar"));
+	CHECK(named != import_type("OtherRecord"));
+	CHECK(named != import_type("OtherNested"));
+	CHECK(named != import_type("OtherBool"));
+	CHECK(named != import_type("OtherEnum"));
+	const TypeId derived = import_type("Derived");
+	REQUIRE(table.hasClassBaseSchema(derived));
+	CHECK(table.classBaseAt(derived, 1).type == named);
+	CHECK(table.classBaseAt(derived, 1).offset_bytes == 8);
+	const TypeInfo* derived_alias = findTypeByName(StringTable::getOrInternStringHandle("Derived"));
+	REQUIRE(derived_alias != nullptr);
+	const TypeInfo* derived_info = resolveAliasTypeInfo(derived_alias->type_index_).terminal_type_info;
+	REQUIRE(derived_info != nullptr);
+	const StructTypeInfo* derived_record = derived_info->getStructInfo();
+	REQUIRE(derived_record != nullptr);
+	REQUIRE(derived_record->declaration_node != nullptr);
+	const CanonicalTypeImport declaration = importCanonicalClassDeclaration(table, *derived_record->declaration_node);
+	REQUIRE(declaration.status == CanonicalTypeImportStatus::Supported);
+	CHECK(declaration.type == derived);
+	const TypeInfo* key_info = findTypeByName(StringTable::getOrInternStringHandle("Key"));
+	REQUIRE(key_info != nullptr);
+	const StructTypeInfo* key_record = key_info->getStructInfo();
+	REQUIRE(key_record != nullptr);
+	REQUIRE(key_record->declaration_node != nullptr);
+	const EntityId key_entity = key_record->declaration_node->entity_id();
+	REQUIRE(table.hasRecordFieldSchema(key_entity));
+	const TypeId value_id = table.templateArgumentValue(table.templateSpecializationArguments(named));
+	const CanonicalTypeNode value = table.node(value_id);
+	REQUIRE(value.kind == CanonicalTypeKind::StructuralValue);
+	CHECK(unpackStructuralValueBaseCount(value.array_extent) == 0);
+	TypeId link = unpackStructuralValueSubobjects(value.array_extent);
+	const CanonicalTypeNode values_node = table.node(table.templateArgumentValue(link));
+	REQUIRE(values_node.kind == CanonicalTypeKind::StructuralArrayValue);
+	CHECK(values_node.child == table.recordMemberAt(key_entity, 0).type);
+	REQUIRE(table.node(values_node.child).kind == CanonicalTypeKind::Array);
+	CHECK(table.node(values_node.child).array_extent == 3);
+	CHECK(unpackStructuralArrayElementCount(values_node.array_extent) == 3);
+	TypeId element_link = unpackStructuralValueSubobjects(values_node.array_extent);
+	const uint64_t expected_values[] = {1, 2, 3};
+	for (const uint64_t expected : expected_values) {
+		const CanonicalTypeNode element = table.node(table.templateArgumentValue(element_link));
+		CHECK(element.child == table.builtin(CanonicalBuiltinKind::UnsignedInt));
+		CHECK(element.array_extent == expected);
+		element_link = table.templateArgumentNext(element_link);
+	}
+	CHECK_FALSE(element_link);
+	link = table.templateArgumentNext(link);
+	const CanonicalTypeNode records_node = table.node(table.templateArgumentValue(link));
+	REQUIRE(records_node.kind == CanonicalTypeKind::StructuralArrayValue);
+	CHECK(records_node.child == table.recordMemberAt(key_entity, 1).type);
+	CHECK(table.node(records_node.child).array_extent == 2);
+	element_link = unpackStructuralValueSubobjects(records_node.array_extent);
+	const uint64_t expected_records[] = {4, 5};
+	for (const uint64_t expected : expected_records) {
+		const CanonicalTypeNode element = table.node(table.templateArgumentValue(element_link));
+		REQUIRE(element.kind == CanonicalTypeKind::StructuralValue);
+		CHECK(table.node(element.child).kind == CanonicalTypeKind::Record);
+		const TypeId field_link = unpackStructuralValueSubobjects(element.array_extent);
+		const CanonicalTypeNode field = table.node(table.templateArgumentValue(field_link));
+		CHECK(field.array_extent == expected);
+		CHECK_FALSE(table.templateArgumentNext(field_link));
+		element_link = table.templateArgumentNext(element_link);
+	}
+	CHECK_FALSE(element_link);
+	link = table.templateArgumentNext(link);
+	const CanonicalTypeNode matrix_node = table.node(table.templateArgumentValue(link));
+	REQUIRE(matrix_node.kind == CanonicalTypeKind::StructuralArrayValue);
+	CHECK(matrix_node.child == table.recordMemberAt(key_entity, 2).type);
+	CHECK(table.node(matrix_node.child).array_extent == 2);
+	element_link = unpackStructuralValueSubobjects(matrix_node.array_extent);
+	const uint64_t expected_matrix[][2] = {{6, 7}, {8, 9}};
+	for (const auto& row : expected_matrix) {
+		const CanonicalTypeNode row_node = table.node(table.templateArgumentValue(element_link));
+		REQUIRE(row_node.kind == CanonicalTypeKind::StructuralArrayValue);
+		CHECK(table.node(row_node.child).array_extent == 2);
+		TypeId cell_link = unpackStructuralValueSubobjects(row_node.array_extent);
+		for (const uint64_t expected : row) {
+			const CanonicalTypeNode cell = table.node(table.templateArgumentValue(cell_link));
+			CHECK(cell.child == table.builtin(CanonicalBuiltinKind::Int));
+			CHECK(cell.array_extent == expected);
+			cell_link = table.templateArgumentNext(cell_link);
+		}
+		CHECK_FALSE(cell_link);
+		element_link = table.templateArgumentNext(element_link);
+	}
+	CHECK_FALSE(element_link);
+	link = table.templateArgumentNext(link);
+	const CanonicalTypeNode flags_node = table.node(table.templateArgumentValue(link));
+	REQUIRE(flags_node.kind == CanonicalTypeKind::StructuralArrayValue);
+	CHECK(flags_node.child == table.recordMemberAt(key_entity, 3).type);
+	element_link = unpackStructuralValueSubobjects(flags_node.array_extent);
+	const uint64_t expected_flags[] = {1, 0};
+	for (const uint64_t expected : expected_flags) {
+		const CanonicalTypeNode element = table.node(table.templateArgumentValue(element_link));
+		CHECK(element.child == table.builtin(CanonicalBuiltinKind::Bool));
+		CHECK(element.array_extent == expected);
+		element_link = table.templateArgumentNext(element_link);
+	}
+	CHECK_FALSE(element_link);
+	link = table.templateArgumentNext(link);
+	const CanonicalTypeNode codes_node = table.node(table.templateArgumentValue(link));
+	REQUIRE(codes_node.kind == CanonicalTypeKind::StructuralArrayValue);
+	CHECK(codes_node.child == table.recordMemberAt(key_entity, 4).type);
+	element_link = unpackStructuralValueSubobjects(codes_node.array_extent);
+	const uint64_t expected_codes[] = {static_cast<uint64_t>(-3), 2};
+	for (const uint64_t expected : expected_codes) {
+		const CanonicalTypeNode element = table.node(table.templateArgumentValue(element_link));
+		CHECK(table.node(element.child).kind == CanonicalTypeKind::Enum);
+		CHECK(element.array_extent == expected);
+		element_link = table.templateArgumentNext(element_link);
+	}
+	CHECK_FALSE(element_link);
+	CHECK_FALSE(table.templateArgumentNext(link));
+}
+
 namespace {
 void publishTestClassBases(CanonicalTypeTable& table, EntityId entity, std::span<const CanonicalRecordBase> record_bases) {
 	std::vector<CanonicalClassBase> bases;

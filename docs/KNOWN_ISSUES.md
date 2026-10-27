@@ -35,9 +35,9 @@ incorrectly bypass nontrivial copy/move semantics.
 
 ## Remaining structural NTTP shapes need canonical value import
 
-Union variants, arrays, remaining scalar field kinds, and structural values of
-class-template types still need canonical subobject identity and matching
-specialization base facts.
+Union variants, remaining scalar field kinds (floating, pointer, and member
+pointer values), and structural values of class-template types still need
+canonical subobject identity and matching specialization base facts.
 Extend the typed-value importer before deleting `legacyDerivedBaseOffset`;
 audit dependent and other non-integral specialization roots as well.
 Integral, bool, and enum fields, including named bit-fields with signed
@@ -45,11 +45,16 @@ extension or unsigned truncation, share class/type/value identity between
 syntax and declaration imports for equivalent named and braced values. Enum
 values use their published underlying layout. Unnamed and zero-width bit-fields
 remain declaration/layout padding and never add value subobjects.
+Array fields now use ordered canonical array values with the published element
+type and outer bound; nested arrays and record elements recurse through the same
+value worklist. Elements are converted to the declared element type before
+identity, so equivalent member spellings share one value.
 Retain `test_canonical_structural_nttp_base_source_ret0.cpp`,
 `test_canonical_structural_nttp_equivalence_ret0.cpp`,
 `test_canonical_structural_nttp_subobjects_ret0.cpp`,
-`test_canonical_structural_nttp_enum_fields_ret0.cpp`, and
-`test_canonical_structural_nttp_bitfields_ret0.cpp` as nonzero-offset guards.
+`test_canonical_structural_nttp_enum_fields_ret0.cpp`,
+`test_canonical_structural_nttp_bitfields_ret0.cpp`, and
+`test_canonical_structural_nttp_arrays_ret0.cpp` as nonzero-offset guards.
 
 ## Bit-field declarations accept ill-formed forms
 
