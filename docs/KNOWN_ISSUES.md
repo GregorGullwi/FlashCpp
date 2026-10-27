@@ -35,17 +35,18 @@ incorrectly bypass nontrivial copy/move semantics.
 
 ## Remaining structural NTTP shapes need canonical value import
 
-Union variants, arrays, bitfields, enum and non-integral fields, and structural
+Union variants, arrays, bitfields, remaining scalar field kinds, and structural
 values of class-template types still need canonical subobject identity and
 matching specialization base facts.
 Extend the typed-value importer before deleting `legacyDerivedBaseOffset`;
 audit dependent and other non-integral specialization roots as well.
-Integral-field records, including nested members and nonvirtual bases, share
+Integral and enum fields, including nested members and nonvirtual bases, share
 class/type/value identity between syntax and declaration imports for equivalent
-named and braced values.
+named and braced values. Enum values use their published underlying layout.
 Retain `test_canonical_structural_nttp_base_source_ret0.cpp`,
-`test_canonical_structural_nttp_equivalence_ret0.cpp`, and
-`test_canonical_structural_nttp_subobjects_ret0.cpp` as nonzero-offset guards.
+`test_canonical_structural_nttp_equivalence_ret0.cpp`,
+`test_canonical_structural_nttp_subobjects_ret0.cpp`, and
+`test_canonical_structural_nttp_enum_fields_ret0.cpp` as nonzero-offset guards.
 
 ## Ordinary calls can prefer a generic NTTP function template
 

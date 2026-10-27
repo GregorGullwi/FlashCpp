@@ -2432,7 +2432,66 @@ inline void checkAliasRedirection() {
 	std::printf("alias redirection: mixed args\n");
 }
 
+inline void checkStructuralEnumScalars() {
+	CanonicalTypeTable table;
+	const auto make_enum = [&](EntityId entity, CanonicalBuiltinKind underlying, uint32_t size, CanonicalEnumLayoutFlags flags) {
+		const TypeId type = table.enumeration(entity);
+		table.publishEnumLayout({.entity = entity, .underlying_type = table.builtin(underlying), .size_bytes = size,
+			.enumerator_count = 0, .flags = flags});
+		return type;
+	};
+	const auto fixed = CanonicalEnumLayoutFlags::FixedUnderlying;
+	const TypeId signed_byte = make_enum(EntityId{40101}, CanonicalBuiltinKind::SignedChar, 1, fixed);
+	const TypeId unsigned_short = make_enum(EntityId{40102}, CanonicalBuiltinKind::UnsignedShort, 2, fixed);
+	const TypeId unsigned_wide = make_enum(EntityId{40103}, CanonicalBuiltinKind::UnsignedLongLong, 8, fixed);
+	const TypeId other_signed = make_enum(EntityId{40104}, CanonicalBuiltinKind::SignedChar, 1, fixed);
+	const TypeId boolean = make_enum(EntityId{40105}, CanonicalBuiltinKind::Bool, 1, fixed);
+	const TypeId unfixed = make_enum(EntityId{40106}, CanonicalBuiltinKind::Int, 4, CanonicalEnumLayoutFlags::None);
+	const TypeId forward = make_enum(EntityId{40107}, CanonicalBuiltinKind::UnsignedChar, 1,
+		fixed | CanonicalEnumLayoutFlags::Scoped | CanonicalEnumLayoutFlags::ForwardDeclaration);
+	const auto negative = tryImportCanonicalStructuralScalar(table, signed_byte, 0xf9, 8);
+	require(negative.has_value());
+	require(table.node(*negative).child == signed_byte);
+	require(table.node(*negative).array_extent == static_cast<uint64_t>(-7));
+	require(negative == tryImportCanonicalStructuralScalar(table, signed_byte, static_cast<uint64_t>(-7), 0));
+	require(negative != tryImportCanonicalStructuralScalar(table, other_signed, 0xf9, 8));
+	require(negative != tryImportCanonicalStructuralScalar(table, table.builtin(CanonicalBuiltinKind::SignedChar), 0xf9, 1));
+	const auto narrow = tryImportCanonicalStructuralScalar(table, unsigned_short, 0xffffffffffffea60ULL, 1);
+	require(narrow.has_value());
+	require(table.node(*narrow).child == unsigned_short);
+	require(table.node(*narrow).array_extent == 60000);
+	const auto wide = tryImportCanonicalStructuralScalar(table, unsigned_wide, 0xfedcba9876543210ULL, 1);
+	require(wide.has_value());
+	require(table.node(*wide).child == unsigned_wide);
+	require(table.node(*wide).array_extent == 0xfedcba9876543210ULL);
+	const auto flag = tryImportCanonicalStructuralScalar(table, boolean, 9, 8);
+	require(flag.has_value());
+	require(table.node(*flag).array_extent == 1);
+	const auto plain = tryImportCanonicalStructuralScalar(table, unfixed, 0xfffffff7ULL, 8);
+	require(plain.has_value());
+	require(table.node(*plain).array_extent == static_cast<uint64_t>(-9));
+	const auto opaque = tryImportCanonicalStructuralScalar(table, forward, 0x1234, 8);
+	require(opaque.has_value());
+	require(table.node(*opaque).array_extent == 0x34);
+	require(!tryImportCanonicalStructuralScalar(table, table.enumeration(EntityId{40108}), 7, 1));
+	require(!tryImportCanonicalStructuralScalar(table, table.builtin(CanonicalBuiltinKind::Double), 7, 8));
+	require(!tryImportCanonicalStructuralScalar(table, table.builtin(CanonicalBuiltinKind::Int), 7, 0));
+	const TargetDataModel previous_model = g_target_data_model;
+	g_target_data_model = TargetDataModel::LLP64;
+	const TypeId windows_wchar = make_enum(EntityId{40109}, CanonicalBuiltinKind::WChar, 2, fixed);
+	const auto windows_value = tryImportCanonicalStructuralScalar(table, windows_wchar, 0xffff, 8);
+	g_target_data_model = TargetDataModel::LP64;
+	const TypeId unix_wchar = make_enum(EntityId{40110}, CanonicalBuiltinKind::WChar, 4, fixed);
+	const auto unix_value = tryImportCanonicalStructuralScalar(table, unix_wchar, 0xffffffff, 8);
+	g_target_data_model = previous_model;
+	require(windows_value.has_value());
+	require(unix_value.has_value());
+	require(table.node(*windows_value).array_extent == 65535);
+	require(table.node(*unix_value).array_extent == static_cast<uint64_t>(-1));
+}
+
 inline int run() {
+	checkStructuralEnumScalars();
 	{
 		CanonicalTypeTable table;
 		const TypeId record = table.record(EntityId{40001});

@@ -7,6 +7,76 @@
 #include "ParserTemplateClassShared.h"
 #include "../../architecture/CanonicalTypeTests.h"
 
+TEST_CASE("Enum structural NTTP fields preserve canonical types values and published offsets") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+enum Tiny : signed char { negative = -7, different = -6 };
+enum class Wide : unsigned long long { high = 0xfedcba9876543210ULL, other = 0xfedcba9876543211ULL };
+enum class Code : unsigned short { chosen = 60000 };
+enum Plain { plain_negative = -9 };
+struct EnumBase { Tiny value; };
+struct Nested { Wide wide; Code code; Plain plain; };
+struct Key : EnumBase { Nested nested; bool enabled; };
+constexpr Key key{{negative}, {Wide::high, Code::chosen, plain_negative}, true};
+template<Key Value> struct Base { short member; };
+struct Padding { long long guard; };
+struct Derived : Padding, Base<key> {};
+using Named = Base<key>;
+using Literal = Base<Key{{negative}, {Wide::high, Code::chosen, plain_negative}, true}>;
+using ChangedBase = Base<Key{{different}, {Wide::high, Code::chosen, plain_negative}, true}>;
+using ChangedNested = Base<Key{{negative}, {Wide::other, Code::chosen, plain_negative}, true}>;
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("structural_nttp_enum_fields.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto import_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		if (const TypeSpecifierNode* syntax = info->aliasTypeSpecifier()) {
+			const CanonicalTypeImport syntax_import = importCanonicalType(table, *syntax);
+			REQUIRE(syntax_import.status == CanonicalTypeImportStatus::Supported);
+			CHECK(syntax_import.type == imported.type);
+		}
+		return imported.type;
+	};
+	const TypeId named = import_type("Named");
+	CHECK(named == import_type("Literal"));
+	CHECK(named != import_type("ChangedBase"));
+	CHECK(named != import_type("ChangedNested"));
+	const TypeId derived = import_type("Derived");
+	REQUIRE(table.hasClassBaseSchema(derived));
+	CHECK(table.classBaseAt(derived, 1).type == named);
+	CHECK(table.classBaseAt(derived, 1).offset_bytes == 8);
+	const auto first_subobject = [&](TypeId value) {
+		return table.templateArgumentValue(unpackStructuralValueSubobjects(table.node(value).array_extent));
+	};
+	const TypeId value = table.templateArgumentValue(table.templateSpecializationArguments(named));
+	const TypeId base = first_subobject(value);
+	const CanonicalTypeNode tiny = table.node(first_subobject(base));
+	CHECK(table.node(tiny.child).kind == CanonicalTypeKind::Enum);
+	CHECK(tiny.array_extent == static_cast<uint64_t>(-7));
+	TypeId link = unpackStructuralValueSubobjects(table.node(value).array_extent);
+	link = table.templateArgumentNext(link);
+	const TypeId nested = table.templateArgumentValue(link);
+	link = unpackStructuralValueSubobjects(table.node(nested).array_extent);
+	const uint64_t expected[] = {0xfedcba9876543210ULL, 60000, static_cast<uint64_t>(-9)};
+	for (const uint64_t bits : expected) {
+		const CanonicalTypeNode field = table.node(table.templateArgumentValue(link));
+		CHECK(table.node(field.child).kind == CanonicalTypeKind::Enum);
+		CHECK(field.array_extent == bits);
+		link = table.templateArgumentNext(link);
+	}
+	CHECK_FALSE(link);
+}
+
 TEST_CASE("Structural NTTP subobjects share syntax declaration and base graph identity") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

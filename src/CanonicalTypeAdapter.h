@@ -1683,6 +1683,31 @@ inline std::optional<TypeId> tryImportCanonicalIntegralValue(CanonicalTypeTable&
 	return table.integralValue(imported.type, static_cast<uint64_t>(converted_value));
 }
 
+// Scalar field identity retains the declared type. Enum representation comes
+// from its published layout, independent of legacy member storage metadata.
+inline std::optional<TypeId> tryImportCanonicalStructuralScalar(CanonicalTypeTable& table, TypeId field_type, uint64_t bits, size_t storage_size) {
+	CanonicalTypeNode representation = table.node(field_type);
+	if (representation.kind == CanonicalTypeKind::Enum) {
+		const EntityId entity = table.enumEntity(field_type);
+		if (!table.hasEnumLayout(entity)) {
+			return std::nullopt;
+		}
+		const CanonicalEnumLayout layout = table.enumLayout(entity);
+		representation = table.node(layout.underlying_type);
+		storage_size = layout.size_bytes;
+	}
+	if (representation.kind != CanonicalTypeKind::Builtin || representation.builtin < CanonicalBuiltinKind::Bool ||
+		representation.builtin > CanonicalBuiltinKind::UnsignedLongLong || storage_size == 0 || storage_size > sizeof(uint64_t)) {
+		return std::nullopt;
+	}
+	const auto category = canonicalBuiltinToTypeCategory(representation.builtin);
+	if (!category.has_value()) {
+		return std::nullopt;
+	}
+	const uint64_t converted_bits = normalizeIntegralImmediateValue(bits, *category, static_cast<int>(storage_size * 8));
+	return table.integralValue(field_type, converted_bits);
+}
+
 // The evaluator's payload is an input bridge only. Identity uses canonical class
 // types and ordered base/member values. Frames and completed subobjects live on
 // worklists; logical value nesting does not add native importer call frames.
@@ -1778,17 +1803,14 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 			}
 			continue;
 		}
-		if (member.scalar_value.kind != FlashCpp::NonTypeValueIdentityKind::Integral || member.scalar_value.is_dependent ||
-			node.kind != CanonicalTypeKind::Builtin || node.builtin < CanonicalBuiltinKind::Bool || node.builtin > CanonicalBuiltinKind::UnsignedLongLong) {
+		if (member.scalar_value.kind != FlashCpp::NonTypeValueIdentityKind::Integral || member.scalar_value.is_dependent) {
 			return std::nullopt;
 		}
-		const auto category = canonicalBuiltinToTypeCategory(node.builtin);
-		if (!category.has_value() || field.size == 0 || field.size > sizeof(uint64_t)) {
+		const auto scalar = tryImportCanonicalStructuralScalar(table, field_type, static_cast<uint64_t>(member.scalar_value.value), field.size);
+		if (!scalar.has_value()) {
 			return std::nullopt;
 		}
-		const uint64_t bits = normalizeIntegralImmediateValue(static_cast<uint64_t>(member.scalar_value.value), *category,
-			static_cast<int>(field.size * 8));
-		subobjects.push_back(table.integralValue(field_type, bits));
+		subobjects.push_back(*scalar);
 	}
 	throw InternalError("canonical value importer: worklist ended without a result");
 }

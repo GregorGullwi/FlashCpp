@@ -560,6 +560,15 @@ def main():
             write_text(directory / IMPL.name, original.replace(before, after))
             jobs.append((name, directory, 1))
         for name, header, before, after in (
+            ("structural_enum_identity", "CanonicalTypeAdapter.h",
+             "return table.integralValue(field_type, converted_bits);",
+             "return table.integralValue(table.enumLayout(table.enumEntity(field_type)).underlying_type, converted_bits);"),
+            ("structural_enum_width", "CanonicalTypeAdapter.h",
+             "storage_size = layout.size_bytes;",
+             "storage_size = layout.size_bytes & 0u;"),
+            ("structural_enum_normalization", "CanonicalTypeAdapter.h",
+             "normalizeIntegralImmediateValue(bits, *category, static_cast<int>(storage_size * 8))",
+             "normalizeIntegralImmediateValue(bits, *category, static_cast<int>(storage_size * 8)) & 0xffu"),
             ("adapter_integral_spec_arg", "CanonicalTypeAdapter.h",
              "if (syntax.specialization_arg_is_value(index)) {",
              "if (false && syntax.specialization_arg_is_value(index)) {"),
