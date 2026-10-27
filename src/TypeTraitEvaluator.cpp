@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <ranges>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -1227,7 +1228,9 @@ bool defaultInitializerArrayElementThrows(
 		const ASTNode element = pending.back();
 		pending.pop_back();
 		if (defaultInitializerIsDefaultConstruction(element)) {
-			schedule_default_construction(element_type);
+			if (!schedule_default_construction(element_type)) {
+				return true;
+			}
 			continue;
 		}
 		if (const auto* nested = element.get_if<InitializerListNode>()) {
@@ -1247,27 +1250,60 @@ bool defaultInitializerArrayElementThrows(
 // classified direct subobject instead of walking its whole ancestry again.
 struct PublishedRecordFactsLookup {
 	CanonicalTypeTable& table;
+	mutable std::unordered_map<TypeIndex, std::optional<CanonicalRecordFacts>> cache;
+
+	explicit PublishedRecordFactsLookup(CanonicalTypeTable& table_reference) : table(table_reference) {}
 
 	std::optional<CanonicalRecordFacts> forType(TypeIndex type_index) const {
+		if (const auto cached = cache.find(type_index); cached != cache.end()) {
+			return cached->second;
+		}
+		std::optional<CanonicalRecordFacts> result;
 		const TypeInfo* type_info = tryGetTypeInfo(type_index);
-		if (type_info == nullptr) {
-			return std::nullopt;
+		if (type_info != nullptr) {
+			const StructTypeInfo* struct_info = type_info->getStructInfo();
+			if (struct_info != nullptr && struct_info->layout_is_complete && !struct_info->has_deferred_base_classes) {
+				const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *type_info);
+				if (imported.status == CanonicalTypeImportStatus::Supported && table.hasRecordProperties(imported.type)) {
+					result = table.recordProperties(imported.type).facts;
+				}
+			}
 		}
-		const StructTypeInfo* struct_info = type_info->getStructInfo();
-		if (struct_info == nullptr || !struct_info->layout_is_complete || struct_info->has_deferred_base_classes) {
-			return std::nullopt;
-		}
-		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *type_info);
-		if (imported.status != CanonicalTypeImportStatus::Supported || !table.hasRecordProperties(imported.type)) {
-			return std::nullopt;
-		}
-		return table.recordProperties(imported.type).facts;
+		cache.emplace(type_index, result);
+		return result;
 	}
 };
 
 struct NoPublishedRecordFacts {
 	std::optional<CanonicalRecordFacts> forType(TypeIndex) const {
 		return std::nullopt;
+	}
+};
+
+struct DefaultConstructionPredicate {
+	bool operator()(const StructTypeInfo&, const StructMemberFunction*) const {
+		return true;
+	}
+};
+
+struct TrivialDefaultConstructionPredicate {
+	bool operator()(const StructTypeInfo& info, const StructMemberFunction*) const {
+		return hasTrivialDefaultConstructor(&info);
+	}
+};
+
+struct NothrowDefaultConstructionPredicate {
+	bool operator()(const StructTypeInfo& info, const StructMemberFunction* default_ctor) const {
+		if (hasTrivialDefaultConstructor(&info)) {
+			return true;
+		}
+		if (default_ctor != nullptr && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+			const ConstructorDeclarationNode& constructor = default_ctor->function_decl.as<ConstructorDeclarationNode>();
+			if (!constructor.is_implicit() && !constructor.is_explicitly_defaulted()) {
+				return constructor.is_noexcept();
+			}
+		}
+		return true;
 	}
 };
 
@@ -1368,8 +1404,12 @@ bool recordSubobjectsSatisfyDefaultConstruction(
 							// selecting leaf contributes its exception spec.
 							const bool element_throws = defaultInitializerArrayElementThrows(
 								initializer, *member_struct_info,
-								[&pending](const StructTypeInfo& element_type) {
+								[&](const StructTypeInfo& element_type) {
+									if (element_type.own_type_index_.has_value()) {
+										return schedule_type(*element_type.own_type_index_);
+									}
 									pending.push_back(&element_type);
+									return true;
 								});
 							if (element_throws) {
 								return false;
@@ -1402,9 +1442,7 @@ bool recordSubobjectsSatisfyDefaultConstruction(
 bool recordDefaultConstructible(const StructTypeInfo& root) {
 	return recordSubobjectsSatisfyDefaultConstruction(
 		root,
-		[](const StructTypeInfo&, const StructMemberFunction*) {
-			return true;
-		},
+		DefaultConstructionPredicate{},
 		false,
 		NoPublishedRecordFacts{},
 		CanonicalRecordFacts::None);
@@ -1413,9 +1451,7 @@ bool recordDefaultConstructible(const StructTypeInfo& root) {
 bool recordTriviallyConstructible(const StructTypeInfo& root) {
 	return recordSubobjectsSatisfyDefaultConstruction(
 		root,
-		[](const StructTypeInfo& info, const StructMemberFunction*) {
-			return hasTrivialDefaultConstructor(&info);
-		},
+		TrivialDefaultConstructionPredicate{},
 		false,
 		NoPublishedRecordFacts{},
 		CanonicalRecordFacts::None);
@@ -1424,30 +1460,14 @@ bool recordTriviallyConstructible(const StructTypeInfo& root) {
 bool recordNothrowConstructible(const StructTypeInfo& root) {
 	return recordSubobjectsSatisfyDefaultConstruction(
 		root,
-		[](const StructTypeInfo& info, const StructMemberFunction* default_ctor) {
-			if (hasTrivialDefaultConstructor(&info)) {
-				return true;
-			}
-			if (default_ctor != nullptr &&
-				default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-				const ConstructorDeclarationNode& constructor =
-					default_ctor->function_decl.as<ConstructorDeclarationNode>();
-				if (!constructor.is_implicit() &&
-					!constructor.is_explicitly_defaulted()) {
-					return constructor.is_noexcept();
-				}
-			}
-			// An implicit or defaulted non-trivial constructor inherits the
-			// exception specification of its subobjects.
-			return true;
-		},
+		NothrowDefaultConstructionPredicate{},
 		true,
 		NoPublishedRecordFacts{},
 		CanonicalRecordFacts::None);
 }
 
-template<typename Pred, typename FactsLookup>
-bool allRecordSubobjectsSatisfy(const StructTypeInfo* struct_info, Pred pred, FactsLookup facts_lookup, CanonicalRecordFacts cached_fact) {
+template<typename Pred>
+bool allRecordSubobjectsSatisfy(const StructTypeInfo* struct_info, Pred pred) {
 	if (!struct_info)
 		return false;
 	std::vector<const StructTypeInfo*> pending{struct_info};
@@ -1467,11 +1487,6 @@ bool allRecordSubobjectsSatisfy(const StructTypeInfo* struct_info, Pred pred, Fa
 				!is_struct_type(member.type_index.category())) {
 				continue;
 			}
-			if (const std::optional<CanonicalRecordFacts> facts = facts_lookup.forType(member.type_index); facts.has_value()) {
-				if (!hasCanonicalRecordFact(*facts, cached_fact))
-					return false;
-				continue;
-			}
 			const TypeInfo* member_type = tryGetTypeInfo(member.type_index);
 			const StructTypeInfo* member_struct = member_type ? member_type->getStructInfo() : nullptr;
 			if (!member_struct)
@@ -1481,11 +1496,6 @@ bool allRecordSubobjectsSatisfy(const StructTypeInfo* struct_info, Pred pred, Fa
 		for (const BaseClassSpecifier& base : current->base_classes) {
 			if (base.is_deferred)
 				continue;
-			if (const std::optional<CanonicalRecordFacts> facts = facts_lookup.forType(base.type_index); facts.has_value()) {
-				if (!hasCanonicalRecordFact(*facts, cached_fact))
-					return false;
-				continue;
-			}
 			const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
 			const StructTypeInfo* base_struct = base_type ? base_type->getStructInfo() : nullptr;
 			if (!base_struct)
@@ -1504,9 +1514,7 @@ bool isStructTriviallyCopyableImpl(const StructTypeInfo* struct_info) {
 		struct_info,
 		[](const StructTypeInfo* current) {
 			return hasTrivialSpecialMemberSetForCopying(current);
-		},
-		NoPublishedRecordFacts{},
-		CanonicalRecordFacts::None);
+		});
 }
 
 // A trivial class is trivially copyable and has no user-declared constructor.
@@ -1517,12 +1525,11 @@ bool isStructTrivialImpl(const StructTypeInfo* struct_info) {
 		[](const StructTypeInfo* current) {
 			return hasTrivialSpecialMemberSetForCopying(current) &&
 				hasTrivialDefaultConstructor(current);
-		},
-		NoPublishedRecordFacts{},
-		CanonicalRecordFacts::None);
+		});
 }
 
-bool isStructEmptyImpl(const StructTypeInfo* struct_info) {
+template <typename FactsLookup>
+bool isStructEmptyImpl(const FactsLookup& facts_lookup, const StructTypeInfo* struct_info) {
 	if (struct_info == nullptr) {
 		return false;
 	}
@@ -1545,9 +1552,14 @@ bool isStructEmptyImpl(const StructTypeInfo* struct_info) {
 			if (base.is_deferred || base.is_virtual) {
 				return false;
 			}
+			if (const std::optional<CanonicalRecordFacts> facts = facts_lookup.forType(base.type_index); facts.has_value()) {
+				if (!hasCanonicalRecordFact(*facts, CanonicalRecordFacts::Empty)) {
+					return false;
+				}
+				continue;
+			}
 			const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
-			const StructTypeInfo* base_struct =
-				base_type == nullptr ? nullptr : base_type->getStructInfo();
+			const StructTypeInfo* base_struct = base_type == nullptr ? nullptr : base_type->getStructInfo();
 			if (base_struct == nullptr) {
 				return false;
 			}
@@ -1555,6 +1567,10 @@ bool isStructEmptyImpl(const StructTypeInfo* struct_info) {
 		}
 	}
 	return true;
+}
+
+bool isStructEmptyImpl(const StructTypeInfo* struct_info) {
+	return isStructEmptyImpl(NoPublishedRecordFacts{}, struct_info);
 }
 
 bool isStructDestructibleImpl(const StructTypeInfo* struct_info) {
@@ -1820,48 +1836,6 @@ bool isStructStandardLayoutWithPublishedFacts(
 	return isStructStandardLayoutImpl(struct_info);
 }
 
-template <typename FactsLookup>
-bool isStructEmptyWithPublishedFacts(
-	const FactsLookup& facts_lookup,
-	const StructTypeInfo* struct_info) {
-	if (struct_info == nullptr) {
-		return false;
-	}
-	std::vector<const StructTypeInfo*> pending{struct_info};
-	std::unordered_set<const StructTypeInfo*> visited;
-	while (!pending.empty()) {
-		const StructTypeInfo* current = pending.back();
-		pending.pop_back();
-		if (current == nullptr || !visited.insert(current).second) {
-			continue;
-		}
-		const bool has_nonzero_size_data_member =
-			std::ranges::any_of(current->members, [](const StructMember& member) {
-				return !StructTypeInfo::isZeroWidthBitfield(member.bitfield_width);
-			});
-		if (current->is_union || has_nonzero_size_data_member || current->has_vtable) {
-			return false;
-		}
-		for (const BaseClassSpecifier& base : current->base_classes) {
-			if (base.is_deferred || base.is_virtual) {
-				return false;
-			}
-			if (const std::optional<CanonicalRecordFacts> facts = facts_lookup.forType(base.type_index); facts.has_value()) {
-				if (!hasCanonicalRecordFact(*facts, CanonicalRecordFacts::Empty)) {
-					return false;
-				}
-				continue;
-			}
-			const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
-			const StructTypeInfo* base_struct = base_type == nullptr ? nullptr : base_type->getStructInfo();
-			if (base_struct == nullptr) {
-				return false;
-			}
-			pending.push_back(base_struct);
-		}
-	}
-	return true;
-}
 
 } // namespace
 
@@ -1897,23 +1871,8 @@ CanonicalRecordFacts computeCanonicalRecordFactsWithLookup(const StructTypeInfo&
 	if (struct_info.has_deleted_destructor) {
 		facts |= CanonicalRecordFacts::DestructorDeleted;
 	}
-	if (allRecordSubobjectsSatisfy(
-			&struct_info,
-			[](const StructTypeInfo* current) {
-				return hasTrivialSpecialMemberSetForCopying(current);
-			},
-			facts_lookup,
-			CanonicalRecordFacts::TrivialCopyingSpecialMembers)) {
+	if (hasTrivialSpecialMemberSetForCopying(&struct_info)) {
 		facts |= CanonicalRecordFacts::TrivialCopyingSpecialMembers;
-	}
-	if (allRecordSubobjectsSatisfy(
-			&struct_info,
-			[](const StructTypeInfo* current) {
-				return hasTrivialSpecialMemberSetForCopying(current) && hasTrivialDefaultConstructor(current);
-			},
-			facts_lookup,
-			CanonicalRecordFacts::Trivial)) {
-		facts |= CanonicalRecordFacts::Trivial;
 	}
 	if (hasTrivialDefaultConstructor(&struct_info)) {
 		facts |= CanonicalRecordFacts::TrivialDefaultConstructor;
@@ -1954,14 +1913,12 @@ CanonicalRecordFacts computeCanonicalRecordFactsWithLookup(const StructTypeInfo&
 	if (struct_info.isAggregate()) {
 		facts |= CanonicalRecordFacts::Aggregate;
 	}
-	if (isStructEmptyWithPublishedFacts(facts_lookup, &struct_info)) {
+	if (isStructEmptyImpl(facts_lookup, &struct_info)) {
 		facts |= CanonicalRecordFacts::Empty;
 	}
 	if (recordSubobjectsSatisfyDefaultConstruction(
 			struct_info,
-			[](const StructTypeInfo&, const StructMemberFunction*) {
-				return true;
-			},
+			DefaultConstructionPredicate{},
 			false,
 			facts_lookup,
 			CanonicalRecordFacts::DefaultConstructible)) {
@@ -1969,9 +1926,7 @@ CanonicalRecordFacts computeCanonicalRecordFactsWithLookup(const StructTypeInfo&
 	}
 	if (recordSubobjectsSatisfyDefaultConstruction(
 			struct_info,
-			[](const StructTypeInfo& info, const StructMemberFunction*) {
-				return hasTrivialDefaultConstructor(&info);
-			},
+			TrivialDefaultConstructionPredicate{},
 			false,
 			facts_lookup,
 			CanonicalRecordFacts::TriviallyDefaultConstructible)) {
@@ -1979,18 +1934,7 @@ CanonicalRecordFacts computeCanonicalRecordFactsWithLookup(const StructTypeInfo&
 	}
 	if (recordSubobjectsSatisfyDefaultConstruction(
 			struct_info,
-			[](const StructTypeInfo& info, const StructMemberFunction* default_ctor) {
-				if (hasTrivialDefaultConstructor(&info)) {
-					return true;
-				}
-				if (default_ctor != nullptr && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-					const ConstructorDeclarationNode& constructor = default_ctor->function_decl.as<ConstructorDeclarationNode>();
-					if (!constructor.is_implicit() && !constructor.is_explicitly_defaulted()) {
-						return constructor.is_noexcept();
-					}
-				}
-				return true;
-			},
+			NothrowDefaultConstructionPredicate{},
 			true,
 			facts_lookup,
 			CanonicalRecordFacts::NothrowDefaultConstructible)) {
