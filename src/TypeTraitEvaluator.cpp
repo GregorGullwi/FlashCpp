@@ -2,12 +2,12 @@
 
 #include <algorithm>
 #include <ranges>
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 #include "CanonicalTypeAdapter.h"
 #include "ExpressionStructure.h"
+#include "FlatHashTable.h"
 #include "FrontendContext.h"
 #include "MigrationStats.h"
 #include "OverloadResolution.h"
@@ -962,6 +962,14 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTra
 
 namespace {
 
+using StructInfoSet = FlashCpp::FlatHashSet<const StructTypeInfo*, std::hash<const StructTypeInfo*>, std::equal_to<const StructTypeInfo*>>;
+using TypeIndexSet = FlashCpp::FlatHashSet<TypeIndex, std::hash<TypeIndex>, std::equal_to<TypeIndex>>;
+
+struct CachedRecordFactsEntry {
+	CanonicalRecordFacts facts = CanonicalRecordFacts::None;
+	bool resolved = false;
+};
+
 std::optional<TypeIndex> resolvePseudoDestructorExpressionTypeIndex(const ExpressionNode& expr, const SymbolTable& symbols) {
 	if (const auto* ctor_call = std::get_if<ConstructorCallNode>(&expr)) {
 		return ctor_call->type_node().type_index();
@@ -1250,15 +1258,22 @@ bool defaultInitializerArrayElementThrows(
 // classified direct subobject instead of walking its whole ancestry again.
 struct PublishedRecordFactsLookup {
 	CanonicalTypeTable& table;
-	mutable std::unordered_map<TypeIndex, std::optional<CanonicalRecordFacts>> cache;
+	mutable FlashCpp::FlatHashTable<TypeIndex, CachedRecordFactsEntry, std::hash<TypeIndex>, std::equal_to<TypeIndex>> cache;
 
 	explicit PublishedRecordFactsLookup(CanonicalTypeTable& table_reference) : table(table_reference) {}
 	PublishedRecordFactsLookup(const PublishedRecordFactsLookup&) = delete;
 	PublishedRecordFactsLookup& operator=(const PublishedRecordFactsLookup&) = delete;
 
 	std::optional<CanonicalRecordFacts> forType(TypeIndex type_index) const {
-		if (const auto cached = cache.find(type_index); cached != cache.end()) {
-			return cached->second;
+		std::optional<CanonicalRecordFacts> cached_facts;
+		const bool cache_hit = cache.forEachValue(type_index, [&](const CachedRecordFactsEntry& entry) {
+			if (entry.resolved) {
+				cached_facts = entry.facts;
+			}
+			return true;
+		});
+		if (cache_hit) {
+			return cached_facts;
 		}
 		std::optional<CanonicalRecordFacts> result;
 		const TypeInfo* type_info = tryGetTypeInfo(type_index);
@@ -1271,7 +1286,7 @@ struct PublishedRecordFactsLookup {
 				}
 			}
 		}
-		cache.emplace(type_index, result);
+		cache.insert(type_index, CachedRecordFactsEntry{result.value_or(CanonicalRecordFacts::None), result.has_value()});
 		return result;
 	}
 };
@@ -1324,14 +1339,14 @@ bool recordSubobjectsSatisfyDefaultConstruction(
 	const FactsLookup& facts_lookup,
 	CanonicalRecordFacts cached_fact) {
 	std::vector<const StructTypeInfo*> pending{&root};
-	std::unordered_set<const StructTypeInfo*> visited;
+	StructInfoSet visited;
 	while (!pending.empty()) {
 		const StructTypeInfo* info = pending.back();
 		pending.pop_back();
 		if (info == nullptr) {
 			return false;
 		}
-		if (!visited.insert(info).second) {
+		if (!visited.insert(info)) {
 			continue;
 		}
 		if (info->is_abstract || info->isDefaultConstructorDeleted()) {
@@ -1473,13 +1488,13 @@ bool allRecordSubobjectsSatisfy(const StructTypeInfo* struct_info, Pred pred) {
 	if (!struct_info)
 		return false;
 	std::vector<const StructTypeInfo*> pending{struct_info};
-	std::unordered_set<const StructTypeInfo*> visited;
+	StructInfoSet visited;
 	while (!pending.empty()) {
 		const StructTypeInfo* current = pending.back();
 		pending.pop_back();
 		if (!current)
 			return false;
-		if (!visited.insert(current).second)
+		if (!visited.insert(current))
 			continue;
 		if (!pred(current))
 			return false;
@@ -1536,11 +1551,11 @@ bool isStructEmptyImpl(const FactsLookup& facts_lookup, const StructTypeInfo* st
 		return false;
 	}
 	std::vector<const StructTypeInfo*> pending{struct_info};
-	std::unordered_set<const StructTypeInfo*> visited;
+	StructInfoSet visited;
 	while (!pending.empty()) {
 		const StructTypeInfo* current = pending.back();
 		pending.pop_back();
-		if (current == nullptr || !visited.insert(current).second) {
+		if (current == nullptr || !visited.insert(current)) {
 			continue;
 		}
 		const bool has_nonzero_size_data_member =
@@ -1588,11 +1603,11 @@ bool isStructTriviallyDestructibleImpl(const StructTypeInfo* struct_info) {
 		return false;
 
 	std::vector<const StructTypeInfo*> pending{struct_info};
-	std::unordered_set<const StructTypeInfo*> visited;
+	StructInfoSet visited;
 	while (!pending.empty()) {
 		const StructTypeInfo* current = pending.back();
 		pending.pop_back();
-		if (!current || !visited.insert(current).second) {
+		if (!current || !visited.insert(current)) {
 			continue;
 		}
 		if (current->has_deleted_destructor)
@@ -1638,11 +1653,11 @@ bool hasVirtualDestructorImpl(const StructTypeInfo* struct_info) {
 		return false;
 
 	std::vector<const StructTypeInfo*> pending{struct_info};
-	std::unordered_set<const StructTypeInfo*> visited;
+	StructInfoSet visited;
 	while (!pending.empty()) {
 		const StructTypeInfo* current = pending.back();
 		pending.pop_back();
-		if (!current || !visited.insert(current).second)
+		if (!current || !visited.insert(current))
 			continue;
 		if (const StructMemberFunction* destructor = current->findDestructor();
 			destructor && destructor->is_virtual) {
@@ -1665,11 +1680,11 @@ bool isStructNothrowDestructibleImpl(const StructTypeInfo* struct_info) {
 		return true;
 	}
 	std::vector<const StructTypeInfo*> pending{struct_info};
-	std::unordered_set<const StructTypeInfo*> visited;
+	StructInfoSet visited;
 	while (!pending.empty()) {
 		const StructTypeInfo* current = pending.back();
 		pending.pop_back();
-		if (current == nullptr || !visited.insert(current).second) {
+		if (current == nullptr || !visited.insert(current)) {
 			continue;
 		}
 		if (current->has_deleted_destructor) {
@@ -1725,14 +1740,14 @@ bool isStructNothrowDestructibleImpl(const StructTypeInfo* struct_info) {
 
 bool hasBaseTypeAmongZeroOffsetMembers(
 	const StructTypeInfo* struct_info,
-	const std::unordered_set<TypeIndex>& base_subobject_types) {
+	const TypeIndexSet& base_subobject_types) {
 	std::vector<const StructTypeInfo*> pending{struct_info};
-	std::unordered_set<const StructTypeInfo*> visited;
+	StructInfoSet visited;
 	std::vector<TypeIndex> zero_offset_member_types;
 	while (!pending.empty()) {
 		const StructTypeInfo* current = pending.back();
 		pending.pop_back();
-		if (!current || !visited.insert(current).second)
+		if (!current || !visited.insert(current))
 			continue;
 
 		for (size_t index = 0; index < current->members.size(); ++index) {
@@ -1764,15 +1779,15 @@ bool isStructStandardLayoutImpl(const StructTypeInfo* struct_info) {
 		return false;
 
 	std::vector<const StructTypeInfo*> pending_roots{struct_info};
-	std::unordered_set<const StructTypeInfo*> checked_roots;
+	StructInfoSet checked_roots;
 	while (!pending_roots.empty()) {
 		const StructTypeInfo* root = pending_roots.back();
 		pending_roots.pop_back();
-		if (!root || !checked_roots.insert(root).second)
+		if (!root || !checked_roots.insert(root))
 			continue;
 
 		std::vector<const StructTypeInfo*> inheritance_worklist{root};
-		std::unordered_set<TypeIndex> base_subobject_types;
+		TypeIndexSet base_subobject_types;
 		const StructTypeInfo* data_member_owner = nullptr;
 		std::optional<AccessSpecifier> data_member_access;
 		while (!inheritance_worklist.empty()) {
@@ -1806,7 +1821,7 @@ bool isStructStandardLayoutImpl(const StructTypeInfo* struct_info) {
 			}
 
 			for (const BaseClassSpecifier& base : current->base_classes) {
-				if (base.is_deferred || base.is_virtual || !base_subobject_types.insert(base.type_index).second) {
+				if (base.is_deferred || base.is_virtual || !base_subobject_types.insert(base.type_index)) {
 					return false;
 				}
 				const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
