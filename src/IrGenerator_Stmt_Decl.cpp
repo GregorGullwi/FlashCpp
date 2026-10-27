@@ -1209,6 +1209,16 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 						}
 					}
+					if (!handled_as_reloc && unary.op() == "&") {
+						sema_.ensureMemberFunctionAddressMaterialized(unary);
+						if (const FunctionDeclarationNode* addressed_function = unary.resolved_addressed_function()) {
+							requestInlineFunctionEmission(*addressed_function);
+							const std::string_view mangled = addressed_function->has_mangled_name()
+								? addressed_function->mangled_name()
+								: generateMangledNameForCall(*addressed_function, StringHandle{}, {});
+							initializeGlobalReloc(mangled, " (member function)");
+						}
+					}
 				}
 					// Handle reference initializer: int& ref = x;
 				if (!handled_as_reloc && type_node.is_reference() && std::holds_alternative<IdentifierNode>(init_expr)) {

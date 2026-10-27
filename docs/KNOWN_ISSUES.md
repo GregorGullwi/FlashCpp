@@ -241,7 +241,10 @@ virtual-base adjustment before the call.
 `tests/test_member_function_pointer_call_ret0.cpp` covers mutable and const
 members, both access forms, and reassigning the pointer, while
 `tests/test_member_function_pointer_call_base_adjustment_ret0.cpp` covers a
-non-primary base and a virtual base.
+non-primary base and a virtual base. Global member-function-pointer
+initializers consume the same sema-resolved address, including an instantiated
+member function template, covered by
+`tests/test_member_function_pointer_global_address_ret0.cpp`.
 
 The following remain unsupported and are rejected or left unresolved:
 
@@ -251,12 +254,11 @@ The following remain unsupported and are rejected or left unresolved:
 - Address-of does not encode a `this` adjustment for a member pointer whose
   target owner is a non-primary base. Calls adjust only when the pointer's
   canonical owner is already a base of the object.
-- Instantiating a member template address whose signature contains a class
-  template in both the return and parameter (or that shares a name with a
-  non-template overload) can still route instantiation through a parser-owned
-  root. `ensureMemberFunctionAddressMaterialized` logs a warning and leaves the
-  address unresolved in that case rather than failing the translation unit, so
-  the old uninitialized-slot behavior can still appear there.
+- Some member-template address overload shapes can still route instantiation
+  through a parser-owned root. `ensureMemberFunctionAddressMaterialized` logs a
+  warning and leaves the address unresolved in that case rather than failing
+  the translation unit, so the old uninitialized-slot behavior can still appear
+  there.
 
 ## Static-member template initializer replay still re-parses source text
 
