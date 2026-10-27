@@ -2442,14 +2442,30 @@ inline int run() {
 		const TypeId two = table.integralValue(integer, 2);
 		const TypeId values[] = {one, two};
 		const TypeId reversed[] = {two, one};
-		const TypeId structural = table.structuralValue(record, values);
-		require(structural == table.structuralValue(record, values));
-		require(structural != table.structuralValue(record, reversed));
-		require(structural != table.structuralValue(other_record, values));
+		const TypeId structural = table.structuralValue(record, values, 0);
+		require(structural == table.structuralValue(record, values, 0));
+		require(structural != table.structuralValue(record, reversed, 0));
+		require(structural != table.structuralValue(other_record, values, 0));
 		const TypeId fewer[] = {one};
-		require(structural != table.structuralValue(record, fewer));
+		require(structural != table.structuralValue(record, fewer, 0));
 		const TypeId unsigned_values[] = {table.integralValue(table.builtin(CanonicalBuiltinKind::UnsignedInt), 1), two};
-		require(structural != table.structuralValue(record, unsigned_values));
+		require(structural != table.structuralValue(record, unsigned_values, 0));
+		const TypeId children[] = {structural, structural};
+		const TypeId nested = table.structuralValue(other_record, children, 1);
+		require(nested != table.structuralValue(other_record, children, 0));
+		require(nested != table.structuralValue(other_record, children, 2));
+		require(unpackStructuralValueBaseCount(table.node(nested).array_extent) == 1);
+		TypeId subobjects = unpackStructuralValueSubobjects(table.node(nested).array_extent);
+		require(table.templateArgumentValue(subobjects) == structural);
+		subobjects = table.templateArgumentNext(subobjects);
+		require(table.templateArgumentValue(subobjects) == structural);
+		require(!table.templateArgumentNext(subobjects));
+		bool invalid_bases = false;
+		try { (void)table.structuralValue(record, values, 1); } catch (const InternalError&) { invalid_bases = true; }
+		require(invalid_bases);
+		bool invalid_count = false;
+		try { (void)table.structuralValue(other_record, children, 3); } catch (const InternalError&) { invalid_count = true; }
+		require(invalid_count);
 		const CanonicalTemplateArgument arguments[] = {CanonicalTemplateArgument::makeValue(structural)};
 		const TypeId specialization = table.templateSpecialization(TemplateDeclId{40003}, arguments);
 		require(table.templateArgumentValue(table.templateSpecializationArguments(specialization)) == structural);

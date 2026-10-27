@@ -871,23 +871,28 @@ TypeId CanonicalTypeTable::integralValue(TypeId value_type, uint64_t converted_b
 		.qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None, .array_extent = converted_bits});
 }
 
-TypeId CanonicalTypeTable::structuralValue(TypeId class_type, std::span<const TypeId> member_values) {
+TypeId CanonicalTypeTable::structuralValue(TypeId class_type, std::span<const TypeId> subobject_values, uint32_t base_count) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
 	if (nodeUnlocked(class_type).kind != CanonicalTypeKind::Record) {
 		throw InternalError("canonical type: structural value requires a published record type");
 	}
+	if (base_count > subobject_values.size()) {
+		throw InternalError("canonical type: structural value base count exceeds its subobjects");
+	}
 	std::vector<CanonicalTemplateArgument> arguments;
-	arguments.reserve(member_values.size());
-	for (const TypeId value : member_values) {
-		if (nodeUnlocked(value).kind != CanonicalTypeKind::IntegralValue) {
-			throw InternalError("canonical type: structural value requires typed integral members");
+	arguments.reserve(subobject_values.size());
+	for (size_t index = 0; index < subobject_values.size(); ++index) {
+		const TypeId value = subobject_values[index];
+		const CanonicalTypeKind kind = nodeUnlocked(value).kind;
+		if (kind != CanonicalTypeKind::StructuralValue && (kind != CanonicalTypeKind::IntegralValue || index < base_count)) {
+			throw InternalError("canonical type: structural value requires typed subobjects and structural bases");
 		}
 		arguments.push_back(CanonicalTemplateArgument::makeValue(value));
 	}
 	const TypeId members = rebuildMixedTemplateArgListUnlocked(arguments);
 	return internUnlocked({.child = class_type, .kind = CanonicalTypeKind::StructuralValue, .builtin = CanonicalBuiltinKind::Void,
-		.qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None, .array_extent = members.value});
+		.qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None, .array_extent = packStructuralValueExtent(members, base_count)});
 }
 
 TypeId CanonicalTypeTable::templateArgumentValue(TypeId arg_link) const {
@@ -3640,12 +3645,32 @@ void CanonicalTypeTable::appendNodeTrace(StringBuilder& shape, CanonicalTypeNode
 		return;
 	}
 	if (node.kind == CanonicalTypeKind::StructuralValue) {
-		appendNodeTraceFields(shape, node, 0);
-		shape.append('/');
-		appendTypeIdTrace(shape, node.child);
-		for (TypeId link{static_cast<uint32_t>(node.array_extent)}; link; link = nodeUnlocked(link).child) {
+		const auto append_header = [&](CanonicalTypeNode value) {
+			appendNodeTraceFields(shape, value, unpackStructuralValueBaseCount(value.array_extent));
 			shape.append('/');
-			appendTypeIdTrace(shape, TypeId{static_cast<uint32_t>(nodeUnlocked(link).array_extent)});
+			appendTypeIdTrace(shape, value.child);
+			shape.append('(');
+		};
+		append_header(node);
+		std::vector<TypeId> pending{unpackStructuralValueSubobjects(node.array_extent)};
+		while (!pending.empty()) {
+			const TypeId link = pending.back();
+			if (!link) {
+				shape.append(')');
+				pending.pop_back();
+				continue;
+			}
+			const CanonicalTypeNode argument = nodeUnlocked(link);
+			pending.back() = argument.child;
+			const TypeId value_id{static_cast<uint32_t>(argument.array_extent)};
+			const CanonicalTypeNode value = nodeUnlocked(value_id);
+			shape.append('/');
+			if (value.kind == CanonicalTypeKind::StructuralValue) {
+				append_header(value);
+				pending.push_back(unpackStructuralValueSubobjects(value.array_extent));
+			} else {
+				appendTypeIdTrace(shape, value_id);
+			}
 		}
 		return;
 	}

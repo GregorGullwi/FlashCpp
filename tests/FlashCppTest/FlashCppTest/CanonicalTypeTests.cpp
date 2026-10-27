@@ -7,6 +7,54 @@
 #include "ParserTemplateClassShared.h"
 #include "../../architecture/CanonicalTypeTests.h"
 
+TEST_CASE("Structural NTTP subobjects share syntax declaration and base graph identity") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+struct Leaf { short value; };
+struct Other { unsigned value; };
+struct Key : Leaf, Other { Leaf member; bool enabled; };
+constexpr Key key{{7}, {4000000000u}, {9}, true};
+template<Key Value> struct Base { short member; };
+struct Padding { long long guard; };
+struct Derived : Padding, Base<key> {};
+using Named = Base<key>;
+using Literal = Base<Key{{7}, {4000000000u}, {9}, true}>;
+using ChangedFirst = Base<Key{{8}, {4000000000u}, {9}, true}>;
+using ChangedSecond = Base<Key{{7}, {4000000001u}, {9}, true}>;
+using ChangedMember = Base<Key{{7}, {4000000000u}, {8}, true}>;
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("structural_nttp_subobjects.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto import_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		if (const TypeSpecifierNode* syntax = info->aliasTypeSpecifier()) {
+			const CanonicalTypeImport syntax_import = importCanonicalType(table, *syntax);
+			REQUIRE(syntax_import.status == CanonicalTypeImportStatus::Supported);
+			CHECK(syntax_import.type == imported.type);
+		}
+		return imported.type;
+	};
+	const TypeId named = import_type("Named");
+	CHECK(named == import_type("Literal"));
+	CHECK(named != import_type("ChangedFirst"));
+	CHECK(named != import_type("ChangedSecond"));
+	CHECK(named != import_type("ChangedMember"));
+	const TypeId derived = import_type("Derived");
+	REQUIRE(table.hasClassBaseSchema(derived));
+	CHECK(table.classBaseAt(derived, 1).type == named);
+	CHECK(table.classBaseAt(derived, 1).offset_bytes == 8);
+}
+
 TEST_CASE("Structural NTTP imports share typed values and published base offsets") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
@@ -5091,4 +5139,62 @@ TEST_CASE("Dependent initializer list identity preserves style designators and n
 	}
 	CHECK(FlashCpp::equalDependentExpressionIdentity(deep_left, deep_right));
 	CHECK(FlashCpp::hashDependentExpressionIdentity(deep_left) == FlashCpp::hashDependentExpressionIdentity(deep_right));
+}
+
+TEST_CASE("Structural value importer bounds native stack across deep subobject graphs") {
+	clearLegacyTypeTablesForTesting();
+	FrontendContext context;
+	initialize_native_types();
+	CanonicalTypeTable& table = context.canonicalTypes();
+	constexpr uint32_t depth = 4096;
+	std::vector<FlashCpp::StructuralClassValue> values(depth);
+	TypeIndex previous_index = nativeTypeIndex(TypeCategory::Short);
+	TypeId previous_type = table.builtin(CanonicalBuiltinKind::Short);
+	const StringHandle field_name = StringTable::getOrInternStringHandle("value");
+	for (uint32_t index = 0; index < depth; ++index) {
+		const StringHandle name = StringTable::getOrInternStringHandle("DeepStructural" + std::to_string(index));
+		const TypeCreationResult created = add_struct_type(name, NamespaceRegistry::GLOBAL_NAMESPACE);
+		StructTypeInfo& record = created.info.createStructInfo(name, AccessSpecifier::Public, false, NamespaceRegistry::GLOBAL_NAMESPACE);
+		ASTNode declaration = ASTNode::emplace_node<StructDeclarationNode>(name, false, false);
+		declaration.as<StructDeclarationNode>().set_entity_id(EntityId{420000 + index});
+		record.declaration_node = &declaration.as<StructDeclarationNode>();
+		record.addMember(field_name, previous_index, previous_type, 2, 2, AccessSpecifier::Public, std::nullopt,
+			ReferenceQualifier::None, 0, false, {}, false, 0, std::nullopt, std::nullopt, false, CVQualifier::None);
+		values[index].type_index = created.index;
+		FlashCpp::StructuralClassValueMember member;
+		member.name = field_name;
+		if (index == 0) {
+			member.scalar_value = FlashCpp::NonTypeValueIdentity::makeConcrete(-7, TypeCategory::Short);
+		} else {
+			member.nested_value = &values[index - 1];
+		}
+		values[index].members.push_back(std::move(member));
+		previous_index = created.index;
+		previous_type = table.record(EntityId{420000 + index});
+	}
+	const std::optional<TypeId> imported = tryImportCanonicalStructuralValue(table, &values.back());
+	REQUIRE(imported.has_value());
+	values.clear();
+	TypeId cursor = *imported;
+	for (uint32_t index = depth; index-- > 0;) {
+		const CanonicalTypeNode value = table.node(cursor);
+		REQUIRE(value.kind == CanonicalTypeKind::StructuralValue);
+		CHECK(value.child == table.record(EntityId{420000 + index}));
+		CHECK(unpackStructuralValueBaseCount(value.array_extent) == 0);
+		const TypeId link = unpackStructuralValueSubobjects(value.array_extent);
+		CHECK_FALSE(table.templateArgumentNext(link));
+		cursor = table.templateArgumentValue(link);
+	}
+	CHECK(table.node(cursor).child == table.builtin(CanonicalBuiltinKind::Short));
+	CHECK(table.node(cursor).array_extent == static_cast<uint64_t>(-7));
+	std::ostringstream trace;
+	const FlashCpp::LogLevel previous_level = FlashCpp::LogConfig::getLevelForCategory(FlashCpp::LogCategory::Types);
+	std::ostream* previous_output = FlashCpp::LogConfig::output_stream;
+	FlashCpp::LogConfig::output_stream = &trace;
+	FlashCpp::LogConfig::setLevel(FlashCpp::LogCategory::Types, FlashCpp::LogLevel::Trace);
+	const CanonicalTemplateArgument arguments[] = {CanonicalTemplateArgument::makeValue(*imported)};
+	(void)table.templateSpecialization(TemplateDeclId{490000}, arguments);
+	FlashCpp::LogConfig::setLevel(FlashCpp::LogCategory::Types, previous_level);
+	FlashCpp::LogConfig::output_stream = previous_output;
+	CHECK(trace.str().find("canonical-request-v2") != std::string::npos);
 }

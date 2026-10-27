@@ -30,10 +30,13 @@ behind that query for specialization bases the canonical importer cannot yet
 represent. Binary and range call selection no longer store AST owner
 TypeIndexes: the published `BinaryOperatorCallTarget.declaring_type` is the
 authority, and codegen derives its ABI owner handle at that boundary.
-Concrete integral and scalar integral-field class NTTPs share converted canonical
-type/value identity in syntax and declaration imports, including equivalent
-named and braced class values and their published base offsets. Dependent and
-unmigrated value shapes retain opaque expression identity.
+Concrete integral and integral-field class NTTPs share converted canonical
+type/value identity in syntax and declaration imports, including nested members,
+nonvirtual bases, equivalent named/braced values, and published base offsets.
+Class values retain ordered base/member values with an explicit base count;
+import and tracing use worklists. Retain the 4,096-level import/trace guard on a
+1 MiB stack; existing evaluator recursion is separate. Dependent and unmigrated
+value shapes retain opaque expression identity.
 `StructTypeInfo::isAggregate` now excludes
 classes with any reachable virtual base, not only direct virtual bases, so an
 indirectly virtual diamond follows its most-derived constructor and installs the
@@ -309,14 +312,13 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Next slice: canonicalize nested and base-bearing structural NTTP values.**
-   Extend the typed-value graph and importer with an explicit subobject worklist,
-   preserving canonical class identity, ordered base/member values, and declared
-   scalar types. Syntax and declaration imports must agree for equivalent named
-   and braced values and publish matching class-base facts. Retain both
-   `test_canonical_structural_nttp_base_source_ret0.cpp` and
-   `test_canonical_structural_nttp_equivalence_ret0.cpp` as nonzero-offset guards.
-   Union variants, arrays, bitfields, enums/non-integral fields, and unpublished
+   **Next slice: canonicalize enum fields in structural NTTP values.**
+   Use each field's canonical enum identity and published underlying layout to
+   normalize its converted bits. Cover signed/unsigned widths and nested/base
+   subobjects, with syntax/declaration agreement and matching specialization
+   base facts. Keep the structural value import/trace worklists and nonzero-offset
+   guards in `test_canonical_structural_nttp_{base_source,equivalence,subobjects}_ret0.cpp`.
+   Union variants, arrays, bitfields, other non-integral fields, and unpublished
    value-class identities remain separate import work. `legacyDerivedBaseOffset`
    remains necessary for unsupported value-specialization roots; audit these and
    dependent roots before deleting it or closing a 3A exit criterion. See

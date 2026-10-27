@@ -522,8 +522,11 @@ def main():
                 ".child = class_type, .kind = CanonicalTypeKind::StructuralValue",
                 ".child = TypeId{}, .kind = CanonicalTypeKind::StructuralValue"),
             "lost_structural_value_members": (
-                ".array_extent = members.value",
-                ".array_extent = members.value & 0u"),
+                "packStructuralValueExtent(members, base_count)",
+                "packStructuralValueExtent(TypeId{members.value & 0u}, base_count)"),
+            "lost_structural_base_boundary": (
+                "packStructuralValueExtent(members, base_count)",
+                "packStructuralValueExtent(members, base_count & 0u)"),
             "lost_record_layout": (
                 "return entity && record_layout_ids_.contains(entity.value);",
                 "return entity && false;"),
