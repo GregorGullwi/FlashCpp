@@ -21,7 +21,7 @@ public:
 			return false;
 		}
 		const Slot* slots = slotData();
-		size_t index = hash_(key) & (count - 1);
+		size_t index = bucketIndex(key, count);
 		for (size_t probes = 0; probes < count; ++probes) {
 			const Slot& slot = slots[index];
 			if (slot.state == SlotState::Empty) {
@@ -60,7 +60,7 @@ public:
 			return false;
 		}
 		Slot* slots = slotData();
-		size_t index = hash_(key) & (count - 1);
+		size_t index = bucketIndex(key, count);
 		for (size_t probes = 0; probes < count; ++probes) {
 			Slot& slot = slots[index];
 			if (slot.state == SlotState::Empty) {
@@ -97,6 +97,19 @@ private:
 		return InlineSlotCapacity >= 8 ? 8 : 16;
 	}
 
+	static uint64_t mixHash(uint64_t value) {
+		value ^= value >> 30;
+		value *= 0xbf58476d1ce4e5b9ULL;
+		value ^= value >> 27;
+		value *= 0x94d049bb133111ebULL;
+		value ^= value >> 31;
+		return value;
+	}
+
+	size_t bucketIndex(const Key& key, size_t slot_count) const {
+		return static_cast<size_t>(mixHash(static_cast<uint64_t>(hash_(key)))) & (slot_count - 1);
+	}
+
 	Slot* slotData() {
 		return using_inline_slots_ ? inline_slots_.data() : heap_slots_.data();
 	}
@@ -110,7 +123,7 @@ private:
 	}
 
 	void insertInto(Slot* slots, size_t slot_count, const Key& key, const Value& value) {
-		size_t index = hash_(key) & (slot_count - 1);
+		size_t index = bucketIndex(key, slot_count);
 		size_t first_tombstone = slot_count;
 		while (true) {
 			Slot& slot = slots[index];
@@ -119,6 +132,7 @@ private:
 			} else if (slot.state == SlotState::Empty) {
 				if (first_tombstone != slot_count) {
 					index = first_tombstone;
+					--tombstone_count_;
 				}
 				slots[index] = Slot{key, value, SlotState::Occupied};
 				return;
