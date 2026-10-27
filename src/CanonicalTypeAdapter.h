@@ -121,7 +121,7 @@ struct CanonicalTypeImport {
 static_assert(sizeof(CanonicalTypeImport) == 8);
 
 CanonicalRecordFacts computeCanonicalRecordFacts(
-	const StructTypeInfo& struct_info);
+	CanonicalTypeTable& table, const StructTypeInfo& struct_info);
 
 struct CanonicalDeclaratorExport {
 	TypeId base;
@@ -2097,7 +2097,7 @@ inline bool tryPublishCanonicalRecordProperties(
 		kind != CanonicalTypeKind::TemplateSpecialization) {
 		return false;
 	}
-	const CanonicalRecordFacts facts = computeCanonicalRecordFacts(struct_info);
+	const CanonicalRecordFacts facts = computeCanonicalRecordFacts(table, struct_info);
 	table.publishRecordProperties(type, facts);
 	return true;
 }
