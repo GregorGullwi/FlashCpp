@@ -1837,7 +1837,18 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 
 							const auto& initializers = init_list.initializers();
-							if (!init_list.is_paren_init() && struct_info.isAggregate() && !struct_info.base_classes.empty()) {
+							bool uses_shared_aggregate_path = !struct_info.base_classes.empty();
+							if (!uses_shared_aggregate_path) {
+								for (const StructMember& member : struct_info.members) {
+									if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index);
+										member_struct_info != nullptr && member_struct_info->isAggregate() && !member.is_array &&
+											member.pointer_depth == 0 && !member.is_reference()) {
+										uses_shared_aggregate_path = true;
+										break;
+									}
+								}
+							}
+							if (!init_list.is_paren_init() && struct_info.isAggregate() && uses_shared_aggregate_path) {
 								const bool copies_same_type = initializers.size() == 1 && initializers.front().is<ExpressionNode>() &&
 									getSameTypeConstructorPreference(initializers.front(), type_node).has_value();
 								if (!copies_same_type) {

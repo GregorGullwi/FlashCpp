@@ -366,10 +366,13 @@ schema publication fail with an inconsistent union group.
 union with a nonzero base offset.
 
 Parser, semantic validation, and lowering share the aggregate appertainment
-walk in `AggregateElementCursor.h`; `AggregateInitialization.h` turns it into
-clause ranges. Reuse that cursor for further aggregate work and move its
-`TypeIndex` inputs to `TypeId` as boundary 3A reaches those APIs. Unbraced empty
-aggregate elements report `AggregateInitializerForEmptyElementRequiresBraces`.
+walk in `AggregateElementCursor.h`. Elements retain the full declared
+`TypeSpecifierNode`, one tagged root identity, arrays stepped through ordered
+declarators, and per-element initialization forms. Whole-element appertainment
+uses the shared conversion planner. Reuse that cursor for further aggregate
+work and move its `TypeIndex` inputs to `TypeId` as boundary 3A reaches those
+APIs. Unbraced empty aggregate elements report
+`AggregateInitializerForEmptyElementRequiresBraces`.
 
 ## Next work
 

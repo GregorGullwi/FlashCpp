@@ -19,6 +19,17 @@ Expression sema must retain the selected declaration and lowering must consume
 it. Published function EntityIds and the canonical function-pointer value adapter
 now provide target identity, but do not select or lower an overload themselves.
 
+## Explicit conversion functions still initialize class values implicitly
+
+An `explicit operator Target()` is correctly excluded from aggregate
+appertainment, but later scalar/member conversion lowering can still accept it.
+For example, `Derived value{Source{}, 1}` with an explicit-only
+`Source::operator Base()` is accepted instead of descending into `Base` and
+diagnosing the unavailable implicit conversion. The missing contract is in
+expression conversion legality, not aggregate appertainment: implicit
+class-to-class or class-to-scalar initialization must select only non-explicit
+conversion functions before codegen lowers the conversion.
+
 ## Implicit derived copy/move construction can omit a template base
 
 An instantiated `template<class T> struct Base { T value; };` can have no
