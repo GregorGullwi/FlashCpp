@@ -3896,6 +3896,25 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					}
 				}
 			}
+		} else if (type_spec.has_ordered_declarator() && !type_spec.declarator_components().empty() &&
+			type_spec.declarator_components().front().kind == DeclaratorComponentKind::Array) {
+			// Member-pointer declarators can keep their outer array suffix only in
+			// the ordered spine. Treat that spine as inline array storage so layout,
+			// initialization, and canonical import agree.
+			is_array = true;
+			for (const DeclaratorComponent& component : type_spec.declarator_components()) {
+				if (component.kind != DeclaratorComponentKind::Array) {
+					break;
+				}
+				if (component.payload == 0) {
+					return errorf(DiagnosticId::ArrayBoundForMemberMustBePositive, decl.identifier_token(),
+						"Array bound for member '{}' must be greater than 0", decl.identifier_token().value());
+				}
+				const size_t dim_size = static_cast<size_t>(component.payload);
+				array_dimensions.push_back(dim_size);
+				member_size *= dim_size;
+				referenced_size_bits *= dim_size;
+			}
 		} else if (type_spec.has_pointee_array_declarator()) {
 			pointee_array_declarator = true;
 			if (!type_spec.array_dimensions().empty()) {

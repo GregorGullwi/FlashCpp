@@ -1062,6 +1062,60 @@ using Changed = Base<second>;
 	CHECK(table.classBaseAt(derived, 1).type == named);
 }
 
+TEST_CASE("Member function pointer array elements import as typed canonical values") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+struct Object { int first(int value); int second(int value); };
+struct Key { int (Object::*methods[2])(int); int tag; };
+constexpr Key first{{&Object::first, &Object::second}, 1};
+constexpr Key second{{&Object::first, &Object::first}, 1};
+template<Key Value> struct Base { short member; };
+struct Padding { long long guard; };
+struct Derived : Padding, Base<first> {};
+using Named = Base<first>;
+using Literal = Base<Key{{&Object::first, &Object::second}, 1}>;
+using Changed = Base<second>;
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("structural_member_function_pointer_array.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto import_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const TypeId named = import_type("Named");
+	CHECK(named == import_type("Literal"));
+	CHECK(named != import_type("Changed"));
+	const TypeId value_id = table.templateArgumentValue(table.templateSpecializationArguments(named));
+	const CanonicalTypeNode value = table.node(value_id);
+	REQUIRE(value.kind == CanonicalTypeKind::StructuralValue);
+	const TypeId link = unpackStructuralValueSubobjects(value.array_extent);
+	const CanonicalTypeNode methods = table.node(table.templateArgumentValue(link));
+	REQUIRE(methods.kind == CanonicalTypeKind::StructuralArrayValue);
+	CHECK(table.node(methods.child).kind == CanonicalTypeKind::Array);
+	CHECK(table.node(table.node(methods.child).child).kind == CanonicalTypeKind::MemberFunctionPointer);
+	TypeId method_link = unpackStructuralValueSubobjects(methods.array_extent);
+	const CanonicalTypeNode first_method = table.node(table.templateArgumentValue(method_link));
+	CHECK(first_method.kind == CanonicalTypeKind::MemberFunctionPointerValue);
+	CHECK(first_method.array_extent == 0);
+	method_link = table.templateArgumentNext(method_link);
+	const CanonicalTypeNode second_method = table.node(table.templateArgumentValue(method_link));
+	CHECK(second_method.kind == CanonicalTypeKind::MemberFunctionPointerValue);
+	CHECK(second_method.array_extent == 1);
+	const TypeId derived = import_type("Derived");
+	REQUIRE(table.hasClassBaseSchema(derived));
+	CHECK(table.classBaseAt(derived, 1).type == named);
+}
+
 TEST_CASE("Canonical integral arguments use converted value and canonical type identity") {
 	static_assert(sizeof(CanonicalTypeNode) == 16);
 	static_assert(sizeof(CanonicalTemplateArgument) == 20);
