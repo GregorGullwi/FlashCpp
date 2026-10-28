@@ -5596,7 +5596,16 @@ TEST_SUITE("Diagnostics") {
 	}
 
 	TEST_CASE("Converted pointer-to-reference diagnostic carries structured payload end to end") {
-		std::string_view code = "using R = int&;\nint main(){ int x = sizeof(R(*)); return x; }\n";
+		std::string_view code;
+		SUBCASE("Parenthesized lvalue-reference alias") {
+			code = "using R = int&;\nint main(){ int x = sizeof(R(*)); return x; }\n";
+		}
+		SUBCASE("Chained reference alias") {
+			code = "using R = short&;\nusing Alias = R;\nint main(){ return sizeof(Alias(*)); }\n";
+		}
+		SUBCASE("Nested rvalue-reference alias declarator") {
+			code = "using R = long long&&;\nint main(){ return sizeof(R((**))); }\n";
+		}
 		Lexer location_lexer(code);
 		SourceLocation expected_pointer_location{};
 		while (true) {
