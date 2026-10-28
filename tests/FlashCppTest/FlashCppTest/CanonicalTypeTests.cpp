@@ -1179,6 +1179,70 @@ using ChangedOwner = BaseHolder<fourth>;
 	CHECK(table.classBaseAt(derived, 1).type == named);
 }
 
+TEST_CASE("Virtual member function pointer structural fields import by declaring class") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+struct Base { virtual int first(int value) { return value; } virtual int second(int value) { return value; } };
+struct Middle : Base {};
+struct Key { int (Middle::*pointer)(int); int tag; };
+struct DirectKey { int (Base::*pointer)(int); int tag; };
+constexpr Key first{&Middle::first, 1};
+constexpr Key second{&Middle::second, 1};
+constexpr DirectKey direct_first{&Base::first, 1};
+template<Key Value> struct BaseHolder { short member; };
+template<DirectKey Value> struct DirectHolder { short member; };
+struct Padding { long long guard; };
+struct Derived : Padding, BaseHolder<first> {};
+using Named = BaseHolder<first>;
+using Literal = BaseHolder<Key{&Middle::first, 1}>;
+using Changed = BaseHolder<second>;
+using DirectNamed = DirectHolder<direct_first>;
+using DirectLiteral = DirectHolder<DirectKey{&Base::first, 1}>;
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("structural_virtual_member_function_pointer.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto import_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const auto structural_target = [&](TypeId specialization) {
+		const TypeId value_id = table.templateArgumentValue(table.templateSpecializationArguments(specialization));
+		const CanonicalTypeNode value = table.node(value_id);
+		REQUIRE(value.kind == CanonicalTypeKind::StructuralValue);
+		const TypeId link = unpackStructuralValueSubobjects(value.array_extent);
+		const CanonicalTypeNode pointer = table.node(table.templateArgumentValue(link));
+		REQUIRE(pointer.kind == CanonicalTypeKind::MemberFunctionPointerValue);
+		return pointer;
+	};
+	const TypeId base_type = import_type("Base");
+	const TypeId named = import_type("Named");
+	CHECK(named == import_type("Literal"));
+	CHECK(named != import_type("Changed"));
+	const CanonicalTypeNode first_pointer = structural_target(named);
+	CHECK(unpackMemberFunctionPointerValueDeclaringClass(first_pointer.array_extent) == base_type);
+	CHECK(unpackMemberFunctionPointerValueOrdinal(first_pointer.array_extent) == 0);
+	const CanonicalTypeNode second_pointer = structural_target(import_type("Changed"));
+	CHECK(unpackMemberFunctionPointerValueOrdinal(second_pointer.array_extent) == 1);
+	const TypeId direct_named = import_type("DirectNamed");
+	CHECK(direct_named == import_type("DirectLiteral"));
+	const CanonicalTypeNode direct_pointer = structural_target(direct_named);
+	CHECK(unpackMemberFunctionPointerValueDeclaringClass(direct_pointer.array_extent) == base_type);
+	CHECK(unpackMemberFunctionPointerValueOrdinal(direct_pointer.array_extent) == 0);
+	const TypeId derived = import_type("Derived");
+	REQUIRE(table.hasClassBaseSchema(derived));
+	CHECK(table.classBaseAt(derived, 1).type == named);
+}
+
 TEST_CASE("Canonical integral arguments use converted value and canonical type identity") {
 	static_assert(sizeof(CanonicalTypeNode) == 16);
 	static_assert(sizeof(CanonicalTemplateArgument) == 20);
