@@ -60,9 +60,9 @@ depth through structural rehydration. Direct and unambiguous non-virtual
 inherited member-object pointer fields resolve to a declaring-class TypeId plus
 member ordinal, and member-object-pointer arrays preserve their outer array
 wrapper and element targets. Direct non-virtual member-function pointer fields
-use the owner's declaration ordinal, with overloads selected by canonical
-signature. Non-null object/function pointer targets, member-function-pointer
-arrays, ambiguous or virtual-base member pointers, virtual or
+and member-function-pointer arrays use the owner's declaration ordinal, with
+overloads selected by canonical signature. Non-null object/function pointer
+targets, ambiguous or virtual-base member pointers, virtual or
 inherited-overload member-function pointers, and non-null object/function
 pointer array elements still need declaration identity.
 
@@ -96,8 +96,9 @@ Retain `test_canonical_structural_nttp_base_source_ret0.cpp`,
 `test_canonical_structural_nttp_member_function_pointer_ret0.cpp`,
 `test_canonical_structural_nttp_inherited_member_object_pointer_ret0.cpp`, and
 `test_canonical_structural_nttp_overloaded_member_function_pointer_ret0.cpp`,
-and `test_canonical_structural_nttp_member_pointer_array_ret0.cpp` as current
-guards.
+`test_canonical_structural_nttp_member_pointer_array_ret0.cpp`, and
+`test_canonical_structural_nttp_member_function_pointer_array_ret0.cpp` as
+current guards.
 
 ## Bit-field declarations accept ill-formed forms
 
@@ -113,14 +114,6 @@ diagnosed:
 The large-width case is additionally clamped by layout, so declaration and
 layout facts disagree while structural value import fails closed. Reject all
 three forms while parsing the member declaration, before layout publication.
-
-## Member-function pointer arrays are not parsed as arrays
-
-`int (Object::*methods[2])(int);` is currently treated as a scalar member
-function pointer; initializing multiple elements reports “Too many initializers
-for scalar type”. Member-object-pointer arrays work and canonicalize structural
-elements. The declarator spine must apply the array suffix outside the member
-function pointer component.
 
 ## Explicit casts of overloaded member-function addresses lose target identity
 
