@@ -1737,6 +1737,14 @@ inline std::optional<TypeId> tryImportCanonicalStructuralFloating(CanonicalTypeT
 	return table.floatingValue(field_type, bits);
 }
 
+inline std::optional<TypeId> tryImportCanonicalStructuralNullPointer(CanonicalTypeTable& table, TypeId field_type) {
+	const CanonicalTypeKind kind = table.node(field_type).kind;
+	if (kind != CanonicalTypeKind::Pointer && kind != CanonicalTypeKind::MemberObjectPointer && kind != CanonicalTypeKind::MemberFunctionPointer) {
+		return std::nullopt;
+	}
+	return table.nullPointerValue(field_type);
+}
+
 inline std::optional<TypeId> tryImportCanonicalStructuralFieldValue(CanonicalTypeTable& table, TypeId field_type,
 	const FlashCpp::NonTypeValueIdentity& value, size_t storage_size, std::optional<uint8_t> bit_width) {
 	if (value.is_dependent) {
@@ -1747,6 +1755,12 @@ inline std::optional<TypeId> tryImportCanonicalStructuralFieldValue(CanonicalTyp
 	}
 	if (value.kind == FlashCpp::NonTypeValueIdentityKind::Floating && !bit_width.has_value()) {
 		return tryImportCanonicalStructuralFloating(table, field_type, static_cast<uint64_t>(value.value), storage_size);
+	}
+	if (value.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr) {
+		return tryImportCanonicalStructuralNullPointer(table, field_type);
+	}
+	if (value.kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer && value.isNullMemberPointer()) {
+		return tryImportCanonicalStructuralNullPointer(table, field_type);
 	}
 	return std::nullopt;
 }

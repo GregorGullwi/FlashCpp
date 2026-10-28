@@ -886,6 +886,18 @@ TypeId CanonicalTypeTable::floatingValue(TypeId value_type, uint64_t converted_b
 		.qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None, .array_extent = converted_bits});
 }
 
+TypeId CanonicalTypeTable::nullPointerValue(TypeId pointer_type) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const CanonicalTypeNode type = nodeUnlocked(pointer_type);
+	if (type.kind != CanonicalTypeKind::Pointer && type.kind != CanonicalTypeKind::MemberObjectPointer &&
+		type.kind != CanonicalTypeKind::MemberFunctionPointer) {
+		throw InternalError("canonical type: null value requires a pointer-like type");
+	}
+	return internUnlocked({.child = pointer_type, .kind = CanonicalTypeKind::NullPointerValue, .builtin = CanonicalBuiltinKind::Void,
+		.qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None, .array_extent = 0});
+}
+
 TypeId CanonicalTypeTable::structuralValue(TypeId class_type, std::span<const TypeId> subobject_values, uint32_t base_count) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
@@ -1902,8 +1914,8 @@ bool CanonicalTypeTable::isReference(CanonicalTypeKind kind) {
 
 bool CanonicalTypeTable::isValueKind(CanonicalTypeKind kind) {
 	return kind == CanonicalTypeKind::IntegralValue || kind == CanonicalTypeKind::FloatingValue ||
-		kind == CanonicalTypeKind::StructuralValue || kind == CanonicalTypeKind::StructuralArrayValue ||
-		kind == CanonicalTypeKind::StructuralUnionValue;
+		kind == CanonicalTypeKind::NullPointerValue || kind == CanonicalTypeKind::StructuralValue ||
+		kind == CanonicalTypeKind::StructuralArrayValue || kind == CanonicalTypeKind::StructuralUnionValue;
 }
 
 bool CanonicalTypeTable::isInternalLink(CanonicalTypeKind kind) {
@@ -2817,6 +2829,7 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 			case CanonicalTypeKind::StructuralArrayValue:
 			case CanonicalTypeKind::IntegralValue:
 			case CanonicalTypeKind::FloatingValue:
+			case CanonicalTypeKind::NullPointerValue:
 			case CanonicalTypeKind::ValueTemplateArg:
 			case CanonicalTypeKind::NonTypeTemplateArg:
 			case CanonicalTypeKind::TemplateTemplateArg:

@@ -57,6 +57,9 @@ enum class CanonicalTypeKind : uint8_t {
 	// Internal converted floating value: child is its Float/Double type and
 	// array_extent is the exact value representation (32 or 64 bits).
 	FloatingValue,
+	// Null pointer-like value: child is its canonical Pointer,
+	// MemberObjectPointer, or MemberFunctionPointer type and extent is zero.
+	NullPointerValue,
 };
 
 enum class CanonicalTemplateArgKind : uint8_t {
@@ -252,7 +255,8 @@ inline TypeId unpackDependentMemberAliasArgs(uint64_t array_extent) {
 // IntegralValue is internal: child is its converted integral/enum type and
 // array_extent is its converted 64-bit value representation. FloatingValue is
 // internal: child is its Float/Double type and array_extent is the exact value
-// representation. ValueTemplateArg stores the converted value TypeId in
+// representation. NullPointerValue is internal: child is its pointer-like type
+// and extent is zero. ValueTemplateArg stores the converted value TypeId in
 // array_extent and the next link in child.
 struct CanonicalTypeNode {
 	TypeId child;
@@ -596,6 +600,10 @@ public:
 	// Exact Float/Double representation. The caller supplies the bit pattern of
 	// the declared floating type; no host-string or rounding identity is used.
 	TypeId floatingValue(TypeId value_type, uint64_t converted_bits);
+	// Null value of the supplied canonical pointer-like type. Non-null pointer
+	// targets are declaration identity and remain outside this API until that
+	// publication exists.
+	TypeId nullPointerValue(TypeId pointer_type);
 	TypeId structuralValue(TypeId class_type, std::span<const TypeId> subobject_values, uint32_t base_count);
 	TypeId structuralUnionValue(TypeId owner_type, uint16_t first_variant, std::optional<uint16_t> active_variant, TypeId value);
 
