@@ -2142,22 +2142,15 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 			scalar_storage_size = published.size_bytes;
 			bit_width = published.bit_width;
 		} else if (field.is_array) {
-			const StructDeclarationNode* declaration = record->declaration_node;
-			if (declaration == nullptr || !declaration->has_entity_id()) {
+			if (!table.hasRecordSubobjectTypes(owner_type) || member_index >= table.recordSubobjectMemberCount(owner_type)) {
 				return false;
 			}
-			const EntityId entity = declaration->entity_id();
-			if (!table.hasRecordFieldSchema(entity)) {
-				return false;
-			}
-			const CanonicalRecordMember published = table.recordMemberAt(entity, member_index);
-			field_type = published.type;
+			field_type = table.recordSubobjectMemberAt(owner_type, member_index);
 			if (!field_type) {
 				return false;
 			}
 		}
 		field_type = unqualified(field_type);
-		const CanonicalTypeNode node = table.node(field_type);
 		if (field.is_array) {
 			if (member.nested_value == nullptr || !member.nested_value->is_array || !enqueue_array(member.nested_value, field_type)) {
 				return false;
@@ -2171,7 +2164,7 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 			return true;
 		}
 		if (member.nested_value != nullptr) {
-			if (bit_width.has_value() || node.kind != CanonicalTypeKind::Record || !enqueue_record(member.nested_value, field_type)) {
+			if (bit_width.has_value() || !enqueue_record(member.nested_value, field_type)) {
 				return false;
 			}
 			if (wrap_union) {
@@ -2256,7 +2249,7 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 					if (expected_node.kind != CanonicalTypeKind::Array || !enqueue_array(element.nested_value, expected)) {
 						return std::nullopt;
 					}
-				} else if (expected_node.kind != CanonicalTypeKind::Record || !enqueue_record(element.nested_value, expected)) {
+				} else if (!enqueue_record(element.nested_value, expected)) {
 					return std::nullopt;
 				}
 				continue;

@@ -102,9 +102,10 @@ Null pointer-like array elements also carry explicit canonical null values and
 their declared element pointer depth. Non-null pointer array elements still
 fail closed.
 
-Class-template structural values now import for plain implicit specializations,
-including substituted member values, while specializations with bases or union
-groups remain fail-closed.
+Concrete implicit class-template values import through supported nonvirtual
+bases, nested members, and arrays. Array fields read the owning TypeId's published
+subobject schema. Specialization union groups and unpublished field-layout or
+dependent base facts remain fail-closed.
 
 Direct and inherited non-virtual member-object pointer targets now use the
 declaring class TypeId plus member ordinal as canonical identity; ambiguous and
@@ -439,18 +440,11 @@ Continue boundary 3A in this order.
    specialization; the native canonical suite includes a mutation-checked
    importer test. The 3A rollup remains 10/79; no exit criterion is closed.
 
-   **Class-template structural value import: complete for plain implicit
-   specializations.** The structural importer now imports an implicit class
-   template specialization through `importCanonicalClassTypeInfo` instead of a
-   bare TypeIndex syntax node, and `structuralValue` accepts a
-   TemplateSpecialization class TypeId. A `Key<int>`-style value therefore
-   keeps its specialization identity while its substituted member values remain
-   typed canonical subobjects. Specializations with bases or union groups still
-   fail closed. `tests/test_canonical_structural_nttp_class_template_ret0.cpp`
-   protects equivalent and changed `Key<int>` values plus a base specialization;
-   the native canonical suite includes a mutation-checked importer test and the
-   canonical table accepts specialization children directly. The 3A rollup
-   remains 10/79; no exit criterion is closed.
+   **Class-template structural values:** supported nonvirtual specialization
+   bases compose through members and arrays with exact declared TypeIds.
+   Retain `test_canonical_structural_nttp_specialization_bases_ret0.cpp` and the
+   native mismatch/missing-schema guards. Specialization union/field-layout
+   facts and unpublished dependent bases remain deferred. The rollup stays 10/79.
 
    **Non-null direct member-object pointer values: complete.** Structural
    member-object-pointer fields now resolve the selected direct data member
@@ -577,8 +571,9 @@ Continue boundary 3A in this order.
    ordinals. The 3A rollup remains 10/79; no exit criterion is closed.
 
    **Next slice: import remaining non-null pointer and specialization facts.**
-   Non-null object/function pointer targets, ambiguous/virtual-base member
-   pointers, specialization base/union facts, and the nested
+   Start with non-null object/function pointer target declaration identity.
+   Ambiguous/virtual-base member pointers, specialization union/field-layout
+   facts, unpublished dependent bases, and the nested
    anonymous-union-in-anonymous-union hierarchy still need canonical subobject
    identity. Extend the typed-value importer and its specialization base facts
    before deleting `legacyDerivedBaseOffset`; audit dependent and other

@@ -787,6 +787,105 @@ using Changed = Base<Key<int>{43}>;
 	CHECK(table.classBaseAt(derived, 1).type == named);
 }
 
+TEST_CASE("Specialization base subobjects retain canonical identity when nested") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	CompileContext compile_context;
+	compile_context.setInputFile("structural_specialization_bases.cpp");
+	Lexer lexer(R"(
+template<class T> struct Payload { T value; };
+struct Padding { long long guard; };
+template<class T> struct Key : Padding, Payload<T> { unsigned short tag; };
+struct Wrapper { Key<short> nested; };
+template<class T> struct ArrayWrapper { Key<T> elements[2]; };
+constexpr Key<short> key{{12345678901LL}, {-7}, 42};
+constexpr Key<long long> wide{{12345678901LL}, {-7}, 42};
+constexpr Wrapper wrapper{key};
+constexpr ArrayWrapper<short> array{{key, {{9}, {8}, 7}}};
+template<Key<short> Value> struct Tag {};
+template<Wrapper Value> struct NestedTag {};
+template<ArrayWrapper<short> Value> struct ArrayTag {};
+template<Key<long long> Value> struct WideTag {};
+using Named = Tag<key>;
+using Literal = Tag<Key<short>{{12345678901LL}, {-7}, 42}>;
+using Changed = Tag<Key<short>{{12345678901LL}, {-8}, 42}>;
+using Nested = NestedTag<wrapper>;
+using Array = ArrayTag<array>;
+using Wide = WideTag<wide>;
+)");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto import_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const auto argument_value = [&](std::string_view name) {
+		const TypeId owner = import_type(name);
+		const TypeId argument = table.templateSpecializationArguments(owner);
+		REQUIRE(table.node(argument).kind == CanonicalTypeKind::ValueTemplateArg);
+		return table.templateArgumentValue(argument);
+	};
+	const TypeId named = argument_value("Named");
+	CHECK(named == argument_value("Literal"));
+	CHECK(named != argument_value("Changed"));
+	const CanonicalTypeNode value = table.node(named);
+	REQUIRE(value.kind == CanonicalTypeKind::StructuralValue);
+	REQUIRE(table.node(value.child).kind == CanonicalTypeKind::TemplateSpecialization);
+	REQUIRE(table.hasClassBaseSchema(value.child));
+	REQUIRE(table.classBaseCount(value.child) == 2);
+	CHECK(table.classBaseAt(value.child, 1).offset_bytes > 0);
+	CHECK(unpackStructuralValueBaseCount(value.array_extent) == 2);
+	TypeId link = unpackStructuralValueSubobjects(value.array_extent);
+	link = table.templateArgumentNext(link);
+	const CanonicalTypeNode base = table.node(table.templateArgumentValue(link));
+	CHECK(base.child == table.classBaseAt(value.child, 1).type);
+	REQUIRE(table.node(base.child).kind == CanonicalTypeKind::TemplateSpecialization);
+	const TypeId base_link = unpackStructuralValueSubobjects(base.array_extent);
+	const CanonicalTypeNode scalar = table.node(table.templateArgumentValue(base_link));
+	CHECK(scalar.child == table.builtin(CanonicalBuiltinKind::Short));
+	CHECK(static_cast<int64_t>(scalar.array_extent) == -7);
+	const CanonicalTypeNode nested = table.node(argument_value("Nested"));
+	const TypeId nested_link = unpackStructuralValueSubobjects(nested.array_extent);
+	CHECK(table.templateArgumentValue(nested_link) == named);
+	const CanonicalTypeNode array_wrapper = table.node(argument_value("Array"));
+	const TypeId array_link = unpackStructuralValueSubobjects(array_wrapper.array_extent);
+	const CanonicalTypeNode array = table.node(table.templateArgumentValue(array_link));
+	REQUIRE(array.kind == CanonicalTypeKind::StructuralArrayValue);
+	const TypeId element_link = unpackStructuralValueSubobjects(array.array_extent);
+	CHECK(table.templateArgumentValue(element_link) == named);
+	const CanonicalTypeNode wide = table.node(argument_value("Wide"));
+	CHECK(wide.child != value.child);
+	CHECK(table.classBaseAt(wide.child, 1).type != base.child);
+	const auto bridge_value = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const StructTypeInfo* record = canonicalClassStructInfoFromTypeInfo(*info);
+		REQUIRE(record != nullptr);
+		REQUIRE(record->declaration_node != nullptr);
+		const auto& arguments = record->declaration_node->outer_template_args();
+		REQUIRE(arguments.size() == 1);
+		REQUIRE(arguments[0].structural_value != nullptr);
+		return arguments[0].structural_value;
+	};
+	FlashCpp::StructuralClassValue mismatched = *bridge_value("Nested");
+	REQUIRE(mismatched.members.size() == 1);
+	mismatched.members[0].nested_value = bridge_value("Wide");
+	CHECK_FALSE(tryImportCanonicalStructuralValue(table, &mismatched).has_value());
+	FlashCpp::StructuralClassValue mismatched_array = *bridge_value("Array")->members[0].nested_value;
+	mismatched_array.members[0].nested_value = bridge_value("Wide");
+	FlashCpp::StructuralClassValue mismatched_owner = *bridge_value("Array");
+	mismatched_owner.members[0].nested_value = &mismatched_array;
+	CHECK_FALSE(tryImportCanonicalStructuralValue(table, &mismatched_owner).has_value());
+	CanonicalTypeTable missing_schemas;
+	CHECK_FALSE(tryImportCanonicalStructuralValue(missing_schemas, bridge_value("Named")).has_value());
+}
+
 TEST_CASE("Member object pointer structural NTTP fields import by member ordinal") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
