@@ -3146,13 +3146,13 @@ trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const Typ
 			if (!member_function.is_conversion_operator() || !member_function.function_decl.is<FunctionDeclarationNode>()) {
 				continue;
 			}
-			if (!allow_explicit && member_function.is_explicit) {
+			const FunctionDeclarationNode& function = member_function.function_decl.as<FunctionDeclarationNode>();
+			if (!allow_explicit && (member_function.is_explicit || function.is_explicit())) {
 				continue;
 			}
 			if (!member_function.conversion_target_type.is_valid()) {
 				continue;
 			}
-			const FunctionDeclarationNode& function = member_function.function_decl.as<FunctionDeclarationNode>();
 			const TypeSpecifierNode& return_type = function.decl_node().type_specifier_node();
 			TypeSpecifierNode canonical_return_type = return_type;
 			tryBindPublishedTypeEntity(canonical_return_type);
@@ -3310,16 +3310,16 @@ trySelectCompatibilityUserDefinedConversionOperator(TypeIndex source_type_index,
 				!member_function.function_decl.is<FunctionDeclarationNode>()) {
 				continue;
 			}
+			const FunctionDeclarationNode& function = member_function.function_decl.as<FunctionDeclarationNode>();
 			// An explicit conversion function is not viable for an implicit
 			// conversion ([class.conv.fct]/2). Explicit conversions (static_cast,
 			// direct-initialization) pass allow_explicit to include them.
-			if (!allow_explicit && member_function.is_explicit) {
+			if (!allow_explicit && (member_function.is_explicit || function.is_explicit())) {
 				continue;
 			}
 			if (!member_function.conversion_target_type.is_valid()) {
 				continue;
 			}
-			const FunctionDeclarationNode& function = member_function.function_decl.as<FunctionDeclarationNode>();
 			const TypeSpecifierNode& return_type = function.decl_node().type_specifier_node();
 			TypeSpecifierNode canonical_return_type = return_type;
 			tryBindPublishedTypeEntity(canonical_return_type);

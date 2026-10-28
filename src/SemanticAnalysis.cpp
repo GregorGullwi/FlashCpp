@@ -3875,27 +3875,8 @@ TypeSpecifierNode SemanticAnalysis::finalizePlaceholderDeduction(TypeCategory pl
 bool SemanticAnalysis::aggregateElementAppertainsWhole(
 	const AggregateElements::Element& element,
 	const ASTNode& clause) {
-	if (!element.is_aggregate) {
-		return true;
-	}
-	if (element.is_array || element.struct_info == nullptr) {
-		return false;
-	}
-
-	const CanonicalTypeId source_type_id = inferExpressionType(clause);
-	if (!source_type_id) {
-		return false;
-	}
-	const CanonicalTypeDesc& source_type = type_context_.get(source_type_id);
-	if (source_type.category() != TypeCategory::Struct) {
-		return false;
-	}
-	const TypeIndex source_type_index = source_type.type_index;
-	const TypeIndex target_type_index = element.struct_info->own_type_index_.value_or(TypeIndex{});
-	if (!source_type_index.is_valid() || !target_type_index.is_valid() || tryGetStructTypeInfo(source_type_index) == nullptr) {
-		return false;
-	}
-	return source_type_index == target_type_index || isDerivedFrom(source_type_index, target_type_index, false);
+	const std::optional<TypeSpecifierNode> source_type = getExpressionType(clause);
+	return source_type.has_value() && AggregateInitialization::acceptsWholeExpression(element, *source_type, clause);
 }
 
 void SemanticAnalysis::validateAggregateInitializerAppertainment(
@@ -3908,16 +3889,89 @@ void SemanticAnalysis::validateAggregateInitializerAppertainment(
 		[this](const AggregateElements::Element& element, const ASTNode& clause) {
 			return aggregateElementAppertainsWhole(element, clause);
 		});
-	if (!partition.empty_element_clause.has_value()) {
-		return;
+	if (partition.empty_element_clause.has_value()) {
+		throw makeStructuredCompileError(
+			context_.diagnostics(),
+			DiagnosticId::AggregateInitializerForEmptyElementRequiresBraces,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(diagnostic_token),
+			"Initializer for aggregate with no elements requires explicit braces",
+			{});
 	}
-	throw makeStructuredCompileError(
-		context_.diagnostics(),
-		DiagnosticId::AggregateInitializerForEmptyElementRequiresBraces,
-		DiagnosticSeverity::Error,
-		SourceLocation::fromToken(diagnostic_token),
-		"Initializer for aggregate with no elements requires explicit braces",
-		{});
+
+	if (init_list.size() == 1 && struct_info.own_type_index_.has_value()) {
+		const ASTNode& only_clause = init_list.initializers().front();
+		const std::optional<TypeSpecifierNode> only_type = only_clause.is<ExpressionNode>() ? getExpressionType(only_clause) : std::nullopt;
+		if (only_type.has_value() && isLogicallySameStructType(only_type->type_index(), *struct_info.own_type_index_)) {
+			return;
+		}
+	}
+
+	for (size_t base_index = 0; base_index < struct_info.base_classes.size(); ++base_index) {
+		if (partition.base_elements[base_index].form != AggregateInitialization::InitializationForm::WholeExpression) {
+			continue;
+		}
+		const AggregateInitialization::ClauseRange range = partition.base_elements[base_index].range;
+		if (range.empty() || range.end - range.begin != 1) {
+			continue;
+		}
+		const ASTNode& clause = init_list.initializers()[range.begin];
+		if (!clause.is<ExpressionNode>()) {
+			continue;
+		}
+		const BaseClassSpecifier& base = struct_info.base_classes[base_index];
+		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+		if (base_type_info == nullptr) {
+			continue;
+		}
+		const TypeSpecifierNode target_type(
+			base.type_index,
+			static_cast<int>(base_type_info->sizeInBits().value),
+			Token(),
+			CVQualifier::None,
+			ReferenceQualifier::None);
+		const std::optional<TypeSpecifierNode> source_type = getExpressionType(clause);
+		if (!source_type.has_value()) {
+			continue;
+		}
+		const ConversionPlan plan = buildConversionPlan(*source_type, target_type, &clause);
+		if (!plan.is_valid || plan.kind != StandardConversionKind::UserDefined) {
+			continue;
+		}
+		const CanonicalTypeId target_type_id = canonicalizeTypeForImplicitConversion(target_type);
+		const CanonicalTypeId source_type_id = inferExpressionType(clause);
+		if (target_type_id && source_type_id) {
+			tryAnnotateConversionByTypeId(clause, target_type_id, source_type_id);
+		}
+	}
+
+	for (size_t member_index = 0; member_index < struct_info.members.size(); ++member_index) {
+		if (partition.member_elements[member_index].form != AggregateInitialization::InitializationForm::WholeExpression) {
+			continue;
+		}
+		const AggregateInitialization::ClauseRange range = partition.member_elements[member_index].range;
+		if (range.empty() || range.end - range.begin != 1) {
+			continue;
+		}
+		const ASTNode& clause = init_list.initializers()[range.begin];
+		if (!clause.is<ExpressionNode>()) {
+			continue;
+		}
+		const TypeSpecifierNode target_type = typeSpecifierFromStructMemberProjection(struct_info.members[member_index]);
+		const std::optional<TypeSpecifierNode> source_type = getExpressionType(clause);
+		if (!source_type.has_value()) {
+			continue;
+		}
+		const ConversionPlan plan = buildConversionPlan(*source_type, target_type, &clause);
+		if (!plan.is_valid || plan.kind != StandardConversionKind::UserDefined) {
+			continue;
+		}
+		const CanonicalTypeId target_type_id = canonicalizeTypeForImplicitConversion(target_type);
+		const CanonicalTypeId source_type_id = inferExpressionType(clause);
+		if (target_type_id && source_type_id) {
+			tryAnnotateConversionByTypeId(clause, target_type_id, source_type_id);
+		}
+	}
 }
 
 void SemanticAnalysis::normalizeTopLevelNode(const ASTNode& node) {
@@ -5036,18 +5090,7 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 				}
 			};
 
-			if (init->is<InitializerListNode>() && vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
-				const TypeSpecifierNode& declared_type = vtype.as<TypeSpecifierNode>();
-				const StructTypeInfo* struct_info = declared_type.category() == TypeCategory::Struct && !declared_type.is_array()
-					? tryGetStructTypeInfo(declared_type.type_index())
-					: nullptr;
-				if (struct_info != nullptr && struct_info->isAggregate()) {
-					validateAggregateInitializerAppertainment(
-						*struct_info,
-						init->as<InitializerListNode>(),
-						decl.identifier_token());
-				}
-			}
+
 			// For struct types initialized via InitializerListNode (direct-init syntax
 			// like `Pair p(42, 3.14)`), annotate each initializer argument with the
 			// matching constructor parameter type.
@@ -5063,6 +5106,18 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			// constructor annotation afterward so the final normalized node retains the
 			// selected constructor for codegen.
 			annotateStructInitListCtor();
+			if (init->is<InitializerListNode>() && vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& declared_type = vtype.as<TypeSpecifierNode>();
+				const StructTypeInfo* struct_info = declared_type.category() == TypeCategory::Struct && !declared_type.is_array()
+					? tryGetStructTypeInfo(declared_type.type_index())
+					: nullptr;
+				if (struct_info != nullptr && struct_info->isAggregate()) {
+					validateAggregateInitializerAppertainment(
+						*struct_info,
+						init->as<InitializerListNode>(),
+						decl.identifier_token());
+				}
+			}
 			// Annotate the initializer with any needed implicit conversion to the declared type.
 			if (decl_type_id) {
 				checkMemberFunctionAddressAccessForTarget(*init, decl_type_id);

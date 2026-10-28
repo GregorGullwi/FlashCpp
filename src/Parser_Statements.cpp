@@ -2489,65 +2489,12 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	};
 
 	auto parse_element_brace_initializer = [&](const AggregateElements::Element& element) -> ParseResult {
-		TypeSpecifierNode element_type_spec;
-		bool have_element_type_spec = false;
-		if (const TypeInfo* element_type_info = tryGetTypeInfo(element.type_index)) {
-			if (element_type_info->getStructInfo() != nullptr || is_struct_type(element.type_index.category())) {
-				const TypeCategory struct_category = element_type_info->getStructInfo() != nullptr
-					? TypeCategory::Struct
-					: element_type_info->resolvedType();
-				element_type_spec = TypeSpecifierNode(
-					element.type_index.withCategory(struct_category),
-					static_cast<int>(element_type_info->sizeInBits().value),
-					Token(),
-					CVQualifier::None,
-					ReferenceQualifier::None);
-			} else {
-				element_type_spec = TypeSpecifierNode(
-					element.type_index.category(),
-					TypeQualifier::None,
-					static_cast<int>(element_type_info->sizeInBits().value),
-					Token(),
-					CVQualifier::None);
-				element_type_spec.set_type_index(element.type_index);
-			}
-			have_element_type_spec = true;
-		} else if (element.type_index.category() != TypeCategory::Invalid) {
-			element_type_spec = TypeSpecifierNode(
-				element.type_index.category(),
-				TypeQualifier::None,
-				get_type_size_bits(element.type_index.category()),
-				Token(),
-				CVQualifier::None);
-			have_element_type_spec = true;
-		}
-
-		if (!have_element_type_spec) {
-			return parse_expression(2, ExpressionContext::Normal);
-		}
-		if (element.is_array) {
-			element_type_spec.set_array_dimensions(element.dimensions);
-		}
-		return parse_brace_initializer(element_type_spec);
+		return parse_brace_initializer(AggregateElements::makeTypeSpecifier(element));
 	};
 
 	auto element_accepts_whole_expression = [&](const AggregateElements::Element& element, const ASTNode& expression) {
-		if (!element.is_aggregate || !element.has_elements) {
-			return true;
-		}
-		if (element.is_array || element.struct_info == nullptr) {
-			return false;
-		}
 		const std::optional<TypeSpecifierNode> expression_type = get_expression_type(expression);
-		if (!expression_type.has_value() || expression_type->category() != TypeCategory::Struct) {
-			return false;
-		}
-		const TypeIndex source_type_index = expression_type->type_index();
-		const TypeIndex target_type_index = element.struct_info->own_type_index_.value_or(TypeIndex{});
-		if (!source_type_index.is_valid() || !target_type_index.is_valid()) {
-			return false;
-		}
-		return source_type_index == target_type_index || isTransitivelyDerivedFrom(source_type_index, target_type_index);
+		return expression_type.has_value() && AggregateInitialization::acceptsWholeExpression(element, *expression_type, expression);
 	};
 
 	while (true) {
@@ -2673,13 +2620,14 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 					return error(DiagnosticId::TooManyInitializers, current_token_, "Too many initializers for struct");
 				}
 
-				if (!is_braced && element->is_root_element && element->is_array && element->root_member_index.has_value()) {
+				if (!is_braced && element->is_root_element && element->is_array && element->root_element.has_value() &&
+					element->root_element->kind == AggregateElements::RootElementKind::Member) {
 					auto [array_init_node, array_init_ref] = create_node_ref(InitializerListNode());
-					const size_t target_member_index = *element->root_member_index;
+					const size_t target_member_index = element->root_element->index;
 					AggregateElements::ClauseCursor array_cursor = aggregate_cursor;
 					for (;;) {
 						std::optional<AggregateElements::Element> array_element = array_cursor.current();
-						if (!array_element.has_value() || array_element->root_member_index != target_member_index) {
+						if (!array_element.has_value() || !array_element->root_element.has_value() || array_element->root_element->index != target_member_index) {
 							break;
 						}
 

@@ -3035,25 +3035,59 @@ void AstToIr::generateNestedMemberStores(
 		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), token));
 	};
 
+	auto selected_conversion_for_clause = [&](const ASTNode& clause) -> const ImplicitCastInfo* {
+		if (!clause.is<ExpressionNode>()) {
+			return nullptr;
+		}
+		const auto slot = sema_.getSlot(&clause.as<ExpressionNode>());
+		if (!slot.has_value() || !slot->has_cast()) {
+			return nullptr;
+		}
+		const ImplicitCastInfo& cast_info = sema_.castInfoTable()[slot->cast_info_index.value - 1];
+		if (cast_info.cast_kind != StandardConversionKind::UserDefined ||
+			cast_info.selected_conversion_function == nullptr ||
+			cast_info.trailing_standard_conversion != StandardConversionKind::None) {
+			return nullptr;
+		}
+		return &cast_info;
+	};
+
+	auto emit_converted_object = [&](const StructTypeInfo& target_info, int target_offset,
+								  const ASTNode& clause, const ImplicitCastInfo& selected_conversion) {
+		const std::optional<TypeSpecifierNode> source_type = tryBuildCodegenOverloadResolutionArgType(clause);
+		const TypeInfo* source_type_info = source_type.has_value() ? tryGetTypeInfo(source_type->type_index()) : nullptr;
+		if (source_type_info == nullptr) {
+			throw InternalError("Sema-selected aggregate conversion has no source type metadata");
+		}
+		ExprResult source = visitExpressionNode(clause.as<ExpressionNode>());
+		std::optional<ExprResult> converted = emitSemaSelectedConversionOperatorCall(
+			source,
+			*source_type_info,
+			selected_conversion,
+			TypeCategory::Struct,
+			token);
+		if (!converted.has_value()) {
+			throw InternalError("Sema-selected aggregate conversion could not be emitted");
+		}
+		const StructMemberFunction* same_type_ctor = target_info.findPreferredSameTypeConstructor(true, true);
+		if (same_type_ctor == nullptr || !same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+			throw InternalError("Converted aggregate element has no same-type constructor");
+		}
+		ConstructorCallOp ctor_op;
+		ctor_op.object = base_object;
+		ctor_op.is_heap_allocated = base_object_is_pointer;
+		ctor_op.base_class_offset = target_offset;
+		ctor_op.call_base_object_variant = !target_info.virtual_bases.empty();
+		ctor_op.resolved_constructor = &same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+		ctor_op.arguments.push_back(toTypedValue(*converted));
+		finalizeConstructorCallOp(ctor_op, target_info, token);
+		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), token));
+	};
+
 	const std::span<const ASTNode> aggregate_elements = init_list.initializers();
 	auto base_appertains_whole = [&](const AggregateElements::Element& element, const ASTNode& clause) {
-		if (!element.is_aggregate || !element.has_elements) {
-			return true;
-		}
-		if (element.is_array || element.struct_info == nullptr) {
-			return false;
-		}
 		const std::optional<TypeSpecifierNode> source_type = tryBuildCodegenOverloadResolutionArgType(clause);
-		if (!source_type.has_value() || source_type->category() != TypeCategory::Struct) {
-			return false;
-		}
-		const TypeIndex source_type_index = source_type->type_index();
-		const StructTypeInfo* source_struct_info = tryGetStructTypeInfo(source_type_index);
-		if (source_struct_info == nullptr) {
-			return false;
-		}
-		return isSameClassOrInstantiation(source_struct_info, element.struct_info) ||
-			isTransitivelyDerivedFrom(source_type_index, element.struct_info->own_type_index_.value_or(TypeIndex{}));
+		return source_type.has_value() && AggregateInitialization::acceptsWholeExpression(element, *source_type, clause);
 	};
 	const AggregateInitialization::BasePartition base_partition =
 		AggregateInitialization::partitionBases(struct_info, init_list, base_appertains_whole);
@@ -3069,7 +3103,7 @@ void AstToIr::generateNestedMemberStores(
 	std::vector<InitializerListNode> base_init_lists(struct_info.base_classes.size());
 	std::vector<bool> base_has_initializer(struct_info.base_classes.size(), false);
 	for (size_t base_index = 0; base_index < struct_info.base_classes.size(); ++base_index) {
-		const AggregateInitialization::ClauseRange range = base_partition.base_clauses[base_index];
+		const AggregateInitialization::ClauseRange range = base_partition.base_elements[base_index].range;
 		if (range.empty()) {
 			continue;
 		}
@@ -3119,14 +3153,19 @@ void AstToIr::generateNestedMemberStores(
 			continue;
 		}
 		const InitializerListNode& base_list = base_init_lists[i];
-		if (base_struct_info->isAggregate() && !base_partition.base_appertains_whole[i]) {
+		if (base_partition.base_elements[i].form == AggregateInitialization::InitializationForm::WholeExpression &&
+			base_list.initializers().size() == 1) {
+			const ASTNode& clause = base_list.initializers().front();
+			if (const ImplicitCastInfo* selected_conversion = selected_conversion_for_clause(clause)) {
+				emit_converted_object(*base_struct_info, full_base_offset, clause, *selected_conversion);
+				continue;
+			}
+		}
+		if (base_struct_info->isAggregate() && base_partition.base_elements[i].form != AggregateInitialization::InitializationForm::WholeExpression) {
 			generateNestedMemberStores(*base_struct_info, base_list, base_object, full_base_offset, base_object_is_pointer, token);
 			continue;
 		}
-		ChunkedVector<ASTNode> base_args;
-		for (const ASTNode& arg : base_list.initializers()) {
-			base_args.push_back(arg);
-		}
+		const std::span<const ASTNode> base_args = base_list.initializers();
 		const ConstructorDeclarationNode* base_ctor = base_list.resolved_constructor();
 		if (!base_ctor) {
 			base_ctor = resolveCodegenConstructorFromArgs(*base_struct_info, base_args);
@@ -3152,20 +3191,14 @@ void AstToIr::generateNestedMemberStores(
 	std::vector<InitializerListNode> synthesized_member_lists(struct_info.members.size());
 	std::vector<std::optional<ASTNode>> member_initializers(struct_info.members.size());
 	for (size_t member_index = 0; member_index < struct_info.members.size(); ++member_index) {
-		const AggregateInitialization::ClauseRange range = base_partition.member_clauses[member_index];
+		const AggregateInitialization::ClauseRange range = base_partition.member_elements[member_index].range;
 		if (range.empty()) {
 			continue;
 		}
 		const ASTNode& first_clause = aggregate_elements[range.begin];
-		if (range.end - range.begin == 1 && first_clause.is<InitializerListNode>()) {
-			member_initializers[member_index] = first_clause;
-			continue;
-		}
-		const StructMember& member = struct_info.members[member_index];
-		const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index);
-		const bool aggregate_member = member.is_array ||
-			(member_struct_info != nullptr && member_struct_info->isAggregate() && member.pointer_depth == 0 && !member.is_reference());
-		if (range.end - range.begin == 1 && !aggregate_member) {
+		const AggregateInitialization::InitializationForm form = base_partition.member_elements[member_index].form;
+		if (form == AggregateInitialization::InitializationForm::Braced ||
+			form == AggregateInitialization::InitializationForm::WholeExpression) {
 			member_initializers[member_index] = first_clause;
 			continue;
 		}
@@ -3301,6 +3334,26 @@ void AstToIr::generateNestedMemberStores(
 		}
 
 		const ASTNode& init_expr = *member_initializers[member_index];
+		if (base_partition.member_elements[member_index].form == AggregateInitialization::InitializationForm::WholeExpression) {
+			const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index);
+			const bool embeds_object = member_struct_info != nullptr && member_struct_info->isAggregate() &&
+				!member.is_array && member.pointer_depth == 0 && !member.is_reference();
+			if (embeds_object) {
+				const int member_offset = base_offset + static_cast<int>(member.offset);
+				if (const ImplicitCastInfo* selected_conversion = selected_conversion_for_clause(init_expr)) {
+					emit_converted_object(*member_struct_info, member_offset, init_expr, *selected_conversion);
+					continue;
+				}
+				ChunkedVector<ASTNode> ctor_args;
+				ctor_args.push_back(init_expr);
+				const ConstructorDeclarationNode* ctor = resolveCodegenConstructorFromArgs(*member_struct_info, ctor_args);
+				if (ctor == nullptr) {
+					throw InternalError("No matching constructor for whole aggregate member initializer");
+				}
+				emit_nested_ctor_call(member, *member_struct_info, *ctor, ctor_args);
+				continue;
+			}
+		}
 
 		if (init_expr.is<InitializerListNode>()) {
 			// Nested brace initializer - check if member is a struct
