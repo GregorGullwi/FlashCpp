@@ -1767,6 +1767,14 @@ inline std::optional<TypeId> tryImportCanonicalStructuralFieldValue(CanonicalTyp
 
 inline std::optional<size_t> canonicalScalarStorageSize(CanonicalTypeTable& table, TypeId type) {
 	const CanonicalTypeNode node = table.node(type);
+	if (node.kind == CanonicalTypeKind::Pointer || node.kind == CanonicalTypeKind::MemberObjectPointer ||
+		node.kind == CanonicalTypeKind::MemberFunctionPointer) {
+		const SizeInBits bits{get_type_size_bits(TypeCategory::FunctionPointer)};
+		if (!bits.is_set() || bits.value % 8 != 0) {
+			return std::nullopt;
+		}
+		return toSizeT(toBytesExact(bits));
+	}
 	if (node.kind == CanonicalTypeKind::Enum) {
 		const EntityId entity = table.enumEntity(type);
 		if (!table.hasEnumLayout(entity)) {
@@ -2012,7 +2020,10 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 				}
 				continue;
 			}
-			if (expected_node.kind != CanonicalTypeKind::Builtin && expected_node.kind != CanonicalTypeKind::Enum) {
+			const CanonicalTypeKind expected_kind = expected_node.kind;
+			if (expected_kind != CanonicalTypeKind::Builtin && expected_kind != CanonicalTypeKind::Enum &&
+				expected_kind != CanonicalTypeKind::Pointer && expected_kind != CanonicalTypeKind::MemberObjectPointer &&
+				expected_kind != CanonicalTypeKind::MemberFunctionPointer) {
 				return std::nullopt;
 			}
 			const std::optional<size_t> storage_size = canonicalScalarStorageSize(table, expected);

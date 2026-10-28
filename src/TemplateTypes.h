@@ -773,6 +773,10 @@ struct StructuralClassValue {
 	// An array value reuses members as its ordered elements; nested arrays and
 	// records live in nested_value. Elements have no names.
 	bool is_array = false;
+	// Declared pointer depth of the array element type. TypeIndex cannot carry
+	// pointer depth, so null pointer elements need this bridge metadata to
+	// rebuild their declared type during rehydration.
+	uint8_t array_element_pointer_depth = 0;
 
 	bool operator==(const StructuralClassValue& other) const;
 	size_t hash() const;
