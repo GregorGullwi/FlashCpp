@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "AggregateInitialization.h"
 #include "IrGenerator.h"
 #include "MigrationStats.h"
 #include "CallNodeHelpers.h"
@@ -3035,32 +3036,51 @@ void AstToIr::generateNestedMemberStores(
 	};
 
 	const std::span<const ASTNode> aggregate_elements = init_list.initializers();
-	std::vector<const ASTNode*> base_initializers(struct_info.base_classes.size(), nullptr);
-	InitializerListNode member_init_list;
-	size_t positional_element_index = 0;
-	for (size_t i = 0; i < aggregate_elements.size(); ++i) {
-		if (init_list.is_designated(i)) {
-			const StringHandle designated_name = init_list.member_name(i);
-			const auto member_it = std::find_if(
-				struct_info.members.begin(),
-				struct_info.members.end(),
-				[&](const StructMember& member) { return member.getName() == designated_name; });
-			if (member_it == struct_info.members.end()) {
-				throw InternalError("Aggregate designator does not name a direct member during IR lowering");
-			}
-			member_init_list.add_designated_initializer(designated_name, aggregate_elements[i]);
+	auto base_appertains_whole = [&](const AggregateElements::Element& element, const ASTNode& clause) {
+		if (!element.is_aggregate || !element.has_elements) {
+			return true;
+		}
+		if (element.is_array || element.struct_info == nullptr) {
+			return false;
+		}
+		const std::optional<TypeSpecifierNode> source_type = tryBuildCodegenOverloadResolutionArgType(clause);
+		if (!source_type.has_value() || source_type->category() != TypeCategory::Struct) {
+			return false;
+		}
+		const TypeIndex source_type_index = source_type->type_index();
+		const StructTypeInfo* source_struct_info = tryGetStructTypeInfo(source_type_index);
+		if (source_struct_info == nullptr) {
+			return false;
+		}
+		return isSameClassOrInstantiation(source_struct_info, element.struct_info) ||
+			isTransitivelyDerivedFrom(source_type_index, element.struct_info->own_type_index_.value_or(TypeIndex{}));
+	};
+	const AggregateInitialization::BasePartition base_partition =
+		AggregateInitialization::partitionBases(struct_info, init_list, base_appertains_whole);
+	if (base_partition.empty_element_clause.has_value()) {
+		throw makeStructuredCompileError(
+			context_->diagnostics(),
+			DiagnosticId::AggregateInitializerForEmptyElementRequiresBraces,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(token),
+			"Initializer for aggregate with no elements requires explicit braces",
+			{});
+	}
+	std::vector<InitializerListNode> base_init_lists(struct_info.base_classes.size());
+	std::vector<bool> base_has_initializer(struct_info.base_classes.size(), false);
+	for (size_t base_index = 0; base_index < struct_info.base_classes.size(); ++base_index) {
+		const AggregateInitialization::ClauseRange range = base_partition.base_clauses[base_index];
+		if (range.empty()) {
 			continue;
 		}
-		if (positional_element_index < base_initializers.size()) {
-			base_initializers[positional_element_index] = &aggregate_elements[i];
-		} else {
-			const size_t member_index = positional_element_index - base_initializers.size();
-			if (member_index >= struct_info.members.size()) {
-				throw InternalError("Too many initializers for aggregate class");
-			}
-			member_init_list.add_initializer(aggregate_elements[i]);
+		base_has_initializer[base_index] = true;
+		if (range.end - range.begin == 1 && aggregate_elements[range.begin].is<InitializerListNode>()) {
+			base_init_lists[base_index] = aggregate_elements[range.begin].as<InitializerListNode>();
+			continue;
 		}
-		positional_element_index++;
+		for (size_t clause_index = range.begin; clause_index < range.end; ++clause_index) {
+			base_init_lists[base_index].add_initializer(aggregate_elements[clause_index]);
+		}
 	}
 
 	for (size_t i = 0; i < struct_info.base_classes.size(); ++i) {
@@ -3072,80 +3092,96 @@ void AstToIr::generateNestedMemberStores(
 		}
 		assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
 		const int full_base_offset = base_offset + static_cast<int>(base.offset);
-		const ASTNode* base_initializer = base_initializers[i];
-		if (!base_initializer || base_initializer->is<InitializerListNode>()) {
+		if (!base_has_initializer[i]) {
 			InitializerListNode empty_initializer;
-			const InitializerListNode& base_list = base_initializer ? base_initializer->as<InitializerListNode>() : empty_initializer;
 			if (base_struct_info->isAggregate()) {
-				generateNestedMemberStores(*base_struct_info, base_list, base_object, full_base_offset, base_object_is_pointer, token);
+				generateNestedMemberStores(*base_struct_info, empty_initializer, base_object, full_base_offset, base_object_is_pointer, token);
 				continue;
-			}
-			ChunkedVector<ASTNode> base_args;
-			for (const ASTNode& arg : base_list.initializers()) {
-				base_args.push_back(arg);
-			}
-			const ConstructorDeclarationNode* base_ctor = base_list.resolved_constructor();
-			if (!base_ctor) {
-				base_ctor = resolveCodegenConstructorFromArgs(*base_struct_info, base_args);
 			}
 			ConstructorCallOp base_ctor_op;
 			base_ctor_op.object = base_object;
 			base_ctor_op.is_heap_allocated = base_object_is_pointer;
 			base_ctor_op.base_class_offset = full_base_offset;
 			base_ctor_op.call_base_object_variant = !base_struct_info->virtual_bases.empty();
-			if (!base_ctor && base_args.size() == 0 &&
-				base_struct_info->implicit_default_constructor.requires_synthetic_ir &&
+			if (base_struct_info->implicit_default_constructor.requires_synthetic_ir &&
 				!base_struct_info->implicit_default_constructor.is_deleted) {
 				fillInDefaultConstructorArguments(base_ctor_op, *base_struct_info);
-			} else if (!base_ctor) {
-				throw InternalError("No matching constructor for aggregate base initializer");
 			} else {
-				appendConstructorCallArguments(base_ctor_op, base_ctor, base_args, token);
+				const auto no_arguments = std::span<const ASTNode>{};
+				const ConstructorDeclarationNode* base_ctor = resolveCodegenConstructorFromArgs(*base_struct_info, no_arguments);
+				if (!base_ctor) {
+					throw InternalError("No matching constructor for aggregate base initializer");
+				}
+				appendConstructorCallArguments(base_ctor_op, base_ctor, no_arguments, token);
 			}
 			finalizeConstructorCallOp(base_ctor_op, *base_struct_info, token);
 			ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(base_ctor_op), token));
 			continue;
 		}
-		if (!base_initializer->is<ExpressionNode>()) {
-			throw InternalError("Aggregate base initializer has an unsupported AST node");
+		const InitializerListNode& base_list = base_init_lists[i];
+		if (base_struct_info->isAggregate() && !base_partition.base_appertains_whole[i]) {
+			generateNestedMemberStores(*base_struct_info, base_list, base_object, full_base_offset, base_object_is_pointer, token);
+			continue;
 		}
 		ChunkedVector<ASTNode> base_args;
-		base_args.push_back(*base_initializer);
-		const ConstructorDeclarationNode* base_ctor = resolveCodegenConstructorFromArgs(*base_struct_info, base_args);
+		for (const ASTNode& arg : base_list.initializers()) {
+			base_args.push_back(arg);
+		}
+		const ConstructorDeclarationNode* base_ctor = base_list.resolved_constructor();
 		if (!base_ctor) {
-			throw InternalError("No matching constructor for aggregate base expression initializer");
+			base_ctor = resolveCodegenConstructorFromArgs(*base_struct_info, base_args);
 		}
 		ConstructorCallOp base_ctor_op;
 		base_ctor_op.object = base_object;
 		base_ctor_op.is_heap_allocated = base_object_is_pointer;
 		base_ctor_op.base_class_offset = full_base_offset;
 		base_ctor_op.call_base_object_variant = !base_struct_info->virtual_bases.empty();
-		appendConstructorCallArguments(base_ctor_op, base_ctor, base_args, token);
+		if (!base_ctor && base_args.size() == 0 &&
+			base_struct_info->implicit_default_constructor.requires_synthetic_ir &&
+			!base_struct_info->implicit_default_constructor.is_deleted) {
+			fillInDefaultConstructorArguments(base_ctor_op, *base_struct_info);
+		} else if (!base_ctor) {
+			throw InternalError("No matching constructor for aggregate base initializer");
+		} else {
+			appendConstructorCallArguments(base_ctor_op, base_ctor, base_args, token);
+		}
 		finalizeConstructorCallOp(base_ctor_op, *base_struct_info, token);
 		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(base_ctor_op), token));
 	}
 
-	// Build map of member names to initializer expressions
-	std::unordered_map<StringHandle, const ASTNode*> member_values;
-	size_t positional_index = 0;
-	const auto& initializers = member_init_list.initializers();
-	member_values.reserve(initializers.size());
-
-	for (size_t i = 0; i < initializers.size(); ++i) {
-		if (member_init_list.is_designated(i)) {
-			member_values[member_init_list.member_name(i)] = &initializers[i];
-		} else if (positional_index < struct_info.members.size()) {
-			StringHandle member_name = struct_info.members[positional_index].getName();
-			member_values[member_name] = &initializers[i];
-			positional_index++;
+	std::vector<InitializerListNode> synthesized_member_lists(struct_info.members.size());
+	std::vector<std::optional<ASTNode>> member_initializers(struct_info.members.size());
+	for (size_t member_index = 0; member_index < struct_info.members.size(); ++member_index) {
+		const AggregateInitialization::ClauseRange range = base_partition.member_clauses[member_index];
+		if (range.empty()) {
+			continue;
 		}
+		const ASTNode& first_clause = aggregate_elements[range.begin];
+		if (range.end - range.begin == 1 && first_clause.is<InitializerListNode>()) {
+			member_initializers[member_index] = first_clause;
+			continue;
+		}
+		const StructMember& member = struct_info.members[member_index];
+		const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index);
+		const bool aggregate_member = member.is_array ||
+			(member_struct_info != nullptr && member_struct_info->isAggregate() && member.pointer_depth == 0 && !member.is_reference());
+		if (range.end - range.begin == 1 && !aggregate_member) {
+			member_initializers[member_index] = first_clause;
+			continue;
+		}
+		InitializerListNode& synthesized = synthesized_member_lists[member_index];
+		for (size_t clause_index = range.begin; clause_index < range.end; ++clause_index) {
+			synthesized.add_initializer(aggregate_elements[clause_index]);
+		}
+		member_initializers[member_index] = ASTNode(&synthesized);
 	}
 
 	// Process each struct member
-	for (const StructMember& member : struct_info.members) {
+	for (size_t member_index = 0; member_index < struct_info.members.size(); ++member_index) {
+		const StructMember& member = struct_info.members[member_index];
 		StringHandle member_name = member.getName();
 
-		if (!member_values.count(member_name)) {
+		if (!member_initializers[member_index].has_value()) {
 			if (!member.default_initializer.has_value()) {
 				if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index)) {
 					size_t element_count = 1;
@@ -3264,7 +3300,7 @@ void AstToIr::generateNestedMemberStores(
 			continue;
 		}
 
-		const ASTNode& init_expr = *member_values[member_name];
+		const ASTNode& init_expr = *member_initializers[member_index];
 
 		if (init_expr.is<InitializerListNode>()) {
 			// Nested brace initializer - check if member is a struct

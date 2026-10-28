@@ -41,6 +41,10 @@ struct CallInfo;
 class SemanticAnalysis;
 class PostParseSemanticNormalizer;
 
+namespace AggregateElements {
+struct Element;
+}
+
 struct ResolvedFunctionQueryResult {
 	enum class State : uint8_t {
 		NotYetAnalyzed,
@@ -505,6 +509,11 @@ private:
 	// Handles: NumericLiteralNode, BoolLiteralNode, IdentifierNode (via scope stack).
 	// Returns invalid CanonicalTypeId if inference is not possible.
 	CanonicalTypeId inferExpressionType(const ASTNode& node);
+	void validateAggregateInitializerAppertainment(
+		const StructTypeInfo& struct_info,
+		const InitializerListNode& init_list,
+		Token diagnostic_token);
+	bool aggregateElementAppertainsWhole(const AggregateElements::Element& element, const ASTNode& clause);
 	CanonicalTypeId inferExpressionResultCallType(const CallExprNode& call);
 	CanonicalTypeId inferResolvedSymbolType(const ASTNode& symbol);
 	CanonicalTypeId inferStaticMemberTypeFromContext(const IdentifierNode& identifier);

@@ -38,15 +38,6 @@ Expression sema must retain the selected declaration and lowering must consume
 it. Published function EntityIds and the canonical function-pointer value adapter
 now provide target identity, but do not select or lower an overload themselves.
 
-## Invalid aggregate base initializers can reach IR lowering
-
-An empty aggregate base requires an explicit brace clause before later member
-initializers, for example `struct Empty {}; struct Derived : Empty { int x; };`
-with `Derived value{{}, 1};`. The invalid `Derived value{1};` can reach the
-shared aggregate emitter without a semantic diagnostic and fail internally
-while resolving a base constructor. Validate aggregate clause appertainment
-and base initialization before lowering, with a source-located diagnostic.
-
 ## Implicit derived copy/move construction can omit a template base
 
 An instantiated `template<class T> struct Base { T value; };` can have no
@@ -163,15 +154,6 @@ Retain `test_canonical_structural_nttp_base_source_ret0.cpp`,
 `test_canonical_structural_nttp_virtual_member_function_pointer_ret0.cpp`, and
 `test_canonical_structural_nttp_specialization_member_pointer_ret0.cpp`, and
 `test_canonical_structural_nttp_nullptr_member_ret0.cpp` as current guards.
-
-## Scalar aggregate base initializers still fail IR lowering
-
-Constexpr evaluation now materializes a scalar base-class initializer such as
-`Key value{7, {1}}`, but IR conversion still reports “No matching constructor
-for aggregate base expression initializer” for the same declaration. Braced base
-initializers (`Key value{{7}, {1}}`) lower correctly. Fix the aggregate base
-initialization lowering path rather than reintroducing a constexpr-only
-workaround.
 
 ## Explicit casts of overloaded member-function addresses lose target identity
 
