@@ -1715,6 +1715,42 @@ inline std::optional<TypeId> tryImportCanonicalStructuralScalar(CanonicalTypeTab
 	return table.integralValue(field_type, converted_bits);
 }
 
+// Floating structural fields retain their declared Float/Double type and exact
+// representation. Long double needs a wider representation than the evaluator
+// carries today, so it fails closed instead of aliasing through double bits.
+inline std::optional<TypeId> tryImportCanonicalStructuralFloating(CanonicalTypeTable& table, TypeId field_type, uint64_t bits, size_t storage_size) {
+	const CanonicalTypeNode representation = table.node(field_type);
+	if (representation.kind != CanonicalTypeKind::Builtin) {
+		return std::nullopt;
+	}
+	if (representation.builtin == CanonicalBuiltinKind::Float) {
+		if (storage_size != sizeof(float) || bits > UINT32_MAX) {
+			return std::nullopt;
+		}
+	} else if (representation.builtin == CanonicalBuiltinKind::Double) {
+		if (storage_size != sizeof(double)) {
+			return std::nullopt;
+		}
+	} else {
+		return std::nullopt;
+	}
+	return table.floatingValue(field_type, bits);
+}
+
+inline std::optional<TypeId> tryImportCanonicalStructuralFieldValue(CanonicalTypeTable& table, TypeId field_type,
+	const FlashCpp::NonTypeValueIdentity& value, size_t storage_size, std::optional<uint8_t> bit_width) {
+	if (value.is_dependent) {
+		return std::nullopt;
+	}
+	if (value.kind == FlashCpp::NonTypeValueIdentityKind::Integral) {
+		return tryImportCanonicalStructuralScalar(table, field_type, static_cast<uint64_t>(value.value), storage_size, bit_width);
+	}
+	if (value.kind == FlashCpp::NonTypeValueIdentityKind::Floating && !bit_width.has_value()) {
+		return tryImportCanonicalStructuralFloating(table, field_type, static_cast<uint64_t>(value.value), storage_size);
+	}
+	return std::nullopt;
+}
+
 inline std::optional<size_t> canonicalScalarStorageSize(CanonicalTypeTable& table, TypeId type) {
 	const CanonicalTypeNode node = table.node(type);
 	if (node.kind == CanonicalTypeKind::Enum) {
@@ -1883,11 +1919,7 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 			}
 			return true;
 		}
-		if (member.scalar_value.kind != FlashCpp::NonTypeValueIdentityKind::Integral || member.scalar_value.is_dependent) {
-			return false;
-		}
-		const auto scalar = tryImportCanonicalStructuralScalar(
-			table, field_type, static_cast<uint64_t>(member.scalar_value.value), scalar_storage_size, bit_width);
+		const auto scalar = tryImportCanonicalStructuralFieldValue(table, field_type, member.scalar_value, scalar_storage_size, bit_width);
 		if (!scalar.has_value()) {
 			return false;
 		}
@@ -1966,16 +1998,14 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 				}
 				continue;
 			}
-			if ((expected_node.kind != CanonicalTypeKind::Builtin && expected_node.kind != CanonicalTypeKind::Enum) ||
-				element.scalar_value.kind != FlashCpp::NonTypeValueIdentityKind::Integral || element.scalar_value.is_dependent) {
+			if (expected_node.kind != CanonicalTypeKind::Builtin && expected_node.kind != CanonicalTypeKind::Enum) {
 				return std::nullopt;
 			}
 			const std::optional<size_t> storage_size = canonicalScalarStorageSize(table, expected);
 			if (!storage_size.has_value()) {
 				return std::nullopt;
 			}
-			const auto scalar = tryImportCanonicalStructuralScalar(
-				table, expected, static_cast<uint64_t>(element.scalar_value.value), *storage_size, std::nullopt);
+			const auto scalar = tryImportCanonicalStructuralFieldValue(table, expected, element.scalar_value, *storage_size, std::nullopt);
 			if (!scalar.has_value()) {
 				return std::nullopt;
 			}

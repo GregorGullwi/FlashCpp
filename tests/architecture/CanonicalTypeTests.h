@@ -2523,6 +2523,34 @@ inline void checkStructuralBitfieldScalars() {
 	require(!tryImportCanonicalStructuralScalar(table, signed_int, 7, 4, 65));
 }
 
+inline void checkFloatingValues() {
+	CanonicalTypeTable table;
+	const TypeId float_type = table.builtin(CanonicalBuiltinKind::Float);
+	const TypeId double_type = table.builtin(CanonicalBuiltinKind::Double);
+	const TypeId one_and_half = table.floatingValue(float_type, 0x3fc00000);
+	require(table.node(one_and_half).kind == CanonicalTypeKind::FloatingValue);
+	require(table.node(one_and_half).child == float_type);
+	require(table.node(one_and_half).array_extent == 0x3fc00000);
+	require(one_and_half == table.floatingValue(float_type, 0x3fc00000));
+	require(one_and_half != table.floatingValue(float_type, 0x40000000));
+	require(one_and_half != table.floatingValue(double_type, 0x3fc00000));
+	const TypeId double_value = table.floatingValue(double_type, 0x3ff8000000000000ULL);
+	require(table.node(double_value).kind == CanonicalTypeKind::FloatingValue);
+	require(table.node(double_value).array_extent == 0x3ff8000000000000ULL);
+	const auto rejects = [&](TypeId type, uint64_t bits) {
+		try { (void)table.floatingValue(type, bits); } catch (const InternalError&) { return true; }
+		return false;
+	};
+	require(rejects(float_type, static_cast<uint64_t>(UINT32_MAX) + 1));
+	require(rejects(table.builtin(CanonicalBuiltinKind::Int), 0));
+	require(rejects(table.builtin(CanonicalBuiltinKind::LongDouble), 0));
+	const TypeId values[] = {one_and_half, double_value};
+	const TypeId record = table.record(EntityId{40301});
+	const TypeId structural = table.structuralValue(record, values, 0);
+	require(table.node(table.templateArgumentValue(unpackStructuralValueSubobjects(table.node(structural).array_extent))).child ==
+		float_type);
+}
+
 inline void checkStructuralArrayValues() {
 	CanonicalTypeTable table;
 	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
@@ -2662,6 +2690,7 @@ inline int run() {
 	checkUnionValues();
 	checkStructuralEnumScalars();
 	checkStructuralBitfieldScalars();
+	checkFloatingValues();
 	checkStructuralArrayValues();
 	{
 		CanonicalTypeTable table;

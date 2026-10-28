@@ -89,6 +89,11 @@ the canonical importer consumes published union-group schemas through
 `structuralUnionValue`. The reduced union specialization case is protected by
 `tests/test_canonical_structural_nttp_union_active_ret0.cpp`.
 
+Float and double structural fields now intern as exact typed canonical values,
+including array elements, so equivalent floating members share specialization
+identity. Long double remains fail-closed until the value carrier stores its
+full representation.
+
 The architecture the remaining work builds on:
 
 - `TypeSpecifierNode` carries an outermost-to-innermost `DeclaratorComponent`
@@ -354,15 +359,28 @@ Continue boundary 3A in this order.
    a named union member at a nonzero offset, and union-valued base
    specializations. The 3A rollup remains 10/79; no exit criterion is closed.
 
-   **Next slice: import the remaining structural value kinds.** Floating,
-   pointer, and member-pointer field values, structural values of class-template
-   types, and the nested anonymous-union-in-anonymous-union hierarchy still need
-   canonical subobject identity. Extend the typed-value importer and its
-   specialization base facts before deleting `legacyDerivedBaseOffset`; audit
-   dependent and other non-integral specialization roots too. Keep the worklist
-   guard and the nonzero-offset guards in
-   `test_canonical_structural_nttp_{base_source,equivalence,subobjects,bitfields,arrays}_ret0.cpp`
-   and the new union-active guard. See `KNOWN_ISSUES.md`.
+   **Float/double structural value import: complete for declared fields.**
+   `CanonicalTypeTable::floatingValue` interns an exact typed Float/Double bit
+   pattern, and structural import now dispatches floating record and array
+   element fields to it after validating the declared width. Float and double
+   fields therefore share class/type/value identity between syntax and
+   declaration imports without host-string or rounding identity. Long double
+   fails closed because the evaluator still carries only a 64-bit
+   representation. `tests/test_canonical_structural_nttp_float_ret0.cpp`
+   protects equivalent and changed float, double, and float-array members plus
+   a base specialization, and the native canonical suite includes
+   a mutation-checked typed importer test. The 3A rollup remains 10/79; no exit
+   criterion is closed.
+
+   **Next slice: import the remaining structural value kinds.** Pointer and
+   member-pointer field values, structural values of class-template types, and
+   the nested anonymous-union-in-anonymous-union hierarchy still need canonical
+   subobject identity. Extend the typed-value importer and its specialization
+   base facts before deleting `legacyDerivedBaseOffset`; audit dependent and
+   other non-integral specialization roots too. Keep the worklist guard and the
+   nonzero-offset guards in
+   `test_canonical_structural_nttp_{base_source,equivalence,subobjects,bitfields,arrays,union_active,float}_ret0.cpp`.
+   See `KNOWN_ISSUES.md`.
 
    **Owner-index deletion gates:** virtual-base ABI facts are published by class
    TypeIds and consumed by AstToIr, explicit-cast, IRConverter, and constructor
