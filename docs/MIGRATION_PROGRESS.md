@@ -354,6 +354,13 @@ type (`1037`), and named zero-width fields (`1038`) are rejected. Unnamed
 zero-width padding and template-dependent bit-field types/widths remain
 supported.
 
+Anonymous union members in a class with base subobjects are now re-laid out as
+one group in `finalizeWithBases`. Previously each variant was re-added
+sequentially, giving variants different offsets and making canonical field
+schema publication fail with an inconsistent union group.
+`tests/test_derived_anonymous_union_layout_ret0.cpp` covers a derived anonymous
+union with a nonzero base offset.
+
 ## Next work
 
 Continue boundary 3A in this order.
