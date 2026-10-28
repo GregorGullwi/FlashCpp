@@ -1760,6 +1760,42 @@ inline std::optional<TypeId> tryImportCanonicalStructuralFloating(CanonicalTypeT
 	return table.floatingValue(field_type, bits);
 }
 
+// Address selection supplies the actual declaration. No lookup by spelling or
+// ABI symbol may manufacture the target's semantic identity at this boundary.
+inline std::optional<TypeId> tryImportCanonicalFunctionPointerValue(CanonicalTypeTable& table, TypeId pointer_type,
+	const FunctionDeclarationNode& target) {
+	if (!target.entity_id() || target.is_member_function() || target.is_template_pattern() || target.is_deleted() || target.has_noexcept_expression()) {
+		return std::nullopt;
+	}
+	const CanonicalTypeNode pointer = table.node(pointer_type);
+	if (pointer.kind != CanonicalTypeKind::Pointer || table.node(pointer.child).kind != CanonicalTypeKind::Function) return std::nullopt;
+	CanonicalTypeTransaction transaction(table);
+	TypeSpecifierNode return_type = target.decl_node().type_specifier_node();
+	tryBindPublishedTypeEntity(return_type);
+	FunctionSignature signature;
+	signature.setReturnType(makeFunctionTypeFromSpecifier(return_type));
+	OverloadVector<FunctionType, 4> parameters;
+	for (const ASTNode& parameter : target.parameter_nodes()) {
+		if (!parameter.is<DeclarationNode>()) return std::nullopt;
+		TypeSpecifierNode parameter_type = parameter.as<DeclarationNode>().type_specifier_node();
+		tryBindPublishedTypeEntity(parameter_type);
+		parameters.push_back(makeFunctionTypeFromSpecifier(parameter_type));
+	}
+	signature.setParameterTypes(std::move(parameters));
+	signature.calling_convention = target.calling_convention();
+	signature.linkage = target.linkage();
+	signature.is_variadic = target.is_variadic();
+	signature.is_noexcept = target.is_noexcept();
+	const CanonicalTypeImport imported = importCanonicalFunctionSignature(table, signature, TypeId{});
+	if (imported.status != CanonicalTypeImportStatus::Supported || table.hasDependentTypeComponents(imported.type) ||
+		!isCanonicalFunctionPointerTargetCompatible(table.node(imported.type), table.node(pointer.child))) {
+		return std::nullopt;
+	}
+	const TypeId value = table.functionPointerValue(pointer_type, target.entity_id(), imported.type);
+	transaction.commit();
+	return value;
+}
+
 inline std::optional<TypeId> tryImportCanonicalStructuralNullPointer(CanonicalTypeTable& table, TypeId field_type) {
 	const CanonicalTypeKind kind = table.node(field_type).kind;
 	if (kind != CanonicalTypeKind::Pointer && kind != CanonicalTypeKind::MemberObjectPointer && kind != CanonicalTypeKind::MemberFunctionPointer) {

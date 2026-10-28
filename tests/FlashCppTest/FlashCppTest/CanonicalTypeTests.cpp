@@ -7,6 +7,81 @@
 #include "ParserTemplateClassShared.h"
 #include "../../architecture/CanonicalTypeTests.h"
 
+TEST_CASE("Published free function targets retain entity and canonical signature identity") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	CompileContext compile_context;
+	compile_context.setInputFile("canonical_function_targets.cpp");
+	Lexer lexer(R"(
+int target(short value);
+int target(short value) { return value; }
+long long target(long long value) { return value; }
+int safe(short value) noexcept { return value; }
+namespace other { int target(short value) { return value; } }
+)");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const auto candidates = gSymbolTable.lookup_all("target");
+	REQUIRE(candidates.size() == 2);
+	const FunctionDeclarationNode* narrow = nullptr;
+	const FunctionDeclarationNode* wide = nullptr;
+	for (const ASTNode& candidate : candidates) {
+		REQUIRE(candidate.is<FunctionDeclarationNode>());
+		const FunctionDeclarationNode& function = candidate.as<FunctionDeclarationNode>();
+		REQUIRE(function.entity_id());
+		if (function.parameter_nodes()[0].as<DeclarationNode>().type_specifier_node().category() == TypeCategory::Short) narrow = &function;
+		else wide = &function;
+	}
+	REQUIRE(narrow != nullptr);
+	REQUIRE(wide != nullptr);
+	CHECK(narrow->entity_id() != wide->entity_id());
+	for (const ASTNode& node : parser.get_nodes()) {
+		if (node.is<FunctionDeclarationNode>() && node.as<FunctionDeclarationNode>().decl_node().identifier_token().value() == "target" &&
+			node.as<FunctionDeclarationNode>().parameter_nodes()[0].as<DeclarationNode>().type_specifier_node().category() == TypeCategory::Short) {
+			CHECK(node.as<FunctionDeclarationNode>().entity_id() == narrow->entity_id());
+		}
+	}
+	const TypeId parameters[] = {table.builtin(CanonicalBuiltinKind::Short)};
+	const TypeId function_type = table.function(table.builtin(CanonicalBuiltinKind::Int), parameters, false, CVQualifier::None,
+		ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	const TypeId pointer_type = table.pointer(function_type);
+	const auto value = tryImportCanonicalFunctionPointerValue(table, pointer_type, *narrow);
+	REQUIRE(value.has_value());
+	CHECK(table.node(*value).array_extent == narrow->entity_id().value);
+	CHECK_FALSE(tryImportCanonicalFunctionPointerValue(table, pointer_type, *wide).has_value());
+	const NamespaceHandle other_namespace = gNamespaceRegistry.lookupNamespace(NamespaceRegistry::GLOBAL_NAMESPACE,
+		StringTable::getOrInternStringHandle("other"));
+	const auto other = gSymbolTable.lookup_qualified(other_namespace, "target");
+	REQUIRE(other.has_value());
+	const auto other_value = tryImportCanonicalFunctionPointerValue(table, pointer_type, other->as<FunctionDeclarationNode>());
+	REQUIRE(other_value.has_value());
+	CHECK(*other_value != *value);
+	const auto safe = gSymbolTable.lookup("safe");
+	REQUIRE(safe.has_value());
+	CHECK(tryImportCanonicalFunctionPointerValue(table, pointer_type, safe->as<FunctionDeclarationNode>()).has_value());
+	const TypeId safe_type = table.function(table.builtin(CanonicalBuiltinKind::Int), parameters, false, CVQualifier::None,
+		ReferenceQualifier::None, true, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	CHECK_FALSE(tryImportCanonicalFunctionPointerValue(table, table.pointer(safe_type), *narrow).has_value());
+	FunctionDeclarationNode unpublished(const_cast<DeclarationNode&>(narrow->decl_node()));
+	CHECK_FALSE(tryImportCanonicalFunctionPointerValue(table, pointer_type, unpublished).has_value());
+	for (const ASTNode& parameter : narrow->parameter_nodes()) unpublished.add_parameter_node(parameter);
+	DeclarationBuilder& builder = frontend.declarationBuilder();
+	const ScopeId scope = builder.declaration(builder.entity(narrow->entity_id()).latest_decl_id).lexical_scope_id;
+	const size_t entity_count = builder.entityCount();
+	const PublishResult rejected = commitParserFreeFunctionPublication(builder, unpublished, scope, true, gSymbolTable);
+	CHECK(rejected.status == PublishStatus::Rejected);
+	CHECK_FALSE(unpublished.entity_id());
+	CHECK(builder.entityCount() == entity_count);
+	const PublishResult merged = commitParserFreeFunctionPublication(builder, unpublished, scope, false, gSymbolTable);
+	REQUIRE(merged.status == PublishStatus::MergedRedeclaration);
+	CHECK(unpublished.entity_id() == narrow->entity_id());
+	CHECK(tryImportCanonicalFunctionPointerValue(table, pointer_type, unpublished) == value);
+	MESSAGE("FunctionDeclarationNode size=" << sizeof(FunctionDeclarationNode));
+}
+
 TEST_CASE("Anonymous union groups publish canonical declaration boundaries") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

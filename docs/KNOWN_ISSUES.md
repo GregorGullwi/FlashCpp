@@ -1,5 +1,24 @@
 # Known Issues
 
+## Overloaded free-function addresses can retain an unresolved target
+
+Target-typed address initialization can emit a function address by name without
+selecting the matching overload. This valid C++20 program returns the wrong
+result in FlashCpp; the MSVC reference returns zero:
+
+```cpp
+long long pick(short) { return 11; }
+long long pick(long long) { return 22; }
+int main() {
+	long long (*target)(long long) = &pick;
+	return target(1LL) == 22 ? 0 : 1;
+}
+```
+
+Expression sema must retain the selected declaration and lowering must consume
+it. Published function EntityIds and the canonical function-pointer value adapter
+now provide target identity, but do not select or lower an overload themselves.
+
 ## Invalid aggregate base initializers can reach IR lowering
 
 An empty aggregate base requires an explicit brace clause before later member
@@ -65,7 +84,13 @@ including virtual functions, and member-function-pointer arrays use a
 declaring-class TypeId plus declaration ordinal, with overloads selected by
 canonical signature. Non-null object/function pointer targets, ambiguous or
 virtual-base member pointers, and non-null object/function pointer array
-elements still need declaration identity.
+elements still need declaration identity in their live constexpr payloads.
+Published namespace free functions retain their EntityId; an explicit
+`FunctionPointerValue` keys that target and its declared pointer TypeId, with
+canonical signature validation and noexcept relaxation. Propagate the selected
+target through evaluation, structural serialization/rehydration, equality/hash,
+and template argument binding before enabling live non-null function import.
+Do not recover target identity from a spelling or ABI symbol.
 
 Concrete implicit class-template specializations import as structural values,
 including supported nonvirtual bases, nested members, and array elements. Array

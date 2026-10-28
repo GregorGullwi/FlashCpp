@@ -4185,8 +4185,8 @@ public:
 	FunctionDeclarationNode(DeclarationNode& decl_node, StringHandle parent_struct_name_handle)
 		: FunctionDeclarationNode(decl_node, StringTable::getStringView(parent_struct_name_handle)) {}
 	FunctionDeclarationNode(DeclarationNode& decl_node, Linkage linkage)
-		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(linkage),
-		  is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
+		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), is_constexpr_(false),
+		  is_constinit_(false), is_consteval_(false), linkage_(linkage) {}
 
 	const DeclarationNode& decl_node() const {
 		return decl_node_;
@@ -4198,6 +4198,8 @@ public:
 	// Namespace this function was declared in
 	NamespaceHandle namespace_handle() const { return namespace_handle_; }
 	void set_namespace_handle(NamespaceHandle ns) { namespace_handle_ = ns; }
+	EntityId entity_id() const { return entity_id_; }
+	void set_entity_id(EntityId entity) { entity_id_ = entity; }
 	std::span<const ASTNode> parameter_nodes() const {
 		return parameter_nodes_;
 	}
@@ -4501,8 +4503,7 @@ private:
 	bool has_template_declaration_ = false;	// True if template declaration position is saved (for SFINAE re-parsing)
 
 	bool is_variadic_ = false;  // True if this function has ... ellipsis parameter
-	Linkage linkage_;  // Linkage specification (C, C++, or None)
-	CallingConvention calling_convention_ = CallingConvention::Default;	// Calling convention (__cdecl, __stdcall, etc.)
+	EntityId entity_id_{}; // Published free-function identity; empty for unmigrated declaration families.
 	SaveHandle template_body_position_handle_;  // Handle to saved position for template body (from Parser::save_token_position())
 	SaveHandle template_declaration_position_handle_;  // Handle to saved position for template declaration (for SFINAE)
 	std::optional<SaveHandle> trailing_return_type_position_handle_;	 // Handle to saved position for trailing return type '->'
@@ -4529,6 +4530,8 @@ private:
 	TemplateArgInfoVector outer_template_args_;
 	BodyStateTag body_state_tag_ = BodyStateTag::NotMaterialized;
 	mutable AstOwnershipPhase ownership_phase_ = AstOwnershipPhase::ConcreteMaterialized;
+	Linkage linkage_;  // Linkage specification (C, C++, or None)
+	CallingConvention calling_convention_ = CallingConvention::Default;	// Calling convention (__cdecl, __stdcall, etc.)
 	StringHandle substitution_failure_reason_;  // Populated iff body_state_tag_ == FailedSubstitution
 	StringHandle lazy_member_registry_key_;
 	TemplateDefinitionLookupContext definition_lookup_context_;  // Captured at parse time for nested member function templates
