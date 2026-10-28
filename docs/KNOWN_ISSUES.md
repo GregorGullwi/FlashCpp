@@ -106,6 +106,15 @@ Retain `test_canonical_structural_nttp_base_source_ret0.cpp`,
 `test_canonical_structural_nttp_specialization_member_pointer_ret0.cpp`, and
 `test_canonical_structural_nttp_nullptr_member_ret0.cpp` as current guards.
 
+## Scalar aggregate base initializers still fail IR lowering
+
+Constexpr evaluation now materializes a scalar base-class initializer such as
+`Key value{7, {1}}`, but IR conversion still reports “No matching constructor
+for aggregate base expression initializer” for the same declaration. Braced base
+initializers (`Key value{{7}, {1}}`) lower correctly. Fix the aggregate base
+initialization lowering path rather than reintroducing a constexpr-only
+workaround.
+
 ## Explicit casts of overloaded member-function addresses lose target identity
 
 `static_cast<int (Object::*)(int)>(&Object::first)` evaluates without retaining

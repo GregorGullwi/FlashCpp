@@ -361,6 +361,15 @@ schema publication fail with an inconsistent union group.
 `tests/test_derived_anonymous_union_layout_ret0.cpp` covers a derived anonymous
 union with a nonzero base offset.
 
+Constexpr aggregate initialization now materializes a scalar base-class
+initializer as an aggregate subobject, so `Key value{7, {1}}` keeps the base
+value and the anonymous-union active member. Derived anonymous-union structural
+values now preserve both the base subobject and the selected variant, including
+through a constexpr function assignment and return.
+`tests/test_canonical_structural_nttp_derived_union_activity_ret0.cpp` covers
+canonical identity; the native canonical suite checks the base value and active
+union payload for both variants.
+
 ## Next work
 
 Continue boundary 3A in this order.
@@ -575,7 +584,7 @@ Continue boundary 3A in this order.
    before deleting `legacyDerivedBaseOffset`; audit dependent and other
    non-integral specialization roots too. Keep the worklist guard and the
    nonzero-offset guards in
-   `test_canonical_structural_nttp_{base_source,equivalence,subobjects,bitfields,arrays,union_active,float,null_pointer,null_pointer_array,class_template,member_object_pointer,member_function_pointer,inherited_member_object_pointer,overloaded_member_function_pointer,member_pointer_array,member_function_pointer_array,inherited_member_function_pointer,virtual_member_function_pointer,specialization_member_pointer,nullptr_member}_ret0.cpp`.
+   `test_canonical_structural_nttp_{base_source,equivalence,subobjects,bitfields,arrays,union_active,float,null_pointer,null_pointer_array,class_template,member_object_pointer,member_function_pointer,inherited_member_object_pointer,overloaded_member_function_pointer,member_pointer_array,member_function_pointer_array,inherited_member_function_pointer,virtual_member_function_pointer,specialization_member_pointer,nullptr_member,derived_union_activity}_ret0.cpp`.
    See `KNOWN_ISSUES.md`.
 
    **Owner-index deletion gates:** virtual-base ABI facts are published by class
