@@ -7,6 +7,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "AggregateInitialization.h"
 #include "AstNodeTypes.h"
 #include "SemanticAnalysis.h"
 #include "MigrationStats.h"
@@ -3871,6 +3872,54 @@ TypeSpecifierNode SemanticAnalysis::finalizePlaceholderDeduction(TypeCategory pl
 
 // --- Top-level dispatch ---
 
+bool SemanticAnalysis::aggregateElementAppertainsWhole(
+	const AggregateElements::Element& element,
+	const ASTNode& clause) {
+	if (!element.is_aggregate) {
+		return true;
+	}
+	if (element.is_array || element.struct_info == nullptr) {
+		return false;
+	}
+
+	const CanonicalTypeId source_type_id = inferExpressionType(clause);
+	if (!source_type_id) {
+		return false;
+	}
+	const CanonicalTypeDesc& source_type = type_context_.get(source_type_id);
+	if (source_type.category() != TypeCategory::Struct) {
+		return false;
+	}
+	const TypeIndex source_type_index = source_type.type_index;
+	const TypeIndex target_type_index = element.struct_info->own_type_index_.value_or(TypeIndex{});
+	if (!source_type_index.is_valid() || !target_type_index.is_valid() || tryGetStructTypeInfo(source_type_index) == nullptr) {
+		return false;
+	}
+	return source_type_index == target_type_index || isDerivedFrom(source_type_index, target_type_index, false);
+}
+
+void SemanticAnalysis::validateAggregateInitializerAppertainment(
+	const StructTypeInfo& struct_info,
+	const InitializerListNode& init_list,
+	Token diagnostic_token) {
+	const AggregateInitialization::BasePartition partition = AggregateInitialization::partitionBases(
+		struct_info,
+		init_list,
+		[this](const AggregateElements::Element& element, const ASTNode& clause) {
+			return aggregateElementAppertainsWhole(element, clause);
+		});
+	if (!partition.empty_element_clause.has_value()) {
+		return;
+	}
+	throw makeStructuredCompileError(
+		context_.diagnostics(),
+		DiagnosticId::AggregateInitializerForEmptyElementRequiresBraces,
+		DiagnosticSeverity::Error,
+		SourceLocation::fromToken(diagnostic_token),
+		"Initializer for aggregate with no elements requires explicit braces",
+		{});
+}
+
 void SemanticAnalysis::normalizeTopLevelNode(const ASTNode& node) {
 	if (!node.has_value())
 		return;
@@ -3910,6 +3959,16 @@ void SemanticAnalysis::normalizeTopLevelNode(const ASTNode& node) {
 			// and a signature mismatch accepted silently.
 			const auto& decl = var.declaration();
 			const ASTNode vtype = decl.type_node();
+			if (init->is<InitializerListNode>() && vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
+				const TypeInfo* type_info = tryGetTypeInfo(vtype.as<TypeSpecifierNode>().type_index());
+				const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+				if (struct_info != nullptr && struct_info->isAggregate()) {
+					validateAggregateInitializerAppertainment(
+						*struct_info,
+						init->as<InitializerListNode>(),
+						decl.identifier_token());
+				}
+			}
 			if (vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
 				TypeSpecifierNode declared_type = vtype.as<TypeSpecifierNode>();
 				applyDeclarationArrayBoundsToTypeSpec(decl, declared_type, *this);
@@ -4977,6 +5036,18 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 				}
 			};
 
+			if (init->is<InitializerListNode>() && vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& declared_type = vtype.as<TypeSpecifierNode>();
+				const StructTypeInfo* struct_info = declared_type.category() == TypeCategory::Struct && !declared_type.is_array()
+					? tryGetStructTypeInfo(declared_type.type_index())
+					: nullptr;
+				if (struct_info != nullptr && struct_info->isAggregate()) {
+					validateAggregateInitializerAppertainment(
+						*struct_info,
+						init->as<InitializerListNode>(),
+						decl.identifier_token());
+				}
+			}
 			// For struct types initialized via InitializerListNode (direct-init syntax
 			// like `Pair p(42, 3.14)`), annotate each initializer argument with the
 			// matching constructor parameter type.
@@ -5986,6 +6057,9 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 					normalizeExpression(ASTNode(initializer), ctx);
 					const TypeInfo* type_info = tryGetTypeInfo(e.type_node().type_index());
 					const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+					if (struct_info != nullptr && struct_info->isAggregate()) {
+						validateAggregateInitializerAppertainment(*struct_info, *initializer, e.called_from());
+					}
 					if (struct_info != nullptr) {
 						const size_t base_count = std::min(struct_info->base_classes.size(), initializer->size());
 						for (size_t base_index = 0; base_index < base_count; ++base_index) {

@@ -365,14 +365,11 @@ schema publication fail with an inconsistent union group.
 `tests/test_derived_anonymous_union_layout_ret0.cpp` covers a derived anonymous
 union with a nonzero base offset.
 
-Constexpr aggregate initialization now materializes a scalar base-class
-initializer as an aggregate subobject, so `Key value{7, {1}}` keeps the base
-value and the anonymous-union active member. Derived anonymous-union structural
-values now preserve both the base subobject and the selected variant, including
-through a constexpr function assignment and return.
-`tests/test_canonical_structural_nttp_derived_union_activity_ret0.cpp` covers
-canonical identity; the native canonical suite checks the base value and active
-union payload for both variants.
+Parser, semantic validation, and lowering share the aggregate appertainment
+walk in `AggregateElementCursor.h`; `AggregateInitialization.h` turns it into
+clause ranges. Reuse that cursor for further aggregate work and move its
+`TypeIndex` inputs to `TypeId` as boundary 3A reaches those APIs. Unbraced empty
+aggregate elements report `AggregateInitializerForEmptyElementRequiresBraces`.
 
 ## Next work
 

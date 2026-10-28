@@ -224,6 +224,12 @@
     </ClCompile>
   <ClCompile Include="src\UnitySupport.cpp"><Filter>Source Files</Filter></ClCompile><ClCompile Include="src\UnityParser.cpp"><Filter>Source Files</Filter></ClCompile><ClCompile Include="src\UnityParserTemplates.cpp"><Filter>Source Files</Filter></ClCompile><ClCompile Include="src\UnityBackend.cpp"><Filter>Source Files</Filter></ClCompile></ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\AggregateElementCursor.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\AggregateInitialization.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\AstNodeTypes.h">
       <Filter>Header Files</Filter>
     </ClInclude>

@@ -439,6 +439,8 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\AggregateInitialization.h" />
+    <ClInclude Include="src\AggregateElementCursor.h" />
     <ClInclude Include="src\AstNodeTypes.h" />
     <ClInclude Include="src\AstNodeTypes_Core.h" />
     <ClInclude Include="src\AstNodeTypes_DeclNodes.h" />

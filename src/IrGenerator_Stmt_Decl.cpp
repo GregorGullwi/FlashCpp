@@ -578,6 +578,14 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						  kPackStructMaxDepth, ") exceeded, skipping deeper nesting");
 				return;
 			}
+			for (size_t base_index = 0; base_index < struct_info.base_classes.size() && base_index < eval_result.object_base_values.size(); ++base_index) {
+				const BaseClassSpecifier& base = struct_info.base_classes[base_index];
+				const TypeInfo* base_type_info = resolveToConcreteStructTypeInfo(base.type_index);
+				const StructTypeInfo* base_struct = base_type_info ? base_type_info->getStructInfo() : nullptr;
+				if (base_struct != nullptr) {
+					self(self, init_data, *base_struct, eval_result.object_base_values[base_index], base_offset + base.offset, depth + 1);
+				}
+			}
 			for (const auto& member : struct_info.members) {
 				std::string_view member_name = StringTable::getStringView(member.getName());
 				auto it = eval_result.object_member_bindings.find(member_name);
