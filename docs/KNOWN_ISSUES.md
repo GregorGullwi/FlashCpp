@@ -114,6 +114,14 @@ The large-width case is additionally clamped by layout, so declaration and
 layout facts disagree while structural value import fails closed. Reject all
 three forms while parsing the member declaration, before layout publication.
 
+## Member-function pointer arrays are not parsed as arrays
+
+`int (Object::*methods[2])(int);` is currently treated as a scalar member
+function pointer; initializing multiple elements reports “Too many initializers
+for scalar type”. Member-object-pointer arrays work and canonicalize structural
+elements. The declarator spine must apply the array suffix outside the member
+function pointer component.
+
 ## Explicit casts of overloaded member-function addresses lose target identity
 
 `static_cast<int (Object::*)(int)>(&Object::first)` evaluates without retaining
