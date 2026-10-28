@@ -111,6 +111,15 @@ The large-width case is additionally clamped by layout, so declaration and
 layout facts disagree while structural value import fails closed. Reject all
 three forms while parsing the member declaration, before layout publication.
 
+## Explicit casts of overloaded member-function addresses lose target identity
+
+`static_cast<int (Object::*)(int)>(&Object::first)` evaluates without retaining
+the selected overload target, so different overloads can collapse to one
+structural value. Target-typed initialization such as `IntKey key{&Object::first}`
+resolves correctly. Canonical structural import now selects overloads by
+signature when the target name survives; fixing the cast path belongs to
+expression sema (boundary 4).
+
 ## Static constexpr data-member NTTP arguments fail specialization matching
 
 A static constexpr data member used directly as a template argument can be
