@@ -741,6 +741,52 @@ using Changed = Base<Key{{nullptr, nullptr}, 2}>;
 	CHECK(table.classBaseAt(derived, 1).type == named);
 }
 
+TEST_CASE("Class template specialization structural NTTP values import canonically") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+template<class T> struct Key { T value; };
+constexpr Key<int> key{42};
+template<Key<int> Value> struct Base { short member; };
+struct Padding { long long guard; };
+struct Derived : Padding, Base<key> {};
+using Named = Base<key>;
+using Literal = Base<Key<int>{42}>;
+using Changed = Base<Key<int>{43}>;
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("structural_class_template_nttp.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto import_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const TypeId named = import_type("Named");
+	CHECK(named == import_type("Literal"));
+	CHECK(named != import_type("Changed"));
+	const TypeId value_id = table.templateArgumentValue(table.templateSpecializationArguments(named));
+	const CanonicalTypeNode value = table.node(value_id);
+	REQUIRE(value.kind == CanonicalTypeKind::StructuralValue);
+	CHECK(table.node(value.child).kind == CanonicalTypeKind::TemplateSpecialization);
+	const TypeId link = unpackStructuralValueSubobjects(value.array_extent);
+	const CanonicalTypeNode member = table.node(table.templateArgumentValue(link));
+	CHECK(member.kind == CanonicalTypeKind::IntegralValue);
+	CHECK(member.child == table.builtin(CanonicalBuiltinKind::Int));
+	CHECK(member.array_extent == 42);
+	CHECK_FALSE(table.templateArgumentNext(link));
+	const TypeId derived = import_type("Derived");
+	REQUIRE(table.hasClassBaseSchema(derived));
+	CHECK(table.classBaseAt(derived, 1).type == named);
+}
+
 TEST_CASE("Canonical integral arguments use converted value and canonical type identity") {
 	static_assert(sizeof(CanonicalTypeNode) == 16);
 	static_assert(sizeof(CanonicalTemplateArgument) == 20);

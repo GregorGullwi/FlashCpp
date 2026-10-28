@@ -901,8 +901,9 @@ TypeId CanonicalTypeTable::nullPointerValue(TypeId pointer_type) {
 TypeId CanonicalTypeTable::structuralValue(TypeId class_type, std::span<const TypeId> subobject_values, uint32_t base_count) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
-	if (nodeUnlocked(class_type).kind != CanonicalTypeKind::Record) {
-		throw InternalError("canonical type: structural value requires a published record type");
+	const CanonicalTypeKind class_kind = nodeUnlocked(class_type).kind;
+	if (class_kind != CanonicalTypeKind::Record && class_kind != CanonicalTypeKind::TemplateSpecialization) {
+		throw InternalError("canonical type: structural value requires a published class type");
 	}
 	if (base_count > subobject_values.size()) {
 		throw InternalError("canonical type: structural value base count exceeds its subobjects");

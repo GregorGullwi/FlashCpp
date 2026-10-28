@@ -58,8 +58,12 @@ Null object, function, and member pointer fields now use typed canonical null
 values, and null pointer-like array elements carry the declared element pointer
 depth through structural rehydration. Non-null object/function/member pointer
 targets still need declaration identity, including non-null pointer array
-elements. Structural values of class-template types also still need canonical
-subobject identity and matching specialization base facts.
+elements.
+
+Plain implicit class-template specializations now import as structural values
+through their canonical specialization TypeId. Specializations with bases or
+union groups, explicit specializations, and dependent specialization roots still
+fail closed until their schema/identity facts are published.
 Extend the typed-value importer before deleting `legacyDerivedBaseOffset`;
 audit dependent and other non-integral specialization roots as well.
 Integral, bool, and enum fields, including named bit-fields with signed
@@ -79,8 +83,9 @@ Retain `test_canonical_structural_nttp_base_source_ret0.cpp`,
 `test_canonical_structural_nttp_arrays_ret0.cpp`,
 `test_canonical_structural_nttp_union_active_ret0.cpp`,
 `test_canonical_structural_nttp_float_ret0.cpp`,
-`test_canonical_structural_nttp_null_pointer_ret0.cpp`, and
-`test_canonical_structural_nttp_null_pointer_array_ret0.cpp` as current guards.
+`test_canonical_structural_nttp_null_pointer_ret0.cpp`,
+`test_canonical_structural_nttp_null_pointer_array_ret0.cpp`, and
+`test_canonical_structural_nttp_class_template_ret0.cpp` as current guards.
 
 ## Bit-field declarations accept ill-formed forms
 
