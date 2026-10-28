@@ -2662,26 +2662,28 @@ inline void checkMemberFunctionPointerValues() {
 		ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
 	const TypeId owner = table.record(EntityId{40341});
 	const TypeId member_function_pointer = table.memberFunctionPointer(owner, function);
-	const TypeId first = table.memberFunctionPointerValue(member_function_pointer, 0);
-	const TypeId second = table.memberFunctionPointerValue(member_function_pointer, 1);
+	const TypeId first = table.memberFunctionPointerValue(member_function_pointer, owner, 0);
+	const TypeId second = table.memberFunctionPointerValue(member_function_pointer, owner, 1);
 	require(table.node(first).kind == CanonicalTypeKind::MemberFunctionPointerValue);
 	require(table.node(first).child == member_function_pointer);
-	require(table.node(first).array_extent == 0);
-	require(table.node(second).array_extent == 1);
-	require(first == table.memberFunctionPointerValue(member_function_pointer, 0));
+	require(unpackMemberFunctionPointerValueDeclaringClass(table.node(first).array_extent) == owner);
+	require(unpackMemberFunctionPointerValueOrdinal(table.node(first).array_extent) == 0);
+	require(unpackMemberFunctionPointerValueOrdinal(table.node(second).array_extent) == 1);
+	require(first == table.memberFunctionPointerValue(member_function_pointer, owner, 0));
 	require(first != second);
-	const auto rejects = [&](TypeId type) {
-		try { (void)table.memberFunctionPointerValue(type, 0); } catch (const InternalError&) { return true; }
+	const auto rejects = [&](TypeId type, TypeId declaring_class) {
+		try { (void)table.memberFunctionPointerValue(type, declaring_class, 0); } catch (const InternalError&) { return true; }
 		return false;
 	};
-	require(rejects(integer));
-	require(rejects(table.memberObjectPointer(owner, integer)));
+	require(rejects(integer, owner));
+	require(rejects(table.memberObjectPointer(owner, integer), owner));
+	require(rejects(member_function_pointer, integer));
 	const TypeId values[] = {first, second};
 	const TypeId structural = table.structuralValue(table.record(EntityId{40342}), values, 0);
 	TypeId link = unpackStructuralValueSubobjects(table.node(structural).array_extent);
 	require(table.node(table.templateArgumentValue(link)).kind == CanonicalTypeKind::MemberFunctionPointerValue);
 	link = table.templateArgumentNext(link);
-	require(table.node(table.templateArgumentValue(link)).array_extent == 1);
+	require(unpackMemberFunctionPointerValueOrdinal(table.node(table.templateArgumentValue(link)).array_extent) == 1);
 }
 
 inline void checkStructuralArrayValues() {

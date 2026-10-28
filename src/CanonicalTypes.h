@@ -64,9 +64,9 @@ enum class CanonicalTypeKind : uint8_t {
 	// extent packs the declaring class TypeId (low 32) with the selected member
 	// ordinal (high 16).
 	MemberObjectPointerValue,
-	// Non-null direct member-function pointer: child is its
-	// MemberFunctionPointer type and extent is the selected member function's
-	// ordinal in the owner's declaration order.
+	// Non-null member-function pointer: child is its MemberFunctionPointer type
+	// and extent packs the declaring class TypeId (low 32) with the selected
+	// function ordinal (high 16).
 	MemberFunctionPointerValue,
 };
 
@@ -219,6 +219,19 @@ inline uint16_t unpackMemberObjectPointerValueOrdinal(uint64_t extent) {
 	return static_cast<uint16_t>(extent >> 32);
 }
 
+inline uint64_t packMemberFunctionPointerValueExtent(TypeId declaring_class, uint16_t function_ordinal) {
+	return static_cast<uint64_t>(declaring_class.value) |
+		(static_cast<uint64_t>(function_ordinal) << 32);
+}
+
+inline TypeId unpackMemberFunctionPointerValueDeclaringClass(uint64_t extent) {
+	return TypeId{static_cast<uint32_t>(extent)};
+}
+
+inline uint16_t unpackMemberFunctionPointerValueOrdinal(uint64_t extent) {
+	return static_cast<uint16_t>(extent >> 32);
+}
+
 inline uint64_t packDependentTemplateMemberExtent(TypeId name_link, TypeId arg_link) {
 	return static_cast<uint64_t>(name_link.value) |
 		(static_cast<uint64_t>(arg_link.value) << 32);
@@ -278,8 +291,9 @@ inline TypeId unpackDependentMemberAliasArgs(uint64_t array_extent) {
 // representation. NullPointerValue is internal: child is its pointer-like type
 // and extent is zero. MemberObjectPointerValue is internal: child is its
 // MemberObjectPointer type and extent packs its declaring class TypeId with the
-// selected member ordinal. MemberFunctionPointerValue is internal: child is its MemberFunctionPointer
-// type and extent is the selected member function ordinal. ValueTemplateArg
+// selected member ordinal. MemberFunctionPointerValue is internal: child is its
+// MemberFunctionPointer type and extent packs its declaring class TypeId with the
+// selected member function ordinal. ValueTemplateArg
 // stores the converted value TypeId in array_extent and the next link in child.
 struct CanonicalTypeNode {
 	TypeId child;
@@ -630,10 +644,10 @@ public:
 	// Data-member target of a canonical MemberObjectPointer type. The declaring
 	// class and ordinal are validated against that class's published field schema.
 	TypeId memberObjectPointerValue(TypeId member_pointer_type, TypeId declaring_class, uint16_t member_ordinal);
-	// Direct non-virtual member-function target of a canonical
-	// MemberFunctionPointer type. The adapter validates the ordinal against the
-	// owner's declaration order before calling this API.
-	TypeId memberFunctionPointerValue(TypeId member_function_pointer_type, uint16_t function_ordinal);
+	// Member-function target of a canonical MemberFunctionPointer type. The
+	// adapter validates the declaring class and ordinal against its declaration
+	// order before calling this API.
+	TypeId memberFunctionPointerValue(TypeId member_function_pointer_type, TypeId declaring_class, uint16_t function_ordinal);
 	TypeId structuralValue(TypeId class_type, std::span<const TypeId> subobject_values, uint32_t base_count);
 	TypeId structuralUnionValue(TypeId owner_type, uint16_t first_variant, std::optional<uint16_t> active_variant, TypeId value);
 

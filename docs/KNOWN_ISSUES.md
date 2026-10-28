@@ -59,12 +59,12 @@ values, and null pointer-like array elements carry the declared element pointer
 depth through structural rehydration. Direct and unambiguous non-virtual
 inherited member-object pointer fields resolve to a declaring-class TypeId plus
 member ordinal, and member-object-pointer arrays preserve their outer array
-wrapper and element targets. Direct non-virtual member-function pointer fields
-and member-function-pointer arrays use the owner's declaration ordinal, with
-overloads selected by canonical signature. Non-null object/function pointer
-targets, ambiguous or virtual-base member pointers, virtual or
-inherited-overload member-function pointers, and non-null object/function
-pointer array elements still need declaration identity.
+wrapper and element targets. Direct and inherited non-virtual member-function
+pointer fields and member-function-pointer arrays use a declaring-class TypeId
+plus declaration ordinal, with overloads selected by canonical signature.
+Non-null object/function pointer targets, ambiguous or virtual-base member
+pointers, virtual member-function pointers, and non-null object/function pointer
+array elements still need declaration identity.
 
 Plain implicit class-template specializations now import as structural values
 through their canonical specialization TypeId. Specializations whose owner
@@ -96,8 +96,9 @@ Retain `test_canonical_structural_nttp_base_source_ret0.cpp`,
 `test_canonical_structural_nttp_member_function_pointer_ret0.cpp`,
 `test_canonical_structural_nttp_inherited_member_object_pointer_ret0.cpp`, and
 `test_canonical_structural_nttp_overloaded_member_function_pointer_ret0.cpp`,
-`test_canonical_structural_nttp_member_pointer_array_ret0.cpp`, and
-`test_canonical_structural_nttp_member_function_pointer_array_ret0.cpp` as
+`test_canonical_structural_nttp_member_pointer_array_ret0.cpp`,
+`test_canonical_structural_nttp_member_function_pointer_array_ret0.cpp`, and
+`test_canonical_structural_nttp_inherited_member_function_pointer_ret0.cpp` as
 current guards.
 
 ## Bit-field declarations accept ill-formed forms
