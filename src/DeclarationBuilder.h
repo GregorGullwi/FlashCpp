@@ -512,12 +512,8 @@ bool shouldPublishParserEnum(
 // Build request, prepare once, and commit through a publication transaction.
 // SymbolTable insert must already have succeeded. SymbolTable remains lookup
 // authority when prepare rejects after insert.
-PublishResult commitParserFreeFunctionPublication(
-	DeclarationBuilder& builder,
-	const FunctionDeclarationNode& func_decl,
-	ScopeId lexical_scope_id,
-	bool is_definition,
-	const SymbolTable& symbol_table);
+PublishResult commitParserFreeFunctionPublication(DeclarationBuilder& builder, FunctionDeclarationNode& func_decl, ScopeId lexical_scope_id,
+	bool is_definition, const SymbolTable& symbol_table);
 
 // owner_id empty resolves a namespace owner; local-scope owners must match
 // lexical_scope_id. Class- and template-owned owners are explicit as well.

@@ -94,9 +94,12 @@ including array elements, so equivalent floating members share specialization
 identity. Long double remains fail-closed until the value carrier stores its
 full representation.
 
-Null object, function, and member pointer fields now intern as typed canonical
-null values. Non-null pointer targets still lack declaration identity and fail
-closed.
+Null object, function, and member pointer fields intern as typed canonical null
+values. Published namespace free functions retain EntityIds; the explicit
+`FunctionPointerValue` API validates the actual declaration's signature and keys
+its EntityId with the declared pointer TypeId. Live non-null pointer payloads
+still lack target IDs and fail closed. Function AST size remains 1,376 bytes on
+Windows x64; canonical nodes remain 16 bytes, with no new arena.
 
 Null pointer-like array elements also carry explicit canonical null values and
 their declared element pointer depth. Non-null pointer array elements still
@@ -570,8 +573,17 @@ Continue boundary 3A in this order.
    native canonical suite verifies specialization declaring classes and
    ordinals. The 3A rollup remains 10/79; no exit criterion is closed.
 
-   **Next slice: import remaining non-null pointer and specialization facts.**
-   Start with non-null object/function pointer target declaration identity.
+   **Next slice: preserve selected function targets through constexpr values.**
+   Carry the published function EntityId through `EvalResult`,
+   `NonTypeValueIdentity`, structural serialization/rehydration, equality/hash,
+   and stored template arguments. Feed the actual selected declaration to
+   `tryImportCanonicalFunctionPointerValue`; never manufacture identity by name
+   lookup or ABI spelling. Retain redeclaration, overload, namespace, signature,
+   noexcept, rejected-publication, and rollback guards. Unresolved address
+   selection remains deferred; the overloaded-address lowering gap is recorded
+   in `KNOWN_ISSUES.md`. No additional 3A exit criterion is closed (10/79).
+
+   Non-null object pointer target identity remains separate.
    Ambiguous/virtual-base member pointers, specialization union/field-layout
    facts, unpublished dependent bases, and the nested
    anonymous-union-in-anonymous-union hierarchy still need canonical subobject

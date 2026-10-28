@@ -950,12 +950,8 @@ void PublicationTransaction::noteParameterListInsert(const DeclarationBuilder::P
 	inserted_parameter_lists_.push_back(key);
 }
 
-PublishResult commitParserFreeFunctionPublication(
-	DeclarationBuilder& builder,
-	const FunctionDeclarationNode& func_decl,
-	ScopeId lexical_scope_id,
-	bool is_definition,
-	const SymbolTable& symbol_table) {
+PublishResult commitParserFreeFunctionPublication(DeclarationBuilder& builder, FunctionDeclarationNode& func_decl, ScopeId lexical_scope_id,
+	bool is_definition, const SymbolTable& symbol_table) {
 	PublicationTransaction transaction(builder);
 	const FunctionDeclRequest request = buildFreeFunctionDeclRequest(
 		builder,
@@ -972,6 +968,7 @@ PublishResult commitParserFreeFunctionPublication(
 
 	const PublishResult result = builder.commitFunctionPublication(prepared, transaction);
 	transaction.commit();
+	func_decl.set_entity_id(result.entity_id);
 	return result;
 }
 

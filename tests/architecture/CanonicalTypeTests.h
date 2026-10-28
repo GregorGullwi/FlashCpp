@@ -2832,7 +2832,51 @@ inline void checkUnionValues() {
 	require(!table.hasRecordFieldSchema(EntityId{40204}));
 }
 
+inline void checkFunctionPointerValues() {
+	CanonicalTypeTable table;
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId parameters[] = {table.builtin(CanonicalBuiltinKind::Short)};
+	const TypeId function = table.function(integer, parameters, false, CVQualifier::None, ReferenceQualifier::None,
+		false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	const TypeId safe = table.function(integer, parameters, false, CVQualifier::None, ReferenceQualifier::None,
+		true, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	const TypeId pointer = table.pointer(function);
+	const TypeId value = table.functionPointerValue(pointer, EntityId{41}, function);
+	require(value == table.functionPointerValue(pointer, EntityId{41}, function));
+	require(value == table.functionPointerValue(pointer, EntityId{41}, safe));
+	require(value != table.functionPointerValue(pointer, EntityId{42}, function));
+	require(value != table.functionPointerValue(table.pointer(safe), EntityId{41}, safe));
+	require(value != table.nullPointerValue(pointer));
+	require(table.node(value).kind == CanonicalTypeKind::FunctionPointerValue);
+	require(table.node(value).child == pointer);
+	require(table.node(value).array_extent == 41);
+	const auto rejects = [&](auto operation) {
+		bool rejected = false;
+		try { operation(); } catch (const InternalError&) { rejected = true; }
+		require(rejected);
+	};
+	rejects([&] { table.functionPointerValue(pointer, EntityId{}, function); });
+	rejects([&] { table.functionPointerValue(table.pointer(integer), EntityId{41}, function); });
+	rejects([&] { table.functionPointerValue(table.pointer(safe), EntityId{41}, function); });
+	rejects([&] { table.functionPointerValue(pointer, EntityId{41}, integer); });
+	rejects([&] { table.pointer(value); });
+	rejects([&] { table.substitute(value, TemplateDeclId{1}, std::span<const TypeId>{}); });
+	const CanonicalTemplateArgument arguments[] = {CanonicalTemplateArgument::makeValue(value)};
+	const TypeId owner = table.templateSpecialization(TemplateDeclId{1}, arguments);
+	require(table.templateArgumentValue(table.templateSpecializationArguments(owner)) == value);
+	const TypeId values[] = {value};
+	require(table.node(table.structuralValue(table.record(EntityId{9}), values, 0)).kind == CanonicalTypeKind::StructuralValue);
+	require(table.node(table.structuralArrayValue(table.array(pointer, 1), values)).kind == CanonicalTypeKind::StructuralArrayValue);
+	const size_t baseline_size = table.size();
+	{
+		CanonicalTypeTransaction transaction(table);
+		table.functionPointerValue(pointer, EntityId{99}, function);
+	}
+	require(table.size() == baseline_size);
+}
+
 inline int run() {
+	checkFunctionPointerValues();
 	checkUnionValues();
 	checkStructuralEnumScalars();
 	checkStructuralBitfieldScalars();

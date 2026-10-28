@@ -263,6 +263,18 @@ def main():
         ]
         original = read_text(IMPL)
         mutations = {
+            "lost_function_pointer_target_entity": (
+                ".flags = CanonicalTypeNodeFlags::None, .array_extent = target.value});",
+                ".flags = CanonicalTypeNodeFlags::None, .array_extent = 1});"),
+            "lost_function_pointer_declared_type": (
+                ".child = pointer_type, .kind = CanonicalTypeKind::FunctionPointerValue",
+                ".child = TypeId{}, .kind = CanonicalTypeKind::FunctionPointerValue"),
+            "lost_function_pointer_signature_check": (
+                "if (!isCanonicalFunctionPointerTargetCompatible(source, destination)) {",
+                "if (false && !isCanonicalFunctionPointerTargetCompatible(source, destination)) {"),
+            "lost_function_pointer_entity_check": (
+                "if (!target || pointer.kind != CanonicalTypeKind::Pointer ||",
+                "if (false || pointer.kind != CanonicalTypeKind::Pointer ||"),
             "lost_dependent_qualifier": (
                 ".child = qualifier,\n\t\t\t.kind = CanonicalTypeKind::DependentName,",
                 ".child = TypeId{1},\n\t\t\t.kind = CanonicalTypeKind::DependentName,"),

@@ -71,6 +71,9 @@ enum class CanonicalTypeKind : uint8_t {
 	// Null pointer constant of type std::nullptr_t: child is the canonical
 	// nullptr_t builtin and extent is zero.
 	NullptrValue,
+	// Non-null function pointer: child is its declared Pointer-to-Function type;
+	// extent is the published target function EntityId, never a spelling handle.
+	FunctionPointerValue,
 };
 
 enum class CanonicalTemplateArgKind : uint8_t {
@@ -297,7 +300,9 @@ inline TypeId unpackDependentMemberAliasArgs(uint64_t array_extent) {
 // selected member ordinal. MemberFunctionPointerValue is internal: child is its
 // MemberFunctionPointer type and extent packs its declaring class TypeId with the
 // selected member function ordinal. NullptrValue is internal: child is the
-// canonical nullptr_t builtin and extent is zero. ValueTemplateArg stores the
+// canonical nullptr_t builtin and extent is zero. FunctionPointerValue is internal:
+// child is its declared function pointer type and extent is its target EntityId.
+// ValueTemplateArg stores the
 // converted value TypeId in array_extent and the next link in child.
 struct CanonicalTypeNode {
 	TypeId child;
@@ -311,6 +316,16 @@ struct CanonicalTypeNode {
 
 static_assert(std::is_trivially_copyable_v<CanonicalTypeNode>);
 static_assert(sizeof(CanonicalTypeNode) == 16);
+
+inline bool isCanonicalFunctionPointerTargetCompatible(CanonicalTypeNode source, CanonicalTypeNode destination) {
+	if (source.kind != CanonicalTypeKind::Function || destination.kind != CanonicalTypeKind::Function) return false;
+	// [conv.fctptr] permits dropping noexcept, never adding it.
+	if (!hasCanonicalTypeNodeFlag(destination.flags, CanonicalTypeNodeFlags::NoexceptFunction)) {
+		source.flags = static_cast<CanonicalTypeNodeFlags>(static_cast<uint8_t>(source.flags) &
+			~static_cast<uint8_t>(CanonicalTypeNodeFlags::NoexceptFunction));
+	}
+	return source == destination;
+}
 
 struct CanonicalTypeArenaStats {
 	uint64_t used_bytes;
@@ -641,9 +656,8 @@ public:
 	// Exact Float/Double representation. The caller supplies the bit pattern of
 	// the declared floating type; no host-string or rounding identity is used.
 	TypeId floatingValue(TypeId value_type, uint64_t converted_bits);
-	// Null value of the supplied canonical pointer-like type. Non-null pointer
-	// targets are declaration identity and remain outside this API until that
-	// publication exists.
+	// Null value of the supplied canonical pointer-like type. Non-null function
+	// declaration targets use functionPointerValue separately.
 	TypeId nullPointerValue(TypeId pointer_type);
 	// Data-member target of a canonical MemberObjectPointer type. The declaring
 	// class and ordinal are validated against that class's published field schema.
@@ -652,6 +666,9 @@ public:
 	// adapter validates the declaring class and ordinal against its declaration
 	// order before calling this API.
 	TypeId memberFunctionPointerValue(TypeId member_function_pointer_type, TypeId declaring_class, uint16_t function_ordinal);
+	// The declaration adapter supplies the published function identity and actual
+	// function type; only identity and canonical types enter the key.
+	TypeId functionPointerValue(TypeId pointer_type, EntityId target, TypeId target_function_type);
 	// The sole value of std::nullptr_t, keyed by its canonical builtin type.
 	TypeId nullptrValue(TypeId value_type);
 	TypeId structuralValue(TypeId class_type, std::span<const TypeId> subobject_values, uint32_t base_count);
