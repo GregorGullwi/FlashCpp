@@ -59,12 +59,12 @@ values, and null pointer-like array elements carry the declared element pointer
 depth through structural rehydration. Direct and unambiguous non-virtual
 inherited member-object pointer fields resolve to a declaring-class TypeId plus
 member ordinal, and member-object-pointer arrays preserve their outer array
-wrapper and element targets. Direct and inherited non-virtual member-function
-pointer fields and member-function-pointer arrays use a declaring-class TypeId
-plus declaration ordinal, with overloads selected by canonical signature.
-Non-null object/function pointer targets, ambiguous or virtual-base member
-pointers, virtual member-function pointers, and non-null object/function pointer
-array elements still need declaration identity.
+wrapper and element targets. Direct and inherited member-function pointer fields,
+including virtual functions, and member-function-pointer arrays use a
+declaring-class TypeId plus declaration ordinal, with overloads selected by
+canonical signature. Non-null object/function pointer targets, ambiguous or
+virtual-base member pointers, and non-null object/function pointer array
+elements still need declaration identity.
 
 Plain implicit class-template specializations now import as structural values
 through their canonical specialization TypeId. Specializations whose owner
@@ -98,7 +98,8 @@ Retain `test_canonical_structural_nttp_base_source_ret0.cpp`,
 `test_canonical_structural_nttp_overloaded_member_function_pointer_ret0.cpp`,
 `test_canonical_structural_nttp_member_pointer_array_ret0.cpp`,
 `test_canonical_structural_nttp_member_function_pointer_array_ret0.cpp`, and
-`test_canonical_structural_nttp_inherited_member_function_pointer_ret0.cpp` as
+`test_canonical_structural_nttp_inherited_member_function_pointer_ret0.cpp`,
+and `test_canonical_structural_nttp_virtual_member_function_pointer_ret0.cpp` as
 current guards.
 
 ## Bit-field declarations accept ill-formed forms
@@ -333,7 +334,9 @@ the common case: sema records the selected overload on the address expression
 and IR lowers it to the member's code symbol. The representation is the
 compiler's existing 64-bit member pointer, so this covers non-virtual members
 whose address needs no `this` adjustment (single-inheritance, no virtual
-dispatch). Calling through such a pointer with `obj.*p` or `ptr->*p` lowers as
+dispatch). Structural NTTP identity for virtual member functions is now
+canonical, but runtime lowering and calls through virtual member pointers remain
+unsupported here. Calling through such a pointer with `obj.*p` or `ptr->*p` lowers as
 an indirect call that passes the object as `this` followed by the explicit
 arguments. The call reads the member pointer's canonical owner `TypeId`; when
 that owner is a base of the object, it applies the published non-virtual or

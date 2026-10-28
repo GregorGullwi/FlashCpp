@@ -1768,6 +1768,34 @@ inline std::optional<TypeId> tryImportCanonicalStructuralNullPointer(CanonicalTy
 	return table.nullPointerValue(field_type);
 }
 
+struct CanonicalLookupClass {
+	TypeId type;
+	const StructTypeInfo* record;
+};
+
+// Enqueue the canonical non-virtual bases of one lookup class. Virtual and
+// deferred bases, unsupported imports, and non-record canonical owners fail
+// closed so member lookup never invents an identity.
+inline bool appendCanonicalBaseLookupClasses(CanonicalTypeTable& table, const CanonicalLookupClass& current,
+	InlineVector<CanonicalLookupClass, FlashCpp::InlineVectorSpillFamily::ClassLayout, 4>& pending) {
+	for (const BaseClassSpecifier& base : current.record->base_classes) {
+		if (base.is_virtual || base.is_deferred) {
+			return false;
+		}
+		const TypeInfo* base_info = tryGetTypeInfo(base.type_index);
+		const StructTypeInfo* base_record = base_info != nullptr ? base_info->getStructInfo() : nullptr;
+		if (base_info == nullptr || base_record == nullptr) {
+			return false;
+		}
+		const CanonicalTypeImport imported_base = importCanonicalClassTypeInfo(table, *base_info);
+		if (imported_base.status != CanonicalTypeImportStatus::Supported || table.node(imported_base.type).kind != CanonicalTypeKind::Record) {
+			return false;
+		}
+		pending.push_back({imported_base.type, base_record});
+	}
+	return true;
+}
+
 inline std::optional<TypeId> tryImportCanonicalStructuralMemberObjectPointer(CanonicalTypeTable& table, TypeId field_type,
 	StringHandle member_name) {
 	const CanonicalTypeNode type = table.node(field_type);
@@ -1783,16 +1811,13 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberObjectPointer(Can
 	if (owner_record == nullptr) {
 		return std::nullopt;
 	}
-	struct PendingClass {
-		TypeId type;
-		const StructTypeInfo* record;
-	};
-	std::vector<PendingClass> pending{{owner, owner_record}};
+	InlineVector<CanonicalLookupClass, FlashCpp::InlineVectorSpillFamily::ClassLayout, 4> pending;
+	pending.push_back({owner, owner_record});
 	std::unordered_set<uint32_t> visited;
 	std::optional<TypeId> declaring_class;
 	uint16_t declaring_ordinal = 0;
 	while (!pending.empty()) {
-		const PendingClass current = pending.back();
+		const CanonicalLookupClass current = pending.back();
 		pending.pop_back();
 		if (!visited.insert(current.type.value).second) {
 			continue;
@@ -1810,20 +1835,8 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberObjectPointer(Can
 			declaring_ordinal = static_cast<uint16_t>(ordinal);
 			continue;
 		}
-		for (const BaseClassSpecifier& base : current.record->base_classes) {
-			if (base.is_virtual || base.is_deferred) {
-				return std::nullopt;
-			}
-			const TypeInfo* base_info = tryGetTypeInfo(base.type_index);
-			const StructTypeInfo* base_record = base_info != nullptr ? base_info->getStructInfo() : nullptr;
-			if (base_info == nullptr || base_record == nullptr) {
-				return std::nullopt;
-			}
-			const CanonicalTypeImport imported_base = importCanonicalClassTypeInfo(table, *base_info);
-			if (imported_base.status != CanonicalTypeImportStatus::Supported || table.node(imported_base.type).kind != CanonicalTypeKind::Record) {
-				return std::nullopt;
-			}
-			pending.push_back({imported_base.type, base_record});
+		if (!appendCanonicalBaseLookupClasses(table, current, pending)) {
+			return std::nullopt;
 		}
 	}
 	if (!declaring_class.has_value() || !table.hasRecordFieldSchema(table.recordEntity(*declaring_class))) {
@@ -1879,16 +1892,13 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberFunctionPointer(C
 		}
 		return imported.type;
 	};
-	struct PendingClass {
-		TypeId type;
-		const StructTypeInfo* record;
-	};
-	std::vector<PendingClass> pending{{owner, owner_record}};
+	InlineVector<CanonicalLookupClass, FlashCpp::InlineVectorSpillFamily::ClassLayout, 4> pending;
+	pending.push_back({owner, owner_record});
 	std::unordered_set<uint32_t> visited;
 	std::optional<TypeId> declaring_class;
 	uint16_t declaring_ordinal = 0;
 	while (!pending.empty()) {
-		const PendingClass current = pending.back();
+		const CanonicalLookupClass current = pending.back();
 		pending.pop_back();
 		if (!visited.insert(current.type.value).second) {
 			continue;
@@ -1901,7 +1911,7 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberFunctionPointer(C
 				continue;
 			}
 			has_name = true;
-			if (function.is_virtual || function.is_constructor || function.is_destructor || !imported_function_signature(function).has_value()) {
+			if (function.is_constructor || function.is_destructor || !imported_function_signature(function).has_value()) {
 				continue;
 			}
 			if (matched_ordinal.has_value() || index > UINT16_MAX) {
@@ -1917,20 +1927,8 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberFunctionPointer(C
 			declaring_ordinal = *matched_ordinal;
 			continue;
 		}
-		for (const BaseClassSpecifier& base : current.record->base_classes) {
-			if (base.is_virtual || base.is_deferred) {
-				return std::nullopt;
-			}
-			const TypeInfo* base_info = tryGetTypeInfo(base.type_index);
-			const StructTypeInfo* base_record = base_info != nullptr ? base_info->getStructInfo() : nullptr;
-			if (base_info == nullptr || base_record == nullptr) {
-				return std::nullopt;
-			}
-			const CanonicalTypeImport imported_base = importCanonicalClassTypeInfo(table, *base_info);
-			if (imported_base.status != CanonicalTypeImportStatus::Supported || table.node(imported_base.type).kind != CanonicalTypeKind::Record) {
-				return std::nullopt;
-			}
-			pending.push_back({imported_base.type, base_record});
+		if (!appendCanonicalBaseLookupClasses(table, current, pending)) {
+			return std::nullopt;
 		}
 	}
 	if (!declaring_class.has_value()) {
