@@ -2580,6 +2580,12 @@ inline void checkNullPointerValues() {
 	link = table.templateArgumentNext(link);
 	require(table.node(table.templateArgumentValue(link)).kind == CanonicalTypeKind::NullPointerValue);
 	require(!table.templateArgumentNext(link));
+	const TypeId pointer_array = table.array(pointer, 2);
+	const TypeId null_elements[] = {null_pointer, null_pointer};
+	const TypeId array_value = table.structuralArrayValue(pointer_array, null_elements);
+	require(table.node(array_value).kind == CanonicalTypeKind::StructuralArrayValue);
+	require(table.node(array_value).child == pointer_array);
+	require(unpackStructuralArrayElementCount(table.node(array_value).array_extent) == 2);
 }
 
 inline void checkStructuralArrayValues() {

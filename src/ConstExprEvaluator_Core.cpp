@@ -867,6 +867,11 @@ EvalResult evalResultFromStructuralValue(
 			EvalResult element_result;
 			if (member.nested_value != nullptr) {
 				element_result = evalResultFromStructuralValue(*member.nested_value);
+			} else if (member.scalar_value.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr) {
+				element_result = EvalResult::from_int(0);
+				TypeSpecifierNode element_type(structural_value.type_index, 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
+				element_type.add_pointer_levels(structural_value.array_element_pointer_depth);
+				element_result.set_exact_type(element_type);
 			} else {
 				element_result = decode_scalar(member.scalar_value);
 				attach_scalar_type(element_result, member.scalar_value);
@@ -972,7 +977,7 @@ std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentityIm
 	const EvalResult& result);
 
 std::optional<FlashCpp::StructuralClassValue*> makeStructuralArrayValueIdentityImpl(
-	const EvalResult& result, TypeIndex element_type, std::span<const size_t> dimensions) {
+	const EvalResult& result, TypeIndex element_type, std::span<const size_t> dimensions, uint8_t element_pointer_depth) {
 	if (!result.is_array || dimensions.empty() || dimensions.front() == 0 ||
 		result.array_elements.size() != dimensions.front()) {
 		return std::nullopt;
@@ -989,6 +994,7 @@ std::optional<FlashCpp::StructuralClassValue*> makeStructuralArrayValueIdentityI
 	FlashCpp::StructuralClassValue& array_value = FlashCpp::gStructuralClassValues.emplace_back();
 	array_value.is_array = true;
 	array_value.type_index = element_type;
+	array_value.array_element_pointer_depth = element_pointer_depth;
 	array_value.members.reserve(result.array_elements.size());
 	for (const EvalResult& element : result.array_elements) {
 		FlashCpp::StructuralClassValueMember member;
@@ -996,7 +1002,7 @@ std::optional<FlashCpp::StructuralClassValue*> makeStructuralArrayValueIdentityI
 			if (!element.is_array) {
 				return std::nullopt;
 			}
-			const auto nested = makeStructuralArrayValueIdentityImpl(element, element_type, dimensions.subspan(1));
+			const auto nested = makeStructuralArrayValueIdentityImpl(element, element_type, dimensions.subspan(1), element_pointer_depth);
 			if (!nested.has_value()) {
 				return std::nullopt;
 			}
@@ -1010,22 +1016,36 @@ std::optional<FlashCpp::StructuralClassValue*> makeStructuralArrayValueIdentityI
 		} else if (element.is_array) {
 			return std::nullopt;
 		} else {
-			EvalResult converted = Evaluator::convertEvalResultToTargetType(
-				element_spec, element, "Unsupported array element type in structural value");
-			if (!converted.success()) {
-				return std::nullopt;
-			}
-			TypeCategory category = converted.exact_type.has_value()
-				? converted.exact_type->category()
-				: element_type.category();
-			TypeIndex value_type = converted.exact_type.has_value()
-				? converted.exact_type->type_index().withCategory(category)
-				: element_type;
-			if (std::holds_alternative<double>(converted.value)) {
-				member.scalar_value = FlashCpp::NonTypeValueIdentity::makeFloating(
-					std::get<double>(converted.value), value_type);
+			const TypeCategory declared_category = element_type.category();
+			const bool pointer_like = element_pointer_depth > 0 || declared_category == TypeCategory::FunctionPointer ||
+				declared_category == TypeCategory::MemberObjectPointer ||
+				declared_category == TypeCategory::MemberFunctionPointer;
+			if (pointer_like) {
+				const bool is_null = !element.is_indeterminate && !element.pointer_to_var.isValid() &&
+					!element.member_pointer_member.isValid() &&
+					(element.is_null_member_pointer || element.as_int() == 0);
+				if (!is_null) {
+					return std::nullopt;
+				}
+				member.scalar_value = FlashCpp::NonTypeValueIdentity::makeNullptr(element_type);
 			} else {
-				member.scalar_value = FlashCpp::NonTypeValueIdentity::makeConcrete(converted.as_int(), value_type);
+				EvalResult converted = Evaluator::convertEvalResultToTargetType(
+					element_spec, element, "Unsupported array element type in structural value");
+				if (!converted.success()) {
+					return std::nullopt;
+				}
+				TypeCategory category = converted.exact_type.has_value()
+					? converted.exact_type->category()
+					: declared_category;
+				TypeIndex value_type = converted.exact_type.has_value()
+					? converted.exact_type->type_index().withCategory(category)
+					: element_type;
+				if (std::holds_alternative<double>(converted.value)) {
+					member.scalar_value = FlashCpp::NonTypeValueIdentity::makeFloating(
+						std::get<double>(converted.value), value_type);
+				} else {
+					member.scalar_value = FlashCpp::NonTypeValueIdentity::makeConcrete(converted.as_int(), value_type);
+				}
 			}
 		}
 		array_value.members.push_back(std::move(member));
@@ -1076,7 +1096,8 @@ std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentityIm
 				return false;
 			}
 			const auto array_value =
-				makeStructuralArrayValueIdentityImpl(member_result, member_info.type_index, member_info.array_dimensions);
+				makeStructuralArrayValueIdentityImpl(member_result, member_info.type_index, member_info.array_dimensions,
+					static_cast<uint8_t>(member_info.pointer_depth));
 			if (!array_value.has_value()) {
 				return false;
 			}
