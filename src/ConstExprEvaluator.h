@@ -168,6 +168,11 @@ struct EvalResult {
 	// None for successful results and for evaluator-gap failures that terminal
 	// sites defer instead of reject.
 	DiagnosticId diagnostic_id = DiagnosticId::None;
+	// Explicit union activity for this object member binding. A union group has
+	// at most one active member; inactive variant bindings stay present for
+	// member lookup but never contribute structural identity. Never inferred
+	// from the stored scalar bits.
+	bool is_active_union_member = false;
 
 	// Check if evaluation was successful
 	bool success() const {
@@ -736,6 +741,20 @@ public:
 		std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context,
 		const std::unordered_map<std::string_view, EvalResult>* evaluation_bindings = nullptr);
+	// Union activity is explicit object state: the selected member is marked on
+	// its binding and every other variant in the same group is cleared.
+	static void selectUnionMember(const StructTypeInfo* struct_info,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		std::string_view member_name);
+	// Apply aggregate/default union rules to a group with no explicit selection:
+	// a default member initializer wins, otherwise the first non-padding variant
+	// when initialize_first_variant is true. Constructors that do not initialize
+	// a union leave it explicitly inactive.
+	static void applyDefaultUnionSelections(const StructTypeInfo* struct_info,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		bool initialize_first_variant);
+	static void clearUnionSelections(const StructTypeInfo* struct_info, std::unordered_map<std::string_view, EvalResult>& bindings);
+	static std::optional<std::pair<size_t, size_t>> declaredUnionGroupBounds(const StructTypeInfo* struct_info, size_t member_index);
 	static EvalResult bind_members_from_constructor_initializers(
 		const StructTypeInfo* struct_info,
 		const ConstructorDeclarationNode& ctor_decl,

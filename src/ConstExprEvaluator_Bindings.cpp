@@ -14,6 +14,21 @@
 
 namespace ConstExpr {
 
+namespace {
+
+void markUnionSelectionForObject(EvalResult& object, std::string_view member_name) {
+	if (!object.object_type_index.is_valid()) {
+		return;
+	}
+	const TypeInfo* type_info = tryGetTypeInfo(object.object_type_index);
+	const StructTypeInfo* struct_info = type_info != nullptr ? type_info->getStructInfo() : nullptr;
+	if (struct_info != nullptr) {
+		Evaluator::selectUnionMember(struct_info, object.object_member_bindings, member_name);
+	}
+}
+
+} // namespace
+
 bool Evaluator::tryCollectConstexprOverloadResolutionArgTypes(
 	const ChunkedVector<ASTNode>& arguments,
 	EvaluationContext& context,
@@ -2312,6 +2327,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						auto assign_result = apply_op_to(*target->slot, rhs_result);
 						if (assign_result.success() && !target->root_name.empty()) {
 							if (EvalResult* root_binding = findMutableBindingValue(target->root_name, bindings, context)) {
+								if (direct_object_id != nullptr && direct_object_id->name() == target->root_name) {
+									markUnionSelectionForObject(*root_binding, member_lhs->member_name());
+								}
 								refreshPointerSnapshotsForBinding(target->root_name, *root_binding, bindings, context);
 							}
 						}
@@ -2386,6 +2404,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							bindings[var_name] = rhs_result;
 							refreshPointerSnapshotsForBinding(var_name, bindings[var_name], bindings, context);
 						}
+						if (assign_to_member_binding) {
+							Evaluator::selectUnionMember(context.struct_info, bindings, var_name);
+						}
 						return rhs_result;
 					} else {
 						// Compound assignment - use apply_op_to helper
@@ -2394,6 +2415,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						}
 						auto result = apply_op_to(*target_binding, rhs_result);
 						if (result.success()) {
+							if (assign_to_member_binding) {
+								Evaluator::selectUnionMember(context.struct_info, bindings, var_name);
+							}
 							refreshPointerSnapshotsForBinding(target_binding_name, *target_binding, bindings, context);
 						}
 						return result;
@@ -2514,6 +2538,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 								return rhs_result;
 							auto assign_result = apply_op_to(member_it->second, rhs_result);
 							if (assign_result.success()) {
+								markUnionSelectionForObject(*object_slot, ma.member_name());
 								refreshPointerSnapshotsForBinding(pointed_name, *object_binding, bindings, context);
 							}
 							return assign_result;
@@ -2531,6 +2556,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						auto& heap_val = heap_it->second.value;
 						int64_t offset = ptr_result.pointer_offset;
 						EvalResult* member_slot = nullptr;
+						EvalResult* member_container = nullptr;
 						if (heap_val.is_array) {
 							// Arrow on an element of a heap struct array
 							if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
@@ -2544,6 +2570,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 								return EvalResult::error("Arrow assignment: member not found in heap struct array element: " + std::string(ma.member_name()));
 							}
 							member_slot = &m_it->second;
+							member_container = &elem;
 							} else {
 								if (offset != 0) {
 									return EvalResult::error("Arrow assignment: non-zero pointer offset on non-array heap object in constexpr assignment",
@@ -2555,8 +2582,13 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 								return EvalResult::error("Arrow assignment: member not found in heap struct: " + std::string(ma.member_name()));
 							}
 							member_slot = &m_it->second;
+							member_container = &heap_val;
 						}
-						return apply_op_to(*member_slot, rhs_result);
+						auto result = apply_op_to(*member_slot, rhs_result);
+						if (result.success() && member_container != nullptr) {
+							markUnionSelectionForObject(*member_container, ma.member_name());
+						}
+						return result;
 					}
 				}
 
@@ -2585,6 +2617,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							return rhs_result;
 						auto result = apply_op_to(member_it->second, rhs_result);
 						if (result.success()) {
+							markUnionSelectionForObject(*obj_binding, ma_ptr->member_name());
 							// Recalculate the container's is_indeterminate flag after the member write
 							// so that whole-struct reads (e.g., `return s;`) are not incorrectly rejected.
 							if (obj_binding->is_indeterminate) {

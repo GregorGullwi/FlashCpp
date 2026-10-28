@@ -822,6 +822,8 @@ std::optional<size_t> resolveSizeofPackCount(
 	return std::nullopt;
 }
 
+const StructTypeInfo* structuralClassStructInfo(TypeIndex type_index);
+
 EvalResult evalResultFromStructuralValue(
 	const FlashCpp::StructuralClassValue& structural_value) {
 	const auto decode_scalar = [](const FlashCpp::NonTypeValueIdentity& scalar) -> EvalResult {
@@ -907,6 +909,24 @@ EvalResult evalResultFromStructuralValue(
 			attach_scalar_type(member_result, member.scalar_value);
 		}
 		result.object_member_bindings[StringTable::getStringView(member.name)] = std::move(member_result);
+	}
+	for (const FlashCpp::StructuralUnionSelection& selection : structural_value.union_selections) {
+		if (!selection.hasActiveVariant()) {
+			continue;
+		}
+		const StructTypeInfo* struct_info = structuralClassStructInfo(structural_value.type_index);
+		if (struct_info == nullptr || selection.active_variant >= struct_info->members.size()) {
+			return EvalResult::error("Structural class value has an invalid union selection");
+		}
+		const StringHandle active_name = struct_info->members[selection.active_variant].getName();
+		if (!active_name.isValid()) {
+			return EvalResult::error("Structural class value selects a padding union member");
+		}
+		auto binding = result.object_member_bindings.find(StringTable::getStringView(active_name));
+		if (binding == result.object_member_bindings.end()) {
+			return EvalResult::error("Structural class value omits its active union member");
+		}
+		binding->second.is_active_union_member = true;
 	}
 	return result;
 }
@@ -1028,36 +1048,36 @@ std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentityIm
 		structural_value.base_values.push_back(base_identity->structural_value);
 	}
 	structural_value.members.reserve(struct_info->members.size());
-	for (const StructMember& member_info : struct_info->members) {
+	const auto append_member = [&](const StructMember& member_info) -> bool {
 		if (member_info.isUnnamedOrZeroWidthBitfield()) {
-			continue;
+			return true;
 		}
 		const std::string_view member_name = StringTable::getStringView(member_info.getName());
 		auto member_it = result.object_member_bindings.find(member_name);
 		if (member_it == result.object_member_bindings.end()) {
-			return std::nullopt;
+			return false;
 		}
 		const EvalResult& member_result = member_it->second;
 		if (member_info.is_array != member_result.is_array) {
-			return std::nullopt;
+			return false;
 		}
 		FlashCpp::StructuralClassValueMember member;
 		member.name = member_info.getName();
 		if (member_result.is_array) {
 			if (!member_info.is_array || member_info.array_dimensions.empty()) {
-				return std::nullopt;
+				return false;
 			}
 			const auto array_value =
 				makeStructuralArrayValueIdentityImpl(member_result, member_info.type_index, member_info.array_dimensions);
 			if (!array_value.has_value()) {
-				return std::nullopt;
+				return false;
 			}
 			member.nested_value = *array_value;
 		} else if (member_result.object_type_index.is_valid()) {
 			std::optional<FlashCpp::NonTypeValueIdentity> nested_identity =
 				makeStructuralClassValueIdentityImpl(member_result);
 			if (!nested_identity.has_value() || nested_identity->structural_value == nullptr) {
-				return std::nullopt;
+				return false;
 			}
 			member.nested_value = nested_identity->structural_value;
 		} else {
@@ -1082,6 +1102,43 @@ std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentityIm
 			}
 		}
 		structural_value.members.push_back(std::move(member));
+		return true;
+	};
+	size_t member_index = 0;
+	while (member_index < struct_info->members.size()) {
+		const std::optional<std::pair<size_t, size_t>> group = Evaluator::declaredUnionGroupBounds(struct_info, member_index);
+		if (group.has_value()) {
+			if (group->first != member_index || group->first > UINT16_MAX || group->second > UINT16_MAX) {
+				return std::nullopt;
+			}
+			size_t active = struct_info->members.size();
+			for (size_t index = group->first; index <= group->second; ++index) {
+				if (!struct_info->members[index].getName().isValid()) {
+					continue;
+				}
+				auto binding = result.object_member_bindings.find(StringTable::getStringView(struct_info->members[index].getName()));
+				if (binding == result.object_member_bindings.end() || !binding->second.is_active_union_member) {
+					continue;
+				}
+				if (active != struct_info->members.size()) {
+					return std::nullopt;
+				}
+				active = index;
+			}
+			structural_value.union_selections.push_back({
+				.first_variant = static_cast<uint16_t>(group->first),
+				.active_variant = active == struct_info->members.size()
+					? FlashCpp::kNoStructuralUnionActiveVariant : static_cast<uint16_t>(active)});
+			if (active != struct_info->members.size() && !append_member(struct_info->members[active])) {
+				return std::nullopt;
+			}
+			member_index = group->second + 1;
+			continue;
+		}
+		if (!append_member(struct_info->members[member_index])) {
+			return std::nullopt;
+		}
+		++member_index;
 	}
 	return FlashCpp::NonTypeValueIdentity::makeStructuralClass(
 		result.object_type_index,
@@ -3841,6 +3898,7 @@ static EvalResult make_local_default_init(const TypeSpecifierNode& type_spec, Ev
 			object_result.is_indeterminate = object_result.is_indeterminate || member_result.is_indeterminate;
 			object_result.object_member_bindings[member_name] = std::move(member_result);
 		}
+		Evaluator::applyDefaultUnionSelections(struct_info, object_result.object_member_bindings, false);
 
 		return object_result;
 	}
@@ -4092,6 +4150,7 @@ EvalResult Evaluator::evaluate_new_expression(
 						object_result.object_member_bindings[mname] = EvalResult::indeterminate();
 					}
 				}
+				Evaluator::applyDefaultUnionSelections(struct_info, object_result.object_member_bindings, value_initializes_members);
 			}
 		}
 

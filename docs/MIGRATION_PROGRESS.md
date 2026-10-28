@@ -82,6 +82,13 @@ Named derived aggregates initialize bases and members through the shared emitter
 array decay retains local identity. Builtin dereference receivers preserve the
 pointee address before inherited object adjustment.
 
+Structural NTTP values now carry explicit union activity. Aggregate,
+designated, default, and constructor initialization plus member assignment mark
+the selected variant, structural equality includes the ordered selection, and
+the canonical importer consumes published union-group schemas through
+`structuralUnionValue`. The reduced union specialization case is protected by
+`tests/test_canonical_structural_nttp_union_active_ret0.cpp`.
+
 The architecture the remaining work builds on:
 
 - `TypeSpecifierNode` carries an outermost-to-innermost `DeclaratorComponent`
@@ -333,23 +340,29 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Next slice: preserve active-union state through constexpr values and import.**
-   Carry the selected declaration ordinal or explicit no-active state through
-   initialization, assignment, copies, serialization, and rehydration. Connect
-   that state to the published group schema and `structuralUnionValue` API;
-   never infer activity from scalar bits or default-filled bindings. The reduced
-   `Key{.first=0}` / `Key{.second=0}` case in `KNOWN_ISSUES.md` must produce
-   distinct template arguments. Preserve nested anonymous-union hierarchy rather
-   than treating flattened layout groups as a complete value schema. Cover
-   equivalent named/braced values, nested records, bases, and nonzero offsets.
-   Other scalar field kinds
-   (floating, pointer, and member-pointer values) and unpublished value-class
-   identities remain separate import work. Keep the worklist guard and the
-   nonzero-offset guards in
-   `test_canonical_structural_nttp_{base_source,equivalence,subobjects,bitfields,arrays}_ret0.cpp`.
-   `legacyDerivedBaseOffset` remains necessary for unsupported
-   value-specialization roots; audit these and dependent roots before deleting it
-   or closing a 3A exit criterion. See `KNOWN_ISSUES.md`.
+   **Active-union structural identity: complete for declared groups.**
+   `EvalResult` now carries the selected variant explicitly on the member
+   binding, and `StructuralClassValue` stores ordered `union_selections`
+   (`first_variant`, active declaration ordinal, or explicit no-active).
+   Aggregate, designated, default, and constructor initialization plus member
+   assignment maintain that state; structural equality and hashing include it;
+   rehydration restores it; and the canonical importer consumes the published
+   union-group schema and calls `structuralUnionValue` for struct anonymous
+   groups and named union records. Activity is never inferred from scalar bits
+   or default-filled variant bindings. `tests/test_canonical_structural_nttp_union_active_ret0.cpp`
+   protects `Key{.first=0}` versus `Key{.second=0}`, named/braced equivalence,
+   a named union member at a nonzero offset, and union-valued base
+   specializations. The 3A rollup remains 10/79; no exit criterion is closed.
+
+   **Next slice: import the remaining structural value kinds.** Floating,
+   pointer, and member-pointer field values, structural values of class-template
+   types, and the nested anonymous-union-in-anonymous-union hierarchy still need
+   canonical subobject identity. Extend the typed-value importer and its
+   specialization base facts before deleting `legacyDerivedBaseOffset`; audit
+   dependent and other non-integral specialization roots too. Keep the worklist
+   guard and the nonzero-offset guards in
+   `test_canonical_structural_nttp_{base_source,equivalence,subobjects,bitfields,arrays}_ret0.cpp`
+   and the new union-active guard. See `KNOWN_ISSUES.md`.
 
    **Owner-index deletion gates:** virtual-base ABI facts are published by class
    TypeIds and consumed by AstToIr, explicit-cast, IRConverter, and constructor

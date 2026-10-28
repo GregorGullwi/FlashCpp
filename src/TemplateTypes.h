@@ -751,10 +751,25 @@ struct StructuralClassValueMember {
 	StructuralClassValue* nested_value = nullptr;
 };
 
+// One declared union group in a structural value. `first_variant` is the
+// declaration ordinal of the group start and `active_variant` is the selected
+// declaration ordinal, or kNoActiveVariant for an explicitly inactive group.
+// Inactive variants are omitted from StructuralClassValue::members.
+inline constexpr uint16_t kNoStructuralUnionActiveVariant = UINT16_MAX;
+
+struct StructuralUnionSelection {
+	uint16_t first_variant = 0;
+	uint16_t active_variant = kNoStructuralUnionActiveVariant;
+
+	bool hasActiveVariant() const { return active_variant != kNoStructuralUnionActiveVariant; }
+	friend bool operator==(StructuralUnionSelection, StructuralUnionSelection) = default;
+};
+
 struct StructuralClassValue {
 	TypeIndex type_index{};
 	TemplateVector<StructuralClassValue*, 2> base_values;
 	TemplateVector<StructuralClassValueMember, 4> members;
+	TemplateVector<StructuralUnionSelection, 2> union_selections;
 	// An array value reuses members as its ordered elements; nested arrays and
 	// records live in nested_value. Elements have no names.
 	bool is_array = false;
