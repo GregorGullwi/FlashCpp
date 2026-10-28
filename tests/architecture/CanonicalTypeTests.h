@@ -2588,6 +2588,23 @@ inline void checkNullPointerValues() {
 	require(unpackStructuralArrayElementCount(table.node(array_value).array_extent) == 2);
 }
 
+inline void checkTemplateSpecializationStructuralValues() {
+	CanonicalTypeTable table;
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const CanonicalTemplateArgument arguments[] = {CanonicalTemplateArgument::makeType(integer)};
+	const TypeId specialization = table.templateSpecialization(TemplateDeclId{40321}, arguments);
+	require(table.node(specialization).kind == CanonicalTypeKind::TemplateSpecialization);
+	const TypeId member = table.integralValue(integer, 42);
+	const TypeId values[] = {member};
+	const TypeId structural = table.structuralValue(specialization, values, 0);
+	require(table.node(structural).kind == CanonicalTypeKind::StructuralValue);
+	require(table.node(structural).child == specialization);
+	require(table.templateArgumentValue(unpackStructuralValueSubobjects(table.node(structural).array_extent)) == member);
+	const CanonicalTemplateArgument other_arguments[] = {CanonicalTemplateArgument::makeType(table.builtin(CanonicalBuiltinKind::Long))};
+	const TypeId other_specialization = table.templateSpecialization(TemplateDeclId{40321}, other_arguments);
+	require(structural != table.structuralValue(other_specialization, values, 0));
+}
+
 inline void checkStructuralArrayValues() {
 	CanonicalTypeTable table;
 	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
@@ -2729,6 +2746,7 @@ inline int run() {
 	checkStructuralBitfieldScalars();
 	checkFloatingValues();
 	checkNullPointerValues();
+	checkTemplateSpecializationStructuralValues();
 	checkStructuralArrayValues();
 	{
 		CanonicalTypeTable table;

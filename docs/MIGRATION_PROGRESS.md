@@ -102,6 +102,10 @@ Null pointer-like array elements also carry explicit canonical null values and
 their declared element pointer depth. Non-null pointer array elements still
 fail closed.
 
+Class-template structural values now import for plain implicit specializations,
+including substituted member values, while specializations with bases or union
+groups remain fail-closed.
+
 The architecture the remaining work builds on:
 
 - `TypeSpecifierNode` carries an outermost-to-innermost `DeclaratorComponent`
@@ -405,15 +409,28 @@ Continue boundary 3A in this order.
    specialization; the native canonical suite includes a mutation-checked
    importer test. The 3A rollup remains 10/79; no exit criterion is closed.
 
+   **Class-template structural value import: complete for plain implicit
+   specializations.** The structural importer now imports an implicit class
+   template specialization through `importCanonicalClassTypeInfo` instead of a
+   bare TypeIndex syntax node, and `structuralValue` accepts a
+   TemplateSpecialization class TypeId. A `Key<int>`-style value therefore
+   keeps its specialization identity while its substituted member values remain
+   typed canonical subobjects. Specializations with bases or union groups still
+   fail closed. `tests/test_canonical_structural_nttp_class_template_ret0.cpp`
+   protects equivalent and changed `Key<int>` values plus a base specialization;
+   the native canonical suite includes a mutation-checked importer test and the
+   canonical table accepts specialization children directly. The 3A rollup
+   remains 10/79; no exit criterion is closed.
+
    **Next slice: import non-null pointer and remaining structural values.**
-   Non-null object/function/member pointer targets, structural values of
-   class-template types, and the nested anonymous-union-in-anonymous-union
-   hierarchy still need canonical subobject identity. Extend the typed-value
-   importer and its specialization base facts before deleting
-   `legacyDerivedBaseOffset`; audit dependent and other non-integral
-   specialization roots too. Keep the worklist guard and the nonzero-offset
-   guards in
-   `test_canonical_structural_nttp_{base_source,equivalence,subobjects,bitfields,arrays,union_active,float,null_pointer,null_pointer_array}_ret0.cpp`.
+   Non-null object/function/member pointer targets, specialization base/union
+   facts, explicit specializations, and the nested
+   anonymous-union-in-anonymous-union hierarchy still need canonical subobject
+   identity. Extend the typed-value importer and its specialization base facts
+   before deleting `legacyDerivedBaseOffset`; audit dependent and other
+   non-integral specialization roots too. Keep the worklist guard and the
+   nonzero-offset guards in
+   `test_canonical_structural_nttp_{base_source,equivalence,subobjects,bitfields,arrays,union_active,float,null_pointer,null_pointer_array,class_template}_ret0.cpp`.
    See `KNOWN_ISSUES.md`.
 
    **Owner-index deletion gates:** virtual-base ABI facts are published by class

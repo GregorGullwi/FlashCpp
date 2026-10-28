@@ -1840,12 +1840,29 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 			subobjects.size() > UINT32_MAX) {
 			throw InternalError("canonical value importer: subobject count exceeds worklist capacity");
 		}
-		TypeSpecifierNode syntax(source->type_index, 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
-		tryBindPublishedTypeEntity(syntax);
-		const CanonicalTypeImport imported = importCanonicalType(table, syntax);
-		if (imported.status != CanonicalTypeImportStatus::Supported || table.node(imported.type).kind != CanonicalTypeKind::Record ||
+		CanonicalTypeImport imported;
+		if (info->isTemplateInstantiation()) {
+			imported = importCanonicalClassTypeInfo(table, *info);
+		} else {
+			TypeSpecifierNode syntax(source->type_index, 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
+			tryBindPublishedTypeEntity(syntax);
+			imported = importCanonicalType(table, syntax);
+		}
+		const CanonicalTypeKind imported_kind = table.node(imported.type).kind;
+		if (imported.status != CanonicalTypeImportStatus::Supported ||
+			(imported_kind != CanonicalTypeKind::Record && imported_kind != CanonicalTypeKind::TemplateSpecialization) ||
 			(expected && imported.type != expected)) {
 			return false;
+		}
+		if (imported_kind == CanonicalTypeKind::TemplateSpecialization) {
+			if (record->is_union) {
+				return false;
+			}
+			for (const StructMember& member : record->members) {
+				if (member.anonymous_union_group_index.has_value()) {
+					return false;
+				}
+			}
 		}
 		if (!record->base_classes.empty() && (!table.hasClassBaseSchema(imported.type) ||
 			table.classBaseCount(imported.type) != record->base_classes.size())) {
