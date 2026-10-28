@@ -535,6 +535,16 @@ Continue boundary 3A in this order.
    canonical suite checks declaring classes and ordinals. The 3A rollup remains
    10/79; no exit criterion is closed.
 
+   **`std::nullptr_t` structural values: complete.** A structural member of
+   type `decltype(nullptr)` now imports as a canonical `NullptrValue` keyed by
+   the `nullptr_t` builtin rather than falling through the integral scalar path.
+   Rehydration keeps the declared member type, so equivalent null members share
+   identity and changed sibling members remain distinct.
+   `tests/test_canonical_structural_nttp_nullptr_member_ret0.cpp` protects
+   equivalent and changed values; the native canonical suite validates the
+   builtin child and zero payload. The 3A rollup remains 10/79; no exit
+   criterion is closed.
+
    **Specialization-owner member pointer values: complete for implicit
    specializations.** Member-target owner resolution now accepts a
    `TemplateSpecialization` TypeId and recovers its primary pattern record
@@ -558,7 +568,7 @@ Continue boundary 3A in this order.
    before deleting `legacyDerivedBaseOffset`; audit dependent and other
    non-integral specialization roots too. Keep the worklist guard and the
    nonzero-offset guards in
-   `test_canonical_structural_nttp_{base_source,equivalence,subobjects,bitfields,arrays,union_active,float,null_pointer,null_pointer_array,class_template,member_object_pointer,member_function_pointer,inherited_member_object_pointer,overloaded_member_function_pointer,member_pointer_array,member_function_pointer_array,inherited_member_function_pointer,virtual_member_function_pointer,specialization_member_pointer}_ret0.cpp`.
+   `test_canonical_structural_nttp_{base_source,equivalence,subobjects,bitfields,arrays,union_active,float,null_pointer,null_pointer_array,class_template,member_object_pointer,member_function_pointer,inherited_member_object_pointer,overloaded_member_function_pointer,member_pointer_array,member_function_pointer_array,inherited_member_function_pointer,virtual_member_function_pointer,specialization_member_pointer,nullptr_member}_ret0.cpp`.
    See `KNOWN_ISSUES.md`.
 
    **Owner-index deletion gates:** virtual-base ABI facts are published by class

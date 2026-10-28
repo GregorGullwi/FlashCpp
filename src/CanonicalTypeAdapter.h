@@ -1968,6 +1968,10 @@ inline std::optional<TypeId> tryImportCanonicalStructuralFieldValue(CanonicalTyp
 		return tryImportCanonicalStructuralFloating(table, field_type, static_cast<uint64_t>(value.value), storage_size);
 	}
 	if (value.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr) {
+		const CanonicalTypeNode field_node = table.node(field_type);
+		if (field_node.kind == CanonicalTypeKind::Builtin && field_node.builtin == CanonicalBuiltinKind::Nullptr) {
+			return table.nullptrValue(field_type);
+		}
 		return tryImportCanonicalStructuralNullPointer(table, field_type);
 	}
 	if (value.kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer && value.isNullMemberPointer()) {

@@ -945,6 +945,17 @@ TypeId CanonicalTypeTable::memberFunctionPointerValue(TypeId member_function_poi
 		.array_extent = packMemberFunctionPointerValueExtent(declaring_class, function_ordinal)});
 }
 
+TypeId CanonicalTypeTable::nullptrValue(TypeId value_type) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const CanonicalTypeNode type = nodeUnlocked(value_type);
+	if (type.kind != CanonicalTypeKind::Builtin || type.builtin != CanonicalBuiltinKind::Nullptr) {
+		throw InternalError("canonical type: nullptr value requires the nullptr_t builtin type");
+	}
+	return internUnlocked({.child = value_type, .kind = CanonicalTypeKind::NullptrValue, .builtin = CanonicalBuiltinKind::Void,
+		.qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None, .array_extent = 0});
+}
+
 TypeId CanonicalTypeTable::structuralValue(TypeId class_type, std::span<const TypeId> subobject_values, uint32_t base_count) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
@@ -1963,8 +1974,9 @@ bool CanonicalTypeTable::isReference(CanonicalTypeKind kind) {
 bool CanonicalTypeTable::isValueKind(CanonicalTypeKind kind) {
 	return kind == CanonicalTypeKind::IntegralValue || kind == CanonicalTypeKind::FloatingValue ||
 		kind == CanonicalTypeKind::NullPointerValue || kind == CanonicalTypeKind::MemberObjectPointerValue ||
-		kind == CanonicalTypeKind::MemberFunctionPointerValue || kind == CanonicalTypeKind::StructuralValue ||
-		kind == CanonicalTypeKind::StructuralArrayValue || kind == CanonicalTypeKind::StructuralUnionValue;
+		kind == CanonicalTypeKind::MemberFunctionPointerValue || kind == CanonicalTypeKind::NullptrValue ||
+		kind == CanonicalTypeKind::StructuralValue || kind == CanonicalTypeKind::StructuralArrayValue ||
+		kind == CanonicalTypeKind::StructuralUnionValue;
 }
 
 bool CanonicalTypeTable::isInternalLink(CanonicalTypeKind kind) {
@@ -2881,6 +2893,7 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 			case CanonicalTypeKind::NullPointerValue:
 			case CanonicalTypeKind::MemberObjectPointerValue:
 			case CanonicalTypeKind::MemberFunctionPointerValue:
+			case CanonicalTypeKind::NullptrValue:
 			case CanonicalTypeKind::ValueTemplateArg:
 			case CanonicalTypeKind::NonTypeTemplateArg:
 			case CanonicalTypeKind::TemplateTemplateArg:

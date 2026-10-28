@@ -52,7 +52,8 @@ Float and double fields, including array elements, now use exact typed
 canonical floating values; equivalent syntax and declaration imports share
 identity. Long double remains unsupported for structural values because the
 evaluator carries only a 64-bit representation, so it fails closed instead of
-aliasing through double bits.
+aliasing through double bits. `std::nullptr_t` fields use a canonical
+`NullptrValue` keyed by the nullptr builtin.
 
 Null object, function, and member pointer fields now use typed canonical null
 values, and null pointer-like array elements carry the declared element pointer
@@ -102,8 +103,8 @@ Retain `test_canonical_structural_nttp_base_source_ret0.cpp`,
 `test_canonical_structural_nttp_member_function_pointer_array_ret0.cpp`, and
 `test_canonical_structural_nttp_inherited_member_function_pointer_ret0.cpp`,
 `test_canonical_structural_nttp_virtual_member_function_pointer_ret0.cpp`, and
-`test_canonical_structural_nttp_specialization_member_pointer_ret0.cpp` as
-current guards.
+`test_canonical_structural_nttp_specialization_member_pointer_ret0.cpp`, and
+`test_canonical_structural_nttp_nullptr_member_ret0.cpp` as current guards.
 
 ## Explicit casts of overloaded member-function addresses lose target identity
 

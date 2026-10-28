@@ -68,6 +68,9 @@ enum class CanonicalTypeKind : uint8_t {
 	// and extent packs the declaring class TypeId (low 32) with the selected
 	// function ordinal (high 16).
 	MemberFunctionPointerValue,
+	// Null pointer constant of type std::nullptr_t: child is the canonical
+	// nullptr_t builtin and extent is zero.
+	NullptrValue,
 };
 
 enum class CanonicalTemplateArgKind : uint8_t {
@@ -293,8 +296,9 @@ inline TypeId unpackDependentMemberAliasArgs(uint64_t array_extent) {
 // MemberObjectPointer type and extent packs its declaring class TypeId with the
 // selected member ordinal. MemberFunctionPointerValue is internal: child is its
 // MemberFunctionPointer type and extent packs its declaring class TypeId with the
-// selected member function ordinal. ValueTemplateArg
-// stores the converted value TypeId in array_extent and the next link in child.
+// selected member function ordinal. NullptrValue is internal: child is the
+// canonical nullptr_t builtin and extent is zero. ValueTemplateArg stores the
+// converted value TypeId in array_extent and the next link in child.
 struct CanonicalTypeNode {
 	TypeId child;
 	CanonicalTypeKind kind;
@@ -648,6 +652,8 @@ public:
 	// adapter validates the declaring class and ordinal against its declaration
 	// order before calling this API.
 	TypeId memberFunctionPointerValue(TypeId member_function_pointer_type, TypeId declaring_class, uint16_t function_ordinal);
+	// The sole value of std::nullptr_t, keyed by its canonical builtin type.
+	TypeId nullptrValue(TypeId value_type);
 	TypeId structuralValue(TypeId class_type, std::span<const TypeId> subobject_values, uint32_t base_count);
 	TypeId structuralUnionValue(TypeId owner_type, uint16_t first_variant, std::optional<uint16_t> active_variant, TypeId value);
 

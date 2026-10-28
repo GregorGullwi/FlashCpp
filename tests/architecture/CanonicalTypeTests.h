@@ -2586,6 +2586,17 @@ inline void checkNullPointerValues() {
 	require(table.node(array_value).kind == CanonicalTypeKind::StructuralArrayValue);
 	require(table.node(array_value).child == pointer_array);
 	require(unpackStructuralArrayElementCount(table.node(array_value).array_extent) == 2);
+	const TypeId nullptr_type = table.builtin(CanonicalBuiltinKind::Nullptr);
+	const TypeId nullptr_value = table.nullptrValue(nullptr_type);
+	require(table.node(nullptr_value).kind == CanonicalTypeKind::NullptrValue);
+	require(table.node(nullptr_value).child == nullptr_type);
+	require(table.node(nullptr_value).array_extent == 0);
+	require(nullptr_value == table.nullptrValue(nullptr_type));
+	try {
+		(void)table.nullptrValue(integer);
+		require(false);
+	} catch (const InternalError&) {
+	}
 }
 
 inline void checkTemplateSpecializationStructuralValues() {
