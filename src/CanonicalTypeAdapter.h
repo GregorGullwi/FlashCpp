@@ -1775,6 +1775,42 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberObjectPointer(Can
 	return table.memberObjectPointerValue(field_type, static_cast<uint16_t>(ordinal));
 }
 
+inline std::optional<TypeId> tryImportCanonicalStructuralMemberFunctionPointer(CanonicalTypeTable& table, TypeId field_type,
+	StringHandle member_name) {
+	const CanonicalTypeNode type = table.node(field_type);
+	if (type.kind != CanonicalTypeKind::MemberFunctionPointer || !member_name.isValid()) {
+		return std::nullopt;
+	}
+	const TypeId owner{static_cast<uint32_t>(type.array_extent)};
+	if (table.node(owner).kind != CanonicalTypeKind::Record) {
+		return std::nullopt;
+	}
+	const TypeInfo* owner_info = tryFindTypeInfoByEntityId(table.recordEntity(owner));
+	const StructTypeInfo* owner_record = owner_info != nullptr ? owner_info->getStructInfo() : nullptr;
+	if (owner_record == nullptr) {
+		return std::nullopt;
+	}
+	size_t ordinal = owner_record->member_functions.size();
+	for (size_t index = 0; index < owner_record->member_functions.size(); ++index) {
+		const StructMemberFunction& function = owner_record->member_functions[index];
+		if (function.getName() != member_name) {
+			continue;
+		}
+		if (ordinal != owner_record->member_functions.size()) {
+			return std::nullopt;
+		}
+		ordinal = index;
+	}
+	if (ordinal == owner_record->member_functions.size() || ordinal > UINT16_MAX) {
+		return std::nullopt;
+	}
+	const StructMemberFunction& function = owner_record->member_functions[ordinal];
+	if (function.is_virtual || function.is_constructor || function.is_destructor) {
+		return std::nullopt;
+	}
+	return table.memberFunctionPointerValue(field_type, static_cast<uint16_t>(ordinal));
+}
+
 inline std::optional<TypeId> tryImportCanonicalStructuralFieldValue(CanonicalTypeTable& table, TypeId field_type,
 	const FlashCpp::NonTypeValueIdentity& value, size_t storage_size, std::optional<uint8_t> bit_width) {
 	if (value.is_dependent) {
@@ -1793,7 +1829,13 @@ inline std::optional<TypeId> tryImportCanonicalStructuralFieldValue(CanonicalTyp
 		return tryImportCanonicalStructuralNullPointer(table, field_type);
 	}
 	if (value.kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer && value.member_name.isValid()) {
-		return tryImportCanonicalStructuralMemberObjectPointer(table, field_type, value.member_name);
+		const CanonicalTypeKind field_kind = table.node(field_type).kind;
+		if (field_kind == CanonicalTypeKind::MemberObjectPointer) {
+			return tryImportCanonicalStructuralMemberObjectPointer(table, field_type, value.member_name);
+		}
+		if (field_kind == CanonicalTypeKind::MemberFunctionPointer) {
+			return tryImportCanonicalStructuralMemberFunctionPointer(table, field_type, value.member_name);
+		}
 	}
 	return std::nullopt;
 }

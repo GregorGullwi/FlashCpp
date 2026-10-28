@@ -2646,6 +2646,35 @@ inline void checkMemberObjectPointerValues() {
 	require(table.node(table.templateArgumentValue(link)).array_extent == 1);
 }
 
+inline void checkMemberFunctionPointerValues() {
+	CanonicalTypeTable table;
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId function = table.function(integer, std::span<const TypeId>(), false, CVQualifier::None,
+		ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	const TypeId owner = table.record(EntityId{40341});
+	const TypeId member_function_pointer = table.memberFunctionPointer(owner, function);
+	const TypeId first = table.memberFunctionPointerValue(member_function_pointer, 0);
+	const TypeId second = table.memberFunctionPointerValue(member_function_pointer, 1);
+	require(table.node(first).kind == CanonicalTypeKind::MemberFunctionPointerValue);
+	require(table.node(first).child == member_function_pointer);
+	require(table.node(first).array_extent == 0);
+	require(table.node(second).array_extent == 1);
+	require(first == table.memberFunctionPointerValue(member_function_pointer, 0));
+	require(first != second);
+	const auto rejects = [&](TypeId type) {
+		try { (void)table.memberFunctionPointerValue(type, 0); } catch (const InternalError&) { return true; }
+		return false;
+	};
+	require(rejects(integer));
+	require(rejects(table.memberObjectPointer(owner, integer)));
+	const TypeId values[] = {first, second};
+	const TypeId structural = table.structuralValue(table.record(EntityId{40342}), values, 0);
+	TypeId link = unpackStructuralValueSubobjects(table.node(structural).array_extent);
+	require(table.node(table.templateArgumentValue(link)).kind == CanonicalTypeKind::MemberFunctionPointerValue);
+	link = table.templateArgumentNext(link);
+	require(table.node(table.templateArgumentValue(link)).array_extent == 1);
+}
+
 inline void checkStructuralArrayValues() {
 	CanonicalTypeTable table;
 	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
@@ -2789,6 +2818,7 @@ inline int run() {
 	checkNullPointerValues();
 	checkTemplateSpecializationStructuralValues();
 	checkMemberObjectPointerValues();
+	checkMemberFunctionPointerValues();
 	checkStructuralArrayValues();
 	{
 		CanonicalTypeTable table;

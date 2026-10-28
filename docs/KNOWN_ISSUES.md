@@ -57,9 +57,11 @@ aliasing through double bits.
 Null object, function, and member pointer fields now use typed canonical null
 values, and null pointer-like array elements carry the declared element pointer
 depth through structural rehydration. Direct non-null member-object pointer
-fields resolve to the owner's published member ordinal. Non-null object/function
-pointer targets, inherited/base member pointers, member-function pointers, and
-non-null pointer array elements still need declaration identity.
+fields resolve to the owner's published member ordinal, and unique non-virtual
+direct member-function pointer fields use the owner's declaration ordinal.
+Non-null object/function pointer targets, inherited/base member pointers,
+overloaded or virtual member-function pointers, and non-null pointer array
+elements still need declaration identity.
 
 Plain implicit class-template specializations now import as structural values
 through their canonical specialization TypeId. Specializations whose owner
@@ -86,8 +88,9 @@ Retain `test_canonical_structural_nttp_base_source_ret0.cpp`,
 `test_canonical_structural_nttp_float_ret0.cpp`,
 `test_canonical_structural_nttp_null_pointer_ret0.cpp`,
 `test_canonical_structural_nttp_null_pointer_array_ret0.cpp`,
-`test_canonical_structural_nttp_class_template_ret0.cpp`, and
-`test_canonical_structural_nttp_member_object_pointer_ret0.cpp` as current
+`test_canonical_structural_nttp_class_template_ret0.cpp`,
+`test_canonical_structural_nttp_member_object_pointer_ret0.cpp`, and
+`test_canonical_structural_nttp_member_function_pointer_ret0.cpp` as current
 guards.
 
 ## Bit-field declarations accept ill-formed forms
