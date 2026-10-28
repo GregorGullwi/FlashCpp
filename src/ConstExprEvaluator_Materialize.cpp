@@ -15,6 +15,149 @@
 
 namespace ConstExpr {
 
+namespace {
+
+struct DeclaredUnionGroup {
+	size_t first;
+	size_t last;
+};
+
+std::optional<DeclaredUnionGroup> declaredUnionGroup(const StructTypeInfo* struct_info, size_t member_index) {
+	if (struct_info == nullptr || member_index >= struct_info->members.size()) {
+		return std::nullopt;
+	}
+	if (struct_info->is_union) {
+		return DeclaredUnionGroup{0, struct_info->members.size() - 1};
+	}
+	const std::optional<size_t> group = struct_info->members[member_index].anonymous_union_group_index;
+	if (!group.has_value()) {
+		return std::nullopt;
+	}
+	size_t first = member_index;
+	while (first > 0 && struct_info->members[first - 1].anonymous_union_group_index == group) {
+		--first;
+	}
+	size_t last = member_index;
+	while (last + 1 < struct_info->members.size() &&
+		struct_info->members[last + 1].anonymous_union_group_index == group) {
+		++last;
+	}
+	return DeclaredUnionGroup{first, last};
+}
+
+void clearGroupActivity(const StructTypeInfo& struct_info, DeclaredUnionGroup group,
+	std::unordered_map<std::string_view, EvalResult>& bindings) {
+	for (size_t index = group.first; index <= group.last; ++index) {
+		const StringHandle name = struct_info.members[index].getName();
+		if (!name.isValid()) {
+			continue;
+		}
+		auto found = bindings.find(StringTable::getStringView(name));
+		if (found != bindings.end()) {
+			found->second.is_active_union_member = false;
+		}
+	}
+}
+
+} // namespace
+
+std::optional<std::pair<size_t, size_t>> Evaluator::declaredUnionGroupBounds(
+	const StructTypeInfo* struct_info, size_t member_index) {
+	const std::optional<DeclaredUnionGroup> group = declaredUnionGroup(struct_info, member_index);
+	if (!group.has_value()) {
+		return std::nullopt;
+	}
+	return std::pair<size_t, size_t>{group->first, group->last};
+}
+
+void Evaluator::selectUnionMember(const StructTypeInfo* struct_info,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	std::string_view member_name) {
+	if (struct_info == nullptr) {
+		return;
+	}
+	const StructMember* member = struct_info->findMember(member_name);
+	if (member == nullptr) {
+		return;
+	}
+	const size_t member_index = static_cast<size_t>(member - struct_info->members.data());
+	const std::optional<DeclaredUnionGroup> group = declaredUnionGroup(struct_info, member_index);
+	if (!group.has_value()) {
+		return;
+	}
+	clearGroupActivity(*struct_info, *group, bindings);
+	auto selected = bindings.find(member_name);
+	if (selected != bindings.end()) {
+		selected->second.is_active_union_member = true;
+	}
+}
+
+void Evaluator::clearUnionSelections(const StructTypeInfo* struct_info, std::unordered_map<std::string_view, EvalResult>& bindings) {
+	if (struct_info == nullptr) {
+		return;
+	}
+	size_t index = 0;
+	while (index < struct_info->members.size()) {
+		const std::optional<DeclaredUnionGroup> group = declaredUnionGroup(struct_info, index);
+		if (!group.has_value()) {
+			++index;
+			continue;
+		}
+		clearGroupActivity(*struct_info, *group, bindings);
+		index = group->last + 1;
+	}
+}
+
+void Evaluator::applyDefaultUnionSelections(const StructTypeInfo* struct_info,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	bool initialize_first_variant) {
+	if (struct_info == nullptr) {
+		return;
+	}
+	size_t index = 0;
+	while (index < struct_info->members.size()) {
+		const std::optional<DeclaredUnionGroup> group = declaredUnionGroup(struct_info, index);
+		if (!group.has_value()) {
+			++index;
+			continue;
+		}
+		bool has_active = false;
+		for (size_t member_index = group->first; member_index <= group->last; ++member_index) {
+			const StringHandle name = struct_info->members[member_index].getName();
+			if (!name.isValid()) {
+				continue;
+			}
+			auto found = bindings.find(StringTable::getStringView(name));
+			if (found != bindings.end() && found->second.is_active_union_member) {
+				has_active = true;
+				break;
+			}
+		}
+		if (!has_active) {
+			size_t chosen = struct_info->members.size();
+			for (size_t member_index = group->first; member_index <= group->last; ++member_index) {
+				const StructMember& member = struct_info->members[member_index];
+				if (member.getName().isValid() && member.default_initializer.has_value()) {
+					chosen = member_index;
+					break;
+				}
+			}
+			if (chosen == struct_info->members.size() && initialize_first_variant) {
+				for (size_t member_index = group->first; member_index <= group->last; ++member_index) {
+					if (struct_info->members[member_index].getName().isValid()) {
+						chosen = member_index;
+						break;
+					}
+				}
+			}
+			if (chosen != struct_info->members.size()) {
+				selectUnionMember(struct_info, bindings, StringTable::getStringView(struct_info->members[chosen].getName()));
+			}
+		}
+		index = group->last + 1;
+	}
+}
+
 // Shared helper: bind struct members from an InitializerListNode (aggregate init)
 // and apply default member initializers for any members not covered by the list.
 EvalResult Evaluator::materialize_aggregate_object_value(
@@ -534,6 +677,7 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 	std::unordered_map<std::string_view, EvalResult>& bindings,
 	EvaluationContext& context,
 	const std::unordered_map<std::string_view, EvalResult>* evaluation_bindings) {
+	clearUnionSelections(struct_info, bindings);
 	// Bind members covered by the initializer list. Unnamed and zero-width
 	// bit-fields are padding, not aggregate elements, so positional clauses
 	// advance over them without consuming a value.
@@ -631,6 +775,7 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 			if (!val.success())
 				return val;
 			bindings[mname] = std::move(val);
+			selectUnionMember(struct_info, bindings, mname);
 			continue;
 		}
 
@@ -694,6 +839,7 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 			bindings[mname] = std::move(value);
 		}
 	}
+	applyDefaultUnionSelections(struct_info, bindings, true);
 	return EvalResult::from_bool(true);
 }
 
@@ -704,6 +850,7 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 	std::unordered_map<std::string_view, EvalResult>& member_bindings,
 	EvaluationContext& context,
 	bool ignore_default_initializer_errors) {
+	clearUnionSelections(struct_info, member_bindings);
 
 	// Returns a type-correct zero EvalResult for a given element type.
 	// Floating-point types get 0.0, unsigned types get 0u, signed/bool get 0.
@@ -780,6 +927,7 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 				return member_result;
 			}
 			member_bindings[mem_init.member_name] = std::move(member_result);
+			selectUnionMember(struct_info, member_bindings, mem_init.member_name);
 			continue;
 		}
 		auto member_result = evaluate_expression_with_bindings(mem_init.initializer_expr, ctor_param_bindings, context);
@@ -844,6 +992,7 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 			}
 		}
 		member_bindings[mem_init.member_name] = std::move(member_result);
+		selectUnionMember(struct_info, member_bindings, mem_init.member_name);
 	}
 
 	for (const auto& member : struct_info->members) {
@@ -863,6 +1012,7 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 		member_bindings[member_name] = default_result;
 	}
 
+	applyDefaultUnionSelections(struct_info, member_bindings, false);
 	return EvalResult::from_bool(true);
 }
 

@@ -966,8 +966,14 @@ size_t hashDependentExpressionIdentityImpl(const ASTNode& node) {
 bool StructuralClassValue::operator==(const StructuralClassValue& other) const {
 	if (!equalTypeIndexIdentity(type_index, other.type_index) || is_array != other.is_array ||
 		base_values.size() != other.base_values.size() ||
-		members.size() != other.members.size()) {
+		members.size() != other.members.size() ||
+		union_selections.size() != other.union_selections.size()) {
 		return false;
+	}
+	for (size_t i = 0; i < union_selections.size(); ++i) {
+		if (!(union_selections[i] == other.union_selections[i])) {
+			return false;
+		}
 	}
 	for (size_t i = 0; i < base_values.size(); ++i) {
 		if ((base_values[i] != nullptr) != (other.base_values[i] != nullptr)) {
@@ -1000,6 +1006,10 @@ size_t StructuralClassValue::hash() const {
 	hashCombine(seed, std::hash<bool>{}(is_array));
 	for (const StructuralClassValue* base_value : base_values) {
 		hashCombine(seed, base_value != nullptr ? base_value->hash() : 0);
+	}
+	for (const StructuralUnionSelection& selection : union_selections) {
+		hashCombine(seed, std::hash<uint16_t>{}(selection.first_variant));
+		hashCombine(seed, std::hash<uint16_t>{}(selection.active_variant));
 	}
 	for (const StructuralClassValueMember& member : members) {
 		hashCombine(seed, std::hash<StringHandle>{}(member.name));

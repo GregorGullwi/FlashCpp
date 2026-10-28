@@ -20,6 +20,7 @@ struct Variants {
 	union { unsigned narrow; long long wide; };
 };
 union Choice { short small; int integer; };
+struct Key { union { int first; int second; }; };
 struct Padding { long long guard; };
 struct Derived : Padding, Variants {};
 )");
@@ -54,16 +55,65 @@ struct Derived : Padding, Variants {};
 	CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(choice_entity, 1).flags, CanonicalRecordMemberFlags::UnionGroupEnd));
 	CHECK(table.structuralUnionValue(table.record(choice_entity), 0, uint16_t{1},
 		table.integralValue(table.builtin(CanonicalBuiltinKind::Int), 42)) != table.structuralUnionValue(owner, 0, std::nullopt, TypeId{}));
-	// The legacy payload has no reliable active-member discriminator yet.
+	const TypeInfo* key_info = findTypeByName(StringTable::getOrInternStringHandle("Key"));
+	REQUIRE(key_info != nullptr);
+	const StructTypeInfo* key_record = key_info->getStructInfo();
+	REQUIRE(key_record != nullptr);
+	REQUIRE(key_record->declaration_node != nullptr);
+	REQUIRE(key_record->declaration_node->has_entity_id());
+	const EntityId key_entity = key_record->declaration_node->entity_id();
+	REQUIRE(table.hasRecordFieldSchema(key_entity));
+	CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(key_entity, 0).flags, CanonicalRecordMemberFlags::UnionGroupStart));
+	CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(key_entity, 1).flags, CanonicalRecordMemberFlags::UnionGroupEnd));
+	// A payload without an explicit union selection is unresolved.
 	FlashCpp::StructuralClassValue unresolved;
-	unresolved.type_index = info->registeredTypeIndex();
-	for (const StructMember& field : record->members) {
+	unresolved.type_index = key_info->registeredTypeIndex();
+	for (const StructMember& field : key_record->members) {
 		FlashCpp::StructuralClassValueMember member;
 		member.name = field.getName();
 		member.scalar_value = FlashCpp::NonTypeValueIdentity::makeConcrete(0, field.type_index);
 		unresolved.members.push_back(std::move(member));
 	}
 	CHECK_FALSE(tryImportCanonicalStructuralValue(table, &unresolved).has_value());
+	const auto make_selected_value = [&](std::string_view member_name) {
+		const StructMember* field = key_record->findMember(member_name);
+		REQUIRE(field != nullptr);
+		REQUIRE(field->canonical_type_id);
+		const size_t index = static_cast<size_t>(field - key_record->members.data());
+		FlashCpp::StructuralClassValue selected;
+		selected.type_index = key_info->registeredTypeIndex();
+		FlashCpp::StructuralClassValueMember member;
+		member.name = field->getName();
+		member.scalar_value = FlashCpp::NonTypeValueIdentity::makeConcrete(0, field->type_index);
+		selected.members.push_back(std::move(member));
+		selected.union_selections.push_back({0, static_cast<uint16_t>(index)});
+		return selected;
+	};
+	const auto imported_union_value = [&](const FlashCpp::StructuralClassValue& selected) {
+		const std::optional<TypeId> imported = tryImportCanonicalStructuralValue(table, &selected);
+		REQUIRE(imported.has_value());
+		const CanonicalTypeNode record_value = table.node(*imported);
+		REQUIRE(record_value.kind == CanonicalTypeKind::StructuralValue);
+		const TypeId link = unpackStructuralValueSubobjects(record_value.array_extent);
+		REQUIRE(link);
+		const TypeId union_value = table.templateArgumentValue(link);
+		REQUIRE(table.node(union_value).kind == CanonicalTypeKind::StructuralUnionValue);
+		return table.node(union_value);
+	};
+	const FlashCpp::StructuralClassValue first_selected = make_selected_value("first");
+	const FlashCpp::StructuralClassValue second_selected = make_selected_value("second");
+	const CanonicalTypeNode first_union = imported_union_value(first_selected);
+	const CanonicalTypeNode second_union = imported_union_value(second_selected);
+	CHECK(unpackStructuralUnionFirstVariant(first_union.array_extent) == 0);
+	CHECK(unpackStructuralUnionActiveVariant(first_union.array_extent) == 0);
+	CHECK(unpackStructuralUnionActiveVariant(second_union.array_extent) == 1);
+	CHECK(table.node(table.templateArgumentValue(unpackStructuralValueSubobjects(first_union.array_extent))).kind ==
+		CanonicalTypeKind::IntegralValue);
+	FlashCpp::StructuralClassValue inactive;
+	inactive.type_index = key_info->registeredTypeIndex();
+	inactive.union_selections.push_back({0, FlashCpp::kNoStructuralUnionActiveVariant});
+	const CanonicalTypeNode inactive_union = imported_union_value(inactive);
+	CHECK_FALSE(unpackStructuralUnionActiveVariant(inactive_union.array_extent).has_value());
 }
 
 TEST_CASE("Enum structural NTTP fields preserve canonical types values and published offsets") {
@@ -292,6 +342,7 @@ using OtherTail = Base<Key{{9u, 7, true, Code::negative}, 33u, 18u}>;
 	const StructTypeInfo* key_record = key_info->getStructInfo();
 	REQUIRE(key_record != nullptr);
 	REQUIRE(key_record->declaration_node != nullptr);
+	REQUIRE(key_record->declaration_node != nullptr);
 	const EntityId key_entity = key_record->declaration_node->entity_id();
 	REQUIRE(table.hasRecordFieldSchema(key_entity));
 	const CanonicalRecordMember upper = table.recordMemberAt(key_entity, 0);
@@ -411,6 +462,7 @@ using OtherEnum = Base<Key{{1u, 2u, 3u}, {{4}, {5}}, {{6, 7}, {8, 9}}, {true, fa
 	REQUIRE(key_info != nullptr);
 	const StructTypeInfo* key_record = key_info->getStructInfo();
 	REQUIRE(key_record != nullptr);
+	REQUIRE(key_record->declaration_node != nullptr);
 	REQUIRE(key_record->declaration_node != nullptr);
 	const EntityId key_entity = key_record->declaration_node->entity_id();
 	REQUIRE(table.hasRecordFieldSchema(key_entity));

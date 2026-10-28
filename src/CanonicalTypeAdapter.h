@@ -1749,8 +1749,11 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 		uint32_t next;
 		uint32_t begin;
 		uint32_t source_member;
+		uint16_t union_first_variant;
+		uint16_t union_active_variant;
+		bool wraps_union;
 	};
-	static_assert(sizeof(Frame) == 32);
+	static_assert(sizeof(Frame) == 40);
 	std::vector<Frame> pending;
 	std::vector<TypeId> subobjects;
 	// An active declared class cannot contain itself by value. This detects
@@ -1770,8 +1773,9 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 		}
 		const TypeInfo* info = tryGetTypeInfo(source->type_index);
 		const StructTypeInfo* record = info != nullptr ? info->getStructInfo() : nullptr;
-		if (record == nullptr || record->is_union || record->has_deferred_base_classes ||
-			source->members.size() > record->members.size() || record->base_classes.size() != source->base_values.size()) {
+		if (record == nullptr || record->has_deferred_base_classes ||
+			source->members.size() > record->members.size() || record->base_classes.size() != source->base_values.size() ||
+			(record->is_union && !record->base_classes.empty())) {
 			return false;
 		}
 		if (source->base_values.size() > UINT32_MAX || source->members.size() > UINT32_MAX - source->base_values.size() ||
@@ -1792,7 +1796,8 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 		if (!active_classes.insert(imported.type.value).second) {
 			return false;
 		}
-		pending.push_back({source, record, imported.type, 0, static_cast<uint32_t>(subobjects.size()), 0});
+		pending.push_back({source, record, imported.type, 0, static_cast<uint32_t>(subobjects.size()), 0,
+			0, FlashCpp::kNoStructuralUnionActiveVariant, false});
 		return true;
 	};
 	const auto enqueue_array = [&](const FlashCpp::StructuralClassValue* source, TypeId expected) {
@@ -1807,7 +1812,90 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 			source->members.size() != static_cast<size_t>(array.array_extent) || subobjects.size() > UINT32_MAX) {
 			return false;
 		}
-		pending.push_back({source, nullptr, array_type, 0, static_cast<uint32_t>(subobjects.size()), 0});
+		pending.push_back({source, nullptr, array_type, 0, static_cast<uint32_t>(subobjects.size()), 0,
+			0, FlashCpp::kNoStructuralUnionActiveVariant, false});
+		return true;
+	};
+	const auto import_member_value = [&](const StructTypeInfo* record, TypeId owner_type,
+		const StructMember& field, size_t member_index, const FlashCpp::StructuralClassValueMember& member,
+		bool wrap_union, uint16_t union_first_variant, uint16_t union_active_variant) -> bool {
+		if (!field.canonical_type_id) {
+			return false;
+		}
+		TypeId field_type = field.canonical_type_id;
+		size_t scalar_storage_size = field.size;
+		std::optional<uint8_t> bit_width;
+		if (field.bitfield_width.has_value()) {
+			const StructDeclarationNode* declaration = record->declaration_node;
+			if (declaration == nullptr || !declaration->has_entity_id()) {
+				return false;
+			}
+			const EntityId entity = declaration->entity_id();
+			if (!table.hasRecordFieldSchema(entity)) {
+				return false;
+			}
+			const CanonicalRecordMember published = table.recordMemberAt(entity, member_index);
+			if (!hasCanonicalRecordMemberFlag(published.flags, CanonicalRecordMemberFlags::Bitfield) || published.bit_width == 0 ||
+				*field.bitfield_width != published.bit_width || !published.type) {
+				return false;
+			}
+			field_type = published.type;
+			scalar_storage_size = published.size_bytes;
+			bit_width = published.bit_width;
+		} else if (field.is_array) {
+			const StructDeclarationNode* declaration = record->declaration_node;
+			if (declaration == nullptr || !declaration->has_entity_id()) {
+				return false;
+			}
+			const EntityId entity = declaration->entity_id();
+			if (!table.hasRecordFieldSchema(entity)) {
+				return false;
+			}
+			const CanonicalRecordMember published = table.recordMemberAt(entity, member_index);
+			field_type = published.type;
+			if (!field_type) {
+				return false;
+			}
+		}
+		field_type = unqualified(field_type);
+		const CanonicalTypeNode node = table.node(field_type);
+		if (field.is_array) {
+			if (member.nested_value == nullptr || !member.nested_value->is_array || !enqueue_array(member.nested_value, field_type)) {
+				return false;
+			}
+			if (wrap_union) {
+				Frame& child = pending.back();
+				child.wraps_union = true;
+				child.union_first_variant = union_first_variant;
+				child.union_active_variant = union_active_variant;
+			}
+			return true;
+		}
+		if (member.nested_value != nullptr) {
+			if (bit_width.has_value() || node.kind != CanonicalTypeKind::Record || !enqueue_record(member.nested_value, field_type)) {
+				return false;
+			}
+			if (wrap_union) {
+				Frame& child = pending.back();
+				child.wraps_union = true;
+				child.union_first_variant = union_first_variant;
+				child.union_active_variant = union_active_variant;
+			}
+			return true;
+		}
+		if (member.scalar_value.kind != FlashCpp::NonTypeValueIdentityKind::Integral || member.scalar_value.is_dependent) {
+			return false;
+		}
+		const auto scalar = tryImportCanonicalStructuralScalar(
+			table, field_type, static_cast<uint64_t>(member.scalar_value.value), scalar_storage_size, bit_width);
+		if (!scalar.has_value()) {
+			return false;
+		}
+		TypeId imported = *scalar;
+		if (wrap_union) {
+			imported = table.structuralUnionValue(owner_type, union_first_variant, union_active_variant, imported);
+		}
+		subobjects.push_back(imported);
 		return true;
 	};
 	if (value == nullptr || value->is_array || !enqueue_record(value, TypeId{})) {
@@ -1828,13 +1916,32 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 				return std::nullopt;
 			}
 			const std::span<const TypeId> values = std::span<const TypeId>(subobjects).subspan(frame.begin);
-			const TypeId completed = is_array ? table.structuralArrayValue(frame.type, values)
-				: table.structuralValue(frame.type, values, static_cast<uint32_t>(base_count));
+			TypeId completed;
+			if (is_array) {
+				completed = table.structuralArrayValue(frame.type, values);
+			} else if (frame.record->is_union) {
+				// The single union-group step already produced the StructuralUnionValue.
+				if (values.size() != 1) {
+					return std::nullopt;
+				}
+				completed = values.front();
+			} else {
+				completed = table.structuralValue(frame.type, values, static_cast<uint32_t>(base_count));
+			}
+			const bool wraps_union = frame.wraps_union;
+			const uint16_t union_first_variant = frame.union_first_variant;
+			const uint16_t union_active_variant = frame.union_active_variant;
 			subobjects.resize(frame.begin);
 			if (!is_array) {
 				active_classes.erase(frame.type.value);
 			}
 			pending.pop_back();
+			if (wraps_union) {
+				if (pending.empty() || pending.back().record == nullptr) {
+					return std::nullopt;
+				}
+				completed = table.structuralUnionValue(pending.back().type, union_first_variant, union_active_variant, completed);
+			}
 			if (pending.empty()) {
 				return completed;
 			}
@@ -1875,8 +1982,9 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 			subobjects.push_back(*scalar);
 			continue;
 		}
-		const size_t index = frame.next++;
+		const size_t index = frame.next;
 		if (index < base_count) {
+			frame.next = static_cast<uint32_t>(index + 1);
 			const BaseClassSpecifier& base = frame.record->base_classes[index];
 			const TypeId expected = table.classBaseAt(frame.type, index).type;
 			const FlashCpp::StructuralClassValue* source = frame.source->base_values[index];
@@ -1887,6 +1995,70 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 		}
 		const size_t member_index = index - base_count;
 		const StructMember& field = frame.record->members[member_index];
+		const bool needs_union_schema = frame.record->is_union || field.anonymous_union_group_index.has_value();
+		if (needs_union_schema) {
+			const StructDeclarationNode* declaration = frame.record->declaration_node;
+			if (declaration == nullptr || !declaration->has_entity_id()) {
+				return std::nullopt;
+			}
+			const EntityId entity = declaration->entity_id();
+			if (!table.hasRecordFieldSchema(entity)) {
+				return std::nullopt;
+			}
+			const CanonicalRecordMember group_start_member = table.recordMemberAt(entity, member_index);
+			if (!hasCanonicalRecordMemberFlag(group_start_member.flags, CanonicalRecordMemberFlags::UnionGroupStart)) {
+				return std::nullopt;
+			}
+			size_t group_last = member_index;
+			while (!hasCanonicalRecordMemberFlag(table.recordMemberAt(entity, group_last).flags, CanonicalRecordMemberFlags::UnionGroupEnd)) {
+				++group_last;
+				if (group_last >= frame.record->members.size()) {
+					return std::nullopt;
+				}
+			}
+			if (member_index > UINT16_MAX || group_last > UINT16_MAX) {
+				return std::nullopt;
+			}
+			const FlashCpp::StructuralUnionSelection* selection = nullptr;
+			for (const FlashCpp::StructuralUnionSelection& candidate : frame.source->union_selections) {
+				if (candidate.first_variant != member_index) {
+					continue;
+				}
+				if (selection != nullptr) {
+					return std::nullopt;
+				}
+				selection = &candidate;
+			}
+			if (selection == nullptr ||
+				(selection->hasActiveVariant() &&
+					(selection->active_variant < member_index || selection->active_variant > group_last))) {
+				return std::nullopt;
+			}
+			const StructTypeInfo* record = frame.record;
+			const TypeId owner_type = frame.type;
+			frame.next = static_cast<uint32_t>(base_count + group_last + 1);
+			if (!selection->hasActiveVariant()) {
+				subobjects.push_back(table.structuralUnionValue(owner_type,
+					static_cast<uint16_t>(member_index), std::nullopt, TypeId{}));
+				continue;
+			}
+			const size_t active_index = selection->active_variant;
+			const StructMember& active_field = record->members[active_index];
+			if (frame.source_member >= frame.source->members.size()) {
+				return std::nullopt;
+			}
+			const FlashCpp::StructuralClassValueMember& active_member = frame.source->members[frame.source_member];
+			if (active_member.name != active_field.getName()) {
+				return std::nullopt;
+			}
+			++frame.source_member;
+			if (!import_member_value(record, owner_type, active_field, active_index, active_member,
+				true, static_cast<uint16_t>(member_index), static_cast<uint16_t>(active_index))) {
+				return std::nullopt;
+			}
+			continue;
+		}
+		frame.next = static_cast<uint32_t>(index + 1);
 		if (field.isUnnamedOrZeroWidthBitfield()) {
 			continue;
 		}
@@ -1894,69 +2066,13 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 			return std::nullopt;
 		}
 		const FlashCpp::StructuralClassValueMember& member = frame.source->members[frame.source_member++];
-		if (member.name != field.getName() || !field.canonical_type_id || field.anonymous_union_group_index.has_value()) {
+		if (member.name != field.getName()) {
 			return std::nullopt;
 		}
-		TypeId field_type = field.canonical_type_id;
-		size_t scalar_storage_size = field.size;
-		std::optional<uint8_t> bit_width;
-		if (field.bitfield_width.has_value()) {
-			const StructDeclarationNode* declaration = frame.record->declaration_node;
-			if (declaration == nullptr || !declaration->has_entity_id()) {
-				return std::nullopt;
-			}
-			const EntityId entity = declaration->entity_id();
-			if (!table.hasRecordFieldSchema(entity)) {
-				return std::nullopt;
-			}
-			const CanonicalRecordMember published = table.recordMemberAt(entity, member_index);
-			if (!hasCanonicalRecordMemberFlag(published.flags, CanonicalRecordMemberFlags::Bitfield) || published.bit_width == 0 ||
-				*field.bitfield_width != published.bit_width || !published.type) {
-				return std::nullopt;
-			}
-			field_type = published.type;
-			scalar_storage_size = published.size_bytes;
-			bit_width = published.bit_width;
-		} else if (field.is_array) {
-			const StructDeclarationNode* declaration = frame.record->declaration_node;
-			if (declaration == nullptr || !declaration->has_entity_id()) {
-				return std::nullopt;
-			}
-			const EntityId entity = declaration->entity_id();
-			if (!table.hasRecordFieldSchema(entity)) {
-				return std::nullopt;
-			}
-			const CanonicalRecordMember published = table.recordMemberAt(entity, member_index);
-			field_type = published.type;
-			if (!field_type) {
-				return std::nullopt;
-			}
-		}
-		field_type = unqualified(field_type);
-		const CanonicalTypeNode node = table.node(field_type);
-		if (field.is_array) {
-			if (member.nested_value == nullptr || !member.nested_value->is_array ||
-				!enqueue_array(member.nested_value, field_type)) {
-				return std::nullopt;
-			}
-			continue;
-		}
-		if (member.nested_value != nullptr) {
-			if (bit_width.has_value() || node.kind != CanonicalTypeKind::Record ||
-				!enqueue_record(member.nested_value, field_type)) {
-				return std::nullopt;
-			}
-			continue;
-		}
-		if (member.scalar_value.kind != FlashCpp::NonTypeValueIdentityKind::Integral || member.scalar_value.is_dependent) {
+		if (!import_member_value(frame.record, frame.type, field, member_index, member,
+			false, 0, FlashCpp::kNoStructuralUnionActiveVariant)) {
 			return std::nullopt;
 		}
-		const auto scalar = tryImportCanonicalStructuralScalar(
-			table, field_type, static_cast<uint64_t>(member.scalar_value.value), scalar_storage_size, bit_width);
-		if (!scalar.has_value()) {
-			return std::nullopt;
-		}
-		subobjects.push_back(*scalar);
 	}
 	throw InternalError("canonical value importer: worklist ended without a result");
 }

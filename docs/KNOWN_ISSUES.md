@@ -35,27 +35,22 @@ incorrectly bypass nontrivial copy/move semantics.
 
 ## Remaining structural NTTP shapes need canonical value import
 
-Union declaration groups and explicit active-member/no-active canonical values
-are published, but the constexpr payload still serializes all variants without
-a reliable active-member selector. This can merge distinct template arguments:
+Union declaration groups now carry explicit active-member state. Aggregate,
+designated, default, and constructor initialization plus member assignment mark
+the selected variant; `StructuralClassValue::union_selections` keeps the group
+start and selected declaration ordinal (or explicit no-active); equality, hash,
+rehydration, and the canonical importer include it. The reduced
+`Key{.first=0}` / `Key{.second=0}` case now produces distinct template arguments,
+protected by `test_canonical_structural_nttp_union_active_ret0.cpp`.
 
-```cpp
-struct Key { union { int first; int second; }; };
-constexpr Key left{.first = 0};
-constexpr Key right{.second = 0};
-template<Key Value> struct Tag {};
-```
+Nested anonymous-union-in-anonymous-union hierarchy still needs an explicit
+representation; flat contiguous layout groups alone cannot distinguish an
+inactive outer union from an active outer variant containing an inactive inner
+union.
 
-`Tag<left>` and `Tag<right>` must be distinct; FlashCpp currently considers them
-the same. Preserve active state through initialization, assignment, copying,
-serialization, and rehydration before connecting the live canonical importer.
-Nested anonymous-union hierarchy also needs an explicit representation; flat
-layout groups alone cannot distinguish an inactive outer union from an active
-outer variant containing an inactive inner union.
-
-Union variants, remaining scalar field kinds (floating, pointer, and member
-pointer values), and structural values of class-template types still need
-canonical subobject identity and matching specialization base facts.
+Remaining scalar field kinds (floating, pointer, and member-pointer values) and
+structural values of class-template types still need canonical subobject
+identity and matching specialization base facts.
 Extend the typed-value importer before deleting `legacyDerivedBaseOffset`;
 audit dependent and other non-integral specialization roots as well.
 Integral, bool, and enum fields, including named bit-fields with signed
@@ -71,8 +66,9 @@ Retain `test_canonical_structural_nttp_base_source_ret0.cpp`,
 `test_canonical_structural_nttp_equivalence_ret0.cpp`,
 `test_canonical_structural_nttp_subobjects_ret0.cpp`,
 `test_canonical_structural_nttp_enum_fields_ret0.cpp`,
-`test_canonical_structural_nttp_bitfields_ret0.cpp`, and
-`test_canonical_structural_nttp_arrays_ret0.cpp` as nonzero-offset guards.
+`test_canonical_structural_nttp_bitfields_ret0.cpp`,
+`test_canonical_structural_nttp_arrays_ret0.cpp`, and
+`test_canonical_structural_nttp_union_active_ret0.cpp` as current guards.
 
 ## Bit-field declarations accept ill-formed forms
 
