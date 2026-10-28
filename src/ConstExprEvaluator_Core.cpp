@@ -872,6 +872,12 @@ EvalResult evalResultFromStructuralValue(
 				TypeSpecifierNode element_type(structural_value.type_index, 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
 				element_type.add_pointer_levels(structural_value.array_element_pointer_depth);
 				element_result.set_exact_type(element_type);
+			} else if (member.scalar_value.kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer && member.scalar_value.member_name.isValid()) {
+				element_result = EvalResult::from_int(member.scalar_value.value);
+				element_result.member_pointer_member = member.scalar_value.member_name;
+				TypeSpecifierNode element_type(structural_value.type_index, 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
+				element_type.add_pointer_levels(structural_value.array_element_pointer_depth);
+				element_result.set_exact_type(element_type);
 			} else {
 				element_result = decode_scalar(member.scalar_value);
 				attach_scalar_type(element_result, member.scalar_value);
@@ -1029,13 +1035,17 @@ std::optional<FlashCpp::StructuralClassValue*> makeStructuralArrayValueIdentityI
 				declared_category == TypeCategory::MemberObjectPointer ||
 				declared_category == TypeCategory::MemberFunctionPointer;
 			if (pointer_like) {
-				const bool is_null = !element.is_indeterminate && !element.pointer_to_var.isValid() &&
-					!element.member_pointer_member.isValid() &&
-					(element.is_null_member_pointer || element.as_int() == 0);
-				if (!is_null) {
-					return std::nullopt;
+				if (element.member_pointer_member.isValid()) {
+					member.scalar_value = FlashCpp::NonTypeValueIdentity::makeMemberPointer(element_type, element.member_pointer_member, element.as_int(), {});
+				} else {
+					const bool is_null = !element.is_indeterminate && !element.pointer_to_var.isValid() &&
+						!element.member_pointer_member.isValid() &&
+						(element.is_null_member_pointer || element.as_int() == 0);
+					if (!is_null) {
+						return std::nullopt;
+					}
+					member.scalar_value = FlashCpp::NonTypeValueIdentity::makeNullptr(element_type);
 				}
-				member.scalar_value = FlashCpp::NonTypeValueIdentity::makeNullptr(element_type);
 			} else {
 				EvalResult converted = Evaluator::convertEvalResultToTargetType(
 					element_spec, element, "Unsupported array element type in structural value");
