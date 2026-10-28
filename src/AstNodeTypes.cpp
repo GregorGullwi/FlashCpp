@@ -2934,15 +2934,11 @@ bool StructTypeInfo::finalizeWithBases() {
 		}
 		const size_t group_offset = alignLayoutSize(toSizeT(layout_data_size), group_alignment);
 		for (size_t index = member_index; index <= group_end; ++index) {
-			StructMember& source = old_members[index];
-			members.emplace_back(source.name, source.type_index, source.canonical_type_id, group_offset,
-				source.size, source.alignment, source.access, std::move(source.default_initializer),
-				source.reference_qualifier, source.referenced_size_bits, source.is_array,
-				std::move(source.array_dimensions), source.pointee_array_declarator, source.pointer_depth,
-				source.bitfield_width, source.member_cv_qualifier);
-			members.back().bitfield_bit_offset = source.bitfield_bit_offset;
-			members.back().is_no_unique_address = source.is_no_unique_address;
-			members.back().function_signature = std::move(source.function_signature);
+			// addMember() computes a fresh sequential offset, which is exactly what a
+			// union group must not do. Reuse the member computed by the initial layout
+			// and override only the shared group offset/identity.
+			members.push_back(std::move(old_members[index]));
+			members.back().offset = group_offset;
 			members.back().anonymous_union_group_index = group;
 		}
 		layout_data_size = toSizeInBytes(std::max(toSizeT(layout_data_size), group_offset + group_size));
