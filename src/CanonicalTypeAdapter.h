@@ -1848,12 +1848,9 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberFunctionPointer(C
 		return std::nullopt;
 	}
 	const TypeId expected_signature = type.child;
-	size_t matched_ordinal = owner_record->member_functions.size();
-	for (size_t index = 0; index < owner_record->member_functions.size(); ++index) {
-		const StructMemberFunction& function = owner_record->member_functions[index];
-		if (function.getName() != member_name || function.is_virtual || function.is_constructor || function.is_destructor ||
-			!function.function_decl.is<FunctionDeclarationNode>()) {
-			continue;
+	const auto imported_function_signature = [&](const StructMemberFunction& function) -> std::optional<TypeId> {
+		if (!function.function_decl.is<FunctionDeclarationNode>()) {
+			return std::nullopt;
 		}
 		const FunctionDeclarationNode& declaration = function.function_decl.as<FunctionDeclarationNode>();
 		TypeSpecifierNode return_type = declaration.decl_node().type_specifier_node();
@@ -1876,19 +1873,70 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberFunctionPointer(C
 		signature.is_volatile = function.is_volatile();
 		signature.function_reference_qualifier = function.ref_qualifier;
 		signature.is_noexcept = declaration.is_noexcept();
-		const CanonicalTypeImport imported_signature = importCanonicalFunctionSignature(table, signature, TypeId{});
-		if (imported_signature.status != CanonicalTypeImportStatus::Supported || imported_signature.type != expected_signature) {
-			continue;
-		}
-		if (matched_ordinal != owner_record->member_functions.size()) {
+		const CanonicalTypeImport imported = importCanonicalFunctionSignature(table, signature, TypeId{});
+		if (imported.status != CanonicalTypeImportStatus::Supported || imported.type != expected_signature) {
 			return std::nullopt;
 		}
-		matched_ordinal = index;
+		return imported.type;
+	};
+	struct PendingClass {
+		TypeId type;
+		const StructTypeInfo* record;
+	};
+	std::vector<PendingClass> pending{{owner, owner_record}};
+	std::unordered_set<uint32_t> visited;
+	std::optional<TypeId> declaring_class;
+	uint16_t declaring_ordinal = 0;
+	while (!pending.empty()) {
+		const PendingClass current = pending.back();
+		pending.pop_back();
+		if (!visited.insert(current.type.value).second) {
+			continue;
+		}
+		bool has_name = false;
+		std::optional<uint16_t> matched_ordinal;
+		for (size_t index = 0; index < current.record->member_functions.size(); ++index) {
+			const StructMemberFunction& function = current.record->member_functions[index];
+			if (function.getName() != member_name) {
+				continue;
+			}
+			has_name = true;
+			if (function.is_virtual || function.is_constructor || function.is_destructor || !imported_function_signature(function).has_value()) {
+				continue;
+			}
+			if (matched_ordinal.has_value() || index > UINT16_MAX) {
+				return std::nullopt;
+			}
+			matched_ordinal = static_cast<uint16_t>(index);
+		}
+		if (has_name) {
+			if (!matched_ordinal.has_value() || declaring_class.has_value()) {
+				return std::nullopt;
+			}
+			declaring_class = current.type;
+			declaring_ordinal = *matched_ordinal;
+			continue;
+		}
+		for (const BaseClassSpecifier& base : current.record->base_classes) {
+			if (base.is_virtual || base.is_deferred) {
+				return std::nullopt;
+			}
+			const TypeInfo* base_info = tryGetTypeInfo(base.type_index);
+			const StructTypeInfo* base_record = base_info != nullptr ? base_info->getStructInfo() : nullptr;
+			if (base_info == nullptr || base_record == nullptr) {
+				return std::nullopt;
+			}
+			const CanonicalTypeImport imported_base = importCanonicalClassTypeInfo(table, *base_info);
+			if (imported_base.status != CanonicalTypeImportStatus::Supported || table.node(imported_base.type).kind != CanonicalTypeKind::Record) {
+				return std::nullopt;
+			}
+			pending.push_back({imported_base.type, base_record});
+		}
 	}
-	if (matched_ordinal == owner_record->member_functions.size() || matched_ordinal > UINT16_MAX) {
+	if (!declaring_class.has_value()) {
 		return std::nullopt;
 	}
-	return table.memberFunctionPointerValue(field_type, static_cast<uint16_t>(matched_ordinal));
+	return table.memberFunctionPointerValue(field_type, *declaring_class, declaring_ordinal);
 }
 
 inline std::optional<TypeId> tryImportCanonicalStructuralFieldValue(CanonicalTypeTable& table, TypeId field_type,

@@ -927,20 +927,20 @@ TypeId CanonicalTypeTable::memberObjectPointerValue(TypeId member_pointer_type, 
 		.array_extent = packMemberObjectPointerValueExtent(declaring_class, member_ordinal)});
 }
 
-TypeId CanonicalTypeTable::memberFunctionPointerValue(TypeId member_function_pointer_type, uint16_t function_ordinal) {
+TypeId CanonicalTypeTable::memberFunctionPointerValue(TypeId member_function_pointer_type, TypeId declaring_class,
+	uint16_t function_ordinal) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
 	const CanonicalTypeNode type = nodeUnlocked(member_function_pointer_type);
 	if (type.kind != CanonicalTypeKind::MemberFunctionPointer) {
 		throw InternalError("canonical type: member function pointer value requires a member function pointer type");
 	}
-	const TypeId owner{static_cast<uint32_t>(type.array_extent)};
-	if (nodeUnlocked(owner).kind != CanonicalTypeKind::Record) {
-		throw InternalError("canonical type: member function pointer value requires a record owner");
+	if (nodeUnlocked(declaring_class).kind != CanonicalTypeKind::Record) {
+		throw InternalError("canonical type: member function pointer value requires a record declaring class");
 	}
 	return internUnlocked({.child = member_function_pointer_type, .kind = CanonicalTypeKind::MemberFunctionPointerValue,
 		.builtin = CanonicalBuiltinKind::Void, .qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None,
-		.array_extent = function_ordinal});
+		.array_extent = packMemberFunctionPointerValueExtent(declaring_class, function_ordinal)});
 }
 
 TypeId CanonicalTypeTable::structuralValue(TypeId class_type, std::span<const TypeId> subobject_values, uint32_t base_count) {
