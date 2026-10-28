@@ -1150,6 +1150,8 @@ std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentityIm
 					}
 					member.scalar_value = FlashCpp::NonTypeValueIdentity::makeNullptr(member_info.type_index);
 				}
+			} else if (declared_category == TypeCategory::Nullptr) {
+				member.scalar_value = FlashCpp::NonTypeValueIdentity::makeNullptr(member_info.type_index);
 			} else {
 				TypeCategory category = member_result.exact_type.has_value() ? member_result.exact_type->category() : declared_category;
 				TypeIndex type_index = member_result.exact_type.has_value()
