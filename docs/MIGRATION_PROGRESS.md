@@ -108,8 +108,9 @@ groups remain fail-closed.
 
 Direct and inherited non-virtual member-object pointer targets now use the
 declaring class TypeId plus member ordinal as canonical identity; ambiguous and
-virtual-base targets remain fail-closed. Unique non-virtual member-function
-pointer targets use the owner's declaration ordinal.
+virtual-base targets remain fail-closed. Direct non-virtual member-function
+pointer targets use the owner's declaration ordinal, with overloads selected by
+canonical signature.
 
 The architecture the remaining work builds on:
 
@@ -465,15 +466,27 @@ Continue boundary 3A in this order.
    mutation-checked importer test. The 3A rollup remains 10/79; no exit criterion
    is closed.
 
+   **Overloaded member-function pointer values: complete for direct non-virtual
+   overloads.** Candidate member functions are filtered by name and rebuilt into
+   canonical function signatures from their declaration return type, adjusted
+   parameter nodes, calling convention, cv/ref qualifiers, variadic flag, and
+   noexcept state. Exactly one signature must match the declared member-pointer
+   type before its declaration ordinal is interned. Virtual, constructor,
+   destructor, inherited-overload, and ambiguous signature cases fail closed.
+   `tests/test_canonical_structural_nttp_overloaded_member_function_pointer_ret0.cpp`
+   protects overload selection by signature, a changed member name, and
+   equivalent braced values; the native canonical suite checks the selected
+   ordinals. The 3A rollup remains 10/79; no exit criterion is closed.
+
    **Next slice: import remaining non-null pointer and specialization facts.**
-   Non-null object/function pointer targets, ambiguous/virtual base member
-   pointers, overloaded/virtual member-function pointers, specialization
-   base/union facts, and the nested anonymous-union-in-anonymous-union hierarchy
-   still need canonical subobject identity. Extend the typed-value importer and
-   its specialization base facts before deleting `legacyDerivedBaseOffset`;
-   audit dependent and other non-integral specialization roots too. Keep the
-   worklist guard and the nonzero-offset guards in
-   `test_canonical_structural_nttp_{base_source,equivalence,subobjects,bitfields,arrays,union_active,float,null_pointer,null_pointer_array,class_template,member_object_pointer,member_function_pointer,inherited_member_object_pointer}_ret0.cpp`.
+   Non-null object/function pointer targets, ambiguous/virtual-base member
+   pointers, virtual member-function pointers, specialization base/union facts,
+   and the nested anonymous-union-in-anonymous-union hierarchy still need
+   canonical subobject identity. Extend the typed-value importer and its
+   specialization base facts before deleting `legacyDerivedBaseOffset`; audit
+   dependent and other non-integral specialization roots too. Keep the worklist
+   guard and the nonzero-offset guards in
+   `test_canonical_structural_nttp_{base_source,equivalence,subobjects,bitfields,arrays,union_active,float,null_pointer,null_pointer_array,class_template,member_object_pointer,member_function_pointer,inherited_member_object_pointer,overloaded_member_function_pointer}_ret0.cpp`.
    See `KNOWN_ISSUES.md`.
 
    **Owner-index deletion gates:** virtual-base ABI facts are published by class
