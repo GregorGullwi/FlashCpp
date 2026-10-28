@@ -1008,6 +1008,60 @@ using LongLiteral = LongBase<LongKey{&Object::first, 1}>;
 	CHECK(table.classBaseAt(derived, 1).type == named);
 }
 
+TEST_CASE("Member object pointer array elements import as typed canonical values") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+struct Object { int first; int second; };
+struct Key { int Object::* fields[2]; int tag; };
+constexpr Key first{{&Object::first, &Object::second}, 1};
+constexpr Key second{{&Object::first, &Object::first}, 1};
+template<Key Value> struct Base { short member; };
+struct Padding { long long guard; };
+struct Derived : Padding, Base<first> {};
+using Named = Base<first>;
+using Literal = Base<Key{{&Object::first, &Object::second}, 1}>;
+using Changed = Base<second>;
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("structural_member_object_pointer_array.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto import_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const TypeId named = import_type("Named");
+	CHECK(named == import_type("Literal"));
+	CHECK(named != import_type("Changed"));
+	const TypeId object_type = import_type("Object");
+	const TypeId value_id = table.templateArgumentValue(table.templateSpecializationArguments(named));
+	const CanonicalTypeNode value = table.node(value_id);
+	REQUIRE(value.kind == CanonicalTypeKind::StructuralValue);
+	const TypeId link = unpackStructuralValueSubobjects(value.array_extent);
+	const CanonicalTypeNode fields = table.node(table.templateArgumentValue(link));
+	REQUIRE(fields.kind == CanonicalTypeKind::StructuralArrayValue);
+	TypeId field_link = unpackStructuralValueSubobjects(fields.array_extent);
+	const CanonicalTypeNode first_field = table.node(table.templateArgumentValue(field_link));
+	CHECK(first_field.kind == CanonicalTypeKind::MemberObjectPointerValue);
+	CHECK(unpackMemberObjectPointerValueDeclaringClass(first_field.array_extent) == object_type);
+	CHECK(unpackMemberObjectPointerValueOrdinal(first_field.array_extent) == 0);
+	field_link = table.templateArgumentNext(field_link);
+	const CanonicalTypeNode second_field = table.node(table.templateArgumentValue(field_link));
+	CHECK(second_field.kind == CanonicalTypeKind::MemberObjectPointerValue);
+	CHECK(unpackMemberObjectPointerValueOrdinal(second_field.array_extent) == 1);
+	const TypeId derived = import_type("Derived");
+	REQUIRE(table.hasClassBaseSchema(derived));
+	CHECK(table.classBaseAt(derived, 1).type == named);
+}
+
 TEST_CASE("Canonical integral arguments use converted value and canonical type identity") {
 	static_assert(sizeof(CanonicalTypeNode) == 16);
 	static_assert(sizeof(CanonicalTemplateArgument) == 20);

@@ -1624,11 +1624,34 @@ inline TypeId importCanonicalStructMemberType(CanonicalTypeTable& table, const T
 					}
 				}
 				normalized.set_ordered_declarator(std::move(components));
+			} else if (array_count == 0 && is_array && !pointee_array_declarator) {
+				// A member-pointer spine can carry the member-pointer component while
+				// the array bounds remain in layout metadata. Restore the outer array
+				// wrappers so the published member type is Array(MemberPointer(...)).
+				std::vector<DeclaratorComponent> restored;
+				restored.reserve(array_dimensions.size() + components.size());
+				for (const size_t extent : array_dimensions) {
+					restored.push_back(DeclaratorComponent::array(extent));
+				}
+				restored.insert(restored.end(), components.begin(), components.end());
+				normalized.set_ordered_declarator(std::move(restored));
 			}
 		}
 	}
 	if (normalized.has_ordered_declarator()) {
 		return importCanonicalStructMemberType(table, normalized);
+	}
+	if (is_array && !pointee_array_declarator && !array_dimensions.empty() && normalized.has_member_class()) {
+		TypeSpecifierNode base = normalized;
+		base.set_array_dimensions({});
+		const TypeId base_id = importCanonicalStructMemberType(table, base);
+		if (!base_id) {
+			return {};
+		}
+		CanonicalTypeTransaction transaction(table);
+		const TypeId result = addCanonicalArrayDimensions(table, base_id, array_dimensions, 0);
+		transaction.commit();
+		return result;
 	}
 	if (pointee_array_declarator) {
 		normalized.set_pointee_array_declarator(true);
