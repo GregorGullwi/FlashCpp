@@ -55,9 +55,9 @@ import and tracing use worklists. Retain the 4,096-level import/trace guard on a
 value shapes retain opaque expression identity.
 Union groups publish variant/start/end flags in the existing member schema.
 `StructuralUnionValue` keys an explicit active variant or no-active state by
-record TypeId and group ordinal; live constexpr import remains deferred until
-its payload preserves active-member identity. Retain the 4,096-level union-value
-trace guard on a 1 MiB stack.
+owner TypeId and group ordinal; live import consumes the payload's explicit
+active-member identity. Retain the 4,096-level union-value trace guard on a 1 MiB
+stack.
 `StructTypeInfo::isAggregate` now excludes
 classes with any reachable virtual base, not only direct virtual bases, so an
 indirectly virtual diamond follows its most-derived constructor and installs the
@@ -106,9 +106,10 @@ their declared element pointer depth. Non-null pointer array elements still
 fail closed.
 
 Concrete implicit class-template values import through supported nonvirtual
-bases, nested members, and arrays. Array fields read the owning TypeId's published
-subobject schema. Specialization union groups and unpublished field-layout or
-dependent base facts remain fail-closed.
+bases, nested members, and arrays. Values read the owning TypeId's published
+subobject and field schemas. Substituted field types, bit-fields, offsets, and
+flat union groups publish by specialization TypeId. Missing/dependent facts
+remain fail-closed; the partial-specialization parser gap is in KNOWN_ISSUES.md.
 
 Direct and inherited non-virtual member-object pointer targets now use the
 declaring class TypeId plus member ordinal as canonical identity; ambiguous and
@@ -446,8 +447,8 @@ Continue boundary 3A in this order.
    **Class-template structural values:** supported nonvirtual specialization
    bases compose through members and arrays with exact declared TypeIds.
    Retain `test_canonical_structural_nttp_specialization_bases_ret0.cpp` and the
-   native mismatch/missing-schema guards. Specialization union/field-layout
-   facts and unpublished dependent bases remain deferred. The rollup stays 10/79.
+   native mismatch/missing-schema guards. Specialization field layouts now publish
+   by owner TypeId; unpublished dependent bases remain deferred. The rollup stays 10/79.
 
    **Non-null direct member-object pointer values: complete.** Structural
    member-object-pointer fields now resolve the selected direct data member
@@ -558,34 +559,30 @@ Continue boundary 3A in this order.
    builtin child and zero payload. The 3A rollup remains 10/79; no exit
    criterion is closed.
 
-   **Specialization-owner member pointer values: complete for implicit
-   specializations.** Member-target owner resolution now accepts a
-   `TemplateSpecialization` TypeId and recovers its primary pattern record
-   through the published `TemplateDeclTable` pattern. The recovered record is
-   verified by declaration pointer, so spelling is only a lookup key; the
-   specialization TypeId remains the value identity. Direct data members and
-   member functions, including overloaded/virtual patterns, retain their
-   declaring-specialization plus ordinal identity. Missing pattern records,
-   non-record/non-specialization owners, ambiguity, and unsupported bases fail
-   closed.
-   `tests/test_canonical_structural_nttp_specialization_member_pointer_ret0.cpp`
-   protects field and method targets plus a derived base specialization; the
-   native canonical suite verifies specialization declaring classes and
-   ordinals. The 3A rollup remains 10/79; no exit criterion is closed.
+   **Specialization field facts:** nominal records and specializations share the
+   TypeId field-schema API. Retain the specialization-fields source/native guards
+   for substituted types, bit-fields, union layout/activity, and transactional
+   publication. No exit criterion closes; the rollup remains 10/79.
 
-   **Next slice: preserve selected function targets through constexpr values.**
-   Carry the published function EntityId through `EvalResult`,
-   `NonTypeValueIdentity`, structural serialization/rehydration, equality/hash,
-   and stored template arguments. Feed the actual selected declaration to
-   `tryImportCanonicalFunctionPointerValue`; never manufacture identity by name
-   lookup or ABI spelling. Retain redeclaration, overload, namespace, signature,
-   noexcept, rejected-publication, and rollback guards. Unresolved address
-   selection remains deferred; the overloaded-address lowering gap is recorded
-   in `KNOWN_ISSUES.md`. No additional 3A exit criterion is closed (10/79).
+   **Function-pointer value import: deferred by its producer contract.**
+   Address ranking/evaluation does not consistently retain a selected, published
+   declaration. Boundary 4 must publish that selection before the 3A adapter can
+   carry its EntityId through values. Do not add name lookup, address selection,
+   or evaluation rules to the canonical importer.
+
+   **Next 3A slice: publish member-function declaration schemas.**
+   Publish already-resolved member signatures and declaration ordinals by owner
+   TypeId, for nominal records and concrete specializations. Make
+   `memberFunctionPointerValue` validate its ordinal/signature against those
+   facts rather than accepting any ordinal. Keep overload selection, access
+   checking, virtual dispatch, and constexpr behavior in their existing callers.
+   Pin missing-schema, wrong-signature, out-of-range, inherited-owner, overload,
+   specialization, immutable-republication, and rollback guards. Reuse existing
+   schema storage where its ownership/record shape fits; measure new records
+   before adding storage. Preserve the 16-byte canonical node invariant.
 
    Non-null object pointer target identity remains separate.
-   Ambiguous/virtual-base member pointers, specialization union/field-layout
-   facts, unpublished dependent bases, and the nested
+   Ambiguous/virtual-base member pointers, unpublished dependent bases, and the nested
    anonymous-union-in-anonymous-union hierarchy still need canonical subobject
    identity. Extend the typed-value importer and its specialization base facts
    before deleting `legacyDerivedBaseOffset`; audit dependent and other

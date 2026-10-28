@@ -2807,6 +2807,47 @@ const StructMemberFunction* StructTypeInfo::findMoveAssignmentOperator(bool incl
 	return nullptr;
 }
 
+void StructTypeInfo::addMembersWithAnonymousUnionGroups(std::vector<StructMember>& old_members) {
+	for (size_t member_index = 0; member_index < old_members.size();) {
+		StructMember& member = old_members[member_index];
+		const std::optional<size_t> group = member.anonymous_union_group_index;
+		if (!group.has_value()) {
+			addMember(member.name, member.type_index, member.canonical_type_id, member.size, member.alignment, member.access,
+				std::move(member.default_initializer), member.reference_qualifier, member.referenced_size_bits, member.is_array,
+				std::move(member.array_dimensions), member.pointee_array_declarator, member.pointer_depth, member.bitfield_width,
+				std::move(member.function_signature), member.is_no_unique_address, member.member_cv_qualifier);
+			++member_index;
+			continue;
+		}
+		size_t group_end = member_index;
+		size_t group_alignment = 1;
+		size_t group_size = 0;
+		while (group_end + 1 < old_members.size() && old_members[group_end + 1].anonymous_union_group_index == group) ++group_end;
+		for (size_t index = member_index; index <= group_end; ++index) {
+			group_alignment = std::max(group_alignment, old_members[index].alignment);
+			group_size = std::max(group_size, old_members[index].size);
+		}
+		alignment = std::max(alignment, group_alignment);
+		const size_t group_offset = alignLayoutSize(toSizeT(layout_data_size), group_alignment);
+		for (size_t index = member_index; index <= group_end; ++index) {
+			// addMember() computes a fresh sequential offset, which is exactly what a
+			// union group must not do. Reuse the member computed by the initial layout
+			// and override only the shared group offset/identity.
+			members.push_back(std::move(old_members[index]));
+			members.back().offset = group_offset;
+			if (members.back().bitfield_width.has_value()) members.back().bitfield_bit_offset = 0;
+			members.back().anonymous_union_group_index = group;
+		}
+		layout_data_size = toSizeInBytes(std::max(toSizeT(layout_data_size), group_offset + group_size));
+		total_size = toSizeInBytes(std::max(toSizeT(total_size), toSizeT(layout_data_size)));
+		active_bitfield_unit_size = 0;
+		active_bitfield_bits_used = 0;
+		active_bitfield_unit_alignment = 0;
+		active_bitfield_type = TypeCategory::Invalid;
+		member_index = group_end + 1;
+	}
+}
+
 void StructTypeInfo::recalculateLayout() {
 	std::vector<StructMember> old_members = std::move(members);
 	members.reserve(old_members.size());
@@ -2837,19 +2878,7 @@ void StructTypeInfo::recalculateLayout() {
 	layout_data_size = toSizeInBytes(current_offset);
 	alignment = max_alignment;
 
-	auto addExistingMember = [this](StructMember& member) {
-		const std::optional<size_t> anonymous_union_group_index = member.anonymous_union_group_index;
-		addMember(member.name, member.type_index, member.canonical_type_id, member.size, member.alignment, member.access,
-				  std::move(member.default_initializer), member.reference_qualifier,
-				  member.referenced_size_bits, member.is_array, std::move(member.array_dimensions),
-				  member.pointee_array_declarator, member.pointer_depth, member.bitfield_width, std::move(member.function_signature),
-				  member.is_no_unique_address, member.member_cv_qualifier);
-		members.back().anonymous_union_group_index = anonymous_union_group_index;
-	};
-
-	for (auto& member : old_members) {
-		addExistingMember(member);
-	}
+	addMembersWithAnonymousUnionGroups(old_members);
 
 	current_offset = currentLayoutOffset();
 	max_alignment = alignment;
@@ -2912,43 +2941,7 @@ bool StructTypeInfo::finalizeWithBases() {
 	active_bitfield_unit_alignment = 0;
 	active_bitfield_bits_used = 0;
 	active_bitfield_type = TypeCategory::Invalid;
-	for (size_t member_index = 0; member_index < old_members.size();) {
-		StructMember& member = old_members[member_index];
-		const std::optional<size_t> group = member.anonymous_union_group_index;
-		if (!group.has_value()) {
-			addMember(member.name, member.type_index, member.canonical_type_id, member.size, member.alignment, member.access,
-					  std::move(member.default_initializer), member.reference_qualifier,
-					  member.referenced_size_bits, member.is_array, std::move(member.array_dimensions),
-					  member.pointee_array_declarator, member.pointer_depth, member.bitfield_width, std::move(member.function_signature),
-					  member.is_no_unique_address, member.member_cv_qualifier);
-			++member_index;
-			continue;
-		}
-		size_t group_end = member_index;
-		size_t group_alignment = 1;
-		size_t group_size = 0;
-		while (group_end + 1 < old_members.size() && old_members[group_end + 1].anonymous_union_group_index == group) ++group_end;
-		for (size_t index = member_index; index <= group_end; ++index) {
-			group_alignment = std::max(group_alignment, old_members[index].alignment);
-			group_size = std::max(group_size, old_members[index].size);
-		}
-		const size_t group_offset = alignLayoutSize(toSizeT(layout_data_size), group_alignment);
-		for (size_t index = member_index; index <= group_end; ++index) {
-			// addMember() computes a fresh sequential offset, which is exactly what a
-			// union group must not do. Reuse the member computed by the initial layout
-			// and override only the shared group offset/identity.
-			members.push_back(std::move(old_members[index]));
-			members.back().offset = group_offset;
-			members.back().anonymous_union_group_index = group;
-		}
-		layout_data_size = toSizeInBytes(std::max(toSizeT(layout_data_size), group_offset + group_size));
-		total_size = toSizeInBytes(std::max(toSizeT(total_size), toSizeT(layout_data_size)));
-		active_bitfield_unit_size = 0;
-		active_bitfield_bits_used = 0;
-		active_bitfield_unit_alignment = 0;
-		active_bitfield_type = TypeCategory::Invalid;
-		member_index = group_end + 1;
-	}
+	addMembersWithAnonymousUnionGroups(old_members);
 
 	current_offset = currentLayoutOffset();
 	max_alignment = alignment;

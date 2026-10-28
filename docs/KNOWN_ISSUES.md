@@ -1,5 +1,24 @@
 # Known Issues
 
+## Signed narrow bit-field reads can lose sign extension
+
+A local `UnionBits<short>` whose anonymous union contains `short first : 3;`
+and `short second : 3;` can read `second` as 7 after designated initialization
+with -1. The canonical structural-value importer normalizes the declared signed
+width correctly, but runtime member lowering must sign-extend the extracted
+bit-field width before the usual integral promotion. Keep this separate from
+specialization field-schema publication and union storage offsets.
+
+## Anonymous unions in partial class-template specializations lose their declarations
+
+The separate partial-specialization body parser in `Parser_Templates_Class.cpp`
+does not retain anonymous-union members in the pattern AST. For example,
+`template<class T> struct Partial<T*> { union { T first; T second; }; unsigned char tag; };`
+after a primary declaration gives `Partial<long long*>` the wrong size and omits
+its union fields. Reuse the normal class-member parser before publishing these
+specializations' field schemas; layout publication cannot recover absent declarations.
+Primary templates and their ordinary nested classes retain these static facts.
+
 ## Overloaded free-function addresses can retain an unresolved target
 
 Target-typed address initialization can emit a function address by name without
@@ -98,8 +117,10 @@ members read the owning TypeId's published substituted subobject types.
 Specialization-owner member
 pointers recover member names/ordinals from the published primary pattern record,
 verified by declaration pointer; the specialization TypeId remains the value
-identity. Specialization union groups and missing field-layout or dependent base
-facts still fail closed; they must publish by specialization identity.
+identity. Specialization field schemas retain substituted member types, offsets, bit-fields,
+and flat union groups by owner TypeId. Missing field-layout and dependent base
+facts still fail closed. The partial-specialization parser gap above and nested
+anonymous-union hierarchy remain separate.
 Extend the typed-value importer before deleting `legacyDerivedBaseOffset`;
 audit dependent and other non-integral specialization roots as well.
 Integral, bool, and enum fields, including named bit-fields with signed

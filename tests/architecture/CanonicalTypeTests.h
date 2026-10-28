@@ -1050,16 +1050,16 @@ inline void checkAdapter() {
 			.flags = CanonicalRecordBaseFlags::None,
 		},
 	}};
-	table.publishRecordFieldSchema(EntityId{11}, schema_members, schema_bases);
-	require(table.hasRecordFieldSchema(EntityId{11}));
-	require(table.recordMemberAt(EntityId{11}, 0) == schema_members[0]);
-	require(table.recordMemberAt(EntityId{11}, 1) == schema_members[1]);
-	require(table.recordBaseAt(EntityId{11}, 0) == schema_bases[0]);
-	table.publishRecordFieldSchema(EntityId{11}, schema_members, schema_bases);
+	table.publishRecordFieldSchema(table.record(EntityId{11}), schema_members, schema_bases);
+	require(table.hasRecordFieldSchema(table.record(EntityId{11})));
+	require(table.recordMemberAt(table.record(EntityId{11}), 0) == schema_members[0]);
+	require(table.recordMemberAt(table.record(EntityId{11}), 1) == schema_members[1]);
+	require(table.recordBaseAt(table.record(EntityId{11}), 0) == schema_bases[0]);
+	table.publishRecordFieldSchema(table.record(EntityId{11}), schema_members, schema_bases);
 	std::array<CanonicalRecordMember, 2> conflicting_members = schema_members;
 	conflicting_members[1].offset_bytes = 4;
 	rejects([&] {
-		table.publishRecordFieldSchema(EntityId{11}, conflicting_members, schema_bases);
+		table.publishRecordFieldSchema(table.record(EntityId{11}), conflicting_members, schema_bases);
 	});
 	table.publishRecordLayout({
 		.entity = EntityId{13},
@@ -1082,9 +1082,9 @@ inline void checkAdapter() {
 			.flags = CanonicalRecordMemberFlags::Bitfield,
 		},
 	}};
-	table.publishRecordFieldSchema(EntityId{13}, zero_width_bitfield, {});
-	require(table.recordMemberAt(EntityId{13}, 0).flags == CanonicalRecordMemberFlags::Bitfield);
-	require(table.recordMemberAt(EntityId{13}, 0).bit_width == 0);
+	table.publishRecordFieldSchema(table.record(EntityId{13}), zero_width_bitfield, {});
+	require(table.recordMemberAt(table.record(EntityId{13}), 0).flags == CanonicalRecordMemberFlags::Bitfield);
+	require(table.recordMemberAt(table.record(EntityId{13}), 0).bit_width == 0);
 	CanonicalTypeTransaction schema_transaction(table);
 	table.publishRecordLayout({
 		.entity = EntityId{12},
@@ -1108,12 +1108,12 @@ inline void checkAdapter() {
 		},
 	}};
 	const TypeId rolled_property_type = table.record(EntityId{12});
-	table.publishRecordFieldSchema(EntityId{12}, rolled_members, {});
+	table.publishRecordFieldSchema(table.record(EntityId{12}), rolled_members, {});
 	table.publishRecordProperties(
 		rolled_property_type, CanonicalRecordFacts::Polymorphic);
 	schema_transaction.rollback();
 	require(!table.hasRecordLayout(EntityId{12}));
-	require(!table.hasRecordFieldSchema(EntityId{12}));
+	require(!table.hasRecordFieldSchema(table.record(EntityId{12})));
 	require(!table.hasRecordProperties(rolled_property_type));
 }
 
@@ -1322,7 +1322,7 @@ inline void checkDependentNames() {
 	table.publishRecordLayout({EntityId{1}, 1, 1, 1, 1, 1, 0, CanonicalRecordLayoutFlags::None});
 	const CanonicalRecordMember invalid_member{bytes, 0, 1, 0, 0, CanonicalAccess::Public,
 		CanonicalRecordMemberFlags::None};
-	rejects([&] { table.publishRecordFieldSchema(EntityId{1},
+	rejects([&] { table.publishRecordFieldSchema(table.record(EntityId{1}),
 		std::span<const CanonicalRecordMember>(&invalid_member, 1), {}); });
 	const auto count = table.size();
 	TypeId discarded;
@@ -2626,7 +2626,7 @@ inline void checkMemberObjectPointerValues() {
 		{integer, 0, 4, 0, 0, CanonicalAccess::Public, CanonicalRecordMemberFlags::None},
 		{integer, 4, 4, 0, 0, CanonicalAccess::Public, CanonicalRecordMemberFlags::None},
 	};
-	table.publishRecordFieldSchema(entity, members, {});
+	table.publishRecordFieldSchema(table.record(entity), members, {});
 	const TypeId member_pointer = table.memberObjectPointer(owner, integer);
 	const TypeId first = table.memberObjectPointerValue(member_pointer, owner, 0);
 	const TypeId second = table.memberObjectPointerValue(member_pointer, owner, 1);
@@ -2641,7 +2641,7 @@ inline void checkMemberObjectPointerValues() {
 	const TypeId base_owner = table.record(base_entity);
 	table.publishRecordLayout({base_entity, 4, 4, 4, 4, 1, 0, CanonicalRecordLayoutFlags::None, 0});
 	const CanonicalRecordMember base_member{integer, 0, 4, 0, 0, CanonicalAccess::Public, CanonicalRecordMemberFlags::None};
-	table.publishRecordFieldSchema(base_entity, std::span<const CanonicalRecordMember>(&base_member, 1), {});
+	table.publishRecordFieldSchema(table.record(base_entity), std::span<const CanonicalRecordMember>(&base_member, 1), {});
 	const TypeId inherited = table.memberObjectPointerValue(member_pointer, base_owner, 0);
 	require(inherited != first);
 	const auto rejects = [&](TypeId type, TypeId declaring_class, uint16_t ordinal) {
@@ -2655,7 +2655,7 @@ inline void checkMemberObjectPointerValues() {
 	const TypeId bitfield_owner = table.record(bitfield_entity);
 	table.publishRecordLayout({bitfield_entity, 4, 4, 4, 4, 1, 0, CanonicalRecordLayoutFlags::None, 0});
 	const CanonicalRecordMember bitfield_member{integer, 0, 4, 3, 0, CanonicalAccess::Public, CanonicalRecordMemberFlags::Bitfield};
-	table.publishRecordFieldSchema(bitfield_entity, std::span<const CanonicalRecordMember>(&bitfield_member, 1), {});
+	table.publishRecordFieldSchema(table.record(bitfield_entity), std::span<const CanonicalRecordMember>(&bitfield_member, 1), {});
 	require(rejects(table.memberObjectPointer(bitfield_owner, integer), bitfield_owner, 0));
 	const TypeId values[] = {first, inherited};
 	const TypeId record = table.record(EntityId{40333});
@@ -2751,7 +2751,7 @@ inline void checkUnionValues() {
 		{integer, 8, 4, 0, 0, CanonicalAccess::Public, end},
 	}};
 	table.publishRecordLayout({entity, 12, 12, 12, 4, 5, 0, CanonicalRecordLayoutFlags::None, 0});
-	table.publishRecordFieldSchema(entity, members, {});
+	table.publishRecordFieldSchema(table.record(entity), members, {});
 	const TypeId zero = table.integralValue(integer, 0);
 	const TypeId one = table.integralValue(integer, 1);
 	const TypeId inactive = table.structuralUnionValue(owner, 0, std::nullopt, TypeId{});
@@ -2795,7 +2795,7 @@ inline void checkUnionValues() {
 	const TypeId array_owner = table.record(array_entity);
 	table.publishRecordLayout({array_entity, 8, 8, 8, 4, 1, 0, CanonicalRecordLayoutFlags::Union, 0});
 	const CanonicalRecordMember array_member{array_type, 0, 8, 0, 0, CanonicalAccess::Public, start | CanonicalRecordMemberFlags::UnionGroupEnd};
-	table.publishRecordFieldSchema(array_entity, std::span<const CanonicalRecordMember>(&array_member, 1), {});
+	table.publishRecordFieldSchema(table.record(array_entity), std::span<const CanonicalRecordMember>(&array_member, 1), {});
 	const TypeId active_array = table.structuralUnionValue(array_owner, 0, uint16_t{0}, array_value);
 	const TypeId compound[] = {active_array};
 	require(table.node(table.structuralValue(owner, compound, 0)).kind == CanonicalTypeKind::StructuralValue);
@@ -2804,7 +2804,7 @@ inline void checkUnionValues() {
 	const auto invalid_schema = [&](std::array<CanonicalRecordMember, 5> invalid) {
 		const EntityId target{invalid_entity++};
 		table.publishRecordLayout({target, 12, 12, 12, 4, 5, 0, CanonicalRecordLayoutFlags::None, 0});
-		try { table.publishRecordFieldSchema(target, invalid, {}); } catch (const InternalError&) { return true; }
+		try { table.publishRecordFieldSchema(table.record(target), invalid, {}); } catch (const InternalError&) { return true; }
 		return false;
 	};
 	auto invalid = members;
@@ -2825,11 +2825,11 @@ inline void checkUnionValues() {
 		CanonicalTypeTransaction transaction(table);
 		const EntityId temporary{40204};
 		table.publishRecordLayout({temporary, 12, 12, 12, 4, 5, 0, CanonicalRecordLayoutFlags::None, 0});
-		table.publishRecordFieldSchema(temporary, members, {});
+		table.publishRecordFieldSchema(table.record(temporary), members, {});
 		(void)table.structuralUnionValue(table.record(temporary), 0, uint16_t{1}, one);
 	}
 	require(table.size() == before);
-	require(!table.hasRecordFieldSchema(EntityId{40204}));
+	require(!table.hasRecordFieldSchema(table.record(EntityId{40204})));
 }
 
 inline void checkFunctionPointerValues() {
@@ -2875,7 +2875,76 @@ inline void checkFunctionPointerValues() {
 	require(table.size() == baseline_size);
 }
 
+inline void checkSpecializationFieldSchemas() {
+	CanonicalTypeTable table;
+	const TypeId small = table.builtin(CanonicalBuiltinKind::Short);
+	const TypeId wide = table.builtin(CanonicalBuiltinKind::LongLong);
+	const TypeId arguments[] = {small};
+	const TypeId owner = table.templateSpecialization(TemplateDeclId{41001}, arguments);
+	const TypeId member_types[] = {small, small};
+	const CanonicalRecordMemberFlags start = CanonicalRecordMemberFlags::UnionVariant | CanonicalRecordMemberFlags::UnionGroupStart;
+	const CanonicalRecordMemberFlags end = CanonicalRecordMemberFlags::UnionVariant | CanonicalRecordMemberFlags::UnionGroupEnd;
+	const CanonicalRecordMember members[] = {
+		{small, 0, 2, 0, 0, CanonicalAccess::Public, start},
+		{small, 0, 2, 0, 0, CanonicalAccess::Public, end},
+	};
+	const auto rejects = [&](auto operation) {
+		bool rejected = false;
+		try { operation(); } catch (const InternalError&) { rejected = true; }
+		require(rejected);
+	};
+	const TypeId member_pointer = table.memberObjectPointer(owner, small);
+	rejects([&] { table.memberObjectPointerValue(member_pointer, owner, 0); });
+	rejects([&] { table.publishRecordFieldSchema(owner, members, {}); });
+	table.publishRecordSubobjectTypes(owner, member_types);
+	rejects([&] { table.publishRecordFieldSchema(owner, members, {}); });
+	table.publishClassBaseSchema(owner, {});
+	table.publishRecordFieldSchema(owner, members, {});
+	table.publishRecordFieldSchema(owner, members, {});
+	require(table.hasRecordFieldSchema(owner));
+	require(table.node(table.memberObjectPointerValue(member_pointer, owner, 1)).kind == CanonicalTypeKind::MemberObjectPointerValue);
+	rejects([&] { table.memberObjectPointerValue(member_pointer, owner, 2); });
+	require(table.recordMemberAt(owner, 0) == members[0]);
+	require(table.recordMemberAt(owner, 1) == members[1]);
+	const TypeId zero = table.integralValue(small, 0);
+	require(table.structuralUnionValue(owner, 0, uint16_t{0}, zero) != table.structuralUnionValue(owner, 0, uint16_t{1}, zero));
+	const TypeId wide_arguments[] = {wide};
+	const TypeId other = table.templateSpecialization(TemplateDeclId{41001}, wide_arguments);
+	const TypeId wide_types[] = {wide, wide};
+	table.publishRecordSubobjectTypes(other, wide_types);
+	table.publishClassBaseSchema(other, {});
+	rejects([&] { table.publishRecordFieldSchema(other, members, {}); });
+	const CanonicalRecordMember wide_members[] = {
+		{wide, 0, 8, 0, 0, CanonicalAccess::Public, start},
+		{wide, 0, 8, 0, 0, CanonicalAccess::Public, end},
+	};
+	rejects([&] { table.publishRecordFieldSchema(other, std::span<const CanonicalRecordMember>(), {}); });
+	table.publishRecordFieldSchema(other, wide_members, {});
+	require(table.recordMemberAt(owner, 0).size_bytes == 2);
+	require(table.recordMemberAt(other, 0).size_bytes == 8);
+	const TypeId bit_owner = table.templateSpecialization(TemplateDeclId{41003}, arguments);
+	const TypeId bit_types[] = {small};
+	table.publishRecordSubobjectTypes(bit_owner, bit_types);
+	table.publishClassBaseSchema(bit_owner, {});
+	const CanonicalRecordMember bit_member{small, 0, 2, 3, 0, CanonicalAccess::Public, CanonicalRecordMemberFlags::Bitfield};
+	table.publishRecordFieldSchema(bit_owner, std::span<const CanonicalRecordMember>(&bit_member, 1), {});
+	rejects([&] { table.memberObjectPointerValue(table.memberObjectPointer(bit_owner, small), bit_owner, 0); });
+	const size_t before = table.size();
+	TypeId temporary;
+	{
+		CanonicalTypeTransaction transaction(table);
+		temporary = table.templateSpecialization(TemplateDeclId{41002}, arguments);
+		table.publishRecordSubobjectTypes(temporary, member_types);
+		table.publishClassBaseSchema(temporary, {});
+		table.publishRecordFieldSchema(temporary, members, {});
+		table.structuralUnionValue(temporary, 0, uint16_t{1}, zero);
+	}
+	require(table.size() == before);
+	require(!table.hasRecordFieldSchema(temporary));
+}
+
 inline int run() {
+	checkSpecializationFieldSchemas();
 	checkFunctionPointerValues();
 	checkUnionValues();
 	checkStructuralEnumScalars();

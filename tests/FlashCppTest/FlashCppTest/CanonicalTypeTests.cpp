@@ -82,6 +82,62 @@ namespace other { int target(short value) { return value; } }
 	MESSAGE("FunctionDeclarationNode size=" << sizeof(FunctionDeclarationNode));
 }
 
+TEST_CASE("Specialization field schemas preserve substituted types and union declarations") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	std::ifstream input("tests/test_canonical_structural_nttp_specialization_fields_ret0.cpp");
+	REQUIRE(input.good());
+	const std::string code((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+	CompileContext context;
+	context.setInputFile("specialization_fields.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(context, gSymbolTable);
+	Parser parser(lexer, context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const auto value_for = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		const TypeId argument = table.templateSpecializationArguments(imported.type);
+		REQUIRE(table.node(argument).kind == CanonicalTypeKind::ValueTemplateArg);
+		return table.templateArgumentValue(argument);
+	};
+	const TypeId union_bits = value_for("UnionBitNamed");
+	CHECK(union_bits == value_for("UnionBitLiteral"));
+	const TypeId union_bit_owner = table.node(union_bits).child;
+	CHECK(table.recordMemberAt(union_bit_owner, 1).bit_offset == 0);
+	const TypeId bits = value_for("BitNamed");
+	CHECK(bits == value_for("BitLiteral"));
+	const TypeId bit_owner = table.node(bits).child;
+	REQUIRE(table.hasRecordFieldSchema(bit_owner));
+	CHECK(table.recordMemberAt(bit_owner, 0).type == table.builtin(CanonicalBuiltinKind::Short));
+	CHECK(table.recordMemberAt(bit_owner, 0).bit_width == 3);
+	const TypeId named = value_for("Named");
+	CHECK(named == value_for("Literal"));
+	CHECK(named != value_for("Other"));
+	const TypeId owner = table.node(named).child;
+	const TypeId wide_owner = table.node(value_for("Wide")).child;
+	CHECK(owner != wide_owner);
+	REQUIRE(table.hasRecordFieldSchema(owner));
+	REQUIRE(table.hasRecordFieldSchema(wide_owner));
+	CHECK(table.recordMemberAt(owner, 0).type == table.builtin(CanonicalBuiltinKind::Short));
+	CHECK(table.recordMemberAt(wide_owner, 0).type == table.builtin(CanonicalBuiltinKind::LongLong));
+	CHECK(table.recordMemberAt(owner, 0).size_bytes == 2);
+	CHECK(table.recordMemberAt(wide_owner, 0).size_bytes == 8);
+	CHECK(table.recordMemberAt(owner, 0).offset_bytes == table.recordMemberAt(owner, 1).offset_bytes);
+	CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(owner, 0).flags, CanonicalRecordMemberFlags::UnionGroupStart));
+	CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(owner, 1).flags, CanonicalRecordMemberFlags::UnionGroupEnd));
+	const TypeId union_value = value_for("UnionNamed");
+	CHECK(union_value == value_for("UnionLiteral"));
+	CHECK(table.node(union_value).kind == CanonicalTypeKind::StructuralUnionValue);
+	CHECK(unpackStructuralUnionActiveVariant(table.node(union_value).array_extent) == 1);
+}
+
 TEST_CASE("Anonymous union groups publish canonical declaration boundaries") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
@@ -110,24 +166,24 @@ struct Derived : Padding, Variants {};
 	REQUIRE(record->declaration_node->has_entity_id());
 	CanonicalTypeTable& table = context.canonicalTypes();
 	const EntityId entity = record->declaration_node->entity_id();
-	REQUIRE(table.hasRecordFieldSchema(entity));
-	CHECK(table.recordMemberAt(entity, 0).offset_bytes == table.recordMemberAt(entity, 1).offset_bytes);
-	CHECK(table.recordMemberAt(entity, 3).offset_bytes == table.recordMemberAt(entity, 4).offset_bytes);
+	REQUIRE(table.hasRecordFieldSchema(table.record(entity)));
+	CHECK(table.recordMemberAt(table.record(entity), 0).offset_bytes == table.recordMemberAt(table.record(entity), 1).offset_bytes);
+	CHECK(table.recordMemberAt(table.record(entity), 3).offset_bytes == table.recordMemberAt(table.record(entity), 4).offset_bytes);
 	for (const size_t index : {size_t{0}, size_t{3}}) {
-		CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(entity, index).flags, CanonicalRecordMemberFlags::UnionGroupStart));
-		CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(entity, index + 1).flags, CanonicalRecordMemberFlags::UnionGroupEnd));
-		CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(entity, index).flags, CanonicalRecordMemberFlags::UnionVariant));
+		CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(table.record(entity), index).flags, CanonicalRecordMemberFlags::UnionGroupStart));
+		CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(table.record(entity), index + 1).flags, CanonicalRecordMemberFlags::UnionGroupEnd));
+		CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(table.record(entity), index).flags, CanonicalRecordMemberFlags::UnionVariant));
 	}
-	CHECK(table.recordMemberAt(entity, 2).flags == CanonicalRecordMemberFlags::None);
+	CHECK(table.recordMemberAt(table.record(entity), 2).flags == CanonicalRecordMemberFlags::None);
 	const TypeId owner = table.record(entity);
 	CHECK(table.structuralUnionValue(owner, 0, uint16_t{1}, table.integralValue(table.builtin(CanonicalBuiltinKind::Int), 42)) !=
 		table.structuralUnionValue(owner, 0, std::nullopt, TypeId{}));
 	const TypeInfo* choice_info = findTypeByName(StringTable::getOrInternStringHandle("Choice"));
 	REQUIRE(choice_info != nullptr);
 	const EntityId choice_entity = choice_info->getStructInfo()->declaration_node->entity_id();
-	REQUIRE(table.hasRecordFieldSchema(choice_entity));
-	CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(choice_entity, 0).flags, CanonicalRecordMemberFlags::UnionGroupStart));
-	CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(choice_entity, 1).flags, CanonicalRecordMemberFlags::UnionGroupEnd));
+	REQUIRE(table.hasRecordFieldSchema(table.record(choice_entity)));
+	CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(table.record(choice_entity), 0).flags, CanonicalRecordMemberFlags::UnionGroupStart));
+	CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(table.record(choice_entity), 1).flags, CanonicalRecordMemberFlags::UnionGroupEnd));
 	CHECK(table.structuralUnionValue(table.record(choice_entity), 0, uint16_t{1},
 		table.integralValue(table.builtin(CanonicalBuiltinKind::Int), 42)) != table.structuralUnionValue(owner, 0, std::nullopt, TypeId{}));
 	const TypeInfo* key_info = findTypeByName(StringTable::getOrInternStringHandle("Key"));
@@ -137,9 +193,9 @@ struct Derived : Padding, Variants {};
 	REQUIRE(key_record->declaration_node != nullptr);
 	REQUIRE(key_record->declaration_node->has_entity_id());
 	const EntityId key_entity = key_record->declaration_node->entity_id();
-	REQUIRE(table.hasRecordFieldSchema(key_entity));
-	CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(key_entity, 0).flags, CanonicalRecordMemberFlags::UnionGroupStart));
-	CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(key_entity, 1).flags, CanonicalRecordMemberFlags::UnionGroupEnd));
+	REQUIRE(table.hasRecordFieldSchema(table.record(key_entity)));
+	CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(table.record(key_entity), 0).flags, CanonicalRecordMemberFlags::UnionGroupStart));
+	CHECK(hasCanonicalRecordMemberFlag(table.recordMemberAt(table.record(key_entity), 1).flags, CanonicalRecordMemberFlags::UnionGroupEnd));
 	// A payload without an explicit union selection is unresolved.
 	FlashCpp::StructuralClassValue unresolved;
 	unresolved.type_index = key_info->registeredTypeIndex();
@@ -419,14 +475,14 @@ using OtherTail = Base<Key{{9u, 7, true, Code::negative}, 33u, 18u}>;
 	REQUIRE(key_record->declaration_node != nullptr);
 	REQUIRE(key_record->declaration_node != nullptr);
 	const EntityId key_entity = key_record->declaration_node->entity_id();
-	REQUIRE(table.hasRecordFieldSchema(key_entity));
-	const CanonicalRecordMember upper = table.recordMemberAt(key_entity, 0);
+	REQUIRE(table.hasRecordFieldSchema(table.record(key_entity)));
+	const CanonicalRecordMember upper = table.recordMemberAt(table.record(key_entity), 0);
 	CHECK(hasCanonicalRecordMemberFlag(upper.flags, CanonicalRecordMemberFlags::Bitfield));
 	CHECK(upper.bit_width == 5);
 	CHECK(upper.type == table.builtin(CanonicalBuiltinKind::UnsignedInt));
-	CHECK(table.recordMemberAt(key_entity, 1).bit_width == 2);
-	CHECK(table.recordMemberAt(key_entity, 2).bit_width == 0);
-	CHECK(table.recordMemberAt(key_entity, 3).bit_width == 4);
+	CHECK(table.recordMemberAt(table.record(key_entity), 1).bit_width == 2);
+	CHECK(table.recordMemberAt(table.record(key_entity), 2).bit_width == 0);
+	CHECK(table.recordMemberAt(table.record(key_entity), 3).bit_width == 4);
 	const TypeId derived = import_type("Derived");
 	REQUIRE(table.hasClassBaseSchema(derived));
 	CHECK(table.classBaseAt(derived, 1).type == named);
@@ -540,7 +596,7 @@ using OtherEnum = Base<Key{{1u, 2u, 3u}, {{4}, {5}}, {{6, 7}, {8, 9}}, {true, fa
 	REQUIRE(key_record->declaration_node != nullptr);
 	REQUIRE(key_record->declaration_node != nullptr);
 	const EntityId key_entity = key_record->declaration_node->entity_id();
-	REQUIRE(table.hasRecordFieldSchema(key_entity));
+	REQUIRE(table.hasRecordFieldSchema(table.record(key_entity)));
 	const TypeId value_id = table.templateArgumentValue(table.templateSpecializationArguments(named));
 	const CanonicalTypeNode value = table.node(value_id);
 	REQUIRE(value.kind == CanonicalTypeKind::StructuralValue);
@@ -548,7 +604,7 @@ using OtherEnum = Base<Key{{1u, 2u, 3u}, {{4}, {5}}, {{6, 7}, {8, 9}}, {true, fa
 	TypeId link = unpackStructuralValueSubobjects(value.array_extent);
 	const CanonicalTypeNode values_node = table.node(table.templateArgumentValue(link));
 	REQUIRE(values_node.kind == CanonicalTypeKind::StructuralArrayValue);
-	CHECK(values_node.child == table.recordMemberAt(key_entity, 0).type);
+	CHECK(values_node.child == table.recordMemberAt(table.record(key_entity), 0).type);
 	REQUIRE(table.node(values_node.child).kind == CanonicalTypeKind::Array);
 	CHECK(table.node(values_node.child).array_extent == 3);
 	CHECK(unpackStructuralArrayElementCount(values_node.array_extent) == 3);
@@ -564,7 +620,7 @@ using OtherEnum = Base<Key{{1u, 2u, 3u}, {{4}, {5}}, {{6, 7}, {8, 9}}, {true, fa
 	link = table.templateArgumentNext(link);
 	const CanonicalTypeNode records_node = table.node(table.templateArgumentValue(link));
 	REQUIRE(records_node.kind == CanonicalTypeKind::StructuralArrayValue);
-	CHECK(records_node.child == table.recordMemberAt(key_entity, 1).type);
+	CHECK(records_node.child == table.recordMemberAt(table.record(key_entity), 1).type);
 	CHECK(table.node(records_node.child).array_extent == 2);
 	element_link = unpackStructuralValueSubobjects(records_node.array_extent);
 	const uint64_t expected_records[] = {4, 5};
@@ -582,7 +638,7 @@ using OtherEnum = Base<Key{{1u, 2u, 3u}, {{4}, {5}}, {{6, 7}, {8, 9}}, {true, fa
 	link = table.templateArgumentNext(link);
 	const CanonicalTypeNode matrix_node = table.node(table.templateArgumentValue(link));
 	REQUIRE(matrix_node.kind == CanonicalTypeKind::StructuralArrayValue);
-	CHECK(matrix_node.child == table.recordMemberAt(key_entity, 2).type);
+	CHECK(matrix_node.child == table.recordMemberAt(table.record(key_entity), 2).type);
 	CHECK(table.node(matrix_node.child).array_extent == 2);
 	element_link = unpackStructuralValueSubobjects(matrix_node.array_extent);
 	const uint64_t expected_matrix[][2] = {{6, 7}, {8, 9}};
@@ -604,7 +660,7 @@ using OtherEnum = Base<Key{{1u, 2u, 3u}, {{4}, {5}}, {{6, 7}, {8, 9}}, {true, fa
 	link = table.templateArgumentNext(link);
 	const CanonicalTypeNode flags_node = table.node(table.templateArgumentValue(link));
 	REQUIRE(flags_node.kind == CanonicalTypeKind::StructuralArrayValue);
-	CHECK(flags_node.child == table.recordMemberAt(key_entity, 3).type);
+	CHECK(flags_node.child == table.recordMemberAt(table.record(key_entity), 3).type);
 	element_link = unpackStructuralValueSubobjects(flags_node.array_extent);
 	const uint64_t expected_flags[] = {1, 0};
 	for (const uint64_t expected : expected_flags) {
@@ -617,7 +673,7 @@ using OtherEnum = Base<Key{{1u, 2u, 3u}, {{4}, {5}}, {{6, 7}, {8, 9}}, {true, fa
 	link = table.templateArgumentNext(link);
 	const CanonicalTypeNode codes_node = table.node(table.templateArgumentValue(link));
 	REQUIRE(codes_node.kind == CanonicalTypeKind::StructuralArrayValue);
-	CHECK(codes_node.child == table.recordMemberAt(key_entity, 4).type);
+	CHECK(codes_node.child == table.recordMemberAt(table.record(key_entity), 4).type);
 	element_link = unpackStructuralValueSubobjects(codes_node.array_extent);
 	const uint64_t expected_codes[] = {static_cast<uint64_t>(-3), 2};
 	for (const uint64_t expected : expected_codes) {
@@ -2050,13 +2106,10 @@ TEST_CASE("Canonical TypeIds rank by-value derived-to-base conversions") {
 	const std::array<CanonicalRecordBase, 1> derived_bases{base_link};
 	table.publishRecordLayout(CanonicalRecordLayout{
 		base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None, 0});
-	table.publishRecordFieldSchema(base_entity,
-		std::span<const CanonicalRecordMember>{},
-		std::span<const CanonicalRecordBase>{});
+	table.publishRecordFieldSchema(table.record(base_entity), std::span<const CanonicalRecordMember>{}, std::span<const CanonicalRecordBase>{});
 	table.publishRecordLayout(CanonicalRecordLayout{
 		derived_entity, 1, 1, 1, 1, 0, 1, CanonicalRecordLayoutFlags::None, 0});
-	table.publishRecordFieldSchema(derived_entity,
-		std::span<const CanonicalRecordMember>{}, derived_bases);
+	table.publishRecordFieldSchema(table.record(derived_entity), std::span<const CanonicalRecordMember>{}, derived_bases);
 	table.publishClassBaseSchema(table.record(base_entity), {});
 	const std::array<CanonicalClassBase, 1> class_bases{{{table.record(base_entity), CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
 	table.publishClassBaseSchema(table.record(derived_entity), class_bases);
@@ -2097,10 +2150,10 @@ TEST_CASE("TypeId inheritance classification requires published class-base schem
 	const std::array<CanonicalClassBase, 1> intermediate_link{{intermediate, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
 	auto publish_entity_schema = [&](bool related) {
 		table.publishRecordLayout({base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None, 0});
-		table.publishRecordFieldSchema(base_entity, {}, {});
+		table.publishRecordFieldSchema(table.record(base_entity), {}, {});
 		table.publishRecordLayout({derived_entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(related), CanonicalRecordLayoutFlags::None, 0});
 		const std::array<CanonicalRecordBase, 1> bases{{base_entity, 0, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
-		table.publishRecordFieldSchema(derived_entity, {},
+		table.publishRecordFieldSchema(table.record(derived_entity), {},
 			related ? std::span<const CanonicalRecordBase>(bases) : std::span<const CanonicalRecordBase>{});
 	};
 	CHECK(classifyCanonicalDerivedBaseConversion(table, base, base) == DerivedBaseConversionKind::UniquePublicNonVirtual);
@@ -2112,7 +2165,7 @@ TEST_CASE("TypeId inheritance classification requires published class-base schem
 	SUBCASE("EntityId-only proof cannot classify a TypeId pair") {
 		publish_entity_schema(true);
 		CHECK(table.recordLayout(derived_entity).direct_base_count == 1);
-		CHECK(table.recordBaseAt(derived_entity, 0).entity == base_entity);
+		CHECK(table.recordBaseAt(table.record(derived_entity), 0).entity == base_entity);
 		CHECK_FALSE(classifyCanonicalDerivedBaseConversion(table, derived, base).has_value());
 	}
 	SUBCASE("Missing root defers despite EntityId proof") {
@@ -2235,10 +2288,10 @@ TEST_CASE("Nominal object conversion queries require published class graphs") {
 	}
 	SUBCASE("Entity-only graphs cannot stand in for class schemas") {
 		table.publishRecordLayout(CanonicalRecordLayout{base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None, 0});
-		table.publishRecordFieldSchema(base_entity, {}, {});
+		table.publishRecordFieldSchema(table.record(base_entity), {}, {});
 		table.publishRecordLayout(CanonicalRecordLayout{derived_entity, 1, 1, 1, 1, 0, 1, CanonicalRecordLayoutFlags::None, 0});
 		const std::array<CanonicalRecordBase, 1> bases{{{base_entity, 0, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
-		table.publishRecordFieldSchema(derived_entity, {}, bases);
+		table.publishRecordFieldSchema(table.record(derived_entity), {}, bases);
 		CHECK_FALSE(tryBuildCanonicalProjectableConversionPlan(source, target).has_value());
 		CHECK_FALSE(table.hasClassBaseSchema(derived));
 	}
@@ -2303,10 +2356,10 @@ TEST_CASE("Record pointer conversion queries consume published TypeId class grap
 	};
 	auto publish_entity_graph = [&](bool related) {
 		table.publishRecordLayout({base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None, 0});
-		table.publishRecordFieldSchema(base_entity, {}, {});
+		table.publishRecordFieldSchema(table.record(base_entity), {}, {});
 		table.publishRecordLayout({derived_entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(related), CanonicalRecordLayoutFlags::None, 0});
 		const std::array<CanonicalRecordBase, 1> bases{{base_entity, 0, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
-		table.publishRecordFieldSchema(derived_entity, {},
+		table.publishRecordFieldSchema(table.record(derived_entity), {},
 			related ? std::span<const CanonicalRecordBase>(bases) : std::span<const CanonicalRecordBase>{});
 	};
 	SUBCASE("Absent class graph fails closed despite EntityId proof") {
@@ -2582,10 +2635,10 @@ TEST_CASE("Conversion function base tails consume published TypeId graphs") {
 		const EntityId base_entity = table.recordEntity(base);
 		const EntityId derived_entity = table.recordEntity(derived);
 		table.publishRecordLayout(CanonicalRecordLayout{base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None, 0});
-		table.publishRecordFieldSchema(base_entity, {}, {});
+		table.publishRecordFieldSchema(table.record(base_entity), {}, {});
 		table.publishRecordLayout(CanonicalRecordLayout{derived_entity, 1, 1, 1, 1, 0, 1, CanonicalRecordLayoutFlags::None, 0});
 		const std::array<CanonicalRecordBase, 1> bases{{{base_entity, 0, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
-		table.publishRecordFieldSchema(derived_entity, {}, bases);
+		table.publishRecordFieldSchema(table.record(derived_entity), {}, bases);
 	};
 	SUBCASE("Missing class schemas defer despite legacy declarations") {
 		CHECK_FALSE(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, base_spec).has_value());
@@ -3391,7 +3444,7 @@ TEST_CASE("Canonical record constructor schema is independent of the field schem
 	table.publishRecordLayout(CanonicalRecordLayout{
 		entity, 4, 4, 4, 4, 0, 0, CanonicalRecordLayoutFlags::None, 0});
 	// No field schema is published (as for an unimportable member record); the constructor schema still publishes from the type node.
-	CHECK_FALSE(table.hasRecordFieldSchema(entity));
+	CHECK_FALSE(table.hasRecordFieldSchema(table.record(entity)));
 	const TypeId record_type = table.record(entity);
 	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
 	const std::array<TypeId, 1> one_parameter{int_type};
@@ -3955,7 +4008,7 @@ TEST_CASE("Canonical TypeIds bind pointer conversion temporaries to references")
 		table.publishRecordLayout(CanonicalRecordLayout{
 			entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(bases.size()),
 			CanonicalRecordLayoutFlags::None, 0});
-		table.publishRecordFieldSchema(entity, std::span<const CanonicalRecordMember>{}, bases);
+		table.publishRecordFieldSchema(table.record(entity), std::span<const CanonicalRecordMember>{}, bases);
 		publishTestClassBases(table, entity, bases);
 	};
 	publish_record(base_entity, {});
@@ -4828,7 +4881,7 @@ TEST_CASE("Canonical TypeIds plan member function pointer base conversions") {
 		table.publishRecordLayout(CanonicalRecordLayout{
 			entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(bases.size()),
 			CanonicalRecordLayoutFlags::None, 0});
-		table.publishRecordFieldSchema(entity, std::span<const CanonicalRecordMember>{}, bases);
+		table.publishRecordFieldSchema(table.record(entity), std::span<const CanonicalRecordMember>{}, bases);
 		publishTestClassBases(table, entity, bases);
 	};
 	auto public_base = [](EntityId entity, CanonicalRecordBaseFlags flags) {
@@ -4958,7 +5011,7 @@ TEST_CASE("Canonical TypeIds convert non-projectable ordered member-pointer owne
 		table.publishRecordLayout(CanonicalRecordLayout{
 			entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(bases.size()),
 			CanonicalRecordLayoutFlags::None, 0});
-		table.publishRecordFieldSchema(entity, std::span<const CanonicalRecordMember>{}, bases);
+		table.publishRecordFieldSchema(table.record(entity), std::span<const CanonicalRecordMember>{}, bases);
 		publishTestClassBases(table, entity, bases);
 	};
 	publish_record(base_owner, {});
@@ -5465,7 +5518,7 @@ TEST_CASE("Canonical TypeIds bind member-pointer conversion temporaries to refer
 		table.publishRecordLayout(CanonicalRecordLayout{
 			entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(bases.size()),
 			CanonicalRecordLayoutFlags::None, 0});
-		table.publishRecordFieldSchema(entity, std::span<const CanonicalRecordMember>{}, bases);
+		table.publishRecordFieldSchema(table.record(entity), std::span<const CanonicalRecordMember>{}, bases);
 		publishTestClassBases(table, entity, bases);
 	};
 	publish_record(base_owner, {});
@@ -6701,7 +6754,7 @@ TEST_CASE("Canonical union value tracing bounds native stack across deep variant
 		const TypeId owner = table.record(entity);
 		table.publishRecordLayout({entity, 4, 4, 4, 4, 1, 0, CanonicalRecordLayoutFlags::Union, 0});
 		const CanonicalRecordMember member{member_type, 0, 4, 0, 0, CanonicalAccess::Public, flags};
-		table.publishRecordFieldSchema(entity, std::span<const CanonicalRecordMember>(&member, 1), {});
+		table.publishRecordFieldSchema(table.record(entity), std::span<const CanonicalRecordMember>(&member, 1), {});
 		payload = table.structuralUnionValue(owner, 0, uint16_t{0}, payload);
 		member_type = owner;
 	}

@@ -567,8 +567,17 @@ def main():
                 "return entity && enum_layout_ids_.contains(entity.value);",
                 "return entity && false;"),
             "lost_record_field_schema": (
-                "return entity && record_field_schema_ids_.contains(entity.value);",
-                "return entity && false;"),
+                "return owner && record_field_schema_ids_.contains(owner.value);",
+                "return owner && false;"),
+            "lost_specialization_field_member_type": (
+                "if (members[index].type != record_subobject_member_types_[schema.member_begin + index]) {",
+                "if (false && members[index].type != record_subobject_member_types_[schema.member_begin + index]) {"),
+            "lost_specialization_field_member_count": (
+                "!bases.empty() || members.size() != schema.member_count || !class_base_schema_ids_.contains(owner.value)",
+                "!bases.empty() || !class_base_schema_ids_.contains(owner.value)"),
+            "lost_specialization_field_base_publication": (
+                "!bases.empty() || members.size() != schema.member_count || !class_base_schema_ids_.contains(owner.value)",
+                "!bases.empty() || members.size() != schema.member_count"),
             "lost_named_type_member_schema": (
                 "return entity && named_type_member_schema_ids_.contains(entity.value);",
                 "return entity && false;"),

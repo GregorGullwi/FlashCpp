@@ -13,27 +13,6 @@
 #include "TypeTraitEvaluator.h"
 
 namespace {
-uint32_t canonicalLayoutSize(size_t value) {
-	if (value > std::numeric_limits<uint32_t>::max()) {
-		throw InternalError("canonical layout exceeds 32-bit object-size limit");
-	}
-	return static_cast<uint32_t>(value);
-}
-
-uint16_t canonicalLayoutCount(size_t value) {
-	if (value > std::numeric_limits<uint16_t>::max()) {
-		throw InternalError("canonical layout exceeds 16-bit member/base count limit");
-	}
-	return static_cast<uint16_t>(value);
-}
-
-uint8_t canonicalBitfieldWidth(size_t value) {
-	if (value > std::numeric_limits<uint8_t>::max()) {
-		throw InternalError("canonical layout exceeds 8-bit bitfield width limit");
-	}
-	return static_cast<uint8_t>(value);
-}
-
 std::optional<TypeCategory> findUnfixedEnumPromotionType(
 	const EnumTypeInfo& enum_info) {
 	long long minimum = 0;
@@ -96,101 +75,6 @@ std::optional<TypeCategory> findUnfixedEnumPromotionType(
 		}
 	}
 	return std::nullopt;
-}
-
-CanonicalAccess canonicalAccess(AccessSpecifier access) {
-	switch (access) {
-	case AccessSpecifier::Public:
-		return CanonicalAccess::Public;
-	case AccessSpecifier::Protected:
-		return CanonicalAccess::Protected;
-	case AccessSpecifier::Private:
-		return CanonicalAccess::Private;
-	}
-	throw InternalError("canonical layout: unknown access specifier");
-}
-
-TypeSpecifierNode makeCanonicalMemberTypeSpec(const StructMember& member) {
-	return typeSpecifierFromStructMemberProjection(member);
-}
-
-EntityId resolvePublishedBaseEntity(const BaseClassSpecifier& base) {
-	if (base.is_deferred) {
-		return {};
-	}
-	const TypeInfo* type_info = tryGetTypeInfo(base.type_index);
-	if (type_info == nullptr || !type_info->isStruct()) {
-		return {};
-	}
-	const StructTypeInfo* base_info = type_info->getStructInfo();
-	if (base_info == nullptr || base_info->declaration_node == nullptr ||
-		!base_info->declaration_node->has_entity_id()) {
-		return {};
-	}
-	return base_info->declaration_node->entity_id();
-}
-
-bool tryPublishCanonicalRecordFieldSchema(CanonicalTypeTable& table, EntityId entity,
-	const StructTypeInfo& struct_info) {
-	std::vector<CanonicalRecordMember> members;
-	members.reserve(struct_info.members.size());
-	for (size_t index = 0; index < struct_info.members.size(); ++index) {
-		const StructMember& member = struct_info.members[index];
-		TypeSpecifierNode member_syntax = makeCanonicalMemberTypeSpec(member);
-		const std::optional<TypeId> imported = tryImportSupportedCanonical(table, member_syntax);
-		if (!imported.has_value()) {
-			return false;
-		}
-		CanonicalRecordMemberFlags flags = CanonicalRecordMemberFlags::None;
-		if (member.anonymous_union_group_index.has_value() || struct_info.is_union) {
-			const auto group = member.anonymous_union_group_index;
-			const bool starts = index == 0 || (!struct_info.is_union && struct_info.members[index - 1].anonymous_union_group_index != group);
-			const bool ends = index + 1 == struct_info.members.size() ||
-				(!struct_info.is_union && struct_info.members[index + 1].anonymous_union_group_index != group);
-			flags = flags | CanonicalRecordMemberFlags::UnionVariant;
-			if (starts) flags = flags | CanonicalRecordMemberFlags::UnionGroupStart;
-			if (ends) flags = flags | CanonicalRecordMemberFlags::UnionGroupEnd;
-		}
-		uint8_t bit_width = 0;
-		uint8_t bit_offset = 0;
-		if (member.bitfield_width.has_value()) {
-			flags = flags | CanonicalRecordMemberFlags::Bitfield;
-			bit_width = canonicalBitfieldWidth(*member.bitfield_width);
-			bit_offset = canonicalBitfieldWidth(member.bitfield_bit_offset);
-		}
-		if (member.is_no_unique_address) {
-			flags = flags | CanonicalRecordMemberFlags::NoUniqueAddress;
-		}
-		members.push_back({
-			.type = *imported,
-			.offset_bytes = canonicalLayoutSize(member.offset),
-			.size_bytes = canonicalLayoutSize(member.size),
-			.bit_width = bit_width,
-			.bit_offset = bit_offset,
-			.access = canonicalAccess(member.access),
-			.flags = flags,
-		});
-	}
-	std::vector<CanonicalRecordBase> bases;
-	bases.reserve(struct_info.base_classes.size());
-	for (const BaseClassSpecifier& base : struct_info.base_classes) {
-		const EntityId base_entity = resolvePublishedBaseEntity(base);
-		if (!base_entity) {
-			return false;
-		}
-		CanonicalRecordBaseFlags flags = CanonicalRecordBaseFlags::None;
-		if (base.is_virtual) {
-			flags = flags | CanonicalRecordBaseFlags::Virtual;
-		}
-		bases.push_back({
-			.entity = base_entity,
-			.offset_bytes = canonicalLayoutSize(base.offset),
-			.access = canonicalAccess(base.access),
-			.flags = flags,
-		});
-	}
-	table.publishRecordFieldSchema(entity, members, bases);
-	return true;
 }
 
 bool tryPublishCanonicalNamedTypeMembers(CanonicalTypeTable& table, EntityId entity,
@@ -1028,7 +912,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	}
 
 	// Create struct declaration node - string_view points directly into source text
-	auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
+	auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class, is_union);
 	struct_ref.set_is_local_class(is_local_class_declaration);
 	if (parsing_template_class_ && !is_nested_class) {
 		FrontendContext& front_end = requireFrontendContext();
@@ -4979,7 +4863,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			record_type,
 			*struct_info);
 		(void)tryPublishCanonicalRecordFieldSchema(
-			canonical_types, struct_ref.entity_id(), *struct_info);
+			canonical_types, record_type, *struct_info);
 		(void)tryPublishCanonicalRecordConstructors(canonical_types, record_type, struct_ref, struct_info->has_deleted_constructor);
 		tryPublishNestedClassEntities(
 			front_end.declarationBuilder(),

@@ -18,6 +18,22 @@
 #include "CanonicalTypeAdapter.h"
 #include "FrontendContext.h"
 
+// Copy declaration group identity after member substitution; layout uses the substituted sizes.
+static void preserveInstantiatedUnionGroups(StructTypeInfo& instance, const StructDeclarationNode& pattern) {
+	const auto groups = pattern.anonymous_unions();
+	for (size_t group_index = 0; group_index < groups.size(); ++group_index) {
+		const auto& group = groups[group_index];
+		if (!group.is_union) throw InternalError("Unsupported anonymous struct declaration group");
+		for (const auto& declaration : group.union_members) {
+			auto member = std::find_if(instance.members.begin(), instance.members.end(), [&](const StructMember& candidate) {
+				return candidate.name == declaration.member_name;
+			});
+			if (member == instance.members.end()) throw InternalError("Instantiated anonymous union member is missing");
+			member->anonymous_union_group_index = group_index;
+		}
+	}
+}
+
 static constexpr size_t kMaxAliasUnwrapIterations = 64;
 
 // Per-compilation instantiation budget shared by class and function templates.
@@ -4249,8 +4265,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			// Finalize the struct layout
+			preserveInstantiatedUnionGroups(*struct_info, pattern_struct);
 			bool finalize_success;
-			if (!struct_info->base_classes.empty()) {
+			if (!struct_info->base_classes.empty() || !pattern_struct.anonymous_unions().empty()) {
 				finalize_success = struct_info->finalizeWithBases();
 			} else {
 				finalize_success = struct_info->finalize();
@@ -10216,8 +10233,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			// Finalize the nested struct layout
+			preserveInstantiatedUnionGroups(*nested_struct_info, nested_struct);
 			const bool nested_finalize_success =
-				!nested_struct_info->base_classes.empty()
+				(!nested_struct_info->base_classes.empty() || !nested_struct.anonymous_unions().empty())
 					? nested_struct_info->finalizeWithBases()
 					: nested_struct_info->finalize();
 			if (!nested_finalize_success) {
@@ -11151,8 +11169,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 
+	preserveInstantiatedUnionGroups(*struct_info, class_decl);
 	bool finalize_success;
-	if (!struct_info->base_classes.empty()) {
+	if (!struct_info->base_classes.empty() || !class_decl.anonymous_unions().empty()) {
 		finalize_success = struct_info->finalizeWithBases();
 	} else {
 		finalize_success = struct_info->finalize();

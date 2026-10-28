@@ -905,23 +905,17 @@ TypeId CanonicalTypeTable::memberObjectPointerValue(TypeId member_pointer_type, 
 	if (type.kind != CanonicalTypeKind::MemberObjectPointer) {
 		throw InternalError("canonical type: member object pointer value requires a member object pointer type");
 	}
-	const CanonicalTypeNode class_node = nodeUnlocked(declaring_class);
-	if (class_node.kind == CanonicalTypeKind::Record) {
-		const EntityId entity{static_cast<uint32_t>(class_node.array_extent)};
-		const auto schema_found = record_field_schema_ids_.find(entity.value);
-		if (schema_found == record_field_schema_ids_.end()) {
-			throw InternalError("canonical type: member object pointer value requires a published field schema");
-		}
-		const CanonicalRecordFieldSchemaHeader header = record_field_schema_headers_[schema_found->second];
-		if (member_ordinal >= header.member_count) {
-			throw InternalError("canonical type: member object pointer value ordinal is not published");
-		}
-		const CanonicalRecordMember member = record_members_[header.member_begin + member_ordinal];
-		if (hasCanonicalRecordMemberFlag(member.flags, CanonicalRecordMemberFlags::Bitfield)) {
-			throw InternalError("canonical type: member object pointer value cannot target a bit-field");
-		}
-	} else if (class_node.kind != CanonicalTypeKind::TemplateSpecialization) {
+	const CanonicalTypeKind kind = nodeUnlocked(declaring_class).kind;
+	if (kind != CanonicalTypeKind::Record && kind != CanonicalTypeKind::TemplateSpecialization) {
 		throw InternalError("canonical type: member object pointer value requires a class declaring class");
+	}
+	const CanonicalRecordFieldSchemaHeader header = fieldSchemaHeaderUnlocked(declaring_class);
+	if (member_ordinal >= header.member_count) {
+		throw InternalError("canonical type: member object pointer value ordinal is not published");
+	}
+	const CanonicalRecordMember member = record_members_[header.member_begin + member_ordinal];
+	if (hasCanonicalRecordMemberFlag(member.flags, CanonicalRecordMemberFlags::Bitfield)) {
+		throw InternalError("canonical type: member object pointer value cannot target a bit-field");
 	}
 	return internUnlocked({.child = member_pointer_type, .kind = CanonicalTypeKind::MemberObjectPointerValue,
 		.builtin = CanonicalBuiltinKind::Void, .qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None,
@@ -1004,10 +998,10 @@ TypeId CanonicalTypeTable::structuralUnionValue(TypeId owner_type, uint16_t firs
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
 	const CanonicalTypeNode owner = nodeUnlocked(owner_type);
-	if (owner.kind != CanonicalTypeKind::Record) {
-		throw InternalError("canonical type: union value requires a nominal record owner");
+	if (owner.kind != CanonicalTypeKind::Record && owner.kind != CanonicalTypeKind::TemplateSpecialization) {
+		throw InternalError("canonical type: union value requires a class owner");
 	}
-	const CanonicalRecordFieldSchemaHeader header = fieldSchemaHeaderUnlocked(EntityId{static_cast<uint32_t>(owner.array_extent)});
+	const CanonicalRecordFieldSchemaHeader header = fieldSchemaHeaderUnlocked(owner_type);
 	if (first_variant >= header.member_count || !hasCanonicalRecordMemberFlag(record_members_[header.member_begin + first_variant].flags,
 		CanonicalRecordMemberFlags::UnionGroupStart)) {
 		throw InternalError("canonical type: union value requires a published group start");
@@ -1356,21 +1350,35 @@ CanonicalEnumLayout CanonicalTypeTable::enumLayout(EntityId entity) const {
 	return enum_layouts_[found->second];
 }
 
-void CanonicalTypeTable::publishRecordFieldSchema(EntityId entity,
-	std::span<const CanonicalRecordMember> members,
+void CanonicalTypeTable::publishRecordFieldSchema(TypeId owner, std::span<const CanonicalRecordMember> members,
 	std::span<const CanonicalRecordBase> bases) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
-	if (!entity) {
-		throw InternalError("canonical type: invalid record field schema entity");
+	const CanonicalTypeNode type = nodeUnlocked(owner);
+	if (members.size() > UINT16_MAX || bases.size() > UINT16_MAX) {
+		throw InternalError("canonical type: record field schema exceeds count limit");
 	}
-	const auto layout_found = record_layout_ids_.find(entity.value);
-	if (layout_found == record_layout_ids_.end()) {
-		throw InternalError("canonical type: record field schema requires complete layout");
-	}
-	const CanonicalRecordLayout layout = record_layouts_[layout_found->second];
-	if (members.size() != layout.member_count || bases.size() != layout.direct_base_count) {
-		throw InternalError("canonical type: record field schema count mismatch");
+	if (type.kind == CanonicalTypeKind::Record) {
+		const auto layout_found = record_layout_ids_.find(static_cast<uint32_t>(type.array_extent));
+		if (layout_found == record_layout_ids_.end()) {
+			throw InternalError("canonical type: record field schema requires complete layout");
+		}
+		const CanonicalRecordLayout layout = record_layouts_[layout_found->second];
+		if (members.size() != layout.member_count || bases.size() != layout.direct_base_count) {
+			throw InternalError("canonical type: record field schema count mismatch");
+		}
+	} else if (type.kind == CanonicalTypeKind::TemplateSpecialization) {
+		const CanonicalRecordSubobjectTypeSchemaHeader schema = recordSubobjectTypeSchemaHeaderUnlocked(owner);
+		if (!bases.empty() || members.size() != schema.member_count || !class_base_schema_ids_.contains(owner.value)) {
+			throw InternalError("canonical type: specialization field schema requires published subobject and base facts");
+		}
+		for (size_t index = 0; index < members.size(); ++index) {
+			if (members[index].type != record_subobject_member_types_[schema.member_begin + index]) {
+				throw InternalError("canonical type: specialization field type differs from its substituted declaration");
+			}
+		}
+	} else {
+		throw InternalError("canonical type: field schema owner is not a class type");
 	}
 	bool in_union = false;
 	uint32_t union_offset = 0;
@@ -1393,7 +1401,7 @@ void CanonicalTypeTable::publishRecordFieldSchema(EntityId entity,
 	for (const CanonicalRecordBase& base : bases) {
 		validateRecordBaseUnlocked(base);
 	}
-	const auto existing = record_field_schema_ids_.find(entity.value);
+	const auto existing = record_field_schema_ids_.find(owner.value);
 	if (existing != record_field_schema_ids_.end()) {
 		const CanonicalRecordFieldSchemaHeader header =
 			record_field_schema_headers_[existing->second];
@@ -1427,7 +1435,7 @@ void CanonicalTypeTable::publishRecordFieldSchema(EntityId entity,
 		appendSchemaEntryUnlocked(record_bases_, live_record_base_count_, base);
 	}
 	const CanonicalRecordFieldSchemaHeader header{
-		.entity = entity,
+		.type = owner,
 		.member_begin = member_begin,
 		.base_begin = base_begin,
 		.member_count = static_cast<uint16_t>(members.size()),
@@ -1437,7 +1445,7 @@ void CanonicalTypeTable::publishRecordFieldSchema(EntityId entity,
 	appendSchemaEntryUnlocked(record_field_schema_headers_, live_record_field_schema_count_,
 		header);
 	try {
-		record_field_schema_ids_.emplace(entity.value, header_index);
+		record_field_schema_ids_.emplace(owner.value, header_index);
 	} catch (...) {
 		live_record_field_schema_count_ = header_index;
 		live_record_member_count_ = member_begin;
@@ -1448,26 +1456,26 @@ void CanonicalTypeTable::publishRecordFieldSchema(EntityId entity,
 	noteArenaBytes();
 }
 
-bool CanonicalTypeTable::hasRecordFieldSchema(EntityId entity) const {
+bool CanonicalTypeTable::hasRecordFieldSchema(TypeId owner) const {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
-	return entity && record_field_schema_ids_.contains(entity.value);
+	return owner && record_field_schema_ids_.contains(owner.value);
 }
 
-CanonicalRecordMember CanonicalTypeTable::recordMemberAt(EntityId entity, size_t index) const {
+CanonicalRecordMember CanonicalTypeTable::recordMemberAt(TypeId owner, size_t index) const {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
-	const CanonicalRecordFieldSchemaHeader header = fieldSchemaHeaderUnlocked(entity);
+	const CanonicalRecordFieldSchemaHeader header = fieldSchemaHeaderUnlocked(owner);
 	if (index >= header.member_count) {
 		throw InternalError("canonical type: record member index out of range");
 	}
 	return record_members_[header.member_begin + index];
 }
 
-CanonicalRecordBase CanonicalTypeTable::recordBaseAt(EntityId entity, size_t index) const {
+CanonicalRecordBase CanonicalTypeTable::recordBaseAt(TypeId owner, size_t index) const {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
-	const CanonicalRecordFieldSchemaHeader header = fieldSchemaHeaderUnlocked(entity);
+	const CanonicalRecordFieldSchemaHeader header = fieldSchemaHeaderUnlocked(owner);
 	if (index >= header.base_count) {
 		throw InternalError("canonical type: record base index out of range");
 	}
@@ -3630,7 +3638,7 @@ void CanonicalTypeTable::finishTransaction(size_t depth, bool commit) {
 		}
 		while (live_record_field_schema_count_ > mark.record_field_schema_count) {
 			record_field_schema_ids_.erase(
-				record_field_schema_headers_[live_record_field_schema_count_ - 1].entity.value);
+				record_field_schema_headers_[live_record_field_schema_count_ - 1].type.value);
 			--live_record_field_schema_count_;
 		}
 		live_record_member_count_ = mark.record_member_count;
