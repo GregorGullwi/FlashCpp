@@ -2912,14 +2912,46 @@ bool StructTypeInfo::finalizeWithBases() {
 	active_bitfield_unit_alignment = 0;
 	active_bitfield_bits_used = 0;
 	active_bitfield_type = TypeCategory::Invalid;
-	for (auto& member : old_members) {
-		const std::optional<size_t> anonymous_union_group_index = member.anonymous_union_group_index;
-		addMember(member.name, member.type_index, member.canonical_type_id, member.size, member.alignment, member.access,
-				  std::move(member.default_initializer), member.reference_qualifier,
-				  member.referenced_size_bits, member.is_array, std::move(member.array_dimensions),
-				  member.pointee_array_declarator, member.pointer_depth, member.bitfield_width, std::move(member.function_signature),
-				  member.is_no_unique_address, member.member_cv_qualifier);
-		members.back().anonymous_union_group_index = anonymous_union_group_index;
+	for (size_t member_index = 0; member_index < old_members.size();) {
+		StructMember& member = old_members[member_index];
+		const std::optional<size_t> group = member.anonymous_union_group_index;
+		if (!group.has_value()) {
+			addMember(member.name, member.type_index, member.canonical_type_id, member.size, member.alignment, member.access,
+					  std::move(member.default_initializer), member.reference_qualifier,
+					  member.referenced_size_bits, member.is_array, std::move(member.array_dimensions),
+					  member.pointee_array_declarator, member.pointer_depth, member.bitfield_width, std::move(member.function_signature),
+					  member.is_no_unique_address, member.member_cv_qualifier);
+			++member_index;
+			continue;
+		}
+		size_t group_end = member_index;
+		size_t group_alignment = 1;
+		size_t group_size = 0;
+		while (group_end + 1 < old_members.size() && old_members[group_end + 1].anonymous_union_group_index == group) ++group_end;
+		for (size_t index = member_index; index <= group_end; ++index) {
+			group_alignment = std::max(group_alignment, old_members[index].alignment);
+			group_size = std::max(group_size, old_members[index].size);
+		}
+		const size_t group_offset = alignLayoutSize(toSizeT(layout_data_size), group_alignment);
+		for (size_t index = member_index; index <= group_end; ++index) {
+			StructMember& source = old_members[index];
+			members.emplace_back(source.name, source.type_index, source.canonical_type_id, group_offset,
+				source.size, source.alignment, source.access, std::move(source.default_initializer),
+				source.reference_qualifier, source.referenced_size_bits, source.is_array,
+				std::move(source.array_dimensions), source.pointee_array_declarator, source.pointer_depth,
+				source.bitfield_width, source.member_cv_qualifier);
+			members.back().bitfield_bit_offset = source.bitfield_bit_offset;
+			members.back().is_no_unique_address = source.is_no_unique_address;
+			members.back().function_signature = std::move(source.function_signature);
+			members.back().anonymous_union_group_index = group;
+		}
+		layout_data_size = toSizeInBytes(std::max(toSizeT(layout_data_size), group_offset + group_size));
+		total_size = toSizeInBytes(std::max(toSizeT(total_size), toSizeT(layout_data_size)));
+		active_bitfield_unit_size = 0;
+		active_bitfield_bits_used = 0;
+		active_bitfield_unit_alignment = 0;
+		active_bitfield_type = TypeCategory::Invalid;
+		member_index = group_end + 1;
 	}
 
 	current_offset = currentLayoutOffset();
