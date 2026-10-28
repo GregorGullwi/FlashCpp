@@ -7779,6 +7779,7 @@ inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
 		case CanonicalTypeKind::StructuralUnionValue:
 		case CanonicalTypeKind::StructuralArrayValue:
 		case CanonicalTypeKind::IntegralValue:
+		case CanonicalTypeKind::FloatingValue:
 		case CanonicalTypeKind::ValueTemplateArg:
 		case CanonicalTypeKind::NonTypeTemplateArg:
 		case CanonicalTypeKind::TemplateTemplateArg:

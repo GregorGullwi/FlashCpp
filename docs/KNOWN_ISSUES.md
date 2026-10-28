@@ -48,9 +48,15 @@ representation; flat contiguous layout groups alone cannot distinguish an
 inactive outer union from an active outer variant containing an inactive inner
 union.
 
-Remaining scalar field kinds (floating, pointer, and member-pointer values) and
-structural values of class-template types still need canonical subobject
-identity and matching specialization base facts.
+Float and double fields, including array elements, now use exact typed
+canonical floating values; equivalent syntax and declaration imports share
+identity. Long double remains unsupported for structural values because the
+evaluator carries only a 64-bit representation, so it fails closed instead of
+aliasing through double bits.
+
+Pointer and member-pointer field values and structural values of class-template
+types still need canonical subobject identity and matching specialization base
+facts.
 Extend the typed-value importer before deleting `legacyDerivedBaseOffset`;
 audit dependent and other non-integral specialization roots as well.
 Integral, bool, and enum fields, including named bit-fields with signed
@@ -67,8 +73,9 @@ Retain `test_canonical_structural_nttp_base_source_ret0.cpp`,
 `test_canonical_structural_nttp_subobjects_ret0.cpp`,
 `test_canonical_structural_nttp_enum_fields_ret0.cpp`,
 `test_canonical_structural_nttp_bitfields_ret0.cpp`,
-`test_canonical_structural_nttp_arrays_ret0.cpp`, and
-`test_canonical_structural_nttp_union_active_ret0.cpp` as current guards.
+`test_canonical_structural_nttp_arrays_ret0.cpp`,
+`test_canonical_structural_nttp_union_active_ret0.cpp`, and
+`test_canonical_structural_nttp_float_ret0.cpp` as current guards.
 
 ## Bit-field declarations accept ill-formed forms
 

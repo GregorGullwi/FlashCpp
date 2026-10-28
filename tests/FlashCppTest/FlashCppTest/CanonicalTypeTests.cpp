@@ -565,6 +565,73 @@ void publishTestClassBases(CanonicalTypeTable& table, EntityId entity, std::span
 }
 }
 
+TEST_CASE("Floating structural NTTP fields import as typed canonical values") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+struct Key { float small; double wide; float row[2]; };
+constexpr Key key{1.5f, 2.25, {3.5f, 4.5f}};
+template<Key Value> struct Base { short member; };
+struct Padding { long long guard; };
+struct Derived : Padding, Base<key> {};
+using Named = Base<key>;
+using Literal = Base<Key{1.5f, 2.25, {3.5f, 4.5f}}>;
+using ChangedSmall = Base<Key{2.5f, 2.25, {3.5f, 4.5f}}>;
+using ChangedWide = Base<Key{1.5f, 2.5, {3.5f, 4.5f}}>;
+using ChangedRow = Base<Key{1.5f, 2.25, {3.5f, 5.5f}}>;
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("structural_floating_nttp.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto import_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const TypeId named = import_type("Named");
+	CHECK(named == import_type("Literal"));
+	CHECK(named != import_type("ChangedSmall"));
+	CHECK(named != import_type("ChangedWide"));
+	CHECK(named != import_type("ChangedRow"));
+	const TypeId value_id = table.templateArgumentValue(table.templateSpecializationArguments(named));
+	const CanonicalTypeNode value = table.node(value_id);
+	REQUIRE(value.kind == CanonicalTypeKind::StructuralValue);
+	TypeId link = unpackStructuralValueSubobjects(value.array_extent);
+	const CanonicalTypeNode small = table.node(table.templateArgumentValue(link));
+	CHECK(small.kind == CanonicalTypeKind::FloatingValue);
+	CHECK(small.child == table.builtin(CanonicalBuiltinKind::Float));
+	CHECK(small.array_extent == 0x3fc00000);
+	link = table.templateArgumentNext(link);
+	const CanonicalTypeNode wide = table.node(table.templateArgumentValue(link));
+	CHECK(wide.kind == CanonicalTypeKind::FloatingValue);
+	CHECK(wide.child == table.builtin(CanonicalBuiltinKind::Double));
+	CHECK(wide.array_extent == 0x4002000000000000ULL);
+	link = table.templateArgumentNext(link);
+	const CanonicalTypeNode row = table.node(table.templateArgumentValue(link));
+	REQUIRE(row.kind == CanonicalTypeKind::StructuralArrayValue);
+	TypeId element_link = unpackStructuralValueSubobjects(row.array_extent);
+	const uint64_t expected_row[] = {0x40600000, 0x40900000};
+	for (const uint64_t expected : expected_row) {
+		const CanonicalTypeNode element = table.node(table.templateArgumentValue(element_link));
+		CHECK(element.kind == CanonicalTypeKind::FloatingValue);
+		CHECK(element.child == table.builtin(CanonicalBuiltinKind::Float));
+		CHECK(element.array_extent == expected);
+		element_link = table.templateArgumentNext(element_link);
+	}
+	CHECK_FALSE(element_link);
+	CHECK_FALSE(table.templateArgumentNext(link));
+	const TypeId derived = import_type("Derived");
+	REQUIRE(table.hasClassBaseSchema(derived));
+	CHECK(table.classBaseAt(derived, 1).type == named);
+}
+
 TEST_CASE("Canonical integral arguments use converted value and canonical type identity") {
 	static_assert(sizeof(CanonicalTypeNode) == 16);
 	static_assert(sizeof(CanonicalTemplateArgument) == 20);

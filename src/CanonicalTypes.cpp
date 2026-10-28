@@ -871,6 +871,21 @@ TypeId CanonicalTypeTable::integralValue(TypeId value_type, uint64_t converted_b
 		.qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None, .array_extent = converted_bits});
 }
 
+TypeId CanonicalTypeTable::floatingValue(TypeId value_type, uint64_t converted_bits) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const CanonicalTypeNode type = nodeUnlocked(value_type);
+	if (type.kind != CanonicalTypeKind::Builtin ||
+		(type.builtin != CanonicalBuiltinKind::Float && type.builtin != CanonicalBuiltinKind::Double)) {
+		throw InternalError("canonical type: floating value requires an unqualified float or double type");
+	}
+	if (type.builtin == CanonicalBuiltinKind::Float && converted_bits > UINT32_MAX) {
+		throw InternalError("canonical type: float value must fit its 32-bit representation");
+	}
+	return internUnlocked({.child = value_type, .kind = CanonicalTypeKind::FloatingValue, .builtin = CanonicalBuiltinKind::Void,
+		.qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None, .array_extent = converted_bits});
+}
+
 TypeId CanonicalTypeTable::structuralValue(TypeId class_type, std::span<const TypeId> subobject_values, uint32_t base_count) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
@@ -1886,8 +1901,9 @@ bool CanonicalTypeTable::isReference(CanonicalTypeKind kind) {
 }
 
 bool CanonicalTypeTable::isValueKind(CanonicalTypeKind kind) {
-	return kind == CanonicalTypeKind::IntegralValue || kind == CanonicalTypeKind::StructuralValue ||
-		kind == CanonicalTypeKind::StructuralArrayValue || kind == CanonicalTypeKind::StructuralUnionValue;
+	return kind == CanonicalTypeKind::IntegralValue || kind == CanonicalTypeKind::FloatingValue ||
+		kind == CanonicalTypeKind::StructuralValue || kind == CanonicalTypeKind::StructuralArrayValue ||
+		kind == CanonicalTypeKind::StructuralUnionValue;
 }
 
 bool CanonicalTypeTable::isInternalLink(CanonicalTypeKind kind) {
@@ -2800,6 +2816,7 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 			case CanonicalTypeKind::StructuralUnionValue:
 			case CanonicalTypeKind::StructuralArrayValue:
 			case CanonicalTypeKind::IntegralValue:
+			case CanonicalTypeKind::FloatingValue:
 			case CanonicalTypeKind::ValueTemplateArg:
 			case CanonicalTypeKind::NonTypeTemplateArg:
 			case CanonicalTypeKind::TemplateTemplateArg:
