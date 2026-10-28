@@ -1904,6 +1904,81 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberObjectPointer(Can
 	return table.memberObjectPointerValue(field_type, *declaring_class, declaring_ordinal);
 }
 
+// The schema preserves the verified declaration-record ordinal. Only canonical
+// substitution of the owner's published arguments makes a pattern signature concrete.
+inline TypeId tryImportCanonicalMemberFunctionSignature(CanonicalTypeTable& table, const StructMemberFunction& function, TemplateDeclId environment,
+	std::span<const CanonicalTemplateArgument> arguments) {
+	if (function.is_constructor || function.is_destructor || !function.function_decl.is<FunctionDeclarationNode>()) return {};
+	const FunctionDeclarationNode& declaration = function.function_decl.as<FunctionDeclarationNode>();
+	if (declaration.is_static() || declaration.is_deleted() || declaration.is_template_pattern() || declaration.has_noexcept_expression()) return {};
+	CanonicalTypeTransaction transaction(table);
+	TypeSpecifierNode return_type = declaration.decl_node().type_specifier_node();
+	tryBindPublishedTypeEntity(return_type);
+	FunctionSignature signature;
+	signature.setReturnType(makeFunctionTypeFromSpecifier(return_type));
+	OverloadVector<FunctionType, 4> parameter_types;
+	for (const ASTNode& parameter_node : declaration.parameter_nodes()) {
+		if (!parameter_node.is<DeclarationNode>()) return {};
+		TypeSpecifierNode parameter_type = parameter_node.as<DeclarationNode>().type_specifier_node();
+		tryBindPublishedTypeEntity(parameter_type);
+		parameter_types.push_back(makeFunctionTypeFromSpecifier(parameter_type));
+	}
+	signature.setParameterTypes(std::move(parameter_types));
+	signature.calling_convention = declaration.calling_convention();
+	signature.is_variadic = declaration.is_variadic();
+	signature.is_const = function.is_const();
+	signature.is_volatile = function.is_volatile();
+	signature.function_reference_qualifier = function.ref_qualifier;
+	signature.is_noexcept = declaration.is_noexcept();
+	const CanonicalTypeImport imported = importCanonicalFunctionSignature(table, signature, TypeId{});
+	if (imported.status != CanonicalTypeImportStatus::Supported) return {};
+	const TypeId concrete = environment ? table.substitute(imported.type, environment, arguments) : imported.type;
+	if (table.hasDependentTypeComponents(concrete)) return {};
+	transaction.commit();
+	return concrete;
+}
+
+inline bool tryPublishCanonicalMemberFunctionSignatures(CanonicalTypeTable& table, TypeId owner, const StructTypeInfo& record) {
+	if (!record.layout_is_complete || tryResolveCanonicalMemberPointerOwnerRecord(table, owner) != &record ||
+		record.declaration_node == nullptr || record.declaration_node->is_forward_declaration() || record.member_functions.size() > UINT16_MAX ||
+		table.hasDependentTypeComponents(owner)) {
+		return false;
+	}
+	if (table.hasMemberFunctionSignatures(owner)) return table.memberFunctionSignatureCount(owner) == record.member_functions.size();
+	CanonicalTypeTransaction transaction(table);
+	TemplateDeclId environment;
+	std::vector<CanonicalTemplateArgument> arguments;
+	if (table.node(owner).kind == CanonicalTypeKind::TemplateSpecialization) {
+		environment = table.templateSpecializationDecl(owner);
+		for (TypeId link = table.templateSpecializationArguments(owner); link; link = table.templateArgumentNext(link)) {
+			switch (table.templateArgumentKind(link)) {
+			case CanonicalTemplateArgKind::Type:
+				arguments.push_back(CanonicalTemplateArgument::makeType(table.templateArgumentType(link)));
+				break;
+			case CanonicalTemplateArgKind::NonType:
+				arguments.push_back(CanonicalTemplateArgument::makeNonType(table.templateArgumentExpr(link)));
+				break;
+			case CanonicalTemplateArgKind::Value:
+				arguments.push_back(CanonicalTemplateArgument::makeValue(table.templateArgumentValue(link)));
+				break;
+			case CanonicalTemplateArgKind::Template:
+				arguments.push_back(CanonicalTemplateArgument::makeTemplate(table.templateArgumentTemplate(link)));
+				break;
+			case CanonicalTemplateArgKind::DependentTemplate:
+				return false;
+			}
+		}
+	}
+	std::vector<TypeId> signatures;
+	signatures.reserve(record.member_functions.size());
+	for (const StructMemberFunction& function : record.member_functions) {
+		signatures.push_back(tryImportCanonicalMemberFunctionSignature(table, function, environment, arguments));
+	}
+	table.publishMemberFunctionSignatures(owner, signatures);
+	transaction.commit();
+	return true;
+}
+
 inline std::optional<TypeId> tryImportCanonicalStructuralMemberFunctionPointer(CanonicalTypeTable& table, TypeId field_type,
 	StringHandle member_name) {
 	const CanonicalTypeNode type = table.node(field_type);
@@ -1916,37 +1991,6 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberFunctionPointer(C
 		return std::nullopt;
 	}
 	const TypeId expected_signature = type.child;
-	const auto imported_function_signature = [&](const StructMemberFunction& function) -> std::optional<TypeId> {
-		if (!function.function_decl.is<FunctionDeclarationNode>()) {
-			return std::nullopt;
-		}
-		const FunctionDeclarationNode& declaration = function.function_decl.as<FunctionDeclarationNode>();
-		TypeSpecifierNode return_type = declaration.decl_node().type_specifier_node();
-		tryBindPublishedTypeEntity(return_type);
-		FunctionSignature signature;
-		signature.setReturnType(makeFunctionTypeFromSpecifier(return_type));
-		OverloadVector<FunctionType, 4> parameter_types;
-		for (const ASTNode& parameter_node : declaration.parameter_nodes()) {
-			if (!parameter_node.is<DeclarationNode>()) {
-				continue;
-			}
-			TypeSpecifierNode parameter_type = parameter_node.as<DeclarationNode>().type_specifier_node();
-			tryBindPublishedTypeEntity(parameter_type);
-			parameter_types.push_back(makeFunctionTypeFromSpecifier(parameter_type));
-		}
-		signature.setParameterTypes(std::move(parameter_types));
-		signature.calling_convention = declaration.calling_convention();
-		signature.is_variadic = declaration.is_variadic();
-		signature.is_const = function.is_const();
-		signature.is_volatile = function.is_volatile();
-		signature.function_reference_qualifier = function.ref_qualifier;
-		signature.is_noexcept = declaration.is_noexcept();
-		const CanonicalTypeImport imported = importCanonicalFunctionSignature(table, signature, TypeId{});
-		if (imported.status != CanonicalTypeImportStatus::Supported || imported.type != expected_signature) {
-			return std::nullopt;
-		}
-		return imported.type;
-	};
 	InlineVector<CanonicalLookupClass, FlashCpp::InlineVectorSpillFamily::ClassLayout, 4> pending;
 	pending.push_back({owner, owner_record});
 	std::unordered_set<uint32_t> visited;
@@ -1958,6 +2002,7 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberFunctionPointer(C
 		if (!visited.insert(current.type.value).second) {
 			continue;
 		}
+		if (!tryPublishCanonicalMemberFunctionSignatures(table, current.type, *current.record)) return std::nullopt;
 		bool has_name = false;
 		std::optional<uint16_t> matched_ordinal;
 		for (size_t index = 0; index < current.record->member_functions.size(); ++index) {
@@ -1966,7 +2011,7 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberFunctionPointer(C
 				continue;
 			}
 			has_name = true;
-			if (function.is_constructor || function.is_destructor || !imported_function_signature(function).has_value()) {
+			if (table.memberFunctionSignatureAt(current.type, index) != expected_signature) {
 				continue;
 			}
 			if (matched_ordinal.has_value() || index > UINT16_MAX) {

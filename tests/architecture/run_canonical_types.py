@@ -570,14 +570,27 @@ def main():
                 "return owner && record_field_schema_ids_.contains(owner.value);",
                 "return owner && false;"),
             "lost_specialization_field_member_type": (
-                "if (members[index].type != record_subobject_member_types_[schema.member_begin + index]) {",
-                "if (false && members[index].type != record_subobject_member_types_[schema.member_begin + index]) {"),
+                "if (members[index].type != class_type_schema_types_[schema.member_begin + index]) {",
+                "if (false && members[index].type != class_type_schema_types_[schema.member_begin + index]) {"),
             "lost_specialization_field_member_count": (
                 "!bases.empty() || members.size() != schema.member_count || !class_base_schema_ids_.contains(owner.value)",
                 "!bases.empty() || !class_base_schema_ids_.contains(owner.value)"),
             "lost_specialization_field_base_publication": (
                 "!bases.empty() || members.size() != schema.member_count || !class_base_schema_ids_.contains(owner.value)",
                 "!bases.empty() || members.size() != schema.member_count"),
+            "lost_member_function_value_signature": (
+                "if (!signature || signature != type.child)", "if (!signature)"),
+            "lost_member_function_value_ordinal": (
+                "if (function_ordinal >= schema.member_count)", "if (false && function_ordinal >= schema.member_count)"),
+            "lost_member_function_signature_rollback": (
+                "class_type_schema_ids_.erase(classTypeSchemaKey(header.type, header.kind));",
+                "class_type_schema_ids_.erase(classTypeSchemaKey(header.type, CanonicalClassTypeSchemaKind::Subobjects));"),
+            "lost_member_function_signature_dependent_check": (
+                "nodeUnlocked(entry).kind != CanonicalTypeKind::Function || hasDependentTypeComponentsUnlocked(entry, true)",
+                "nodeUnlocked(entry).kind != CanonicalTypeKind::Function"),
+            "lost_class_type_schema_republication": (
+                "if (class_type_schema_types_[header.member_begin + index] != entries[index]) {",
+                "if (false && class_type_schema_types_[header.member_begin + index] != entries[index]) {"),
             "lost_named_type_member_schema": (
                 "return entity && named_type_member_schema_ids_.contains(entity.value);",
                 "return entity && false;"),
@@ -602,6 +615,9 @@ def main():
             write_text(directory / IMPL.name, original.replace(before, after))
             jobs.append((name, directory, 1))
         for name, header, before, after in (
+            ("lost_member_function_signature_kind", "CanonicalTypes.h",
+             "return static_cast<uint64_t>(type.value) | (static_cast<uint64_t>(kind) << 32);",
+             "return static_cast<uint64_t>(type.value) | (static_cast<uint64_t>(kind) & 0u);"),
             ("structural_enum_identity", "CanonicalTypeAdapter.h",
              "return table.integralValue(field_type, converted_bits);",
              "return table.integralValue(table.enumLayout(table.enumEntity(field_type)).underlying_type, converted_bits);"),
