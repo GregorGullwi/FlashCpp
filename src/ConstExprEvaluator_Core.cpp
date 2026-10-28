@@ -900,10 +900,19 @@ EvalResult evalResultFromStructuralValue(
 		}
 		result.object_base_values.push_back(std::move(base_result));
 	}
+	const StructTypeInfo* struct_info = structuralClassStructInfo(structural_value.type_index);
 	for (const FlashCpp::StructuralClassValueMember& member : structural_value.members) {
 		EvalResult member_result;
 		if (member.nested_value != nullptr) {
 			member_result = evalResultFromStructuralValue(*member.nested_value);
+		} else if (member.scalar_value.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr) {
+			member_result = EvalResult::from_int(0);
+			const StructMember* field = struct_info != nullptr ? struct_info->findMember(member.name) : nullptr;
+			if (field != nullptr && field->canonical_type_id) {
+				member_result.set_exact_type(typeSpecifierFromStructMemberProjection(*field));
+			} else {
+				attach_scalar_type(member_result, member.scalar_value);
+			}
 		} else {
 			member_result = decode_scalar(member.scalar_value);
 			attach_scalar_type(member_result, member.scalar_value);
@@ -914,7 +923,6 @@ EvalResult evalResultFromStructuralValue(
 		if (!selection.hasActiveVariant()) {
 			continue;
 		}
-		const StructTypeInfo* struct_info = structuralClassStructInfo(structural_value.type_index);
 		if (struct_info == nullptr || selection.active_variant >= struct_info->members.size()) {
 			return EvalResult::error("Structural class value has an invalid union selection");
 		}
@@ -1081,24 +1089,36 @@ std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentityIm
 			}
 			member.nested_value = nested_identity->structural_value;
 		} else {
-			TypeCategory category = member_result.exact_type.has_value()
-				? member_result.exact_type->category()
-				: member_info.memberType();
-			TypeIndex type_index = member_result.exact_type.has_value()
-				? member_result.exact_type->type_index().withCategory(category)
-				: member_info.type_index;
-			if (!type_index.is_valid()) {
-				type_index = nativeTypeIndex(category);
-			}
-			if (!type_index.is_valid()) {
-				type_index = TypeIndex{0, category};
-			}
-			if (std::holds_alternative<double>(member_result.value)) {
-				member.scalar_value = FlashCpp::NonTypeValueIdentity::makeFloating(
-					std::get<double>(member_result.value), type_index);
+			const TypeCategory declared_category = member_info.memberType();
+			const bool pointer_like = member_info.pointer_depth > 0 ||
+				declared_category == TypeCategory::FunctionPointer ||
+				declared_category == TypeCategory::MemberObjectPointer ||
+				declared_category == TypeCategory::MemberFunctionPointer;
+			if (pointer_like) {
+				const bool is_null = !member_result.is_indeterminate && !member_result.pointer_to_var.isValid() &&
+					!member_result.member_pointer_member.isValid() &&
+					(member_result.is_null_member_pointer || member_result.as_int() == 0);
+				if (!is_null) {
+					return false;
+				}
+				member.scalar_value = FlashCpp::NonTypeValueIdentity::makeNullptr(member_info.type_index);
 			} else {
-				const int64_t converted = normalizeStructuralBitfieldScalar(member_info, member_result.as_int());
-				member.scalar_value = FlashCpp::NonTypeValueIdentity::makeConcrete(converted, type_index);
+				TypeCategory category = member_result.exact_type.has_value() ? member_result.exact_type->category() : declared_category;
+				TypeIndex type_index = member_result.exact_type.has_value()
+					? member_result.exact_type->type_index().withCategory(category)
+					: member_info.type_index;
+				if (!type_index.is_valid()) {
+					type_index = nativeTypeIndex(category);
+				}
+				if (!type_index.is_valid()) {
+					type_index = TypeIndex{0, category};
+				}
+				if (std::holds_alternative<double>(member_result.value)) {
+					member.scalar_value = FlashCpp::NonTypeValueIdentity::makeFloating(std::get<double>(member_result.value), type_index);
+				} else {
+					const int64_t converted = normalizeStructuralBitfieldScalar(member_info, member_result.as_int());
+					member.scalar_value = FlashCpp::NonTypeValueIdentity::makeConcrete(converted, type_index);
+				}
 			}
 		}
 		structural_value.members.push_back(std::move(member));

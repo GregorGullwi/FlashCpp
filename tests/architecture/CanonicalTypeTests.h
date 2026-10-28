@@ -2551,6 +2551,37 @@ inline void checkFloatingValues() {
 		float_type);
 }
 
+inline void checkNullPointerValues() {
+	CanonicalTypeTable table;
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId pointer = table.pointer(integer);
+	const TypeId null_pointer = table.nullPointerValue(pointer);
+	require(table.node(null_pointer).kind == CanonicalTypeKind::NullPointerValue);
+	require(table.node(null_pointer).child == pointer);
+	require(table.node(null_pointer).array_extent == 0);
+	require(null_pointer == table.nullPointerValue(pointer));
+	const TypeId owner = table.record(EntityId{40311});
+	const TypeId member_pointer = table.memberObjectPointer(owner, integer);
+	const TypeId null_member = table.nullPointerValue(member_pointer);
+	require(table.node(null_member).kind == CanonicalTypeKind::NullPointerValue);
+	require(table.node(null_member).child == member_pointer);
+	require(null_pointer != null_member);
+	const auto rejects = [&](TypeId type) {
+		try { (void)table.nullPointerValue(type); } catch (const InternalError&) { return true; }
+		return false;
+	};
+	require(rejects(integer));
+	require(rejects(table.reference(pointer, ReferenceQualifier::LValueReference)));
+	const TypeId values[] = {null_pointer, null_member};
+	const TypeId record = table.record(EntityId{40312});
+	const TypeId structural = table.structuralValue(record, values, 0);
+	TypeId link = unpackStructuralValueSubobjects(table.node(structural).array_extent);
+	require(table.node(table.templateArgumentValue(link)).kind == CanonicalTypeKind::NullPointerValue);
+	link = table.templateArgumentNext(link);
+	require(table.node(table.templateArgumentValue(link)).kind == CanonicalTypeKind::NullPointerValue);
+	require(!table.templateArgumentNext(link));
+}
+
 inline void checkStructuralArrayValues() {
 	CanonicalTypeTable table;
 	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
@@ -2691,6 +2722,7 @@ inline int run() {
 	checkStructuralEnumScalars();
 	checkStructuralBitfieldScalars();
 	checkFloatingValues();
+	checkNullPointerValues();
 	checkStructuralArrayValues();
 	{
 		CanonicalTypeTable table;
