@@ -898,19 +898,18 @@ TypeId CanonicalTypeTable::nullPointerValue(TypeId pointer_type) {
 		.qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None, .array_extent = 0});
 }
 
-TypeId CanonicalTypeTable::memberObjectPointerValue(TypeId member_pointer_type, uint16_t member_ordinal) {
+TypeId CanonicalTypeTable::memberObjectPointerValue(TypeId member_pointer_type, TypeId declaring_class, uint16_t member_ordinal) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
 	const CanonicalTypeNode type = nodeUnlocked(member_pointer_type);
 	if (type.kind != CanonicalTypeKind::MemberObjectPointer) {
 		throw InternalError("canonical type: member object pointer value requires a member object pointer type");
 	}
-	const TypeId owner{static_cast<uint32_t>(type.array_extent)};
-	const CanonicalTypeNode owner_node = nodeUnlocked(owner);
-	if (owner_node.kind != CanonicalTypeKind::Record) {
-		throw InternalError("canonical type: member object pointer value requires a record owner");
+	const CanonicalTypeNode class_node = nodeUnlocked(declaring_class);
+	if (class_node.kind != CanonicalTypeKind::Record) {
+		throw InternalError("canonical type: member object pointer value requires a record declaring class");
 	}
-	const EntityId entity{static_cast<uint32_t>(owner_node.array_extent)};
+	const EntityId entity{static_cast<uint32_t>(class_node.array_extent)};
 	const auto schema_found = record_field_schema_ids_.find(entity.value);
 	if (schema_found == record_field_schema_ids_.end()) {
 		throw InternalError("canonical type: member object pointer value requires a published field schema");
@@ -925,7 +924,7 @@ TypeId CanonicalTypeTable::memberObjectPointerValue(TypeId member_pointer_type, 
 	}
 	return internUnlocked({.child = member_pointer_type, .kind = CanonicalTypeKind::MemberObjectPointerValue,
 		.builtin = CanonicalBuiltinKind::Void, .qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None,
-		.array_extent = member_ordinal});
+		.array_extent = packMemberObjectPointerValueExtent(declaring_class, member_ordinal)});
 }
 
 TypeId CanonicalTypeTable::memberFunctionPointerValue(TypeId member_function_pointer_type, uint16_t function_ordinal) {
