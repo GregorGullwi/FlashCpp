@@ -121,6 +121,14 @@ identity. Specialization field schemas retain substituted member types, offsets,
 and flat union groups by owner TypeId. Missing field-layout and dependent base
 facts still fail closed. The partial-specialization parser gap above and nested
 anonymous-union hierarchy remain separate.
+
+A concrete holder instantiated from `template<class T> struct Key {
+T (Owner<T>::*pointer)(T); };` can still retain a dependent canonical field type.
+The target method signature substitutes correctly; the holder's field graph must
+also be substituted before `StructMember::canonical_type_id` is stored. Such
+values stay unresolved in the canonical importer. Keep this producer fix separate
+from overload selection and constant evaluation.
+
 Extend the typed-value importer before deleting `legacyDerivedBaseOffset`;
 audit dependent and other non-integral specialization roots as well.
 Integral, bool, and enum fields, including named bit-fields with signed

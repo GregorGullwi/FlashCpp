@@ -570,16 +570,22 @@ Continue boundary 3A in this order.
    carry its EntityId through values. Do not add name lookup, address selection,
    or evaluation rules to the canonical importer.
 
-   **Next 3A slice: publish member-function declaration schemas.**
-   Publish already-resolved member signatures and declaration ordinals by owner
-   TypeId, for nominal records and concrete specializations. Make
-   `memberFunctionPointerValue` validate its ordinal/signature against those
-   facts rather than accepting any ordinal. Keep overload selection, access
-   checking, virtual dispatch, and constexpr behavior in their existing callers.
-   Pin missing-schema, wrong-signature, out-of-range, inherited-owner, overload,
-   specialization, immutable-republication, and rollback guards. Reuse existing
-   schema storage where its ownership/record shape fits; measure new records
-   before adding storage. Preserve the 16-byte canonical node invariant.
+   **Member-function declaration facts:** owner TypeId plus declaration ordinal
+   selects a published canonical signature after class finalization. Empty slots
+   and missing/mismatched schemas fail closed. Retain the native/source and mutation
+   guards; the existing class type-schema arenas serve both functions and
+   subobjects. No exit criterion closes; the rollup stays 10/79.
+
+   **Next 3A slice: substitute member-pointer field graphs in class templates.**
+   A holder such as `template<class T> struct Key { T (Owner<T>::*pointer)(T); };`
+   can instantiate with a dependent canonical field TypeId even for `T=short`.
+   The target method signature already substitutes; fix the field producer in
+   `Parser_Templates_Inst_ClassTemplate.cpp` before `StructMember` registration.
+   Substitute the canonical member-pointer graph using the holder's published
+   environment and store the concrete result. Keep declaration order, qualifiers,
+   and member-pointer owner identity; pin named/braced equivalence, mixed native
+   widths, nested pointer shapes, and missing/unresolved environment rejection.
+   Do not recover type identity by spelling or add evaluator/selection rules.
 
    Non-null object pointer target identity remains separate.
    Ambiguous/virtual-base member pointers, unpublished dependent bases, and the nested

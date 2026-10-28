@@ -2673,6 +2673,12 @@ inline void checkMemberFunctionPointerValues() {
 		ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
 	const TypeId owner = table.record(EntityId{40341});
 	const TypeId member_function_pointer = table.memberFunctionPointer(owner, function);
+	const TypeId signatures[] = {function, function};
+	table.publishMemberFunctionSignatures(owner, signatures);
+	require(table.hasMemberFunctionSignatures(owner));
+	require(table.memberFunctionSignatureCount(owner) == 2);
+	require(table.memberFunctionSignatureAt(owner, 0) == function);
+	require(table.memberFunctionSignatureAt(owner, 1) == function);
 	const TypeId first = table.memberFunctionPointerValue(member_function_pointer, owner, 0);
 	const TypeId second = table.memberFunctionPointerValue(member_function_pointer, owner, 1);
 	require(table.node(first).kind == CanonicalTypeKind::MemberFunctionPointerValue);
@@ -2686,15 +2692,97 @@ inline void checkMemberFunctionPointerValues() {
 		try { (void)table.memberFunctionPointerValue(type, declaring_class, 0); } catch (const InternalError&) { return true; }
 		return false;
 	};
+	const auto rejects_at = [&](TypeId type, TypeId declaring_class, uint16_t ordinal) {
+		try { (void)table.memberFunctionPointerValue(type, declaring_class, ordinal); } catch (const InternalError&) { return true; }
+		return false;
+	};
 	require(rejects(integer, owner));
 	require(rejects(table.memberObjectPointer(owner, integer), owner));
 	require(rejects(member_function_pointer, integer));
+	require(rejects(member_function_pointer, table.record(EntityId{40351})));
+	const TypeId wrong_function = table.function(table.builtin(CanonicalBuiltinKind::Long), std::span<const TypeId>(), false,
+		CVQualifier::None, ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	require(rejects_at(table.memberFunctionPointer(owner, wrong_function), owner, 1));
+	const TypeId specialization_args[] = {integer};
+	const TypeId specialization_owner = table.templateSpecialization(TemplateDeclId{40343}, specialization_args);
+	table.publishMemberFunctionSignatures(specialization_owner, signatures);
+	require(table.memberFunctionSignatureAt(specialization_owner, 1) == function);
+	require(rejects_at(member_function_pointer, owner, 2));
+	const TypeId specialization_pointer = table.memberFunctionPointer(specialization_owner, function);
+	require(table.memberFunctionPointerValue(specialization_pointer, specialization_owner, 0) != first);
 	const TypeId values[] = {first, second};
 	const TypeId structural = table.structuralValue(table.record(EntityId{40342}), values, 0);
 	TypeId link = unpackStructuralValueSubobjects(table.node(structural).array_extent);
 	require(table.node(table.templateArgumentValue(link)).kind == CanonicalTypeKind::MemberFunctionPointerValue);
 	link = table.templateArgumentNext(link);
 	require(unpackMemberFunctionPointerValueOrdinal(table.node(table.templateArgumentValue(link)).array_extent) == 1);
+}
+
+inline void checkMemberFunctionSignatureTransactions() {
+	SemanticArenaAccounting accounting;
+	CanonicalTypeTable table(accounting);
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId function = table.function(integer, std::span<const TypeId>(), false, CVQualifier::None,
+		ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	const TypeId owner = table.record(EntityId{40344});
+	const TypeId signatures[] = {TypeId{}, function};
+	const TypeId member_types[] = {integer};
+	table.publishRecordSubobjectTypes(owner, member_types);
+	{
+		CanonicalTypeTransaction warmup(table);
+		table.publishMemberFunctionSignatures(owner, signatures);
+	}
+	const size_t initial_size = table.size();
+	const auto initial_stats = table.arenaStats();
+	const auto initial_accounting = accounting.snapshot();
+	TypeId temporary;
+	{
+		CanonicalTypeTransaction transaction(table);
+		temporary = table.record(EntityId{40345});
+		table.publishRecordSubobjectTypes(temporary, member_types);
+		table.publishMemberFunctionSignatures(temporary, signatures);
+	}
+	{
+		CanonicalTypeTransaction transaction(table);
+		table.publishMemberFunctionSignatures(owner, signatures);
+	}
+	require(table.size() == initial_size);
+	require(table.hasRecordSubobjectTypes(owner));
+	require(table.recordSubobjectMemberAt(owner, 0) == integer);
+	require(!table.hasMemberFunctionSignatures(temporary));
+	require(!table.hasRecordSubobjectTypes(temporary));
+	require(!table.hasMemberFunctionSignatures(owner));
+	require(table.arenaStats().reserved_bytes == initial_stats.reserved_bytes);
+	require(accounting.snapshot().current_bytes == initial_accounting.current_bytes);
+	require(accounting.snapshot().peak_bytes >= initial_accounting.peak_bytes);
+	table.publishMemberFunctionSignatures(owner, signatures);
+	table.publishMemberFunctionSignatures(owner, signatures);
+	const TypeId conflicting_function = table.function(table.builtin(CanonicalBuiltinKind::Long), std::span<const TypeId>(), false,
+		CVQualifier::None, ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	const TypeId conflicting[] = {TypeId{}, conflicting_function};
+	rejects([&] { table.publishMemberFunctionSignatures(owner, conflicting); });
+	require(table.memberFunctionSignatureCount(owner) == 2);
+	require(table.memberFunctionSignatureAt(owner, 1) == function);
+	const TypeId bad[] = {integer};
+	rejects([&] { table.publishMemberFunctionSignatures(table.record(EntityId{40346}), bad); });
+	const TypeId dependent_return = table.templateParameter(TemplateDeclId{40348}, 0);
+	const TypeId dependent[] = {table.function(dependent_return, std::span<const TypeId>(), false, CVQualifier::None,
+		ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{})};
+	rejects([&] { table.publishMemberFunctionSignatures(table.record(EntityId{40349}), dependent); });
+	rejects([&] { table.publishMemberFunctionSignatures(integer, signatures); });
+	const TypeId dependent_arguments[] = {dependent_return};
+	const TypeId dependent_owner = table.templateSpecialization(TemplateDeclId{40352}, dependent_arguments);
+	rejects([&] { table.publishMemberFunctionSignatures(dependent_owner, signatures); });
+	const TypeId empty_owner = table.record(EntityId{40347});
+	table.publishMemberFunctionSignatures(empty_owner, std::span<const TypeId>());
+	require(table.hasMemberFunctionSignatures(empty_owner));
+	require(table.memberFunctionSignatureCount(empty_owner) == 0);
+	rejects([&] { table.memberFunctionSignatureAt(owner, 2); });
+	rejects([&] { table.memberFunctionPointerValue(table.memberFunctionPointer(owner, function), owner, 0); });
+	const TypeId zero_owner = table.record(EntityId{40350});
+	const TypeId zero_signatures[] = {TypeId{}, function};
+	table.publishMemberFunctionSignatures(zero_owner, zero_signatures);
+	rejects([&] { table.memberFunctionPointerValue(table.memberFunctionPointer(zero_owner, function), zero_owner, 0); });
 }
 
 inline void checkStructuralArrayValues() {
@@ -2945,6 +3033,7 @@ inline void checkSpecializationFieldSchemas() {
 
 inline int run() {
 	checkSpecializationFieldSchemas();
+	checkMemberFunctionSignatureTransactions();
 	checkFunctionPointerValues();
 	checkUnionValues();
 	checkStructuralEnumScalars();

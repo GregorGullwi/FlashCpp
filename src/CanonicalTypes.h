@@ -903,6 +903,13 @@ public:
 
 	void publishRecordSubobjectTypes(TypeId type, std::span<const TypeId> member_types);
 
+	// Dense declaration ordinals share the class type-schema arenas with subobjects.
+	// An empty slot preserves an ordinal that has no supported member-function signature.
+	void publishMemberFunctionSignatures(TypeId type, std::span<const TypeId> signatures);
+	bool hasMemberFunctionSignatures(TypeId type) const;
+	size_t memberFunctionSignatureCount(TypeId type) const;
+	TypeId memberFunctionSignatureAt(TypeId type, size_t ordinal) const;
+
 	bool hasRecordSubobjectTypes(TypeId type) const;
 
 	size_t recordSubobjectMemberCount(TypeId type) const;
@@ -987,16 +994,17 @@ private:
 	};
 	static_assert(sizeof(CanonicalVirtualBaseSchemaHeader) == 16);
 
-	struct CanonicalRecordSubobjectTypeSchemaHeader {
+	enum class CanonicalClassTypeSchemaKind : uint16_t { Subobjects, MemberFunctions };
+
+	struct CanonicalClassTypeSchemaHeader {
 		TypeId type;
 		uint32_t member_begin;
 		uint16_t member_count;
-		uint16_t reserved;
+		CanonicalClassTypeSchemaKind kind;
 		uint32_t reserved2;
-		friend bool operator==(CanonicalRecordSubobjectTypeSchemaHeader,
-			CanonicalRecordSubobjectTypeSchemaHeader) = default;
+		friend bool operator==(CanonicalClassTypeSchemaHeader, CanonicalClassTypeSchemaHeader) = default;
 	};
-	static_assert(sizeof(CanonicalRecordSubobjectTypeSchemaHeader) == 16);
+	static_assert(sizeof(CanonicalClassTypeSchemaHeader) == 16);
 
 	struct CanonicalNamedTypeMemberSchemaHeader {
 		EntityId entity;
@@ -1032,8 +1040,8 @@ private:
 		size_t class_base_count;
 		size_t virtual_base_schema_count;
 		size_t virtual_base_count;
-		size_t record_subobject_schema_count;
-		size_t record_subobject_member_count;
+		size_t class_type_schema_count;
+		size_t class_type_schema_entry_count;
 		size_t named_type_member_schema_count;
 		size_t named_type_member_count;
 		size_t record_constructor_schema_count;
@@ -1198,12 +1206,20 @@ private:
 		return virtual_base_schema_headers_[found->second];
 	}
 
-	CanonicalRecordSubobjectTypeSchemaHeader recordSubobjectTypeSchemaHeaderUnlocked(TypeId type) const {
-		const auto found = record_subobject_type_schema_ids_.find(type.value);
-		if (!type || found == record_subobject_type_schema_ids_.end()) {
-			throw InternalError("canonical type: class has no subobject type schema");
-		}
-		return record_subobject_type_schema_headers_[found->second];
+	static uint64_t classTypeSchemaKey(TypeId type, CanonicalClassTypeSchemaKind kind) {
+		return static_cast<uint64_t>(type.value) | (static_cast<uint64_t>(kind) << 32);
+	}
+
+	void publishClassTypeSchemaUnlocked(TypeId type, std::span<const TypeId> entries, CanonicalClassTypeSchemaKind kind);
+
+	CanonicalClassTypeSchemaHeader classTypeSchemaHeaderUnlocked(TypeId type, CanonicalClassTypeSchemaKind kind) const {
+		const auto found = class_type_schema_ids_.find(classTypeSchemaKey(type, kind));
+		if (!type || found == class_type_schema_ids_.end()) throw InternalError("canonical type: class has no requested type schema");
+		return class_type_schema_headers_[found->second];
+	}
+
+	CanonicalClassTypeSchemaHeader recordSubobjectTypeSchemaHeaderUnlocked(TypeId type) const {
+		return classTypeSchemaHeaderUnlocked(type, CanonicalClassTypeSchemaKind::Subobjects);
 	}
 
 	bool nameBytesEqualUnlocked(TypeId name_link, std::string_view identifier) const;
@@ -1258,8 +1274,8 @@ private:
 	size_t live_class_base_count_ = 0;
 	size_t live_virtual_base_schema_count_ = 0;
 	size_t live_virtual_base_count_ = 0;
-	size_t live_record_subobject_schema_count_ = 0;
-	size_t live_record_subobject_member_count_ = 0;
+	size_t live_class_type_schema_count_ = 0;
+	size_t live_class_type_schema_entry_count_ = 0;
 	size_t live_named_type_member_schema_count_ = 0;
 	size_t live_named_type_member_count_ = 0;
 	size_t live_record_constructor_schema_count_ = 0;
@@ -1297,10 +1313,11 @@ private:
 	ChunkedVector<CanonicalVirtualBaseSchemaHeader, 16> virtual_base_schema_headers_;
 	ChunkedVector<CanonicalVirtualBase, 16> virtual_bases_;
 	std::unordered_map<uint32_t, size_t> virtual_base_schema_ids_;
-	// Subobject walk samples: 16 class headers / 32 direct member TypeIds.
-	ChunkedVector<CanonicalRecordSubobjectTypeSchemaHeader, 16> record_subobject_type_schema_headers_;
-	ChunkedVector<TypeId, 32> record_subobject_member_types_;
-	std::unordered_map<uint32_t, size_t> record_subobject_type_schema_ids_;
+	// Five member-pointer TUs contain 27 class headers / 140 ordinal slots. Reuse
+	// the subobject arena's 16-header / 32-TypeId chunks for both schema kinds.
+	ChunkedVector<CanonicalClassTypeSchemaHeader, 16> class_type_schema_headers_;
+	ChunkedVector<TypeId, 32> class_type_schema_types_;
+	std::unordered_map<uint64_t, size_t> class_type_schema_ids_;
 	// Named type-member schema samples: 16 headers / 32 members per chunk until a
 	// production nested-type corpus measures a larger peak.
 	ChunkedVector<CanonicalNamedTypeMemberSchemaHeader, 16> named_type_member_schema_headers_;
