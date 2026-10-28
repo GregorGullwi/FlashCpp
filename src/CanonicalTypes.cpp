@@ -898,6 +898,36 @@ TypeId CanonicalTypeTable::nullPointerValue(TypeId pointer_type) {
 		.qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None, .array_extent = 0});
 }
 
+TypeId CanonicalTypeTable::memberObjectPointerValue(TypeId member_pointer_type, uint16_t member_ordinal) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const CanonicalTypeNode type = nodeUnlocked(member_pointer_type);
+	if (type.kind != CanonicalTypeKind::MemberObjectPointer) {
+		throw InternalError("canonical type: member object pointer value requires a member object pointer type");
+	}
+	const TypeId owner{static_cast<uint32_t>(type.array_extent)};
+	const CanonicalTypeNode owner_node = nodeUnlocked(owner);
+	if (owner_node.kind != CanonicalTypeKind::Record) {
+		throw InternalError("canonical type: member object pointer value requires a record owner");
+	}
+	const EntityId entity{static_cast<uint32_t>(owner_node.array_extent)};
+	const auto schema_found = record_field_schema_ids_.find(entity.value);
+	if (schema_found == record_field_schema_ids_.end()) {
+		throw InternalError("canonical type: member object pointer value requires a published field schema");
+	}
+	const CanonicalRecordFieldSchemaHeader header = record_field_schema_headers_[schema_found->second];
+	if (member_ordinal >= header.member_count) {
+		throw InternalError("canonical type: member object pointer value ordinal is not published");
+	}
+	const CanonicalRecordMember member = record_members_[header.member_begin + member_ordinal];
+	if (hasCanonicalRecordMemberFlag(member.flags, CanonicalRecordMemberFlags::Bitfield)) {
+		throw InternalError("canonical type: member object pointer value cannot target a bit-field");
+	}
+	return internUnlocked({.child = member_pointer_type, .kind = CanonicalTypeKind::MemberObjectPointerValue,
+		.builtin = CanonicalBuiltinKind::Void, .qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None,
+		.array_extent = member_ordinal});
+}
+
 TypeId CanonicalTypeTable::structuralValue(TypeId class_type, std::span<const TypeId> subobject_values, uint32_t base_count) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
@@ -1915,8 +1945,9 @@ bool CanonicalTypeTable::isReference(CanonicalTypeKind kind) {
 
 bool CanonicalTypeTable::isValueKind(CanonicalTypeKind kind) {
 	return kind == CanonicalTypeKind::IntegralValue || kind == CanonicalTypeKind::FloatingValue ||
-		kind == CanonicalTypeKind::NullPointerValue || kind == CanonicalTypeKind::StructuralValue ||
-		kind == CanonicalTypeKind::StructuralArrayValue || kind == CanonicalTypeKind::StructuralUnionValue;
+		kind == CanonicalTypeKind::NullPointerValue || kind == CanonicalTypeKind::MemberObjectPointerValue ||
+		kind == CanonicalTypeKind::StructuralValue || kind == CanonicalTypeKind::StructuralArrayValue ||
+		kind == CanonicalTypeKind::StructuralUnionValue;
 }
 
 bool CanonicalTypeTable::isInternalLink(CanonicalTypeKind kind) {
@@ -2831,6 +2862,7 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 			case CanonicalTypeKind::IntegralValue:
 			case CanonicalTypeKind::FloatingValue:
 			case CanonicalTypeKind::NullPointerValue:
+			case CanonicalTypeKind::MemberObjectPointerValue:
 			case CanonicalTypeKind::ValueTemplateArg:
 			case CanonicalTypeKind::NonTypeTemplateArg:
 			case CanonicalTypeKind::TemplateTemplateArg:

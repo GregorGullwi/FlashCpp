@@ -2605,6 +2605,47 @@ inline void checkTemplateSpecializationStructuralValues() {
 	require(structural != table.structuralValue(other_specialization, values, 0));
 }
 
+inline void checkMemberObjectPointerValues() {
+	CanonicalTypeTable table;
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const EntityId entity{40331};
+	const TypeId owner = table.record(entity);
+	table.publishRecordLayout({entity, 8, 8, 8, 4, 2, 0, CanonicalRecordLayoutFlags::None, 0});
+	const CanonicalRecordMember members[] = {
+		{integer, 0, 4, 0, 0, CanonicalAccess::Public, CanonicalRecordMemberFlags::None},
+		{integer, 4, 4, 0, 0, CanonicalAccess::Public, CanonicalRecordMemberFlags::None},
+	};
+	table.publishRecordFieldSchema(entity, members, {});
+	const TypeId member_pointer = table.memberObjectPointer(owner, integer);
+	const TypeId first = table.memberObjectPointerValue(member_pointer, 0);
+	const TypeId second = table.memberObjectPointerValue(member_pointer, 1);
+	require(table.node(first).kind == CanonicalTypeKind::MemberObjectPointerValue);
+	require(table.node(first).child == member_pointer);
+	require(table.node(first).array_extent == 0);
+	require(table.node(second).array_extent == 1);
+	require(first == table.memberObjectPointerValue(member_pointer, 0));
+	require(first != second);
+	const auto rejects = [&](TypeId type, uint16_t ordinal) {
+		try { (void)table.memberObjectPointerValue(type, ordinal); } catch (const InternalError&) { return true; }
+		return false;
+	};
+	require(rejects(member_pointer, 2));
+	require(rejects(integer, 0));
+	const EntityId bitfield_entity{40332};
+	const TypeId bitfield_owner = table.record(bitfield_entity);
+	table.publishRecordLayout({bitfield_entity, 4, 4, 4, 4, 1, 0, CanonicalRecordLayoutFlags::None, 0});
+	const CanonicalRecordMember bitfield_member{integer, 0, 4, 3, 0, CanonicalAccess::Public, CanonicalRecordMemberFlags::Bitfield};
+	table.publishRecordFieldSchema(bitfield_entity, std::span<const CanonicalRecordMember>(&bitfield_member, 1), {});
+	require(rejects(table.memberObjectPointer(bitfield_owner, integer), 0));
+	const TypeId values[] = {first, second};
+	const TypeId record = table.record(EntityId{40333});
+	const TypeId structural = table.structuralValue(record, values, 0);
+	TypeId link = unpackStructuralValueSubobjects(table.node(structural).array_extent);
+	require(table.node(table.templateArgumentValue(link)).kind == CanonicalTypeKind::MemberObjectPointerValue);
+	link = table.templateArgumentNext(link);
+	require(table.node(table.templateArgumentValue(link)).array_extent == 1);
+}
+
 inline void checkStructuralArrayValues() {
 	CanonicalTypeTable table;
 	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
@@ -2747,6 +2788,7 @@ inline int run() {
 	checkFloatingValues();
 	checkNullPointerValues();
 	checkTemplateSpecializationStructuralValues();
+	checkMemberObjectPointerValues();
 	checkStructuralArrayValues();
 	{
 		CanonicalTypeTable table;

@@ -908,11 +908,19 @@ EvalResult evalResultFromStructuralValue(
 	const StructTypeInfo* struct_info = structuralClassStructInfo(structural_value.type_index);
 	for (const FlashCpp::StructuralClassValueMember& member : structural_value.members) {
 		EvalResult member_result;
+		const StructMember* field = struct_info != nullptr ? struct_info->findMember(member.name) : nullptr;
 		if (member.nested_value != nullptr) {
 			member_result = evalResultFromStructuralValue(*member.nested_value);
 		} else if (member.scalar_value.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr) {
 			member_result = EvalResult::from_int(0);
-			const StructMember* field = struct_info != nullptr ? struct_info->findMember(member.name) : nullptr;
+			if (field != nullptr && field->canonical_type_id) {
+				member_result.set_exact_type(typeSpecifierFromStructMemberProjection(*field));
+			} else {
+				attach_scalar_type(member_result, member.scalar_value);
+			}
+		} else if (member.scalar_value.kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer && member.scalar_value.member_name.isValid()) {
+			member_result = EvalResult::from_int(member.scalar_value.value);
+			member_result.member_pointer_member = member.scalar_value.member_name;
 			if (field != nullptr && field->canonical_type_id) {
 				member_result.set_exact_type(typeSpecifierFromStructMemberProjection(*field));
 			} else {
@@ -1116,13 +1124,22 @@ std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentityIm
 				declared_category == TypeCategory::MemberObjectPointer ||
 				declared_category == TypeCategory::MemberFunctionPointer;
 			if (pointer_like) {
-				const bool is_null = !member_result.is_indeterminate && !member_result.pointer_to_var.isValid() &&
-					!member_result.member_pointer_member.isValid() &&
-					(member_result.is_null_member_pointer || member_result.as_int() == 0);
-				if (!is_null) {
-					return false;
+				if (member_result.member_pointer_member.isValid()) {
+					StringHandle member_class_name{};
+					if (member_result.exact_type.has_value() && member_result.exact_type->has_member_class()) {
+						member_class_name = member_result.exact_type->member_class_name();
+					}
+					member.scalar_value = FlashCpp::NonTypeValueIdentity::makeMemberPointer(
+						member_info.type_index, member_result.member_pointer_member, member_result.as_int(), member_class_name);
+				} else {
+					const bool is_null = !member_result.is_indeterminate && !member_result.pointer_to_var.isValid() &&
+						!member_result.member_pointer_member.isValid() &&
+						(member_result.is_null_member_pointer || member_result.as_int() == 0);
+					if (!is_null) {
+						return false;
+					}
+					member.scalar_value = FlashCpp::NonTypeValueIdentity::makeNullptr(member_info.type_index);
 				}
-				member.scalar_value = FlashCpp::NonTypeValueIdentity::makeNullptr(member_info.type_index);
 			} else {
 				TypeCategory category = member_result.exact_type.has_value() ? member_result.exact_type->category() : declared_category;
 				TypeIndex type_index = member_result.exact_type.has_value()

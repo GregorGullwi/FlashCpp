@@ -1745,6 +1745,36 @@ inline std::optional<TypeId> tryImportCanonicalStructuralNullPointer(CanonicalTy
 	return table.nullPointerValue(field_type);
 }
 
+inline std::optional<TypeId> tryImportCanonicalStructuralMemberObjectPointer(CanonicalTypeTable& table, TypeId field_type,
+	StringHandle member_name) {
+	const CanonicalTypeNode type = table.node(field_type);
+	if (type.kind != CanonicalTypeKind::MemberObjectPointer || !member_name.isValid()) {
+		return std::nullopt;
+	}
+	const TypeId owner{static_cast<uint32_t>(type.array_extent)};
+	if (table.node(owner).kind != CanonicalTypeKind::Record) {
+		return std::nullopt;
+	}
+	const EntityId entity = table.recordEntity(owner);
+	if (!table.hasRecordFieldSchema(entity)) {
+		return std::nullopt;
+	}
+	const TypeInfo* owner_info = tryFindTypeInfoByEntityId(entity);
+	const StructTypeInfo* owner_record = owner_info != nullptr ? owner_info->getStructInfo() : nullptr;
+	if (owner_record == nullptr) {
+		return std::nullopt;
+	}
+	const StructMember* member = owner_record->findMember(member_name);
+	if (member == nullptr || member->bitfield_width.has_value() || member->isUnnamedOrZeroWidthBitfield()) {
+		return std::nullopt;
+	}
+	const size_t ordinal = static_cast<size_t>(member - owner_record->members.data());
+	if (ordinal > UINT16_MAX) {
+		return std::nullopt;
+	}
+	return table.memberObjectPointerValue(field_type, static_cast<uint16_t>(ordinal));
+}
+
 inline std::optional<TypeId> tryImportCanonicalStructuralFieldValue(CanonicalTypeTable& table, TypeId field_type,
 	const FlashCpp::NonTypeValueIdentity& value, size_t storage_size, std::optional<uint8_t> bit_width) {
 	if (value.is_dependent) {
@@ -1761,6 +1791,9 @@ inline std::optional<TypeId> tryImportCanonicalStructuralFieldValue(CanonicalTyp
 	}
 	if (value.kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer && value.isNullMemberPointer()) {
 		return tryImportCanonicalStructuralNullPointer(table, field_type);
+	}
+	if (value.kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer && value.member_name.isValid()) {
+		return tryImportCanonicalStructuralMemberObjectPointer(table, field_type, value.member_name);
 	}
 	return std::nullopt;
 }

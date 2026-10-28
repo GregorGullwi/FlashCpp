@@ -60,6 +60,9 @@ enum class CanonicalTypeKind : uint8_t {
 	// Null pointer-like value: child is its canonical Pointer,
 	// MemberObjectPointer, or MemberFunctionPointer type and extent is zero.
 	NullPointerValue,
+	// Non-null direct member-object pointer: child is its MemberObjectPointer
+	// type and extent is the selected member's ordinal in the owner schema.
+	MemberObjectPointerValue,
 };
 
 enum class CanonicalTemplateArgKind : uint8_t {
@@ -256,8 +259,10 @@ inline TypeId unpackDependentMemberAliasArgs(uint64_t array_extent) {
 // array_extent is its converted 64-bit value representation. FloatingValue is
 // internal: child is its Float/Double type and array_extent is the exact value
 // representation. NullPointerValue is internal: child is its pointer-like type
-// and extent is zero. ValueTemplateArg stores the converted value TypeId in
-// array_extent and the next link in child.
+// and extent is zero. MemberObjectPointerValue is internal: child is its
+// MemberObjectPointer type and extent is the selected member ordinal.
+// ValueTemplateArg stores the converted value TypeId in array_extent and the
+// next link in child.
 struct CanonicalTypeNode {
 	TypeId child;
 	CanonicalTypeKind kind;
@@ -604,6 +609,9 @@ public:
 	// targets are declaration identity and remain outside this API until that
 	// publication exists.
 	TypeId nullPointerValue(TypeId pointer_type);
+	// Direct data-member target of a canonical MemberObjectPointer type. The
+	// ordinal is validated against the owner's published field schema.
+	TypeId memberObjectPointerValue(TypeId member_pointer_type, uint16_t member_ordinal);
 	TypeId structuralValue(TypeId class_type, std::span<const TypeId> subobject_values, uint32_t base_count);
 	TypeId structuralUnionValue(TypeId owner_type, uint16_t first_variant, std::optional<uint16_t> active_variant, TypeId value);
 
