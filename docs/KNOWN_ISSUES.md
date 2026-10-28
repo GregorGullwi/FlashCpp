@@ -67,12 +67,14 @@ canonical signature. Non-null object/function pointer targets, ambiguous or
 virtual-base member pointers, and non-null object/function pointer array
 elements still need declaration identity.
 
-Plain implicit class-template specializations now import as structural values
-through their canonical specialization TypeId. Specialization-owner member
+Concrete implicit class-template specializations import as structural values,
+including supported nonvirtual bases, nested members, and array elements. Array
+members read the owning TypeId's published substituted subobject types.
+Specialization-owner member
 pointers recover member names/ordinals from the published primary pattern record,
 verified by declaration pointer; the specialization TypeId remains the value
-identity. Specializations whose owner schema is needed for base or union facts
-still fail closed when that schema is not published by specialization identity.
+identity. Specialization union groups and missing field-layout or dependent base
+facts still fail closed; they must publish by specialization identity.
 Extend the typed-value importer before deleting `legacyDerivedBaseOffset`;
 audit dependent and other non-integral specialization roots as well.
 Integral, bool, and enum fields, including named bit-fields with signed
@@ -95,6 +97,7 @@ Retain `test_canonical_structural_nttp_base_source_ret0.cpp`,
 `test_canonical_structural_nttp_null_pointer_ret0.cpp`,
 `test_canonical_structural_nttp_null_pointer_array_ret0.cpp`,
 `test_canonical_structural_nttp_class_template_ret0.cpp`,
+`test_canonical_structural_nttp_specialization_bases_ret0.cpp`,
 `test_canonical_structural_nttp_member_object_pointer_ret0.cpp`,
 `test_canonical_structural_nttp_member_function_pointer_ret0.cpp`,
 `test_canonical_structural_nttp_inherited_member_object_pointer_ret0.cpp`, and
