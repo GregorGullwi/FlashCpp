@@ -1755,24 +1755,58 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberObjectPointer(Can
 	if (table.node(owner).kind != CanonicalTypeKind::Record) {
 		return std::nullopt;
 	}
-	const EntityId entity = table.recordEntity(owner);
-	if (!table.hasRecordFieldSchema(entity)) {
-		return std::nullopt;
-	}
-	const TypeInfo* owner_info = tryFindTypeInfoByEntityId(entity);
+	const TypeInfo* owner_info = tryFindTypeInfoByEntityId(table.recordEntity(owner));
 	const StructTypeInfo* owner_record = owner_info != nullptr ? owner_info->getStructInfo() : nullptr;
 	if (owner_record == nullptr) {
 		return std::nullopt;
 	}
-	const StructMember* member = owner_record->findMember(member_name);
-	if (member == nullptr || member->bitfield_width.has_value() || member->isUnnamedOrZeroWidthBitfield()) {
+	struct PendingClass {
+		TypeId type;
+		const StructTypeInfo* record;
+	};
+	std::vector<PendingClass> pending{{owner, owner_record}};
+	std::unordered_set<uint32_t> visited;
+	std::optional<TypeId> declaring_class;
+	uint16_t declaring_ordinal = 0;
+	while (!pending.empty()) {
+		const PendingClass current = pending.back();
+		pending.pop_back();
+		if (!visited.insert(current.type.value).second) {
+			continue;
+		}
+		const StructMember* member = current.record->findMember(member_name);
+		if (member != nullptr) {
+			if (member->bitfield_width.has_value() || member->isUnnamedOrZeroWidthBitfield()) {
+				return std::nullopt;
+			}
+			const size_t ordinal = static_cast<size_t>(member - current.record->members.data());
+			if (declaring_class.has_value() || ordinal > UINT16_MAX) {
+				return std::nullopt;
+			}
+			declaring_class = current.type;
+			declaring_ordinal = static_cast<uint16_t>(ordinal);
+			continue;
+		}
+		for (const BaseClassSpecifier& base : current.record->base_classes) {
+			if (base.is_virtual || base.is_deferred) {
+				return std::nullopt;
+			}
+			const TypeInfo* base_info = tryGetTypeInfo(base.type_index);
+			const StructTypeInfo* base_record = base_info != nullptr ? base_info->getStructInfo() : nullptr;
+			if (base_info == nullptr || base_record == nullptr) {
+				return std::nullopt;
+			}
+			const CanonicalTypeImport imported_base = importCanonicalClassTypeInfo(table, *base_info);
+			if (imported_base.status != CanonicalTypeImportStatus::Supported || table.node(imported_base.type).kind != CanonicalTypeKind::Record) {
+				return std::nullopt;
+			}
+			pending.push_back({imported_base.type, base_record});
+		}
+	}
+	if (!declaring_class.has_value() || !table.hasRecordFieldSchema(table.recordEntity(*declaring_class))) {
 		return std::nullopt;
 	}
-	const size_t ordinal = static_cast<size_t>(member - owner_record->members.data());
-	if (ordinal > UINT16_MAX) {
-		return std::nullopt;
-	}
-	return table.memberObjectPointerValue(field_type, static_cast<uint16_t>(ordinal));
+	return table.memberObjectPointerValue(field_type, *declaring_class, declaring_ordinal);
 }
 
 inline std::optional<TypeId> tryImportCanonicalStructuralMemberFunctionPointer(CanonicalTypeTable& table, TypeId field_type,
