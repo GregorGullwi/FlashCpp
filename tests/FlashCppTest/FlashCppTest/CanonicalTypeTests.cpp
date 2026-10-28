@@ -1243,6 +1243,79 @@ using DirectLiteral = DirectHolder<DirectKey{&Base::first, 1}>;
 	CHECK(table.classBaseAt(derived, 1).type == named);
 }
 
+TEST_CASE("Specialization member pointer structural fields use specialization identity") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+template<class T> struct Object { int first; int second; int method(int value); int other(int value); };
+struct FieldKey { int Object<int>::* pointer; int tag; };
+struct MethodKey { int (Object<int>::*pointer)(int); int tag; };
+constexpr FieldKey field_first{&Object<int>::first, 1};
+constexpr FieldKey field_second{&Object<int>::second, 1};
+constexpr MethodKey method_first{&Object<int>::method, 1};
+constexpr MethodKey method_second{&Object<int>::other, 1};
+template<FieldKey Value> struct FieldBase { short member; };
+template<MethodKey Value> struct MethodBase { short member; };
+struct Padding { long long guard; };
+struct Derived : Padding, FieldBase<field_first> {};
+using FieldNamed = FieldBase<field_first>;
+using FieldLiteral = FieldBase<FieldKey{&Object<int>::first, 1}>;
+using FieldChanged = FieldBase<field_second>;
+using MethodNamed = MethodBase<method_first>;
+using MethodLiteral = MethodBase<MethodKey{&Object<int>::method, 1}>;
+using MethodChanged = MethodBase<method_second>;
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("structural_specialization_member_pointer.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto import_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const auto structural_pointer = [&](TypeId specialization) {
+		const TypeId value_id = table.templateArgumentValue(table.templateSpecializationArguments(specialization));
+		const CanonicalTypeNode value = table.node(value_id);
+		REQUIRE(value.kind == CanonicalTypeKind::StructuralValue);
+		const TypeId link = unpackStructuralValueSubobjects(value.array_extent);
+		return table.node(table.templateArgumentValue(link));
+	};
+	const TypeId field_named = import_type("FieldNamed");
+	CHECK(field_named == import_type("FieldLiteral"));
+	CHECK(field_named != import_type("FieldChanged"));
+	const CanonicalTypeNode field_pointer = structural_pointer(field_named);
+	CHECK(field_pointer.kind == CanonicalTypeKind::MemberObjectPointerValue);
+	const CanonicalTypeNode field_type = table.node(field_pointer.child);
+	CHECK(field_type.kind == CanonicalTypeKind::MemberObjectPointer);
+	const TypeId field_owner{static_cast<uint32_t>(field_type.array_extent)};
+	CHECK(table.node(field_owner).kind == CanonicalTypeKind::TemplateSpecialization);
+	CHECK(unpackMemberObjectPointerValueDeclaringClass(field_pointer.array_extent) == field_owner);
+	CHECK(unpackMemberObjectPointerValueOrdinal(field_pointer.array_extent) == 0);
+	CHECK(unpackMemberObjectPointerValueOrdinal(structural_pointer(import_type("FieldChanged")).array_extent) == 1);
+	const TypeId method_named = import_type("MethodNamed");
+	CHECK(method_named == import_type("MethodLiteral"));
+	CHECK(method_named != import_type("MethodChanged"));
+	const CanonicalTypeNode method_pointer = structural_pointer(method_named);
+	CHECK(method_pointer.kind == CanonicalTypeKind::MemberFunctionPointerValue);
+	const CanonicalTypeNode method_type = table.node(method_pointer.child);
+	CHECK(method_type.kind == CanonicalTypeKind::MemberFunctionPointer);
+	const TypeId method_owner{static_cast<uint32_t>(method_type.array_extent)};
+	CHECK(table.node(method_owner).kind == CanonicalTypeKind::TemplateSpecialization);
+	CHECK(unpackMemberFunctionPointerValueDeclaringClass(method_pointer.array_extent) == method_owner);
+	CHECK(unpackMemberFunctionPointerValueOrdinal(method_pointer.array_extent) == 0);
+	CHECK(unpackMemberFunctionPointerValueOrdinal(structural_pointer(import_type("MethodChanged")).array_extent) == 1);
+	const TypeId derived = import_type("Derived");
+	REQUIRE(table.hasClassBaseSchema(derived));
+	CHECK(table.classBaseAt(derived, 1).type == field_named);
+}
+
 TEST_CASE("Canonical integral arguments use converted value and canonical type identity") {
 	static_assert(sizeof(CanonicalTypeNode) == 16);
 	static_assert(sizeof(CanonicalTemplateArgument) == 20);

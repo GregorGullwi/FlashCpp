@@ -535,18 +535,30 @@ Continue boundary 3A in this order.
    canonical suite checks declaring classes and ordinals. The 3A rollup remains
    10/79; no exit criterion is closed.
 
+   **Specialization-owner member pointer values: complete for implicit
+   specializations.** Member-target owner resolution now accepts a
+   `TemplateSpecialization` TypeId and recovers its primary pattern record
+   through the published `TemplateDeclTable` pattern. The recovered record is
+   verified by declaration pointer, so spelling is only a lookup key; the
+   specialization TypeId remains the value identity. Direct data members and
+   member functions, including overloaded/virtual patterns, retain their
+   declaring-specialization plus ordinal identity. Missing pattern records,
+   non-record/non-specialization owners, ambiguity, and unsupported bases fail
+   closed.
+   `tests/test_canonical_structural_nttp_specialization_member_pointer_ret0.cpp`
+   protects field and method targets plus a derived base specialization; the
+   native canonical suite verifies specialization declaring classes and
+   ordinals. The 3A rollup remains 10/79; no exit criterion is closed.
+
    **Next slice: import remaining non-null pointer and specialization facts.**
    Non-null object/function pointer targets, ambiguous/virtual-base member
    pointers, specialization base/union facts, and the nested
    anonymous-union-in-anonymous-union hierarchy still need canonical subobject
-   identity. Specialization-owner member pointers are blocked because primary
-   class-template pattern declarations do not publish an `EntityId`/record
-   identity; do not add a spelling lookup fallback. Extend the typed-value
-   importer and its specialization base facts before deleting
-   `legacyDerivedBaseOffset`; audit dependent and other non-integral
-   specialization roots too. Keep the worklist guard and the nonzero-offset
-   guards in
-   `test_canonical_structural_nttp_{base_source,equivalence,subobjects,bitfields,arrays,union_active,float,null_pointer,null_pointer_array,class_template,member_object_pointer,member_function_pointer,inherited_member_object_pointer,overloaded_member_function_pointer,member_pointer_array,member_function_pointer_array,inherited_member_function_pointer,virtual_member_function_pointer}_ret0.cpp`.
+   identity. Extend the typed-value importer and its specialization base facts
+   before deleting `legacyDerivedBaseOffset`; audit dependent and other
+   non-integral specialization roots too. Keep the worklist guard and the
+   nonzero-offset guards in
+   `test_canonical_structural_nttp_{base_source,equivalence,subobjects,bitfields,arrays,union_active,float,null_pointer,null_pointer_array,class_template,member_object_pointer,member_function_pointer,inherited_member_object_pointer,overloaded_member_function_pointer,member_pointer_array,member_function_pointer_array,inherited_member_function_pointer,virtual_member_function_pointer,specialization_member_pointer}_ret0.cpp`.
    See `KNOWN_ISSUES.md`.
 
    **Owner-index deletion gates:** virtual-base ABI facts are published by class
