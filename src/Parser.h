@@ -1991,6 +1991,8 @@ private:
 	void compute_and_set_mangled_name(FunctionDeclarationNode& func_node, bool force_recompute = false);	 // Phase 6 (mangling): Generate and set mangled name
 	ParseResult parse_struct_declaration();	// Add struct declaration parser (entry point)
 	ParseResult parse_struct_declaration_with_specs(bool pre_is_constexpr, bool pre_is_inline);	// With pre-parsed specifiers
+	ParseResult validate_bitfield_declaration(const TypeSpecifierNode& type_spec, std::string_view member_name,
+		std::optional<size_t> bitfield_width, const Token& token);
 	ParseResult parse_member_type_alias(std::string_view keyword, StructDeclarationNode* struct_ref, AccessSpecifier current_access);  // Helper: Parse typedef/using in struct/template
 	bool tryParsePointerToArrayTypedefDeclarator(
 		TypeSpecifierNode& type_spec,

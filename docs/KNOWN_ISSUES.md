@@ -69,7 +69,11 @@ elements still need declaration identity.
 Plain implicit class-template specializations now import as structural values
 through their canonical specialization TypeId. Specializations whose owner
 schema is needed for base, union, or member-pointer facts still fail closed when
-that schema is not published by specialization identity.
+that schema is not published by specialization identity. In particular,
+specialization-owner member pointers cannot resolve member names/ordinals:
+primary class-template pattern declarations do not publish an `EntityId`, and a
+spelling lookup fallback is intentionally not used. Publish pattern record
+identity before enabling that family.
 Extend the typed-value importer before deleting `legacyDerivedBaseOffset`;
 audit dependent and other non-integral specialization roots as well.
 Integral, bool, and enum fields, including named bit-fields with signed
@@ -101,21 +105,6 @@ Retain `test_canonical_structural_nttp_base_source_ret0.cpp`,
 `test_canonical_structural_nttp_inherited_member_function_pointer_ret0.cpp`,
 and `test_canonical_structural_nttp_virtual_member_function_pointer_ret0.cpp` as
 current guards.
-
-## Bit-field declarations accept ill-formed forms
-
-The parser validates only that a bit-field width is a non-negative constant
-expression. It accepts declarations that C++20 [class.bit] requires to be
-diagnosed:
-
-- a non-integral, non-enumeration declared type, such as `float value : 3;`;
-- a width larger than the declared type can represent, such as `int value : 40;`;
-- a named zero-width field, such as `int value : 0;` (zero width is reserved
-  for unnamed alignment padding).
-
-The large-width case is additionally clamped by layout, so declaration and
-layout facts disagree while structural value import fails closed. Reject all
-three forms while parsing the member declaration, before layout publication.
 
 ## Explicit casts of overloaded member-function addresses lose target identity
 
