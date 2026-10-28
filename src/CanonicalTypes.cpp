@@ -906,21 +906,22 @@ TypeId CanonicalTypeTable::memberObjectPointerValue(TypeId member_pointer_type, 
 		throw InternalError("canonical type: member object pointer value requires a member object pointer type");
 	}
 	const CanonicalTypeNode class_node = nodeUnlocked(declaring_class);
-	if (class_node.kind != CanonicalTypeKind::Record) {
-		throw InternalError("canonical type: member object pointer value requires a record declaring class");
-	}
-	const EntityId entity{static_cast<uint32_t>(class_node.array_extent)};
-	const auto schema_found = record_field_schema_ids_.find(entity.value);
-	if (schema_found == record_field_schema_ids_.end()) {
-		throw InternalError("canonical type: member object pointer value requires a published field schema");
-	}
-	const CanonicalRecordFieldSchemaHeader header = record_field_schema_headers_[schema_found->second];
-	if (member_ordinal >= header.member_count) {
-		throw InternalError("canonical type: member object pointer value ordinal is not published");
-	}
-	const CanonicalRecordMember member = record_members_[header.member_begin + member_ordinal];
-	if (hasCanonicalRecordMemberFlag(member.flags, CanonicalRecordMemberFlags::Bitfield)) {
-		throw InternalError("canonical type: member object pointer value cannot target a bit-field");
+	if (class_node.kind == CanonicalTypeKind::Record) {
+		const EntityId entity{static_cast<uint32_t>(class_node.array_extent)};
+		const auto schema_found = record_field_schema_ids_.find(entity.value);
+		if (schema_found == record_field_schema_ids_.end()) {
+			throw InternalError("canonical type: member object pointer value requires a published field schema");
+		}
+		const CanonicalRecordFieldSchemaHeader header = record_field_schema_headers_[schema_found->second];
+		if (member_ordinal >= header.member_count) {
+			throw InternalError("canonical type: member object pointer value ordinal is not published");
+		}
+		const CanonicalRecordMember member = record_members_[header.member_begin + member_ordinal];
+		if (hasCanonicalRecordMemberFlag(member.flags, CanonicalRecordMemberFlags::Bitfield)) {
+			throw InternalError("canonical type: member object pointer value cannot target a bit-field");
+		}
+	} else if (class_node.kind != CanonicalTypeKind::TemplateSpecialization) {
+		throw InternalError("canonical type: member object pointer value requires a class declaring class");
 	}
 	return internUnlocked({.child = member_pointer_type, .kind = CanonicalTypeKind::MemberObjectPointerValue,
 		.builtin = CanonicalBuiltinKind::Void, .qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None,
@@ -935,8 +936,9 @@ TypeId CanonicalTypeTable::memberFunctionPointerValue(TypeId member_function_poi
 	if (type.kind != CanonicalTypeKind::MemberFunctionPointer) {
 		throw InternalError("canonical type: member function pointer value requires a member function pointer type");
 	}
-	if (nodeUnlocked(declaring_class).kind != CanonicalTypeKind::Record) {
-		throw InternalError("canonical type: member function pointer value requires a record declaring class");
+	const CanonicalTypeKind declaring_kind = nodeUnlocked(declaring_class).kind;
+	if (declaring_kind != CanonicalTypeKind::Record && declaring_kind != CanonicalTypeKind::TemplateSpecialization) {
+		throw InternalError("canonical type: member function pointer value requires a class declaring class");
 	}
 	return internUnlocked({.child = member_function_pointer_type, .kind = CanonicalTypeKind::MemberFunctionPointerValue,
 		.builtin = CanonicalBuiltinKind::Void, .qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None,

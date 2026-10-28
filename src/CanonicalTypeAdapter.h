@@ -1768,6 +1768,30 @@ inline std::optional<TypeId> tryImportCanonicalStructuralNullPointer(CanonicalTy
 	return table.nullPointerValue(field_type);
 }
 
+// Pattern records provide member names and declaration ordinals for a
+// specialization owner; the specialization TypeId remains the value identity.
+// The pattern declaration pointer verifies the recovered record, so its spelling
+// is only a lookup key, never the identity.
+inline const StructTypeInfo* tryResolveCanonicalMemberPointerOwnerRecord(CanonicalTypeTable& table, TypeId owner) {
+	const CanonicalTypeNode owner_node = table.node(owner);
+	if (owner_node.kind == CanonicalTypeKind::Record) {
+		const TypeInfo* owner_info = tryFindTypeInfoByEntityId(table.recordEntity(owner));
+		return owner_info != nullptr ? owner_info->getStructInfo() : nullptr;
+	}
+	if (owner_node.kind != CanonicalTypeKind::TemplateSpecialization) {
+		return nullptr;
+	}
+	const TemplateDeclId primary{static_cast<uint32_t>(owner_node.array_extent)};
+	const std::optional<ASTNode> pattern = requireFrontendContext().templateDecls().primaryClassTemplatePattern(primary);
+	if (!pattern.has_value() || !pattern->is<TemplateClassDeclarationNode>()) {
+		return nullptr;
+	}
+	const StructDeclarationNode& declaration = pattern->as<TemplateClassDeclarationNode>().class_decl_node();
+	const TypeInfo* owner_info = findTypeByName(declaration.name());
+	const StructTypeInfo* owner_record = owner_info != nullptr ? owner_info->getStructInfo() : nullptr;
+	return owner_record != nullptr && owner_record->declaration_node == &declaration ? owner_record : nullptr;
+}
+
 struct CanonicalLookupClass {
 	TypeId type;
 	const StructTypeInfo* record;
@@ -1803,11 +1827,7 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberObjectPointer(Can
 		return std::nullopt;
 	}
 	const TypeId owner{static_cast<uint32_t>(type.array_extent)};
-	if (table.node(owner).kind != CanonicalTypeKind::Record) {
-		return std::nullopt;
-	}
-	const TypeInfo* owner_info = tryFindTypeInfoByEntityId(table.recordEntity(owner));
-	const StructTypeInfo* owner_record = owner_info != nullptr ? owner_info->getStructInfo() : nullptr;
+	const StructTypeInfo* owner_record = tryResolveCanonicalMemberPointerOwnerRecord(table, owner);
 	if (owner_record == nullptr) {
 		return std::nullopt;
 	}
@@ -1839,7 +1859,10 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberObjectPointer(Can
 			return std::nullopt;
 		}
 	}
-	if (!declaring_class.has_value() || !table.hasRecordFieldSchema(table.recordEntity(*declaring_class))) {
+	if (!declaring_class.has_value()) {
+		return std::nullopt;
+	}
+	if (table.node(*declaring_class).kind == CanonicalTypeKind::Record && !table.hasRecordFieldSchema(table.recordEntity(*declaring_class))) {
 		return std::nullopt;
 	}
 	return table.memberObjectPointerValue(field_type, *declaring_class, declaring_ordinal);
@@ -1852,11 +1875,7 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberFunctionPointer(C
 		return std::nullopt;
 	}
 	const TypeId owner{static_cast<uint32_t>(type.array_extent)};
-	if (table.node(owner).kind != CanonicalTypeKind::Record) {
-		return std::nullopt;
-	}
-	const TypeInfo* owner_info = tryFindTypeInfoByEntityId(table.recordEntity(owner));
-	const StructTypeInfo* owner_record = owner_info != nullptr ? owner_info->getStructInfo() : nullptr;
+	const StructTypeInfo* owner_record = tryResolveCanonicalMemberPointerOwnerRecord(table, owner);
 	if (owner_record == nullptr) {
 		return std::nullopt;
 	}

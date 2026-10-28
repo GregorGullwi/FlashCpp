@@ -67,13 +67,11 @@ virtual-base member pointers, and non-null object/function pointer array
 elements still need declaration identity.
 
 Plain implicit class-template specializations now import as structural values
-through their canonical specialization TypeId. Specializations whose owner
-schema is needed for base, union, or member-pointer facts still fail closed when
-that schema is not published by specialization identity. In particular,
-specialization-owner member pointers cannot resolve member names/ordinals:
-primary class-template pattern declarations do not publish an `EntityId`, and a
-spelling lookup fallback is intentionally not used. Publish pattern record
-identity before enabling that family.
+through their canonical specialization TypeId. Specialization-owner member
+pointers recover member names/ordinals from the published primary pattern record,
+verified by declaration pointer; the specialization TypeId remains the value
+identity. Specializations whose owner schema is needed for base or union facts
+still fail closed when that schema is not published by specialization identity.
 Extend the typed-value importer before deleting `legacyDerivedBaseOffset`;
 audit dependent and other non-integral specialization roots as well.
 Integral, bool, and enum fields, including named bit-fields with signed
@@ -103,7 +101,8 @@ Retain `test_canonical_structural_nttp_base_source_ret0.cpp`,
 `test_canonical_structural_nttp_member_pointer_array_ret0.cpp`,
 `test_canonical_structural_nttp_member_function_pointer_array_ret0.cpp`, and
 `test_canonical_structural_nttp_inherited_member_function_pointer_ret0.cpp`,
-and `test_canonical_structural_nttp_virtual_member_function_pointer_ret0.cpp` as
+`test_canonical_structural_nttp_virtual_member_function_pointer_ret0.cpp`, and
+`test_canonical_structural_nttp_specialization_member_pointer_ret0.cpp` as
 current guards.
 
 ## Explicit casts of overloaded member-function addresses lose target identity
