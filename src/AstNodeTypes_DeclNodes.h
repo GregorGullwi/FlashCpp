@@ -552,6 +552,7 @@ struct StructTypeInfo {
 	// Finalize with base classes - computes layout including base class subobjects
 	// Returns false if semantic errors were detected
 	bool finalizeWithBases();
+	void addMembersWithAnonymousUnionGroups(std::vector<StructMember>& old_members);
 
 	// Recalculate member offsets, size, and alignment from the current members.
 	void recalculateLayout();

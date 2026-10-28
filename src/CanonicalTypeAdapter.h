@@ -1898,7 +1898,7 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberObjectPointer(Can
 	if (!declaring_class.has_value()) {
 		return std::nullopt;
 	}
-	if (table.node(*declaring_class).kind == CanonicalTypeKind::Record && !table.hasRecordFieldSchema(table.recordEntity(*declaring_class))) {
+	if (!table.hasRecordFieldSchema(*declaring_class)) {
 		return std::nullopt;
 	}
 	return table.memberObjectPointerValue(field_type, *declaring_class, declaring_ordinal);
@@ -2114,16 +2114,6 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 			(expected && imported.type != expected)) {
 			return false;
 		}
-		if (imported_kind == CanonicalTypeKind::TemplateSpecialization) {
-			if (record->is_union) {
-				return false;
-			}
-			for (const StructMember& member : record->members) {
-				if (member.anonymous_union_group_index.has_value()) {
-					return false;
-				}
-			}
-		}
 		if (!record->base_classes.empty() && (!table.hasClassBaseSchema(imported.type) ||
 			table.classBaseCount(imported.type) != record->base_classes.size())) {
 			return false;
@@ -2151,7 +2141,7 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 			0, FlashCpp::kNoStructuralUnionActiveVariant, false});
 		return true;
 	};
-	const auto import_member_value = [&](const StructTypeInfo* record, TypeId owner_type,
+	const auto import_member_value = [&](TypeId owner_type,
 		const StructMember& field, size_t member_index, const FlashCpp::StructuralClassValueMember& member,
 		bool wrap_union, uint16_t union_first_variant, uint16_t union_active_variant) -> bool {
 		if (!field.canonical_type_id) {
@@ -2161,15 +2151,8 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 		size_t scalar_storage_size = field.size;
 		std::optional<uint8_t> bit_width;
 		if (field.bitfield_width.has_value()) {
-			const StructDeclarationNode* declaration = record->declaration_node;
-			if (declaration == nullptr || !declaration->has_entity_id()) {
-				return false;
-			}
-			const EntityId entity = declaration->entity_id();
-			if (!table.hasRecordFieldSchema(entity)) {
-				return false;
-			}
-			const CanonicalRecordMember published = table.recordMemberAt(entity, member_index);
+			if (!table.hasRecordFieldSchema(owner_type)) return false;
+			const CanonicalRecordMember published = table.recordMemberAt(owner_type, member_index);
 			if (!hasCanonicalRecordMemberFlag(published.flags, CanonicalRecordMemberFlags::Bitfield) || published.bit_width == 0 ||
 				*field.bitfield_width != published.bit_width || !published.type) {
 				return false;
@@ -2322,20 +2305,13 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 		const StructMember& field = frame.record->members[member_index];
 		const bool needs_union_schema = frame.record->is_union || field.anonymous_union_group_index.has_value();
 		if (needs_union_schema) {
-			const StructDeclarationNode* declaration = frame.record->declaration_node;
-			if (declaration == nullptr || !declaration->has_entity_id()) {
-				return std::nullopt;
-			}
-			const EntityId entity = declaration->entity_id();
-			if (!table.hasRecordFieldSchema(entity)) {
-				return std::nullopt;
-			}
-			const CanonicalRecordMember group_start_member = table.recordMemberAt(entity, member_index);
+			if (!table.hasRecordFieldSchema(frame.type)) return std::nullopt;
+			const CanonicalRecordMember group_start_member = table.recordMemberAt(frame.type, member_index);
 			if (!hasCanonicalRecordMemberFlag(group_start_member.flags, CanonicalRecordMemberFlags::UnionGroupStart)) {
 				return std::nullopt;
 			}
 			size_t group_last = member_index;
-			while (!hasCanonicalRecordMemberFlag(table.recordMemberAt(entity, group_last).flags, CanonicalRecordMemberFlags::UnionGroupEnd)) {
+			while (!hasCanonicalRecordMemberFlag(table.recordMemberAt(frame.type, group_last).flags, CanonicalRecordMemberFlags::UnionGroupEnd)) {
 				++group_last;
 				if (group_last >= frame.record->members.size()) {
 					return std::nullopt;
@@ -2377,7 +2353,7 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 				return std::nullopt;
 			}
 			++frame.source_member;
-			if (!import_member_value(record, owner_type, active_field, active_index, active_member,
+			if (!import_member_value(owner_type, active_field, active_index, active_member,
 				true, static_cast<uint16_t>(member_index), static_cast<uint16_t>(active_index))) {
 				return std::nullopt;
 			}
@@ -2394,7 +2370,7 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 		if (member.name != field.getName()) {
 			return std::nullopt;
 		}
-		if (!import_member_value(frame.record, frame.type, field, member_index, member,
+		if (!import_member_value(frame.type, field, member_index, member,
 			false, 0, FlashCpp::kNoStructuralUnionActiveVariant)) {
 			return std::nullopt;
 		}
@@ -2811,6 +2787,125 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 	return true;
 }
 
+inline uint32_t canonicalLayoutSize(size_t value) {
+	if (value > std::numeric_limits<uint32_t>::max()) {
+		throw InternalError("canonical layout exceeds 32-bit object-size limit");
+	}
+	return static_cast<uint32_t>(value);
+}
+
+inline uint16_t canonicalLayoutCount(size_t value) {
+	if (value > std::numeric_limits<uint16_t>::max()) {
+		throw InternalError("canonical layout exceeds 16-bit member/base count limit");
+	}
+	return static_cast<uint16_t>(value);
+}
+
+inline uint8_t canonicalBitfieldWidth(size_t value) {
+	if (value > std::numeric_limits<uint8_t>::max()) {
+		throw InternalError("canonical layout exceeds 8-bit bitfield width limit");
+	}
+	return static_cast<uint8_t>(value);
+}
+
+inline CanonicalAccess canonicalAccess(AccessSpecifier access) {
+	switch (access) {
+	case AccessSpecifier::Public:
+		return CanonicalAccess::Public;
+	case AccessSpecifier::Protected:
+		return CanonicalAccess::Protected;
+	case AccessSpecifier::Private:
+		return CanonicalAccess::Private;
+	}
+	throw InternalError("canonical layout: unknown access specifier");
+}
+
+inline EntityId resolvePublishedBaseEntity(const BaseClassSpecifier& base) {
+	if (base.is_deferred) {
+		return {};
+	}
+	const TypeInfo* type_info = tryGetTypeInfo(base.type_index);
+	if (type_info == nullptr || !type_info->isStruct()) {
+		return {};
+	}
+	const StructTypeInfo* base_info = type_info->getStructInfo();
+	if (base_info == nullptr || base_info->declaration_node == nullptr || !base_info->declaration_node->has_entity_id()) {
+		return {};
+	}
+	return base_info->declaration_node->entity_id();
+}
+
+inline bool tryPublishCanonicalRecordFieldSchema(CanonicalTypeTable& table, TypeId owner, const StructTypeInfo& struct_info) {
+	if (!struct_info.layout_is_complete || struct_info.has_deferred_base_classes) return false;
+	const CanonicalTypeKind kind = table.node(owner).kind;
+	if (kind == CanonicalTypeKind::Record) {
+		if (!table.hasRecordLayout(table.recordEntity(owner))) return false;
+	} else if (kind == CanonicalTypeKind::TemplateSpecialization) {
+		if (!table.hasRecordSubobjectTypes(owner) || !table.hasClassBaseSchema(owner)) return false;
+	} else {
+		return false;
+	}
+	std::vector<CanonicalRecordMember> members;
+	members.reserve(struct_info.members.size());
+	for (size_t index = 0; index < struct_info.members.size(); ++index) {
+		const StructMember& member = struct_info.members[index];
+		if (!member.canonical_type_id) {
+			return false;
+		}
+		CanonicalRecordMemberFlags flags = CanonicalRecordMemberFlags::None;
+		if (member.anonymous_union_group_index.has_value() || struct_info.is_union) {
+			const auto group = member.anonymous_union_group_index;
+			const bool starts = index == 0 || (!struct_info.is_union && struct_info.members[index - 1].anonymous_union_group_index != group);
+			const bool ends = index + 1 == struct_info.members.size() ||
+				(!struct_info.is_union && struct_info.members[index + 1].anonymous_union_group_index != group);
+			flags = flags | CanonicalRecordMemberFlags::UnionVariant;
+			if (starts) flags = flags | CanonicalRecordMemberFlags::UnionGroupStart;
+			if (ends) flags = flags | CanonicalRecordMemberFlags::UnionGroupEnd;
+		}
+		uint8_t bit_width = 0;
+		uint8_t bit_offset = 0;
+		if (member.bitfield_width.has_value()) {
+			flags = flags | CanonicalRecordMemberFlags::Bitfield;
+			bit_width = canonicalBitfieldWidth(*member.bitfield_width);
+			bit_offset = canonicalBitfieldWidth(member.bitfield_bit_offset);
+		}
+		if (member.is_no_unique_address) {
+			flags = flags | CanonicalRecordMemberFlags::NoUniqueAddress;
+		}
+		members.push_back({
+			.type = member.canonical_type_id,
+			.offset_bytes = canonicalLayoutSize(member.offset),
+			.size_bytes = canonicalLayoutSize(member.size),
+			.bit_width = bit_width,
+			.bit_offset = bit_offset,
+			.access = canonicalAccess(member.access),
+			.flags = flags,
+		});
+	}
+	std::vector<CanonicalRecordBase> bases;
+	bases.reserve(struct_info.base_classes.size());
+	if (kind == CanonicalTypeKind::Record) {
+		for (const BaseClassSpecifier& base : struct_info.base_classes) {
+			const EntityId base_entity = resolvePublishedBaseEntity(base);
+			if (!base_entity) {
+				return false;
+			}
+			CanonicalRecordBaseFlags flags = CanonicalRecordBaseFlags::None;
+			if (base.is_virtual) {
+				flags = flags | CanonicalRecordBaseFlags::Virtual;
+			}
+			bases.push_back({
+				.entity = base_entity,
+				.offset_bytes = canonicalLayoutSize(base.offset),
+				.access = canonicalAccess(base.access),
+				.flags = flags,
+			});
+		}
+	}
+	table.publishRecordFieldSchema(owner, members, bases);
+	return true;
+}
+
 enum class CanonicalClassSchemaPublication : uint8_t { BasesOnly, WithObjectFacts };
 
 inline bool tryPublishCanonicalClassBaseSchema(CanonicalTypeTable& table, TypeId root_type, const StructTypeInfo& root_struct_info,
@@ -2931,6 +3026,11 @@ inline bool tryPublishCanonicalClassBaseSchema(CanonicalTypeTable& table, TypeId
 		}
 		if (!has_base_schema) {
 			table.publishClassBaseSchema(current.type, bases);
+		}
+
+		if (publication == CanonicalClassSchemaPublication::WithObjectFacts &&
+			table.node(current.type).kind == CanonicalTypeKind::TemplateSpecialization) {
+			(void)tryPublishCanonicalRecordFieldSchema(table, current.type, *current.struct_info);
 		}
 
 		const bool has_virtual_base_schema = table.hasVirtualBaseSchema(current.type);

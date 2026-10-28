@@ -875,9 +875,7 @@ public:
 
 	CanonicalEnumLayout enumLayout(EntityId entity) const;
 
-	void publishRecordFieldSchema(EntityId entity,
-		std::span<const CanonicalRecordMember> members,
-		std::span<const CanonicalRecordBase> bases);
+	void publishRecordFieldSchema(TypeId owner, std::span<const CanonicalRecordMember> members, std::span<const CanonicalRecordBase> bases);
 
 	void publishClassBaseSchema(TypeId class_type,
 		std::span<const CanonicalClassBase> bases);
@@ -911,11 +909,11 @@ public:
 
 	TypeId recordSubobjectMemberAt(TypeId type, size_t index) const;
 
-	bool hasRecordFieldSchema(EntityId entity) const;
+	bool hasRecordFieldSchema(TypeId owner) const;
 
-	CanonicalRecordMember recordMemberAt(EntityId entity, size_t index) const;
+	CanonicalRecordMember recordMemberAt(TypeId owner, size_t index) const;
 
-	CanonicalRecordBase recordBaseAt(EntityId entity, size_t index) const;
+	CanonicalRecordBase recordBaseAt(TypeId owner, size_t index) const;
 
 	// Constructor schema for a completed class, keyed by canonical TypeId (Record
 	// or TemplateSpecialization) so records and specializations share one lookup.
@@ -957,7 +955,7 @@ private:
 		TemplateVector<CanonicalTemplateArgKind, 4> parameter_kinds;
 	};
 	struct CanonicalRecordFieldSchemaHeader {
-		EntityId entity;
+		TypeId type;
 		uint32_t member_begin;
 		uint32_t base_begin;
 		uint16_t member_count;
@@ -1168,9 +1166,9 @@ private:
 
 	void validateRecordBaseUnlocked(const CanonicalRecordBase& base) const;
 
-	CanonicalRecordFieldSchemaHeader fieldSchemaHeaderUnlocked(EntityId entity) const {
-		const auto found = record_field_schema_ids_.find(entity.value);
-		if (!entity || found == record_field_schema_ids_.end()) {
+	CanonicalRecordFieldSchemaHeader fieldSchemaHeaderUnlocked(TypeId owner) const {
+		const auto found = record_field_schema_ids_.find(owner.value);
+		if (!owner || found == record_field_schema_ids_.end()) {
 			throw InternalError("canonical type: record has no field schema");
 		}
 		return record_field_schema_headers_[found->second];
