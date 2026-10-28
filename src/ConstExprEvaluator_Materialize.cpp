@@ -238,6 +238,11 @@ EvalResult Evaluator::materialize_aggregate_object_value(
 							false)) {
 						base_result = std::move(*ctor_result);
 					}
+					if ((!base_result.success() || !base_result.object_type_index.is_valid()) && !base_struct_info->hasUserDeclaredConstructor()) {
+						InitializerListNode base_init_list;
+						base_init_list.add_initializer(initializer);
+						base_result = materialize_aggregate_object_value(base_struct_info, base.type_index, base_init_list, context, outer_bindings);
+					}
 				}
 			}
 		} else {

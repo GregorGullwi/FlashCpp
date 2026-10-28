@@ -1365,6 +1365,76 @@ using Changed = Base<second>;
 	CHECK(table.classBaseAt(derived, 1).type == named);
 }
 
+TEST_CASE("Derived anonymous union structural values preserve base and active member") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+struct Root { int root; };
+struct Key : Root { union { int first; long long second; }; };
+constexpr Key make_second() {
+	Key value{7, {1}};
+	value.second = 2;
+	return value;
+}
+constexpr Key first{7, {1}};
+constexpr Key second = make_second();
+template<Key Value> struct Base { short member; };
+using Named = Base<first>;
+using Literal = Base<Key{7, {1}}>;
+using Changed = Base<second>;
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("structural_derived_union_activity.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto import_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const auto structural_value = [&](TypeId specialization) {
+		const TypeId value_id = table.templateArgumentValue(table.templateSpecializationArguments(specialization));
+		return table.node(value_id);
+	};
+	const auto active_union = [&](const CanonicalTypeNode& value) {
+		REQUIRE(value.kind == CanonicalTypeKind::StructuralValue);
+		TypeId link = unpackStructuralValueSubobjects(value.array_extent);
+		const CanonicalTypeNode base = table.node(table.templateArgumentValue(link));
+		REQUIRE(base.kind == CanonicalTypeKind::StructuralValue);
+		const TypeId base_link = unpackStructuralValueSubobjects(base.array_extent);
+		const CanonicalTypeNode root = table.node(table.templateArgumentValue(base_link));
+		CHECK(root.kind == CanonicalTypeKind::IntegralValue);
+		CHECK(root.array_extent == 7);
+		link = table.templateArgumentNext(link);
+		const CanonicalTypeNode union_value = table.node(table.templateArgumentValue(link));
+		REQUIRE(union_value.kind == CanonicalTypeKind::StructuralUnionValue);
+		return union_value;
+	};
+	const TypeId named = import_type("Named");
+	CHECK(named == import_type("Literal"));
+	CHECK(named != import_type("Changed"));
+	const CanonicalTypeNode first_value = structural_value(named);
+	const CanonicalTypeNode first_union = active_union(first_value);
+	CHECK(unpackStructuralUnionActiveVariant(first_union.array_extent) == 0);
+	const TypeId first_payload = unpackStructuralValueSubobjects(first_union.array_extent);
+	const CanonicalTypeNode first_payload_node = table.node(table.templateArgumentValue(first_payload));
+	CHECK(first_payload_node.kind == CanonicalTypeKind::IntegralValue);
+	CHECK(first_payload_node.array_extent == 1);
+	const CanonicalTypeNode second_value = structural_value(import_type("Changed"));
+	const CanonicalTypeNode second_union = active_union(second_value);
+	CHECK(unpackStructuralUnionActiveVariant(second_union.array_extent) == 1);
+	const TypeId second_payload = unpackStructuralValueSubobjects(second_union.array_extent);
+	const CanonicalTypeNode second_payload_node = table.node(table.templateArgumentValue(second_payload));
+	CHECK(second_payload_node.kind == CanonicalTypeKind::IntegralValue);
+	CHECK(second_payload_node.array_extent == 2);
+}
+
 TEST_CASE("Canonical integral arguments use converted value and canonical type identity") {
 	static_assert(sizeof(CanonicalTypeNode) == 16);
 	static_assert(sizeof(CanonicalTemplateArgument) == 20);
