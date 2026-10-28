@@ -13,26 +13,21 @@ constexpr int kFunctionPointerSizeBits = 64; // x64 target: always 8 bytes
 // [dcl.ref]/5: no references to references, no arrays of references, and no
 // pointers to references. The ordered spine records those shapes; reject them
 // here instead of importing a type the language forbids.
-bool orderedReferenceComponentIsIllFormed(
-	std::span<const DeclaratorComponent> components) {
+std::optional<DeclaratorComponentKind> orderedInvalidReferenceWrapper(std::span<const DeclaratorComponent> components) {
 	for (size_t index = 0; index + 1 < components.size(); ++index) {
 		const DeclaratorComponentKind outer = components[index].kind;
 		const DeclaratorComponentKind inner = components[index + 1].kind;
-		const bool inner_is_reference =
-			inner == DeclaratorComponentKind::LValueReference ||
-			inner == DeclaratorComponentKind::RValueReference;
+		const bool inner_is_reference = inner == DeclaratorComponentKind::LValueReference || inner == DeclaratorComponentKind::RValueReference;
 		if (!inner_is_reference) {
 			continue;
 		}
-		if (outer == DeclaratorComponentKind::Pointer ||
-			outer == DeclaratorComponentKind::Array ||
-			outer == DeclaratorComponentKind::UnknownBoundArray ||
-			outer == DeclaratorComponentKind::LValueReference ||
+		if (outer == DeclaratorComponentKind::Pointer || outer == DeclaratorComponentKind::Array ||
+			outer == DeclaratorComponentKind::UnknownBoundArray || outer == DeclaratorComponentKind::LValueReference ||
 			outer == DeclaratorComponentKind::RValueReference) {
-			return true;
+			return outer;
 		}
 	}
-	return false;
+	return std::nullopt;
 }
 
 // [dcl.fct]/1 forbids an array of functions and a function returning an array.
@@ -1680,31 +1675,22 @@ ParseResult Parser::parse_declarator(
 							failed = true;
 							break;
 						}
-						if (orderedReferenceComponentIsIllFormed(completed)) {
-							failed = true;
-							break;
-						}
+						const auto invalid_reference_wrapper = orderedInvalidReferenceWrapper(completed);
 						// [dcl.ref]/5: no pointer or array of references. A reference
 						// base type is only well-formed as a function return or a
 						// reference declarator, so a pointer/array as the innermost
 						// wrapper over it is ill-formed.
-						if (base_type.is_reference() && !completed.empty()) {
-							const DeclaratorComponentKind innermost = completed.back().kind;
-							if (innermost == DeclaratorComponentKind::Pointer ||
-								innermost == DeclaratorComponentKind::Array ||
-								innermost == DeclaratorComponentKind::UnknownBoundArray) {
-								const Token error_token = first_pointer_token.value().empty()
-									? base_type.token()
-									: first_pointer_token;
-								const std::string message = "Cannot form a pointer to reference type";
-								throw makeStructuredCompileError(
-									context_.diagnostics(),
-									DiagnosticId::PointerToReferenceType,
-									DiagnosticSeverity::Error,
-									lexer_.getSourceLocation(error_token),
-									message,
-									{});
-							}
+						const bool invalid_reference_base = base_type.is_reference() && !completed.empty() &&
+							(completed.back().kind == DeclaratorComponentKind::Pointer || completed.back().kind == DeclaratorComponentKind::Array ||
+							completed.back().kind == DeclaratorComponentKind::UnknownBoundArray);
+						if (invalid_reference_wrapper == DeclaratorComponentKind::Pointer || invalid_reference_base) {
+							const Token error_token = first_pointer_token.value().empty() ? base_type.token() : first_pointer_token;
+							throw makeStructuredCompileError(context_.diagnostics(), DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error,
+								lexer_.getSourceLocation(error_token), "Cannot form a pointer to reference type", {});
+						}
+						if (invalid_reference_wrapper.has_value()) {
+							failed = true;
+							break;
 						}
 						// [dcl.fct]: the denoted type may be a function. A pointer or
 						// reference to it is well-formed. An array of that function,
