@@ -102,6 +102,9 @@ enum class DiagnosticId : uint32_t {
 	ArrayBoundForMemberMustBePositive = 1033,
 	ExplicitSpecifierNotConstant = 1034,
 	FunctionTypeDeclarator = 1035,
+	InvalidBitfieldDeclaredType = 1036,
+	BitfieldWidthExceedsType = 1037,
+	NamedZeroWidthBitfield = 1038,
 
 	// Notes attached to declarator-family diagnostics (1051..1079).
 	NoteToMatchOpeningBracket = 1051,
@@ -308,6 +311,12 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "ExplicitSpecifierNotConstant";
 	case DiagnosticId::FunctionTypeDeclarator:
 		return "FunctionTypeDeclarator";
+	case DiagnosticId::InvalidBitfieldDeclaredType:
+		return "InvalidBitfieldDeclaredType";
+	case DiagnosticId::BitfieldWidthExceedsType:
+		return "BitfieldWidthExceedsType";
+	case DiagnosticId::NamedZeroWidthBitfield:
+		return "NamedZeroWidthBitfield";
 	case DiagnosticId::OutOfLineDefinitionMismatch:
 		return "OutOfLineDefinitionMismatch";
 	case DiagnosticId::OutOfLineDefinitionMalformedTarget:

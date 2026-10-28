@@ -1,0 +1,7 @@
+struct Sample {
+	int value : 0;
+};
+
+int main() {
+	return 0;
+}

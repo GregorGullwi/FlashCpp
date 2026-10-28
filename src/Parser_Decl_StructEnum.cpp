@@ -724,6 +724,56 @@ ParseResult Parser::parse_struct_declaration() {
 	return parse_struct_declaration_with_specs(false, false);
 }
 
+ParseResult Parser::validate_bitfield_declaration(const TypeSpecifierNode& type_spec, std::string_view member_name,
+	std::optional<size_t> bitfield_width, const Token& token) {
+	if (type_spec.has_template_parameter_identity()) {
+		return ParseResult::success();
+	}
+	TypeCategory category = type_spec.category();
+	TypeIndex type_index = type_spec.type_index();
+	if (category == TypeCategory::TypeAlias || category == TypeCategory::UserDefined) {
+		const ResolvedAliasTypeInfo resolved = resolveAliasTypeInfo(type_index);
+		if (!resolved.type_index.is_valid()) {
+			// Dependent or not-yet-materialized nominal type: validate after
+			// substitution instead of rejecting the template pattern.
+			return ParseResult::success();
+		}
+		category = resolved.typeEnum();
+		type_index = resolved.type_index;
+	}
+	if (category == TypeCategory::Template || category == TypeCategory::Auto ||
+		category == TypeCategory::DeclTypeAuto || category == TypeCategory::Invalid) {
+		return ParseResult::success();
+	}
+	int type_bits = 0;
+	if (category == TypeCategory::Bool) {
+		type_bits = 1;
+	} else if (isIntegralType(category)) {
+		type_bits = get_type_size_bits(category);
+	} else if (category == TypeCategory::Enum) {
+		const TypeInfo* type_info = tryGetTypeInfo(type_index);
+		const SizeInBits size = type_info != nullptr ? type_info->sizeInBits() : SizeInBits{};
+		if (!size.is_set()) {
+			return ParseResult::success();
+		}
+		type_bits = size.value;
+	} else {
+		return errorf(DiagnosticId::InvalidBitfieldDeclaredType, token, "Bit-field '{}' has a non-integral, non-enumeration declared type", member_name);
+	}
+	if (!bitfield_width.has_value()) {
+		return ParseResult::success();
+	}
+	if (!member_name.empty() && *bitfield_width == 0) {
+		return errorf(DiagnosticId::NamedZeroWidthBitfield, token,
+			"Named bit-field '{}' cannot have zero width", member_name);
+	}
+	if (type_bits > 0 && *bitfield_width > static_cast<size_t>(type_bits)) {
+		return errorf(DiagnosticId::BitfieldWidthExceedsType, token,
+			"Bit-field '{}' width {} exceeds the {} bits of its declared type", member_name, *bitfield_width, type_bits);
+	}
+	return ParseResult::success();
+}
+
 ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, bool pre_is_inline) {
 #if WITH_PARSER_RUNTIME_STATS
 	FLASHCPP_PARSER_RUNTIME_PHASE(StructDeclaration);
@@ -2136,6 +2186,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 								}
 								bitfield_width = static_cast<size_t>(eval_result.as_int());
 							}
+							ParseResult bitfield_result = validate_bitfield_declaration(anon_member_type_spec,
+								anon_member_name_token.value(), bitfield_width, anon_member_name_token);
+							if (bitfield_result.is_error()) {
+								return bitfield_result;
+							}
 						}
 
 						// Calculate member size and alignment
@@ -3416,6 +3471,13 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					}
 				}
 			}
+			if (bitfield_width.has_value() || bitfield_width_expr.has_value()) {
+				ParseResult bitfield_result = validate_bitfield_declaration(
+					type_spec, decl_node.identifier_token().value(), bitfield_width, decl_node.identifier_token());
+				if (bitfield_result.is_error()) {
+					return bitfield_result;
+				}
+			}
 
 			// Check for direct brace initialization: C c1{ 1 };
 			if (peek() == "{"_tok) {
@@ -3570,6 +3632,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						} else {
 							additional_bitfield_width = static_cast<size_t>(eval_result.as_int());
 						}
+					}
+					ParseResult bitfield_result = validate_bitfield_declaration(type_spec, identifier_token.value(), additional_bitfield_width, identifier_token);
+					if (bitfield_result.is_error()) {
+						return bitfield_result;
 					}
 				}
 
