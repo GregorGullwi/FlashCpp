@@ -409,9 +409,11 @@ Continue boundary 3A in this order.
    **Function-reference conversion tails: complete.** A conversion operator returning
    `T (&)()` now lowers to the function address, and a following function-to-pointer
    target conversion preserves that address instead of dereferencing the function
-   object. `tests/test_conversion_operator_function_reference_tail_ret0.cpp` covers
-   the evaluated call and function-pointer comparison. This does not close a 3A exit
-   criterion; the rollup remains 10/79.
+   object.    `tests/test_conversion_operator_function_reference_tail_ret0.cpp` covers
+   the evaluated call and function-pointer comparison. Canonical function-pointer
+   pairs now reject adding `noexcept`, with diagnostic 1515 and the negative
+   `test_function_pointer_noexcept_direction_e1515.cpp` regression. Removing
+   `noexcept` remains accepted. No 3A exit criterion closes; the rollup remains 10/79.
 
    **Template-base implicit copy/move construction: complete.** Implicit derived
    copy/move constructors now synthesize unregistered base copy/move constructors when

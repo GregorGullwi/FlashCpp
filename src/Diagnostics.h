@@ -186,6 +186,7 @@ enum class DiagnosticId : uint32_t {
 	ArrayToNonPointerMemberInitializer = 1512,
 	EmptyUnknownBoundArrayInitializer = 1513,
 	AggregateInitializerForEmptyElementRequiresBraces = 1514,
+	InvalidFunctionPointerNoexceptConversion = 1515,
 
 	// Semantic validity family (1601..1699).
 	RangeForBeginEndRequired = 1601,
@@ -470,6 +471,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "EmptyUnknownBoundArrayInitializer";
 	case DiagnosticId::AggregateInitializerForEmptyElementRequiresBraces:
 		return "AggregateInitializerForEmptyElementRequiresBraces";
+	case DiagnosticId::InvalidFunctionPointerNoexceptConversion:
+		return "InvalidFunctionPointerNoexceptConversion";
 	case DiagnosticId::AmbiguousConstructorCall:
 		return "AmbiguousConstructorCall";
 	case DiagnosticId::DllImportConstexprConflict:
