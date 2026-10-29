@@ -1259,6 +1259,158 @@ TEST_CASE("Canonical member field substitution rejects incomplete and unresolved
 	CHECK(substituteCanonicalStructMemberType(table, deep, environment, arguments) == expected);
 }
 
+TEST_CASE("Partial specialization member pointer patterns retain published parameter environments") {
+	MESSAGE("sizeof(StructDeclarationNode)=", sizeof(StructDeclarationNode), "; sizeof(TemplateDeclTable)=", sizeof(TemplateDeclTable));
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream fixture("tests/test_canonical_partial_member_pointer_environment_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	const std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	CompileContext compile_context;
+	compile_context.setInputFile("partial_member_pointer_environment.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	const auto primary_node = gTemplateRegistry.lookupTemplate("Key");
+	REQUIRE(primary_node.has_value());
+	const TemplateDeclId primary = primary_node->as<TemplateClassDeclarationNode>().template_decl_id();
+	TemplateDeclId forward_environment;
+	for (const ASTNode& node : parser.get_nodes()) {
+		if (!node.is<TemplateClassDeclarationNode>()) continue;
+		const TemplateClassDeclarationNode& declaration = node.as<TemplateClassDeclarationNode>();
+		const TemplateDeclId environment = declaration.class_decl_node().partial_specialization_environment();
+		if (!environment) continue;
+		forward_environment = environment;
+		TemplateTypeArg wrong_category;
+		wrong_category.type_index = declaration.template_parameters()[0].registered_type_index().withCategory(TypeCategory::Int);
+		wrong_category.is_dependent = true;
+		const TemplateTypeArg arguments[] = {wrong_category};
+		CHECK_FALSE(tryImportCanonicalPartialClassPattern(context.canonicalTypes(), primary, declaration.template_parameters(), arguments));
+	}
+	REQUIRE(forward_environment);
+	std::vector<TemplateDeclId> environments;
+	CanonicalTypeTable& table = context.canonicalTypes();
+	size_t patterns = 0;
+	for (const ASTNode& node : parser.get_nodes()) {
+		if (!node.is<StructDeclarationNode>()) continue;
+		const StructDeclarationNode& pattern = node.as<StructDeclarationNode>();
+		if (!gTemplateRegistry.isClassTemplateSpecializationPattern(&pattern)) continue;
+		++patterns;
+		const TemplateDeclId environment = pattern.partial_specialization_environment();
+		REQUIRE(environment);
+		CHECK(environment != primary);
+		CHECK_FALSE(pattern.has_template_decl_id());
+		environments.push_back(environment);
+		const TypeSpecifierNode& field = pattern.members()[0].declaration.as<DeclarationNode>().type_specifier_node();
+		CHECK(field.has_template_parameter_decl());
+		CHECK(field.template_decl_id() == environment);
+		for (const StructMemberDecl& member : pattern.members()) {
+			const TypeId imported = importCanonicalStructMemberType(table, member.declaration.as<DeclarationNode>().type_specifier_node());
+			REQUIRE(imported);
+			CHECK(table.hasDependentTypeComponents(imported));
+			CHECK(table.dependsOnlyOnTemplateParameters(imported, environment));
+			const TypeId arguments[] = {table.builtin(CanonicalBuiltinKind::Short)};
+			const TypeId concrete = table.substitute(imported, environment, arguments);
+			CHECK_FALSE(table.hasDependentTypeComponents(concrete));
+			CHECK(table.substitute(imported, primary, arguments) == imported);
+		}
+	}
+	CHECK(patterns == 2);
+	REQUIRE(environments.size() == 2);
+	CHECK(environments[0] == forward_environment);
+	CHECK(environments[0] != environments[1]);
+}
+
+TEST_CASE("Partial parameter environments merge canonical patterns and roll back with declarations") {
+	FrontendContext context;
+	TemplateDeclTable& declarations = context.templateDecls();
+	CanonicalTypeTable& types = context.canonicalTypes();
+	const OwnerId owner{1};
+	const TemplateDeclId primary = declarations.publishPrimaryClassTemplate(owner, StringTable::getOrInternStringHandle("Key"));
+	const TypeId parameter = types.templateParameter(primary, 0);
+	const TypeId pointer_arguments[] = {types.pointer(parameter)};
+	const TypeId reference_arguments[] = {types.reference(parameter, ReferenceQualifier::LValueReference)};
+	const TypeId pointer = types.templateSpecialization(primary, pointer_arguments);
+	const TypeId reference = types.templateSpecialization(primary, reference_arguments);
+	const TemplateDeclId environment = declarations.publishClassPartialEnvironment(primary, pointer);
+	CHECK(environment != primary);
+	CHECK(declarations.publishClassPartialEnvironment(primary, pointer) == environment);
+	const size_t committed_count = declarations.size();
+	{
+		TemplateDeclTableTransaction transaction(declarations);
+		const TemplateDeclId temporary = declarations.publishClassPartialEnvironment(primary, reference);
+		CHECK(temporary != environment);
+		CHECK(declarations.size() == committed_count + 1);
+	}
+	CHECK(declarations.size() == committed_count);
+	CHECK(declarations.publishClassPartialEnvironment(primary, pointer) == environment);
+	CHECK_THROWS_AS(declarations.publishClassPartialEnvironment(TemplateDeclId{}, pointer), InternalError);
+	CHECK_THROWS_AS(declarations.publishClassPartialEnvironment(primary, TypeId{}), InternalError);
+	CHECK_THROWS_AS(declarations.publishClassPartialEnvironment(TemplateDeclId{99}, pointer), InternalError);
+}
+
+TEST_CASE("Partial parameter environment publication defers unsupported declaration families") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	CompileContext compile_context;
+	compile_context.setInputFile("partial_environment_deferral.cpp");
+	Lexer lexer(R"(
+template<class T, int N> struct Mixed {};
+template<class T, int N> struct Mixed<T*, N> { T member; };
+template<class... T> struct Pack {};
+template<class T, class... Rest> struct Pack<T*, Rest...> { T member; };
+template<class T> concept Any = true;
+template<class T> struct Constrained {};
+template<Any T> struct Constrained<T*> { T member; };
+)");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	size_t patterns = 0;
+	for (const ASTNode& node : parser.get_nodes()) {
+		if (!node.is<StructDeclarationNode>()) continue;
+		const StructDeclarationNode& pattern = node.as<StructDeclarationNode>();
+		if (!gTemplateRegistry.isClassTemplateSpecializationPattern(&pattern)) continue;
+		CHECK_FALSE(pattern.partial_specialization_environment());
+		++patterns;
+	}
+	CHECK(patterns == 3);
+}
+
+TEST_CASE("Partial pattern normalization keeps deep declarators off the native stack") {
+	clearLegacyTypeTablesForTesting();
+	FrontendContext context;
+	initialize_native_types();
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const StringHandle name = StringTable::getOrInternStringHandle("T");
+	TypeInfo& parameter_info = add_template_param_type(name, TypeCategory::UserDefined, 0);
+	TemplateParameterNode parameters[] = {TemplateParameterNode(name, Token{})};
+	parameters[0].set_registered_type_index(parameter_info.type_index_);
+	TemplateTypeArg arguments[1];
+	arguments[0].type_index = parameter_info.type_index_;
+	arguments[0].is_dependent = true;
+	arguments[0].dependent_name = name;
+	arguments[0].ordered_declarator.assign(4096, DeclaratorComponent::pointer(CVQualifier::Const));
+	const TemplateDeclId primary = context.templateDecls().publishPrimaryClassTemplate(OwnerId{1}, StringTable::getOrInternStringHandle("Deep"));
+	const std::optional<TypeId> pattern = tryImportCanonicalPartialClassPattern(table, primary, parameters, arguments);
+	REQUIRE(pattern.has_value());
+	TypeId current = table.templateArgumentType(table.templateSpecializationArguments(*pattern));
+	for (size_t depth = 0; depth < 4096; ++depth) {
+		const CanonicalTypeNode qualified = table.node(current);
+		REQUIRE(qualified.kind == CanonicalTypeKind::Qualified);
+		CHECK(qualified.qualifiers == CVQualifier::Const);
+		const CanonicalTypeNode pointer = table.node(qualified.child);
+		REQUIRE(pointer.kind == CanonicalTypeKind::Pointer);
+		current = pointer.child;
+	}
+	CHECK(current == table.templateParameter(primary, 0));
+}
+
 TEST_CASE("Inherited member object pointer structural fields keep declaring class identity") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

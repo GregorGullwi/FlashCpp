@@ -16,8 +16,8 @@
 class ASTNode;
 class TemplateDeclTableTransaction;
 
-// Context-local publication of primary class-, function-, and alias-template
-// identity for boundary 3A. TemplateDeclId is keyed by OwnerId + spelling +
+// Context-local publication of template declaration identity for boundary 3A.
+// Primary TemplateDeclId is keyed by OwnerId + spelling +
 // primary kind (+ signature index for function primaries) for redeclaration
 // merge; the spelling is a lookup key only and does not participate in
 // canonical TypeId equality (that uses TemplateDeclId + parameter index).
@@ -27,44 +27,59 @@ class TemplateDeclTableTransaction;
 // published class template). Function primaries use a distinct kind so they
 // cannot share slots with class primaries. Distinct free function-template
 // overloads use distinct signature indices; matching shapes reuse the same
-// TemplateDeclId.
+// TemplateDeclId. Partial parameter environments reuse these slots with a
+// disjoint kind, primary-owned OwnerId, empty spelling, and canonical pattern TypeId.
 class TemplateDeclTable {
 public:
-	enum class PrimaryKind : uint8_t {
+	enum class DeclarationKind : uint8_t {
 		Class = 0,
 		Function = 1,
 		Alias = 2,
 		Variable = 3,
+		ClassPartialEnvironment = 4,
 	};
 
 	TemplateDeclId publishPrimaryClassTemplate(OwnerId owner, StringHandle name) {
-		return publishPrimary(owner, name, PrimaryKind::Class, 0u);
+		return publishDeclaration(owner, name, DeclarationKind::Class, 0u);
 	}
 
 	std::optional<TemplateDeclId> findPrimaryClassTemplate(OwnerId owner, StringHandle name) const {
-		return findPrimary(owner, name, PrimaryKind::Class, 0u);
+		return findPrimary(owner, name, DeclarationKind::Class, 0u);
+	}
+
+	// A partial owns its parameter environment, while instantiated class identity
+	// still names the primary. The canonical pattern alpha-normalizes partial
+	// parameters to primary/index placeholders; spelling is absent from this key.
+	TemplateDeclId publishClassPartialEnvironment(TemplateDeclId primary, TypeId normalized_pattern) {
+		if (!primary || !normalized_pattern) throw InternalError("template decl: invalid partial environment key");
+		if (!primary_class_patterns_.contains(primary.value)) {
+			bool class_primary = false;
+			for (const auto& [key, id] : ids_by_key_) class_primary |= id == primary && key.kind == DeclarationKind::Class;
+			if (!class_primary) throw InternalError("template decl: partial environment requires a published class primary");
+		}
+		return publishDeclaration(ownerIdFromTemplateDecl(primary), StringHandle{}, DeclarationKind::ClassPartialEnvironment, normalized_pattern.value);
 	}
 
 	// Member alias-template primaries publish under the same OwnerId
 	// derivation as member class templates; there are no alias overloads, so
 	// the signature index is always 0.
 	TemplateDeclId publishPrimaryAliasTemplate(OwnerId owner, StringHandle name) {
-		return publishPrimary(owner, name, PrimaryKind::Alias, 0u);
+		return publishDeclaration(owner, name, DeclarationKind::Alias, 0u);
 	}
 
 	std::optional<TemplateDeclId> findPrimaryAliasTemplate(OwnerId owner, StringHandle name) const {
-		return findPrimary(owner, name, PrimaryKind::Alias, 0u);
+		return findPrimary(owner, name, DeclarationKind::Alias, 0u);
 	}
 
 	// Member variable-template primaries publish under the same OwnerId
 	// derivation as member class templates; there are no variable overloads,
 	// so the signature index is always 0.
 	TemplateDeclId publishPrimaryVariableTemplate(OwnerId owner, StringHandle name) {
-		return publishPrimary(owner, name, PrimaryKind::Variable, 0u);
+		return publishDeclaration(owner, name, DeclarationKind::Variable, 0u);
 	}
 
 	std::optional<TemplateDeclId> findPrimaryVariableTemplate(OwnerId owner, StringHandle name) const {
-		return findPrimary(owner, name, PrimaryKind::Variable, 0u);
+		return findPrimary(owner, name, DeclarationKind::Variable, 0u);
 	}
 
 	// signature_index discriminates free function-template overloads under the
@@ -73,14 +88,14 @@ public:
 		OwnerId owner,
 		StringHandle name,
 		uint32_t signature_index) {
-		return publishPrimary(owner, name, PrimaryKind::Function, signature_index);
+		return publishDeclaration(owner, name, DeclarationKind::Function, signature_index);
 	}
 
 	std::optional<TemplateDeclId> findPrimaryFunctionTemplate(
 		OwnerId owner,
 		StringHandle name,
 		uint32_t signature_index) const {
-		return findPrimary(owner, name, PrimaryKind::Function, signature_index);
+		return findPrimary(owner, name, DeclarationKind::Function, signature_index);
 	}
 
 	// Next unused signature index for OwnerId + name function primaries.
@@ -93,7 +108,7 @@ public:
 			(void)id;
 			if (key.owner_value == owner.value &&
 				key.name == name &&
-				key.kind == PrimaryKind::Function) {
+				key.kind == DeclarationKind::Function) {
 				++count;
 			}
 		}
@@ -173,7 +188,7 @@ public:
 	bool hasConflictingMemberOwnedPrimaryClassTemplate(
 		StringHandle name,
 		TemplateDeclId primary) const {
-		return hasConflictingMemberOwnedPrimary(PrimaryKind::Class, name, primary);
+		return hasConflictingMemberOwnedPrimary(DeclarationKind::Class, name, primary);
 	}
 
 	// Same test for member variable-template primaries feeding the
@@ -183,7 +198,7 @@ public:
 	bool hasConflictingMemberOwnedPrimaryVariableTemplate(
 		StringHandle name,
 		TemplateDeclId primary) const {
-		return hasConflictingMemberOwnedPrimary(PrimaryKind::Variable, name, primary);
+		return hasConflictingMemberOwnedPrimary(DeclarationKind::Variable, name, primary);
 	}
 
 private:
@@ -195,10 +210,7 @@ private:
 		VariablePattern,
 	};
 
-	bool hasConflictingMemberOwnedPrimary(
-		PrimaryKind kind,
-		StringHandle name,
-		TemplateDeclId primary) const {
+	bool hasConflictingMemberOwnedPrimary(DeclarationKind kind, StringHandle name, TemplateDeclId primary) const {
 		for (const auto& [key, candidate] : ids_by_key_) {
 			const OwnerId owner{key.owner_value};
 			if (key.name == name &&
@@ -211,10 +223,7 @@ private:
 		return false;
 	}
 
-	bool hasConflictingClassOwnedPrimary(
-		PrimaryKind kind,
-		StringHandle name,
-		TemplateDeclId primary) const {
+	bool hasConflictingClassOwnedPrimary(DeclarationKind kind, StringHandle name, TemplateDeclId primary) const {
 		for (const auto& [key, candidate] : ids_by_key_) {
 			if (key.name == name &&
 				key.kind == kind &&
@@ -229,7 +238,7 @@ private:
 	struct Key {
 		uint32_t owner_value = 0;
 		StringHandle name;
-		PrimaryKind kind = PrimaryKind::Class;
+		DeclarationKind kind = DeclarationKind::Class;
 		uint32_t signature_index = 0;
 
 		friend bool operator==(Key lhs, Key rhs) {
@@ -256,18 +265,14 @@ private:
 		std::optional<ASTNode> previous_pattern;
 	};
 
-	TemplateDeclId publishPrimary(
-		OwnerId owner,
-		StringHandle name,
-		PrimaryKind kind,
-		uint32_t signature_index) {
+	TemplateDeclId publishDeclaration(OwnerId owner, StringHandle name, DeclarationKind kind, uint32_t signature_index) {
 		if (!owner) {
 			throw InternalError("template decl: invalid OwnerId");
 		}
-		if (!name.isValid()) {
+		if (!name.isValid() && kind != DeclarationKind::ClassPartialEnvironment) {
 			throw InternalError("template decl: invalid template name");
 		}
-		if (kind != PrimaryKind::Function && signature_index != 0u) {
+		if (kind != DeclarationKind::Function && kind != DeclarationKind::ClassPartialEnvironment && signature_index != 0u) {
 			throw InternalError("template decl: non-function primary signature index must be 0");
 		}
 		const Key key{owner.value, name, kind, signature_index};
@@ -369,11 +374,7 @@ private:
 		}
 	}
 
-	std::optional<TemplateDeclId> findPrimary(
-		OwnerId owner,
-		StringHandle name,
-		PrimaryKind kind,
-		uint32_t signature_index) const {
+	std::optional<TemplateDeclId> findPrimary(OwnerId owner, StringHandle name, DeclarationKind kind, uint32_t signature_index) const {
 		if (!owner || !name.isValid()) {
 			return std::nullopt;
 		}

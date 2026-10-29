@@ -125,8 +125,12 @@ facts still fail closed. The partial-specialization parser gap above and nested
 anonymous-union hierarchy remain separate.
 
 Primary-template member-pointer fields substitute their canonical graphs before
-registration. Partial-specialization and nested-class field producers still need
-their own published substitution environments. Member-pointer graphs containing
+registration. Unconstrained namespace/global partials with directly represented
+type patterns now publish separate parameter environments, but their field
+producer still needs to consume those IDs with the deduced partial arguments.
+Nested-class producers and partials involving constraints, packs, non-type
+parameters, or complex dependent patterns need further publication work.
+Member-pointer graphs containing
 opaque non-type specialization arguments fail closed: the canonical substitutor
 preserves those ExprIds and cannot replace a pattern argument such as `N` with
 its concrete value. Publish substitutable parameter/value identity before

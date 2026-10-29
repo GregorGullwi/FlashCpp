@@ -217,6 +217,56 @@ inline std::optional<TypeId> tryImportCanonicalTemplateTypeArgument(CanonicalTyp
 	return tryImportSupportedCanonical(table, syntax);
 }
 
+// Normalize directly represented type-pattern parameters by declaration slot,
+// before the partial owns a published environment. The primary is only the
+// alpha-normalization anchor; it does not bind the partial's body parameters.
+inline std::optional<TypeId> tryImportCanonicalPartialClassPattern(CanonicalTypeTable& table, TemplateDeclId primary,
+	std::span<const TemplateParameterNode> parameters, std::span<const TemplateTypeArg> arguments) {
+	if (!primary || parameters.empty()) return std::nullopt;
+	for (const TemplateParameterNode& parameter : parameters) {
+		if (parameter.kind() != TemplateParameterKind::Type || parameter.is_variadic() || parameter.has_concept_constraint()) return std::nullopt;
+	}
+	CanonicalTypeTransaction transaction(table);
+	std::vector<TypeId> pattern_arguments;
+	pattern_arguments.reserve(arguments.size());
+	for (const TemplateTypeArg& argument : arguments) {
+		if (!argument.isTypeArgument() || argument.is_pack || argument.member_pointer_kind != MemberPointerKind::None ||
+			argument.function_signature.has_value()) return std::nullopt;
+		TypeSpecifierNode syntax = typeSpecifierFromTemplateTypeArgProjection(argument);
+		bool parameter_bound = false;
+		for (size_t index = 0; index < parameters.size(); ++index) {
+			const TypeIndex parameter_type = parameters[index].registered_type_index();
+			if (parameter_type.is_valid() && parameter_type == argument.type_index && parameter_type.category() == argument.type_index.category()) {
+				syntax.set_template_parameter_decl(primary, static_cast<uint32_t>(index));
+				parameter_bound = true;
+				break;
+			}
+		}
+		if (!parameter_bound) {
+			if (argument.is_dependent) return std::nullopt;
+			tryBindPublishedTypeEntity(syntax);
+		}
+		const std::optional<TypeId> imported = tryImportSupportedCanonical(table, syntax);
+		if (!imported.has_value() || !table.dependsOnlyOnTemplateParameters(*imported, primary)) return std::nullopt;
+		TypeId base = *imported;
+		while (true) {
+			const CanonicalTypeNode node = table.node(base);
+			if (node.kind == CanonicalTypeKind::Qualified || node.kind == CanonicalTypeKind::Pointer || node.kind == CanonicalTypeKind::LValueReference ||
+				node.kind == CanonicalTypeKind::RValueReference || node.kind == CanonicalTypeKind::Array) {
+				base = node.child;
+				continue;
+			}
+			if (node.kind != CanonicalTypeKind::Builtin && node.kind != CanonicalTypeKind::Record && node.kind != CanonicalTypeKind::Enum &&
+				node.kind != CanonicalTypeKind::TemplateParameter) return std::nullopt;
+			break;
+		}
+		pattern_arguments.push_back(*imported);
+	}
+	const TypeId pattern = table.templateSpecialization(primary, pattern_arguments);
+	transaction.commit();
+	return pattern;
+}
+
 // A concrete field must not retain dependent declarator components from its pattern.
 // Unsupported argument environments leave the field unpublished rather than inventing identity.
 inline TypeId substituteCanonicalStructMemberType(CanonicalTypeTable& table, TypeId pattern, TemplateDeclId environment,
