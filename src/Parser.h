@@ -2336,6 +2336,7 @@ private:
 		const TypeSpecifierNode& target_return_type,
 		TypeId target_return_type_id,
 		bool& return_type_deduced);
+	const FunctionDeclarationNode* resolveFreeFunctionAddressForTarget(ASTNode& argument, const TypeSpecifierNode& target_type);
 	struct TemplateDeductionCandidate {
 		TemplateArgumentVector template_args;
 		CallArgDeductionInfo deduction_info;

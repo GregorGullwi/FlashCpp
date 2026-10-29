@@ -415,6 +415,14 @@ Continue boundary 3A in this order.
    `test_function_pointer_noexcept_direction_e1515.cpp` regression. Removing
    `noexcept` remains accepted. No 3A exit criterion closes; the rollup remains 10/79.
 
+   **Target-typed free-function addresses: complete.** Declaration initialization now
+   resolves an overloaded free-function name against the target function-pointer type
+   and stores the selected declaration on the address expression for lowering. This
+   covers unqualified and namespace-qualified overload sets and preserves the selected
+   function EntityId through codegen. `tests/test_overloaded_free_function_address_target_ret0.cpp`
+   covers long, short, and qualified selections. No 3A exit criterion closes; the
+   rollup remains 10/79.
+
    **Template-base implicit copy/move construction: complete.** Implicit derived
    copy/move constructors now synthesize unregistered base copy/move constructors when
    a class-template base has no constructor AST, queue their definitions for deferred
