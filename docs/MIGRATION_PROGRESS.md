@@ -415,6 +415,16 @@ Continue boundary 3A in this order.
    `tests/test_template_base_implicit_copy_move_ret0.cpp` covers direct, move, and
    virtual template-base construction.
 
+   **Implicit base assignment: complete.** Implicit derived copy and move assignment
+   now assign base subobjects before direct members, resolving each base address
+   without applying derived-to-base access checks. Existing implicit base assignment
+   definitions are queued for codegen, and class-template bases without an assignment
+   operator receive unregistered copy/move assignment nodes whose definitions share the
+   same deferred queue. Implicit derived assignments stay deferred when a base
+   assignment is bodyless, preserving the unreferenced-bodyless-member contract.
+   `tests/test_implicit_assignment_base_ret0.cpp` covers non-template, template,
+   virtual, user-defined, copy, and move base assignment.
+
    **Active-union structural identity: complete for declared groups.**
    `EvalResult` now carries the selected variant explicitly on the member
    binding, and `StructuralClassValue` stores ordered `union_selections`

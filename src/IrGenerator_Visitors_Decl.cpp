@@ -1293,6 +1293,81 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 							StringTable::getOrInternStringHandle("this"),
 							func_decl.identifier_token());
 					} else {
+						const bool is_move_assignment = !node.parameter_nodes().empty() &&
+							node.parameter_nodes()[0].is<DeclarationNode>() &&
+							node.parameter_nodes()[0].as<DeclarationNode>().type_specifier_node().is_rvalue_reference();
+						const TypeIndex derived_type_index = struct_type_info->type_index_.withCategory(TypeCategory::Struct);
+						auto adjust_base_address = [&](const std::variant<StringHandle, TempVar, LocalVarId>& object,
+							const BaseClassSpecifier& base, SizeInBits base_size) {
+							TempVar address = var_counter.next();
+							if (base.is_virtual) {
+								const std::optional<uint32_t> virtual_base_index = tryFindPublishedVirtualBaseIndex(
+									requireFrontendContext().canonicalTypes(), derived_type_index, base.type_index);
+								if (!virtual_base_index.has_value()) {
+									throw InternalError("Implicit assignment base is missing its virtual-base ABI index");
+								}
+								VirtualBaseAdjustOp adjust_op;
+								adjust_op.result = address;
+								adjust_op.source = object;
+								adjust_op.source_is_address = true;
+								adjust_op.source_type_index = derived_type_index;
+								adjust_op.target_type_index = base.type_index;
+								adjust_op.virtual_base_index = *virtual_base_index;
+								ir_.addInstruction(IrInstruction(IrOpcode::VirtualBaseAdjust, std::move(adjust_op), func_decl.identifier_token()));
+							} else {
+								const std::optional<int64_t> published_offset = tryFindPublishedDerivedBaseOffset(
+									requireFrontendContext().canonicalTypes(), derived_type_index, base.type_index);
+								const int64_t offset = published_offset.value_or(static_cast<int64_t>(base.offset));
+								if (offset > std::numeric_limits<int>::max()) {
+									throw InternalError("Implicit assignment base offset exceeds IR range");
+								}
+								ComputeAddressOp address_op;
+								address_op.result = address;
+								address_op.base = object;
+								address_op.base_storage = ValueStorage::ContainsAddress;
+								address_op.total_member_offset = static_cast<int>(offset);
+								address_op.result_type_index = base.type_index;
+								address_op.result_size_bits = base_size;
+								ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(address_op), func_decl.identifier_token()));
+							}
+							setTempVarMetadata(address, TempVarMetadata::makeAddressOnly(base.type_index, base_size, ValueCategory::LValue));
+							return address;
+						};
+						for (const BaseClassSpecifier& base : struct_info->base_classes) {
+							TypeInfo* base_type_info = tryGetTypeInfoMut(base.type_index);
+							if (base_type_info == nullptr) {
+								continue;
+							}
+							StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
+							if (base_struct_info == nullptr) {
+								continue;
+							}
+							const FunctionDeclarationNode* base_assignment = ensureSynthesizedBaseAssignment(*base_type_info, *base_struct_info, is_move_assignment);
+							if (base_assignment == nullptr) {
+								continue;
+							}
+							const SizeInBits base_size{static_cast<int>(base_struct_info->sizeInBits().value)};
+							TempVar source_base = adjust_base_address(source_param_name_handle, base, base_size);
+							TempVar destination_base = adjust_base_address(StringTable::getOrInternStringHandle("this"), base, base_size);
+							const std::string_view base_assignment_name =
+								NameMangling::generateMangledNameFromNode(*base_assignment, base_struct_info->namespace_handle).view();
+							const TypeSpecifierNode& return_type = base_assignment->decl_node().type_specifier_node();
+							TempVar result = var_counter.next();
+							CallOp call_op = createCallOp(result, StringTable::getOrInternStringHandle(base_assignment_name), return_type, true, base_assignment->is_variadic());
+							call_op.applyFunctionControlFlow(*base_assignment);
+							call_op.returns_reference = return_type.is_reference() || return_type.is_rvalue_reference();
+							call_op.args.push_back(makeMemberThisCallArgument(base.type_index, IrValue(destination_base)));
+							TypedValue source_argument;
+							source_argument.type_index = base.type_index.withCategory(TypeCategory::Struct);
+							source_argument.setType(TypeCategory::Struct);
+							source_argument.ir_type = IrType::Struct;
+							source_argument.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+							source_argument.value = source_base;
+							source_argument.ref_qualifier = is_move_assignment ? ReferenceQualifier::RValueReference : ReferenceQualifier::LValueReference;
+							source_argument.cv_qualifier = is_move_assignment ? CVQualifier::None : CVQualifier::Const;
+							call_op.args.push_back(std::move(source_argument));
+							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), func_decl.identifier_token()));
+						}
 						// Generate memberwise assignment
 						for (const auto& member : struct_info->members) {
 							// First, load the member from source parameter

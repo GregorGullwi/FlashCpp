@@ -2543,6 +2543,64 @@ ImplicitSameTypeConstructors createUnregisteredImplicitSameTypeConstructors(
 }
 
 namespace {
+ASTNode createImplicitAssignmentOperator(
+	TypeIndex self_type_index,
+	int self_size_bits,
+	StringHandle instantiated_name,
+	CVQualifier cv_qualifier,
+	ReferenceQualifier reference_qualifier) {
+	const Token name_token(Token::Type::Identifier, StringTable::getStringView(instantiated_name), 0, 0, 0);
+	ASTNode return_type = ASTNode::emplace_node<TypeSpecifierNode>(
+		self_type_index.withCategory(TypeCategory::Struct),
+		self_size_bits,
+		name_token,
+		CVQualifier::None,
+		ReferenceQualifier::LValueReference);
+	Token operator_token(Token::Type::Identifier, "operator="sv, 0, 0, 0);
+	ASTNode operator_decl = ASTNode::emplace_node<DeclarationNode>(return_type, operator_token);
+	ASTNode function_node = ASTNode::emplace_node<FunctionDeclarationNode>(operator_decl.as<DeclarationNode>(), instantiated_name);
+	FunctionDeclarationNode& function = function_node.as<FunctionDeclarationNode>();
+	ASTNode param_type = ASTNode::emplace_node<TypeSpecifierNode>(
+		self_type_index.withCategory(TypeCategory::Struct),
+		self_size_bits,
+		name_token,
+		cv_qualifier,
+		reference_qualifier);
+	Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
+	function.add_parameter_node(ASTNode::emplace_node<DeclarationNode>(param_type, param_token));
+	function.set_definition(ASTNode::emplace_node<BlockNode>());
+	function.set_is_implicit(true);
+	return function_node;
+}
+}
+
+ImplicitSameTypeAssignments createUnregisteredImplicitSameTypeAssignments(
+	StructTypeInfo& struct_info,
+	TypeIndex self_type_index,
+	const TypeInfo& self_type_info,
+	StringHandle instantiated_name) {
+	ImplicitSameTypeAssignments assignments;
+	if (struct_info.findCopyAssignmentOperator(true) ||
+		struct_info.findMoveAssignmentOperator(true) ||
+		struct_info.isCopyAssignmentDeleted() ||
+		struct_info.isMoveAssignmentDeleted()) {
+		return assignments;
+	}
+	int self_size_bits = struct_info.sizeInBits().value;
+	if (self_size_bits == 0 && self_type_info.hasStoredSize()) {
+		self_size_bits = self_type_info.sizeInBits().value;
+	}
+	assignments.copy_assignment = createImplicitAssignmentOperator(
+		self_type_index, self_size_bits, instantiated_name, CVQualifier::Const, ReferenceQualifier::LValueReference);
+	const bool declare_move = !struct_info.hasUserDefinedDestructor();
+	if (declare_move) {
+		assignments.move_assignment = createImplicitAssignmentOperator(
+			self_type_index, self_size_bits, instantiated_name, CVQualifier::None, ReferenceQualifier::RValueReference);
+	}
+	return assignments;
+}
+
+namespace {
 bool isMatchingSameTypeAssignmentOperator(const StructTypeInfo& struct_info,
 										  const StructMemberFunction& func,
 										  bool want_move,
