@@ -52,6 +52,35 @@ inline bool acceptsWholeExpression(
 	return buildConversionPlan(source_type, AggregateElements::makeTypeSpecifier(element), &clause).is_valid;
 }
 
+struct ClauseSettlement {
+	std::optional<AggregateElements::Element> element;
+	bool empty_element_requires_braces = false;
+};
+
+template <typename AppertainsWhole>
+ClauseSettlement settleClause(
+	AggregateElements::ClauseCursor& cursor,
+	bool is_braced,
+	AppertainsWhole&& appertains_whole) {
+	for (;;) {
+		std::optional<AggregateElements::Element> element = cursor.current();
+		if (!element.has_value()) {
+			return {};
+		}
+		const bool appertains = is_braced || !element->is_aggregate || appertains_whole(*element);
+		if (!appertains) {
+			if (element->is_aggregate && !element->has_elements) {
+				cursor.consumeCurrent();
+				return ClauseSettlement{element, true};
+			}
+			cursor.descendCurrent();
+			continue;
+		}
+		cursor.consumeCurrent();
+		return ClauseSettlement{element, false};
+	}
+}
+
 template <typename AppertainsWhole>
 BasePartition partitionBases(
 	const StructTypeInfo& root_struct_info,
@@ -86,48 +115,44 @@ BasePartition partitionBases(
 
 		const ASTNode& clause = init_list.initializers()[clause_index];
 		const bool is_braced = clause.is<InitializerListNode>();
-		for (;;) {
-			const std::optional<AggregateElements::Element> element = cursor.current();
-			if (!element.has_value()) {
-				partition.excess_clause = clause_index;
-				return partition;
-			}
-			const bool appertains = is_braced || !element->is_aggregate || appertains_whole(*element, clause);
-			if (!appertains) {
-				if (element->is_aggregate && !element->has_elements) {
-					partition.empty_element_clause = clause_index;
-					return partition;
-				}
-				cursor.descendCurrent();
-				continue;
-			}
+		auto clause_appertains = [&](const AggregateElements::Element& element) {
+			return appertains_whole(element, clause);
+		};
+		const ClauseSettlement settlement = settleClause(cursor, is_braced, clause_appertains);
+		if (!settlement.element.has_value()) {
+			partition.excess_clause = clause_index;
+			return partition;
+		}
+		if (settlement.empty_element_requires_braces) {
+			partition.empty_element_clause = clause_index;
+			return partition;
+		}
 
-			const InitializationForm form = element->is_root_element
-				? (is_braced ? InitializationForm::Braced : InitializationForm::WholeExpression)
-				: InitializationForm::BraceElided;
-			if (element->root_element.has_value() && element->root_element->kind == AggregateElements::RootElementKind::Base) {
-				ElementAssignment& assignment = partition.base_elements[element->root_element->index];
+		const AggregateElements::Element& element = *settlement.element;
+		InitializationForm form = InitializationForm::BraceElided;
+		if (element.is_root_element) {
+			form = is_braced ? InitializationForm::Braced : InitializationForm::WholeExpression;
+		}
+		if (element.root_element.has_value() && element.root_element->kind == AggregateElements::RootElementKind::Base) {
+			ElementAssignment& assignment = partition.base_elements[element.root_element->index];
+			if (assignment.range.empty()) {
+				assignment = ElementAssignment{ClauseRange{clause_index, clause_index + 1}, form};
+			} else {
+				assignment.range.end = clause_index + 1;
+			}
+		} else {
+			if (!member_seen) {
+				partition.member_begin = clause_index;
+				member_seen = true;
+			}
+			if (element.root_element.has_value()) {
+				ElementAssignment& assignment = partition.member_elements[element.root_element->index];
 				if (assignment.range.empty()) {
 					assignment = ElementAssignment{ClauseRange{clause_index, clause_index + 1}, form};
 				} else {
 					assignment.range.end = clause_index + 1;
 				}
-			} else {
-				if (!member_seen) {
-					partition.member_begin = clause_index;
-					member_seen = true;
-				}
-				if (element->root_element.has_value()) {
-					ElementAssignment& assignment = partition.member_elements[element->root_element->index];
-					if (assignment.range.empty()) {
-						assignment = ElementAssignment{ClauseRange{clause_index, clause_index + 1}, form};
-					} else {
-						assignment.range.end = clause_index + 1;
-					}
-				}
 			}
-			cursor.consumeCurrent();
-			break;
 		}
 	}
 

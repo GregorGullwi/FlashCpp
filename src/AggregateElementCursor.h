@@ -22,17 +22,14 @@ struct RootElementIdentity {
 
 struct Element {
 	TypeSpecifierNode declared_type;
-	TypeIndex type_index;
-	bool is_array = false;
 	std::span<const size_t> dimensions;
 	const StructTypeInfo* struct_info = nullptr;
+	std::optional<RootElementIdentity> root_element;
+	TypeIndex type_index;
+	bool is_array = false;
 	bool is_aggregate = false;
 	bool has_elements = false;
 	bool is_root_element = false;
-	int pointer_depth = 0;
-	bool is_reference = false;
-	CVQualifier cv_qualifier = CVQualifier::None;
-	std::optional<RootElementIdentity> root_element;
 };
 
 inline bool isAggregateElement(const StructMember& member) {
@@ -97,18 +94,13 @@ class ClauseCursor {
 public:
 	explicit ClauseCursor(const StructTypeInfo& root_struct_info) {
 		frames_.push_back(Frame{
-			FrameKind::Struct,
+			TypeSpecifierNode{},
 			&root_struct_info,
-			TypeIndex{},
-			{},
-			0,
-			0,
-			false,
-			0,
-			false,
-			CVQualifier::None,
 			std::nullopt,
-			TypeSpecifierNode{}});
+			0,
+			0,
+			false,
+			FrameKind::Struct});
 	}
 
 	std::optional<Element> current() {
@@ -133,34 +125,24 @@ public:
 		}
 		if (element->is_array) {
 			frames_.push_back(Frame{
-				FrameKind::Array,
+				element->declared_type,
 				nullptr,
-				element->type_index,
-				element->dimensions,
+				element->root_element,
 				0,
 				element->dimensions.empty() ? 0 : element->dimensions[0],
 				true,
-				element->pointer_depth,
-				element->is_reference,
-				element->cv_qualifier,
-				element->root_element,
-				element->declared_type});
+				FrameKind::Array});
 			return;
 		}
 		if (element->is_aggregate && element->struct_info != nullptr) {
 			frames_.push_back(Frame{
-				FrameKind::Struct,
+				TypeSpecifierNode{},
 				element->struct_info,
-				TypeIndex{},
-				{},
+				element->root_element,
 				0,
 				0,
 				true,
-				0,
-				false,
-				CVQualifier::None,
-				element->root_element,
-				TypeSpecifierNode{}});
+				FrameKind::Struct});
 		}
 	}
 
@@ -171,18 +153,13 @@ private:
 	};
 
 	struct Frame {
-		FrameKind kind;
+		TypeSpecifierNode array_declared_type;
 		const StructTypeInfo* struct_info;
-		TypeIndex element_type;
-		std::span<const size_t> dimensions;
+		std::optional<RootElementIdentity> root_element;
 		size_t next_index;
 		size_t extent;
 		bool advances_parent;
-		int pointer_depth;
-		bool is_reference;
-		CVQualifier cv_qualifier;
-		std::optional<RootElementIdentity> root_element;
-		TypeSpecifierNode array_declared_type;
+		FrameKind kind;
 	};
 
 	void normalize() {
@@ -234,12 +211,10 @@ private:
 		const StructMember& member = frame.struct_info->members[frame.next_index - base_count];
 		element.declared_type = typeSpecifierFromStructMemberProjection(member);
 		element.type_index = element.declared_type.type_index();
-		element.is_reference = element.declared_type.is_reference();
-		element.is_array = !element.is_reference && (member.is_array || isArrayObjectType(element.declared_type));
+		const bool reference = element.declared_type.is_reference();
+		element.is_array = !reference && (member.is_array || isArrayObjectType(element.declared_type));
 		element.dimensions = element.declared_type.array_dimensions();
-		element.pointer_depth = static_cast<int>(element.declared_type.pointer_depth());
-		element.cv_qualifier = element.declared_type.cv_qualifier();
-		const bool pointer_like = element.pointer_depth > 0 || element.is_reference;
+		const bool pointer_like = element.declared_type.pointer_depth() > 0 || reference;
 		const bool embeds_object = !element.is_array && !pointer_like;
 		element.struct_info = (element.is_array || embeds_object) ? tryGetStructTypeInfo(element.type_index) : nullptr;
 		element.is_aggregate = element.is_array || (!pointer_like && element.struct_info != nullptr && element.struct_info->isAggregate());
@@ -260,11 +235,8 @@ private:
 		element.type_index = element.declared_type.type_index();
 		element.is_array = isArrayObjectType(element.declared_type);
 		element.dimensions = element.declared_type.array_dimensions();
-		element.pointer_depth = static_cast<int>(element.declared_type.pointer_depth());
-		element.is_reference = element.declared_type.is_reference();
-		element.cv_qualifier = element.declared_type.cv_qualifier();
 		element.root_element = frame.root_element;
-		const bool pointer_like = element.pointer_depth > 0 || element.is_reference;
+		const bool pointer_like = element.declared_type.pointer_depth() > 0 || element.declared_type.is_reference();
 		element.struct_info = (pointer_like || element.is_array) ? nullptr : tryGetStructTypeInfo(element.type_index);
 		element.is_aggregate = element.is_array || (!pointer_like && element.struct_info != nullptr && element.struct_info->isAggregate());
 		element.has_elements = element.is_array ? true : (element.is_aggregate && hasAggregateElements(*element.struct_info));

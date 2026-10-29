@@ -3100,23 +3100,6 @@ void AstToIr::generateNestedMemberStores(
 			"Initializer for aggregate with no elements requires explicit braces",
 			{});
 	}
-	std::vector<InitializerListNode> base_init_lists(struct_info.base_classes.size());
-	std::vector<bool> base_has_initializer(struct_info.base_classes.size(), false);
-	for (size_t base_index = 0; base_index < struct_info.base_classes.size(); ++base_index) {
-		const AggregateInitialization::ClauseRange range = base_partition.base_elements[base_index].range;
-		if (range.empty()) {
-			continue;
-		}
-		base_has_initializer[base_index] = true;
-		if (range.end - range.begin == 1 && aggregate_elements[range.begin].is<InitializerListNode>()) {
-			base_init_lists[base_index] = aggregate_elements[range.begin].as<InitializerListNode>();
-			continue;
-		}
-		for (size_t clause_index = range.begin; clause_index < range.end; ++clause_index) {
-			base_init_lists[base_index].add_initializer(aggregate_elements[clause_index]);
-		}
-	}
-
 	for (size_t i = 0; i < struct_info.base_classes.size(); ++i) {
 		const auto& base = struct_info.base_classes[i];
 		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
@@ -3126,7 +3109,8 @@ void AstToIr::generateNestedMemberStores(
 		}
 		assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
 		const int full_base_offset = base_offset + static_cast<int>(base.offset);
-		if (!base_has_initializer[i]) {
+		const AggregateInitialization::ElementAssignment& assignment = base_partition.base_elements[i];
+		if (assignment.range.empty()) {
 			InitializerListNode empty_initializer;
 			if (base_struct_info->isAggregate()) {
 				generateNestedMemberStores(*base_struct_info, empty_initializer, base_object, full_base_offset, base_object_is_pointer, token);
@@ -3152,21 +3136,34 @@ void AstToIr::generateNestedMemberStores(
 			ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(base_ctor_op), token));
 			continue;
 		}
-		const InitializerListNode& base_list = base_init_lists[i];
-		if (base_partition.base_elements[i].form == AggregateInitialization::InitializationForm::WholeExpression &&
-			base_list.initializers().size() == 1) {
-			const ASTNode& clause = base_list.initializers().front();
-			if (const ImplicitCastInfo* selected_conversion = selected_conversion_for_clause(clause)) {
-				emit_converted_object(*base_struct_info, full_base_offset, clause, *selected_conversion);
+
+		const ASTNode& first_clause = aggregate_elements[assignment.range.begin];
+		if (assignment.form == AggregateInitialization::InitializationForm::WholeExpression) {
+			if (const ImplicitCastInfo* selected_conversion = selected_conversion_for_clause(first_clause)) {
+				emit_converted_object(*base_struct_info, full_base_offset, first_clause, *selected_conversion);
 				continue;
 			}
 		}
-		if (base_struct_info->isAggregate() && base_partition.base_elements[i].form != AggregateInitialization::InitializationForm::WholeExpression) {
-			generateNestedMemberStores(*base_struct_info, base_list, base_object, full_base_offset, base_object_is_pointer, token);
+
+		InitializerListNode synthesized_base_list;
+		const InitializerListNode* explicit_base_list = nullptr;
+		std::span<const ASTNode> base_args = aggregate_elements.subspan(assignment.range.begin, assignment.range.end - assignment.range.begin);
+		if (assignment.form == AggregateInitialization::InitializationForm::Braced) {
+			explicit_base_list = &first_clause.as<InitializerListNode>();
+			base_args = explicit_base_list->initializers();
+		} else if (assignment.form == AggregateInitialization::InitializationForm::BraceElided) {
+			for (size_t clause_index = assignment.range.begin; clause_index < assignment.range.end; ++clause_index) {
+				synthesized_base_list.add_initializer(aggregate_elements[clause_index]);
+			}
+			explicit_base_list = &synthesized_base_list;
+			base_args = explicit_base_list->initializers();
+		}
+
+		if (base_struct_info->isAggregate() && assignment.form != AggregateInitialization::InitializationForm::WholeExpression) {
+			generateNestedMemberStores(*base_struct_info, *explicit_base_list, base_object, full_base_offset, base_object_is_pointer, token);
 			continue;
 		}
-		const std::span<const ASTNode> base_args = base_list.initializers();
-		const ConstructorDeclarationNode* base_ctor = base_list.resolved_constructor();
+		const ConstructorDeclarationNode* base_ctor = explicit_base_list != nullptr ? explicit_base_list->resolved_constructor() : nullptr;
 		if (!base_ctor) {
 			base_ctor = resolveCodegenConstructorFromArgs(*base_struct_info, base_args);
 		}
@@ -3188,33 +3185,31 @@ void AstToIr::generateNestedMemberStores(
 		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(base_ctor_op), token));
 	}
 
-	std::vector<InitializerListNode> synthesized_member_lists(struct_info.members.size());
-	std::vector<std::optional<ASTNode>> member_initializers(struct_info.members.size());
-	for (size_t member_index = 0; member_index < struct_info.members.size(); ++member_index) {
-		const AggregateInitialization::ClauseRange range = base_partition.member_elements[member_index].range;
-		if (range.empty()) {
-			continue;
-		}
-		const ASTNode& first_clause = aggregate_elements[range.begin];
-		const AggregateInitialization::InitializationForm form = base_partition.member_elements[member_index].form;
-		if (form == AggregateInitialization::InitializationForm::Braced ||
-			form == AggregateInitialization::InitializationForm::WholeExpression) {
-			member_initializers[member_index] = first_clause;
-			continue;
-		}
-		InitializerListNode& synthesized = synthesized_member_lists[member_index];
-		for (size_t clause_index = range.begin; clause_index < range.end; ++clause_index) {
-			synthesized.add_initializer(aggregate_elements[clause_index]);
-		}
-		member_initializers[member_index] = ASTNode(&synthesized);
-	}
-
 	// Process each struct member
 	for (size_t member_index = 0; member_index < struct_info.members.size(); ++member_index) {
 		const StructMember& member = struct_info.members[member_index];
 		StringHandle member_name = member.getName();
+		const AggregateInitialization::ElementAssignment& member_assignment = base_partition.member_elements[member_index];
+		InitializerListNode synthesized_member_list;
+		std::optional<ASTNode> synthesized_member_node;
+		const ASTNode* member_initializer = nullptr;
+		if (!member_assignment.range.empty()) {
+			const ASTNode& first_clause = aggregate_elements[member_assignment.range.begin];
+			if (member_assignment.form == AggregateInitialization::InitializationForm::Braced ||
+				member_assignment.form == AggregateInitialization::InitializationForm::WholeExpression) {
+				member_initializer = &first_clause;
+			} else {
+				for (size_t clause_index = member_assignment.range.begin;
+					 clause_index < member_assignment.range.end;
+					 ++clause_index) {
+					synthesized_member_list.add_initializer(aggregate_elements[clause_index]);
+				}
+				synthesized_member_node = ASTNode(&synthesized_member_list);
+				member_initializer = &*synthesized_member_node;
+			}
+		}
 
-		if (!member_initializers[member_index].has_value()) {
+		if (member_initializer == nullptr) {
 			if (!member.default_initializer.has_value()) {
 				if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index)) {
 					size_t element_count = 1;
@@ -3333,8 +3328,8 @@ void AstToIr::generateNestedMemberStores(
 			continue;
 		}
 
-		const ASTNode& init_expr = *member_initializers[member_index];
-		if (base_partition.member_elements[member_index].form == AggregateInitialization::InitializationForm::WholeExpression) {
+		const ASTNode& init_expr = *member_initializer;
+		if (member_assignment.form == AggregateInitialization::InitializationForm::WholeExpression) {
 			const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index);
 			const bool embeds_object = member_struct_info != nullptr && member_struct_info->isAggregate() &&
 				!member.is_array && member.pointer_depth == 0 && !member.is_reference();
