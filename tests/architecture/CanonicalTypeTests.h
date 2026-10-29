@@ -85,6 +85,14 @@ inline bool sameStructure(const CanonicalTypeTable& left, TypeId left_id,
 			a.kind == CanonicalTypeKind::TemplateParameter) {
 			return a.array_extent == b.array_extent;
 		}
+		if (a.kind == CanonicalTypeKind::NestedRecord) {
+			if (left.nestedRecordEntity(left_id) != right.nestedRecordEntity(right_id)) {
+				return false;
+			}
+			left_id = left.nestedRecordOwner(left_id);
+			right_id = right.nestedRecordOwner(right_id);
+			continue;
+		}
 		if (a.kind == CanonicalTypeKind::TemplateSpecialization) {
 			if (a.array_extent != b.array_extent) {
 				return false;
@@ -3345,6 +3353,55 @@ inline int run() {
 	rejects([&] { table.memberObjectPointer(owner_a, int_fn); });
 	rejects([&] { table.memberFunctionPointer(owner_a, integer); });
 	require(table.size() == count);
+	const TypeId nested_a = table.nestedRecord(spec_a, EntityId{51});
+	const TypeId nested_a_same = table.nestedRecord(spec_a, EntityId{51});
+	const TypeId nested_a_other = table.nestedRecord(spec_a, EntityId{52});
+	require(nested_a == nested_a_same);
+	require(nested_a != nested_a_other);
+	require(nested_a != table.nestedRecord(spec_other, EntityId{51}));
+	require(table.nestedRecordOwner(nested_a) == spec_a);
+	require(table.nestedRecordEntity(nested_a) == EntityId{51});
+	require(table.nestedRecord(table.qualify(spec_a, CVQualifier::Const), EntityId{51}) == nested_a);
+	rejects([&] { table.nestedRecord(owner_a, EntityId{51}); });
+	rejects([&] { table.nestedRecord(tmpl_a, EntityId{51}); });
+	const size_t nested_rollback_size = table.size();
+	{
+		CanonicalTypeTransaction nested_transaction(table);
+		table.nestedRecord(nested_a, EntityId{54});
+		nested_transaction.rollback();
+	}
+	require(table.size() == nested_rollback_size);
+	const TypeId nested_reordered = reordered.nestedRecord(reordered_spec, EntityId{51});
+	require(sameStructure(table, nested_a, reordered, nested_reordered));
+	const TemplateDeclId nested_env{9100};
+	const TypeId nested_param = table.templateParameter(nested_env, 0);
+	const TypeId dependent_owner_args[] = {nested_param};
+	const TypeId dependent_owner = table.templateSpecialization(TemplateDeclId{9101}, dependent_owner_args);
+	const TypeId dependent_nested = table.nestedRecord(dependent_owner, EntityId{53});
+	const TypeId nested_bindings[] = {integer};
+	const TypeId expected_nested_owner_args[] = {integer};
+	const TypeId expected_nested = table.nestedRecord(table.templateSpecialization(TemplateDeclId{9101}, expected_nested_owner_args), EntityId{53});
+	require(table.hasDependentTypeComponents(dependent_nested));
+	require(table.dependsOnlyOnTemplateParameters(dependent_nested, nested_env));
+	require(table.substitute(dependent_nested, nested_env, nested_bindings) == expected_nested);
+	const TemplateDeclId nested_alias{9102};
+	const TypeId alias_nested_args[] = {table.templateParameter(nested_alias, 0)};
+	const TypeId alias_nested_owner = table.templateSpecialization(TemplateDeclId{9101}, alias_nested_args);
+	const TypeId alias_nested_target = table.nestedRecord(alias_nested_owner, EntityId{55});
+	const CanonicalTemplateArgKind nested_alias_kind[] = {CanonicalTemplateArgKind::Type};
+	table.publishAliasTemplateTarget(nested_alias, alias_nested_target, nested_alias_kind);
+	const TypeId alias_nested_input[] = {integer};
+	const TypeId alias_nested_expected_owner_args[] = {integer};
+	const TypeId alias_nested_expected = table.nestedRecord(
+		table.templateSpecialization(TemplateDeclId{9101}, alias_nested_expected_owner_args), EntityId{55});
+	require(table.substitute(table.aliasTemplateSpecialization(nested_alias, alias_nested_input), nested_alias,
+		alias_nested_input) == alias_nested_expected);
+	TypeId deep_nested = dependent_owner;
+	for (uint32_t depth = 0; depth < 4096; ++depth) {
+		deep_nested = table.nestedRecord(deep_nested, EntityId{1000 + depth});
+	}
+	const TypeId deep_substituted = table.substitute(deep_nested, nested_env, nested_bindings);
+	require(!table.hasDependentTypeComponents(deep_substituted));
 	// Source-controlled nesting does not grow the native stack in the table.
 	std::vector<TypeId> chain{integer};
 	for (int i = 0; i < 65536; ++i) {

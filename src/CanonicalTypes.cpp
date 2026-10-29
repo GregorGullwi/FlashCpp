@@ -240,6 +240,24 @@ TypeId CanonicalTypeTable::record(EntityId entity) {
 	});
 }
 
+TypeId CanonicalTypeTable::nestedRecord(TypeId owner, EntityId entity) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	if (!owner || !entity) {
+		throw InternalError("canonical type: invalid nested record identity");
+	}
+	while (nodeUnlocked(owner).kind == CanonicalTypeKind::Qualified) {
+		owner = nodeUnlocked(owner).child;
+	}
+	const CanonicalTypeKind owner_kind = nodeUnlocked(owner).kind;
+	if (owner_kind != CanonicalTypeKind::TemplateSpecialization && owner_kind != CanonicalTypeKind::NestedRecord) {
+		throw InternalError("canonical type: nested record owner must be a specialization or nested record");
+	}
+	return internUnlocked({.child = owner, .kind = CanonicalTypeKind::NestedRecord,
+		.builtin = CanonicalBuiltinKind::Void, .qualifiers = CVQualifier::None,
+		.flags = CanonicalTypeNodeFlags::None, .array_extent = entity.value});
+}
+
 TypeId CanonicalTypeTable::enumeration(EntityId entity) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
@@ -731,6 +749,26 @@ EntityId CanonicalTypeTable::recordEntity(TypeId record) const {
 	const auto input = nodeUnlocked(record);
 	if (input.kind != CanonicalTypeKind::Record) {
 		throw InternalError("canonical type: TypeId is not a record");
+	}
+	return EntityId{static_cast<uint32_t>(input.array_extent)};
+}
+
+TypeId CanonicalTypeTable::nestedRecordOwner(TypeId nested_record) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const CanonicalTypeNode input = nodeUnlocked(nested_record);
+	if (input.kind != CanonicalTypeKind::NestedRecord) {
+		throw InternalError("canonical type: TypeId is not a nested record");
+	}
+	return input.child;
+}
+
+EntityId CanonicalTypeTable::nestedRecordEntity(TypeId nested_record) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const CanonicalTypeNode input = nodeUnlocked(nested_record);
+	if (input.kind != CanonicalTypeKind::NestedRecord) {
+		throw InternalError("canonical type: TypeId is not a nested record");
 	}
 	return EntityId{static_cast<uint32_t>(input.array_extent)};
 }
@@ -2075,6 +2113,7 @@ bool CanonicalTypeTable::hasDependentTypeComponentsUnlocked(TypeId type, bool in
 		case CanonicalTypeKind::LValueReference:
 		case CanonicalTypeKind::RValueReference:
 		case CanonicalTypeKind::Array:
+		case CanonicalTypeKind::NestedRecord:
 			pending.push_back(node.child);
 			break;
 		case CanonicalTypeKind::Function: {
@@ -2132,6 +2171,7 @@ bool CanonicalTypeTable::templateParameterReferencesCoveredUnlocked(TypeId type,
 		case CanonicalTypeKind::RValueReference:
 		case CanonicalTypeKind::Array:
 		case CanonicalTypeKind::DependentName:
+		case CanonicalTypeKind::NestedRecord:
 			pending.push_back(node.child);
 			break;
 		case CanonicalTypeKind::Function: {
@@ -2196,6 +2236,9 @@ bool CanonicalTypeTable::containsNonTypeTemplateArgUnlocked(TypeId type) const {
 		case CanonicalTypeKind::ValueTemplateArg:
 		case CanonicalTypeKind::NonTypeTemplateArg:
 			return true;
+		case CanonicalTypeKind::NestedRecord:
+			pending.push_back(node.child);
+			break;
 		case CanonicalTypeKind::DependentMemberAlias:
 			pending.push_back(node.child);
 			break;
@@ -2310,7 +2353,8 @@ TypeId CanonicalTypeTable::resolveNestedAliasGraphUnlocked(TypeId type) {
 			case CanonicalTypeKind::LValueReference:
 			case CanonicalTypeKind::RValueReference:
 			case CanonicalTypeKind::Array:
-			case CanonicalTypeKind::DependentName: {
+			case CanonicalTypeKind::DependentName:
+			case CanonicalTypeKind::NestedRecord: {
 				stack.pop_back();
 				Frame parent = frame;
 				parent.phase = Phase::Build;
@@ -2471,6 +2515,15 @@ TypeId CanonicalTypeTable::resolveNestedAliasGraphUnlocked(TypeId type) {
 					.flags = CanonicalTypeNodeFlags::None,
 					.array_extent = 0,
 				});
+			}
+			break;
+		}
+		case CanonicalTypeKind::NestedRecord: {
+			const TypeId owner = memo.at(memoKey(frame.scope, node.child));
+			if (owner != node.child) {
+				rebuilt = internUnlocked({.child = owner, .kind = CanonicalTypeKind::NestedRecord,
+					.builtin = CanonicalBuiltinKind::Void, .qualifiers = CVQualifier::None,
+					.flags = CanonicalTypeNodeFlags::None, .array_extent = node.array_extent});
 			}
 			break;
 		}
@@ -2895,6 +2948,10 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 				memo.emplace(frame.id.value, frame.id);
 				stack.pop_back();
 				continue;
+			case CanonicalTypeKind::NestedRecord:
+				stack.back().building = true;
+				stack.push_back({node.child, false});
+				continue;
 			case CanonicalTypeKind::TemplateParameter: {
 				const TemplateDeclId decl = unpackTemplateParameterDecl(node.array_extent);
 				if (decl != env) {
@@ -3011,6 +3068,15 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 		stack.pop_back();
 		TypeId rebuilt = frame.id;
 		switch (node.kind) {
+		case CanonicalTypeKind::NestedRecord: {
+			const TypeId owner = memo.at(node.child.value);
+			if (owner != node.child) {
+				rebuilt = internUnlocked({.child = owner, .kind = CanonicalTypeKind::NestedRecord,
+					.builtin = CanonicalBuiltinKind::Void, .qualifiers = CVQualifier::None,
+					.flags = CanonicalTypeNodeFlags::None, .array_extent = node.array_extent});
+			}
+			break;
+		}
 		case CanonicalTypeKind::Qualified: {
 			const TypeId child = memo.at(node.child.value);
 			if (child == node.child) {

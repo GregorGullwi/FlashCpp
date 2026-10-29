@@ -6743,6 +6743,141 @@ TEST_CASE("Canonical adapter imports the source corpus at publication") {
 	CHECK(found_enum);
 }
 
+TEST_CASE("Canonical nested record identity includes its specialized enclosing class") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream input("tests/test_canonical_nested_class_specialization_identity_ret0.cpp");
+	REQUIRE(input.is_open());
+	const std::string code((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>{});
+	CompileContext compile_context;
+	compile_context.setInputFile("tests/test_canonical_nested_class_specialization_identity_ret0.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto import_alias = [&](std::string_view name) {
+		INFO("alias: " << name);
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const TypeSpecifierNode syntax(info->registeredTypeIndex(), 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
+		const CanonicalTypeImport imported = importCanonicalTypeWithClassFallback(table, syntax);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	CHECK(table.node(import_alias("PlainKey")).kind == CanonicalTypeKind::Record);
+	const TypeId short_key = import_alias("ShortKey");
+	const TypeId wide_key = import_alias("WideKey");
+	const TypeId short_again = import_alias("ShortAgain");
+	const TypeId short_chain = import_alias("ShortChain");
+	const TypeId short_pointer = import_alias("ShortPointer");
+	const TypeId other_key = import_alias("OtherKey");
+	const TypeId foreign_key = import_alias("ForeignKey");
+	CHECK(short_again == short_key);
+	CHECK(short_chain == short_key);
+	CHECK(short_pointer == table.pointer(short_key));
+	CHECK(short_key != wide_key);
+	CHECK(short_key != other_key);
+	CHECK(short_key != foreign_key);
+	for (const std::string_view name : {"ShortKey", "WideKey", "ShortAgain", "ShortChain", "OtherKey", "ForeignKey"}) {
+		const TypeInfo* alias = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(alias != nullptr);
+		const TypeInfo* terminal = resolveAliasTypeInfo(alias->registeredTypeIndex()).terminal_type_info;
+		REQUIRE(terminal != nullptr);
+		const StructTypeInfo* nested = canonicalClassStructInfoFromTypeInfo(*terminal);
+		REQUIRE(nested != nullptr);
+		REQUIRE(nested->declaration_node != nullptr);
+		const StructDeclarationNode* pattern = nested->declaration_node->injected_class_pattern_declaration();
+		REQUIRE(pattern != nullptr);
+		REQUIRE(pattern->has_entity_id());
+		const CanonicalTypeImport declaration = importCanonicalClassDeclaration(table, *nested->declaration_node);
+		REQUIRE(declaration.status == CanonicalTypeImportStatus::Supported);
+		CHECK(declaration.type == import_alias(name));
+		CHECK(table.node(declaration.type).kind == CanonicalTypeKind::NestedRecord);
+		CHECK(table.nestedRecordEntity(declaration.type) == pattern->entity_id());
+		REQUIRE(nested->declaration_node->enclosing_class() != nullptr);
+		const CanonicalTypeImport owner = importCanonicalClassDeclaration(table, *nested->declaration_node->enclosing_class());
+		REQUIRE(owner.status == CanonicalTypeImportStatus::Supported);
+		CHECK(table.node(owner.type).kind == CanonicalTypeKind::TemplateSpecialization);
+		CHECK(table.nestedRecordOwner(declaration.type) == owner.type);
+	}
+}
+
+TEST_CASE("Canonical nested record owner chains scale with logical nesting depth") {
+	FrontendContext context;
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const ScratchArenaState scratch_mark = context.scratchArena().mark();
+	StructDeclarationNode* owner_declaration = context.scratchArena().allocateObject<StructDeclarationNode>(StringHandle{});
+	owner_declaration->set_canonical_specialization_owner_template_decl_id(TemplateDeclId{1});
+	for (uint32_t index = 0; index < 4096; ++index) {
+		StructDeclarationNode* pattern = context.scratchArena().allocateObject<StructDeclarationNode>(StringHandle{});
+		pattern->set_entity_id(EntityId{index + 10000});
+		StructDeclarationNode* nested = context.scratchArena().allocateObject<StructDeclarationNode>(StringHandle{});
+		nested->set_injected_class_pattern_declaration(pattern);
+		nested->set_enclosing_class(owner_declaration);
+		owner_declaration = nested;
+	}
+	const CanonicalTypeImport imported = importCanonicalClassDeclaration(table, *owner_declaration);
+	REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+	TypeId cursor = imported.type;
+	for (uint32_t index = 0; index < 4096; ++index) {
+		CHECK(table.node(cursor).kind == CanonicalTypeKind::NestedRecord);
+		CHECK(table.nestedRecordEntity(cursor) == EntityId{10000 + 4095 - index});
+		cursor = table.nestedRecordOwner(cursor);
+	}
+	CHECK(table.node(cursor).kind == CanonicalTypeKind::TemplateSpecialization);
+	CHECK(table.templateSpecializationDecl(cursor) == TemplateDeclId{1});
+	context.scratchArena().rollbackTo(scratch_mark);
+}
+
+TEST_CASE("Canonical nested class import rejects missing, cyclic, and partial owners transactionally") {
+	FrontendContext context;
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const ScratchArenaState scratch_mark = context.scratchArena().mark();
+	StructDeclarationNode* missing_pattern = context.scratchArena().allocateObject<StructDeclarationNode>(StringHandle{});
+	missing_pattern->set_entity_id(EntityId{31});
+	StructDeclarationNode* missing_parent = context.scratchArena().allocateObject<StructDeclarationNode>(StringHandle{});
+	missing_parent->set_injected_class_pattern_declaration(missing_pattern);
+	const size_t before_missing = table.size();
+	const CanonicalTypeImport missing = importCanonicalClassDeclaration(table, *missing_parent);
+	CHECK(missing.status == CanonicalTypeImportStatus::UnmigratedNominal);
+	CHECK(table.size() == before_missing);
+	StructDeclarationNode* cyclic_pattern = context.scratchArena().allocateObject<StructDeclarationNode>(StringHandle{});
+	cyclic_pattern->set_entity_id(EntityId{32});
+	StructDeclarationNode* cyclic = context.scratchArena().allocateObject<StructDeclarationNode>(StringHandle{});
+	cyclic->set_injected_class_pattern_declaration(cyclic_pattern);
+	cyclic->set_enclosing_class(cyclic);
+	const size_t before_cycle = table.size();
+	const CanonicalTypeImport cycle = importCanonicalClassDeclaration(table, *cyclic);
+	CHECK(cycle.status == CanonicalTypeImportStatus::Unresolved);
+	CHECK(table.size() == before_cycle);
+	StructDeclarationNode* partial_pattern = context.scratchArena().allocateObject<StructDeclarationNode>(StringHandle{});
+	partial_pattern->set_entity_id(EntityId{33});
+	CHECK_FALSE(partial_pattern->has_template_decl_id());
+	StructDeclarationNode* partial_owner = context.scratchArena().allocateObject<StructDeclarationNode>(StringHandle{});
+	partial_owner->set_injected_class_pattern_declaration(partial_pattern);
+	partial_owner->set_canonical_specialization_owner_template_decl_id(TemplateDeclId{3});
+	StructDeclarationNode* nested_pattern = context.scratchArena().allocateObject<StructDeclarationNode>(StringHandle{});
+	nested_pattern->set_entity_id(EntityId{34});
+	StructDeclarationNode* nested = context.scratchArena().allocateObject<StructDeclarationNode>(StringHandle{});
+	nested->set_injected_class_pattern_declaration(nested_pattern);
+	nested->set_enclosing_class(partial_owner);
+	const size_t before_partial = table.size();
+	const CanonicalTypeImport partial = importCanonicalClassDeclaration(table, *nested);
+	CHECK(partial.status == CanonicalTypeImportStatus::UnmigratedNominal);
+	CHECK(table.size() == before_partial);
+	StructDeclarationNode* member_template_pattern = context.scratchArena().allocateObject<StructDeclarationNode>(StringHandle{});
+	member_template_pattern->set_template_decl_id(TemplateDeclId{4});
+	nested->set_injected_class_pattern_declaration(member_template_pattern);
+	const size_t before_member_template = table.size();
+	CHECK(importCanonicalClassDeclaration(table, *nested).status == CanonicalTypeImportStatus::UnmigratedNominal);
+	CHECK(table.size() == before_member_template);
+	context.scratchArena().rollbackTo(scratch_mark);
+}
+
 TEST_CASE("Callable alias parameters retain their enclosing declaration identity") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

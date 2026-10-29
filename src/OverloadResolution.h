@@ -7771,6 +7771,7 @@ inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
 			}
 			break;
 		}
+		case CanonicalTypeKind::NestedRecord:
 		case CanonicalTypeKind::DependentName:
 		case CanonicalTypeKind::DependentTemplateMember:
 		case CanonicalTypeKind::DependentMemberAlias:

@@ -613,18 +613,27 @@ Continue boundary 3A in this order.
    renamed-declaration, owner, rollback/mutation, and 4,096-level guards. Worklist
    frames and argument arrays use `FrontendContext` scratch storage with scoped reclamation.
 
-   **Next 3A slice: nested-class specialization identity.**
-   Start with `Outer<short>::Key` versus `Outer<long long>::Key`. Nested pattern
-   EntityIds already publish under the enclosing template in
-   `tryPublishNestedClassIdentity`; use the retained pattern and instantiated
-   enclosing declaration to key canonical type identity by owning specialization
-   TypeId plus nested EntityId. The pattern EntityId alone must not merge all
-   enclosing instantiations. First land that TypeId/import prerequisite with
-   owner-distinction and rollback guards; leave nested member-pointer field
-   production deferred until it can consume the owning TypeId. Keep constrained,
-   pack, non-type, alias, and other dependent patterns separate. Opaque non-type
-   arguments remain fail-closed until their identity can substitute.
-   Do not recover identity by spelling or add evaluator/selection rules.
+   **Nested-class specialization identity:** non-template nested classes of instantiated
+   owners use `NestedRecord(owning specialization TypeId, nested EntityId)`. Retain alias,
+   owner-distinction, rollback/mutation, and 4,096-level worklist guards.
+
+   **Next 3A slice: nested member-pointer fields.**
+   Publish the fields of `Outer<T>::Key` using its owning `NestedRecord` TypeId
+   and the retained enclosing specialization's bindings. Extend class/schema
+   consumers to accept that identity only with complete published facts; never
+   use the nested pattern EntityId as the layout of every enclosing specialization.
+   Enclosing links currently attach after nested field production, so first choose
+   a publication point where the actual owner and arguments are available.
+   Cover mixed short/long-long layouts, repeated aliases, pointer-to-member owner
+   distinctions, rollback, and a nonzero subobject offset. Keep ordinary nested
+   records on their existing EntityId path and retain the deep-owner guard.
+
+   Selected partial owners need their published primary arguments rather than
+   deduced pattern bindings; member class templates need composed enclosing and
+   member specialization identity. Their class-source imports remain deferred.
+   Keep constrained, pack, non-type, alias, and other dependent partial patterns
+   separate. Opaque non-type arguments remain fail-closed until their identity
+   can substitute. Do not recover identity by spelling or add evaluator/selection rules.
 
    Non-null object pointer target identity remains separate.
    Ambiguous/virtual-base member pointers, unpublished dependent bases, and the nested

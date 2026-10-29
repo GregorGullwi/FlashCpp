@@ -263,6 +263,12 @@ def main():
         ]
         original = read_text(IMPL)
         mutations = {
+            "lost_nested_record_owner": (
+                "return internUnlocked({.child = owner, .kind = CanonicalTypeKind::NestedRecord,",
+                "return internUnlocked({.child = TypeId{}, .kind = CanonicalTypeKind::NestedRecord,"),
+            "lost_nested_record_entity": (
+                ".flags = CanonicalTypeNodeFlags::None, .array_extent = entity.value});",
+                ".flags = CanonicalTypeNodeFlags::None, .array_extent = 1});"),
             "lost_function_pointer_target_entity": (
                 ".flags = CanonicalTypeNodeFlags::None, .array_extent = target.value});",
                 ".flags = CanonicalTypeNodeFlags::None, .array_extent = 1});"),
