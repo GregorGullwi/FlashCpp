@@ -387,7 +387,11 @@ void AstToIr::generateCollectedLocalStructMembers() {
 }
 
 void AstToIr::generateDeferredMemberFunctions() {
-	while (deferred_member_functions_processed_ < deferred_member_functions_.size()) {
+	while (true) {
+		queueOdrUsedSpecialMembers();
+		if (deferred_member_functions_processed_ >= deferred_member_functions_.size()) {
+			break;
+		}
 		DeferredMemberFunctionInfo info = deferred_member_functions_[deferred_member_functions_processed_++];
 		StringHandle saved_function = current_function_name_;
 		auto saved_namespace = current_namespace_stack_;

@@ -29,6 +29,12 @@ public:
 
 	void generateDeferredMemberFunctions();
 
+	// Drain sema-published ODR-used implicit/defaulted copy and move
+	// constructors into the deferred emission queue. Sema owns the ODR-use
+	// decision; codegen only materializes the published declarations.
+	void queueOdrUsedSpecialMembers();
+	bool hasPendingOdrUsedSpecialMembers() const;
+
 	void generateCollectedTemplateInstantiations();
 	void normalizePendingSemanticRoots();
 
@@ -1561,6 +1567,7 @@ private:
 	std::vector<DeferredMemberFunctionInfo> deferred_member_functions_;
 	std::unordered_set<const void*> deferred_member_function_nodes_;
 	size_t deferred_member_functions_processed_ = 0;
+	size_t odr_used_special_members_processed_ = 0;
 	std::unordered_map<const StructTypeInfo*, ImplicitSameTypeConstructors> synthesized_implicit_base_constructors_;
 	std::unordered_map<const StructTypeInfo*, ImplicitSameTypeAssignments> synthesized_implicit_base_assignments_;
 

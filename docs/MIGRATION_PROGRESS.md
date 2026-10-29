@@ -432,6 +432,22 @@ Continue boundary 3A in this order.
    `tests/test_template_base_implicit_copy_move_ret0.cpp` covers direct, move, and
    virtual template-base construction.
 
+   **Implicit copy/move construction: ODR-deferred.** Every implicitly-declared or
+   explicitly-defaulted copy/move constructor now waits for ODR use, independent of
+   triviality, matching assignment lowering. Semantic analysis publishes the selected
+   copy/move declaration at each ODR-use site, keyed by the owner's canonical `TypeId`,
+   and codegen drains that publication instead of inferring use from its lowering
+   paths. This covers copy and direct initialization, return copy-initialization,
+   base/member initializers, and exception throw/handler parameters. By-value call
+   arguments lower as direct object copies and therefore do not force a constructor
+   definition. An unreferenced derived class therefore emits no copy/move body and
+   never queues synthesized template-base definitions or codegen-to-parser callbacks.
+   `tests/test_template_base_implicit_copy_move_odr_ret0.cpp` covers the use paths,
+   `tests/test_eh_throw_catch_implicit_copy_ctor_ret0.cpp` protects the exception
+   paths that emit no constructor-call IR, and
+   `tests/test_template_base_implicit_copy_move_unreferenced_ret0.cpp` protects the
+   zero-callback unreferenced case in the migration counter corpus.
+
    **Implicit base assignment: complete.** Implicit derived copy and move assignment
    now assign base subobjects before direct members, resolving each base address
    without applying derived-to-base access checks. Existing implicit base assignment

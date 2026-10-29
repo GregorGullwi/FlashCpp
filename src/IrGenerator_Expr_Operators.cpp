@@ -1406,6 +1406,10 @@ void AstToIr::finalizeConstructorCallOp(
 											.commit()));
 	}
 
+	// Source-level ODR use is published by sema (see
+	// `SemanticAnalysis::odrUsedSpecialMembers`). A constructor call emitted while
+	// generating a synthesized implicit body (for example a base or member copy)
+	// is a definition dependency instead, so queue it here as well.
 	if (ctor_op.resolved_constructor &&
 		shouldDeferImplicitConstructorCodegen(target_struct_info, *ctor_op.resolved_constructor)) {
 		for (const auto& member_func : target_struct_info.member_functions) {
