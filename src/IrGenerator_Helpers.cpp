@@ -335,37 +335,11 @@ bool AstToIr::shouldDeferImplicitConstructorCodegen(const StructTypeInfo& struct
 	return isStructTriviallyCopyable(&struct_info);
 }
 
-bool AstToIr::shouldDeferImplicitAssignmentCodegen(const StructTypeInfo& struct_info, const FunctionDeclarationNode& fn) const {
+bool AstToIr::shouldDeferImplicitAssignmentCodegen(const StructTypeInfo&, const FunctionDeclarationNode& fn) const {
 	if (!fn.is_implicit()) {
 		return false;
 	}
-	if (fn.decl_node().identifier_token().value() != "operator=") {
-		return false;
-	}
-	if (isStructTriviallyCopyable(&struct_info)) {
-		return true;
-	}
-	const bool move = !fn.parameter_nodes().empty() && fn.parameter_nodes()[0].is<DeclarationNode>() &&
-		fn.parameter_nodes()[0].as<DeclarationNode>().type_specifier_node().is_rvalue_reference();
-	for (const BaseClassSpecifier& base : struct_info.base_classes) {
-		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
-		const StructTypeInfo* base_struct_info = base_type_info != nullptr ? base_type_info->getStructInfo() : nullptr;
-		if (base_struct_info == nullptr) {
-			continue;
-		}
-		const StructMemberFunction* base_assignment = move ? base_struct_info->findMoveAssignmentOperator(true) : nullptr;
-		if (base_assignment == nullptr) {
-			base_assignment = base_struct_info->findCopyAssignmentOperator(true);
-		}
-		if (base_assignment == nullptr || !base_assignment->function_decl.is<FunctionDeclarationNode>()) {
-			continue;
-		}
-		const FunctionDeclarationNode& base_fn = base_assignment->function_decl.as<FunctionDeclarationNode>();
-		if (!base_fn.is_materialized() && !base_fn.is_implicit()) {
-			return true;
-		}
-	}
-	return false;
+	return fn.decl_node().identifier_token().value() == "operator=";
 }
 
 void AstToIr::exitScope() {

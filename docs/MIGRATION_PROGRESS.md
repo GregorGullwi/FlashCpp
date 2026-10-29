@@ -420,8 +420,9 @@ Continue boundary 3A in this order.
    without applying derived-to-base access checks. Existing implicit base assignment
    definitions are queued for codegen, and class-template bases without an assignment
    operator receive unregistered copy/move assignment nodes whose definitions share the
-   same deferred queue. Implicit derived assignments stay deferred when a base
-   assignment is bodyless, preserving the unreferenced-bodyless-member contract.
+   same deferred queue. All implicit assignment bodies are ODR-deferred, so an
+   unreferenced derived assignment does not emit base calls, definitions, or parser
+   callbacks.
    `tests/test_implicit_assignment_base_ret0.cpp` covers non-template, template,
    virtual, user-defined, copy, and move base assignment.
 

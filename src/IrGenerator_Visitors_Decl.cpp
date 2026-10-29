@@ -1333,6 +1333,34 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 							setTempVarMetadata(address, TempVarMetadata::makeAddressOnly(base.type_index, base_size, ValueCategory::LValue));
 							return address;
 						};
+						auto emit_memberwise_members = [&](const StructTypeInfo& info) {
+							for (const StructMember& member : info.members) {
+								TempVar member_value = var_counter.next();
+								const CVReferenceQualifier member_ref_qualifier =
+									member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference
+									: member.is_reference() ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None;
+								MemberLoadOp member_load;
+								member_load.result.value = member_value;
+								member_load.result.setType(member.type_index.category());
+								member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
+								member_load.object = source_param_name_handle;
+								member_load.member_name = member.getName();
+								member_load.offset = static_cast<int>(member.offset);
+								member_load.ref_qualifier = member_ref_qualifier;
+								member_load.struct_type_info = nullptr;
+								ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), func_decl.identifier_token()));
+								MemberStoreOp member_store;
+								member_store.value.setType(member.type_index.category());
+								member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
+								member_store.value.value = member_value;
+								member_store.object = StringTable::getOrInternStringHandle("this");
+								member_store.member_name = member.getName();
+								member_store.offset = static_cast<int>(member.offset);
+								member_store.ref_qualifier = member_ref_qualifier;
+								member_store.struct_type_info = nullptr;
+								ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), func_decl.identifier_token()));
+							}
+						};
 						for (const BaseClassSpecifier& base : struct_info->base_classes) {
 							TypeInfo* base_type_info = tryGetTypeInfoMut(base.type_index);
 							if (base_type_info == nullptr) {
@@ -1368,39 +1396,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 							call_op.args.push_back(std::move(source_argument));
 							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), func_decl.identifier_token()));
 						}
-						// Generate memberwise assignment
-						for (const auto& member : struct_info->members) {
-							// First, load the member from source parameter
-							TempVar member_value = var_counter.next();
-							const CVReferenceQualifier member_ref_qualifier =
-								member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference
-								: member.is_reference() ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None;
-							MemberLoadOp member_load;
-							member_load.result.value = member_value;
-							member_load.result.setType(member.type_index.category());
-							member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
-							member_load.object = source_param_name_handle;  // Load from source parameter
-							member_load.member_name = member.getName();
-							member_load.offset = static_cast<int>(member.offset);
-							member_load.ref_qualifier = member_ref_qualifier;
-							member_load.struct_type_info = nullptr;
-
-							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), func_decl.identifier_token()));
-
-							// Then, store the member to 'this'
-							// Format: [member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, ref_size_bits, value]
-							MemberStoreOp member_store;
-							member_store.value.setType(member.type_index.category());
-							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
-							member_store.value.value = member_value;
-							member_store.object = StringTable::getOrInternStringHandle("this");
-							member_store.member_name = member.getName();
-							member_store.offset = static_cast<int>(member.offset);
-							member_store.ref_qualifier = member_ref_qualifier;
-							member_store.struct_type_info = nullptr;
-
-							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), func_decl.identifier_token()));
-						}
+						emit_memberwise_members(*struct_info);
 					}
 
 					// operator= returns 'Type&', so 'return *this' yields a reference
