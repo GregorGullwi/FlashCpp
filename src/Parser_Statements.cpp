@@ -2642,17 +2642,14 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 							return ParseResult::error("Expected initializer expression", current_token_);
 						}
 						ASTNode clause_node = *clause_result.node();
-						if (!clause_is_braced) {
-							while (array_element->is_aggregate && array_element->has_elements &&
-								   !element_accepts_whole_expression(*array_element, clause_node)) {
-								array_cursor.descendCurrent();
-								array_element = array_cursor.current();
-								if (!array_element.has_value()) {
-									return error(DiagnosticId::TooManyInitializers, current_token_, "Too many initializers for struct");
-								}
-							}
+						auto array_clause_appertains = [&](const AggregateElements::Element& element) {
+							return element_accepts_whole_expression(element, clause_node);
+						};
+						const AggregateInitialization::ClauseSettlement settlement =
+							AggregateInitialization::settleClause(array_cursor, clause_is_braced, array_clause_appertains);
+						if (!settlement.element.has_value()) {
+							return error(DiagnosticId::TooManyInitializers, current_token_, "Too many initializers for struct");
 						}
-						array_cursor.consumeCurrent();
 						array_init_ref.add_initializer(clause_node);
 						if (peek() == ","_tok) {
 							advance();
@@ -2689,16 +2686,14 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 					init_list_ref.add_initializer(element_node);
 					has_seen_pack_expansion = true;
 				} else {
-					if (!is_braced) {
-						while (element->is_aggregate && element->has_elements && !element_accepts_whole_expression(*element, element_node)) {
-							aggregate_cursor.descendCurrent();
-							element = aggregate_cursor.current();
-							if (!element.has_value()) {
-								return error(DiagnosticId::TooManyInitializers, current_token_, "Too many initializers for struct");
-							}
-						}
+					auto clause_appertains = [&](const AggregateElements::Element& current_element) {
+						return element_accepts_whole_expression(current_element, element_node);
+					};
+					const AggregateInitialization::ClauseSettlement settlement =
+						AggregateInitialization::settleClause(aggregate_cursor, is_braced, clause_appertains);
+					if (!settlement.element.has_value()) {
+						return error(DiagnosticId::TooManyInitializers, current_token_, "Too many initializers for struct");
 					}
-					aggregate_cursor.consumeCurrent();
 					init_list_ref.add_initializer(element_node);
 				}
 			}
