@@ -438,10 +438,12 @@ Continue boundary 3A in this order.
    copy/move declaration at each ODR-use site, keyed by the owner's canonical `TypeId`,
    and codegen drains that publication instead of inferring use from its lowering
    paths. This covers copy and direct initialization, return copy-initialization,
-   base/member initializers, and exception throw/handler parameters. By-value call
-   arguments lower as direct object copies and therefore do not force a constructor
-   definition. An unreferenced derived class therefore emits no copy/move body and
-   never queues synthesized template-base definitions or codegen-to-parser callbacks.
+   base/member initializers, and exception throw/handler parameters. A by-value
+   argument from an lvalue is copy-initialized and publishes the selected copy
+   constructor; prvalue arguments that initialize an object of the same type are
+   elided and do not force a definition. An unreferenced derived class therefore
+   emits no copy/move body and never queues synthesized template-base definitions or
+   codegen-to-parser callbacks.
    `tests/test_template_base_implicit_copy_move_odr_ret0.cpp` covers the use paths,
    `tests/test_eh_throw_catch_implicit_copy_ctor_ret0.cpp` protects the exception
    paths that emit no constructor-call IR, and

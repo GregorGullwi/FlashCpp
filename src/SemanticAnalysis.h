@@ -1,13 +1,15 @@
 #pragma once
-#include "SemanticTypes.h"
-#include "AstNodeTypes_Core.h"
-#include "MemberFunctionLookupShared.h"
+
 #include <cstdint>
 #include <optional>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
-#include <string_view>
 #include <vector>
+
+#include "AstNodeTypes_Core.h"
+#include "MemberFunctionLookupShared.h"
+#include "SemanticTypes.h"
 
 class Parser;
 class CompileContext;

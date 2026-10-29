@@ -12257,7 +12257,11 @@ void SemanticAnalysis::recordOdrUsedSpecialMember(TypeId owner_type_id, const St
 	if (!owner_type_id) {
 		return;
 	}
-	const uint64_t key = (static_cast<uint64_t>(owner_type_id.value) << 2) | static_cast<uint64_t>(kind);
+	// Reserve enough low bits for every special-member kind so extending the
+	// enumeration cannot silently alias another kind's key.
+	constexpr uint32_t kSpecialMemberKindKeyShift = 4;
+	static_assert(static_cast<uint8_t>(SpecialMemberKind::MoveAssignment) < (1u << kSpecialMemberKindKeyShift));
+	const uint64_t key = (static_cast<uint64_t>(owner_type_id.value) << kSpecialMemberKindKeyShift) | static_cast<uint64_t>(kind);
 	if (!odr_used_special_member_keys_.insert(key).second) {
 		return;
 	}
@@ -12345,7 +12349,13 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	if (isLogicallySameStructType(from_desc.type_index, to_desc.type_index)) {
 		const TypeInfo* same_type_info = tryGetTypeInfo(to_desc.type_index);
 		if (same_type_info && same_type_info->getStructInfo()) {
-			markOdrUsedSameTypeConstructor(*same_type_info->getStructInfo(), inferExpressionValueCategory(expr_node) != ValueCategory::LValue);
+			// [dcl.init]/17.6.1: a prvalue of the same class initializes the
+			// destination directly, so guaranteed copy elision does not ODR-use a
+			// copy/move constructor.
+			const ValueCategory source_category = inferExpressionValueCategory(expr_node);
+			if (source_category != ValueCategory::PRValue) {
+				markOdrUsedSameTypeConstructor(*same_type_info->getStructInfo(), source_category != ValueCategory::LValue);
+			}
 			return false;
 		}
 	}
@@ -15302,6 +15312,7 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 				argument_type->runtime_pointer_depth() == 0 &&
 				argument_type->category() == TypeCategory::Struct &&
 				struct_info->own_type_index_.has_value() &&
+				inferExpressionValueCategory(first_argument) != ValueCategory::PRValue &&
 				(argument_type->type_index() == *struct_info->own_type_index_ ||
 				 isLogicallySameStructType(argument_type->type_index(), *struct_info->own_type_index_))) {
 				markOdrUsedSameTypeConstructor(*struct_info, inferExpressionValueCategory(first_argument) != ValueCategory::LValue);
@@ -15513,6 +15524,7 @@ const ConstructorDeclarationNode* SemanticAnalysis::tryAnnotateConstructorArgRef
 			argument_type->runtime_pointer_depth() == 0 &&
 			argument_type->category() == TypeCategory::Struct &&
 			struct_info.own_type_index_.has_value() &&
+			inferExpressionValueCategory(arguments.front()) != ValueCategory::PRValue &&
 			(argument_type->type_index() == *struct_info.own_type_index_ ||
 			 isLogicallySameStructType(argument_type->type_index(), *struct_info.own_type_index_))) {
 			markOdrUsedSameTypeConstructor(struct_info, inferExpressionValueCategory(arguments.front()) != ValueCategory::LValue);
@@ -15549,7 +15561,19 @@ const ConstructorDeclarationNode* SemanticAnalysis::tryAnnotateConstructorArgRef
 	}
 
 	const auto& parameters = selected_ctor->parameter_nodes();
-	markOdrUsedImplicitSpecialMember(struct_info, *selected_ctor);
+	bool elided_same_type_prvalue = false;
+	if (arg_types.size() == 1 && inferExpressionValueCategory(arguments.front()) == ValueCategory::PRValue) {
+		const TypeSpecifierNode& argument_type = arg_types.front();
+		elided_same_type_prvalue =
+			argument_type.runtime_pointer_depth() == 0 &&
+			argument_type.category() == TypeCategory::Struct &&
+			struct_info.own_type_index_.has_value() &&
+			(argument_type.type_index() == *struct_info.own_type_index_ ||
+			 isLogicallySameStructType(argument_type.type_index(), *struct_info.own_type_index_));
+	}
+	if (!elided_same_type_prvalue) {
+		markOdrUsedImplicitSpecialMember(struct_info, *selected_ctor);
+	}
 	selected_initializer_constructors_[binding_key] = selected_ctor;
 	auto& ref_bindings = call_ref_bindings_[binding_key];
 	ref_bindings.clear();
