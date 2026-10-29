@@ -18,6 +18,8 @@ struct StructuralClassValue;
 }
 struct StructTypeInfo;
 const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index);
+ConstructorDeclarationNode* synthesizeImplicitCopyConstructor(
+	StructTypeInfo& struct_info, TypeIndex self_type_index, StringHandle instantiated_name);
 
 // Classification of a class type's participation in the translation unit.
 // This is deliberately independent of AstOwnershipPhase: parser ownership of

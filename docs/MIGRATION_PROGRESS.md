@@ -393,15 +393,18 @@ Continue boundary 3A in this order.
    and callable-component tails. Keep compatibility for shapes the canonical importer
    or declaration bridge cannot yet represent.
 
-   **Derived-to-base value tails: complete for published same-type constructors.**
-   Sema now records the target base copy/move constructor when a conversion operator's
-   class result feeds a by-value base parameter, and lowering materializes that base
-   object instead of copying the derived result bytes. This covers nonzero base offsets
-   and reference pre-bindings; class-template specializations without a published
-   same-type constructor still use the compatibility conversion noted in
-   [known issues](KNOWN_ISSUES.md). `tests/test_conversion_operator_value_base_tail_offset_ret0.cpp`
-   protects the nonzero-offset value tail, a nontrivial base copy, and the adjacent
-   reference binding. No 3A exit criterion closes; the rollup remains 10/79.
+   **Derived-to-base value tails: complete.** Sema records the target base
+   copy/move constructor when a conversion operator's class result feeds a by-value
+   base parameter, and lowering materializes that base object instead of copying the
+   derived result bytes. This covers nonzero base offsets, nontrivial copies, and
+   reference pre-bindings. Class-template specializations without a pre-existing
+   same-type constructor receive a synthesized implicit copy constructor on demand,
+   so template value tails use the same materialization path instead of the compatibility
+   conversion. `tests/test_conversion_operator_value_base_tail_offset_ret0.cpp` protects
+   the non-template offset tail, a nontrivial copy, and reference binding, while
+   `tests/test_conversion_operator_template_value_base_tail_offset_ret0.cpp` covers the
+   corresponding class-template specialization. No 3A exit criterion closes; the rollup
+   remains 10/79.
 
    **Active-union structural identity: complete for declared groups.**
    `EvalResult` now carries the selected variant explicitly on the member

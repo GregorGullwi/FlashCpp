@@ -2462,6 +2462,48 @@ const StructMemberFunction* StructTypeInfo::findPreferredSameTypeConstructor(
 	return nullptr;
 }
 
+ConstructorDeclarationNode* synthesizeImplicitCopyConstructor(
+	StructTypeInfo& struct_info,
+	TypeIndex self_type_index,
+	StringHandle instantiated_name) {
+	if (struct_info.findCopyConstructor(true) ||
+		struct_info.findMoveConstructor(true) ||
+		struct_info.isCopyConstructorDeleted() ||
+		struct_info.isMoveConstructorDeleted()) {
+		return nullptr;
+	}
+
+	int copy_param_size_bits = struct_info.sizeInBits().value;
+	if (copy_param_size_bits == 0 && self_type_index.is_valid()) {
+		if (const TypeInfo* self_type_info = tryGetTypeInfo(self_type_index)) {
+			if (self_type_info->hasStoredSize()) {
+				copy_param_size_bits = self_type_info->sizeInBits().value;
+			}
+		}
+	}
+	if (copy_param_size_bits == 0) {
+		copy_param_size_bits = get_type_size_bits(TypeCategory::FunctionPointer);
+	}
+
+	Token ctor_name_token(Token::Type::Identifier, StringTable::getStringView(instantiated_name), 0, 0, 0);
+	ASTNode copy_ctor_node = ASTNode::emplace_node<ConstructorDeclarationNode>(instantiated_name, instantiated_name);
+	ConstructorDeclarationNode& copy_ctor = copy_ctor_node.as<ConstructorDeclarationNode>();
+	ASTNode copy_param_type = ASTNode::emplace_node<TypeSpecifierNode>(
+		self_type_index.withCategory(TypeCategory::Struct),
+		copy_param_size_bits,
+		ctor_name_token,
+		CVQualifier::Const,
+		ReferenceQualifier::LValueReference);
+	Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
+	ASTNode param_decl_node = ASTNode::emplace_node<DeclarationNode>(copy_param_type, param_token);
+	copy_ctor.add_parameter_node(param_decl_node);
+	ASTNode copy_block_node = ASTNode::emplace_node<BlockNode>();
+	copy_ctor.set_definition(copy_block_node);
+	copy_ctor.set_is_implicit(true);
+	struct_info.addConstructor(copy_ctor_node, AccessSpecifier::Public);
+	return &copy_ctor;
+}
+
 namespace {
 bool isMatchingSameTypeAssignmentOperator(const StructTypeInfo& struct_info,
 										  const StructMemberFunction& func,

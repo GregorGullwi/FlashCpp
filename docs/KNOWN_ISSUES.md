@@ -49,17 +49,6 @@ false. Materialize or plan the implicit base copy/move operation before
 lowering, preserving nontrivial member construction and base offsets rather
 than replacing the operation with an unconditional byte copy.
 
-## Template conversion-function value base tails still need base-object materialization
-
-Conversion functions returning a non-template `Derived` now carry the selected
-target base copy/move constructor through `ImplicitCastInfo` and materialize the
-base object in lowering, including when the base is at a nonzero offset. Class
-template specializations can still lack a published same-type constructor, so
-those value tails retain the old raw conversion. Publish the specialization
-copy/move constructor before routing template base tails through the same
-materialization path; a raw byte copy would incorrectly bypass nontrivial
-copy/move semantics.
-
 ## Remaining structural NTTP shapes need canonical value import
 
 Union declaration groups now carry explicit active-member state. Aggregate,
