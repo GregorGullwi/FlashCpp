@@ -11527,6 +11527,27 @@ bool SemanticAnalysis::checkSelectedConversionOperatorAccess(
 	return true;
 }
 
+const ConstructorDeclarationNode* selectTrailingBaseConstructor(
+	const CanonicalTypeDesc& target_desc, const UserDefinedConversionOperatorSelection& selected_conversion) {
+	if (selected_conversion.trailing_standard_kind != StandardConversionKind::DerivedToBase ||
+		target_desc.category() != TypeCategory::Struct || target_desc.ref_qualifier != ReferenceQualifier::None ||
+		!target_desc.pointer_levels.empty()) {
+		return nullptr;
+	}
+	const TypeInfo* target_type_info = target_desc.type_index.is_valid() ? tryGetTypeInfo(target_desc.type_index) : nullptr;
+	const StructTypeInfo* target_struct_info = target_type_info != nullptr ? target_type_info->getStructInfo() : nullptr;
+	if (target_struct_info == nullptr) {
+		throw InternalError("Sema-selected base-tail conversion has no target class declaration");
+	}
+	const TypeSpecifierNode conversion_return_type = selected_conversion.function->decl_node().type_specifier_node();
+	const bool prefer_move_ctor = !conversion_return_type.is_lvalue_reference();
+	const StructMemberFunction* same_type_ctor = target_struct_info->findPreferredSameTypeConstructor(prefer_move_ctor, true);
+	if (same_type_ctor == nullptr || !same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+		return nullptr;
+	}
+	return &same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+}
+
 bool SemanticAnalysis::annotateSelectedConversionOperator(
 	const ASTNode& expr_node,
 	CanonicalTypeId expr_type_id,
@@ -11542,6 +11563,7 @@ bool SemanticAnalysis::annotateSelectedConversionOperator(
 	cast_info.value_category_after = ValueCategory::PRValue;
 	cast_info.selected_conversion_function = selected_conversion.function;
 	cast_info.trailing_standard_conversion = selected_conversion.trailing_standard_kind;
+	cast_info.trailing_constructor = selectTrailingBaseConstructor(type_context_.get(target_type_id), selected_conversion);
 	const CastInfoIndex idx = allocateCastInfo(cast_info);
 	SemanticSlot slot;
 	slot.type_id = target_type_id;
@@ -13402,6 +13424,7 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 		cast_info.value_category_after = ValueCategory::PRValue;
 		cast_info.selected_conversion_function = selected_conversion->function;
 		cast_info.trailing_standard_conversion = selected_conversion->trailing_standard_kind;
+		cast_info.trailing_constructor = selectTrailingBaseConstructor(type_context_.get(param_value_type_id), *selected_conversion);
 		info.pre_bind_cast_info_index = allocateCastInfo(cast_info);
 		info.flags = ConversionPlanFlags::IsValid | ConversionPlanFlags::IsUserDefined |
 			ConversionPlanFlags::MaterializesTemporary;

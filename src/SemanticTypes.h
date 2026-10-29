@@ -85,6 +85,10 @@ struct ImplicitCastInfo {
 	StandardConversionKind cast_kind;
 	ValueCategory value_category_after = ValueCategory::PRValue;
 	const ConstructorDeclarationNode* selected_constructor = nullptr;
+	// A conversion operator returning a class may be followed by a derived-to-base
+	// value tail. Sema selects the target base copy/move constructor here so
+	// lowering can materialize the base object instead of copying raw bytes.
+	const ConstructorDeclarationNode* trailing_constructor = nullptr;
 	// For UserDefined struct-to-X conversions (e.g. operator T*()): the
 	// conversion operator selected by sema. Codegen consumes this directly
 	// rather than re-running conversion-operator lookup.
