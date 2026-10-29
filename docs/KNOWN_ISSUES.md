@@ -19,25 +19,6 @@ its union fields. Reuse the normal class-member parser before publishing these
 specializations' field schemas; layout publication cannot recover absent declarations.
 Primary templates and their ordinary nested classes retain these static facts.
 
-## Overloaded free-function addresses can retain an unresolved target
-
-Target-typed address initialization can emit a function address by name without
-selecting the matching overload. This valid C++20 program returns the wrong
-result in FlashCpp; the MSVC reference returns zero:
-
-```cpp
-long long pick(short) { return 11; }
-long long pick(long long) { return 22; }
-int main() {
-	long long (*target)(long long) = &pick;
-	return target(1LL) == 22 ? 0 : 1;
-}
-```
-
-Expression sema must retain the selected declaration and lowering must consume
-it. Published function EntityIds and the canonical function-pointer value adapter
-now provide target identity, but do not select or lower an overload themselves.
-
 ## Implicit copy/move constructor definitions are not uniformly ODR-deferred
 
 Implicit assignment definitions are now emitted only on ODR use, but implicit

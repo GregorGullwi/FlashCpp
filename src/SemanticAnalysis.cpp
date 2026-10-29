@@ -11633,6 +11633,9 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
 	const bool target_is_member_object_pointer = isMemberObjectPointerType(target_type_id);
 	const bool target_is_member_function_pointer = isMemberFunctionPointerType(target_type_id);
+	if (to_desc.category() == TypeCategory::FunctionPointer) {
+		(void)parser().resolveFreeFunctionAddressForTarget(const_cast<ASTNode&>(expr_node), materializeTypeSpecifier(to_desc));
+	}
 	auto select_conversion_operator = [this](CanonicalTypeId source_type_id, const TypeSpecifierNode& target_type)
 		-> std::optional<UserDefinedConversionOperatorSelection> {
 		const TypeSpecifierNode source_type = materializeTypeSpecifier(type_context_.get(source_type_id));

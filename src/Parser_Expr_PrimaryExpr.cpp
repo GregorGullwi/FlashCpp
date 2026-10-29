@@ -982,6 +982,61 @@ void appendQualifiedMemberFunctionAddressAssociatedTypes(
 }
 } // namespace
 
+const FunctionDeclarationNode* Parser::resolveFreeFunctionAddressForTarget(
+	ASTNode& argument,
+	const TypeSpecifierNode& target_type) {
+	if (!argument.is<ExpressionNode>()) {
+		return nullptr;
+	}
+	auto* address = std::get_if<UnaryOperatorNode>(&argument.as<ExpressionNode>());
+	if (address == nullptr || address->op() != "&" || address->is_builtin_addressof()) {
+		return nullptr;
+	}
+	const FreeFunctionAddressOverloadSet overload_set = tryCollectFreeFunctionAddressOverloads(&argument);
+	if (overload_set.direct_functions.empty()) {
+		return nullptr;
+	}
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const std::optional<TypeId> target_import = tryImportSupportedCanonical(table, target_type);
+	if (!target_import.has_value()) {
+		return nullptr;
+	}
+	const TypeId target = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, *target_import)).first;
+	const CanonicalTypeNode target_node = table.node(target);
+	if (target_node.kind != CanonicalTypeKind::Pointer ||
+		table.node(stripCanonicalTopCv(table, target_node.child).first).kind != CanonicalTypeKind::Function) {
+		return nullptr;
+	}
+	const FunctionDeclarationNode* selected = nullptr;
+	std::optional<ConversionRank> best_rank;
+	for (const FunctionDeclarationNode* function : overload_set.direct_functions) {
+		if (function == nullptr) {
+			continue;
+		}
+		const CanonicalTypeImport function_import = importFunctionDeclarationCanonicalType(table, *function);
+		if (function_import.status != CanonicalTypeImportStatus::Supported) {
+			continue;
+		}
+		const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, table.pointer(function_import.type), target);
+		if (!conversion.is_valid) {
+			continue;
+		}
+		if (!best_rank.has_value() || conversion.rank < *best_rank) {
+			best_rank = conversion.rank;
+			selected = function;
+		} else if (conversion.rank == *best_rank) {
+			selected = nullptr;
+		}
+	}
+	if (selected == nullptr) {
+		return nullptr;
+	}
+	transaction.commit();
+	address->set_resolved_addressed_function(selected);
+	return selected;
+}
+
 std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateForAddress(
 	const StructTypeInfo& owner,
 	const QualifiedIdentifierNode& member_id,
