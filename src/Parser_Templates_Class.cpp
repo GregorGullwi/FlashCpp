@@ -5,6 +5,7 @@
 #include "FrontendContext.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "ParserTemplateClassShared.h"
 #include "TemplateFunctionSignatureShape.h"
 #include "TypeTraitEvaluator.h"
 
@@ -3508,10 +3509,24 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			gTemplateRegistry.registerPatternStructName(instantiated_name, StringTable::getOrInternStringHandle(template_name));
 
 			// Create a struct node for this specialization
-			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
-				instantiated_name,
-				is_class,
-				is_union);
+			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(instantiated_name, is_class, is_union);
+
+			FlashCpp::ScopedState partial_environment_guard(active_template_decl_id_);
+			active_template_decl_id_ = {};
+			const ScopeType partial_scope = gSymbolTable.get_current_scope_type();
+			const TemplateClassDeclarationNode& primary = class_template_opt->as<TemplateClassDeclarationNode>();
+			if (!requires_clause.has_value() && (partial_scope == ScopeType::Global || partial_scope == ScopeType::Namespace)) {
+				FrontendContext& front_end = requireFrontendContext();
+				const std::optional<TypeId> pattern = tryImportCanonicalPartialClassPattern(front_end.canonicalTypes(), primary.template_decl_id(),
+					std::span<const TemplateParameterNode>(template_param_nodes.data(), template_param_nodes.size()),
+					std::span<const TemplateTypeArg>(pattern_args.data(), pattern_args.size()));
+				if (pattern.has_value()) {
+					const TemplateDeclId environment = front_end.templateDecls().publishClassPartialEnvironment(primary.template_decl_id(), *pattern);
+					struct_ref.set_partial_specialization_environment(environment);
+					active_template_decl_id_ = environment;
+					bindCurrentUnpublishedTemplateParameters(environment);
+				}
+			}
 
 			// Create struct type info early so we can add base classes
 			TypeInfo& struct_type_info = add_struct_type(instantiated_name, gSymbolTable.get_current_namespace_handle());

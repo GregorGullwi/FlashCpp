@@ -581,14 +581,22 @@ Continue boundary 3A in this order.
    `test_canonical_structural_nttp_templated_member_pointer_ret0.cpp`, native
    environment/mutation guards, and the 4,096-level field graph on a 1 MiB stack.
 
-   **Next 3A slice: partial-specialization member-pointer field production.**
-   Start with a reduced `Key<T*>` holder and native canonical-import regression.
-   Establish the partial pattern's published parameter environment and deduced
-   arguments before reusing `substituteCanonicalStructMemberType` at the partial
-   field registration in `Parser_Templates_Inst_ClassTemplate.cpp`. A partial's
-   `T` must bind to its deduced type, not the primary's `T*` argument slot. If the
-   environment is unpublished, land that publication prerequisite first. Keep
-   the nested-class producer separate. Opaque non-type specialization arguments
+   **Partial-pattern environments:** unconstrained namespace/global direct type
+   patterns publish a separate `partial_specialization_environment()` keyed by
+   primary declaration and alpha-normalized canonical pattern. Retain the renamed
+   declaration, rollback/mutation, and 4,096-level normalization guards.
+
+   **Next 3A slice: consume partial environments in member-pointer fields.**
+   At the partial field registration in `Parser_Templates_Inst_ClassTemplate.cpp`,
+   import the original stamped member-pointer pattern and call
+   `substituteCanonicalStructMemberType` with the pattern's published environment
+   and `template_args_for_member_copy` deduced bindings. A partial's `T` must bind
+   to its deduced type, not the primary's `T*` argument slot. Keep class identity
+   as the primary plus actual specialization arguments; an environment ID is
+   never a class owner. Add native/source named-versus-braced structural-NTTP
+   guards covering short/long long, qualifiers, and nested pointer signatures.
+   Keep nested-class producers and constrained, pack, non-type, or complex
+   dependent partial patterns separate. Opaque non-type specialization arguments
    remain fail-closed until their parameter/value identity can substitute.
    Do not recover identity by spelling or add evaluator/selection rules.
 

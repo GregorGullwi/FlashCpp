@@ -1715,6 +1715,10 @@ public:
 	void set_canonical_specialization_owner_template_decl_id(TemplateDeclId id) { canonical_specialization_owner_template_decl_id_ = id; }
 	bool has_canonical_specialization_owner() const { return static_cast<bool>(canonical_specialization_owner_template_decl_id_); }
 
+	// Parameter substitution identity of a partial pattern, never a class type owner.
+	TemplateDeclId partial_specialization_environment() const { return partial_specialization_environment_; }
+	void set_partial_specialization_environment(TemplateDeclId environment) { partial_specialization_environment_ = environment; }
+
 private:
 	StringHandle name_;	// Points directly into source text from lexer token
 	StringHandle semantic_name_; // Lookup-qualified TypeInfo name for local classes
@@ -1730,14 +1734,15 @@ private:
 	std::vector<StaticMemberDecl> static_members_;  // Static members (for templates)
 	std::vector<AnonymousUnionInfo> anonymous_unions_;  // Anonymous union tracking info
 	StructDeclarationNode* enclosing_class_ = nullptr;  // Enclosing class (if nested)
-	bool is_class_;	// true for class, false for struct
-	bool is_union_;	// true for union, false for struct/class
-	bool is_final_ = false;	// true if declared with 'final' keyword
-	bool is_forward_declaration_ = false;  // true for forward declarations without body
-	bool is_local_class_ = false;
-	bool has_deleted_default_constructor_ = false;  // Track deleted default constructor
-	bool has_deleted_copy_constructor_ = false;		// Track deleted copy constructor
-	bool has_deleted_move_constructor_ = false;		// Track deleted move constructor
+	bool is_class_ : 1;	// true for class, false for struct
+	bool is_union_ : 1;	// true for union, false for struct/class
+	bool is_final_ : 1 = false;	// true if declared with 'final' keyword
+	bool is_forward_declaration_ : 1 = false;  // true for forward declarations without body
+	bool is_local_class_ : 1 = false;
+	bool has_deleted_default_constructor_ : 1 = false;  // Track deleted default constructor
+	bool has_deleted_copy_constructor_ : 1 = false;		// Track deleted copy constructor
+	bool has_deleted_move_constructor_ : 1 = false;		// Track deleted move constructor
+	TemplateDeclId partial_specialization_environment_;
 	std::vector<DeferredStaticAssert> deferred_static_asserts_;	// Static_asserts deferred during template definition
 	const TemplateEnvironmentSnapshotNode* outer_template_environment_snapshot_node_{};
 	TemplateParamNameVector outer_template_param_names_;
