@@ -2266,24 +2266,30 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				symbol_table.exit_scope();
 			} else {
 				for (const auto& virtual_base : enclosing_struct_info->virtual_bases) {
-					const TypeInfo* base_type_info = tryGetTypeInfo(virtual_base.type_index);
+					TypeInfo* base_type_info = tryGetTypeInfoMut(virtual_base.type_index);
 					if (!base_type_info) {
 						continue;
 					}
-					const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
+					StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 					ConstructorCallOp ctor_op;
 					ctor_op.object = StringTable::getOrInternStringHandle("this");
 					assert(virtual_base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
 					ctor_op.base_class_offset = static_cast<int>(virtual_base.offset);
 					ctor_op.call_base_object_variant = shouldCallBaseObjectVariant(base_struct_info);
-					if ((is_implicit_copy_constructor || is_implicit_move_constructor) &&
-						base_struct_info && base_struct_info->hasAnyConstructor()) {
-						if (const StructMemberFunction* base_same_type_ctor =
+					if ((is_implicit_copy_constructor || is_implicit_move_constructor) && base_struct_info) {
+						const ConstructorDeclarationNode* base_same_type_ctor = nullptr;
+						if (const StructMemberFunction* selected =
 								base_struct_info->findPreferredSameTypeConstructor(is_implicit_move_constructor, true);
-							base_same_type_ctor && base_same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-							ctor_op.resolved_constructor =
-								&base_same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+							selected && selected->function_decl.is<ConstructorDeclarationNode>()) {
+							base_same_type_ctor = &selected->function_decl.as<ConstructorDeclarationNode>();
+						} else {
+							base_same_type_ctor = ensureSynthesizedBaseConstructor(
+								*base_type_info, *base_struct_info, is_implicit_move_constructor);
 						}
+						if (base_same_type_ctor == nullptr) {
+							continue;
+						}
+						ctor_op.resolved_constructor = base_same_type_ctor;
 						ctor_op.source_base_class_offset = static_cast<int>(virtual_base.offset);
 						TypedValue other_arg;
 						other_arg.type_index = virtual_base.type_index;
@@ -2525,16 +2531,14 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 							continue;
 						}
 						// Get base class type info
-						const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+						TypeInfo* base_type_info = tryGetTypeInfoMut(base.type_index);
 						if (!base_type_info) {
 							continue;  // Invalid base type index
 						}
 
-						// Only call base copy/move constructor if the base class actually has constructors
-						// This avoids link errors when inheriting from classes without constructors
-						const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
-						if (!base_struct_info || !base_struct_info->hasAnyConstructor()) {
-							continue;  // Skip if base has no constructors
+						StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
+						if (!base_struct_info) {
+							continue;
 						}
 
 						// Build constructor call: Base::Base(this, other)
@@ -2542,12 +2546,19 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						// For move constructors, pass 'other' as the move source
 						ConstructorCallOp ctor_op;
 						ctor_op.object = StringTable::getOrInternStringHandle("this");
-						if (const StructMemberFunction* base_same_type_ctor =
+						const ConstructorDeclarationNode* base_same_type_ctor = nullptr;
+						if (const StructMemberFunction* selected =
 								base_struct_info->findPreferredSameTypeConstructor(is_implicit_move_constructor, true);
-							base_same_type_ctor && base_same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-							ctor_op.resolved_constructor =
-								&base_same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+							selected && selected->function_decl.is<ConstructorDeclarationNode>()) {
+							base_same_type_ctor = &selected->function_decl.as<ConstructorDeclarationNode>();
+						} else {
+							base_same_type_ctor = ensureSynthesizedBaseConstructor(
+								*base_type_info, *base_struct_info, is_implicit_move_constructor);
 						}
+						if (base_same_type_ctor == nullptr) {
+							continue;
+						}
+						ctor_op.resolved_constructor = base_same_type_ctor;
 						// For multiple inheritance, the 'this' pointer must be adjusted to point to the base subobject
 						assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
 						ctor_op.base_class_offset = static_cast<int>(base.offset);

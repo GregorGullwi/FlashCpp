@@ -38,17 +38,6 @@ Expression sema must retain the selected declaration and lowering must consume
 it. Published function EntityIds and the canonical function-pointer value adapter
 now provide target identity, but do not select or lower an overload themselves.
 
-## Implicit derived copy/move construction can omit a template base
-
-An instantiated `template<class T> struct Base { T value; };` can have no
-constructor AST even though its implicit copy/move operations exist. Copying
-or moving a derived object can then leave `Base<short>::value` uninitialized
-while copying its other bases and direct members. The implicit derived
-constructor emitter currently skips bases for which `hasAnyConstructor()` is
-false. Materialize or plan the implicit base copy/move operation before
-lowering, preserving nontrivial member construction and base offsets rather
-than replacing the operation with an unconditional byte copy.
-
 ## Remaining structural NTTP shapes need canonical value import
 
 Union declaration groups now carry explicit active-member state. Aggregate,

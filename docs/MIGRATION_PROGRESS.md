@@ -406,6 +406,15 @@ Continue boundary 3A in this order.
    corresponding class-template specialization. No 3A exit criterion closes; the rollup
    remains 10/79.
 
+   **Template-base implicit copy/move construction: complete.** Implicit derived
+   copy/move constructors now synthesize unregistered base copy/move constructors when
+   a class-template base has no constructor AST, queue their definitions for deferred
+   codegen, and use the same generated body for direct and virtual bases. The synthesis
+   helper is shared with conversion-tail materialization but no longer mutates a
+   finalized `StructTypeInfo` member list, avoiding vtable-pointer invalidation.
+   `tests/test_template_base_implicit_copy_move_ret0.cpp` covers direct, move, and
+   virtual template-base construction.
+
    **Active-union structural identity: complete for declared groups.**
    `EvalResult` now carries the selected variant explicitly on the member
    binding, and `StructuralClassValue` stores ordered `union_selections`
