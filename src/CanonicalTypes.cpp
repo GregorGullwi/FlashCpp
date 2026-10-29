@@ -944,7 +944,7 @@ TypeId CanonicalTypeTable::memberObjectPointerValue(TypeId member_pointer_type, 
 		throw InternalError("canonical type: member object pointer value requires a member object pointer type");
 	}
 	const CanonicalTypeKind kind = nodeUnlocked(declaring_class).kind;
-	if (kind != CanonicalTypeKind::Record && kind != CanonicalTypeKind::TemplateSpecialization) {
+	if (!isCanonicalClassTypeKind(kind)) {
 		throw InternalError("canonical type: member object pointer value requires a class declaring class");
 	}
 	const CanonicalRecordFieldSchemaHeader header = fieldSchemaHeaderUnlocked(declaring_class);
@@ -968,7 +968,7 @@ TypeId CanonicalTypeTable::memberFunctionPointerValue(TypeId member_function_poi
 		throw InternalError("canonical type: member function pointer value requires a member function pointer type");
 	}
 	const CanonicalTypeKind declaring_kind = nodeUnlocked(declaring_class).kind;
-	if (declaring_kind != CanonicalTypeKind::Record && declaring_kind != CanonicalTypeKind::TemplateSpecialization) {
+	if (!isCanonicalClassTypeKind(declaring_kind)) {
 		throw InternalError("canonical type: member function pointer value requires a class declaring class");
 	}
 	const CanonicalClassTypeSchemaHeader schema = classTypeSchemaHeaderUnlocked(declaring_class, CanonicalClassTypeSchemaKind::MemberFunctions);
@@ -1014,7 +1014,7 @@ TypeId CanonicalTypeTable::structuralValue(TypeId class_type, std::span<const Ty
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
 	const CanonicalTypeKind class_kind = nodeUnlocked(class_type).kind;
-	if (class_kind != CanonicalTypeKind::Record && class_kind != CanonicalTypeKind::TemplateSpecialization) {
+	if (!isCanonicalClassTypeKind(class_kind)) {
 		throw InternalError("canonical type: structural value requires a published class type");
 	}
 	if (base_count > subobject_values.size()) {
@@ -1039,7 +1039,7 @@ TypeId CanonicalTypeTable::structuralUnionValue(TypeId owner_type, uint16_t firs
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
 	const CanonicalTypeNode owner = nodeUnlocked(owner_type);
-	if (owner.kind != CanonicalTypeKind::Record && owner.kind != CanonicalTypeKind::TemplateSpecialization) {
+	if (!isCanonicalClassTypeKind(owner.kind)) {
 		throw InternalError("canonical type: union value requires a class owner");
 	}
 	const CanonicalRecordFieldSchemaHeader header = fieldSchemaHeaderUnlocked(owner_type);
@@ -1333,9 +1333,7 @@ void CanonicalTypeTable::publishRecordProperties(
 		CanonicalRecordFacts::DestructorHasNoexceptSpecifier | CanonicalRecordFacts::DestructorNoexcept |
 		CanonicalRecordFacts::TrivialCopyingSpecialMembers | CanonicalRecordFacts::TrivialDefaultConstructor);
 	const CanonicalTypeKind kind = type ? nodeUnlocked(type).kind : CanonicalTypeKind::Builtin;
-	if (!type || (kind != CanonicalTypeKind::Record &&
-		kind != CanonicalTypeKind::TemplateSpecialization) ||
-		(static_cast<uint32_t>(facts) & ~valid_facts) != 0) {
+	if (!type || !isCanonicalClassTypeKind(kind) || (static_cast<uint32_t>(facts) & ~valid_facts) != 0) {
 		throw InternalError("canonical type: invalid record property publication");
 	}
 	const CanonicalRecordProperties properties{type, facts};
@@ -1408,7 +1406,7 @@ void CanonicalTypeTable::publishRecordFieldSchema(TypeId owner, std::span<const 
 		if (members.size() != layout.member_count || bases.size() != layout.direct_base_count) {
 			throw InternalError("canonical type: record field schema count mismatch");
 		}
-	} else if (type.kind == CanonicalTypeKind::TemplateSpecialization) {
+	} else if (isCanonicalClassTypeKind(type.kind)) {
 		const CanonicalClassTypeSchemaHeader schema = recordSubobjectTypeSchemaHeaderUnlocked(owner);
 		if (!bases.empty() || members.size() != schema.member_count || !class_base_schema_ids_.contains(owner.value)) {
 			throw InternalError("canonical type: specialization field schema requires published subobject and base facts");
@@ -1537,7 +1535,7 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 	// anonymous-union or unimportable members while the constructor signature
 	// still imports.
 	const CanonicalTypeKind type_kind = nodeUnlocked(type).kind;
-	if (type_kind != CanonicalTypeKind::Record && type_kind != CanonicalTypeKind::TemplateSpecialization) {
+	if (!isCanonicalClassTypeKind(type_kind)) {
 		throw InternalError("canonical type: constructor schema requires a class type");
 	}
 	const auto minimumParameterCount = [](const CanonicalRecordConstructorSpec& constructor) {
@@ -1665,8 +1663,7 @@ void CanonicalTypeTable::publishClassBaseSchema(TypeId class_type,
 		throw InternalError("canonical type: invalid class base schema");
 	}
 	const CanonicalTypeKind owner_kind = nodeUnlocked(class_type).kind;
-	if (owner_kind != CanonicalTypeKind::Record &&
-		owner_kind != CanonicalTypeKind::TemplateSpecialization) {
+	if (!isCanonicalClassTypeKind(owner_kind)) {
 		throw InternalError("canonical type: base schema owner is not a class type");
 	}
 	for (const CanonicalClassBase& base : bases) {
@@ -1680,8 +1677,7 @@ void CanonicalTypeTable::publishClassBaseSchema(TypeId class_type,
 			throw InternalError("canonical type: invalid class base schema edge");
 		}
 		const CanonicalTypeKind base_kind = nodeUnlocked(base.type).kind;
-		if (base_kind != CanonicalTypeKind::Record &&
-			base_kind != CanonicalTypeKind::TemplateSpecialization) {
+		if (!isCanonicalClassTypeKind(base_kind)) {
 			throw InternalError("canonical type: class base edge does not name a class type");
 		}
 	}
@@ -1758,7 +1754,7 @@ void CanonicalTypeTable::publishVirtualBaseSchema(TypeId class_type, std::span<c
 		throw InternalError("canonical type: invalid virtual base schema");
 	}
 	const CanonicalTypeKind owner_kind = nodeUnlocked(class_type).kind;
-	if (owner_kind != CanonicalTypeKind::Record && owner_kind != CanonicalTypeKind::TemplateSpecialization) {
+	if (!isCanonicalClassTypeKind(owner_kind)) {
 		throw InternalError("canonical type: virtual base schema owner is not a class type");
 	}
 	for (size_t index = 0; index < virtual_bases.size(); ++index) {
@@ -1767,7 +1763,7 @@ void CanonicalTypeTable::publishVirtualBaseSchema(TypeId class_type, std::span<c
 			throw InternalError("canonical type: invalid virtual base schema entry");
 		}
 		const CanonicalTypeKind base_kind = nodeUnlocked(base.type).kind;
-		if (base_kind != CanonicalTypeKind::Record && base_kind != CanonicalTypeKind::TemplateSpecialization) {
+		if (!isCanonicalClassTypeKind(base_kind)) {
 			throw InternalError("canonical type: virtual base entry does not name a class type");
 		}
 		for (size_t previous = 0; previous < index; ++previous) {
@@ -1860,7 +1856,7 @@ std::optional<uint32_t> CanonicalTypeTable::findVirtualBaseIndex(TypeId class_ty
 void CanonicalTypeTable::publishClassTypeSchemaUnlocked(TypeId type, std::span<const TypeId> entries, CanonicalClassTypeSchemaKind kind) {
 	if (!type || entries.size() > std::numeric_limits<uint16_t>::max()) throw InternalError("canonical type: invalid class type schema");
 	const CanonicalTypeKind owner_kind = nodeUnlocked(type).kind;
-	if (owner_kind != CanonicalTypeKind::Record && owner_kind != CanonicalTypeKind::TemplateSpecialization) {
+	if (!isCanonicalClassTypeKind(owner_kind)) {
 		throw InternalError("canonical type: type schema owner is not a class type");
 	}
 	if (kind == CanonicalClassTypeSchemaKind::MemberFunctions && hasDependentTypeComponentsUnlocked(type, true)) {
@@ -2701,9 +2697,8 @@ TypeId CanonicalTypeTable::resolveNestedAliasGraphUnlocked(TypeId type) {
 			if (substituted_owner == original_owner && substituted_pointee == node.child) {
 				break;
 			}
-			if (nodeUnlocked(substituted_owner).kind != CanonicalTypeKind::Record) {
-				throw InternalError(
-					"canonical type: normalized member pointer owner must be a record");
+			if (!isCanonicalClassTypeKind(nodeUnlocked(substituted_owner).kind)) {
+				throw InternalError("canonical type: normalized member pointer owner must be a class type");
 			}
 			if (node.kind == CanonicalTypeKind::MemberFunctionPointer) {
 				if (nodeUnlocked(substituted_pointee).kind != CanonicalTypeKind::Function) {
@@ -3366,8 +3361,7 @@ TypeId CanonicalTypeTable::classOwnerUnlocked(TypeId owner) const {
 		owner = input.child;
 		input = nodeUnlocked(owner);
 	}
-	if (input.kind != CanonicalTypeKind::Record &&
-		input.kind != CanonicalTypeKind::TemplateSpecialization) {
+	if (!isCanonicalClassTypeKind(input.kind)) {
 		throw InternalError("canonical type: member pointer owner must be a class type");
 	}
 	return owner;

@@ -9704,12 +9704,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 																			 : std::nullopt;
 
 				StringHandle member_name_handle = decl.identifier_token().handle();
-				const TypeId canonical_member_type_id = importCanonicalStructMemberType(
-					requireFrontendContext().canonicalTypes(), substituted_type_spec, is_array_member, member_pointee_array_declarator, resolved_array_dimensions);
+				const TypeSpecifierNode& canonical_member_syntax = type_spec.has_member_class() ? type_spec : substituted_type_spec;
+				CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+				const TypeId canonical_member_type_id = importCanonicalStructMemberType(canonical_types, canonical_member_syntax,
+					is_array_member, member_pointee_array_declarator, resolved_array_dimensions);
+				const TypeId concrete_member_type_id = type_spec.has_member_class()
+					? substituteCanonicalStructMemberType(canonical_types, canonical_member_type_id, template_class.template_decl_id(),
+						std::span<const TemplateTypeArg>(template_args_to_use.data(), template_args_to_use.size()))
+					: canonical_member_type_id;
 				nested_struct_info->addMember(
 					member_name_handle,
 					stored_member_type_index,
-					canonical_member_type_id,
+					concrete_member_type_id,
 					member_size,
 					member_alignment,
 					member_decl.access,
@@ -14604,6 +14610,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			effective_template_params,
 			effective_template_args);
 		instantiated_struct.as<StructDeclarationNode>().mark_materialized();
+		tryPublishCanonicalNestedClassSchemas(requireFrontendContext(), *struct_info_ptr, template_class.template_decl_id(),
+			std::span<const TemplateTypeArg>(template_args_to_use.data(), template_args_to_use.size()));
 		CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
 		const CanonicalTypeImport imported_specialization =
 			importCanonicalClassTypeInfo(canonical_types, struct_type_info);

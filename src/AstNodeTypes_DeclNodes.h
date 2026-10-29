@@ -1966,6 +1966,15 @@ public:
 		declarator_components_ = std::move(components);
 		rebuild_legacy_declarator_projection();
 	}
+	void rebindOrderedMemberOwner(EntityId source_entity, TypeId source_type, TypeId target_type) {
+		if (!source_entity || !source_type || !target_type) throw InternalError("member owner rebinding requires published identities");
+		for (DeclaratorComponent& component : declarator_components_) {
+			if (component.memberOwnerEntity() != source_entity && component.memberOwnerType() != source_type) continue;
+			component = DeclaratorComponent::memberPointer(target_type,
+				component.kind == DeclaratorComponentKind::MemberFunctionPointer, component.cv_qualifier);
+		}
+		rebuild_legacy_declarator_projection();
+	}
 	void clear_ordered_declarator() {
 		declarator_components_.clear();
 		declarator_has_legacy_projection_ = true;

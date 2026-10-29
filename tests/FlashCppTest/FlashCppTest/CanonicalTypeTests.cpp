@@ -1296,6 +1296,147 @@ TEST_CASE("Nested specialization partial patterns publish parameter environments
 	CHECK(found_forward);
 }
 
+TEST_CASE("Nested structural NTTP member pointer fields publish concrete canonical schemas") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream fixture("tests/test_canonical_structural_nttp_nested_member_pointer_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	const std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	CompileContext compile_context;
+	compile_context.setInputFile("nested_member_pointer_nttp.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto import_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		CHECK_FALSE(table.hasDependentTypeComponents(imported.type));
+		return imported.type;
+	};
+	const auto import_key = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const StructTypeInfo* record = canonicalClassStructInfoFromTypeInfo(*info);
+		REQUIRE(record != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		CHECK_FALSE(table.hasDependentTypeComponents(imported.type));
+		CHECK(table.node(imported.type).kind == CanonicalTypeKind::NestedRecord);
+		REQUIRE(table.hasRecordSubobjectTypes(imported.type));
+		REQUIRE(table.hasRecordProperties(imported.type));
+		REQUIRE(table.hasRecordFieldSchema(imported.type));
+		REQUIRE(table.hasClassBaseSchema(imported.type));
+		REQUIRE(table.recordSubobjectMemberCount(imported.type) == 3);
+		REQUIRE(record->base_classes.size() == 1);
+		CHECK(table.classBaseAt(imported.type, 0).offset_bytes == 0);
+		CHECK(table.recordMemberAt(imported.type, 0).offset_bytes > 0);
+		return imported.type;
+	};
+	const TypeId short_key = import_key("ShortKey");
+	const TypeId long_key = import_key("LongKey");
+	CHECK(short_key != long_key);
+	const auto check_self_key = [&](std::string_view alias, std::string_view tag, CanonicalBuiltinKind builtin) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(alias));
+		REQUIRE(info != nullptr);
+		REQUIRE(canonicalClassStructInfoFromTypeInfo(*info) != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		const TypeId self = imported.type;
+		REQUIRE(table.node(self).kind == CanonicalTypeKind::NestedRecord);
+		REQUIRE(table.hasRecordFieldSchema(self));
+		REQUIRE(table.hasRecordSubobjectTypes(self));
+		REQUIRE(table.recordSubobjectMemberCount(self) == 4);
+		const TypeId pointer_type = table.recordSubobjectMemberAt(self, 1);
+		REQUIRE(table.node(pointer_type).kind == CanonicalTypeKind::MemberObjectPointer);
+		CHECK(table.memberPointerOwner(pointer_type) == self);
+		CHECK(table.memberPointerPointee(pointer_type) == table.builtin(builtin));
+		const TypeId function_type = table.recordSubobjectMemberAt(self, 2);
+		REQUIRE(table.node(function_type).kind == CanonicalTypeKind::MemberFunctionPointer);
+		CHECK(table.memberPointerOwner(function_type) == self);
+		const TypeId signature = table.memberPointerPointee(function_type);
+		CHECK(table.node(signature).child == table.builtin(builtin));
+		CHECK(table.functionParameterType(table.functionParameters(signature)) == table.builtin(builtin));
+		const TypeId array_type = table.recordSubobjectMemberAt(self, 3);
+		REQUIRE(table.node(array_type).kind == CanonicalTypeKind::Array);
+		CHECK(table.node(array_type).array_extent == 2);
+		REQUIRE(table.node(table.node(array_type).child).kind == CanonicalTypeKind::MemberObjectPointer);
+		CHECK(table.memberPointerOwner(table.node(array_type).child) == self);
+		CHECK(table.memberPointerPointee(table.node(array_type).child) == table.builtin(builtin));
+		const TypeId tag_type = import_type(tag);
+		const TypeId value = table.templateArgumentValue(table.templateSpecializationArguments(tag_type));
+		REQUIRE(table.node(value).kind == CanonicalTypeKind::StructuralValue);
+		TypeId value_link = unpackStructuralValueSubobjects(table.node(value).array_extent);
+		value_link = table.templateArgumentNext(value_link);
+		const TypeId pointer_value = table.templateArgumentValue(value_link);
+		REQUIRE(table.node(pointer_value).kind == CanonicalTypeKind::MemberObjectPointerValue);
+		CHECK(unpackMemberObjectPointerValueDeclaringClass(table.node(pointer_value).array_extent) == self);
+		const TypeId function_value = table.templateArgumentValue(table.templateArgumentNext(value_link));
+		REQUIRE(table.node(function_value).kind == CanonicalTypeKind::MemberFunctionPointerValue);
+		CHECK(unpackMemberFunctionPointerValueDeclaringClass(table.node(function_value).array_extent) == self);
+		const TypeId array_value = table.templateArgumentValue(table.templateArgumentNext(table.templateArgumentNext(value_link)));
+		REQUIRE(table.node(array_value).kind == CanonicalTypeKind::StructuralArrayValue);
+		CHECK(unpackStructuralArrayElementCount(table.node(array_value).array_extent) == 2);
+		CHECK(table.node(array_value).child == array_type);
+		REQUIRE(table.node(array_type).kind == CanonicalTypeKind::Array);
+		CHECK(table.node(array_type).array_extent == 2);
+		const TypeId array_element_type = table.node(array_type).child;
+		REQUIRE(table.node(array_element_type).kind == CanonicalTypeKind::MemberObjectPointer);
+		TypeId element_link = unpackStructuralValueSubobjects(table.node(array_value).array_extent);
+		const CanonicalTypeNode first_element = table.node(table.templateArgumentValue(element_link));
+		REQUIRE(first_element.kind == CanonicalTypeKind::MemberObjectPointerValue);
+		CHECK(first_element.child == array_element_type);
+		CHECK(unpackMemberObjectPointerValueDeclaringClass(first_element.array_extent) == self);
+		CHECK(unpackMemberObjectPointerValueOrdinal(first_element.array_extent) == 0);
+		element_link = table.templateArgumentNext(element_link);
+		const CanonicalTypeNode second_element = table.node(table.templateArgumentValue(element_link));
+		REQUIRE(second_element.kind == CanonicalTypeKind::NullPointerValue);
+		CHECK(second_element.child == array_element_type);
+		return self;
+	};
+	const TypeId short_self = check_self_key("ShortSelf", "SelfNamed", CanonicalBuiltinKind::Short);
+	CHECK(check_self_key("LongSelf", "LongSelfNamed", CanonicalBuiltinKind::LongLong) != short_self);
+	CHECK(import_type("SelfNamed") == import_type("SelfBraced"));
+	CHECK(import_type("LongSelfNamed") == import_type("LongSelfBraced"));
+	const auto check_value = [&](std::string_view alias, CanonicalBuiltinKind builtin) {
+		const TypeId key = import_type(alias);
+		const TypeId value = table.templateArgumentValue(table.templateSpecializationArguments(key));
+		REQUIRE(table.node(value).kind == CanonicalTypeKind::StructuralValue);
+		TypeId link = unpackStructuralValueSubobjects(table.node(value).array_extent);
+		link = table.templateArgumentNext(link);
+		const CanonicalTypeNode object = table.node(table.templateArgumentValue(link));
+		REQUIRE(object.kind == CanonicalTypeKind::MemberObjectPointerValue);
+		CHECK(table.memberPointerOwner(object.child) == table.memberPointerOwner(table.node(
+			table.templateArgumentValue(table.templateArgumentNext(link))).child));
+		CHECK(table.memberPointerPointee(object.child) == table.builtin(builtin));
+		link = table.templateArgumentNext(link);
+		const CanonicalTypeNode function = table.node(table.templateArgumentValue(link));
+		REQUIRE(function.kind == CanonicalTypeKind::MemberFunctionPointerValue);
+		const TypeId owner = unpackMemberFunctionPointerValueDeclaringClass(function.array_extent);
+		REQUIRE(table.node(owner).kind == CanonicalTypeKind::TemplateSpecialization);
+		const TypeId signature = table.memberPointerPointee(function.child);
+		CHECK(table.node(signature).child == table.builtin(builtin));
+		CHECK(table.functionParameterType(table.functionParameters(signature)) == table.builtin(builtin));
+		CHECK(table.memberFunctionSignatureAt(owner, unpackMemberFunctionPointerValueOrdinal(function.array_extent)) == signature);
+		link = table.templateArgumentNext(link);
+		CHECK(table.node(table.templateArgumentValue(link)).array_extent == (builtin == CanonicalBuiltinKind::Short ? 3 : 5));
+		return owner;
+	};
+	const TypeId short_owner = check_value("ShortNamed", CanonicalBuiltinKind::Short);
+	const TypeId long_owner = check_value("LongNamed", CanonicalBuiltinKind::LongLong);
+	CHECK(short_owner != long_owner);
+	CHECK(import_type("ShortNamed") == import_type("ShortBraced"));
+	CHECK(import_type("LongNamed") == import_type("LongBraced"));
+	CHECK(import_type("ShortNamed") == import_type("ShortRepeatAlias"));
+	CHECK(import_type("ShortNamed") != import_type("ChangedObject"));
+}
+
 TEST_CASE("Canonical member field substitution rejects incomplete and unresolved environments") {
 	clearLegacyTypeTablesForTesting();
 	FrontendContext context;
@@ -6831,6 +6972,50 @@ TEST_CASE("Canonical nested record owner chains scale with logical nesting depth
 	CHECK(table.node(cursor).kind == CanonicalTypeKind::TemplateSpecialization);
 	CHECK(table.templateSpecializationDecl(cursor) == TemplateDeclId{1});
 	context.scratchArena().rollbackTo(scratch_mark);
+}
+
+TEST_CASE("Nested class schema publication scales without retaining scratch frames") {
+	FrontendContext context;
+	CanonicalTypeTable& table = context.canonicalTypes();
+	ScratchTransaction scratch_scope(context.scratchArena(), context.scratchRegistry());
+	MonotonicScratchArena& scratch = scratch_scope.arena();
+	StructDeclarationNode* root_declaration = scratch.allocateObject<StructDeclarationNode>(StringHandle{});
+	root_declaration->set_canonical_specialization_owner_template_decl_id(TemplateDeclId{91});
+	StructTypeInfo* root = scratch.allocateObject<StructTypeInfo>(StringHandle{}, AccessSpecifier::Public, false, NamespaceHandle{});
+	root->declaration_node = root_declaration;
+	root->layout_is_complete = true;
+	root->total_size = SizeInBytes{1};
+	StructTypeInfo* parent_record = root;
+	StructDeclarationNode* parent_declaration = root_declaration;
+	for (uint32_t index = 0; index < 4096; ++index) {
+		const StringHandle name = StringTable::getOrInternStringHandle("Nested");
+		StructDeclarationNode* pattern = scratch.allocateObject<StructDeclarationNode>(name);
+		pattern->set_entity_id(EntityId{20000 + index});
+		StructDeclarationNode* declaration = scratch.allocateObject<StructDeclarationNode>(name);
+		declaration->set_injected_class_pattern_declaration(pattern);
+		declaration->set_enclosing_class(parent_declaration);
+		StructTypeInfo* record = scratch.allocateObject<StructTypeInfo>(name, AccessSpecifier::Public, false, NamespaceHandle{});
+		record->declaration_node = declaration;
+		record->layout_is_complete = true;
+		record->total_size = SizeInBytes{1};
+		parent_record->addNestedClass(record);
+		parent_record = record;
+		parent_declaration = declaration;
+	}
+	const CanonicalTypeImport imported_root = importCanonicalClassDeclaration(table, *root_declaration);
+	REQUIRE(imported_root.status == CanonicalTypeImportStatus::Supported);
+	const uint64_t scratch_before = scratch.currentBytes();
+	tryPublishCanonicalNestedClassSchemas(context, *root, TemplateDeclId{91}, std::span<const TemplateTypeArg>{});
+	CHECK(scratch.currentBytes() == scratch_before);
+	TypeId nested = table.nestedRecord(imported_root.type, EntityId{20000});
+	for (uint32_t index = 0; index < 4096; ++index) {
+		REQUIRE(table.node(nested).kind == CanonicalTypeKind::NestedRecord);
+		CHECK(table.hasRecordFieldSchema(nested));
+		CHECK(table.hasRecordSubobjectTypes(nested));
+		CHECK(table.hasRecordProperties(nested));
+		CHECK(table.hasClassBaseSchema(nested));
+		if (index != 4095) nested = table.nestedRecord(nested, EntityId{20001 + index});
+	}
 }
 
 TEST_CASE("Canonical nested class import rejects missing, cyclic, and partial owners transactionally") {

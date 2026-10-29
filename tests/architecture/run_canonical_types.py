@@ -624,6 +624,10 @@ def main():
             write_text(directory / IMPL.name, original.replace(before, after))
             jobs.append((name, directory, 1))
         for name, header, before, after in (
+            ("lost_nested_record_class_kind", "CanonicalTypes.h",
+             "return kind == CanonicalTypeKind::Record || kind == CanonicalTypeKind::TemplateSpecialization || "
+             "kind == CanonicalTypeKind::NestedRecord;",
+             "return kind == CanonicalTypeKind::Record || kind == CanonicalTypeKind::TemplateSpecialization;"),
             ("lost_member_function_signature_kind", "CanonicalTypes.h",
              "return static_cast<uint64_t>(type.value) | (static_cast<uint64_t>(kind) << 32);",
              "return static_cast<uint64_t>(type.value) | (static_cast<uint64_t>(kind) & 0u);"),

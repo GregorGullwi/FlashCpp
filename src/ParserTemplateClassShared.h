@@ -374,6 +374,7 @@ inline TypeId substituteCanonicalStructMemberType(CanonicalTypeTable& table, Typ
 			if (table.templateParameterDecl(current) != environment || table.templateParameterIndex(current) >= arguments.size()) return {};
 			if (!arguments[table.templateParameterIndex(current)].isTypeArgument()) return {};
 			break;
+		case CanonicalTypeKind::NestedRecord:
 		case CanonicalTypeKind::Qualified:
 		case CanonicalTypeKind::Pointer:
 		case CanonicalTypeKind::LValueReference:
@@ -2431,4 +2432,61 @@ inline TemplateParameterNode rebuildOuterTemplateParameter(
 	outer_param.set_registered_type_index(
 		arg.type_index.withCategory(arg.typeEnum()));
 	return outer_param;
+}
+
+// Nested instantiations receive their enclosing declarations after field production.
+// Publish their completed facts once that owner chain exists, using scoped scratch frames.
+inline void tryPublishCanonicalNestedClassSchemas(FrontendContext& context, const StructTypeInfo& root, TemplateDeclId environment,
+	std::span<const TemplateTypeArg> arguments) {
+	if (root.declaration_node == nullptr) return;
+	const StructDeclarationNode* root_pattern = root.declaration_node->injected_class_pattern_declaration();
+	if (root_pattern != nullptr && !root_pattern->has_template_decl_id()) return;
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const CanonicalTypeImport imported_root = importCanonicalClassDeclaration(table, *root.declaration_node);
+	if (imported_root.status != CanonicalTypeImportStatus::Supported || !isCanonicalClassTypeKind(table.node(imported_root.type).kind)) return;
+	struct PendingNestedClass { StructTypeInfo* record; TypeId type; PendingNestedClass* next; };
+	ScratchTransaction scratch_scope(context.scratchArena(), context.scratchRegistry());
+	MonotonicScratchArena& scratch = scratch_scope.arena();
+	PendingNestedClass* pending = nullptr;
+	const auto enqueue_children = [&](const StructTypeInfo& record, TypeId owner) {
+		for (StructTypeInfo* child : record.getNestedClasses()) {
+			const StructDeclarationNode* declaration = child->declaration_node;
+			if (declaration == nullptr || declaration->enclosing_class() != record.declaration_node) continue;
+			const StructDeclarationNode* pattern = declaration->injected_class_pattern_declaration();
+			if (pattern == nullptr || !pattern->has_entity_id() || pattern->has_template_decl_id()) continue;
+			if (table.node(owner).kind != CanonicalTypeKind::TemplateSpecialization && table.node(owner).kind != CanonicalTypeKind::NestedRecord) continue;
+			const TypeId type = table.nestedRecord(owner, pattern->entity_id());
+			pending = scratch.allocateObject<PendingNestedClass>(PendingNestedClass{child, type, pending});
+		}
+	};
+	enqueue_children(root, imported_root.type);
+	while (pending != nullptr) {
+		const PendingNestedClass current = *pending;
+		pending = current.next;
+		enqueue_children(*current.record, current.type);
+		const StructDeclarationNode& pattern = *current.record->declaration_node->injected_class_pattern_declaration();
+		for (const StructMemberDecl& source_member : pattern.members()) {
+			if (!source_member.declaration.is<DeclarationNode>()) continue;
+			const DeclarationNode& source = source_member.declaration.as<DeclarationNode>();
+			const TypeSpecifierNode& syntax = source.type_specifier_node();
+			const auto is_self_owner = [&](const DeclaratorComponent& component) {
+				if (component.memberOwnerEntity() == pattern.entity_id()) return true;
+				const TypeId owner = component.memberOwnerType();
+				return owner && table.node(owner).kind == CanonicalTypeKind::Record && table.recordEntity(owner) == pattern.entity_id();
+			};
+			const auto components = syntax.declarator_components();
+			if (resolveMemberClassEntity(syntax) != pattern.entity_id() && !std::any_of(components.begin(), components.end(), is_self_owner)) continue;
+			const auto member = std::find_if(current.record->members.begin(), current.record->members.end(), [&](const StructMember& candidate) {
+				return candidate.name == source.identifier_token().handle();
+			});
+			if (member == current.record->members.end()) continue;
+			TypeSpecifierNode rebound = syntax;
+			rebound.rebindOrderedMemberOwner(pattern.entity_id(), table.record(pattern.entity_id()), current.type);
+			rebound.set_member_class_type_id(current.type);
+			const TypeId imported = importCanonicalStructMemberType(table, rebound, member->is_array, member->pointee_array_declarator,
+				member->array_dimensions);
+			member->canonical_type_id = substituteCanonicalStructMemberType(table, imported, environment, arguments);
+		}
+		(void)tryPublishCanonicalClassBaseSchema(table, current.type, *current.record);
+	}
 }

@@ -3045,8 +3045,87 @@ inline void checkSpecializationFieldSchemas() {
 	require(!table.hasRecordFieldSchema(temporary));
 }
 
+inline void checkNestedFieldSchemas() {
+	CanonicalTypeTable table;
+	const TypeId short_type = table.builtin(CanonicalBuiltinKind::Short);
+	const TypeId long_long_type = table.builtin(CanonicalBuiltinKind::LongLong);
+	const TypeId arguments[] = {short_type};
+	const TypeId owner_spec = table.templateSpecialization(TemplateDeclId{41101}, arguments);
+	const TypeId nested = table.nestedRecord(owner_spec, EntityId{41102});
+	require(isCanonicalClassTypeKind(CanonicalTypeKind::Record));
+	require(isCanonicalClassTypeKind(CanonicalTypeKind::TemplateSpecialization));
+	require(isCanonicalClassTypeKind(CanonicalTypeKind::NestedRecord));
+	require(!isCanonicalClassTypeKind(CanonicalTypeKind::Enum));
+	require(!isCanonicalClassTypeKind(CanonicalTypeKind::Builtin));
+	table.publishRecordProperties(nested, CanonicalRecordFacts::Aggregate);
+	require(table.hasRecordProperties(nested));
+	require(table.recordProperties(nested).facts == CanonicalRecordFacts::Aggregate);
+	const TypeId subobjects[] = {long_long_type};
+	table.publishRecordSubobjectTypes(nested, subobjects);
+	table.publishClassBaseSchema(nested, {});
+	require(table.hasClassBaseSchema(nested));
+	require(table.classBaseCount(nested) == 0);
+	const CanonicalRecordMember member{long_long_type, 8, 8, 0, 0, CanonicalAccess::Public,
+		CanonicalRecordMemberFlags::None};
+	table.publishRecordFieldSchema(nested, std::span<const CanonicalRecordMember>(&member, 1), {});
+	require(table.hasRecordFieldSchema(nested));
+	require(table.recordMemberAt(nested, 0) == member);
+	const TypeId member_pointer = table.memberObjectPointer(nested, long_long_type);
+	require(table.node(table.memberObjectPointerValue(member_pointer, nested, 0)).kind == CanonicalTypeKind::MemberObjectPointerValue);
+	const TypeId function_type = table.function(short_type, {}, false, CVQualifier::None, ReferenceQualifier::None, false,
+		CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	table.publishMemberFunctionSignatures(nested, std::span<const TypeId>(&function_type, 1));
+	const TypeId function_pointer = table.memberFunctionPointer(nested, function_type);
+	require(table.node(table.memberFunctionPointerValue(function_pointer, nested, 0)).kind == CanonicalTypeKind::MemberFunctionPointerValue);
+	TypeSpecifierNode ordered(TypeCategory::LongLong, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	ordered.set_ordered_declarator({DeclaratorComponent::array(2), DeclaratorComponent::pointer(CVQualifier::Const),
+		DeclaratorComponent::memberPointer(EntityId{41102}, false, CVQualifier::Volatile)});
+	ordered.rebindOrderedMemberOwner(EntityId{41102}, table.record(EntityId{41102}), nested);
+	const CanonicalTypeImport imported_ordered = importCanonicalType(table, ordered);
+	require(imported_ordered.status == CanonicalTypeImportStatus::Supported);
+	const TypeId volatile_member = table.qualify(member_pointer, CVQualifier::Volatile);
+	const TypeId const_pointer = table.qualify(table.pointer(volatile_member), CVQualifier::Const);
+	require(imported_ordered.type == table.array(const_pointer, 2));
+	const CanonicalRecordMember wrong_type{short_type, 8, 2, 0, 0, CanonicalAccess::Public,
+		CanonicalRecordMemberFlags::None};
+	const CanonicalRecordMember second_member{long_long_type, 16, 8, 0, 0, CanonicalAccess::Public,
+		CanonicalRecordMemberFlags::None};
+	auto rejects = [&](auto operation) {
+		bool rejected = false;
+		try { operation(); } catch (const InternalError&) { rejected = true; }
+		require(rejected);
+	};
+	rejects([&] { table.publishRecordFieldSchema(nested, std::span<const CanonicalRecordMember>(&wrong_type, 1), {}); });
+	rejects([&] { table.publishRecordFieldSchema(nested, std::span<const CanonicalRecordMember>(&second_member, 1), {}); });
+	rejects([&] { table.memberObjectPointerValue(member_pointer, nested, 1); });
+	require(!table.hasRecordLayout(EntityId{41102}));
+	const size_t baseline_size = table.size();
+	TypeId temporary;
+	{
+		CanonicalTypeTransaction transaction(table);
+		const TypeId nested_owner = table.nestedRecord(owner_spec, EntityId{41103});
+		temporary = nested_owner;
+		table.publishRecordProperties(nested_owner, CanonicalRecordFacts::Aggregate);
+		table.publishRecordSubobjectTypes(nested_owner, subobjects);
+		table.publishClassBaseSchema(nested_owner, {});
+		table.publishMemberFunctionSignatures(nested_owner, std::span<const TypeId>(&function_type, 1));
+		table.publishRecordFieldSchema(nested_owner, std::span<const CanonicalRecordMember>(&member, 1), {});
+		table.memberObjectPointerValue(table.memberObjectPointer(nested_owner, long_long_type), nested_owner, 0);
+	}
+	require(table.size() == baseline_size);
+	require(!table.hasRecordFieldSchema(temporary));
+	require(!table.hasRecordProperties(temporary));
+	require(!table.hasRecordSubobjectTypes(temporary));
+	require(!table.hasClassBaseSchema(temporary));
+	require(!table.hasMemberFunctionSignatures(temporary));
+	const TypeId republished = table.nestedRecord(owner_spec, EntityId{41103});
+	require(republished == temporary);
+	require(!table.hasRecordFieldSchema(republished));
+}
+
 inline int run() {
 	checkSpecializationFieldSchemas();
+	checkNestedFieldSchemas();
 	checkMemberFunctionSignatureTransactions();
 	checkFunctionPointerValues();
 	checkUnionValues();

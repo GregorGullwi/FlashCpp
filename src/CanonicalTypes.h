@@ -78,6 +78,10 @@ enum class CanonicalTypeKind : uint8_t {
 	NestedRecord,
 };
 
+constexpr bool isCanonicalClassTypeKind(CanonicalTypeKind kind) {
+	return kind == CanonicalTypeKind::Record || kind == CanonicalTypeKind::TemplateSpecialization || kind == CanonicalTypeKind::NestedRecord;
+}
+
 enum class CanonicalTemplateArgKind : uint8_t {
 	Type = 0,
 	NonType = 1,
