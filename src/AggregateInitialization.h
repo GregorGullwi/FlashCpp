@@ -49,7 +49,22 @@ inline bool acceptsWholeExpression(
 	if (element.is_array) {
 		return false;
 	}
-	return buildConversionPlan(source_type, AggregateElements::makeTypeSpecifier(element), &clause).is_valid;
+	const TypeSpecifierNode target_type = AggregateElements::makeTypeSpecifier(element);
+	const ConversionPlan plan = buildConversionPlan(source_type, target_type, &clause);
+	if (!plan.is_valid) {
+		return false;
+	}
+	const auto implicit_selection = trySelectUserDefinedConversionOperator(source_type, target_type, false);
+	const bool has_implicit_selection = implicit_selection.has_value() && implicit_selection->function != nullptr &&
+		!implicit_selection->function->is_explicit();
+	if (!has_implicit_selection) {
+		const auto explicit_selection = trySelectUserDefinedConversionOperator(source_type, target_type, true);
+		if (explicit_selection.has_value() && explicit_selection->function != nullptr &&
+			explicit_selection->function->is_explicit()) {
+			return false;
+		}
+	}
+	return true;
 }
 
 struct ClauseSettlement {

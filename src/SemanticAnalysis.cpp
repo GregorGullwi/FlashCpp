@@ -3907,6 +3907,64 @@ void SemanticAnalysis::validateAggregateInitializerAppertainment(
 		}
 	}
 
+	auto diagnose_explicit_element_conversion = [&](const AggregateInitialization::ElementAssignment& assignment,
+											 const TypeSpecifierNode& target_type) {
+		if (assignment.range.empty()) {
+			return;
+		}
+		const ASTNode& clause = init_list.initializers()[assignment.range.begin];
+		if (!clause.is<ExpressionNode>()) {
+			return;
+		}
+		const std::optional<TypeSpecifierNode> source_type = getExpressionType(clause);
+		if (!source_type.has_value()) {
+			return;
+		}
+		const auto implicit_selection = trySelectUserDefinedConversionOperator(*source_type, target_type, false);
+		if (implicit_selection.has_value() && implicit_selection->function != nullptr &&
+			!implicit_selection->function->is_explicit()) {
+			return;
+		}
+		if (hasImplicitConvertingConstructorForArgument(target_type, *source_type, &clause)) {
+			return;
+		}
+		const auto explicit_selection = trySelectUserDefinedConversionOperator(*source_type, target_type, true);
+		if (!explicit_selection.has_value() || explicit_selection->function == nullptr ||
+			!explicit_selection->function->is_explicit()) {
+			return;
+		}
+		const Token source_token = FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(clause).value_or(Token{});
+		const StringHandle conversion_name = explicit_selection->function->decl_node().identifier_token().handle();
+		throw makeStructuredCompileError(
+			context_.diagnostics(),
+			DiagnosticId::ExplicitConversionFunctionCopyInitialization,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(source_token),
+			"conversion function '" + std::string(StringTable::getStringView(conversion_name)) +
+				"' is explicit and cannot be used for copy-initialization",
+			{});
+	};
+
+	for (size_t base_index = 0; base_index < struct_info.base_classes.size(); ++base_index) {
+		const BaseClassSpecifier& base = struct_info.base_classes[base_index];
+		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+		if (base_type_info == nullptr) {
+			continue;
+		}
+		const TypeSpecifierNode target_type(
+			base.type_index,
+			static_cast<int>(base_type_info->sizeInBits().value),
+			Token(),
+			CVQualifier::None,
+			ReferenceQualifier::None);
+		diagnose_explicit_element_conversion(partition.base_elements[base_index], target_type);
+	}
+	for (size_t member_index = 0; member_index < struct_info.members.size(); ++member_index) {
+		diagnose_explicit_element_conversion(
+			partition.member_elements[member_index],
+			typeSpecifierFromStructMemberProjection(struct_info.members[member_index]));
+	}
+
 	for (size_t base_index = 0; base_index < struct_info.base_classes.size(); ++base_index) {
 		if (partition.base_elements[base_index].form != AggregateInitialization::InitializationForm::WholeExpression) {
 			continue;
@@ -3970,6 +4028,32 @@ void SemanticAnalysis::validateAggregateInitializerAppertainment(
 		const CanonicalTypeId source_type_id = inferExpressionType(clause);
 		if (target_type_id && source_type_id) {
 			tryAnnotateConversionByTypeId(clause, target_type_id, source_type_id);
+		}
+	}
+
+	AggregateElements::ClauseCursor cursor(struct_info);
+	for (size_t clause_index = 0; clause_index < init_list.size(); ++clause_index) {
+		if (init_list.is_designated(clause_index)) {
+			continue;
+		}
+		const ASTNode& clause = init_list.initializers()[clause_index];
+		const bool is_braced = clause.is<InitializerListNode>();
+		auto clause_appertains = [&](const AggregateElements::Element& element) {
+			return aggregateElementAppertainsWhole(element, clause);
+		};
+		const AggregateInitialization::ClauseSettlement settlement =
+			AggregateInitialization::settleClause(cursor, is_braced, clause_appertains);
+		if (!settlement.element.has_value() || settlement.empty_element_requires_braces || is_braced) {
+			continue;
+		}
+		const AggregateElements::Element& element = *settlement.element;
+		if (element.is_root_element) {
+			continue;
+		}
+		const CanonicalTypeId target_type_id =
+			canonicalizeTypeForImplicitConversion(AggregateElements::makeTypeSpecifier(element));
+		if (target_type_id) {
+			tryAnnotateVariableInitializationConversion(clause, target_type_id, " in aggregate initializer", false);
 		}
 	}
 }
@@ -12466,8 +12550,7 @@ void SemanticAnalysis::tryAnnotateVariableInitializationConversion(
 	const CanonicalTypeDesc& source_desc = type_context_.get(init_type_id);
 	const CanonicalTypeDesc& target_desc = type_context_.get(target_type_id);
 	if (!annotated_conversion && source_desc.category() == TypeCategory::Struct && source_desc.pointer_levels.empty() &&
-		source_desc.array_dimensions.empty() && target_desc.category() != TypeCategory::Struct && target_desc.pointer_levels.empty() &&
-		target_desc.array_dimensions.empty()) {
+		source_desc.array_dimensions.empty() && target_desc.pointer_levels.empty() && target_desc.array_dimensions.empty()) {
 		const TypeSpecifierNode source_type = materializeTypeSpecifier(source_desc);
 		const TypeSpecifierNode target_type = materializeTypeSpecifier(target_desc);
 		const auto explicit_conversion = trySelectUserDefinedConversionOperator(source_type, target_type, true);
