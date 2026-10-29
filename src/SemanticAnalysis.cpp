@@ -6072,7 +6072,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				if (e.has_resolved_member_operator_overload()) {
 					if (const StructMemberFunction* member_overload =
 							e.resolved_member_operator_overload()) {
-						markResolvedOperatorOverloadOdrUsed(*member_overload);
+						markResolvedOperatorOverloadOdrUsed(*member_overload, e.resolved_member_operator_owner());
 					}
 				}
 				normalizeExpression(e.get_lhs(), ctx);
@@ -12252,6 +12252,19 @@ TypeId SemanticAnalysis::structuralTypeIdForStruct(const StructTypeInfo& struct_
 	return imported.status == CanonicalTypeImportStatus::Supported ? imported.type : TypeId{};
 }
 
+TypeId SemanticAnalysis::canonicalOwnerTypeIdForDeclaration(const FunctionDeclarationNode& function) {
+	const TypeIndex owner_index = function.access_owner_type_index();
+	if (!owner_index.is_valid()) {
+		return TypeId{};
+	}
+	const TypeInfo* owner_info = tryGetTypeInfo(owner_index);
+	if (owner_info == nullptr) {
+		return TypeId{};
+	}
+	const CanonicalTypeImport imported = importCanonicalClassTypeInfo(requireFrontendContext().canonicalTypes(), *owner_info);
+	return imported.status == CanonicalTypeImportStatus::Supported ? imported.type : TypeId{};
+}
+
 void SemanticAnalysis::recordOdrUsedSpecialMember(TypeId owner_type_id, const StructTypeInfo& struct_info,
 	SpecialMemberKind kind, ASTNode declaration) {
 	if (!owner_type_id) {
@@ -12287,8 +12300,8 @@ void SemanticAnalysis::markOdrUsedImplicitSpecialMember(const StructTypeInfo& st
 	recordOdrUsedSpecialMember(structuralTypeIdForStruct(struct_info), struct_info, kind, ASTNode(&ctor));
 }
 
-void SemanticAnalysis::markOdrUsedImplicitAssignment(const StructTypeInfo& struct_info, const StructMemberFunction& assignment) {
-	if (!assignment.function_decl.is<FunctionDeclarationNode>()) {
+void SemanticAnalysis::markOdrUsedImplicitAssignment(TypeId owner_type_id, const StructMemberFunction& assignment) {
+	if (!owner_type_id || !assignment.function_decl.is<FunctionDeclarationNode>()) {
 		return;
 	}
 	const FunctionDeclarationNode& function = assignment.function_decl.as<FunctionDeclarationNode>();
@@ -12306,7 +12319,11 @@ void SemanticAnalysis::markOdrUsedImplicitAssignment(const StructTypeInfo& struc
 	default:
 		return;
 	}
-	recordOdrUsedSpecialMember(structuralTypeIdForStruct(struct_info), struct_info, kind, ASTNode(&function));
+	const TypeInfo* owner_info = tryFindCanonicalOverloadClassTypeInfo(requireFrontendContext().canonicalTypes(), owner_type_id);
+	if (owner_info == nullptr || owner_info->getStructInfo() == nullptr) {
+		return;
+	}
+	recordOdrUsedSpecialMember(owner_type_id, *owner_info->getStructInfo(), kind, ASTNode(&function));
 }
 
 void SemanticAnalysis::markOdrUsedSameTypeConstructor(const StructTypeInfo& struct_info, bool prefer_move) {
@@ -15182,19 +15199,65 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 	// struct visitor emits IR for the real body instead of relying on
 	// codegen-side fallbacks. See `tryMaterializeLazyCallTarget` for details.
 	func_decl = tryMaterializeLazyCallTarget(func_decl, call_info);
-	if (func_decl != nullptr && func_decl->is_implicit() && !func_decl->parent_struct_name().empty()) {
-		const StringHandle owner_name = StringTable::getOrInternStringHandle(func_decl->parent_struct_name());
-		auto owner_it = getTypesByNameMap().find(owner_name);
-		if (owner_it != getTypesByNameMap().end() && owner_it->second != nullptr) {
-			if (const StructTypeInfo* owner_info = owner_it->second->getStructInfo()) {
-				for (const StructMemberFunction& member : owner_info->member_functions) {
-					if (member.function_decl.is<FunctionDeclarationNode>() &&
-						&member.function_decl.as<FunctionDeclarationNode>() == func_decl) {
-						markOdrUsedImplicitAssignment(*owner_info, member);
-						break;
-					}
+	const bool is_assignment_direct_call =
+		func_decl != nullptr && func_decl->is_implicit() &&
+		overloadableOperatorFromFunctionName(func_decl->decl_node().identifier_token().value()) == OverloadableOperator::Assign;
+	if (is_assignment_direct_call) {
+		// The declaration owner is authoritative; the receiver owner differs for
+		// inherited or base-qualified calls such as derived.Base::operator=(other).
+		const TypeId declaration_owner_type_id = canonicalOwnerTypeIdForDeclaration(*func_decl);
+		TypeId receiver_owner_type_id{};
+		if (call_info.has_receiver && !call_info.is_indirect) {
+			if (const TypeInfo* receiver_owner = tryResolveStructOwnerTypeInfoForExpression(call_info.receiver)) {
+				const CanonicalTypeImport imported = importCanonicalClassTypeInfo(requireFrontendContext().canonicalTypes(), *receiver_owner);
+				if (imported.status == CanonicalTypeImportStatus::Supported) {
+					receiver_owner_type_id = imported.type;
 				}
 			}
+		}
+		auto findMember = [&](const StructTypeInfo* owner_info) -> const StructMemberFunction* {
+			if (owner_info == nullptr) {
+				return nullptr;
+			}
+			for (const StructMemberFunction& member : owner_info->member_functions) {
+				if (member.function_decl.is<FunctionDeclarationNode>() &&
+					&member.function_decl.as<FunctionDeclarationNode>() == func_decl) {
+					return &member;
+				}
+			}
+			return nullptr;
+		};
+		auto publishForOwnerTypeId = [&](TypeId owner_type_id) {
+			if (!owner_type_id) {
+				return false;
+			}
+			const TypeInfo* owner_type = tryFindCanonicalOverloadClassTypeInfo(requireFrontendContext().canonicalTypes(), owner_type_id);
+			const StructMemberFunction* member = owner_type != nullptr ? findMember(owner_type->getStructInfo()) : nullptr;
+			if (member == nullptr) {
+				return false;
+			}
+			markOdrUsedImplicitAssignment(owner_type_id, *member);
+			return true;
+		};
+		bool published = publishForOwnerTypeId(declaration_owner_type_id);
+		if (!published) {
+			published = publishForOwnerTypeId(receiver_owner_type_id);
+		}
+		if (!published && !func_decl->parent_struct_name().empty()) {
+			const StringHandle owner_name = StringTable::getOrInternStringHandle(func_decl->parent_struct_name());
+			auto owner_it = getTypesByNameMap().find(owner_name);
+			const StructTypeInfo* owner_info =
+				(owner_it != getTypesByNameMap().end() && owner_it->second != nullptr) ? owner_it->second->getStructInfo() : nullptr;
+			if (const StructMemberFunction* member = findMember(owner_info)) {
+				const TypeId owner_type_id = structuralTypeIdForStruct(*owner_info);
+				if (owner_type_id) {
+					markOdrUsedImplicitAssignment(owner_type_id, *member);
+					published = true;
+				}
+			}
+		}
+		if (!published) {
+			throw InternalError("direct call ODR publication: selected implicit assignment is missing from its owning StructTypeInfo");
 		}
 	}
 
@@ -15564,11 +15627,8 @@ const ConstructorDeclarationNode* SemanticAnalysis::tryAnnotateConstructorArgRef
 	bool elided_same_type_prvalue = false;
 	if (arg_types.size() == 1 && inferExpressionValueCategory(arguments.front()) == ValueCategory::PRValue) {
 		const TypeSpecifierNode& argument_type = arg_types.front();
-		elided_same_type_prvalue =
-			argument_type.runtime_pointer_depth() == 0 &&
-			argument_type.category() == TypeCategory::Struct &&
-			struct_info.own_type_index_.has_value() &&
-			(argument_type.type_index() == *struct_info.own_type_index_ ||
+		elided_same_type_prvalue = argument_type.runtime_pointer_depth() == 0 && argument_type.category() == TypeCategory::Struct &&
+			struct_info.own_type_index_.has_value() && (argument_type.type_index() == *struct_info.own_type_index_ ||
 			 isLogicallySameStructType(argument_type.type_index(), *struct_info.own_type_index_));
 	}
 	if (!elided_same_type_prvalue) {
@@ -15617,25 +15677,26 @@ const ConstructorDeclarationNode* SemanticAnalysis::ensureSelectedConstructorMat
 	return &instantiated->as<ConstructorDeclarationNode>();
 }
 
+void SemanticAnalysis::markResolvedOperatorOverloadOdrUsed(const StructMemberFunction& member_overload) {
+	markResolvedOperatorOverloadOdrUsed(member_overload, TypeId{});
+}
+
 void SemanticAnalysis::markResolvedOperatorOverloadOdrUsed(
-	const StructMemberFunction& member_overload) {
+	const StructMemberFunction& member_overload, TypeId owner_type_id) {
 	if (!member_overload.function_decl.is<FunctionDeclarationNode>())
 		return;
 	const auto& fdecl = member_overload.function_decl.as<FunctionDeclarationNode>();
 	const std::string_view parent_sv = fdecl.parent_struct_name();
-	if (parent_sv.empty())
-		return;
-	StringHandle struct_name = StringTable::getOrInternStringHandle(parent_sv);
-	if (!struct_name.isValid())
-		return;
-	LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
-		LazyMemberKey::exact(struct_name, fdecl));
+	if (!parent_sv.empty()) {
+		StringHandle struct_name = StringTable::getOrInternStringHandle(parent_sv);
+		if (struct_name.isValid()) {
+			LazyMemberInstantiationRegistry::getInstance().markOdrUsed(LazyMemberKey::exact(struct_name, fdecl));
+		}
+	}
 	if (fdecl.is_implicit()) {
-		auto owner_it = getTypesByNameMap().find(struct_name);
-		if (owner_it != getTypesByNameMap().end() && owner_it->second != nullptr) {
-			if (const StructTypeInfo* owner_info = owner_it->second->getStructInfo()) {
-				markOdrUsedImplicitAssignment(*owner_info, member_overload);
-			}
+		const TypeId resolved_owner = owner_type_id ? owner_type_id : canonicalOwnerTypeIdForDeclaration(fdecl);
+		if (resolved_owner) {
+			markOdrUsedImplicitAssignment(resolved_owner, member_overload);
 		}
 	}
 }

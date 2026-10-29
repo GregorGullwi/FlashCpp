@@ -202,8 +202,7 @@ void AstToIr::queueOdrUsedSpecialMembers() {
 	const std::span<const OdrUsedSpecialMember> published = sema_.odrUsedSpecialMembers();
 	while (odr_used_special_members_processed_ < published.size()) {
 		const OdrUsedSpecialMember& entry = published[odr_used_special_members_processed_++];
-		if (!entry.declaration.is<ConstructorDeclarationNode>() &&
-			!entry.declaration.is<FunctionDeclarationNode>()) {
+		if (!entry.declaration.is<ConstructorDeclarationNode>() && !entry.declaration.is<FunctionDeclarationNode>()) {
 			continue;
 		}
 		queueDeferredMemberFunctionFromNode(entry.owner_name, entry.declaration, entry.namespace_handle);

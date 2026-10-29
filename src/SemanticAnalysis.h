@@ -173,8 +173,7 @@ public:
 		StringHandle struct_name,
 		StringHandle member_name);
 
-	void markResolvedOperatorOverloadOdrUsed(
-		const StructMemberFunction& member_overload);
+	void markResolvedOperatorOverloadOdrUsed(const StructMemberFunction& member_overload);
 
 	// ODR-used implicit/defaulted copy and move constructors and assignment
 	// operators selected by this semantic pass. Codegen drains this list instead
@@ -464,8 +463,8 @@ public:
 	// drain materializes it. Safe no-op if the overload isn't a lazy-member
 	// entry. Used from binary/unary/subscript/arrow/call operator
 	// annotation sites after the parser resolved the overload.
-	void markResolvedOperatorOverloadOdrUsed(
-		const StructMemberFunction& member_overload);
+	void markResolvedOperatorOverloadOdrUsed(const StructMemberFunction& member_overload);
+	void markResolvedOperatorOverloadOdrUsed(const StructMemberFunction& member_overload, TypeId owner_type_id);
 
 	// Phase 5 Slice F: Drain any remaining lazy-member registry entries by
 	// materializing them before codegen's struct-visitor runs. This preempts
@@ -611,10 +610,10 @@ private:
 	// canonical TypeId; the selected declaration is retained only as the codegen
 	// emission handle.
 	TypeId structuralTypeIdForStruct(const StructTypeInfo& struct_info);
-	void recordOdrUsedSpecialMember(TypeId owner_type_id, const StructTypeInfo& struct_info,
-		SpecialMemberKind kind, ASTNode declaration);
+	TypeId canonicalOwnerTypeIdForDeclaration(const FunctionDeclarationNode& function);
+	void recordOdrUsedSpecialMember(TypeId owner_type_id, const StructTypeInfo& struct_info, SpecialMemberKind kind, ASTNode declaration);
 	void markOdrUsedImplicitSpecialMember(const StructTypeInfo& struct_info, const ConstructorDeclarationNode& ctor);
-	void markOdrUsedImplicitAssignment(const StructTypeInfo& struct_info, const StructMemberFunction& assignment);
+	void markOdrUsedImplicitAssignment(TypeId owner_type_id, const StructMemberFunction& assignment);
 	void markOdrUsedSameTypeConstructor(const StructTypeInfo& struct_info, bool prefer_move);
 	bool tryAnnotateCopyInitConvertingConstructor(const ASTNode& expr_node,
 												  CanonicalTypeId target_type_id,

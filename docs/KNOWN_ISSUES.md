@@ -19,6 +19,18 @@ its union fields. Reuse the normal class-member parser before publishing these
 specializations' field schemas; layout publication cannot recover absent declarations.
 Primary templates and their ordinary nested classes retain these static facts.
 
+## Class-template specializations do not synthesize implicit assignment operators
+
+A class-template specialization whose pattern declares no assignment operator does
+not receive implicit copy/move assignment operators during instantiation, so
+`Base<short> a, b; a = b;` and `a.operator=(b);` are rejected even when the pattern
+is an aggregate. Implicit copy/move constructors are synthesized on demand by
+codegen, and semantic ODR-use publication for assignment is in place, but the
+specialization must first synthesize the assignment declarations. Explicitly
+defaulted assignment operators on such specializations can also reach deferred
+emission without a materialized body, so keep that path eager until synthesis is
+fixed.
+
 ## Remaining structural NTTP shapes need canonical value import
 
 Union declaration groups now carry explicit active-member state. Aggregate,
