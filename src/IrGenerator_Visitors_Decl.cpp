@@ -1597,9 +1597,7 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 					const auto& fn = func_decl.as<FunctionDeclarationNode>();
 					if (fn.is_implicit() &&
 						(member_func.operator_kind == OverloadableOperator::CopyAssign ||
-						 member_func.operator_kind == OverloadableOperator::MoveAssign) &&
-						current_struct_info &&
-						shouldDeferImplicitAssignmentCodegen(fn)) {
+						 member_func.operator_kind == OverloadableOperator::MoveAssign)) {
 						FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - deferring implicit assignment operator emission until ODR-use");
 						continue;
 					}

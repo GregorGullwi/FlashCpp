@@ -202,7 +202,8 @@ void AstToIr::queueOdrUsedSpecialMembers() {
 	const std::span<const OdrUsedSpecialMember> published = sema_.odrUsedSpecialMembers();
 	while (odr_used_special_members_processed_ < published.size()) {
 		const OdrUsedSpecialMember& entry = published[odr_used_special_members_processed_++];
-		if (!entry.declaration.is<ConstructorDeclarationNode>()) {
+		if (!entry.declaration.is<ConstructorDeclarationNode>() &&
+			!entry.declaration.is<FunctionDeclarationNode>()) {
 			continue;
 		}
 		queueDeferredMemberFunctionFromNode(entry.owner_name, entry.declaration, entry.namespace_handle);
@@ -356,13 +357,6 @@ bool AstToIr::shouldDeferImplicitConstructorCodegen(const StructTypeInfo& struct
 	// only trivial ones can wait for ODR use, because a nontrivial default
 	// constructor is the sole definition that runs default member initializers.
 	return isStructTrivial(&struct_info);
-}
-
-bool AstToIr::shouldDeferImplicitAssignmentCodegen(const FunctionDeclarationNode& fn) const {
-	if (!fn.is_implicit()) {
-		return false;
-	}
-	return fn.decl_node().identifier_token().value() == "operator=";
 }
 
 void AstToIr::exitScope() {

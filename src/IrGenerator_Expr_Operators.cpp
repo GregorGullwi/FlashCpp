@@ -2915,14 +2915,6 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 			const StructMemberFunction& member_func = *overload_result.member_overload;
 			const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-			if (op == "=" &&
-				shouldDeferImplicitAssignmentCodegen(func_decl)) {
-				StringHandle owner_struct_name = getTypeInfo(lhs_type_index).name();
-				queueDeferredMemberFunctionFromNode(
-					owner_struct_name,
-					member_func.function_decl,
-					buildNamespaceHandleForStructName(owner_struct_name));
-			}
 			if (op == "=") {
 				if (lhs_type_index.is_valid()) {
 					if (const StructTypeInfo* struct_info = getTypeInfo(lhs_type_index).getStructInfo()) {

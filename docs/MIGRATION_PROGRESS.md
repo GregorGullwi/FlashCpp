@@ -459,6 +459,17 @@ Continue boundary 3A in this order.
    `tests/test_implicit_assignment_base_ret0.cpp` covers non-template, template,
    virtual, user-defined, copy, and move base assignment.
 
+   **Implicit assignment ODR-use publication: complete.** Implicit copy/move
+   assignment now follows the same sema-owned publication as construction: semantic
+   analysis records the selected assignment operator by owner `TypeId` and copy/move
+   kind, and codegen drains it. The `shouldDeferImplicitAssignmentCodegen` predicate
+   and its `operator=` spelling check are gone. Direct `operator=` calls publish at
+   their direct-call annotation site, while generated assignment bodies still queue
+   base and member assignment dependencies. `tests/test_implicit_assignment_direct_call_ret0.cpp`
+   protects direct copy and move operator calls, and
+   `tests/test_implicit_assignment_unreferenced_template_base_ret0.cpp` pins the
+   unreferenced template-base case to zero codegen-to-parser callbacks.
+
    **Active-union structural identity: complete for declared groups.**
    `EvalResult` now carries the selected variant explicitly on the member
    binding, and `StructuralClassValue` stores ordered `union_selections`
