@@ -3721,11 +3721,31 @@ std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCallInterna
 	if (!result.has_value() || cast_info.trailing_standard_conversion == StandardConversionKind::None) {
 		return result;
 	}
+	const CanonicalTypeDesc& destination_desc = sema_.typeContext().get(cast_info.target_type_id);
+	const bool target_is_reference = destination_desc.ref_qualifier != ReferenceQualifier::None;
 	if (cast_info.trailing_standard_conversion == StandardConversionKind::DerivedToBase &&
-		conversion_returns_reference &&
+		!target_is_reference && conversion_return_type.category() == TypeCategory::Struct &&
+		destination_desc.category() == TypeCategory::Struct && destination_desc.pointer_levels.empty() &&
+		cast_info.trailing_constructor != nullptr) {
+		TypeSpecifierNode target_object_type = materializeCanonicalTypeSpecifier(destination_desc);
+		target_object_type.set_reference_qualifier(ReferenceQualifier::None);
+		ExprResult source_object = *result;
+		const CanonicalTypeDesc& conversion_return_desc = sema_.typeContext().get(conversion_return_type_id);
+		if (conversion_return_desc.type_index.is_valid()) {
+			source_object.type_index = conversion_return_desc.type_index.withCategory(conversion_return_desc.category());
+		}
+		ASTNode no_source_expression = ASTNode::emplace_node<TypeSpecifierNode>(target_object_type);
+		auto materialized = materializeSelectedConvertingConstructor(std::move(source_object), no_source_expression,
+			target_object_type, *cast_info.trailing_constructor, token, false, std::nullopt);
+		if (!materialized) {
+			throw InternalError("Failed to materialize conversion-operator base value tail");
+		}
+		return *materialized;
+	}
+	if (cast_info.trailing_standard_conversion == StandardConversionKind::DerivedToBase &&
+		target_is_reference && conversion_returns_reference &&
 		conversion_return_type.category() == TypeCategory::Struct &&
 		result->storage == ValueStorage::ContainsAddress) {
-		const CanonicalTypeDesc& destination_desc = sema_.typeContext().get(cast_info.target_type_id);
 		int target_size_bits = 0;
 		if (const TypeInfo* target_info = destination_desc.type_index.is_valid() ? tryGetTypeInfo(destination_desc.type_index) : nullptr) {
 			if (const StructTypeInfo* target_struct_info = target_info->getStructInfo();
@@ -3741,7 +3761,6 @@ std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCallInterna
 	}
 	if (cast_info.trailing_standard_conversion == StandardConversionKind::PointerConversion) {
 		const CanonicalTypeDesc& conversion_return_desc = sema_.typeContext().get(conversion_return_type_id);
-		const CanonicalTypeDesc& destination_desc = sema_.typeContext().get(cast_info.target_type_id);
 		if (sema_.isMemberObjectPointerType(conversion_return_type_id) && sema_.isMemberObjectPointerType(cast_info.target_type_id)) {
 			if (!conversion_return_desc.structural_type_id || !destination_desc.structural_type_id) {
 				throw InternalError("Sema-selected member-object-pointer conversion has no canonical types");

@@ -49,18 +49,16 @@ false. Materialize or plan the implicit base copy/move operation before
 lowering, preserving nontrivial member construction and base offsets rather
 than replacing the operation with an unconditional byte copy.
 
-## Conversion-function value base tails need base-object materialization
+## Template conversion-function value base tails still need base-object materialization
 
-A conversion function returning `Derived` can rank a trailing conversion to a
-by-value `Base` parameter, but lowering does not materialize the selected base
-copy/move construction. For example, with `struct Base { long long value; };`,
-`struct Derived : Base { short tag; };` and an operator returning a `Derived`
-whose `value` is 42, passing that conversion result to `long long read(Base b)`
-can lose the value. Reference targets preserve it. The conversion-operator call
-helper currently routes the tail through `generateTypeConversion`, which lacks
-class-value slicing. Boundary 9 must carry the selected base constructor into
-lowering and reuse the base-object materialization path; a raw byte copy would
-incorrectly bypass nontrivial copy/move semantics.
+Conversion functions returning a non-template `Derived` now carry the selected
+target base copy/move constructor through `ImplicitCastInfo` and materialize the
+base object in lowering, including when the base is at a nonzero offset. Class
+template specializations can still lack a published same-type constructor, so
+those value tails retain the old raw conversion. Publish the specialization
+copy/move constructor before routing template base tails through the same
+materialization path; a raw byte copy would incorrectly bypass nontrivial
+copy/move semantics.
 
 ## Remaining structural NTTP shapes need canonical value import
 
