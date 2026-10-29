@@ -335,7 +335,7 @@ bool AstToIr::shouldDeferImplicitConstructorCodegen(const StructTypeInfo& struct
 	return isStructTriviallyCopyable(&struct_info);
 }
 
-bool AstToIr::shouldDeferImplicitAssignmentCodegen(const StructTypeInfo&, const FunctionDeclarationNode& fn) const {
+bool AstToIr::shouldDeferImplicitAssignmentCodegen(const FunctionDeclarationNode& fn) const {
 	if (!fn.is_implicit()) {
 		return false;
 	}

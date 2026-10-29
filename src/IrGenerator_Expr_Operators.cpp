@@ -2912,7 +2912,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			const StructMemberFunction& member_func = *overload_result.member_overload;
 			const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 			if (op == "=" &&
-				shouldDeferImplicitAssignmentCodegen(*getTypeInfo(lhs_type_index).getStructInfo(), func_decl)) {
+				shouldDeferImplicitAssignmentCodegen(func_decl)) {
 				StringHandle owner_struct_name = getTypeInfo(lhs_type_index).name();
 				queueDeferredMemberFunctionFromNode(
 					owner_struct_name,
