@@ -1158,11 +1158,11 @@ TEST_CASE("Member function pointer structural NTTP fields import by function ord
 	CHECK(table.memberFunctionSignatureAt(qualified_owner, qualified_ordinal) == table.memberPointerPointee(qualified_pointer.child));
 }
 
-TEST_CASE("Templated member pointer fields publish concrete canonical graphs") {
+static void checkTemplatedMemberPointerFields(const char* fixture_path, bool partial_specialization) {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
 	FrontendContext context;
-	std::ifstream fixture("tests/test_canonical_structural_nttp_templated_member_pointer_ret0.cpp");
+	std::ifstream fixture(fixture_path);
 	REQUIRE(fixture.is_open());
 	const std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
 	CompileContext compile_context;
@@ -1187,7 +1187,7 @@ TEST_CASE("Templated member pointer fields publish concrete canonical graphs") {
 	CHECK(import_type("ShortObjectNamed") == import_type("ShortObjectBraced"));
 	CHECK(import_type("LongObjectNamed") == import_type("LongObjectBraced"));
 	CHECK(import_type("NestedNamed") == import_type("NestedBraced"));
-	CHECK(import_type("MixedNamed") == import_type("MixedBraced"));
+	if (!partial_specialization) CHECK(import_type("MixedNamed") == import_type("MixedBraced"));
 	const auto pointer_value = [&](std::string_view name) {
 		const TypeId value = table.templateArgumentValue(table.templateSpecializationArguments(import_type(name)));
 		const TypeId first = unpackStructuralValueSubobjects(table.node(value).array_extent);
@@ -1213,6 +1213,23 @@ TEST_CASE("Templated member pointer fields publish concrete canonical graphs") {
 	CHECK(object.kind == CanonicalTypeKind::MemberObjectPointerValue);
 	CHECK(table.memberPointerOwner(object.child) == table.memberPointerOwner(narrow.child));
 	CHECK(table.memberPointerPointee(object.child) == narrow_type);
+	if (partial_specialization) {
+		const auto primary = gTemplateRegistry.lookupTemplate("Key");
+		REQUIRE(primary.has_value());
+		const TypeId value = table.templateArgumentValue(table.templateSpecializationArguments(import_type("ShortNamed")));
+		const TypeId holder = table.node(value).child;
+		REQUIRE(table.node(holder).kind == CanonicalTypeKind::TemplateSpecialization);
+		CHECK(table.templateSpecializationDecl(holder) == primary->as<TemplateClassDeclarationNode>().template_decl_id());
+		CHECK(table.templateArgumentType(table.templateSpecializationArguments(holder)) == table.pointer(narrow_type));
+	}
+}
+
+TEST_CASE("Templated member pointer fields publish concrete canonical graphs") {
+	checkTemplatedMemberPointerFields("tests/test_canonical_structural_nttp_templated_member_pointer_ret0.cpp", false);
+}
+
+TEST_CASE("Partial specialization member pointer fields publish concrete canonical graphs") {
+	checkTemplatedMemberPointerFields("tests/test_canonical_structural_nttp_partial_member_pointer_ret0.cpp", true);
 }
 
 TEST_CASE("Canonical member field substitution rejects incomplete and unresolved environments") {

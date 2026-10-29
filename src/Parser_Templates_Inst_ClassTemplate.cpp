@@ -3323,29 +3323,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
 					member_decl.default_initializer, template_args_for_member_copy, template_params);
 
-				// Member registration consumes the canonical substituted type metadata materialized above.
-				// Phase 7B: Intern member name and use StringHandle overload
+				// Use the stamped member-pointer pattern and the partial's deduced bindings;
+				// the primary arguments can retain additional declarator wrappers.
 				StringHandle member_name_handle = decl.identifier_token().handle();
-				const TypeId canonical_member_type_id = importCanonicalStructMemberType(
-					requireFrontendContext().canonicalTypes(), substituted_member_type_spec, is_array_member, member_pointee_array_declarator,
-					resolved_array_dimensions);
-				struct_info->addMember(
-					member_name_handle,
-					stored_member_type_index,
-					canonical_member_type_id,
-					member_size,
-					member_alignment,
-					member_decl.access,
-					substituted_default_initializer,
-					ref_qual,
-					ref_qual != ReferenceQualifier::None ? get_substituted_type_size_bits(member_type_index) : 0,
-					is_array_member,
-					std::move(resolved_array_dimensions),
-					member_pointee_array_declarator,
-					static_cast<int>(ptr_depth),
+				const TypeSpecifierNode& canonical_member_syntax = type_spec.has_member_class() ? type_spec : substituted_member_type_spec;
+				const TypeId canonical_member_type_id = importCanonicalStructMemberType(requireFrontendContext().canonicalTypes(), canonical_member_syntax,
+					is_array_member, member_pointee_array_declarator, resolved_array_dimensions);
+				const TypeId concrete_member_type_id = type_spec.has_member_class()
+					? substituteCanonicalStructMemberType(requireFrontendContext().canonicalTypes(), canonical_member_type_id,
+						pattern_struct.partial_specialization_environment(), template_args_for_member_copy)
+					: canonical_member_type_id;
+				struct_info->addMember(member_name_handle, stored_member_type_index, concrete_member_type_id, member_size, member_alignment,
+					member_decl.access, substituted_default_initializer, ref_qual,
+					ref_qual != ReferenceQualifier::None ? get_substituted_type_size_bits(member_type_index) : 0, is_array_member,
+					std::move(resolved_array_dimensions), member_pointee_array_declarator, static_cast<int>(ptr_depth),
 					resolve_bitfield_width(member_decl, template_params, template_args_for_member_copy),
-					getCanonicalFunctionPointerSignature(substituted_member_type_spec),
-					member_decl.is_no_unique_address,
+					getCanonicalFunctionPointerSignature(substituted_member_type_spec), member_decl.is_no_unique_address,
 					substituted_member_type_spec.top_level_cv_qualifier());
 			}
 
