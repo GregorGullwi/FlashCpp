@@ -607,17 +607,23 @@ Continue boundary 3A in this order.
    checks, and environment/argument/substitution mutations. Class identity remains
    the primary plus actual arguments; an environment ID is never a class owner.
 
-   **Next 3A slice: specialization-shaped partial-pattern environments.**
-   Extend publication from direct patterns such as `Key<T*>` to type-only class
-   specialization patterns such as `Key<Box<T>>`. Start in
-   `tryImportCanonicalPartialClassPattern` and the captured
-   `pattern_arg_syntax_nodes` in `Parser_Templates_Class.cpp`; normalize nested
-   parameter references from structural argument syntax and published template
-   IDs before body parsing. Pin renamed redeclarations, distinct nested template
-   owners, concrete field substitution, and named/braced structural-NTTP identity.
-   Keep the 4,096-level worklist guard. Nested-class producers and constrained,
-   pack, non-type, alias, or other dependent patterns remain separate. Opaque
-   non-type arguments remain fail-closed until their identity can substitute.
+   **Specialization-shaped partial environments:** type-only patterns such as
+   `Key<Box<T>>` normalize captured syntax with published nested template IDs.
+   Retain `test_canonical_structural_nttp_nested_partial_pattern_ret0.cpp` and the
+   renamed-declaration, owner, rollback/mutation, and 4,096-level guards. Worklist
+   frames and argument arrays use `FrontendContext` scratch storage with scoped reclamation.
+
+   **Next 3A slice: nested-class specialization identity.**
+   Start with `Outer<short>::Key` versus `Outer<long long>::Key`. Nested pattern
+   EntityIds already publish under the enclosing template in
+   `tryPublishNestedClassIdentity`; use the retained pattern and instantiated
+   enclosing declaration to key canonical type identity by owning specialization
+   TypeId plus nested EntityId. The pattern EntityId alone must not merge all
+   enclosing instantiations. First land that TypeId/import prerequisite with
+   owner-distinction and rollback guards; leave nested member-pointer field
+   production deferred until it can consume the owning TypeId. Keep constrained,
+   pack, non-type, alias, and other dependent patterns separate. Opaque non-type
+   arguments remain fail-closed until their identity can substitute.
    Do not recover identity by spelling or add evaluator/selection rules.
 
    Non-null object pointer target identity remains separate.
