@@ -38,6 +38,20 @@ Expression sema must retain the selected declaration and lowering must consume
 it. Published function EntityIds and the canonical function-pointer value adapter
 now provide target identity, but do not select or lower an overload themselves.
 
+## Implicit copy/move constructor definitions are not uniformly ODR-deferred
+
+Implicit assignment definitions are now emitted only on ODR use, but implicit
+copy/move constructor codegen still emits nontrivial bodies eagerly and defers
+only trivially copyable classes. An unreferenced derived class whose template
+base needs a synthesized constructor can therefore queue base definitions and
+codegen-to-parser callbacks even though nothing uses the derived constructor.
+Audit every constructor ODR-use path first: direct construction, by-value calls
+and returns, temporaries, base/member initialization, exception cleanup, and ABI
+return slots. Then make implicit copy/move constructors unconditionally deferred
+and add unreferenced/used template-base regressions plus a counter check. Keep
+implicit default constructors separate because their use paths and triviality
+rules differ.
+
 ## Remaining structural NTTP shapes need canonical value import
 
 Union declaration groups now carry explicit active-member state. Aggregate,
