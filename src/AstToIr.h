@@ -42,10 +42,8 @@ public:
 	void queueConstructorDefinition(
 		const TypeInfo& type_info,
 		const ConstructorDeclarationNode* constructor);
-	const ConstructorDeclarationNode* ensureSynthesizedBaseConstructor(
-		const TypeInfo& base_type_info,
-		StructTypeInfo& base_struct_info,
-		bool move);
+	const ConstructorDeclarationNode* ensureSynthesizedBaseConstructor(const TypeInfo& base_type_info, StructTypeInfo& base_struct_info, bool move);
+	const FunctionDeclarationNode* ensureSynthesizedBaseAssignment(const TypeInfo& base_type_info, StructTypeInfo& base_struct_info, bool move);
 
 	// ODR-use emission for free inline/__inline definitions: skip bodies until
 	// a call (or other use) marks them needed, then emit from the deferred queue.
@@ -1564,6 +1562,7 @@ private:
 	std::unordered_set<const void*> deferred_member_function_nodes_;
 	size_t deferred_member_functions_processed_ = 0;
 	std::unordered_map<const StructTypeInfo*, ImplicitSameTypeConstructors> synthesized_implicit_base_constructors_;
+	std::unordered_map<const StructTypeInfo*, ImplicitSameTypeAssignments> synthesized_implicit_base_assignments_;
 
 	// Free inline/__inline definitions deferred until ODR-use (call / address-of).
 	// Keyed by FunctionDeclarationNode identity so forward-referenced needed flags

@@ -19,13 +19,13 @@ struct StructuralClassValue;
 struct StructTypeInfo;
 struct TypeInfo;
 const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index);
-struct ImplicitSameTypeConstructors {
-	ASTNode copy_constructor;
-	ASTNode move_constructor;
-};
+struct ImplicitSameTypeConstructors { ASTNode copy_constructor; ASTNode move_constructor; };
+struct ImplicitSameTypeAssignments { ASTNode copy_assignment; ASTNode move_assignment; };
 ConstructorDeclarationNode* synthesizeImplicitCopyConstructor(
 	StructTypeInfo& struct_info, TypeIndex self_type_index, const TypeInfo& self_type_info, StringHandle instantiated_name);
 ImplicitSameTypeConstructors createUnregisteredImplicitSameTypeConstructors(
+	StructTypeInfo& struct_info, TypeIndex self_type_index, const TypeInfo& self_type_info, StringHandle instantiated_name);
+ImplicitSameTypeAssignments createUnregisteredImplicitSameTypeAssignments(
 	StructTypeInfo& struct_info, TypeIndex self_type_index, const TypeInfo& self_type_info, StringHandle instantiated_name);
 
 // Classification of a class type's participation in the translation unit.
