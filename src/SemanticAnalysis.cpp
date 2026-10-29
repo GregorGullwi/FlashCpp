@@ -11539,10 +11539,8 @@ const ConstructorDeclarationNode* selectTrailingBaseConstructor(
 	if (target_struct_info == nullptr) {
 		throw InternalError("Sema-selected base-tail conversion has no target class declaration");
 	}
-	if (target_desc.type_index.is_valid()) {
-		(void)synthesizeImplicitCopyConstructor(
-			*target_struct_info, target_desc.type_index.withCategory(TypeCategory::Struct), target_struct_info->name);
-	}
+	(void)synthesizeImplicitCopyConstructor(
+		*target_struct_info, target_desc.type_index, *target_type_info, target_struct_info->name);
 	const TypeSpecifierNode conversion_return_type = selected_conversion.function->decl_node().type_specifier_node();
 	const bool prefer_move_ctor = !conversion_return_type.is_lvalue_reference();
 	const StructMemberFunction* same_type_ctor = target_struct_info->findPreferredSameTypeConstructor(prefer_move_ctor, true);

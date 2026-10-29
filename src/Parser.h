@@ -3908,6 +3908,7 @@ private:
 	void synthesize_implicit_copy_constructor_if_needed(
 		StructTypeInfo& struct_info,
 		TypeIndex self_type_index,
+		const TypeInfo& self_type_info,
 		StringHandle instantiated_name);
 	// Synthesize C++20 implicit special members for a class that has no user-declared
 	// constructors/assignment/destructor yet (e.g. typedef struct/union { ... } Alias).

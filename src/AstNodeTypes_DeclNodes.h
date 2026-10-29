@@ -17,9 +17,10 @@ namespace FlashCpp {
 struct StructuralClassValue;
 }
 struct StructTypeInfo;
+struct TypeInfo;
 const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index);
 ConstructorDeclarationNode* synthesizeImplicitCopyConstructor(
-	StructTypeInfo& struct_info, TypeIndex self_type_index, StringHandle instantiated_name);
+	StructTypeInfo& struct_info, TypeIndex self_type_index, const TypeInfo& self_type_info, StringHandle instantiated_name);
 
 // Classification of a class type's participation in the translation unit.
 // This is deliberately independent of AstOwnershipPhase: parser ownership of
