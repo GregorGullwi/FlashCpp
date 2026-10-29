@@ -3911,6 +3911,12 @@ private:
 		TypeIndex self_type_index,
 		const TypeInfo& self_type_info,
 		StringHandle instantiated_name);
+	bool synthesize_implicit_assignment_operators_if_needed(StructTypeInfo& struct_info, StructDeclarationNode* struct_ref,
+		TypeIndex self_type_index, const TypeInfo& self_type_info, StringHandle instantiated_name);
+	void createImplicitCopyAssignmentOperator(StructTypeInfo& struct_info, StructDeclarationNode* struct_ref,
+		TypeIndex self_type_index, int size_in_bits, StringHandle qualified_struct_name, const Token& name_token);
+	void createImplicitMoveAssignmentOperator(StructTypeInfo& struct_info, StructDeclarationNode* struct_ref,
+		TypeIndex self_type_index, int size_in_bits, StringHandle qualified_struct_name, const Token& name_token);
 	// Synthesize C++20 implicit special members for a class that has no user-declared
 	// constructors/assignment/destructor yet (e.g. typedef struct/union { ... } Alias).
 	void synthesize_implicit_special_members_for_aggregate(

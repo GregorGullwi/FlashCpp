@@ -3580,6 +3580,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						struct_type_info.registeredTypeIndex(),
 						struct_type_info,
 						instantiated_name);
+					synthesize_implicit_assignment_operators_if_needed(
+						*struct_info, nullptr, struct_type_info.registeredTypeIndex(), struct_type_info, instantiated_name);
 
 					FLASH_LOG(Templates, Trace, "Copying ", pattern_struct_info->static_members.size(), " static members from pattern");
 					for (const auto& static_member : pattern_struct_info->static_members) {
@@ -14496,6 +14498,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		self_type_index,
 		struct_type_info,
 		instantiated_name);
+	const bool added_assignment = synthesize_implicit_assignment_operators_if_needed(
+		*struct_info_ptr, nullptr, self_type_index, struct_type_info, instantiated_name);
+	if (added_assignment && struct_info_ptr->has_vtable && !struct_info_ptr->rebuildVTable()) {
+		FLASH_LOG(Parser, Error, struct_info_ptr->getFinalizationError());
+		return std::nullopt;
+	}
 
 	// Re-evaluate deferred static_asserts with substituted template parameters
 	FLASH_LOG(Templates, Trace, "Checking deferred static_asserts for struct '", class_decl.name(),
