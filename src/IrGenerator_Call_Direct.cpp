@@ -1263,7 +1263,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				? owner_type_it->second->getStructInfo()
 				: nullptr;
 		if (owner_struct_info &&
-			shouldDeferImplicitAssignmentCodegen(*owner_struct_info, *matched_func_decl)) {
+			shouldDeferImplicitAssignmentCodegen(*matched_func_decl)) {
 			for (const auto& member_func : owner_struct_info->member_functions) {
 				if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
 					continue;
