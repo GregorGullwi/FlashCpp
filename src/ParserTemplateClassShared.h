@@ -1,5 +1,7 @@
 #pragma once
 
+#include <new>
+
 #include "CanonicalTypeAdapter.h"
 
 struct SourceMemberStructInfoIndexMaps;
@@ -217,52 +219,132 @@ inline std::optional<TypeId> tryImportCanonicalTemplateTypeArgument(CanonicalTyp
 	return tryImportSupportedCanonical(table, syntax);
 }
 
-// Normalize directly represented type-pattern parameters by declaration slot,
-// before the partial owns a published environment. The primary is only the
-// alpha-normalization anchor; it does not bind the partial's body parameters.
-inline std::optional<TypeId> tryImportCanonicalPartialClassPattern(CanonicalTypeTable& table, TemplateDeclId primary,
-	std::span<const TemplateParameterNode> parameters, std::span<const TemplateTypeArg> arguments) {
-	if (!primary || parameters.empty()) return std::nullopt;
+// Normalize captured type-only argument syntax without copying nested specifier
+// trees or mapping logical template depth to native calls. Frame syntax pointers
+// remain stable while nodes are interned. The caller owns the canonical
+// transaction; scratch frames are reclaimed before returning.
+inline std::optional<TypeId> tryImportCanonicalPartialTypePattern(CanonicalTypeTable& table, MonotonicScratchArena& scratch,
+	TemplateDeclId primary, std::span<const TemplateParameterNode> parameters, const TypeSpecifierNode& root, bool root_dependent) {
+	struct Frame {
+		const TypeSpecifierNode* syntax;
+		Frame* parent;
+		size_t next_argument;
+		TypeId* arguments() { return reinterpret_cast<TypeId*>(this + 1); }
+	};
+	static_assert(sizeof(Frame) == 24);
+	static_assert(std::is_trivially_destructible_v<Frame> && std::is_trivially_destructible_v<TypeId>);
+	const ScratchArenaState scratch_mark = scratch.mark();
+	auto scratch_scope = ScopeGuard([&scratch, scratch_mark]() { scratch.rollbackTo(scratch_mark); });
+	// One allocation holds the frame header followed by its known-arity arguments.
+	const auto make_frame = [&](const TypeSpecifierNode& syntax, Frame* parent) {
+		const size_t count = syntax.has_template_specialization() ? syntax.specialization_arg_count() : 0;
+		if (count > (std::numeric_limits<size_t>::max() - sizeof(Frame)) / sizeof(TypeId)) {
+			throw InternalError("partial pattern argument storage overflow");
+		}
+		void* storage = scratch.allocate(sizeof(Frame) + count * sizeof(TypeId), alignof(Frame));
+		Frame* frame = new (storage) Frame{&syntax, parent, 0};
+		if (count != 0) new (frame->arguments()) TypeId[count]{};
+		return frame;
+	};
+	Frame* pending = make_frame(root, nullptr);
+	while (pending != nullptr) {
+		Frame& frame = *pending;
+		const TypeSpecifierNode& syntax = *frame.syntax;
+		if (syntax.is_pack_expansion() || syntax.has_concept_constraint() || syntax.has_member_class() || syntax.has_function_signature() ||
+			syntax.has_dependent_name_type() || syntax.is_alias_template_specialization()) return std::nullopt;
+		for (const DeclaratorComponent& component : syntax.declarator_components()) {
+			if (component.kind == DeclaratorComponentKind::Function || component.kind == DeclaratorComponentKind::MemberObjectPointer ||
+				component.kind == DeclaratorComponentKind::MemberFunctionPointer) return std::nullopt;
+		}
+		std::optional<TypeId> result;
+		if (syntax.has_template_specialization()) {
+			if (frame.next_argument < syntax.specialization_arg_count()) {
+				const size_t index = frame.next_argument++;
+				if (!syntax.specialization_arg_is_type(index)) return std::nullopt;
+				pending = make_frame(syntax.specialization_arg_type(index), &frame);
+				continue;
+			}
+			const TypeId base = table.templateSpecialization(syntax.specialization_template_decl(),
+				std::span<const TypeId>(frame.arguments(), syntax.specialization_arg_count()));
+			const CanonicalTypeImport shaped = importCanonicalShapedBase(table, syntax, CanonicalTypeImportContext::Exact, base);
+			if (shaped.status != CanonicalTypeImportStatus::Supported) return std::nullopt;
+			result = shaped.type;
+		} else {
+			for (size_t index = 0; index < parameters.size(); ++index) {
+				const TypeIndex parameter = parameters[index].registered_type_index();
+				if (parameter.is_valid() && parameter == syntax.type_index() && parameter.category() == syntax.type_index().category()) {
+					const TypeId base = table.templateParameter(primary, static_cast<uint32_t>(index));
+					const CanonicalTypeImport shaped = importCanonicalShapedBase(table, syntax, CanonicalTypeImportContext::Exact, base);
+					if (shaped.status != CanonicalTypeImportStatus::Supported) return std::nullopt;
+					result = shaped.type;
+					break;
+				}
+			}
+			if (!result.has_value()) {
+				if ((frame.syntax == &root && root_dependent) || syntax.has_template_parameter_identity() || syntax.has_template_parameter_decl()) {
+					return std::nullopt;
+				}
+				TypeSpecifierNode bound = syntax;
+				tryBindPublishedTypeEntity(bound);
+				result = tryImportSupportedCanonical(table, bound);
+				if (!result.has_value()) return std::nullopt;
+				TypeId base = *result;
+				while (true) {
+					const CanonicalTypeNode node = table.node(base);
+					if (node.kind == CanonicalTypeKind::Qualified || node.kind == CanonicalTypeKind::Pointer || node.kind == CanonicalTypeKind::LValueReference ||
+						node.kind == CanonicalTypeKind::RValueReference || node.kind == CanonicalTypeKind::Array) {
+						base = node.child;
+						continue;
+					}
+					if (node.kind != CanonicalTypeKind::Builtin && node.kind != CanonicalTypeKind::Record && node.kind != CanonicalTypeKind::Enum) {
+						return std::nullopt;
+					}
+					break;
+				}
+			}
+		}
+		pending = frame.parent;
+		if (pending == nullptr) return result;
+		pending->arguments()[pending->next_argument - 1] = *result;
+	}
+	throw InternalError("partial pattern normalization ended without a result");
+}
+
+// The primary is only the alpha-normalization anchor; it does not bind the
+// partial's body parameters. Captured syntax retains nested published primaries.
+inline std::optional<TypeId> tryImportCanonicalPartialClassPattern(FrontendContext& context, TemplateDeclId primary,
+	std::span<const TemplateParameterNode> parameters, std::span<const TemplateTypeArg> arguments, std::span<const ASTNode> argument_syntax) {
+	if (!primary || parameters.empty() || arguments.empty() || (!argument_syntax.empty() && argument_syntax.size() != arguments.size())) {
+		return std::nullopt;
+	}
 	for (const TemplateParameterNode& parameter : parameters) {
 		if (parameter.kind() != TemplateParameterKind::Type || parameter.is_variadic() || parameter.has_concept_constraint()) return std::nullopt;
 	}
+	CanonicalTypeTable& table = context.canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
-	std::vector<TypeId> pattern_arguments;
-	pattern_arguments.reserve(arguments.size());
-	for (const TemplateTypeArg& argument : arguments) {
+	MonotonicScratchArena& scratch = context.scratchArena();
+	const ScratchArenaState scratch_mark = scratch.mark();
+	auto scratch_scope = ScopeGuard([&scratch, scratch_mark]() { scratch.rollbackTo(scratch_mark); });
+	if (arguments.size() > std::numeric_limits<size_t>::max() / sizeof(TypeId)) throw InternalError("partial pattern argument count overflow");
+	void* argument_storage = scratch.allocate(arguments.size() * sizeof(TypeId), alignof(TypeId));
+	TypeId* pattern_arguments = new (argument_storage) TypeId[arguments.size()]{};
+	for (size_t index = 0; index < arguments.size(); ++index) {
+		const TemplateTypeArg& argument = arguments[index];
 		if (!argument.isTypeArgument() || argument.is_pack || argument.member_pointer_kind != MemberPointerKind::None ||
 			argument.function_signature.has_value()) return std::nullopt;
-		TypeSpecifierNode syntax = typeSpecifierFromTemplateTypeArgProjection(argument);
-		bool parameter_bound = false;
-		for (size_t index = 0; index < parameters.size(); ++index) {
-			const TypeIndex parameter_type = parameters[index].registered_type_index();
-			if (parameter_type.is_valid() && parameter_type == argument.type_index && parameter_type.category() == argument.type_index.category()) {
-				syntax.set_template_parameter_decl(primary, static_cast<uint32_t>(index));
-				parameter_bound = true;
-				break;
-			}
+		std::optional<TypeId> imported;
+		if (argument_syntax.empty()) {
+			const TypeSpecifierNode syntax = typeSpecifierFromTemplateTypeArgProjection(argument);
+			imported = tryImportCanonicalPartialTypePattern(table, scratch, primary, parameters, syntax, argument.is_dependent);
+		} else {
+			if (!argument_syntax[index].is<TypeSpecifierNode>()) return std::nullopt;
+			imported = tryImportCanonicalPartialTypePattern(table, scratch, primary, parameters, argument_syntax[index].as<TypeSpecifierNode>(),
+				argument.is_dependent);
 		}
-		if (!parameter_bound) {
-			if (argument.is_dependent) return std::nullopt;
-			tryBindPublishedTypeEntity(syntax);
-		}
-		const std::optional<TypeId> imported = tryImportSupportedCanonical(table, syntax);
 		if (!imported.has_value() || !table.dependsOnlyOnTemplateParameters(*imported, primary)) return std::nullopt;
-		TypeId base = *imported;
-		while (true) {
-			const CanonicalTypeNode node = table.node(base);
-			if (node.kind == CanonicalTypeKind::Qualified || node.kind == CanonicalTypeKind::Pointer || node.kind == CanonicalTypeKind::LValueReference ||
-				node.kind == CanonicalTypeKind::RValueReference || node.kind == CanonicalTypeKind::Array) {
-				base = node.child;
-				continue;
-			}
-			if (node.kind != CanonicalTypeKind::Builtin && node.kind != CanonicalTypeKind::Record && node.kind != CanonicalTypeKind::Enum &&
-				node.kind != CanonicalTypeKind::TemplateParameter) return std::nullopt;
-			break;
-		}
-		pattern_arguments.push_back(*imported);
+		pattern_arguments[index] = *imported;
 	}
-	const TypeId pattern = table.templateSpecialization(primary, pattern_arguments);
+	const TypeId pattern = table.templateSpecialization(primary, std::span<const TypeId>(pattern_arguments, arguments.size()));
 	transaction.commit();
 	return pattern;
 }

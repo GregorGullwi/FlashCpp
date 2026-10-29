@@ -100,15 +100,13 @@ and flat union groups by owner TypeId. Missing field-layout and dependent base
 facts still fail closed. The partial-specialization parser gap above and nested
 anonymous-union hierarchy remain separate.
 
-Primary-template and directly represented partial-template member-pointer fields
-substitute their canonical graphs before registration. Partial fields use the
-published partial environment and deduced bindings, while class identity retains
-the primary and actual specialization arguments. Specialization-shaped partial
-patterns such as `Key<Box<T>>`, nested-class producers, and partials involving
-constraints, packs, or non-type parameters need further publication work.
+Nested-class holders inside class-template specializations need canonical type
+identity that combines the enclosing specialization with the nested declaration.
+The published nested pattern EntityId alone must not identify every enclosing
+instantiation. Constrained, pack, non-type, and alias partial patterns still need
+separate environment publication before dependent fields can import concretely.
 Member-pointer graphs containing opaque non-type specialization arguments fail
-closed: the canonical substitutor
-preserves those ExprIds and cannot replace a pattern argument such as `N` with
+closed: the canonical substitutor preserves those ExprIds and cannot replace a pattern argument such as `N` with
 its concrete value. Publish substitutable parameter/value identity before
 enabling those graphs; keep evaluator and overload-selection rules separate.
 
