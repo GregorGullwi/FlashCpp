@@ -465,10 +465,19 @@ Continue boundary 3A in this order.
    assignment now follows the same sema-owned publication as construction: semantic
    analysis records the selected assignment operator by owner `TypeId` and copy/move
    kind, and codegen drains it. The `shouldDeferImplicitAssignmentCodegen` predicate
-   and its `operator=` spelling check are gone. Direct `operator=` calls publish at
-   their direct-call annotation site, while generated assignment bodies still queue
-   base and member assignment dependencies. `tests/test_implicit_assignment_direct_call_ret0.cpp`
-   protects direct copy and move operator calls, and
+   and its `operator=` spelling check are gone. Direct `operator=` calls publish from
+   the selected declaration's canonical owner `TypeId` first, then the receiver's
+   owner for calls whose declaration owner is unavailable, with the parent-name
+   lookup kept only as a bridge for declarations that do not carry canonical owner
+   identity. Failure to find the exact selected declaration in any owning
+   `StructTypeInfo` is an internal error rather than a silent link failure.
+   Generated assignment bodies still queue base and member assignment dependencies.
+   `tests/test_implicit_assignment_direct_call_ret0.cpp` protects direct copy and move
+   operator calls on a concrete class,
+   `tests/test_implicit_assignment_direct_call_nested_ret0.cpp` covers a nested class
+   whose declaration parent is not the registered top-level name,
+   `tests/test_implicit_assignment_direct_call_base_qualified_ret0.cpp` covers a
+   base-qualified call whose receiver owner differs from the declaration owner, and
    `tests/test_implicit_assignment_unreferenced_template_base_ret0.cpp` pins the
    unreferenced template-base case to zero codegen-to-parser callbacks.
 
