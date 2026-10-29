@@ -12252,17 +12252,8 @@ TypeId SemanticAnalysis::structuralTypeIdForStruct(const StructTypeInfo& struct_
 	return imported.status == CanonicalTypeImportStatus::Supported ? imported.type : TypeId{};
 }
 
-void SemanticAnalysis::markOdrUsedImplicitSpecialMember(const StructTypeInfo& struct_info, const ConstructorDeclarationNode& ctor) {
-	if (!ctor.is_implicit() || ctor.parameter_nodes().empty()) {
-		return;
-	}
-	const ASTNode& first_parameter = ctor.parameter_nodes().front();
-	if (!first_parameter.is<DeclarationNode>()) {
-		return;
-	}
-	const TypeSpecifierNode& parameter_type = first_parameter.as<DeclarationNode>().type_specifier_node();
-	const SpecialMemberKind kind = parameter_type.is_rvalue_reference() ? SpecialMemberKind::MoveConstructor : SpecialMemberKind::CopyConstructor;
-	const TypeId owner_type_id = structuralTypeIdForStruct(struct_info);
+void SemanticAnalysis::recordOdrUsedSpecialMember(TypeId owner_type_id, const StructTypeInfo& struct_info,
+	SpecialMemberKind kind, ASTNode declaration) {
 	if (!owner_type_id) {
 		return;
 	}
@@ -12275,8 +12266,43 @@ void SemanticAnalysis::markOdrUsedImplicitSpecialMember(const StructTypeInfo& st
 	entry.kind = kind;
 	entry.owner_name = struct_info.name;
 	entry.namespace_handle = struct_info.namespace_handle;
-	entry.declaration = ASTNode(&ctor);
+	entry.declaration = std::move(declaration);
 	odr_used_special_members_.push_back(std::move(entry));
+}
+
+void SemanticAnalysis::markOdrUsedImplicitSpecialMember(const StructTypeInfo& struct_info, const ConstructorDeclarationNode& ctor) {
+	if (!ctor.is_implicit() || ctor.parameter_nodes().empty()) {
+		return;
+	}
+	const ASTNode& first_parameter = ctor.parameter_nodes().front();
+	if (!first_parameter.is<DeclarationNode>()) {
+		return;
+	}
+	const TypeSpecifierNode& parameter_type = first_parameter.as<DeclarationNode>().type_specifier_node();
+	const SpecialMemberKind kind = parameter_type.is_rvalue_reference() ? SpecialMemberKind::MoveConstructor : SpecialMemberKind::CopyConstructor;
+	recordOdrUsedSpecialMember(structuralTypeIdForStruct(struct_info), struct_info, kind, ASTNode(&ctor));
+}
+
+void SemanticAnalysis::markOdrUsedImplicitAssignment(const StructTypeInfo& struct_info, const StructMemberFunction& assignment) {
+	if (!assignment.function_decl.is<FunctionDeclarationNode>()) {
+		return;
+	}
+	const FunctionDeclarationNode& function = assignment.function_decl.as<FunctionDeclarationNode>();
+	if (!function.is_implicit()) {
+		return;
+	}
+	SpecialMemberKind kind;
+	switch (assignment.operator_kind) {
+	case OverloadableOperator::CopyAssign:
+		kind = SpecialMemberKind::CopyAssignment;
+		break;
+	case OverloadableOperator::MoveAssign:
+		kind = SpecialMemberKind::MoveAssignment;
+		break;
+	default:
+		return;
+	}
+	recordOdrUsedSpecialMember(structuralTypeIdForStruct(struct_info), struct_info, kind, ASTNode(&function));
 }
 
 void SemanticAnalysis::markOdrUsedSameTypeConstructor(const StructTypeInfo& struct_info, bool prefer_move) {
@@ -15146,6 +15172,21 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 	// struct visitor emits IR for the real body instead of relying on
 	// codegen-side fallbacks. See `tryMaterializeLazyCallTarget` for details.
 	func_decl = tryMaterializeLazyCallTarget(func_decl, call_info);
+	if (func_decl != nullptr && func_decl->is_implicit() && !func_decl->parent_struct_name().empty()) {
+		const StringHandle owner_name = StringTable::getOrInternStringHandle(func_decl->parent_struct_name());
+		auto owner_it = getTypesByNameMap().find(owner_name);
+		if (owner_it != getTypesByNameMap().end() && owner_it->second != nullptr) {
+			if (const StructTypeInfo* owner_info = owner_it->second->getStructInfo()) {
+				for (const StructMemberFunction& member : owner_info->member_functions) {
+					if (member.function_decl.is<FunctionDeclarationNode>() &&
+						&member.function_decl.as<FunctionDeclarationNode>() == func_decl) {
+						markOdrUsedImplicitAssignment(*owner_info, member);
+						break;
+					}
+				}
+			}
+		}
+	}
 
 	const ResolvedFunctionQueryResult resolved_op_call_query = getResolvedOpCallQuery(call_key);
 	const FunctionDeclarationNode* resolved_op_call = resolved_op_call_query.hasValue() ? resolved_op_call_query.function : nullptr;
@@ -15565,6 +15606,14 @@ void SemanticAnalysis::markResolvedOperatorOverloadOdrUsed(
 		return;
 	LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
 		LazyMemberKey::exact(struct_name, fdecl));
+	if (fdecl.is_implicit()) {
+		auto owner_it = getTypesByNameMap().find(struct_name);
+		if (owner_it != getTypesByNameMap().end() && owner_it->second != nullptr) {
+			if (const StructTypeInfo* owner_info = owner_it->second->getStructInfo()) {
+				markOdrUsedImplicitAssignment(*owner_info, member_overload);
+			}
+		}
+	}
 }
 
 namespace {

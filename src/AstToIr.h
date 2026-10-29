@@ -484,7 +484,6 @@ private:
 	bool isArithmeticType(TypeCategory type) const;
 	bool isFundamentalType(TypeCategory type) const;
 	bool shouldDeferImplicitConstructorCodegen(const StructTypeInfo& struct_info, const ConstructorDeclarationNode& ctor) const;
-	bool shouldDeferImplicitAssignmentCodegen(const FunctionDeclarationNode& fn) const;
 	ExprResult generateTypeTraitIr(const TypeTraitExprNode& traitNode);
 	ExprResult generateNewExpressionIr(const NewExpressionNode& newExpr);
 	ExprResult generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr);

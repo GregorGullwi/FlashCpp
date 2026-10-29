@@ -95,16 +95,18 @@ struct TypeSpecifierQueryResult {
 };
 
 // Semantic ODR-use publication for implicitly-declared (or explicitly
-// defaulted) copy/move constructors.
+// defaulted) copy/move constructors and assignment operators.
 //
 // Codegen must not decide on its own whether one of these special members was
-// ODR-used: semantic analysis resolves every construction and records the
-// selected declaration here. `owner_type_id` is the canonical class TypeId when
-// published and is the identity used for deduplication. `declaration` is only
-// the materialization handle consumed by the deferred emission queue.
+// ODR-used: semantic analysis resolves every construction/assignment and records
+// the selected declaration here. `owner_type_id` is the canonical class TypeId
+// when published and is the identity used for deduplication. `declaration` is
+// only the materialization handle consumed by the deferred emission queue.
 enum class SpecialMemberKind : uint8_t {
 	CopyConstructor = 0,
 	MoveConstructor = 1,
+	CopyAssignment = 2,
+	MoveAssignment = 3,
 };
 
 struct OdrUsedSpecialMember {
@@ -172,9 +174,9 @@ public:
 	void markResolvedOperatorOverloadOdrUsed(
 		const StructMemberFunction& member_overload);
 
-	// ODR-used implicit/defaulted copy and move constructors selected by this
-	// semantic pass. Codegen drains this list instead of inferring ODR use from
-	// its own lowering paths.
+	// ODR-used implicit/defaulted copy and move constructors and assignment
+	// operators selected by this semantic pass. Codegen drains this list instead
+	// of inferring ODR use from its own lowering paths.
 	std::span<const OdrUsedSpecialMember> odrUsedSpecialMembers() const;
 
 	bool isParserAttached() const;
@@ -242,8 +244,9 @@ public:
 	std::span<const StructTypeInfo* const> codegenReadyTypes() const {
 		return codegen_ready_types_;
 	}
-	// Implicit/defaulted copy and move constructors that semantic analysis
-	// selected at an ODR-use site, published for codegen's deferred emission.
+	// Implicit/defaulted copy and move constructors and assignment operators that
+	// semantic analysis selected at an ODR-use site, published for codegen's
+	// deferred emission.
 	std::span<const OdrUsedSpecialMember> odrUsedSpecialMembers() const {
 		return odr_used_special_members_;
 	}
@@ -602,10 +605,14 @@ private:
 	// Explicit conversions start selection from canonical source and target TypeIds.
 	bool tryAnnotateExplicitConversionByTypeId(const ASTNode& slot_expression, const ASTNode& source_expression, const TypeSpecifierNode& target_type);
 	// Semantic ODR-use publication for implicitly-declared/defaulted copy and
-	// move constructors. Identity is the owner's canonical TypeId; the selected
-	// declaration is retained only as the codegen emission handle.
+	// move constructors and assignment operators. Identity is the owner's
+	// canonical TypeId; the selected declaration is retained only as the codegen
+	// emission handle.
 	TypeId structuralTypeIdForStruct(const StructTypeInfo& struct_info);
+	void recordOdrUsedSpecialMember(TypeId owner_type_id, const StructTypeInfo& struct_info,
+		SpecialMemberKind kind, ASTNode declaration);
 	void markOdrUsedImplicitSpecialMember(const StructTypeInfo& struct_info, const ConstructorDeclarationNode& ctor);
+	void markOdrUsedImplicitAssignment(const StructTypeInfo& struct_info, const StructMemberFunction& assignment);
 	void markOdrUsedSameTypeConstructor(const StructTypeInfo& struct_info, bool prefer_move);
 	bool tryAnnotateCopyInitConvertingConstructor(const ASTNode& expr_node,
 												  CanonicalTypeId target_type_id,

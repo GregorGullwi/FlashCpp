@@ -19,18 +19,6 @@ its union fields. Reuse the normal class-member parser before publishing these
 specializations' field schemas; layout publication cannot recover absent declarations.
 Primary templates and their ordinary nested classes retain these static facts.
 
-## Implicit assignment ODR-use is still decided in codegen
-
-Implicit copy/move construction now publishes ODR use from semantic analysis and
-codegen only drains the published declarations. Implicit copy/move assignment did
-not receive the same treatment: `shouldDeferImplicitAssignmentCodegen` still
-recognizes `operator=` by its spelling in codegen, and assignment call sites queue
-definitions from that check. Extend `OdrUsedSpecialMember` with copy/move
-assignment kinds, mark the selected assignment operator during sema assignment
-resolution (including direct `operator=` calls), and delete the name-based check.
-Generated assignment bodies can keep queueing base/member assignment dependencies
-the same way generated constructor bodies do.
-
 ## Remaining structural NTTP shapes need canonical value import
 
 Union declaration groups now carry explicit active-member state. Aggregate,
