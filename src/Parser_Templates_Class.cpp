@@ -175,6 +175,90 @@ void Parser::synthesize_implicit_copy_constructor_if_needed(
 	(void)synthesizeImplicitCopyConstructor(struct_info, self_type_index, self_type_info, instantiated_name);
 }
 
+void Parser::createImplicitCopyAssignmentOperator(StructTypeInfo& struct_info, StructDeclarationNode* struct_ref,
+	TypeIndex self_type_index, int size_in_bits, StringHandle qualified_struct_name, const Token& name_token) {
+	ASTNode return_type_node = emplace_node<TypeSpecifierNode>(self_type_index.withCategory(TypeCategory::Struct), size_in_bits, name_token,
+		CVQualifier::None, ReferenceQualifier::LValueReference);
+	Token operator_name_token(Token::Type::Identifier, "operator="sv, name_token.line(), name_token.column(), name_token.file_index());
+	ASTNode operator_decl_node = emplace_node<DeclarationNode>(return_type_node, operator_name_token);
+	ASTNode func_node = emplace_node<FunctionDeclarationNode>(operator_decl_node.as<DeclarationNode>(), qualified_struct_name);
+	FunctionDeclarationNode& func_ref = func_node.as<FunctionDeclarationNode>();
+	func_ref.set_access_owner_type_index(self_type_index.withCategory(TypeCategory::Struct));
+	func_ref.set_namespace_handle(struct_info.namespace_handle);
+	ASTNode param_type_node = emplace_node<TypeSpecifierNode>(self_type_index.withCategory(TypeCategory::Struct), size_in_bits, name_token,
+		CVQualifier::Const, ReferenceQualifier::LValueReference);
+	Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
+	func_ref.add_parameter_node(emplace_node<DeclarationNode>(param_type_node, param_token));
+	func_ref.set_definition(emplace_node<BlockNode>());
+	finalize_function_after_definition(func_ref);
+	func_ref.set_is_implicit(true);
+	struct_info.addOperatorOverload(OverloadableOperator::CopyAssign, func_node, AccessSpecifier::Public);
+	if (struct_ref) {
+		struct_ref->add_operator_overload(OverloadableOperator::CopyAssign, func_node, AccessSpecifier::Public);
+	}
+}
+
+void Parser::createImplicitMoveAssignmentOperator(StructTypeInfo& struct_info, StructDeclarationNode* struct_ref,
+	TypeIndex self_type_index, int size_in_bits, StringHandle qualified_struct_name, const Token& name_token) {
+	ASTNode return_type_node = emplace_node<TypeSpecifierNode>(self_type_index.withCategory(TypeCategory::Struct), size_in_bits, name_token,
+		CVQualifier::None, ReferenceQualifier::LValueReference);
+	Token operator_name_token(Token::Type::Identifier, "operator="sv, name_token.line(), name_token.column(), name_token.file_index());
+	ASTNode operator_decl_node = emplace_node<DeclarationNode>(return_type_node, operator_name_token);
+	ASTNode func_node = emplace_node<FunctionDeclarationNode>(operator_decl_node.as<DeclarationNode>(), qualified_struct_name);
+	FunctionDeclarationNode& func_ref = func_node.as<FunctionDeclarationNode>();
+	func_ref.set_access_owner_type_index(self_type_index.withCategory(TypeCategory::Struct));
+	func_ref.set_namespace_handle(struct_info.namespace_handle);
+	ASTNode param_type_node = emplace_node<TypeSpecifierNode>(self_type_index.withCategory(TypeCategory::Struct), size_in_bits, name_token,
+		CVQualifier::None, ReferenceQualifier::RValueReference);
+	Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
+	func_ref.add_parameter_node(emplace_node<DeclarationNode>(param_type_node, param_token));
+	func_ref.set_definition(emplace_node<BlockNode>());
+	finalize_function_after_definition(func_ref);
+	func_ref.set_is_implicit(true);
+	struct_info.addOperatorOverload(OverloadableOperator::MoveAssign, func_node, AccessSpecifier::Public);
+	if (struct_ref) {
+		struct_ref->add_operator_overload(OverloadableOperator::MoveAssign, func_node, AccessSpecifier::Public);
+	}
+}
+
+bool Parser::synthesize_implicit_assignment_operators_if_needed(StructTypeInfo& struct_info, StructDeclarationNode* struct_ref,
+	TypeIndex self_type_index, const TypeInfo& self_type_info, StringHandle instantiated_name) {
+	if (struct_info.findCopyAssignmentOperator(true) || struct_info.findMoveAssignmentOperator(true) || struct_info.isCopyAssignmentDeleted() ||
+		struct_info.isMoveAssignmentDeleted()) {
+		return false;
+	}
+	TypeIndex effective_type_index = self_type_index;
+	if (!effective_type_index.is_valid()) {
+		effective_type_index = self_type_info.registeredTypeIndex();
+	}
+	if (!effective_type_index.is_valid()) {
+		return false;
+	}
+	int size_in_bits = static_cast<int>(struct_info.sizeInBits().value);
+	if (size_in_bits == 0 && self_type_info.hasStoredSize()) {
+		size_in_bits = static_cast<int>(self_type_info.sizeInBits().value);
+	}
+	if (size_in_bits == 0) {
+		size_in_bits = get_type_size_bits(TypeCategory::FunctionPointer);
+	}
+	const bool has_user_copy_assign = struct_info.findCopyAssignmentOperator(false) != nullptr;
+	const bool has_user_move_assign = struct_info.findMoveAssignmentOperator(false) != nullptr;
+	const bool has_user_copy_ctor = struct_info.findCopyConstructor(false) != nullptr;
+	const bool has_user_move_ctor = struct_info.findMoveConstructor(false) != nullptr;
+	const bool has_user_destructor = struct_info.hasUserDefinedDestructor();
+	const Token name_token(Token::Type::Identifier, StringTable::getStringView(instantiated_name), 0, 0, 0);
+	bool added_assignment = false;
+	if (!has_user_copy_assign && !has_user_move_assign && !has_user_move_ctor && !has_user_destructor) {
+		createImplicitCopyAssignmentOperator(struct_info, struct_ref, effective_type_index, size_in_bits, instantiated_name, name_token);
+		added_assignment = true;
+	}
+	if (!has_user_copy_ctor && !has_user_move_ctor && !has_user_copy_assign && !has_user_move_assign && !has_user_destructor) {
+		createImplicitMoveAssignmentOperator(struct_info, struct_ref, effective_type_index, size_in_bits, instantiated_name, name_token);
+		added_assignment = true;
+	}
+	return added_assignment;
+}
+
 ParseResult Parser::parse_bitfield_width(std::optional<size_t>& out_width, std::optional<ASTNode>* out_expr) {
 	if (peek() != ":"_tok) {
 		return ParseResult::success();
@@ -3199,6 +3283,8 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				struct_type_info.type_index_,
 				struct_type_info,
 				instantiated_name);
+			synthesize_implicit_assignment_operators_if_needed(
+				*struct_info_ptr, &struct_ref, struct_type_info.type_index_, struct_type_info, instantiated_name);
 
 			// If no constructor was found, mark that we need a default one
 			struct_info_ptr->needs_default_constructor = !has_constructor;
@@ -4713,7 +4799,6 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				struct_type_info.type_index_,
 				struct_type_info,
 				instantiated_name);
-
 			// Finalize the struct layout with base classes
 			bool finalize_success;
 			struct_info->setDeferredTemplateBases(

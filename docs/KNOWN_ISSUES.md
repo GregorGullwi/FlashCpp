@@ -1,5 +1,15 @@
 # Known Issues
 
+## Implicit assignment does not call member assignment operators
+
+An implicitly generated assignment operator for a class with a data member whose
+type has a user-defined assignment operator copies the member directly instead
+of invoking that member operator. For example, assigning a `Holder` containing
+a `Counted` whose `operator=` adds 100 leaves the destination member value
+unchanged instead of applying the user-defined behavior. This affects ordinary
+classes as well as class-template specializations and should be fixed in the
+implicit-assignment body lowering rather than by adding assignment declarations.
+
 ## Signed narrow bit-field reads can lose sign extension
 
 A local `UnionBits<short>` whose anonymous union contains `short first : 3;`
@@ -18,18 +28,6 @@ after a primary declaration gives `Partial<long long*>` the wrong size and omits
 its union fields. Reuse the normal class-member parser before publishing these
 specializations' field schemas; layout publication cannot recover absent declarations.
 Primary templates and their ordinary nested classes retain these static facts.
-
-## Class-template specializations do not synthesize implicit assignment operators
-
-A class-template specialization whose pattern declares no assignment operator does
-not receive implicit copy/move assignment operators during instantiation, so
-`Base<short> a, b; a = b;` and `a.operator=(b);` are rejected even when the pattern
-is an aggregate. Implicit copy/move constructors are synthesized on demand by
-codegen, and semantic ODR-use publication for assignment is in place, but the
-specialization must first synthesize the assignment declarations. Explicitly
-defaulted assignment operators on such specializations can also reach deferred
-emission without a materialized body, so keep that path eager until synthesis is
-fixed.
 
 ## Remaining structural NTTP shapes need canonical value import
 

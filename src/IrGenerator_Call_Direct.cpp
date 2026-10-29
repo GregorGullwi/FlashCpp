@@ -995,6 +995,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			ASTNode function_node = member_func.function_decl;
 			if (function_node.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& func_decl = function_node.as<FunctionDeclarationNode>();
+				if (func_decl.is_implicit() &&
+					(member_func.operator_kind == OverloadableOperator::CopyAssign ||
+					 member_func.operator_kind == OverloadableOperator::MoveAssign)) {
+					continue;
+				}
 				if (!func_decl.is_materialized() && !func_decl.is_implicit() && member_func.getName().isValid()) {
 					if (std::optional<ASTNode> materialized =
 							sema_.ensureMemberFunctionMaterialized(
