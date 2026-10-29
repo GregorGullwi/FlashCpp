@@ -74,6 +74,8 @@ enum class CanonicalTypeKind : uint8_t {
 	// Non-null function pointer: child is its declared Pointer-to-Function type;
 	// extent is the published target function EntityId, never a spelling handle.
 	FunctionPointerValue,
+	// Nested class identity: owner TypeId in child and declaring EntityId in extent.
+	NestedRecord,
 };
 
 enum class CanonicalTemplateArgKind : uint8_t {
@@ -737,6 +739,10 @@ public:
 
 	// Type-only convenience overload for Spec identity.
 	TypeId templateSpecialization(TemplateDeclId primary, std::span<const TypeId> arguments);
+
+	TypeId nestedRecord(TypeId owner, EntityId entity);
+	TypeId nestedRecordOwner(TypeId nested_record) const;
+	EntityId nestedRecordEntity(TypeId nested_record) const;
 
 	// Plain identifier members of unknown specializations. Qualifiers may be a
 	// published type parameter, a type-only TemplateSpecialization (Primary<Args>),

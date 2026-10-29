@@ -686,9 +686,15 @@ inline EntityId resolveNamedTypeEntity(const TypeSpecifierNode& syntax) {
 
 // Opaque Record import for published class/struct types. Alias and unpublished
 // nominal forms stay deferred until their EntityId path lands.
-inline CanonicalTypeImport importCanonicalRecord(CanonicalTypeTable& table,
-	const TypeSpecifierNode& syntax,
-	CanonicalTypeImportContext context) {
+inline CanonicalTypeImport importCanonicalRecord(CanonicalTypeTable& table, const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
+	// An instantiated nested declaration shares its pattern EntityId across
+	// enclosing specializations. The class-source importer must recover its owner.
+	if (syntax.has_injected_class_declaration()) {
+		const StructDeclarationNode* pattern = syntax.injected_class_declaration()->injected_class_pattern_declaration();
+		if (pattern != nullptr && pattern->has_entity_id() && !pattern->has_template_decl_id()) {
+			return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+		}
+	}
 	const EntityId entity = resolveNamedTypeEntity(syntax);
 	if (!entity) {
 		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
@@ -2452,9 +2458,7 @@ inline CanonicalTypeImport shapeCanonicalTemplateTypeArgument(
 		base);
 }
 
-inline CanonicalTypeImport importCanonicalClassSource(
-	CanonicalTypeTable& table,
-	const TypeInfo* root_type_info,
+inline CanonicalTypeImport importCanonicalClassSource(CanonicalTypeTable& table, const TypeInfo* root_type_info,
 	const StructDeclarationNode* root_declaration) {
 	if ((root_type_info == nullptr) == (root_declaration == nullptr)) {
 		throw InternalError("canonical type adapter: class source must have one root");
@@ -2462,6 +2466,9 @@ inline CanonicalTypeImport importCanonicalClassSource(
 	struct PendingClassImport {
 		const StructDeclarationNode* declaration;
 		TemplateDeclId specialization_owner;
+		EntityId nested_entity;
+		const TypeInfo* alias_source = nullptr;
+		const TypeSpecifierNode* alias_syntax = nullptr;
 		size_t next_argument = 0;
 		size_t waiting_argument = std::numeric_limits<size_t>::max();
 		std::vector<CanonicalTemplateArgument> arguments;
@@ -2474,28 +2481,40 @@ inline CanonicalTypeImport importCanonicalClassSource(
 
 	CanonicalTypeTransaction transaction(table);
 	std::vector<PendingClassImport> worklist;
-	std::unordered_set<const StructDeclarationNode*> active_declarations;
-	const auto enqueue_source = [&](
-		const TypeInfo* type_info,
-		const StructDeclarationNode* declaration)
-		-> std::optional<CanonicalTypeImport> {
+	std::unordered_set<const void*> active_sources;
+	const auto enqueue_source = [&](const TypeInfo* type_info, const StructDeclarationNode* declaration) -> std::optional<CanonicalTypeImport> {
 		if (type_info != nullptr) {
-			if (const TypeSpecifierNode* alias_type =
-					type_info->aliasTypeSpecifier()) {
-				return importCanonicalType(table, *alias_type);
+			if (const TypeSpecifierNode* alias_type = type_info->aliasTypeSpecifier()) {
+				const CanonicalTypeImport direct_import = importCanonicalType(table, *alias_type);
+				if (direct_import.status != CanonicalTypeImportStatus::UnmigratedNominal) return direct_import;
+				if (!active_sources.insert(type_info).second) return CanonicalTypeImport{{}, CanonicalTypeImportStatus::Unresolved};
+				PendingClassImport pending{};
+				pending.alias_source = type_info;
+				pending.alias_syntax = alias_type;
+				worklist.push_back(std::move(pending));
+				return std::nullopt;
 			}
 			const StructTypeInfo* struct_info = type_info->getStructInfo();
 			if (struct_info == nullptr || struct_info->declaration_node == nullptr) {
-				return CanonicalTypeImport{{},
-					CanonicalTypeImportStatus::UnmigratedNominal};
+				return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
 			}
 			declaration = struct_info->declaration_node;
 		}
 
-		const StructDeclarationNode* pattern =
-			declaration->injected_class_pattern_declaration();
+		const StructDeclarationNode* pattern = declaration->injected_class_pattern_declaration();
 		TemplateDeclId specialization_owner{};
-		if (pattern != nullptr && pattern->has_template_decl_id()) {
+		EntityId nested_entity{};
+		if (pattern != nullptr && pattern->has_entity_id() && !pattern->has_template_decl_id()) {
+			if (declaration->enclosing_class() == nullptr) {
+				return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+			}
+			nested_entity = pattern->entity_id();
+		} else if (pattern != nullptr && pattern->has_template_decl_id()) {
+			// Member class templates also need enclosing arguments in their identity.
+			// Their composed specialization representation is a separate slice.
+			if (declaration->enclosing_class() != nullptr) {
+				return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+			}
 			specialization_owner = pattern->template_decl_id();
 		} else if (declaration->has_canonical_specialization_owner()) {
 			// An explicit (full) specialization carries the primary's template identity
@@ -2508,22 +2527,24 @@ inline CanonicalTypeImport importCanonicalClassSource(
 					table.record(declaration->entity_id()),
 					CanonicalTypeImportStatus::Supported};
 			}
-			return CanonicalTypeImport{{},
-				CanonicalTypeImportStatus::UnmigratedNominal};
+			return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
 		}
-		if (!active_declarations.insert(declaration).second) {
+		if (!active_sources.insert(declaration).second) {
 			return CanonicalTypeImport{{}, CanonicalTypeImportStatus::Unresolved};
 		}
 		PendingClassImport pending{};
 		pending.declaration = declaration;
 		pending.specialization_owner = specialization_owner;
+		pending.nested_entity = nested_entity;
 		const bool pattern_owns_template = pattern != nullptr && pattern->has_template_decl_id();
 		if (!pattern_owns_template && declaration->has_canonical_specialization_owner() &&
 			type_info != nullptr && type_info->baseTemplateName().isValid()) {
 			pending.published_arguments = type_info->templateArgs();
 			pending.use_published_arguments = true;
 		}
-		pending.arguments.reserve(pending.use_published_arguments ? pending.published_arguments.size() : declaration->outer_template_args().size());
+		if (!nested_entity) {
+			pending.arguments.reserve(pending.use_published_arguments ? pending.published_arguments.size() : declaration->outer_template_args().size());
+		}
 		worklist.push_back(std::move(pending));
 		return std::nullopt;
 	};
@@ -2531,8 +2552,7 @@ inline CanonicalTypeImport importCanonicalClassSource(
 		return pending.use_published_arguments ? pending.published_arguments : pending.declaration->outer_template_args();
 	};
 
-	std::optional<CanonicalTypeImport> completed =
-		enqueue_source(root_type_info, root_declaration);
+	std::optional<CanonicalTypeImport> completed = enqueue_source(root_type_info, root_declaration);
 	if (completed.has_value()) {
 		if (completed->status == CanonicalTypeImportStatus::Supported) {
 			transaction.commit();
@@ -2549,22 +2569,34 @@ inline CanonicalTypeImport importCanonicalClassSource(
 				return *completed;
 			}
 			PendingClassImport& parent = worklist.back();
+			if (completed->status != CanonicalTypeImportStatus::Supported) return *completed;
+			if (parent.alias_syntax != nullptr) {
+				const CanonicalTypeImport shaped = importCanonicalShapedBase(table, *parent.alias_syntax, CanonicalTypeImportContext::Exact, completed->type);
+				active_sources.erase(parent.alias_source);
+				worklist.pop_back();
+				completed = shaped;
+				continue;
+			}
+			if (parent.nested_entity) {
+				const CanonicalTypeKind owner_kind = table.node(completed->type).kind;
+				if (owner_kind != CanonicalTypeKind::TemplateSpecialization && owner_kind != CanonicalTypeKind::NestedRecord) {
+					return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+				}
+				const TypeId nested = table.nestedRecord(completed->type, parent.nested_entity);
+				active_sources.erase(parent.declaration);
+				worklist.pop_back();
+				completed = CanonicalTypeImport{nested, CanonicalTypeImportStatus::Supported};
+				continue;
+			}
 			if (parent.waiting_argument == std::numeric_limits<size_t>::max()) {
 				throw InternalError("canonical type adapter: class import result has no parent");
 			}
-			if (completed->status != CanonicalTypeImportStatus::Supported) {
-				return *completed;
-			}
-			const TypeInfo::TemplateArgInfo& argument =
-				specialization_arguments(parent)[parent.waiting_argument];
-			const CanonicalTypeImport imported_argument =
-				shapeCanonicalTemplateTypeArgument(
-					table, argument, completed->type);
+			const TypeInfo::TemplateArgInfo& argument = specialization_arguments(parent)[parent.waiting_argument];
+			const CanonicalTypeImport imported_argument = shapeCanonicalTemplateTypeArgument(table, argument, completed->type);
 			if (imported_argument.status != CanonicalTypeImportStatus::Supported) {
 				return imported_argument;
 			}
-			parent.arguments.push_back(
-				CanonicalTemplateArgument::makeType(imported_argument.type));
+			parent.arguments.push_back(CanonicalTemplateArgument::makeType(imported_argument.type));
 			parent.next_argument = parent.waiting_argument + 1;
 			parent.waiting_argument = std::numeric_limits<size_t>::max();
 			completed.reset();
@@ -2575,11 +2607,27 @@ inline CanonicalTypeImport importCanonicalClassSource(
 			throw InternalError("canonical type adapter: class import worklist ended early");
 		}
 		PendingClassImport& current = worklist.back();
+		if (current.alias_syntax != nullptr) {
+			const TypeInfo* target = tryGetTypeInfo(current.alias_syntax->type_index());
+			if (target == nullptr) return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+			completed = enqueue_source(target, nullptr);
+			continue;
+		}
+		if (current.nested_entity) {
+			const StructDeclarationNode* owner = current.declaration->enclosing_class();
+			const StructDeclarationNode* owner_pattern = owner->injected_class_pattern_declaration();
+			// A selected partial stores deduced pattern bindings, not its primary
+			// arguments. Importing it needs a retained TypeInfo bridge first.
+			if (owner_pattern != nullptr && !owner_pattern->has_template_decl_id() && owner->has_canonical_specialization_owner()) {
+				return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+			}
+			completed = enqueue_source(nullptr, owner);
+			continue;
+		}
 		const TemplateArgInfoVector& source_arguments = specialization_arguments(current);
 		if (current.next_argument < source_arguments.size()) {
 			const size_t argument_index = current.next_argument;
-			const TypeInfo::TemplateArgInfo& argument =
-				source_arguments[argument_index];
+			const TypeInfo::TemplateArgInfo& argument = source_arguments[argument_index];
 			if (argument.is_value && !argument.is_pack && (argument.nttp_kind == FlashCpp::NonTypeValueIdentityKind::Integral ||
 				argument.nttp_kind == FlashCpp::NonTypeValueIdentityKind::StructuralClass) &&
 				!argument.dependent_name.isValid() && !argument.dependent_expr().has_value()) {
@@ -2594,24 +2642,20 @@ inline CanonicalTypeImport importCanonicalClassSource(
 			}
 			// Dependent and unsupported arguments retain opaque source identity.
 			if (argument.is_value && argument.nttp_expr) {
-				current.arguments.push_back(
-					CanonicalTemplateArgument::makeNonType(argument.nttp_expr));
+				current.arguments.push_back(CanonicalTemplateArgument::makeNonType(argument.nttp_expr));
 				++current.next_argument;
 				continue;
 			}
-			const CanonicalTypeImport direct_import =
-				importCanonicalTemplateTypeArgumentDirect(table, argument);
+			const CanonicalTypeImport direct_import = importCanonicalTemplateTypeArgumentDirect(table, argument);
 			if (direct_import.status == CanonicalTypeImportStatus::Supported) {
-				current.arguments.push_back(
-					CanonicalTemplateArgument::makeType(direct_import.type));
+				current.arguments.push_back(CanonicalTemplateArgument::makeType(direct_import.type));
 				++current.next_argument;
 				continue;
 			}
 			if (!argument.type_index.is_valid()) {
 				return direct_import;
 			}
-			const TypeInfo* argument_type_info =
-				tryGetTypeInfo(argument.type_index);
+			const TypeInfo* argument_type_info = tryGetTypeInfo(argument.type_index);
 			if (argument_type_info == nullptr ||
 				(argument_type_info->getStructInfo() == nullptr &&
 					argument_type_info->aliasTypeSpecifier() == nullptr)) {
@@ -2626,12 +2670,10 @@ inline CanonicalTypeImport importCanonicalClassSource(
 			continue;
 		}
 
-		const TypeId specialization = table.templateSpecialization(
-			current.specialization_owner, current.arguments);
-		active_declarations.erase(current.declaration);
+		const TypeId specialization = table.templateSpecialization(current.specialization_owner, current.arguments);
+		active_sources.erase(current.declaration);
 		worklist.pop_back();
-		completed = CanonicalTypeImport{
-			specialization, CanonicalTypeImportStatus::Supported};
+		completed = CanonicalTypeImport{specialization, CanonicalTypeImportStatus::Supported};
 	}
 }
 
