@@ -231,36 +231,36 @@ const ConstructorDeclarationNode* AstToIr::ensureSynthesizedBaseConstructor(
 	return selected.is<ConstructorDeclarationNode>() ? &selected.as<ConstructorDeclarationNode>() : nullptr;
 }
 
-const FunctionDeclarationNode* AstToIr::ensureSynthesizedBaseAssignment(const TypeInfo& base_type_info, StructTypeInfo& base_struct_info, bool move) {
-	if (move && !base_struct_info.isMoveAssignmentDeleted()) {
-		if (const StructMemberFunction* existing = base_struct_info.findMoveAssignmentOperator(true);
+const FunctionDeclarationNode* AstToIr::ensureSynthesizedAssignment(const TypeInfo& type_info, StructTypeInfo& struct_info, bool move) {
+	if (move && !struct_info.isMoveAssignmentDeleted()) {
+		if (const StructMemberFunction* existing = struct_info.findMoveAssignmentOperator(true);
 			existing != nullptr && existing->function_decl.is<FunctionDeclarationNode>()) {
 			const FunctionDeclarationNode& assignment = existing->function_decl.as<FunctionDeclarationNode>();
 			if (assignment.is_implicit()) {
-				queueDeferredMemberFunctionFromNode(base_type_info.name(), existing->function_decl, base_struct_info.namespace_handle);
+				queueDeferredMemberFunctionFromNode(type_info.name(), existing->function_decl, struct_info.namespace_handle);
 			}
 			return &assignment;
 		}
 	}
-	if (!base_struct_info.isCopyAssignmentDeleted()) {
-		if (const StructMemberFunction* existing = base_struct_info.findCopyAssignmentOperator(true);
+	if (!struct_info.isCopyAssignmentDeleted()) {
+		if (const StructMemberFunction* existing = struct_info.findCopyAssignmentOperator(true);
 			existing != nullptr && existing->function_decl.is<FunctionDeclarationNode>()) {
 			const FunctionDeclarationNode& assignment = existing->function_decl.as<FunctionDeclarationNode>();
 			if (assignment.is_implicit()) {
-				queueDeferredMemberFunctionFromNode(base_type_info.name(), existing->function_decl, base_struct_info.namespace_handle);
+				queueDeferredMemberFunctionFromNode(type_info.name(), existing->function_decl, struct_info.namespace_handle);
 			}
 			return &assignment;
 		}
 	}
-	auto [entry, inserted] = synthesized_implicit_base_assignments_.try_emplace(&base_struct_info);
+	auto [entry, inserted] = synthesized_implicit_assignments_.try_emplace(&struct_info);
 	if (inserted) {
 		entry->second = createUnregisteredImplicitSameTypeAssignments(
-			base_struct_info, base_type_info.registeredTypeIndex(), base_type_info, base_struct_info.name);
+			struct_info, type_info.registeredTypeIndex(), type_info, struct_info.name);
 		if (entry->second.copy_assignment.is<FunctionDeclarationNode>()) {
-			queueDeferredMemberFunctionFromNode(base_type_info.name(), entry->second.copy_assignment, base_struct_info.namespace_handle);
+			queueDeferredMemberFunctionFromNode(type_info.name(), entry->second.copy_assignment, struct_info.namespace_handle);
 		}
 		if (entry->second.move_assignment.is<FunctionDeclarationNode>()) {
-			queueDeferredMemberFunctionFromNode(base_type_info.name(), entry->second.move_assignment, base_struct_info.namespace_handle);
+			queueDeferredMemberFunctionFromNode(type_info.name(), entry->second.move_assignment, struct_info.namespace_handle);
 		}
 	}
 	ASTNode selected = move ? entry->second.move_assignment : entry->second.copy_assignment;
