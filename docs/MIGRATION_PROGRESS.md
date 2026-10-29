@@ -588,18 +588,23 @@ Continue boundary 3A in this order.
    primary declaration and alpha-normalized canonical pattern. Retain the renamed
    declaration, rollback/mutation, and 4,096-level normalization guards.
 
-   **Next 3A slice: consume partial environments in member-pointer fields.**
-   At the partial field registration in `Parser_Templates_Inst_ClassTemplate.cpp`,
-   import the original stamped member-pointer pattern and call
-   `substituteCanonicalStructMemberType` with the pattern's published environment
-   and `template_args_for_member_copy` deduced bindings. A partial's `T` must bind
-   to its deduced type, not the primary's `T*` argument slot. Keep class identity
-   as the primary plus actual specialization arguments; an environment ID is
-   never a class owner. Add native/source named-versus-braced structural-NTTP
-   guards covering short/long long, qualifiers, and nested pointer signatures.
-   Keep nested-class producers and constrained, pack, non-type, or complex
-   dependent partial patterns separate. Opaque non-type specialization arguments
-   remain fail-closed until their parameter/value identity can substitute.
+   **Partial member-pointer fields:** direct-pattern partials substitute with
+   their own environment and deduced arguments before registration. Retain
+   `test_canonical_structural_nttp_partial_member_pointer_ret0.cpp`, shared native
+   checks, and environment/argument/substitution mutations. Class identity remains
+   the primary plus actual arguments; an environment ID is never a class owner.
+
+   **Next 3A slice: specialization-shaped partial-pattern environments.**
+   Extend publication from direct patterns such as `Key<T*>` to type-only class
+   specialization patterns such as `Key<Box<T>>`. Start in
+   `tryImportCanonicalPartialClassPattern` and the captured
+   `pattern_arg_syntax_nodes` in `Parser_Templates_Class.cpp`; normalize nested
+   parameter references from structural argument syntax and published template
+   IDs before body parsing. Pin renamed redeclarations, distinct nested template
+   owners, concrete field substitution, and named/braced structural-NTTP identity.
+   Keep the 4,096-level worklist guard. Nested-class producers and constrained,
+   pack, non-type, alias, or other dependent patterns remain separate. Opaque
+   non-type arguments remain fail-closed until their identity can substitute.
    Do not recover identity by spelling or add evaluator/selection rules.
 
    Non-null object pointer target identity remains separate.

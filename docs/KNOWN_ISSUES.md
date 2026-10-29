@@ -113,14 +113,14 @@ and flat union groups by owner TypeId. Missing field-layout and dependent base
 facts still fail closed. The partial-specialization parser gap above and nested
 anonymous-union hierarchy remain separate.
 
-Primary-template member-pointer fields substitute their canonical graphs before
-registration. Unconstrained namespace/global partials with directly represented
-type patterns now publish separate parameter environments, but their field
-producer still needs to consume those IDs with the deduced partial arguments.
-Nested-class producers and partials involving constraints, packs, non-type
-parameters, or complex dependent patterns need further publication work.
-Member-pointer graphs containing
-opaque non-type specialization arguments fail closed: the canonical substitutor
+Primary-template and directly represented partial-template member-pointer fields
+substitute their canonical graphs before registration. Partial fields use the
+published partial environment and deduced bindings, while class identity retains
+the primary and actual specialization arguments. Specialization-shaped partial
+patterns such as `Key<Box<T>>`, nested-class producers, and partials involving
+constraints, packs, or non-type parameters need further publication work.
+Member-pointer graphs containing opaque non-type specialization arguments fail
+closed: the canonical substitutor
 preserves those ExprIds and cannot replace a pattern argument such as `N` with
 its concrete value. Publish substitutable parameter/value identity before
 enabling those graphs; keep evaluator and overload-selection rules separate.
