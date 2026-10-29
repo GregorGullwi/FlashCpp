@@ -788,10 +788,13 @@ int main_impl(int argc, char* argv[]) {
 
 		// Generate remaining deferred member functions and ODR-used free inlines.
 		// Emitting either queue can enqueue the other, so alternate until both drain.
+		converter.queueOdrUsedSpecialMembers();
 		while (converter.deferredMemberFunctionsPending() > 0 ||
-			   converter.deferredInlineFunctionsPending() > 0) {
+			   converter.deferredInlineFunctionsPending() > 0 ||
+			   converter.hasPendingOdrUsedSpecialMembers()) {
 			converter.generateDeferredMemberFunctions();
 			converter.generateDeferredInlineFunctions();
+			converter.queueOdrUsedSpecialMembers();
 		}
 
 		// Note: Template instantiations happen during parsing, not here

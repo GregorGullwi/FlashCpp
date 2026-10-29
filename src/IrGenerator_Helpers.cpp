@@ -194,6 +194,21 @@ void AstToIr::queueDeferredMemberFunctionFromNode(
 	deferred_member_functions_.push_back(std::move(deferred_info));
 }
 
+bool AstToIr::hasPendingOdrUsedSpecialMembers() const {
+	return odr_used_special_members_processed_ < sema_.odrUsedSpecialMembers().size();
+}
+
+void AstToIr::queueOdrUsedSpecialMembers() {
+	const std::span<const OdrUsedSpecialMember> published = sema_.odrUsedSpecialMembers();
+	while (odr_used_special_members_processed_ < published.size()) {
+		const OdrUsedSpecialMember& entry = published[odr_used_special_members_processed_++];
+		if (!entry.declaration.is<ConstructorDeclarationNode>()) {
+			continue;
+		}
+		queueDeferredMemberFunctionFromNode(entry.owner_name, entry.declaration, entry.namespace_handle);
+	}
+}
+
 const ConstructorDeclarationNode* AstToIr::ensureSynthesizedBaseConstructor(
 	const TypeInfo& base_type_info,
 	StructTypeInfo& base_struct_info,
@@ -329,10 +344,18 @@ bool AstToIr::shouldDeferImplicitConstructorCodegen(const StructTypeInfo& struct
 	if (!ctor.is_implicit()) {
 		return false;
 	}
-	if (ctor.parameter_nodes().empty()) {
-		return isStructTrivial(&struct_info);
+	// [class.copy.ctor]/8: an implicitly-declared (or explicitly-defaulted)
+	// copy/move constructor is defined only when it is ODR-used, independent of
+	// whether the class is trivially copyable. Every implicit constructor with a
+	// parameter is such a same-type constructor; default arguments cannot turn a
+	// default constructor into a copy/move constructor.
+	if (!ctor.parameter_nodes().empty()) {
+		return true;
 	}
-	return isStructTriviallyCopyable(&struct_info);
+	// Implicit default constructors keep their separate eager/deferred split:
+	// only trivial ones can wait for ODR use, because a nontrivial default
+	// constructor is the sole definition that runs default member initializers.
+	return isStructTrivial(&struct_info);
 }
 
 bool AstToIr::shouldDeferImplicitAssignmentCodegen(const FunctionDeclarationNode& fn) const {

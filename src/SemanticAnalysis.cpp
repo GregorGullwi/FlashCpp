@@ -2679,6 +2679,10 @@ void ParserSemanticServices::markResolvedOperatorOverloadOdrUsed(
 	owner_->markResolvedOperatorOverloadOdrUsed(member_overload);
 }
 
+std::span<const OdrUsedSpecialMember> ParserSemanticServices::odrUsedSpecialMembers() const {
+	return owner_->odrUsedSpecialMembers();
+}
+
 bool ParserSemanticServices::isParserAttached() const {
 	return owner_->isParserAttached();
 }
@@ -5240,6 +5244,20 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		const auto& throw_stmt = node.as<ThrowStatementNode>();
 		if (throw_stmt.expression().has_value()) {
 			normalizeExpression(*throw_stmt.expression(), ctx);
+			// [except.throw]/3: throwing a class object copy-initializes the
+			// exception object, which ODR-uses its copy or move constructor.
+			const ASTNode& thrown = *throw_stmt.expression();
+			if (thrown.is<ExpressionNode>()) {
+				if (std::optional<TypeSpecifierNode> thrown_type = getExpressionType(thrown);
+					thrown_type.has_value() &&
+					!thrown_type->is_reference() && !thrown_type->is_rvalue_reference() &&
+					thrown_type->runtime_pointer_depth() == 0 &&
+					thrown_type->category() == TypeCategory::Struct) {
+					if (const TypeInfo* thrown_type_info = tryGetTypeInfo(thrown_type->type_index()); thrown_type_info && thrown_type_info->getStructInfo()) {
+						markOdrUsedSameTypeConstructor(*thrown_type_info->getStructInfo(), inferExpressionValueCategory(thrown) != ValueCategory::LValue);
+					}
+				}
+			}
 		}
 	} else if (node.is<IfStatementNode>()) {
 		const auto& stmt = node.as<IfStatementNode>();
@@ -5352,6 +5370,14 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 					const StringHandle name = catch_decl.identifier_token().handle();
 					if (name.isValid()) {
 						addLocalType(name, tid);
+					}
+					// [except.handle]/15: a by-value handler parameter is copy-initialized
+					// from the exception object, which ODR-uses that class's copy ctor.
+					if (!catch_type.is_reference() && !catch_type.is_rvalue_reference() &&
+						catch_type.runtime_pointer_depth() == 0 && catch_type.category() == TypeCategory::Struct) {
+						if (const TypeInfo* catch_type_info = tryGetTypeInfo(catch_type.type_index()); catch_type_info && catch_type_info->getStructInfo()) {
+							markOdrUsedSameTypeConstructor(*catch_type_info->getStructInfo(), false);
+						}
 					}
 				}
 				normalizeStatement(catch_clause.body(), ctx);
@@ -12214,6 +12240,53 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 	return true;
 }
 
+TypeId SemanticAnalysis::structuralTypeIdForStruct(const StructTypeInfo& struct_info) {
+	if (!struct_info.own_type_index_.has_value()) {
+		return TypeId{};
+	}
+	const TypeInfo* type_info = tryGetTypeInfo(*struct_info.own_type_index_);
+	if (type_info == nullptr) {
+		return TypeId{};
+	}
+	const CanonicalTypeImport imported = importCanonicalClassTypeInfo(requireFrontendContext().canonicalTypes(), *type_info);
+	return imported.status == CanonicalTypeImportStatus::Supported ? imported.type : TypeId{};
+}
+
+void SemanticAnalysis::markOdrUsedImplicitSpecialMember(const StructTypeInfo& struct_info, const ConstructorDeclarationNode& ctor) {
+	if (!ctor.is_implicit() || ctor.parameter_nodes().empty()) {
+		return;
+	}
+	const ASTNode& first_parameter = ctor.parameter_nodes().front();
+	if (!first_parameter.is<DeclarationNode>()) {
+		return;
+	}
+	const TypeSpecifierNode& parameter_type = first_parameter.as<DeclarationNode>().type_specifier_node();
+	const SpecialMemberKind kind = parameter_type.is_rvalue_reference() ? SpecialMemberKind::MoveConstructor : SpecialMemberKind::CopyConstructor;
+	const TypeId owner_type_id = structuralTypeIdForStruct(struct_info);
+	if (!owner_type_id) {
+		return;
+	}
+	const uint64_t key = (static_cast<uint64_t>(owner_type_id.value) << 2) | static_cast<uint64_t>(kind);
+	if (!odr_used_special_member_keys_.insert(key).second) {
+		return;
+	}
+	OdrUsedSpecialMember entry;
+	entry.owner_type_id = owner_type_id;
+	entry.kind = kind;
+	entry.owner_name = struct_info.name;
+	entry.namespace_handle = struct_info.namespace_handle;
+	entry.declaration = ASTNode(&ctor);
+	odr_used_special_members_.push_back(std::move(entry));
+}
+
+void SemanticAnalysis::markOdrUsedSameTypeConstructor(const StructTypeInfo& struct_info, bool prefer_move) {
+	const StructMemberFunction* selected = struct_info.findPreferredSameTypeConstructor(prefer_move, true);
+	if (selected == nullptr || !selected->function_decl.is<ConstructorDeclarationNode>()) {
+		return;
+	}
+	markOdrUsedImplicitSpecialMember(struct_info, selected->function_decl.as<ConstructorDeclarationNode>());
+}
+
 bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& expr_node,
 																CanonicalTypeId target_type_id,
 																const char* context_description,
@@ -12246,6 +12319,7 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	if (isLogicallySameStructType(from_desc.type_index, to_desc.type_index)) {
 		const TypeInfo* same_type_info = tryGetTypeInfo(to_desc.type_index);
 		if (same_type_info && same_type_info->getStructInfo()) {
+			markOdrUsedSameTypeConstructor(*same_type_info->getStructInfo(), inferExpressionValueCategory(expr_node) != ValueCategory::LValue);
 			return false;
 		}
 	}
@@ -12388,6 +12462,7 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 					cast_info.value_category_after = ValueCategory::PRValue;
 					cast_info.selected_constructor =
 						&same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+					markOdrUsedImplicitSpecialMember(*struct_info, *cast_info.selected_constructor);
 
 					const CastInfoIndex idx = allocateCastInfo(cast_info);
 					SemanticSlot slot;
@@ -15172,6 +15247,26 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 				SourceLocation::fromToken(call_node.called_from()), message, {});
 		}
 	}
+	if (num_args == 1) {
+		ASTNode first_argument;
+		arguments.visit([&](ASTNode argument) {
+			if (!first_argument.has_value()) {
+				first_argument = argument;
+			}
+		});
+		if (first_argument.is<ExpressionNode>()) {
+			if (std::optional<TypeSpecifierNode> argument_type =
+					buildOverloadResolutionArgType(first_argument, nullptr);
+				argument_type.has_value() &&
+				argument_type->runtime_pointer_depth() == 0 &&
+				argument_type->category() == TypeCategory::Struct &&
+				struct_info->own_type_index_.has_value() &&
+				(argument_type->type_index() == *struct_info->own_type_index_ ||
+				 isLogicallySameStructType(argument_type->type_index(), *struct_info->own_type_index_))) {
+				markOdrUsedSameTypeConstructor(*struct_info, inferExpressionValueCategory(first_argument) != ValueCategory::LValue);
+			}
+		}
+	}
 	if (!struct_info->hasAnyConstructor())
 		return;
 
@@ -15367,6 +15462,21 @@ const ConstructorDeclarationNode* SemanticAnalysis::tryAnnotateConstructorArgRef
 		return nullptr;
 	}
 	const StructTypeInfo& struct_info = *target_struct_info;
+	if (arguments.size() == 1 && arguments.front().is<ExpressionNode>()) {
+		// Direct one-argument construction from the same class uses the implicit
+		// same-type constructor even when overload resolution skips implicit
+		// candidates. Record the ODR use before resolution can return early.
+		if (std::optional<TypeSpecifierNode> argument_type =
+				buildOverloadResolutionArgType(arguments.front(), nullptr);
+			argument_type.has_value() &&
+			argument_type->runtime_pointer_depth() == 0 &&
+			argument_type->category() == TypeCategory::Struct &&
+			struct_info.own_type_index_.has_value() &&
+			(argument_type->type_index() == *struct_info.own_type_index_ ||
+			 isLogicallySameStructType(argument_type->type_index(), *struct_info.own_type_index_))) {
+			markOdrUsedSameTypeConstructor(struct_info, inferExpressionValueCategory(arguments.front()) != ValueCategory::LValue);
+		}
+	}
 	std::vector<TypeSpecifierNode> arg_types;
 	arg_types.reserve(arguments.size());
 	for (const ASTNode& arg : arguments) {
@@ -15398,6 +15508,7 @@ const ConstructorDeclarationNode* SemanticAnalysis::tryAnnotateConstructorArgRef
 	}
 
 	const auto& parameters = selected_ctor->parameter_nodes();
+	markOdrUsedImplicitSpecialMember(struct_info, *selected_ctor);
 	selected_initializer_constructors_[binding_key] = selected_ctor;
 	auto& ref_bindings = call_ref_bindings_[binding_key];
 	ref_bindings.clear();

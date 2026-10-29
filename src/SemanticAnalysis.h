@@ -2,6 +2,7 @@
 #include "SemanticTypes.h"
 #include "AstNodeTypes_Core.h"
 #include "MemberFunctionLookupShared.h"
+#include <cstdint>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -93,6 +94,27 @@ struct TypeSpecifierQueryResult {
 	}
 };
 
+// Semantic ODR-use publication for implicitly-declared (or explicitly
+// defaulted) copy/move constructors.
+//
+// Codegen must not decide on its own whether one of these special members was
+// ODR-used: semantic analysis resolves every construction and records the
+// selected declaration here. `owner_type_id` is the canonical class TypeId when
+// published and is the identity used for deduplication. `declaration` is only
+// the materialization handle consumed by the deferred emission queue.
+enum class SpecialMemberKind : uint8_t {
+	CopyConstructor = 0,
+	MoveConstructor = 1,
+};
+
+struct OdrUsedSpecialMember {
+	TypeId owner_type_id{};
+	SpecialMemberKind kind = SpecialMemberKind::CopyConstructor;
+	StringHandle owner_name;
+	NamespaceHandle namespace_handle;
+	ASTNode declaration;
+};
+
 class ParserSemanticServices final {
 public:
 	ParserSemanticServices() = delete;
@@ -149,6 +171,11 @@ public:
 
 	void markResolvedOperatorOverloadOdrUsed(
 		const StructMemberFunction& member_overload);
+
+	// ODR-used implicit/defaulted copy and move constructors selected by this
+	// semantic pass. Codegen drains this list instead of inferring ODR use from
+	// its own lowering paths.
+	std::span<const OdrUsedSpecialMember> odrUsedSpecialMembers() const;
 
 	bool isParserAttached() const;
 	bool hasPostParseNormalizationStarted() const;
@@ -214,6 +241,11 @@ public:
 	// shape probes never enter this collection.
 	std::span<const StructTypeInfo* const> codegenReadyTypes() const {
 		return codegen_ready_types_;
+	}
+	// Implicit/defaulted copy and move constructors that semantic analysis
+	// selected at an ODR-use site, published for codegen's deferred emission.
+	std::span<const OdrUsedSpecialMember> odrUsedSpecialMembers() const {
+		return odr_used_special_members_;
 	}
 	// Refresh sema-owned implicit special-member records after an existing late
 	// materialization gateway admits additional class entities.
@@ -569,6 +601,12 @@ private:
 											const UserDefinedConversionOperatorSelection& selected_conversion);
 	// Explicit conversions start selection from canonical source and target TypeIds.
 	bool tryAnnotateExplicitConversionByTypeId(const ASTNode& slot_expression, const ASTNode& source_expression, const TypeSpecifierNode& target_type);
+	// Semantic ODR-use publication for implicitly-declared/defaulted copy and
+	// move constructors. Identity is the owner's canonical TypeId; the selected
+	// declaration is retained only as the codegen emission handle.
+	TypeId structuralTypeIdForStruct(const StructTypeInfo& struct_info);
+	void markOdrUsedImplicitSpecialMember(const StructTypeInfo& struct_info, const ConstructorDeclarationNode& ctor);
+	void markOdrUsedSameTypeConstructor(const StructTypeInfo& struct_info, bool prefer_move);
 	bool tryAnnotateCopyInitConvertingConstructor(const ASTNode& expr_node,
 												  CanonicalTypeId target_type_id,
 												  const char* context_description,
@@ -838,6 +876,8 @@ private:
 	std::unordered_set<const void*> analyzed_overload_resolution_arg_queries_;
 	std::unordered_map<const void*, std::vector<CallArgReferenceBindingInfo>> call_ref_bindings_;
 	std::unordered_map<const void*, const ConstructorDeclarationNode*> selected_initializer_constructors_;
+	std::vector<OdrUsedSpecialMember> odr_used_special_members_;
+	std::unordered_set<uint64_t> odr_used_special_member_keys_;
 	std::unordered_map<const TernaryOperatorNode*, CanonicalTypeId> ternary_result_types_;
 	std::unordered_map<const StructuredBindingNode*, StructuredBindingPlan> structured_binding_plans_;
 

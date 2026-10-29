@@ -19,19 +19,17 @@ its union fields. Reuse the normal class-member parser before publishing these
 specializations' field schemas; layout publication cannot recover absent declarations.
 Primary templates and their ordinary nested classes retain these static facts.
 
-## Implicit copy/move constructor definitions are not uniformly ODR-deferred
+## Implicit assignment ODR-use is still decided in codegen
 
-Implicit assignment definitions are now emitted only on ODR use, but implicit
-copy/move constructor codegen still emits nontrivial bodies eagerly and defers
-only trivially copyable classes. An unreferenced derived class whose template
-base needs a synthesized constructor can therefore queue base definitions and
-codegen-to-parser callbacks even though nothing uses the derived constructor.
-Audit every constructor ODR-use path first: direct construction, by-value calls
-and returns, temporaries, base/member initialization, exception cleanup, and ABI
-return slots. Then make implicit copy/move constructors unconditionally deferred
-and add unreferenced/used template-base regressions plus a counter check. Keep
-implicit default constructors separate because their use paths and triviality
-rules differ.
+Implicit copy/move construction now publishes ODR use from semantic analysis and
+codegen only drains the published declarations. Implicit copy/move assignment did
+not receive the same treatment: `shouldDeferImplicitAssignmentCodegen` still
+recognizes `operator=` by its spelling in codegen, and assignment call sites queue
+definitions from that check. Extend `OdrUsedSpecialMember` with copy/move
+assignment kinds, mark the selected assignment operator during sema assignment
+resolution (including direct `operator=` calls), and delete the name-based check.
+Generated assignment bodies can keep queueing base/member assignment dependencies
+the same way generated constructor bodies do.
 
 ## Remaining structural NTTP shapes need canonical value import
 
