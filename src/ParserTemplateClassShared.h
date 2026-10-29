@@ -2448,6 +2448,8 @@ inline void tryPublishCanonicalNestedClassSchemas(FrontendContext& context, cons
 	ScratchTransaction scratch_scope(context.scratchArena(), context.scratchRegistry());
 	MonotonicScratchArena& scratch = scratch_scope.arena();
 	PendingNestedClass* pending = nullptr;
+	PendingNestedClass* completed = nullptr;
+	size_t nested_count = 0;
 	const auto enqueue_children = [&](const StructTypeInfo& record, TypeId owner) {
 		for (StructTypeInfo* child : record.getNestedClasses()) {
 			const StructDeclarationNode* declaration = child->declaration_node;
@@ -2457,36 +2459,114 @@ inline void tryPublishCanonicalNestedClassSchemas(FrontendContext& context, cons
 			if (table.node(owner).kind != CanonicalTypeKind::TemplateSpecialization && table.node(owner).kind != CanonicalTypeKind::NestedRecord) continue;
 			const TypeId type = table.nestedRecord(owner, pattern->entity_id());
 			pending = scratch.allocateObject<PendingNestedClass>(PendingNestedClass{child, type, pending});
+			++nested_count;
 		}
 	};
 	enqueue_children(root, imported_root.type);
 	while (pending != nullptr) {
-		const PendingNestedClass current = *pending;
-		pending = current.next;
-		enqueue_children(*current.record, current.type);
-		const StructDeclarationNode& pattern = *current.record->declaration_node->injected_class_pattern_declaration();
+		PendingNestedClass* current = pending;
+		pending = current->next;
+		enqueue_children(*current->record, current->type);
+		current->next = completed;
+		completed = current;
+	}
+	if (nested_count == 0) return;
+	struct OwnerBinding { EntityId declaration; TypeId type; };
+	static_assert(sizeof(OwnerBinding) == 8 && std::is_trivially_destructible_v<OwnerBinding>);
+	auto* bindings = new (scratch.allocate(nested_count * sizeof(OwnerBinding), alignof(OwnerBinding))) OwnerBinding[nested_count];
+	size_t binding_index = 0;
+	for (const PendingNestedClass* current = completed; current != nullptr; current = current->next) {
+		const StructDeclarationNode* pattern = current->record->declaration_node->injected_class_pattern_declaration();
+		bindings[binding_index++] = OwnerBinding{pattern->entity_id(), current->type};
+	}
+	std::sort(bindings, bindings + nested_count, [](OwnerBinding lhs, OwnerBinding rhs) { return lhs.declaration.value < rhs.declaration.value; });
+	const auto is_template_nested_owner = [&](EntityId declaration) {
+		const DeclarationBuilder& builder = context.declarationBuilder();
+		size_t remaining = builder.entityCount();
+		while (declaration && declaration.value <= builder.entityCount()) {
+			if (remaining-- == 0) throw InternalError("nested member owner publication contains a declaration cycle");
+			const OwnerId owner = builder.entity(declaration).owner_id;
+			if (isTemplateOwnedOwnerId(owner)) return true;
+			if (!isClassOwnedOwnerId(owner)) return false;
+			declaration = classEntityFromOwnerId(owner);
+		}
+		return false;
+	};
+	// Empty means an ordinary external owner. A present zero TypeId keeps an
+	// ambiguous or unavailable nested owner deferred instead of using its pattern.
+	const auto find_owner = [&](EntityId declaration) -> std::optional<TypeId> {
+		if (!declaration) return std::nullopt;
+		const OwnerBinding* found = std::lower_bound(bindings, bindings + nested_count, declaration,
+			[](OwnerBinding binding, EntityId value) { return binding.declaration.value < value.value; });
+		if (found == bindings + nested_count || found->declaration != declaration) {
+			return is_template_nested_owner(declaration) ? std::optional<TypeId>{TypeId{}} : std::nullopt;
+		}
+		const TypeId type = found->type;
+		for (++found; found != bindings + nested_count && found->declaration == declaration; ++found) {
+			if (found->type != type) return TypeId{};
+		}
+		return type;
+	};
+	const auto owner_entity = [&](TypeId owner) {
+		return owner && table.node(owner).kind == CanonicalTypeKind::Record ? table.recordEntity(owner) : EntityId{};
+	};
+	for (const PendingNestedClass* current = completed; current != nullptr; current = current->next) {
+		const StructDeclarationNode& pattern = *current->record->declaration_node->injected_class_pattern_declaration();
 		for (const StructMemberDecl& source_member : pattern.members()) {
 			if (!source_member.declaration.is<DeclarationNode>()) continue;
 			const DeclarationNode& source = source_member.declaration.as<DeclarationNode>();
 			const TypeSpecifierNode& syntax = source.type_specifier_node();
-			const auto is_self_owner = [&](const DeclaratorComponent& component) {
-				if (component.memberOwnerEntity() == pattern.entity_id()) return true;
-				const TypeId owner = component.memberOwnerType();
-				return owner && table.node(owner).kind == CanonicalTypeKind::Record && table.recordEntity(owner) == pattern.entity_id();
-			};
 			const auto components = syntax.declarator_components();
-			if (resolveMemberClassEntity(syntax) != pattern.entity_id() && !std::any_of(components.begin(), components.end(), is_self_owner)) continue;
-			const auto member = std::find_if(current.record->members.begin(), current.record->members.end(), [&](const StructMember& candidate) {
+			const bool has_member_pointer = syntax.has_member_class() || syntax.category() == TypeCategory::MemberObjectPointer ||
+				syntax.category() == TypeCategory::MemberFunctionPointer || std::any_of(components.begin(), components.end(), [](DeclaratorComponent component) {
+					return component.kind == DeclaratorComponentKind::MemberObjectPointer || component.kind == DeclaratorComponentKind::MemberFunctionPointer;
+				});
+			if (!has_member_pointer) continue;
+			const EntityId flat_entity = syntax.has_member_class_type_id() ? owner_entity(syntax.member_class_type_id()) :
+				resolveMemberClassEntity(syntax);
+			const std::optional<TypeId> flat_owner = find_owner(flat_entity);
+			bool contextual = flat_owner.has_value();
+			bool unresolved = flat_owner.has_value() && !*flat_owner;
+			TypeId first_owner = flat_owner.value_or(TypeId{});
+			for (const DeclaratorComponent& component : components) {
+				const EntityId entity = component.memberOwnerEntity() ? component.memberOwnerEntity() : owner_entity(component.memberOwnerType());
+				const std::optional<TypeId> owner = find_owner(entity);
+				if (!owner.has_value()) continue;
+				contextual = true;
+				unresolved |= !*owner;
+				if (!first_owner) first_owner = *owner;
+			}
+			if (!contextual) continue;
+			const auto member = std::find_if(current->record->members.begin(), current->record->members.end(), [&](const StructMember& candidate) {
 				return candidate.name == source.identifier_token().handle();
 			});
-			if (member == current.record->members.end()) continue;
+			if (member == current->record->members.end()) continue;
+			if (unresolved) {
+				member->canonical_type_id = {};
+				continue;
+			}
 			TypeSpecifierNode rebound = syntax;
-			rebound.rebindOrderedMemberOwner(pattern.entity_id(), table.record(pattern.entity_id()), current.type);
-			rebound.set_member_class_type_id(current.type);
-			const TypeId imported = importCanonicalStructMemberType(table, rebound, member->is_array, member->pointee_array_declarator,
-				member->array_dimensions);
+			tryBindPublishedTypeEntity(rebound);
+			if (flat_owner.has_value()) rebound.rebindOrderedMemberOwner(flat_entity, table.record(flat_entity), *flat_owner);
+			for (const DeclaratorComponent& component : components) {
+				const EntityId entity = component.memberOwnerEntity() ? component.memberOwnerEntity() : owner_entity(component.memberOwnerType());
+				const std::optional<TypeId> owner = find_owner(entity);
+				if (owner.has_value()) rebound.rebindOrderedMemberOwner(entity, table.record(entity), *owner);
+			}
+			if (flat_owner.has_value()) rebound.set_member_class_type_id(*flat_owner);
+			else if (!flat_entity && !syntax.has_member_class_type_id()) rebound.set_member_class_type_id(first_owner);
+			const TypeId imported = importCanonicalStructMemberShape(table, rebound, member->is_array, member->pointee_array_declarator,
+				member->array_dimensions, [&table](const TypeSpecifierNode& base) -> TypeId {
+					CanonicalTypeTransaction transaction(table);
+					const CanonicalTypeImport imported_base = importCanonicalType(table, base);
+					if (imported_base.status != CanonicalTypeImportStatus::Supported) return {};
+					transaction.commit();
+					return imported_base.type;
+				});
 			member->canonical_type_id = substituteCanonicalStructMemberType(table, imported, environment, arguments);
 		}
-		(void)tryPublishCanonicalClassBaseSchema(table, current.type, *current.record);
+	}
+	for (const PendingNestedClass* current = completed; current != nullptr; current = current->next) {
+		(void)tryPublishCanonicalClassBaseSchema(table, current->type, *current->record);
 	}
 }

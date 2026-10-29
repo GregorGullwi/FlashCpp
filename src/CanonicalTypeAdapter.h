@@ -1604,12 +1604,13 @@ inline TypeId importCanonicalStructMemberType(CanonicalTypeTable& table, const T
 
 // Declarator bounds may be resolved separately from the source type during layout.
 // Import those extents with the original qualifiers and pointer/array ordering.
-inline TypeId importCanonicalStructMemberType(CanonicalTypeTable& table, const TypeSpecifierNode& syntax, bool is_array,
-	bool pointee_array_declarator, std::span<const size_t> array_dimensions) {
+template<typename ImportBase>
+inline TypeId importCanonicalStructMemberShape(CanonicalTypeTable& table, const TypeSpecifierNode& syntax, bool is_array,
+	bool pointee_array_declarator, std::span<const size_t> array_dimensions, const ImportBase& import_base) {
 	TypeSpecifierNode normalized = syntax;
 	if (normalized.has_ordered_declarator()) {
 		if (array_dimensions.empty()) {
-			return importCanonicalStructMemberType(table, normalized);
+			return import_base(normalized);
 		}
 		if (normalized.ordered_declarator_has_legacy_projection()) {
 			normalized.clear_ordered_declarator();
@@ -1645,12 +1646,12 @@ inline TypeId importCanonicalStructMemberType(CanonicalTypeTable& table, const T
 		}
 	}
 	if (normalized.has_ordered_declarator()) {
-		return importCanonicalStructMemberType(table, normalized);
+		return import_base(normalized);
 	}
 	if (is_array && !pointee_array_declarator && !array_dimensions.empty() && normalized.has_member_class()) {
 		TypeSpecifierNode base = normalized;
 		base.set_array_dimensions({});
-		const TypeId base_id = importCanonicalStructMemberType(table, base);
+		const TypeId base_id = import_base(base);
 		if (!base_id) {
 			return {};
 		}
@@ -1670,7 +1671,13 @@ inline TypeId importCanonicalStructMemberType(CanonicalTypeTable& table, const T
 			normalized.set_array_dimensions(array_dimensions);
 		}
 	}
-	return importCanonicalStructMemberType(table, normalized);
+	return import_base(normalized);
+}
+
+inline TypeId importCanonicalStructMemberType(CanonicalTypeTable& table, const TypeSpecifierNode& syntax, bool is_array,
+	bool pointee_array_declarator, std::span<const size_t> array_dimensions) {
+	return importCanonicalStructMemberShape(table, syntax, is_array, pointee_array_declarator, array_dimensions,
+		[&table](const TypeSpecifierNode& base) { return importCanonicalStructMemberType(table, base); });
 }
 
 // Trait operands share the component reshape, so a class recovered from TypeInfo keeps its array bounds.

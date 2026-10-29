@@ -418,8 +418,7 @@ void Parser::applyMemberPointerOwner(
 			table, parsed.specialization_node->as<StructDeclarationNode>());
 		if (imported.status == CanonicalTypeImportStatus::Supported) {
 			const CanonicalTypeKind kind = table.node(imported.type).kind;
-			if (kind == CanonicalTypeKind::TemplateSpecialization ||
-				kind == CanonicalTypeKind::Record) {
+			if (isCanonicalClassTypeKind(kind)) {
 				type_spec.set_member_class_type_id(imported.type);
 				const auto type_it = getTypesByNameMap().find(parsed.spelling);
 				if (type_it != getTypesByNameMap().end() &&
@@ -451,8 +450,7 @@ void Parser::applyMemberPointerOwner(
 	if (type_spec.has_member_class_type_id()) {
 		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
 		const CanonicalTypeKind owner_kind = table.node(type_spec.member_class_type_id()).kind;
-		if (owner_kind != CanonicalTypeKind::Record &&
-			owner_kind != CanonicalTypeKind::TemplateSpecialization) {
+		if (!isCanonicalClassTypeKind(owner_kind)) {
 			throw makeStructuredCompileError(
 				context_.diagnostics(),
 				DiagnosticId::MemberPointerOwnerNotClass,
