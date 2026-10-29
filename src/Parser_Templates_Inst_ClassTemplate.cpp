@@ -3577,7 +3577,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							  pattern_struct_info->has_deleted_copy_constructor);
 					synthesize_implicit_copy_constructor_if_needed(
 						*struct_info,
-						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
+						struct_type_info.registeredTypeIndex(),
+						struct_type_info,
 						instantiated_name);
 
 					FLASH_LOG(Templates, Trace, "Copying ", pattern_struct_info->static_members.size(), " static members from pattern");
@@ -14492,7 +14493,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		struct_info_ptr->own_type_index_.value_or(struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct));
 	synthesize_implicit_copy_constructor_if_needed(
 		*struct_info_ptr,
-		self_type_index.withCategory(TypeCategory::Struct),
+		self_type_index,
+		struct_type_info,
 		instantiated_name);
 
 	// Re-evaluate deferred static_asserts with substituted template parameters

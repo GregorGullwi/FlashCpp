@@ -167,11 +167,12 @@ std::optional<OwnerId> Parser::resolveOwnerChainClassOwner(std::string_view owne
 void Parser::synthesize_implicit_copy_constructor_if_needed(
 	StructTypeInfo& struct_info,
 	TypeIndex self_type_index,
+	const TypeInfo& self_type_info,
 	StringHandle instantiated_name) {
 	if (!struct_info.hasAnyConstructor()) {
 		return;
 	}
-	(void)synthesizeImplicitCopyConstructor(struct_info, self_type_index, instantiated_name);
+	(void)synthesizeImplicitCopyConstructor(struct_info, self_type_index, self_type_info, instantiated_name);
 }
 
 ParseResult Parser::parse_bitfield_width(std::optional<size_t>& out_width, std::optional<ASTNode>* out_expr) {
@@ -3195,7 +3196,8 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			}
 			synthesize_implicit_copy_constructor_if_needed(
 				*struct_info_ptr,
-				struct_type_info.type_index_.withCategory(TypeCategory::Struct),
+				struct_type_info.type_index_,
+				struct_type_info,
 				instantiated_name);
 
 			// If no constructor was found, mark that we need a default one
@@ -4708,7 +4710,8 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			}
 			synthesize_implicit_copy_constructor_if_needed(
 				*struct_info,
-				struct_type_info.type_index_.withCategory(TypeCategory::Struct),
+				struct_type_info.type_index_,
+				struct_type_info,
 				instantiated_name);
 
 			// Finalize the struct layout with base classes
