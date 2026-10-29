@@ -3721,6 +3721,9 @@ std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCallInterna
 	if (!result.has_value() || cast_info.trailing_standard_conversion == StandardConversionKind::None) {
 		return result;
 	}
+	if (result->category() == TypeCategory::FunctionPointer && destination_type_category == TypeCategory::FunctionPointer) {
+		return result;
+	}
 	const CanonicalTypeDesc& destination_desc = sema_.typeContext().get(cast_info.target_type_id);
 	const bool target_is_reference = destination_desc.ref_qualifier != ReferenceQualifier::None;
 	if (cast_info.trailing_standard_conversion == StandardConversionKind::DerivedToBase &&
