@@ -692,16 +692,19 @@ Continue boundary 3A in this order.
    owners use `NestedRecord(owning specialization TypeId, nested EntityId)`. Retain alias,
    owner-distinction, rollback/mutation, and 4,096-level worklist guards.
 
-   **Next 3A slice: nested member-pointer fields.**
-   Publish the fields of `Outer<T>::Key` using its owning `NestedRecord` TypeId
-   and the retained enclosing specialization's bindings. Extend class/schema
-   consumers to accept that identity only with complete published facts; never
-   use the nested pattern EntityId as the layout of every enclosing specialization.
-   Enclosing links currently attach after nested field production, so first choose
-   a publication point where the actual owner and arguments are available.
-   Cover mixed short/long-long layouts, repeated aliases, pointer-to-member owner
-   distinctions, rollback, and a nonzero subobject offset. Keep ordinary nested
-   records on their existing EntityId path and retain the deep-owner guard.
+   **Nested member-pointer fields:** primary instantiations publish nested field
+   facts by `NestedRecord`. Retain external/self owner, array, nonzero-offset,
+   rollback/mutation, and 4,096-level scratch-publication guards.
+
+   **Next 3A slice: cross-nested member-pointer owner binding.**
+   Extend the late field publisher beyond self references to pointers owned by a
+   sibling or enclosing nested declaration. Resolve the captured owner declaration
+   against the instantiated enclosing TypeId chain; a plain `Record(pattern EntityId)`
+   must not stand in for that owner. Start with two `Outer<short, N>` specializations
+   whose nested declarations share pattern IDs and scalar types but have different
+   `N` values. Check field and value owner identity, aliases/ordered declarators,
+   rollback, and bounded deep-owner traversal. Keep missing owner facts deferred;
+   do not recover identity from generated names or add selection/evaluation rules.
 
    Selected partial owners need their published primary arguments rather than
    deduced pattern bindings; member class templates need composed enclosing and

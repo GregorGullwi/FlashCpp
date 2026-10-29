@@ -1820,6 +1820,10 @@ inline const StructTypeInfo* tryResolveCanonicalMemberPointerOwnerRecord(Canonic
 		const TypeInfo* owner_info = tryFindTypeInfoByEntityId(table.recordEntity(owner));
 		return owner_info != nullptr ? owner_info->getStructInfo() : nullptr;
 	}
+	if (owner_node.kind == CanonicalTypeKind::NestedRecord) {
+		const TypeInfo* pattern_info = tryFindTypeInfoByEntityId(table.nestedRecordEntity(owner));
+		return pattern_info != nullptr ? pattern_info->getStructInfo() : nullptr;
+	}
 	if (owner_node.kind != CanonicalTypeKind::TemplateSpecialization) {
 		return nullptr;
 	}
@@ -1954,9 +1958,11 @@ inline bool tryPublishCanonicalMemberFunctionSignatures(CanonicalTypeTable& tabl
 	CanonicalTypeTransaction transaction(table);
 	TemplateDeclId environment;
 	std::vector<CanonicalTemplateArgument> arguments;
-	if (table.node(owner).kind == CanonicalTypeKind::TemplateSpecialization) {
-		environment = table.templateSpecializationDecl(owner);
-		for (TypeId link = table.templateSpecializationArguments(owner); link; link = table.templateArgumentNext(link)) {
+	TypeId environment_owner = owner;
+	while (table.node(environment_owner).kind == CanonicalTypeKind::NestedRecord) environment_owner = table.nestedRecordOwner(environment_owner);
+	if (table.node(environment_owner).kind == CanonicalTypeKind::TemplateSpecialization) {
+		environment = table.templateSpecializationDecl(environment_owner);
+		for (TypeId link = table.templateSpecializationArguments(environment_owner); link; link = table.templateArgumentNext(link)) {
 			switch (table.templateArgumentKind(link)) {
 			case CanonicalTemplateArgKind::Type:
 				arguments.push_back(CanonicalTemplateArgument::makeType(table.templateArgumentType(link)));
@@ -2151,18 +2157,10 @@ inline std::optional<TypeId> tryImportCanonicalStructuralValue(CanonicalTypeTabl
 			subobjects.size() > UINT32_MAX) {
 			throw InternalError("canonical value importer: subobject count exceeds worklist capacity");
 		}
-		CanonicalTypeImport imported;
-		if (info->isTemplateInstantiation()) {
-			imported = importCanonicalClassTypeInfo(table, *info);
-		} else {
-			TypeSpecifierNode syntax(source->type_index, 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
-			tryBindPublishedTypeEntity(syntax);
-			imported = importCanonicalType(table, syntax);
-		}
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		if (imported.status != CanonicalTypeImportStatus::Supported) return false;
 		const CanonicalTypeKind imported_kind = table.node(imported.type).kind;
-		if (imported.status != CanonicalTypeImportStatus::Supported ||
-			(imported_kind != CanonicalTypeKind::Record && imported_kind != CanonicalTypeKind::TemplateSpecialization) ||
-			(expected && imported.type != expected)) {
+		if (!isCanonicalClassTypeKind(imported_kind) || (expected && imported.type != expected)) {
 			return false;
 		}
 		if (!record->base_classes.empty() && (!table.hasClassBaseSchema(imported.type) ||
@@ -2743,8 +2741,7 @@ inline bool tryPublishCanonicalRecordProperties(
 		return false;
 	}
 	const CanonicalTypeKind kind = table.node(type).kind;
-	if (kind != CanonicalTypeKind::Record &&
-		kind != CanonicalTypeKind::TemplateSpecialization) {
+	if (!isCanonicalClassTypeKind(kind)) {
 		return false;
 	}
 	const CanonicalRecordFacts facts = computeCanonicalRecordFacts(table, struct_info);
@@ -2927,7 +2924,7 @@ inline bool tryPublishCanonicalRecordFieldSchema(CanonicalTypeTable& table, Type
 	const CanonicalTypeKind kind = table.node(owner).kind;
 	if (kind == CanonicalTypeKind::Record) {
 		if (!table.hasRecordLayout(table.recordEntity(owner))) return false;
-	} else if (kind == CanonicalTypeKind::TemplateSpecialization) {
+	} else if (isCanonicalClassTypeKind(kind)) {
 		if (!table.hasRecordSubobjectTypes(owner) || !table.hasClassBaseSchema(owner)) return false;
 	} else {
 		return false;
@@ -2999,7 +2996,7 @@ inline bool tryPublishCanonicalClassBaseSchema(CanonicalTypeTable& table, TypeId
 	CanonicalClassSchemaPublication publication) {
 	const auto is_class_type = [&table](TypeId type) {
 		const CanonicalTypeKind kind = table.node(type).kind;
-		return kind == CanonicalTypeKind::Record || kind == CanonicalTypeKind::TemplateSpecialization;
+		return isCanonicalClassTypeKind(kind);
 	};
 	if (!root_type || !is_class_type(root_type)) {
 		return false;
@@ -3044,7 +3041,7 @@ inline bool tryPublishCanonicalClassBaseSchema(CanonicalTypeTable& table, TypeId
 					member_type = member_node.child;
 					member_node = table.node(member_type);
 				}
-				if (member_node.kind != CanonicalTypeKind::Record && member_node.kind != CanonicalTypeKind::TemplateSpecialization) {
+				if (!isCanonicalClassTypeKind(member_node.kind)) {
 					continue;
 				}
 				const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
@@ -3115,8 +3112,7 @@ inline bool tryPublishCanonicalClassBaseSchema(CanonicalTypeTable& table, TypeId
 			table.publishClassBaseSchema(current.type, bases);
 		}
 
-		if (publication == CanonicalClassSchemaPublication::WithObjectFacts &&
-			table.node(current.type).kind == CanonicalTypeKind::TemplateSpecialization) {
+		if (publication == CanonicalClassSchemaPublication::WithObjectFacts && table.node(current.type).kind != CanonicalTypeKind::Record) {
 			(void)tryPublishCanonicalRecordFieldSchema(table, current.type, *current.struct_info);
 		}
 
@@ -3242,7 +3238,7 @@ inline CanonicalDeclaratorExport exportCanonicalDeclaratorUntil(
 			if (owner_node.kind == CanonicalTypeKind::Record) {
 				result.components.push_back(DeclaratorComponent::memberPointer(
 					table.recordEntity(owner), false, pending_pointer_cv));
-			} else if (owner_node.kind == CanonicalTypeKind::TemplateSpecialization) {
+			} else if (isCanonicalClassTypeKind(owner_node.kind)) {
 				result.components.push_back(DeclaratorComponent::memberPointer(
 					owner, false, pending_pointer_cv));
 			} else {
@@ -3260,7 +3256,7 @@ inline CanonicalDeclaratorExport exportCanonicalDeclaratorUntil(
 			if (owner_node.kind == CanonicalTypeKind::Record) {
 				result.components.push_back(DeclaratorComponent::memberPointer(
 					table.recordEntity(owner), true, pending_pointer_cv));
-			} else if (owner_node.kind == CanonicalTypeKind::TemplateSpecialization) {
+			} else if (isCanonicalClassTypeKind(owner_node.kind)) {
 				result.components.push_back(DeclaratorComponent::memberPointer(
 					owner, true, pending_pointer_cv));
 			} else {
