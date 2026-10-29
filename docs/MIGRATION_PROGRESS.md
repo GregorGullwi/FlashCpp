@@ -696,19 +696,24 @@ Continue boundary 3A in this order.
    facts by `NestedRecord`. Retain external/self owner, array, nonzero-offset,
    rollback/mutation, and 4,096-level scratch-publication guards.
 
-   **Next 3A slice: cross-nested member-pointer owner binding.**
-   Extend the late field publisher beyond self references to pointers owned by a
-   sibling or enclosing nested declaration. Resolve the captured owner declaration
-   against the instantiated enclosing TypeId chain; a plain `Record(pattern EntityId)`
-   must not stand in for that owner. Start with two `Outer<short, N>` specializations
-   whose nested declarations share pattern IDs and scalar types but have different
-   `N` values. Check field and value owner identity, aliases/ordered declarators,
-   rollback, and bounded deep-owner traversal. Keep missing owner facts deferred;
-   do not recover identity from generated names or add selection/evaluation rules.
+   **Cross-nested member-pointer owners:** primary instantiations bind sibling and
+   enclosing declarations through a scoped EntityId/TypeId catalog before publishing
+   schemas. Retain same-type/different-NTTP, alias, foreign-owner, missing-owner,
+   mutation, and deep scratch guards.
 
-   Selected partial owners need their published primary arguments rather than
-   deduced pattern bindings; member class templates need composed enclosing and
-   member specialization identity. Their class-source imports remain deferred.
+   **Next 3A slice: selected partial enclosing-specialization identity.**
+   Nested class-source imports still defer when the enclosing declaration came from
+   a selected partial. Its outer bindings are deduced pattern arguments, not the
+   primary's actual arguments. Retain or recover the published primary specialization
+   TypeId through owned declaration facts before composing its `NestedRecord` children.
+   Start with `Outer<T*>` selected for `Outer<short*>` and `Outer<long long*>`:
+   preserve the pointer in owning class identity while keeping the partial's body
+   environment bound to the deduced element type. Land importer identity, alias,
+   rollback, and deep-owner guards first; leave partial nested-field publication
+   deferred until both environments are available. No generated-name recovery.
+
+   Member class templates need composed enclosing and member specialization
+   identity and remain separate from this prerequisite.
    Keep constrained, pack, non-type, alias, and other dependent partial patterns
    separate. Opaque non-type arguments remain fail-closed until their identity
    can substitute. Do not recover identity by spelling or add evaluator/selection rules.
