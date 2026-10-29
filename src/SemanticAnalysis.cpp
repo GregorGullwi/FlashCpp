@@ -11678,6 +11678,27 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 			stats_.slots_filled++;
 			return true;
 		}
+		CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+		const TypeId source_function = canonicalFunctionPointerTarget(canonical_types, from_import.type);
+		const TypeId target_function = canonicalFunctionPointerTarget(canonical_types, to_import.type);
+		if (source_function && target_function &&
+			!canonical_types.hasDependentTypeComponents(from_import.type) &&
+			!canonical_types.hasDependentTypeComponents(to_import.type)) {
+			const CanonicalTypeNode source_node = canonical_types.node(source_function);
+			const CanonicalTypeNode target_node = canonical_types.node(target_function);
+			if (hasCanonicalTypeNodeFlag(target_node.flags, CanonicalTypeNodeFlags::NoexceptFunction) &&
+				!hasCanonicalTypeNodeFlag(source_node.flags, CanonicalTypeNodeFlags::NoexceptFunction)) {
+				const Token source_token =
+					FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(expr_node).value_or(Token{});
+				throw makeStructuredCompileError(
+					context_.diagnostics(),
+					DiagnosticId::InvalidFunctionPointerNoexceptConversion,
+					DiagnosticSeverity::Error,
+					SourceLocation::fromToken(source_token),
+					"Function pointer conversion cannot add noexcept",
+					{});
+			}
+		}
 	}
 	// Non-Supported import statuses deliberately reach the compatibility logic
 	// below; the standard TypeId planner must not turn an unmigrated type into
