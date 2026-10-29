@@ -217,6 +217,87 @@ inline std::optional<TypeId> tryImportCanonicalTemplateTypeArgument(CanonicalTyp
 	return tryImportSupportedCanonical(table, syntax);
 }
 
+// A concrete field must not retain dependent declarator components from its pattern.
+// Unsupported argument environments leave the field unpublished rather than inventing identity.
+inline TypeId substituteCanonicalStructMemberType(CanonicalTypeTable& table, TypeId pattern, TemplateDeclId environment,
+	std::span<const TemplateTypeArg> arguments) {
+	if (!pattern) return {};
+	const bool needs_substitution = table.hasDependentTypeComponents(pattern);
+	if (needs_substitution && !environment) return {};
+	// Field publication currently supports structural declarators and primary
+	// specializations. Lookup-dependent tips require a later producer boundary.
+	std::vector<TypeId> pending{pattern};
+	std::unordered_set<uint32_t> visited;
+	while (!pending.empty()) {
+		const TypeId current = pending.back();
+		pending.pop_back();
+		if (!visited.insert(current.value).second) continue;
+		const CanonicalTypeNode node = table.node(current);
+		switch (node.kind) {
+		case CanonicalTypeKind::Builtin:
+		case CanonicalTypeKind::Record:
+		case CanonicalTypeKind::Enum:
+			break;
+		case CanonicalTypeKind::TemplateParameter:
+			if (table.templateParameterDecl(current) != environment || table.templateParameterIndex(current) >= arguments.size()) return {};
+			if (!arguments[table.templateParameterIndex(current)].isTypeArgument()) return {};
+			break;
+		case CanonicalTypeKind::Qualified:
+		case CanonicalTypeKind::Pointer:
+		case CanonicalTypeKind::LValueReference:
+		case CanonicalTypeKind::RValueReference:
+		case CanonicalTypeKind::Array:
+			pending.push_back(node.child);
+			break;
+		case CanonicalTypeKind::Function:
+			pending.push_back(node.child);
+			for (TypeId link = table.functionParameters(current); link; link = table.functionParameterNext(link)) {
+				pending.push_back(table.functionParameterType(link));
+			}
+			break;
+		case CanonicalTypeKind::MemberObjectPointer:
+		case CanonicalTypeKind::MemberFunctionPointer:
+			pending.push_back(table.memberPointerOwner(current));
+			pending.push_back(node.child);
+			break;
+		case CanonicalTypeKind::TemplateSpecialization:
+			for (TypeId link = table.templateSpecializationArguments(current); link; link = table.templateArgumentNext(link)) {
+				if (table.templateArgumentKind(link) == CanonicalTemplateArgKind::Type) {
+					pending.push_back(table.templateArgumentType(link));
+				} else if (table.templateArgumentKind(link) == CanonicalTemplateArgKind::NonType ||
+					table.templateArgumentKind(link) == CanonicalTemplateArgKind::DependentTemplate) {
+					// Opaque expressions do not expose parameter dependencies to the
+					// canonical substitutor. Do not publish a pattern expression as concrete.
+					return {};
+				}
+			}
+			break;
+		default:
+			return {};
+		}
+	}
+	if (!needs_substitution) return pattern;
+	CanonicalTypeTransaction transaction(table);
+	std::vector<CanonicalTemplateArgument> canonical_arguments;
+	canonical_arguments.reserve(arguments.size());
+	for (const TemplateTypeArg& argument : arguments) {
+		if (argument.is_pack || argument.is_dependent || argument.is_template_template_arg) return {};
+		if (argument.is_value) {
+			const std::optional<TypeId> value = tryImportCanonicalValue(table, argument.valueIdentity());
+			if (!value.has_value()) return {};
+			canonical_arguments.push_back(CanonicalTemplateArgument::makeValue(*value));
+		} else {
+			const std::optional<TypeId> type = tryImportCanonicalTemplateTypeArgument(table, argument);
+			if (!type.has_value()) return {};
+			canonical_arguments.push_back(CanonicalTemplateArgument::makeType(*type));
+		}
+	}
+	const TypeId concrete = table.substitute(pattern, environment, canonical_arguments);
+	if (table.hasDependentTypeComponents(concrete)) return {};
+	transaction.commit();
+	return concrete;
+}
+
 inline TypeId substituteCanonicalFunctionTypeComponent(CanonicalTypeTable& table, const FunctionType& pattern, const TemplateTypeArg& argument) {
 	if (!pattern.template_parameter_decl || !argument.isTypeArgument() || argument.is_pack || pattern.is_pack_expansion) {
 		return {};

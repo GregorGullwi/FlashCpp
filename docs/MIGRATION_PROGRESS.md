@@ -576,16 +576,22 @@ Continue boundary 3A in this order.
    guards; the existing class type-schema arenas serve both functions and
    subobjects. No exit criterion closes; the rollup stays 10/79.
 
-   **Next 3A slice: substitute member-pointer field graphs in class templates.**
-   A holder such as `template<class T> struct Key { T (Owner<T>::*pointer)(T); };`
-   can instantiate with a dependent canonical field TypeId even for `T=short`.
-   The target method signature already substitutes; fix the field producer in
-   `Parser_Templates_Inst_ClassTemplate.cpp` before `StructMember` registration.
-   Substitute the canonical member-pointer graph using the holder's published
-   environment and store the concrete result. Keep declaration order, qualifiers,
-   and member-pointer owner identity; pin named/braced equivalence, mixed native
-   widths, nested pointer shapes, and missing/unresolved environment rejection.
-   Do not recover type identity by spelling or add evaluator/selection rules.
+   **Primary-template member-pointer fields:** the stamped pattern graph now
+   substitutes before `StructMember` registration, including specialization owners,
+   nested pointer signatures, and mixed value/type argument positions. Retain
+   `test_canonical_structural_nttp_templated_member_pointer_ret0.cpp`, native
+   environment/mutation guards, and the 4,096-level field graph on a 1 MiB stack.
+
+   **Next 3A slice: partial-specialization member-pointer field production.**
+   Start with a reduced `Key<T*>` holder and native canonical-import regression.
+   Establish the partial pattern's published parameter environment and deduced
+   arguments before reusing `substituteCanonicalStructMemberType` at the partial
+   field registration in `Parser_Templates_Inst_ClassTemplate.cpp`. A partial's
+   `T` must bind to its deduced type, not the primary's `T*` argument slot. If the
+   environment is unpublished, land that publication prerequisite first. Keep
+   the nested-class producer separate. Opaque non-type specialization arguments
+   remain fail-closed until their parameter/value identity can substitute.
+   Do not recover identity by spelling or add evaluator/selection rules.
 
    Non-null object pointer target identity remains separate.
    Ambiguous/virtual-base member pointers, unpublished dependent bases, and the nested

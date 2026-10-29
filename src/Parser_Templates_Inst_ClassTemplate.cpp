@@ -8586,26 +8586,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Member registration consumes the canonical substituted type metadata materialized above.
 		// Phase 7B: Intern member name and use StringHandle overload
 		StringHandle member_name_handle = decl.identifier_token().handle();
-		const TypeId canonical_member_type_id = importCanonicalStructMemberType(
-			requireFrontendContext().canonicalTypes(), substituted_type_spec, is_array_member, member_pointee_array_declarator, resolved_array_dimensions);
-		struct_info->addMember(
-			member_name_handle,
-			stored_member_type_index,
-			canonical_member_type_id,
-			member_size,
-			member_alignment,
-			member_decl.access,
-			substituted_default_initializer,
-			ref_qual,
-			referenced_size_bits,
-			is_array_member,
-			std::move(resolved_array_dimensions),
-			member_pointee_array_declarator,
-			static_cast<int>(substituted_type_spec.pointer_depth()),
+		// Member-pointer graphs retain the pattern's parameter stamps through the
+		// canonical substitution; the compatibility projection may erase the pointee.
+		const TypeSpecifierNode& canonical_member_syntax = type_spec.has_member_class() ? type_spec : substituted_type_spec;
+		const TypeId canonical_member_type_id = importCanonicalStructMemberType(requireFrontendContext().canonicalTypes(), canonical_member_syntax,
+			is_array_member, member_pointee_array_declarator, resolved_array_dimensions);
+		const TypeId concrete_member_type_id = type_spec.has_member_class()
+			? substituteCanonicalStructMemberType(requireFrontendContext().canonicalTypes(), canonical_member_type_id, template_class.template_decl_id(),
+				std::span<const TemplateTypeArg>(template_args_to_use.data(), template_args_to_use.size()))
+			: canonical_member_type_id;
+		struct_info->addMember(member_name_handle, stored_member_type_index, concrete_member_type_id, member_size, member_alignment, member_decl.access,
+			substituted_default_initializer, ref_qual, referenced_size_bits, is_array_member, std::move(resolved_array_dimensions),
+			member_pointee_array_declarator, static_cast<int>(substituted_type_spec.pointer_depth()),
 			resolve_bitfield_width(member_decl, effective_template_params, effective_template_args),
-			getCanonicalFunctionPointerSignature(substituted_type_spec),
-			member_decl.is_no_unique_address,
-			substituted_type_spec.top_level_cv_qualifier());
+			getCanonicalFunctionPointerSignature(substituted_type_spec), member_decl.is_no_unique_address, substituted_type_spec.top_level_cv_qualifier());
 	}
 
 	// Skip member function instantiation - we only need type information for nested classes

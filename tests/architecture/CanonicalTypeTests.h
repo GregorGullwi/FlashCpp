@@ -1643,6 +1643,12 @@ inline void checkCallableSubstitution() {
 	require(table.substitute(mop, env, args) == table.memberObjectPointer(owner_a, integer));
 	require(table.substitute(table.memberObjectPointer(owner_a, foreign), env, args) ==
 		table.memberObjectPointer(owner_a, foreign));
+	const TypeId pattern_arguments[] = {param0};
+	const TypeId pattern_owner = table.templateSpecialization(TemplateDeclId{43}, pattern_arguments);
+	const TypeId concrete_owner = table.templateSpecialization(TemplateDeclId{43}, args);
+	require(table.substitute(table.memberObjectPointer(pattern_owner, param0), env, args) == table.memberObjectPointer(concrete_owner, integer));
+	const TypeId pattern_mfp = table.memberFunctionPointer(pattern_owner, dependent_function);
+	require(table.substitute(pattern_mfp, env, args) == table.memberFunctionPointer(concrete_owner, subst_function));
 
 	// Interleaved array/pointer/member-function-pointer/function declarator has one
 	// structural substitution shape.

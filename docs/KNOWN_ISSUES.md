@@ -122,12 +122,13 @@ and flat union groups by owner TypeId. Missing field-layout and dependent base
 facts still fail closed. The partial-specialization parser gap above and nested
 anonymous-union hierarchy remain separate.
 
-A concrete holder instantiated from `template<class T> struct Key {
-T (Owner<T>::*pointer)(T); };` can still retain a dependent canonical field type.
-The target method signature substitutes correctly; the holder's field graph must
-also be substituted before `StructMember::canonical_type_id` is stored. Such
-values stay unresolved in the canonical importer. Keep this producer fix separate
-from overload selection and constant evaluation.
+Primary-template member-pointer fields substitute their canonical graphs before
+registration. Partial-specialization and nested-class field producers still need
+their own published substitution environments. Member-pointer graphs containing
+opaque non-type specialization arguments fail closed: the canonical substitutor
+preserves those ExprIds and cannot replace a pattern argument such as `N` with
+its concrete value. Publish substitutable parameter/value identity before
+enabling those graphs; keep evaluator and overload-selection rules separate.
 
 Extend the typed-value importer before deleting `legacyDerivedBaseOffset`;
 audit dependent and other non-integral specialization roots as well.

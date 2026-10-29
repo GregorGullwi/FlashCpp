@@ -3252,14 +3252,11 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 		case CanonicalTypeKind::MemberObjectPointer:
 		case CanonicalTypeKind::MemberFunctionPointer: {
 			const TypeId original_owner = TypeId{static_cast<uint32_t>(node.array_extent)};
-			const TypeId substituted_owner = memo.at(original_owner.value);
+			const TypeId substituted_owner = classOwnerUnlocked(memo.at(original_owner.value));
 			const TypeId substituted_pointee = memo.at(node.child.value);
 			if (substituted_owner == original_owner && substituted_pointee == node.child) {
 				rebuilt = frame.id;
 				break;
-			}
-			if (nodeUnlocked(substituted_owner).kind != CanonicalTypeKind::Record) {
-				throw InternalError("canonical type: substituted member pointer owner must be a record");
 			}
 			if (node.kind == CanonicalTypeKind::MemberFunctionPointer) {
 				if (nodeUnlocked(substituted_pointee).kind != CanonicalTypeKind::Function) {
