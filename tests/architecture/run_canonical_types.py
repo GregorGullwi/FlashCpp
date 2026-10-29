@@ -362,6 +362,9 @@ def main():
                 "\t\t} else if (false && dll_linkage == CanonicalDllLinkage::Export) {\n"
                 "\t\t\tflags |= CanonicalTypeNodeFlags::FunctionDllExport;\n"
                 "\t\t}"),
+            "lost_specialization_member_owner_substitution": (
+                "const TypeId substituted_owner = classOwnerUnlocked(memo.at(original_owner.value));",
+                "const TypeId substituted_owner = classOwnerUnlocked(original_owner);"),
             "lost_member_owner": (
                 "TypeId CanonicalTypeTable::memberObjectPointer(TypeId owner, TypeId pointee) {\n"
                 "\t\tstd::lock_guard lock(mutex_);\n"

@@ -1158,6 +1158,107 @@ TEST_CASE("Member function pointer structural NTTP fields import by function ord
 	CHECK(table.memberFunctionSignatureAt(qualified_owner, qualified_ordinal) == table.memberPointerPointee(qualified_pointer.child));
 }
 
+TEST_CASE("Templated member pointer fields publish concrete canonical graphs") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream fixture("tests/test_canonical_structural_nttp_templated_member_pointer_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	const std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	CompileContext compile_context;
+	compile_context.setInputFile("templated_member_pointer.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto import_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		REQUIRE_FALSE(table.hasDependentTypeComponents(imported.type));
+		return imported.type;
+	};
+	CHECK(import_type("ShortNamed") == import_type("ShortBraced"));
+	CHECK(import_type("LongNamed") == import_type("LongBraced"));
+	CHECK(import_type("ShortObjectNamed") == import_type("ShortObjectBraced"));
+	CHECK(import_type("LongObjectNamed") == import_type("LongObjectBraced"));
+	CHECK(import_type("NestedNamed") == import_type("NestedBraced"));
+	CHECK(import_type("MixedNamed") == import_type("MixedBraced"));
+	const auto pointer_value = [&](std::string_view name) {
+		const TypeId value = table.templateArgumentValue(table.templateSpecializationArguments(import_type(name)));
+		const TypeId first = unpackStructuralValueSubobjects(table.node(value).array_extent);
+		return table.node(table.templateArgumentValue(first));
+	};
+	const CanonicalTypeNode narrow = pointer_value("ShortNamed");
+	const CanonicalTypeNode wide = pointer_value("LongNamed");
+	REQUIRE(narrow.kind == CanonicalTypeKind::MemberFunctionPointerValue);
+	REQUIRE(wide.kind == CanonicalTypeKind::MemberFunctionPointerValue);
+	CHECK(table.memberPointerOwner(narrow.child) != table.memberPointerOwner(wide.child));
+	const TypeId signature = table.memberPointerPointee(narrow.child);
+	const TypeId narrow_type = table.builtin(CanonicalBuiltinKind::Short);
+	CHECK(table.node(signature).child == narrow_type);
+	CHECK(table.functionParameterType(table.functionParameters(signature)) == narrow_type);
+	CHECK(table.node(signature).qualifiers == CVQualifier::Const);
+	CHECK(table.node(signature).flags == (CanonicalTypeNodeFlags::FunctionLValueRef | CanonicalTypeNodeFlags::NoexceptFunction));
+	CHECK(table.node(table.memberPointerPointee(wide.child)).child == table.builtin(CanonicalBuiltinKind::LongLong));
+	const CanonicalTypeNode nested = pointer_value("NestedNamed");
+	const TypeId nested_signature = table.memberPointerPointee(nested.child);
+	CHECK(table.node(nested_signature).child == table.pointer(narrow_type));
+	CHECK(table.functionParameterType(table.functionParameters(nested_signature)) == table.pointer(narrow_type));
+	const CanonicalTypeNode object = pointer_value("ShortObjectNamed");
+	CHECK(object.kind == CanonicalTypeKind::MemberObjectPointerValue);
+	CHECK(table.memberPointerOwner(object.child) == table.memberPointerOwner(narrow.child));
+	CHECK(table.memberPointerPointee(object.child) == narrow_type);
+}
+
+TEST_CASE("Canonical member field substitution rejects incomplete and unresolved environments") {
+	clearLegacyTypeTablesForTesting();
+	FrontendContext context;
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const TemplateDeclId environment{73};
+	const TypeId parameter = table.templateParameter(environment, 0);
+	const TypeId owner_arguments[] = {parameter};
+	const TypeId owner = table.templateSpecialization(TemplateDeclId{74}, owner_arguments);
+	const TypeId pattern = table.memberObjectPointer(owner, table.pointer(parameter));
+	TemplateTypeArg arguments[1];
+	arguments[0].type_index = nativeTypeIndex(TypeCategory::Short);
+	CHECK_FALSE(substituteCanonicalStructMemberType(table, pattern, TemplateDeclId{}, arguments));
+	CHECK_FALSE(substituteCanonicalStructMemberType(table, pattern, TemplateDeclId{75}, arguments));
+	CHECK_FALSE(substituteCanonicalStructMemberType(table, pattern, environment, std::span<const TemplateTypeArg>{}));
+	const TypeId unresolved = table.dependentName(parameter, "missing");
+	CHECK_FALSE(substituteCanonicalStructMemberType(table, unresolved, environment, arguments));
+	const CanonicalTemplateArgument opaque_arguments[] = {CanonicalTemplateArgument::makeNonType(ExprId{91})};
+	const TypeId opaque_owner = table.templateSpecialization(TemplateDeclId{74}, opaque_arguments);
+	const TypeId opaque_pointer = table.memberObjectPointer(opaque_owner, table.builtin(CanonicalBuiltinKind::Int));
+	CHECK_FALSE(substituteCanonicalStructMemberType(table, opaque_pointer, environment, arguments));
+	const TypeId fixed_value = table.integralValue(table.builtin(CanonicalBuiltinKind::Int), 3);
+	const CanonicalTemplateArgument fixed_arguments[] = {CanonicalTemplateArgument::makeValue(fixed_value)};
+	const TypeId fixed_owner = table.templateSpecialization(TemplateDeclId{74}, fixed_arguments);
+	const TypeId fixed_pointer = table.memberObjectPointer(fixed_owner, table.builtin(CanonicalBuiltinKind::Int));
+	CHECK(substituteCanonicalStructMemberType(table, fixed_pointer, TemplateDeclId{}, arguments) == fixed_pointer);
+	const TemplateTypeArg wrong_kind[] = {TemplateTypeArg(int64_t{3})};
+	CHECK_FALSE(substituteCanonicalStructMemberType(table, pattern, environment, wrong_kind));
+	arguments[0].is_dependent = true;
+	const size_t before_rejection = table.size();
+	CHECK_FALSE(substituteCanonicalStructMemberType(table, pattern, environment, arguments));
+	CHECK(table.size() == before_rejection);
+	arguments[0].is_dependent = false;
+	const TypeId concrete = substituteCanonicalStructMemberType(table, pattern, environment, arguments);
+	REQUIRE(concrete);
+	CHECK_FALSE(table.hasDependentTypeComponents(concrete));
+	TypeId deep = pattern;
+	TypeId expected = concrete;
+	for (size_t depth = 0; depth < 4096; ++depth) {
+		deep = table.pointer(deep);
+		expected = table.pointer(expected);
+	}
+	CHECK(substituteCanonicalStructMemberType(table, deep, environment, arguments) == expected);
+}
+
 TEST_CASE("Inherited member object pointer structural fields keep declaring class identity") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
