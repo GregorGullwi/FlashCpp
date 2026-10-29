@@ -11534,10 +11534,14 @@ const ConstructorDeclarationNode* selectTrailingBaseConstructor(
 		!target_desc.pointer_levels.empty()) {
 		return nullptr;
 	}
-	const TypeInfo* target_type_info = target_desc.type_index.is_valid() ? tryGetTypeInfo(target_desc.type_index) : nullptr;
-	const StructTypeInfo* target_struct_info = target_type_info != nullptr ? target_type_info->getStructInfo() : nullptr;
+	TypeInfo* target_type_info = target_desc.type_index.is_valid() ? tryGetTypeInfoMut(target_desc.type_index) : nullptr;
+	StructTypeInfo* target_struct_info = target_type_info != nullptr ? target_type_info->getStructInfo() : nullptr;
 	if (target_struct_info == nullptr) {
 		throw InternalError("Sema-selected base-tail conversion has no target class declaration");
+	}
+	if (target_desc.type_index.is_valid()) {
+		(void)synthesizeImplicitCopyConstructor(
+			*target_struct_info, target_desc.type_index.withCategory(TypeCategory::Struct), target_struct_info->name);
 	}
 	const TypeSpecifierNode conversion_return_type = selected_conversion.function->decl_node().type_specifier_node();
 	const bool prefer_move_ctor = !conversion_return_type.is_lvalue_reference();
