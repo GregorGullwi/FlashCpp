@@ -194,6 +194,28 @@ void AstToIr::queueDeferredMemberFunctionFromNode(
 	deferred_member_functions_.push_back(std::move(deferred_info));
 }
 
+const ConstructorDeclarationNode* AstToIr::ensureSynthesizedBaseConstructor(
+	const TypeInfo& base_type_info,
+	StructTypeInfo& base_struct_info,
+	bool move) {
+	auto [entry, inserted] = synthesized_implicit_base_constructors_.try_emplace(&base_struct_info);
+	if (inserted) {
+		entry->second = createUnregisteredImplicitSameTypeConstructors(
+			base_struct_info, base_type_info.registeredTypeIndex(), base_type_info, base_struct_info.name);
+		if (entry->second.copy_constructor.is<ConstructorDeclarationNode>()) {
+			queueConstructorDefinition(base_type_info, &entry->second.copy_constructor.as<ConstructorDeclarationNode>());
+		}
+		if (entry->second.move_constructor.is<ConstructorDeclarationNode>()) {
+			queueConstructorDefinition(base_type_info, &entry->second.move_constructor.as<ConstructorDeclarationNode>());
+		}
+	}
+	ASTNode selected = move ? entry->second.move_constructor : entry->second.copy_constructor;
+	if (!selected.is<ConstructorDeclarationNode>()) {
+		selected = entry->second.copy_constructor;
+	}
+	return selected.is<ConstructorDeclarationNode>() ? &selected.as<ConstructorDeclarationNode>() : nullptr;
+}
+
 void AstToIr::queueConstructorDefinition(
 	const TypeInfo& type_info,
 	const ConstructorDeclarationNode* constructor) {

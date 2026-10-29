@@ -2462,6 +2462,46 @@ const StructMemberFunction* StructTypeInfo::findPreferredSameTypeConstructor(
 	return nullptr;
 }
 
+namespace {
+ConstructorDeclarationNode* createImplicitSameTypeConstructor(
+	StructTypeInfo& struct_info,
+	TypeIndex self_type_index,
+	const TypeInfo& self_type_info,
+	StringHandle instantiated_name,
+	CVQualifier cv_qualifier,
+	ReferenceQualifier reference_qualifier,
+	bool register_with_struct) {
+	int parameter_size_bits = struct_info.sizeInBits().value;
+	if (parameter_size_bits == 0 && self_type_info.hasStoredSize()) {
+		parameter_size_bits = self_type_info.sizeInBits().value;
+	}
+	if (parameter_size_bits == 0) {
+		parameter_size_bits = get_type_size_bits(TypeCategory::FunctionPointer);
+	}
+
+	Token ctor_name_token(Token::Type::Identifier, StringTable::getStringView(instantiated_name), 0, 0, 0);
+	ASTNode ctor_node = ASTNode::emplace_node<ConstructorDeclarationNode>(instantiated_name, instantiated_name);
+	ConstructorDeclarationNode& ctor = ctor_node.as<ConstructorDeclarationNode>();
+	ASTNode param_type = ASTNode::emplace_node<TypeSpecifierNode>(
+		self_type_index.withCategory(TypeCategory::Struct),
+		parameter_size_bits,
+		ctor_name_token,
+		cv_qualifier,
+		reference_qualifier);
+	Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
+	ASTNode param_decl_node = ASTNode::emplace_node<DeclarationNode>(param_type, param_token);
+	ctor.add_parameter_node(param_decl_node);
+	ASTNode block_node = ASTNode::emplace_node<BlockNode>();
+	ctor.set_definition(block_node);
+	ctor.set_is_implicit(true);
+	ctor.set_owning_type_index(self_type_index);
+	if (register_with_struct) {
+		struct_info.addConstructor(ctor_node, AccessSpecifier::Public);
+	}
+	return &ctor;
+}
+}
+
 ConstructorDeclarationNode* synthesizeImplicitCopyConstructor(
 	StructTypeInfo& struct_info,
 	TypeIndex self_type_index,
@@ -2473,32 +2513,33 @@ ConstructorDeclarationNode* synthesizeImplicitCopyConstructor(
 		struct_info.isMoveConstructorDeleted()) {
 		return nullptr;
 	}
+	return createImplicitSameTypeConstructor(struct_info, self_type_index, self_type_info, instantiated_name,
+		CVQualifier::Const, ReferenceQualifier::LValueReference, true);
+}
 
-	int copy_param_size_bits = struct_info.sizeInBits().value;
-	if (copy_param_size_bits == 0 && self_type_info.hasStoredSize()) {
-		copy_param_size_bits = self_type_info.sizeInBits().value;
+ImplicitSameTypeConstructors createUnregisteredImplicitSameTypeConstructors(
+	StructTypeInfo& struct_info,
+	TypeIndex self_type_index,
+	const TypeInfo& self_type_info,
+	StringHandle instantiated_name) {
+	ImplicitSameTypeConstructors constructors;
+	if (struct_info.findCopyConstructor(true) ||
+		struct_info.findMoveConstructor(true) ||
+		struct_info.isCopyConstructorDeleted() ||
+		struct_info.isMoveConstructorDeleted()) {
+		return constructors;
 	}
-	if (copy_param_size_bits == 0) {
-		copy_param_size_bits = get_type_size_bits(TypeCategory::FunctionPointer);
+	constructors.copy_constructor = ASTNode(createImplicitSameTypeConstructor(
+		struct_info, self_type_index, self_type_info, instantiated_name,
+		CVQualifier::Const, ReferenceQualifier::LValueReference, false));
+	const bool declare_move = !struct_info.hasUserDefinedDestructor() &&
+		!struct_info.hasCopyAssignmentOperator() && !struct_info.hasMoveAssignmentOperator();
+	if (declare_move) {
+		constructors.move_constructor = ASTNode(createImplicitSameTypeConstructor(
+			struct_info, self_type_index, self_type_info, instantiated_name,
+			CVQualifier::None, ReferenceQualifier::RValueReference, false));
 	}
-
-	Token ctor_name_token(Token::Type::Identifier, StringTable::getStringView(instantiated_name), 0, 0, 0);
-	ASTNode copy_ctor_node = ASTNode::emplace_node<ConstructorDeclarationNode>(instantiated_name, instantiated_name);
-	ConstructorDeclarationNode& copy_ctor = copy_ctor_node.as<ConstructorDeclarationNode>();
-	ASTNode copy_param_type = ASTNode::emplace_node<TypeSpecifierNode>(
-		self_type_index.withCategory(TypeCategory::Struct),
-		copy_param_size_bits,
-		ctor_name_token,
-		CVQualifier::Const,
-		ReferenceQualifier::LValueReference);
-	Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
-	ASTNode param_decl_node = ASTNode::emplace_node<DeclarationNode>(copy_param_type, param_token);
-	copy_ctor.add_parameter_node(param_decl_node);
-	ASTNode copy_block_node = ASTNode::emplace_node<BlockNode>();
-	copy_ctor.set_definition(copy_block_node);
-	copy_ctor.set_is_implicit(true);
-	struct_info.addConstructor(copy_ctor_node, AccessSpecifier::Public);
-	return &copy_ctor;
+	return constructors;
 }
 
 namespace {
