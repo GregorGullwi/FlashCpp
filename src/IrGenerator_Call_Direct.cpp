@@ -219,8 +219,12 @@ ExprResult AstToIr::buildCallReturnResult(
 	ExpressionContext context,
 	const Token& source_token) {
 	const TypeSpecifierNode normalized_return_type = normalizeCallReturnType(return_type);
-	// ── Reference-returning functions ──────────────────────────────────────
+	// Reference-returning functions
 	if (normalized_return_type.is_reference() || normalized_return_type.is_rvalue_reference()) {
+		if (normalized_return_type.type() == TypeCategory::Function) {
+			return makeExprResult(nativeTypeIndex(TypeCategory::FunctionPointer), SizeInBits{POINTER_SIZE_BITS},
+				IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
+		}
 		LValueInfo lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
 		int referenced_size_bits = requireConcreteAliasResolvedTypeSizeBits(normalized_return_type, "call return result reference size");
 		if (normalized_return_type.is_rvalue_reference()) {

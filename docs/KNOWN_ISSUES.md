@@ -38,6 +38,15 @@ Expression sema must retain the selected declaration and lowering must consume
 it. Published function EntityIds and the canonical function-pointer value adapter
 now provide target identity, but do not select or lower an overload themselves.
 
+## Adding noexcept to a function pointer conversion is accepted
+
+C++20 only permits removing noexcept from a function-pointer target, but
+FlashCpp accepts the opposite direction. With `using Throwing = void (*)();`
+and `using Noexcept = void (*)() noexcept;`, `Noexcept target = &function;`
+should be rejected. The canonical function-target planner already rejects
+adding noexcept; the compatibility projection still admits it. Add a dedicated
+diagnostic and a negative regression before closing this.
+
 ## Implicit copy/move constructor definitions are not uniformly ODR-deferred
 
 Implicit assignment definitions are now emitted only on ODR use, but implicit
