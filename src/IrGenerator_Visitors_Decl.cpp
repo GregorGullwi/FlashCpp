@@ -1333,8 +1333,76 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 							setTempVarMetadata(address, TempVarMetadata::makeAddressOnly(base.type_index, base_size, ValueCategory::LValue));
 							return address;
 						};
+						auto emit_member_assignment_call = [&](TypeIndex type_index, const StructTypeInfo& info,
+							const FunctionDeclarationNode& assignment, TempVar source_address, TempVar destination_address) {
+							const std::string_view assignment_name =
+								NameMangling::generateMangledNameFromNode(assignment, info.namespace_handle).view();
+							const TypeSpecifierNode& return_type = assignment.decl_node().type_specifier_node();
+							TempVar result = var_counter.next();
+							CallOp call_op = createCallOp(result, StringTable::getOrInternStringHandle(assignment_name),
+								return_type, true, assignment.is_variadic());
+							call_op.applyFunctionControlFlow(assignment);
+							call_op.returns_reference = return_type.is_reference() || return_type.is_rvalue_reference();
+							call_op.args.push_back(makeMemberThisCallArgument(type_index, IrValue(destination_address)));
+							TypedValue source_argument;
+							source_argument.type_index = type_index.withCategory(TypeCategory::Struct);
+							source_argument.setType(TypeCategory::Struct);
+							source_argument.ir_type = IrType::Struct;
+							source_argument.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+							source_argument.value = source_address;
+							source_argument.ref_qualifier = is_move_assignment ? ReferenceQualifier::RValueReference : ReferenceQualifier::LValueReference;
+							source_argument.cv_qualifier = is_move_assignment ? CVQualifier::None : CVQualifier::Const;
+							call_op.args.push_back(std::move(source_argument));
+							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), func_decl.identifier_token()));
+						};
 						auto emit_memberwise_members = [&](const StructTypeInfo& info) {
 							for (const StructMember& member : info.members) {
+								if (!member.is_reference() && member.memberType() == TypeCategory::Struct) {
+									TypeInfo* member_type_info = tryGetTypeInfoMut(member.type_index);
+									StructTypeInfo* member_struct_info = member_type_info == nullptr ? nullptr : member_type_info->getStructInfo();
+									if (member_struct_info != nullptr) {
+										const FunctionDeclarationNode* member_assignment =
+											ensureSynthesizedAssignment(*member_type_info, *member_struct_info, is_move_assignment);
+										if (member_assignment != nullptr) {
+											size_t element_count = 1;
+											if (member.is_array) {
+												for (size_t dimension : member.array_dimensions) {
+													element_count *= dimension;
+												}
+											}
+											size_t element_stride = toSizeT(member_struct_info->sizeInBytes());
+											if (element_stride == 0 && element_count != 0) {
+												element_stride = member.size / element_count;
+											}
+											if (element_stride != 0) {
+												const SizeInBits element_size{static_cast<int>(element_stride * 8)};
+												auto address_of_member = [&](const auto& object, size_t offset) {
+													TempVar address = var_counter.next();
+													ComputeAddressOp address_op;
+													address_op.result = address;
+													address_op.base = object;
+													address_op.base_storage = ValueStorage::ContainsAddress;
+													address_op.total_member_offset = static_cast<int>(offset);
+													address_op.result_type_index = member.type_index;
+													address_op.result_size_bits = element_size;
+													ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(address_op), func_decl.identifier_token()));
+													setTempVarMetadata(address, TempVarMetadata::makeAddressOnly(member.type_index, element_size, ValueCategory::LValue));
+													return address;
+												};
+												for (size_t element_index = 0; element_index < element_count; ++element_index) {
+													const size_t element_offset = member.offset + element_index * element_stride;
+													if (element_offset > static_cast<size_t>(std::numeric_limits<int>::max())) {
+														throw InternalError("Implicit assignment member offset exceeds IR range");
+													}
+													TempVar source_member = address_of_member(source_param_name_handle, element_offset);
+													TempVar destination_member = address_of_member(StringTable::getOrInternStringHandle("this"), element_offset);
+													emit_member_assignment_call(member.type_index, *member_struct_info, *member_assignment, source_member, destination_member);
+												}
+												continue;
+											}
+										}
+									}
+								}
 								TempVar member_value = var_counter.next();
 								const CVReferenceQualifier member_ref_qualifier =
 									member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference
@@ -1370,31 +1438,14 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 							if (base_struct_info == nullptr) {
 								continue;
 							}
-							const FunctionDeclarationNode* base_assignment = ensureSynthesizedBaseAssignment(*base_type_info, *base_struct_info, is_move_assignment);
+							const FunctionDeclarationNode* base_assignment = ensureSynthesizedAssignment(*base_type_info, *base_struct_info, is_move_assignment);
 							if (base_assignment == nullptr) {
 								continue;
 							}
 							const SizeInBits base_size{static_cast<int>(base_struct_info->sizeInBits().value)};
 							TempVar source_base = adjust_base_address(source_param_name_handle, base, base_size);
 							TempVar destination_base = adjust_base_address(StringTable::getOrInternStringHandle("this"), base, base_size);
-							const std::string_view base_assignment_name =
-								NameMangling::generateMangledNameFromNode(*base_assignment, base_struct_info->namespace_handle).view();
-							const TypeSpecifierNode& return_type = base_assignment->decl_node().type_specifier_node();
-							TempVar result = var_counter.next();
-							CallOp call_op = createCallOp(result, StringTable::getOrInternStringHandle(base_assignment_name), return_type, true, base_assignment->is_variadic());
-							call_op.applyFunctionControlFlow(*base_assignment);
-							call_op.returns_reference = return_type.is_reference() || return_type.is_rvalue_reference();
-							call_op.args.push_back(makeMemberThisCallArgument(base.type_index, IrValue(destination_base)));
-							TypedValue source_argument;
-							source_argument.type_index = base.type_index.withCategory(TypeCategory::Struct);
-							source_argument.setType(TypeCategory::Struct);
-							source_argument.ir_type = IrType::Struct;
-							source_argument.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
-							source_argument.value = source_base;
-							source_argument.ref_qualifier = is_move_assignment ? ReferenceQualifier::RValueReference : ReferenceQualifier::LValueReference;
-							source_argument.cv_qualifier = is_move_assignment ? CVQualifier::None : CVQualifier::Const;
-							call_op.args.push_back(std::move(source_argument));
-							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), func_decl.identifier_token()));
+							emit_member_assignment_call(base.type_index, *base_struct_info, *base_assignment, source_base, destination_base);
 						}
 						emit_memberwise_members(*struct_info);
 					}
