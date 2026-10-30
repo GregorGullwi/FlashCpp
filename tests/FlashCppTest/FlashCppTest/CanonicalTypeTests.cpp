@@ -7158,6 +7158,74 @@ int main() { return 0; }
 	CHECK(table.templateArgumentType(table.templateSpecializationArguments(wide_owner)) == table.builtin(CanonicalBuiltinKind::LongLong));
 }
 
+TEST_CASE("Selected member class-template partials compose their owner") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+template<class T> struct Owner {
+	template<class U> struct Box { U value; };
+	template<class U> struct Box<U*> { U* pointer; int tag; };
+};
+using ShortPointer = Owner<short>::Box<int*>;
+using ShortPointerAgain = Owner<short>::Box<int*>;
+using WidePointer = Owner<long long>::Box<int*>;
+using ShortCharPointer = Owner<short>::Box<char*>;
+int main() { return 0; }
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("member_partial_owner_identity.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto import_alias = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const auto template_decl = [](std::string_view name) {
+		const auto entry = gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle(name));
+		REQUIRE(entry.has_value());
+		REQUIRE(entry->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& node = entry->as<TemplateClassDeclarationNode>();
+		REQUIRE(node.has_template_decl_id());
+		return node.template_decl_id();
+	};
+	const TemplateDeclId owner_decl = template_decl("Owner");
+	const TemplateDeclId box_decl = template_decl("Owner::Box");
+	const TypeId short_pointer = import_alias("ShortPointer");
+	const TypeId short_pointer_again = import_alias("ShortPointerAgain");
+	const TypeId wide_pointer = import_alias("WidePointer");
+	const TypeId short_char_pointer = import_alias("ShortCharPointer");
+	CHECK(short_pointer == short_pointer_again);
+	CHECK(short_pointer != wide_pointer);
+	CHECK(short_pointer != short_char_pointer);
+	REQUIRE(table.node(short_pointer).kind == CanonicalTypeKind::TemplateSpecialization);
+	CHECK(table.templateSpecializationDecl(short_pointer) == box_decl);
+	const TypeId short_owner = table.templateSpecializationOwner(short_pointer);
+	const TypeId wide_owner = table.templateSpecializationOwner(wide_pointer);
+	REQUIRE(short_owner);
+	REQUIRE(wide_owner);
+	CHECK(short_owner != wide_owner);
+	REQUIRE(table.node(short_owner).kind == CanonicalTypeKind::TemplateSpecialization);
+	CHECK(table.templateSpecializationDecl(short_owner) == owner_decl);
+	CHECK(table.templateSpecializationOwner(short_owner) == TypeId{});
+	CHECK(table.templateArgumentType(table.templateSpecializationArguments(short_pointer)) ==
+		table.pointer(table.builtin(CanonicalBuiltinKind::Int)));
+	CHECK(table.templateArgumentType(table.templateSpecializationArguments(short_char_pointer)) ==
+		table.pointer(table.builtin(CanonicalBuiltinKind::Char)));
+	CHECK(table.templateArgumentType(table.templateSpecializationArguments(short_owner)) ==
+		table.builtin(CanonicalBuiltinKind::Short));
+	CHECK(table.templateArgumentType(table.templateSpecializationArguments(wide_owner)) ==
+		table.builtin(CanonicalBuiltinKind::LongLong));
+}
+
 TEST_CASE("Nested structural NTTP member pointers bind the specialized target owner") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

@@ -8,16 +8,16 @@ implementation history belongs in git and the regression suite.
 
 ## Next 3A slice
 
-**Member class-template partial-pattern identity.** Nested member class
-templates now publish and import their full instantiated owner chain:
-`Owner<short>::Box<int>::Inner<char>` stores the composed `Box` specialization
-as its owner and keeps `Inner`'s own argument chain separate. Each template-owned
-enclosing pattern is composed recursively, so depth and owner arguments remain
-observable without flattening them into the member arguments. Member-template
-partial patterns, constrained/pack/non-type/alias partials, and other dependent
-member forms remain deferred. Keep opaque non-type arguments fail-closed until
-their identity can substitute. Do not recover identity by spelling or generated
-name, and do not add evaluator or selection rules.
+**Member class-template partial-pattern environment.** Selected member
+class-template partial instantiations now compose the instantiated owner with the
+actual member arguments, so `Owner<short>::Box<int*>` and
+`Owner<long long>::Box<int*>` keep distinct owners while repeated uses intern.
+Member partial-pattern environment publication and partial bodies whose members
+depend on enclosing template parameters remain deferred. Constrained,
+pack, non-type, and alias partials, and other dependent member forms remain
+deferred as well. Keep opaque non-type arguments fail-closed until their identity
+can substitute. Do not recover identity by spelling or generated name, and do not
+add evaluator or selection rules.
 
 The preceding slices are complete. Class-template-owned member specializations
 now pack the instantiated owner TypeId beside the member arguments, distinguishing
@@ -25,8 +25,11 @@ same-spelling members under different owner arguments while keeping owner and
 member arguments separately observable. Nested member class templates compose
 the same way at every nesting level. Native coverage is in `CanonicalTypeTests.cpp`,
 and `tests/test_canonical_nested_member_template_owner_chain_ret0.cpp` covers the
-source path. Selected partial specializations also parse and publish their nested
-class declarations with direct members, type aliases, base layout, and preserved
+source path. Selected member partial instantiations use the same composition with
+their effective owner bindings and actual member arguments;
+`tests/test_canonical_member_partial_owner_chain_ret0.cpp` covers the source path.
+Selected partial specializations also parse and publish their nested class
+declarations with direct members, type aliases, base layout, and preserved
 pointer-owner identity;
 `tests/test_selected_partial_nested_class_lookup_ret0.cpp` covers the source
 path.
@@ -77,8 +80,10 @@ class TypeId with the member template's own canonical arguments; the enclosing
 owner is packed outside the member argument list, so owner and member arguments
 remain separately observable. Nested member class templates recursively compose
 each template-owned enclosing pattern, preserving the complete owner chain.
-Class-owned member specializations already encode their owner in the member
-`TemplateDeclId`. Source-level nested declarations under partial
+Selected member partial instantiations recover effective owner bindings from the
+instantiated declaration and compose them with the actual member arguments on
+their TypeInfo. Class-owned member specializations already encode their owner in
+the member `TemplateDeclId`. Source-level nested declarations under partial
 specializations are parsed and registered. The importer remains fail-closed for
 missing, mismatched, unpublished, or unresolved owner facts.
 
@@ -159,9 +164,11 @@ These seed adjacent slices; the authoritative inventory is
 - Nested classes of selected partial specializations now publish direct members,
   aliases, and non-deferred base layout. Deferred/template bases and other
   advanced nested-body effects still need the full instantiated-owner path.
-- Class-template-owned direct and nested member specializations compose the full
-  owner chain and keep member arguments separate. Member-template partial
-  patterns and dependent owner/member argument forms remain deferred.
+- Class-template-owned direct, nested, and selected partial member
+  specializations compose the full owner chain and keep member arguments
+  separate. Member partial-pattern environment publication, partial bodies that
+  depend on enclosing parameters, and dependent owner/member argument forms
+  remain deferred.
 - Non-null object pointer target identity, ambiguous/virtual-base member
   pointers, unpublished dependent bases, and the nested
   anonymous-union-in-anonymous-union hierarchy still need canonical subobject

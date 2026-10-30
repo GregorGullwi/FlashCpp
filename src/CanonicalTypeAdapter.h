@@ -2587,8 +2587,35 @@ inline CanonicalTypeImport importCanonicalClassSource(CanonicalTypeTable& table,
 		}
 		if (!pattern_owns_template && declaration->has_canonical_specialization_owner() &&
 			type_info != nullptr && type_info->baseTemplateName().isValid()) {
-			pending.published_arguments = type_info->templateArgs();
-			pending.use_published_arguments = true;
+			const TemplateDeclId member_specialization_owner = declaration->canonical_specialization_owner_template_decl_id();
+			const std::optional<OwnerId> owner = requireFrontendContext().templateDecls().primaryClassTemplateOwner(member_specialization_owner);
+			if (owner.has_value() && isTemplateOwnedOwnerId(*owner)) {
+				// A selected member partial carries owner bindings in
+				// outer_template_args and the actual member arguments on its TypeInfo.
+				// Compose them instead of flattening the member template-id into the
+				// member arguments alone.
+				const TemplateArgInfoVector& effective_arguments = declaration->outer_template_args();
+				const TemplateArgInfoVector& member_arguments = type_info->templateArgs();
+				if (effective_arguments.size() < member_arguments.size()) {
+					return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+				}
+				const size_t owner_argument_count = effective_arguments.size() - member_arguments.size();
+				TemplateArgInfoVector combined_arguments;
+				combined_arguments.reserve(effective_arguments.size());
+				for (size_t index = 0; index < owner_argument_count; ++index) {
+					combined_arguments.push_back(effective_arguments[index]);
+				}
+				for (const TypeInfo::TemplateArgInfo& member_argument : member_arguments) {
+					combined_arguments.push_back(member_argument);
+				}
+				if (const auto failure = configure_member_template_identity(
+					pending, *declaration, member_specialization_owner, combined_arguments)) {
+					return *failure;
+				}
+			} else {
+				pending.published_arguments = type_info->templateArgs();
+				pending.use_published_arguments = true;
+			}
 		}
 		if (!nested_entity) {
 			pending.arguments.reserve(pending.use_published_arguments ? pending.published_arguments.size() : declaration->outer_template_args().size());
