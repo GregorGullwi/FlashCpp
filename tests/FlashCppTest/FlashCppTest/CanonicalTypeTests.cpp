@@ -1512,7 +1512,7 @@ TEST_CASE("Partial specialization member pointer patterns retain published param
 		wrong_category.is_dependent = true;
 		const TemplateTypeArg arguments[] = {wrong_category};
 		CHECK_FALSE(tryImportCanonicalPartialClassPattern(context, primary, declaration.template_parameters(), arguments, {},
-			CanonicalPartialPatternOptions{false, false}));
+			CanonicalPartialPatternOptions{.allow_concept_constrained_parameters = false, .allow_non_type_literal_arguments = false}));
 	}
 	REQUIRE(forward_environment);
 	std::vector<TemplateDeclId> environments;
@@ -1621,7 +1621,8 @@ TEST_CASE("Partial pattern normalization keeps deep declarators off the native s
 	arguments[0].ordered_declarator.assign(4096, DeclaratorComponent::pointer(CVQualifier::Const));
 	const TemplateDeclId primary = context.templateDecls().publishPrimaryClassTemplate(OwnerId{1}, StringTable::getOrInternStringHandle("Deep"));
 	const std::optional<TypeId> pattern =
-		tryImportCanonicalPartialClassPattern(context, primary, parameters, arguments, {}, CanonicalPartialPatternOptions{false, false});
+		tryImportCanonicalPartialClassPattern(context, primary, parameters, arguments, {},
+			CanonicalPartialPatternOptions{.allow_concept_constrained_parameters = false, .allow_non_type_literal_arguments = false});
 	REQUIRE(pattern.has_value());
 	TypeId current = table.templateArgumentType(table.templateSpecializationArguments(*pattern));
 	for (size_t depth = 0; depth < 4096; ++depth) {
@@ -1657,14 +1658,14 @@ TEST_CASE("Nested partial normalization reclaims scratch and rejects unsupported
 	const size_t before = context.canonicalTypes().size();
 	const uint64_t scratch_before = context.scratchArena().currentBytes();
 	CHECK_FALSE(tryImportCanonicalPartialClassPattern(context, primary, parameters, arguments, mixed_syntax,
-		CanonicalPartialPatternOptions{false, false}));
+		CanonicalPartialPatternOptions{.allow_concept_constrained_parameters = false, .allow_non_type_literal_arguments = false}));
 	CHECK(context.canonicalTypes().size() == before);
 	CHECK(context.scratchArena().currentBytes() == scratch_before);
 	TypeSpecifierNode alias;
 	alias.set_alias_template_specialization(box, {leaf});
 	const ASTNode alias_syntax[] = {ASTNode::emplace_node<TypeSpecifierNode>(std::move(alias))};
 	CHECK_FALSE(tryImportCanonicalPartialClassPattern(context, primary, parameters, arguments, alias_syntax,
-		CanonicalPartialPatternOptions{false, false}));
+		CanonicalPartialPatternOptions{.allow_concept_constrained_parameters = false, .allow_non_type_literal_arguments = false}));
 	CHECK(context.canonicalTypes().size() == before);
 	CHECK(context.scratchArena().currentBytes() == scratch_before);
 	TypeSpecifierNode empty;
@@ -1674,7 +1675,7 @@ TEST_CASE("Nested partial normalization reclaims scratch and rejects unsupported
 	supported.set_template_specialization(box, {second_leaf, empty, leaf});
 	const ASTNode supported_syntax[] = {ASTNode::emplace_node<TypeSpecifierNode>(std::move(supported))};
 	const std::optional<TypeId> result = tryImportCanonicalPartialClassPattern(context, primary, parameters, arguments,
-		supported_syntax, CanonicalPartialPatternOptions{false, false});
+		supported_syntax, CanonicalPartialPatternOptions{.allow_concept_constrained_parameters = false, .allow_non_type_literal_arguments = false});
 	REQUIRE(result.has_value());
 	CHECK(context.scratchArena().currentBytes() == scratch_before);
 	CHECK(context.canonicalTypes().hasDependentTypeComponents(*result));
@@ -1717,7 +1718,7 @@ TEST_CASE("Nested partial normalization keeps deep syntax traversal off the nati
 	});
 	const uint64_t before = context.scratchArena().currentBytes();
 	const std::optional<TypeId> pattern = tryImportCanonicalPartialClassPattern(context, primary, parameters, arguments,
-		syntax_nodes, CanonicalPartialPatternOptions{false, false});
+		syntax_nodes, CanonicalPartialPatternOptions{.allow_concept_constrained_parameters = false, .allow_non_type_literal_arguments = false});
 	REQUIRE(pattern.has_value());
 	CHECK(context.scratchArena().currentBytes() == before);
 	CanonicalTypeTable& table = context.canonicalTypes();
