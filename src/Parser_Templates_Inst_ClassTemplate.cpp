@@ -36,38 +36,41 @@ static void preserveInstantiatedUnionGroups(StructTypeInfo& instance, const Stru
 
 static constexpr size_t kMaxAliasUnwrapIterations = 64;
 
-static std::pair<TemplateParameterVector, std::vector<TemplateTypeArg>> buildEffectivePartialSpecTemplateBindings(
+struct EffectivePartialSpecBindings {
+	TemplateParameterVector params;
+	std::vector<TemplateTypeArg> args;
+	bool has_outer_binding = false;
+};
+
+static EffectivePartialSpecBindings buildEffectivePartialSpecTemplateBindings(
 	std::string_view template_name, const TemplateParameterVector& template_params, std::span<const TemplateTypeArg> local_template_args) {
-	TemplateParameterVector effective_template_params;
-	std::vector<TemplateTypeArg> effective_template_args;
+	EffectivePartialSpecBindings effective;
 	const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(template_name);
-	if (outer_binding != nullptr) {
-		const bool has_outer_params = !outer_binding->params.empty();
-		effective_template_params.reserve((has_outer_params ? outer_binding->params.size() : outer_binding->param_names.size()) + template_params.size());
-		effective_template_args.reserve((has_outer_params ? outer_binding->all_args.size() : outer_binding->param_args.size()) +
-			local_template_args.size());
-		if (has_outer_params) {
-			for (const ASTNode& outer_param_node : outer_binding->params) {
-				if (const TemplateParameterNode* outer_param = tryGetTemplateParameterNode(outer_param_node)) {
-					effective_template_params.push_back(*outer_param);
-				}
-			}
-			effective_template_args.insert(effective_template_args.end(), outer_binding->all_args.begin(), outer_binding->all_args.end());
-		} else {
-			for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
-				effective_template_params.push_back(rebuildOuterTemplateParameter(outer_binding->param_names[i], outer_binding->param_args[i]));
-				effective_template_args.push_back(outer_binding->param_args[i]);
+	if (outer_binding == nullptr || (outer_binding->params.empty() && outer_binding->param_names.empty())) {
+		return effective;
+	}
+	effective.has_outer_binding = true;
+	const bool has_outer_params = !outer_binding->params.empty();
+	effective.params.reserve((has_outer_params ? outer_binding->params.size() : outer_binding->param_names.size()) + template_params.size());
+	effective.args.reserve((has_outer_params ? outer_binding->all_args.size() : outer_binding->param_args.size()) + local_template_args.size());
+	if (has_outer_params) {
+		for (const ASTNode& outer_param_node : outer_binding->params) {
+			if (const TemplateParameterNode* outer_param = tryGetTemplateParameterNode(outer_param_node)) {
+				effective.params.push_back(*outer_param);
 			}
 		}
+		effective.args.insert(effective.args.end(), outer_binding->all_args.begin(), outer_binding->all_args.end());
 	} else {
-		effective_template_params.reserve(template_params.size());
-		effective_template_args.reserve(local_template_args.size());
+		for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
+			effective.params.push_back(rebuildOuterTemplateParameter(outer_binding->param_names[i], outer_binding->param_args[i]));
+			effective.args.push_back(outer_binding->param_args[i]);
+		}
 	}
 	for (const TemplateParameterNode& template_param : template_params) {
-		effective_template_params.push_back(template_param);
+		effective.params.push_back(template_param);
 	}
-	effective_template_args.insert(effective_template_args.end(), local_template_args.begin(), local_template_args.end());
-	return std::pair<TemplateParameterVector, std::vector<TemplateTypeArg>>(std::move(effective_template_params), std::move(effective_template_args));
+	effective.args.insert(effective.args.end(), local_template_args.begin(), local_template_args.end());
+	return effective;
 }
 
 // Per-compilation instantiation budget shared by class and function templates.
@@ -3255,10 +3258,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 
-			const auto [effective_member_copy_template_params, effective_member_copy_template_args_storage] =
+			const EffectivePartialSpecBindings effective_bindings =
 				buildEffectivePartialSpecTemplateBindings(template_name, template_params, template_args_for_member_copy);
-			const std::span<const TemplateTypeArg> effective_member_copy_template_args(
-				effective_member_copy_template_args_storage.data(), effective_member_copy_template_args_storage.size());
+			const std::span<const TemplateParameterNode> effective_member_copy_template_params = effective_bindings.has_outer_binding
+				? std::span<const TemplateParameterNode>(effective_bindings.params.data(), effective_bindings.params.size())
+				: std::span<const TemplateParameterNode>(template_params.data(), template_params.size());
+			const std::span<const TemplateTypeArg> effective_member_copy_template_args = effective_bindings.has_outer_binding
+				? std::span<const TemplateTypeArg>(effective_bindings.args.data(), effective_bindings.args.size())
+				: template_args_for_member_copy;
 
 			// Copy members from pattern
 			FLASH_LOG(Templates, Trace, "Pattern struct '", pattern_struct.name(), "' has ", pattern_struct.members().size(), " members");
@@ -4253,7 +4260,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				template_args_for_member_copy;
 			StructTypeInfo* instantiated_struct_info_mut = struct_info;
 			const StructTypeInfo* instantiated_struct_info = instantiated_struct_info_mut;
-			const TemplateParameterVector& effective_pattern_template_params = effective_member_copy_template_params;
+			const std::span<const TemplateParameterNode> effective_pattern_template_params = effective_member_copy_template_params;
 			const std::span<const TemplateTypeArg> effective_pattern_template_args = effective_member_copy_template_args;
 
 			for (const auto& type_alias : pattern_struct.type_aliases()) {
