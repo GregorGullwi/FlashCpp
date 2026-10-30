@@ -189,19 +189,13 @@ directly. A future implementation should compute funclet return/throw summaries
 and use them at each invocation, preserving its individual continuation and
 exception context.
 
-## Deep aggregate initialization still uses native recursion
+## Deep aggregate braces still use native parser recursion
 
-The shared aggregate member-store emitter recursively descends into base
-subobjects, nested members, default member initializers, and struct array
-elements. Its array shape and initializer-list walks also use native recursion.
-Consequently, native stack usage grows with source aggregate nesting; the
-current parser also has recursive expression frames. Ordinary nested structs
-and array members work, but sufficiently deep inputs can exhaust the stack.
-
-A future refactor should use continuation frames on an explicit worklist for
-aggregate and array traversal together. Frames must resume each parent after
-its child finishes, preserving base, member, and array element initialization
-order, including constructor and default member initializer side effects.
+The aggregate member-store emitter now traverses bases, members, default member
+initializers, struct array elements, array shapes, initializer lists, and
+zero-fill with explicit continuation frames and worklists. Deeply nested
+initializer braces still recurse through parser expression frames, so
+sufficiently deep source nesting can still exhaust the native stack.
 
 ## WSL front end crashes while processing the libstdc++ `<typeinfo>` test
 
