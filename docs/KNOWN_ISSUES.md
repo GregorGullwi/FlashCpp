@@ -84,8 +84,11 @@ facts still fail closed. The partial-specialization parser gap above and nested
 anonymous-union hierarchy remain separate.
 
 Non-type-parameter and alias partial patterns still need substitutable canonical
-environments before dependent fields can import concretely. Published type-pack
-environments also need expansion inside member template-id type spellings.
+environments before dependent fields can import concretely. Direct concrete
+type-pack occurrences now expand in data-member template-ids targeting namespace
+templates or templates owned by non-template classes. Targets with an instantiated
+class-template owner and nontrivial expansion patterns such as `Wrapper<Tail>...`
+still need complete canonical publication. Callable pack expansion is separate.
 Member-pointer graphs containing opaque non-type specialization arguments fail
 closed: the canonical substitutor preserves those ExprIds and cannot replace a pattern argument such as `N` with
 its concrete value. Publish substitutable parameter/value identity before

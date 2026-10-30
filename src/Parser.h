@@ -2614,19 +2614,20 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		const ArgContainer& template_args,
 		TemplateParamNameVector& out_param_names,
 		OutArgContainer& out_args) const {
-		const size_t pair_count = std::min(template_params.size(), template_args.size());
 		out_param_names.clear();
 		out_args.clear();
-		out_param_names.reserve(pair_count);
-		out_args.reserve(pair_count);
-
-		for (size_t i = 0; i < pair_count; ++i) {
-			const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
-			if (param == nullptr) {
-				continue;
+		out_param_names.reserve(template_args.size());
+		out_args.reserve(template_args.size());
+		size_t argument_index = 0;
+		for (size_t parameter_index = 0; parameter_index < template_params.size(); ++parameter_index) {
+			const TemplateParameterNode* parameter = tryGetTemplateParameterNode(template_params[parameter_index]);
+			if (parameter == nullptr) continue;
+			const size_t count = parameter->is_variadic() ? countTemplatePackArguments(template_params, template_args, parameter_index, argument_index)
+				: static_cast<size_t>(argument_index < template_args.size());
+			for (size_t index = 0; index < count; ++index) {
+				out_param_names.push_back(parameter->nameHandle());
+				out_args.push_back(template_args[argument_index++]);
 			}
-			out_param_names.push_back(param->nameHandle());
-			out_args.push_back(template_args[i]);
 		}
 	}
 	template <typename ParamContainer, typename ArgContainer>
@@ -4712,6 +4713,8 @@ private:	 // Resume private methods
 		const TypeSpecifierNode& original_type,
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args);
+	TypeIndex substitute_template_parameter(const TypeSpecifierNode& original_type, std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args, bool expand_direct_type_packs);
 
 	enum class DependentAliasResolutionStatus {
 		NotApplicable,

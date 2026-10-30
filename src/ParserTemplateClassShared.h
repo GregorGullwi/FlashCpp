@@ -138,6 +138,33 @@ inline void normalizeSubstitutedTypeSpec(TypeSpecifierNode& type_spec) {
 	}
 }
 
+// Stamp already-materialized type arguments from their published primary and
+// owned argument facts. Dependent pack syntax stays unpublished until expansion.
+inline bool tryStampMaterializedClassTemplateType(TypeSpecifierNode& syntax, const TypeInfo& resolved) {
+	if (syntax.has_template_specialization() || !resolved.isTemplateInstantiation() || resolved.isDependentPlaceholder()) return false;
+	const StructTypeInfo* record = resolved.getStructInfo();
+	if (record == nullptr || record->declaration_node == nullptr) return false;
+	const StructDeclarationNode* pattern = record->declaration_node->injected_class_pattern_declaration();
+	if (pattern == nullptr || !pattern->has_template_decl_id()) return false;
+	FrontendContext& context = requireFrontendContext();
+	const auto owner = context.templateDecls().primaryClassTemplateOwner(pattern->template_decl_id());
+	if (!owner.has_value() || isTemplateOwnedOwnerId(*owner)) return false;
+	CanonicalTypeTransaction transaction(context.canonicalTypes());
+	std::vector<TypeSpecifierNode> arguments;
+	arguments.reserve(resolved.templateArgs().size());
+	for (const TypeInfo::TemplateArgInfo& argument : resolved.templateArgs()) {
+		if (argument.is_pack || argument.is_value || argument.is_template_template_arg || argument.dependent_name.isValid()) return false;
+		auto type = makeTypeSpecifierFromTemplateArgInfo(argument, syntax.token());
+		if (!type.has_value()) return false;
+		tryBindPublishedTypeEntity(*type);
+		if (!tryImportSupportedCanonical(context.canonicalTypes(), *type).has_value()) return false;
+		arguments.push_back(std::move(*type));
+	}
+	syntax.set_template_specialization(pattern->template_decl_id(), std::move(arguments));
+	transaction.commit();
+	return true;
+}
+
 inline int getSubstitutedTypeSizeBits(TypeIndex substituted_type_index) {
 	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(substituted_type_index);
 	TypeIndex size_type_index = resolved_alias.type_index.is_valid()

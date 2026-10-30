@@ -1063,6 +1063,7 @@ std::string_view Parser::get_instantiated_class_name(std::string_view template_n
 		std::string_view owner_name = template_name.substr(0, last_colon);
 		bool has_templated_class_owner = false;
 		size_t raw_param_count = 0;
+		bool has_type_pack = false;
 		if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 			template_opt.has_value() &&
 			template_opt->is<TemplateClassDeclarationNode>()) {
@@ -1071,10 +1072,11 @@ std::string_view Parser::get_instantiated_class_name(std::string_view template_n
 					.template_parameters()
 					.size();
 			has_templated_class_owner = hasTemplatedClassOwner(template_name);
+			has_type_pack = std::ranges::any_of(template_opt->as<TemplateClassDeclarationNode>().template_parameters(),
+				[](const TemplateParameterNode& parameter) { return parameter.kind() == TemplateParameterKind::Type && parameter.is_variadic(); });
 		}
 
-		if (has_templated_class_owner &&
-			template_args.size() <= raw_param_count) {
+		if (has_templated_class_owner && (template_args.size() <= raw_param_count || has_type_pack)) {
 			const OuterTemplateBinding* outer_binding =
 				gTemplateRegistry.getOuterTemplateBinding(template_name);
 			std::optional<OuterTemplateBinding> synthesized_outer_binding;
