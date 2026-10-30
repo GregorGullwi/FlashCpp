@@ -7226,6 +7226,61 @@ int main() { return 0; }
 		table.builtin(CanonicalBuiltinKind::LongLong));
 }
 
+TEST_CASE("Member class-template partial patterns publish canonical environments") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+template<class T> struct Owner {
+	template<class U> struct Box { U value; };
+	template<class U> struct Box<U*> { U* pointer; int tag; };
+};
+int main() { return 0; }
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("member_partial_environment.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	const auto box_entry = gTemplateRegistry.lookupTemplate("Owner::Box");
+	REQUIRE(box_entry.has_value());
+	REQUIRE(box_entry->is<TemplateClassDeclarationNode>());
+	const TemplateDeclId box_primary = box_entry->as<TemplateClassDeclarationNode>().template_decl_id();
+	REQUIRE(box_primary);
+	TypeSpecifierNode int_pointer(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	int_pointer.add_pointer_level(CVQualifier::None);
+	const TemplateTypeArg concrete_argument(int_pointer);
+	const auto pattern_match = gTemplateRegistry.matchSpecializationPatternWithBindings("Owner::Box",
+		std::span<const TemplateTypeArg>(&concrete_argument, 1));
+	REQUIRE(pattern_match.has_value());
+	REQUIRE(pattern_match->node.is<TemplateClassDeclarationNode>());
+	const StructDeclarationNode& pattern = pattern_match->node.as<TemplateClassDeclarationNode>().class_decl_node();
+	const TemplateDeclId environment = pattern.partial_specialization_environment();
+	REQUIRE(environment);
+	CHECK(environment != box_primary);
+	CHECK_FALSE(pattern.has_template_decl_id());
+	REQUIRE(pattern.members().size() == 2);
+	const TypeSpecifierNode& field = pattern.members()[0].declaration.as<DeclarationNode>().type_specifier_node();
+	CHECK(field.has_template_parameter_decl());
+	CHECK(field.template_decl_id() == environment);
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const TypeId imported_field = importCanonicalStructMemberType(table, field);
+	REQUIRE(imported_field);
+	CHECK(table.hasDependentTypeComponents(imported_field));
+	CHECK(table.dependsOnlyOnTemplateParameters(imported_field, environment));
+	const TypeId deduced_argument = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId concrete_arguments[] = {deduced_argument};
+	CHECK(table.substitute(imported_field, environment, concrete_arguments) == table.pointer(deduced_argument));
+	const TypeId expected_pattern = table.templateSpecialization(box_primary,
+		std::array<TypeId, 1>{table.pointer(table.templateParameter(box_primary, 0))});
+	const size_t declarations_before = context.templateDecls().size();
+	CHECK(context.templateDecls().publishClassPartialEnvironment(box_primary, expected_pattern) == environment);
+	CHECK(context.templateDecls().size() == declarations_before);
+}
+
 TEST_CASE("Nested structural NTTP member pointers bind the specialized target owner") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

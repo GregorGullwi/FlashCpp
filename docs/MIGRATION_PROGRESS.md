@@ -8,16 +8,15 @@ implementation history belongs in git and the regression suite.
 
 ## Next 3A slice
 
-**Member class-template partial-pattern environment.** Selected member
-class-template partial instantiations now compose the instantiated owner with the
-actual member arguments, so `Owner<short>::Box<int*>` and
-`Owner<long long>::Box<int*>` keep distinct owners while repeated uses intern.
-Member partial-pattern environment publication and partial bodies whose members
-depend on enclosing template parameters remain deferred. Constrained,
-pack, non-type, and alias partials, and other dependent member forms remain
-deferred as well. Keep opaque non-type arguments fail-closed until their identity
-can substitute. Do not recover identity by spelling or generated name, and do not
-add evaluator or selection rules.
+**Member class-template partial body substitution.** Member partial patterns now
+publish a canonical partial environment before their base and body parse, so
+member field identities anchor to the pattern's own `TemplateDeclId` and
+substitute through that environment. Partial member bodies whose fields depend on
+enclosing template parameters still copy members with only the deduced local
+bindings and remain deferred. Constrained, pack, non-type, and alias partials,
+and other dependent member forms remain deferred as well. Keep opaque non-type
+arguments fail-closed until their identity can substitute. Do not recover identity
+by spelling or generated name, and do not add evaluator or selection rules.
 
 The preceding slices are complete. Class-template-owned member specializations
 now pack the instantiated owner TypeId beside the member arguments, distinguishing
@@ -28,6 +27,8 @@ and `tests/test_canonical_nested_member_template_owner_chain_ret0.cpp` covers th
 source path. Selected member partial instantiations use the same composition with
 their effective owner bindings and actual member arguments;
 `tests/test_canonical_member_partial_owner_chain_ret0.cpp` covers the source path.
+Member partial patterns publish their canonical environment before body parse;
+`CanonicalTypeTests.cpp` covers the environment, field identity, and substitution.
 Selected partial specializations also parse and publish their nested class
 declarations with direct members, type aliases, base layout, and preserved
 pointer-owner identity;
@@ -82,8 +83,11 @@ remain separately observable. Nested member class templates recursively compose
 each template-owned enclosing pattern, preserving the complete owner chain.
 Selected member partial instantiations recover effective owner bindings from the
 instantiated declaration and compose them with the actual member arguments on
-their TypeInfo. Class-owned member specializations already encode their owner in
-the member `TemplateDeclId`. Source-level nested declarations under partial
+their TypeInfo. Member partial patterns publish a canonical environment before
+their base and body parse, so in-pattern member identities anchor to the pattern
+instead of the primary or enclosing template. Class-owned member specializations
+already encode their owner in the member `TemplateDeclId`. Source-level nested
+declarations under partial
 specializations are parsed and registered. The importer remains fail-closed for
 missing, mismatched, unpublished, or unresolved owner facts.
 
@@ -166,9 +170,8 @@ These seed adjacent slices; the authoritative inventory is
   advanced nested-body effects still need the full instantiated-owner path.
 - Class-template-owned direct, nested, and selected partial member
   specializations compose the full owner chain and keep member arguments
-  separate. Member partial-pattern environment publication, partial bodies that
-  depend on enclosing parameters, and dependent owner/member argument forms
-  remain deferred.
+  separate. Member partial bodies that depend on enclosing parameters, and
+  dependent owner/member argument forms, remain deferred.
 - Non-null object pointer target identity, ambiguous/virtual-base member
   pointers, unpublished dependent bases, and the nested
   anonymous-union-in-anonymous-union hierarchy still need canonical subobject

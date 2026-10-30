@@ -6220,6 +6220,25 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			&class_template_opt->as<TemplateClassDeclarationNode>().class_decl_node();
 		struct_parsing_context_stack_.push_back(partial_member_struct_context);
 
+		// Publish the canonical partial environment before the base/body parse so
+		// member type identities inside the pattern anchor to this pattern rather
+		// than the primary or the enclosing class template.
+		std::optional<TemplateDeclId> partial_environment;
+		FlashCpp::ScopedState partial_environment_guard(active_template_decl_id_);
+		const TemplateClassDeclarationNode& partial_primary = class_template_opt->as<TemplateClassDeclarationNode>();
+		if (!requires_clause.has_value() && partial_primary.has_template_decl_id()) {
+			FrontendContext& front_end = requireFrontendContext();
+			const std::optional<TypeId> pattern = tryImportCanonicalPartialClassPattern(front_end, partial_primary.template_decl_id(),
+				std::span<const TemplateParameterNode>(template_param_nodes.data(), template_param_nodes.size()),
+				std::span<const TemplateTypeArg>(pattern_args.data(), pattern_args.size()), pattern_arg_syntax_nodes);
+			if (pattern.has_value()) {
+				const TemplateDeclId environment = front_end.templateDecls().publishClassPartialEnvironment(partial_primary.template_decl_id(), *pattern);
+				member_struct_ref.set_partial_specialization_environment(environment);
+				active_template_decl_id_ = environment;
+				partial_environment = environment;
+			}
+		}
+
 		// Parse base class list if present (e.g., : List<Rest...>)
 		if (peek() == ":"_tok) {
 			advance();  // consume ':'
@@ -6241,6 +6260,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// Set template context flags so static_assert deferral works correctly
 		FlashCpp::ScopedState guard_tpn_partial(currentTemplateParamState());
 		pushMemberStructTemplateParameters();
+		if (partial_environment.has_value()) {
+			bindCurrentUnpublishedTemplateParameters(*partial_environment);
+		}
 		FlashCpp::TemplateDepthGuard guard_ptb_partial(parsing_template_depth_);
 
 		while (!peek().is_eof() && peek() != "}"_tok) {
