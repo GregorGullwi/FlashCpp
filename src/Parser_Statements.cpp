@@ -2040,143 +2040,17 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	// one outermost element at a time.
 	const bool ordered_array_object = orderedDeclaratorIsArrayObject(type_specifier) && !type_specifier.is_array();
 	if (type_specifier.is_array() || ordered_array_object) {
-		// Get the array size if specified
-		const bool has_unsized_outer_dimension = type_specifier.has_unsized_outer_array_dimension();
-		std::optional<size_t> array_size;
-		if (!has_unsized_outer_dimension) {
-			array_size = type_specifier.array_size();
-		}
-		size_t element_count = 0;
-		// Once any scalar (non-'{') element has been parsed in a multi-dim list the list is in
-		// fully-flat brace-elision mode. Locking this flag prevents the per-element limit from
-		// incorrectly switching back to the outer dimension limit when a later element happens
-		// to be a nested '{' initializer (mixed brace-init form).
-		bool saw_scalar = false;
-
-		// For multi-dimensional arrays, compute the total flattened element count to support
-		// C++20 brace-elision (e.g., int[2][3] = {1,2,3,4,5,6} distributes scalars across rows).
-		std::optional<size_t> flat_total_size;
-		if (!has_unsized_outer_dimension && type_specifier.array_dimension_count() > 1 && array_size.has_value()) {
-			size_t total = 1;
-			for (size_t d : type_specifier.array_dimensions())
-				total *= d;
-			flat_total_size = total;
-		}
-
-		// Build the element type specifier for nested brace-init.
-		// For multi-dimensional arrays (e.g., int[2][3]), the element type is the remaining
-		// array type (int[3]), not a plain scalar.  For single-dimension arrays, clear the
-		// array flag so nested {…} is parsed as a struct (aggregate) initializer.
-		TypeSpecifierNode element_type_spec = type_specifier;
-		if (ordered_array_object) {
-			const DeclaratorComponent& outer = type_specifier.declarator_components().front();
-			if (outer.kind == DeclaratorComponentKind::Array && outer.payload != 0) {
-				array_size = static_cast<size_t>(outer.payload);
-			}
-			element_type_spec.remove_outermost_ordered_declarator_component();
-		} else if (has_unsized_outer_dimension) {
-			element_type_spec.set_unsized_outer_array_dimension(false);
-		} else if (type_specifier.array_dimension_count() > 1) {
-			// Multi-dimensional: element type has the remaining dimensions
-			std::vector<size_t> elem_dims(
-				type_specifier.array_dimensions().begin() + 1,
-				type_specifier.array_dimensions().end());
-			element_type_spec.set_array_dimensions(elem_dims);
-		} else {
-			element_type_spec.set_array(false);
-		}
-
-		// Parse comma-separated initializer expressions
-		while (true) {
-			// Check if we've reached the end of the initializer list
-			if (peek() == "}"_tok) {
-				break;
-			}
-
-			// Check if we have too many initializers.
-			// For multi-dimensional arrays with flat brace-elision (next token is a scalar, not '{'),
-			// allow up to the total flattened count; otherwise use the outer dimension as the limit.
-			// Once a scalar has been seen (saw_scalar), lock in flat mode to avoid false rejections
-			// in mixed brace-init lists (e.g. int arr[2][3] = {1, 2, 3, {4, 5, 6}}).
-			// NOTE: Fully-flat brace-elision (all scalars) and fully-nested form (each inner array
-			// in its own {…}) both work correctly.  Mixed form is a known limitation of the evaluator
-			// but the parser now accepts it without a spurious "too many initializers" error.
-			if (array_size.has_value()) {
-				if (flat_total_size.has_value() && peek() != "{"_tok) {
-					saw_scalar = true;
-				}
-				size_t limit = (flat_total_size.has_value() && saw_scalar)
-								   ? *flat_total_size
-								   : *array_size;
-				if (element_count >= limit) {
-					return error(DiagnosticId::TooManyInitializers, current_token_, "Too many initializers for array");
-				}
-			}
-
-			ParseResult init_expr_result;
-			// If the next token is '{', parse it as a nested brace initializer for the element
-			// (handles both struct elements and scalar elements with redundant braces like {{1}}).
-			if (peek() == "{"_tok) {
-				init_expr_result = parse_brace_initializer(element_type_spec);
-			} else {
-				// Parse the initializer expression with precedence > comma operator (precedence 1)
-				// This prevents comma from being treated as an operator in initializer lists
-				init_expr_result = parse_expression(2, ExpressionContext::Normal);
-			}
-			if (init_expr_result.is_error()) {
-				return init_expr_result;
-			}
-
-			// Add the initializer to the list
-			if (init_expr_result.node().has_value()) {
-				ASTNode element_node = *init_expr_result.node();
-				// Check for pack expansion (...) after the element, e.g. {args...}
-				if (peek() == "..."_tok) {
-					Token ellipsis_token = peek_info();
-					advance();
-					element_node = emplace_node<ExpressionNode>(
-						PackExpansionExprNode(element_node, ellipsis_token));
-				}
-				init_list_ref.add_initializer(element_node);
-			} else {
-				return ParseResult::error("Expected initializer expression", current_token_);
-			}
-
-			element_count++;
-
-			// Check for comma or end of list
-			if (peek() == ","_tok) {
-				advance(); // consume the comma
-
-				// Allow trailing comma before '}'
-				if (peek() == "}"_tok) {
-					break;
-				}
-			} else {
-				// No comma, so we should be at the end
-				break;
-			}
-		}
-
-		if (!consume("}"_tok)) {
-			return ParseResult::error("Expected '}' to close brace initializer", current_token_);
-		}
-
-		// [dcl.init.aggr]: an array of unknown bound is defined as having n
-		// elements only when the brace list contains n > 0 clauses.
-		if (ordered_array_object && element_count == 0 && !type_specifier.declarator_components().empty() && type_specifier.declarator_components().front()
-			.kind == DeclaratorComponentKind::UnknownBoundArray) {
-			return error(DiagnosticId::EmptyUnknownBoundArrayInitializer, brace_token, "An array of unknown bound requires at least one initializer clause");
-		}
-
-		return ParseResult::success(init_list_node);
+		return parse_array_brace_initializer(type_specifier, brace_token);
 	}
 
 	// Handle scalar type brace initialization (C++11): int x = {10}; or int x{};
 	// For scalar types, braced initializer should have exactly one element or be empty (value initialization)
 	// Note: Template instantiations are stored as TypeCategory::UserDefined, so we need to check if it's a struct-like type
 	bool is_struct_like_type = (type_specifier.category() == TypeCategory::Struct);
-	const bool is_user_defined_category = (type_specifier.category() == TypeCategory::UserDefined || type_specifier.category() == TypeCategory::TypeAlias || type_specifier.category() == TypeCategory::Template);
+	const bool is_user_defined_category =
+		type_specifier.category() == TypeCategory::UserDefined ||
+		type_specifier.category() == TypeCategory::TypeAlias ||
+		type_specifier.category() == TypeCategory::Template;
 	if (!is_struct_like_type && is_user_defined_category) {
 		TypeIndex type_index = type_specifier.type_index();
 		if (const TypeInfo* type_info = tryGetTypeInfo(type_index); type_info && type_info->getStructInfo()) {
@@ -2718,6 +2592,167 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	}
 
 	return ParseResult::success(init_list_node);
+}
+
+ParseResult Parser::parse_array_brace_initializer(const TypeSpecifierNode& type_specifier, const Token& root_brace_token) {
+	struct ArrayContext {
+		TypeSpecifierNode element_type_spec;
+		Token brace_token;
+		bool ordered_array_object = false;
+		bool has_unsized_outer_dimension = false;
+		bool unknown_bound_array = false;
+		std::optional<size_t> array_size;
+		std::optional<size_t> flat_total_size;
+		size_t element_count = 0;
+		bool saw_scalar = false;
+		ASTNode init_list_node;
+		InitializerListNode* init_list = nullptr;
+	};
+
+	auto make_context = [&](const TypeSpecifierNode& spec, const Token& brace_token) {
+		ArrayContext context;
+		context.brace_token = brace_token;
+		context.ordered_array_object = orderedDeclaratorIsArrayObject(spec) && !spec.is_array();
+		context.has_unsized_outer_dimension = spec.has_unsized_outer_array_dimension();
+		if (!context.has_unsized_outer_dimension) {
+			context.array_size = spec.array_size();
+		}
+		if (!context.has_unsized_outer_dimension && spec.array_dimension_count() > 1 && context.array_size.has_value()) {
+			size_t total = 1;
+			for (size_t dimension : spec.array_dimensions()) {
+				total *= dimension;
+			}
+			context.flat_total_size = total;
+		}
+		context.element_type_spec = spec;
+		if (context.ordered_array_object) {
+			const DeclaratorComponent& outer = spec.declarator_components().front();
+			context.unknown_bound_array = outer.kind == DeclaratorComponentKind::UnknownBoundArray;
+			if (outer.kind == DeclaratorComponentKind::Array && outer.payload != 0) {
+				context.array_size = static_cast<size_t>(outer.payload);
+			}
+			context.element_type_spec.remove_outermost_ordered_declarator_component();
+		} else if (context.has_unsized_outer_dimension) {
+			context.element_type_spec.set_unsized_outer_array_dimension(false);
+		} else if (spec.array_dimension_count() > 1) {
+			std::vector<size_t> element_dimensions(
+				spec.array_dimensions().begin() + 1, spec.array_dimensions().end());
+			context.element_type_spec.set_array_dimensions(element_dimensions);
+		} else {
+			context.element_type_spec.set_array(false);
+		}
+		auto [node, ref] = create_node_ref(InitializerListNode());
+		context.init_list_node = node;
+		context.init_list = &ref;
+		return context;
+	};
+
+	auto add_element_and_consume_comma = [&](ArrayContext& context, ASTNode element_node) {
+		if (peek() == "..."_tok) {
+			Token ellipsis_token = peek_info();
+			advance();
+			element_node = emplace_node<ExpressionNode>(PackExpansionExprNode(element_node, ellipsis_token));
+		}
+		context.init_list->add_initializer(element_node);
+		context.element_count++;
+		if (peek() == ","_tok) {
+			advance();
+			if (peek() == "}"_tok) {
+				return true;
+			}
+			return true;
+		}
+		return peek() == "}"_tok;
+	};
+
+	FlashCpp::InlineVector<ArrayContext, FlashCpp::InlineVectorSpillFamily::AggregateInitialization, 2> contexts;
+	contexts.push_back(make_context(type_specifier, root_brace_token));
+
+	while (!contexts.empty()) {
+		ArrayContext& context = contexts.back();
+		if (peek() == "}"_tok) {
+			const bool ordered_array_object = context.ordered_array_object;
+			const bool unknown_bound_array = context.unknown_bound_array;
+			const size_t element_count = context.element_count;
+			const Token brace_token = context.brace_token;
+			ASTNode completed = context.init_list_node;
+			if (!consume("}"_tok)) {
+				return ParseResult::error("Expected '}' to close brace initializer", current_token_);
+			}
+			contexts.pop_back();
+			if (contexts.empty()) {
+				if (ordered_array_object && element_count == 0 && unknown_bound_array) {
+					return error(DiagnosticId::EmptyUnknownBoundArrayInitializer, brace_token,
+						"An array of unknown bound requires at least one initializer clause");
+				}
+				return ParseResult::success(completed);
+			}
+			if (peek() == "..."_tok) {
+				Token ellipsis_token = peek_info();
+				advance();
+				completed = emplace_node<ExpressionNode>(PackExpansionExprNode(completed, ellipsis_token));
+			}
+			ArrayContext& parent = contexts.back();
+			parent.init_list->add_initializer(completed);
+			parent.element_count++;
+			if (peek() == ","_tok) {
+				advance();
+				continue;
+			}
+			if (peek() != "}"_tok) {
+				return ParseResult::error("Expected ',' or '}' after initializer", current_token_);
+			}
+			continue;
+		}
+
+		if (context.array_size.has_value()) {
+			if (context.flat_total_size.has_value() && peek() != "{"_tok) {
+				context.saw_scalar = true;
+			}
+			const size_t limit = (context.flat_total_size.has_value() && context.saw_scalar)
+									 ? *context.flat_total_size
+									 : *context.array_size;
+			if (context.element_count >= limit) {
+				return error(DiagnosticId::TooManyInitializers, current_token_, "Too many initializers for array");
+			}
+		}
+
+		if (peek() == "{"_tok) {
+			const bool nested_array =
+				context.element_type_spec.is_array() ||
+				orderedDeclaratorIsArrayObject(context.element_type_spec);
+			if (nested_array) {
+				const Token nested_brace_token = peek_info();
+				advance();
+				contexts.push_back(make_context(context.element_type_spec, nested_brace_token));
+				continue;
+			}
+			ParseResult nested = parse_brace_initializer(context.element_type_spec);
+			if (nested.is_error()) {
+				return nested;
+			}
+			if (!nested.node().has_value()) {
+				return ParseResult::error("Expected initializer expression", current_token_);
+			}
+			if (!add_element_and_consume_comma(context, *nested.node())) {
+				return ParseResult::error("Expected ',' or '}' after initializer", current_token_);
+			}
+			continue;
+		}
+
+		ParseResult expression = parse_expression(2, ExpressionContext::Normal);
+		if (expression.is_error()) {
+			return expression;
+		}
+		if (!expression.node().has_value()) {
+			return ParseResult::error("Expected initializer expression", current_token_);
+		}
+		if (!add_element_and_consume_comma(context, *expression.node())) {
+			return ParseResult::error("Expected ',' or '}' after initializer", current_token_);
+		}
+	}
+
+	return ParseResult::error("Expected '}' to close brace initializer", current_token_);
 }
 
 bool Parser::try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const InitializerListNode& init_list) {
