@@ -3413,7 +3413,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					const ConstructorDeclarationNode& orig_ctor = mem_func.function_declaration.as<ConstructorDeclarationNode>();
 					auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
 						instantiated_name, orig_ctor.name());
-					setOuterTemplateBindingsFromParams(new_ctor_ref, template_params, template_args_for_member_copy);
+					setOuterTemplateBindingsFromParams(new_ctor_ref, effective_member_copy_template_params, effective_member_copy_template_args);
 					if (orig_ctor.has_template_parameters()) {
 						new_ctor_ref.set_template_parameters(orig_ctor.template_parameters());
 					}
@@ -3425,23 +3425,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 					size_t saved_pack_info = pack_param_info_.size();
-					substituteAndCopyParams(
-						orig_ctor.parameter_nodes(),
-						new_ctor_ref,
-						template_params,
-						template_args_for_member_copy,
-						makeCurrentInstantiationTypeRewrite(
-							orig_ctor,
-							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct)));
+					substituteAndCopyParams(orig_ctor.parameter_nodes(), new_ctor_ref, effective_member_copy_template_params, effective_member_copy_template_args,
+						makeCurrentInstantiationTypeRewrite(orig_ctor, struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct)));
 					const std::vector<PackParamInfo> ctor_pack_param_info = pack_param_info_;
-					substituteAndCopyInitializers(
-						orig_ctor,
-						new_ctor_ref,
-						template_params,
-						template_args_for_member_copy,
-						std::span<const PackParamInfo>(
-							ctor_pack_param_info.data(),
-							ctor_pack_param_info.size()));
+					substituteAndCopyInitializers(orig_ctor, new_ctor_ref, effective_member_copy_template_params, effective_member_copy_template_args,
+						std::span<const PackParamInfo>(ctor_pack_param_info.data(), ctor_pack_param_info.size()));
 					if (orig_ctor.is_materialized()) {
 						deferred_member_body_substitutions.push_back({
 							new_ctor_node,
@@ -3450,13 +3438,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							true});
 					}
 					pack_param_info_.resize(saved_pack_info);
-					copyInstantiatedConstructorDeclarationFlags(orig_ctor, new_ctor_ref, template_params, template_args_for_member_copy);
-					materializeInstantiatedConstructorNoexcept(new_ctor_ref, orig_ctor, template_params, template_args_for_member_copy);
+					copyInstantiatedConstructorDeclarationFlags(orig_ctor, new_ctor_ref, effective_member_copy_template_params, effective_member_copy_template_args);
+					materializeInstantiatedConstructorNoexcept(new_ctor_ref, orig_ctor, effective_member_copy_template_params, effective_member_copy_template_args);
 					struct_info->addConstructor(new_ctor_node, mem_func.access);
-					registerSourceMemberStructInfoIndex(
-						struct_info_member_identity_maps,
-						mem_func.function_declaration,
-						struct_info->member_functions.size() - 1);
+					registerSourceMemberStructInfoIndex(struct_info_member_identity_maps, mem_func.function_declaration, struct_info->member_functions.size() - 1);
 				} else if (mem_func.is_destructor) {
 					// Handle destructor
 					struct_info->addDestructor(
@@ -3488,10 +3473,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							mem_func.is_override,
 							mem_func.is_final);
 					}
-					registerSourceMemberStructInfoIndex(
-						struct_info_member_identity_maps,
-						mem_func.function_declaration,
-						struct_info->member_functions.size() - 1);
+					registerSourceMemberStructInfoIndex(struct_info_member_identity_maps, mem_func.function_declaration, struct_info->member_functions.size() - 1);
 				} else {
 					const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
 					const DeclarationNode& orig_decl = orig_func.decl_node();
@@ -3501,8 +3483,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						orig_decl.type_node(),
 						orig_decl.identifier_token(),
 						instantiated_name,
-						template_params,
-						template_args_for_member_copy,
+						effective_member_copy_template_params,
+						effective_member_copy_template_args,
 						&pattern_struct,
 						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 						TypeIndex{}, // No pre-resolved return TypeIndex override
@@ -3518,8 +3500,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituteAndCopyMemberFunctionParameters(
 						orig_func.parameter_nodes(),
 						new_func_ref,
-						template_params,
-						template_args_for_member_copy,
+						effective_member_copy_template_params,
+						effective_member_copy_template_args,
 						&pattern_struct,
 						TypeIndex{},
 						TypeIndex{},
@@ -3530,7 +3512,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						false, // Do not force resolved TypeIndex onto full AST substitutions
 						true); // Preserve dependent member-template signature identity for replay
 
-					copy_function_properties(new_func_ref, orig_func, template_params, template_args_for_member_copy);
+					copy_function_properties(new_func_ref, orig_func, effective_member_copy_template_params, effective_member_copy_template_args);
 					// Ensure is_const_member_function is set from pattern so propagateAstProperties derives cv_qualifier.
 					new_func_ref.set_is_const_member_function(mem_func.is_const());
 					new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
@@ -3558,10 +3540,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.operator_kind,
 						mem_func.is_const(),
 						mem_func.is_volatile()});
-					registerSourceMemberStructInfoIndex(
-						struct_info_member_identity_maps,
-						mem_func.function_declaration,
-						struct_info->member_functions.size() - 1);
+					registerSourceMemberStructInfoIndex(struct_info_member_identity_maps, mem_func.function_declaration, struct_info->member_functions.size() - 1);
 					// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
 				}
 			}
@@ -4535,16 +4514,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					original_declaration.type_specifier_node();
 				TypeIndex return_type_index = substitute_template_parameter(
 					original_return_type,
-					template_params,
-					template_args_for_member_copy);
+					effective_member_copy_template_params,
+					effective_member_copy_template_args);
 				return_type_index = resolveOwnerAliasTypeIndex(
 					[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
 						return substitute_template_parameter(type_spec, params, args);
 					},
 					pattern_struct,
 					original_return_type,
-					template_params,
-					template_args_for_member_copy,
+					effective_member_copy_template_params,
+					effective_member_copy_template_args,
 					return_type_index,
 					instantiated_owner_type_index);
 				SubstitutedMemberFunctionShell shell = createSubstitutedMemberFunctionShell(
@@ -4552,8 +4531,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					original_declaration.type_node(),
 					original_declaration.identifier_token(),
 					instantiated_name,
-					template_params,
-					template_args_for_member_copy,
+					effective_member_copy_template_params,
+					effective_member_copy_template_args,
 					&pattern_struct,
 					instantiated_owner_type_index,
 					return_type_index,
@@ -4567,8 +4546,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				substituteAndCopyMemberFunctionParameters(
 					original_function.parameter_nodes(),
 					replacement_function,
-					template_params,
-					template_args_for_member_copy,
+					effective_member_copy_template_params,
+					effective_member_copy_template_args,
 					&pattern_struct,
 					instantiated_owner_type_index,
 					TypeIndex{},
@@ -4578,7 +4557,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					false,
 					true,
 					true);
-				copy_function_properties(replacement_function, original_function, template_params, template_args_for_member_copy);
+				copy_function_properties(replacement_function, original_function, effective_member_copy_template_params, effective_member_copy_template_args);
 				replacement_function.set_is_const_member_function(deferred_signature.is_const);
 				replacement_function.set_is_volatile_member_function(deferred_signature.is_volatile);
 				pack_param_info_.resize(saved_pack_info);
@@ -4611,8 +4590,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				ASTNode substituted_body = substituteTemplateParameters(
 					deferred_body.source,
-					template_params,
-					template_args_for_member_copy,
+					effective_member_copy_template_params,
+					effective_member_copy_template_args,
 					struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 					!deferred_body.is_constructor && !deferred_body.is_static,
 					&pattern_struct);

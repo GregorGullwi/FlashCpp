@@ -8,42 +8,23 @@ implementation history belongs in git and the regression suite.
 
 ## Next 3A slice
 
-**Outer-dependent member function signatures.** Member partial method bodies now
-substitute enclosing template parameters from the effective owner bindings, so a
-body that names the outer parameter no longer leaves it unresolved. Member
-function signatures whose parameter or return types use outer parameters, pack
-expansions inside member type spellings, non-type-parameter, alias, and
-trailing-requires member partials, and other dependent member forms remain
-deferred. Keep opaque and dependent non-type arguments fail-closed until their
-identity can substitute. Do not recover identity by spelling or generated name,
-and do not add evaluator or selection rules.
+**Pack expansions inside member type spellings.** Member partial patterns now
+publish pack parameter environments, but a data-member template-id such as
+`List<Head, Tail...>` still needs substitution of the expansion into ordered
+canonical type arguments. Start with concrete type packs in selected member
+partials: retain the declared pack's canonical environment/slot, expand its
+bound arguments in order, and preserve the instantiated enclosing owner TypeId.
+Add empty, single-element, and multi-element pack regressions, alias-equivalence and
+owner-separation guards, and mutation checks before enabling publication. Keep
+unbound packs and opaque/dependent non-type arguments fail-closed. Non-type and
+alias partial patterns, callable-component pack expansions, trailing-requires
+member partials, and nested method emission remain separate work. Do not add
+evaluator or selection rules or recover identity by spelling/generated name.
 
-The preceding slices are complete. Class-template-owned member specializations
-now pack the instantiated owner TypeId beside the member arguments, distinguishing
-same-spelling members under different owner arguments while keeping owner and
-member arguments separately observable. Nested member class templates compose
-the same way at every nesting level. Native coverage is in `CanonicalTypeTests.cpp`,
-and `tests/test_canonical_nested_member_template_owner_chain_ret0.cpp` covers the
-source path. Selected member partial instantiations use the same composition with
-their effective owner bindings and actual member arguments;
-`tests/test_canonical_member_partial_owner_chain_ret0.cpp` covers the source path.
-Member partial patterns publish their canonical environment before body parse;
-`CanonicalTypeTests.cpp` covers the environment, field identity, and substitution.
-Member partial data members substitute effective owner plus local bindings;
-`tests/test_canonical_member_partial_outer_body_ret0.cpp` covers the source path.
-Concept-constrained type parameters and concrete non-type literal arguments on
-member partial patterns publish their environments; `CanonicalTypeTests.cpp`
-covers both patterns and substitution. Pack member partial patterns publish
-parameter environments and substitute non-pack members; `CanonicalTypeTests.cpp`
-covers the pack environment and head substitution. Member partial method bodies
-substitute effective owner bindings;
-`tests/test_canonical_member_partial_outer_method_param_ret0.cpp` covers the
-source path.
-Selected partial specializations also parse and publish their nested class
-declarations with direct members, type aliases, base layout, and preserved
-pointer-owner identity;
-`tests/test_selected_partial_nested_class_lookup_ret0.cpp` covers the source
-path.
+Direct member partial signatures and bodies now share effective owner-plus-local
+bindings with data members. `test_canonical_member_partial_outer_signature_ret0.cpp`
+covers constructors, references, callbacks, and differing widths; native checks
+pin defined/declaration-only canonical signatures and reject local-only finalization.
 
 ## Current state
 
@@ -102,12 +83,12 @@ non-type literal pattern arguments use the same environment because constraints
 affect selection and concrete values already carry canonical identity. Pack
 member partial patterns normalize each declared parameter, including the pack,
 to one environment slot so non-pack members substitute from the expanded
-instantiation bindings. Member function bodies use the same effective owner plus
-local bindings as data members. Class-owned member specializations already encode
-their owner in the member `TemplateDeclId`. Source-level nested declarations under
-partial
-specializations are parsed and registered. The importer remains fail-closed for
-missing, mismatched, unpublished, or unresolved owner facts.
+instantiation bindings. Direct member function signatures, constructor parameters,
+and bodies use the same effective owner plus local bindings as data members.
+Class-owned member specializations already encode their owner in the member
+`TemplateDeclId`. Source-level nested declarations under partial specializations
+are parsed and registered. The importer remains fail-closed for missing,
+mismatched, unpublished, or unresolved owner facts.
 
 ## Remaining 3A work
 
@@ -189,11 +170,11 @@ These seed adjacent slices; the authoritative inventory is
 - Class-template-owned direct, nested, and selected partial member
   specializations compose the full owner chain and keep member arguments
   separate. Concept-constrained type, concrete non-type literal, and pack member
-  partials publish canonical parameter environments, and member method bodies
-  substitute effective owner bindings. Outer-dependent member function
-  signatures, pack expansions inside member type spellings, non-type-parameter,
-  alias, and trailing-requires member partials, and dependent owner/member
-  argument forms remain deferred.
+  partials publish canonical parameter environments, and direct member function
+  signatures, constructors, and bodies substitute effective owner bindings.
+  Pack expansions inside member type spellings, non-type-parameter, alias, and
+  trailing-requires member partials, nested method emission, and dependent
+  owner/member argument forms remain deferred.
 - Non-null object pointer target identity, ambiguous/virtual-base member
   pointers, unpublished dependent bases, and the nested
   anonymous-union-in-anonymous-union hierarchy still need canonical subobject
