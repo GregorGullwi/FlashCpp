@@ -8,15 +8,14 @@ implementation history belongs in git and the regression suite.
 
 ## Next 3A slice
 
-**Constrained and pack member partial patterns.** Member partial data-member
-copy now uses effective owner bindings plus the deduced local bindings, so fields
-and default initializers that name enclosing template parameters instantiate with
-the specialized owner. Member partial patterns also publish their canonical
-environment before base and body parse. Constrained, pack, non-type, and alias
-member partials, outer-dependent member function bodies, and other dependent
-member forms remain deferred. Keep opaque non-type arguments fail-closed until
-their identity can substitute. Do not recover identity by spelling or generated
-name, and do not add evaluator or selection rules.
+**Pack and non-type member partial patterns.** Concept-constrained type
+parameters on member partial patterns now publish a canonical environment and
+substitute through it, because the concept constrains selection rather than the
+parameter's type identity. Pack, non-type, alias, and trailing-requires member
+partials, outer-dependent member function bodies, and other dependent member forms
+remain deferred. Keep opaque non-type arguments fail-closed until their identity
+can substitute. Do not recover identity by spelling or generated name, and do not
+add evaluator or selection rules.
 
 The preceding slices are complete. Class-template-owned member specializations
 now pack the instantiated owner TypeId beside the member arguments, distinguishing
@@ -31,6 +30,9 @@ Member partial patterns publish their canonical environment before body parse;
 `CanonicalTypeTests.cpp` covers the environment, field identity, and substitution.
 Member partial data members substitute effective owner plus local bindings;
 `tests/test_canonical_member_partial_outer_body_ret0.cpp` covers the source path.
+Concept-constrained type parameters on member partial patterns publish their
+environment; `CanonicalTypeTests.cpp` covers the constrained pattern and
+substitution.
 Selected partial specializations also parse and publish their nested class
 declarations with direct members, type aliases, base layout, and preserved
 pointer-owner identity;
@@ -89,9 +91,10 @@ their TypeInfo. Member partial patterns publish a canonical environment before
 their base and body parse, so in-pattern member identities anchor to the pattern
 instead of the primary or enclosing template. Data-member copy then substitutes
 that pattern with the effective owner plus deduced local bindings for both layout
-and the instantiated AST. Class-owned member specializations already encode their
-owner in the member `TemplateDeclId`. Source-level nested declarations under
-partial
+and the instantiated AST. Concept-constrained type parameters use the same
+environment because their constraint affects selection, not type identity.
+Class-owned member specializations already encode their owner in the member
+`TemplateDeclId`. Source-level nested declarations under partial
 specializations are parsed and registered. The importer remains fail-closed for
 missing, mismatched, unpublished, or unresolved owner facts.
 
@@ -174,7 +177,8 @@ These seed adjacent slices; the authoritative inventory is
   advanced nested-body effects still need the full instantiated-owner path.
 - Class-template-owned direct, nested, and selected partial member
   specializations compose the full owner chain and keep member arguments
-  separate. Constrained, pack, non-type, and alias member partials,
+  separate. Concept-constrained type member partials publish canonical
+  environments. Pack, non-type, alias, and trailing-requires member partials,
   outer-dependent member function bodies, and dependent owner/member argument
   forms remain deferred.
 - Non-null object pointer target identity, ambiguous/virtual-base member

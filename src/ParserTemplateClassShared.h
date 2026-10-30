@@ -313,12 +313,18 @@ inline std::optional<TypeId> tryImportCanonicalPartialTypePattern(CanonicalTypeT
 // The primary is only the alpha-normalization anchor; it does not bind the
 // partial's body parameters. Captured syntax retains nested published primaries.
 inline std::optional<TypeId> tryImportCanonicalPartialClassPattern(FrontendContext& context, TemplateDeclId primary,
-	std::span<const TemplateParameterNode> parameters, std::span<const TemplateTypeArg> arguments, std::span<const ASTNode> argument_syntax) {
+	std::span<const TemplateParameterNode> parameters, std::span<const TemplateTypeArg> arguments,
+	std::span<const ASTNode> argument_syntax, bool allow_concept_constrained_parameters) {
 	if (!primary || parameters.empty() || arguments.empty() || (!argument_syntax.empty() && argument_syntax.size() != arguments.size())) {
 		return std::nullopt;
 	}
 	for (const TemplateParameterNode& parameter : parameters) {
-		if (parameter.kind() != TemplateParameterKind::Type || parameter.is_variadic() || parameter.has_concept_constraint()) return std::nullopt;
+		// A concept constraint affects partial-specialization selection, not the
+		// type identity of the parameter it constrains. Callers opt in where that
+		// selection policy is already owned. Packs and non-type parameters still
+		// need dedicated canonical argument shapes.
+		if (parameter.kind() != TemplateParameterKind::Type || parameter.is_variadic() ||
+			(parameter.has_concept_constraint() && !allow_concept_constrained_parameters)) return std::nullopt;
 	}
 	CanonicalTypeTable& table = context.canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
