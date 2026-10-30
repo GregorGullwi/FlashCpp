@@ -4737,7 +4737,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						instantiated_name, // Set correct parent struct name
 						orig_ctor.name() // Constructor name (same as template name)
 					);
-					setOuterTemplateBindingsFromParams(new_ctor_ref, template_params, template_args_for_pattern);
+					setOuterTemplateBindingsFromParams(new_ctor_ref, effective_pattern_template_params, effective_pattern_template_args);
 					if (orig_ctor.has_template_parameters()) {
 						new_ctor_ref.set_template_parameters(orig_ctor.template_parameters());
 					}
@@ -4754,8 +4754,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituteAndCopyParams(
 						orig_ctor.parameter_nodes(),
 						new_ctor_ref,
-						template_params,
-						template_args_for_pattern,
+						effective_pattern_template_params,
+						effective_pattern_template_args,
 						makeCurrentInstantiationTypeRewrite(
 							orig_ctor,
 							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct)));
@@ -4765,8 +4765,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituteAndCopyInitializers(
 						orig_ctor,
 						new_ctor_ref,
-						template_params,
-						template_args_for_pattern,
+						effective_pattern_template_params,
+						effective_pattern_template_args,
 						std::span<const PackParamInfo>(
 							ctor_pack_param_info.data(),
 							ctor_pack_param_info.size()));
@@ -4775,13 +4775,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (orig_ctor.is_materialized()) {
 						new_ctor_ref.set_definition(substituteTemplateParameters(
 							*orig_ctor.get_definition(),
-							template_params,
-							template_args_for_pattern,
+							effective_pattern_template_params,
+							effective_pattern_template_args,
 							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 							true));
 					}
 					pack_param_info_.resize(saved_pack_info);
-					copyInstantiatedConstructorDeclarationFlags(orig_ctor, new_ctor_ref, template_params, template_args_for_pattern);
+					copyInstantiatedConstructorDeclarationFlags(orig_ctor, new_ctor_ref, effective_pattern_template_params, effective_pattern_template_args);
 
 					instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
 					registerSourceMemberStubIdentity(
@@ -4856,9 +4856,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							return;
 						}
 						out_params.reserve(
-							func_decl.outer_template_param_names().size() + template_params.size());
+							func_decl.outer_template_param_names().size() + effective_pattern_template_params.size());
 						out_args.reserve(
-							func_decl.outer_template_args().size() + template_args_for_pattern.size());
+							func_decl.outer_template_args().size() + effective_pattern_template_args.size());
 						for (size_t i = 0; i < func_decl.outer_template_param_names().size(); ++i) {
 							out_params.push_back(
 								rebuildOuterTemplateParameter(
@@ -4866,10 +4866,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									func_decl.outer_template_args()[i]));
 							out_args.push_back(toTemplateTypeArg(func_decl.outer_template_args()[i]));
 						}
-						for (const auto& param : template_params) {
+						for (const auto& param : effective_pattern_template_params) {
 							out_params.push_back(param);
 						}
-						for (const auto& arg : template_args_for_pattern) {
+						for (const auto& arg : effective_pattern_template_args) {
 							out_args.push_back(arg);
 						}
 					};
@@ -4880,7 +4880,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (!combined_params.empty()) {
 							collectOuterTemplateBinding(combined_params, combined_args, out_binding);
 						} else {
-							collectOuterTemplateBinding(template_params, template_args_for_pattern, out_binding);
+							collectOuterTemplateBinding(effective_pattern_template_params, effective_pattern_template_args, out_binding);
 						}
 					};
 					auto applyMergedOuterTemplateBindings = [&](FunctionDeclarationNode& target_func) {
@@ -4890,7 +4890,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (!combined_params.empty()) {
 							setOuterTemplateBindingsFromParams(target_func, combined_params, combined_args);
 						} else {
-							setOuterTemplateBindingsFromParams(target_func, template_params, template_args_for_pattern);
+							setOuterTemplateBindingsFromParams(target_func, effective_pattern_template_params, effective_pattern_template_args);
 						}
 					};
 					auto registerMemberTemplateInRegistry = [&](
@@ -4915,17 +4915,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (needs_substitution) {
 						const TypeSpecifierNode& return_type_spec = decl_node.type_specifier_node();
 						ASTNode substituted_return_type_node = substituteTemplateParameters(
-							decl_node.type_node(), template_params, template_args_for_pattern);
+							decl_node.type_node(), effective_pattern_template_params, effective_pattern_template_args);
 						TypeIndex ret_type_index = substitute_template_parameter(
-							return_type_spec, template_params, template_args_for_pattern);
+							return_type_spec, effective_pattern_template_params, effective_pattern_template_args);
 						ret_type_index = resolveOwnerAliasTypeIndex(
 							[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
 								return substitute_template_parameter(type_spec, params, args);
 							},
 							pattern_struct,
 							return_type_spec,
-							template_params,
-							template_args_for_pattern,
+							effective_pattern_template_params,
+							effective_pattern_template_args,
 							ret_type_index,
 							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct));
 
@@ -4950,8 +4950,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								   new_return_spec.type_index().category() == TypeCategory::MemberFunctionPointer) {
 							if (const auto* arg = findTemplateArgByName(
 									return_type_spec.token().value(),
-									template_params,
-									template_args_for_pattern)) {
+									effective_pattern_template_params,
+									effective_pattern_template_args)) {
 								if (arg->function_signature.has_value()) {
 									new_return_spec.set_function_signature(*arg->function_signature);
 								}
@@ -4962,8 +4962,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							*this,
 							new_return_spec,
 							return_type_spec,
-							template_params,
-							template_args_for_pattern);
+							effective_pattern_template_params,
+							effective_pattern_template_args);
 
 						auto [new_decl_node, new_decl_ref] = emplace_node_ref<DeclarationNode>(
 							new_return_type, decl_node.identifier_token());
@@ -4978,8 +4978,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						substituteAndCopyMemberFunctionParameters(
 							func_decl.parameter_nodes(),
 							new_func_ref,
-							template_params,
-							template_args_for_pattern,
+							effective_pattern_template_params,
+							effective_pattern_template_args,
 							&pattern_struct,
 							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 							TypeIndex{},
@@ -4998,8 +4998,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							std::span<const ASTNode>(
 								func_decl.parameter_nodes().data(),
 								func_decl.parameter_nodes().size()),
-							template_params,
-							template_args_for_pattern);
+							effective_pattern_template_params,
+							effective_pattern_template_args);
 						preserveDependentMemberTemplateParameterPlaceholdersFromPattern(
 							std::span<ASTNode>(
 								new_func_ref.parameter_nodes().data(),
@@ -5008,7 +5008,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								func_decl.parameter_nodes().data(),
 								func_decl.parameter_nodes().size()));
 
-						copy_function_properties(new_func_ref, func_decl, template_params, template_args_for_pattern);
+						copy_function_properties(new_func_ref, func_decl, effective_pattern_template_params, effective_pattern_template_args);
 						new_func_ref.set_is_const_member_function(mem_func.is_const());
 						new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 						if (func_decl.is_materialized())
@@ -5073,7 +5073,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							new_func_ref_no_subst.add_parameter_node(param);
 						}
 
-						copy_function_properties(new_func_ref_no_subst, func_decl, template_params, template_args_for_pattern);
+						copy_function_properties(new_func_ref_no_subst, func_decl, effective_pattern_template_params, effective_pattern_template_args);
 						new_func_ref_no_subst.set_is_const_member_function(mem_func.is_const());
 						new_func_ref_no_subst.set_is_volatile_member_function(mem_func.is_volatile());
 						if (func_decl.is_materialized())
@@ -5133,15 +5133,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					const TypeSpecifierNode& orig_return_type = orig_decl.type_specifier_node();
 
 					TypeIndex return_type_index = substitute_template_parameter(
-						orig_return_type, template_params, template_args_for_pattern);
+						orig_return_type, effective_pattern_template_params, effective_pattern_template_args);
 					return_type_index = resolveOwnerAliasTypeIndex(
 						[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
 							return substitute_template_parameter(type_spec, params, args);
 						},
 						pattern_struct,
 						orig_return_type,
-						template_params,
-						template_args_for_pattern,
+						effective_pattern_template_params,
+						effective_pattern_template_args,
 						return_type_index,
 						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct));
 
@@ -5150,8 +5150,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						ASTNode(&orig_return_type),
 						orig_decl.identifier_token(),
 						instantiated_name,
-						template_params,
-						template_args_for_pattern,
+						effective_pattern_template_params,
+						effective_pattern_template_args,
 						&pattern_struct,
 						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 						return_type_index,	 // Return TypeIndex already alias-resolved above
@@ -5168,8 +5168,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituteAndCopyMemberFunctionParameters(
 						orig_func.parameter_nodes(),
 						new_func,
-						template_params,
-						template_args_for_pattern,
+						effective_pattern_template_params,
+						effective_pattern_template_args,
 						&pattern_struct,
 						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 						TypeIndex{},
@@ -5180,20 +5180,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						true,  // Force resolved TypeIndex onto full AST substitutions
 						true); // Preserve dependent member-template signature identity for replay
 					std::unordered_map<std::string_view, TemplateTypeArg> deduced_args;
-					for (size_t i = 0; i < template_params.size() && i < template_args_for_pattern.size(); ++i) {
-						std::string_view pname = template_params[i].name();
-						deduced_args[pname] = template_args_for_pattern[i];
+					for (size_t i = 0; i < effective_pattern_template_params.size() && i < effective_pattern_template_args.size(); ++i) {
+						std::string_view pname = effective_pattern_template_params[i].name();
+						deduced_args[pname] = effective_pattern_template_args[i];
 					}
 					if (orig_func.is_materialized()) {
 						FLASH_LOG(Templates, Trace, "Copying function definition to new function");
 						ASTNode substituted_body = *orig_func.get_definition();
-						if (!template_args_for_pattern.empty()) {
+						if (!effective_pattern_template_args.empty()) {
 							FlashCpp::ScopedState guard_current_function(current_function_);
 							current_function_ = &orig_func;
 							substituted_body = substituteTemplateParameters(
 								*orig_func.get_definition(),
-								template_params,
-								template_args_for_pattern,
+								effective_pattern_template_params,
+								effective_pattern_template_args,
 								struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 								!orig_func.is_static());
 						}
@@ -5246,8 +5246,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								// Substitute template parameters in the parsed body
 								ASTNode substituted_body = substituteTemplateParameters(
 									*block_result.node(),
-									template_params,
-									template_args_for_pattern,
+									effective_pattern_template_params,
+									effective_pattern_template_args,
 									struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 									!orig_func.is_static());
 								if (orig_func.is_static()) {
@@ -5267,7 +5267,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						FLASH_LOG(Templates, Trace, "Original function has NO definition - may need delayed parsing");
 					}
 
-					copy_function_properties(new_func, orig_func, template_params, template_args_for_pattern);
+					copy_function_properties(new_func, orig_func, effective_pattern_template_params, effective_pattern_template_args);
 					pack_param_info_.resize(saved_pack_info);
 					if (new_func.is_materialized()) {
 						finalize_function_after_definition(new_func);
@@ -5396,11 +5396,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							pattern_struct.member_functions().size()),
 						plain_ool_func,
 						std::span<const TemplateParameterNode>(
-							template_params.data(),
-							template_params.size()),
+							effective_pattern_template_params.data(),
+							effective_pattern_template_params.size()),
 						std::span<const TemplateTypeArg>(
-							template_args_for_pattern.data(),
-							template_args_for_pattern.size()),
+							effective_pattern_template_args.data(),
+							effective_pattern_template_args.size()),
 						struct_type_info.registeredTypeIndex().withCategory(
 							TypeCategory::Struct));
 					FunctionDeclarationNode* inst_func = member_resolution.func;
@@ -5418,11 +5418,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								plain_ool_func.parameter_nodes().data(),
 								plain_ool_func.parameter_nodes().size()),
 							std::span<const TemplateParameterNode>(
-								template_params.data(),
-								template_params.size()),
+								effective_pattern_template_params.data(),
+								effective_pattern_template_params.size()),
 							std::span<const TemplateTypeArg>(
-								template_args_for_pattern.data(),
-								template_args_for_pattern.size()),
+								effective_pattern_template_args.data(),
+								effective_pattern_template_args.size()),
 							struct_type_info.registeredTypeIndex().withCategory(
 								TypeCategory::Struct));
 
@@ -5438,11 +5438,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								out_of_line_member.definition_lookup_context,
 								plain_ool_decl.identifier_token(),
 								std::span<const TemplateParameterNode>(
-									template_params.data(),
-									template_params.size()),
+									effective_pattern_template_params.data(),
+									effective_pattern_template_params.size()),
 								std::span<const TemplateTypeArg>(
-									template_args_for_pattern.data(),
-									template_args_for_pattern.size()),
+									effective_pattern_template_args.data(),
+									effective_pattern_template_args.size()),
 								pattern_owner_struct_node,
 								"partial-spec",
 								plain_ool_name)) {
@@ -5478,11 +5478,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										plain_ool_func.parameter_nodes().data(),
 										plain_ool_func.parameter_nodes().size()),
 									std::span<const TemplateParameterNode>(
-										template_params.data(),
-										template_params.size()),
+										effective_pattern_template_params.data(),
+										effective_pattern_template_params.size()),
 									std::span<const TemplateTypeArg>(
-										template_args_for_pattern.data(),
-										template_args_for_pattern.size()),
+										effective_pattern_template_args.data(),
+										effective_pattern_template_args.size()),
 									struct_type_info.registeredTypeIndex().withCategory(
 										TypeCategory::Struct));
 								info_func_resolution.func->set_definition(*inst_func->get_definition());
@@ -5580,11 +5580,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								source_member->function_declaration,
 								ool_func,
 								std::span<const TemplateParameterNode>(
-									template_params.data(),
-									template_params.size()),
+									effective_pattern_template_params.data(),
+									effective_pattern_template_params.size()),
 								std::span<const TemplateTypeArg>(
-									template_args_for_pattern.data(),
-									template_args_for_pattern.size()),
+									effective_pattern_template_args.data(),
+									effective_pattern_template_args.size()),
 								struct_type_info.registeredTypeIndex().withCategory(
 									TypeCategory::Struct),
 								std::span<const TemplateParameterNode>(
@@ -5622,11 +5622,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 					if (inst_func_decl != nullptr) {
 						auto outer_params_span = std::span<const TemplateParameterNode>(
-							template_params.data(),
-							template_params.size());
+							effective_pattern_template_params.data(),
+							effective_pattern_template_params.size());
 						auto outer_args_span = std::span<const TemplateTypeArg>(
-							template_args_for_pattern.data(),
-							template_args_for_pattern.size());
+							effective_pattern_template_args.data(),
+							effective_pattern_template_args.size());
 						inst_func_decl->set_template_body_position(out_of_line_member.body_start);
 						copyDefinitionParameterIdentifiers(
 							inst_func_decl->parameter_nodes(),
@@ -5690,7 +5690,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								StringTable::getOrInternStringHandle(qualified_name_builder.commit());
 							OuterTemplateBinding ool_outer_binding;
 							collectOuterTemplateBinding(
-								template_params, template_args_for_pattern, ool_outer_binding);
+								effective_pattern_template_params, effective_pattern_template_args, ool_outer_binding);
 							gTemplateRegistry.registerOuterTemplateBinding(
 								qualified_name_handle, std::move(ool_outer_binding));
 						}
@@ -5750,11 +5750,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							pattern_struct.member_functions().size()),
 						ool_func,
 						std::span<const TemplateParameterNode>(
-							template_params.data(),
-							template_params.size()),
+							effective_pattern_template_params.data(),
+							effective_pattern_template_params.size()),
 						std::span<const TemplateTypeArg>(
-							template_args_for_pattern.data(),
-							template_args_for_pattern.size()),
+							effective_pattern_template_args.data(),
+							effective_pattern_template_args.size()),
 						struct_type_info.registeredTypeIndex().withCategory(
 							TypeCategory::Struct),
 						std::span<const TemplateParameterNode>(
@@ -5848,7 +5848,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				FLASH_LOG(Templates, Trace, "Re-evaluating deferred static_assert during template instantiation");
 
 				// Build template parameter name to type mapping for substitution
-				auto sub_map = buildSubstitutionParamMap(template_params, template_args_for_pattern);
+				auto sub_map = buildSubstitutionParamMap(effective_pattern_template_params, effective_pattern_template_args);
 
 				// Create substitution context with template parameter mappings
 				ExpressionSubstitutor substitutor(sub_map.param_map, *this, sub_map.param_order);
@@ -5861,7 +5861,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				eval_ctx.struct_node = &instantiated_struct_ref;
 				populateDeferredStaticAssertEvalTemplateBindings(
 					eval_ctx,
-					buildTemplateEnvironment(template_params, template_args_for_pattern, nullptr),
+					buildTemplateEnvironment(effective_pattern_template_params, effective_pattern_template_args, nullptr),
 					sub_map.param_order,
 					sub_map.param_map);
 
@@ -5934,8 +5934,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					instantiated_name,
 					struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 					std::span<const TemplateParameterNode>(
-						template_params.data(),
-						template_params.size()),
+						effective_pattern_template_params.data(),
+						effective_pattern_template_params.size()),
 					template_args_for_member_copy);
 				instantiated_struct.as<StructDeclarationNode>().mark_materialized();
 				CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
@@ -5959,7 +5959,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_nested_info.qualified_name = StringTable::getOrInternStringHandle(
 					StringBuilder().append(instantiated_name).append("::"sv).append(nested_pattern.name()).commit());
 				lazy_nested_info.nested_type_declaration = nested_class;
-				lazy_nested_info.parent_template_params = template_params;
+				lazy_nested_info.parent_template_params = effective_pattern_template_params;
 				lazy_nested_info.parent_template_args.assign(template_args_for_member_copy.begin(), template_args_for_member_copy.end());
 				LazyNestedTypeRegistry::getInstance().registerLazyNestedType(lazy_nested_info);
 				if (!instantiateLazyNestedType(lazy_nested_info.parent_class_name, lazy_nested_info.nested_type_name).has_value()) {

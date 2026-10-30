@@ -8,15 +8,15 @@ implementation history belongs in git and the regression suite.
 
 ## Next 3A slice
 
-**Pack expansion in member partial member types.** Pack member partial patterns
-now publish canonical environments with one placeholder per declared parameter,
-so members that name the non-pack head parameter substitute with the expanded
-instantiation arguments. Pack expansions inside member type spellings,
-non-type-parameter, alias, and trailing-requires member partials, outer-dependent
-member function bodies, and other dependent member forms remain deferred. Keep
-opaque and dependent non-type arguments fail-closed until their identity can
-substitute. Do not recover identity by spelling or generated name, and do not add
-evaluator or selection rules.
+**Outer-dependent member function signatures.** Member partial method bodies now
+substitute enclosing template parameters from the effective owner bindings, so a
+body that names the outer parameter no longer leaves it unresolved. Member
+function signatures whose parameter or return types use outer parameters, pack
+expansions inside member type spellings, non-type-parameter, alias, and
+trailing-requires member partials, and other dependent member forms remain
+deferred. Keep opaque and dependent non-type arguments fail-closed until their
+identity can substitute. Do not recover identity by spelling or generated name,
+and do not add evaluator or selection rules.
 
 The preceding slices are complete. Class-template-owned member specializations
 now pack the instantiated owner TypeId beside the member arguments, distinguishing
@@ -35,7 +35,10 @@ Concept-constrained type parameters and concrete non-type literal arguments on
 member partial patterns publish their environments; `CanonicalTypeTests.cpp`
 covers both patterns and substitution. Pack member partial patterns publish
 parameter environments and substitute non-pack members; `CanonicalTypeTests.cpp`
-covers the pack environment and head substitution.
+covers the pack environment and head substitution. Member partial method bodies
+substitute effective owner bindings;
+`tests/test_canonical_member_partial_outer_method_param_ret0.cpp` covers the
+source path.
 Selected partial specializations also parse and publish their nested class
 declarations with direct members, type aliases, base layout, and preserved
 pointer-owner identity;
@@ -99,8 +102,9 @@ non-type literal pattern arguments use the same environment because constraints
 affect selection and concrete values already carry canonical identity. Pack
 member partial patterns normalize each declared parameter, including the pack,
 to one environment slot so non-pack members substitute from the expanded
-instantiation bindings. Class-owned member specializations already encode their
-owner in the member `TemplateDeclId`. Source-level nested declarations under
+instantiation bindings. Member function bodies use the same effective owner plus
+local bindings as data members. Class-owned member specializations already encode
+their owner in the member `TemplateDeclId`. Source-level nested declarations under
 partial
 specializations are parsed and registered. The importer remains fail-closed for
 missing, mismatched, unpublished, or unresolved owner facts.
@@ -185,9 +189,10 @@ These seed adjacent slices; the authoritative inventory is
 - Class-template-owned direct, nested, and selected partial member
   specializations compose the full owner chain and keep member arguments
   separate. Concept-constrained type, concrete non-type literal, and pack member
-  partials publish canonical parameter environments. Pack expansions inside
-  member type spellings, non-type-parameter, alias, and trailing-requires member
-  partials, outer-dependent member function bodies, and dependent owner/member
+  partials publish canonical parameter environments, and member method bodies
+  substitute effective owner bindings. Outer-dependent member function
+  signatures, pack expansions inside member type spellings, non-type-parameter,
+  alias, and trailing-requires member partials, and dependent owner/member
   argument forms remain deferred.
 - Non-null object pointer target identity, ambiguous/virtual-base member
   pointers, unpublished dependent bases, and the nested
