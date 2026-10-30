@@ -3875,48 +3875,32 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 							addUnscopedEnumEnumeratorsAsStaticMembers(struct_ref, struct_info, enum_node->as<EnumDeclarationNode>(), current_access);
 						}
 						continue;
-					} else if (peek() == "struct"_tok || peek() == "class"_tok) {
-						// Handle nested struct/class declarations inside partial specialization body
-						// e.g., struct __type { ... };
-						// e.g., class _Sp_counted_ptr final : public _Sp_counted_base<_Lp> { ... };
-						advance(); // consume 'struct' or 'class'
-
-						// Skip C++11 attributes
+					} else if (peek() == "struct"_tok || peek() == "class"_tok || peek() == "union"_tok) {
+						SaveHandle nested_saved_pos = save_token_position();
+						advance(); // consume the class-key
 						skip_cpp_attributes();
-
-						// Skip struct name if present
+						bool is_nested_declaration = false;
 						if (peek().is_identifier()) {
-							advance(); // consume struct name
+							advance(); // consume the nested class name
+							is_nested_declaration = peek() == "{"_tok || peek() == ";"_tok || peek() == ":"_tok;
 						}
-
-						// Skip template arguments if present (e.g., struct Wrapper<int>)
-						if (peek() == "<"_tok) {
-							skip_template_arguments();
-						}
-
-						// Skip 'final' specifier if present
-						if (peek() == "final"_tok) {
-							advance();
-						}
-
-						// Skip base class list if present (e.g., : public Base<T>)
-						if (peek() == ":"_tok) {
-							advance(); // consume ':'
-							while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok) {
-								advance();
+						if (is_nested_declaration) {
+							restore_token_position(nested_saved_pos);
+							auto saved_delayed_bodies = std::move(delayed_function_bodies_);
+							delayed_function_bodies_.clear();
+							auto nested_result = parse_struct_declaration();
+							delayed_function_bodies_ = std::move(saved_delayed_bodies);
+							if (nested_result.is_error()) {
+								return nested_result;
 							}
+							if (auto nested_node = nested_result.node()) {
+								auto& nested_struct = nested_node->as<StructDeclarationNode>();
+								nested_struct.set_enclosing_class(&struct_ref);
+								struct_ref.add_nested_class(*nested_node);
+							}
+							continue;
 						}
-
-						// Skip to body or semicolon
-						if (peek() == "{"_tok) {
-							skip_balanced_braces();
-						}
-
-						// Consume trailing semicolon
-						if (peek() == ";"_tok) {
-							advance();
-						}
-						continue;
+						restore_token_position(nested_saved_pos);
 					} else if (peek() == "static"_tok) {
 						// Handle static members: static const int size = 10;
 						advance(); // consume "static"

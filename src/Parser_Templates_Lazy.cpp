@@ -1836,14 +1836,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 			lazy_info->parent_template_args);
 
 		// Get size and alignment for the member
-		size_t member_size = get_type_size_bits(substituted_type_index.category()) / 8;
-		size_t member_alignment = member_size > 0 ? member_size : 1;
-		if (const TypeInfo* member_type_info = tryGetTypeInfo(substituted_type_index)) {
-			if (member_type_info->getStructInfo()) {
-				member_size = toSizeT(member_type_info->getStructInfo()->sizeInBytes());
-				member_alignment = member_type_info->getStructInfo()->alignment;
-			}
-		}
+		auto [member_size, member_alignment] = calculateResolvedMemberSizeAndAlignment(substituted_type_spec, substituted_type_index);
 
 		// Get the name from the identifier token
 		StringHandle member_name_handle = decl.identifier_token().handle();
@@ -1871,8 +1864,52 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 			substituted_type_spec.top_level_cv_qualifier());
 	}
 
+	for (const auto& type_alias : nested_struct.type_aliases()) {
+		if (!type_alias.type_node.is<TypeSpecifierNode>()) {
+			continue;
+		}
+		const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
+		TypeIndex substituted_alias_index = substitute_template_parameter(
+			alias_type_spec, lazy_info->parent_template_params, lazy_info->parent_template_args);
+		TypeSpecifierNode substituted_alias_spec = alias_type_spec;
+		substituted_alias_spec.set_type_index(substituted_alias_index);
+		substituted_alias_spec.set_size_in_bits(get_type_size_bits(substituted_alias_index.category()));
+		const TypeInfo* alias_semantic_source = tryGetTypeInfo(substituted_alias_index);
+		if (!isConcreteAliasSemanticSource(alias_semantic_source)) {
+			alias_semantic_source = nullptr;
+		}
+		StringHandle qualified_alias_name = StringTable::getOrInternStringHandle(
+			StringBuilder().append(lazy_info->qualified_name).append("::").append(type_alias.alias_name).commit());
+		const int alias_size_bits = substituted_alias_spec.size_in_bits();
+		TypeInfo& alias_type_info =
+			alias_semantic_source != nullptr
+				? add_type_alias_copy(qualified_alias_name, substituted_alias_index, alias_size_bits, substituted_alias_spec, *alias_semantic_source)
+				: add_type_alias_copy(qualified_alias_name, substituted_alias_index, alias_size_bits, substituted_alias_spec);
+		getTypesByNameMap().insert_or_assign(qualified_alias_name, &alias_type_info);
+	}
+
+	for (const BaseClassSpecifier& base : nested_struct.base_classes()) {
+		if (base.is_deferred) {
+			continue;
+		}
+		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+		if (base_type_info == nullptr) {
+			base_type_info = findTypeByName(StringTable::getOrInternStringHandle(base.name));
+		}
+		if (base_type_info == nullptr || base_type_info->getStructInfo() == nullptr) {
+			throw InternalError("Nested class base type was not materialized");
+		}
+		nested_struct_info->addBaseClass(
+			StringTable::getStringView(base_type_info->name()), base_type_info->registeredTypeIndex().withCategory(base_type_info->typeEnum()),
+			base.access, base.is_virtual);
+	}
+
 	// Finalize layout
-	nested_struct_info->finalize();
+	if (!nested_struct.base_classes().empty()) {
+		nested_struct_info->finalizeWithBases();
+	} else {
+		nested_struct_info->finalize();
+	}
 
 	// Process member functions: register for lazy instantiation and add signatures to StructTypeInfo.
 	// Uses the shared helper defined in Parser_Templates_Inst_ClassTemplate.cpp (included first
