@@ -2495,6 +2495,40 @@ inline CanonicalTypeImport importCanonicalClassSource(CanonicalTypeTable& table,
 	CanonicalTypeTransaction transaction(table);
 	std::vector<PendingClassImport> worklist;
 	std::unordered_set<const void*> active_sources;
+	// Split a member template's combined source arguments into the instantiated
+	// enclosing class and the member's own arguments. The enclosing class may
+	// itself be a member template, so callers apply this recursively to each
+	// owner before importing the member argument chain.
+	const auto configure_member_template_identity = [&](PendingClassImport& pending,
+		const StructDeclarationNode& declaration, TemplateDeclId specialization_owner,
+		const TemplateArgInfoVector& combined_arguments) -> std::optional<CanonicalTypeImport> {
+		const std::optional<OwnerId> owner = requireFrontendContext().templateDecls().primaryClassTemplateOwner(specialization_owner);
+		if (declaration.enclosing_class() != nullptr && !owner.has_value()) {
+			return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+		}
+		if (!owner.has_value() || !isTemplateOwnedOwnerId(*owner)) {
+			return std::nullopt;
+		}
+		pending.member_owner_template = templateDeclFromOwnerId(*owner);
+		const std::optional<ASTNode> member_pattern = requireFrontendContext().templateDecls().primaryClassTemplatePattern(specialization_owner);
+		if (!member_pattern.has_value() || !member_pattern->is<TemplateClassDeclarationNode>()) {
+			return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+		}
+		const TemplateParameterVector& member_parameters = member_pattern->as<TemplateClassDeclarationNode>().template_parameters();
+		if (std::ranges::any_of(member_parameters, [](const TemplateParameterNode& parameter) { return parameter.is_variadic(); })) {
+			return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+		}
+		const size_t member_parameter_count = member_parameters.size();
+		if (combined_arguments.size() < member_parameter_count) {
+			return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+		}
+		const size_t owner_argument_count = combined_arguments.size() - member_parameter_count;
+		pending.member_owner_arguments.assign(combined_arguments.begin(), combined_arguments.begin() + owner_argument_count);
+		pending.published_arguments.assign(combined_arguments.begin() + owner_argument_count, combined_arguments.end());
+		pending.use_published_arguments = true;
+		pending.is_member_template = true;
+		return std::nullopt;
+	};
 	const auto enqueue_source = [&](const TypeInfo* type_info, const StructDeclarationNode* declaration) -> std::optional<CanonicalTypeImport> {
 		if (type_info != nullptr) {
 			if (const TypeSpecifierNode* alias_type = type_info->aliasTypeSpecifier()) {
@@ -2546,32 +2580,9 @@ inline CanonicalTypeImport importCanonicalClassSource(CanonicalTypeTable& table,
 		pending.nested_entity = nested_entity;
 		const bool pattern_owns_template = pattern != nullptr && pattern->has_template_decl_id();
 		if (pattern_owns_template) {
-			const std::optional<OwnerId> owner = requireFrontendContext().templateDecls().primaryClassTemplateOwner(specialization_owner);
-			if (declaration->enclosing_class() != nullptr && !owner.has_value()) {
-				return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
-			}
-			if (owner.has_value() && isTemplateOwnedOwnerId(*owner)) {
-				pending.member_owner_template = templateDeclFromOwnerId(*owner);
-			}
-			if (pending.member_owner_template) {
-				const std::optional<ASTNode> member_pattern = requireFrontendContext().templateDecls().primaryClassTemplatePattern(specialization_owner);
-				if (!member_pattern.has_value() || !member_pattern->is<TemplateClassDeclarationNode>()) {
-					return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
-				}
-				const TemplateParameterVector& member_parameters = member_pattern->as<TemplateClassDeclarationNode>().template_parameters();
-				if (std::ranges::any_of(member_parameters, [](const TemplateParameterNode& parameter) { return parameter.is_variadic(); })) {
-					return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
-				}
-				const size_t member_parameter_count = member_parameters.size();
-				const TemplateArgInfoVector& combined_arguments = declaration->outer_template_args();
-				if (combined_arguments.size() < member_parameter_count) {
-					return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
-				}
-				const size_t owner_argument_count = combined_arguments.size() - member_parameter_count;
-				pending.member_owner_arguments.assign(combined_arguments.begin(), combined_arguments.begin() + owner_argument_count);
-				pending.published_arguments.assign(combined_arguments.begin() + owner_argument_count, combined_arguments.end());
-				pending.use_published_arguments = true;
-				pending.is_member_template = true;
+			if (const auto failure = configure_member_template_identity(
+				pending, *declaration, specialization_owner, declaration->outer_template_args())) {
+				return *failure;
 			}
 		}
 		if (!pattern_owns_template && declaration->has_canonical_specialization_owner() &&
@@ -2695,7 +2706,11 @@ inline CanonicalTypeImport importCanonicalClassSource(CanonicalTypeTable& table,
 				owner_pending.specialization_owner = current.member_owner_template;
 				owner_pending.published_arguments = current.member_owner_arguments;
 				owner_pending.use_published_arguments = true;
-				owner_pending.arguments.reserve(current.member_owner_arguments.size());
+				if (const auto failure = configure_member_template_identity(
+					owner_pending, owner_declaration, current.member_owner_template, current.member_owner_arguments)) {
+					return *failure;
+				}
+				owner_pending.arguments.reserve(specialization_arguments(owner_pending).size());
 				current.waiting_for_member_owner = true;
 				worklist.push_back(std::move(owner_pending));
 				continue;

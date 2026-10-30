@@ -497,6 +497,9 @@ def main():
                 "\t\t\t.qualifiers = CVQualifier::None,\n"
                 "\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
                 "\t\t\t.array_extent = 1,"),
+            "lost_member_template_owner": (
+                ".array_extent = packTemplateSpecializationExtent(member_primary, owner_specialization),",
+                ".array_extent = packTemplateSpecializationExtent(member_primary, TypeId{}),"),
             "lost_specialization_argument_order": (
                 "TypeId CanonicalTypeTable::rebuildMixedTemplateArgListUnlocked(std::span<const CanonicalTemplateArgument> arguments) {\n"
                 "\t\tTypeId arg_link{};\n"
