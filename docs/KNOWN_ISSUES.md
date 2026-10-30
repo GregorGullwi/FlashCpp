@@ -189,13 +189,14 @@ directly. A future implementation should compute funclet return/throw summaries
 and use them at each invocation, preserving its individual continuation and
 exception context.
 
-## Deep aggregate braces still use native parser recursion
+## Deep struct aggregate braces still use native parser recursion
 
 The aggregate member-store emitter now traverses bases, members, default member
 initializers, struct array elements, array shapes, initializer lists, and
-zero-fill with explicit continuation frames and worklists. Deeply nested
-initializer braces still recurse through parser expression frames, so
-sufficiently deep source nesting can still exhaust the native stack.
+zero-fill with explicit continuation frames and worklists. Array brace
+initializers also keep their dimensions on an explicit parser stack. Deeply
+nested non-array struct braces still recurse through `parse_brace_initializer`,
+so sufficiently deep struct nesting can still exhaust the native stack.
 
 ## WSL front end crashes while processing the libstdc++ `<typeinfo>` test
 
