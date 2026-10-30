@@ -114,6 +114,15 @@ Retain `test_canonical_structural_nttp_base_source_ret0.cpp`,
 `test_canonical_structural_nttp_specialization_member_pointer_ret0.cpp`, and
 `test_canonical_structural_nttp_nullptr_member_ret0.cpp` as current guards.
 
+## Nested classes of selected partial specializations cannot be named in source
+
+The canonical importer now preserves the owning `Outer<short*>` versus
+`Outer<long long*>` identity for a nested class whose enclosing declaration came
+from a selected partial specialization. Source lookup such as
+`Outer<short*>::Key` still reports “Expected type or namespace name”; only the
+importer path is fixed. Add qualified lookup for nested declarations of a
+selected partial without falling back to generated names.
+
 ## Explicit casts of overloaded member-function addresses lose target identity
 
 `static_cast<int (Object::*)(int)>(&Object::first)` evaluates without retaining
