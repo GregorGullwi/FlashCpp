@@ -36,6 +36,40 @@ static void preserveInstantiatedUnionGroups(StructTypeInfo& instance, const Stru
 
 static constexpr size_t kMaxAliasUnwrapIterations = 64;
 
+static std::pair<TemplateParameterVector, std::vector<TemplateTypeArg>> buildEffectivePartialSpecTemplateBindings(
+	std::string_view template_name, const TemplateParameterVector& template_params, std::span<const TemplateTypeArg> local_template_args) {
+	TemplateParameterVector effective_template_params;
+	std::vector<TemplateTypeArg> effective_template_args;
+	const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(template_name);
+	if (outer_binding != nullptr) {
+		const bool has_outer_params = !outer_binding->params.empty();
+		effective_template_params.reserve((has_outer_params ? outer_binding->params.size() : outer_binding->param_names.size()) + template_params.size());
+		effective_template_args.reserve((has_outer_params ? outer_binding->all_args.size() : outer_binding->param_args.size()) +
+			local_template_args.size());
+		if (has_outer_params) {
+			for (const ASTNode& outer_param_node : outer_binding->params) {
+				if (const TemplateParameterNode* outer_param = tryGetTemplateParameterNode(outer_param_node)) {
+					effective_template_params.push_back(*outer_param);
+				}
+			}
+			effective_template_args.insert(effective_template_args.end(), outer_binding->all_args.begin(), outer_binding->all_args.end());
+		} else {
+			for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
+				effective_template_params.push_back(rebuildOuterTemplateParameter(outer_binding->param_names[i], outer_binding->param_args[i]));
+				effective_template_args.push_back(outer_binding->param_args[i]);
+			}
+		}
+	} else {
+		effective_template_params.reserve(template_params.size());
+		effective_template_args.reserve(local_template_args.size());
+	}
+	for (const TemplateParameterNode& template_param : template_params) {
+		effective_template_params.push_back(template_param);
+	}
+	effective_template_args.insert(effective_template_args.end(), local_template_args.begin(), local_template_args.end());
+	return std::pair<TemplateParameterVector, std::vector<TemplateTypeArg>>(std::move(effective_template_params), std::move(effective_template_args));
+}
+
 // Per-compilation instantiation budget shared by class and function templates.
 // resetTemplateInstantiationCounters() clears these at the start of each parse().
 static int g_template_inst_iteration_count = 0;
@@ -3221,6 +3255,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 
+			const auto [effective_member_copy_template_params, effective_member_copy_template_args_storage] =
+				buildEffectivePartialSpecTemplateBindings(template_name, template_params, template_args_for_member_copy);
+			const std::span<const TemplateTypeArg> effective_member_copy_template_args(
+				effective_member_copy_template_args_storage.data(), effective_member_copy_template_args_storage.size());
+
 			// Copy members from pattern
 			FLASH_LOG(Templates, Trace, "Pattern struct '", pattern_struct.name(), "' has ", pattern_struct.members().size(), " members");
 			for (const auto& member_decl : pattern_struct.members()) {
@@ -3237,8 +3276,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						member_type_info->hasDependentQualifiedName()) {
 						ASTNode substituted_type_node = substituteTemplateParameters(
 							ASTNode::emplace_node<TypeSpecifierNode>(type_spec),
-							template_params,
-							template_args_for_member_copy,
+							effective_member_copy_template_params,
+							effective_member_copy_template_args,
 							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 							false);
 						if (substituted_type_node.is<TypeSpecifierNode>()) {
@@ -3267,19 +3306,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// For pattern specializations, member types need substitution!
 				// Use substitute_template_parameter to properly match template parameters by name
 				TypeIndex member_type_index = substitute_template_parameter(
-					*effective_type_spec, template_params, template_args_for_member_copy);
+					*effective_type_spec, effective_member_copy_template_params, effective_member_copy_template_args);
 				TypeSpecifierNode substituted_member_type_spec = *effective_type_spec;
 				substituted_member_type_spec.set_type_index(member_type_index);
 				materializeSubstitutedFunctionTypeMetadata(
 					*this,
 					substituted_member_type_spec,
 					*effective_type_spec,
-					template_params,
-					template_args_for_member_copy);
+					effective_member_copy_template_params,
+					effective_member_copy_template_args);
 				size_t ptr_depth = substituted_member_type_spec.pointer_depth();
 				ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(member_type_index);
 				std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(
-					decl, template_params, template_args_for_member_copy);
+					decl, effective_member_copy_template_params, effective_member_copy_template_args);
 				if (resolved_array_dimensions.empty()) {
 					resolved_array_dimensions = resolved_member_alias.array_dimensions;
 				}
@@ -3321,7 +3360,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Substitute template parameters in default member initializers
 				std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
-					member_decl.default_initializer, template_args_for_member_copy, template_params);
+					member_decl.default_initializer, effective_member_copy_template_args, effective_member_copy_template_params);
 
 				// Use the stamped member-pointer pattern and the partial's deduced bindings;
 				// the primary arguments can retain additional declarator wrappers.
@@ -3337,7 +3376,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_decl.access, substituted_default_initializer, ref_qual,
 					ref_qual != ReferenceQualifier::None ? get_substituted_type_size_bits(member_type_index) : 0, is_array_member,
 					std::move(resolved_array_dimensions), member_pointee_array_declarator, static_cast<int>(ptr_depth),
-					resolve_bitfield_width(member_decl, template_params, template_args_for_member_copy),
+					resolve_bitfield_width(member_decl, effective_member_copy_template_params, effective_member_copy_template_args),
 					getCanonicalFunctionPointerSignature(substituted_member_type_spec), member_decl.is_no_unique_address,
 					substituted_member_type_spec.top_level_cv_qualifier());
 			}
@@ -3964,67 +4003,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Also copy static members from the pattern AST node (for member template partial specializations)
 			// These may not have been added to StructTypeInfo yet
-			auto build_effective_partial_spec_template_bindings =
-				[&](std::span<const TemplateTypeArg> local_template_args) {
-				TemplateParameterVector effective_template_params;
-				std::vector<TemplateTypeArg> effective_template_args;
-				if (const OuterTemplateBinding* outer_binding =
-						gTemplateRegistry.getOuterTemplateBinding(template_name)) {
-					const bool has_outer_params = !outer_binding->params.empty();
-					effective_template_params.reserve(
-						(has_outer_params
-							 ? outer_binding->params.size()
-							 : outer_binding->param_names.size()) +
-						template_params.size());
-					effective_template_args.reserve(
-						(has_outer_params
-							 ? outer_binding->all_args.size()
-							 : outer_binding->param_args.size()) +
-						local_template_args.size());
-					if (has_outer_params) {
-						for (const ASTNode& outer_param_node :
-							 outer_binding->params) {
-							if (const TemplateParameterNode* outer_param =
-									tryGetTemplateParameterNode(
-										outer_param_node)) {
-								effective_template_params.push_back(*outer_param);
-							}
-						}
-						effective_template_args.insert(
-							effective_template_args.end(),
-							outer_binding->all_args.begin(),
-							outer_binding->all_args.end());
-					} else {
-						for (size_t i = 0;
-							 i < outer_binding->param_names.size() &&
-							 i < outer_binding->param_args.size();
-							 ++i) {
-							effective_template_params.push_back(
-								rebuildOuterTemplateParameter(
-									outer_binding->param_names[i],
-									outer_binding->param_args[i]));
-							effective_template_args.push_back(
-								outer_binding->param_args[i]);
-						}
-					}
-				} else {
-					effective_template_params.reserve(template_params.size());
-					effective_template_args.reserve(local_template_args.size());
-				}
-				for (const TemplateParameterNode& template_param :
-					 template_params) {
-					effective_template_params.push_back(template_param);
-				}
-				effective_template_args.insert(
-					effective_template_args.end(),
-					local_template_args.begin(),
-					local_template_args.end());
-				return std::pair<
-					TemplateParameterVector,
-					std::vector<TemplateTypeArg>>(
-					std::move(effective_template_params),
-					std::move(effective_template_args));
-			};
 			auto substitute_in_class_static_initializer_replay_first =
 				[&](
 					const auto& static_member,
@@ -4149,13 +4127,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				return substituted_initializer;
 			};
-
-			auto [effective_member_copy_template_params, effective_member_copy_template_args_storage] =
-				build_effective_partial_spec_template_bindings(
-					template_args_for_member_copy);
-			std::span<const TemplateTypeArg> effective_member_copy_template_args(
-				effective_member_copy_template_args_storage.data(),
-				effective_member_copy_template_args_storage.size());
 
 			if (!pattern_struct.static_members().empty()) {
 				FLASH_LOG(Templates, Trace, "Copying ", pattern_struct.static_members().size(), " static members from pattern AST node");
@@ -4282,12 +4253,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				template_args_for_member_copy;
 			StructTypeInfo* instantiated_struct_info_mut = struct_info;
 			const StructTypeInfo* instantiated_struct_info = instantiated_struct_info_mut;
-			auto [effective_pattern_template_params, effective_pattern_template_args_storage] =
-				build_effective_partial_spec_template_bindings(
-					template_args_for_pattern);
-			std::span<const TemplateTypeArg> effective_pattern_template_args(
-				effective_pattern_template_args_storage.data(),
-				effective_pattern_template_args_storage.size());
+			const TemplateParameterVector& effective_pattern_template_params = effective_member_copy_template_params;
+			const std::span<const TemplateTypeArg> effective_pattern_template_args = effective_member_copy_template_args;
 
 			for (const auto& type_alias : pattern_struct.type_aliases()) {
 				// Build the qualified name: enable_if_true_int::type
@@ -4685,14 +4652,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Copy data members
 			for (const auto& member_decl : pattern_struct.members()) {
 				ASTNode substituted_member_decl = substituteTemplateParameters(
-					member_decl.declaration, template_params, template_args_for_pattern);
+					member_decl.declaration, effective_pattern_template_params, effective_pattern_template_args);
 				std::optional<ASTNode> substituted_default_initializer = member_decl.default_initializer.has_value()
 																			 ? std::optional<ASTNode>(substituteTemplateParameters(
-																				   *member_decl.default_initializer, template_params, template_args_for_pattern))
+																				   *member_decl.default_initializer, effective_pattern_template_params, effective_pattern_template_args))
 																			 : std::nullopt;
 				std::optional<ASTNode> substituted_bitfield_width_expr = member_decl.bitfield_width_expr.has_value()
 																			 ? std::optional<ASTNode>(substituteTemplateParameters(
-																				   *member_decl.bitfield_width_expr, template_params, template_args_for_pattern))
+																				   *member_decl.bitfield_width_expr, effective_pattern_template_params, effective_pattern_template_args))
 																			 : std::nullopt;
 				instantiated_struct_ref.add_member(
 					substituted_member_decl,
