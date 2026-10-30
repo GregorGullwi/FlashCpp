@@ -2596,53 +2596,50 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 ParseResult Parser::parse_array_brace_initializer(const TypeSpecifierNode& type_specifier, const Token& root_brace_token) {
 	struct ArrayContext {
-		TypeSpecifierNode element_type_spec;
-		Token brace_token;
+		const TypeSpecifierNode* element_type_spec = nullptr;
 		bool ordered_array_object = false;
-		bool has_unsized_outer_dimension = false;
 		bool unknown_bound_array = false;
 		std::optional<size_t> array_size;
 		std::optional<size_t> flat_total_size;
 		size_t element_count = 0;
 		bool saw_scalar = false;
-		ASTNode init_list_node;
 		InitializerListNode* init_list = nullptr;
 	};
 
-	auto make_context = [&](const TypeSpecifierNode& spec, const Token& brace_token) {
+	ChunkedVector<TypeSpecifierNode, 4> element_type_specs;
+	auto make_context = [&](const TypeSpecifierNode& spec) {
 		ArrayContext context;
-		context.brace_token = brace_token;
 		context.ordered_array_object = orderedDeclaratorIsArrayObject(spec) && !spec.is_array();
-		context.has_unsized_outer_dimension = spec.has_unsized_outer_array_dimension();
-		if (!context.has_unsized_outer_dimension) {
+		const bool has_unsized_outer_dimension = spec.has_unsized_outer_array_dimension();
+		if (!has_unsized_outer_dimension) {
 			context.array_size = spec.array_size();
 		}
-		if (!context.has_unsized_outer_dimension && spec.array_dimension_count() > 1 && context.array_size.has_value()) {
+		if (!has_unsized_outer_dimension && spec.array_dimension_count() > 1 && context.array_size.has_value()) {
 			size_t total = 1;
 			for (size_t dimension : spec.array_dimensions()) {
 				total *= dimension;
 			}
 			context.flat_total_size = total;
 		}
-		context.element_type_spec = spec;
+		TypeSpecifierNode element_type_spec = spec;
 		if (context.ordered_array_object) {
 			const DeclaratorComponent& outer = spec.declarator_components().front();
 			context.unknown_bound_array = outer.kind == DeclaratorComponentKind::UnknownBoundArray;
 			if (outer.kind == DeclaratorComponentKind::Array && outer.payload != 0) {
 				context.array_size = static_cast<size_t>(outer.payload);
 			}
-			context.element_type_spec.remove_outermost_ordered_declarator_component();
-		} else if (context.has_unsized_outer_dimension) {
-			context.element_type_spec.set_unsized_outer_array_dimension(false);
+			element_type_spec.remove_outermost_ordered_declarator_component();
+		} else if (has_unsized_outer_dimension) {
+			element_type_spec.set_unsized_outer_array_dimension(false);
 		} else if (spec.array_dimension_count() > 1) {
 			std::vector<size_t> element_dimensions(
 				spec.array_dimensions().begin() + 1, spec.array_dimensions().end());
-			context.element_type_spec.set_array_dimensions(element_dimensions);
+			element_type_spec.set_array_dimensions(element_dimensions);
 		} else {
-			context.element_type_spec.set_array(false);
+			element_type_spec.set_array(false);
 		}
+		context.element_type_spec = &element_type_specs.emplace_back(std::move(element_type_spec));
 		auto [node, ref] = create_node_ref(InitializerListNode());
-		context.init_list_node = node;
 		context.init_list = &ref;
 		return context;
 	};
@@ -2666,7 +2663,7 @@ ParseResult Parser::parse_array_brace_initializer(const TypeSpecifierNode& type_
 	};
 
 	FlashCpp::InlineVector<ArrayContext, FlashCpp::InlineVectorSpillFamily::AggregateInitialization, 2> contexts;
-	contexts.push_back(make_context(type_specifier, root_brace_token));
+	contexts.push_back(make_context(type_specifier));
 
 	while (!contexts.empty()) {
 		ArrayContext& context = contexts.back();
@@ -2674,15 +2671,14 @@ ParseResult Parser::parse_array_brace_initializer(const TypeSpecifierNode& type_
 			const bool ordered_array_object = context.ordered_array_object;
 			const bool unknown_bound_array = context.unknown_bound_array;
 			const size_t element_count = context.element_count;
-			const Token brace_token = context.brace_token;
-			ASTNode completed = context.init_list_node;
+			ASTNode completed = ASTNode(context.init_list);
 			if (!consume("}"_tok)) {
 				return ParseResult::error("Expected '}' to close brace initializer", current_token_);
 			}
 			contexts.pop_back();
 			if (contexts.empty()) {
 				if (ordered_array_object && element_count == 0 && unknown_bound_array) {
-					return error(DiagnosticId::EmptyUnknownBoundArrayInitializer, brace_token,
+					return error(DiagnosticId::EmptyUnknownBoundArrayInitializer, root_brace_token,
 						"An array of unknown bound requires at least one initializer clause");
 				}
 				return ParseResult::success(completed);
@@ -2719,15 +2715,14 @@ ParseResult Parser::parse_array_brace_initializer(const TypeSpecifierNode& type_
 
 		if (peek() == "{"_tok) {
 			const bool nested_array =
-				context.element_type_spec.is_array() ||
-				orderedDeclaratorIsArrayObject(context.element_type_spec);
+				context.element_type_spec->is_array() ||
+				orderedDeclaratorIsArrayObject(*context.element_type_spec);
 			if (nested_array) {
-				const Token nested_brace_token = peek_info();
 				advance();
-				contexts.push_back(make_context(context.element_type_spec, nested_brace_token));
+				contexts.push_back(make_context(*context.element_type_spec));
 				continue;
 			}
-			ParseResult nested = parse_brace_initializer(context.element_type_spec);
+			ParseResult nested = parse_brace_initializer(*context.element_type_spec);
 			if (nested.is_error()) {
 				return nested;
 			}
