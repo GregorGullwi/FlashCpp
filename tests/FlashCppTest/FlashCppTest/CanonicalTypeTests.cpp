@@ -7233,6 +7233,59 @@ int main() { return 0; }
 		table.builtin(CanonicalBuiltinKind::LongLong));
 }
 
+TEST_CASE("Selected member partial methods publish concrete outer signatures") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	std::ifstream fixture("tests/test_canonical_member_partial_outer_signature_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	code.append("\nusing NarrowSignature = SignatureOwner<short>::Box<int*>;\nusing WideSignature = SignatureOwner<long long>::Box<int*>;\n");
+	CompileContext compile_context;
+	compile_context.setInputFile("member_partial_outer_signature.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const auto record_for_alias = [](std::string_view name) {
+		const TypeInfo* alias = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(alias != nullptr);
+		const ResolvedAliasTypeInfo resolved = resolveAliasTypeInfo(alias->registeredTypeIndex());
+		REQUIRE(resolved.terminal_type_info != nullptr);
+		const StructTypeInfo* record = tryGetStructTypeInfo(resolved.type_index);
+		REQUIRE(record != nullptr);
+		return record;
+	};
+	const auto check_function = [&](const StructTypeInfo& record, std::string_view name, TypeId expected_outer, TypeId expected_parameter) {
+		const StructMemberFunction* selected = nullptr;
+		for (const StructMemberFunction& member : record.member_functions) {
+			if (StringTable::getStringView(member.name) != name || !member.function_decl.is<FunctionDeclarationNode>()) continue;
+			selected = &member;
+			break;
+		}
+		REQUIRE(selected != nullptr);
+		const FunctionDeclarationNode& function = selected->function_decl.as<FunctionDeclarationNode>();
+		const auto result_id = tryImportSupportedCanonical(table, function.decl_node().type_specifier_node());
+		REQUIRE(result_id.has_value());
+		CHECK(*result_id == expected_outer);
+		REQUIRE(!function.parameter_nodes().empty());
+		const auto parameter_id = tryImportSupportedCanonical(table, function.parameter_nodes()[0].as<DeclarationNode>().type_specifier_node());
+		REQUIRE(parameter_id.has_value());
+		CHECK(*parameter_id == expected_parameter);
+	};
+	const StructTypeInfo* narrow = record_for_alias("NarrowSignature");
+	const StructTypeInfo* wide = record_for_alias("WideSignature");
+	check_function(*narrow, "echo", table.builtin(CanonicalBuiltinKind::Short), table.builtin(CanonicalBuiltinKind::Short));
+	check_function(*narrow, "declared", table.builtin(CanonicalBuiltinKind::Short), table.builtin(CanonicalBuiltinKind::Short));
+	check_function(*narrow, "mix", table.builtin(CanonicalBuiltinKind::Short), table.builtin(CanonicalBuiltinKind::Int));
+	check_function(*wide, "echo", table.builtin(CanonicalBuiltinKind::LongLong), table.builtin(CanonicalBuiltinKind::LongLong));
+	check_function(*wide, "declared", table.builtin(CanonicalBuiltinKind::LongLong), table.builtin(CanonicalBuiltinKind::LongLong));
+	check_function(*wide, "mix", table.builtin(CanonicalBuiltinKind::LongLong), table.builtin(CanonicalBuiltinKind::Int));
+}
+
 TEST_CASE("Member class-template partial patterns publish canonical environments") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

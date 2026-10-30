@@ -1,5 +1,18 @@
 # Known Issues
 
+## Nested methods under selected member partial specializations can miss emission
+
+A nested class inside a selected member partial can parse its outer-dependent
+method but leave an unresolved method symbol at link time. Reduced shape:
+`template<class T> struct Owner { template<class U> struct Box {};
+template<class U> struct Box<U*> { struct Child { T echo(T value) { return value; } }; }; };`.
+After namespace aliases for `Owner<long long>::Box<int*>` and its `Child`, calling
+`child.echo(5000000000LL)` produces an unresolved `echo` on Windows. Direct member
+partial methods have separate signature coverage. Audit nested-class binding
+propagation and deferred body ownership before enabling this nested case; do not
+recover the method by generated name. The selected-partial lazy nested setup
+currently pairs effective parent parameters with local-only arguments.
+
 ## Signed narrow bit-field reads can lose sign extension
 
 A local `UnionBits<short>` whose anonymous union contains `short first : 3;`
@@ -70,11 +83,9 @@ and flat union groups by owner TypeId. Missing field-layout and dependent base
 facts still fail closed. The partial-specialization parser gap above and nested
 anonymous-union hierarchy remain separate.
 
-Nested-class holders inside class-template specializations need canonical type
-identity that combines the enclosing specialization with the nested declaration.
-The published nested pattern EntityId alone must not identify every enclosing
-instantiation. Constrained, pack, non-type, and alias partial patterns still need
-separate environment publication before dependent fields can import concretely.
+Non-type-parameter and alias partial patterns still need substitutable canonical
+environments before dependent fields can import concretely. Published type-pack
+environments also need expansion inside member template-id type spellings.
 Member-pointer graphs containing opaque non-type specialization arguments fail
 closed: the canonical substitutor preserves those ExprIds and cannot replace a pattern argument such as `N` with
 its concrete value. Publish substitutable parameter/value identity before
