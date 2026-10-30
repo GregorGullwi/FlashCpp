@@ -313,6 +313,19 @@ inline std::optional<TypeId> tryImportCanonicalPartialTypePattern(CanonicalTypeT
 struct CanonicalPartialPatternOptions {
 	bool allow_concept_constrained_parameters;
 	bool allow_non_type_literal_arguments;
+	bool allow_pack_parameters;
+};
+
+inline constexpr CanonicalPartialPatternOptions kCanonicalPartialPatternNone{
+	.allow_concept_constrained_parameters = false,
+	.allow_non_type_literal_arguments = false,
+	.allow_pack_parameters = false,
+};
+
+inline constexpr CanonicalPartialPatternOptions kCanonicalPartialPatternMember{
+	.allow_concept_constrained_parameters = true,
+	.allow_non_type_literal_arguments = true,
+	.allow_pack_parameters = true,
 };
 
 // The primary is only the alpha-normalization anchor; it does not bind the
@@ -327,7 +340,8 @@ inline std::optional<TypeId> tryImportCanonicalPartialClassPattern(FrontendConte
 		// A concept constraint affects partial-specialization selection, not the
 		// type identity of the parameter it constrains. Non-type *parameters* still
 		// need dedicated canonical placeholder shapes.
-		if (parameter.kind() != TemplateParameterKind::Type || parameter.is_variadic() ||
+		if (parameter.kind() != TemplateParameterKind::Type ||
+			(parameter.is_variadic() && !options.allow_pack_parameters) ||
 			(parameter.has_concept_constraint() && !options.allow_concept_constrained_parameters)) return std::nullopt;
 	}
 	CanonicalTypeTable& table = context.canonicalTypes();
@@ -342,8 +356,23 @@ inline std::optional<TypeId> tryImportCanonicalPartialClassPattern(FrontendConte
 	CanonicalTemplateArgument* pattern_arguments = new (argument_storage) CanonicalTemplateArgument[arguments.size()]{};
 	for (size_t index = 0; index < arguments.size(); ++index) {
 		const TemplateTypeArg& argument = arguments[index];
-		if (argument.is_pack || argument.member_pointer_kind != MemberPointerKind::None ||
+		if (argument.member_pointer_kind != MemberPointerKind::None ||
 			argument.function_signature.has_value()) return std::nullopt;
+		if (argument.is_pack) {
+			if (!options.allow_pack_parameters || !argument.isTypeArgument() || !argument.dependent_name.isValid()) {
+				return std::nullopt;
+			}
+			size_t parameter_index = parameters.size();
+			for (size_t candidate = 0; candidate < parameters.size(); ++candidate) {
+				if (parameters[candidate].nameHandle() == argument.dependent_name) {
+					parameter_index = candidate;
+					break;
+				}
+			}
+			if (parameter_index == parameters.size() || !parameters[parameter_index].is_variadic()) return std::nullopt;
+			pattern_arguments[index] = CanonicalTemplateArgument::makeType(table.templateParameter(primary, static_cast<uint32_t>(parameter_index)));
+			continue;
+		}
 		if (!argument.isTypeArgument()) {
 			if (!options.allow_non_type_literal_arguments || !argument.is_value || argument.is_dependent ||
 				argument.is_template_template_arg) return std::nullopt;

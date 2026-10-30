@@ -3574,7 +3574,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				const std::optional<TypeId> pattern = tryImportCanonicalPartialClassPattern(front_end, primary.template_decl_id(),
 					std::span<const TemplateParameterNode>(template_param_nodes.data(), template_param_nodes.size()),
 					std::span<const TemplateTypeArg>(pattern_args.data(), pattern_args.size()), pattern_arg_syntax_nodes,
-					CanonicalPartialPatternOptions{.allow_concept_constrained_parameters = false, .allow_non_type_literal_arguments = false});
+					kCanonicalPartialPatternNone);
 				if (pattern.has_value()) {
 					const TemplateDeclId environment = front_end.templateDecls().publishClassPartialEnvironment(primary.template_decl_id(), *pattern);
 					struct_ref.set_partial_specialization_environment(environment);
@@ -6232,7 +6232,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			const std::optional<TypeId> pattern = tryImportCanonicalPartialClassPattern(front_end, partial_primary.template_decl_id(),
 				std::span<const TemplateParameterNode>(template_param_nodes.data(), template_param_nodes.size()),
 				std::span<const TemplateTypeArg>(pattern_args.data(), pattern_args.size()), pattern_arg_syntax_nodes,
-				CanonicalPartialPatternOptions{.allow_concept_constrained_parameters = true, .allow_non_type_literal_arguments = true});
+				kCanonicalPartialPatternMember);
 			if (pattern.has_value()) {
 				const TemplateDeclId environment = front_end.templateDecls().publishClassPartialEnvironment(partial_primary.template_decl_id(), *pattern);
 				member_struct_ref.set_partial_specialization_environment(environment);
