@@ -7014,6 +7014,67 @@ TEST_CASE("Canonical nested record identity includes its specialized enclosing c
 	}
 }
 
+TEST_CASE("Member class-template import composes owner and member arguments") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+template<class T> struct Owner {
+	template<class U> struct Box { U value; };
+};
+using ShortInt = Owner<short>::Box<int>;
+using ShortIntAgain = Owner<short>::Box<int>;
+using ShortLong = Owner<short>::Box<long long>;
+using WideInt = Owner<long long>::Box<int>;
+int main() { return 0; }
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("member_template_composed_identity.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto import_alias = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const auto template_decl = [](std::string_view name) {
+		const auto entry = gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle(name));
+		REQUIRE(entry.has_value());
+		REQUIRE(entry->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& node = entry->as<TemplateClassDeclarationNode>();
+		REQUIRE(node.has_template_decl_id());
+		return node.template_decl_id();
+	};
+	const TemplateDeclId owner_decl = template_decl("Owner");
+	const TemplateDeclId member_decl = template_decl("Owner::Box");
+	const TypeId short_int = import_alias("ShortInt");
+	const TypeId short_int_again = import_alias("ShortIntAgain");
+	const TypeId short_long = import_alias("ShortLong");
+	const TypeId wide_int = import_alias("WideInt");
+	CHECK(short_int == short_int_again);
+	CHECK(short_int != short_long);
+	CHECK(short_int != wide_int);
+	REQUIRE(table.node(short_int).kind == CanonicalTypeKind::TemplateSpecialization);
+	CHECK(table.templateSpecializationDecl(short_int) == member_decl);
+	const TypeId short_owner = table.templateSpecializationOwner(short_int);
+	const TypeId wide_owner = table.templateSpecializationOwner(wide_int);
+	REQUIRE(short_owner);
+	REQUIRE(wide_owner);
+	CHECK(short_owner != wide_owner);
+	CHECK(table.node(short_owner).kind == CanonicalTypeKind::TemplateSpecialization);
+	CHECK(table.templateSpecializationDecl(short_owner) == owner_decl);
+	CHECK(table.templateSpecializationOwner(short_owner) == TypeId{});
+	CHECK(table.templateArgumentType(table.templateSpecializationArguments(short_int)) == table.builtin(CanonicalBuiltinKind::Int));
+	CHECK(table.templateArgumentType(table.templateSpecializationArguments(short_long)) == table.builtin(CanonicalBuiltinKind::LongLong));
+}
+
 TEST_CASE("Nested structural NTTP member pointers bind the specialized target owner") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
