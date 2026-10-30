@@ -717,6 +717,37 @@ inline void checkAdapter() {
 		table.templateSpecialization(TemplateDeclId{11}, expected_args)));
 	require(imported_specialization.type != table.pointer(
 		table.templateSpecialization(TemplateDeclId{12}, expected_args)));
+	const TypeId member_owner_short = table.templateSpecialization(
+		TemplateDeclId{401}, std::array<TypeId, 1>{table.builtin(CanonicalBuiltinKind::Short)});
+	const TypeId member_owner_long = table.templateSpecialization(
+		TemplateDeclId{401}, std::array<TypeId, 1>{table.builtin(CanonicalBuiltinKind::LongLong)});
+	const CanonicalTemplateArgument member_int_args[] = {
+		CanonicalTemplateArgument::makeType(table.builtin(CanonicalBuiltinKind::Int)),
+	};
+	const CanonicalTemplateArgument member_char_args[] = {
+		CanonicalTemplateArgument::makeType(table.builtin(CanonicalBuiltinKind::Char)),
+	};
+	const TypeId box_short = table.memberTemplateSpecialization(
+		TemplateDeclId{402}, member_owner_short, member_int_args);
+	const TypeId box_long = table.memberTemplateSpecialization(
+		TemplateDeclId{402}, member_owner_long, member_int_args);
+	const TypeId inner_short = table.memberTemplateSpecialization(
+		TemplateDeclId{403}, box_short, member_char_args);
+	const TypeId inner_long = table.memberTemplateSpecialization(
+		TemplateDeclId{403}, box_long, member_char_args);
+	require(inner_short == table.memberTemplateSpecialization(
+		TemplateDeclId{403}, box_short, member_char_args));
+	require(inner_short != inner_long);
+	require(inner_short != box_short);
+	require(table.templateSpecializationDecl(inner_short) == TemplateDeclId{403});
+	require(table.templateSpecializationOwner(inner_short) == box_short);
+	require(table.templateSpecializationDecl(table.templateSpecializationOwner(inner_short)) ==
+		TemplateDeclId{402});
+	require(table.templateSpecializationOwner(box_short) == member_owner_short);
+	require(table.templateArgumentType(table.templateSpecializationArguments(inner_short)) ==
+		table.builtin(CanonicalBuiltinKind::Char));
+	require(table.templateArgumentType(table.templateSpecializationArguments(box_short)) ==
+		table.builtin(CanonicalBuiltinKind::Int));
 	const TypeId swapped_args[] = {
 		table.builtin(CanonicalBuiltinKind::Float),
 		table.builtin(CanonicalBuiltinKind::Int),

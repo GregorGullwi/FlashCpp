@@ -12,25 +12,25 @@
 namespace {
 
 // Publish TemplateDeclId for a primary member class template when its immediate
-// enclosing class has a published EntityId, or is itself a published primary
-// class template. Named nested classes in a primary class-template pattern now
-// publish EntityIds under their enclosing TemplateDeclId, so their direct
-// member templates can publish under the nested class identity. Spelling is a
-// lookup key only and is never TypeId identity.
+// enclosing class has a published EntityId, or is itself a published class
+// template. A member class template nested directly in another member class
+// template composes the same owner chain one level deeper: the enclosing
+// pattern's published TemplateDeclId owns the child. Named nested classes in a
+// primary class-template pattern publish EntityIds under their enclosing
+// TemplateDeclId, so their direct member templates use the nested class
+// identity. Spelling is a lookup key only and is never TypeId identity.
 std::optional<TemplateDeclId> tryPublishMemberPrimaryClassTemplate(
 	StructDeclarationNode& enclosing,
 	StructDeclarationNode& member,
 	StringHandle simple_name,
-	TemplateDeclId enclosing_template_decl,
-	bool is_direct_member_of_top_level_class_template) {
+	TemplateDeclId enclosing_template_decl) {
 	if (!simple_name.isValid()) {
 		return std::nullopt;
 	}
 	OwnerId owner{};
 	if (enclosing.has_entity_id()) {
 		owner = ownerIdFromClassEntity(enclosing.entity_id());
-	} else if (is_direct_member_of_top_level_class_template &&
-		enclosing.has_template_decl_id() &&
+	} else if (enclosing.has_template_decl_id() &&
 		enclosing.template_decl_id() == enclosing_template_decl) {
 		owner = ownerIdFromTemplateDecl(enclosing_template_decl);
 	}
@@ -6000,8 +6000,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			struct_node,
 			forward_struct_ref,
 			struct_name_token.handle(),
-			active_template_decl_id_,
-			struct_parsing_context_stack_.size() == 1u);
+			active_template_decl_id_);
 
 		// Create template struct node for the forward declaration
 		auto template_struct_node = emplace_node<TemplateClassDeclarationNode>(
@@ -6820,8 +6819,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			struct_node,
 			member_struct_ref,
 			struct_name_token.handle(),
-			active_template_decl_id_,
-			struct_parsing_context_stack_.size() == 1u);
+			active_template_decl_id_);
 	FlashCpp::ScopedStateCopy member_struct_context_guard(
 		struct_parsing_context_stack_);
 	struct_parsing_context_stack_.push_back({
