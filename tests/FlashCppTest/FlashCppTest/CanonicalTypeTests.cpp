@@ -7486,6 +7486,138 @@ int main() { return 0; }
 	CHECK(table.substitute(imported_field, environment, concrete_arguments) == table.pointer(table.builtin(CanonicalBuiltinKind::Int)));
 }
 
+TEST_CASE("Data member template-id pack expansions preserve canonical argument order") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream fixture("tests/test_canonical_member_partial_type_pack_fields_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	code.append(R"(
+using Empty = PackOwner<short>::Box<int>;
+using Single = PackOwner<short>::Box<int, char>;
+using Multiple = PackOwner<long long>::Box<int, char, double>;
+using SameArguments = PackOwner<short>::Box<int, char, double>;
+using Reordered = PackOwner<short>::Box<int, double, char>;
+using Small = short;
+using Equivalent = PackOwner<Small>::Box<int, char, double>;
+using Structured = PackOwner<short>::Box<int, PackPayload>;
+using ExpectedEmpty = TypeList<short, int>;
+using ExpectedSingle = TypeList<short, int, char>;
+using ExpectedMultiple = TypeList<long long, int, char, double>;
+using ExpectedSame = TypeList<short, int, char, double>;
+using ExpectedReordered = TypeList<short, int, double, char>;
+using ExpectedStructured = TypeList<short, int, PackPayload>;
+using StructuredPointers = TypeList<const PackPayload*>;
+using EmptyPointers = TypeList<>;
+using SinglePointers = TypeList<const char*>;
+using MultiplePointers = TypeList<const char*, const double*>;
+using ReorderedPointers = TypeList<const double*, const char*>;
+)");
+	CompileContext compile_context;
+	compile_context.setInputFile("canonical_member_partial_type_pack_fields.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto imported_alias = [&](std::string_view name) {
+		INFO("canonical pack alias: " << name);
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	CHECK(imported_alias("Multiple") != imported_alias("SameArguments"));
+	CHECK(imported_alias("Equivalent") == imported_alias("SameArguments"));
+	const std::string_view names[] = {"Empty", "Single", "Multiple", "SameArguments", "Reordered", "Equivalent", "Structured"};
+	const std::string_view values[] = {
+		"ExpectedEmpty", "ExpectedSingle", "ExpectedMultiple", "ExpectedSame", "ExpectedReordered", "ExpectedSame", "ExpectedStructured"};
+	const size_t member_argument_counts[] = {1, 2, 3, 3, 3, 3, 2};
+	const std::string_view pointers[] = {
+		"EmptyPointers", "SinglePointers", "MultiplePointers", "MultiplePointers", "ReorderedPointers", "MultiplePointers", "StructuredPointers"};
+	for (size_t index = 0; index < std::size(names); ++index) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(names[index]));
+		REQUIRE(info != nullptr);
+		const ResolvedAliasTypeInfo resolved = resolveAliasTypeInfo(info->registeredTypeIndex());
+		const StructTypeInfo* record = tryGetStructTypeInfo(resolved.type_index);
+		REQUIRE(record != nullptr);
+		REQUIRE(record->declaration_node != nullptr);
+		REQUIRE(record->declaration_node->members().size() == 2);
+		const TypeId member_type = imported_alias(names[index]);
+		const TypeId owner = table.templateSpecializationOwner(member_type);
+		REQUIRE(owner);
+		const TypeId owner_arguments = table.templateSpecializationArguments(owner);
+		REQUIRE(owner_arguments);
+		CHECK(table.node(owner_arguments).child == TypeId{});
+		CHECK(table.templateArgumentType(owner_arguments) == table.builtin(index == 2 ? CanonicalBuiltinKind::LongLong : CanonicalBuiltinKind::Short));
+		size_t argument_count = 0;
+		for (TypeId argument = table.templateSpecializationArguments(member_type); argument; argument = table.node(argument).child) ++argument_count;
+		CHECK(argument_count == member_argument_counts[index]);
+		REQUIRE(table.hasRecordSubobjectTypes(member_type));
+		const TypeId expected[] = {imported_alias(values[index]), imported_alias(pointers[index])};
+		for (size_t member_index = 0; member_index < 2; ++member_index) {
+			CHECK(record->members[member_index].canonical_type_id == expected[member_index]);
+			CHECK(table.recordSubobjectMemberAt(member_type, member_index) == expected[member_index]);
+			const auto& member = record->declaration_node->members()[member_index].declaration.as<DeclarationNode>();
+			CHECK(importCanonicalStructMemberType(table, member.type_specifier_node()) == expected[member_index]);
+		}
+	}
+}
+
+TEST_CASE("Direct type pack bindings preserve declaration and argument boundaries") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+struct Owner {
+	template<class... T> struct List {};
+	template<class Head, class... Tail> struct List<Head, Tail...> { int member; };
+};
+)";
+	CompileContext compile_context;
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine engine;
+	parser.attachTemplateEngine(engine);
+	REQUIRE(!parser.parse().is_error());
+	const auto arg = [](TypeCategory category) {
+		TemplateTypeArg result;
+		result.type_index = nativeTypeIndex(category);
+		return result;
+	};
+	TemplateTypeArg arguments[] = {arg(TypeCategory::Int), arg(TypeCategory::Char), arg(TypeCategory::Double), arg(TypeCategory::Short)};
+	arguments[1].is_pack = true;
+	arguments[2].is_pack = true;
+	const std::span<const TemplateTypeArg> bound(arguments);
+	const auto match = gTemplateRegistry.matchSpecializationPatternWithBindings("Owner::List", bound.first(3));
+	REQUIRE(match.has_value());
+	const auto& parameters = match->node.as<TemplateClassDeclarationNode>().template_parameters();
+	REQUIRE(parameters.size() == 2);
+	TypeInfo::TemplateArgInfo occurrence;
+	occurrence.type_index = parameters[1].registered_type_index();
+	occurrence.is_pack = true;
+	const auto pack = findDirectTypePackExpansion(occurrence, parameters, bound);
+	REQUIRE(pack.has_value());
+	REQUIRE(pack->size() == 2);
+	CHECK((*pack)[0].category() == TypeCategory::Char);
+	CHECK((*pack)[1].category() == TypeCategory::Double);
+	CHECK(findDirectTypePackExpansion(occurrence, parameters, bound.first(1))->empty());
+	CHECK_FALSE(findDirectTypePackExpansion(occurrence, parameters, bound.first(0)).has_value());
+	TemplateParameterVector other_parameters = parameters;
+	other_parameters[1].set_registered_type_index(parameters[0].registered_type_index());
+	CHECK_FALSE(findDirectTypePackExpansion(occurrence, other_parameters, bound).has_value());
+	arguments[1].is_dependent = true;
+	CHECK_FALSE(findDirectTypePackExpansion(occurrence, parameters, bound).has_value());
+	arguments[1].is_dependent = false;
+	occurrence.is_pack = false;
+	CHECK_FALSE(findDirectTypePackExpansion(occurrence, parameters, bound).has_value());
+}
+
 TEST_CASE("Nested structural NTTP member pointers bind the specialized target owner") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

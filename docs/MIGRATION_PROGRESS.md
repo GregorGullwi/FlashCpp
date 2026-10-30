@@ -8,23 +8,27 @@ implementation history belongs in git and the regression suite.
 
 ## Next 3A slice
 
-**Pack expansions inside member type spellings.** Member partial patterns now
-publish pack parameter environments, but a data-member template-id such as
-`List<Head, Tail...>` still needs substitution of the expansion into ordered
-canonical type arguments. Start with concrete type packs in selected member
-partials: retain the declared pack's canonical environment/slot, expand its
-bound arguments in order, and preserve the instantiated enclosing owner TypeId.
-Add empty, single-element, and multi-element pack regressions, alias-equivalence and
-owner-separation guards, and mutation checks before enabling publication. Keep
-unbound packs and opaque/dependent non-type arguments fail-closed. Non-type and
-alias partial patterns, callable-component pack expansions, trailing-requires
-member partials, and nested method emission remain separate work. Do not add
-evaluator or selection rules or recover identity by spelling/generated name.
+**Instantiated-owner targets in expanded data-member types.** Direct concrete
+packs now expand into ordered canonical arguments for namespace templates and
+templates owned by non-template classes. A field whose target is itself class-template-owned,
+such as `Owner<T>::List<Head, Tail...>`, still needs the target's instantiated
+owner TypeId in its published type. Extend the typed declaration/syntax bridge
+using the existing `memberTemplateSpecialization` identity; do not stamp only the
+member primary and silently discard its owner. Keep owner and member arguments
+separately observable, pin same-arguments/different-owner and alias-equivalence
+cases, and mutation-check missing owner facts. The current materialized-type
+stamper deliberately defers template-owned targets. Do not recover their identity
+from spelling or generated names.
 
-Direct member partial signatures and bodies now share effective owner-plus-local
-bindings with data members. `test_canonical_member_partial_outer_signature_ret0.cpp`
-covers constructors, references, callbacks, and differing widths; native checks
-pin defined/declaration-only canonical signatures and reject local-only finalization.
+Nontrivial expansion patterns such as `Wrapper<Tail>...`, callable packs,
+non-type-parameter/alias/trailing-requires member partials, opaque dependent
+values, and nested method emission remain separate work. Keep unsupported or
+unbound expansions fail-closed and do not add evaluator or selection rules.
+
+Direct type-pack data members now retain empty/full packs, written CV/pointer
+wrappers, enclosing-owner identity, and canonical subobject schemas. Coverage is
+in `test_canonical_member_partial_type_pack_fields_ret0.cpp` and native
+identity/boundary guards; removing declaration binding or expansion is rejected.
 
 ## Current state
 
@@ -82,9 +86,13 @@ and the instantiated AST. Concept-constrained type parameters and concrete
 non-type literal pattern arguments use the same environment because constraints
 affect selection and concrete values already carry canonical identity. Pack
 member partial patterns normalize each declared parameter, including the pack,
-to one environment slot so non-pack members substitute from the expanded
-instantiation bindings. Direct member function signatures, constructor parameters,
-and bodies use the same effective owner plus local bindings as data members.
+to one environment slot. Direct type-pack data-member template-ids expand from
+the declared pack binding; outer binding views retain every element, and member
+specializations split actual member arguments from the instantiated owner.
+Supported materialized targets publish matching syntax, field, and subobject
+TypeIds; unresolved packs and template-owned targets remain deferred. Direct
+member function signatures, constructor parameters, and bodies use the same
+effective owner plus local bindings as data members.
 Class-owned member specializations already encode their owner in the member
 `TemplateDeclId`. Source-level nested declarations under partial specializations
 are parsed and registered. The importer remains fail-closed for missing,
@@ -172,9 +180,11 @@ These seed adjacent slices; the authoritative inventory is
   separate. Concept-constrained type, concrete non-type literal, and pack member
   partials publish canonical parameter environments, and direct member function
   signatures, constructors, and bodies substitute effective owner bindings.
-  Pack expansions inside member type spellings, non-type-parameter, alias, and
-  trailing-requires member partials, nested method emission, and dependent
-  owner/member argument forms remain deferred.
+  Direct type-pack data-member template-ids publish concrete argument lists for
+  namespace/non-template-class targets. Instantiated-owner targets, nontrivial
+  expansion patterns, callable packs, non-type-parameter/alias/trailing-requires
+  member partials, nested method emission, and other dependent owner/member
+  arguments remain deferred.
 - Non-null object pointer target identity, ambiguous/virtual-base member
   pointers, unpublished dependent bases, and the nested
   anonymous-union-in-anonymous-union hierarchy still need canonical subobject

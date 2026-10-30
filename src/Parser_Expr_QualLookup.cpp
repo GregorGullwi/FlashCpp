@@ -2262,10 +2262,13 @@ ParseResult Parser::validate_and_add_base_class(
 
 // Substitute template parameter in a type specification
 // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
-TypeIndex Parser::substitute_template_parameter(
-	const TypeSpecifierNode& original_type,
-	std::span<const TemplateParameterNode> template_params,
+TypeIndex Parser::substitute_template_parameter(const TypeSpecifierNode& original_type, std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args) {
+	return substitute_template_parameter(original_type, template_params, template_args, false);
+}
+
+TypeIndex Parser::substitute_template_parameter(const TypeSpecifierNode& original_type, std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args, bool expand_direct_type_packs) {
 	TypeCategory current_type = original_type.type();
 	TypeIndex current_type_index = original_type.type_index();
 
@@ -2399,6 +2402,11 @@ TypeIndex Parser::substitute_template_parameter(
 					placeholder_owner_handle);
 			};
 		for (const TypeInfo::TemplateArgInfo& arg_info : placeholder_info.templateArgs()) {
+			if (expand_direct_type_packs && appendDirectTypePackExpansion(concrete_args, arg_info, template_params, template_args)) continue;
+			if (expand_direct_type_packs && arg_info.is_pack && !arg_info.is_value) {
+				concrete_args.push_back(toTemplateTypeArg(arg_info));
+				continue;
+			}
 			TemplateTypeArg preliminary = toTemplateTypeArg(arg_info);
 			if (preliminary.is_value && preliminary.dependent_name.isValid()) {
 				std::string_view dependent_name_view =

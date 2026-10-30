@@ -338,8 +338,8 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 	if (active_template_param_bindings.size() != active_template_param_names.size()) {
 		throw InternalError("stamp template specialization: active parameter binding shape mismatch");
 	}
-	const auto stampPublishedTypeArgument = [&](TypeSpecifierNode type_arg,
-		const TemplateTypeArg& arg) {
+	const auto stampPublishedTypeArgument = [&](TypeSpecifierNode type_arg, const TemplateTypeArg& arg) {
+		tryBindPublishedTypeEntity(type_arg);
 		const StringHandle syntax_name = type_arg.token().handle();
 		const StringHandle parameter_name = syntax_name.isValid()
 			? syntax_name

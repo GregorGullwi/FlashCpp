@@ -3312,10 +3312,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// For pattern specializations, member types need substitution!
 				// Use substitute_template_parameter to properly match template parameters by name
-				TypeIndex member_type_index = substitute_template_parameter(
-					*effective_type_spec, effective_member_copy_template_params, effective_member_copy_template_args);
+				TypeIndex member_type_index = substitute_template_parameter(*effective_type_spec, effective_member_copy_template_params,
+					effective_member_copy_template_args, true);
 				TypeSpecifierNode substituted_member_type_spec = *effective_type_spec;
 				substituted_member_type_spec.set_type_index(member_type_index);
+				if (const TypeInfo* concrete_member = tryGetTypeInfo(member_type_index)) {
+					(void)tryStampMaterializedClassTemplateType(substituted_member_type_spec, *concrete_member);
+				}
 				materializeSubstitutedFunctionTypeMetadata(
 					*this,
 					substituted_member_type_spec,
@@ -4639,6 +4642,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			for (const auto& member_decl : pattern_struct.members()) {
 				ASTNode substituted_member_decl = substituteTemplateParameters(
 					member_decl.declaration, effective_pattern_template_params, effective_pattern_template_args);
+				const TypeSpecifierNode& original_type = member_decl.declaration.as<DeclarationNode>().type_specifier_node();
+				const TypeInfo* pattern_type = tryGetTypeInfo(original_type.type_index());
+				if (pattern_type != nullptr && std::ranges::any_of(pattern_type->templateArgs(),
+					[](const TypeInfo::TemplateArgInfo& argument) { return argument.is_pack && !argument.is_value; })) {
+					const TypeIndex concrete_index = substitute_template_parameter(original_type, effective_pattern_template_params,
+						effective_pattern_template_args, true);
+					TypeSpecifierNode& concrete = substituted_member_decl.as<DeclarationNode>().type_specifier_node();
+					concrete.set_type_index(concrete_index);
+					if (const TypeInfo* resolved = tryGetTypeInfo(concrete_index)) {
+						(void)tryStampMaterializedClassTemplateType(concrete, *resolved);
+					}
+				}
 				std::optional<ASTNode> substituted_default_initializer = member_decl.default_initializer.has_value()
 																			 ? std::optional<ASTNode>(substituteTemplateParameters(
 																				   *member_decl.default_initializer, effective_pattern_template_params, effective_pattern_template_args))
