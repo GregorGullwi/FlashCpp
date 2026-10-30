@@ -7631,6 +7631,52 @@ using LongOwner = Owner<long long>;
 	CHECK(table.templateSpecializationOwner(ownerless_imported.type) == TypeId{});
 }
 
+TEST_CASE("Materialized class-template-owned data members publish their owner") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream fixture("tests/test_canonical_member_template_owned_fields_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	CompileContext compile_context;
+	compile_context.setInputFile("member_template_owned_fields.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto imported_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const auto member_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const StructTypeInfo* record = info->getStructInfo();
+		REQUIRE(record != nullptr);
+		REQUIRE(record->declaration_node != nullptr);
+		REQUIRE(record->declaration_node->members().size() == 1);
+		const TypeSpecifierNode& field =
+			record->declaration_node->members()[0].declaration.as<DeclarationNode>().type_specifier_node();
+		const TypeId imported = importCanonicalStructMemberType(table, field);
+		REQUIRE(imported);
+		return imported;
+	};
+	const TypeId short_owner = imported_type("ShortOwner");
+	const TypeId long_owner = imported_type("LongOwner");
+	const TypeId short_member = member_type("ShortBox");
+	const TypeId long_member = member_type("LongBox");
+	CHECK(short_member != long_member);
+	CHECK(table.templateSpecializationOwner(short_member) == short_owner);
+	CHECK(table.templateSpecializationOwner(long_member) == long_owner);
+	CHECK(table.templateSpecializationArguments(short_member) == table.templateSpecializationArguments(long_member));
+}
+
 TEST_CASE("Direct type pack bindings preserve declaration and argument boundaries") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

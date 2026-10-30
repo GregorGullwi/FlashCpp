@@ -255,6 +255,10 @@ inline CanonicalTypeImport importCanonicalClassDeclaration(
 	CanonicalTypeTable& table,
 	const StructDeclarationNode& declaration);
 
+inline CanonicalTypeImport importCanonicalClassTypeInfo(
+	CanonicalTypeTable& table,
+	const TypeInfo& type_info);
+
 inline CanonicalTypeImport importCanonicalMemberPointerFunctionSignature(
 	CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax,
@@ -1607,7 +1611,20 @@ inline TypeId importCanonicalStructMemberType(CanonicalTypeTable& table, const T
 	tryBindPublishedTypeEntity(bound_syntax);
 	tryBindPublishedMemberClassEntity(bound_syntax);
 	CanonicalTypeTransaction transaction(table);
-	const std::optional<TypeId> imported = tryImportSupportedCanonical(table, bound_syntax);
+	std::optional<TypeId> imported = tryImportSupportedCanonical(table, bound_syntax);
+	if (!imported.has_value()) {
+		// A materialized member template-id can reach a member declaration without a
+		// syntax specialization stamp. Import the resolved TypeInfo, which composes
+		// memberTemplateSpecialization(member_primary, owner, arguments) from the
+		// declaration's instantiated owner facts.
+		if (const TypeInfo* resolved = tryGetTypeInfo(bound_syntax.type_index());
+			resolved != nullptr && resolved->isTemplateInstantiation()) {
+			const CanonicalTypeImport info_import = importCanonicalClassTypeInfo(table, *resolved);
+			if (info_import.status == CanonicalTypeImportStatus::Supported) {
+				imported = info_import.type;
+			}
+		}
+	}
 	if (!imported.has_value()) {
 		return {};
 	}
