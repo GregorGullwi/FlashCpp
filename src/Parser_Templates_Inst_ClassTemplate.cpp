@@ -5971,6 +5971,28 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 
+			for (const auto& nested_class : pattern_struct.nested_classes()) {
+				if (!nested_class.is<StructDeclarationNode>()) {
+					continue;
+				}
+				const StructDeclarationNode& nested_pattern = nested_class.as<StructDeclarationNode>();
+				if (nested_pattern.is_local_class()) {
+					continue;
+				}
+				LazyNestedTypeInfo lazy_nested_info;
+				lazy_nested_info.parent_class_name = instantiated_name;
+				lazy_nested_info.nested_type_name = nested_pattern.name();
+				lazy_nested_info.qualified_name = StringTable::getOrInternStringHandle(
+					StringBuilder().append(instantiated_name).append("::"sv).append(nested_pattern.name()).commit());
+				lazy_nested_info.nested_type_declaration = nested_class;
+				lazy_nested_info.parent_template_params = template_params;
+				lazy_nested_info.parent_template_args.assign(template_args_for_member_copy.begin(), template_args_for_member_copy.end());
+				LazyNestedTypeRegistry::getInstance().registerLazyNestedType(lazy_nested_info);
+				if (!instantiateLazyNestedType(lazy_nested_info.parent_class_name, lazy_nested_info.nested_type_name).has_value()) {
+					throw InternalError("Selected partial nested class was not instantiated");
+				}
+			}
+
 			// Register in cache for O(1) lookup on future instantiations
 			gTemplateRegistry.registerInstantiation(cache_key, instantiated_struct);
 			if (can_use_raw_cache_key && unfilled_cache_key != cache_key) {

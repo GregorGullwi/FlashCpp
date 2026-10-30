@@ -114,14 +114,14 @@ Retain `test_canonical_structural_nttp_base_source_ret0.cpp`,
 `test_canonical_structural_nttp_specialization_member_pointer_ret0.cpp`, and
 `test_canonical_structural_nttp_nullptr_member_ret0.cpp` as current guards.
 
-## Nested classes of selected partial specializations cannot be named in source
+## Deferred bases of selected-partial nested classes are not replayed
 
-The canonical importer now preserves the owning `Outer<short*>` versus
-`Outer<long long*>` identity for a nested class whose enclosing declaration came
-from a selected partial specialization. Source lookup such as
-`Outer<short*>::Key` still reports “Expected type or namespace name”; only the
-importer path is fixed. Add qualified lookup for nested declarations of a
-selected partial without falling back to generated names.
+A nested class declared in a selected partial specialization now publishes
+direct members, type aliases, and non-deferred base layout. A base whose type is
+dependent on the partial's template parameters is parsed as a deferred base but
+is not replayed on the selected instantiation, so inherited members from that
+base are unavailable. Route deferred base replay through the full
+instantiated-owner path rather than the lazy nested-type helper.
 
 ## Explicit casts of overloaded member-function addresses lose target identity
 
