@@ -251,6 +251,10 @@ inline CanonicalTypeImport importCanonicalTemplateSpecialization(
 	const TypeSpecifierNode& syntax,
 	CanonicalTypeImportContext context);
 
+inline CanonicalTypeImport importCanonicalClassDeclaration(
+	CanonicalTypeTable& table,
+	const StructDeclarationNode& declaration);
+
 inline CanonicalTypeImport importCanonicalMemberPointerFunctionSignature(
 	CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax,
@@ -1381,9 +1385,18 @@ inline CanonicalTypeImport importCanonicalTemplateSpecialization(CanonicalTypeTa
 		}
 		argument_ids.push_back(CanonicalTemplateArgument::makeNonType(expr));
 	}
-	auto id = syntax.is_alias_template_specialization()
-		? table.aliasTemplateSpecialization(syntax.specialization_template_decl(), argument_ids)
-		: table.templateSpecialization(syntax.specialization_template_decl(), argument_ids);
+	TypeId id;
+	if (syntax.is_alias_template_specialization()) {
+		id = table.aliasTemplateSpecialization(syntax.specialization_template_decl(), argument_ids);
+	} else if (syntax.has_specialization_owner()) {
+		const TypeId owner = syntax.specialization_owner_type_id();
+		if (!isCanonicalClassTypeKind(table.node(owner).kind)) {
+			return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+		}
+		id = table.memberTemplateSpecialization(syntax.specialization_template_decl(), owner, argument_ids);
+	} else {
+		id = table.templateSpecialization(syntax.specialization_template_decl(), argument_ids);
+	}
 	id = table.qualify(id, syntax.cv_qualifier());
 	id = applyCanonicalPointerArrayReference(
 		table, id, syntax, context, has_ordinary_array, has_pointee_array);

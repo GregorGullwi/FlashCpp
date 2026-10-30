@@ -148,7 +148,17 @@ inline bool tryStampMaterializedClassTemplateType(TypeSpecifierNode& syntax, con
 	if (pattern == nullptr || !pattern->has_template_decl_id()) return false;
 	FrontendContext& context = requireFrontendContext();
 	const auto owner = context.templateDecls().primaryClassTemplateOwner(pattern->template_decl_id());
-	if (!owner.has_value() || isTemplateOwnedOwnerId(*owner)) return false;
+	if (!owner.has_value()) return false;
+	const bool template_owned_owner = isTemplateOwnedOwnerId(*owner);
+	TypeId owner_specialization{};
+	if (template_owned_owner) {
+		const StructDeclarationNode* owner_declaration = record->declaration_node->enclosing_class();
+		if (owner_declaration == nullptr) return false;
+		const CanonicalTypeImport owner_import =
+			importCanonicalClassDeclaration(context.canonicalTypes(), *owner_declaration);
+		if (owner_import.status != CanonicalTypeImportStatus::Supported) return false;
+		owner_specialization = owner_import.type;
+	}
 	CanonicalTypeTransaction transaction(context.canonicalTypes());
 	std::vector<TypeSpecifierNode> arguments;
 	arguments.reserve(resolved.templateArgs().size());
@@ -160,7 +170,11 @@ inline bool tryStampMaterializedClassTemplateType(TypeSpecifierNode& syntax, con
 		if (!tryImportSupportedCanonical(context.canonicalTypes(), *type).has_value()) return false;
 		arguments.push_back(std::move(*type));
 	}
-	syntax.set_template_specialization(pattern->template_decl_id(), std::move(arguments));
+	if (template_owned_owner) {
+		syntax.set_member_template_specialization(pattern->template_decl_id(), owner_specialization, std::move(arguments));
+	} else {
+		syntax.set_template_specialization(pattern->template_decl_id(), std::move(arguments));
+	}
 	transaction.commit();
 	return true;
 }

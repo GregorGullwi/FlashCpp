@@ -32,6 +32,21 @@ its union fields. Reuse the normal class-member parser before publishing these
 specializations' field schemas; layout publication cannot recover absent declarations.
 Primary templates and their ordinary nested classes retain these static facts.
 
+## Class-template-owned member-template data-member packs lose concrete TypeInfo
+
+A data-member type such as `Owner<T>::List<Head, Tail...>` inside a class-template
+partial specialization can remain a dependent member placeholder even when the
+owner is concrete. Direct member access and method calls on that field then lower
+as free functions, and same member arguments under different owners can collapse
+to one concrete TypeInfo. Canonical publication composes
+`memberTemplateSpecialization(member_primary, owner, arguments)` when the
+materialized member TypeInfo is available; the parser's member-template
+instantiation path must compose the instantiated owner arguments before assigning
+the field TypeInfo. Plain-struct fields spelled
+`Owner<short>::List<int, char>` also fail to import a canonical member type until
+that stamp is published. Keep these fields fail-closed until the parser path is
+fixed.
+
 ## Remaining structural NTTP shapes need canonical value import
 
 Union declaration groups now carry explicit active-member state. Aggregate,

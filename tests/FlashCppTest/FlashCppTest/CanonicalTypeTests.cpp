@@ -7568,6 +7568,69 @@ using ReorderedPointers = TypeList<const double*, const char*>;
 	}
 }
 
+TEST_CASE("Member template specialization syntax retains its instantiated owner") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+template <class T>
+struct Owner {
+	template <class... U> struct List { T owner_value; };
+	template <class Head, class... Tail> struct List<Head, Tail...> { T owner_value; };
+};
+using ShortOwner = Owner<short>;
+using LongOwner = Owner<long long>;
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("member_template_owned_syntax.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	const auto list_entry = gTemplateRegistry.lookupTemplate("Owner::List");
+	REQUIRE(list_entry.has_value());
+	REQUIRE(list_entry->is<TemplateClassDeclarationNode>());
+	const TemplateDeclId list_primary = list_entry->as<TemplateClassDeclarationNode>().template_decl_id();
+	REQUIRE(list_primary);
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto owner_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const TypeId short_owner = owner_type("ShortOwner");
+	const TypeId long_owner = owner_type("LongOwner");
+	REQUIRE(short_owner != long_owner);
+	const TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	const TypeSpecifierNode char_type(TypeCategory::Char, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	const std::vector<TypeSpecifierNode> arguments{int_type, char_type};
+	TypeSpecifierNode short_syntax;
+	short_syntax.set_member_template_specialization(list_primary, short_owner, arguments);
+	TypeSpecifierNode long_syntax;
+	long_syntax.set_member_template_specialization(list_primary, long_owner, arguments);
+	const CanonicalTypeImport short_imported =
+		importCanonicalTemplateSpecialization(table, short_syntax, CanonicalTypeImportContext::Exact);
+	REQUIRE(short_imported.status == CanonicalTypeImportStatus::Supported);
+	const CanonicalTypeImport long_imported =
+		importCanonicalTemplateSpecialization(table, long_syntax, CanonicalTypeImportContext::Exact);
+	REQUIRE(long_imported.status == CanonicalTypeImportStatus::Supported);
+	CHECK(short_imported.type != long_imported.type);
+	CHECK(table.templateSpecializationOwner(short_imported.type) == short_owner);
+	CHECK(table.templateSpecializationOwner(long_imported.type) == long_owner);
+	CHECK(table.templateSpecializationArguments(short_imported.type) == table.templateSpecializationArguments(long_imported.type));
+	TypeSpecifierNode ownerless_syntax;
+	ownerless_syntax.set_template_specialization(list_primary, arguments);
+	const CanonicalTypeImport ownerless_imported =
+		importCanonicalTemplateSpecialization(table, ownerless_syntax, CanonicalTypeImportContext::Exact);
+	REQUIRE(ownerless_imported.status == CanonicalTypeImportStatus::Supported);
+	CHECK(ownerless_imported.type != short_imported.type);
+	CHECK(table.templateSpecializationOwner(ownerless_imported.type) == TypeId{});
+}
+
 TEST_CASE("Direct type pack bindings preserve declaration and argument boundaries") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

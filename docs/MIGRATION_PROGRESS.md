@@ -8,17 +8,15 @@ implementation history belongs in git and the regression suite.
 
 ## Next 3A slice
 
-**Instantiated-owner targets in expanded data-member types.** Direct concrete
-packs now expand into ordered canonical arguments for namespace templates and
-templates owned by non-template classes. A field whose target is itself class-template-owned,
-such as `Owner<T>::List<Head, Tail...>`, still needs the target's instantiated
-owner TypeId in its published type. Extend the typed declaration/syntax bridge
-using the existing `memberTemplateSpecialization` identity; do not stamp only the
-member primary and silently discard its owner. Keep owner and member arguments
-separately observable, pin same-arguments/different-owner and alias-equivalence
-cases, and mutation-check missing owner facts. The current materialized-type
-stamper deliberately defers template-owned targets. Do not recover their identity
-from spelling or generated names.
+**Compose instantiated owners in member-template data-member pack resolution.**
+The canonical bridge now stamps class-template-owned targets with the member
+primary plus the instantiated owner TypeId, keeping owner and member arguments
+separately observable. A data-member pack whose target is
+`Owner<T>::List<Head, Tail...>` inside a class-template partial specialization
+still resolves to a dependent member placeholder, so direct member access and
+method calls on that field can lower as free functions. Extend the parser's
+member-template instantiation path to compose the owner arguments before
+assigning the field TypeInfo, and keep unbound expansions fail-closed until then.
 
 Nontrivial expansion patterns such as `Wrapper<Tail>...`, callable packs,
 non-type-parameter/alias/trailing-requires member partials, opaque dependent
@@ -90,8 +88,13 @@ to one environment slot. Direct type-pack data-member template-ids expand from
 the declared pack binding; outer binding views retain every element, and member
 specializations split actual member arguments from the instantiated owner.
 Supported materialized targets publish matching syntax, field, and subobject
-TypeIds; unresolved packs and template-owned targets remain deferred. Direct
-member function signatures, constructor parameters, and bodies use the same
+TypeIds; class-template-owned targets publish `memberTemplateSpecialization` with
+the instantiated owner TypeId separate from the member arguments. Unresolved packs
+remain deferred. `tests/test_canonical_member_template_owned_fields_ret0.cpp`
+covers the runtime owner-sensitive field, and the native
+`Member template specialization syntax retains its instantiated owner` test
+covers same-arguments/different-owner identity plus the missing-owner mutation.
+Direct member function signatures, constructor parameters, and bodies use the same
 effective owner plus local bindings as data members.
 Class-owned member specializations already encode their owner in the member
 `TemplateDeclId`. Source-level nested declarations under partial specializations
