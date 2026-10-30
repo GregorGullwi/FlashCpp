@@ -23,6 +23,9 @@ struct LongBox {
 	typename Owner<long long>::template List<int, char> values;
 };
 
+using ShortOwner = Owner<short>;
+using LongOwner = Owner<long long>;
+
 int main() {
 	ShortBox short_box{};
 	LongBox long_box{};

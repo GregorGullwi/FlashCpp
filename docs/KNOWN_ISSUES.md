@@ -40,12 +40,11 @@ owner is concrete. Direct member access and method calls on that field then lowe
 as free functions, and same member arguments under different owners can collapse
 to one concrete TypeInfo. Canonical publication composes
 `memberTemplateSpecialization(member_primary, owner, arguments)` when the
-materialized member TypeInfo is available; the parser's member-template
-instantiation path must compose the instantiated owner arguments before assigning
-the field TypeInfo. Plain-struct fields spelled
-`Owner<short>::List<int, char>` also fail to import a canonical member type until
-that stamp is published. Keep these fields fail-closed until the parser path is
-fixed.
+materialized member TypeInfo is available, and member field import now falls back
+to that resolved TypeInfo when the syntax carries no specialization stamp. The
+parser's member-template instantiation path still must compose the instantiated
+owner arguments before assigning a pack-expanded field TypeInfo. Keep these
+pack-expanded fields fail-closed until that path is fixed.
 
 ## Remaining structural NTTP shapes need canonical value import
 
