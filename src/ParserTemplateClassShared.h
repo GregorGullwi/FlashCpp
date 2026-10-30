@@ -310,34 +310,48 @@ inline std::optional<TypeId> tryImportCanonicalPartialTypePattern(CanonicalTypeT
 	throw InternalError("partial pattern normalization ended without a result");
 }
 
+struct CanonicalPartialPatternOptions {
+	bool allow_concept_constrained_parameters;
+	bool allow_non_type_literal_arguments;
+};
+
 // The primary is only the alpha-normalization anchor; it does not bind the
 // partial's body parameters. Captured syntax retains nested published primaries.
 inline std::optional<TypeId> tryImportCanonicalPartialClassPattern(FrontendContext& context, TemplateDeclId primary,
 	std::span<const TemplateParameterNode> parameters, std::span<const TemplateTypeArg> arguments,
-	std::span<const ASTNode> argument_syntax, bool allow_concept_constrained_parameters) {
+	std::span<const ASTNode> argument_syntax, CanonicalPartialPatternOptions options) {
 	if (!primary || parameters.empty() || arguments.empty() || (!argument_syntax.empty() && argument_syntax.size() != arguments.size())) {
 		return std::nullopt;
 	}
 	for (const TemplateParameterNode& parameter : parameters) {
 		// A concept constraint affects partial-specialization selection, not the
-		// type identity of the parameter it constrains. Callers opt in where that
-		// selection policy is already owned. Packs and non-type parameters still
-		// need dedicated canonical argument shapes.
+		// type identity of the parameter it constrains. Non-type *parameters* still
+		// need dedicated canonical placeholder shapes.
 		if (parameter.kind() != TemplateParameterKind::Type || parameter.is_variadic() ||
-			(parameter.has_concept_constraint() && !allow_concept_constrained_parameters)) return std::nullopt;
+			(parameter.has_concept_constraint() && !options.allow_concept_constrained_parameters)) return std::nullopt;
 	}
 	CanonicalTypeTable& table = context.canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
 	MonotonicScratchArena& scratch = context.scratchArena();
 	const ScratchArenaState scratch_mark = scratch.mark();
 	auto scratch_scope = ScopeGuard([&scratch, scratch_mark]() { scratch.rollbackTo(scratch_mark); });
-	if (arguments.size() > std::numeric_limits<size_t>::max() / sizeof(TypeId)) throw InternalError("partial pattern argument count overflow");
-	void* argument_storage = scratch.allocate(arguments.size() * sizeof(TypeId), alignof(TypeId));
-	TypeId* pattern_arguments = new (argument_storage) TypeId[arguments.size()]{};
+	if (arguments.size() > std::numeric_limits<size_t>::max() / sizeof(CanonicalTemplateArgument)) {
+		throw InternalError("partial pattern argument count overflow");
+	}
+	void* argument_storage = scratch.allocate(arguments.size() * sizeof(CanonicalTemplateArgument), alignof(CanonicalTemplateArgument));
+	CanonicalTemplateArgument* pattern_arguments = new (argument_storage) CanonicalTemplateArgument[arguments.size()]{};
 	for (size_t index = 0; index < arguments.size(); ++index) {
 		const TemplateTypeArg& argument = arguments[index];
-		if (!argument.isTypeArgument() || argument.is_pack || argument.member_pointer_kind != MemberPointerKind::None ||
+		if (argument.is_pack || argument.member_pointer_kind != MemberPointerKind::None ||
 			argument.function_signature.has_value()) return std::nullopt;
+		if (!argument.isTypeArgument()) {
+			if (!options.allow_non_type_literal_arguments || !argument.is_value || argument.is_dependent ||
+				argument.is_template_template_arg) return std::nullopt;
+			const std::optional<TypeId> value = tryImportCanonicalValue(table, argument.valueIdentity());
+			if (!value.has_value()) return std::nullopt;
+			pattern_arguments[index] = CanonicalTemplateArgument::makeValue(*value);
+			continue;
+		}
 		std::optional<TypeId> imported;
 		if (argument_syntax.empty()) {
 			const TypeSpecifierNode syntax = typeSpecifierFromTemplateTypeArgProjection(argument);
@@ -348,9 +362,9 @@ inline std::optional<TypeId> tryImportCanonicalPartialClassPattern(FrontendConte
 				argument.is_dependent);
 		}
 		if (!imported.has_value() || !table.dependsOnlyOnTemplateParameters(*imported, primary)) return std::nullopt;
-		pattern_arguments[index] = *imported;
+		pattern_arguments[index] = CanonicalTemplateArgument::makeType(*imported);
 	}
-	const TypeId pattern = table.templateSpecialization(primary, std::span<const TypeId>(pattern_arguments, arguments.size()));
+	const TypeId pattern = table.templateSpecialization(primary, std::span<const CanonicalTemplateArgument>(pattern_arguments, arguments.size()));
 	transaction.commit();
 	return pattern;
 }
