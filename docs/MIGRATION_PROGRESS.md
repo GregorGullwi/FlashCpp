@@ -8,15 +8,15 @@ implementation history belongs in git and the regression suite.
 
 ## Next 3A slice
 
-**Member class-template partial body substitution.** Member partial patterns now
-publish a canonical partial environment before their base and body parse, so
-member field identities anchor to the pattern's own `TemplateDeclId` and
-substitute through that environment. Partial member bodies whose fields depend on
-enclosing template parameters still copy members with only the deduced local
-bindings and remain deferred. Constrained, pack, non-type, and alias partials,
-and other dependent member forms remain deferred as well. Keep opaque non-type
-arguments fail-closed until their identity can substitute. Do not recover identity
-by spelling or generated name, and do not add evaluator or selection rules.
+**Constrained and pack member partial patterns.** Member partial data-member
+copy now uses effective owner bindings plus the deduced local bindings, so fields
+and default initializers that name enclosing template parameters instantiate with
+the specialized owner. Member partial patterns also publish their canonical
+environment before base and body parse. Constrained, pack, non-type, and alias
+member partials, outer-dependent member function bodies, and other dependent
+member forms remain deferred. Keep opaque non-type arguments fail-closed until
+their identity can substitute. Do not recover identity by spelling or generated
+name, and do not add evaluator or selection rules.
 
 The preceding slices are complete. Class-template-owned member specializations
 now pack the instantiated owner TypeId beside the member arguments, distinguishing
@@ -29,6 +29,8 @@ their effective owner bindings and actual member arguments;
 `tests/test_canonical_member_partial_owner_chain_ret0.cpp` covers the source path.
 Member partial patterns publish their canonical environment before body parse;
 `CanonicalTypeTests.cpp` covers the environment, field identity, and substitution.
+Member partial data members substitute effective owner plus local bindings;
+`tests/test_canonical_member_partial_outer_body_ret0.cpp` covers the source path.
 Selected partial specializations also parse and publish their nested class
 declarations with direct members, type aliases, base layout, and preserved
 pointer-owner identity;
@@ -85,9 +87,11 @@ Selected member partial instantiations recover effective owner bindings from the
 instantiated declaration and compose them with the actual member arguments on
 their TypeInfo. Member partial patterns publish a canonical environment before
 their base and body parse, so in-pattern member identities anchor to the pattern
-instead of the primary or enclosing template. Class-owned member specializations
-already encode their owner in the member `TemplateDeclId`. Source-level nested
-declarations under partial
+instead of the primary or enclosing template. Data-member copy then substitutes
+that pattern with the effective owner plus deduced local bindings for both layout
+and the instantiated AST. Class-owned member specializations already encode their
+owner in the member `TemplateDeclId`. Source-level nested declarations under
+partial
 specializations are parsed and registered. The importer remains fail-closed for
 missing, mismatched, unpublished, or unresolved owner facts.
 
@@ -170,8 +174,9 @@ These seed adjacent slices; the authoritative inventory is
   advanced nested-body effects still need the full instantiated-owner path.
 - Class-template-owned direct, nested, and selected partial member
   specializations compose the full owner chain and keep member arguments
-  separate. Member partial bodies that depend on enclosing parameters, and
-  dependent owner/member argument forms, remain deferred.
+  separate. Constrained, pack, non-type, and alias member partials,
+  outer-dependent member function bodies, and dependent owner/member argument
+  forms remain deferred.
 - Non-null object pointer target identity, ambiguous/virtual-base member
   pointers, unpublished dependent bases, and the nested
   anonymous-union-in-anonymous-union hierarchy still need canonical subobject
