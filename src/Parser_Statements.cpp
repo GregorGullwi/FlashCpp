@@ -2022,6 +2022,134 @@ Parser::find_initializer_list_constructor(const StructTypeInfo& struct_info) con
 	return std::nullopt;
 }
 
+ParseResult Parser::try_parse_simple_struct_brace_chain(const StructTypeInfo& struct_info, InitializerListNode& init_list, bool& handled) {
+	auto simple_aggregate_member = [&](const StructTypeInfo& info) -> const StructMember* {
+		if (!info.isAggregate() || info.is_union || !info.base_classes.empty() || info.members.size() != 1) {
+			return nullptr;
+		}
+		const StructMember& member = info.members.front();
+		if (member.is_array || member.is_reference() || member.isUnnamedOrZeroWidthBitfield()) {
+			return nullptr;
+		}
+		return &member;
+	};
+
+	const StructMember* root_member = simple_aggregate_member(struct_info);
+	if (root_member == nullptr || peek() != "{"_tok) {
+		handled = false;
+		return ParseResult::success();
+	}
+
+	struct SimpleFrame {
+		const StructMember* member = nullptr;
+		InitializerListNode* init_list = nullptr;
+		bool value_parsed = false;
+	};
+
+	SaveHandle fast_path_position = save_token_position();
+	ScopeGuard discard_fast_path_position([&]() { discard_saved_token(fast_path_position); });
+	FlashCpp::InlineVector<SimpleFrame, FlashCpp::InlineVectorSpillFamily::AggregateInitialization, 2> frames;
+	frames.push_back(SimpleFrame{root_member, &init_list});
+	while (!frames.empty()) {
+		SimpleFrame& frame = frames.back();
+		if (frame.value_parsed) {
+			if (peek() == ","_tok) {
+				advance();
+			}
+			if (!consume("}"_tok)) {
+				handled = true;
+				return ParseResult::error("Expected '}' to close brace initializer", current_token_);
+			}
+			ASTNode completed = ASTNode(frame.init_list);
+			frames.pop_back();
+			if (frames.empty()) {
+				handled = true;
+				return ParseResult::success(ASTNode(&init_list));
+			}
+			frames.back().init_list->add_initializer(completed);
+			frames.back().value_parsed = true;
+			continue;
+		}
+
+		if (peek() == "}"_tok) {
+			frame.value_parsed = true;
+			continue;
+		}
+
+		const StructMember& member = *frame.member;
+		const StructTypeInfo* child_info = tryGetStructTypeInfo(member.type_index);
+		const StructMember* child_member = child_info != nullptr ? simple_aggregate_member(*child_info) : nullptr;
+		if (child_member != nullptr && peek() == "{"_tok) {
+			advance();
+			auto [child_node, child_ref] = create_node_ref(InitializerListNode());
+			frames.push_back(SimpleFrame{child_member, &child_ref});
+			continue;
+		}
+		if (child_info != nullptr && peek() != "{"_tok) {
+			restore_token_position(fast_path_position);
+			handled = false;
+			return ParseResult::success();
+		}
+
+		ParseResult value_result;
+		if (peek() == "{"_tok) {
+			TypeSpecifierNode member_type_spec;
+			bool have_member_type_spec = false;
+			if (const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index)) {
+				if (is_struct_type(member.type_index.category())) {
+					member_type_spec = TypeSpecifierNode(
+						member.type_index.withCategory(member_type_info->resolvedType()),
+						static_cast<int>(member_type_info->sizeInBits().value),
+						Token(),
+						CVQualifier::None,
+						ReferenceQualifier::None);
+				} else {
+					member_type_spec = TypeSpecifierNode(
+						member.memberType(),
+						TypeQualifier::None,
+						static_cast<int>(member_type_info->sizeInBits().value),
+						Token(),
+						CVQualifier::None);
+					member_type_spec.set_type_index(member.type_index);
+				}
+				have_member_type_spec = true;
+			} else if (member.type_index.category() != TypeCategory::Invalid) {
+				member_type_spec = TypeSpecifierNode(
+					member.memberType(),
+					TypeQualifier::None,
+					get_type_size_bits(member.memberType()),
+					Token(),
+					CVQualifier::None);
+				have_member_type_spec = true;
+			}
+			if (!have_member_type_spec) {
+				restore_token_position(fast_path_position);
+				handled = false;
+				return ParseResult::success();
+			}
+			if (member.is_array) {
+				member_type_spec.set_array_dimensions(member.array_dimensions);
+			}
+			value_result = parse_brace_initializer(member_type_spec);
+		} else {
+			value_result = parse_expression(2, ExpressionContext::Normal);
+		}
+		if (value_result.is_error()) {
+			handled = true;
+			return value_result;
+		}
+		if (!value_result.node().has_value()) {
+			handled = true;
+			return ParseResult::error("Expected initializer expression", current_token_);
+		}
+		frame.init_list->add_initializer(*value_result.node());
+		frame.value_parsed = true;
+	}
+
+	handled = true;
+	return ParseResult::success(ASTNode(&init_list));
+}
+
 ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specifier) {
 	// Parse brace initializer list: { expr1, expr2, ... }
 	// This is used for struct initialization like: Point p = {10, 20};
@@ -2371,82 +2499,10 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		return expression_type.has_value() && AggregateInitialization::acceptsWholeExpression(element, *expression_type, expression);
 	};
 
-	auto simple_aggregate_member = [&](const StructTypeInfo& info) -> const StructMember* {
-		if (!info.isAggregate() || info.is_union || !info.base_classes.empty() || info.members.size() != 1) {
-			return nullptr;
-		}
-		const StructMember& member = info.members.front();
-		if (member.is_array || member.is_reference() || member.isUnnamedOrZeroWidthBitfield()) {
-			return nullptr;
-		}
-		return &member;
-	};
-
-	if (const StructMember* root_member = simple_aggregate_member(struct_info);
-		root_member != nullptr && peek() == "{"_tok) {
-		struct SimpleFrame {
-			const StructMember* member = nullptr;
-			InitializerListNode* init_list = nullptr;
-			bool value_parsed = false;
-		};
-
-		SaveHandle fast_path_position = save_token_position();
-		ScopeGuard discard_fast_path_position([&]() { discard_saved_token(fast_path_position); });
-		FlashCpp::InlineVector<SimpleFrame, FlashCpp::InlineVectorSpillFamily::AggregateInitialization, 2> frames;
-		frames.push_back(SimpleFrame{root_member, &init_list_ref});
-		while (!frames.empty()) {
-			SimpleFrame& frame = frames.back();
-			if (frame.value_parsed) {
-				if (peek() == ","_tok) {
-					advance();
-				}
-				if (!consume("}"_tok)) {
-					return ParseResult::error("Expected '}' to close brace initializer", current_token_);
-				}
-				ASTNode completed = ASTNode(frame.init_list);
-				frames.pop_back();
-				if (frames.empty()) {
-					return ParseResult::success(init_list_node);
-				}
-				frames.back().init_list->add_initializer(completed);
-				frames.back().value_parsed = true;
-				continue;
-			}
-
-			if (peek() == "}"_tok) {
-				frame.value_parsed = true;
-				continue;
-			}
-
-			const StructMember& member = *frame.member;
-			const StructTypeInfo* child_info = tryGetStructTypeInfo(member.type_index);
-			const StructMember* child_member = child_info != nullptr ? simple_aggregate_member(*child_info) : nullptr;
-			if (child_member != nullptr && peek() == "{"_tok) {
-				advance();
-				auto [child_node, child_ref] = create_node_ref(InitializerListNode());
-				frames.push_back(SimpleFrame{child_member, &child_ref});
-				continue;
-			}
-			if (child_info != nullptr && peek() != "{"_tok) {
-				restore_token_position(fast_path_position);
-				break;
-			}
-
-			ParseResult value_result;
-			if (peek() == "{"_tok) {
-				value_result = parse_nested_member_brace_initializer(member);
-			} else {
-				value_result = parse_expression(2, ExpressionContext::Normal);
-			}
-			if (value_result.is_error()) {
-				return value_result;
-			}
-			if (!value_result.node().has_value()) {
-				return ParseResult::error("Expected initializer expression", current_token_);
-			}
-			frame.init_list->add_initializer(*value_result.node());
-			frame.value_parsed = true;
-		}
+	bool fast_path_handled = false;
+	ParseResult fast_path_result = try_parse_simple_struct_brace_chain(struct_info, init_list_ref, fast_path_handled);
+	if (fast_path_handled) {
+		return fast_path_result;
 	}
 
 	while (true) {

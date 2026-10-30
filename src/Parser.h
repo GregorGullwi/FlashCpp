@@ -4111,6 +4111,7 @@ private:	 // Resume private methods
 																			const Token& token) const;
 	ParseResult parse_brace_initializer(const TypeSpecifierNode& type_specifier);  // Add brace initializer parser
 	ParseResult parse_array_brace_initializer(const TypeSpecifierNode& type_specifier, const Token& brace_token);
+	ParseResult try_parse_simple_struct_brace_chain(const StructTypeInfo& struct_info, InitializerListNode& init_list, bool& handled);
 	static bool isFoldOperatorToken(std::string_view op);
 	ParseResult parse_for_loop();
 	ParseResult parse_while_loop();
