@@ -490,7 +490,7 @@ def main():
                 "\t\t\t.builtin = CanonicalBuiltinKind::Void,\n"
                 "\t\t\t.qualifiers = CVQualifier::None,\n"
                 "\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
-                "\t\t\t.array_extent = primary.value,",
+                "\t\t\t.array_extent = packTemplateSpecializationExtent(primary, TypeId{}),",
                 ".child = rebuildMixedTemplateArgListUnlocked(arguments),\n"
                 "\t\t\t.kind = CanonicalTypeKind::TemplateSpecialization,\n"
                 "\t\t\t.builtin = CanonicalBuiltinKind::Void,\n"

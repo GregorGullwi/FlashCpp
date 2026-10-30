@@ -303,7 +303,28 @@ TypeId CanonicalTypeTable::templateSpecialization(TemplateDeclId primary,
 		.builtin = CanonicalBuiltinKind::Void,
 		.qualifiers = CVQualifier::None,
 		.flags = CanonicalTypeNodeFlags::None,
-		.array_extent = primary.value,
+		.array_extent = packTemplateSpecializationExtent(primary, TypeId{}),
+	});
+}
+
+TypeId CanonicalTypeTable::memberTemplateSpecialization(TemplateDeclId member_primary, TypeId owner_specialization,
+	std::span<const CanonicalTemplateArgument> arguments) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	if (!member_primary || !owner_specialization) {
+		throw InternalError("canonical type: invalid member specialization identity");
+	}
+	const CanonicalTypeKind owner_kind = nodeUnlocked(owner_specialization).kind;
+	if (!isCanonicalClassTypeKind(owner_kind)) {
+		throw InternalError("canonical type: member specialization owner is not a class type");
+	}
+	return internUnlocked({
+		.child = rebuildMixedTemplateArgListUnlocked(arguments),
+		.kind = CanonicalTypeKind::TemplateSpecialization,
+		.builtin = CanonicalBuiltinKind::Void,
+		.qualifiers = CVQualifier::None,
+		.flags = CanonicalTypeNodeFlags::None,
+		.array_extent = packTemplateSpecializationExtent(member_primary, owner_specialization),
 	});
 }
 
@@ -320,7 +341,7 @@ TypeId CanonicalTypeTable::aliasTemplateSpecialization(TemplateDeclId primary,
 		.builtin = CanonicalBuiltinKind::Void,
 		.qualifiers = CVQualifier::None,
 		.flags = CanonicalTypeNodeFlags::None,
-		.array_extent = primary.value,
+		.array_extent = packTemplateSpecializationExtent(primary, TypeId{}),
 	});
 }
 
@@ -405,7 +426,7 @@ TypeId CanonicalTypeTable::templateSpecialization(TemplateDeclId primary, std::s
 		.builtin = CanonicalBuiltinKind::Void,
 		.qualifiers = CVQualifier::None,
 		.flags = CanonicalTypeNodeFlags::None,
-		.array_extent = primary.value,
+		.array_extent = packTemplateSpecializationExtent(primary, TypeId{}),
 	});
 }
 
@@ -853,7 +874,18 @@ TemplateDeclId CanonicalTypeTable::templateSpecializationDecl(TypeId specializat
 		input.kind != CanonicalTypeKind::AliasTemplateSpecialization) {
 		throw InternalError("canonical type: TypeId is not a template specialization");
 	}
-	return TemplateDeclId{static_cast<uint32_t>(input.array_extent)};
+	return unpackTemplateSpecializationDecl(input.array_extent);
+}
+
+TypeId CanonicalTypeTable::templateSpecializationOwner(TypeId specialization) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const auto input = nodeUnlocked(specialization);
+	if (input.kind != CanonicalTypeKind::TemplateSpecialization &&
+		input.kind != CanonicalTypeKind::AliasTemplateSpecialization) {
+		throw InternalError("canonical type: TypeId is not a template specialization");
+	}
+	return unpackTemplateSpecializationOwner(input.array_extent);
 }
 
 TypeId CanonicalTypeTable::templateSpecializationArguments(TypeId specialization) const {
@@ -2129,6 +2161,10 @@ bool CanonicalTypeTable::hasDependentTypeComponentsUnlocked(TypeId type, bool in
 			break;
 		case CanonicalTypeKind::TemplateSpecialization:
 		case CanonicalTypeKind::AliasTemplateSpecialization: {
+			const TypeId member_owner = unpackTemplateSpecializationOwner(node.array_extent);
+			if (member_owner) {
+				pending.push_back(member_owner);
+			}
 			for (TypeId link = node.child; link; link = nodeUnlocked(link).child) {
 				const CanonicalTypeNode argument = nodeUnlocked(link);
 				if (argument.kind == CanonicalTypeKind::TemplateArg) {
@@ -2186,6 +2222,10 @@ bool CanonicalTypeTable::templateParameterReferencesCoveredUnlocked(TypeId type,
 			break;
 		case CanonicalTypeKind::TemplateSpecialization:
 		case CanonicalTypeKind::AliasTemplateSpecialization: {
+			const TypeId member_owner = unpackTemplateSpecializationOwner(node.array_extent);
+			if (member_owner) {
+				pending.push_back(member_owner);
+			}
 			for (TypeId link = node.child; link; link = nodeUnlocked(link).child) {
 				const CanonicalTypeNode argument = nodeUnlocked(link);
 				if (argument.kind == CanonicalTypeKind::TemplateArg) {
@@ -2262,6 +2302,10 @@ bool CanonicalTypeTable::containsNonTypeTemplateArgUnlocked(TypeId type) const {
 			break;
 		case CanonicalTypeKind::TemplateSpecialization:
 		case CanonicalTypeKind::AliasTemplateSpecialization: {
+			const TypeId member_owner = unpackTemplateSpecializationOwner(node.array_extent);
+			if (member_owner) {
+				pending.push_back(member_owner);
+			}
 			for (TypeId link = node.child; link; link = nodeUnlocked(link).child) {
 				const CanonicalTypeNode argument = nodeUnlocked(link);
 				if (argument.kind == CanonicalTypeKind::NonTypeTemplateArg || argument.kind == CanonicalTypeKind::ValueTemplateArg) {
@@ -2389,6 +2433,10 @@ TypeId CanonicalTypeTable::resolveNestedAliasGraphUnlocked(TypeId type) {
 				parent.phase = node.kind == CanonicalTypeKind::AliasTemplateSpecialization
 					? Phase::Expand : Phase::Build;
 				stack.push_back(parent);
+				const TypeId member_owner = unpackTemplateSpecializationOwner(node.array_extent);
+				if (member_owner) {
+					stack.push_back({member_owner, Phase::Discover, frame.scope, TypeId{}, 0});
+				}
 				for (TypeId link = node.child; link; link = nodeUnlocked(link).child) {
 					const CanonicalTypeNode argument = nodeUnlocked(link);
 					if (argument.kind == CanonicalTypeKind::TemplateArg) {
@@ -2595,8 +2643,10 @@ TypeId CanonicalTypeTable::resolveNestedAliasGraphUnlocked(TypeId type) {
 		case CanonicalTypeKind::TemplateSpecialization:
 		case CanonicalTypeKind::AliasTemplateSpecialization: {
 			rebuilt_mixed.clear();
+			const TypeId original_owner = unpackTemplateSpecializationOwner(node.array_extent);
+			const TypeId member_owner = original_owner ? memo.at(memoKey(frame.scope, original_owner)) : TypeId{};
+			bool unchanged = member_owner == original_owner;
 			TypeId arg_link = node.child;
-			bool unchanged = true;
 			while (arg_link) {
 				const CanonicalTypeNode argument = nodeUnlocked(arg_link);
 				if (argument.kind == CanonicalTypeKind::TemplateArg) {
@@ -2629,7 +2679,7 @@ TypeId CanonicalTypeTable::resolveNestedAliasGraphUnlocked(TypeId type) {
 					.builtin = CanonicalBuiltinKind::Void,
 					.qualifiers = CVQualifier::None,
 					.flags = CanonicalTypeNodeFlags::None,
-					.array_extent = node.array_extent,
+					.array_extent = packTemplateSpecializationExtent(unpackTemplateSpecializationDecl(node.array_extent), member_owner),
 				});
 			}
 			break;
@@ -3026,6 +3076,10 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 				if (node.kind == CanonicalTypeKind::TemplateSpecialization ||
 					node.kind == CanonicalTypeKind::AliasTemplateSpecialization) {
 					arg_link = node.child;
+					const TypeId member_owner = unpackTemplateSpecializationOwner(node.array_extent);
+					if (member_owner) {
+						stack.push_back({member_owner, false});
+					}
 				} else if (node.kind == CanonicalTypeKind::DependentTemplateMember) {
 					arg_link = unpackDependentTemplateMemberArgs(node.array_extent);
 				} else {
@@ -3169,8 +3223,10 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 		case CanonicalTypeKind::AliasTemplateSpecialization: {
 			rebuilt_mixed.clear();
 			rebuilt_args.clear();
+			const TypeId original_owner = unpackTemplateSpecializationOwner(node.array_extent);
+			const TypeId member_owner = original_owner ? memo.at(original_owner.value) : TypeId{};
+			bool unchanged = member_owner == original_owner;
 			TypeId arg_link = node.child;
-			bool unchanged = true;
 			while (arg_link) {
 				const CanonicalTypeNode arg_node = nodeUnlocked(arg_link);
 				if (arg_node.kind == CanonicalTypeKind::TemplateArg) {
@@ -3215,7 +3271,7 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 					.builtin = CanonicalBuiltinKind::Void,
 					.qualifiers = CVQualifier::None,
 					.flags = CanonicalTypeNodeFlags::None,
-					.array_extent = node.array_extent,
+					.array_extent = packTemplateSpecializationExtent(unpackTemplateSpecializationDecl(node.array_extent), member_owner),
 				});
 			}
 			break;

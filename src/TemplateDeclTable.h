@@ -47,6 +47,19 @@ public:
 		return findPrimary(owner, name, DeclarationKind::Class, 0u);
 	}
 
+	// Semantic owner used when a class primary was published. A template-owned
+	// owner identifies the enclosing class template; a class-owned owner
+	// identifies a non-template enclosing class EntityId.
+	std::optional<OwnerId> primaryClassTemplateOwner(TemplateDeclId id) const {
+		if (!id) return std::nullopt;
+		for (const auto& [key, candidate] : ids_by_key_) {
+			if (candidate == id && key.kind == DeclarationKind::Class) {
+				return OwnerId{key.owner_value};
+			}
+		}
+		return std::nullopt;
+	}
+
 	// A partial owns its parameter environment, while instantiated class identity
 	// still names the primary. The canonical pattern alpha-normalizes partial
 	// parameters to primary/index placeholders; spelling is absent from this key.

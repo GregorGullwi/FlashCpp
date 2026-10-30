@@ -1834,7 +1834,7 @@ inline const StructTypeInfo* tryResolveCanonicalMemberPointerOwnerRecord(Canonic
 	if (owner_node.kind != CanonicalTypeKind::TemplateSpecialization) {
 		return nullptr;
 	}
-	const TemplateDeclId primary{static_cast<uint32_t>(owner_node.array_extent)};
+	const TemplateDeclId primary = unpackTemplateSpecializationDecl(owner_node.array_extent);
 	const std::optional<ASTNode> pattern = requireFrontendContext().templateDecls().primaryClassTemplatePattern(primary);
 	if (!pattern.has_value() || !pattern->is<TemplateClassDeclarationNode>()) {
 		return nullptr;
@@ -2482,6 +2482,14 @@ inline CanonicalTypeImport importCanonicalClassSource(CanonicalTypeTable& table,
 		// primary arguments on the TypeInfo.
 		TemplateArgInfoVector published_arguments;
 		bool use_published_arguments = false;
+		// Direct member class templates compose the instantiated enclosing class
+		// with the member's own arguments. The owner is imported before the member
+		// argument list so object identity never depends on import order.
+		TypeId member_owner_specialization{};
+		TemplateDeclId member_owner_template{};
+		TemplateArgInfoVector member_owner_arguments;
+		bool is_member_template = false;
+		bool waiting_for_member_owner = false;
 	};
 
 	CanonicalTypeTransaction transaction(table);
@@ -2515,11 +2523,6 @@ inline CanonicalTypeImport importCanonicalClassSource(CanonicalTypeTable& table,
 			}
 			nested_entity = pattern->entity_id();
 		} else if (pattern != nullptr && pattern->has_template_decl_id()) {
-			// Member class templates also need enclosing arguments in their identity.
-			// Their composed specialization representation is a separate slice.
-			if (declaration->enclosing_class() != nullptr) {
-				return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
-			}
 			specialization_owner = pattern->template_decl_id();
 		} else if (declaration->has_canonical_specialization_owner()) {
 			// An explicit (full) specialization carries the primary's template identity
@@ -2542,6 +2545,35 @@ inline CanonicalTypeImport importCanonicalClassSource(CanonicalTypeTable& table,
 		pending.specialization_owner = specialization_owner;
 		pending.nested_entity = nested_entity;
 		const bool pattern_owns_template = pattern != nullptr && pattern->has_template_decl_id();
+		if (pattern_owns_template) {
+			const std::optional<OwnerId> owner = requireFrontendContext().templateDecls().primaryClassTemplateOwner(specialization_owner);
+			if (declaration->enclosing_class() != nullptr && !owner.has_value()) {
+				return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+			}
+			if (owner.has_value() && isTemplateOwnedOwnerId(*owner)) {
+				pending.member_owner_template = templateDeclFromOwnerId(*owner);
+			}
+			if (pending.member_owner_template) {
+				const std::optional<ASTNode> member_pattern = requireFrontendContext().templateDecls().primaryClassTemplatePattern(specialization_owner);
+				if (!member_pattern.has_value() || !member_pattern->is<TemplateClassDeclarationNode>()) {
+					return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+				}
+				const TemplateParameterVector& member_parameters = member_pattern->as<TemplateClassDeclarationNode>().template_parameters();
+				if (std::ranges::any_of(member_parameters, [](const TemplateParameterNode& parameter) { return parameter.is_variadic(); })) {
+					return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+				}
+				const size_t member_parameter_count = member_parameters.size();
+				const TemplateArgInfoVector& combined_arguments = declaration->outer_template_args();
+				if (combined_arguments.size() < member_parameter_count) {
+					return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+				}
+				const size_t owner_argument_count = combined_arguments.size() - member_parameter_count;
+				pending.member_owner_arguments.assign(combined_arguments.begin(), combined_arguments.begin() + owner_argument_count);
+				pending.published_arguments.assign(combined_arguments.begin() + owner_argument_count, combined_arguments.end());
+				pending.use_published_arguments = true;
+				pending.is_member_template = true;
+			}
+		}
 		if (!pattern_owns_template && declaration->has_canonical_specialization_owner() &&
 			type_info != nullptr && type_info->baseTemplateName().isValid()) {
 			pending.published_arguments = type_info->templateArgs();
@@ -2552,6 +2584,21 @@ inline CanonicalTypeImport importCanonicalClassSource(CanonicalTypeTable& table,
 		}
 		worklist.push_back(std::move(pending));
 		return std::nullopt;
+	};
+	const auto enqueue_enclosing_class_source = [&](const StructDeclarationNode& owner) -> std::optional<CanonicalTypeImport> {
+		const StructDeclarationNode* owner_pattern = owner.injected_class_pattern_declaration();
+		// A selected partial stores deduced pattern bindings, not the primary's
+		// actual arguments. Recover its published specialization TypeInfo instead
+		// of importing the partial declaration as a standalone class.
+		if (owner_pattern != nullptr && !owner_pattern->has_template_decl_id() && owner.has_canonical_specialization_owner()) {
+			const TypeInfo* owner_info = findTypeByName(owner.name());
+			const StructTypeInfo* owner_record = owner_info != nullptr ? owner_info->getStructInfo() : nullptr;
+			if (owner_record == nullptr || owner_record->declaration_node != &owner) {
+				return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+			}
+			return enqueue_source(owner_info, &owner);
+		}
+		return enqueue_source(nullptr, &owner);
 	};
 	const auto specialization_arguments = [](const PendingClassImport& pending) -> const TemplateArgInfoVector& {
 		return pending.use_published_arguments ? pending.published_arguments : pending.declaration->outer_template_args();
@@ -2593,6 +2640,16 @@ inline CanonicalTypeImport importCanonicalClassSource(CanonicalTypeTable& table,
 				completed = CanonicalTypeImport{nested, CanonicalTypeImportStatus::Supported};
 				continue;
 			}
+			if (parent.waiting_for_member_owner) {
+				if (completed->status != CanonicalTypeImportStatus::Supported) return *completed;
+				if (!isCanonicalClassTypeKind(table.node(completed->type).kind)) {
+					return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+				}
+				parent.member_owner_specialization = completed->type;
+				parent.waiting_for_member_owner = false;
+				completed.reset();
+				continue;
+			}
 			if (parent.waiting_argument == std::numeric_limits<size_t>::max()) {
 				throw InternalError("canonical type adapter: class import result has no parent");
 			}
@@ -2620,21 +2677,30 @@ inline CanonicalTypeImport importCanonicalClassSource(CanonicalTypeTable& table,
 		}
 		if (current.nested_entity) {
 			const StructDeclarationNode* owner = current.declaration->enclosing_class();
-			const StructDeclarationNode* owner_pattern = owner->injected_class_pattern_declaration();
-			// A selected partial stores deduced pattern bindings, not the primary's
-			// actual arguments. Recover its published specialization TypeInfo instead
-			// of importing the partial declaration as a standalone class.
-			if (owner_pattern != nullptr && !owner_pattern->has_template_decl_id() && owner->has_canonical_specialization_owner()) {
-				const TypeInfo* owner_info = findTypeByName(owner->name());
-				const StructTypeInfo* owner_record = owner_info != nullptr ? owner_info->getStructInfo() : nullptr;
-				if (owner_record == nullptr || owner_record->declaration_node != owner) {
+			if (owner == nullptr) {
+				return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+			}
+			completed = enqueue_enclosing_class_source(*owner);
+			continue;
+		}
+		if (current.is_member_template && !current.member_owner_specialization) {
+			if (current.member_owner_template) {
+				const std::optional<ASTNode> owner_pattern = requireFrontendContext().templateDecls().primaryClassTemplatePattern(current.member_owner_template);
+				if (!owner_pattern.has_value() || !owner_pattern->is<TemplateClassDeclarationNode>()) {
 					return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
 				}
-				completed = enqueue_source(owner_info, owner);
+				const StructDeclarationNode& owner_declaration = owner_pattern->as<TemplateClassDeclarationNode>().class_decl_node();
+				PendingClassImport owner_pending{};
+				owner_pending.declaration = &owner_declaration;
+				owner_pending.specialization_owner = current.member_owner_template;
+				owner_pending.published_arguments = current.member_owner_arguments;
+				owner_pending.use_published_arguments = true;
+				owner_pending.arguments.reserve(current.member_owner_arguments.size());
+				current.waiting_for_member_owner = true;
+				worklist.push_back(std::move(owner_pending));
 				continue;
 			}
-			completed = enqueue_source(nullptr, owner);
-			continue;
+			throw InternalError("canonical type adapter: member template has no semantic owner");
 		}
 		const TemplateArgInfoVector& source_arguments = specialization_arguments(current);
 		if (current.next_argument < source_arguments.size()) {
@@ -2682,7 +2748,9 @@ inline CanonicalTypeImport importCanonicalClassSource(CanonicalTypeTable& table,
 			continue;
 		}
 
-		const TypeId specialization = table.templateSpecialization(current.specialization_owner, current.arguments);
+		const TypeId specialization = current.member_owner_specialization
+			? table.memberTemplateSpecialization(current.specialization_owner, current.member_owner_specialization, current.arguments)
+			: table.templateSpecialization(current.specialization_owner, current.arguments);
 		active_sources.erase(current.declaration);
 		worklist.pop_back();
 		completed = CanonicalTypeImport{specialization, CanonicalTypeImportStatus::Supported};

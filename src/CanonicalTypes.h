@@ -257,6 +257,22 @@ inline TypeId unpackDependentTemplateMemberArgs(uint64_t array_extent) {
 	return TypeId{static_cast<uint32_t>(array_extent >> 32)};
 }
 
+// A class-template specialization packs the primary TemplateDeclId in the low
+// 32 bits of array_extent. A direct member class template also packs its
+// instantiated enclosing class TypeId in the high 32 bits so two same-spelling
+// member templates under different owner arguments cannot share identity.
+inline uint64_t packTemplateSpecializationExtent(TemplateDeclId primary, TypeId member_owner) {
+	return static_cast<uint64_t>(primary.value) | (static_cast<uint64_t>(member_owner.value) << 32);
+}
+
+inline TemplateDeclId unpackTemplateSpecializationDecl(uint64_t array_extent) {
+	return TemplateDeclId{static_cast<uint32_t>(array_extent)};
+}
+
+inline TypeId unpackTemplateSpecializationOwner(uint64_t array_extent) {
+	return TypeId{static_cast<uint32_t>(array_extent >> 32)};
+}
+
 // A qualified member-alias use packs the published alias TemplateDeclId in the
 // low 32 bits and the type-only argument chain head in the high 32 bits.
 inline uint64_t packDependentMemberAliasExtent(TemplateDeclId member, TypeId arg_link) {
@@ -280,9 +296,11 @@ inline TypeId unpackDependentMemberAliasArgs(uint64_t array_extent) {
 // Function nodes pack parameter-list TypeId in the low 32 bits of array_extent
 // and optional dependent-noexcept ExprId in the high 32 bits. TemplateParameter
 // nodes pack TemplateDeclId in the low 32 bits and parameter index in the high
-// 32 bits. TemplateSpecialization and AliasTemplateSpecialization store TemplateDeclId in array_extent and the
-// first TemplateArg / NonTypeTemplateArg / TemplateTemplateArg /
-// DependentTemplateTemplateArg link in child.
+// 32 bits. TemplateSpecialization and AliasTemplateSpecialization pack the
+// TemplateDeclId in the low 32 bits of array_extent, an optional direct-member
+// owner TypeId in the high 32 bits, and the first TemplateArg /
+// NonTypeTemplateArg / TemplateTemplateArg / DependentTemplateTemplateArg link
+// in child.
 // TemplateArg links store a type TypeId in array_extent; NonTypeTemplateArg links
 // store an opaque NTTP ExprId; TemplateTemplateArg links store a published primary
 // class TemplateDeclId; DependentTemplateTemplateArg links pack an owning class
@@ -697,6 +715,12 @@ public:
 	TypeId templateSpecialization(TemplateDeclId primary,
 		std::span<const CanonicalTemplateArgument> arguments);
 
+	// Direct member class-template identity composes the instantiated enclosing
+	// class with the member template's own arguments. The owner must be a
+	// canonical class type; it is not an argument in the member's link list.
+	TypeId memberTemplateSpecialization(TemplateDeclId member_primary, TypeId owner_specialization,
+		std::span<const CanonicalTemplateArgument> arguments);
+
 	// An unresolved alias template-id preserves its own declaration identity.
 	// It may redirect to the alias target only after concrete substitution.
 	TypeId aliasTemplateSpecialization(TemplateDeclId primary,
@@ -846,6 +870,10 @@ public:
 		TemplateDeclId owner_decl) const;
 
 	TemplateDeclId templateSpecializationDecl(TypeId specialization) const;
+
+	// Empty for a primary/namespace/global specialization; otherwise the
+	// instantiated enclosing class of a direct member class template.
+	TypeId templateSpecializationOwner(TypeId specialization) const;
 
 	TypeId templateSpecializationArguments(TypeId specialization) const;
 

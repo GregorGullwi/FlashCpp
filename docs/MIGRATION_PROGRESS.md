@@ -8,19 +8,25 @@ implementation history belongs in git and the regression suite.
 
 ## Next 3A slice
 
-**Composed member class-template identity.** Member class templates need both
-enclosing and member specialization identity. Keep constrained, pack, non-type,
-alias, and other dependent partial patterns separate. Opaque non-type arguments
-remain fail-closed until their identity can substitute. Do not recover identity
-by spelling or generated name, and do not add evaluator or selection rules.
+**Nested member class-template identity.** Direct member class templates under
+class-template owners now compose their instantiated enclosing class with their
+own arguments; class-owned member templates already carry their enclosing class
+in the member `TemplateDeclId`. Nested member templates inside those
+class-template bodies, member-template partial patterns,
+constrained/pack/non-type/alias partials, and other dependent member forms remain
+deferred. Keep opaque non-type arguments fail-closed until their
+identity can substitute. Do not recover identity by spelling or generated name,
+and do not add evaluator or selection rules.
 
-The preceding slice is complete: selected partial specializations now parse
-their nested class declarations instead of skipping them, and selected
-instantiation publishes those nested classes with direct members, type aliases,
-base layout, and preserved `Outer<short*>` versus `Outer<long long*>` owner
-identity. `tests/test_selected_partial_nested_class_lookup_ret0.cpp` covers
-qualified source lookup, nested aliases, base members, pointer layout, and
-distinct pointer owners.
+The preceding slices are complete. Class-template-owned member specializations
+now pack the instantiated owner TypeId beside the member arguments, distinguishing
+same-spelling members under different owner arguments while keeping owner and
+member arguments separately observable. Native coverage is in
+`CanonicalTypeTests.cpp`. Selected partial specializations also parse and publish
+their nested class declarations with direct members, type aliases, base layout,
+and preserved pointer-owner identity;
+`tests/test_selected_partial_nested_class_lookup_ret0.cpp` covers the source
+path.
 
 ## Current state
 
@@ -62,10 +68,14 @@ canonical facts, with residual compatibility only where schemas are incomplete.
 Selected full and partial class-template specializations share the primary
 canonical identity where supported. Explicit full specializations publish the
 primary `TemplateDeclId` and concrete `outer_template_args`; selected partial
-nested classes now preserve both their enclosing specialization and their own
-entity identity. Source-level nested declarations under partial specializations
-are parsed and registered. The importer remains fail-closed for missing,
-mismatched, or unresolved owner facts.
+nested classes preserve both their enclosing specialization and their own entity
+identity. Class-template-owned member specializations compose the enclosing
+class TypeId with the member template's own canonical arguments; the enclosing
+owner is packed outside the member argument list, so owner and member arguments
+remain separately observable. Class-owned member specializations already encode
+their owner in the member `TemplateDeclId`. Source-level nested declarations under partial
+specializations are parsed and registered. The importer remains fail-closed for
+missing, mismatched, unpublished, or unresolved owner facts.
 
 ## Remaining 3A work
 
@@ -144,6 +154,9 @@ These seed adjacent slices; the authoritative inventory is
 - Nested classes of selected partial specializations now publish direct members,
   aliases, and non-deferred base layout. Deferred/template bases and other
   advanced nested-body effects still need the full instantiated-owner path.
+- Class-template-owned direct member specializations compose owner and member
+  identity. Nested member templates in class-template bodies, member-template
+  partial patterns, and dependent owner/member argument forms remain deferred.
 - Non-null object pointer target identity, ambiguous/virtual-base member
   pointers, unpublished dependent bases, and the nested
   anonymous-union-in-anonymous-union hierarchy still need canonical subobject
