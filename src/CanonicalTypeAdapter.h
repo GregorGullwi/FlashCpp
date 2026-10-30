@@ -2621,10 +2621,17 @@ inline CanonicalTypeImport importCanonicalClassSource(CanonicalTypeTable& table,
 		if (current.nested_entity) {
 			const StructDeclarationNode* owner = current.declaration->enclosing_class();
 			const StructDeclarationNode* owner_pattern = owner->injected_class_pattern_declaration();
-			// A selected partial stores deduced pattern bindings, not its primary
-			// arguments. Importing it needs a retained TypeInfo bridge first.
+			// A selected partial stores deduced pattern bindings, not the primary's
+			// actual arguments. Recover its published specialization TypeInfo instead
+			// of importing the partial declaration as a standalone class.
 			if (owner_pattern != nullptr && !owner_pattern->has_template_decl_id() && owner->has_canonical_specialization_owner()) {
-				return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+				const TypeInfo* owner_info = findTypeByName(owner->name());
+				const StructTypeInfo* owner_record = owner_info != nullptr ? owner_info->getStructInfo() : nullptr;
+				if (owner_record == nullptr || owner_record->declaration_node != owner) {
+					return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+				}
+				completed = enqueue_source(owner_info, owner);
+				continue;
 			}
 			completed = enqueue_source(nullptr, owner);
 			continue;

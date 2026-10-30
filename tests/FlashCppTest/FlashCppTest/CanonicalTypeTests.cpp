@@ -2268,6 +2268,73 @@ using Changed = Base<second>;
 	CHECK(second_payload_node.array_extent == 2);
 }
 
+TEST_CASE("Selected partial nested class import preserves primary specialization identity") {
+	clearLegacyTypeTablesForTesting();
+	FrontendContext context;
+	initialize_native_types();
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const TemplateDeclId primary{7001};
+	const auto make_owner = [&](const char* name, TypeCategory element_category) -> StructDeclarationNode* {
+		const StringHandle owner_name = StringTable::getOrInternStringHandle(name);
+		const TypeCreationResult created = add_struct_type(owner_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+		TypeInfo::TemplateArgInfo argument;
+		argument.type_index = nativeTypeIndex(element_category);
+		argument.pointer_depth = 1;
+		TypeInfo::TemplateArgInfoVector arguments;
+		arguments.push_back(argument);
+		created.info.setTemplateInstantiationInfo(
+			QualifiedIdentifier::fromQualifiedName("Outer", NamespaceRegistry::GLOBAL_NAMESPACE), arguments);
+		ASTNode pattern_node = ASTNode::emplace_node<StructDeclarationNode>(owner_name, false, false);
+		ASTNode owner_node = ASTNode::emplace_node<StructDeclarationNode>(owner_name, false, false);
+		StructDeclarationNode& owner = owner_node.as<StructDeclarationNode>();
+		owner.set_canonical_specialization_owner_template_decl_id(primary);
+		owner.set_injected_class_pattern_declaration(&pattern_node.as<StructDeclarationNode>());
+		StructTypeInfo& record = created.info.createStructInfo(
+			owner_name, AccessSpecifier::Public, false, NamespaceRegistry::GLOBAL_NAMESPACE);
+		record.declaration_node = &owner;
+		record.layout_is_complete = true;
+		record.total_size = SizeInBytes{8};
+		return &owner;
+	};
+	StructDeclarationNode* short_owner = make_owner("SelectedPartialShortOwner", TypeCategory::Short);
+	StructDeclarationNode* wide_owner = make_owner("SelectedPartialWideOwner", TypeCategory::LongLong);
+	const StringHandle nested_name = StringTable::getOrInternStringHandle("Key");
+	const EntityId nested_entity{9701};
+	const auto make_nested = [&](StructDeclarationNode* owner) -> StructDeclarationNode* {
+		ASTNode pattern_node = ASTNode::emplace_node<StructDeclarationNode>(nested_name, false, false);
+		pattern_node.as<StructDeclarationNode>().set_entity_id(nested_entity);
+		ASTNode nested_node = ASTNode::emplace_node<StructDeclarationNode>(nested_name, false, false);
+		StructDeclarationNode& nested = nested_node.as<StructDeclarationNode>();
+		nested.set_injected_class_pattern_declaration(&pattern_node.as<StructDeclarationNode>());
+		nested.set_enclosing_class(owner);
+		return &nested;
+	};
+	StructDeclarationNode* short_nested = make_nested(short_owner);
+	StructDeclarationNode* wide_nested = make_nested(wide_owner);
+	const CanonicalTypeImport short_import = importCanonicalClassDeclaration(table, *short_nested);
+	REQUIRE(short_import.status == CanonicalTypeImportStatus::Supported);
+	const CanonicalTypeImport repeated_import = importCanonicalClassDeclaration(table, *short_nested);
+	REQUIRE(repeated_import.status == CanonicalTypeImportStatus::Supported);
+	CHECK(repeated_import.type == short_import.type);
+	const CanonicalTypeImport wide_import = importCanonicalClassDeclaration(table, *wide_nested);
+	REQUIRE(wide_import.status == CanonicalTypeImportStatus::Supported);
+	CHECK(wide_import.type != short_import.type);
+	REQUIRE(table.node(short_import.type).kind == CanonicalTypeKind::NestedRecord);
+	REQUIRE(table.node(wide_import.type).kind == CanonicalTypeKind::NestedRecord);
+	CHECK(table.nestedRecordEntity(short_import.type) == nested_entity);
+	CHECK(table.nestedRecordEntity(wide_import.type) == nested_entity);
+	const TypeId short_owner_type = table.nestedRecordOwner(short_import.type);
+	const TypeId wide_owner_type = table.nestedRecordOwner(wide_import.type);
+	REQUIRE(table.node(short_owner_type).kind == CanonicalTypeKind::TemplateSpecialization);
+	REQUIRE(table.node(wide_owner_type).kind == CanonicalTypeKind::TemplateSpecialization);
+	CHECK(table.templateSpecializationDecl(short_owner_type) == primary);
+	CHECK(table.templateSpecializationDecl(wide_owner_type) == primary);
+	CHECK(table.templateArgumentType(table.templateSpecializationArguments(short_owner_type)) ==
+		table.pointer(table.builtin(CanonicalBuiltinKind::Short)));
+	CHECK(table.templateArgumentType(table.templateSpecializationArguments(wide_owner_type)) ==
+		table.pointer(table.builtin(CanonicalBuiltinKind::LongLong)));
+}
+
 TEST_CASE("Canonical integral arguments use converted value and canonical type identity") {
 	static_assert(sizeof(CanonicalTypeNode) == 16);
 	static_assert(sizeof(CanonicalTemplateArgument) == 20);

@@ -701,19 +701,26 @@ Continue boundary 3A in this order.
    schemas. Retain same-type/different-NTTP, alias, foreign-owner, missing-owner,
    mutation, and deep scratch guards.
 
-   **Next 3A slice: selected partial enclosing-specialization identity.**
-   Nested class-source imports still defer when the enclosing declaration came from
-   a selected partial. Its outer bindings are deduced pattern arguments, not the
-   primary's actual arguments. Retain or recover the published primary specialization
-   TypeId through owned declaration facts before composing its `NestedRecord` children.
-   Start with `Outer<T*>` selected for `Outer<short*>` and `Outer<long long*>`:
-   preserve the pointer in owning class identity while keeping the partial's body
-   environment bound to the deduced element type. Land importer identity, alias,
-   rollback, and deep-owner guards first; leave partial nested-field publication
-   deferred until both environments are available. No generated-name recovery.
+   **Selected partial enclosing-specialization identity: complete for the
+   importer.** A nested class-source import whose enclosing declaration came from
+   a selected partial now recovers that owner's published specialization
+   `TypeInfo` by declaration pointer instead of importing the partial declaration
+   as a standalone class. This preserves `Outer<short*>` versus
+   `Outer<long long*>` (including pointer arguments) in the nested
+   `NestedRecord` owner while keeping the partial body environment separate.
+   Missing or mismatched owner TypeInfo still fails closed; no generated-name or
+   spelling recovery was added. The native canonical suite covers repeated
+   imports, distinct pointer owners, nested entity identity, and the owner
+   specialization arguments. Partial nested-field publication remains deferred
+   until both environments are available.
+   `tests/test_canonical_structural_nttp_nested_partial_pattern_ret0.cpp` retains
+   the partial-pattern member-pointer environment guard.
 
-   Member class templates need composed enclosing and member specialization
-   identity and remain separate from this prerequisite.
+   **Next 3A slice: composed member class-template identity.** Member class
+   templates need both enclosing and member specialization identity; source-level
+   naming of a nested class through a selected partial specialization is also
+   still unsupported. Keep constrained, pack, non-type, alias, and other
+   dependent partial patterns separate. No generated-name or spelling recovery.
    Keep constrained, pack, non-type, alias, and other dependent partial patterns
    separate. Opaque non-type arguments remain fail-closed until their identity
    can substitute. Do not recover identity by spelling or add evaluator/selection rules.
