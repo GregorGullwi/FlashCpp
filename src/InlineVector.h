@@ -38,6 +38,7 @@ enum class InlineVectorSpillFamily : uint8_t {
 	TemplateArgument = 2,
 	QualifiedLookup = 3,
 	ClassLayout = 4,
+	AggregateInitialization = 5,
 	Count,
 };
 
@@ -53,6 +54,8 @@ inline std::string_view inlineVectorSpillFamilyLabel(InlineVectorSpillFamily fam
 		return "qualified-lookup";
 	case InlineVectorSpillFamily::ClassLayout:
 		return "class-layout";
+	case InlineVectorSpillFamily::AggregateInitialization:
+		return "aggregate-initialization";
 	case InlineVectorSpillFamily::Count:
 		break;
 	}
