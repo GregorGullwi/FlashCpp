@@ -118,6 +118,7 @@ public:
 	std::optional<TemplateArgumentVector> tryExpandLockstepTypePack(
 		const TypeInfo::TemplateArgInfo& stored_arg,
 		const TypeInfo& pattern_info);
+	std::optional<TemplateArgumentVector> tryExpandStoredPack(const TypeInfo::TemplateArgInfo& stored_arg);
 
 	void setCurrentOwnerTypeName(StringHandle owner_type_name) {
 		current_owner_type_name_ = owner_type_name;
