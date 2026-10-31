@@ -441,6 +441,8 @@ private:
 	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key);
 	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key,
 		TypeIndex receiver_owner_type_index);
+	ExprResult generateMemberFunctionCallIrBody(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key,
+		TypeIndex receiver_owner_type_index, const ExprResult* precomputed_receiver);
 	std::optional<ExprResult> tryGenerateMemberPointerCallIr(const CallExprNode& callExprNode, const PointerToMemberAccessNode& access);
 	MultiDimSubscriptChain collectMultiDimSubscriptChain(const ArraySubscriptNode& subscript);
 	std::optional<MultiDimMemberArrayAccess> resolveMultiDimMemberArrayBase(
