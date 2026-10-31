@@ -1301,6 +1301,8 @@ private:
 		std::vector<TemplateTypeArg> pack_args;
 	};
 	TemplateVector<TemplateParamSubstitution, 4> template_param_substitutions_;
+	// Grouped bindings for the current member-copy substitution when retained pack boundaries are available.
+	const TemplateEnvironment* current_grouped_template_environment_ = nullptr;
 
 	// Root-local lexical bindings for one template-body substitution.
 	// Capacity 8 covers typical member bodies with up to eight simultaneously

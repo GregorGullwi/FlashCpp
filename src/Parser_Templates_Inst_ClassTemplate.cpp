@@ -6967,6 +6967,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	TemplateEnvironment& effective_environment = *binding_scratch.allocateObject<TemplateEnvironment>();
 	populateEffectiveClassTemplateEnvironment(effective_environment, outer_binding, template_params, template_args_to_use,
 		effective_template_params, effective_template_args, template_params_already_include_outer_prefix, outer_prefix_count);
+	FlashCpp::ScopedState<const TemplateEnvironment*> grouped_environment_guard(current_grouped_template_environment_);
+	if (!effective_environment.bindings.empty()) {
+		current_grouped_template_environment_ = &effective_environment;
+	}
 	std::vector<TemplateTypeArg> effective_template_args_vector(
 		effective_template_args.begin(),
 		effective_template_args.end());
