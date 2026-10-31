@@ -1528,6 +1528,38 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 	int depth) {
 	TemplateArgumentVector materialized_args;
 	materialized_args.reserve(stored_args.size());
+	// A nontrivial pack pattern such as `Wrapper<Tail>...` records the wrapper
+	// spelling as its dependent name; recover the bound pack from the wrapper's
+	// type arguments so the generic expression can be substituted per element.
+	auto find_single_referenced_pack =
+		[&](auto&& self, const TypeInfo* type_info, std::unordered_set<TypeIndex>& visited, int scan_depth,
+			StringHandle& referenced_pack) -> bool {
+		if (type_info == nullptr || scan_depth > kMaxDependentMemberTypeResolutionDepth ||
+			!visited.insert(type_info->registeredTypeIndex()).second) {
+			return true;
+		}
+		for (const TypeInfo::TemplateArgInfo& nested : type_info->templateArgs()) {
+			StringHandle candidate;
+			if (nested.dependent_name.isValid() && pack_map_.find(nested.dependent_name) != pack_map_.end()) {
+				candidate = nested.dependent_name;
+			} else if (!nested.is_value && nested.type_index.is_valid()) {
+				const TypeInfo* nested_info = tryGetTypeInfo(nested.type_index);
+				if (nested_info != nullptr && nested_info->name().isValid() &&
+					pack_map_.find(nested_info->name()) != pack_map_.end()) {
+					candidate = nested_info->name();
+				} else if (!self(self, nested_info, visited, scan_depth + 1, referenced_pack)) {
+					return false;
+				}
+			}
+			if (candidate.isValid()) {
+				if (referenced_pack.isValid() && referenced_pack != candidate) {
+					return false;
+				}
+				referenced_pack = candidate;
+			}
+		}
+		return true;
+	};
 	for (const TypeInfo::TemplateArgInfo& stored_arg : stored_args) {
 		TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
 		if (std::optional<std::vector<TemplateTypeArg>> expanded_args =
@@ -1544,11 +1576,21 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 			continue;
 		}
 		if (arg.is_pack) {
+			const TypeInfo* const pack_pattern_info = arg.type_index.is_valid() ? tryGetTypeInfo(arg.type_index) : nullptr;
 			StringHandle pack_name = arg.dependent_name;
-			if (!pack_name.isValid() && arg.type_index.is_valid()) {
-				if (const TypeInfo* pack_type_info = tryGetTypeInfo(arg.type_index)) {
-					pack_name = pack_type_info->name();
+			if (!pack_name.isValid() || pack_map_.find(pack_name) == pack_map_.end()) {
+				if (pack_pattern_info != nullptr && pack_pattern_info->isTemplateInstantiation()) {
+					std::unordered_set<TypeIndex> visited_packs;
+					StringHandle referenced_pack;
+					if (find_single_referenced_pack(find_single_referenced_pack, pack_pattern_info, visited_packs, 0, referenced_pack)) {
+						if (referenced_pack.isValid()) {
+							pack_name = referenced_pack;
+						}
+					}
 				}
+			}
+			if (!pack_name.isValid() && pack_pattern_info != nullptr) {
+				pack_name = pack_pattern_info->name();
 			}
 			if (pack_name.isValid()) {
 				auto pack_it = pack_map_.find(pack_name);
@@ -1556,6 +1598,48 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 				if (pack_it != pack_map_.end() && std::ranges::none_of(pack_it->second, [](const TemplateTypeArg& element) {
 					return templateArgIsStructurallyDependent(element) || typeIndexContainsDependentPlaceholder(element.type_index);
 				})) {
+					// A nontrivial element pattern such as `Wrapper<Tail>` cannot be
+					// formed by rebinding the pack element alone; substitute the
+					// generic expression once per element instead.
+					if (pack_pattern_info != nullptr && pack_pattern_info->isTemplateInstantiation()) {
+						const std::optional<TypeSpecifierNode> element_pattern_spec =
+							makeTypeSpecifierFromTemplateArgInfo(stored_arg, Token{});
+						if (element_pattern_spec.has_value()) {
+							const std::string_view target_pack_name = StringTable::getStringView(pack_name);
+							bool expanded_all = true;
+							TemplateArgumentVector expanded_args;
+							expanded_args.reserve(pack_it->second.size());
+							for (const TemplateTypeArg& pack_element : pack_it->second) {
+								std::unordered_map<std::string_view, TemplateTypeArg> element_param_map = param_map_;
+								element_param_map[target_pack_name] = pack_element;
+								ExpressionSubstitutor element_substitutor(element_param_map, parser_);
+								element_substitutor.setCurrentOwnerTypeName(current_owner_type_name_);
+								element_substitutor.setCurrentOwnerDeclaration(current_owner_declaration_);
+								TypeSpecifierNode substituted_element =
+									element_substitutor.substituteTypeSpecifier(*element_pattern_spec);
+								if (!substituted_element.type_index().is_valid() ||
+									typeIndexContainsDependentPlaceholder(substituted_element.type_index()) ||
+									tryGetTypeInfo(substituted_element.type_index()) == nullptr) {
+									expanded_all = false;
+									break;
+								}
+								TemplateTypeArg expanded_arg(substituted_element);
+								expanded_arg.is_pack = false;
+								expanded_args.push_back(std::move(expanded_arg));
+							}
+							if (expanded_all) {
+								for (TemplateTypeArg& expanded_arg : expanded_args) {
+									materialized_args.push_back(std::move(expanded_arg));
+								}
+								continue;
+							}
+						}
+						// A nontrivial pattern that cannot be substituted per element
+						// must stay dependent rather than degrade to its pack element.
+						arg.is_dependent = true;
+						materialized_args.push_back(std::move(arg));
+						continue;
+					}
 					for (const TemplateTypeArg& pack_arg : pack_it->second) {
 						appendReboundDependentPackArgument(materialized_args, pack_arg, stored_arg);
 					}
