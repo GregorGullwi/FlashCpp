@@ -8,13 +8,16 @@ implementation history belongs in git and the regression suite.
 
 ## Next 3A slice
 
-**Expand multiple type packs in lockstep in a member-template data member.**
-Handle a pattern such as `Pair<Tail, Other>...` by substituting every referenced
-pack element in a single expansion and preserving the instantiated owner and
-canonical field type. Mismatched pack lengths and still-dependent elements stay
-fail-closed. Callable packs, non-type-parameter/alias/trailing-requires member
-partials, opaque dependent values, and nested method emission remain separate
-work; do not add evaluator or selection rules as part of this slice.
+**Bind every pack referenced by a lockstep member-template expansion.**
+The substitution layer now expands a pattern such as `Pair<Tail, Other>...` in
+lockstep when every referenced pack is present in the effective binding.
+Pattern deduction and effective owner bindings still collapse an enclosing pack
+to a scalar or leave a second partial-specialization pack empty, so end-to-end
+fields that mix packs from different template scopes remain deferred. Preserve
+each referenced pack through pattern deduction and effective binding before the
+expansion runs. Callable packs, non-type-parameter/alias/trailing-requires
+member partials, opaque dependent values, and nested method emission remain
+separate work; do not add evaluator or selection rules as part of this slice.
 
 Direct type-pack data members now retain empty/full packs, written CV/pointer
 wrappers, enclosing-owner identity, and canonical subobject schemas. Coverage is
@@ -27,6 +30,12 @@ while preserving the instantiated owner and canonical field type.
 packs, owner-sensitive layout, and wrapper nesting; the native `Nontrivial member
 pack fields retain wrapped elements and owners` test checks canonical owner and
 member argument identity and rejects flattening the wrapper per element.
+Lockstep expansion collects every bound pack referenced by the element pattern,
+requires equal lengths and concrete elements, and substitutes one element from
+each pack per result. The native `Lockstep member pack expansion substitutes
+every referenced pack` test supplies two packs explicitly and verifies both
+resulting `Pair` arguments. End-to-end binding of packs from distinct template
+scopes remains the next slice.
 
 ## Current state
 
@@ -201,7 +210,9 @@ These seed adjacent slices; the authoritative inventory is
   signatures, constructors, and bodies substitute effective owner bindings.
   Direct type-pack data-member template-ids publish concrete argument lists for
   namespace/non-template-class targets. Single nontrivial type-pack expansions
-  substitute the generic element expression per concrete element; multiple-pack,
+  substitute the generic element expression per concrete element, and lockstep
+  expansion substitutes every referenced pack when the effective binding contains
+  all of them. End-to-end binding of packs from distinct template scopes,
   callable-pack, non-type-parameter/alias/trailing-requires member partials,
   nested method emission, and other dependent owner/member arguments remain
   deferred.
