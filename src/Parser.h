@@ -3091,6 +3091,9 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		StringHandle candidate_name,
 		TypeIndex owner_type_index);
 	std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, std::span<const TemplateTypeArg> template_args, bool force_eager = false);	// NEW: Instantiate class template
+	std::optional<ASTNode> try_instantiate_class_template_body(std::string_view template_name, std::span<const TemplateTypeArg> template_args,
+		bool force_eager, bool skip_dependency_worklist);
+	bool preinstantiate_class_template_dependencies(std::string_view template_name, std::span<const TemplateTypeArg> filled_args);
 	std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, std::span<const TemplateTypeArg> template_args, ASTNode& spec_node);  // Instantiate full specialization
 	std::optional<ASTNode> try_instantiate_variable_template(
 		std::string_view template_name,
