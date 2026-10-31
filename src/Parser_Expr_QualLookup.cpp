@@ -2380,6 +2380,17 @@ TypeIndex Parser::substitute_template_parameter(const TypeSpecifierNode& origina
 				});
 		}
 	};
+	std::optional<ExpressionSubstitutor> lockstep_substitutor;
+	auto expandLockstep = [&](const TypeInfo::TemplateArgInfo& arg_info,
+		const TypeInfo& pattern_info) -> std::optional<TemplateArgumentVector> {
+		if (!lockstep_substitutor.has_value()) {
+			TemplateInstantiationContext context;
+			populateTemplateInstantiationContext(context, template_params, template_args, nullptr,
+				currentTemplateSubstitutionFailurePolicy());
+			lockstep_substitutor.emplace(context, *this);
+		}
+		return lockstep_substitutor->tryExpandLockstepTypePack(arg_info, pattern_info);
+	};
 	auto materializeConcretePlaceholderArgsBase = [&](const TypeInfo& placeholder_info) {
 		// Prefer folding `Owner::static_member` NTTP markers before generic
 		// dependent-expression evaluation. Re-evaluating a stale MemberAccess
@@ -2425,6 +2436,22 @@ TypeIndex Parser::substitute_template_parameter(const TypeSpecifierNode& origina
 			};
 		for (const TypeInfo::TemplateArgInfo& arg_info : placeholder_info.templateArgs()) {
 			if (expand_direct_type_packs && appendDirectTypePackExpansion(concrete_args, arg_info, template_params, template_args)) continue;
+			if (arg_info.is_pack && !arg_info.is_value && arg_info.type_index.is_valid()) {
+				const TypeInfo* pattern_info = tryGetTypeInfo(arg_info.type_index);
+				if (pattern_info != nullptr && pattern_info->isTemplateInstantiation()) {
+
+					if (std::optional<TemplateArgumentVector> expanded = expandLockstep(arg_info, *pattern_info)) {
+						for (TemplateTypeArg& expanded_arg : *expanded) {
+							concrete_args.push_back(std::move(expanded_arg));
+						}
+						continue;
+					}
+					TemplateTypeArg unresolved = toTemplateTypeArg(arg_info);
+					unresolved.is_dependent = true;
+					concrete_args.push_back(std::move(unresolved));
+					continue;
+				}
+			}
 			if (expand_direct_type_packs && arg_info.is_pack && !arg_info.is_value) {
 				TemplateTypeArg unresolved = toTemplateTypeArg(arg_info);
 				unresolved.is_dependent = true;

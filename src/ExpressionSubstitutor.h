@@ -113,6 +113,12 @@ public:
 
 	const TypeInfo* resolveDependentMemberTypeForSubstitution(const TypeInfo& type_info);
 
+	// Expand a nontrivial pack element pattern per bound pack element. Returns
+	// std::nullopt when the pattern is unsupported or still dependent.
+	std::optional<TemplateArgumentVector> tryExpandLockstepTypePack(
+		const TypeInfo::TemplateArgInfo& stored_arg,
+		const TypeInfo& pattern_info);
+
 	void setCurrentOwnerTypeName(StringHandle owner_type_name) {
 		current_owner_type_name_ = owner_type_name;
 	}
@@ -220,6 +226,7 @@ private:
 	TemplateArgumentVector materializeDependentRecordTemplateArgs(
 		std::span<const TypeInfo::TemplateArgInfo> stored_args,
 		int depth);
+
 	bool templateArgsStillDependent(std::span<const TemplateTypeArg> args) const;
 	Parser::AliasTemplateMaterializationResult materializeDependentQualifiedRecordOwner(
 		const TypeInfo::DependentQualifiedNameRecord& dependent_name,

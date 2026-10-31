@@ -53,8 +53,13 @@ argument is reused for every pack element while every pack is still required to
 be bound and concrete. `test_lockstep_mixed_scalar_pack_member_field_ret0.cpp`
 covers empty packs, owner-sensitive layout, and reuse of the scalar element, and
 the native `Mixed scalar and pack member fields preserve canonical owners` test
-checks the canonical owner and ordered `Pair` arguments. Namespace targets and
-inner expansions remain deferred.
+checks the canonical owner and ordered `Pair` arguments. Single-pack
+namespace-scope targets such as `List<Wrap<Tail>...>` now share the lockstep
+helper; `test_namespace_scope_lockstep_pack_member_field_ret0.cpp` covers empty
+and full packs, and the native `Namespace-scope lockstep targets preserve
+canonical arguments` test checks the ordered wrapper arguments. Multi-pack
+namespace targets and inner expansions remain deferred because the generic
+substitution path still receives flat parameter/argument spans.
 
 ## Current state
 

@@ -7993,6 +7993,69 @@ template<class T> struct Holder {
 	CHECK(mixed_second->templateArgs()[1].type_index == nativeTypeIndex(TypeCategory::LongLong));
 }
 
+TEST_CASE("Namespace-scope lockstep targets preserve canonical arguments") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream fixture("tests/test_namespace_scope_lockstep_pack_member_field_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	code.append(R"(
+using FullBox = Holder<int>::Box<char, Payload>;
+using EmptyBox = Holder<int>::Box<>;
+)");
+	CompileContext compile_context;
+	compile_context.setInputFile("namespace_scope_lockstep_pack.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto imported_alias = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const auto wrap_type = [&](TemplateTypeArg argument) {
+		const TemplateArgumentVector arguments{argument};
+		const auto instance = template_engine.materializeTemplateInstantiationForLookup("Wrap", arguments);
+		REQUIRE(instance.resolved_type_info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *instance.resolved_type_info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const auto field_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const ResolvedAliasTypeInfo resolved = resolveAliasTypeInfo(info->registeredTypeIndex());
+		const StructTypeInfo* record = tryGetStructTypeInfo(resolved.type_index);
+		REQUIRE(record != nullptr);
+		REQUIRE(record->declaration_node != nullptr);
+		REQUIRE(record->members.size() == 1);
+		const TypeSpecifierNode& syntax = record->declaration_node->members()[0].declaration.as<DeclarationNode>().type_specifier_node();
+		const TypeId field = importCanonicalStructMemberType(table, syntax);
+		REQUIRE(field);
+		CHECK(record->members[0].canonical_type_id == field);
+		return field;
+	};
+	const TypeId full_field = field_type("FullBox");
+	const TypeInfo* payload_info = findTypeByName(StringTable::getOrInternStringHandle("Payload"));
+	REQUIRE(payload_info != nullptr);
+	TypeId argument = table.templateSpecializationArguments(full_field);
+	REQUIRE(argument);
+	CHECK(table.templateArgumentType(argument) == wrap_type(TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Char))));
+	argument = table.templateArgumentNext(argument);
+	REQUIRE(argument);
+	CHECK(table.templateArgumentType(argument) == wrap_type(TemplateTypeArg::makeType(payload_info->registeredTypeIndex())));
+	CHECK_FALSE(table.templateArgumentNext(argument));
+	const TypeId empty_field = field_type("EmptyBox");
+	CHECK_FALSE(table.templateSpecializationArguments(empty_field));
+	CHECK(imported_alias("FullBox") != imported_alias("EmptyBox"));
+}
 TEST_CASE("Mixed scalar and pack member fields preserve canonical owners") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
