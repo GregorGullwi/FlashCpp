@@ -36,6 +36,13 @@ static void preserveInstantiatedUnionGroups(StructTypeInfo& instance, const Stru
 
 static constexpr size_t kMaxAliasUnwrapIterations = 64;
 
+static bool hasDependentMemberPack(const TypeInfo* type_info) {
+	const auto* name = type_info != nullptr ? type_info->dependentQualifiedName() : nullptr;
+	return name != nullptr && std::ranges::any_of(name->member_chain, [](const auto& member) {
+		return std::ranges::any_of(member.template_arguments, [](const auto& argument) { return argument.is_pack; });
+	});
+}
+
 struct EffectivePartialSpecBindings {
 	TemplateParameterVector params;
 	std::vector<TemplateTypeArg> args;
@@ -3269,6 +3276,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Copy members from pattern
 			FLASH_LOG(Templates, Trace, "Pattern struct '", pattern_struct.name(), "' has ", pattern_struct.members().size(), " members");
+			std::vector<std::pair<size_t, ASTNode>> resolved_member_pack_types;
+			size_t pattern_member_index = 0;
 			for (const auto& member_decl : pattern_struct.members()) {
 				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 				FLASH_LOG(Templates, Trace, "Copying member: ", decl.identifier_token().value(),
@@ -3276,6 +3285,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 				TypeSpecifierNode resolved_dependent_member_type_spec = type_spec;
 				const TypeSpecifierNode* effective_type_spec = &type_spec;
+				ASTNode resolved_member_pack_type;
 				if (type_spec.type_index().is_valid()) {
 					if (const TypeInfo* member_type_info = tryGetTypeInfo(type_spec.type_index());
 						member_type_info != nullptr &&
@@ -3290,17 +3300,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (substituted_type_node.is<TypeSpecifierNode>()) {
 							const TypeSpecifierNode& substituted_type =
 								substituted_type_node.as<TypeSpecifierNode>();
-							bool substituted_still_dependent = false;
-							if (substituted_type.type_index().is_valid()) {
-								if (const TypeInfo* substituted_type_info =
-										tryGetTypeInfo(substituted_type.type_index())) {
-									substituted_still_dependent =
-										substituted_type_info->isDependentPlaceholder();
-								}
-							}
+							const bool substituted_still_dependent = !substituted_type.type_index().is_valid() ||
+								typeIndexContainsDependentPlaceholder(substituted_type.type_index());
 							if (!substituted_still_dependent) {
 								resolved_dependent_member_type_spec = substituted_type;
 								effective_type_spec = &resolved_dependent_member_type_spec;
+								if (hasDependentMemberPack(member_type_info)) resolved_member_pack_type = substituted_type_node;
 							}
 						}
 					}
@@ -3312,8 +3317,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// For pattern specializations, member types need substitution!
 				// Use substitute_template_parameter to properly match template parameters by name
-				TypeIndex member_type_index = substitute_template_parameter(*effective_type_spec, effective_member_copy_template_params,
-					effective_member_copy_template_args, true);
+				TypeIndex member_type_index = effective_type_spec != &type_spec ? effective_type_spec->type_index()
+					: substitute_template_parameter(*effective_type_spec, effective_member_copy_template_params, effective_member_copy_template_args, true);
 				TypeSpecifierNode substituted_member_type_spec = *effective_type_spec;
 				substituted_member_type_spec.set_type_index(member_type_index);
 				if (const TypeInfo* concrete_member = tryGetTypeInfo(member_type_index)) {
@@ -3389,6 +3394,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					resolve_bitfield_width(member_decl, effective_member_copy_template_params, effective_member_copy_template_args),
 					getCanonicalFunctionPointerSignature(substituted_member_type_spec), member_decl.is_no_unique_address,
 					substituted_member_type_spec.top_level_cv_qualifier());
+				if (resolved_member_pack_type.is<TypeSpecifierNode>()) {
+					resolved_member_pack_type.as<TypeSpecifierNode>() = substituted_member_type_spec;
+					resolved_member_pack_types.emplace_back(pattern_member_index, resolved_member_pack_type);
+				}
+				++pattern_member_index;
 			}
 
 			SourceMemberStructInfoIndexMaps struct_info_member_identity_maps;
@@ -4639,12 +4649,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			// Copy data members
+			size_t copied_member_index = 0;
+			size_t resolved_pack_index = 0;
 			for (const auto& member_decl : pattern_struct.members()) {
 				ASTNode substituted_member_decl = substituteTemplateParameters(
 					member_decl.declaration, effective_pattern_template_params, effective_pattern_template_args);
 				const TypeSpecifierNode& original_type = member_decl.declaration.as<DeclarationNode>().type_specifier_node();
 				const TypeInfo* pattern_type = tryGetTypeInfo(original_type.type_index());
-				if (pattern_type != nullptr && std::ranges::any_of(pattern_type->templateArgs(),
+				if (resolved_pack_index < resolved_member_pack_types.size() &&
+					resolved_member_pack_types[resolved_pack_index].first == copied_member_index) {
+					TypeSpecifierNode& concrete = substituted_member_decl.as<DeclarationNode>().type_specifier_node();
+					concrete = resolved_member_pack_types[resolved_pack_index++].second.as<TypeSpecifierNode>();
+					if (copied_member_index >= struct_info->members.size()) throw InternalError("Missing instantiated member pack layout");
+					const StructMember& published = struct_info->members[copied_member_index];
+					if (importCanonicalStructMemberType(requireFrontendContext().canonicalTypes(), concrete, published.is_array,
+						published.pointee_array_declarator, published.array_dimensions) != published.canonical_type_id) {
+						throw InternalError("Instantiated member pack syntax does not match its published canonical type");
+					}
+				} else if (pattern_type != nullptr && std::ranges::any_of(pattern_type->templateArgs(),
 					[](const TypeInfo::TemplateArgInfo& argument) { return argument.is_pack && !argument.is_value; })) {
 					const TypeIndex concrete_index = substitute_template_parameter(original_type, effective_pattern_template_params,
 						effective_pattern_template_args, true);
@@ -4669,6 +4691,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_decl.bitfield_width,
 					substituted_bitfield_width_expr,
 					member_decl.is_no_unique_address);
+				++copied_member_index;
 			}
 			for (const auto& static_member : pattern_struct.static_members()) {
 				TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
@@ -6235,10 +6258,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		return gSymbolTable.get_current_namespace_handle();
 	}();
-	const OuterTemplateBinding* outer_binding =
-		gTemplateRegistry.getOuterTemplateBinding(template_name);
+	const std::optional<OwnerId> declared_owner = template_class.has_template_decl_id()
+		? requireFrontendContext().templateDecls().primaryClassTemplateOwner(template_class.template_decl_id()) : std::nullopt;
+	const bool has_class_owner = class_decl.is_nested() || hasTemplatedClassOwner(template_name) ||
+		(declared_owner.has_value() && isClassOrTemplateOwnedOwnerId(*declared_owner));
+	const OuterTemplateBinding* outer_binding = has_class_owner ? gTemplateRegistry.getOuterTemplateBinding(template_name) : nullptr;
 	std::optional<OuterTemplateBinding> synthesized_outer_binding;
-	if (outer_binding == nullptr) {
+	if (has_class_owner && outer_binding == nullptr) {
 		if (const size_t owner_sep = template_name.rfind("::");
 			owner_sep != std::string_view::npos && owner_sep > 0) {
 			StringHandle owner_name_handle = StringTable::getOrInternStringHandle(
@@ -6270,7 +6296,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			outer_binding = &*synthesized_outer_binding;
 		}
 	}
-	if (outer_binding == nullptr) {
+	if (has_class_owner && outer_binding == nullptr) {
 		if (const size_t owner_sep = template_name.rfind("::");
 			owner_sep != std::string_view::npos && owner_sep > 0) {
 			const std::string_view owner_template_name =

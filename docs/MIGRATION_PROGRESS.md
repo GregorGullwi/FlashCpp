@@ -8,20 +8,13 @@ implementation history belongs in git and the regression suite.
 
 ## Next 3A slice
 
-**Compose instantiated owners in member-template data-member pack resolution.**
-The canonical bridge now stamps class-template-owned targets with the member
-primary plus the instantiated owner TypeId, keeping owner and member arguments
-separately observable. A data-member pack whose target is
-`Owner<T>::List<Head, Tail...>` inside a class-template partial specialization
-still resolves to a dependent member placeholder, so direct member access and
-method calls on that field can lower as free functions. Extend the parser's
-member-template instantiation path to compose the owner arguments before
-assigning the field TypeInfo, and keep unbound expansions fail-closed until then.
-
-Nontrivial expansion patterns such as `Wrapper<Tail>...`, callable packs,
-non-type-parameter/alias/trailing-requires member partials, opaque dependent
-values, and nested method emission remain separate work. Keep unsupported or
-unbound expansions fail-closed and do not add evaluator or selection rules.
+**Materialize a single nontrivial type-pack expansion in member-template data members.**
+Handle a pattern such as `Wrapper<Tail>...` through substitution of the generic
+type expression and preserve its instantiated owner and canonical field type.
+Keep unsupported or unbound expansions fail-closed. Multiple packs, callable
+packs, non-type-parameter/alias/trailing-requires member partials, opaque
+dependent values, and nested method emission remain separate work; do not add
+evaluator or selection rules as part of this slice.
 
 Direct type-pack data members now retain empty/full packs, written CV/pointer
 wrappers, enclosing-owner identity, and canonical subobject schemas. Coverage is
@@ -89,8 +82,17 @@ the declared pack binding; outer binding views retain every element, and member
 specializations split actual member arguments from the instantiated owner.
 Supported materialized targets publish matching syntax, field, and subobject
 TypeIds; class-template-owned targets publish `memberTemplateSpecialization` with
-the instantiated owner TypeId separate from the member arguments. Unresolved packs
-remain deferred. `tests/test_canonical_member_template_owned_fields_ret0.cpp`
+the instantiated owner TypeId separate from the member arguments. Dependent
+qualified member-template fields with direct type-pack expansions use the same
+resolved syntax for layout and the copied AST; unresolved or still-dependent
+pack elements remain deferred. Scoped owner bindings restore the prior registry
+entry after lookup. `buildAccumulatedOuterTemplateBindingInto` populates empty
+caller-owned storage so this bridge does not place the large binding return
+object in a recursive lookup frame. `tests/test_canonical_member_pack_instantiated_owner_ret0.cpp`
+checks empty/full packs, owner-sensitive layout, and written pointer qualifiers;
+the native identity guard checks syntax and record schema against the same
+owner-bearing TypeId and rejects removal of the owner handoff.
+`tests/test_canonical_member_template_owned_fields_ret0.cpp`
 covers the runtime owner-sensitive field, and the native
 `Member template specialization syntax retains its instantiated owner` test
 covers same-arguments/different-owner identity plus the missing-owner mutation.

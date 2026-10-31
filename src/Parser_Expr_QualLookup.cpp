@@ -1939,9 +1939,12 @@ std::vector<QualifiedTypeMemberAccess> Parser::buildQualifiedTypeMemberChain(std
 	return member_type_chain;
 }
 
+const TypeInfo* Parser::resolveBaseClassMemberTypeChain(std::string_view name, std::span<const QualifiedTypeMemberAccess> chain) {
+	return resolveBaseClassMemberTypeChain(name, chain, nullptr);
+}
+
 const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
-	std::string_view base_class_name,
-	std::span<const QualifiedTypeMemberAccess> member_type_chain) {
+	std::string_view base_class_name, std::span<const QualifiedTypeMemberAccess> member_type_chain, const TypeInfo* bound_owner) {
 	if (member_type_chain.empty()) {
 		return findTypeByName(StringTable::getOrInternStringHandle(base_class_name));
 	}
@@ -2019,6 +2022,14 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 						  current_base_name, "::", member_name);
 				return nullptr;
 			}
+			const StringHandle template_handle = StringTable::getOrInternStringHandle(qualified_member_template_name);
+			// Materialization consumes the registry binding; restore it after this lookup so another owner cannot inherit it.
+			TemplateRegistry::ScopedOuterTemplateBinding binding_scope(gTemplateRegistry, template_handle, bound_owner != nullptr);
+			if (bound_owner != nullptr) {
+				OuterTemplateBinding& owner_binding = binding_scope.binding();
+				buildAccumulatedOuterTemplateBindingInto(bound_owner, nullptr, StringHandle{}, owner_binding);
+				// An empty binding masks unrelated ambient bindings until the scoped lookup finishes.
+			}
 
 			AliasTemplateMaterializationResult materialized_member =
 				materializeTemplateInstantiationForLookup(
@@ -2040,6 +2051,7 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 				return nullptr;
 			}
 			normalizeResolvedMemberOwner(resolved_type, current_base_name);
+			if (bound_owner != nullptr) bound_owner = resolved_type;
 			continue;
 		}
 
@@ -2093,6 +2105,7 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 		}
 
 		normalizeResolvedMemberOwner(resolved_type, current_base_name);
+		if (bound_owner != nullptr) bound_owner = resolved_type;
 	}
 
 	return resolved_type;
@@ -2404,7 +2417,9 @@ TypeIndex Parser::substitute_template_parameter(const TypeSpecifierNode& origina
 		for (const TypeInfo::TemplateArgInfo& arg_info : placeholder_info.templateArgs()) {
 			if (expand_direct_type_packs && appendDirectTypePackExpansion(concrete_args, arg_info, template_params, template_args)) continue;
 			if (expand_direct_type_packs && arg_info.is_pack && !arg_info.is_value) {
-				concrete_args.push_back(toTemplateTypeArg(arg_info));
+				TemplateTypeArg unresolved = toTemplateTypeArg(arg_info);
+				unresolved.is_dependent = true;
+				concrete_args.push_back(std::move(unresolved));
 				continue;
 			}
 			TemplateTypeArg preliminary = toTemplateTypeArg(arg_info);
@@ -2448,9 +2463,7 @@ TypeIndex Parser::substitute_template_parameter(const TypeSpecifierNode& origina
 	};
 	auto areTemplateArgsConcrete = [&](std::span<const TemplateTypeArg> args) {
 		for (const TemplateTypeArg& arg : args) {
-			if (arg.is_dependent ||
-				arg.dependent_name.isValid() ||
-				arg.dependent_expr.has_value()) {
+			if (arg.is_dependent || arg.dependent_name.isValid() || arg.dependent_expr.has_value()) {
 				return false;
 			}
 			if (arg.is_value || !arg.type_index.is_valid()) {

@@ -3786,6 +3786,9 @@ private:
 		const TypeInfo* owner_type_info,
 		const OuterTemplateBinding* inherited_binding,
 		StringHandle fallback_binding_lookup_name);
+	// Populate empty caller-owned storage to avoid a large binding temporary on recursive lookup paths.
+	void buildAccumulatedOuterTemplateBindingInto(const TypeInfo* owner_type_info, const OuterTemplateBinding* inherited_binding,
+		StringHandle fallback_binding_lookup_name, OuterTemplateBinding& binding);
 	std::optional<ASTNode> instantiateLazyMemberForCanonicalOwner(
 		std::string_view& owner_name,
 		std::string_view member_name,
@@ -4637,9 +4640,9 @@ private:	 // Resume private methods
 	// Returns std::nullopt if '::' is found but not followed by an identifier (parse error).
 	std::optional<BaseClassPostTemplateInfo> consume_base_class_qualifiers_after_template_args();
 	std::vector<QualifiedTypeMemberAccess> buildQualifiedTypeMemberChain(std::string_view member_chain) const;
+	const TypeInfo* resolveBaseClassMemberTypeChain(std::string_view base_class_name, std::span<const QualifiedTypeMemberAccess> member_type_chain);
 	const TypeInfo* resolveBaseClassMemberTypeChain(
-		std::string_view base_class_name,
-		std::span<const QualifiedTypeMemberAccess> member_type_chain);
+		std::string_view base_class_name, std::span<const QualifiedTypeMemberAccess> member_type_chain, const TypeInfo* bound_owner);
 
 	// Helper: Build TemplateArgumentNodeInfo vector from parsed template args and AST nodes.
 	// Shared across all base class deferral sites.
