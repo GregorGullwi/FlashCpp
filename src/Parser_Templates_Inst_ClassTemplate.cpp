@@ -36,7 +36,10 @@ static void preserveInstantiatedUnionGroups(StructTypeInfo& instance, const Stru
 
 static constexpr size_t kMaxAliasUnwrapIterations = 64;
 
-static bool hasDependentMemberPack(const TypeInfo* type_info) {
+static bool hasStoredTemplatePackExpansion(const TypeInfo* type_info) {
+	if (type_info != nullptr && std::ranges::any_of(type_info->templateArgs(), [](const TypeInfo::TemplateArgInfo& argument) {
+		return argument.is_pack && templateArgIsStructurallyDependent(toTemplateTypeArg(argument));
+	})) return true;
 	const auto* name = type_info != nullptr ? type_info->dependentQualifiedName() : nullptr;
 	return name != nullptr && std::ranges::any_of(name->member_chain, [](const auto& member) {
 		return std::ranges::any_of(member.template_arguments, [](const auto& argument) { return argument.is_pack; });
@@ -2547,7 +2550,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					return fail("deferred base has no template name");
 				}
 				DeferredBasePackExpansionBindingInfo pack_bindings;
-				size_t expansion_count = 1;
 				if (deferred_base.is_pack_expansion) {
 					pack_bindings = collectDeferredBasePackExpansionBindings(
 						deferred_base,
@@ -2555,9 +2557,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (pack_bindings.invalid || pack_bindings.pack_bindings.empty()) {
 						return fail("pack expansion has no consistent concrete bindings");
 					}
-					expansion_count = pack_bindings.expansion_count;
 				}
-				for (size_t expansion_index = 0; expansion_index < expansion_count; ++expansion_index) {
+				for (size_t expansion_index : templatePackExpansionIndices(pack_bindings)) {
 					std::vector<TemplateTypeArg>& base_arguments = base_arguments_scratch;
 					base_arguments.clear();
 					base_arguments.reserve(deferred_base.template_arguments.size());
@@ -3096,10 +3097,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						continue;
 					}
 
-					size_t expansion_count = base_pack_bindings.pack_bindings.empty()
-						? 1
-						: base_pack_bindings.expansion_count;
-					for (size_t expansion_index = 0; expansion_index < expansion_count; ++expansion_index) {
+					for (size_t expansion_index : templatePackExpansionIndices(base_pack_bindings)) {
 						TemplateArgSubstitutionMap spec_subst_map =
 							makeDeferredBaseExpansionSubstitutionMap(
 								spec_name_subst_map,
@@ -3375,7 +3373,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							if (!substituted_still_dependent) {
 								resolved_dependent_member_type_spec = substituted_type;
 								effective_type_spec = &resolved_dependent_member_type_spec;
-								if (hasDependentMemberPack(member_type_info)) resolved_member_pack_type = substituted_type_node;
+								if (hasStoredTemplatePackExpansion(member_type_info)) resolved_member_pack_type = substituted_type_node;
 							}
 						}
 					}
@@ -7483,10 +7481,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				continue;
 			}
 
-			size_t expansion_count = base_pack_bindings.pack_bindings.empty()
-				? 1
-				: base_pack_bindings.expansion_count;
-			for (size_t expansion_index = 0; expansion_index < expansion_count; ++expansion_index) {
+			for (size_t expansion_index : templatePackExpansionIndices(base_pack_bindings)) {
 				TemplateArgSubstitutionMap subst_map =
 					makeDeferredBaseExpansionSubstitutionMap(
 						name_substitution_map,
@@ -8382,7 +8377,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 		const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 		ASTNode full_substituted_type_node;
-		if (hasDependentMemberPack(tryGetTypeInfo(type_spec.type_index()))) {
+		if (hasStoredTemplatePackExpansion(tryGetTypeInfo(type_spec.type_index()))) {
 			MonotonicScratchArena& scratch = requireFrontendContext().scratchArena();
 			const ScratchArenaState scratch_mark = scratch.mark();
 			ScopeGuard scratch_scope([&]() { scratch.rollbackTo(scratch_mark); });
@@ -8679,7 +8674,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			member_pointee_array_declarator, static_cast<int>(substituted_type_spec.pointer_depth()),
 			resolve_bitfield_width(member_decl, effective_template_params, effective_template_args),
 			getCanonicalFunctionPointerSignature(substituted_type_spec), member_decl.is_no_unique_address, substituted_type_spec.top_level_cv_qualifier());
-		if (hasDependentMemberPack(tryGetTypeInfo(type_spec.type_index()))) {
+		if (hasStoredTemplatePackExpansion(tryGetTypeInfo(type_spec.type_index()))) {
 			full_substituted_type_node.as<TypeSpecifierNode>() = substituted_type_spec;
 			resolved_member_pack_types.emplace_back(member_index, full_substituted_type_node);
 		}
@@ -9563,12 +9558,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						continue;
 					}
 
-					const size_t expansion_count = base_pack_bindings.pack_bindings.empty()
-						? 1
-						: base_pack_bindings.expansion_count;
 					TemplateVector<const TypeInfo*, 4> resolved_base_types;
 					bool defer_entire_base = false;
-					for (size_t expansion_index = 0; expansion_index < expansion_count; ++expansion_index) {
+					for (size_t expansion_index : templatePackExpansionIndices(base_pack_bindings)) {
 						TemplateArgSubstitutionMap subst_map =
 							makeDeferredBaseExpansionSubstitutionMap(
 								name_substitution_map,

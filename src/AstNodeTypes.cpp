@@ -347,10 +347,12 @@ uint32_t storeTypeInfoTemplateArgs(TemplateArgInfoVector args) {
 			++gTypeInfoTemplateArgListInternStats.equality_checks;
 			const TemplateArgInfoVector& existing_args =
 				gTypeInfoTemplateArgLists[candidate.list_index];
-			// Semantic builtin equality ignores the legacy TypeIndex projection. Storage
-			// sharing must preserve it so an indexed argument cannot reuse an unindexed list.
+			// Semantic equality ignores expansion provenance and the legacy builtin TypeIndex
+			// projection. Storage sharing must retain both for later syntax-aware substitution.
 			if (!std::equal(args.begin(), args.end(), existing_args.begin(), existing_args.end(),
-				[](const auto& argument, const auto& existing) { return argument.type_index == existing.type_index; })) continue;
+				[](const auto& argument, const auto& existing) { return argument.type_index == existing.type_index && argument.is_pack == existing.is_pack; })) {
+				continue;
+			}
 			if (FlashCpp::equalTemplateArgInfoListIdentity(
 					args_span,
 					std::span<const TypeInfo::TemplateArgInfo>(

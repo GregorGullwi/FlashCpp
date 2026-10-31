@@ -455,6 +455,9 @@
     <ClInclude Include="src\TemplateRegistry_Types.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\TemplatePackExpansion.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\TemplateEnvironment.h">
       <Filter>Header Files</Filter>
     </ClInclude>

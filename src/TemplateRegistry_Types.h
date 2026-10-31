@@ -1852,50 +1852,6 @@ inline TemplateTypeArg materializeTemplateArg(
 	return materializeTemplateArg(arg_info, template_params, template_args, nullptr);
 }
 
-// A direct type-pack occurrence is bound by its retained declaration handle.
-// Names remain source lookup keys; they must not select a different same-spelling pack.
-template <typename ParamContainer, typename ArgContainer>
-inline std::optional<std::span<const TemplateTypeArg>> findDirectTypePackExpansion(const TypeInfo::TemplateArgInfo& argument,
-	const ParamContainer& template_params, const ArgContainer& template_args) {
-	if (!argument.is_pack || argument.is_value || !argument.type_index.is_valid()) return std::nullopt;
-	size_t argument_index = 0;
-	for (size_t parameter_index = 0; parameter_index < template_params.size(); ++parameter_index) {
-		const TemplateParameterNode* parameter = tryGetTemplateParameterNode(template_params[parameter_index]);
-		if (parameter == nullptr) continue;
-		if (!parameter->is_variadic()) {
-			++argument_index;
-			continue;
-		}
-		if (argument_index > template_args.size()) return std::nullopt;
-		const size_t count = countTemplatePackArguments(template_params, template_args, parameter_index, argument_index);
-		if (parameter->kind() == TemplateParameterKind::Type && parameter->registered_type_index() == argument.type_index) {
-			const std::span<const TemplateTypeArg> arguments(template_args.data(), template_args.size());
-			const auto pack = arguments.subspan(argument_index, count);
-			for (const TemplateTypeArg& element : pack) {
-				if (!element.isTypeArgument() || element.is_dependent || element.dependent_name.isValid() || element.dependent_expr.has_value()) {
-					return std::nullopt;
-				}
-			}
-			return pack;
-		}
-		argument_index += count;
-	}
-	return std::nullopt;
-}
-
-template <typename ParamContainer, typename ArgContainer>
-inline bool appendDirectTypePackExpansion(std::vector<TemplateTypeArg>& result, const TypeInfo::TemplateArgInfo& argument,
-	const ParamContainer& template_params, const ArgContainer& template_args) {
-	const auto pack = findDirectTypePackExpansion(argument, template_params, template_args);
-	if (!pack.has_value()) return false;
-	for (const TemplateTypeArg& element : *pack) {
-		TemplateTypeArg expanded = rebindDependentTemplateTypeArg(element, argument);
-		expanded.is_pack = false;
-		result.push_back(std::move(expanded));
-	}
-	return true;
-}
-
 // Convenience: materialize all stored TemplateArgInfo entries from a TypeInfo
 // into a concrete TemplateTypeArg vector, substituting dependent names.
 // EvalFn: callable with signature std::optional<int64_t>(const ASTNode&, std::span<const ASTNode>, std::span<const TemplateTypeArg>)

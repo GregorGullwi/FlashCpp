@@ -7437,6 +7437,74 @@ int main() { return 0; }
 	CHECK(table.substitute(imported_field, environment, concrete_arguments) == table.pointer(concrete_type));
 }
 
+TEST_CASE("Direct lockstep type-pack expansion preserves nested pack arguments") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	const std::string code = R"(
+template<class... T> struct List {};
+template<class A, class B> struct Pair {};
+template<class... Outer> struct Owner {
+	template<class... Inner> struct Box {
+		List<Pair<Outer, List<Inner...>>...> values;
+	};
+};
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("direct_nested_lockstep_pack.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	const auto box_template = gTemplateRegistry.lookupTemplate("Owner::Box");
+	REQUIRE(box_template.has_value());
+	REQUIRE(box_template->is<TemplateClassDeclarationNode>());
+	const StructDeclarationNode& box = box_template->as<TemplateClassDeclarationNode>().class_decl_node();
+	REQUIRE(box.members().size() == 1);
+	REQUIRE(box.members()[0].declaration.is<DeclarationNode>());
+	const TypeSpecifierNode& field_type = box.members()[0].declaration.as<DeclarationNode>().type_specifier_node();
+	const TypeInfo* list_info = tryGetTypeInfo(field_type.type_index());
+	REQUIRE(list_info != nullptr);
+	REQUIRE(list_info->templateArgs().size() == 1);
+	const TypeInfo::TemplateArgInfo& stored_arg = list_info->templateArgs()[0];
+	const TypeInfo* pair_info = tryGetTypeInfo(stored_arg.type_index);
+	REQUIRE(pair_info != nullptr);
+	std::unordered_map<std::string_view, TemplateTypeArg> scalar_map;
+	std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> pack_map;
+	const StringHandle outer_name = StringTable::getOrInternStringHandle("Outer");
+	const StringHandle inner_name = StringTable::getOrInternStringHandle("Inner");
+	pack_map[outer_name] = {
+		TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Short)),
+		TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Double))};
+	pack_map[inner_name] = {
+		TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Char)),
+		TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Int)),
+		TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::LongLong))};
+	ExpressionSubstitutor substitutor(scalar_map, pack_map, parser);
+	const auto expanded = substitutor.tryExpandLockstepTypePack(stored_arg, *pair_info);
+	REQUIRE(expanded.has_value());
+	REQUIRE(expanded->size() == 2);
+	for (size_t index = 0; index < expanded->size(); ++index) {
+		const TypeInfo* expanded_pair = tryGetTypeInfo((*expanded)[index].type_index);
+		REQUIRE(expanded_pair != nullptr);
+		REQUIRE(expanded_pair->templateArgs().size() == 2);
+		CHECK(expanded_pair->templateArgs()[0].type_index.category() == (index == 0 ? TypeCategory::Short : TypeCategory::Double));
+		const TypeInfo* nested_list = tryGetTypeInfo(expanded_pair->templateArgs()[1].type_index);
+		REQUIRE(nested_list != nullptr);
+		REQUIRE(nested_list->templateArgs().size() == 3);
+		CHECK(nested_list->templateArgs()[0].type_index.category() == TypeCategory::Char);
+		CHECK(nested_list->templateArgs()[1].type_index.category() == TypeCategory::Int);
+		CHECK(nested_list->templateArgs()[2].type_index.category() == TypeCategory::LongLong);
+	}
+	pack_map[outer_name].clear();
+	ExpressionSubstitutor empty_substitutor(scalar_map, pack_map, parser);
+	const auto empty_expansion = empty_substitutor.tryExpandLockstepTypePack(stored_arg, *pair_info);
+	REQUIRE(empty_expansion.has_value());
+	CHECK(empty_expansion->empty());
+}
+
 TEST_CASE("Pack member class-template partials publish environments") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
@@ -8123,6 +8191,214 @@ using FullBox = Holder<short, char, PackPayload>::Box<int, long long, double>;
 	REQUIRE(argument);
 	CHECK(table.templateArgumentType(argument) == pair_type(payload_arg, TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Double))));
 	CHECK_FALSE(table.templateArgumentNext(argument));
+}
+TEST_CASE("Interned template argument storage retains pack expansion boundaries") {
+	clearLegacyTypeTablesForTesting();
+	FrontendContext context;
+	initialize_native_types();
+	TypeInfo::TemplateArgInfo argument;
+	argument.type_index = nativeTypeIndex(TypeCategory::Int);
+	TemplateArgInfoVector scalar_args;
+	scalar_args.push_back(argument);
+	const uint32_t scalar_list = storeTypeInfoTemplateArgs(scalar_args);
+	TemplateArgInfoVector expanded_args = scalar_args;
+	expanded_args[0].is_pack = true;
+	const uint32_t expanded_list = storeTypeInfoTemplateArgs(expanded_args);
+	CHECK(scalar_list != expanded_list);
+	CHECK_FALSE(getTypeInfoTemplateArgs(scalar_list)[0].is_pack);
+	CHECK(getTypeInfoTemplateArgs(expanded_list)[0].is_pack);
+	CHECK(storeTypeInfoTemplateArgs(expanded_args) == expanded_list);
+}
+
+TEST_CASE("Nested member pack expansion keeps the inner pack independent") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream fixture("tests/test_nested_inner_pack_member_field_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	code.append(R"(
+using NestedBox = Owner<short, Payload>::Box<char, long long, double>;
+using EmptyOuterBox = Owner<>::Box<char, long long, double>;
+using EmptyInnerBox = Owner<short, Payload>::Box<>;
+)");
+	CompileContext compile_context;
+	compile_context.setInputFile("nested_member_inner_pack.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto field_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const ResolvedAliasTypeInfo resolved = resolveAliasTypeInfo(info->registeredTypeIndex());
+		const StructTypeInfo* record = tryGetStructTypeInfo(resolved.type_index);
+		REQUIRE(record != nullptr);
+		REQUIRE(record->declaration_node != nullptr);
+		REQUIRE(record->members.size() == 1);
+		const TypeSpecifierNode& syntax = record->declaration_node->members()[0].declaration.as<DeclarationNode>().type_specifier_node();
+		const TypeId field = importCanonicalStructMemberType(table, syntax);
+		REQUIRE(field);
+		CHECK(record->members[0].canonical_type_id == field);
+		return field;
+	};
+	const auto check_pair = [&](TypeId pair_id, TypeId first_type, std::span<const CanonicalBuiltinKind> expected) {
+		TypeId argument = table.templateSpecializationArguments(pair_id);
+		REQUIRE(argument);
+		CHECK(table.templateArgumentType(argument) == first_type);
+		argument = table.templateArgumentNext(argument);
+		REQUIRE(argument);
+		const TypeId inner_list = table.templateArgumentType(argument);
+		REQUIRE(inner_list);
+		TypeId inner_argument = table.templateSpecializationArguments(inner_list);
+		for (const CanonicalBuiltinKind kind : expected) {
+			REQUIRE(inner_argument);
+			CHECK(table.templateArgumentType(inner_argument) == table.builtin(kind));
+			inner_argument = table.templateArgumentNext(inner_argument);
+		}
+		CHECK_FALSE(inner_argument);
+	};
+	const auto imported_alias = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const TypeInfo* payload_info = findTypeByName(StringTable::getOrInternStringHandle("Payload"));
+	REQUIRE(payload_info != nullptr);
+	const TypeId nested_field = field_type("NestedBox");
+	TypeId outer_argument = table.templateSpecializationArguments(nested_field);
+	REQUIRE(outer_argument);
+	const std::array inner_kinds{CanonicalBuiltinKind::Char, CanonicalBuiltinKind::LongLong, CanonicalBuiltinKind::Double};
+	check_pair(table.templateArgumentType(outer_argument), table.builtin(CanonicalBuiltinKind::Short), inner_kinds);
+	outer_argument = table.templateArgumentNext(outer_argument);
+	REQUIRE(outer_argument);
+	const CanonicalTypeImport payload_import = importCanonicalClassTypeInfo(table, *payload_info);
+	REQUIRE(payload_import.status == CanonicalTypeImportStatus::Supported);
+	check_pair(table.templateArgumentType(outer_argument), payload_import.type, inner_kinds);
+	CHECK_FALSE(table.templateArgumentNext(outer_argument));
+	CHECK(imported_alias("NestedBox") != imported_alias("EmptyOuterBox"));
+	const TypeId empty_outer_field = field_type("EmptyOuterBox");
+	CHECK_FALSE(table.templateSpecializationArguments(empty_outer_field));
+	const TypeId empty_inner_field = field_type("EmptyInnerBox");
+	outer_argument = table.templateSpecializationArguments(empty_inner_field);
+	REQUIRE(outer_argument);
+	check_pair(table.templateArgumentType(outer_argument), table.builtin(CanonicalBuiltinKind::Short), std::span<const CanonicalBuiltinKind>{});
+	outer_argument = table.templateArgumentNext(outer_argument);
+	REQUIRE(outer_argument);
+	check_pair(table.templateArgumentType(outer_argument), payload_import.type, std::span<const CanonicalBuiltinKind>{});
+	CHECK_FALSE(table.templateArgumentNext(outer_argument));
+}
+TEST_CASE("Template pack scanner distinguishes current and nested references iteratively") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	initialize_native_types();
+	const auto make_argument = [](TypeIndex type_index, bool is_pack) {
+		TypeInfo::TemplateArgInfo argument;
+		argument.type_index = type_index;
+		argument.is_pack = is_pack;
+		return argument;
+	};
+	const auto make_instantiation = [&](std::string_view name, std::string_view base_name,
+		TypeInfo::TemplateArgInfoVector arguments) -> TypeInfo& {
+		TypeInfo& info = add_instantiated_type(StringTable::getOrInternStringHandle(name), TypeCategory::UserDefined, 0);
+		info.setTemplateInstantiationInfo(QualifiedIdentifier::fromQualifiedName(base_name, NamespaceRegistry::GLOBAL_NAMESPACE), std::move(arguments));
+		return info;
+	};
+	TypeInfo& outer_parameter = add_template_param_type(StringTable::getOrInternStringHandle("Outer"), TypeCategory::UserDefined, 0);
+	TypeInfo::TemplateArgInfoVector inner_arguments;
+	inner_arguments.push_back(make_argument(outer_parameter.registeredTypeIndex(), true));
+	TypeInfo& inner_list = make_instantiation("InnerListPattern", "List", std::move(inner_arguments));
+	TypeInfo::TemplateArgInfoVector pair_arguments;
+	pair_arguments.push_back(make_argument(outer_parameter.registeredTypeIndex(), false));
+	pair_arguments.push_back(make_argument(inner_list.registeredTypeIndex(), false));
+	TypeInfo& pair_pattern = make_instantiation("NestedPairPattern", "Pair", std::move(pair_arguments));
+	TemplateTypeArg bound_args[] = {TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Char)),
+		TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Double))};
+	const std::span<const TemplateTypeArg> bound(bound_args);
+	const auto lookup_pack = [&](StringHandle name) -> std::optional<std::span<const TemplateTypeArg>> {
+		return name == outer_parameter.name() ? std::optional<std::span<const TemplateTypeArg>>(bound) : std::nullopt;
+	};
+	std::vector<TemplatePackReferenceScope> scopes;
+	TypeSpecifierNode token_only_type(TypeIndex{}, TypeQualifier::None, SizeInBits{0},
+		Token(Token::Type::Identifier, "Outer"sv, 1, 1, 0), CVQualifier::None);
+	ASTNode token_only_node(&token_only_type);
+	scopes.clear();
+	REQUIRE(scanTemplateExpressionPackReferences(token_only_node, lookup_pack,
+		[&](StringHandle, TemplatePackReferenceScope scope, std::span<const TemplateTypeArg>) { scopes.push_back(scope); }));
+	REQUIRE(scopes.size() == 1);
+	CHECK(scopes[0] == TemplatePackReferenceScope::Current);
+	TypeSpecifierNode nested_pack_type(outer_parameter.registeredTypeIndex(), TypeQualifier::None, SizeInBits{0},
+		Token(Token::Type::Identifier, "Outer"sv, 1, 1, 0), CVQualifier::None);
+	nested_pack_type.set_pack_expansion(true);
+	ASTNode nested_pack_node(&nested_pack_type);
+	scopes.clear();
+	REQUIRE(scanTemplateExpressionPackReferences(nested_pack_node, lookup_pack,
+		[&](StringHandle, TemplatePackReferenceScope scope, std::span<const TemplateTypeArg>) { scopes.push_back(scope); }));
+	REQUIRE(scopes.size() == 1);
+	CHECK(scopes[0] == TemplatePackReferenceScope::Nested);
+	SizeofPackNode sizeof_outer("Outer", Token(Token::Type::Keyword, "sizeof..."sv, 1, 1, 0));
+	ASTNode sizeof_outer_node(&sizeof_outer);
+	scopes.clear();
+	REQUIRE(scanTemplateExpressionPackReferences(sizeof_outer_node, lookup_pack,
+		[&](StringHandle, TemplatePackReferenceScope scope, std::span<const TemplateTypeArg>) { scopes.push_back(scope); }));
+	CHECK(scopes.empty());
+	REQUIRE(scanTemplateTypePackReferences(pair_pattern, lookup_pack,
+		[&](StringHandle, TemplatePackReferenceScope scope, std::span<const TemplateTypeArg>) { scopes.push_back(scope); }));
+	REQUIRE(scopes.size() == 2);
+	CHECK(scopes[0] == TemplatePackReferenceScope::Current);
+	CHECK(scopes[1] == TemplatePackReferenceScope::Nested);
+	TypeInfo::TemplateArgInfoVector wrap_inner_arguments;
+	wrap_inner_arguments.push_back(make_argument(outer_parameter.registeredTypeIndex(), false));
+	TypeInfo& wrap_inner = make_instantiation("InnerWrapPattern", "Wrap", std::move(wrap_inner_arguments));
+	TypeInfo::TemplateArgInfoVector wrap_outer_arguments;
+	wrap_outer_arguments.push_back(make_argument(wrap_inner.registeredTypeIndex(), false));
+	TypeInfo& wrap_pattern = make_instantiation("NestedWrapPattern", "Wrap", std::move(wrap_outer_arguments));
+	scopes.clear();
+	REQUIRE(scanTemplateTypePackReferences(wrap_pattern, lookup_pack,
+		[&](StringHandle, TemplatePackReferenceScope scope, std::span<const TemplateTypeArg>) { scopes.push_back(scope); }));
+	REQUIRE(scopes.size() == 1);
+	CHECK(scopes[0] == TemplatePackReferenceScope::Current);
+	TemplatePackExpansionBindings bindings;
+	bindings.add(outer_parameter.name(), bound);
+	bindings.add(outer_parameter.name(), bound);
+	CHECK_FALSE(bindings.invalid);
+	CHECK(bindings.pack_bindings.size() == 1);
+	int callbacks = 0;
+	CHECK(forEachTemplatePackExpansionElement(bindings, [&](size_t) { ++callbacks; return true; }));
+	CHECK(callbacks == 2);
+	const TemplateTypeArg shorter[] = {TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Int))};
+	bindings.add(StringTable::getOrInternStringHandle("Other"), std::span<const TemplateTypeArg>(shorter));
+	callbacks = 0;
+	CHECK_FALSE(forEachTemplatePackExpansionElement(bindings, [&](size_t) { ++callbacks; return true; }));
+	CHECK(callbacks == 0);
+	TemplatePackExpansionBindings empty_bindings;
+	empty_bindings.add(outer_parameter.name(), std::span<const TemplateTypeArg>{});
+	callbacks = 0;
+	CHECK(forEachTemplatePackExpansionElement(empty_bindings, [&](size_t) { ++callbacks; return true; }));
+	CHECK(callbacks == 0);
+	TemplateTypeArg dependent{};
+	dependent.is_dependent = true;
+	TemplatePackExpansionBindings dependent_bindings;
+	dependent_bindings.add(outer_parameter.name(), std::span<const TemplateTypeArg>(&dependent, 1));
+	callbacks = 0;
+	CHECK_FALSE(forEachTemplatePackExpansionElement(dependent_bindings, [&](size_t) { ++callbacks; return true; }));
+	CHECK(callbacks == 0);
+	TypeInfo* deep_pattern = &outer_parameter;
+	for (size_t depth = 0; depth < 1024; ++depth) {
+		TypeInfo::TemplateArgInfoVector arguments;
+		arguments.push_back(make_argument(deep_pattern->registeredTypeIndex(), false));
+		deep_pattern = &make_instantiation(std::string("DeepScan") + std::to_string(depth), "Deep", std::move(arguments));
+	}
+	scopes.clear();
+	REQUIRE(scanTemplateTypePackReferences(*deep_pattern, lookup_pack,
+		[&](StringHandle, TemplatePackReferenceScope scope, std::span<const TemplateTypeArg>) { scopes.push_back(scope); }));
+	REQUIRE(scopes.size() == 1);
+	CHECK(scopes[0] == TemplatePackReferenceScope::Current);
 }
 TEST_CASE("Mixed scalar and pack member fields preserve canonical owners") {
 	clearLegacyTypeTablesForTesting();

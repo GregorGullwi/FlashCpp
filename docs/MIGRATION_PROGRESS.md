@@ -8,18 +8,14 @@ implementation history belongs in git and the regression suite.
 
 ## Next 3A slice
 
-**Share pack scanning and expansion across materialization paths.**
-Effective owner bindings now retain grouped `TemplateBinding` records, including
-empty and single-element packs. Primary member-template field substitution and
-its type-owned instantiation context consume those groups before any legacy
-flattening. Layout and cloned declarations share the resolved member-pack type.
-Cross-scope `Pair<Outer, Inner>...` fields expand end to end with
-concrete canonical target owners and ordered arguments. The next slice must
-share pack-reference scanning and iteration across member fields, deferred
-bases, and value packs, distinguishing inner expansions from the current
-expansion. Namespace-scope targets now consume the grouped environment. Partial-specialization deduction still leaves a second
-pack empty. Transactional per-element substitution and pack-length diagnostics
-remain separate work; this does not complete boundary 3A or 8A.
+**Deduce every pack in a multi-pack partial-specialization pattern.**
+Grouped owner bindings and the shared pack-expansion layer now preserve enclosing
+and local packs through member-field, namespace-target, deferred-base, and NTTP
+field materialization. The next slice must make partial-specialization deduction
+bind both packs in `Box<Pair<Tail, Other>...>` instead of leaving the second pack
+empty. Reuse the grouped binding and expansion authority; add source and canonical
+identity coverage. Transactional per-element substitution and pack-length
+diagnostics remain separate work. Boundary 3A and 8A remain incomplete.
 
 Direct type-pack data members now retain empty/full packs, written CV/pointer
 wrappers, enclosing-owner identity, and canonical subobject schemas. Coverage is
@@ -37,9 +33,8 @@ requires equal lengths and concrete elements, and substitutes one element from
 each pack per result. The native `Lockstep member pack expansion substitutes
 every referenced pack` test supplies two packs explicitly, verifies both
 resulting `Pair` arguments, and checks the canonical owner and member-argument
-identities. A same-spelling dependent name that is only available as a scalar,
-or a pack expanded by an inner expansion, keeps the field dependent instead of
-materializing a wrong concrete type. The source regression
+identities. A same-spelling dependent name that is only available as a scalar
+keeps the field dependent instead of materializing a wrong concrete type. The source regression
 `test_enclosing_owner_pack_lockstep_member_field_ret0.cpp` and native canonical
 checks cover empty, single-element, and mixed-type enclosing/member packs,
 owner-sensitive layout, and ordered wrapper identities. `OuterTemplateBinding`
@@ -62,7 +57,19 @@ namespace-scope targets now consume the grouped effective environment:
 `test_namespace_scope_lockstep_multipack_member_field_ret0.cpp` covers empty,
 single-element, and full enclosing/member packs, and the native
 `Namespace-scope multipack targets preserve canonical lockstep arguments` test
-checks the ordered `Pair` arguments. Inner expansions remain deferred.
+checks the ordered `Pair` arguments.
+
+`TemplatePackExpansion.h` now shares iterative type/expression scanning,
+current-versus-inner expansion classification, concrete/equal-length validation,
+element iteration, and scalar binding overlays. Nested argument-list storage
+preserves written expansion markers independently of semantic argument identity.
+Inner expansions retain their complete binding even when the same pack also
+appears in the outer expansion. Nested field, repeated-pack, deferred-base, and
+NTTP-field regressions cover unequal inner/outer lengths, empty packs, mixed
+sizes, and inner compile-time folds. Native checks pin nested canonical arguments,
+syntax/schema agreement, storage metadata, and a 1,024-level iterative scan.
+Runtime function-parameter fold replay and alias/variable-template flattened
+adapters remain legacy paths scheduled for boundary 8A.
 
 ## Current state
 

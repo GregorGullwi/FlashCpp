@@ -38,8 +38,9 @@ Direct type packs, supported nontrivial type-pack patterns, and lockstep
 expansions across enclosing and primary member-template packs now materialize
 concrete field TypeInfo and canonical target owners. Mixed scalar/pack lockstep
 patterns are supported when every referenced pack is bound and concrete.
-Alias/non-type partial patterns and inner expansions still need grouped
-substitution and complete canonical publication. Keep those unsupported fields
+Alias/non-type partial patterns still need grouped substitution and complete
+canonical publication; supported nested primary-member expansions now retain
+independent inner bindings. Keep those unsupported fields
 fail-closed; the lockstep follow-up entry below records the remaining paths.
 
 ## Remaining structural NTTP shapes need canonical value import
@@ -207,6 +208,13 @@ alias (`Holder<Tag<N>>::Box` -> `Owner<T>::List`) still instantiates recursively
 inside each pre-instantiated `Chain`, so extending the worklist to member
 template alias targets is the remaining step for 1 MB.
 
+The nested NTTP-field regression
+`test_nested_inner_value_pack_member_field_ret0.cpp` also overflows during
+compilation with a 1 MB reserve. The shared pack scanner uses an explicit
+worklist, but surrounding template materialization still needs smaller frames
+and bounded scheduling. The nested type-pack field regression fits at 1 MB;
+that result does not establish stack safety for the NTTP path.
+
 The rare NTTP and callable payloads in `TemplateTypeArg` live behind immutable
 32-bit handles in persistent arenas, and `TemplateArgumentVector` is now an
 out-of-line owning list that can expose a span over its current storage. That
@@ -232,26 +240,28 @@ A nested alias chain that expands two dependent type packs into one member
 template-id can materialize the wrong argument count. This remains deferred
 with the nontrivial and multi-pack member-template expansion work.
 
-## Member-template lockstep scanning, deduction, and rollback remain incomplete
+## Multi-pack deduction, substitution rollback, and pack diagnostics remain incomplete
 
 Effective primary owner bindings retain complete enclosing and local packs,
-including empty and single-element packs. Member-template fields such as
-`Target<T>::List<Pair<Outer, Inner>...>` now expand end to end and preserve the
-canonical target owner and ordered Pair arguments. Mixed scalar/pack patterns
-now reuse the scalar argument across the pack expansion; inner expansions still
-stay dependent; partial-specialization deduction
-can leave a second pack empty. Alias and variable-template substitution still
-have legacy flattened-input adapters that need migration to grouped bindings.
-Namespace-scope targets now use the shared lockstep helper. Multi-pack targets
-such as `List<Pair<Outer, Inner>...>` consume the grouped effective environment
-from the primary member-copy substitution, so enclosing and local packs expand
-without splitting flat spans. Inner expansions remain dependent.
-A nested member-template declaration with a pack-expanded base such as
-`List : U...` is rejected by the parser; this syntax gap is separate from
-owner binding. Per-element substitution can still publish wrapper
-instantiations before a later element fails, and unequal pack lengths stay
-dependent instead of producing the required ill-formed diagnostic. These
-remain explicit follow-up work, not completed C++20 support.
+including empty and single-element packs. Shared iterative scanning distinguishes
+current and inner expansions in member fields, namespace template targets,
+deferred template-id bases, and NTTP fields. Nested inner packs can have a
+different length from the outer pack, and repeated packs retain their full inner
+binding alongside the selected outer element. Compile-time complex folds use the
+pack referenced by their expression. Runtime function-parameter fold replay still
+uses its separate legacy adapter.
+
+Partial-specialization deduction for `Box<Pair<Tail, Other>...>` can leave the
+second pack empty. Alias and variable-template substitution still have flattened
+input adapters that need migration to grouped bindings; nested pack NTTP aliases
+remain unsupported through those adapters. A nested member-template declaration
+with a pack-expanded base such as `List : U...` is rejected by the parser; this
+syntax gap is separate from supported template-id bases.
+
+Per-element substitution can still publish wrapper instantiations before a later
+element fails. Unequal lengths of packs in the same expansion remain dependent
+instead of producing the required ill-formed diagnostic. These remain explicit
+follow-up work, not completed C++20 support.
 
 ## SEH finally funclet termination is conservative in return-flow diagnostics
 

@@ -10,6 +10,7 @@
 #include "Parser.h"
 #include "TemplateInstantiationHelper.h"
 #include "TemplateArgumentMaterialization.h"
+#include "TemplatePackExpansion.h"
 #include "ParserTemplateClassShared.h"
 #include "AstTraversal.h"
 #include "Log.h"
@@ -690,7 +691,27 @@ ASTNode ExpressionSubstitutor::substituteFoldExpression(const FoldExpressionNode
 	};
 
 	std::vector<ASTNode> pack_values;
-	if (fold.has_complex_pack_expr()) {
+	if (fold.has_complex_pack_expr() && captured_pack_param_info_.empty()) {
+		if (!fold.pack_expr().has_value()) throw InternalError("Complex fold has no pack expression");
+		TemplatePackExpansionBindings bindings;
+		const auto lookup_pack = [&](StringHandle name) -> std::optional<std::span<const TemplateTypeArg>> {
+			const auto found = pack_map_.find(name);
+			if (found != pack_map_.end()) return std::span<const TemplateTypeArg>(found->second);
+			return find_context_pack(StringTable::getStringView(name));
+		};
+		scanTemplateExpressionPackReferences(*fold.pack_expr(), lookup_pack,
+			[&](StringHandle name, TemplatePackReferenceScope scope, std::span<const TemplateTypeArg> args) {
+				if (scope == TemplatePackReferenceScope::Current) bindings.add(name, args);
+			});
+		if (!forEachTemplatePackExpansionElement(bindings, [&](size_t index) {
+			const auto scalar_bindings = makeTemplatePackElementSubstitutionMap(param_map_, bindings, index);
+			ExpressionSubstitutor element_substitutor(scalar_bindings, pack_map_, parser_);
+			element_substitutor.setCurrentOwnerTypeName(current_owner_type_name_);
+			element_substitutor.setCurrentOwnerDeclaration(current_owner_declaration_);
+			pack_values.push_back(element_substitutor.substitute(*fold.pack_expr()));
+			return true;
+		})) return ASTNode::emplace_node<ExpressionNode>(fold);
+	} else if (fold.has_complex_pack_expr()) {
 		size_t expansion_count = 0;
 		bool found_pack = false;
 		if (!captured_pack_param_info_.empty()) {
@@ -1173,84 +1194,26 @@ std::vector<TemplateTypeArg> ExpressionSubstitutor::collectCurrentBoundTemplateA
 	throw InternalError("ExpressionSubstitutor requires template parameter declaration order when collecting bound args for " + std::string(use_site));
 }
 
-std::optional<std::vector<TemplateTypeArg>> ExpressionSubstitutor::expandDependentValuePack(
-	const TemplateTypeArg& pack_arg) {
-	if (!pack_arg.is_value || !pack_arg.dependent_expr.has_value()) {
+std::optional<std::vector<TemplateTypeArg>> ExpressionSubstitutor::expandDependentValuePack(const TemplateTypeArg& pack_arg) {
+	if (!pack_arg.is_pack || !pack_arg.is_value || !pack_arg.dependent_expr.has_value()) {
 		return std::nullopt;
 	}
 
-	std::vector<StringHandle> matched_pack_names;
-	AstTraversal::visitAST(
-		*pack_arg.dependent_expr,
-		[&](const ASTNode& node) {
-			StringHandle candidate_name;
-			if (node.is<TemplateParameterReferenceNode>()) {
-				candidate_name = node.as<TemplateParameterReferenceNode>().param_name();
-			} else if (node.is<IdentifierNode>()) {
-				candidate_name = node.as<IdentifierNode>().getOrInternNameHandle();
-			} else if (node.is<QualifiedIdentifierNode>()) {
-				const QualifiedIdentifierNode& qualified_id = node.as<QualifiedIdentifierNode>();
-				std::string_view namespace_name =
-					gNamespaceRegistry.getQualifiedName(qualified_id.namespace_handle());
-				if (!namespace_name.empty()) {
-					candidate_name = StringTable::getOrInternStringHandle(namespace_name);
-				}
-			}
-			if (!candidate_name.isValid() || pack_map_.find(candidate_name) == pack_map_.end() ||
-				std::find(matched_pack_names.begin(), matched_pack_names.end(), candidate_name) !=
-					matched_pack_names.end()) {
-				return;
-			}
-			matched_pack_names.push_back(candidate_name);
-		});
-	if (matched_pack_names.empty()) {
-		return std::nullopt;
-	}
-
-	const auto first_pack = pack_map_.find(matched_pack_names.front());
-	if (first_pack == pack_map_.end()) {
-		throw InternalError("Dependent NTTP pack expansion lost its first pack binding");
-	}
-	const size_t expansion_count = first_pack->second.size();
-	for (size_t pack_index = 1; pack_index < matched_pack_names.size(); ++pack_index) {
-		const auto pack_it = pack_map_.find(matched_pack_names[pack_index]);
-		if (pack_it == pack_map_.end()) {
-			throw InternalError("Dependent NTTP pack expansion lost a referenced pack binding");
-		}
-		if (pack_it->second.size() != expansion_count) {
-			throw InternalError("Mismatched template parameter pack sizes while expanding a dependent NTTP");
-		}
-	}
-	for (StringHandle matched_pack_name : matched_pack_names) {
-		const auto pack_it = pack_map_.find(matched_pack_name);
-		if (pack_it == pack_map_.end()) {
-			throw InternalError("Dependent NTTP pack expansion lost a referenced pack binding");
-		}
-		for (const TemplateTypeArg& pack_element : pack_it->second) {
-			if (pack_element.is_dependent || pack_element.dependent_name.isValid() ||
-				pack_element.dependent_expr.has_value()) {
-				return std::nullopt;
-			}
-		}
-	}
-
+	TemplatePackExpansionBindings bindings;
+	const auto lookup_pack = [&](StringHandle name) -> std::optional<std::span<const TemplateTypeArg>> {
+		const auto found = pack_map_.find(name);
+		if (found == pack_map_.end()) return std::nullopt;
+		return std::span<const TemplateTypeArg>(found->second);
+	};
+	if (!scanTemplateExpressionPackReferences(*pack_arg.dependent_expr, lookup_pack,
+		[&](StringHandle name, TemplatePackReferenceScope scope, std::span<const TemplateTypeArg> args) {
+			if (scope == TemplatePackReferenceScope::Current) bindings.add(name, args);
+		}) || bindings.invalid || bindings.pack_bindings.empty()) return std::nullopt;
 	std::vector<TemplateTypeArg> expanded_args;
-	expanded_args.reserve(expansion_count);
-	for (size_t expansion_index = 0; expansion_index < expansion_count; ++expansion_index) {
-		std::unordered_map<std::string_view, TemplateTypeArg> scalar_bindings = param_map_;
-		for (StringHandle matched_pack_name : matched_pack_names) {
-			const auto pack_it = pack_map_.find(matched_pack_name);
-			if (pack_it == pack_map_.end() || expansion_index >= pack_it->second.size()) {
-				throw InternalError("Missing pack element while expanding a dependent NTTP");
-			}
-			scalar_bindings[StringTable::getStringView(matched_pack_name)] =
-				pack_it->second[expansion_index];
-		}
-
-		ExpressionSubstitutor element_substitutor(
-			scalar_bindings,
-			parser_,
-			template_param_order_);
+	expanded_args.reserve(bindings.expansion_count);
+	const bool expanded = forEachTemplatePackExpansionElement(bindings, [&](size_t expansion_index) {
+		const auto scalar_bindings = makeTemplatePackElementSubstitutionMap(param_map_, bindings, expansion_index);
+		ExpressionSubstitutor element_substitutor(scalar_bindings, pack_map_, parser_);
 		element_substitutor.setCurrentOwnerTypeName(current_owner_type_name_);
 		element_substitutor.setCurrentOwnerDeclaration(current_owner_declaration_);
 		ASTNode substituted_expr = element_substitutor.substitute(*pack_arg.dependent_expr);
@@ -1266,7 +1229,7 @@ std::optional<std::vector<TemplateTypeArg>> ExpressionSubstitutor::expandDepende
 				expanded_arg.nttp_expr = substituted_expr_id;
 			}
 			expanded_args.push_back(std::move(expanded_arg));
-			continue;
+			return true;
 		}
 
 		TemplateTypeArg unresolved_arg = pack_arg;
@@ -1276,12 +1239,14 @@ std::optional<std::vector<TemplateTypeArg>> ExpressionSubstitutor::expandDepende
 		if (substituted_expr_id && !unresolved_arg.nttp_expr) {
 			unresolved_arg.nttp_expr = substituted_expr_id;
 		}
-		if (std::find(matched_pack_names.begin(), matched_pack_names.end(), unresolved_arg.dependent_name) !=
-			matched_pack_names.end()) {
+		if (std::ranges::any_of(bindings.pack_bindings,
+			[&](const TemplatePackExpansionBinding& binding) { return binding.name == unresolved_arg.dependent_name; })) {
 			unresolved_arg.dependent_name = {};
 		}
 		expanded_args.push_back(std::move(unresolved_arg));
-	}
+		return true;
+	});
+	if (!expanded) return std::nullopt;
 
 	return expanded_args;
 }
@@ -1327,6 +1292,16 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 	};
 	for (const auto& arg : stored_args) {
 		TemplateTypeArg materialized_arg = toTemplateTypeArg(arg);
+		if (arg.is_pack && (!arg.is_value || !arg.dependent_expr().has_value())) {
+			if (std::optional<TemplateArgumentVector> expanded = tryExpandStoredPack(arg)) {
+				for (TemplateTypeArg& element : *expanded) result.args.push_back(std::move(element));
+				result.had_substitution = true;
+			} else {
+				materialized_arg.is_dependent = true;
+				result.args.push_back(std::move(materialized_arg));
+			}
+			continue;
+		}
 		bool substituted = false;
 		auto applyEvaluatedValue = [&](const Parser::ConstantValue& value, ExprId evaluated_expr_id) {
 			materialized_arg = makeConcreteNttpArg(value.identity, materialized_arg);
@@ -1458,7 +1433,7 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 							*arg_type_info,
 							evaluate_dependent_member_values,
 							depth + 1);
-					if (!nested_materialized_args.args.empty() &&
+					if ((!nested_materialized_args.args.empty() || nested_materialized_args.had_substitution) &&
 						!templateArgsStillDependent(nested_materialized_args.args)) {
 						StringHandle qualified_base_template_name =
 							gNamespaceRegistry.buildQualifiedIdentifier(
@@ -1524,100 +1499,61 @@ static void appendReboundDependentPackArgument(TemplateArgumentVector& args, con
 	args.back().is_pack = false;
 }
 
+std::optional<TemplateArgumentVector> ExpressionSubstitutor::tryExpandStoredPack(const TypeInfo::TemplateArgInfo& stored_arg) {
+	if (!stored_arg.is_pack || (stored_arg.is_value && stored_arg.dependent_expr().has_value())) return std::nullopt;
+	const TypeInfo* pattern_info = tryGetTypeInfo(stored_arg.type_index);
+	if (!stored_arg.is_value && pattern_info != nullptr && pattern_info->isTemplateInstantiation()) {
+		return tryExpandLockstepTypePack(stored_arg, *pattern_info);
+	}
+	StringHandle name = stored_arg.dependent_name;
+	if (!name.isValid() && pattern_info != nullptr) name = pattern_info->name();
+	const auto pack = pack_map_.find(name);
+	if (pack == pack_map_.end()) return std::nullopt;
+	TemplatePackExpansionBindings bindings;
+	bindings.add(name, pack->second);
+	TemplateArgumentVector expanded_args;
+	expanded_args.reserve(bindings.expansion_count);
+	if (!forEachTemplatePackExpansionElement(bindings, [&](size_t index) {
+		appendReboundDependentPackArgument(expanded_args, pack->second[index], stored_arg);
+		return true;
+	})) return std::nullopt;
+	return expanded_args;
+}
+
 std::optional<TemplateArgumentVector> ExpressionSubstitutor::tryExpandLockstepTypePack(
 	const TypeInfo::TemplateArgInfo& stored_arg, const TypeInfo& pattern_info) {
-	// A nontrivial pack pattern such as `Wrapper<Tail>...` records the wrapper
-	// spelling as its dependent name. Collect every bound pack referenced by the
-	// element pattern so lockstep expansions can substitute all of them per element.
-	// The inline visit list covers a full scan-depth chain and spills only for wider trees, avoiding a hash set.
-	using TypeIndexVisitList = TemplateVector<TypeIndex, kMaxDependentMemberTypeResolutionDepth + 1>;
-	auto find_referenced_packs = [&](auto&& self, const TypeInfo* type_info, TypeIndexVisitList& visited, int scan_depth,
-		TemplateParamNameVector& referenced_packs, bool& unsupported) -> void {
-		if (type_info == nullptr || scan_depth > kMaxDependentMemberTypeResolutionDepth) {
-			return;
-		}
-		const TypeIndex type_index = type_info->registeredTypeIndex();
-		if (std::find(visited.begin(), visited.end(), type_index) != visited.end()) {
-			return;
-		}
-		visited.push_back(type_index);
-		for (const TypeInfo::TemplateArgInfo& nested : type_info->templateArgs()) {
-			StringHandle candidate;
-			if (nested.dependent_name.isValid() && pack_map_.find(nested.dependent_name) != pack_map_.end()) {
-				candidate = nested.dependent_name;
-			} else if (!nested.is_value && nested.type_index.is_valid()) {
-				const TypeInfo* nested_info = tryGetTypeInfo(nested.type_index);
-				if (nested_info != nullptr && nested_info->name().isValid() && pack_map_.find(nested_info->name()) != pack_map_.end()) {
-					candidate = nested_info->name();
-				} else {
-					self(self, nested_info, visited, scan_depth + 1, referenced_packs, unsupported);
-				}
-			}
-			if (candidate.isValid() && std::find(referenced_packs.begin(), referenced_packs.end(), candidate) == referenced_packs.end()) {
-				referenced_packs.push_back(candidate);
-			}
-		}
+	TemplatePackExpansionBindings bindings;
+	const auto lookup_pack = [&](StringHandle name) -> std::optional<std::span<const TemplateTypeArg>> {
+		const auto found = pack_map_.find(name);
+		if (found == pack_map_.end()) return std::nullopt;
+		return std::span<const TemplateTypeArg>(found->second);
 	};
-	TemplateParamNameVector referenced_packs;
-	TypeIndexVisitList visited_packs;
-	bool unsupported_pattern = false;
-
-	find_referenced_packs(find_referenced_packs, &pattern_info, visited_packs, 0, referenced_packs, unsupported_pattern);
-	TemplateVector<std::span<const TemplateTypeArg>, 4> referenced_pack_elements;
-	size_t expansion_count = 0;
-	bool can_expand = !unsupported_pattern && !referenced_packs.empty();
-	for (size_t pack_index = 0; pack_index < referenced_packs.size() && can_expand; ++pack_index) {
-		const auto pack_it = pack_map_.find(referenced_packs[pack_index]);
-		if (pack_it == pack_map_.end()) {
-			can_expand = false;
-			break;
-		}
-		const size_t count = pack_it->second.size();
-		if (pack_index == 0) {
-			expansion_count = count;
-		} else if (count != expansion_count) {
-			can_expand = false;
-			break;
-		}
-		for (const TemplateTypeArg& element : pack_it->second) {
-			if (templateArgIsStructurallyDependent(element) || typeIndexContainsDependentPlaceholder(element.type_index)) {
-				can_expand = false;
-				break;
-			}
-		}
-		referenced_pack_elements.push_back(std::span<const TemplateTypeArg>(pack_it->second.data(), pack_it->second.size()));
-	}
-
-	if (!can_expand) {
-		return std::nullopt;
-	}
-	if (expansion_count == 0) {
-		return TemplateArgumentVector{};
-	}
+	if (!scanTemplateTypePackReferences(pattern_info, lookup_pack,
+		[&](StringHandle name, TemplatePackReferenceScope scope, std::span<const TemplateTypeArg> args) {
+			if (scope == TemplatePackReferenceScope::Current) bindings.add(name, args);
+		}) || bindings.invalid || bindings.pack_bindings.empty()) return std::nullopt;
 	const std::optional<TypeSpecifierNode> element_pattern_spec = makeTypeSpecifierFromTemplateArgInfo(stored_arg, Token{});
 	if (!element_pattern_spec.has_value()) {
 		return std::nullopt;
 	}
 	TemplateArgumentVector expanded_args;
-	expanded_args.reserve(expansion_count);
-	for (size_t element_index = 0; element_index < expansion_count; ++element_index) {
-		std::unordered_map<std::string_view, TemplateTypeArg> element_param_map = param_map_;
-		for (size_t referenced_index = 0; referenced_index < referenced_packs.size(); ++referenced_index) {
-			element_param_map[StringTable::getStringView(referenced_packs[referenced_index])] =
-				referenced_pack_elements[referenced_index][element_index];
-		}
-		ExpressionSubstitutor element_substitutor(element_param_map, parser_);
+	expanded_args.reserve(bindings.expansion_count);
+	const bool expanded = forEachTemplatePackExpansionElement(bindings, [&](size_t element_index) {
+		const auto element_param_map = makeTemplatePackElementSubstitutionMap(param_map_, bindings, element_index);
+		ExpressionSubstitutor element_substitutor(element_param_map, pack_map_, parser_);
 		element_substitutor.setCurrentOwnerTypeName(current_owner_type_name_);
 		element_substitutor.setCurrentOwnerDeclaration(current_owner_declaration_);
+		FlashCpp::ScopedState grouped_environment(parser_.current_grouped_template_environment_);
+		parser_.current_grouped_template_environment_ = &element_substitutor.environment_;
 		TypeSpecifierNode substituted_element = element_substitutor.substituteTypeSpecifier(*element_pattern_spec);
 		if (!substituted_element.type_index().is_valid() || typeIndexContainsDependentPlaceholder(substituted_element.type_index()) ||
-			tryGetTypeInfo(substituted_element.type_index()) == nullptr) {
-			return std::nullopt;
-		}
+			tryGetTypeInfo(substituted_element.type_index()) == nullptr) return false;
 		TemplateTypeArg expanded_arg(substituted_element);
 		expanded_arg.is_pack = false;
 		expanded_args.push_back(std::move(expanded_arg));
-	}
+		return true;
+	});
+	if (!expanded) return std::nullopt;
 	return expanded_args;
 }
 TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplateArgs(
@@ -1641,36 +1577,12 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 			continue;
 		}
 		if (arg.is_pack) {
-			const TypeInfo* const pack_pattern_info = arg.type_index.is_valid() ? tryGetTypeInfo(arg.type_index) : nullptr;
-			if (pack_pattern_info != nullptr && pack_pattern_info->isTemplateInstantiation()) {
-				if (std::optional<TemplateArgumentVector> expanded = tryExpandLockstepTypePack(stored_arg, *pack_pattern_info)) {
-					for (TemplateTypeArg& expanded_arg : *expanded) {
-						materialized_args.push_back(std::move(expanded_arg));
-					}
-					continue;
-				}
-				// A nontrivial pattern that cannot be expanded per element must stay dependent.
+			if (std::optional<TemplateArgumentVector> expanded = tryExpandStoredPack(stored_arg)) {
+				for (TemplateTypeArg& element : *expanded) materialized_args.push_back(std::move(element));
+			} else {
 				arg.is_dependent = true;
 				materialized_args.push_back(std::move(arg));
-				continue;
-			}			StringHandle pack_name = arg.dependent_name;
-			if (!pack_name.isValid() && pack_pattern_info != nullptr) {
-				pack_name = pack_pattern_info->name();
 			}
-			if (pack_name.isValid()) {
-				auto pack_it = pack_map_.find(pack_name);
-				// Rebinding clears dependency metadata, so defer the entire expansion until every element is concrete.
-				if (pack_it != pack_map_.end() && std::ranges::none_of(pack_it->second, [](const TemplateTypeArg& element) {
-					return templateArgIsStructurallyDependent(element) || typeIndexContainsDependentPlaceholder(element.type_index);
-				})) {
-					for (const TemplateTypeArg& pack_arg : pack_it->second) {
-						appendReboundDependentPackArgument(materialized_args, pack_arg, stored_arg);
-					}
-					continue;
-				}
-			}
-			arg.is_dependent = true;
-			materialized_args.push_back(std::move(arg));
 			continue;
 		}
 		if (arg.is_value && arg.dependent_expr.has_value()) {
@@ -5692,9 +5604,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 					}
 				}
 			}
-			if (materialized_args.had_substitution &&
-				!materialized_args.args.empty() &&
-				!templateArgsStillDependent(materialized_args.args)) {
+			if (materialized_args.had_substitution && !templateArgsStillDependent(materialized_args.args)) {
 				StringHandle qualified_base_template_name =
 					gNamespaceRegistry.buildQualifiedIdentifier(
 						type_info->sourceNamespace(),
@@ -5991,7 +5901,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 
 				MaterializedStoredTemplateArgs substituted_args =
 					materializeStoredTemplateArgs(*type_info, /*evaluate_dependent_member_values=*/false, kInitialDependentMemberTypeResolutionDepth);
-				if (substituted_args.had_substitution && !substituted_args.args.empty()) {
+				if (substituted_args.had_substitution) {
 					Parser::AliasTemplateMaterializationResult materialized_type =
 						parser_.templateEngine().materializeTemplateInstantiationForLookup(base_name, substituted_args.args);
 					if (const TypeInfo* resolved_type_info = materialized_type.resolved_type_info) {

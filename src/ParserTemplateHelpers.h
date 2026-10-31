@@ -19,6 +19,7 @@
 #include "ParserTemplateClassShared.h"
 #include "AstTraversal.h"
 #include "TemplateEnvironment.h"
+#include "TemplatePackExpansion.h"
 
 
 inline void buildTemplateParameterReplayState(
@@ -1092,16 +1093,8 @@ inline bool tryEnterAliasTemplateIdentity(
 	return true;
 }
 
-struct DeferredBasePackBinding {
-	StringHandle name;
-	std::span<const TemplateTypeArg> args;
-};
-
-struct DeferredBasePackExpansionBindingInfo {
-	std::vector<DeferredBasePackBinding> pack_bindings;
-	size_t expansion_count = 1;
-	bool invalid = false;
-};
+using DeferredBasePackBinding = TemplatePackExpansionBinding;
+using DeferredBasePackExpansionBindingInfo = TemplatePackExpansionBindings;
 
 // Adapt retained bindings without re-inferring boundaries between adjacent or empty packs.
 inline void buildTemplateArgSubstitutionMaps(const TemplateEnvironment& environment, TemplateArgSubstitutionMap& name_substitution_map,
@@ -1225,52 +1218,38 @@ inline DeferredBasePackExpansionBindingInfo collectDeferredBasePackExpansionBind
 		return binding_info;
 	}
 
-	auto register_pack = [&](StringHandle pack_name) {
+	auto lookup_pack = [&](StringHandle pack_name) -> std::optional<std::span<const TemplateTypeArg>> {
 		auto pack_it = pack_substitution_map.find(pack_name);
 		if (pack_it == pack_substitution_map.end()) {
-			return;
+			return std::nullopt;
 		}
-		for (const DeferredBasePackBinding& existing_binding : binding_info.pack_bindings) {
-			if (existing_binding.name == pack_name) {
-				if (existing_binding.args.size() != pack_it->second.size()) {
-					binding_info.invalid = true;
-				}
-				return;
-			}
+		return std::span<const TemplateTypeArg>(pack_it->second);
+	};
+	auto collect_current_pack = [&](StringHandle pack_name, TemplatePackReferenceScope scope,
+		std::span<const TemplateTypeArg> args) {
+		if (scope == TemplatePackReferenceScope::Current) {
+			binding_info.add(pack_name, args);
 		}
-		if (!binding_info.pack_bindings.empty() &&
-			binding_info.expansion_count != pack_it->second.size()) {
-			binding_info.invalid = true;
-			return;
-		}
-		binding_info.expansion_count = pack_it->second.size();
-		binding_info.pack_bindings.push_back(
-			DeferredBasePackBinding{pack_name, std::span<const TemplateTypeArg>(pack_it->second)});
 	};
 
 	for (const auto& arg_info : deferred_base.template_arguments) {
 		if (arg_info.is_pack) {
 			continue;
 		}
-		if (arg_info.node.is<ExpressionNode>()) {
-			const ExpressionNode& expr = arg_info.node.as<ExpressionNode>();
-			if (const auto* template_parameter_reference =
-					std::get_if<TemplateParameterReferenceNode>(&expr)) {
-				register_pack(template_parameter_reference->param_name());
-			} else if (const auto* identifier = std::get_if<IdentifierNode>(&expr)) {
-				register_pack(StringTable::getOrInternStringHandle(identifier->name()));
-			}
-		} else if (arg_info.node.is<TypeSpecifierNode>()) {
+		if (arg_info.node.is<TypeSpecifierNode>()) {
 			TypeIndex idx = arg_info.node.as<TypeSpecifierNode>().type_index();
 			if (!idx.is_valid()) {
 				continue;
 			}
 			if (const TypeInfo* idx_ti = tryGetTypeInfo(idx)) {
-				register_pack(idx_ti->name_);
+				scanTemplateTypePackReferences(*idx_ti, lookup_pack, collect_current_pack);
 			}
+		} else {
+			scanTemplateExpressionPackReferences(arg_info.node, lookup_pack, collect_current_pack);
 		}
 	}
 
+	if (!templatePackExpansionBindingsAreConcrete(binding_info)) binding_info.invalid = true;
 	return binding_info;
 }
 
@@ -1281,15 +1260,7 @@ inline TemplateArgSubstitutionMap makeDeferredBaseExpansionSubstitutionMap(
 	const TemplateArgSubstitutionMap& base_name_substitution_map,
 	const DeferredBasePackExpansionBindingInfo& binding_info,
 	size_t expansion_index) {
-	TemplateArgSubstitutionMap subst_map = base_name_substitution_map;
-	for (const DeferredBasePackBinding& pack_binding : binding_info.pack_bindings) {
-		if (expansion_index >= pack_binding.args.size()) {
-			throw InternalError("Deferred base pack expansion index out of range");
-		}
-		subst_map[StringTable::getStringView(pack_binding.name)] =
-			pack_binding.args[expansion_index];
-	}
-	return subst_map;
+	return makeTemplatePackElementSubstitutionMap(base_name_substitution_map, binding_info, expansion_index);
 }
 
 inline TypeIndex makeDeferredBaseValueTypeIndex(TypeCategory category, TypeIndex type_index) {

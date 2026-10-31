@@ -4,6 +4,7 @@
 #include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
 #include "ExpressionSubstitutor.h"
+#include "TemplatePackExpansion.h"
 #include "CanonicalTypeAdapter.h"
 #include "FrontendContext.h"
 #include "MemberFunctionLookupShared.h"
@@ -2381,8 +2382,7 @@ TypeIndex Parser::substitute_template_parameter(const TypeSpecifierNode& origina
 		}
 	};
 	std::optional<ExpressionSubstitutor> lockstep_substitutor;
-	auto expandLockstep = [&](const TypeInfo::TemplateArgInfo& arg_info,
-		const TypeInfo& pattern_info) -> std::optional<TemplateArgumentVector> {
+	auto expandStoredPack = [&](const TypeInfo::TemplateArgInfo& arg_info) -> std::optional<TemplateArgumentVector> {
 		if (!lockstep_substitutor.has_value()) {
 			if (current_grouped_template_environment_ != nullptr && !current_grouped_template_environment_->bindings.empty()) {
 				lockstep_substitutor.emplace(*current_grouped_template_environment_, *this);
@@ -2393,7 +2393,7 @@ TypeIndex Parser::substitute_template_parameter(const TypeSpecifierNode& origina
 				lockstep_substitutor.emplace(context, *this);
 			}
 		}
-		return lockstep_substitutor->tryExpandLockstepTypePack(arg_info, pattern_info);
+		return lockstep_substitutor->tryExpandStoredPack(arg_info);
 	};
 	auto materializeConcretePlaceholderArgsBase = [&](const TypeInfo& placeholder_info) {
 		// Prefer folding `Owner::static_member` NTTP markers before generic
@@ -2439,12 +2439,22 @@ TypeIndex Parser::substitute_template_parameter(const TypeSpecifierNode& origina
 					placeholder_owner_handle);
 			};
 		for (const TypeInfo::TemplateArgInfo& arg_info : placeholder_info.templateArgs()) {
+			if (expand_direct_type_packs && arg_info.is_pack && !arg_info.is_value && current_grouped_template_environment_ != nullptr) {
+				if (std::optional<TemplateArgumentVector> expanded = expandStoredPack(arg_info)) {
+					for (TemplateTypeArg& element : *expanded) concrete_args.push_back(std::move(element));
+					continue;
+				}
+				TemplateTypeArg unresolved = toTemplateTypeArg(arg_info);
+				unresolved.is_dependent = true;
+				concrete_args.push_back(std::move(unresolved));
+				continue;
+			}
 			if (expand_direct_type_packs && appendDirectTypePackExpansion(concrete_args, arg_info, template_params, template_args)) continue;
 			if (arg_info.is_pack && !arg_info.is_value && arg_info.type_index.is_valid()) {
 				const TypeInfo* pattern_info = tryGetTypeInfo(arg_info.type_index);
 				if (pattern_info != nullptr && pattern_info->isTemplateInstantiation()) {
 
-					if (std::optional<TemplateArgumentVector> expanded = expandLockstep(arg_info, *pattern_info)) {
+					if (std::optional<TemplateArgumentVector> expanded = expandStoredPack(arg_info)) {
 						for (TemplateTypeArg& expanded_arg : *expanded) {
 							concrete_args.push_back(std::move(expanded_arg));
 						}
