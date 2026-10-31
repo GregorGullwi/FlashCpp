@@ -7744,10 +7744,8 @@ using FlattenedShort = Owner<short>::List<int, char, Payload>;
 	CHECK(short_field != long_field);
 	CHECK(table.templateSpecializationOwner(short_field) == imported_alias("ShortOwner"));
 	CHECK(table.templateSpecializationOwner(long_field) == imported_alias("LongOwner"));
-	CHECK(table.templateSpecializationArguments(short_field) ==
-		table.templateSpecializationArguments(imported_alias("ExpectedShort")));
-	CHECK(table.templateSpecializationArguments(short_field) !=
-		table.templateSpecializationArguments(imported_alias("FlattenedShort")));
+	CHECK(table.templateSpecializationArguments(short_field) == table.templateSpecializationArguments(imported_alias("ExpectedShort")));
+	CHECK(table.templateSpecializationArguments(short_field) != table.templateSpecializationArguments(imported_alias("FlattenedShort")));
 }
 
 TEST_CASE("Member template specialization syntax retains its instantiated owner") {

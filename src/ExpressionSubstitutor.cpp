@@ -1531,11 +1531,9 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 	// A nontrivial pack pattern such as `Wrapper<Tail>...` records the wrapper
 	// spelling as its dependent name; recover the bound pack from the wrapper's
 	// type arguments so the generic expression can be substituted per element.
-	auto find_single_referenced_pack =
-		[&](auto&& self, const TypeInfo* type_info, std::unordered_set<TypeIndex>& visited, int scan_depth,
-			StringHandle& referenced_pack) -> bool {
-		if (type_info == nullptr || scan_depth > kMaxDependentMemberTypeResolutionDepth ||
-			!visited.insert(type_info->registeredTypeIndex()).second) {
+	auto find_single_referenced_pack = [&](auto&& self, const TypeInfo* type_info, std::unordered_set<TypeIndex>& visited, int scan_depth,
+		StringHandle& referenced_pack) -> bool {
+		if (type_info == nullptr || scan_depth > kMaxDependentMemberTypeResolutionDepth || !visited.insert(type_info->registeredTypeIndex()).second) {
 			return true;
 		}
 		for (const TypeInfo::TemplateArgInfo& nested : type_info->templateArgs()) {
@@ -1544,8 +1542,7 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 				candidate = nested.dependent_name;
 			} else if (!nested.is_value && nested.type_index.is_valid()) {
 				const TypeInfo* nested_info = tryGetTypeInfo(nested.type_index);
-				if (nested_info != nullptr && nested_info->name().isValid() &&
-					pack_map_.find(nested_info->name()) != pack_map_.end()) {
+				if (nested_info != nullptr && nested_info->name().isValid() && pack_map_.find(nested_info->name()) != pack_map_.end()) {
 					candidate = nested_info->name();
 				} else if (!self(self, nested_info, visited, scan_depth + 1, referenced_pack)) {
 					return false;
@@ -1602,8 +1599,7 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 					// formed by rebinding the pack element alone; substitute the
 					// generic expression once per element instead.
 					if (pack_pattern_info != nullptr && pack_pattern_info->isTemplateInstantiation()) {
-						const std::optional<TypeSpecifierNode> element_pattern_spec =
-							makeTypeSpecifierFromTemplateArgInfo(stored_arg, Token{});
+						const std::optional<TypeSpecifierNode> element_pattern_spec = makeTypeSpecifierFromTemplateArgInfo(stored_arg, Token{});
 						if (element_pattern_spec.has_value()) {
 							const std::string_view target_pack_name = StringTable::getStringView(pack_name);
 							bool expanded_all = true;
@@ -1615,10 +1611,8 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 								ExpressionSubstitutor element_substitutor(element_param_map, parser_);
 								element_substitutor.setCurrentOwnerTypeName(current_owner_type_name_);
 								element_substitutor.setCurrentOwnerDeclaration(current_owner_declaration_);
-								TypeSpecifierNode substituted_element =
-									element_substitutor.substituteTypeSpecifier(*element_pattern_spec);
-								if (!substituted_element.type_index().is_valid() ||
-									typeIndexContainsDependentPlaceholder(substituted_element.type_index()) ||
+								TypeSpecifierNode substituted_element = element_substitutor.substituteTypeSpecifier(*element_pattern_spec);
+								if (!substituted_element.type_index().is_valid() || typeIndexContainsDependentPlaceholder(substituted_element.type_index()) ||
 									tryGetTypeInfo(substituted_element.type_index()) == nullptr) {
 									expanded_all = false;
 									break;
