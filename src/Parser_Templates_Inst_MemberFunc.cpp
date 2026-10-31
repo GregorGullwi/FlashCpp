@@ -122,8 +122,8 @@ void propagateSubstitutedFunctionSignature(
 	const TemplateTypeArg* resolved_arg) {
 	if (original.has_function_signature()) {
 		target.set_function_signature(original.function_signature());
-	} else if (resolved_arg && resolved_arg->function_signature.has_value()) {
-		target.set_function_signature(*resolved_arg->function_signature);
+	} else if (resolved_arg && resolved_arg->hasFunctionSignature()) {
+		target.set_function_signature(resolved_arg->functionSignature());
 	}
 }
 

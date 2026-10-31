@@ -798,6 +798,64 @@ inline NonTypeValueIdentity NonTypeValueIdentity::makeStructuralClass(
 
 extern ChunkedVector<StructuralClassValue> gStructuralClassValues;
 
+// Immutable rare-payload storage for TemplateTypeArg. Handles are storage
+// identities only; equality, hashing, mangling, and instantiation keys continue
+// to compare payload content. Published entries are never modified in place, so
+// copying a handle shares the payload while a mutating copy allocates a
+// replacement for that copy. NonTypeValueIdentity::structural_value and
+// FunctionSignature::callable_types already point into persistent arenas, so a
+// stored payload never retains scratch storage.
+inline constexpr uint32_t kInvalidTemplatePayloadIndex = UINT32_MAX;
+
+struct TemplateValueIdentityHandle {
+	uint32_t index = kInvalidTemplatePayloadIndex;
+
+	bool isValid() const noexcept { return index != kInvalidTemplatePayloadIndex; }
+	void reset() noexcept { index = kInvalidTemplatePayloadIndex; }
+	friend bool operator==(TemplateValueIdentityHandle, TemplateValueIdentityHandle) = default;
+};
+
+struct TemplateFunctionSignatureHandle {
+	uint32_t index = kInvalidTemplatePayloadIndex;
+
+	bool isValid() const noexcept { return index != kInvalidTemplatePayloadIndex; }
+	void reset() noexcept { index = kInvalidTemplatePayloadIndex; }
+	friend bool operator==(TemplateFunctionSignatureHandle, TemplateFunctionSignatureHandle) = default;
+};
+
+// Persistent because TemplateTypeArg payloads are retained in TypeInfo,
+// TemplateRegistry, instantiation keys, AST, and mangling.
+extern ChunkedVector<NonTypeValueIdentity, 32> gTemplateValueIdentities;
+extern ChunkedVector<FunctionSignature, 64> gTemplateFunctionSignatures;
+
+inline TemplateValueIdentityHandle storeTemplateValueIdentity(const NonTypeValueIdentity& identity) {
+	TemplateValueIdentityHandle handle;
+	handle.index = static_cast<uint32_t>(gTemplateValueIdentities.size());
+	gTemplateValueIdentities.push_back(identity);
+	return handle;
+}
+
+inline const NonTypeValueIdentity* tryGetTemplateValueIdentity(TemplateValueIdentityHandle handle) {
+	if (!handle.isValid() || handle.index >= gTemplateValueIdentities.size()) {
+		return nullptr;
+	}
+	return &gTemplateValueIdentities[handle.index];
+}
+
+inline TemplateFunctionSignatureHandle storeTemplateFunctionSignature(const FunctionSignature& signature) {
+	TemplateFunctionSignatureHandle handle;
+	handle.index = static_cast<uint32_t>(gTemplateFunctionSignatures.size());
+	gTemplateFunctionSignatures.push_back(signature);
+	return handle;
+}
+
+inline const FunctionSignature* tryGetTemplateFunctionSignature(TemplateFunctionSignatureHandle handle) {
+	if (!handle.isValid() || handle.index >= gTemplateFunctionSignatures.size()) {
+		return nullptr;
+	}
+	return &gTemplateFunctionSignatures[handle.index];
+}
+
 // ============================================================================
 // Ordered Template Instantiation Identity - Phase 7
 // ============================================================================

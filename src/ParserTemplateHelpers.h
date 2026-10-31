@@ -1481,8 +1481,8 @@ inline void applyResolvedTemplateArgTypeMetadata(TypeSpecifierNode& target, cons
 		resolved_arg->ref_qualifier,
 		target.reference_qualifier()));
 
-	if (!target.has_function_signature() && resolved_arg->function_signature.has_value()) {
-		target.set_function_signature(*resolved_arg->function_signature);
+	if (!target.has_function_signature() && resolved_arg->hasFunctionSignature()) {
+		target.set_function_signature(resolved_arg->functionSignature());
 	}
 
 	const int resolved_size_bits = getTypeSpecSizeBits(target);
@@ -3675,8 +3675,8 @@ inline void Parser::substituteAndCopyMemberFunctionParameters(
 							substituted_type.add_pointer_level(pointer_level.cv_qualifier);
 						}
 						substituted_type.set_reference_qualifier(param_type_spec.reference_qualifier());
-						if (elem.function_signature.has_value()) {
-							substituted_type.set_function_signature(*elem.function_signature);
+						if (elem.hasFunctionSignature()) {
+							substituted_type.set_function_signature(elem.functionSignature());
 						}
 						normalizeSubstitutedTypeSpec(substituted_type);
 						StringBuilder name_builder;

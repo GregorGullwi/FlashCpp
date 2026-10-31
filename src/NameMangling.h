@@ -472,8 +472,8 @@ inline TemplateTypeArg normalizeTemplateTypeArgForMangling(TemplateTypeArg arg) 
 		if (should_use_resolved_category) {
 			arg.type_index = alias_info.type_index.withCategory(resolved_category);
 		}
-		if (!arg.function_signature.has_value() && alias_info.function_signature.has_value()) {
-			arg.function_signature = alias_info.function_signature;
+		if (!arg.hasFunctionSignature() && alias_info.function_signature.has_value()) {
+			arg.setFunctionSignature(*alias_info.function_signature);
 		}
 		if (!arg.member_class_name.isValid() && alias_info.member_class_name.has_value()) {
 			arg.member_class_name = *alias_info.member_class_name;
@@ -2190,7 +2190,7 @@ inline void appendItaniumTypeTemplateArgs(
 			}
 			case TypeCategory::Function:
 			case TypeCategory::FunctionPointer: {
-				if (!arg.function_signature.has_value()) {
+				if (!arg.hasFunctionSignature()) {
 					throw InternalError(
 						"Itanium name mangling: callable template argument missing function signature");
 				}
@@ -2204,13 +2204,13 @@ inline void appendItaniumTypeTemplateArgs(
 					throw InternalError(
 						"Itanium name mangling: member function pointer template argument missing declaring class");
 				}
-				if (!arg.function_signature.has_value()) {
+				if (!arg.hasFunctionSignature()) {
 					throw InternalError("Itanium name mangling: MemberFunctionPointer template arg missing function signature");
 				}
 				appendItaniumMemberFunctionPointerTypeCode(
 					output,
 					resolveItaniumMemberPointerClassName(arg.member_class_name),
-					*arg.function_signature);
+					arg.functionSignature());
 				break;
 			}
 			default:

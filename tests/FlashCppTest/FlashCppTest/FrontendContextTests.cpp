@@ -5743,3 +5743,155 @@ struct FriendHostNarrow {
 		CHECK(true);
 	}
 }
+
+TEST_SUITE("TemplatePayloadHandles") {
+	using namespace FlashCpp;
+
+	TEST_CASE("Copying and mutating a typed value identity leaves the original payload unchanged") {
+		const StringHandle member_name = StringTable::getOrInternStringHandle("payload_member");
+		const StringHandle owner_name = StringTable::getOrInternStringHandle("PayloadOwner");
+		const NonTypeValueIdentity identity = NonTypeValueIdentity::makeMemberPointer(
+			nativeTypeIndex(TypeCategory::Int), member_name, 3, owner_name);
+
+		TemplateTypeArg original = TemplateTypeArg::makeValueIdentity(identity);
+		TemplateTypeArg copy = original;
+		REQUIRE(original.typed_value_identity_handle.isValid());
+		CHECK(copy.typed_value_identity_handle == original.typed_value_identity_handle);
+
+		copy.updateTypedValueIdentity([](NonTypeValueIdentity& value) {
+			value.value = 9;
+		});
+
+		CHECK(original.valueIdentity().value == 3);
+		CHECK(copy.valueIdentity().value == 9);
+		CHECK(copy.typed_value_identity_handle.index != original.typed_value_identity_handle.index);
+	}
+
+	TEST_CASE("Function signature payloads keep copy-on-write value semantics") {
+		FunctionSignature signature;
+		signature.return_type_index = nativeTypeIndex(TypeCategory::Int);
+		signature.parameter_type_indices.push_back(nativeTypeIndex(TypeCategory::Int));
+		signature.calling_convention = CallingConvention::Cdecl;
+
+		TemplateTypeArg original;
+		original.type_index = nativeTypeIndex(TypeCategory::Int);
+		original.setFunctionSignature(signature);
+		TemplateTypeArg copy = original;
+		REQUIRE(original.hasFunctionSignature());
+		CHECK(copy.function_signature_handle == original.function_signature_handle);
+
+		copy.updateFunctionSignature([](FunctionSignature& value) {
+			value.is_variadic = true;
+		});
+
+		CHECK_FALSE(original.functionSignature().is_variadic);
+		CHECK(copy.functionSignature().is_variadic);
+		CHECK(copy.function_signature_handle.index != original.function_signature_handle.index);
+	}
+
+	TEST_CASE("Equal payload content under different handles keeps identity equal") {
+		const StringHandle template_name = StringTable::getOrInternStringHandle("PayloadIdentityTemplate");
+		const StringHandle member_name = StringTable::getOrInternStringHandle("same_member");
+		const StringHandle owner_name = StringTable::getOrInternStringHandle("SameOwner");
+		const NonTypeValueIdentity identity = NonTypeValueIdentity::makeMemberPointer(
+			nativeTypeIndex(TypeCategory::Int), member_name, 7, owner_name);
+
+		TemplateTypeArg first = TemplateTypeArg::makeValueIdentity(identity);
+		TemplateTypeArg second = TemplateTypeArg::makeValueIdentity(identity);
+		REQUIRE(first.typed_value_identity_handle.isValid());
+		REQUIRE(second.typed_value_identity_handle.isValid());
+		CHECK(first.typed_value_identity_handle.index != second.typed_value_identity_handle.index);
+		CHECK(first == second);
+		CHECK(first.hash() == second.hash());
+
+		FunctionSignature signature;
+		signature.return_type_index = nativeTypeIndex(TypeCategory::Int);
+		signature.parameter_type_indices.push_back(nativeTypeIndex(TypeCategory::Char));
+		first.setFunctionSignature(signature);
+		second.setFunctionSignature(signature);
+		CHECK(first.function_signature_handle.index != second.function_signature_handle.index);
+		CHECK(first == second);
+		CHECK(first.hash() == second.hash());
+
+		const TemplateTypeArg first_args[] = { first };
+		const TemplateTypeArg second_args[] = { second };
+		const TemplateInstantiationKey first_key = makeInstantiationKey(template_name, first_args);
+		const TemplateInstantiationKey second_key = makeInstantiationKey(template_name, second_args);
+		CHECK(first_key == second_key);
+		CHECK(TemplateInstantiationKeyHash{}(first_key) == TemplateInstantiationKeyHash{}(second_key));
+	}
+
+	TEST_CASE("Structural-class non-type arguments retain persistent arena identity") {
+		StructuralClassValue& value = gStructuralClassValues.emplace_back();
+		value.type_index = TypeIndex{0, TypeCategory::Struct};
+		StructuralClassValueMember member;
+		member.name = StringTable::getOrInternStringHandle("structural_member");
+		member.scalar_value = NonTypeValueIdentity::makeConcrete(11, nativeTypeIndex(TypeCategory::Int));
+		value.members.push_back(member);
+
+		const NonTypeValueIdentity identity = NonTypeValueIdentity::makeStructuralClass(value.type_index, &value);
+		TemplateTypeArg original = TemplateTypeArg::makeValueIdentity(identity);
+		TemplateTypeArg copy = original;
+		REQUIRE(original.typed_value_identity_handle.isValid());
+		REQUIRE(original.typedValueIdentity()->structural_value == &value);
+		CHECK(copy.typedValueIdentity()->structural_value == &value);
+
+		copy.updateTypedValueIdentity([](NonTypeValueIdentity& mutated) {
+			mutated.value = 0;
+		});
+		CHECK(original.valueIdentity().structural_value == &value);
+		CHECK(original.valueIdentity().value == identity.value);
+		CHECK(copy.valueIdentity().value == 0);
+	}
+
+	TEST_CASE("Parser-only deep callable chain completes without lowering") {
+		const char* code = R"CPP(// Each result retains the next callable's signature through semantic queries
+// and lowering. Exercise the chain with the normal executable stack setting.
+int fn0(int value) { return value + 2; }
+
+int (*fn1(int))(int) { return fn0; }
+int (*(*fn2(int))(int))(int) { return fn1; }
+int (*(*(*fn3(int))(int))(int))(int) { return fn2; }
+int (*(*(*(*fn4(int))(int))(int))(int))(int) { return fn3; }
+int (*(*(*(*(*fn5(int))(int))(int))(int))(int))(int) { return fn4; }
+int (*(*(*(*(*(*fn6(int))(int))(int))(int))(int))(int))(int) { return fn5; }
+int (*(*(*(*(*(*(*fn7(int))(int))(int))(int))(int))(int))(int))(int) { return fn6; }
+int (*(*(*(*(*(*(*(*fn8(int))(int))(int))(int))(int))(int))(int))(int))(int) { return fn7; }
+int (*(*(*(*(*(*(*(*(*fn9(int))(int))(int))(int))(int))(int))(int))(int))(int))(int) { return fn8; }
+int (*(*(*(*(*(*(*(*(*(*fn10(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int) { return fn9; }
+int (*(*(*(*(*(*(*(*(*(*(*fn11(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int) { return fn10; }
+int (*(*(*(*(*(*(*(*(*(*(*(*fn12(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int) { return fn11; }
+int (*(*(*(*(*(*(*(*(*(*(*(*(*fn13(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int) { return fn12; }
+int (*(*(*(*(*(*(*(*(*(*(*(*(*(*fn14(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int) { return fn13; }
+int (*(*(*(*(*(*(*(*(*(*(*(*(*(*(*fn15(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int) { return fn14; }
+int (*(*(*(*(*(*(*(*(*(*(*(*(*(*(*(*fn16(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int))(int) {
+	return fn15;
+}
+
+int main() {
+	return fn16(0)(0)(0)(0)(0)(0)(0)(0)(0)(0)(0)(0)(0)(0)(0)(0)(40) == 42 ? 0 : 1;
+}
+)CPP";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("rare_payload_deep_parser_only.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		const ParseResult result = parser.parse();
+
+		REQUIRE(!result.is_error());
+		CHECK(parser.get_nodes().size() >= 18u);
+
+		MESSAGE("value identity arena entries=" << gTemplateValueIdentities.size()
+			<< " used=" << gTemplateValueIdentities.usedBytes()
+			<< " peak=" << gTemplateValueIdentities.peakUsedBytes()
+			<< " reserved=" << gTemplateValueIdentities.reservedBytes());
+		MESSAGE("function signature arena entries=" << gTemplateFunctionSignatures.size()
+			<< " used=" << gTemplateFunctionSignatures.usedBytes()
+			<< " peak=" << gTemplateFunctionSignatures.peakUsedBytes()
+			<< " reserved=" << gTemplateFunctionSignatures.reservedBytes());
+		MESSAGE("scratch arena peak=" << context.scratchArena().peakBytes()
+			<< " reserved=" << context.scratchArena().peakReservedBytes());
+	}
+}

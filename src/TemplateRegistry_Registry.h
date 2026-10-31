@@ -1296,8 +1296,8 @@ private:
 							? resolved_category
 							: canonical_arg.category();
 					canonical_arg.type_index = alias_info.type_index.withCategory(canonical_category);
-					if (!canonical_arg.function_signature.has_value() && alias_info.function_signature.has_value()) {
-						canonical_arg.function_signature = alias_info.function_signature;
+					if (!canonical_arg.hasFunctionSignature() && alias_info.function_signature.has_value()) {
+						canonical_arg.setFunctionSignature(*alias_info.function_signature);
 					}
 				}
 				if (canonical_arg.category() == TypeCategory::Invalid) {

@@ -750,7 +750,7 @@ namespace {
 			concrete_arg.pointee_array_declarator =
 				resolved_alias_arg.pointee_array_declarator;
 			concrete_arg.array_dimensions = std::move(resolved_alias_arg.array_dimensions);
-			concrete_arg.function_signature = resolved_alias_arg.function_signature;
+			concrete_arg.assignFunctionSignature(resolved_alias_arg.copyFunctionSignature());
 			if (resolved_arg_alias.member_class_name.has_value()) {
 				concrete_arg.member_class_name = *resolved_arg_alias.member_class_name;
 			}
@@ -2473,7 +2473,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		if (!rebound_arg.has_value() || rebound_arg->is_value) {
 			return false;
 		}
-		if (rebound_arg->function_signature.has_value() && !alias_node->target_type_node().has_ordered_declarator()) {
+		if (rebound_arg->hasFunctionSignature() && !alias_node->target_type_node().has_ordered_declarator()) {
 			if (anyTemplateArgIsStructurallyDependent(template_args)) {
 				const TypeSpecifierNode& target = alias_node->target_type_node();
 				result.resolved_type_specifier = buildDependentAliasTemplateTypeSpecifier(alias_template_name, *alias_node, template_args, {},
@@ -5564,8 +5564,8 @@ ASTNode Parser::substitute_template_params_in_expression(
 		if (arg.is_array && !arg.array_dimensions.empty()) {
 			new_type.set_array_dimensions(arg.array_dimensions);
 		}
-		if (arg.function_signature.has_value()) {
-			new_type.set_function_signature(*arg.function_signature);
+		if (arg.hasFunctionSignature()) {
+			new_type.set_function_signature(arg.functionSignature());
 		}
 		return new_type;
 	};
@@ -7395,7 +7395,7 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 			direct_substitution.value = arg.value;
 			direct_substitution.value_type = arg.category();
 			if (arg.has_typed_value_identity) {
-				direct_substitution.typed_value_identity = arg.typed_value_identity;
+				direct_substitution.typed_value_identity = *arg.typedValueIdentity();
 			}
 			template_param_substitutions_.push_back(direct_substitution);
 		}
@@ -7418,7 +7418,7 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 				owner_substitution.value = owner_arg.value;
 				owner_substitution.value_type = owner_arg.category();
 				if (owner_arg.has_typed_value_identity) {
-					owner_substitution.typed_value_identity = owner_arg.typed_value_identity;
+					owner_substitution.typed_value_identity = *owner_arg.typedValueIdentity();
 				}
 			} else {
 				owner_substitution.is_type_param = true;

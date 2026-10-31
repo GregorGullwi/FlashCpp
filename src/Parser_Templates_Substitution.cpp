@@ -755,8 +755,8 @@ ASTNode Parser::substituteTemplateParametersWithState(
 						matched_direct_template_arg->ref_qualifier,
 						substituted_spec.reference_qualifier()));
 					if (!substituted_spec.has_function_signature() &&
-						matched_direct_template_arg->function_signature.has_value()) {
-						substituted_spec.set_function_signature(*matched_direct_template_arg->function_signature);
+						matched_direct_template_arg->hasFunctionSignature()) {
+						substituted_spec.set_function_signature(matched_direct_template_arg->functionSignature());
 					}
 					const int resolved_size_bits = getTypeSpecSizeBits(substituted_spec);
 					if (resolved_size_bits > 0) {

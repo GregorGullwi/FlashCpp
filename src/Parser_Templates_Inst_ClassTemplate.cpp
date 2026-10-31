@@ -1057,8 +1057,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						for (const auto& pl : param_type_spec.pointer_levels())
 							sub_type.add_pointer_level(pl.cv_qualifier);
 						sub_type.set_reference_qualifier(param_type_spec.reference_qualifier());
-						if (elem.function_signature.has_value()) {
-							sub_type.set_function_signature(*elem.function_signature);
+						if (elem.hasFunctionSignature()) {
+							sub_type.set_function_signature(elem.functionSignature());
 						}
 						normalizeSubstitutedTypeSpec(sub_type);
 						StringBuilder name_builder;
@@ -1148,8 +1148,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						param_type_spec.token().value(),
 						tmpl_params,
 						tmpl_args)) {
-					if (arg->function_signature.has_value()) {
-						substituted_param_type.set_function_signature(*arg->function_signature);
+					if (arg->hasFunctionSignature()) {
+						substituted_param_type.set_function_signature(arg->functionSignature());
 					}
 				}
 			}
@@ -4969,8 +4969,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									return_type_spec.token().value(),
 									effective_pattern_template_params,
 									effective_pattern_template_args)) {
-								if (arg->function_signature.has_value()) {
-									new_return_spec.set_function_signature(*arg->function_signature);
+								if (arg->hasFunctionSignature()) {
+									new_return_spec.set_function_signature(arg->functionSignature());
 								}
 							}
 						}
@@ -12234,8 +12234,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							return_type_spec.token().value(),
 							template_params,
 							template_args_to_use)) {
-						if (arg->function_signature.has_value()) {
-							new_return_spec.set_function_signature(*arg->function_signature);
+						if (arg->hasFunctionSignature()) {
+							new_return_spec.set_function_signature(arg->functionSignature());
 						}
 					}
 				}

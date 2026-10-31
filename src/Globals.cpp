@@ -23,6 +23,8 @@ LegacyAstChunkedAnyVector gChunkedAnyStorage;
 
 namespace FlashCpp {
 ChunkedVector<StructuralClassValue> gStructuralClassValues;
+ChunkedVector<NonTypeValueIdentity, 32> gTemplateValueIdentities;
+ChunkedVector<FunctionSignature, 64> gTemplateFunctionSignatures;
 LazyMemberResolver gLazyMemberResolver;
 InstantiationQueue gInstantiationQueue;
 } // namespace FlashCpp

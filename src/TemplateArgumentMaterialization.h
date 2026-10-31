@@ -255,7 +255,7 @@ inline bool templateArgumentUsesNamedIdentifierForm(const TemplateTypeArg& arg) 
 	return !arg.isTypeArgument() || arg.is_pack ||
 		(arg.is_dependent && arg.dependent_name.isValid() &&
 		 arg.pointer_depth == 0 &&
-		 arg.ref_qualifier == ReferenceQualifier::None && arg.cv_qualifier == CVQualifier::None && !arg.is_array && !arg.function_signature.has_value());
+		 arg.ref_qualifier == ReferenceQualifier::None && arg.cv_qualifier == CVQualifier::None && !arg.is_array && !arg.hasFunctionSignature());
 }
 
 inline StringHandle templateArgumentIdentifierName(const TemplateTypeArg& arg) {

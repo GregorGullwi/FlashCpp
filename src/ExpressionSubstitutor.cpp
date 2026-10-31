@@ -510,7 +510,7 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 		if (structural_arg != param_map_.end() &&
 			structural_arg->second.is_value &&
 			structural_arg->second.has_typed_value_identity &&
-			structural_arg->second.typed_value_identity.kind ==
+			structural_arg->second.typedValueIdentity()->kind ==
 				FlashCpp::NonTypeValueIdentityKind::StructuralClass) {
 			ExpressionNode& preserved_reference =
 				gChunkedAnyStorage.emplace_back<ExpressionNode>(tparam_ref);

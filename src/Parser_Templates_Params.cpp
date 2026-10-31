@@ -3951,9 +3951,8 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 					existing_arg.member_class_name.isValid()) {
 					identity.member_class_name = existing_arg.member_class_name;
 				}
-				if (!identity.function_signature.has_value() &&
-					existing_arg.function_signature.has_value()) {
-					identity.function_signature = existing_arg.function_signature;
+				if (!identity.function_signature.has_value() && existing_arg.hasFunctionSignature()) {
+					identity.function_signature = existing_arg.functionSignature();
 				}
 				TypeIndex declared_type_index = param.has_type()
 					? param.type_specifier_node().type_index().withCategory(param.type_specifier_node().type())
@@ -4101,8 +4100,10 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 			get_type_size_bits(target.type())));
 		argument.type_index = target.type_index().is_valid() ? target.type_index() : nativeTypeIndex(target.type());
 		if (argument.has_typed_value_identity) {
-			argument.typed_value_identity.value = argument.value;
-			argument.typed_value_identity.value_type_index = argument.type_index;
+			argument.updateTypedValueIdentity([&](FlashCpp::NonTypeValueIdentity& identity) {
+				identity.value = argument.value;
+				identity.value_type_index = argument.type_index;
+			});
 		}
 	};
 	size_t arg_index = 0;
