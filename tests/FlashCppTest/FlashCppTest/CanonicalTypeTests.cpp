@@ -5,6 +5,7 @@
 #include "CanonicalTypeAdapter.h"
 #include "ExpressionSubstitutor.h"
 #include "ParserTemplateClassShared.h"
+#include "ParserTemplateHelpers.h"
 #include "../../architecture/CanonicalTypeTests.h"
 
 TEST_CASE("Published free function targets retain entity and canonical signature identity") {
@@ -7566,6 +7567,130 @@ using ReorderedPointers = TypeList<const double*, const char*>;
 			CHECK(importCanonicalStructMemberType(table, member.type_specifier_node()) == expected[member_index]);
 		}
 	}
+}
+
+TEST_CASE("Dependent member pack elements stay deferred during substitution") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+template<class T> struct Owner { template<class... U> struct List {}; };
+template<class T, class... U> struct Holder { typename Owner<T>::template List<const U*...> field; };
+)";
+	CompileContext compile_context;
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	const auto holder = gTemplateRegistry.lookupTemplate("Holder");
+	REQUIRE(holder.has_value());
+	REQUIRE(holder->is<TemplateClassDeclarationNode>());
+	const StructDeclarationNode& pattern = holder->as<TemplateClassDeclarationNode>().class_decl_node();
+	REQUIRE(pattern.members().size() == 1);
+	const TypeSpecifierNode& field = pattern.members()[0].declaration.as<DeclarationNode>().type_specifier_node();
+	const TypeInfo* dependent_field = tryGetTypeInfo(field.type_index());
+	REQUIRE(dependent_field != nullptr);
+	REQUIRE(dependent_field->isDependentMemberType());
+	TemplateArgSubstitutionMap scalar_args;
+	TemplateTypeArg owner_arg;
+	owner_arg.type_index = nativeTypeIndex(TypeCategory::Short);
+	scalar_args["T"] = owner_arg;
+	TemplateArgPackSubstitutionMap pack_args;
+	TemplateTypeArg dependent_arg;
+	dependent_arg.type_index = nativeTypeIndex(TypeCategory::Int);
+	dependent_arg.dependent_name = StringTable::getOrInternStringHandle("StillDependent");
+	dependent_arg.is_dependent = true;
+	pack_args[StringTable::getOrInternStringHandle("U")].push_back(dependent_arg);
+	const std::string_view order[] = {"T", "U"};
+	ExpressionSubstitutor substitutor(scalar_args, pack_args, parser, order);
+	const TypeSpecifierNode substituted = substitutor.substituteTypeSpecifier(field);
+	const TypeInfo* result = tryGetTypeInfo(substituted.type_index());
+	REQUIRE(result != nullptr);
+	CHECK(result->isDependentMemberType());
+}
+
+TEST_CASE("Scoped outer template bindings restore nested lookups") {
+	TemplateRegistry registry;
+	const StringHandle name = StringTable::getOrInternStringHandle("nested_member_template");
+	const StringHandle outer = StringTable::getOrInternStringHandle("Outer");
+	const StringHandle inner = StringTable::getOrInternStringHandle("Inner");
+	OuterTemplateBinding initial;
+	initial.param_names.push_back(outer);
+	registry.registerOuterTemplateBinding(name, std::move(initial));
+	{
+		TemplateRegistry::ScopedOuterTemplateBinding first(registry, name, true);
+		CHECK(first.binding().param_names.empty());
+		first.binding().param_names.push_back(inner);
+		{
+			TemplateRegistry::ScopedOuterTemplateBinding second(registry, name, true);
+			CHECK(second.binding().param_names.empty());
+			second.binding().param_names.push_back(outer);
+		}
+		REQUIRE(registry.getOuterTemplateBinding(name) != nullptr);
+		CHECK(registry.getOuterTemplateBinding(name)->param_names[0] == inner);
+	}
+	REQUIRE(registry.getOuterTemplateBinding(name) != nullptr);
+	CHECK(registry.getOuterTemplateBinding(name)->param_names[0] == outer);
+	const StringHandle absent = StringTable::getOrInternStringHandle("unbound_member_template");
+	try {
+		TemplateRegistry::ScopedOuterTemplateBinding scope(registry, absent, true);
+		throw 1;
+	} catch (int) {}
+	CHECK(registry.getOuterTemplateBinding(absent) == nullptr);
+}
+
+TEST_CASE("Expanded member template fields retain their instantiated owner") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream fixture("tests/test_canonical_member_pack_instantiated_owner_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	code.append(R"(
+using ShortOwner = Owner<short>;
+using LongOwner = Owner<long long>;
+using ShortBox = Holder<short>::Box<int, char, Payload>;
+using LongBox = Holder<long long>::Box<int, char, Payload>;
+)");
+	CompileContext compile_context;
+	compile_context.setInputFile("canonical_member_pack_instantiated_owner.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto imported_alias = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const auto field_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const ResolvedAliasTypeInfo resolved = resolveAliasTypeInfo(info->registeredTypeIndex());
+		const StructTypeInfo* record = tryGetStructTypeInfo(resolved.type_index);
+		REQUIRE(record != nullptr);
+		REQUIRE(record->declaration_node != nullptr);
+		REQUIRE(record->members.size() == 2);
+		const TypeId type = record->members[0].canonical_type_id;
+		REQUIRE(type);
+		CHECK(table.recordSubobjectMemberAt(imported_alias(name), 0) == type);
+		const TypeSpecifierNode& syntax = record->declaration_node->members()[0].declaration.as<DeclarationNode>().type_specifier_node();
+		CHECK(importCanonicalStructMemberType(table, syntax) == type);
+		return type;
+	};
+	const TypeId short_field = field_type("ShortBox");
+	const TypeId long_field = field_type("LongBox");
+	CHECK(short_field != long_field);
+	CHECK(table.templateSpecializationOwner(short_field) == imported_alias("ShortOwner"));
+	CHECK(table.templateSpecializationOwner(long_field) == imported_alias("LongOwner"));
+	CHECK(table.templateSpecializationArguments(short_field) == table.templateSpecializationArguments(long_field));
 }
 
 TEST_CASE("Member template specialization syntax retains its instantiated owner") {

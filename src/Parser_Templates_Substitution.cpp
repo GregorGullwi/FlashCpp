@@ -657,8 +657,13 @@ ASTNode Parser::substituteTemplateParametersWithState(
 				dependent_type_info != nullptr &&
 				dependent_type_info->isDependentMemberType() &&
 				dependent_type_info->hasDependentQualifiedName()) {
-				auto sub_map = buildSubstitutionParamMap(template_params, template_args);
-				ExpressionSubstitutor substitutor(sub_map.param_map, *this, sub_map.param_order);
+				TemplateArgSubstitutionMap scalar_args;
+				TemplateArgPackSubstitutionMap pack_args;
+				std::vector<std::string_view> param_order;
+				buildTemplateArgSubstitutionMaps(template_params, template_args,
+					[](const TemplateParameterNode& param, const TemplateTypeArg& arg) { return enrichTemplateArgForParameter(param, arg); },
+					scalar_args, pack_args, &param_order);
+				ExpressionSubstitutor substitutor(scalar_args, pack_args, *this, param_order);
 				if (current_owner_type_name.isValid()) {
 					substitutor.setCurrentOwnerTypeName(current_owner_type_name);
 					substitutor.setCurrentOwnerDeclaration(state.owner_declaration);

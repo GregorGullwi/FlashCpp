@@ -4,6 +4,36 @@
 
 class TemplateRegistry {
 public:
+	using OuterTemplateBindingMap = std::unordered_map<StringHandle, OuterTemplateBinding, StringHandleHash, std::equal_to<>>;
+	using OuterTemplateBindingNode = OuterTemplateBindingMap::node_type;
+	class ScopedOuterTemplateBinding {
+	public:
+		ScopedOuterTemplateBinding(TemplateRegistry& registry, StringHandle name, bool enabled)
+			: registry_(registry), name_(name), enabled_(enabled) {
+			if (!enabled_) return;
+			previous_ = registry_.outer_template_bindings_.extract(name_);
+			try {
+				registry_.outer_template_bindings_.try_emplace(name_);
+			} catch (...) {
+				if (!previous_.empty()) registry_.outer_template_bindings_.insert(std::move(previous_));
+				throw;
+			}
+		}
+		ScopedOuterTemplateBinding(const ScopedOuterTemplateBinding&) = delete;
+		ScopedOuterTemplateBinding& operator=(const ScopedOuterTemplateBinding&) = delete;
+		~ScopedOuterTemplateBinding() {
+			if (!enabled_) return;
+			registry_.outer_template_bindings_.erase(name_);
+			if (!previous_.empty()) registry_.outer_template_bindings_.insert(std::move(previous_));
+		}
+		OuterTemplateBinding& binding() { return registry_.outer_template_bindings_.at(name_); }
+	private:
+		TemplateRegistry& registry_;
+		StringHandle name_;
+		OuterTemplateBindingNode previous_;
+		bool enabled_;
+	};
+
 	struct SpecializationPatternMatch {
 		const TemplatePattern* pattern;
 		ASTNode node;
@@ -1334,7 +1364,7 @@ private:
 
 	// Map from qualified member function template name (e.g., "Container$hash::convert") to
 	// outer template parameter bindings (e.g., T→int). Used during nested template instantiation.
-	std::unordered_map<StringHandle, OuterTemplateBinding, StringHandleHash, std::equal_to<>> outer_template_bindings_;
+	OuterTemplateBindingMap outer_template_bindings_;
 
 	// Map from (template_name, template_args) to specialized class node (exact matches)
 	std::unordered_map<SpecializationKey, ASTNode, SpecializationKeyHash> specializations_;

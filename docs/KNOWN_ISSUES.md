@@ -204,6 +204,14 @@ lowering. No stack reserve was increased for this regression.
 The native `Canonical adapter imports the source corpus at publication` fixture
 also overflows at 1 MB, including in a pre-change binary. Reduce parser frames
 and replace recursive syntax processing before expecting that corpus to fit.
+The member-template pack owner regression likewise overflows at 1 MB in
+`parse_type_specifier`, including with a pre-change compiler binary.
+
+## Staged dependent alias expansions can lose pack elements
+
+A nested alias chain that expands two dependent type packs into one member
+template-id can materialize the wrong argument count. This remains deferred
+with the nontrivial and multi-pack member-template expansion work.
 
 ## SEH finally funclet termination is conservative in return-flow diagnostics
 

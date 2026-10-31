@@ -1517,6 +1517,12 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 	return result;
 }
 
+static void appendReboundDependentPackArgument(TemplateArgumentVector& args, const TemplateTypeArg& bound, const TypeInfo::TemplateArgInfo& pattern) {
+	if (!pattern.is_value && !bound.is_value) args.push_back(rebindDependentTemplateTypeArg(bound, pattern));
+	else args.push_back(bound);
+	args.back().is_pack = false;
+}
+
 TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplateArgs(
 	std::span<const TypeInfo::TemplateArgInfo> stored_args,
 	int depth) {
@@ -1533,6 +1539,7 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 			continue;
 		}
 		if (arg.is_pack && arg.dependent_expr.has_value()) {
+			arg.is_dependent = true;
 			materialized_args.push_back(std::move(arg));
 			continue;
 		}
@@ -1545,13 +1552,19 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 			}
 			if (pack_name.isValid()) {
 				auto pack_it = pack_map_.find(pack_name);
-				if (pack_it != pack_map_.end()) {
+				// Rebinding clears dependency metadata, so defer the entire expansion until every element is concrete.
+				if (pack_it != pack_map_.end() && std::ranges::none_of(pack_it->second, [](const TemplateTypeArg& element) {
+					return templateArgIsStructurallyDependent(element) || typeIndexContainsDependentPlaceholder(element.type_index);
+				})) {
 					for (const TemplateTypeArg& pack_arg : pack_it->second) {
-						materialized_args.push_back(pack_arg);
+						appendReboundDependentPackArgument(materialized_args, pack_arg, stored_arg);
 					}
 					continue;
 				}
 			}
+			arg.is_dependent = true;
+			materialized_args.push_back(std::move(arg));
+			continue;
 		}
 		if (arg.is_value && arg.dependent_expr.has_value()) {
 			ASTNode substituted_expr = substitute(*arg.dependent_expr);
@@ -2115,9 +2128,7 @@ ExpressionSubstitutor::materializeDependentQualifiedMemberPrefixOwner(
 
 bool ExpressionSubstitutor::templateArgsStillDependent(std::span<const TemplateTypeArg> args) const {
 	for (const TemplateTypeArg& arg : args) {
-		if (arg.is_dependent ||
-			arg.dependent_name.isValid() ||
-			arg.dependent_expr.has_value()) {
+		if (arg.is_dependent || arg.dependent_name.isValid() || arg.dependent_expr.has_value()) {
 			return true;
 		}
 		if (!arg.is_value && arg.type_index.is_valid()) {
@@ -2179,6 +2190,8 @@ ExpressionSubstitutor::lookupMaterializedDependentMember(const TypeInfo& type_in
 				QualifiedTypeMemberAccess member_access;
 				member_access.member_name = member_record.name;
 				if (member_record.has_template_arguments) {
+					if (materialized_owner.resolved_type_info == nullptr && std::ranges::any_of(member_record.template_arguments,
+						[](const TypeInfo::TemplateArgInfo& argument) { return argument.is_pack; })) return lookup;
 					TemplateArgumentVector member_args =
 						materializeDependentRecordTemplateArgs(member_record.template_arguments, depth);
 					if (templateArgsStillDependent(member_args)) {
@@ -2192,9 +2205,7 @@ ExpressionSubstitutor::lookupMaterializedDependentMember(const TypeInfo& type_in
 			}
 
 			const TypeInfo* resolved_type =
-				parser_.resolveBaseClassMemberTypeChain(
-					materialized_owner_name,
-					member_chain);
+				parser_.resolveBaseClassMemberTypeChain(materialized_owner_name, member_chain, materialized_owner.resolved_type_info);
 			resolved_type = resolveConcreteAliasChain(resolved_type);
 			FLASH_LOG(Templates, Trace, "lookupMaterializedDependentMember chain result ",
 					  resolved_type != nullptr ? StringTable::getStringView(resolved_type->name()) : std::string_view{"<null>"});

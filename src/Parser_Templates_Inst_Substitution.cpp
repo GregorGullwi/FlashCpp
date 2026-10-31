@@ -3707,6 +3707,12 @@ OuterTemplateBinding Parser::buildAccumulatedOuterTemplateBinding(
 	const OuterTemplateBinding* inherited_binding,
 	StringHandle fallback_binding_lookup_name) {
 	OuterTemplateBinding binding;
+	buildAccumulatedOuterTemplateBindingInto(owner_type_info, inherited_binding, fallback_binding_lookup_name, binding);
+	return binding;
+}
+
+void Parser::buildAccumulatedOuterTemplateBindingInto(const TypeInfo* owner_type_info, const OuterTemplateBinding* inherited_binding,
+	StringHandle fallback_binding_lookup_name, OuterTemplateBinding& binding) {
 	auto overlay_binding =
 		[&](StringHandle param_name, const TemplateTypeArg& param_arg) {
 		for (size_t i = 0; i < binding.param_names.size();) {
@@ -3775,8 +3781,6 @@ OuterTemplateBinding Parser::buildAccumulatedOuterTemplateBinding(
 				toTemplateTypeArg(instantiation_context->param_args()[i]));
 		}
 	}
-
-	return binding;
 }
 
 std::optional<ASTNode> Parser::instantiateLazyMemberForCanonicalOwner(
