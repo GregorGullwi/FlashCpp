@@ -33,9 +33,12 @@ member argument identity and rejects flattening the wrapper per element.
 Lockstep expansion collects every bound pack referenced by the element pattern,
 requires equal lengths and concrete elements, and substitutes one element from
 each pack per result. The native `Lockstep member pack expansion substitutes
-every referenced pack` test supplies two packs explicitly and verifies both
-resulting `Pair` arguments. End-to-end binding of packs from distinct template
-scopes remains the next slice.
+every referenced pack` test supplies two packs explicitly, verifies both
+resulting `Pair` arguments, and checks the canonical owner and member-argument
+identities. A same-spelling dependent name that is only available as a scalar,
+or a pack expanded by an inner expansion, keeps the field dependent instead of
+materializing a wrong concrete type. End-to-end binding of packs from distinct
+template scopes and mixed scalar/pack element patterns remain the next slice.
 
 ## Current state
 

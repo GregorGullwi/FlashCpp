@@ -226,6 +226,16 @@ A nested alias chain that expands two dependent type packs into one member
 template-id can materialize the wrong argument count. This remains deferred
 with the nontrivial and multi-pack member-template expansion work.
 
+## Member-template lockstep expansion needs pack-aware bindings
+
+A lockstep member-template expansion such as `Pair<Tail, Other>...` now defers
+mixed scalar/pack patterns and inner pack expansions instead of substituting a
+same-spelling scalar for an unbound pack. Effective owner bindings can still
+collapse an enclosing pack to a scalar, and partial-specialization deduction can
+leave a second pack empty, so end-to-end fields that mix packs from different
+template scopes remain deferred until the binding and deduction paths share one
+pack-aware representation.
+
 ## SEH finally funclet termination is conservative in return-flow diagnostics
 
 The control-flow analysis models a Windows `SehFinallyCall` as a call that can
