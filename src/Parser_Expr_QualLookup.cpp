@@ -967,12 +967,12 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 			dependent_record.owner_type =
 				owner_type_info->registeredTypeIndex();
 			dependent_record.owner_template_arguments =
-				owner_type_info->templateArgs();
+				TypeInfo::DependentQualifiedNameRecord::makeTemplateArgStorage(owner_type_info->templateArgs());
 			TypeInfo::DependentQualifiedNameRecord::Member member_record;
 			member_record.name = member_name_handle;
 			if (member_template_args.has_value()) {
 				member_record.template_arguments =
-					toTemplateArgInfoList(*member_template_args);
+					TypeInfo::DependentQualifiedNameRecord::makeTemplateArgStorage(toTemplateArgInfoList(*member_template_args));
 				member_record.has_template_arguments = true;
 			}
 			dependent_record.member_chain.push_back(std::move(member_record));

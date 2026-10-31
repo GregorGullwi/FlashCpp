@@ -472,7 +472,7 @@ TypeInfo::DependentQualifiedNameRecord makeDependentQualifiedNameRecord(
 	record.owner_type = owner_type;
 	record.names_current_instantiation =
 		owner_kind == TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation;
-	record.owner_template_arguments = std::move(owner_template_arguments);
+	record.owner_template_arguments = TypeInfo::DependentQualifiedNameRecord::makeTemplateArgStorage(std::move(owner_template_arguments));
 
 	size_t member_index = 0;
 	for (std::string_view component : splitDependentMemberPathComponents(member_path)) {
@@ -486,7 +486,7 @@ TypeInfo::DependentQualifiedNameRecord makeDependentQualifiedNameRecord(
 			if (member_index < segment_infos.size()) {
 				const DependentMemberSegmentInfo& seg = segment_infos[member_index];
 				if (seg.template_args.has_value()) {
-					member.template_arguments = *seg.template_args;
+					member.template_arguments = TypeInfo::DependentQualifiedNameRecord::makeTemplateArgStorage(*seg.template_args);
 					member.has_template_arguments = true;
 				}
 				member.has_template_keyword = seg.has_template_keyword;
@@ -1714,7 +1714,7 @@ ParseResult Parser::parse_type_specifier() {
 				terminal_member.has_template_keyword = has_explicit_template_keyword;
 				terminal_member.has_template_arguments = true;
 				terminal_member.template_arguments =
-					convertToTemplateArgInfo(*member_template_args);
+					TypeInfo::DependentQualifiedNameRecord::makeTemplateArgStorage(convertToTemplateArgInfo(*member_template_args));
 				bool can_stamp_member_chain = true;
 				if (!appendTypeOnlyArgSpecifiers(
 						argument_syntax_nodes, member_template_arg_syntax)) {
@@ -1754,7 +1754,7 @@ ParseResult Parser::parse_type_specifier() {
 						}
 						member.has_template_arguments = true;
 						member.template_arguments =
-							convertToTemplateArgInfo(*nested_template_args);
+							TypeInfo::DependentQualifiedNameRecord::makeTemplateArgStorage(convertToTemplateArgInfo(*nested_template_args));
 						if (!appendTypeOnlyArgSpecifiers(
 								nested_argument_syntax_nodes, member_template_arg_syntax)) {
 							can_stamp_member_chain = false;
@@ -1951,7 +1951,7 @@ ParseResult Parser::parse_type_specifier() {
 							record.owner_name = qualified_owner_name;
 						}
 						record.owner_template_arguments =
-							alias_target_info->templateArgs();
+							TypeInfo::DependentQualifiedNameRecord::makeTemplateArgStorage(alias_target_info->templateArgs());
 						auto classify_current_instantiation_owner =
 							[&](TypeIndex current_owner_type_index,
 								const StructDeclarationNode* current_owner_declaration) {
@@ -3158,7 +3158,7 @@ ParseResult Parser::parse_type_specifier() {
 						dependent_name_record.owner_type = owner_it->second->registeredTypeIndex();
 					}
 					dependent_name_record.owner_template_arguments =
-						convertToTemplateArgInfo(*template_args);
+						TypeInfo::DependentQualifiedNameRecord::makeTemplateArgStorage(convertToTemplateArgInfo(*template_args));
 
 						while (peek() == "::"_tok) {
 							advance(); // consume '::'
@@ -3187,7 +3187,7 @@ ParseResult Parser::parse_type_specifier() {
 									return ParseResult::error("Failed to parse template arguments for dependent nested type", nested_token);
 								}
 								member_record.template_arguments =
-									convertToTemplateArgInfo(*nested_template_args);
+									TypeInfo::DependentQualifiedNameRecord::makeTemplateArgStorage(convertToTemplateArgInfo(*nested_template_args));
 								member_record.has_template_arguments = true;
 								dependent_type_builder.append("<")
 													.append(nested_template_args->size())
@@ -4821,7 +4821,7 @@ ParseResult Parser::parse_type_specifier() {
 									return ParseResult::error("Failed to parse template arguments for dependent nested type", nested_token);
 								}
 								member_record.template_arguments =
-									convertToTemplateArgInfo(*nested_template_args);
+									TypeInfo::DependentQualifiedNameRecord::makeTemplateArgStorage(convertToTemplateArgInfo(*nested_template_args));
 								member_record.has_template_arguments = true;
 								if (!appendTypeOnlyArgSpecifiers(
 										argument_syntax_nodes, member_template_arg_syntax)) {

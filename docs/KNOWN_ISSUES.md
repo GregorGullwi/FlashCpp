@@ -199,8 +199,11 @@ increased for this regression.
 The native `Canonical adapter imports the source corpus at publication` fixture
 still overflows at 1 MB, including in a pre-change binary. Reduce parser frames
 and replace recursive syntax processing before expecting that corpus to fit.
-The member-template pack owner regression likewise still overflows at 1 MB in
-`parse_type_specifier`, including with a pre-change compiler binary.
+The member-template pack owner regression likewise still overflows at 1 MB,
+including with a pre-change compiler binary. Compacting its parser and
+instantiation frames is not enough: `Chain<N>` member aliases recurse through
+`try_instantiate_class_template` once per level, and the 24-level regression
+needs an explicit instantiation worklist for that member-dependency path.
 
 The rare NTTP and callable payloads in `TemplateTypeArg` live behind immutable
 32-bit handles in persistent arenas, and `TemplateArgumentVector` is now an
@@ -213,8 +216,13 @@ parsing and emit an object for the deep callable-chain regression.
 
 Payload handles are copy-on-write and never point at scratch storage. The
 persistent handle arenas do not reclaim entries abandoned by rolled-back probes;
-they are released only when the process exits. `TemplateArgumentList` storage is
-owned by the list, so a span from it remains valid only until the next mutation.
+they are released only when the process exits. `TemplateArgumentList` and the
+other out-of-line template/parser vectors use the same persistent arena, so a
+span from one remains valid only until the next mutation. Compacting
+`DependentQualifiedNameRecord` and the template-instantiation key reduces
+`parse_type_specifier` from 160,376 to 59,336 bytes and
+`try_instantiate_class_template` from 243,704 to 185,704 bytes in clang `-O0`
+builds; the arenas do not reclaim old list arrays.
 
 ## Staged dependent alias expansions can lose pack elements
 
