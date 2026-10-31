@@ -242,11 +242,10 @@ now reuse the scalar argument across the pack expansion; inner expansions still
 stay dependent; partial-specialization deduction
 can leave a second pack empty. Alias and variable-template substitution still
 have legacy flattened-input adapters that need migration to grouped bindings.
-A namespace-scope target such as `List<Wrap<Tail>...>` now uses the shared
-lockstep helper. A multi-pack namespace target such as
-`List<Pair<Outer, Inner>...>` still needs grouped bindings propagated into the
-generic substitution path, because flat parameter/argument spans cannot split
-multiple packs.
+Namespace-scope targets now use the shared lockstep helper. Multi-pack targets
+such as `List<Pair<Outer, Inner>...>` consume the grouped effective environment
+from the primary member-copy substitution, so enclosing and local packs expand
+without splitting flat spans. Inner expansions remain dependent.
 A nested member-template declaration with a pack-expanded base such as
 `List : U...` is rejected by the parser; this syntax gap is separate from
 owner binding. Per-element substitution can still publish wrapper

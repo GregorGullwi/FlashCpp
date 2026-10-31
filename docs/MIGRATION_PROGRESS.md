@@ -15,9 +15,9 @@ its type-owned instantiation context consume those groups before any legacy
 flattening. Layout and cloned declarations share the resolved member-pack type.
 Cross-scope `Pair<Outer, Inner>...` fields expand end to end with
 concrete canonical target owners and ordered arguments. The next slice must
-share pack-reference scanning and iteration across member fields, namespace
-targets, deferred bases, and value packs, distinguishing inner expansions from
-the current expansion. Partial-specialization deduction still leaves a second
+share pack-reference scanning and iteration across member fields, deferred
+bases, and value packs, distinguishing inner expansions from the current
+expansion. Namespace-scope targets now consume the grouped environment. Partial-specialization deduction still leaves a second
 pack empty. Transactional per-element substitution and pack-length diagnostics
 remain separate work; this does not complete boundary 3A or 8A.
 
@@ -58,8 +58,11 @@ namespace-scope targets such as `List<Wrap<Tail>...>` now share the lockstep
 helper; `test_namespace_scope_lockstep_pack_member_field_ret0.cpp` covers empty
 and full packs, and the native `Namespace-scope lockstep targets preserve
 canonical arguments` test checks the ordered wrapper arguments. Multi-pack
-namespace targets and inner expansions remain deferred because the generic
-substitution path still receives flat parameter/argument spans.
+namespace-scope targets now consume the grouped effective environment:
+`test_namespace_scope_lockstep_multipack_member_field_ret0.cpp` covers empty,
+single-element, and full enclosing/member packs, and the native
+`Namespace-scope multipack targets preserve canonical lockstep arguments` test
+checks the ordered `Pair` arguments. Inner expansions remain deferred.
 
 ## Current state
 
@@ -138,8 +141,8 @@ covers the runtime owner-sensitive field, and the native
 covers same-arguments/different-owner identity plus the missing-owner mutation.
 Nontrivial single-pack expansions recover the referenced pack from the element
 pattern's type arguments and substitute the generic expression once per concrete
-element instead of rebinding the bare pack element; multi-pack or still-dependent
-patterns remain deferred. `test_canonical_member_nontrivial_type_pack_fields_ret0.cpp`
+element instead of rebinding the bare pack element; still-dependent patterns
+remain deferred. `test_canonical_member_nontrivial_type_pack_fields_ret0.cpp`
 covers wrapped, nested, and pointer-wrapped element patterns plus owner-sensitive
 layout, and the native `Nontrivial member pack fields retain wrapped elements and
 owners` test pins the canonical owner and member argument list.

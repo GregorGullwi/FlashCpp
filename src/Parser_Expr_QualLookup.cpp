@@ -2384,10 +2384,14 @@ TypeIndex Parser::substitute_template_parameter(const TypeSpecifierNode& origina
 	auto expandLockstep = [&](const TypeInfo::TemplateArgInfo& arg_info,
 		const TypeInfo& pattern_info) -> std::optional<TemplateArgumentVector> {
 		if (!lockstep_substitutor.has_value()) {
-			TemplateInstantiationContext context;
-			populateTemplateInstantiationContext(context, template_params, template_args, nullptr,
-				currentTemplateSubstitutionFailurePolicy());
-			lockstep_substitutor.emplace(context, *this);
+			if (current_grouped_template_environment_ != nullptr && !current_grouped_template_environment_->bindings.empty()) {
+				lockstep_substitutor.emplace(*current_grouped_template_environment_, *this);
+			} else {
+				TemplateInstantiationContext context;
+				populateTemplateInstantiationContext(context, template_params, template_args, nullptr,
+					currentTemplateSubstitutionFailurePolicy());
+				lockstep_substitutor.emplace(context, *this);
+			}
 		}
 		return lockstep_substitutor->tryExpandLockstepTypePack(arg_info, pattern_info);
 	};
