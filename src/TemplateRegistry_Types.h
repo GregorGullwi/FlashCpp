@@ -256,7 +256,12 @@ struct TemplateTypeArg {
 	}
 
 	void setTypedValueIdentity(const FlashCpp::NonTypeValueIdentity& identity) {
-		typed_value_identity_handle = FlashCpp::storeTemplateValueIdentity(identity);
+		has_typed_value_identity = identity.kind != FlashCpp::NonTypeValueIdentityKind::Integral;
+		if (has_typed_value_identity) {
+			typed_value_identity_handle = FlashCpp::storeTemplateValueIdentity(identity);
+		} else {
+			typed_value_identity_handle.reset();
+		}
 	}
 
 	template <typename Mutator>
@@ -317,7 +322,6 @@ struct TemplateTypeArg {
 
 	void setValueIdentity(const FlashCpp::NonTypeValueIdentity& identity) {
 		is_value = true;
-		has_typed_value_identity = identity.kind != FlashCpp::NonTypeValueIdentityKind::Integral;
 		setTypedValueIdentity(identity);
 		type_index = identity.value_type_index;
 		value = identity.value;
