@@ -7748,6 +7748,136 @@ using FlattenedShort = Owner<short>::List<int, char, Payload>;
 	CHECK(table.templateSpecializationArguments(short_field) != table.templateSpecializationArguments(imported_alias("FlattenedShort")));
 }
 
+TEST_CASE("Interned template arguments preserve builtin type-index projections") {
+	clearLegacyTypeTablesForTesting();
+	FrontendContext context;
+	initialize_native_types();
+	TemplateArgInfoVector category_arguments;
+	TypeInfo::TemplateArgInfo first;
+	first.type_index = TypeIndex{0, TypeCategory::Double};
+	category_arguments.push_back(first);
+	TypeInfo::TemplateArgInfo second;
+	second.type_index = TypeIndex{0, TypeCategory::LongLong};
+	category_arguments.push_back(second);
+	const uint32_t category_list = storeTypeInfoTemplateArgs(category_arguments);
+	TemplateArgInfoVector indexed_arguments = category_arguments;
+	indexed_arguments[0].type_index = nativeTypeIndex(TypeCategory::Double);
+	indexed_arguments[1].type_index = nativeTypeIndex(TypeCategory::LongLong);
+	const uint32_t indexed_list = storeTypeInfoTemplateArgs(indexed_arguments);
+	CHECK(category_list != indexed_list);
+	CHECK(getTypeInfoTemplateArgs(category_list)[0].type_index == first.type_index);
+	CHECK(getTypeInfoTemplateArgs(indexed_list)[0].type_index == nativeTypeIndex(TypeCategory::Double));
+	CHECK(getTypeInfoTemplateArgs(indexed_list)[1].type_index == nativeTypeIndex(TypeCategory::LongLong));
+	CHECK(storeTypeInfoTemplateArgs(indexed_arguments) == indexed_list);
+}
+
+TEST_CASE("Enclosing owner and nested member packs preserve canonical lockstep fields") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream fixture("tests/test_enclosing_owner_pack_lockstep_member_field_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	code.append(R"(
+using ShortTarget = PackTarget<short>;
+using LongTarget = PackTarget<long long>;
+using EmptyOwner = PackOwner<short>;
+using EmptyBox = PackOwner<short>::Box<>;
+using SingleOwner = PackOwner<short, PackPayload>;
+using SingleBox = PackOwner<short, PackPayload>::Box<double>;
+using MixedOwner = PackOwner<long long, short, char, PackPayload>;
+using MixedBox = PackOwner<long long, short, char, PackPayload>::Box<int, long long, double>;
+using SameInnerOwner = PackOwner<short, long long, double, unsigned char>;
+using SameInnerBox = PackOwner<short, long long, double, unsigned char>::Box<int, long long, double>;
+)");
+	CompileContext compile_context;
+	compile_context.setInputFile("enclosing_owner_lockstep_member_fields.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto imported_alias = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const auto pair_type = [&](TemplateTypeArg first, TemplateTypeArg second) {
+		const TemplateArgumentVector arguments{first, second};
+		const auto instance = template_engine.materializeTemplateInstantiationForLookup("PackPair", arguments);
+		REQUIRE(instance.resolved_type_info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *instance.resolved_type_info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const auto field_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const ResolvedAliasTypeInfo resolved = resolveAliasTypeInfo(info->registeredTypeIndex());
+		const StructTypeInfo* record = tryGetStructTypeInfo(resolved.type_index);
+		REQUIRE(record != nullptr);
+		REQUIRE(record->declaration_node != nullptr);
+		REQUIRE(record->members.size() == 2);
+		const TypeSpecifierNode& syntax = record->declaration_node->members()[1].declaration.as<DeclarationNode>().type_specifier_node();
+		const TypeId field = importCanonicalStructMemberType(table, syntax);
+		REQUIRE(field);
+		CHECK(record->members[1].canonical_type_id == field);
+		return field;
+	};
+	const auto check_box = [&](std::string_view box_name, std::string_view owner_name, std::string_view target_name,
+		std::span<const TypeId> inner_types, std::span<const TypeId> expected_pairs) {
+		const TypeId box = imported_alias(box_name);
+		CHECK(table.templateSpecializationOwner(box) == imported_alias(owner_name));
+		TypeId inner = table.templateSpecializationArguments(box);
+		for (TypeId expected : inner_types) {
+			REQUIRE(inner);
+			CHECK(table.templateArgumentType(inner) == expected);
+			inner = table.templateArgumentNext(inner);
+		}
+		CHECK_FALSE(inner);
+		const TypeId field = field_type(box_name);
+		CHECK(table.templateSpecializationOwner(field) == imported_alias(target_name));
+		TypeId argument = table.templateSpecializationArguments(field);
+		for (TypeId expected : expected_pairs) {
+			REQUIRE(argument);
+			CHECK(table.templateArgumentType(argument) == expected);
+			argument = table.templateArgumentNext(argument);
+		}
+		CHECK_FALSE(argument);
+	};
+	const TypeInfo* payload_info = findTypeByName(StringTable::getOrInternStringHandle("PackPayload"));
+	REQUIRE(payload_info != nullptr);
+	const TemplateTypeArg payload_arg = TemplateTypeArg::makeType(payload_info->registeredTypeIndex());
+	const TypeId pair_payload_double = pair_type(payload_arg, TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Double)));
+	const TypeId pair_short_int = pair_type(TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Short)),
+		TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Int)));
+	const TypeId pair_char_long = pair_type(TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Char)),
+		TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::LongLong)));
+	const TypeId pair_payload_double_mixed = pair_type(payload_arg, TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Double)));
+	const TypeId pair_long_int = pair_type(TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::LongLong)),
+		TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Int)));
+	const TypeId pair_double_long = pair_type(TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Double)),
+		TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::LongLong)));
+	const TypeId pair_uchar_double = pair_type(TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::UnsignedChar)),
+		TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Double)));
+	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId long_type = table.builtin(CanonicalBuiltinKind::LongLong);
+	const TypeId double_type = table.builtin(CanonicalBuiltinKind::Double);
+	const TypeId single_types[] = {double_type};
+	const TypeId single_pairs[] = {pair_payload_double};
+	const TypeId full_types[] = {int_type, long_type, double_type};
+	const TypeId mixed_pairs[] = {pair_short_int, pair_char_long, pair_payload_double_mixed};
+	const TypeId same_inner_pairs[] = {pair_long_int, pair_double_long, pair_uchar_double};
+	check_box("EmptyBox", "EmptyOwner", "ShortTarget", std::span<const TypeId>{}, std::span<const TypeId>{});
+	check_box("SingleBox", "SingleOwner", "ShortTarget", single_types, single_pairs);
+	check_box("MixedBox", "MixedOwner", "LongTarget", full_types, mixed_pairs);
+	check_box("SameInnerBox", "SameInnerOwner", "ShortTarget", full_types, same_inner_pairs);
+}
+
 TEST_CASE("Lockstep member pack expansion substitutes every referenced pack") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

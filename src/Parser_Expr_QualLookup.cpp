@@ -1554,7 +1554,7 @@ std::optional<OuterTemplateBinding> Parser::buildOuterBindingForOwner(StringHand
 	const size_t pair_count = std::min(
 		owner_context->param_names.size(),
 		owner_context->param_args().size());
-	if (pair_count == 0) {
+	if (pair_count == 0 && owner_context->bindings.empty()) {
 		return std::nullopt;
 	}
 	if (owner_context->param_names.size() != owner_context->param_args().size()) {
@@ -1623,6 +1623,15 @@ std::optional<OuterTemplateBinding> Parser::buildOuterBindingForOwner(StringHand
 		pattern_owner =
 			ancestor_it != getTypesByNameMap().end() ? ancestor_it->second : nullptr;
 	}
+	std::vector<TemplateParameterNode> recovered_params;
+	recovered_params.reserve(binding.params.size());
+	for (const ASTNode& parameter_node : binding.params) {
+		if (const TemplateParameterNode* parameter = tryGetTemplateParameterNode(parameter_node)) {
+			recovered_params.push_back(*parameter);
+		}
+	}
+	TemplateEnvironment environment = buildTemplateEnvironment(*owner_context);
+	populateOuterTemplateBinding(environment, recovered_params, binding);
 	return binding;
 }
 

@@ -43,6 +43,48 @@ static bool hasDependentMemberPack(const TypeInfo* type_info) {
 	});
 }
 
+static std::optional<ASTNode> copyResolvedMemberPackDeclaration(const ASTNode& pattern, size_t member_index,
+	std::span<const std::pair<size_t, ASTNode>> resolved_types, size_t& next_resolved, const StructTypeInfo& layout) {
+	if (next_resolved >= resolved_types.size() || resolved_types[next_resolved].first != member_index) return std::nullopt;
+	if (member_index >= layout.members.size()) throw InternalError("Missing instantiated member pack layout");
+	ASTNode declaration = ASTNode::emplace_node<DeclarationNode>(pattern.as<DeclarationNode>());
+	const TypeSpecifierNode& concrete = resolved_types[next_resolved++].second.as<TypeSpecifierNode>();
+	declaration.as<DeclarationNode>().set_type_node(concrete);
+	const StructMember& published = layout.members[member_index];
+	if (importCanonicalStructMemberType(requireFrontendContext().canonicalTypes(), concrete, published.is_array,
+		published.pointee_array_declarator, published.array_dimensions) != published.canonical_type_id) {
+		throw InternalError("Instantiated member pack syntax does not match its published canonical type");
+	}
+	return declaration;
+}
+
+static void populateEffectiveClassTemplateEnvironment(TemplateEnvironment& environment, const OuterTemplateBinding* outer_binding,
+	std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> local_args,
+	std::span<const TemplateParameterNode> effective_params, std::span<const TemplateTypeArg> effective_args,
+	bool includes_outer_prefix, size_t outer_prefix_count) {
+	if (outer_binding != nullptr) {
+		TemplateEnvironment outer_environment = buildTemplateEnvironment(*outer_binding);
+		if (includes_outer_prefix) {
+			size_t outer_argument_count = 0;
+			for (const TemplateBinding& binding : outer_environment.bindings) outer_argument_count += binding.args.size();
+			if (outer_argument_count > effective_args.size()) throw InternalError("Missing effective outer template arguments");
+			environment = buildTemplateEnvironment(template_params.subspan(outer_prefix_count), effective_args.subspan(outer_argument_count), nullptr);
+		} else {
+			environment = buildTemplateEnvironment(template_params, local_args, nullptr);
+		}
+		environment.bindings.insert(environment.bindings.begin(), outer_environment.bindings.begin(), outer_environment.bindings.end());
+	} else {
+		environment = buildTemplateEnvironment(template_params, local_args, nullptr);
+	}
+	for (TemplateBinding& binding : environment.bindings) {
+		for (const TemplateParameterNode& parameter : effective_params) {
+			if (parameter.nameHandle() != binding.name) continue;
+			for (TemplateTypeArg& argument : binding.args) argument = enrichTemplateArgForParameter(parameter, argument);
+			break;
+		}
+	}
+}
+
 struct EffectivePartialSpecBindings {
 	TemplateParameterVector params;
 	std::vector<TemplateTypeArg> args;
@@ -4652,21 +4694,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			size_t copied_member_index = 0;
 			size_t resolved_pack_index = 0;
 			for (const auto& member_decl : pattern_struct.members()) {
-				ASTNode substituted_member_decl = substituteTemplateParameters(
-					member_decl.declaration, effective_pattern_template_params, effective_pattern_template_args);
+				const auto resolved_declaration = copyResolvedMemberPackDeclaration(member_decl.declaration, copied_member_index,
+					resolved_member_pack_types, resolved_pack_index, *struct_info);
+				ASTNode substituted_member_decl = resolved_declaration.has_value() ? *resolved_declaration
+					: substituteTemplateParameters(member_decl.declaration, effective_pattern_template_params, effective_pattern_template_args);
 				const TypeSpecifierNode& original_type = member_decl.declaration.as<DeclarationNode>().type_specifier_node();
 				const TypeInfo* pattern_type = tryGetTypeInfo(original_type.type_index());
-				if (resolved_pack_index < resolved_member_pack_types.size() &&
-					resolved_member_pack_types[resolved_pack_index].first == copied_member_index) {
-					TypeSpecifierNode& concrete = substituted_member_decl.as<DeclarationNode>().type_specifier_node();
-					concrete = resolved_member_pack_types[resolved_pack_index++].second.as<TypeSpecifierNode>();
-					if (copied_member_index >= struct_info->members.size()) throw InternalError("Missing instantiated member pack layout");
-					const StructMember& published = struct_info->members[copied_member_index];
-					if (importCanonicalStructMemberType(requireFrontendContext().canonicalTypes(), concrete, published.is_array,
-						published.pointee_array_declarator, published.array_dimensions) != published.canonical_type_id) {
-						throw InternalError("Instantiated member pack syntax does not match its published canonical type");
-					}
-				} else if (pattern_type != nullptr && std::ranges::any_of(pattern_type->templateArgs(),
+				if (!resolved_declaration.has_value() && pattern_type != nullptr && std::ranges::any_of(pattern_type->templateArgs(),
 					[](const TypeInfo::TemplateArgInfo& argument) { return argument.is_pack && !argument.is_value; })) {
 					const TypeIndex concrete_index = substitute_template_parameter(original_type, effective_pattern_template_params,
 						effective_pattern_template_args, true);
@@ -6881,6 +6915,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			effective_template_args.push_back(outer_arg);
 		}
+		// The per-parameter view contains only a representative argument for a pack.
+		if (!outer_binding->all_args.empty() || !outer_binding->bindings.empty()) {
+			effective_template_args.assign(outer_binding->all_args.begin(), outer_binding->all_args.end());
+		}
 	}
 	for (const TemplateParameterNode& template_param : template_params) {
 		effective_template_params.push_back(template_param);
@@ -6888,13 +6926,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	if (outer_binding != nullptr &&
 		template_params_already_include_outer_prefix &&
 		template_args_to_use.size() + outer_prefix_count == template_params.size()) {
-		for (size_t i = 0; i < outer_prefix_count && i < outer_binding->param_args.size(); ++i) {
-			effective_template_args.push_back(outer_binding->param_args[i]);
-		}
+		const auto& outer_args = outer_binding->bindings.empty() && outer_binding->all_args.empty()
+			? outer_binding->param_args : outer_binding->all_args;
+		effective_template_args.insert(effective_template_args.end(), outer_args.begin(), outer_args.end());
 	}
 	for (const TemplateTypeArg& template_arg : template_args_to_use) {
 		effective_template_args.push_back(template_arg);
 	}
+	MonotonicScratchArena& binding_scratch = requireFrontendContext().scratchArena();
+	const ScratchArenaState binding_mark = binding_scratch.mark();
+	ScopeGuard binding_scope([&]() { binding_scratch.rollbackTo(binding_mark); });
+	TemplateEnvironment& effective_environment = *binding_scratch.allocateObject<TemplateEnvironment>();
+	populateEffectiveClassTemplateEnvironment(effective_environment, outer_binding, template_params, template_args_to_use,
+		effective_template_params, effective_template_args, template_params_already_include_outer_prefix, outer_prefix_count);
 	std::vector<TemplateTypeArg> effective_template_args_vector(
 		effective_template_args.begin(),
 		effective_template_args.end());
@@ -6921,15 +6965,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			return;
 		}
 
-		buildTemplateArgSubstitutionMaps(
-			effective_template_params,
-			effective_template_args,
-			[&](const TemplateParameterNode& tparam, const TemplateTypeArg& arg) {
-				return enrichTemplateArgForParameter(tparam, arg);
-			},
-			name_substitution_map,
-			pack_substitution_map,
-			&template_param_order);
+		buildTemplateArgSubstitutionMaps(effective_environment, name_substitution_map, pack_substitution_map, &template_param_order);
 
 		for (size_t i = 0; i < effective_template_params.size(); ++i) {
 			const TemplateParameterNode* tparam = tryGetTemplateParameterNode(effective_template_params[i]);
@@ -7117,21 +7153,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// evaluation can resolve template bindings without relying on ambient parser state.
 	// Use effective (outer + local) bindings when available; this avoids partial
 	// substitution in nested member-template contexts.
-	TemplateArgInfoVector instantiation_context_args_info =
-		collectEnrichedTemplateArgInfos(
-			effective_template_params,
-			std::span<const TemplateTypeArg>(
-				effective_template_args.data(),
-				effective_template_args.size()));
-	struct_type_info.setInstantiationContext(
-		collectParamNameHandles(
-			effective_template_params,
-			effective_template_args.size()),
-		collectParamTypeIndices(
-			effective_template_params,
-			effective_template_args.size()),
-		instantiation_context_args_info,
-		nullptr);
+	struct_type_info.setInstantiationContextFromEnvironment(effective_environment, effective_template_params, nullptr);
 
 	// Register class template pack sizes in persistent registry for member function template lookup
 	if (has_parameter_pack) {
@@ -8322,11 +8344,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
 	// Copy members from the template, substituting template parameters with concrete types
-	for (const auto& member_decl : class_decl.members()) {
+	std::vector<std::pair<size_t, ASTNode>> resolved_member_pack_types;
+	for (size_t member_index = 0; member_index < class_decl.members().size(); ++member_index) {
+		const auto& member_decl = class_decl.members()[member_index];
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 		const TypeSpecifierNode& type_spec = decl.type_specifier_node();
-		ASTNode full_substituted_type_node = substituteTemplateParameters(
-			decl.type_node(), effective_template_params, effective_template_args);
+		ASTNode full_substituted_type_node;
+		if (hasDependentMemberPack(tryGetTypeInfo(type_spec.type_index()))) {
+			MonotonicScratchArena& scratch = requireFrontendContext().scratchArena();
+			const ScratchArenaState scratch_mark = scratch.mark();
+			ScopeGuard scratch_scope([&]() { scratch.rollbackTo(scratch_mark); });
+			ExpressionSubstitutor* member_substitutor = scratch.allocateObject<ExpressionSubstitutor>(effective_environment, *this,
+				effective_template_params, effective_template_args);
+			member_substitutor->setCurrentOwnerTypeName(instantiated_name);
+			member_substitutor->setCurrentOwnerDeclaration(&class_decl);
+			full_substituted_type_node = emplace_node<TypeSpecifierNode>(member_substitutor->substituteTypeSpecifier(type_spec));
+		} else {
+			full_substituted_type_node = substituteTemplateParameters(decl.type_node(), effective_template_params, effective_template_args);
+		}
 
 		// Substitute template parameter if the member type is a template parameter
 		TypeIndex member_type_index = substitute_template_parameter(
@@ -8612,6 +8647,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			member_pointee_array_declarator, static_cast<int>(substituted_type_spec.pointer_depth()),
 			resolve_bitfield_width(member_decl, effective_template_params, effective_template_args),
 			getCanonicalFunctionPointerSignature(substituted_type_spec), member_decl.is_no_unique_address, substituted_type_spec.top_level_cv_qualifier());
+		if (hasDependentMemberPack(tryGetTypeInfo(type_spec.type_index()))) {
+			full_substituted_type_node.as<TypeSpecifierNode>() = substituted_type_spec;
+			resolved_member_pack_types.emplace_back(member_index, full_substituted_type_node);
+		}
 	}
 
 	// Skip member function instantiation - we only need type information for nested classes
@@ -11284,9 +11323,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	setOuterTemplateBindingsFromParams(
 		instantiated_struct_ref, effective_template_params, effective_template_args);
 
+	size_t copied_member_index = 0;
+	size_t resolved_pack_index = 0;
 	for (const auto& member_decl : class_decl.members()) {
-		ASTNode substituted_member_decl = substituteTemplateParameters(
-			member_decl.declaration, effective_template_params, effective_template_args);
+		const auto resolved_declaration = copyResolvedMemberPackDeclaration(member_decl.declaration, copied_member_index++,
+			resolved_member_pack_types, resolved_pack_index, *struct_info_ptr);
+		ASTNode substituted_member_decl = resolved_declaration.has_value() ? *resolved_declaration
+			: substituteTemplateParameters(member_decl.declaration, effective_template_params, effective_template_args);
 		if (substituted_member_decl.is<DeclarationNode>() &&
 			member_decl.declaration.is<DeclarationNode>()) {
 			materializeSubstitutedFunctionTypeMetadata(

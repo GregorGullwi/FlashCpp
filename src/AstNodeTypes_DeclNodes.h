@@ -18,6 +18,8 @@ struct StructuralClassValue;
 }
 struct StructTypeInfo;
 struct TypeInfo;
+struct TemplateEnvironment;
+class TemplateParameterNode;
 const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index);
 struct ImplicitSameTypeConstructors { ASTNode copy_constructor; ASTNode move_constructor; };
 struct ImplicitSameTypeAssignments { ASTNode copy_assignment; ASTNode move_assignment; };
@@ -1419,6 +1421,8 @@ struct TypeInfo {
 								 TemplateVector<TypeIndex, 4> parameter_type_indices,
 								 TemplateArgInfoVector param_args,
 								 const InstantiationContext* parent);
+	void setInstantiationContextFromEnvironment(const TemplateEnvironment& environment, std::span<const TemplateParameterNode> params,
+		const InstantiationContext* parent);
 
 	// Returns the TypeCategory embedded in type_index_.
 	TypeCategory category() const {

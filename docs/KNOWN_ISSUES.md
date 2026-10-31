@@ -32,19 +32,14 @@ its union fields. Reuse the normal class-member parser before publishing these
 specializations' field schemas; layout publication cannot recover absent declarations.
 Primary templates and their ordinary nested classes retain these static facts.
 
-## Class-template-owned member-template data-member packs lose concrete TypeInfo
+## Remaining dependent member-template field forms need concrete TypeInfo
 
-A data-member type such as `Owner<T>::List<Head, Tail...>` inside a class-template
-partial specialization can remain a dependent member placeholder even when the
-owner is concrete. Direct member access and method calls on that field then lower
-as free functions, and same member arguments under different owners can collapse
-to one concrete TypeInfo. Canonical publication composes
-`memberTemplateSpecialization(member_primary, owner, arguments)` when the
-materialized member TypeInfo is available, and member field import now falls back
-to that resolved TypeInfo when the syntax carries no specialization stamp. The
-parser's member-template instantiation path still must compose the instantiated
-owner arguments before assigning a pack-expanded field TypeInfo. Keep these
-pack-expanded fields fail-closed until that path is fixed.
+Direct type packs, supported nontrivial type-pack patterns, and lockstep
+expansions across enclosing and primary member-template packs now materialize
+concrete field TypeInfo and canonical target owners. Alias/non-type partial
+patterns, mixed scalar/pack patterns, and inner expansions still need grouped
+substitution and complete canonical publication. Keep those unsupported fields
+fail-closed; the lockstep follow-up entry below records the remaining paths.
 
 ## Remaining structural NTTP shapes need canonical value import
 
@@ -226,15 +221,23 @@ A nested alias chain that expands two dependent type packs into one member
 template-id can materialize the wrong argument count. This remains deferred
 with the nontrivial and multi-pack member-template expansion work.
 
-## Member-template lockstep expansion needs pack-aware bindings
+## Member-template lockstep scanning, deduction, and rollback remain incomplete
 
-A lockstep member-template expansion such as `Pair<Tail, Other>...` now defers
-mixed scalar/pack patterns and inner pack expansions instead of substituting a
-same-spelling scalar for an unbound pack. Effective owner bindings can still
-collapse an enclosing pack to a scalar, and partial-specialization deduction can
-leave a second pack empty, so end-to-end fields that mix packs from different
-template scopes remain deferred until the binding and deduction paths share one
-pack-aware representation.
+Effective primary owner bindings retain complete enclosing and local packs,
+including empty and single-element packs. Member-template fields such as
+`Target<T>::List<Pair<Outer, Inner>...>` now expand end to end and preserve the
+canonical target owner and ordered Pair arguments. Mixed scalar/pack patterns
+and inner expansions still stay dependent; partial-specialization deduction
+can leave a second pack empty. Alias and variable-template substitution still
+have legacy flattened-input adapters that need migration to grouped bindings.
+A namespace-scope target such as `List<Pair<Outer, Inner>...>` uses the separate
+stored-argument materializer and still needs the shared expansion layer.
+A nested member-template declaration with a pack-expanded base such as
+`List : U...` is rejected by the parser; this syntax gap is separate from
+owner binding. Per-element substitution can still publish wrapper
+instantiations before a later element fails, and unequal pack lengths stay
+dependent instead of producing the required ill-formed diagnostic. These
+remain explicit follow-up work, not completed C++20 support.
 
 ## SEH finally funclet termination is conservative in return-flow diagnostics
 

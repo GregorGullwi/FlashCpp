@@ -243,70 +243,18 @@ static void buildEffectiveVariableTemplateSubstitutionInputs(
 		effective_template_args_storage.size());
 }
 
-static TemplateParameterNode rebuildOuterTemplateParameterForSubstitution(
-	StringHandle param_name,
-	const TemplateTypeArg& param_arg) {
-	Token param_token(
-		Token::Type::Identifier,
-		StringTable::getStringView(param_name),
-		0,
-		0,
-		0);
-	if (param_arg.is_value) {
-		TypeSpecifierNode param_type(
-			param_arg.type_index.withCategory(param_arg.typeEnum()),
-			get_type_size_bits(param_arg.typeEnum()),
-			param_token,
-			CVQualifier::None,
-			ReferenceQualifier::None);
-		return TemplateParameterNode(
-			param_name,
-			param_type,
-			param_token);
+static void appendMergedOuterTemplateBinding(const OuterTemplateBinding& source_binding, OuterTemplateBinding& merged_binding) {
+	TemplateEnvironment environment = buildTemplateEnvironment(merged_binding);
+	const TemplateEnvironment source = buildTemplateEnvironment(source_binding);
+	std::vector<TemplateParameterNode> parameters;
+	for (const ASTNode& node : merged_binding.params) {
+		if (const TemplateParameterNode* parameter = tryGetTemplateParameterNode(node)) parameters.push_back(*parameter);
 	}
-
-	TemplateParameterNode param_node(param_name, param_token);
-	if (param_arg.type_index.is_valid()) {
-		param_node.set_registered_type_index(
-			param_arg.type_index.withCategory(param_arg.typeEnum()));
+	for (const ASTNode& node : source_binding.params) {
+		if (const TemplateParameterNode* parameter = tryGetTemplateParameterNode(node)) parameters.push_back(*parameter);
 	}
-	return param_node;
-}
-
-static void appendMergedOuterTemplateBinding(
-	const OuterTemplateBinding& source_binding,
-	OuterTemplateBinding& merged_binding) {
-	const size_t pair_count = std::min(
-		source_binding.param_names.size(),
-		source_binding.param_args.size());
-	if (pair_count == 0) {
-		return;
-	}
-
-	size_t overlap = 0;
-	const size_t overlap_limit = std::min(merged_binding.param_names.size(), pair_count);
-	for (; overlap < overlap_limit; ++overlap) {
-		if (merged_binding.param_names[overlap] != source_binding.param_names[overlap]) {
-			break;
-		}
-	}
-
-	for (size_t i = overlap; i < pair_count; ++i) {
-		TemplateParameterNode rebuilt_param = rebuildOuterTemplateParameterForSubstitution(
-			source_binding.param_names[i],
-			source_binding.param_args[i]);
-		if (i < source_binding.params.size()) {
-			if (const TemplateParameterNode* source_param =
-					tryGetTemplateParameterNode(source_binding.params[i]);
-				source_param != nullptr) {
-				rebuilt_param = *source_param;
-			}
-		}
-		merged_binding.params.push_back(ASTNode::emplace_node<TemplateParameterNode>(rebuilt_param));
-		merged_binding.param_names.push_back(source_binding.param_names[i]);
-		merged_binding.param_args.push_back(source_binding.param_args[i]);
-		merged_binding.all_args.push_back(source_binding.param_args[i]);
-	}
+	environment.overlayBindings(source);
+	populateOuterTemplateBinding(environment, parameters, merged_binding);
 }
 
 TemplateTypeArg templateTypeArgFromEvalResult(const ConstExpr::EvalResult& eval_result) {
@@ -3713,31 +3661,13 @@ OuterTemplateBinding Parser::buildAccumulatedOuterTemplateBinding(
 
 void Parser::buildAccumulatedOuterTemplateBindingInto(const TypeInfo* owner_type_info, const OuterTemplateBinding* inherited_binding,
 	StringHandle fallback_binding_lookup_name, OuterTemplateBinding& binding) {
-	auto overlay_binding =
-		[&](StringHandle param_name, const TemplateTypeArg& param_arg) {
-		for (size_t i = 0; i < binding.param_names.size();) {
-			if (binding.param_names[i] == param_name) {
-				binding.param_names.erase(binding.param_names.begin() + i);
-				binding.param_args.erase(binding.param_args.begin() + i);
-				continue;
-			}
-			++i;
-		}
-		binding.param_names.push_back(param_name);
-		binding.param_args.push_back(param_arg);
-	};
-	auto overlay_existing_binding =
-		[&](const OuterTemplateBinding* existing_binding) {
-		if (existing_binding == nullptr) {
-			return;
-		}
-		for (size_t i = 0;
-			 i < existing_binding->param_names.size() &&
-			 i < existing_binding->param_args.size();
-			 ++i) {
-			overlay_binding(
-				existing_binding->param_names[i],
-				existing_binding->param_args[i]);
+	TemplateEnvironment environment;
+	std::vector<TemplateParameterNode> parameters;
+	auto overlay_existing_binding = [&](const OuterTemplateBinding* existing_binding) {
+		if (existing_binding == nullptr) return;
+		environment.overlayBindings(buildTemplateEnvironment(*existing_binding));
+		for (const ASTNode& parameter_node : existing_binding->params) {
+			if (const TemplateParameterNode* parameter = tryGetTemplateParameterNode(parameter_node)) parameters.push_back(*parameter);
 		}
 	};
 
@@ -3767,20 +3697,21 @@ void Parser::buildAccumulatedOuterTemplateBindingInto(const TypeInfo* owner_type
 		}
 	}
 
-	if (owner_type_info != nullptr &&
-		owner_type_info->hasInstantiationContext()) {
-		const TypeInfo::InstantiationContext* instantiation_context =
-			owner_type_info->instantiationContext();
-		for (size_t i = 0;
-			 instantiation_context != nullptr &&
-			 i < instantiation_context->param_names.size() &&
-			 i < instantiation_context->param_args().size();
-			 ++i) {
-			overlay_binding(
-				instantiation_context->param_names[i],
-				toTemplateTypeArg(instantiation_context->param_args()[i]));
+	if (owner_type_info != nullptr && owner_type_info->isTemplateInstantiation()) {
+		const StringHandle primary_name = gNamespaceRegistry.buildQualifiedIdentifier(
+			owner_type_info->sourceNamespace(), owner_type_info->baseTemplateName());
+		auto primary = gTemplateRegistry.lookupTemplate(primary_name);
+		if (!primary.has_value()) primary = gTemplateRegistry.lookupTemplate(owner_type_info->baseTemplateName());
+		if (primary.has_value() && primary->is<TemplateClassDeclarationNode>()) {
+			for (const TemplateParameterNode& parameter : primary->as<TemplateClassDeclarationNode>().template_parameters()) {
+				parameters.push_back(parameter);
+			}
 		}
 	}
+	if (owner_type_info != nullptr && owner_type_info->hasInstantiationContext()) {
+		environment.overlayBindings(buildTemplateEnvironment(*owner_type_info->instantiationContext()));
+	}
+	populateOuterTemplateBinding(environment, parameters, binding);
 }
 
 std::optional<ASTNode> Parser::instantiateLazyMemberForCanonicalOwner(

@@ -84,6 +84,9 @@ struct OutOfLineMemberFunction {
 // Stored when a TemplateFunctionDeclarationNode is copied during class template instantiation.
 // Used during inner template instantiation to resolve outer template params (e.g., T→int).
 struct OuterTemplateBinding {
+	// Authoritative grouped bindings when nonempty. The flattened fields below
+	// remain derived compatibility views, removed with the legacy engine at 8A.
+	std::vector<TemplateBinding> bindings;
 	TemplateParamNameVector param_names; // Outer param names (e.g., ["T"])
 	TemplateArgumentVector param_args; // Concrete types (e.g., [int])
 	TemplateAstNodeVector params; // Original outer template params, preserving variadic/kind metadata

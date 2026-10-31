@@ -8,16 +8,18 @@ implementation history belongs in git and the regression suite.
 
 ## Next 3A slice
 
-**Bind every pack referenced by a lockstep member-template expansion.**
-The substitution layer now expands a pattern such as `Pair<Tail, Other>...` in
-lockstep when every referenced pack is present in the effective binding.
-Pattern deduction and effective owner bindings still collapse an enclosing pack
-to a scalar or leave a second partial-specialization pack empty, so end-to-end
-fields that mix packs from different template scopes remain deferred. Preserve
-each referenced pack through pattern deduction and effective binding before the
-expansion runs. Callable packs, non-type-parameter/alias/trailing-requires
-member partials, opaque dependent values, and nested method emission remain
-separate work; do not add evaluator or selection rules as part of this slice.
+**Share pack scanning and expansion across materialization paths.**
+Effective owner bindings now retain grouped `TemplateBinding` records, including
+empty and single-element packs. Primary member-template field substitution and
+its type-owned instantiation context consume those groups before any legacy
+flattening. Layout and cloned declarations share the resolved member-pack type.
+Cross-scope `Pair<Outer, Inner>...` fields expand end to end with
+concrete canonical target owners and ordered arguments. The next slice must
+share pack-reference scanning and iteration across member fields, namespace
+targets, deferred bases, and value packs, distinguishing inner expansions from
+the current expansion. Partial-specialization deduction still leaves a second
+pack empty. Transactional per-element substitution and pack-length diagnostics
+remain separate work; this does not complete boundary 3A or 8A.
 
 Direct type-pack data members now retain empty/full packs, written CV/pointer
 wrappers, enclosing-owner identity, and canonical subobject schemas. Coverage is
@@ -37,8 +39,17 @@ every referenced pack` test supplies two packs explicitly, verifies both
 resulting `Pair` arguments, and checks the canonical owner and member-argument
 identities. A same-spelling dependent name that is only available as a scalar,
 or a pack expanded by an inner expansion, keeps the field dependent instead of
-materializing a wrong concrete type. End-to-end binding of packs from distinct
-template scopes and mixed scalar/pack element patterns remain the next slice.
+materializing a wrong concrete type. The source regression
+`test_enclosing_owner_pack_lockstep_member_field_ret0.cpp` and native canonical
+checks cover empty, single-element, and mixed-type enclosing/member packs,
+owner-sensitive layout, and ordered wrapper identities. `OuterTemplateBinding`
+retains the existing binding representation in an out-of-line vector (24 bytes
+of added record storage); its flattened fields are derived compatibility views.
+Argument-list storage sharing also preserves exact legacy type-index projections
+when semantic builtin identity considers indexed and unindexed arguments equal.
+The adapter and spelling-based lookup remain scheduled for deletion at 8A.
+Mixed scalar/pack element patterns, namespace targets, and inner expansions
+remain deferred.
 
 ## Current state
 
@@ -215,8 +226,8 @@ These seed adjacent slices; the authoritative inventory is
   namespace/non-template-class targets. Single nontrivial type-pack expansions
   substitute the generic element expression per concrete element, and lockstep
   expansion substitutes every referenced pack when the effective binding contains
-  all of them. End-to-end binding of packs from distinct template scopes,
-  callable-pack, non-type-parameter/alias/trailing-requires member partials,
+  all of them, including enclosing and local packs retained as separate binding groups.
+  Callable-pack, non-type-parameter/alias/trailing-requires member partials,
   nested method emission, and other dependent owner/member arguments remain
   deferred.
 - Non-null object pointer target identity, ambiguous/virtual-base member
