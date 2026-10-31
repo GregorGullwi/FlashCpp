@@ -7968,22 +7968,99 @@ template<class T> struct Holder {
 	CHECK(table.templateArgumentType(argument_link) == imported_pair_double_long.type);
 	CHECK_FALSE(table.templateArgumentNext(argument_link));
 
-	// A pack name that is only available as a scalar must not be used for the
-	// expansion; the whole field stays dependent instead of materializing a
-	// wrong element type.
-	TemplateArgSubstitutionMap guarded_scalar_args;
-	guarded_scalar_args["T"] = TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Int));
-	guarded_scalar_args["Other"] = long_arg;
-	TemplateArgPackSubstitutionMap guarded_pack_args;
-	guarded_pack_args[StringTable::getOrInternStringHandle("Tail")] = {char_arg, double_arg};
-	const std::string_view guarded_order[] = {"T", "Tail", "Other"};
-	ExpressionSubstitutor guarded_substitutor(guarded_scalar_args, guarded_pack_args, parser, guarded_order);
-	const TypeSpecifierNode guarded = guarded_substitutor.substituteTypeSpecifier(field);
-	const TypeInfo* guarded_info = tryGetTypeInfo(guarded.type_index());
-	const bool guarded_is_dependent = guarded_info == nullptr || guarded_info->isDependentPlaceholder();
-	CHECK(guarded_is_dependent);
+	// A scalar template parameter inside the pattern expands alongside the pack.
+	TemplateArgSubstitutionMap mixed_scalar_args;
+	mixed_scalar_args["T"] = TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Int));
+	mixed_scalar_args["Other"] = long_arg;
+	TemplateArgPackSubstitutionMap mixed_pack_args;
+	mixed_pack_args[StringTable::getOrInternStringHandle("Tail")] = {char_arg, double_arg};
+	const std::string_view mixed_order[] = {"T", "Tail", "Other"};
+	ExpressionSubstitutor mixed_substitutor(mixed_scalar_args, mixed_pack_args, parser, mixed_order);
+	const TypeSpecifierNode mixed = mixed_substitutor.substituteTypeSpecifier(field);
+	const TypeInfo* mixed_list = tryGetTypeInfo(mixed.type_index());
+	REQUIRE(mixed_list != nullptr);
+	CHECK(!mixed_list->isDependentMemberType());
+	REQUIRE(mixed_list->templateArgs().size() == 2);
+	const TypeInfo* mixed_first = tryGetTypeInfo(mixed_list->templateArgs()[0].type_index);
+	const TypeInfo* mixed_second = tryGetTypeInfo(mixed_list->templateArgs()[1].type_index);
+	REQUIRE(mixed_first != nullptr);
+	REQUIRE(mixed_second != nullptr);
+	REQUIRE(mixed_first->templateArgs().size() == 2);
+	REQUIRE(mixed_second->templateArgs().size() == 2);
+	CHECK(mixed_first->templateArgs()[0].type_index == nativeTypeIndex(TypeCategory::Char));
+	CHECK(mixed_first->templateArgs()[1].type_index == nativeTypeIndex(TypeCategory::LongLong));
+	CHECK(mixed_second->templateArgs()[0].type_index == nativeTypeIndex(TypeCategory::Double));
+	CHECK(mixed_second->templateArgs()[1].type_index == nativeTypeIndex(TypeCategory::LongLong));
 }
 
+TEST_CASE("Mixed scalar and pack member fields preserve canonical owners") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream fixture("tests/test_lockstep_mixed_scalar_pack_member_field_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	code.append(R"(
+using ShortOwner = Owner<short>;
+using LongOwner = Owner<long long>;
+using ShortBox = Holder<short>::Box<char, int, Payload>;
+using LongBox = Holder<long long>::Box<char, int, Payload>;
+)");
+	CompileContext compile_context;
+	compile_context.setInputFile("lockstep_mixed_scalar_pack.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto imported_alias = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const auto pair_type = [&](TemplateTypeArg first, TemplateTypeArg second) {
+		const TemplateArgumentVector arguments{first, second};
+		const auto instance = template_engine.materializeTemplateInstantiationForLookup("Pair", arguments);
+		REQUIRE(instance.resolved_type_info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *instance.resolved_type_info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const auto field_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const ResolvedAliasTypeInfo resolved = resolveAliasTypeInfo(info->registeredTypeIndex());
+		const StructTypeInfo* record = tryGetStructTypeInfo(resolved.type_index);
+		REQUIRE(record != nullptr);
+		REQUIRE(record->declaration_node != nullptr);
+		REQUIRE(record->members.size() == 1);
+		const TypeSpecifierNode& syntax = record->declaration_node->members()[0].declaration.as<DeclarationNode>().type_specifier_node();
+		const TypeId field = importCanonicalStructMemberType(table, syntax);
+		REQUIRE(field);
+		CHECK(record->members[0].canonical_type_id == field);
+		return field;
+	};
+	const TypeId short_field = field_type("ShortBox");
+	const TypeId long_field = field_type("LongBox");
+	CHECK(short_field != long_field);
+	CHECK(table.templateSpecializationOwner(short_field) == imported_alias("ShortOwner"));
+	CHECK(table.templateSpecializationOwner(long_field) == imported_alias("LongOwner"));
+	const TypeInfo* payload_info = findTypeByName(StringTable::getOrInternStringHandle("Payload"));
+	REQUIRE(payload_info != nullptr);
+	const TypeId short_arguments = table.templateSpecializationArguments(short_field);
+	REQUIRE(short_arguments);
+	CHECK(table.templateArgumentType(short_arguments) ==
+		pair_type(TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Char)), TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Int))));
+	const TypeId second_argument = table.templateArgumentNext(short_arguments);
+	REQUIRE(second_argument);
+	CHECK(table.templateArgumentType(second_argument) ==
+		pair_type(TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Char)), TemplateTypeArg::makeType(payload_info->registeredTypeIndex())));
+	CHECK_FALSE(table.templateArgumentNext(second_argument));
+}
 TEST_CASE("Member template specialization syntax retains its instantiated owner") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

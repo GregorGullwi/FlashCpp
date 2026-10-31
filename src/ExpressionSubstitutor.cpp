@@ -1547,12 +1547,6 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 			StringHandle candidate;
 			if (nested.dependent_name.isValid() && pack_map_.find(nested.dependent_name) != pack_map_.end()) {
 				candidate = nested.dependent_name;
-			} else if (nested.dependent_name.isValid() && param_map_.find(StringTable::getStringView(nested.dependent_name)) != param_map_.end()) {
-				// A template parameter that is bound only as a scalar may be a pack
-				// that the effective binding collapsed. Expanding with that scalar
-				// would be wrong, so keep the whole expansion deferred.
-				unsupported = true;
-				continue;
 			} else if (!nested.is_value && nested.type_index.is_valid()) {
 				const TypeInfo* nested_info = tryGetTypeInfo(nested.type_index);
 				if (nested_info != nullptr && nested_info->name().isValid() && pack_map_.find(nested_info->name()) != pack_map_.end()) {

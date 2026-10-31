@@ -36,8 +36,9 @@ Primary templates and their ordinary nested classes retain these static facts.
 
 Direct type packs, supported nontrivial type-pack patterns, and lockstep
 expansions across enclosing and primary member-template packs now materialize
-concrete field TypeInfo and canonical target owners. Alias/non-type partial
-patterns, mixed scalar/pack patterns, and inner expansions still need grouped
+concrete field TypeInfo and canonical target owners. Mixed scalar/pack lockstep
+patterns are supported when every referenced pack is bound and concrete.
+Alias/non-type partial patterns and inner expansions still need grouped
 substitution and complete canonical publication. Keep those unsupported fields
 fail-closed; the lockstep follow-up entry below records the remaining paths.
 
@@ -227,7 +228,8 @@ Effective primary owner bindings retain complete enclosing and local packs,
 including empty and single-element packs. Member-template fields such as
 `Target<T>::List<Pair<Outer, Inner>...>` now expand end to end and preserve the
 canonical target owner and ordered Pair arguments. Mixed scalar/pack patterns
-and inner expansions still stay dependent; partial-specialization deduction
+now reuse the scalar argument across the pack expansion; inner expansions still
+stay dependent; partial-specialization deduction
 can leave a second pack empty. Alias and variable-template substitution still
 have legacy flattened-input adapters that need migration to grouped bindings.
 A namespace-scope target such as `List<Pair<Outer, Inner>...>` uses the separate
