@@ -52,6 +52,7 @@ struct TemplateEnvironment {
 
 	const TemplateTypeArg* findOne(StringHandle name) const;
 	std::span<const TemplateTypeArg> findPack(StringHandle name) const;
+	void overlayBindings(const TemplateEnvironment& source);
 };
 
 struct TemplatePackExpansionState {
@@ -127,6 +128,8 @@ TemplateEnvironment buildTemplateEnvironment(
 TemplateEnvironment buildTemplateEnvironment(const TemplateEnvironmentSnapshot& snapshot);
 TemplateEnvironment buildTemplateEnvironment(const OuterTemplateBinding& binding);
 TemplateEnvironment buildTemplateEnvironment(const TypeInfo::InstantiationContext& context);
+void populateOuterTemplateBinding(const TemplateEnvironment& environment, std::span<const TemplateParameterNode> params,
+	OuterTemplateBinding& out_binding);
 
 void populateTemplateInstantiationContext(TemplateInstantiationContext& context, std::span<const TemplateParameterNode> params,
 	std::span<const TemplateTypeArg> args, const TemplateEnvironment* parent, TemplateSubstitutionFailurePolicy failure_policy);

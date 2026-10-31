@@ -1103,6 +1103,25 @@ struct DeferredBasePackExpansionBindingInfo {
 	bool invalid = false;
 };
 
+// Adapt retained bindings without re-inferring boundaries between adjacent or empty packs.
+inline void buildTemplateArgSubstitutionMaps(const TemplateEnvironment& environment, TemplateArgSubstitutionMap& name_substitution_map,
+	TemplateArgPackSubstitutionMap& pack_substitution_map, std::vector<std::string_view>* template_param_order) {
+	std::vector<const TemplateEnvironment*> scopes;
+	for (const TemplateEnvironment* scope = &environment; scope != nullptr; scope = scope->parent) scopes.push_back(scope);
+	for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+		for (const TemplateBinding& binding : (*scope)->bindings) {
+			if (template_param_order != nullptr) template_param_order->push_back(binding.name.view());
+			if (binding.is_pack) {
+				name_substitution_map.erase(binding.name.view());
+				pack_substitution_map[binding.name].assign(binding.args.begin(), binding.args.end());
+			} else {
+				pack_substitution_map.erase(binding.name);
+				if (!binding.args.empty()) name_substitution_map[binding.name.view()] = binding.args.front();
+			}
+		}
+	}
+}
+
 // Build the ordinary template-parameter substitution maps used by deferred base
 // instantiation. `transform_scalar_arg` can enrich scalar arguments before they
 // are stored in the name map, while variadic packs remain grouped in the pack

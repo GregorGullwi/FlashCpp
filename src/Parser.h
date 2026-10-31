@@ -2636,6 +2636,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		const ArgContainer& template_args,
 		OuterTemplateBinding& out_binding) const {
 		out_binding.param_names.clear();
+		out_binding.bindings.clear();
 		out_binding.param_args.clear();
 		out_binding.params.clear();
 		out_binding.all_args.clear();
@@ -2665,6 +2666,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 			nullptr);
 
 		for (const TemplateBinding& binding : environment.bindings) {
+			out_binding.bindings.push_back(binding);
 			out_binding.param_names.push_back(binding.name);
 			if (binding.is_pack) {
 				if (!binding.args.empty()) {

@@ -28,6 +28,18 @@ std::span<const TemplateTypeArg> TemplateEnvironment::findPack(StringHandle name
 	return parent != nullptr ? parent->findPack(name) : std::span<const TemplateTypeArg>{};
 }
 
+void TemplateEnvironment::overlayBindings(const TemplateEnvironment& source) {
+	std::vector<const TemplateEnvironment*> scopes;
+	for (const TemplateEnvironment* scope = &source; scope != nullptr; scope = scope->parent) scopes.push_back(scope);
+	for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+		for (const TemplateBinding& entry : (*scope)->bindings) {
+			auto existing = std::find_if(bindings.begin(), bindings.end(), [&](const TemplateBinding& prior) { return prior.name == entry.name; });
+			if (existing == bindings.end()) bindings.push_back(entry);
+			else *existing = entry;
+		}
+	}
+}
+
 TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 	TypeInfo::TemplateArgInfo info;
 	info.type_index = arg.type_index; // carries both index and TypeCategory
@@ -441,6 +453,15 @@ TemplateEnvironment buildTemplateEnvironment(const TemplateEnvironmentSnapshot& 
 }
 
 TemplateEnvironment buildTemplateEnvironment(const OuterTemplateBinding& binding) {
+	if (!binding.bindings.empty()) {
+		TemplateEnvironment environment;
+		environment.bindings.reserve(binding.bindings.size());
+		for (const TemplateBinding& retained_binding : binding.bindings) {
+			environment.bindings.push_back(retained_binding);
+		}
+		return environment;
+	}
+
 	TemplateParameterVector params;
 	params.reserve(binding.params.size());
 	for (const ASTNode& param_node : binding.params) {
@@ -491,6 +512,72 @@ TemplateEnvironment buildTemplateEnvironment(const OuterTemplateBinding& binding
 		i = next_index;
 	}
 	return environment;
+}
+
+static TemplateParameterNode makeOuterTemplateParameter(const TemplateBinding& binding, const TemplateTypeArg* first_arg) {
+	const Token token(Token::Type::Identifier, StringTable::getStringView(binding.name), 0, 0, 0);
+	TemplateParameterNode parameter(binding.name, token);
+	if (binding.kind == TemplateParameterKind::NonType) {
+		if (first_arg == nullptr) {
+			throw InternalError("Cannot rebuild non-type template parameter without its declared type");
+		}
+		const TypeIndex parameter_type_index = first_arg->type_index.is_valid() ? first_arg->type_index : nativeTypeIndex(first_arg->typeEnum());
+		if (!parameter_type_index.is_valid()) throw InternalError("Non-type template argument has no concrete declared type");
+		const TypeSpecifierNode parameter_type(parameter_type_index, SizeInBits{get_type_size_bits(first_arg->typeEnum())}, token,
+			CVQualifier::None, ReferenceQualifier::None);
+		parameter = TemplateParameterNode(binding.name, parameter_type, token);
+	} else if (binding.kind == TemplateParameterKind::Template) {
+		throw InternalError("Cannot rebuild template-template parameter without its nested parameter list");
+	}
+	parameter.set_variadic(binding.is_pack);
+	return parameter;
+}
+
+void populateOuterTemplateBinding(const TemplateEnvironment& environment, std::span<const TemplateParameterNode> params,
+	OuterTemplateBinding& out_binding) {
+	out_binding.bindings.clear();
+	out_binding.param_names.clear();
+	out_binding.param_args.clear();
+	out_binding.params.clear();
+	out_binding.all_args.clear();
+
+	TemplateVector<const TemplateEnvironment*, 4> chain;
+	for (const TemplateEnvironment* current = &environment; current != nullptr; current = current->parent) {
+		chain.push_back(current);
+	}
+	size_t binding_count = 0;
+	for (const TemplateEnvironment* scope : chain) {
+		binding_count += scope->bindings.size();
+	}
+	out_binding.bindings.reserve(binding_count);
+	out_binding.param_names.reserve(binding_count);
+	out_binding.param_args.reserve(binding_count);
+	out_binding.params.reserve(binding_count);
+	for (size_t scope_index = chain.size(); scope_index > 0; --scope_index) {
+		for (const TemplateBinding& binding : chain[scope_index - 1]->bindings) {
+			out_binding.bindings.push_back(binding);
+			out_binding.param_names.push_back(binding.name);
+
+			const TemplateTypeArg* first_arg = binding.args.empty() ? nullptr : &binding.args.front();
+			if (first_arg != nullptr) {
+				out_binding.param_args.push_back(*first_arg);
+			} else {
+				out_binding.param_args.push_back(TemplateTypeArg());
+			}
+			for (const TemplateTypeArg& arg : binding.args) {
+				out_binding.all_args.push_back(arg);
+			}
+
+			const auto param = std::find_if(params.begin(), params.end(), [&](const TemplateParameterNode& candidate) {
+				return candidate.nameHandle() == binding.name && candidate.kind() == binding.kind;
+			});
+			TemplateParameterNode parameter = param != params.end() ? *param : makeOuterTemplateParameter(binding, first_arg);
+			if (parameter.is_variadic() != binding.is_pack) {
+				parameter.set_variadic(binding.is_pack);
+			}
+			out_binding.params.push_back(ASTNode::emplace_node<TemplateParameterNode>(std::move(parameter)));
+		}
+	}
 }
 
 TemplateEnvironment buildTemplateEnvironment(const TypeInfo::InstantiationContext& context) {

@@ -7,6 +7,7 @@
 #include "NameMangling.h"
 #include "NamespaceRegistry.h"
 #include "TemplateExpressionEquivalence.h"
+#include "TemplateEnvironment.h"
 #include "Log.h"
 #include <algorithm>
 #include <cstring>
@@ -346,6 +347,10 @@ uint32_t storeTypeInfoTemplateArgs(TemplateArgInfoVector args) {
 			++gTypeInfoTemplateArgListInternStats.equality_checks;
 			const TemplateArgInfoVector& existing_args =
 				gTypeInfoTemplateArgLists[candidate.list_index];
+			// Semantic builtin equality ignores the legacy TypeIndex projection. Storage
+			// sharing must preserve it so an indexed argument cannot reuse an unindexed list.
+			if (!std::equal(args.begin(), args.end(), existing_args.begin(), existing_args.end(),
+				[](const auto& argument, const auto& existing) { return argument.type_index == existing.type_index; })) continue;
 			if (FlashCpp::equalTemplateArgInfoListIdentity(
 					args_span,
 					std::span<const TypeInfo::TemplateArgInfo>(
@@ -2309,6 +2314,49 @@ void TypeInfo::setInstantiationContext(TemplateParamNameVector param_names,
 		binding.is_pack = (binding.args.size() > 1);
 		ctx.bindings.push_back(std::move(binding));
 	}
+	instantiation_context_index_ = storeInstantiationContext(std::move(ctx));
+}
+
+void TypeInfo::setInstantiationContextFromEnvironment(const TemplateEnvironment& environment, std::span<const TemplateParameterNode> params,
+	const InstantiationContext* parent) {
+	if (environment.parent != nullptr) {
+		throw InternalError("TypeInfo::setInstantiationContext requires a flattened template environment");
+	}
+
+	InstantiationContext ctx;
+	ctx.parent = parent;
+	ctx.bindings.reserve(environment.bindings.size());
+	TemplateParamNameVector legacy_param_names;
+	TemplateArgInfoVector legacy_param_args;
+	size_t legacy_arg_count = 0;
+	for (const TemplateBinding& binding : environment.bindings) {
+		legacy_arg_count += binding.args.size();
+	}
+	legacy_param_names.reserve(legacy_arg_count);
+	legacy_param_args.reserve(legacy_arg_count);
+
+	for (const TemplateBinding& environment_binding : environment.bindings) {
+		InstantiationContext::Binding binding;
+		binding.name = environment_binding.name;
+		binding.kind = static_cast<uint8_t>(environment_binding.kind);
+		binding.is_pack = environment_binding.is_pack;
+		for (const TemplateParameterNode& param : params) {
+			if (param.nameHandle() == environment_binding.name) {
+				binding.parameter_type_index = param.registered_type_index();
+				break;
+			}
+		}
+		binding.args.reserve(environment_binding.args.size());
+		for (const TemplateTypeArg& arg : environment_binding.args) {
+			TypeInfo::TemplateArgInfo arg_info = toTemplateArgInfo(arg);
+			binding.args.push_back(arg_info);
+			legacy_param_names.push_back(environment_binding.name);
+			legacy_param_args.push_back(std::move(arg_info));
+		}
+		ctx.bindings.push_back(std::move(binding));
+	}
+	ctx.param_names = std::move(legacy_param_names);
+	ctx.param_args_index = storeTypeInfoTemplateArgs(std::move(legacy_param_args));
 	instantiation_context_index_ = storeInstantiationContext(std::move(ctx));
 }
 
