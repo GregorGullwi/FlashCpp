@@ -823,6 +823,9 @@ struct TemplateFunctionSignatureHandle {
 	friend bool operator==(TemplateFunctionSignatureHandle, TemplateFunctionSignatureHandle) = default;
 };
 
+static_assert(sizeof(TemplateValueIdentityHandle) == sizeof(uint32_t));
+static_assert(sizeof(TemplateFunctionSignatureHandle) == sizeof(uint32_t));
+
 // Persistent because TemplateTypeArg payloads are retained in TypeInfo,
 // TemplateRegistry, instantiation keys, AST, and mangling.
 extern ChunkedVector<NonTypeValueIdentity, 32> gTemplateValueIdentities;
