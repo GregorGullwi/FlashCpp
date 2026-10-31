@@ -196,9 +196,10 @@ that deduction-based comparison in place of the specificity score.
 
 The 16-level `test_deep_callable_chain_ret0.cpp` passes with the shipping Windows
 compiler's existing stack reserve. A copy of that executable with its reserve
-reduced to 1 MB now completes parsing, but overflows in
-`AstToIr::generateMemberFunctionCallIr` before emitting an object. No stack
-reserve was increased for this regression.
+reduced to 1 MB also completes parsing and emits an object; member-call receiver
+chains are now lowered through an explicit worklist instead of recursively
+re-entering `AstToIr::generateMemberFunctionCallIr`. No stack reserve was
+increased for this regression.
 The native `Canonical adapter imports the source corpus at publication` fixture
 still overflows at 1 MB, including in a pre-change binary. Reduce parser frames
 and replace recursive syntax processing before expecting that corpus to fit.
@@ -212,7 +213,7 @@ reduces `sizeof(TemplateTypeArg)` from 624 to 248 bytes,
 `sizeof(TemplateArgumentVector)` from 2,528 to 24 bytes, and the clang `-O0`
 `parse_primary_expression` frame from 343,560 to 250,504 bytes. The parser-only
 harness regression and the full MSVC compiler copy at 1 MB both complete
-parsing; only the backend call-frame overflow remains for this test.
+parsing and emit an object for the deep callable-chain regression.
 
 Payload handles are copy-on-write and never point at scratch storage. The
 persistent handle arenas do not reclaim entries abandoned by rolled-back probes;

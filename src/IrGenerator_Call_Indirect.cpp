@@ -4,6 +4,17 @@
 #include "SemanticAnalysis.h"
 #include "TypeSizeQuery.h"
 
+namespace {
+
+const ExpressionNode* callExpressionReceiver(const CallExprNode& callExprNode) {
+	if (!callExprNode.has_receiver()) {
+		return nullptr;
+	}
+	const ExpressionNode* receiver = callExprNode.receiver().get_if<ExpressionNode>();
+	return receiver != nullptr && std::get_if<CallExprNode>(receiver) != nullptr ? receiver : nullptr;
+}
+
+} // namespace
 
 std::optional<ExprResult> AstToIr::tryGenerateMemberPointerCallIr(const CallExprNode& callExprNode, const PointerToMemberAccessNode& access) {
 	auto sema_services = sema_.parserSemanticServices();
@@ -123,6 +134,34 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key,
 	TypeIndex receiver_owner_type_index) {
+	// Explicit-owner calls carry metadata for one call only, so they bypass the chain worklist.
+	if (!receiver_owner_type_index.is_valid()) {
+		const ExpressionNode* innermost_receiver = callExpressionReceiver(callExprNode);
+		if (innermost_receiver != nullptr) {
+			std::vector<const CallExprNode*> receiver_chain;
+			const CallExprNode* current = &callExprNode;
+			while (const ExpressionNode* receiver = callExpressionReceiver(*current)) {
+				receiver_chain.push_back(current);
+				innermost_receiver = receiver;
+				current = std::get_if<CallExprNode>(receiver);
+			}
+			// Lower the innermost receiver normally, then replay the chain without native recursion.
+			ExprResult result = visitExpressionNode(*innermost_receiver);
+			bool outermost_call = true;
+			for (auto it = receiver_chain.rbegin(); it != receiver_chain.rend(); ++it) {
+				const void* call_key = outermost_call ? sema_call_key : static_cast<const void*>(*it);
+				ExpressionContext call_context = outermost_call ? context : ExpressionContext::Load;
+				result = generateMemberFunctionCallIrBody(**it, call_context, call_key, TypeIndex{}, &result);
+				outermost_call = false;
+			}
+			return result;
+		}
+	}
+	return generateMemberFunctionCallIrBody(callExprNode, context, sema_call_key, receiver_owner_type_index, nullptr);
+}
+
+ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key,
+	TypeIndex receiver_owner_type_index, const ExprResult* precomputed_receiver) {
 	std::vector<IrOperand> irOperands;
 	irOperands.reserve(5 + callExprNode.arguments().size() * 4); // ret + name + this + ~4 per arg
 
@@ -168,6 +207,12 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 	// Get the object expression
 	ASTNode object_node = callExprNode.receiver();
+	auto emitReceiver = [&](const ASTNode& receiver_node) -> ExprResult {
+		if (precomputed_receiver != nullptr) {
+			return *precomputed_receiver;
+		}
+		return visitExpressionNode(receiver_node.as<ExpressionNode>());
+	};
 	std::optional<StringHandle> immediate_lambda_object_name;
 	std::optional<TypeSpecifierNode> immediate_lambda_object_type;
 
@@ -477,7 +522,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				 indirect_signature->returnType() == TypeCategory::TypeAlias ||
 				 indirect_signature->returnType() == TypeCategory::Template ||
 				 isPlaceholderAutoType(indirect_signature->returnType()));
-			ExprResult function_ptr_result = visitExpressionNode(object_node.as<ExpressionNode>());
+			ExprResult function_ptr_result = emitReceiver(object_node);
 			std::variant<StringHandle, TempVar, LocalVarId> function_pointer;
 			if (std::holds_alternative<TempVar>(function_ptr_result.value)) {
 				function_pointer = std::get<TempVar>(function_ptr_result.value);
@@ -891,7 +936,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		const StructMember* resolved_member = nullptr;
 		if (resolveMemberAccessType(member_access, resolved_struct_info, resolved_member)) {
 			if (resolved_member && resolved_member->memberType() == TypeCategory::FunctionPointer) {
-				ExprResult func_ptr_result = visitExpressionNode(*object_expr);
+				ExprResult func_ptr_result = emitReceiver(object_node);
 				std::variant<StringHandle, TempVar, LocalVarId> function_pointer;
 				if (std::holds_alternative<TempVar>(func_ptr_result.value)) {
 					function_pointer = std::get<TempVar>(func_ptr_result.value);
@@ -936,7 +981,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 								// Generate member access chain for o.inner.callback
 								// First get o.inner
-								ExprResult base_result = visitExpressionNode(*object_expr);
+								ExprResult base_result = emitReceiver(object_node);
 								if (!std::holds_alternative<TempVar>(base_result.value)) {
 									throw InternalError("Function pointer member base expression did not produce a TempVar");
 								}
@@ -1380,7 +1425,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						std::holds_alternative<IdentifierNode>(*object_expr) ||
 						std::holds_alternative<QualifiedIdentifierNode>(*object_expr);
 					if (!trivial_receiver) {
-						visitExpressionNode(*object_expr);
+						emitReceiver(object_node);
 					}
 				}
 				CallExprNode direct_static_call = makeResolvedCallExpr(
@@ -1420,7 +1465,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					// Add object operand
 					if (object_name.empty()) {
 						// Object is not a named variable - evaluate the expression to get a TempVar
-						ExprResult obj_result = visitExpressionNode(*object_expr);
+						ExprResult obj_result = emitReceiver(object_node);
 						if (!std::holds_alternative<TempVar>(obj_result.value)) {
 							throw InternalError("Function pointer member call: expression did not produce a TempVar");
 						}
@@ -1520,7 +1565,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		vcall_op.object_size = static_cast<int>(object_type.size_in_bits());
 		if (object_name.empty()) {
 			// Object is a temporary expression result - evaluate it to get a TempVar
-			ExprResult obj_result = visitExpressionNode(*object_expr);
+			ExprResult obj_result = emitReceiver(object_node);
 			if (!std::holds_alternative<TempVar>(obj_result.value)) {
 				throw InternalError("Virtual call on expression: did not produce a TempVar");
 			}
@@ -2100,7 +2145,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		} else if (object_name.empty()) {
 			// Object is a temporary expression result (e.g., getContainer().method())
 			// Evaluate the expression to get a TempVar, then take its address for the this pointer
-			ExprResult obj_result = visitExpressionNode(*object_expr);
+			ExprResult obj_result = emitReceiver(object_node);
 			if (!std::holds_alternative<TempVar>(obj_result.value)) {
 				throw InternalError("Member function call on expression: did not produce a TempVar");
 			}
@@ -2146,7 +2191,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				// Global/static pointer receivers need an explicit load of the pointer value so
 				// the call receives the pointee address as `this` instead of the storage slot
 				// holding the pointer.
-				ExprResult obj_result = visitExpressionNode(*object_expr);
+				ExprResult obj_result = emitReceiver(object_node);
 				this_arg_value = toIrValue(obj_result.value);
 				this_arg_is_pointer_value =
 					obj_result.pointer_depth.is_pointer() &&
