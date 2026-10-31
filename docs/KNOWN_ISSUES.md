@@ -196,34 +196,28 @@ that deduction-based comparison in place of the specificity score.
 
 The 16-level `test_deep_callable_chain_ret0.cpp` passes with the shipping Windows
 compiler's existing stack reserve. A copy of that executable with its reserve
-reduced to 1 MB overflows in `parse_primary_expression`, reached through
-`parse_function_arguments`, before semantic analysis. The callable-result type
-inference worklist adds no native recursion for the receiver chain, but does not
-resolve these existing parser frames or recursive expression normalization and
-lowering. No stack reserve was increased for this regression.
+reduced to 1 MB now completes parsing, but overflows in
+`AstToIr::generateMemberFunctionCallIr` before emitting an object. No stack
+reserve was increased for this regression.
 The native `Canonical adapter imports the source corpus at publication` fixture
-also overflows at 1 MB, including in a pre-change binary. Reduce parser frames
+still overflows at 1 MB, including in a pre-change binary. Reduce parser frames
 and replace recursive syntax processing before expecting that corpus to fit.
-The member-template pack owner regression likewise overflows at 1 MB in
+The member-template pack owner regression likewise still overflows at 1 MB in
 `parse_type_specifier`, including with a pre-change compiler binary.
 
-The rare NTTP and callable payloads in `TemplateTypeArg` now live behind
-immutable 32-bit handles in persistent arenas. That reduces
-`sizeof(TemplateTypeArg)` from 624 to 248 bytes and
-`TemplateArgumentVector` (still N=4) from 2,528 to 1,024 bytes, and reduces the
-clang `-O0` `parse_primary_expression` frame from 343,560 to 287,528 bytes.
-The shipping MSVC compiler copy at 1 MB still overflows in
-`parse_primary_expression` on `test_deep_callable_chain_ret0.cpp`, so the
-parser frame is smaller but not yet bounded by a small constant. The parser-only
-harness regression passes under a 1 MB stack. The previously observed backend
-`generateMemberFunctionCallIr` overflow remains a separate limitation once
-parsing succeeds. Closing this issue requires the separate arena-backed
-owning-list or span-based redesign of the remaining `TemplateArgumentVector`
-locals.
+The rare NTTP and callable payloads in `TemplateTypeArg` live behind immutable
+32-bit handles in persistent arenas, and `TemplateArgumentVector` is now an
+out-of-line owning list that can expose a span over its current storage. That
+reduces `sizeof(TemplateTypeArg)` from 624 to 248 bytes,
+`sizeof(TemplateArgumentVector)` from 2,528 to 24 bytes, and the clang `-O0`
+`parse_primary_expression` frame from 343,560 to 250,504 bytes. The parser-only
+harness regression and the full MSVC compiler copy at 1 MB both complete
+parsing; only the backend call-frame overflow remains for this test.
 
 Payload handles are copy-on-write and never point at scratch storage. The
-persistent arenas do not reclaim entries abandoned by rolled-back probes; they
-are released only when the process exits.
+persistent handle arenas do not reclaim entries abandoned by rolled-back probes;
+they are released only when the process exits. `TemplateArgumentList` storage is
+owned by the list, so a span from it remains valid only until the next mutation.
 
 ## Staged dependent alias expansions can lose pack elements
 

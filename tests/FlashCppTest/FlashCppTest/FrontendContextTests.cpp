@@ -5895,3 +5895,38 @@ int main() {
 			<< " reserved=" << context.scratchArena().peakReservedBytes());
 	}
 }
+
+TEST_SUITE("TemplateArgumentList") {
+	TEST_CASE("TemplateArgumentList owns out-of-line storage and preserves value semantics") {
+		static_assert(sizeof(TemplateArgumentVector) <= 32);
+		static_assert(sizeof(std::optional<TemplateArgumentVector>) <= 40);
+
+		TemplateArgumentVector original;
+		original.push_back(TemplateTypeArg::makeValue(1, TypeCategory::Int));
+		original.push_back(TemplateTypeArg::makeValue(2, TypeCategory::Int));
+		REQUIRE(original.size() == 2u);
+
+		TemplateArgumentVector copy = original;
+		copy[0].value = 9;
+		CHECK(original[0].value == 1);
+		CHECK(copy[0].value == 9);
+
+		const std::span<const TemplateTypeArg> view = original;
+		CHECK(view.size() == 2u);
+		CHECK(view.data() == original.data());
+		CHECK(view[1].value == 2);
+
+		original.insert_at(1, TemplateTypeArg::makeValue(3, TypeCategory::Int));
+		REQUIRE(original.size() == 3u);
+		CHECK(original[1].value == 3);
+
+		original.erase(original.begin() + 1);
+		REQUIRE(original.size() == 2u);
+		CHECK(original[1].value == 2);
+
+		const TemplateTypeArg source_args[] = { TemplateTypeArg::makeValue(4, TypeCategory::Int) };
+		TemplateArgumentVector from_span{std::span<const TemplateTypeArg>(source_args)};
+		REQUIRE(from_span.size() == 1u);
+		CHECK(from_span[0].value == 4);
+	}
+}
