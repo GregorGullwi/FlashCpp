@@ -48,8 +48,13 @@ of added record storage); its flattened fields are derived compatibility views.
 Argument-list storage sharing also preserves exact legacy type-index projections
 when semantic builtin identity considers indexed and unindexed arguments equal.
 The adapter and spelling-based lookup remain scheduled for deletion at 8A.
-Mixed scalar/pack element patterns, namespace targets, and inner expansions
-remain deferred.
+Mixed scalar/pack element patterns now expand in lockstep as well: the scalar
+argument is reused for every pack element while every pack is still required to
+be bound and concrete. `test_lockstep_mixed_scalar_pack_member_field_ret0.cpp`
+covers empty packs, owner-sensitive layout, and reuse of the scalar element, and
+the native `Mixed scalar and pack member fields preserve canonical owners` test
+checks the canonical owner and ordered `Pair` arguments. Namespace targets and
+inner expansions remain deferred.
 
 ## Current state
 
