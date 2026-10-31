@@ -678,6 +678,425 @@ inlineVectorSpillFamilyCounts() {
 
 namespace FlashCpp {
 
+void* allocatePersistentArena(std::size_t size, std::size_t alignment);
+uint64_t persistentArenaUsedBytes();
+uint64_t persistentArenaPeakBytes();
+uint64_t persistentArenaReservedBytes();
+uint64_t persistentArenaPeakReservedBytes();
+
+template <typename T> class ArenaVector {
+public:
+	using value_type = T;
+	using size_type = std::size_t;
+	using difference_type = std::ptrdiff_t;
+	using iterator = T*;
+	using const_iterator = const T*;
+
+	ArenaVector() = default;
+
+	ArenaVector(std::initializer_list<T> init) {
+		for (const T& value : init) { emplace_back(value); }
+	}
+
+	ArenaVector(std::span<const T> values) {
+		for (const T& value : values) { emplace_back(value); }
+	}
+
+	template <std::input_iterator InputIt> ArenaVector(InputIt first, InputIt last) {
+		for (; first != last; ++first) { emplace_back(*first); }
+	}
+
+	template <typename Range>
+		requires(!std::same_as<std::remove_cvref_t<Range>, ArenaVector>)
+	ArenaVector(Range&& range) {
+		for (auto&& value : range) { emplace_back(value); }
+	}
+
+	ArenaVector(const ArenaVector& other) {
+		for (const T& value : other) { emplace_back(value); }
+	}
+
+	ArenaVector(ArenaVector&& other) noexcept : data_(other.data_), size_(other.size_), capacity_(other.capacity_) {
+		other.data_ = nullptr;
+		other.size_ = 0;
+		other.capacity_ = 0;
+	}
+
+	~ArenaVector() { destroyElements(); }
+
+	ArenaVector& operator=(const ArenaVector& other) {
+		if (this != &other) {
+			destroyElements();
+			data_ = nullptr;
+			size_ = 0;
+			capacity_ = 0;
+			for (const T& value : other) { emplace_back(value); }
+		}
+		return *this;
+	}
+
+	ArenaVector& operator=(ArenaVector&& other) noexcept {
+		if (this != &other) {
+			destroyElements();
+			data_ = other.data_;
+			size_ = other.size_;
+			capacity_ = other.capacity_;
+			other.data_ = nullptr;
+			other.size_ = 0;
+			other.capacity_ = 0;
+		}
+		return *this;
+	}
+
+	void push_back(const T& value) { emplace_back(value); }
+	void push_back(T&& value) { emplace_back(std::move(value)); }
+
+	template <typename... Args> T& emplace_back(Args&&... args) {
+		if (size_ == capacity_) { reserve(capacity_ == 0 ? 4 : capacity_ * 2); }
+		T* slot = data_ + size_;
+		::new (static_cast<void*>(slot)) T(std::forward<Args>(args)...);
+		++size_;
+		return *slot;
+	}
+
+	[[nodiscard]] size_t size() const noexcept { return size_; }
+	[[nodiscard]] bool empty() const noexcept { return size_ == 0; }
+	void pop_back() {
+		assert(size_ > 0);
+		--size_;
+		data_[size_].~T();
+	}
+	void clear() noexcept {
+		destroyElements();
+		size_ = 0;
+	}
+	[[nodiscard]] size_t capacity() const noexcept { return capacity_; }
+
+	template <std::input_iterator InputIt> void assign(InputIt first, InputIt last) {
+		clear();
+		for (; first != last; ++first) { emplace_back(*first); }
+	}
+
+	void assign(size_t count, const T& value) {
+		clear();
+		for (size_t index = 0; index < count; ++index) { emplace_back(value); }
+	}
+
+	void assign(std::initializer_list<T> init) { assign(init.begin(), init.end()); }
+
+	void reserve(size_t capacity) {
+		if (capacity <= capacity_) { return; }
+		T* new_data = allocateRaw(capacity);
+		size_t constructed = 0;
+		try {
+			for (; constructed < size_; ++constructed) {
+				::new (static_cast<void*>(new_data + constructed)) T(std::move_if_noexcept(data_[constructed]));
+			}
+		} catch (...) {
+			for (size_t index = 0; index < constructed; ++index) { new_data[index].~T(); }
+			throw;
+		}
+		destroyElements();
+		data_ = new_data;
+		capacity_ = capacity;
+	}
+
+	void shrink_to_fit() {}
+
+	void resize(size_t count) {
+		while (size_ > count) { pop_back(); }
+		while (size_ < count) { emplace_back(); }
+	}
+
+	void resize(size_t count, const T& value) {
+		while (size_ > count) { pop_back(); }
+		while (size_ < count) { emplace_back(value); }
+	}
+
+	[[nodiscard]] T* data() noexcept { return data_; }
+	[[nodiscard]] const T* data() const noexcept { return data_; }
+
+	T& operator[](size_t index) { return data_[index]; }
+	const T& operator[](size_t index) const { return data_[index]; }
+	T& at(size_t index) { return data_[index]; }
+	const T& at(size_t index) const { return data_[index]; }
+	T& front() { return data_[0]; }
+	const T& front() const { return data_[0]; }
+	T& back() { return data_[size_ - 1]; }
+	const T& back() const { return data_[size_ - 1]; }
+
+	bool operator==(const ArenaVector& other) const { return size_ == other.size_ && std::equal(begin(), end(), other.begin()); }
+
+	bool operator!=(const ArenaVector& other) const { return !(*this == other); }
+
+	iterator begin() noexcept { return data_; }
+	iterator end() noexcept { return data_ + size_; }
+	const_iterator begin() const noexcept { return data_; }
+	const_iterator end() const noexcept { return data_ + size_; }
+	const_iterator cbegin() const noexcept { return data_; }
+	const_iterator cend() const noexcept { return data_ + size_; }
+
+	iterator insert_at(size_t index, const T& value) {
+		T inserted(value);
+		return insertPrepared(index, std::move(inserted));
+	}
+
+	iterator insert_at(size_t index, T&& value) {
+		if (referencesElements(value)) {
+			T inserted(value);
+			return insertPrepared(index, std::move(inserted));
+		}
+		T inserted(std::move(value));
+		return insertPrepared(index, std::move(inserted));
+	}
+
+	iterator insert(const_iterator pos, const T& value) { return insert_at(static_cast<size_t>(pos - begin()), value); }
+	iterator insert(iterator pos, const T& value) { return insert_at(static_cast<size_t>(pos - begin()), value); }
+	iterator insert(const_iterator pos, T&& value) { return insert_at(static_cast<size_t>(pos - begin()), std::move(value)); }
+	iterator insert(iterator pos, T&& value) { return insert_at(static_cast<size_t>(pos - begin()), std::move(value)); }
+
+	iterator insert(const_iterator pos, size_t count, const T& value) {
+		size_t index = static_cast<size_t>(pos - begin());
+		ArenaVector<T> inserted;
+		inserted.reserve(count);
+		for (size_t item = 0; item < count; ++item) { inserted.emplace_back(value); }
+		return insertRangeAt(index, inserted.begin(), inserted.end());
+	}
+
+	iterator insert(iterator pos, size_t count, const T& value) { return insert(static_cast<const_iterator>(pos), count, value); }
+
+	iterator insert(const_iterator pos, std::initializer_list<T> init) {
+		return insertRangeAt(static_cast<size_t>(pos - begin()), init.begin(), init.end());
+	}
+
+	iterator insert(iterator pos, std::initializer_list<T> init) { return insert(static_cast<const_iterator>(pos), init.begin(), init.end()); }
+
+	template <typename Iter> iterator insert_range_at(size_t index, Iter first, Iter last) {
+		ArenaVector<T> inserted(first, last);
+		return insertRangeAt(index, inserted.begin(), inserted.end());
+	}
+
+	template <typename Iter> iterator insertRangeAt(size_t index, Iter first, Iter last) {
+		const size_t count = static_cast<size_t>(last - first);
+		if (count == 0) { return begin() + index; }
+		const size_t new_size = size_ + count;
+		const size_t new_capacity = capacity_ >= new_size ? capacity_ : new_size * 2;
+		T* new_data = allocateRaw(new_capacity);
+		size_t out = 0;
+		for (size_t source = 0; source < index; ++source) { ::new (static_cast<void*>(new_data + out++)) T(std::move(data_[source])); }
+		for (Iter item = first; item != last; ++item) { ::new (static_cast<void*>(new_data + out++)) T(*item); }
+		for (size_t source = index; source < size_; ++source) { ::new (static_cast<void*>(new_data + out++)) T(std::move(data_[source])); }
+		destroyElements();
+		data_ = new_data;
+		size_ = new_size;
+		capacity_ = new_capacity;
+		return data_ + index;
+	}
+
+	template <typename... Args> iterator emplace(const_iterator pos, Args&&... args) {
+		return insert_at(static_cast<size_t>(pos - begin()), T(std::forward<Args>(args)...));
+	}
+
+	template <typename... Args> iterator emplace(iterator pos, Args&&... args) {
+		return emplace(static_cast<const_iterator>(pos), std::forward<Args>(args)...);
+	}
+
+	iterator erase(const_iterator pos) { return erase(pos, pos + 1); }
+	iterator erase(iterator pos) { return erase(static_cast<const_iterator>(pos)); }
+
+	iterator erase(const_iterator first, const_iterator last) {
+		const size_t index = static_cast<size_t>(first - begin());
+		const size_t count = static_cast<size_t>(last - first);
+		if (count == 0) { return begin() + index; }
+		const size_t new_size = size_ - count;
+		T* new_data = allocateRaw(capacity_);
+		size_t out = 0;
+		for (size_t source = 0; source < index; ++source) { ::new (static_cast<void*>(new_data + out++)) T(std::move(data_[source])); }
+		for (size_t source = index + count; source < size_; ++source) { ::new (static_cast<void*>(new_data + out++)) T(std::move(data_[source])); }
+		destroyElements();
+		data_ = new_data;
+		size_ = new_size;
+		return data_ + index;
+	}
+
+	iterator erase(iterator first, iterator last) { return erase(static_cast<const_iterator>(first), static_cast<const_iterator>(last)); }
+
+private:
+	static T* allocateRaw(size_t capacity) {
+		if (capacity == 0) { return nullptr; }
+		if (capacity > std::numeric_limits<size_t>::max() / sizeof(T)) { throw std::bad_array_new_length(); }
+		return static_cast<T*>(allocatePersistentArena(sizeof(T) * capacity, alignof(T)));
+	}
+
+	bool referencesElements(const T& value) const noexcept {
+		const auto address = reinterpret_cast<std::uintptr_t>(std::addressof(value));
+		const auto begin_address = reinterpret_cast<std::uintptr_t>(data_);
+		const auto end_address = begin_address + size_ * sizeof(T);
+		return address >= begin_address && address < end_address;
+	}
+
+	iterator insertPrepared(size_t index, T&& value) {
+		const size_t new_size = size_ + 1;
+		const size_t new_capacity = capacity_ >= new_size ? capacity_ : new_size * 2;
+		T* new_data = allocateRaw(new_capacity);
+		size_t out = 0;
+		for (size_t source = 0; source < index; ++source) { ::new (static_cast<void*>(new_data + out++)) T(std::move(data_[source])); }
+		::new (static_cast<void*>(new_data + out++)) T(std::move(value));
+		for (size_t source = index; source < size_; ++source) { ::new (static_cast<void*>(new_data + out++)) T(std::move(data_[source])); }
+		destroyElements();
+		data_ = new_data;
+		size_ = new_size;
+		capacity_ = new_capacity;
+		return data_ + index;
+	}
+
+	void destroyElements() noexcept {
+		for (size_t index = 0; index < size_; ++index) { data_[index].~T(); }
+	}
+
+	T* data_ = nullptr;
+	size_t size_ = 0;
+	size_t capacity_ = 0;
+};
+
+// Compact owning vector for large element types on parser and template paths.
+// Storage is out of line so locals and optional copies do not embed inline
+// elements; std::span views remain valid only until the next mutation.
+template <typename T> class OutOfLineVector {
+public:
+	using value_type = T;
+	using size_type = std::size_t;
+	using difference_type = std::ptrdiff_t;
+	using iterator = typename ArenaVector<T>::iterator;
+	using const_iterator = typename ArenaVector<T>::const_iterator;
+
+	OutOfLineVector() = default;
+
+	OutOfLineVector(std::initializer_list<T> init) : values_(init) {}
+
+	OutOfLineVector(std::span<const T> values) { values_.assign(values.begin(), values.end()); }
+
+	template <std::input_iterator InputIt> OutOfLineVector(InputIt first, InputIt last) { values_.assign(first, last); }
+
+	OutOfLineVector(std::vector<T>&& values) { values_.assign(values.begin(), values.end()); }
+
+	template <typename Range>
+		requires(!std::same_as<std::remove_cvref_t<Range>, OutOfLineVector>)
+	OutOfLineVector(Range&& range) {
+		values_.assign(std::begin(range), std::end(range));
+	}
+
+	OutOfLineVector& operator=(std::span<const T> values) {
+		values_.assign(values.begin(), values.end());
+		return *this;
+	}
+
+	OutOfLineVector& operator=(std::vector<T>&& values) {
+		values_.assign(values.begin(), values.end());
+		return *this;
+	}
+
+	OutOfLineVector& operator=(std::initializer_list<T> init) {
+		values_.assign(init.begin(), init.end());
+		return *this;
+	}
+
+	template <typename Range>
+		requires(!std::same_as<std::remove_cvref_t<Range>, OutOfLineVector>)
+	OutOfLineVector& operator=(Range&& range) {
+		values_.assign(std::begin(range), std::end(range));
+		return *this;
+	}
+
+	[[nodiscard]] std::vector<T> toVector() const& { return std::vector<T>(values_.begin(), values_.end()); }
+	[[nodiscard]] std::vector<T> toVector() && { return std::vector<T>(values_.begin(), values_.end()); }
+
+	void push_back(const T& value) { values_.push_back(value); }
+	void push_back(T&& value) { values_.push_back(std::move(value)); }
+
+	template <typename... Args> void emplace_back(Args&&... args) { values_.emplace_back(std::forward<Args>(args)...); }
+
+	[[nodiscard]] size_t size() const noexcept { return values_.size(); }
+	[[nodiscard]] bool empty() const noexcept { return values_.empty(); }
+	void pop_back() { values_.pop_back(); }
+	void clear() noexcept { values_.clear(); }
+	[[nodiscard]] size_t capacity() const noexcept { return values_.capacity(); }
+
+	template <std::input_iterator InputIt> void assign(InputIt first, InputIt last) { values_.assign(first, last); }
+
+	void assign(size_t count, const T& value) { values_.assign(count, value); }
+	void assign(std::initializer_list<T> init) { values_.assign(init.begin(), init.end()); }
+
+	void reserve(size_t capacity) { values_.reserve(capacity); }
+	void shrink_to_fit() { values_.shrink_to_fit(); }
+	void resize(size_t count) { values_.resize(count); }
+	void resize(size_t count, const T& value) { values_.resize(count, value); }
+
+	[[nodiscard]] T* data() noexcept { return values_.data(); }
+	[[nodiscard]] const T* data() const noexcept { return values_.data(); }
+
+	operator std::span<T>() noexcept { return std::span<T>(data(), size()); }
+	operator std::span<const T>() const noexcept { return std::span<const T>(data(), size()); }
+
+	T& operator[](size_t index) { return values_[index]; }
+	const T& operator[](size_t index) const { return values_[index]; }
+	T& at(size_t index) { return values_.at(index); }
+	const T& at(size_t index) const { return values_.at(index); }
+	T& front() { return values_.front(); }
+	const T& front() const { return values_.front(); }
+	T& back() { return values_.back(); }
+	const T& back() const { return values_.back(); }
+
+	bool operator==(const OutOfLineVector& other) const { return values_ == other.values_; }
+	bool operator!=(const OutOfLineVector& other) const { return values_ != other.values_; }
+
+	iterator begin() noexcept { return values_.begin(); }
+	iterator end() noexcept { return values_.end(); }
+	const_iterator begin() const noexcept { return values_.begin(); }
+	const_iterator end() const noexcept { return values_.end(); }
+	const_iterator cbegin() const noexcept { return values_.cbegin(); }
+	const_iterator cend() const noexcept { return values_.cend(); }
+
+	iterator insert_at(size_t index, const T& value) { return values_.insert(values_.begin() + static_cast<difference_type>(index), value); }
+
+	iterator insert(const_iterator pos, const T& value) { return values_.insert(pos, value); }
+	iterator insert(iterator pos, const T& value) { return values_.insert(pos, value); }
+
+	iterator insert_at(size_t index, T&& value) { return values_.insert(values_.begin() + static_cast<difference_type>(index), std::move(value)); }
+
+	iterator insert(const_iterator pos, T&& value) { return values_.insert(pos, std::move(value)); }
+	iterator insert(iterator pos, T&& value) { return values_.insert(pos, std::move(value)); }
+
+	iterator insert(const_iterator pos, size_t count, const T& value) { return values_.insert(pos, count, value); }
+	iterator insert(iterator pos, size_t count, const T& value) { return values_.insert(pos, count, value); }
+
+	iterator insert(const_iterator pos, std::initializer_list<T> init) { return values_.insert(pos, init); }
+	iterator insert(iterator pos, std::initializer_list<T> init) { return values_.insert(pos, init); }
+
+	template <typename Iter> iterator insert_range_at(size_t index, Iter first, Iter last) {
+		ArenaVector<T> inserted(first, last);
+		return values_.insert_range_at(index, inserted.begin(), inserted.end());
+	}
+
+	iterator insert(const_iterator pos, const_iterator first, const_iterator last) {
+		return insert_range_at(static_cast<size_t>(pos - begin()), first, last);
+	}
+
+	iterator insert(iterator pos, iterator first, iterator last) { return insert_range_at(static_cast<size_t>(pos - begin()), first, last); }
+
+	template <typename... Args> iterator emplace(const_iterator pos, Args&&... args) { return values_.emplace(pos, std::forward<Args>(args)...); }
+
+	template <typename... Args> iterator emplace(iterator pos, Args&&... args) { return values_.emplace(pos, std::forward<Args>(args)...); }
+
+	iterator erase(const_iterator pos) { return values_.erase(pos); }
+	iterator erase(iterator pos) { return values_.erase(pos); }
+	iterator erase(const_iterator first, const_iterator last) { return values_.erase(first, last); }
+	iterator erase(iterator first, iterator last) { return values_.erase(first, last); }
+
+private:
+	ArenaVector<T> values_;
+};
+
 template <typename T, size_t N = 4>
 using OverloadVector = InlineVector<T, InlineVectorSpillFamily::OverloadResolution, N>;
 

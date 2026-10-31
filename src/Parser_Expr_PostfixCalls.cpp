@@ -121,7 +121,7 @@ TypeInfo::DependentQualifiedNameRecord makePostfixDependentQualifiedNameRecord(
 	record.owner_kind = owner_kind;
 	record.owner_name = owner_name;
 	record.owner_type = owner_type;
-	record.owner_template_arguments = std::move(owner_template_arguments);
+	record.owner_template_arguments = TypeInfo::DependentQualifiedNameRecord::makeTemplateArgStorage(std::move(owner_template_arguments));
 	record.names_current_instantiation =
 		owner_kind == TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation;
 	for (const PostfixDependentMemberSegmentInfo& segment_info : member_segments) {
@@ -129,7 +129,7 @@ TypeInfo::DependentQualifiedNameRecord makePostfixDependentQualifiedNameRecord(
 		member.name = segment_info.name;
 		member.has_template_keyword = segment_info.template_args.has_value();
 		if (segment_info.template_args.has_value()) {
-			member.template_arguments = *segment_info.template_args;
+			member.template_arguments = TypeInfo::DependentQualifiedNameRecord::makeTemplateArgStorage(*segment_info.template_args);
 			member.has_template_arguments = true;
 		}
 		record.member_chain.push_back(std::move(member));
@@ -2177,7 +2177,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					: StringTable::getOrInternStringHandle(member_token.value());
 			final_member_segment.template_args =
 				member_template_args.has_value()
-					? toTemplateArgInfoList(*member_template_args)
+					? std::optional<TemplateArgInfoVector>(toTemplateArgInfoList(*member_template_args))
 					: std::optional<TemplateArgInfoVector>{};
 			member_segments.push_back(std::move(final_member_segment));
 			TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind =
