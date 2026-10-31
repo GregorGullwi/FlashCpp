@@ -207,6 +207,24 @@ and replace recursive syntax processing before expecting that corpus to fit.
 The member-template pack owner regression likewise overflows at 1 MB in
 `parse_type_specifier`, including with a pre-change compiler binary.
 
+The rare NTTP and callable payloads in `TemplateTypeArg` now live behind
+immutable 32-bit handles in persistent arenas. That reduces
+`sizeof(TemplateTypeArg)` from 624 to 248 bytes and
+`TemplateArgumentVector` (still N=4) from 2,528 to 1,024 bytes, and reduces the
+clang `-O0` `parse_primary_expression` frame from 343,560 to 287,528 bytes.
+The shipping MSVC compiler copy at 1 MB still overflows in
+`parse_primary_expression` on `test_deep_callable_chain_ret0.cpp`, so the
+parser frame is smaller but not yet bounded by a small constant. The parser-only
+harness regression passes under a 1 MB stack. The previously observed backend
+`generateMemberFunctionCallIr` overflow remains a separate limitation once
+parsing succeeds. Closing this issue requires the separate arena-backed
+owning-list or span-based redesign of the remaining `TemplateArgumentVector`
+locals.
+
+Payload handles are copy-on-write and never point at scratch storage. The
+persistent arenas do not reclaim entries abandoned by rolled-back probes; they
+are released only when the process exits.
+
 ## Staged dependent alias expansions can lose pack elements
 
 A nested alias chain that expands two dependent type packs into one member

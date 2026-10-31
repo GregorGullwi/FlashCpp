@@ -6079,7 +6079,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						arg.member_pointer_kind != MemberPointerKind::None ||
 						arg.ref_qualifier != ReferenceQualifier::None ||
 						arg.cv_qualifier != CVQualifier::None ||
-						arg.function_signature.has_value()) {
+						arg.hasFunctionSignature()) {
 						return false;
 					}
 					switch (param.kind()) {

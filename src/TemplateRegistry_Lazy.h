@@ -1466,7 +1466,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 					static std::optional<long long> sizeFromConcreteTemplateArg(
 						const TemplateTypeArg& concrete_arg) {
 						if (concrete_arg.pointer_depth > 0 ||
-							concrete_arg.function_signature.has_value() ||
+							concrete_arg.hasFunctionSignature() ||
 							concrete_arg.category() == TypeCategory::FunctionPointer ||
 							concrete_arg.category() == TypeCategory::MemberFunctionPointer ||
 							concrete_arg.category() == TypeCategory::MemberObjectPointer) {

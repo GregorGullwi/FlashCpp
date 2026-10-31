@@ -241,8 +241,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 									collapseReferenceQualifiers(
 										elem.ref_qualifier,
 										param_type_spec.reference_qualifier()));
-								if (elem.function_signature.has_value()) {
-									sub_type.set_function_signature(*elem.function_signature);
+								if (elem.hasFunctionSignature()) {
+									sub_type.set_function_signature(elem.functionSignature());
 								}
 								StringBuilder name_builder;
 								name_builder.append(orig_name).append('_').append(pi);
@@ -318,8 +318,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 					// The original param_type_spec is a dependent placeholder (e.g. "F")
 					// that has no function_signature.  Look up the concrete TemplateTypeArg.
 					if (direct_template_arg != nullptr) {
-						if (direct_template_arg->function_signature.has_value())
-							substituted_param_type.set_function_signature(*direct_template_arg->function_signature);
+						if (direct_template_arg->hasFunctionSignature())
+							substituted_param_type.set_function_signature(direct_template_arg->functionSignature());
 					}
 				}
 				normalizeSubstitutedTypeSpec(substituted_param_type);
@@ -1044,8 +1044,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 						nttp_type.set_array_dimensions(
 							std::span<const size_t>(outer_arg_info.array_dimensions.data(), outer_arg_info.array_dimensions.size()));
 					}
-					if (outer_arg.function_signature.has_value()) {
-						nttp_type.set_function_signature(*outer_arg.function_signature);
+					if (outer_arg.hasFunctionSignature()) {
+						nttp_type.set_function_signature(outer_arg.functionSignature());
 					}
 					substitution_params.push_back(TemplateParameterNode(outer_pnames[i], nttp_type, outer_tok));
 				} else {

@@ -45,7 +45,7 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 	info.is_value = arg.is_value;
 	info.is_pack = arg.is_pack;
 	info.dependent_name = arg.dependent_name;
-	info.function_signature() = arg.function_signature;
+	info.function_signature() = arg.copyFunctionSignature();
 	info.dependent_expr() = arg.dependent_expr;
 	info.is_template_template_arg = arg.is_template_template_arg;
 	info.template_name = arg.template_name_handle;
@@ -58,7 +58,7 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 	info.value = arg.value;
 	info.nttp_expr = arg.nttp_expr;
 	if (arg.has_typed_value_identity) {
-		const auto& id = arg.typed_value_identity;
+		const auto& id = *arg.typedValueIdentity();
 		info.nttp_kind = id.kind;
 		if (id.entity_name.isValid()) {
 			info.nttp_entity_name = id.entity_name;
@@ -95,7 +95,7 @@ TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 	ta.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
 	ta.dependent_name = arg.dependent_name;
 	ta.dependent_expr = arg.dependent_expr();
-	ta.function_signature = arg.function_signature();
+	ta.assignFunctionSignature(arg.function_signature());
 	ta.is_dependent = arg.dependent_name.isValid() || arg.dependent_expr().has_value();
 	ta.is_template_template_arg = arg.is_template_template_arg;
 	ta.template_name_handle = arg.template_name;

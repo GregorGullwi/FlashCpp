@@ -398,7 +398,7 @@ inline std::optional<TypeId> tryImportCanonicalPartialClassPattern(FrontendConte
 	for (size_t index = 0; index < arguments.size(); ++index) {
 		const TemplateTypeArg& argument = arguments[index];
 		if (argument.member_pointer_kind != MemberPointerKind::None ||
-			argument.function_signature.has_value()) return std::nullopt;
+			argument.hasFunctionSignature()) return std::nullopt;
 		if (argument.is_pack) {
 			if (!options.allow_pack_parameters || !argument.isTypeArgument() || !argument.dependent_name.isValid()) {
 				return std::nullopt;
@@ -934,7 +934,7 @@ inline void materializeSubstitutedFunctionTypeMetadata(
 				: original_type.type_index();
 			if (const auto* arg = findTemplateArgByRegisteredTypeIndex(
 					binding_type_index, template_params, template_args)) {
-				signature = arg->function_signature;
+				signature = arg->copyFunctionSignature();
 			}
 		}
 	}
@@ -1054,8 +1054,8 @@ inline void applyBoundTemplateArgMetadata(
 	if (!substituted_type.has_member_class() && arg->member_class_name.isValid()) {
 		substituted_type.set_member_class_name(arg->member_class_name);
 	}
-	if (!substituted_type.has_function_signature() && arg->function_signature.has_value()) {
-		substituted_type.set_function_signature(*arg->function_signature);
+	if (!substituted_type.has_function_signature() && arg->hasFunctionSignature()) {
+		substituted_type.set_function_signature(arg->functionSignature());
 	}
 	const int resolved_size_bits = getTypeSpecSizeBits(substituted_type);
 	if (resolved_size_bits > 0) {

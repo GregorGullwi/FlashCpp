@@ -183,7 +183,7 @@ struct TemplatePattern {
 			deduced.array_dimensions.assign(
 				c.array_dimensions.begin(),
 				c.array_dimensions.end());
-			deduced.function_signature = c.function_signature();
+			deduced.assignFunctionSignature(c.function_signature());
 		}
 		deduced.injected_class_declaration = c.injected_class_declaration;
 		return deduced;
@@ -470,15 +470,15 @@ struct TemplatePattern {
 		const TemplateTypeArg& concrete_arg,
 		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions) {
-		if (pattern_arg.function_signature.has_value() != concrete_arg.function_signature.has_value()) {
+		if (pattern_arg.hasFunctionSignature() != concrete_arg.hasFunctionSignature()) {
 			return false;
 		}
-		if (!pattern_arg.function_signature.has_value()) {
+		if (!pattern_arg.hasFunctionSignature()) {
 			return true;
 		}
 
-		const auto& pattern_sig = *pattern_arg.function_signature;
-		const auto& concrete_sig = *concrete_arg.function_signature;
+		const auto& pattern_sig = pattern_arg.functionSignature();
+		const auto& concrete_sig = concrete_arg.functionSignature();
 		if (pattern_sig.parameter_type_indices.size() != concrete_sig.parameter_type_indices.size() ||
 			pattern_sig.linkage != concrete_sig.linkage ||
 			normalizeCallingConventionForTemplatePatternMatch(pattern_sig.calling_convention) !=
@@ -616,7 +616,7 @@ struct TemplatePattern {
 				pattern_arg.pointer_depth == 0 &&
 				!pattern_arg.is_array &&
 				pattern_arg.member_pointer_kind == MemberPointerKind::None &&
-				!pattern_arg.function_signature.has_value();
+				!pattern_arg.hasFunctionSignature();
 			// A pattern whose base is a bare deduced type parameter and whose own
 			// cv or array shape is absent absorbs those from the concrete argument
 			// into the deduced parameter: `T&` matches `const int&` (T = const int)

@@ -179,7 +179,7 @@ struct TemplateTypeArg {
 	bool is_value;  // true if this represents a value instead of a type
 	int64_t value;  // the value for non-type parameters
 	bool has_typed_value_identity;  // true when non-integral NTTP identity carries semantic payload
-	FlashCpp::NonTypeValueIdentity typed_value_identity;
+	FlashCpp::TemplateValueIdentityHandle typed_value_identity_handle;
 	// Opaque identity of the source non-type argument expression. Carried so a
 	// specialization imported from a declaration keeps the same canonical
 	// NonType argument identity the syntax path stamps.
@@ -198,7 +198,7 @@ struct TemplateTypeArg {
 	StringHandle template_name_handle;  // name of the template (e.g., "HasType")
 
 	// For function pointer types: stores the full function signature
-	std::optional<FunctionSignature> function_signature;
+	FlashCpp::TemplateFunctionSignatureHandle function_signature_handle;
 
 	// --- Accessors ---
 	// Returns the TypeCategory embedded in type_index.
@@ -230,13 +230,17 @@ struct TemplateTypeArg {
 	// when building instantiation keys, hashes, or mangled names for non-type arguments.
 	FlashCpp::NonTypeValueIdentity valueIdentity() const {
 		if (is_value && has_typed_value_identity) {
-			FlashCpp::NonTypeValueIdentity identity = typed_value_identity;
+			const FlashCpp::NonTypeValueIdentity* stored = typedValueIdentity();
+			if (stored == nullptr) {
+				throw InternalError("TemplateTypeArg: typed value identity handle is invalid");
+			}
+			FlashCpp::NonTypeValueIdentity identity = *stored;
 			if (identity.kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer) {
 				if (!identity.member_class_name.isValid() && member_class_name.isValid()) {
 					identity.member_class_name = member_class_name;
 				}
-				if (!identity.function_signature.has_value() && function_signature.has_value()) {
-					identity.function_signature = function_signature;
+				if (!identity.function_signature.has_value() && hasFunctionSignature()) {
+					identity.function_signature = functionSignature();
 				}
 			}
 			return identity;
@@ -247,10 +251,74 @@ struct TemplateTypeArg {
 		return FlashCpp::NonTypeValueIdentity::makeConcrete(value, type_index);
 	}
 
+	const FlashCpp::NonTypeValueIdentity* typedValueIdentity() const {
+		return FlashCpp::tryGetTemplateValueIdentity(typed_value_identity_handle);
+	}
+
+	void setTypedValueIdentity(const FlashCpp::NonTypeValueIdentity& identity) {
+		typed_value_identity_handle = FlashCpp::storeTemplateValueIdentity(identity);
+	}
+
+	template <typename Mutator>
+	void updateTypedValueIdentity(Mutator&& mutator) {
+		const FlashCpp::NonTypeValueIdentity* stored = typedValueIdentity();
+		if (stored == nullptr) {
+			throw InternalError("TemplateTypeArg: typed value identity handle is invalid");
+		}
+		FlashCpp::NonTypeValueIdentity identity = *stored;
+		mutator(identity);
+		setTypedValueIdentity(identity);
+	}
+
+	bool hasFunctionSignature() const { return function_signature_handle.isValid(); }
+
+	const FunctionSignature* functionSignatureOrNull() const {
+		return FlashCpp::tryGetTemplateFunctionSignature(function_signature_handle);
+	}
+
+	const FunctionSignature& functionSignature() const {
+		const FunctionSignature* stored = functionSignatureOrNull();
+		if (stored == nullptr) {
+			throw InternalError("TemplateTypeArg: function signature handle is invalid");
+		}
+		return *stored;
+	}
+
+	std::optional<FunctionSignature> copyFunctionSignature() const {
+		const FunctionSignature* stored = functionSignatureOrNull();
+		if (stored == nullptr) {
+			return std::nullopt;
+		}
+		return *stored;
+	}
+
+	void setFunctionSignature(const FunctionSignature& signature) {
+		function_signature_handle = FlashCpp::storeTemplateFunctionSignature(signature);
+	}
+
+	void assignFunctionSignature(const std::optional<FunctionSignature>& signature) {
+		if (signature.has_value()) {
+			setFunctionSignature(*signature);
+		} else {
+			clearFunctionSignature();
+		}
+	}
+
+	void clearFunctionSignature() {
+		function_signature_handle.reset();
+	}
+
+	template <typename Mutator>
+	void updateFunctionSignature(Mutator&& mutator) {
+		FunctionSignature signature = functionSignature();
+		mutator(signature);
+		setFunctionSignature(signature);
+	}
+
 	void setValueIdentity(const FlashCpp::NonTypeValueIdentity& identity) {
 		is_value = true;
 		has_typed_value_identity = identity.kind != FlashCpp::NonTypeValueIdentityKind::Integral;
-		typed_value_identity = identity;
+		setTypedValueIdentity(identity);
 		type_index = identity.value_type_index;
 		value = identity.value;
 		is_dependent = identity.is_dependent;
@@ -260,7 +328,7 @@ struct TemplateTypeArg {
 			member_class_name = identity.member_class_name;
 		}
 		if (identity.function_signature.has_value()) {
-			function_signature = identity.function_signature;
+			setFunctionSignature(*identity.function_signature);
 		}
 	}
 
@@ -270,16 +338,19 @@ struct TemplateTypeArg {
 	}
 
 	TemplateTypeArg()
-		: type_index(TypeIndex{}), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_dimensions(), member_pointer_kind(MemberPointerKind::None), member_class_name(), injected_class_declaration(nullptr), is_value(false), value(0), has_typed_value_identity(false), typed_value_identity(), is_pack(false), is_dependent(false), dependent_name(), is_template_template_arg(false), template_name_handle() {}
+		: type_index(TypeIndex{}), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_dimensions(), member_pointer_kind(MemberPointerKind::None), member_class_name(), injected_class_declaration(nullptr), is_value(false), value(0), has_typed_value_identity(false), typed_value_identity_handle(), is_pack(false), is_dependent(false), dependent_name(), is_template_template_arg(false), template_name_handle() {}
 
 	explicit TemplateTypeArg(const TypeSpecifierNode& type_spec)
-		: type_index(makeTypeIndex(type_spec.type_index().withCategory(type_spec.type()))), ref_qualifier(type_spec.reference_qualifier()), pointer_depth(type_spec.pointer_depth()), pointer_cv_qualifiers(), cv_qualifier(type_spec.cv_qualifier()), is_array(type_spec.is_array()), pointee_array_declarator(type_spec.has_pointee_array_declarator()), array_dimensions(type_spec.array_dimensions().begin(), type_spec.array_dimensions().end()), member_pointer_kind(MemberPointerKind::None), member_class_name(type_spec.has_member_class() ? type_spec.member_class_name() : StringHandle{}), injected_class_declaration(type_spec.injected_class_declaration()), is_value(false), value(0), has_typed_value_identity(false), typed_value_identity(), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle(), function_signature(type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt) {
+		: type_index(makeTypeIndex(type_spec.type_index().withCategory(type_spec.type()))), ref_qualifier(type_spec.reference_qualifier()), pointer_depth(type_spec.pointer_depth()), pointer_cv_qualifiers(), cv_qualifier(type_spec.cv_qualifier()), is_array(type_spec.is_array()), pointee_array_declarator(type_spec.has_pointee_array_declarator()), array_dimensions(type_spec.array_dimensions().begin(), type_spec.array_dimensions().end()), member_pointer_kind(MemberPointerKind::None), member_class_name(type_spec.has_member_class() ? type_spec.member_class_name() : StringHandle{}), injected_class_declaration(type_spec.injected_class_declaration()), is_value(false), value(0), has_typed_value_identity(false), typed_value_identity_handle(), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle(), function_signature_handle() {
 		for (const auto& level : type_spec.pointer_levels()) {
 			pointer_cv_qualifiers.push_back(level.cv_qualifier);
 		}
 		if (type_spec.has_ordered_declarator() && !type_spec.ordered_declarator_has_legacy_projection()) {
 			const std::span<const DeclaratorComponent> components = type_spec.declarator_components();
 			ordered_declarator.assign(components.begin(), components.end());
+		}
+		if (type_spec.has_function_signature()) {
+			setFunctionSignature(type_spec.function_signature());
 		}
 		auto isDependentTypeIndex = [](TypeIndex idx) -> bool {
 			if (idx.category() == TypeCategory::Auto ||
@@ -294,10 +365,11 @@ struct TemplateTypeArg {
 				   (type_info->isDependentPlaceholder() || type_info->is_incomplete_instantiation_);
 		};
 		bool has_structural_dependency = isDependentTypeIndex(type_index);
-		if (!has_structural_dependency && function_signature.has_value()) {
-			has_structural_dependency = isDependentTypeIndex(function_signature->return_type_index);
+		const FunctionSignature* signature = functionSignatureOrNull();
+		if (!has_structural_dependency && signature != nullptr) {
+			has_structural_dependency = isDependentTypeIndex(signature->return_type_index);
 			if (!has_structural_dependency) {
-				for (TypeIndex parameter_type : function_signature->parameter_type_indices) {
+				for (TypeIndex parameter_type : signature->parameter_type_indices) {
 					if (isDependentTypeIndex(parameter_type)) {
 						has_structural_dependency = true;
 						break;
@@ -318,11 +390,11 @@ struct TemplateTypeArg {
 
 	// Constructor for non-type template parameters (default int type)
 	explicit TemplateTypeArg(int64_t val)
-		: type_index(nativeTypeIndex(TypeCategory::Int)), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_dimensions(), member_pointer_kind(MemberPointerKind::None), member_class_name(), injected_class_declaration(nullptr), is_value(true), value(val), has_typed_value_identity(false), typed_value_identity(), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle() {}
+		: type_index(nativeTypeIndex(TypeCategory::Int)), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_dimensions(), member_pointer_kind(MemberPointerKind::None), member_class_name(), injected_class_declaration(nullptr), is_value(true), value(val), has_typed_value_identity(false), typed_value_identity_handle(), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle() {}
 
 	// Constructor for non-type template parameters with explicit type
 	TemplateTypeArg(int64_t val, TypeCategory category)
-		: type_index(TypeIndex{0, category}), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_dimensions(), member_pointer_kind(MemberPointerKind::None), member_class_name(), injected_class_declaration(nullptr), is_value(true), value(val), has_typed_value_identity(false), typed_value_identity(), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle() {}
+		: type_index(TypeIndex{0, category}), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_dimensions(), member_pointer_kind(MemberPointerKind::None), member_class_name(), injected_class_declaration(nullptr), is_value(true), value(val), has_typed_value_identity(false), typed_value_identity_handle(), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle() {}
 
 	// Factory methods
 	static TemplateTypeArg makeType(TypeIndex idx) {
@@ -466,8 +538,8 @@ struct TemplateTypeArg {
 		if (is_template_template_arg) {
 			h ^= std::hash<StringHandle>{}(template_name_handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
-		if (function_signature.has_value()) {
-			h ^= FlashCpp::hashFunctionSignatureIdentity(*function_signature) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		if (const FunctionSignature* signature = functionSignatureOrNull()) {
+			h ^= FlashCpp::hashFunctionSignatureIdentity(*signature) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		return h;
 	}
@@ -512,10 +584,12 @@ struct TemplateTypeArg {
 			return false;
 
 		// Compare function_signature to distinguish e.g. int(*)(int) from int(*)(double)
-		if (function_signature.has_value() != other.function_signature.has_value())
+		const FunctionSignature* signature = functionSignatureOrNull();
+		const FunctionSignature* other_signature = other.functionSignatureOrNull();
+		if ((signature != nullptr) != (other_signature != nullptr))
 			return false;
-		if (function_signature.has_value()) {
-			if (!FlashCpp::equalFunctionSignatureIdentity(*function_signature, *other.function_signature))
+		if (signature != nullptr) {
+			if (!FlashCpp::equalFunctionSignatureIdentity(*signature, *other_signature))
 				return false;
 		}
 		return true;
@@ -607,8 +681,8 @@ struct TemplateTypeArg {
 					// Encode function pointer types using their signature to avoid
 					// collisions between e.g. int(*)(int) and int(*)(double).
 				result += (category() == TypeCategory::MemberFunctionPointer) ? "MFP(" : "FP(";
-				if (function_signature.has_value()) {
-					const auto& sig = *function_signature;
+				if (const FunctionSignature* signature = functionSignatureOrNull()) {
+					const auto& sig = *signature;
 					auto ret_name = getTypeName(sig.return_type_index.category());
 					result += ret_name.empty() ? "?" : ret_name;
 					result += "(";
@@ -706,8 +780,8 @@ inline TypeSpecifierNode typeSpecifierFromTemplateTypeArgProjection(
 		if (arg.injected_class_declaration != nullptr) {
 			type_spec.set_injected_class_declaration(arg.injected_class_declaration);
 		}
-		if (arg.function_signature.has_value()) {
-			type_spec.set_function_signature(*arg.function_signature);
+		if (arg.hasFunctionSignature()) {
+			type_spec.set_function_signature(arg.functionSignature());
 		}
 		return type_spec;
 	}
@@ -727,8 +801,8 @@ inline TypeSpecifierNode typeSpecifierFromTemplateTypeArgProjection(
 	if (arg.injected_class_declaration != nullptr) {
 		type_spec.set_injected_class_declaration(arg.injected_class_declaration);
 	}
-	if (arg.function_signature.has_value()) {
-		type_spec.set_function_signature(*arg.function_signature);
+	if (arg.hasFunctionSignature()) {
+		type_spec.set_function_signature(arg.functionSignature());
 	}
 	return type_spec;
 }
@@ -1105,7 +1179,7 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	result.pointee_array_declarator = arg.pointee_array_declarator;
 	result.array_sizes.assign(arg.array_dimensions.begin(), arg.array_dimensions.end());
 	result.ordered_declarator = arg.ordered_declarator;
-	result.function_signature = arg.function_signature;
+	result.function_signature = arg.copyFunctionSignature();
 	result.is_dependent =
 		arg.is_dependent &&
 		(arg.dependent_name.isValid() || typeIndexContainsDependentPlaceholder(result.type_index));
@@ -1324,8 +1398,8 @@ inline TypeSpecifierNode makeTypeSpecifierFromTemplateTypeArg(
 		if (arg.member_class_name.isValid()) {
 			substituted_spec.set_member_class_name(arg.member_class_name);
 		}
-		if (arg.function_signature.has_value()) {
-			substituted_spec.set_function_signature(*arg.function_signature);
+		if (arg.hasFunctionSignature()) {
+			substituted_spec.set_function_signature(arg.functionSignature());
 		}
 		substituted_spec.set_injected_class_declaration(arg.injected_class_declaration);
 		return substituted_spec;
@@ -1349,8 +1423,8 @@ inline TypeSpecifierNode makeTypeSpecifierFromTemplateTypeArg(
 	if (arg.member_class_name.isValid()) {
 		substituted_spec.set_member_class_name(arg.member_class_name);
 	}
-	if (arg.function_signature.has_value()) {
-		substituted_spec.set_function_signature(*arg.function_signature);
+	if (arg.hasFunctionSignature()) {
+		substituted_spec.set_function_signature(arg.functionSignature());
 	}
 	substituted_spec.set_injected_class_declaration(
 		arg.injected_class_declaration);
@@ -1381,7 +1455,7 @@ inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 		arg_info.pointee_array_declarator;
 	materialized.array_dimensions.assign(arg_info.array_dimensions.begin(), arg_info.array_dimensions.end());
 	materialized.ordered_declarator = arg_info.ordered_declarator;
-	materialized.function_signature = arg_info.function_signature();
+	materialized.assignFunctionSignature(arg_info.function_signature());
 
 	TypeSpecifierNode substituted_spec(
 		arg_info.type_index.withCategory(arg_info.typeEnum()),
@@ -1466,7 +1540,7 @@ inline TemplateTypeArg makeTemplateTypeArgFromResolvedAlias(
 	if (resolved_alias.has_ordered_declarator) {
 		resolved_arg.ordered_declarator = resolved_alias.ordered_declarator;
 	}
-	resolved_arg.function_signature = resolved_alias.function_signature;
+	resolved_arg.assignFunctionSignature(resolved_alias.function_signature);
 	return resolved_arg;
 }
 
@@ -1491,7 +1565,7 @@ inline TemplateTypeArg rebindDependentTemplateTypeArg(
 	pattern_arg.pointee_array_declarator =
 		dependent_pattern.pointee_array_declarator;
 	pattern_arg.ordered_declarator = dependent_pattern.ordered_declarator;
-	pattern_arg.function_signature = dependent_pattern.function_signature();
+	pattern_arg.assignFunctionSignature(dependent_pattern.function_signature());
 	pattern_arg.injected_class_declaration =
 		dependent_pattern.injected_class_declaration;
 	pattern_arg.dependent_name = dependent_pattern.dependent_name;
