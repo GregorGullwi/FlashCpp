@@ -8,18 +8,25 @@ implementation history belongs in git and the regression suite.
 
 ## Next 3A slice
 
-**Materialize a single nontrivial type-pack expansion in member-template data members.**
-Handle a pattern such as `Wrapper<Tail>...` through substitution of the generic
-type expression and preserve its instantiated owner and canonical field type.
-Keep unsupported or unbound expansions fail-closed. Multiple packs, callable
-packs, non-type-parameter/alias/trailing-requires member partials, opaque
-dependent values, and nested method emission remain separate work; do not add
-evaluator or selection rules as part of this slice.
+**Expand multiple type packs in lockstep in a member-template data member.**
+Handle a pattern such as `Pair<Tail, Other>...` by substituting every referenced
+pack element in a single expansion and preserving the instantiated owner and
+canonical field type. Mismatched pack lengths and still-dependent elements stay
+fail-closed. Callable packs, non-type-parameter/alias/trailing-requires member
+partials, opaque dependent values, and nested method emission remain separate
+work; do not add evaluator or selection rules as part of this slice.
 
 Direct type-pack data members now retain empty/full packs, written CV/pointer
 wrappers, enclosing-owner identity, and canonical subobject schemas. Coverage is
 in `test_canonical_member_partial_type_pack_fields_ret0.cpp` and native
 identity/boundary guards; removing declaration binding or expansion is rejected.
+Single nontrivial patterns such as `Wrapper<Tail>...` now substitute the generic
+type expression per pack element, including nested and pointer-wrapped wrappers,
+while preserving the instantiated owner and canonical field type.
+`test_canonical_member_nontrivial_type_pack_fields_ret0.cpp` covers empty/full
+packs, owner-sensitive layout, and wrapper nesting; the native `Nontrivial member
+pack fields retain wrapped elements and owners` test checks canonical owner and
+member argument identity and rejects flattening the wrapper per element.
 
 ## Current state
 
@@ -96,6 +103,13 @@ owner-bearing TypeId and rejects removal of the owner handoff.
 covers the runtime owner-sensitive field, and the native
 `Member template specialization syntax retains its instantiated owner` test
 covers same-arguments/different-owner identity plus the missing-owner mutation.
+Nontrivial single-pack expansions recover the referenced pack from the element
+pattern's type arguments and substitute the generic expression once per concrete
+element instead of rebinding the bare pack element; multi-pack or still-dependent
+patterns remain deferred. `test_canonical_member_nontrivial_type_pack_fields_ret0.cpp`
+covers wrapped, nested, and pointer-wrapped element patterns plus owner-sensitive
+layout, and the native `Nontrivial member pack fields retain wrapped elements and
+owners` test pins the canonical owner and member argument list.
 Direct member function signatures, constructor parameters, and bodies use the same
 effective owner plus local bindings as data members.
 Class-owned member specializations already encode their owner in the member
@@ -186,10 +200,11 @@ These seed adjacent slices; the authoritative inventory is
   partials publish canonical parameter environments, and direct member function
   signatures, constructors, and bodies substitute effective owner bindings.
   Direct type-pack data-member template-ids publish concrete argument lists for
-  namespace/non-template-class targets. Instantiated-owner targets, nontrivial
-  expansion patterns, callable packs, non-type-parameter/alias/trailing-requires
-  member partials, nested method emission, and other dependent owner/member
-  arguments remain deferred.
+  namespace/non-template-class targets. Single nontrivial type-pack expansions
+  substitute the generic element expression per concrete element; multiple-pack,
+  callable-pack, non-type-parameter/alias/trailing-requires member partials,
+  nested method emission, and other dependent owner/member arguments remain
+  deferred.
 - Non-null object pointer target identity, ambiguous/virtual-base member
   pointers, unpublished dependent bases, and the nested
   anonymous-union-in-anonymous-union hierarchy still need canonical subobject

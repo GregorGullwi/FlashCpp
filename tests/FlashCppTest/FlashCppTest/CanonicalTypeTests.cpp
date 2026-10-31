@@ -7693,6 +7693,63 @@ using LongBox = Holder<long long>::Box<int, char, Payload>;
 	CHECK(table.templateSpecializationArguments(short_field) == table.templateSpecializationArguments(long_field));
 }
 
+TEST_CASE("Nontrivial member pack fields retain wrapped elements and owners") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream fixture("tests/test_canonical_member_nontrivial_type_pack_fields_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	code.append(R"(
+using ShortOwner = Owner<short>;
+using LongOwner = Owner<long long>;
+using ShortBox = Holder<short>::Box<int, char, Payload>;
+using LongBox = Holder<long long>::Box<int, char, Payload>;
+using ExpectedShort = Owner<short>::List<int, Wrap<char>, Wrap<Payload>>;
+using FlattenedShort = Owner<short>::List<int, char, Payload>;
+)");
+	CompileContext compile_context;
+	compile_context.setInputFile("canonical_member_nontrivial_type_pack.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto imported_alias = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const auto field_type = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const ResolvedAliasTypeInfo resolved = resolveAliasTypeInfo(info->registeredTypeIndex());
+		const StructTypeInfo* record = tryGetStructTypeInfo(resolved.type_index);
+		REQUIRE(record != nullptr);
+		REQUIRE(record->declaration_node != nullptr);
+		REQUIRE(record->members.size() == 4);
+		const TypeId type = record->members[0].canonical_type_id;
+		REQUIRE(type);
+		CHECK(table.recordSubobjectMemberAt(imported_alias(name), 0) == type);
+		const TypeSpecifierNode& syntax = record->declaration_node->members()[0].declaration.as<DeclarationNode>().type_specifier_node();
+		CHECK(importCanonicalStructMemberType(table, syntax) == type);
+		return type;
+	};
+	const TypeId short_field = field_type("ShortBox");
+	const TypeId long_field = field_type("LongBox");
+	CHECK(short_field != long_field);
+	CHECK(table.templateSpecializationOwner(short_field) == imported_alias("ShortOwner"));
+	CHECK(table.templateSpecializationOwner(long_field) == imported_alias("LongOwner"));
+	CHECK(table.templateSpecializationArguments(short_field) ==
+		table.templateSpecializationArguments(imported_alias("ExpectedShort")));
+	CHECK(table.templateSpecializationArguments(short_field) !=
+		table.templateSpecializationArguments(imported_alias("FlattenedShort")));
+}
+
 TEST_CASE("Member template specialization syntax retains its instantiated owner") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
