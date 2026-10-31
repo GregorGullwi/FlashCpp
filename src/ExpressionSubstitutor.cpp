@@ -1351,6 +1351,7 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 			continue;
 		}
 
+
 		if (materialized_arg.is_value && materialized_arg.dependent_expr.has_value()) {
 			const ASTNode& stored_expr = *materialized_arg.dependent_expr;
 			ASTNode substituted_expr = substitute(stored_expr);
@@ -1523,11 +1524,8 @@ static void appendReboundDependentPackArgument(TemplateArgumentVector& args, con
 	args.back().is_pack = false;
 }
 
-TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplateArgs(
-	std::span<const TypeInfo::TemplateArgInfo> stored_args,
-	int depth) {
-	TemplateArgumentVector materialized_args;
-	materialized_args.reserve(stored_args.size());
+std::optional<TemplateArgumentVector> ExpressionSubstitutor::tryExpandLockstepTypePack(
+	const TypeInfo::TemplateArgInfo& stored_arg, const TypeInfo& pattern_info) {
 	// A nontrivial pack pattern such as `Wrapper<Tail>...` records the wrapper
 	// spelling as its dependent name. Collect every bound pack referenced by the
 	// element pattern so lockstep expansions can substitute all of them per element.
@@ -1560,6 +1558,73 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 			}
 		}
 	};
+	TemplateParamNameVector referenced_packs;
+	TypeIndexVisitList visited_packs;
+	bool unsupported_pattern = false;
+
+	find_referenced_packs(find_referenced_packs, &pattern_info, visited_packs, 0, referenced_packs, unsupported_pattern);
+	TemplateVector<std::span<const TemplateTypeArg>, 4> referenced_pack_elements;
+	size_t expansion_count = 0;
+	bool can_expand = !unsupported_pattern && !referenced_packs.empty();
+	for (size_t pack_index = 0; pack_index < referenced_packs.size() && can_expand; ++pack_index) {
+		const auto pack_it = pack_map_.find(referenced_packs[pack_index]);
+		if (pack_it == pack_map_.end()) {
+			can_expand = false;
+			break;
+		}
+		const size_t count = pack_it->second.size();
+		if (pack_index == 0) {
+			expansion_count = count;
+		} else if (count != expansion_count) {
+			can_expand = false;
+			break;
+		}
+		for (const TemplateTypeArg& element : pack_it->second) {
+			if (templateArgIsStructurallyDependent(element) || typeIndexContainsDependentPlaceholder(element.type_index)) {
+				can_expand = false;
+				break;
+			}
+		}
+		referenced_pack_elements.push_back(std::span<const TemplateTypeArg>(pack_it->second.data(), pack_it->second.size()));
+	}
+
+	if (!can_expand) {
+		return std::nullopt;
+	}
+	if (expansion_count == 0) {
+		return TemplateArgumentVector{};
+	}
+	const std::optional<TypeSpecifierNode> element_pattern_spec = makeTypeSpecifierFromTemplateArgInfo(stored_arg, Token{});
+	if (!element_pattern_spec.has_value()) {
+		return std::nullopt;
+	}
+	TemplateArgumentVector expanded_args;
+	expanded_args.reserve(expansion_count);
+	for (size_t element_index = 0; element_index < expansion_count; ++element_index) {
+		std::unordered_map<std::string_view, TemplateTypeArg> element_param_map = param_map_;
+		for (size_t referenced_index = 0; referenced_index < referenced_packs.size(); ++referenced_index) {
+			element_param_map[StringTable::getStringView(referenced_packs[referenced_index])] =
+				referenced_pack_elements[referenced_index][element_index];
+		}
+		ExpressionSubstitutor element_substitutor(element_param_map, parser_);
+		element_substitutor.setCurrentOwnerTypeName(current_owner_type_name_);
+		element_substitutor.setCurrentOwnerDeclaration(current_owner_declaration_);
+		TypeSpecifierNode substituted_element = element_substitutor.substituteTypeSpecifier(*element_pattern_spec);
+		if (!substituted_element.type_index().is_valid() || typeIndexContainsDependentPlaceholder(substituted_element.type_index()) ||
+			tryGetTypeInfo(substituted_element.type_index()) == nullptr) {
+			return std::nullopt;
+		}
+		TemplateTypeArg expanded_arg(substituted_element);
+		expanded_arg.is_pack = false;
+		expanded_args.push_back(std::move(expanded_arg));
+	}
+	return expanded_args;
+}
+TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplateArgs(
+	std::span<const TypeInfo::TemplateArgInfo> stored_args,
+	int depth) {
+	TemplateArgumentVector materialized_args;
+	materialized_args.reserve(stored_args.size());
 	for (const TypeInfo::TemplateArgInfo& stored_arg : stored_args) {
 		TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
 		if (std::optional<std::vector<TemplateTypeArg>> expanded_args =
@@ -1578,73 +1643,17 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 		if (arg.is_pack) {
 			const TypeInfo* const pack_pattern_info = arg.type_index.is_valid() ? tryGetTypeInfo(arg.type_index) : nullptr;
 			if (pack_pattern_info != nullptr && pack_pattern_info->isTemplateInstantiation()) {
-				TemplateParamNameVector referenced_packs;
-				TypeIndexVisitList visited_packs;
-				bool unsupported_pattern = false;
-				find_referenced_packs(find_referenced_packs, pack_pattern_info, visited_packs, 0, referenced_packs, unsupported_pattern);
-				TemplateVector<std::span<const TemplateTypeArg>, 4> referenced_pack_elements;
-				size_t expansion_count = 0;
-				bool can_expand = !unsupported_pattern && !referenced_packs.empty();
-				for (size_t pack_index = 0; pack_index < referenced_packs.size() && can_expand; ++pack_index) {
-					const auto pack_it = pack_map_.find(referenced_packs[pack_index]);
-					if (pack_it == pack_map_.end()) {
-						can_expand = false;
-						break;
+				if (std::optional<TemplateArgumentVector> expanded = tryExpandLockstepTypePack(stored_arg, *pack_pattern_info)) {
+					for (TemplateTypeArg& expanded_arg : *expanded) {
+						materialized_args.push_back(std::move(expanded_arg));
 					}
-					const size_t count = pack_it->second.size();
-					if (pack_index == 0) {
-						expansion_count = count;
-					} else if (count != expansion_count) {
-						can_expand = false;
-						break;
-					}
-					for (const TemplateTypeArg& element : pack_it->second) {
-						if (templateArgIsStructurallyDependent(element) || typeIndexContainsDependentPlaceholder(element.type_index)) {
-							can_expand = false;
-							break;
-						}
-					}
-					referenced_pack_elements.push_back(std::span<const TemplateTypeArg>(pack_it->second.data(), pack_it->second.size()));
-				}
-				if (can_expand) {
-					const std::optional<TypeSpecifierNode> element_pattern_spec = makeTypeSpecifierFromTemplateArgInfo(stored_arg, Token{});
-					if (element_pattern_spec.has_value()) {
-						bool expanded_all = true;
-						TemplateArgumentVector expanded_args;
-						expanded_args.reserve(expansion_count);
-						for (size_t element_index = 0; element_index < expansion_count; ++element_index) {
-							std::unordered_map<std::string_view, TemplateTypeArg> element_param_map = param_map_;
-							for (size_t referenced_index = 0; referenced_index < referenced_packs.size(); ++referenced_index) {
-								element_param_map[StringTable::getStringView(referenced_packs[referenced_index])] =
-									referenced_pack_elements[referenced_index][element_index];
-							}
-							ExpressionSubstitutor element_substitutor(element_param_map, parser_);
-							element_substitutor.setCurrentOwnerTypeName(current_owner_type_name_);
-							element_substitutor.setCurrentOwnerDeclaration(current_owner_declaration_);
-							TypeSpecifierNode substituted_element = element_substitutor.substituteTypeSpecifier(*element_pattern_spec);
-							if (!substituted_element.type_index().is_valid() || typeIndexContainsDependentPlaceholder(substituted_element.type_index()) ||
-								tryGetTypeInfo(substituted_element.type_index()) == nullptr) {
-								expanded_all = false;
-								break;
-							}
-							TemplateTypeArg expanded_arg(substituted_element);
-							expanded_arg.is_pack = false;
-							expanded_args.push_back(std::move(expanded_arg));
-						}
-						if (expanded_all) {
-							for (TemplateTypeArg& expanded_arg : expanded_args) {
-								materialized_args.push_back(std::move(expanded_arg));
-							}
-							continue;
-						}
-					}
+					continue;
 				}
 				// A nontrivial pattern that cannot be expanded per element must stay dependent.
 				arg.is_dependent = true;
 				materialized_args.push_back(std::move(arg));
 				continue;
-			}
-			StringHandle pack_name = arg.dependent_name;
+			}			StringHandle pack_name = arg.dependent_name;
 			if (!pack_name.isValid() && pack_pattern_info != nullptr) {
 				pack_name = pack_pattern_info->name();
 			}
