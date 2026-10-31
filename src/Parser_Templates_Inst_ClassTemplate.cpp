@@ -2676,6 +2676,34 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					children.push_back(*child);
 				}
 			}
+			for (const StructMemberDecl& member_decl : pattern_struct->members()) {
+				if (!member_decl.declaration.is<DeclarationNode>()) {
+					continue;
+				}
+				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
+				const TypeSpecifierNode& member_type = decl.type_specifier_node();
+				if (!is_struct_type(member_type.category()) || !member_type.type_index().is_valid()) {
+					continue;
+				}
+				const TypeInfo* member_type_info = tryGetTypeInfo(member_type.type_index());
+				if (member_type_info == nullptr || !member_type_info->isTemplateInstantiation()) {
+					continue;
+				}
+				std::string_view member_template_name = buildQualifiedNameFromHandle(
+					member_type_info->sourceNamespace(), StringTable::getStringView(member_type_info->baseTemplateName()));
+				if (member_template_name.empty()) {
+					continue;
+				}
+				std::vector<TemplateTypeArg> member_arguments =
+					materializePlaceholderTemplateArgs(*member_type_info, *pattern_template_params, pattern_arguments);
+				const bool arguments_are_concrete = std::ranges::all_of(member_arguments,
+					[](const TemplateTypeArg& argument) { return !argument.is_dependent && !argument.is_pack; });
+				if (!arguments_are_concrete) {
+					continue;
+				}
+				auto member_request = make_request(member_template_name, member_arguments);
+				if (member_request.has_value() && *member_request != request_id) children.push_back(*member_request);
+			}
 			return true;
 		};
 

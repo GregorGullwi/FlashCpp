@@ -199,11 +199,13 @@ increased for this regression.
 The native `Canonical adapter imports the source corpus at publication` fixture
 still overflows at 1 MB, including in a pre-change binary. Reduce parser frames
 and replace recursive syntax processing before expecting that corpus to fit.
-The member-template pack owner regression likewise still overflows at 1 MB,
-including with a pre-change compiler binary. Compacting its parser and
-instantiation frames is not enough: `Chain<N>` member aliases recurse through
-`try_instantiate_class_template` once per level, and the 24-level regression
-needs an explicit instantiation worklist for that member-dependency path.
+The member-template pack owner regression still overflows at 1 MB, including
+with a pre-change compiler binary. The instantiation worklist now collects
+direct member class-template fields, so `Chain<N>` levels are pre-instantiated
+rather than re-entering once per level; a 1.5 MB stack completes. A nested member
+alias (`Holder<Tag<N>>::Box` -> `Owner<T>::List`) still instantiates recursively
+inside each pre-instantiated `Chain`, so extending the worklist to member
+template alias targets is the remaining step for 1 MB.
 
 The rare NTTP and callable payloads in `TemplateTypeArg` live behind immutable
 32-bit handles in persistent arenas, and `TemplateArgumentVector` is now an
