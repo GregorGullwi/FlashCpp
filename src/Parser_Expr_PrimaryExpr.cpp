@@ -1507,7 +1507,7 @@ TypeInfo::DependentQualifiedNameRecord makeExpressionDependentQualifiedNameRecor
 	record.owner_kind = owner_kind;
 	record.owner_name = owner_name;
 	record.owner_type = owner_type;
-	record.owner_template_arguments = std::move(owner_template_arguments);
+	record.owner_template_arguments = TypeInfo::DependentQualifiedNameRecord::makeTemplateArgStorage(std::move(owner_template_arguments));
 	record.names_current_instantiation =
 		owner_kind == TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation;
 	for (StringHandle member_name : member_names) {
@@ -1528,7 +1528,7 @@ TypeInfo::DependentQualifiedNameRecord makeExpressionDependentQualifiedNameRecor
 	record.owner_kind = owner_kind;
 	record.owner_name = owner_name;
 	record.owner_type = owner_type;
-	record.owner_template_arguments = std::move(owner_template_arguments);
+	record.owner_template_arguments = TypeInfo::DependentQualifiedNameRecord::makeTemplateArgStorage(std::move(owner_template_arguments));
 	record.names_current_instantiation =
 		owner_kind == TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation;
 	for (const ExpressionDependentMemberSegmentInfo& segment_info : member_segments) {
@@ -1536,7 +1536,7 @@ TypeInfo::DependentQualifiedNameRecord makeExpressionDependentQualifiedNameRecor
 		member.name = segment_info.name;
 		member.has_template_keyword = segment_info.has_template_keyword;
 		if (segment_info.template_args.has_value()) {
-			member.template_arguments = *segment_info.template_args;
+			member.template_arguments = TypeInfo::DependentQualifiedNameRecord::makeTemplateArgStorage(*segment_info.template_args);
 			member.has_template_arguments = true;
 		}
 		record.member_chain.push_back(std::move(member));

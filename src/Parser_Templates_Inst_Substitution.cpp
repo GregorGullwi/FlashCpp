@@ -4492,21 +4492,21 @@ std::optional<TypeSpecifierNode> Parser::rewriteDependentMemberTypeSpellings(
 
 	bool any_rebound = false;
 	TypeInfo::DependentQualifiedNameRecord rewritten_record = *record;
-	rewritten_record.owner_template_arguments = rewrite_arg_infos(
+	rewritten_record.owner_template_arguments = TypeInfo::DependentQualifiedNameRecord::makeTemplateArgStorage(rewrite_arg_infos(
 		std::span<const TypeInfo::TemplateArgInfo>(
 			record->owner_template_arguments.data(),
 			record->owner_template_arguments.size()),
-		any_rebound);
+		any_rebound));
 	for (auto& member_record : rewritten_record.member_chain) {
 		if (!member_record.has_template_arguments) {
 			continue;
 		}
 		bool member_rebound = false;
-		member_record.template_arguments = rewrite_arg_infos(
+		member_record.template_arguments = TypeInfo::DependentQualifiedNameRecord::makeTemplateArgStorage(rewrite_arg_infos(
 			std::span<const TypeInfo::TemplateArgInfo>(
 				member_record.template_arguments.data(),
 				member_record.template_arguments.size()),
-			member_rebound);
+			member_rebound));
 		any_rebound = any_rebound || member_rebound;
 	}
 	if (!any_rebound) {

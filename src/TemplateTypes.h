@@ -983,12 +983,9 @@ struct TemplateArgIdentity {
  */
 struct OrderedTemplateInstantiationIdentity {
 	StringHandle base_template{};
-	TemplateVector<TemplateArgIdentity, 4> args;
+	OutOfLineVector<TemplateArgIdentity> args;
 
-	bool operator==(const OrderedTemplateInstantiationIdentity& other) const {
-		return base_template == other.base_template &&
-			   args == other.args;
-	}
+	bool operator==(const OrderedTemplateInstantiationIdentity& other) const { return base_template == other.base_template && args == other.args; }
 
 	bool operator!=(const OrderedTemplateInstantiationIdentity& other) const {
 		return !(*this == other);
@@ -1053,8 +1050,8 @@ using ValueArgKey = NonTypeValueIdentity;
 
 struct TemplateInstantiationKey {
 	StringHandle base_template;							// Template name handle
-	TemplateVector<TypeIndexArg, 4> type_args;				 // Type arguments
-	TemplateVector<ValueArgKey, 4> value_args;				 // Non-type arguments
+	OutOfLineVector<TypeIndexArg> type_args;				 // Type arguments
+	OutOfLineVector<ValueArgKey> value_args;				 // Non-type arguments
 	TemplateVector<StringHandle, 2> template_template_args; // Template template args
 	OrderedTemplateInstantiationIdentity ordered_identity; // Phase 7: ordered argument identity
 

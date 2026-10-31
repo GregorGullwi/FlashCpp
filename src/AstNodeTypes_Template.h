@@ -103,10 +103,8 @@ private:
 	TypeIndex registered_type_index_;
 };
 
-using TemplateParameterVector =
-	TemplateVector<TemplateParameterNode, 4>;
-using TemplateAstNodeVector =
-	TemplateVector<ASTNode, 4>;
+using TemplateParameterVector = FlashCpp::OutOfLineVector<TemplateParameterNode>;
+using TemplateAstNodeVector = TemplateVector<ASTNode, 4>;
 
 // Template function declaration node - represents a function template
 class TemplateFunctionDeclarationNode {

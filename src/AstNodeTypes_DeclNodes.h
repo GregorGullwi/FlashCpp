@@ -1,5 +1,6 @@
 #pragma once
 #include <cassert>
+#include <iterator>
 #include <memory>
 #include <span>
 #include <vector>
@@ -21,12 +22,9 @@ struct TypeInfo;
 const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index);
 struct ImplicitSameTypeConstructors { ASTNode copy_constructor; ASTNode move_constructor; };
 struct ImplicitSameTypeAssignments { ASTNode copy_assignment; ASTNode move_assignment; };
-ConstructorDeclarationNode* synthesizeImplicitCopyConstructor(
-	StructTypeInfo& struct_info, TypeIndex self_type_index, const TypeInfo& self_type_info, StringHandle instantiated_name);
-ImplicitSameTypeConstructors createUnregisteredImplicitSameTypeConstructors(
-	StructTypeInfo& struct_info, TypeIndex self_type_index, const TypeInfo& self_type_info, StringHandle instantiated_name);
-ImplicitSameTypeAssignments createUnregisteredImplicitSameTypeAssignments(
-	StructTypeInfo& struct_info, TypeIndex self_type_index, const TypeInfo& self_type_info, StringHandle instantiated_name);
+ConstructorDeclarationNode* synthesizeImplicitCopyConstructor(StructTypeInfo& struct_info, TypeIndex self_type_index, const TypeInfo& self_type_info, StringHandle instantiated_name);
+ImplicitSameTypeConstructors createUnregisteredImplicitSameTypeConstructors(StructTypeInfo& struct_info, TypeIndex self_type_index, const TypeInfo& self_type_info, StringHandle instantiated_name);
+ImplicitSameTypeAssignments createUnregisteredImplicitSameTypeAssignments(StructTypeInfo& struct_info, TypeIndex self_type_index, const TypeInfo& self_type_info, StringHandle instantiated_name);
 
 // Classification of a class type's participation in the translation unit.
 // This is deliberately independent of AstOwnershipPhase: parser ownership of
@@ -1241,10 +1239,8 @@ struct TypeInfo {
 		StringHandle stringValue() const { return FlashCpp::get_if<StringHandle>(value); }
 	};
 
-	using TemplateArgInfoVector =
-		TemplateVector<TemplateArgInfo, 4>;
-	using TemplateArgInfoSingleVector =
-		TemplateVector<TemplateArgInfo, 1>;
+	using TemplateArgInfoVector = FlashCpp::OutOfLineVector<TemplateArgInfo>;
+	using TemplateArgInfoSingleVector = TemplateVector<TemplateArgInfo, 1>;
 
 	struct DependentQualifiedNameRecord {
 		enum class OwnerKind : uint8_t {
@@ -1256,7 +1252,7 @@ struct TypeInfo {
 
 		struct Member {
 			StringHandle name;
-			TemplateArgInfoVector template_arguments;
+			FlashCpp::OutOfLineVector<TemplateArgInfo> template_arguments;
 			bool has_template_arguments;
 			bool has_template_keyword;
 
@@ -1274,9 +1270,14 @@ struct TypeInfo {
 		StringHandle owner_name;
 		TypeIndex owner_type;
 		const StructDeclarationNode* current_instantiation_declaration = nullptr;
-		TemplateArgInfoVector owner_template_arguments;
-		TemplateVector<Member, 4> member_chain;
+		FlashCpp::OutOfLineVector<TemplateArgInfo> owner_template_arguments;
+		FlashCpp::OutOfLineVector<Member> member_chain;
 		bool names_current_instantiation;
+
+		template <typename Range>
+		static FlashCpp::OutOfLineVector<TemplateArgInfo> makeTemplateArgStorage(Range&& range) {
+			return FlashCpp::OutOfLineVector<TemplateArgInfo>(std::make_move_iterator(range.begin()), std::make_move_iterator(range.end()));
+		}
 
 		DependentQualifiedNameRecord()
 			: owner_kind(OwnerKind::UnknownSpecialization),
