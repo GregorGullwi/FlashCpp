@@ -1534,7 +1534,7 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 	// The inline visit list covers a full scan-depth chain and spills only for wider trees, avoiding a hash set.
 	using TypeIndexVisitList = TemplateVector<TypeIndex, kMaxDependentMemberTypeResolutionDepth + 1>;
 	auto find_referenced_packs = [&](auto&& self, const TypeInfo* type_info, TypeIndexVisitList& visited, int scan_depth,
-		TemplateParamNameVector& referenced_packs) -> void {
+		TemplateParamNameVector& referenced_packs, bool& unsupported) -> void {
 		if (type_info == nullptr || scan_depth > kMaxDependentMemberTypeResolutionDepth) {
 			return;
 		}
@@ -1547,12 +1547,18 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 			StringHandle candidate;
 			if (nested.dependent_name.isValid() && pack_map_.find(nested.dependent_name) != pack_map_.end()) {
 				candidate = nested.dependent_name;
+			} else if (nested.dependent_name.isValid() && param_map_.find(StringTable::getStringView(nested.dependent_name)) != param_map_.end()) {
+				// A template parameter that is bound only as a scalar may be a pack
+				// that the effective binding collapsed. Expanding with that scalar
+				// would be wrong, so keep the whole expansion deferred.
+				unsupported = true;
+				continue;
 			} else if (!nested.is_value && nested.type_index.is_valid()) {
 				const TypeInfo* nested_info = tryGetTypeInfo(nested.type_index);
 				if (nested_info != nullptr && nested_info->name().isValid() && pack_map_.find(nested_info->name()) != pack_map_.end()) {
 					candidate = nested_info->name();
 				} else {
-					self(self, nested_info, visited, scan_depth + 1, referenced_packs);
+					self(self, nested_info, visited, scan_depth + 1, referenced_packs, unsupported);
 				}
 			}
 			if (candidate.isValid() && std::find(referenced_packs.begin(), referenced_packs.end(), candidate) == referenced_packs.end()) {
@@ -1580,10 +1586,11 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 			if (pack_pattern_info != nullptr && pack_pattern_info->isTemplateInstantiation()) {
 				TemplateParamNameVector referenced_packs;
 				TypeIndexVisitList visited_packs;
-				find_referenced_packs(find_referenced_packs, pack_pattern_info, visited_packs, 0, referenced_packs);
+				bool unsupported_pattern = false;
+				find_referenced_packs(find_referenced_packs, pack_pattern_info, visited_packs, 0, referenced_packs, unsupported_pattern);
 				TemplateVector<std::span<const TemplateTypeArg>, 4> referenced_pack_elements;
 				size_t expansion_count = 0;
-				bool can_expand = !referenced_packs.empty();
+				bool can_expand = !unsupported_pattern && !referenced_packs.empty();
 				for (size_t pack_index = 0; pack_index < referenced_packs.size() && can_expand; ++pack_index) {
 					const auto pack_it = pack_map_.find(referenced_packs[pack_index]);
 					if (pack_it == pack_map_.end()) {

@@ -7814,6 +7814,44 @@ template<class T> struct Holder {
 	CHECK(first->templateArgs()[1].type_index == nativeTypeIndex(TypeCategory::Int));
 	CHECK(second->templateArgs()[0].type_index == nativeTypeIndex(TypeCategory::Double));
 	CHECK(second->templateArgs()[1].type_index == nativeTypeIndex(TypeCategory::LongLong));
+
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const TypeId field_type = importCanonicalStructMemberType(table, substituted);
+	REQUIRE(field_type);
+	const TemplateArgumentVector owner_int_args{int_arg};
+	const auto owner_int = parser.templateEngine().materializeTemplateInstantiationForLookup("Owner", owner_int_args);
+	REQUIRE(owner_int.resolved_type_info != nullptr);
+	const CanonicalTypeImport imported_owner = importCanonicalClassTypeInfo(table, *owner_int.resolved_type_info);
+	REQUIRE(imported_owner.status == CanonicalTypeImportStatus::Supported);
+	CHECK(table.templateSpecializationOwner(field_type) == imported_owner.type);
+	const CanonicalTypeImport imported_pair_char_int = importCanonicalClassTypeInfo(table, *pair_char_int.resolved_type_info);
+	const CanonicalTypeImport imported_pair_double_long = importCanonicalClassTypeInfo(table, *pair_double_long.resolved_type_info);
+	REQUIRE(imported_pair_char_int.status == CanonicalTypeImportStatus::Supported);
+	REQUIRE(imported_pair_double_long.status == CanonicalTypeImportStatus::Supported);
+	TypeId argument_link = table.templateSpecializationArguments(field_type);
+	REQUIRE(argument_link);
+	REQUIRE(table.templateArgumentIsType(argument_link));
+	CHECK(table.templateArgumentType(argument_link) == imported_pair_char_int.type);
+	argument_link = table.templateArgumentNext(argument_link);
+	REQUIRE(argument_link);
+	REQUIRE(table.templateArgumentIsType(argument_link));
+	CHECK(table.templateArgumentType(argument_link) == imported_pair_double_long.type);
+	CHECK_FALSE(table.templateArgumentNext(argument_link));
+
+	// A pack name that is only available as a scalar must not be used for the
+	// expansion; the whole field stays dependent instead of materializing a
+	// wrong element type.
+	TemplateArgSubstitutionMap guarded_scalar_args;
+	guarded_scalar_args["T"] = TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Int));
+	guarded_scalar_args["Other"] = long_arg;
+	TemplateArgPackSubstitutionMap guarded_pack_args;
+	guarded_pack_args[StringTable::getOrInternStringHandle("Tail")] = {char_arg, double_arg};
+	const std::string_view guarded_order[] = {"T", "Tail", "Other"};
+	ExpressionSubstitutor guarded_substitutor(guarded_scalar_args, guarded_pack_args, parser, guarded_order);
+	const TypeSpecifierNode guarded = guarded_substitutor.substituteTypeSpecifier(field);
+	const TypeInfo* guarded_info = tryGetTypeInfo(guarded.type_index());
+	const bool guarded_is_dependent = guarded_info == nullptr || guarded_info->isDependentPlaceholder();
+	CHECK(guarded_is_dependent);
 }
 
 TEST_CASE("Member template specialization syntax retains its instantiated owner") {
