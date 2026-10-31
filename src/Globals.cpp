@@ -21,6 +21,25 @@ bool g_enable_exceptions = true;
 NamespaceRegistry gNamespaceRegistry;
 LegacyAstChunkedAnyVector gChunkedAnyStorage;
 
+namespace {
+
+MonotonicScratchArena& persistentArena() {
+	static MonotonicScratchArena* arena = new MonotonicScratchArena(*new DiagnosticEngine(), 2ULL * 1024ULL * 1024ULL * 1024ULL);
+	return *arena;
+}
+
+} // namespace
+
+namespace FlashCpp {
+
+void* allocatePersistentArena(std::size_t size, std::size_t alignment) { return persistentArena().allocate(size, alignment); }
+uint64_t persistentArenaUsedBytes() { return persistentArena().currentBytes(); }
+uint64_t persistentArenaPeakBytes() { return persistentArena().peakBytes(); }
+uint64_t persistentArenaReservedBytes() { return persistentArena().reservedBytes(); }
+uint64_t persistentArenaPeakReservedBytes() { return persistentArena().peakReservedBytes(); }
+
+} // namespace FlashCpp
+
 namespace FlashCpp {
 ChunkedVector<StructuralClassValue> gStructuralClassValues;
 ChunkedVector<NonTypeValueIdentity, 32> gTemplateValueIdentities;
