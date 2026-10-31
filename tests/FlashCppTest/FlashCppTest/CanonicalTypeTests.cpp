@@ -7748,6 +7748,112 @@ using FlattenedShort = Owner<short>::List<int, char, Payload>;
 	CHECK(table.templateSpecializationArguments(short_field) != table.templateSpecializationArguments(imported_alias("FlattenedShort")));
 }
 
+TEST_CASE("Lockstep member pack expansion substitutes every referenced pack") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+template<class A, class B> struct Pair { A first; B second; };
+template<class T> struct Owner { template<class... U> struct List { int marker; }; };
+template<class T> struct Holder {
+	template<class... U> struct Box {};
+	template<class... Tail, class... Other>
+	struct Box<Pair<Tail, Other>...> {
+		typename Owner<T>::template List<Pair<Tail, Other>...> values;
+	};
+};
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("lockstep_member_pack.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	const TemplateTypeArg char_arg = TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Char));
+	const TemplateTypeArg int_arg = TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Int));
+	const TemplateTypeArg double_arg = TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Double));
+	const TemplateTypeArg long_arg = TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::LongLong));
+	const TemplateArgumentVector pair_char_int_args{char_arg, int_arg};
+	const TemplateArgumentVector pair_double_long_args{double_arg, long_arg};
+	const auto pair_char_int = parser.templateEngine().materializeTemplateInstantiationForLookup("Pair", pair_char_int_args);
+	const auto pair_double_long = parser.templateEngine().materializeTemplateInstantiationForLookup("Pair", pair_double_long_args);
+	REQUIRE(pair_char_int.resolved_type_info != nullptr);
+	REQUIRE(pair_double_long.resolved_type_info != nullptr);
+	const TemplateArgumentVector box_args{
+		TemplateTypeArg::makeType(pair_char_int.resolved_type_info->registeredTypeIndex()),
+		TemplateTypeArg::makeType(pair_double_long.resolved_type_info->registeredTypeIndex())};
+	const auto pattern_match = gTemplateRegistry.matchSpecializationPatternWithBindings("Holder::Box", box_args);
+	REQUIRE(pattern_match.has_value());
+	REQUIRE(pattern_match->node.is<TemplateClassDeclarationNode>());
+	const StructDeclarationNode& pattern = pattern_match->node.as<TemplateClassDeclarationNode>().class_decl_node();
+	REQUIRE(pattern.members().size() == 1);
+	const TypeSpecifierNode& field = pattern.members()[0].declaration.as<DeclarationNode>().type_specifier_node();
+	TemplateArgSubstitutionMap scalar_args;
+	scalar_args["T"] = TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Int));
+	TemplateArgPackSubstitutionMap pack_args;
+	pack_args[StringTable::getOrInternStringHandle("Tail")] = {char_arg, double_arg};
+	pack_args[StringTable::getOrInternStringHandle("Other")] = {int_arg, long_arg};
+	const std::string_view order[] = {"T", "Tail", "Other"};
+	ExpressionSubstitutor substitutor(scalar_args, pack_args, parser, order);
+	const TypeSpecifierNode substituted = substitutor.substituteTypeSpecifier(field);
+	const TypeInfo* list = tryGetTypeInfo(substituted.type_index());
+	REQUIRE(list != nullptr);
+	CHECK(!list->isDependentMemberType());
+	REQUIRE(list->templateArgs().size() == 2);
+	const TypeInfo* first = tryGetTypeInfo(list->templateArgs()[0].type_index);
+	const TypeInfo* second = tryGetTypeInfo(list->templateArgs()[1].type_index);
+	REQUIRE(first != nullptr);
+	REQUIRE(second != nullptr);
+	CHECK(first->baseTemplateName() == StringTable::getOrInternStringHandle("Pair"));
+	CHECK(second->baseTemplateName() == StringTable::getOrInternStringHandle("Pair"));
+	REQUIRE(first->templateArgs().size() == 2);
+	REQUIRE(second->templateArgs().size() == 2);
+	CHECK(first->templateArgs()[0].type_index == nativeTypeIndex(TypeCategory::Char));
+	CHECK(first->templateArgs()[1].type_index == nativeTypeIndex(TypeCategory::Int));
+	CHECK(second->templateArgs()[0].type_index == nativeTypeIndex(TypeCategory::Double));
+	CHECK(second->templateArgs()[1].type_index == nativeTypeIndex(TypeCategory::LongLong));
+
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const TypeId field_type = importCanonicalStructMemberType(table, substituted);
+	REQUIRE(field_type);
+	const TemplateArgumentVector owner_int_args{int_arg};
+	const auto owner_int = parser.templateEngine().materializeTemplateInstantiationForLookup("Owner", owner_int_args);
+	REQUIRE(owner_int.resolved_type_info != nullptr);
+	const CanonicalTypeImport imported_owner = importCanonicalClassTypeInfo(table, *owner_int.resolved_type_info);
+	REQUIRE(imported_owner.status == CanonicalTypeImportStatus::Supported);
+	CHECK(table.templateSpecializationOwner(field_type) == imported_owner.type);
+	const CanonicalTypeImport imported_pair_char_int = importCanonicalClassTypeInfo(table, *pair_char_int.resolved_type_info);
+	const CanonicalTypeImport imported_pair_double_long = importCanonicalClassTypeInfo(table, *pair_double_long.resolved_type_info);
+	REQUIRE(imported_pair_char_int.status == CanonicalTypeImportStatus::Supported);
+	REQUIRE(imported_pair_double_long.status == CanonicalTypeImportStatus::Supported);
+	TypeId argument_link = table.templateSpecializationArguments(field_type);
+	REQUIRE(argument_link);
+	REQUIRE(table.templateArgumentIsType(argument_link));
+	CHECK(table.templateArgumentType(argument_link) == imported_pair_char_int.type);
+	argument_link = table.templateArgumentNext(argument_link);
+	REQUIRE(argument_link);
+	REQUIRE(table.templateArgumentIsType(argument_link));
+	CHECK(table.templateArgumentType(argument_link) == imported_pair_double_long.type);
+	CHECK_FALSE(table.templateArgumentNext(argument_link));
+
+	// A pack name that is only available as a scalar must not be used for the
+	// expansion; the whole field stays dependent instead of materializing a
+	// wrong element type.
+	TemplateArgSubstitutionMap guarded_scalar_args;
+	guarded_scalar_args["T"] = TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Int));
+	guarded_scalar_args["Other"] = long_arg;
+	TemplateArgPackSubstitutionMap guarded_pack_args;
+	guarded_pack_args[StringTable::getOrInternStringHandle("Tail")] = {char_arg, double_arg};
+	const std::string_view guarded_order[] = {"T", "Tail", "Other"};
+	ExpressionSubstitutor guarded_substitutor(guarded_scalar_args, guarded_pack_args, parser, guarded_order);
+	const TypeSpecifierNode guarded = guarded_substitutor.substituteTypeSpecifier(field);
+	const TypeInfo* guarded_info = tryGetTypeInfo(guarded.type_index());
+	const bool guarded_is_dependent = guarded_info == nullptr || guarded_info->isDependentPlaceholder();
+	CHECK(guarded_is_dependent);
+}
+
 TEST_CASE("Member template specialization syntax retains its instantiated owner") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
