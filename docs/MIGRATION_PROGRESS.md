@@ -20,7 +20,15 @@ instantiated bodies still propagate, as required by C++20 [temp.deduct]. Native
 checks cover the previous one-ID leak, successful publication, duplicate IDs,
 late hashing failure, and rollback across an arena-chunk boundary.
 
-The next slice must give candidate-local type, AST, registry, and parser artifacts
+Dependent-name canonical restamping now runs after semantic type substitution
+and member-pointer owner rebinding succeed. Only a surviving stamp enters a
+canonical-type transaction, which publishes after the replacement is applied.
+Unsupported later bindings and failed restamps discard their imported type
+prefix; required dependency instantiations stay outside that transaction.
+Native guards cover late unsupported bindings, a class-body hard error, and a
+1,024-segment qualifier path with stable repeated substitution identities.
+
+The next slice must give remaining candidate-local type, AST, registry, and parser artifacts
 an owned publication boundary before enabling a transaction around type-pack
 materialization. Existing `FrontendScratchTransaction` coverage is insufficient
 for those legacy stores. Required dependency instantiations must remain separate
