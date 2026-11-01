@@ -1210,23 +1210,19 @@ std::optional<std::vector<TemplateTypeArg>> ExpressionSubstitutor::expandDepende
 		}) || bindings.invalid || bindings.pack_bindings.empty()) return std::nullopt;
 	std::vector<TemplateTypeArg> expanded_args;
 	expanded_args.reserve(bindings.expansion_count);
+	std::vector<ASTNode> staged_expressions;
+	staged_expressions.reserve(bindings.expansion_count);
 	const bool expanded = forEachTemplatePackExpansionElement(bindings, [&](size_t expansion_index) {
 		const auto scalar_bindings = makeTemplatePackElementSubstitutionMap(param_map_, bindings, expansion_index);
 		ExpressionSubstitutor element_substitutor(scalar_bindings, pack_map_, parser_);
 		element_substitutor.setCurrentOwnerTypeName(current_owner_type_name_);
 		element_substitutor.setCurrentOwnerDeclaration(current_owner_declaration_);
 		ASTNode substituted_expr = element_substitutor.substitute(*pack_arg.dependent_expr);
-		ExprId substituted_expr_id{};
-		if (FrontendContext* context = frontendContext()) {
-			substituted_expr_id = context->dependentExpressions().intern(substituted_expr);
-		}
+		staged_expressions.push_back(substituted_expr);
 
 		if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
 			TemplateTypeArg expanded_arg = makeConcreteNttpArg(eval_result->identity, pack_arg);
 			expanded_arg.is_pack = false;
-			if (substituted_expr_id && !expanded_arg.nttp_expr) {
-				expanded_arg.nttp_expr = substituted_expr_id;
-			}
 			expanded_args.push_back(std::move(expanded_arg));
 			return true;
 		}
@@ -1235,9 +1231,6 @@ std::optional<std::vector<TemplateTypeArg>> ExpressionSubstitutor::expandDepende
 		unresolved_arg.is_pack = false;
 		unresolved_arg.is_dependent = true;
 		unresolved_arg.dependent_expr = std::move(substituted_expr);
-		if (substituted_expr_id && !unresolved_arg.nttp_expr) {
-			unresolved_arg.nttp_expr = substituted_expr_id;
-		}
 		if (std::ranges::any_of(bindings.pack_bindings,
 			[&](const TemplatePackExpansionBinding& binding) { return binding.name == unresolved_arg.dependent_name; })) {
 			unresolved_arg.dependent_name = {};
@@ -1246,7 +1239,12 @@ std::optional<std::vector<TemplateTypeArg>> ExpressionSubstitutor::expandDepende
 		return true;
 	});
 	if (!expanded) return std::nullopt;
-
+	if (FrontendContext* context = frontendContext()) {
+		const auto identities = context->dependentExpressions().internBatch(staged_expressions);
+		for (size_t index = 0; index < expanded_args.size(); ++index) {
+			if (!expanded_args[index].nttp_expr) expanded_args[index].nttp_expr = identities[index];
+		}
+	}
 	return expanded_args;
 }
 

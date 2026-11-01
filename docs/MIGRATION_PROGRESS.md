@@ -8,21 +8,24 @@ implementation history belongs in git and the regression suite.
 
 ## Next 3A slice
 
-**Make speculative pack-element substitution transactional.**
-Class partial-specialization deduction now matches every argument in a trailing
-pack expansion and retains a `TemplateBinding` group per declared parameter.
-`Box<Pair<Tail, Other>...>` preserves both ordered packs, including empty packs,
-through selection, member initialization, layout, and canonical field publication.
-Scalar deductions remain consistent across elements; conflicting repeated pack
-occurrences reject the candidate. Native identity checks and mixed-size source
-regressions cover both packs, singleton/empty cases, and 256 expansion elements.
+**Separate provisional type publication from required instantiations.**
+Value-pack substitution now stages its expressions until every element finishes,
+then interns their identities atomically. A later element's hard error publishes
+no prefix of candidate expression IDs. Failed batch publication restores hash
+buckets and live IDs, retains stable committed IDs, and reuses arena slots.
+Required earlier class instantiations stay available and errors in separately
+instantiated bodies still propagate, as required by C++20 [temp.deduct]. Native
+checks cover the previous one-ID leak, successful publication, duplicate IDs,
+late hashing failure, and rollback across an arena-chunk boundary.
 
-The next slice must ensure a failed later element rolls back declarations,
-entities, types, instantiations, and AST allocations from earlier elements. Reuse
-the existing scratch/publication transaction infrastructure. Pack-length mismatch
-diagnostics may follow separately; unequal lengths still stay dependent.
-Alias/variable-template flattened adapters and runtime function-parameter fold
-replay remain deferred. Boundary 3A and 8A remain incomplete.
+The next slice must give candidate-local type, AST, registry, and parser artifacts
+an owned publication boundary before enabling a transaction around type-pack
+materialization. Existing `FrontendScratchTransaction` coverage is insufficient
+for those legacy stores. Required dependency instantiations must remain separate
+from that candidate-local transaction; blanket rollback would violate observable
+C++20 instantiation effects. Mismatch diagnostics, alias/variable-template
+flattened adapters, and runtime function-parameter fold replay remain deferred.
+Boundary 3A and 8A remain incomplete.
 
 Direct type-pack data members now retain empty/full packs, written CV/pointer
 wrappers, enclosing-owner identity, and canonical subobject schemas. Coverage is

@@ -73,8 +73,11 @@ The target ownership model is:
    allowed, but dual writes are not.
 6. Syntax nodes contain no mangled names or backend state.
 7. Template bodies are AST patterns, not saved lexer positions.
-8. Failed tentative parsing and failed substitution commit no declarations,
-   entities, types, diagnostics, instantiations, or AST nodes.
+8. Failed tentative parsing and failed substitution publish no candidate-local
+   provisional declarations, entities, types, diagnostics, instantiations, or
+   AST nodes. Required separately instantiated constructs retain their C++20
+   effects under [temp.inst] and [temp.deduct]; a later deduction failure cannot
+   erase those effects or turn their hard errors into SFINAE.
 9. Lookup returns complete declaration sets and represents ambiguity directly.
 10. Overload resolution records complete implicit conversion sequences.
 11. ELF mangling conforms to the Itanium C++ ABI. COFF mangling conforms to
@@ -606,10 +609,15 @@ Add typed arena models with:
   relocating cyclic AST graphs.
 
 Failed probes may leave unreachable arena bytes until the translation unit
-ends. They must leave no observable declaration, entity, type, diagnostic, or
-instantiation registration. Track discarded scratch bytes and enforce a
-reasonable implementation limit so repeated failure cannot exhaust memory
-silently.
+ends. They must leave no observable candidate-local provisional declaration,
+entity, type, diagnostic, or instantiation registration. Required dependency
+instantiations are separate semantic operations: their declarations can remain
+observable after a later immediate-context substitution failure, and errors in
+their bodies remain hard errors ([temp.deduct], [temp.inst], [temp.friend]).
+Substitution preserves lexical order and stops at the first deduction failure;
+transaction preparation cannot instantiate later dependencies early. Track
+discarded scratch bytes and enforce a reasonable implementation limit so
+repeated failure cannot exhaust memory silently.
 
 The existing `ChunkedAnyVector` remains available to the old AST during the
 bridge. New semantic nodes cannot use raw addresses as identity.
@@ -1108,7 +1116,8 @@ Implements: [temp.spec], [temp.inst], [temp.explicit],
 Exit criteria:
 
 - migrated constructs never restore saved lexer positions;
-- migrated probes commit no state on failure;
+- migrated probes commit no candidate-local provisional state on failure,
+  while preserving required dependency-instantiation effects and hard errors;
 - namespace, outer-binding, specialization, ADL, detection, and cross-TU
   regressions pass;
 - at least 1024 levels of logical instantiation run under the normal OS stack

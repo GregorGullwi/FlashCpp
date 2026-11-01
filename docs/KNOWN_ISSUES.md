@@ -262,10 +262,19 @@ remain unsupported through those adapters. A nested member-template declaration
 with a pack-expanded base such as `List : U...` is rejected by the parser; this
 syntax gap is separate from supported template-id bases.
 
-Per-element substitution can still publish wrapper instantiations before a later
-element fails. Unequal lengths of packs in the same expansion remain dependent
-instead of producing the required ill-formed diagnostic. These remain explicit
-follow-up work, not completed C++20 support.
+Computed NTTP packs stage their expressions and publish their IDs as one atomic
+batch. A later element's hard error leaves no candidate expression-ID prefix.
+This does not roll back required class instantiations: C++20 permits observable
+instantiation effects before a later deduction failure and requires errors in
+separately instantiated bodies to remain hard errors.
+
+Candidate-local type, legacy AST, registry/cache, and parser publication still
+need an owned transaction boundary. `FrontendScratchTransaction` currently covers
+scratch, declaration/template identity, canonical types, and symbol/namespace
+publication; it does not make those other stores transactional. Do not wrap the
+whole materialization path in it or erase required dependency instantiations.
+Unequal lengths of packs in the same expansion remain dependent instead of
+producing the required ill-formed diagnostic.
 
 ## SEH finally funclet termination is conservative in return-flow diagnostics
 
@@ -642,3 +651,20 @@ partial ordering and constraint-based tie-breaking need their own boundary-5
 slice; until then a constrained-overload regression must stay within the
 prose-verified probe count and pair each constrained overload with an
 unconstrained fallback rather than with a second constrained overload.
+
+## Immediate-context function-pack substitution still accepts a missing member
+
+A trailing return containing
+`consume<T...>(static_cast<typename T::member>(0)...)` can retain a function
+candidate when a later `T` has no `member`. With a variadic fallback overload,
+`decltype(detect<Good, Bad>(0))` selects the invalid candidate instead of the
+fallback. The reduced input is accepted by Clang C++20 as a valid SFINAE probe.
+Audit function call-argument pack replay and immediate-context failure
+classification separately from candidate expression-ID publication.
+
+A separate required-instantiation observability probe using
+`typename Writer<sizeof(T)>::type` as a default template argument is rejected
+while parsing the template argument list. A reduced friend/ADL form reaches an
+incorrect constructor diagnostic. These parser/lookup gaps prevent a source-level
+friend-effect regression here; native tests retain a successfully instantiated
+`Check<Good>` after a later class-body error without rolling back its cache entry.
