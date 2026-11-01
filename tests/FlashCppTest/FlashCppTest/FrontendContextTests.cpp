@@ -445,6 +445,66 @@ TEST_SUITE("FrontendContext") {
 			StringTable::getOrInternStringHandle("frontend_tx_global_symbol")).has_value());
 	}
 
+	TEST_CASE("Frontend scratch rollback restores legacy type registry publication") {
+		clearLegacyTypeTablesForTesting();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+		initialize_native_types();
+		FrontendContext context;
+		const StringHandle retained_name = StringTable::getOrInternStringHandle("frontend_tx_retained_type");
+		const StringHandle alias_name = StringTable::getOrInternStringHandle("frontend_tx_type_alias_binding");
+		TypeCreationResult retained = add_struct_type(retained_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+		getTypesByNameMap()[alias_name] = &retained.info;
+		const size_t count_before = getTypeInfoCount();
+
+		const StringHandle provisional_name = StringTable::getOrInternStringHandle("frontend_tx_provisional_type");
+		const StringHandle nested_name = StringTable::getOrInternStringHandle("frontend_tx_nested_type");
+		const StringHandle committed_name = StringTable::getOrInternStringHandle("frontend_tx_committed_type");
+		{
+			auto transaction = context.beginScratchTransaction();
+			TypeCreationResult provisional = add_struct_type(provisional_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+			getTypesByNameMap()[alias_name] = &provisional.info;
+			CHECK(findTypeByName(provisional_name) == &provisional.info);
+			CHECK(findTypeByName(alias_name) == &provisional.info);
+			CHECK(getTypeInfoCount() == count_before + 1);
+			{
+				auto nested = context.beginScratchTransaction();
+				TypeCreationResult nested_type = add_struct_type(nested_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+				CHECK(findTypeByName(nested_name) == &nested_type.info);
+				nested.commit();
+			}
+			CHECK(findTypeByName(nested_name) != nullptr);
+			transaction.rollback();
+		}
+
+		CHECK(getTypeInfoCount() == count_before);
+		CHECK(findTypeByName(retained_name) == &retained.info);
+		CHECK(findTypeByName(alias_name) == &retained.info);
+		CHECK(findTypeByName(provisional_name) == nullptr);
+		CHECK(findTypeByName(nested_name) == nullptr);
+
+		{
+			auto transaction = context.beginScratchTransaction();
+			TypeCreationResult committed = add_struct_type(committed_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+			transaction.commit();
+			CHECK(findTypeByName(committed_name) == &committed.info);
+		}
+
+		CHECK(getTypeInfoCount() == count_before + 1);
+		CHECK(findTypeByName(committed_name) != nullptr);
+		CHECK(findTypeByName(provisional_name) == nullptr);
+	}
+
+	TEST_CASE("Legacy type registry journal rejects out-of-order completion") {
+		clearLegacyTypeTablesForTesting();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+		initialize_native_types();
+		const LegacyTypeRegistryJournalMark outer = beginLegacyTypeRegistryJournal();
+		const LegacyTypeRegistryJournalMark inner = beginLegacyTypeRegistryJournal();
+		CHECK_THROWS_AS(commitLegacyTypeRegistryJournal(outer), InternalError);
+		commitLegacyTypeRegistryJournal(inner);
+		rollbackLegacyTypeRegistryJournal(outer);
+	}
+
 	TEST_CASE("Frontend scratch rollback restores in-place symbol type normalization") {
 		const std::string_view identifier = "frontend_tx_array_redeclaration";
 		Token identifier_token(Token::Type::Identifier, identifier, 1, 1, 0);
