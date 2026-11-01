@@ -179,15 +179,15 @@ equally and is independent of the bit-field value conversion. Materialize the
 static member's typed value identity before building the outer specialization
 key.
 
-## Ordinary calls can prefer a generic NTTP function template
+## Ordinary calls order concrete NTTP arguments by structural specificity
 
-For `template<unsigned N> struct Cell {};`, ordinary call selection can prefer
-`choose(Cell<N>*, T*)` over `choose(Cell<1u>*, T*)` when passed a `Cell<1u>*` and
-another pointer. Both are function templates; the fixed-value overload should
-win. This path still uses `computeFunctionTemplateSpecificity`, which does not
-order the constant and dependent NTTP patterns. The canonical function-template
-address-query path supports typed integral ordering, but ordinary calls need
-that deduction-based comparison in place of the specificity score.
+Ordinary call selection now scores concrete non-type template arguments in
+parameter types above dependent patterns, so `choose(Cell<1u>*, T*)` wins over
+`choose(Cell<N>*, T*)` for a `Cell<1u>*` argument.
+`test_nttp_function_template_preference_ret0.cpp` pins this case. Two distinct
+dependent NTTP patterns with the same structural shape still tie because the
+ordinary path has not yet been replaced by the canonical
+[temp.deduct.partial] comparison used by the function-address query.
 
 ## Expression parsing can overflow a 1 MB native stack before callable sema
 

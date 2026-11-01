@@ -636,6 +636,9 @@ static int computeTemplateFunctionSpecificity(const TemplateFunctionDeclarationN
 				if (const TypeInfo* ti = tryGetTypeInfo(ts.type_index())) {
 					if (ti->isTemplateInstantiation()) {
 						score += 2 + static_cast<int>(ti->templateArgs().size());
+						for (const TypeInfo::TemplateArgInfo& argument : ti->templateArgs()) {
+							score += templateArgumentSpecificityScore(argument);
+						}
 					} else {
 						score += 2; // concrete named non-template-instantiation struct
 					}

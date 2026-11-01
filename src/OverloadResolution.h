@@ -7877,6 +7877,16 @@ inline CanonicalTemplatePartialOrdering compareCanonicalFunctionTemplateTypes(
 		second_template);
 }
 
+inline int templateArgumentSpecificityScore(const TypeInfo::TemplateArgInfo& argument) {
+	if (!argument.is_value) {
+		return 0;
+	}
+	// A concrete non-type argument is more specific than a dependent pattern;
+	// this orders Cell<1u> ahead of Cell<N> in ordinary overload selection.
+	const bool dependent = argument.dependent_name.isValid() || argument.dependent_expr().has_value();
+	return dependent ? 0 : 2;
+}
+
 inline int computeFunctionTemplateSpecificity(const TemplateFunctionDeclarationNode& template_func) {
 	std::unordered_set<StringHandle, StringHash> param_name_handles;
 	for (const auto& tp : template_func.template_parameters()) {
@@ -7897,6 +7907,9 @@ inline int computeFunctionTemplateSpecificity(const TemplateFunctionDeclarationN
 				if (const TypeInfo* ti = tryGetTypeInfo(ts.type_index())) {
 					if (ti->isTemplateInstantiation()) {
 						score += 2 + static_cast<int>(ti->templateArgs().size());
+						for (const TypeInfo::TemplateArgInfo& argument : ti->templateArgs()) {
+							score += templateArgumentSpecificityScore(argument);
+						}
 					} else {
 						score += 2;
 					}
