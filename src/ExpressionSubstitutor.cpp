@@ -1,5 +1,6 @@
 #include <charconv>
 #include <limits>
+#include <memory>
 
 #include "ExpressionSubstitutor.h"
 #include "CallNodeHelpers.h"
@@ -1193,9 +1194,10 @@ std::vector<TemplateTypeArg> ExpressionSubstitutor::collectCurrentBoundTemplateA
 	throw InternalError("ExpressionSubstitutor requires template parameter declaration order when collecting bound args for " + std::string(use_site));
 }
 
-std::optional<std::vector<TemplateTypeArg>> ExpressionSubstitutor::expandDependentValuePack(const TemplateTypeArg& pack_arg) {
+template <typename Output>
+bool ExpressionSubstitutor::expandDependentValuePack(const TemplateTypeArg& pack_arg, Output& expanded_args) {
 	if (!pack_arg.is_pack || !pack_arg.is_value || !pack_arg.dependent_expr.has_value()) {
-		return std::nullopt;
+		return false;
 	}
 
 	TemplatePackExpansionBindings bindings;
@@ -1207,18 +1209,35 @@ std::optional<std::vector<TemplateTypeArg>> ExpressionSubstitutor::expandDepende
 	if (!scanTemplateExpressionPackReferences(*pack_arg.dependent_expr, lookup_pack,
 		[&](StringHandle name, TemplatePackReferenceScope scope, std::span<const TemplateTypeArg> args) {
 			if (scope == TemplatePackReferenceScope::Current) bindings.add(name, args);
-		}) || bindings.invalid || bindings.pack_bindings.empty()) return std::nullopt;
-	std::vector<TemplateTypeArg> expanded_args;
-	expanded_args.reserve(bindings.expansion_count);
-	std::vector<ASTNode> staged_expressions;
-	staged_expressions.reserve(bindings.expansion_count);
+		}) || bindings.invalid || bindings.pack_bindings.empty()) return false;
+	if (!templatePackExpansionBindingsAreConcrete(bindings)) return false;
+	const size_t original_size = expanded_args.size();
+	if (bindings.expansion_count > std::numeric_limits<size_t>::max() - original_size) {
+		throw InternalError("Dependent value pack result size overflow");
+	}
+	expanded_args.reserve(original_size + bindings.expansion_count);
+	FrontendContext* context = frontendContext();
+	MonotonicScratchArena* scratch = context != nullptr ? &context->scratchArena() : nullptr;
+	const ScratchArenaState scratch_mark = scratch != nullptr ? scratch->mark() : ScratchArenaState{};
+	ScopeGuard scratch_scope([&]() { if (scratch != nullptr) scratch->rollbackTo(scratch_mark); });
+	std::span<DependentExpressionBatchEntry> staged_expressions;
+	if (scratch != nullptr && bindings.expansion_count != 0) {
+		if (bindings.expansion_count > std::numeric_limits<size_t>::max() / sizeof(DependentExpressionBatchEntry)) {
+			throw InternalError("Dependent value pack workspace size overflow");
+		}
+		const size_t workspace_size = bindings.expansion_count * sizeof(DependentExpressionBatchEntry);
+		auto* entries = static_cast<DependentExpressionBatchEntry*>(scratch->allocate(workspace_size, alignof(DependentExpressionBatchEntry)));
+		for (size_t index = 0; index < bindings.expansion_count; ++index) std::construct_at(entries + index);
+		staged_expressions = std::span<DependentExpressionBatchEntry>(entries, bindings.expansion_count);
+	}
+	ScopeGuard argument_scope([&]() { expanded_args.resize(original_size); });
 	const bool expanded = forEachTemplatePackExpansionElement(bindings, [&](size_t expansion_index) {
 		const auto scalar_bindings = makeTemplatePackElementSubstitutionMap(param_map_, bindings, expansion_index);
 		ExpressionSubstitutor element_substitutor(scalar_bindings, pack_map_, parser_);
 		element_substitutor.setCurrentOwnerTypeName(current_owner_type_name_);
 		element_substitutor.setCurrentOwnerDeclaration(current_owner_declaration_);
 		ASTNode substituted_expr = element_substitutor.substitute(*pack_arg.dependent_expr);
-		staged_expressions.push_back(substituted_expr);
+		if (context != nullptr) staged_expressions[expansion_index].expression = substituted_expr;
 
 		if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
 			TemplateTypeArg expanded_arg = makeConcreteNttpArg(eval_result->identity, pack_arg);
@@ -1238,14 +1257,16 @@ std::optional<std::vector<TemplateTypeArg>> ExpressionSubstitutor::expandDepende
 		expanded_args.push_back(std::move(unresolved_arg));
 		return true;
 	});
-	if (!expanded) return std::nullopt;
-	if (FrontendContext* context = frontendContext()) {
-		const auto identities = context->dependentExpressions().internBatch(staged_expressions);
-		for (size_t index = 0; index < expanded_args.size(); ++index) {
-			if (!expanded_args[index].nttp_expr) expanded_args[index].nttp_expr = identities[index];
+	if (!expanded) return false;
+	if (context != nullptr) {
+		context->dependentExpressions().internBatch(staged_expressions);
+		for (size_t index = 0; index < bindings.expansion_count; ++index) {
+			TemplateTypeArg& argument = expanded_args[original_size + index];
+			if (!argument.nttp_expr) argument.nttp_expr = staged_expressions[index].identity;
 		}
 	}
-	return expanded_args;
+	argument_scope.dismiss();
+	return true;
 }
 
 ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::materializeStoredTemplateArgs(
@@ -1309,13 +1330,8 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 			substituted = true;
 		};
 
-		if (std::optional<std::vector<TemplateTypeArg>> expanded_pack_args =
-				expandDependentValuePack(materialized_arg);
-			expanded_pack_args.has_value()) {
+		if (expandDependentValuePack(materialized_arg, result.args)) {
 			result.had_substitution = true;
-			for (TemplateTypeArg& expanded_arg : *expanded_pack_args) {
-				result.args.push_back(std::move(expanded_arg));
-			}
 			continue;
 		}
 		if (materialized_arg.is_pack && materialized_arg.dependent_expr.has_value()) {
@@ -1560,14 +1576,7 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 	materialized_args.reserve(stored_args.size());
 	for (const TypeInfo::TemplateArgInfo& stored_arg : stored_args) {
 		TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
-		if (std::optional<std::vector<TemplateTypeArg>> expanded_args =
-				expandDependentValuePack(arg);
-			expanded_args.has_value()) {
-			for (TemplateTypeArg& expanded_arg : *expanded_args) {
-				materialized_args.push_back(std::move(expanded_arg));
-			}
-			continue;
-		}
+		if (expandDependentValuePack(arg, materialized_args)) continue;
 		if (arg.is_pack && arg.dependent_expr.has_value()) {
 			arg.is_dependent = true;
 			materialized_args.push_back(std::move(arg));

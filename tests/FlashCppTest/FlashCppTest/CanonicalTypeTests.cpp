@@ -8101,6 +8101,7 @@ template<class... T> struct Pattern { Values<sizeof(Check<T>)...> values; };
 	const std::string_view order[] = {"T"};
 	ExpressionSubstitutor substitutor(scalar_args, pack_args, parser, order);
 	const size_t expressions_before = context.dependentExpressions().size();
+	const uint64_t scratch_bytes_before = context.scratchArena().currentBytes();
 	bool saw_static_assert_failure = false;
 	try {
 		substitutor.substituteTypeSpecifier(field);
@@ -8110,6 +8111,7 @@ template<class... T> struct Pattern { Values<sizeof(Check<T>)...> values; };
 	}
 	CHECK(saw_static_assert_failure);
 	CHECK(context.dependentExpressions().size() == expressions_before);
+	CHECK(context.scratchArena().currentBytes() == scratch_bytes_before);
 	const TemplateArgumentVector good_arguments{good};
 	CHECK(gTemplateRegistry.getInstantiation(StringTable::getOrInternStringHandle("Check"), good_arguments).has_value());
 
@@ -8127,6 +8129,7 @@ template<class... T> struct Pattern { Values<sizeof(Check<T>)...> values; };
 	CHECK(static_cast<bool>(values->templateArgs()[0].nttp_expr));
 	CHECK(static_cast<bool>(values->templateArgs()[1].nttp_expr));
 	CHECK(context.dependentExpressions().size() > expressions_before);
+	CHECK(context.scratchArena().currentBytes() == scratch_bytes_before);
 }
 
 TEST_CASE("Namespace-scope lockstep targets preserve canonical arguments") {
