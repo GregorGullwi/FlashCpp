@@ -2795,14 +2795,17 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 
 		return base_name;
 	}
-	template <typename TemplateParamsContainer, typename TemplateArgsContainer>
-	std::vector<TemplateTypeArg> materializePlaceholderTemplateArgs(
+	template <typename TemplateParamsContainer, typename TemplateArgsContainer, typename OutputContainer>
+	void materializePlaceholderTemplateArgsInto(
 		const TypeInfo& placeholder_info,
 		const TemplateParamsContainer& template_params,
-		const TemplateArgsContainer& template_args) {
+		const TemplateArgsContainer& template_args,
+		OutputContainer& concrete_args) {
+		concrete_args.clear();
+		concrete_args.reserve(placeholder_info.templateArgs().size());
 		auto appendExpandedPackArgs =
 			[&](const TypeInfo::TemplateArgInfo& arg_info,
-				std::vector<TemplateTypeArg>& out_args) -> bool {
+				OutputContainer& out_args) -> bool {
 			if (!arg_info.dependent_name.isValid()) {
 				return false;
 			}
@@ -2851,8 +2854,6 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 			return false;
 		};
 
-		std::vector<TemplateTypeArg> concrete_args;
-		concrete_args.reserve(placeholder_info.templateArgs().size());
 		for (const auto& arg_info : placeholder_info.templateArgs()) {
 			if (appendExpandedPackArgs(arg_info, concrete_args)) {
 				continue;
@@ -3006,6 +3007,18 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 			}
 		}
 
+	}
+	template <typename TemplateParamsContainer, typename TemplateArgsContainer>
+	std::vector<TemplateTypeArg> materializePlaceholderTemplateArgs(
+		const TypeInfo& placeholder_info,
+		const TemplateParamsContainer& template_params,
+		const TemplateArgsContainer& template_args) {
+		std::vector<TemplateTypeArg> concrete_args;
+		materializePlaceholderTemplateArgsInto(
+			placeholder_info,
+			template_params,
+			template_args,
+			concrete_args);
 		return concrete_args;
 	}
 	template <typename TemplateParamsContainer, typename TemplateArgsContainer, typename ConcreteBaseInstantiator>

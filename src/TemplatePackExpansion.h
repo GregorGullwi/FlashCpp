@@ -288,8 +288,8 @@ inline std::optional<std::span<const TemplateTypeArg>> findDirectTypePackExpansi
 	return std::nullopt;
 }
 
-template <typename ParamContainer, typename ArgContainer>
-inline bool appendDirectTypePackExpansion(std::vector<TemplateTypeArg>& result, const TypeInfo::TemplateArgInfo& argument,
+template <typename ResultContainer, typename ParamContainer, typename ArgContainer>
+inline bool appendDirectTypePackExpansion(ResultContainer& result, const TypeInfo::TemplateArgInfo& argument,
 	const ParamContainer& template_params, const ArgContainer& template_args) {
 	const auto pack = findDirectTypePackExpansion(argument, template_params, template_args);
 	if (!pack.has_value()) return false;
