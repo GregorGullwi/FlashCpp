@@ -37,61 +37,31 @@ fail-closed; the lockstep follow-up entry below records the remaining paths.
 
 ## Remaining structural NTTP shapes need canonical value import
 
-Union declaration groups now carry explicit active-member state. Aggregate,
-designated, default, and constructor initialization plus member assignment mark
-the selected variant; `StructuralClassValue::union_selections` keeps the group
-start and selected declaration ordinal (or explicit no-active); equality, hash,
-rehydration, and the canonical importer include it. The reduced
-`Key{.first=0}` / `Key{.second=0}` case now produces distinct template arguments,
-protected by `test_canonical_structural_nttp_union_active_ret0.cpp`.
-
 Nested anonymous-union-in-anonymous-union hierarchy still needs an explicit
 representation; flat contiguous layout groups alone cannot distinguish an
 inactive outer union from an active outer variant containing an inactive inner
 union.
 
-Float and double fields, including array elements, now use exact typed
-canonical floating values; equivalent syntax and declaration imports share
-identity. Long double remains unsupported for structural values because the
-evaluator carries only a 64-bit representation, so it fails closed instead of
-aliasing through double bits. `std::nullptr_t` fields use a canonical
-`NullptrValue` keyed by the nullptr builtin.
+Long double remains unsupported for structural values because the evaluator
+carries only a 64-bit representation, so it fails closed instead of aliasing
+through double bits.
 
-Null object, function, and member pointer fields now use typed canonical null
-values, and null pointer-like array elements carry the declared element pointer
-depth through structural rehydration. Direct and unambiguous non-virtual
-inherited member-object pointer fields resolve to a declaring-class TypeId plus
-member ordinal, and member-object-pointer arrays preserve their outer array
-wrapper and element targets. Direct and inherited member-function pointer fields,
-including virtual functions, and member-function-pointer arrays use a
-declaring-class TypeId plus declaration ordinal, with overloads selected by
-canonical signature. Non-null object/function pointer targets, ambiguous or
-virtual-base member pointers, and non-null object/function pointer array
-elements still need declaration identity in their live constexpr payloads.
-Published namespace free functions retain their EntityId; an explicit
-`FunctionPointerValue` keys that target and its declared pointer TypeId, with
-canonical signature validation and noexcept relaxation. Propagate the selected
-target through evaluation, structural serialization/rehydration, equality/hash,
-and template argument binding before enabling live non-null function import.
-Do not recover target identity from a spelling or ABI symbol.
+Non-null object/function pointer targets, ambiguous or virtual-base member
+pointers, and non-null object/function pointer array elements still need
+declaration identity in their live constexpr payloads. Selected non-null function
+target identity must survive evaluation, structural serialization/rehydration,
+equality/hash, and template argument binding. Do not recover target identity from
+a spelling or ABI symbol.
 
-Concrete implicit class-template specializations import as structural values,
-including supported nonvirtual bases, nested members, and array elements. Array
-members read the owning TypeId's published substituted subobject types.
-Specialization-owner member
-pointers recover member names/ordinals from the published primary pattern record,
-verified by declaration pointer; the specialization TypeId remains the value
-identity. Specialization field schemas retain substituted member types, offsets, bit-fields,
-and flat union groups by owner TypeId. Missing field-layout and dependent base
-facts still fail closed. The partial-specialization parser gap above and nested
-anonymous-union hierarchy remain separate.
+Missing field-layout and dependent base facts still fail closed. The
+partial-specialization parser gap above and nested anonymous-union hierarchy
+remain separate.
 
 Non-type-parameter and alias partial patterns still need substitutable canonical
-environments before dependent fields can import concretely. Direct concrete
-type-pack occurrences now expand in data-member template-ids targeting namespace
-templates or templates owned by non-template classes. Targets with an instantiated
-class-template owner and nontrivial expansion patterns such as `Wrapper<Tail>...`
-still need complete canonical publication. Callable pack expansion is separate.
+environments before dependent fields can import concretely. Targets with an
+instantiated class-template owner and nontrivial expansion patterns such as
+`Wrapper<Tail>...` still need complete canonical publication. Callable pack
+expansion is separate.
 Member-pointer graphs containing opaque non-type specialization arguments fail
 closed: the canonical substitutor preserves those ExprIds and cannot replace a pattern argument such as `N` with
 its concrete value. Publish substitutable parameter/value identity before
@@ -99,37 +69,6 @@ enabling those graphs; keep evaluator and overload-selection rules separate.
 
 Extend the typed-value importer before deleting `legacyDerivedBaseOffset`;
 audit dependent and other non-integral specialization roots as well.
-Integral, bool, and enum fields, including named bit-fields with signed
-extension or unsigned truncation, share class/type/value identity between
-syntax and declaration imports for equivalent named and braced values. Enum
-values use their published underlying layout. Unnamed and zero-width bit-fields
-remain declaration/layout padding and never add value subobjects.
-Array fields now use ordered canonical array values with the published element
-type and outer bound; nested arrays and record elements recurse through the same
-value worklist. Elements are converted to the declared element type before
-identity, so equivalent member spellings share one value.
-Retain `test_canonical_structural_nttp_base_source_ret0.cpp`,
-`test_canonical_structural_nttp_equivalence_ret0.cpp`,
-`test_canonical_structural_nttp_subobjects_ret0.cpp`,
-`test_canonical_structural_nttp_enum_fields_ret0.cpp`,
-`test_canonical_structural_nttp_bitfields_ret0.cpp`,
-`test_canonical_structural_nttp_arrays_ret0.cpp`,
-`test_canonical_structural_nttp_union_active_ret0.cpp`,
-`test_canonical_structural_nttp_float_ret0.cpp`,
-`test_canonical_structural_nttp_null_pointer_ret0.cpp`,
-`test_canonical_structural_nttp_null_pointer_array_ret0.cpp`,
-`test_canonical_structural_nttp_class_template_ret0.cpp`,
-`test_canonical_structural_nttp_specialization_bases_ret0.cpp`,
-`test_canonical_structural_nttp_member_object_pointer_ret0.cpp`,
-`test_canonical_structural_nttp_member_function_pointer_ret0.cpp`,
-`test_canonical_structural_nttp_inherited_member_object_pointer_ret0.cpp`, and
-`test_canonical_structural_nttp_overloaded_member_function_pointer_ret0.cpp`,
-`test_canonical_structural_nttp_member_pointer_array_ret0.cpp`,
-`test_canonical_structural_nttp_member_function_pointer_array_ret0.cpp`, and
-`test_canonical_structural_nttp_inherited_member_function_pointer_ret0.cpp`,
-`test_canonical_structural_nttp_virtual_member_function_pointer_ret0.cpp`, and
-`test_canonical_structural_nttp_specialization_member_pointer_ret0.cpp`, and
-`test_canonical_structural_nttp_nullptr_member_ret0.cpp` as current guards.
 
 ## Deferred bases of selected-partial nested classes are not replayed
 
@@ -183,48 +122,24 @@ ordinary path has not yet been replaced by the canonical
 
 ## Expression parsing can overflow a 1 MB native stack before callable sema
 
-The 16-level `test_deep_callable_chain_ret0.cpp` passes with the shipping Windows
-compiler's existing stack reserve. A copy of that executable with its reserve
-reduced to 1 MB also completes parsing and emits an object; member-call receiver
-chains are now lowered through an explicit worklist instead of recursively
-re-entering `AstToIr::generateMemberFunctionCallIr`. No stack reserve was
-increased for this regression.
 The native `Canonical adapter imports the source corpus at publication` fixture
-still overflows at 1 MB, including in a pre-change binary. Reduce parser frames
-and replace recursive syntax processing before expecting that corpus to fit.
-The member-template pack owner regression still overflows at 1 MB, including
-with a pre-change compiler binary. The instantiation worklist now collects
-direct member class-template fields, so `Chain<N>` levels are pre-instantiated
-rather than re-entering once per level; a 1.5 MB stack completes. A nested member
-alias (`Holder<Tag<N>>::Box` -> `Owner<T>::List`) still instantiates recursively
+overflows at 1 MB, including in a pre-change binary. Reduce parser frames and
+replace recursive syntax processing before expecting that corpus to fit.
+The member-template pack owner regression also overflows at 1 MB, including in
+a pre-change compiler binary; a 1.5 MB stack completes. A nested member alias
+(`Holder<Tag<N>>::Box` -> `Owner<T>::List`) still instantiates recursively
 inside each pre-instantiated `Chain`, so extending the worklist to member
-template alias targets is the remaining step for 1 MB.
+template alias targets remains necessary for 1 MB.
 
 The nested NTTP-field regression
-`test_nested_inner_value_pack_member_field_ret0.cpp` also overflows during
-compilation with a 1 MB reserve. The shared pack scanner uses an explicit
-worklist, but surrounding template materialization still needs smaller frames
-and bounded scheduling. The nested type-pack field regression fits at 1 MB;
-that result does not establish stack safety for the NTTP path.
+`test_nested_inner_value_pack_member_field_ret0.cpp` overflows during compilation
+with a 1 MB reserve. The nested type-pack field regression fits at 1 MB; that
+result does not establish stack safety for the NTTP path. Surrounding template
+materialization still needs smaller frames and bounded scheduling.
 
-The rare NTTP and callable payloads in `TemplateTypeArg` live behind immutable
-32-bit handles in persistent arenas, and `TemplateArgumentVector` is now an
-out-of-line owning list that can expose a span over its current storage. That
-reduces `sizeof(TemplateTypeArg)` from 624 to 248 bytes,
-`sizeof(TemplateArgumentVector)` from 2,528 to 24 bytes, and the clang `-O0`
-`parse_primary_expression` frame from 343,560 to 250,504 bytes. The parser-only
-harness regression and the full MSVC compiler copy at 1 MB both complete
-parsing and emit an object for the deep callable-chain regression.
-
-Payload handles are copy-on-write and never point at scratch storage. The
-persistent handle arenas do not reclaim entries abandoned by rolled-back probes;
-they are released only when the process exits. `TemplateArgumentList` and the
-other out-of-line template/parser vectors use the same persistent arena, so a
-span from one remains valid only until the next mutation. Compacting
-`DependentQualifiedNameRecord` and the template-instantiation key reduces
-`parse_type_specifier` from 160,376 to 59,336 bytes and
-`try_instantiate_class_template` from 243,704 to 185,704 bytes in clang `-O0`
-builds; the arenas do not reclaim old list arrays.
+Persistent payload handles and out-of-line argument vectors are not reclaimed
+when rolled-back probes abandon entries; they remain allocated until process
+exit. Spans into these vectors remain valid only until their next mutation.
 
 ## Staged dependent alias expansions can lose pack elements
 
@@ -253,54 +168,30 @@ before enabling that rejection throughout the legacy callable pipeline.
 
 ## Pack substitution rollback and diagnostics remain incomplete
 
-Effective primary owner bindings retain complete enclosing and local packs,
-including empty and single-element packs. Shared iterative scanning distinguishes
-current and inner expansions in member fields, namespace template targets,
-deferred template-id bases, and NTTP fields. Nested inner packs can have a
-different length from the outer pack, and repeated packs retain their full inner
-binding alongside the selected outer element. Compile-time complex folds use the
-pack referenced by their expression. Runtime function-parameter fold replay still
-uses its separate legacy adapter.
+Runtime function-parameter fold replay still uses its separate legacy adapter.
+The legacy structural matcher still has its 64-level nested-argument guard.
+Alias and variable-template substitution still have flattened input adapters
+that need migration to grouped bindings; nested pack NTTP aliases remain
+unsupported through those adapters. A nested member-template declaration with
+a pack-expanded base such as `List : U...` is rejected by the parser; this syntax
+gap is separate from supported template-id bases.
 
-Class partial-specialization deduction for `Box<Pair<Tail, Other>...>` now
-retains both ordered packs, including empty packs, and checks repeated/scalar
-deductions across expansion elements. The selected specialization publishes its
-grouped environment and uses it for member fields and pack counts. The legacy
-structural matcher still has its 64-level nested-argument guard. Alias and
-variable-template substitution still have flattened
-input adapters that need migration to grouped bindings; nested pack NTTP aliases
-remain unsupported through those adapters. A nested member-template declaration
-with a pack-expanded base such as `List : U...` is rejected by the parser; this
-syntax gap is separate from supported template-id bases.
+C++20 permits observable class-instantiation effects before a later deduction
+failure and requires errors in separately instantiated bodies to remain hard
+errors. These required effects must not be rolled back with candidate-local
+state.
 
-Computed NTTP packs stage their expressions and publish their IDs as one atomic
-batch. A later element's hard error leaves no candidate expression-ID prefix.
-This does not roll back required class instantiations: C++20 permits observable
-instantiation effects before a later deduction failure and requires errors in
-separately instantiated bodies to remain hard errors.
+Complete signature substitution can still retain earlier component identities
+after a later failure, and nested callable signature objects are shared by the
+legacy representation. Establish owned candidate signature storage before
+extending rollback across that walk.
 
-Dependent-name restamping now publishes canonical types only after semantic
-substitution succeeds and the replacement stamp has been applied. Its canonical
-transaction discards partially imported bindings when a later argument is
-unsupported. Required class instantiations run before this transaction, so their
-effects and hard errors remain independent of candidate restamping.
-
-Pure callable-component substitution now owns its canonical import/substitution
-transaction. Unsupported arguments and existing structural rejection paths
-discard their provisional identities. Callable environment construction also
-discards its imported prefix when a later argument is unsupported, before the
-legacy signature walk begins. That walk independently publishes successfully
-substituted components. Complete signature substitution can still retain earlier
-component identities after a later failure, and nested callable signature
-objects are shared by the legacy representation. Establish owned candidate
-signature storage before extending rollback across that walk.
-
-Other candidate-local type, legacy AST, registry/cache, and parser publication still
-need an owned transaction boundary. `FrontendScratchTransaction` currently covers
-scratch, declaration/template identity, canonical types, and symbol/namespace
-publication; it does not make those other stores transactional. Do not wrap the
-whole materialization path in it or erase required dependency instantiations.
-Lockstep member and namespace-scope expansions now report
+Other candidate-local type, legacy AST, registry/cache, and parser publication
+still need an owned transaction boundary. `FrontendScratchTransaction` currently
+covers scratch, declaration/template identity, canonical types, and
+symbol/namespace publication; it does not make those other stores transactional.
+Do not wrap the whole materialization path in it or erase required dependency
+instantiations. Lockstep member and namespace-scope expansions now report
 `TemplatePackLengthMismatch` (#1820) when referenced packs differ in length.
 Expansion contexts that still use the flat legacy adapter remain dependent
 instead of producing the diagnostic.
@@ -342,102 +233,33 @@ means the test still does not reach its Itanium symbol-mangling check on WSL.
 
 ## Complex member-type class-template bases still need stack coverage
 
-The base-instantiation worklist now expands concrete pack-expanded bases and
-schedules member-type chains that pass through plain nested classes and end in
-a non-template alias to a class-template specialization. The 1,024-level
-regressions `tests/test_deep_pack_expanded_base_chain_ret0.cpp`,
-`tests/test_deep_member_type_base_chain_ret0.cpp`, and
-`tests/test_deep_nested_member_type_base_chain_ret0.cpp` cover those paths;
-the pack and alias regressions also pass at their existing shallow depths.
-These checks use the shipping Windows compiler build settings, with no
-stack-reserve change.
-
 Member-template segments and member aliases whose targets are not directly
 materialized class-template specializations still fall back to ordinary
 instantiation. Stack usage for deep chains through those forms remains
 unverified. Extend dependency scheduling to cover them while sharing base
-substitution semantics with ordinary instantiation.
+substitution semantics with ordinary instantiation. Existing 1,024-level
+coverage for concrete pack-expanded bases and nested-class chains does not
+establish stack safety for these remaining forms.
 
 ## Legacy flat consumers cannot yet handle interleaved pointer/array declarators
 
-Boundary 3A is not complete: descriptors carry authoritative
-`structural_type_id` identity where canonical import is supported and retain
-flat fields as compatibility projections, but unmigrated consumers still read
-those fields directly. A non-projectable pointer/array type-id is kept on the
-stored template argument as its ordered declarator, and a declarator written
-around a template parameter is kept on substitution. General IR object-storage
-consumers still read parallel flat pointer/array fields, so member storage of
-an interleaved declarator remains fail-closed. Built-in subscripting no longer
-flattens an interleaved chain: each selected step is materialized from the
-sema-published canonical result type, so an array of pointers followed by a
-pointer-to-array uses the correct pointer/row strides. Inline array-object
-storage, identifier lowering, and initializer-list lowering now accept
-non-projectable interleaved array declarations with a known outermost bound.
-Each brace clause initializes one outermost element, and a short list
-value-initializes the rest. An unknown outermost bound is completed from a
-brace list of n > 0 clauses as an array of n elements. A range-for over that
-array visits one outermost element through a pointer to that element. The remaining flat
-readers still fail closed.
-An ordered declarator around an alias that is an array, a reference, a
-member pointer, or a function keeps that wrapper as the inner type. An array
-of a function alias, or a function returning one, is ill-formed. An ordered member-function-pointer declarator whose
-callable return carries its own declarator (for example
-`int* (Owner::*)() const`) is now supported end to end: it imports structurally
-with the owner `TypeId`, ABI-mangles in both the MSVC and Itanium styles, and
-lowers its fixed-size scalar object (declaration, parameter, return, and
-identifier paths). Multi-hop pointer-to-array alias
-forwarding keeps the pointee extent; an eight-hop chain is pinned by
-`tests/test_alias_template_forwarded_pointer_to_array_bounds_deep_ret0.cpp`.
-Non-projectable spines are rejected at migrated boundary guards rather than
-being reordered or truncated. Remove this entry when those consumers migrate
-and the compatibility projection fields are deleted.
+Canonical `TypeId` identity is authoritative where imported, but unmigrated
+consumers still read flat pointer/array projections. General IR object-storage
+consumers therefore fail closed for member storage of an interleaved
+pointer/array declarator. Other remaining flat readers also fail closed for
+non-projectable shapes; remove this entry when those consumers migrate and the
+compatibility projection fields are deleted.
 
-The shared unary type-trait evaluator now classifies the whole structural
-`[meta.unary.prop]` family from the canonical `TypeId`, and the lazy-constraint
-evaluator routes the same family through that classification, so
-`tests/test_canonical_structural_type_traits_ret0.cpp` and
-`tests/test_canonical_lazy_constraint_traits_ret0.cpp` no longer depend on the
-flat fields for pointers, arrays, references, functions, member pointers, enums,
-or the builtin groupings, and
-`tests/test_canonical_class_qualification_traits_ret0.cpp` adds the class, union,
-cv, and signedness families. Trait operands now publish their nominal `EntityId`
-at materialization, so `canonical_structural_trait_fallback` is zero on the
-structural-trait regressions and its recorded baseline was lowered from 23 so a
-reappearance fails the counter run. The triviality and lifetime families still
-read `StructTypeInfo`, which needs a published member-property schema rather
-than a classifier change. Two measurable trait residues remain: the
-`lazy_constraint_trait_fallback` counter, which records the traits the canonical
-table does not own, and the residual 2 on
-`tests/test_canonical_lazy_constraint_traits_ret0.cpp`, which is a
-member-object-pointer operand: that one needs member-owner identity rather than
-nominal type identity, and its owner is not published at materialization.
-The canonical record-properties schema now publishes polymorphic, final, and
-abstract facts for completed record TypeIds, including materialized
-class-template specializations. The
-`test_canonical_record_class_trait_concepts_ret0.cpp` regression checks their
-C++20 answers in constant evaluation, runtime lowering, and lazy constraints,
-with both canonical-trait fallback counters at zero. Class-template
-instantiation now refreshes virtual metadata and object layout after member
-declarations are attached, then publishes the specialization's canonical facts.
-The remaining sema-owned construction traits (`__is_constructible`,
-`__is_trivially_constructible`, and `__is_nothrow_constructible`) depend on a
-variadic argument list and overload resolution, so they need a canonical
-constructor-query path rather than a unary record-property flag. The unary
-record-property traits now read TypeId-keyed facts published for completed
-records and materialized class-template specializations. The
-`test_canonical_record_property_trait_concepts_ret0.cpp` regression covers
-their constant-evaluation answers, positive and negative class shapes, template
-specializations, and lazy concept constraints. By contrast,
-`__is_class`, `__is_union`, `__is_const`, `__is_volatile`, `__is_signed`, and
-`__is_unsigned` now use canonical type identity. A concept built on an
-unsupported sema-owned trait still receives an explicit unknown outcome: not
-proof of satisfaction, and not inverted into a failure by `!`, `&&`, or `||`.
-
-Ordered declarators over aliases with callable, array, reference, or
-member-object-pointer wrappers now convert as the spelled type: copy
-initialization, parameter passing, and overload ranking consume the ordered
-spine. Static member semantic identity must remain canonical and must not be
-flattened.
+The triviality and lifetime traits still read `StructTypeInfo` and need a
+published member-property schema. A lazy-constraint member-object-pointer trait
+case remains unresolved because its member-owner identity is not published at
+materialization. The sema-owned construction traits
+(`__is_constructible`, `__is_trivially_constructible`, and
+`__is_nothrow_constructible`) need a canonical constructor-query path for
+variadic arguments and overload resolution. Concepts using unsupported
+sema-owned traits must retain an explicit unknown outcome rather than treating
+it as satisfaction or failure. Static member semantic identity must remain
+canonical through any remaining flat-consumer migration.
 
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 
