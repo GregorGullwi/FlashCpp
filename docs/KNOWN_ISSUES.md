@@ -13,14 +13,6 @@ propagation and deferred body ownership before enabling this nested case; do not
 recover the method by generated name. The selected-partial lazy nested setup
 currently pairs effective parent parameters with local-only arguments.
 
-## Signed narrow bit-field reads can lose sign extension
-
-A local `UnionBits<short>` whose anonymous union contains `short first : 3;`
-and `short second : 3;` can read `second` as 7 after designated initialization
-with -1. The canonical structural-value importer normalizes the declared signed
-width correctly, but runtime member lowering must sign-extend the extracted
-bit-field width before the usual integral promotion. Keep this separate from
-specialization field-schema publication and union storage offsets.
 
 ## Anonymous unions in partial class-template specializations lose their declarations
 

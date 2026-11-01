@@ -3353,6 +3353,33 @@ void IrToObjConverter<TWriterClass>::emitShrImm(X64Register reg, uint8_t shift_a
 }
 
 template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::emitSarImm(X64Register reg, uint8_t shift_amount) {
+	uint8_t reg_enc = static_cast<uint8_t>(reg);
+	textSectionData.push_back(0x48 | ((reg_enc >> 3) & 0x01)); // REX.W + REX.B branchless
+	textSectionData.push_back(0xC1); // SAR r/m64, imm8
+	textSectionData.push_back(0xF8 | (reg_enc & 0x07));
+	textSectionData.push_back(shift_amount);
+}
+
+template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::emitBitfieldExtract(X64Register reg, size_t bit_offset, size_t width, TypeCategory type) {
+	if (width == 0 || width > 64) {
+		return;
+	}
+	if (bit_offset > 0) {
+		emitShrImm(reg, static_cast<uint8_t>(bit_offset));
+	}
+	emitAndImm64(reg, bitfieldMask(width));
+	// A signed narrow bit-field is sign-extended to its declared type before
+	// integral promotion. Place the field sign bit at bit 63 and use SAR.
+	if (isSignedType(type) && width < 64) {
+		const uint8_t sign_shift = static_cast<uint8_t>(64 - width);
+		emitShlImm(reg, sign_shift);
+		emitSarImm(reg, sign_shift);
+	}
+}
+
+template <class TWriterClass>
 uint64_t IrToObjConverter<TWriterClass>::bitfieldMask(size_t width) {
 	return (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
 }
@@ -13998,13 +14025,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 
 			// Extract bitfield value if this is a bitfield member
 			if (op.bitfield_width.has_value()) {
-				size_t bit_offset = op.bitfield_bit_offset;
-				size_t width = *op.bitfield_width;
-				if (bit_offset > 0) {
-					emitShrImm(temp_reg, static_cast<uint8_t>(bit_offset));
-				}
-				uint64_t mask = bitfieldMask(width);
-				emitAndImm64(temp_reg, mask);
+				emitBitfieldExtract(temp_reg, op.bitfield_bit_offset, *op.bitfield_width, op.result.typeEnum());
 			}
 
 			// Store loaded value to result_offset for later use (e.g., indirect_call)
@@ -14054,13 +14075,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 
 		// Extract bitfield value if this is a bitfield member
 		if (op.bitfield_width.has_value()) {
-			size_t bit_offset = op.bitfield_bit_offset;
-			size_t width = *op.bitfield_width;
-			if (bit_offset > 0) {
-				emitShrImm(temp_reg, static_cast<uint8_t>(bit_offset));
-			}
-			uint64_t mask = bitfieldMask(width);
-			emitAndImm64(temp_reg, mask);
+			emitBitfieldExtract(temp_reg, op.bitfield_bit_offset, *op.bitfield_width, op.result.typeEnum());
 		}
 
 		// Store loaded value to result_offset for later use (e.g., indirect_call)
@@ -14075,15 +14090,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 
 	// Extract bitfield value if this is a bitfield member
 	if (op.bitfield_width.has_value()) {
-		size_t bit_offset = op.bitfield_bit_offset;
-		size_t width = *op.bitfield_width;
-		if (bit_offset > 0) {
-				// SHR temp_reg, bit_offset
-			emitShrImm(temp_reg, static_cast<uint8_t>(bit_offset));
-		}
-			// AND temp_reg, (1 << width) - 1
-		uint64_t mask = bitfieldMask(width);
-		emitAndImm64(temp_reg, mask);
+		emitBitfieldExtract(temp_reg, op.bitfield_bit_offset, *op.bitfield_width, op.result.typeEnum());
 	}
 
 	if (op.is_reference()) {

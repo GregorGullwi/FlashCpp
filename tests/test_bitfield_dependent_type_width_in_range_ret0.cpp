@@ -10,6 +10,6 @@ struct SizedBits {
 
 int main() {
 	TypedBits<unsigned> typed{5};
-	SizedBits<4> sized{9};
-	return typed.value == 5 && sized.value == 9 ? 0 : 1;
+	SizedBits<4> sized{7};
+	return typed.value == 5 && sized.value == 7 ? 0 : 1;
 }
