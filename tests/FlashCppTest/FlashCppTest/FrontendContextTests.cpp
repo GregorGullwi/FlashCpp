@@ -14,16 +14,17 @@ TEST_SUITE("FrontendContext") {
 		const ASTNode existing_node = literal(3);
 		const ExprId existing = expressions.intern(existing_node);
 		const size_t original_size = expressions.size();
-		std::vector<ASTNode> batch{existing_node};
-		for (uint64_t value = 100; value < 170; ++value) batch.push_back(literal(value));
-		batch.push_back(batch[1]);
-		batch.push_back(ASTNode{});
+		std::vector<DependentExpressionBatchEntry> batch{{existing_node, {}}};
+		for (uint64_t value = 100; value < 170; ++value) batch.push_back({literal(value), {}});
+		batch.push_back({batch[1].expression, {}});
+		batch.push_back({ASTNode::emplace_node<BreakStatementNode>(Token{}), {}});
 		CHECK_THROWS_AS(expressions.internBatch(batch), InternalError);
+		CHECK(std::all_of(batch.begin(), batch.end(), [](const auto& entry) { return entry.identity == ExprId{}; }));
 		CHECK(expressions.size() == original_size);
 		CHECK(expressions.intern(existing_node) == existing);
-		const ExprId retry = expressions.intern(batch[1]);
+		const ExprId retry = expressions.intern(batch[1].expression);
 		CHECK(retry.value == original_size + 1);
-		CHECK(expressions.intern(batch[1]) == retry);
+		CHECK(expressions.intern(batch[1].expression) == retry);
 	}
 
 	TEST_CASE("Dependent expression batches commit ordered deduplicated identities") {
@@ -36,19 +37,34 @@ TEST_SUITE("FrontendContext") {
 		const ASTNode second = literal(8);
 		const ASTNode third = literal(9);
 		const ExprId existing = expressions.intern(first);
-		const ASTNode batch[] = {first, second, second, third};
-		const auto identities = expressions.internBatch(batch);
-		REQUIRE(identities.size() == 4);
-		CHECK(identities[0] == existing);
-		CHECK(identities[1] == identities[2]);
-		CHECK(identities[1] != identities[3]);
+		DependentExpressionBatchEntry batch[] = {{first, {}}, {second, {}}, {second, {}}, {third, {}}};
+		expressions.internBatch(batch);
+		CHECK(batch[0].identity == existing);
+		CHECK(batch[1].identity == batch[2].identity);
+		CHECK(batch[1].identity != batch[3].identity);
 		CHECK(expressions.size() == 3);
-		CHECK(expressions.internBatch(std::span<const ASTNode>{}).empty());
-		const ASTNode late_unsupported[] = {literal(10), ASTNode::emplace_node<BreakStatementNode>(Token{})};
+		CHECK_NOTHROW(expressions.internBatch(std::span<DependentExpressionBatchEntry>{}));
+		DependentExpressionBatchEntry late_unsupported[] = {{literal(10), {}},
+			{ASTNode::emplace_node<BreakStatementNode>(Token{}), {}}};
 		CHECK_THROWS_AS(expressions.internBatch(late_unsupported), InternalError);
+		CHECK(late_unsupported[0].identity == ExprId{});
+		CHECK(late_unsupported[1].identity == ExprId{});
 		CHECK(expressions.size() == 3);
 		CHECK(expressions.intern(first) == existing);
-		CHECK(expressions.intern(late_unsupported[0]).value == 4);
+		CHECK(expressions.intern(late_unsupported[0].expression).value == 4);
+	}
+
+	TEST_CASE("Dependent expression batches reject prepopulated output identities") {
+		FrontendContext context;
+		auto& expressions = context.dependentExpressions();
+		const ASTNode node = ASTNode::emplace_node<ExpressionNode>(
+			NumericLiteralNode(Token{}, uint64_t{42}, TypeCategory::Int, TypeQualifier::None, 32));
+		const ExprId existing = expressions.intern(node);
+		DependentExpressionBatchEntry batch[] = {{node, existing}};
+		CHECK_THROWS_AS(expressions.internBatch(batch), InternalError);
+		CHECK(batch[0].identity == existing);
+		CHECK(expressions.size() == 1);
+		CHECK(expressions.intern(node) == existing);
 	}
 
 	TEST_CASE("Alias-base identity path rejects repeated declaration IDs") {

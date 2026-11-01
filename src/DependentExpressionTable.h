@@ -10,8 +10,17 @@
 #include <cstdint>
 #include <limits>
 #include <span>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
+
+// Caller-owned temporary workspace; committed AST handles are copied into the table.
+struct DependentExpressionBatchEntry {
+	ASTNode expression;
+	ExprId identity{};
+};
+
+static_assert(std::is_trivially_destructible_v<DependentExpressionBatchEntry>);
 
 // Context-local structural identity for dependent unevaluated expressions.
 // ExprId slots are stable for the lifetime of the owning FrontendContext; this
@@ -25,27 +34,21 @@ public:
 		return internHashed(node, FlashCpp::hashDependentExpressionIdentity(node));
 	}
 
-	// Only this batch's newly created identities are provisional. Required template
-	// instantiation performed before publication is outside this identity transaction.
-	std::vector<ExprId> internBatch(std::span<const ASTNode> expressions) {
-		std::vector<ExprId> identities;
-		std::vector<size_t> inserted_hashes;
-		identities.reserve(expressions.size());
-		inserted_hashes.reserve(expressions.size());
+	// Caller supplies empty identity slots. Only this batch's newly created IDs are
+	// provisional; required template instantiation precedes this publication step.
+	void internBatch(std::span<DependentExpressionBatchEntry> expressions) {
+		for (const DependentExpressionBatchEntry& entry : expressions) {
+			if (entry.identity) throw InternalError("dependent expression: batch output is not empty");
+			if (!entry.expression.has_value()) throw InternalError("dependent expression: empty ASTNode");
+		}
+		const uint32_t original_count = node_count_;
 		try {
-			for (const ASTNode& expression : expressions) {
-				if (!expression.has_value()) throw InternalError("dependent expression: empty ASTNode");
-				const size_t hash = FlashCpp::hashDependentExpressionIdentity(expression);
-				const uint32_t previous_count = node_count_;
-				const ExprId identity = internHashed(expression, hash);
-				if (node_count_ != previous_count) inserted_hashes.push_back(hash);
-				identities.push_back(identity);
-			}
+			for (DependentExpressionBatchEntry& entry : expressions) entry.identity = intern(entry.expression);
 		} catch (...) {
-			rollbackBatch(inserted_hashes);
+			rollbackBatch(original_count);
+			for (DependentExpressionBatchEntry& entry : expressions) entry.identity = ExprId{};
 			throw;
 		}
-		return identities;
 	}
 
 	size_t size() const {
@@ -88,16 +91,18 @@ private:
 		return ExprId{id};
 	}
 
-	void rollbackBatch(std::span<const size_t> inserted_hashes) {
-		for (auto hash = inserted_hashes.rbegin(); hash != inserted_hashes.rend(); ++hash) {
-			const auto bucket = buckets_.find(*hash);
-			if (bucket == buckets_.end() || bucket->second.empty() || bucket->second.back() != node_count_) {
-				throw InternalError("dependent expression: invalid batch rollback order");
-			}
-			bucket->second.pop_back();
-			if (bucket->second.empty()) buckets_.erase(bucket);
-			nodes_[--node_count_] = ASTNode{};
+	// Identity-publication failures are exceptional. Scanning buckets here avoids
+	// allocating an insertion journal for every successful batch.
+	void rollbackBatch(uint32_t original_count) {
+		if (node_count_ == original_count) return;
+		if (original_count > node_count_) throw InternalError("dependent expression: invalid batch rollback count");
+		for (auto bucket = buckets_.begin(); bucket != buckets_.end();) {
+			std::vector<uint32_t>& identities = bucket->second;
+			while (!identities.empty() && identities.back() > original_count) identities.pop_back();
+			if (identities.empty()) bucket = buckets_.erase(bucket);
+			else ++bucket;
 		}
+		while (node_count_ > original_count) nodes_[--node_count_] = ASTNode{};
 	}
 
 	// Retain rolled-back arena slots for reuse; repeatedly failing batches must not

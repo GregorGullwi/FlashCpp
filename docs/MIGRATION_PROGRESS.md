@@ -10,7 +10,9 @@ implementation history belongs in git and the regression suite.
 
 **Separate provisional type publication from required instantiations.**
 Value-pack substitution now stages its expressions until every element finishes,
-then interns their identities atomically. A later element's hard error publishes
+then interns their identities atomically. Expansion appends to the caller's
+result buffer and stages AST/ID pairs in one scratch allocation; batch interning
+uses no temporary vectors. A later element's hard error publishes
 no prefix of candidate expression IDs. Failed batch publication restores hash
 buckets and live IDs, retains stable committed IDs, and reuses arena slots.
 Required earlier class instantiations stay available and errors in separately
