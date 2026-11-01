@@ -42,6 +42,13 @@ the type-ID overload's conversion buffer; success and failure restore the outer
 scratch mark. A 32-argument regression checks repeated reuse and stable published
 identities after the argument storage has been reclaimed.
 
+Canonical owner publication now includes the enclosing owner import when stamping
+a materialized member class-template type. Member-function-pointer owner probes
+also discard incomplete argument imports and unchanged-owner work. A distinct
+owner identity commits only when it is attached to the output type; required
+owner materialization starts after the probe transaction has ended. Native guards
+cover late failure, successful owner publication, and retained callback effects.
+
 The next slice must give remaining candidate-local type, AST, registry, and parser artifacts
 an owned publication boundary before enabling a transaction around type-pack
 materialization. Existing `FrontendScratchTransaction` coverage is insufficient

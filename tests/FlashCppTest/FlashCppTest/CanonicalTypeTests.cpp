@@ -8,6 +8,190 @@
 #include "ParserTemplateHelpers.h"
 #include "../../architecture/CanonicalTypeTests.h"
 
+using OwnerPublicationMaterialization = decltype(std::declval<TemplateEngine&>().materializeTemplateInstantiationForLookup({}, {}));
+
+TEST_CASE("Canonical member function pointer owner substitution rolls back late unsupported arguments") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TemplateDeclId primary{801};
+	const TemplateDeclId environment{802};
+	const CanonicalTemplateArgument pattern_arguments[] = {
+		CanonicalTemplateArgument::makeType(table.templateParameter(environment, 0)),
+		CanonicalTemplateArgument::makeType(table.templateParameter(environment, 1))};
+	const TypeId pattern_owner = table.templateSpecialization(primary, pattern_arguments);
+	TypeSpecifierNode original(TypeCategory::MemberFunctionPointer, TypeQualifier::None, SizeInBits{0}, Token{}, CVQualifier::None);
+	original.set_member_class_name(StringTable::getOrInternStringHandle("Owner"));
+	original.set_member_class_type_id(pattern_owner);
+	FunctionSignature signature;
+	signature.return_type_index = nativeTypeIndex(TypeCategory::Int);
+	signature.class_name = original.member_class_name();
+	original.set_function_signature(signature);
+	TypeSpecifierNode substituted = original;
+	TemplateParameterNode parameters[] = {TemplateParameterNode(StringTable::getOrInternStringHandle("A"), Token{}),
+		TemplateParameterNode(StringTable::getOrInternStringHandle("B"), Token{})};
+	TypeSpecifierNode pointer_type(TypeCategory::Short, TypeQualifier::None, 16, Token{}, CVQualifier::None);
+	pointer_type.add_pointer_level(CVQualifier::None);
+	const TemplateTypeArg pointer_argument(pointer_type);
+	const TemplateTypeArg arguments[] = {pointer_argument, TemplateTypeArg::makeType(TypeIndex{})};
+	const size_t before = table.size();
+	bool materialized = false;
+	substituteCanonicalMemberFunctionPointerOwner(substituted, original, environment, parameters, arguments,
+		[&](const TypeInfo&, std::span<const TemplateTypeArg>) {
+			materialized = true;
+			return OwnerPublicationMaterialization{};
+		});
+	CHECK_FALSE(materialized);
+	CHECK(table.size() == before);
+	CHECK(substituted.member_class_type_id() == pattern_owner);
+}
+
+TEST_CASE("Canonical member function pointer owner substitution commits deep concrete owner identity") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TemplateDeclId primary{811};
+	const TemplateDeclId environment{812};
+	TypeId first_pattern = table.templateParameter(environment, 0);
+	for (size_t depth = 0; depth < 4096; ++depth) first_pattern = table.pointer(first_pattern);
+	const CanonicalTemplateArgument pattern_arguments[] = {
+		CanonicalTemplateArgument::makeType(first_pattern),
+		CanonicalTemplateArgument::makeType(table.templateParameter(environment, 1))};
+	const TypeId pattern_owner = table.templateSpecialization(primary, pattern_arguments);
+	TypeSpecifierNode original(TypeCategory::MemberFunctionPointer, TypeQualifier::None, SizeInBits{0}, Token{}, CVQualifier::None);
+	original.set_member_class_name(StringTable::getOrInternStringHandle("Owner"));
+	original.set_member_class_type_id(pattern_owner);
+	FunctionSignature signature;
+	signature.return_type_index = nativeTypeIndex(TypeCategory::Int);
+	signature.class_name = original.member_class_name();
+	original.set_function_signature(signature);
+	TypeSpecifierNode substituted = original;
+	TemplateParameterNode parameters[] = {TemplateParameterNode(StringTable::getOrInternStringHandle("A"), Token{}),
+		TemplateParameterNode(StringTable::getOrInternStringHandle("B"), Token{})};
+	TypeSpecifierNode pointer_type(TypeCategory::Short, TypeQualifier::None, 16, Token{}, CVQualifier::None);
+	pointer_type.add_pointer_level(CVQualifier::None);
+	const TemplateTypeArg pointer_argument(pointer_type);
+	const TemplateTypeArg arguments[] = {pointer_argument, TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Double))};
+	bool materialized = false;
+	substituteCanonicalMemberFunctionPointerOwner(substituted, original, environment, parameters, arguments,
+		[&](const TypeInfo&, std::span<const TemplateTypeArg>) {
+			materialized = true;
+			return OwnerPublicationMaterialization{};
+		});
+	CHECK_FALSE(materialized);
+	TypeId expected_first = table.pointer(table.builtin(CanonicalBuiltinKind::Short));
+	for (size_t depth = 0; depth < 4096; ++depth) expected_first = table.pointer(expected_first);
+	const TypeId expected_arguments[] = {expected_first, table.builtin(CanonicalBuiltinKind::Double)};
+	const TypeId expected_owner = table.templateSpecialization(primary, expected_arguments);
+	CHECK(substituted.member_class_type_id() == expected_owner);
+	CHECK(expected_owner != pattern_owner);
+}
+
+TEST_CASE("Materialized member type stamping rolls back an unused enclosing owner import") {
+	clearLegacyTypeTablesForTesting();
+	FrontendContext context;
+	auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+	initialize_native_types();
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const StringHandle outer_name = StringTable::getOrInternStringHandle("PublicationOuter");
+	const StringHandle inner_name = StringTable::getOrInternStringHandle("PublicationInner");
+	const TemplateDeclId outer = context.templateDecls().publishPrimaryClassTemplate(
+		ownerIdFromNamespaceHandle(NamespaceRegistry::GLOBAL_NAMESPACE), outer_name);
+	const TemplateDeclId inner = context.templateDecls().publishPrimaryClassTemplate(ownerIdFromTemplateDecl(outer), inner_name);
+	StructDeclarationNode owner(outer_name);
+	owner.set_canonical_specialization_owner_template_decl_id(outer);
+	StructDeclarationNode pattern(inner_name);
+	pattern.set_template_decl_id(inner);
+	StructDeclarationNode declaration(inner_name);
+	declaration.set_enclosing_class(&owner);
+	declaration.set_injected_class_pattern_declaration(&pattern);
+	const TypeCreationResult created = add_struct_type(inner_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+	StructTypeInfo& record = created.info.createStructInfo(inner_name, AccessSpecifier::Public, false, NamespaceRegistry::GLOBAL_NAMESPACE);
+	record.declaration_node = &declaration;
+	TypeInfo::TemplateArgInfo first;
+	first.type_index = nativeTypeIndex(TypeCategory::Short);
+	first.pointer_depth = 1;
+	TypeInfo::TemplateArgInfo second;
+	second.is_value = true;
+	TemplateArgInfoVector arguments{first, second};
+	created.info.setTemplateInstantiationInfo(QualifiedIdentifier::fromQualifiedName("PublicationInner", NamespaceRegistry::GLOBAL_NAMESPACE),
+		arguments);
+	TypeSpecifierNode syntax(TypeCategory::Struct, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	const size_t before = table.size();
+	for (size_t attempt = 0; attempt < 3; ++attempt) {
+		CHECK_FALSE(tryStampMaterializedClassTemplateType(syntax, created.info));
+		CHECK_FALSE(syntax.has_template_specialization());
+		CHECK(table.size() == before);
+	}
+	arguments[1].is_value = false;
+	arguments[1].type_index = nativeTypeIndex(TypeCategory::Double);
+	created.info.setTemplateInstantiationInfo(QualifiedIdentifier::fromQualifiedName("PublicationInner", NamespaceRegistry::GLOBAL_NAMESPACE),
+		arguments);
+	REQUIRE(tryStampMaterializedClassTemplateType(syntax, created.info));
+	CHECK(syntax.has_specialization_owner());
+	const TypeId expected_owner = table.templateSpecialization(outer, std::span<const TypeId>{});
+	CHECK(syntax.specialization_owner_type_id() == expected_owner);
+	const TypeId expected_arguments[] = {table.pointer(table.builtin(CanonicalBuiltinKind::Short)), table.builtin(CanonicalBuiltinKind::Double)};
+	const CanonicalTemplateArgument member_arguments[] = {CanonicalTemplateArgument::makeType(expected_arguments[0]),
+		CanonicalTemplateArgument::makeType(expected_arguments[1])};
+	const TypeId expected = table.memberTemplateSpecialization(inner, expected_owner, member_arguments);
+	CHECK(importCanonicalType(table, syntax).type == expected);
+}
+
+TEST_CASE("Canonical owner probing ends before required materialization effects") {
+	clearLegacyTypeTablesForTesting();
+	FrontendContext context;
+	auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+	initialize_native_types();
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const StringHandle owner_name = StringTable::getOrInternStringHandle("RequiredPublicationOwner");
+	const TypeCreationResult created = add_struct_type(owner_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+	TypeInfo::TemplateArgInfo concrete_argument;
+	concrete_argument.type_index = nativeTypeIndex(TypeCategory::Char);
+	created.info.setTemplateInstantiationInfo(QualifiedIdentifier::fromQualifiedName("RequiredPublicationPrimary", NamespaceRegistry::GLOBAL_NAMESPACE),
+		TemplateArgInfoVector{concrete_argument});
+	const TypeId owner_argument = table.builtin(CanonicalBuiltinKind::Char);
+	const TypeId owner = table.templateSpecialization(TemplateDeclId{821}, std::span<const TypeId>(&owner_argument, 1));
+	TypeSpecifierNode original(TypeCategory::MemberFunctionPointer, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	original.set_member_class_name(owner_name);
+	original.set_member_class_type_id(owner);
+	FunctionSignature signature;
+	signature.return_type_index = nativeTypeIndex(TypeCategory::Int);
+	signature.class_name = owner_name;
+	original.set_function_signature(signature);
+	TypeSpecifierNode substituted = original;
+	const TemplateParameterNode parameters[] = {TemplateParameterNode(StringTable::getOrInternStringHandle("T"), Token{})};
+	TypeSpecifierNode pointer_type(TypeCategory::Short, TypeQualifier::None, 16, Token{}, CVQualifier::None);
+	pointer_type.add_pointer_level(CVQualifier::None);
+	const TemplateTypeArg argument(pointer_type);
+	const TemplateTypeArg arguments[] = {argument};
+	const size_t before = table.size();
+	TypeId required_effect{};
+	bool materialized = false;
+	bool saw_static_assert_failure = false;
+	try {
+		substituteCanonicalMemberFunctionPointerOwner(substituted, original, TemplateDeclId{822}, parameters, arguments,
+			[&](const TypeInfo& info, std::span<const TemplateTypeArg> materialized_arguments) -> OwnerPublicationMaterialization {
+				materialized = true;
+				CHECK(&info == &created.info);
+				REQUIRE(materialized_arguments.size() == 1);
+				CHECK(materialized_arguments[0].typeEnum() == TypeCategory::Char);
+				CHECK(table.size() == before);
+				required_effect = table.pointer(table.builtin(CanonicalBuiltinKind::Double));
+				throw makeStructuredCompileError(context.diagnostics(), DiagnosticId::TemplateStaticAssertFailure, DiagnosticSeverity::Error,
+					SourceLocation{}, "required owner materialization failed", {});
+			});
+	} catch (const CompileError& error) {
+		const Diagnostic* diagnostic = error.structuredDiagnostic();
+		saw_static_assert_failure = diagnostic != nullptr && diagnostic->id == DiagnosticId::TemplateStaticAssertFailure;
+	}
+	CHECK(materialized);
+	CHECK(saw_static_assert_failure);
+	REQUIRE(required_effect);
+	REQUIRE(required_effect.value <= table.size());
+	CHECK(table.node(required_effect).kind == CanonicalTypeKind::Pointer);
+	CHECK(table.node(table.node(required_effect).child).builtin == CanonicalBuiltinKind::Double);
+	CHECK(substituted.member_class_type_id() == owner);
+}
+
 TEST_CASE("Published free function targets retain entity and canonical signature identity") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
