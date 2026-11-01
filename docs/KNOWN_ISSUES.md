@@ -232,6 +232,25 @@ A nested alias chain that expands two dependent type packs into one member
 template-id can materialize the wrong argument count. This remains deferred
 with the nontrivial and multi-pack member-template expansion work.
 
+## Callable member signature arguments can fail specialization matching
+
+Callable member types also expose a separate matching discrepancy:
+`template<class R, class... A> struct Packed { R (*value)(A...); };` compares
+equal to the corresponding concrete function pointer through `__is_same`, but a
+generic `Same<T, T>` partial-specialization trait reports false when passed
+`decltype(Packed<long long>::value)` and `long long (*)()`. Both empty and full
+packs reproduce; equivalent function-pointer aliases match correctly. Audit
+member callable argument identity at partial-specialization deduction rather
+than recognizing the trait spelling.
+
+## Canonical substitution can form a pointer to reference
+
+Canonical structural substitution also rebuilds `T*` with a reference argument
+without applying the direct pointer constructor's reference-pointee rejection.
+Keep this distinct from rollback of existing canonical rejection paths; the
+producer needs a typed substitution failure for source-level immediate contexts
+before enabling that rejection throughout the legacy callable pipeline.
+
 ## Pack substitution rollback and diagnostics remain incomplete
 
 Effective primary owner bindings retain complete enclosing and local packs,
@@ -265,6 +284,16 @@ substitution succeeds and the replacement stamp has been applied. Its canonical
 transaction discards partially imported bindings when a later argument is
 unsupported. Required class instantiations run before this transaction, so their
 effects and hard errors remain independent of candidate restamping.
+
+Pure callable-component substitution now owns its canonical import/substitution
+transaction. Unsupported arguments and existing structural rejection paths
+discard their provisional identities. Callable environment construction also
+discards its imported prefix when a later argument is unsupported, before the
+legacy signature walk begins. That walk independently publishes successfully
+substituted components. Complete signature substitution can still retain earlier
+component identities after a later failure, and nested callable signature
+objects are shared by the legacy representation. Establish owned candidate
+signature storage before extending rollback across that walk.
 
 Other candidate-local type, legacy AST, registry/cache, and parser publication still
 need an owned transaction boundary. `FrontendScratchTransaction` currently covers

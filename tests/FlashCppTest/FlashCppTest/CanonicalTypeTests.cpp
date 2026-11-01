@@ -6770,6 +6770,139 @@ TEST_CASE("Callable alias return binding walks deep canonical wrappers iterative
 	CHECK(imported.type == expected_result);
 }
 
+TEST_CASE("Canonical function component substitution rolls back unsupported argument imports") {
+	FrontendContext context;
+	CanonicalTypeTable& table = context.canonicalTypes();
+	MonotonicScratchArena& scratch = context.scratchArena();
+	FunctionType pattern;
+	pattern.type_index = nativeTypeIndex(TypeCategory::Template);
+	pattern.template_parameter_decl = TemplateDeclId{731};
+	pattern.template_parameter_index = 0;
+	const TypeSpecifierNode long_spec(TypeCategory::Long, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	const TemplateTypeArg valid_argument(long_spec);
+	TemplateTypeArg unsupported_argument;
+	unsupported_argument.setType(TypeCategory::Invalid);
+	const size_t before = table.size();
+	CHECK_FALSE(substituteCanonicalFunctionTypeComponent(table, scratch, pattern, unsupported_argument));
+	CHECK(table.size() == before);
+	CHECK_FALSE(substituteCanonicalFunctionTypeComponent(table, scratch, pattern, unsupported_argument));
+	CHECK(table.size() == before);
+	const TypeId substituted = substituteCanonicalFunctionTypeComponent(table, scratch, pattern, valid_argument);
+	REQUIRE(substituted);
+	CHECK(substituted == table.builtin(CanonicalBuiltinKind::Long));
+}
+
+TEST_CASE("Canonical function component substitution rolls back invalid member pointer rebuilds") {
+	FrontendContext context;
+	CanonicalTypeTable& table = context.canonicalTypes();
+	MonotonicScratchArena& scratch = context.scratchArena();
+	FunctionType pattern;
+	pattern.type_index = nativeTypeIndex(TypeCategory::Template);
+	pattern.template_parameter_decl = TemplateDeclId{732};
+	pattern.template_parameter_index = 0;
+	const TypeId owner = table.record(EntityId{734});
+	pattern.ordered_declarator_components = {DeclaratorComponent::memberPointer(owner, false, CVQualifier::None)};
+	const TypeSpecifierNode void_spec(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	const TemplateTypeArg argument(void_spec);
+	const TypeId stable = table.builtin(CanonicalBuiltinKind::Double);
+	const size_t before = table.size();
+	CHECK_THROWS_AS(substituteCanonicalFunctionTypeComponent(table, scratch, pattern, argument), InternalError);
+	CHECK(table.size() == before);
+	CHECK(table.builtin(CanonicalBuiltinKind::Double) == stable);
+	CHECK_THROWS_AS(substituteCanonicalFunctionTypeComponent(table, scratch, pattern, argument), InternalError);
+	CHECK(table.size() == before);
+}
+
+TEST_CASE("Canonical signature environment imports roll back unsupported argument prefixes") {
+	FrontendContext context;
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const StringHandle first_name = StringTable::getOrInternStringHandle("First");
+	const StringHandle second_name = StringTable::getOrInternStringHandle("Second");
+	const std::array<TemplateParameterNode, 2> parameters{
+		TemplateParameterNode(first_name, Token{}), TemplateParameterNode(second_name, Token{})};
+	TypeSpecifierNode pointer_to_array(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	pointer_to_array.set_ordered_declarator({DeclaratorComponent::pointer(CVQualifier::None), DeclaratorComponent::array(3)});
+	const TemplateTypeArg supported(pointer_to_array);
+	TemplateTypeArg unsupported;
+	unsupported.setType(TypeCategory::Invalid);
+	const std::array<TemplateTypeArg, 2> invalid_arguments{supported, unsupported};
+	FunctionSignature signature;
+	FunctionType concrete_return;
+	concrete_return.type_index = nativeTypeIndex(TypeCategory::Long);
+	signature.setReturnType(concrete_return);
+	const TemplateDeclId environment{733};
+	const size_t before = table.size();
+	const FunctionSignature deferred = substituteTemplateFunctionSignatureTypes(signature, parameters, invalid_arguments, table, environment);
+	CHECK_FALSE(deferred.return_type().canonical_type_id);
+	CHECK(table.size() == before);
+	signature.updateReturnType([&](FunctionType& type) { type.canonical_type_id = table.templateParameter(environment, 0); });
+	const std::array<TemplateTypeArg, 2> valid_arguments{supported, TemplateTypeArg(TypeSpecifierNode(
+		TypeCategory::Short, TypeQualifier::None, 16, Token{}, CVQualifier::None))};
+	const FunctionSignature committed = substituteTemplateFunctionSignatureTypes(signature, parameters, valid_arguments, table, environment);
+	const TypeId expected = table.pointer(table.array(table.builtin(CanonicalBuiltinKind::Int), 3));
+	CHECK(committed.return_type().canonical_type_id == expected);
+	const size_t after_commit = table.size();
+	CHECK(after_commit > before);
+	const FunctionSignature repeated = substituteTemplateFunctionSignatureTypes(signature, parameters, valid_arguments, table, environment);
+	CHECK(repeated.return_type().canonical_type_id == expected);
+	CHECK(table.size() == after_commit);
+}
+
+TEST_CASE("Callable components publish independently of a deferred canonical environment") {
+	FrontendContext context;
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const TemplateDeclId environment{735};
+	const StringHandle first = StringTable::getOrInternStringHandle("First");
+	const StringHandle second = StringTable::getOrInternStringHandle("Second");
+	const std::array<TemplateParameterNode, 2> parameters{TemplateParameterNode(first, Token{}), TemplateParameterNode(second, Token{})};
+	FunctionType result;
+	result.type_index = nativeTypeIndex(TypeCategory::Template);
+	result.template_parameter_name = first;
+	result.template_parameter_decl = environment;
+	FunctionSignature signature;
+	signature.setReturnType(result);
+	TypeSpecifierNode short_pointer(TypeCategory::Short, TypeQualifier::None, 16, Token{}, CVQualifier::None);
+	short_pointer.add_pointer_level(CVQualifier::Const);
+	TemplateTypeArg unsupported;
+	unsupported.setType(TypeCategory::Invalid);
+	const std::array<TemplateTypeArg, 2> arguments{TemplateTypeArg(short_pointer), unsupported};
+	const FunctionSignature substituted = substituteTemplateFunctionSignatureTypes(signature, parameters, arguments, table, environment);
+	REQUIRE(substituted.return_type().canonical_type_id);
+	const TypeId expected = table.qualify(table.pointer(table.builtin(CanonicalBuiltinKind::Short)), CVQualifier::Const);
+	CHECK(substituted.return_type().canonical_type_id == expected);
+	CHECK_FALSE(signature.return_type().canonical_type_id);
+}
+
+TEST_CASE("Callable component scratch arguments survive reuse and reclaim failed substitutions") {
+	FrontendContext context;
+	CanonicalTypeTable& table = context.canonicalTypes();
+	MonotonicScratchArena& scratch = context.scratchArena();
+	uint32_t* sentinel = scratch.allocateObject<uint32_t>(73);
+	const uint64_t bytes_before = scratch.currentBytes();
+	const TypeId owner = table.record(EntityId{736});
+	FunctionType pattern;
+	pattern.type_index = nativeTypeIndex(TypeCategory::Template);
+	pattern.template_parameter_decl = TemplateDeclId{737};
+	pattern.template_parameter_index = 31;
+	pattern.ordered_declarator_components = {DeclaratorComponent::memberPointer(owner, false, CVQualifier::None)};
+	const TypeId prefix = table.templateParameter(pattern.template_parameter_decl, 0);
+	const TemplateTypeArg valid(TypeSpecifierNode(TypeCategory::Short, TypeQualifier::None, 16, Token{}, CVQualifier::None));
+	const TemplateTypeArg invalid(TypeSpecifierNode(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None));
+	const TypeId expected = table.memberObjectPointer(owner, table.builtin(CanonicalBuiltinKind::Short));
+	CHECK(substituteCanonicalFunctionTypeComponent(table, scratch, pattern, valid) == expected);
+	const uint64_t reserved_after_warmup = scratch.reservedBytes();
+	const size_t types_after_success = table.size();
+	for (size_t attempt = 0; attempt < 32; ++attempt) {
+		CHECK(substituteCanonicalFunctionTypeComponent(table, scratch, pattern, valid) == expected);
+		CHECK_THROWS_AS(substituteCanonicalFunctionTypeComponent(table, scratch, pattern, invalid), InternalError);
+		CHECK(scratch.currentBytes() == bytes_before);
+		CHECK(scratch.reservedBytes() == reserved_after_warmup);
+		CHECK(table.size() == types_after_success);
+		CHECK(table.templateParameter(pattern.template_parameter_decl, 0) == prefix);
+		CHECK(*sentinel == 73);
+	}
+}
+
 TEST_CASE("Mixed callable alias bindings retain value positions and canonical component authority") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
