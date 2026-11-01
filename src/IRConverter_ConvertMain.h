@@ -327,6 +327,8 @@ private:
 
 	// Helper to emit SHR reg, imm8 for bitfield extraction
 	void emitShrImm(X64Register reg, uint8_t shift_amount);
+	void emitSarImm(X64Register reg, uint8_t shift_amount);
+	void emitBitfieldExtract(X64Register reg, size_t bit_offset, size_t width, TypeCategory type);
 
 	// Compute the mask for a bitfield of the given width in bits.
 	static uint64_t bitfieldMask(size_t width);
