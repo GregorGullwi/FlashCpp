@@ -28,6 +28,20 @@ prefix; required dependency instantiations stay outside that transaction.
 Native guards cover late unsupported bindings, a class-body hard error, and a
 1,024-segment qualifier path with stable repeated substitution identities.
 
+Pure callable-component imports and structural substitution now publish through
+a local canonical transaction. Callable environment imports also publish only
+after every argument imports successfully; an unsupported later argument leaves
+no bulk-import prefix. After that transaction ends, the legacy signature walk
+may independently publish successfully substituted components. It still shares
+nested callable objects and needs candidate-owned storage before whole-signature
+rollback is safe. Native checks cover unsupported imports, an existing structural
+rejection, and successful retry with committed identities.
+Callable-component argument lists use one scoped scratch buffer of canonical
+arguments, passed directly as a span. This avoids a temporary type-ID vector and
+the type-ID overload's conversion buffer; success and failure restore the outer
+scratch mark. A 32-argument regression checks repeated reuse and stable published
+identities after the argument storage has been reclaimed.
+
 The next slice must give remaining candidate-local type, AST, registry, and parser artifacts
 an owned publication boundary before enabling a transaction around type-pack
 materialization. Existing `FrontendScratchTransaction` coverage is insufficient

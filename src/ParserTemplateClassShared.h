@@ -267,23 +267,28 @@ inline std::optional<TypeId> tryImportCanonicalPartialTypePattern(CanonicalTypeT
 		Frame& frame = *pending;
 		const TypeSpecifierNode& syntax = *frame.syntax;
 		if (syntax.is_pack_expansion() || syntax.has_concept_constraint() || syntax.has_member_class() || syntax.has_function_signature() ||
-			syntax.has_dependent_name_type() || syntax.is_alias_template_specialization()) return std::nullopt;
+			syntax.has_dependent_name_type() || syntax.is_alias_template_specialization()) {
+			return std::nullopt;
+		}
 		for (const DeclaratorComponent& component : syntax.declarator_components()) {
 			if (component.kind == DeclaratorComponentKind::Function || component.kind == DeclaratorComponentKind::MemberObjectPointer ||
-				component.kind == DeclaratorComponentKind::MemberFunctionPointer) return std::nullopt;
+				component.kind == DeclaratorComponentKind::MemberFunctionPointer) {
+				return std::nullopt;
+			}
 		}
 		std::optional<TypeId> result;
 		if (syntax.has_template_specialization()) {
 			if (frame.next_argument < syntax.specialization_arg_count()) {
 				const size_t index = frame.next_argument++;
-				if (!syntax.specialization_arg_is_type(index)) return std::nullopt;
+				if (!syntax.specialization_arg_is_type(index))
+					return std::nullopt;
 				pending = make_frame(syntax.specialization_arg_type(index), &frame);
 				continue;
 			}
-			const TypeId base = table.templateSpecialization(syntax.specialization_template_decl(),
-				std::span<const TypeId>(frame.arguments(), syntax.specialization_arg_count()));
+			const TypeId base = table.templateSpecialization(syntax.specialization_template_decl(), std::span<const TypeId>(frame.arguments(), syntax.specialization_arg_count()));
 			const CanonicalTypeImport shaped = importCanonicalShapedBase(table, syntax, CanonicalTypeImportContext::Exact, base);
-			if (shaped.status != CanonicalTypeImportStatus::Supported) return std::nullopt;
+			if (shaped.status != CanonicalTypeImportStatus::Supported)
+				return std::nullopt;
 			result = shaped.type;
 		} else {
 			for (size_t index = 0; index < parameters.size(); ++index) {
@@ -291,7 +296,8 @@ inline std::optional<TypeId> tryImportCanonicalPartialTypePattern(CanonicalTypeT
 				if (parameter.is_valid() && parameter == syntax.type_index() && parameter.category() == syntax.type_index().category()) {
 					const TypeId base = table.templateParameter(primary, static_cast<uint32_t>(index));
 					const CanonicalTypeImport shaped = importCanonicalShapedBase(table, syntax, CanonicalTypeImportContext::Exact, base);
-					if (shaped.status != CanonicalTypeImportStatus::Supported) return std::nullopt;
+					if (shaped.status != CanonicalTypeImportStatus::Supported)
+						return std::nullopt;
 					result = shaped.type;
 					break;
 				}
@@ -320,7 +326,8 @@ inline std::optional<TypeId> tryImportCanonicalPartialTypePattern(CanonicalTypeT
 			}
 		}
 		pending = frame.parent;
-		if (pending == nullptr) return result;
+		if (pending == nullptr)
+			return result;
 		pending->arguments()[pending->next_argument - 1] = *result;
 	}
 	throw InternalError("partial pattern normalization ended without a result");
@@ -402,11 +409,13 @@ inline std::optional<TypeId> tryImportCanonicalPartialClassPattern(FrontendConte
 			const TypeSpecifierNode syntax = typeSpecifierFromTemplateTypeArgProjection(argument);
 			imported = tryImportCanonicalPartialTypePattern(table, scratch, primary, parameters, syntax, argument.is_dependent);
 		} else {
-			if (!argument_syntax[index].is<TypeSpecifierNode>()) return std::nullopt;
+			if (!argument_syntax[index].is<TypeSpecifierNode>())
+				return std::nullopt;
 			imported = tryImportCanonicalPartialTypePattern(table, scratch, primary, parameters, argument_syntax[index].as<TypeSpecifierNode>(),
 				argument.is_dependent);
 		}
-		if (!imported.has_value() || !table.dependsOnlyOnTemplateParameters(*imported, primary)) return std::nullopt;
+		if (!imported.has_value() || !table.dependsOnlyOnTemplateParameters(*imported, primary))
+			return std::nullopt;
 		pattern_arguments[index] = CanonicalTemplateArgument::makeType(*imported);
 	}
 	const TypeId pattern = table.templateSpecialization(primary, std::span<const CanonicalTemplateArgument>(pattern_arguments, arguments.size()));
@@ -418,9 +427,11 @@ inline std::optional<TypeId> tryImportCanonicalPartialClassPattern(FrontendConte
 // Unsupported argument environments leave the field unpublished rather than inventing identity.
 inline TypeId substituteCanonicalStructMemberType(CanonicalTypeTable& table, TypeId pattern, TemplateDeclId environment,
 	std::span<const TemplateTypeArg> arguments) {
-	if (!pattern) return {};
+	if (!pattern)
+		return {};
 	const bool needs_substitution = table.hasDependentTypeComponents(pattern);
-	if (needs_substitution && !environment) return {};
+	if (needs_substitution && !environment)
+		return {};
 	// Field publication currently supports structural declarators and primary
 	// specializations. Lookup-dependent tips require a later producer boundary.
 	std::vector<TypeId> pending{pattern};
@@ -479,27 +490,33 @@ inline TypeId substituteCanonicalStructMemberType(CanonicalTypeTable& table, Typ
 	std::vector<CanonicalTemplateArgument> canonical_arguments;
 	canonical_arguments.reserve(arguments.size());
 	for (const TemplateTypeArg& argument : arguments) {
-		if (argument.is_pack || argument.is_dependent || argument.is_template_template_arg) return {};
+		if (argument.is_pack || argument.is_dependent || argument.is_template_template_arg)
+			return {};
 		if (argument.is_value) {
 			const std::optional<TypeId> value = tryImportCanonicalValue(table, argument.valueIdentity());
-			if (!value.has_value()) return {};
+			if (!value.has_value())
+				return {};
 			canonical_arguments.push_back(CanonicalTemplateArgument::makeValue(*value));
 		} else {
 			const std::optional<TypeId> type = tryImportCanonicalTemplateTypeArgument(table, argument);
-			if (!type.has_value()) return {};
+			if (!type.has_value())
+				return {};
 			canonical_arguments.push_back(CanonicalTemplateArgument::makeType(*type));
 		}
 	}
 	const TypeId concrete = table.substitute(pattern, environment, canonical_arguments);
-	if (table.hasDependentTypeComponents(concrete)) return {};
+	if (table.hasDependentTypeComponents(concrete))
+		return {};
 	transaction.commit();
 	return concrete;
 }
 
-inline TypeId substituteCanonicalFunctionTypeComponent(CanonicalTypeTable& table, const FunctionType& pattern, const TemplateTypeArg& argument) {
+inline TypeId substituteCanonicalFunctionTypeComponent(CanonicalTypeTable& table, MonotonicScratchArena& scratch, const FunctionType& pattern,
+	const TemplateTypeArg& argument) {
 	if (!pattern.template_parameter_decl || !argument.isTypeArgument() || argument.is_pack || pattern.is_pack_expansion) {
 		return {};
 	}
+	CanonicalTypeTransaction transaction(table);
 	TypeSpecifierNode pattern_type = typeSpecifierFromFunctionType(pattern);
 	const std::optional<TypeId> imported_pattern = tryImportSupportedCanonical(table, pattern_type);
 	if (!imported_pattern.has_value()) {
@@ -509,13 +526,23 @@ inline TypeId substituteCanonicalFunctionTypeComponent(CanonicalTypeTable& table
 	if (!imported_argument.has_value()) {
 		return {};
 	}
-	std::vector<TypeId> arguments;
-	arguments.reserve(static_cast<size_t>(pattern.template_parameter_index) + 1);
-	for (uint32_t index = 0; index < pattern.template_parameter_index; ++index) {
-		arguments.push_back(table.templateParameter(pattern.template_parameter_decl, index));
+	const size_t parameter_index = pattern.template_parameter_index;
+	if (parameter_index >= std::numeric_limits<size_t>::max() / sizeof(CanonicalTemplateArgument)) {
+		throw InternalError("callable component argument count overflow");
 	}
-	arguments.push_back(*imported_argument);
-	return table.substitute(*imported_pattern, pattern.template_parameter_decl, arguments);
+	const size_t argument_count = parameter_index + 1;
+	const ScratchArenaState scratch_mark = scratch.mark();
+	auto scratch_scope = ScopeGuard([&scratch, scratch_mark]() { scratch.rollbackTo(scratch_mark); });
+	void* storage = scratch.allocate(argument_count * sizeof(CanonicalTemplateArgument), alignof(CanonicalTemplateArgument));
+	CanonicalTemplateArgument* arguments = new (storage) CanonicalTemplateArgument[argument_count];
+	for (uint32_t index = 0; index < pattern.template_parameter_index; ++index) {
+		arguments[index] = CanonicalTemplateArgument::makeType(table.templateParameter(pattern.template_parameter_decl, index));
+	}
+	arguments[parameter_index] = CanonicalTemplateArgument::makeType(*imported_argument);
+	const TypeId substituted = table.substitute(*imported_pattern, pattern.template_parameter_decl,
+		std::span<const CanonicalTemplateArgument>(arguments, argument_count));
+	transaction.commit();
+	return substituted;
 }
 
 template <typename ParamContainer, typename ArgContainer>
@@ -523,6 +550,9 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypesImpl(FunctionSi
 	const ArgContainer& template_args, CanonicalTypeTable* canonical_types, TemplateDeclId canonical_environment) {
 	std::vector<CanonicalTemplateArgument> canonical_arguments;
 	if (canonical_types != nullptr && canonical_environment) {
+		// Import the entire environment before publishing its canonical identities.
+		// The later legacy signature walk is outside this pure import transaction.
+		CanonicalTypeTransaction transaction(*canonical_types);
 		canonical_arguments.reserve(template_args.size());
 		// Keep every argument position, including opaque non-type expression IDs.
 		// Unsupported packs and unpublished argument identities remain deferred.
@@ -545,9 +575,13 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypesImpl(FunctionSi
 			}
 			canonical_arguments.push_back(CanonicalTemplateArgument::makeType(*imported));
 		}
+		if (canonical_environment)
+			transaction.commit();
+		else
+			canonical_arguments.clear();
 	}
 	auto apply_template_argument = [&](FunctionType& type, const TemplateTypeArg& arg) {
-		const TypeId canonical_substitution = canonical_types != nullptr ? substituteCanonicalFunctionTypeComponent(*canonical_types, type, arg) : TypeId{};
+		const TypeId canonical_substitution = canonical_types ? substituteCanonicalFunctionTypeComponent(*canonical_types, requireFrontendContext().scratchArena(), type, arg) : TypeId{};
 		TypeSpecifierNode substituted_type = typeSpecifierFromTemplateTypeArgProjection(arg);
 		substituted_type.set_type_index(canonicalizeConcreteTemplateArgumentTypeIndex(arg));
 		tryBindPublishedTypeEntity(substituted_type);
@@ -585,8 +619,7 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypesImpl(FunctionSi
 	};
 	auto substitute_function_type = [&](FunctionType& type) {
 		if (canonical_environment && type.canonical_type_id) {
-			const TypeId substituted = canonical_types->resolveAliasTemplateSpecializations(
-				canonical_types->substitute(type.canonical_type_id, canonical_environment, canonical_arguments));
+			const TypeId substituted = canonical_types->resolveAliasTemplateSpecializations(canonical_types->substitute(type.canonical_type_id, canonical_environment, canonical_arguments));
 			const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(*canonical_types, substituted);
 			TypeId base = exported.base;
 			while (canonical_types->node(base).kind == CanonicalTypeKind::Qualified) {
