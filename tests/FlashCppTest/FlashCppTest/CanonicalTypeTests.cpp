@@ -8627,6 +8627,150 @@ struct Owner {
 	CHECK_FALSE(findDirectTypePackExpansion(occurrence, parameters, bound).has_value());
 }
 
+TEST_CASE("Multipack partial specialization publishes canonical ordered pair arguments") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream fixture("tests/test_multipack_partial_specialization_deduction_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	const std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	CompileContext compile_context;
+	compile_context.setInputFile("multipack_partial_specialization.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine engine;
+	parser.attachTemplateEngine(engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto imported_alias = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const auto items_type = [&](std::string_view alias) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(alias));
+		REQUIRE(info != nullptr);
+		const ResolvedAliasTypeInfo resolved = resolveAliasTypeInfo(info->registeredTypeIndex());
+		const StructTypeInfo* record = tryGetStructTypeInfo(resolved.type_index);
+		REQUIRE(record != nullptr);
+		REQUIRE(record->declaration_node != nullptr);
+		for (size_t index = 0; index < record->members.size(); ++index) {
+			if (record->members[index].getName().view() != "items") continue;
+			const TypeSpecifierNode& syntax = record->declaration_node->members()[index].declaration.as<DeclarationNode>().type_specifier_node();
+			const TypeId field = importCanonicalStructMemberType(table, syntax);
+			REQUIRE(field);
+			CHECK(record->members[index].canonical_type_id == field);
+			return field;
+		}
+		FAIL("specialization has no published items member");
+		return TypeId{};
+	};
+	const auto pair_type = [&](TypeIndex first, TypeIndex second) {
+		const TemplateArgumentVector arguments{TemplateTypeArg::makeType(first), TemplateTypeArg::makeType(second)};
+		const auto instance = engine.materializeTemplateInstantiationForLookup("Pair", arguments);
+		REQUIRE(instance.resolved_type_info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *instance.resolved_type_info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		return imported.type;
+	};
+	const TypeInfo* small = findTypeByName(StringTable::getOrInternStringHandle("SmallRecord"));
+	const TypeInfo* wide = findTypeByName(StringTable::getOrInternStringHandle("WideRecord"));
+	REQUIRE(small != nullptr);
+	REQUIRE(wide != nullptr);
+	const TypeId empty = items_type("concreteEmpty");
+	CHECK_FALSE(table.templateSpecializationArguments(empty));
+	const TypeId single = items_type("concreteSingle");
+	TypeId argument = table.templateSpecializationArguments(single);
+	REQUIRE(argument);
+	CHECK(table.templateArgumentType(argument) == pair_type(nativeTypeIndex(TypeCategory::Char), nativeTypeIndex(TypeCategory::Int)));
+	CHECK_FALSE(table.templateArgumentNext(argument));
+	const TypeId full = items_type("concreteFull");
+	argument = table.templateSpecializationArguments(full);
+	REQUIRE(argument);
+	CHECK(table.templateArgumentType(argument) == pair_type(nativeTypeIndex(TypeCategory::Char), nativeTypeIndex(TypeCategory::Int)));
+	argument = table.templateArgumentNext(argument);
+	REQUIRE(argument);
+	CHECK(table.templateArgumentType(argument) == pair_type(small->registeredTypeIndex(), nativeTypeIndex(TypeCategory::LongLong)));
+	argument = table.templateArgumentNext(argument);
+	REQUIRE(argument);
+	CHECK(table.templateArgumentType(argument) == pair_type(nativeTypeIndex(TypeCategory::Double), wide->registeredTypeIndex()));
+	CHECK_FALSE(table.templateArgumentNext(argument));
+	CHECK(imported_alias("concreteFull") != imported_alias("concreteSingle"));
+}
+
+TEST_CASE("Multipack pattern deduction returns ordered complete bindings") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream fixture("tests/test_multipack_partial_specialization_deduction_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	const std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	CompileContext compile_context;
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine engine;
+	parser.attachTemplateEngine(engine);
+	REQUIRE(!parser.parse().is_error());
+	const auto pair_arg = [&](TypeIndex first, TypeIndex second) {
+		const TemplateArgumentVector arguments{TemplateTypeArg::makeType(first), TemplateTypeArg::makeType(second)};
+		const auto instance = engine.materializeTemplateInstantiationForLookup("Pair", arguments);
+		REQUIRE(instance.resolved_type_info != nullptr);
+		return TemplateTypeArg::makeType(instance.resolved_type_info->registeredTypeIndex());
+	};
+	const TypeInfo* small = findTypeByName(StringTable::getOrInternStringHandle("SmallRecord"));
+	const TypeInfo* wide = findTypeByName(StringTable::getOrInternStringHandle("WideRecord"));
+	REQUIRE(small != nullptr);
+	REQUIRE(wide != nullptr);
+	const std::vector<TemplateTypeArg> concrete{
+		pair_arg(nativeTypeIndex(TypeCategory::Char), nativeTypeIndex(TypeCategory::Int)),
+		pair_arg(small->registeredTypeIndex(), nativeTypeIndex(TypeCategory::LongLong)),
+		pair_arg(nativeTypeIndex(TypeCategory::Double), wide->registeredTypeIndex())};
+	const auto match = gTemplateRegistry.matchSpecializationPatternWithBindings("Box", concrete);
+	REQUIRE(match.has_value());
+	std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> scalar_bindings;
+	std::vector<TemplateBinding> bindings;
+	REQUIRE(match->pattern->matches(concrete, scalar_bindings, bindings));
+	REQUIRE(bindings.size() == 2);
+	CHECK(bindings[0].name == StringTable::getOrInternStringHandle("A"));
+	CHECK(bindings[1].name == StringTable::getOrInternStringHandle("B"));
+	CHECK(bindings[0].is_pack);
+	CHECK(bindings[1].is_pack);
+	REQUIRE(bindings[0].args.size() == concrete.size());
+	REQUIRE(bindings[1].args.size() == concrete.size());
+	const TypeIndex expected_a[] = {nativeTypeIndex(TypeCategory::Char), small->registeredTypeIndex(), nativeTypeIndex(TypeCategory::Double)};
+	const TypeIndex expected_b[] = {nativeTypeIndex(TypeCategory::Int), nativeTypeIndex(TypeCategory::LongLong), wide->registeredTypeIndex()};
+	for (size_t index = 0; index < concrete.size(); ++index) {
+		const TypeInfo* pair = tryGetTypeInfo(concrete[index].type_index);
+		REQUIRE(pair != nullptr);
+		REQUIRE(pair->templateArgs().size() == 2);
+		CHECK(bindings[0].args[index] == TemplateTypeArg::makeType(expected_a[index]));
+		CHECK(bindings[1].args[index] == TemplateTypeArg::makeType(expected_b[index]));
+		CHECK(bindings[0].args[index].type_index == pair->templateArgs()[0].type_index);
+		CHECK(bindings[1].args[index].type_index == pair->templateArgs()[1].type_index);
+	}
+	const auto empty_match = gTemplateRegistry.matchSpecializationPatternWithBindings("Box", std::span<const TemplateTypeArg>{});
+	REQUIRE(empty_match.has_value());
+	bindings.clear();
+	CHECK(empty_match->pattern->matches(std::span<const TemplateTypeArg>{}, scalar_bindings, bindings));
+	REQUIRE(bindings.size() == 2);
+	CHECK(bindings[0].name == StringTable::getOrInternStringHandle("A"));
+	CHECK(bindings[1].name == StringTable::getOrInternStringHandle("B"));
+	CHECK(bindings[0].args.empty());
+	CHECK(bindings[1].args.empty());
+	const TemplateTypeArg conflicting[] = {
+		pair_arg(nativeTypeIndex(TypeCategory::Char), nativeTypeIndex(TypeCategory::Int)),
+		pair_arg(nativeTypeIndex(TypeCategory::Double), nativeTypeIndex(TypeCategory::Double))};
+	CHECK_FALSE(gTemplateRegistry.matchSpecializationPatternWithBindings("EqualBox", conflicting).has_value());
+	const TemplateTypeArg scalar_reuse[] = {
+		pair_arg(nativeTypeIndex(TypeCategory::Char), nativeTypeIndex(TypeCategory::Int)),
+		pair_arg(nativeTypeIndex(TypeCategory::Double), nativeTypeIndex(TypeCategory::LongLong))};
+	CHECK_FALSE(gTemplateRegistry.matchSpecializationPatternWithBindings("ReuseBox", scalar_reuse).has_value());
+}
+
 TEST_CASE("Nested structural NTTP member pointers bind the specialized target owner") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

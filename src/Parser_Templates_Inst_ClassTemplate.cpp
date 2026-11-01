@@ -2829,80 +2829,36 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			const auto& template_params = matched_pattern.template_params;
-			const auto& pattern_args = matched_pattern.pattern_args;
 			std::vector<TemplateTypeArg> template_args_for_member_copy_storage;
-			template_args_for_member_copy_storage.reserve(template_params.size());
-			for (const TemplateParameterNode& template_param : template_params) {
-				const StringHandle parameter_name = template_param.nameHandle();
-				if (!template_param.is_variadic()) {
-					auto binding = pattern_match_opt->substitutions.find(parameter_name);
-					if (binding == pattern_match_opt->substitutions.end()) {
-						throw InternalError("Partial-specialization parameter has no deduced semantic binding");
-					}
-					template_args_for_member_copy_storage.push_back(binding->second);
-					continue;
-				}
-
-				bool found_pack_pattern = false;
-				for (size_t pattern_idx = 0; pattern_idx < pattern_args.size(); ++pattern_idx) {
-					auto pattern_parameter_name = TemplatePattern::getPatternParameterName(
-						pattern_args[pattern_idx],
-						matched_pattern.getTemplateParamNames());
-					if (!pattern_parameter_name.has_value() ||
-						*pattern_parameter_name != parameter_name) {
-						continue;
-					}
-					found_pack_pattern = true;
-					for (size_t pack_idx = pattern_idx;
-						 pack_idx < filled_args_for_pattern_match.size();
-						 ++pack_idx) {
-						template_args_for_member_copy_storage.push_back(
-							deduceArgFromPattern(
-								filled_args_for_pattern_match[pack_idx],
-								pattern_args[pattern_idx]));
-					}
-					break;
-				}
-				if (!found_pack_pattern) {
-					for (size_t pattern_idx = 0; pattern_idx < pattern_args.size(); ++pattern_idx) {
-						if (pattern_idx >= filled_args_for_pattern_match.size()) {
-							break;
-						}
-						if (TemplatePattern::tryAppendNestedTrailingPack(
-								pattern_args[pattern_idx],
-								filled_args_for_pattern_match[pattern_idx],
-								parameter_name,
-								matched_pattern.getTemplateParamNames(),
-								template_args_for_member_copy_storage)) {
-							found_pack_pattern = true;
-							break;
-						}
-					}
-				}
-				if (!found_pack_pattern) {
-					auto binding = pattern_match_opt->substitutions.find(parameter_name);
-					if (binding != pattern_match_opt->substitutions.end()) {
-						template_args_for_member_copy_storage.push_back(binding->second);
-					}
-				}
+			template_args_for_member_copy_storage.reserve(filled_args_for_pattern_match.size());
+			MonotonicScratchArena& partial_binding_scratch = requireFrontendContext().scratchArena();
+			const ScratchArenaState partial_binding_mark = partial_binding_scratch.mark();
+			ScopeGuard partial_binding_scope([&]() { partial_binding_scratch.rollbackTo(partial_binding_mark); });
+			TemplateEnvironment& local_partial_environment = *partial_binding_scratch.allocateObject<TemplateEnvironment>();
+			local_partial_environment.bindings.assign(pattern_match_opt->bindings.begin(), pattern_match_opt->bindings.end());
+			for (const TemplateBinding& binding : pattern_match_opt->bindings) {
+				template_args_for_member_copy_storage.insert( template_args_for_member_copy_storage.end(), binding.args.begin(), binding.args.end());
 			}
-			std::span<const TemplateTypeArg> template_args_for_member_copy =
-				template_args_for_member_copy_storage;
+			std::span<const TemplateTypeArg> template_args_for_member_copy = template_args_for_member_copy_storage;
+			const OuterTemplateBinding* partial_outer_binding = gTemplateRegistry.getOuterTemplateBinding(template_name);
+			TemplateEnvironment& effective_partial_environment = *partial_binding_scratch.allocateObject<TemplateEnvironment>();
+			if (partial_outer_binding != nullptr) {
+				TemplateEnvironment& outer_partial_environment = *partial_binding_scratch.allocateObject<TemplateEnvironment>();
+				outer_partial_environment = buildTemplateEnvironment(*partial_outer_binding);
+				effective_partial_environment.overlayBindings(outer_partial_environment);
+			}
+			effective_partial_environment.overlayBindings(local_partial_environment);
+			FlashCpp::ScopedState<const TemplateEnvironment*> partial_grouped_environment_guard(current_grouped_template_environment_);
+			current_grouped_template_environment_ = &effective_partial_environment;
 			// Push class template pack info for specialization path
 			ClassTemplatePackGuard spec_pack_guard(class_template_pack_stack_);
 			bool has_spec_pack_info = false;
 			{
 				std::vector<ClassTemplatePackInfo> pack_infos;
-				size_t non_variadic_count = 0;
-				for (size_t i = 0; i < template_params.size(); ++i) {
+				for (size_t i = 0; i < pattern_match_opt->bindings.size(); ++i) {
 					const auto& tparam = template_params[i];
 					if (tparam.is_variadic()) {
-						size_t pack_size = template_args_for_member_copy_storage.size() >= non_variadic_count
-											   ? template_args_for_member_copy_storage.size() - non_variadic_count
-											   : 0;
-						pack_infos.push_back({tparam.name(), pack_size});
-					} else {
-						non_variadic_count++;
+						pack_infos.push_back({tparam.name(), pattern_match_opt->bindings[i].args.size()});
 					}
 				}
 				if (!pack_infos.empty()) {
@@ -2945,10 +2901,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				template_args_info);
 
  // Populate type-owned instantiation context
-			struct_type_info.setInstantiationContext(
-				collectParamNameHandles(template_params, template_args.size()),
-				collectParamTypeIndices(template_params, template_args.size()),
-				template_args_info, nullptr);
+			auto effective_partial_bindings = buildEffectivePartialSpecTemplateBindings(
+				template_name, template_params, template_args_for_member_copy);
+			std::span<const TemplateParameterNode> effective_partial_params = effective_partial_bindings.has_outer_binding
+				? std::span<const TemplateParameterNode>(effective_partial_bindings.params)
+				: std::span<const TemplateParameterNode>(template_params);
+			struct_type_info.setInstantiationContextFromEnvironment(effective_partial_environment, effective_partial_params, nullptr);
 
 			// Register class template pack sizes in persistent registry for specializations
 			// Only register if this specialization actually has variadic parameters
