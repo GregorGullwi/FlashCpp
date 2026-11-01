@@ -8,14 +8,21 @@ implementation history belongs in git and the regression suite.
 
 ## Next 3A slice
 
-**Deduce every pack in a multi-pack partial-specialization pattern.**
-Grouped owner bindings and the shared pack-expansion layer now preserve enclosing
-and local packs through member-field, namespace-target, deferred-base, and NTTP
-field materialization. The next slice must make partial-specialization deduction
-bind both packs in `Box<Pair<Tail, Other>...>` instead of leaving the second pack
-empty. Reuse the grouped binding and expansion authority; add source and canonical
-identity coverage. Transactional per-element substitution and pack-length
-diagnostics remain separate work. Boundary 3A and 8A remain incomplete.
+**Make speculative pack-element substitution transactional.**
+Class partial-specialization deduction now matches every argument in a trailing
+pack expansion and retains a `TemplateBinding` group per declared parameter.
+`Box<Pair<Tail, Other>...>` preserves both ordered packs, including empty packs,
+through selection, member initialization, layout, and canonical field publication.
+Scalar deductions remain consistent across elements; conflicting repeated pack
+occurrences reject the candidate. Native identity checks and mixed-size source
+regressions cover both packs, singleton/empty cases, and 256 expansion elements.
+
+The next slice must ensure a failed later element rolls back declarations,
+entities, types, instantiations, and AST allocations from earlier elements. Reuse
+the existing scratch/publication transaction infrastructure. Pack-length mismatch
+diagnostics may follow separately; unequal lengths still stay dependent.
+Alias/variable-template flattened adapters and runtime function-parameter fold
+replay remain deferred. Boundary 3A and 8A remain incomplete.
 
 Direct type-pack data members now retain empty/full packs, written CV/pointer
 wrappers, enclosing-owner identity, and canonical subobject schemas. Coverage is

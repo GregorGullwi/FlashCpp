@@ -12,6 +12,19 @@
 
 namespace {
 
+void retainGroupedSubstitutionBindings(TemplateEnvironment& environment, const TemplateEnvironment* grouped_environment) {
+	if (grouped_environment == nullptr) return;
+	for (TemplateBinding& binding : environment.bindings) {
+		for (const TemplateBinding& grouped : grouped_environment->bindings) {
+			if (binding.name == grouped.name && binding.kind == grouped.kind && binding.is_pack == grouped.is_pack) {
+				binding = grouped;
+				break;
+			}
+		}
+	}
+}
+
+
 struct NamedPackBinding {
 	bool found = false;
 	size_t count = 0;
@@ -226,6 +239,7 @@ ASTNode Parser::substituteTemplateParameters(
 		has_implicit_this);
 	state.owner_declaration = owner_declaration;
 	state.environment = buildTemplateEnvironment(template_params, template_args, nullptr);
+	retainGroupedSubstitutionBindings(state.environment, current_grouped_template_environment_);
 	return substituteTemplateParametersWithState(
 		node,
 		template_params,
@@ -243,6 +257,7 @@ ASTNode Parser::substituteTemplateParameters(
 		current_owner_type_index,
 		has_implicit_this);
 	state.environment = buildTemplateEnvironment(template_params, template_args, nullptr);
+	retainGroupedSubstitutionBindings(state.environment, current_grouped_template_environment_);
 	return substituteTemplateParametersWithState(
 		node,
 		template_params,

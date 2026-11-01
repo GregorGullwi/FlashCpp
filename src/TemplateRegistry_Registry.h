@@ -38,6 +38,7 @@ public:
 		const TemplatePattern* pattern;
 		ASTNode node;
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> substitutions;
+		std::vector<TemplateBinding> bindings;
 	};
 
 	// Register a template function declaration
@@ -1025,18 +1026,21 @@ public:
 		const TemplatePattern* best_match = nullptr;
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> best_substitutions;
 		int best_specificity = -1;
+		std::vector<TemplateBinding> best_bindings;
 
 		// Find the most specific matching pattern
 		for (size_t i = 0; i < patterns.size(); ++i) {
 			const auto& pattern = patterns[i];
 			FLASH_LOG(Templates, Trace, "    Checking pattern #", i, " (specificity=", pattern.specificity(), ")");
 			std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> substitutions;
-			if (pattern.matches(concrete_args, substitutions)) {
+			std::vector<TemplateBinding> bindings;
+			if (pattern.matches(concrete_args, substitutions, bindings)) {
 				FLASH_LOG(Templates, Trace, "      Pattern #", i, " MATCHES!");
 				int spec = pattern.specificity();
 				if (spec > best_specificity) {
 					best_match = &pattern;
 					best_substitutions = std::move(substitutions);
+					best_bindings = std::move(bindings);
 					best_specificity = spec;
 					FLASH_LOG(Templates, Trace, "      New best match (specificity=", spec, ")");
 				}
@@ -1050,7 +1054,8 @@ public:
 			return SpecializationPatternMatch{
 				best_match,
 				best_match->specialized_node,
-				std::move(best_substitutions)};
+				std::move(best_substitutions),
+				std::move(best_bindings)};
 		}
 
 		FLASH_LOG(Templates, Trace, "    No matching pattern found");

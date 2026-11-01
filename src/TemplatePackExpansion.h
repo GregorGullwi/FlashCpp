@@ -9,7 +9,6 @@
 
 #include "AstNodeTypes.h"
 #include "ExpressionStructure.h"
-#include "ParserTemplateClassShared.h"
 #include "TemplateRegistry_Types.h"
 
 enum class TemplatePackReferenceScope : uint8_t {

@@ -1878,3 +1878,29 @@ inline std::vector<TemplateTypeArg> materializeTemplateArgs(
 	const ArgContainer& template_args) {
 	return materializeTemplateArgs(type_info, template_params, template_args, nullptr);
 }
+
+/// Returns true when \p arg is still structurally dependent on unresolved
+/// template parameters — i.e. it cannot yet be used as a concrete
+/// instantiation key.
+///
+/// Covers:
+///  • is_dependent flag (type arg that was never fully substituted)
+///  • surviving dependent_name (belt-and-suspenders guard)
+///  • dependent NTTP expressions that still carry AST-backed unresolved identity
+///  • Auto / DeclTypeAuto placeholder categories
+///  • TypeIndex values whose TypeInfo is a dependent placeholder
+///
+/// Does NOT include is_pack — call sites that need pack-deferral must check
+/// arg.is_pack separately (e.g. explicitTemplateArgsRequireDeferredInstantiation).
+inline bool templateArgIsStructurallyDependent(const TemplateTypeArg& arg) {
+	if (arg.is_dependent || arg.dependent_name.isValid() || arg.dependent_expr.has_value())
+		return true;
+	const TypeCategory cat = arg.category();
+	if (cat == TypeCategory::Auto || cat == TypeCategory::DeclTypeAuto)
+		return true;
+	if (arg.type_index.is_valid()) {
+		const TypeInfo* type_info = tryGetTypeInfo(arg.type_index);
+		return type_info != nullptr && type_info->isDependentPlaceholder();
+	}
+	return false;
+}

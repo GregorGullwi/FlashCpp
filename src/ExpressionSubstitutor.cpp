@@ -582,13 +582,12 @@ ASTNode ExpressionSubstitutor::substituteSizeofPack(const SizeofPackNode& sizeof
 				}
 				continue;
 			}
-			const size_t pack_size = parser_.get_template_param_pack_size(param.name()).value_or(
-				countTemplatePackArguments(
-					template_params_,
-					template_args_,
-					param_index,
-					arg_index));
+			const auto exact_pack_size = parser_.get_template_param_pack_size(param.name());
+			const size_t pack_size = exact_pack_size.value_or(countTemplatePackArguments(template_params_, template_args_, param_index, arg_index));
 			if (param.name() == sizeof_pack.pack_name()) {
+				if (exact_pack_size.has_value()) return *exact_pack_size;
+				const StringHandle pack_name = StringTable::getOrInternStringHandle(sizeof_pack.pack_name());
+				if (const auto pack = pack_map_.find(pack_name); pack != pack_map_.end()) return pack->second.size();
 				return pack_size;
 			}
 			arg_index += pack_size;

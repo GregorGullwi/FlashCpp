@@ -240,7 +240,7 @@ A nested alias chain that expands two dependent type packs into one member
 template-id can materialize the wrong argument count. This remains deferred
 with the nontrivial and multi-pack member-template expansion work.
 
-## Multi-pack deduction, substitution rollback, and pack diagnostics remain incomplete
+## Pack substitution rollback and diagnostics remain incomplete
 
 Effective primary owner bindings retain complete enclosing and local packs,
 including empty and single-element packs. Shared iterative scanning distinguishes
@@ -251,8 +251,12 @@ binding alongside the selected outer element. Compile-time complex folds use the
 pack referenced by their expression. Runtime function-parameter fold replay still
 uses its separate legacy adapter.
 
-Partial-specialization deduction for `Box<Pair<Tail, Other>...>` can leave the
-second pack empty. Alias and variable-template substitution still have flattened
+Class partial-specialization deduction for `Box<Pair<Tail, Other>...>` now
+retains both ordered packs, including empty packs, and checks repeated/scalar
+deductions across expansion elements. The selected specialization publishes its
+grouped environment and uses it for member fields and pack counts. The legacy
+structural matcher still has its 64-level nested-argument guard. Alias and
+variable-template substitution still have flattened
 input adapters that need migration to grouped bindings; nested pack NTTP aliases
 remain unsupported through those adapters. A nested member-template declaration
 with a pack-expanded base such as `List : U...` is rejected by the parser; this
