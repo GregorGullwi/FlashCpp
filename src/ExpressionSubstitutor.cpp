@@ -1311,7 +1311,7 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 	for (const auto& arg : stored_args) {
 		TemplateTypeArg materialized_arg = toTemplateTypeArg(arg);
 		if (arg.is_pack && (!arg.is_value || !arg.dependent_expr().has_value())) {
-			if (std::optional<TemplateArgumentVector> expanded = tryExpandStoredPack(arg)) {
+			if (std::optional<TemplateArgumentVector> expanded = tryExpandStoredPack(arg, false)) {
 				for (TemplateTypeArg& element : *expanded) result.args.push_back(std::move(element));
 				result.had_substitution = true;
 			} else {
@@ -1512,11 +1512,12 @@ static void appendReboundDependentPackArgument(TemplateArgumentVector& args, con
 	args.back().is_pack = false;
 }
 
-std::optional<TemplateArgumentVector> ExpressionSubstitutor::tryExpandStoredPack(const TypeInfo::TemplateArgInfo& stored_arg) {
+std::optional<TemplateArgumentVector> ExpressionSubstitutor::tryExpandStoredPack(
+	const TypeInfo::TemplateArgInfo& stored_arg, bool report_length_mismatch) {
 	if (!stored_arg.is_pack || (stored_arg.is_value && stored_arg.dependent_expr().has_value())) return std::nullopt;
 	const TypeInfo* pattern_info = tryGetTypeInfo(stored_arg.type_index);
 	if (!stored_arg.is_value && pattern_info != nullptr && pattern_info->isTemplateInstantiation()) {
-		return tryExpandLockstepTypePack(stored_arg, *pattern_info);
+		return tryExpandLockstepTypePack(stored_arg, *pattern_info, report_length_mismatch);
 	}
 	StringHandle name = stored_arg.dependent_name;
 	if (!name.isValid() && pattern_info != nullptr) name = pattern_info->name();
@@ -1534,7 +1535,7 @@ std::optional<TemplateArgumentVector> ExpressionSubstitutor::tryExpandStoredPack
 }
 
 std::optional<TemplateArgumentVector> ExpressionSubstitutor::tryExpandLockstepTypePack(
-	const TypeInfo::TemplateArgInfo& stored_arg, const TypeInfo& pattern_info) {
+	const TypeInfo::TemplateArgInfo& stored_arg, const TypeInfo& pattern_info, bool report_length_mismatch) {
 	TemplatePackExpansionBindings bindings;
 	const auto lookup_pack = [&](StringHandle name) -> std::optional<std::span<const TemplateTypeArg>> {
 		const auto found = pack_map_.find(name);
@@ -1544,7 +1545,21 @@ std::optional<TemplateArgumentVector> ExpressionSubstitutor::tryExpandLockstepTy
 	if (!scanTemplateTypePackReferences(pattern_info, lookup_pack,
 		[&](StringHandle name, TemplatePackReferenceScope scope, std::span<const TemplateTypeArg> args) {
 			if (scope == TemplatePackReferenceScope::Current) bindings.add(name, args);
-		}) || bindings.invalid || bindings.pack_bindings.empty()) return std::nullopt;
+		})) return std::nullopt;
+	if (bindings.invalid) {
+		if (report_length_mismatch &&
+			parser_.currentTemplateSubstitutionFailurePolicy() == TemplateSubstitutionFailurePolicy::HardUse) {
+			throw makeStructuredCompileError(
+				parser_.context_.diagnostics(),
+				DiagnosticId::TemplatePackLengthMismatch,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(parser_.current_token_),
+				"template parameter packs have different lengths in a member-template expansion",
+				{});
+		}
+		return std::nullopt;
+	}
+	if (bindings.pack_bindings.empty()) return std::nullopt;
 	const std::optional<TypeSpecifierNode> element_pattern_spec = makeTypeSpecifierFromTemplateArgInfo(stored_arg, Token{});
 	if (!element_pattern_spec.has_value()) {
 		return std::nullopt;
@@ -1583,7 +1598,7 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 			continue;
 		}
 		if (arg.is_pack) {
-			if (std::optional<TemplateArgumentVector> expanded = tryExpandStoredPack(stored_arg)) {
+			if (std::optional<TemplateArgumentVector> expanded = tryExpandStoredPack(stored_arg, false)) {
 				for (TemplateTypeArg& element : *expanded) materialized_args.push_back(std::move(element));
 			} else {
 				arg.is_dependent = true;

@@ -7483,7 +7483,7 @@ template<class... Outer> struct Owner {
 		TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Int)),
 		TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::LongLong))};
 	ExpressionSubstitutor substitutor(scalar_map, pack_map, parser);
-	const auto expanded = substitutor.tryExpandLockstepTypePack(stored_arg, *pair_info);
+	const auto expanded = substitutor.tryExpandLockstepTypePack(stored_arg, *pair_info, false);
 	REQUIRE(expanded.has_value());
 	REQUIRE(expanded->size() == 2);
 	for (size_t index = 0; index < expanded->size(); ++index) {
@@ -7500,7 +7500,7 @@ template<class... Outer> struct Owner {
 	}
 	pack_map[outer_name].clear();
 	ExpressionSubstitutor empty_substitutor(scalar_map, pack_map, parser);
-	const auto empty_expansion = empty_substitutor.tryExpandLockstepTypePack(stored_arg, *pair_info);
+	const auto empty_expansion = empty_substitutor.tryExpandLockstepTypePack(stored_arg, *pair_info, false);
 	REQUIRE(empty_expansion.has_value());
 	CHECK(empty_expansion->empty());
 }

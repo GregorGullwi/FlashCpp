@@ -273,8 +273,10 @@ need an owned transaction boundary. `FrontendScratchTransaction` currently cover
 scratch, declaration/template identity, canonical types, and symbol/namespace
 publication; it does not make those other stores transactional. Do not wrap the
 whole materialization path in it or erase required dependency instantiations.
-Unequal lengths of packs in the same expansion remain dependent instead of
-producing the required ill-formed diagnostic.
+Lockstep member and namespace-scope expansions now report
+`TemplatePackLengthMismatch` (#1820) when referenced packs differ in length.
+Expansion contexts that still use the flat legacy adapter remain dependent
+instead of producing the diagnostic.
 
 ## SEH finally funclet termination is conservative in return-flow diagnostics
 

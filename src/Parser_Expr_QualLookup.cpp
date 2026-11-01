@@ -2393,7 +2393,8 @@ TypeIndex Parser::substitute_template_parameter(const TypeSpecifierNode& origina
 				lockstep_substitutor.emplace(context, *this);
 			}
 		}
-		return lockstep_substitutor->tryExpandStoredPack(arg_info);
+		const bool grouped_bindings = current_grouped_template_environment_ != nullptr && !current_grouped_template_environment_->bindings.empty();
+		return lockstep_substitutor->tryExpandStoredPack(arg_info, grouped_bindings);
 	};
 	auto materializeConcretePlaceholderArgsBase = [&](const TypeInfo& placeholder_info) {
 		// Prefer folding `Owner::static_member` NTTP markers before generic

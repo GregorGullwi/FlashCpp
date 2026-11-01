@@ -25,8 +25,10 @@ an owned publication boundary before enabling a transaction around type-pack
 materialization. Existing `FrontendScratchTransaction` coverage is insufficient
 for those legacy stores. Required dependency instantiations must remain separate
 from that candidate-local transaction; blanket rollback would violate observable
-C++20 instantiation effects. Mismatch diagnostics, alias/variable-template
-flattened adapters, and runtime function-parameter fold replay remain deferred.
+C++20 instantiation effects. Lockstep member and namespace-scope length
+mismatches now produce `TemplatePackLengthMismatch` (#1820); remaining mismatch
+contexts, alias/variable-template flattened adapters, and runtime
+function-parameter fold replay remain deferred.
 Boundary 3A and 8A remain incomplete.
 
 Direct type-pack data members now retain empty/full packs, written CV/pointer
@@ -69,7 +71,9 @@ namespace-scope targets now consume the grouped effective environment:
 `test_namespace_scope_lockstep_multipack_member_field_ret0.cpp` covers empty,
 single-element, and full enclosing/member packs, and the native
 `Namespace-scope multipack targets preserve canonical lockstep arguments` test
-checks the ordered `Pair` arguments.
+checks the ordered `Pair` arguments. Unequal referenced pack lengths now produce
+`TemplatePackLengthMismatch` (#1820) for member and namespace member-field
+expansions; `test_member_pack_length_mismatch_e1820.cpp` pins the diagnostic.
 
 `TemplatePackExpansion.h` now shares iterative type/expression scanning,
 current-versus-inner expansion classification, concrete/equal-length validation,
