@@ -125,6 +125,7 @@ inline bool tryStampMaterializedClassTemplateType(TypeSpecifierNode& syntax, con
 	const auto owner = context.templateDecls().primaryClassTemplateOwner(pattern->template_decl_id());
 	if (!owner.has_value()) return false;
 	const bool template_owned_owner = isTemplateOwnedOwnerId(*owner);
+	CanonicalTypeTransaction transaction(context.canonicalTypes());
 	TypeId owner_specialization{};
 	if (template_owned_owner) {
 		const StructDeclarationNode* owner_declaration = record->declaration_node->enclosing_class();
@@ -134,7 +135,6 @@ inline bool tryStampMaterializedClassTemplateType(TypeSpecifierNode& syntax, con
 		if (owner_import.status != CanonicalTypeImportStatus::Supported) return false;
 		owner_specialization = owner_import.type;
 	}
-	CanonicalTypeTransaction transaction(context.canonicalTypes());
 	std::vector<TypeSpecifierNode> arguments;
 	arguments.reserve(resolved.templateArgs().size());
 	for (const TypeInfo::TemplateArgInfo& argument : resolved.templateArgs()) {
@@ -511,6 +511,15 @@ inline TypeId substituteCanonicalStructMemberType(CanonicalTypeTable& table, Typ
 	return concrete;
 }
 
+inline std::span<CanonicalTemplateArgument> allocateCanonicalArgumentScratch(MonotonicScratchArena& scratch, size_t count) {
+	if (count == 0) return {};
+	if (count > std::numeric_limits<size_t>::max() / sizeof(CanonicalTemplateArgument)) {
+		throw InternalError("canonical argument count overflow");
+	}
+	void* storage = scratch.allocate(count * sizeof(CanonicalTemplateArgument), alignof(CanonicalTemplateArgument));
+	return {new (storage) CanonicalTemplateArgument[count], count};
+}
+
 inline TypeId substituteCanonicalFunctionTypeComponent(CanonicalTypeTable& table, MonotonicScratchArena& scratch, const FunctionType& pattern,
 	const TemplateTypeArg& argument) {
 	if (!pattern.template_parameter_decl || !argument.isTypeArgument() || argument.is_pack || pattern.is_pack_expansion) {
@@ -527,20 +536,18 @@ inline TypeId substituteCanonicalFunctionTypeComponent(CanonicalTypeTable& table
 		return {};
 	}
 	const size_t parameter_index = pattern.template_parameter_index;
-	if (parameter_index >= std::numeric_limits<size_t>::max() / sizeof(CanonicalTemplateArgument)) {
+	if (parameter_index == std::numeric_limits<size_t>::max()) {
 		throw InternalError("callable component argument count overflow");
 	}
 	const size_t argument_count = parameter_index + 1;
 	const ScratchArenaState scratch_mark = scratch.mark();
 	auto scratch_scope = ScopeGuard([&scratch, scratch_mark]() { scratch.rollbackTo(scratch_mark); });
-	void* storage = scratch.allocate(argument_count * sizeof(CanonicalTemplateArgument), alignof(CanonicalTemplateArgument));
-	CanonicalTemplateArgument* arguments = new (storage) CanonicalTemplateArgument[argument_count];
+	std::span<CanonicalTemplateArgument> arguments = allocateCanonicalArgumentScratch(scratch, argument_count);
 	for (uint32_t index = 0; index < pattern.template_parameter_index; ++index) {
 		arguments[index] = CanonicalTemplateArgument::makeType(table.templateParameter(pattern.template_parameter_decl, index));
 	}
 	arguments[parameter_index] = CanonicalTemplateArgument::makeType(*imported_argument);
-	const TypeId substituted = table.substitute(*imported_pattern, pattern.template_parameter_decl,
-		std::span<const CanonicalTemplateArgument>(arguments, argument_count));
+	const TypeId substituted = table.substitute(*imported_pattern, pattern.template_parameter_decl, arguments);
 	transaction.commit();
 	return substituted;
 }
@@ -819,9 +826,13 @@ inline void substituteCanonicalMemberFunctionPointerOwner(
 			? substituted_type.member_class_type_id()
 			: TypeId{});
 	if (original_owner && has_only_type_parameters) {
-		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-		std::vector<TypeId> canonical_args;
-		canonical_args.reserve(template_args.size());
+		FrontendContext& context = requireFrontendContext();
+		CanonicalTypeTable& table = context.canonicalTypes();
+		CanonicalTypeTransaction transaction(table);
+		MonotonicScratchArena& scratch = context.scratchArena();
+		const ScratchArenaState scratch_mark = scratch.mark();
+		auto scratch_scope = ScopeGuard([&scratch, scratch_mark]() { scratch.rollbackTo(scratch_mark); });
+		std::span<CanonicalTemplateArgument> canonical_args = allocateCanonicalArgumentScratch(scratch, template_args.size());
 		for (size_t index = 0; index < template_args.size(); ++index) {
 			const TemplateTypeArg& arg = template_args[index];
 			if (!arg.isTypeArgument() || arg.is_pack ||
@@ -834,15 +845,13 @@ inline void substituteCanonicalMemberFunctionPointerOwner(
 			if (!imported_argument.has_value()) {
 				return;
 			}
-			canonical_args.push_back(*imported_argument);
+			canonical_args[index] = CanonicalTemplateArgument::makeType(*imported_argument);
 		}
 
-		const TypeId substituted_owner = table.substitute(
-			original_owner,
-			template_decl,
-			std::span<const TypeId>(canonical_args.data(), canonical_args.size()));
+		const TypeId substituted_owner = table.substitute(original_owner, template_decl, canonical_args);
 		if (substituted_owner != original_owner) {
 			substituted_type.set_member_class_type_id(substituted_owner);
+			transaction.commit();
 			return;
 		}
 	}
