@@ -1010,6 +1010,50 @@ TypeCreationResult add_empty_type_entry() {
 	return TypeCreationResult{type_info, idx};
 }
 
+namespace {
+
+struct LegacyTypeRegistryJournalFrame {
+	size_t type_info_count = 0;
+	std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual> names;
+	std::unordered_map<TypeCategory, const TypeInfo*> native_types;
+};
+
+// Production speculative parsing is not yet routed through frontend
+// transactions, so this stack stays process-global and single-context, like
+// gNamespaceRegistry. Keep one context's journal alive at a time.
+std::vector<LegacyTypeRegistryJournalFrame> gLegacyTypeRegistryJournal;
+
+} // namespace
+
+LegacyTypeRegistryJournalMark beginLegacyTypeRegistryJournal() {
+	LegacyTypeRegistryJournalFrame frame;
+	frame.type_info_count = gTypeInfo.size();
+	frame.names = gTypesByName;
+	frame.native_types = gNativeTypes;
+	gLegacyTypeRegistryJournal.push_back(std::move(frame));
+	return gLegacyTypeRegistryJournal.size();
+}
+
+void commitLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark) {
+	if (mark == 0 || mark != gLegacyTypeRegistryJournal.size()) {
+		throw InternalError("legacy type registry journal: commit depth is out of order");
+	}
+	gLegacyTypeRegistryJournal.pop_back();
+}
+
+void rollbackLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark) {
+	if (mark == 0 || mark != gLegacyTypeRegistryJournal.size()) {
+		throw InternalError("legacy type registry journal: rollback depth is out of order");
+	}
+	LegacyTypeRegistryJournalFrame frame = std::move(gLegacyTypeRegistryJournal.back());
+	gLegacyTypeRegistryJournal.pop_back();
+	gTypesByName = std::move(frame.names);
+	gNativeTypes = std::move(frame.native_types);
+	while (gTypeInfo.size() > frame.type_info_count) {
+		gTypeInfo.pop_back();
+	}
+}
+
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesByNameMap() {
 	return gTypesByName;
 }

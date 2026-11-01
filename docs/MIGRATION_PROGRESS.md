@@ -49,10 +49,20 @@ owner identity commits only when it is attached to the output type; required
 owner materialization starts after the probe transaction has ended. Native guards
 cover late failure, successful owner publication, and retained callback effects.
 
-The next slice must give remaining candidate-local type, AST, registry, and parser artifacts
-an owned publication boundary before enabling a transaction around type-pack
-materialization. Existing `FrontendScratchTransaction` coverage is insufficient
-for those legacy stores. Required dependency instantiations must remain separate
+The legacy type registry now has a candidate-local publication journal. A frontend
+publication transaction snapshots newly publishable top-level `TypeInfo` rows,
+name bindings, and native-type bindings; commit promotes the snapshot, while
+rollback restores overwritten bindings, removes new ones, and truncates the row
+count. Nested commits remain provisional until the outer transaction commits.
+Cold type payload arenas, in-place rewrites of pre-existing `TypeInfo` rows,
+legacy AST nodes, and parser state stay outside this first boundary. Native
+guards cover rollback, commit, overwritten bindings, nested commit, and
+out-of-order completion.
+
+The next slice must still give the remaining candidate-local cold type payloads,
+in-place `TypeInfo` rewrites, legacy AST nodes, and parser artifacts an owned
+publication boundary before enabling a transaction around type-pack
+materialization. Required dependency instantiations must remain separate
 from that candidate-local transaction; blanket rollback would violate observable
 C++20 instantiation effects. Lockstep member and namespace-scope length
 mismatches now produce `TemplatePackLengthMismatch` (#1820); remaining mismatch
@@ -303,13 +313,15 @@ These seed adjacent slices; the authoritative inventory is
 ## Other open boundaries
 
 - **Scratch rollback and publication:** `FrontendScratchTransaction` journals
-  scratch state, `DeclarationBuilder`, `TemplateDeclTable`, bound `SymbolTable`
-  publication maps, in-place global/namespace variable array type normalization,
-  and namespace metadata. Nested commits stay provisional until the outer
+  scratch state, `DeclarationBuilder`, `TemplateDeclTable`, legacy type-registry
+  rows and name/native bindings, bound `SymbolTable` publication maps, in-place
+  global/namespace variable array type normalization, and namespace metadata.
+  Cold type payload arenas and in-place rewrites of pre-existing `TypeInfo` rows
+  are outside the journal. Nested commits stay provisional until the outer
   transaction commits; scope creation, cursor movement, and `ScopeRecord`
   publication are outside the boundary, production speculative parsing is not yet
-  integrated, and the process-global namespace registry keeps transactions across
-  multiple live `FrontendContext`s from being isolated. See
+  integrated, and the process-global namespace and type-registry journals keep
+  transactions across multiple live `FrontendContext`s from being isolated. See
   [known issues](KNOWN_ISSUES.md).
 - **Compiler bugs and bounded unsupported cases:** consult
   [known issues](KNOWN_ISSUES.md) before selecting adjacent work; add newly found

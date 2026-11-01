@@ -2,6 +2,7 @@
 // These globals are needed by both main.cpp and FlashCppTest.cpp.
 // Included via FlashCppUnity.h (unity build).
 
+#include "AstNodeTypes.h"
 #include "NamespaceRegistry.h"
 #include "LazyMemberResolver.h"
 #include "InstantiationQueue.h"
@@ -73,6 +74,7 @@ FrontendContext& requirePersistentScopePublicationContext(const SymbolTable& tab
 FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& context) {
 	const size_t context_depth = context.publication_transaction_depth_ + 1U;
 	const size_t namespace_depth = gNamespaceRegistry.beginPublicationTransaction();
+	const LegacyTypeRegistryJournalMark legacy_type_registry_depth = beginLegacyTypeRegistryJournal();
 
 	size_t opened_tables = 0;
 	try {
@@ -89,11 +91,12 @@ FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& 
 			context.persistent_scope_publication_tables_[--opened_tables]->rollbackPublicationTransaction(context_depth);
 		}
 		gNamespaceRegistry.rollbackPublicationTransaction(namespace_depth);
+		rollbackLegacyTypeRegistryJournal(legacy_type_registry_depth);
 		throw;
 	}
 
 	context.publication_transaction_depth_ = context_depth;
-	return FrontendPublicationJournalMark{context_depth, namespace_depth};
+	return FrontendPublicationJournalMark{context_depth, namespace_depth, legacy_type_registry_depth};
 }
 
 void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicationJournalMark mark) {
@@ -106,6 +109,7 @@ void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicat
 		(*it)->commitPublicationTransaction(mark.context_depth);
 	}
 	gNamespaceRegistry.commitPublicationTransaction(mark.namespace_depth);
+	commitLegacyTypeRegistryJournal(mark.legacy_type_registry_depth);
 	--context.publication_transaction_depth_;
 }
 
@@ -119,6 +123,7 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 		(*it)->rollbackPublicationTransaction(mark.context_depth);
 	}
 	gNamespaceRegistry.rollbackPublicationTransaction(mark.namespace_depth);
+	rollbackLegacyTypeRegistryJournal(mark.legacy_type_registry_depth);
 	--context.publication_transaction_depth_;
 }
 

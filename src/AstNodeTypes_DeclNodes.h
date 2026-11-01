@@ -1582,6 +1582,16 @@ size_t getTypeInfoCount();				   // replaces gTypeInfo.size()
 // the accessor API above rather than manipulating the backing containers.
 void clearLegacyTypeTablesForTesting();
 
+// Candidate-local publication journal for the legacy type registry. Rollback
+// restores newly published top-level TypeInfo rows and name/native bindings.
+// In-place field rewrites of pre-existing rows and cold payload arenas remain
+// outside this first boundary; their unreachable bytes are allowed to persist.
+// Nesting is LIFO. A committed child is still undone by an outer rollback.
+using LegacyTypeRegistryJournalMark = size_t;
+LegacyTypeRegistryJournalMark beginLegacyTypeRegistryJournal();
+void commitLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark);
+void rollbackLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark);
+
 bool isExactComparisonCategoryType(TypeIndex type_index);
 
 // Map accessors — use these instead of the extern globals
