@@ -5,6 +5,52 @@
 #include "doctest.h"
 
 TEST_SUITE("FrontendContext") {
+	TEST_CASE("Dependent expression batches roll back a late publication failure") {
+		FrontendContext context;
+		auto& expressions = context.dependentExpressions();
+		const auto literal = [](uint64_t value) {
+			return ASTNode::emplace_node<ExpressionNode>(NumericLiteralNode(Token{}, value, TypeCategory::Int, TypeQualifier::None, 32));
+		};
+		const ASTNode existing_node = literal(3);
+		const ExprId existing = expressions.intern(existing_node);
+		const size_t original_size = expressions.size();
+		std::vector<ASTNode> batch{existing_node};
+		for (uint64_t value = 100; value < 170; ++value) batch.push_back(literal(value));
+		batch.push_back(batch[1]);
+		batch.push_back(ASTNode{});
+		CHECK_THROWS_AS(expressions.internBatch(batch), InternalError);
+		CHECK(expressions.size() == original_size);
+		CHECK(expressions.intern(existing_node) == existing);
+		const ExprId retry = expressions.intern(batch[1]);
+		CHECK(retry.value == original_size + 1);
+		CHECK(expressions.intern(batch[1]) == retry);
+	}
+
+	TEST_CASE("Dependent expression batches commit ordered deduplicated identities") {
+		FrontendContext context;
+		auto& expressions = context.dependentExpressions();
+		const auto literal = [](uint64_t value) {
+			return ASTNode::emplace_node<ExpressionNode>(NumericLiteralNode(Token{}, value, TypeCategory::Int, TypeQualifier::None, 32));
+		};
+		const ASTNode first = literal(7);
+		const ASTNode second = literal(8);
+		const ASTNode third = literal(9);
+		const ExprId existing = expressions.intern(first);
+		const ASTNode batch[] = {first, second, second, third};
+		const auto identities = expressions.internBatch(batch);
+		REQUIRE(identities.size() == 4);
+		CHECK(identities[0] == existing);
+		CHECK(identities[1] == identities[2]);
+		CHECK(identities[1] != identities[3]);
+		CHECK(expressions.size() == 3);
+		CHECK(expressions.internBatch(std::span<const ASTNode>{}).empty());
+		const ASTNode late_unsupported[] = {literal(10), ASTNode::emplace_node<BreakStatementNode>(Token{})};
+		CHECK_THROWS_AS(expressions.internBatch(late_unsupported), InternalError);
+		CHECK(expressions.size() == 3);
+		CHECK(expressions.intern(first) == existing);
+		CHECK(expressions.intern(late_unsupported[0]).value == 4);
+	}
+
 	TEST_CASE("Alias-base identity path rejects repeated declaration IDs") {
 		std::vector<TemplateDeclId> alias_path;
 		const TemplateDeclId first_alias{31};

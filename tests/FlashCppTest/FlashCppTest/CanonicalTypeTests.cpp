@@ -8061,6 +8061,74 @@ template<class T> struct Holder {
 	CHECK(mixed_second->templateArgs()[1].type_index == nativeTypeIndex(TypeCategory::LongLong));
 }
 
+TEST_CASE("Failed NTTP pack expansion does not publish partial dependent expressions") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const std::string code = R"(
+struct Good { char bytes[8]; };
+struct Bad { char bytes[1]; };
+template<class T> struct Check { static_assert(sizeof(T) > 1); T value; };
+template<int... N> struct Values {};
+template<class... T> struct Pattern { Values<sizeof(Check<T>)...> values; };
+)";
+	CompileContext compile_context;
+	compile_context.setInputFile("failed_nttp_pack_publication.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	const OwnerId owner = ownerIdFromNamespaceHandle(gSymbolTable.get_current_namespace_handle());
+	const auto pattern_id = context.templateDecls().findPrimaryClassTemplate(owner, StringTable::getOrInternStringHandle("Pattern"));
+	REQUIRE(pattern_id.has_value());
+	const auto pattern_node = context.templateDecls().primaryClassTemplatePattern(*pattern_id);
+	REQUIRE(pattern_node.has_value());
+	REQUIRE(pattern_node->is<TemplateClassDeclarationNode>());
+	const StructDeclarationNode& pattern = pattern_node->as<TemplateClassDeclarationNode>().class_decl_node();
+	REQUIRE(pattern.members().size() == 1);
+	const TypeSpecifierNode& field = pattern.members()[0].declaration.as<DeclarationNode>().type_specifier_node();
+	const TypeInfo* good_type = findTypeByName(StringTable::getOrInternStringHandle("Good"));
+	const TypeInfo* bad_type = findTypeByName(StringTable::getOrInternStringHandle("Bad"));
+	REQUIRE(good_type != nullptr);
+	REQUIRE(bad_type != nullptr);
+	const TemplateTypeArg good = TemplateTypeArg::makeType(good_type->registeredTypeIndex());
+	const TemplateTypeArg bad = TemplateTypeArg::makeType(bad_type->registeredTypeIndex());
+	TemplateArgSubstitutionMap scalar_args;
+	TemplateArgPackSubstitutionMap pack_args;
+	pack_args[StringTable::getOrInternStringHandle("T")] = {good, bad};
+	const std::string_view order[] = {"T"};
+	ExpressionSubstitutor substitutor(scalar_args, pack_args, parser, order);
+	const size_t expressions_before = context.dependentExpressions().size();
+	bool saw_static_assert_failure = false;
+	try {
+		substitutor.substituteTypeSpecifier(field);
+	} catch (const CompileError& error) {
+		const Diagnostic* diagnostic = error.structuredDiagnostic();
+		saw_static_assert_failure = diagnostic != nullptr && diagnostic->id == DiagnosticId::TemplateStaticAssertFailure;
+	}
+	CHECK(saw_static_assert_failure);
+	CHECK(context.dependentExpressions().size() == expressions_before);
+	const TemplateArgumentVector good_arguments{good};
+	CHECK(gTemplateRegistry.getInstantiation(StringTable::getOrInternStringHandle("Check"), good_arguments).has_value());
+
+	TemplateArgPackSubstitutionMap valid_pack_args;
+	valid_pack_args[StringTable::getOrInternStringHandle("T")] = {good, good};
+	ExpressionSubstitutor valid_substitutor(scalar_args, valid_pack_args, parser, order);
+	const TypeSpecifierNode valid = valid_substitutor.substituteTypeSpecifier(field);
+	const TypeInfo* values = tryGetTypeInfo(valid.type_index());
+	REQUIRE(values != nullptr);
+	REQUIRE(values->templateArgs().size() == 2);
+	CHECK(values->templateArgs()[0].is_value);
+	CHECK(values->templateArgs()[1].is_value);
+	CHECK(std::get<int64_t>(values->templateArgs()[0].value) == 8);
+	CHECK(std::get<int64_t>(values->templateArgs()[1].value) == 8);
+	CHECK(static_cast<bool>(values->templateArgs()[0].nttp_expr));
+	CHECK(static_cast<bool>(values->templateArgs()[1].nttp_expr));
+	CHECK(context.dependentExpressions().size() > expressions_before);
+}
+
 TEST_CASE("Namespace-scope lockstep targets preserve canonical arguments") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
