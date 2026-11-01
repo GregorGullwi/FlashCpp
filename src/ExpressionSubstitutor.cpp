@@ -5401,14 +5401,18 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
 	const DependentNameRestampResult restamp = tryRestampDependentNameType(type);
-	if (restamp.action == DependentNameRestampAction::None) return result;
-	if (restamp.action == DependentNameRestampAction::Set) {
+	switch (restamp.action) {
+	case DependentNameRestampAction::None:
+		return result;
+	case DependentNameRestampAction::Set:
 		result.set_dependent_name_type(restamp.type);
-	} else if (restamp.action == DependentNameRestampAction::Clear) {
+		break;
+	case DependentNameRestampAction::Clear:
 		if (restamp.type) {
 			(void)tryProjectCanonicalTipOntoTypeSpecifier(table, restamp.type, result);
 		}
 		result.clear_dependent_name_type();
+		break;
 	}
 	transaction.commit();
 	return result;
