@@ -8132,6 +8132,115 @@ template<class... T> struct Pattern { Values<sizeof(Check<T>)...> values; };
 	CHECK(context.scratchArena().currentBytes() == scratch_bytes_before);
 }
 
+TEST_CASE("Dependent name restamping rolls back when a later binding is unsupported") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	CompileContext compile_context;
+	Lexer lexer("");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const TemplateDeclId environment{731};
+	const TypeId parameter = table.templateParameter(environment, 0);
+	TypeSpecifierNode syntax(TypeCategory::Auto, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	syntax.set_dependent_name_type(table.dependentName(parameter, "missing"));
+	TemplateTypeArg pointer_arg = TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Short));
+	pointer_arg.pointer_depth = 1;
+	TemplateArgSubstitutionMap scalar_args;
+	scalar_args["A"] = pointer_arg;
+	scalar_args["N"] = TemplateTypeArg::makeValue(3, TypeCategory::Int);
+	const std::string_view order[] = {"A", "N"};
+	ExpressionSubstitutor substitutor(scalar_args, parser, order);
+	const size_t before = table.size();
+	for (size_t attempt = 0; attempt < 3; ++attempt) {
+		const TypeSpecifierNode result = substitutor.substituteTypeSpecifier(syntax);
+		CHECK(result.has_dependent_name_type());
+		CHECK(table.size() == before);
+	}
+}
+
+TEST_CASE("Dependent name restamping does not publish when core substitution fails") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	CompileContext compile_context;
+	compile_context.setInputFile("restamp_core_failure.cpp");
+	Lexer lexer(R"(
+template<class T> struct Check { static_assert(sizeof(T) > 16); T value; };
+template<class T> struct Pattern { Check<T> value; };
+)");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	const auto pattern = gTemplateRegistry.lookupTemplate("Pattern");
+	REQUIRE(pattern.has_value());
+	const StructDeclarationNode& declaration = pattern->as<TemplateClassDeclarationNode>().class_decl_node();
+	REQUIRE(declaration.members().size() == 1);
+	TypeSpecifierNode syntax = declaration.members()[0].declaration.as<DeclarationNode>().type_specifier_node();
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const TemplateDeclId environment{734};
+	const TypeId parameter = table.templateParameter(environment, 0);
+	const TypeId stamp = table.dependentName(parameter, "missing");
+	syntax.set_dependent_name_type(stamp);
+	TemplateArgSubstitutionMap scalar_args;
+	scalar_args["T"] = TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Short));
+	const std::string_view order[] = {"T"};
+	ExpressionSubstitutor substitutor(scalar_args, parser, order);
+	bool saw_static_assert_failure = false;
+	try {
+		substitutor.substituteTypeSpecifier(syntax);
+	} catch (const CompileError& error) {
+		const Diagnostic* diagnostic = error.structuredDiagnostic();
+		saw_static_assert_failure = diagnostic != nullptr && diagnostic->id == DiagnosticId::TemplateStaticAssertFailure;
+	}
+	CHECK(saw_static_assert_failure);
+	const size_t size_after_failure = table.size();
+	const TypeId short_type = table.builtin(CanonicalBuiltinKind::Short);
+	const TypeId candidate = table.substitute(stamp, environment, std::span<const TypeId>(&short_type, 1));
+	CHECK(candidate.value > size_after_failure);
+}
+
+TEST_CASE("Deep dependent name restamping rebinds the nested qualifier path") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	CompileContext compile_context;
+	Lexer lexer("");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const TemplateDeclId environment{733};
+	const TypeId parameter = table.templateParameter(environment, 0);
+	TypeId stamp = parameter;
+	for (size_t depth = 0; depth < 1024; ++depth) {
+		stamp = table.dependentName(stamp, "nested");
+	}
+	TypeSpecifierNode syntax(TypeCategory::Auto, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	syntax.set_dependent_name_type(stamp);
+	TemplateArgSubstitutionMap scalar_args;
+	scalar_args["T"] = TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Short));
+	const std::string_view order[] = {"T"};
+	ExpressionSubstitutor substitutor(scalar_args, parser, order);
+	const TypeSpecifierNode result = substitutor.substituteTypeSpecifier(syntax);
+	REQUIRE(result.has_dependent_name_type());
+	CHECK(result.dependent_name_type() != stamp);
+	TypeId cursor = result.dependent_name_type();
+	for (size_t depth = 0; depth < 1024; ++depth) {
+		REQUIRE(table.node(cursor).kind == CanonicalTypeKind::DependentName);
+		CHECK(table.dependentNameIdentifier(cursor) == "nested");
+		cursor = table.dependentNameQualifier(cursor);
+	}
+	CHECK(cursor == table.builtin(CanonicalBuiltinKind::Short));
+	const TypeId result_id = result.dependent_name_type();
+	const size_t after_first_substitution = table.size();
+	const TypeSpecifierNode repeated = substitutor.substituteTypeSpecifier(syntax);
+	CHECK(repeated.dependent_name_type() == result_id);
+	CHECK(table.size() == after_first_substitution);
+}
+
 TEST_CASE("Namespace-scope lockstep targets preserve canonical arguments") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

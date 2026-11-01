@@ -260,7 +260,13 @@ This does not roll back required class instantiations: C++20 permits observable
 instantiation effects before a later deduction failure and requires errors in
 separately instantiated bodies to remain hard errors.
 
-Candidate-local type, legacy AST, registry/cache, and parser publication still
+Dependent-name restamping now publishes canonical types only after semantic
+substitution succeeds and the replacement stamp has been applied. Its canonical
+transaction discards partially imported bindings when a later argument is
+unsupported. Required class instantiations run before this transaction, so their
+effects and hard errors remain independent of candidate restamping.
+
+Other candidate-local type, legacy AST, registry/cache, and parser publication still
 need an owned transaction boundary. `FrontendScratchTransaction` currently covers
 scratch, declaration/template identity, canonical types, and symbol/namespace
 publication; it does not make those other stores transactional. Do not wrap the

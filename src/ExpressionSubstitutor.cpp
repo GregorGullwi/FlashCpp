@@ -5391,22 +5391,26 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	// Tip collapse after substitute+resolve projects Builtin/Record/Enum onto the
 	// TypeSpecifierNode then clears the stamp (adapter requires DependentName-
 	// family kinds); unresolved DependentName-family tips are restamped.
-	const DependentNameRestampResult restamp = tryRestampDependentNameType(type);
 	TypeSpecifierNode result = substituteInTypeCore(type);
 	rebindDependentMemberPointerOwner(result);
 	if (!result.has_dependent_name_type()) {
 		return result;
 	}
+	// Required dependency instantiations above retain their effects. Only the
+	// candidate's canonical overlay is provisional until its stamp is applied.
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const DependentNameRestampResult restamp = tryRestampDependentNameType(type);
+	if (restamp.action == DependentNameRestampAction::None) return result;
 	if (restamp.action == DependentNameRestampAction::Set) {
 		result.set_dependent_name_type(restamp.type);
 	} else if (restamp.action == DependentNameRestampAction::Clear) {
 		if (restamp.type) {
-			FrontendContext& front_end = requireFrontendContext();
-			(void)tryProjectCanonicalTipOntoTypeSpecifier(
-				front_end.canonicalTypes(), restamp.type, result);
+			(void)tryProjectCanonicalTipOntoTypeSpecifier(table, restamp.type, result);
 		}
 		result.clear_dependent_name_type();
 	}
+	transaction.commit();
 	return result;
 }
 
