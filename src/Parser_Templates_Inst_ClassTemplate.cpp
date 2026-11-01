@@ -1,5 +1,7 @@
+#include <array>
 #include <cctype>
 #include <functional>
+#include <memory_resource>
 
 #include "Parser.h"
 #include "FlatHashTable.h"
@@ -160,9 +162,7 @@ static void preserveMissingTypeSpecifierModifiers(
 	const TypeSpecifierNode& source) {
 	target.add_cv_qualifier(source.cv_qualifier());
 	const size_t existing_pointer_depth = target.pointer_depth();
-	for (size_t pointer_index = existing_pointer_depth;
-		 pointer_index < source.pointer_depth();
-		 ++pointer_index) {
+	for (size_t pointer_index = existing_pointer_depth; pointer_index < source.pointer_depth(); ++pointer_index) {
 		const CVQualifier pointer_cv =
 			pointer_index < source.pointer_levels().size()
 				? source.pointer_levels()[pointer_index].cv_qualifier
@@ -424,6 +424,96 @@ void Parser::promoteCachedClassTemplateInstantiationForCurrentUse(
 	}
 }
 
+namespace {
+
+struct BaseInstantiationArgumentIdentity {
+	enum class Kind : uint8_t {
+		Type,
+		Value,
+		Template,
+	};
+	Kind kind = Kind::Type;
+	TypeId type{};
+	TypeId value_type{};
+	int64_t value = 0;
+	TemplateDeclId template_decl{};
+	bool operator==(const BaseInstantiationArgumentIdentity&) const = default;
+};
+constexpr size_t kNoBaseInstantiationRequest = std::numeric_limits<size_t>::max();
+struct BaseInstantiationRequest {
+	StringHandle template_name{};
+	StringHandle instantiated_name{};
+	TemplateDeclId template_decl{};
+	size_t arguments_begin = 0;
+	size_t arguments_count = 0;
+	size_t children_begin = 0;
+	size_t children_count = 0;
+	size_t owner_request = kNoBaseInstantiationRequest;
+	enum class State : uint8_t {
+		Unvisited,
+		Active,
+		Completed,
+	};
+	State state = State::Unvisited;
+};
+struct BaseInstantiationFrame {
+	size_t request_id = 0;
+	size_t next_child = 0;
+};
+struct SubstitutionParameterKey {
+	std::string_view name;
+	bool is_pack = false;
+	bool operator==(const SubstitutionParameterKey&) const = default;
+};
+struct BaseInstantiationWorklist {
+	struct Storage {
+		explicit Storage(std::pmr::memory_resource* resource)
+			: requests(resource),
+			  arguments(resource),
+			  identity_arguments(resource),
+			  child_ids(resource) {}
+		std::pmr::vector<BaseInstantiationRequest> requests;
+		std::pmr::vector<TemplateTypeArg> arguments;
+		std::pmr::vector<BaseInstantiationArgumentIdentity> identity_arguments;
+		std::pmr::vector<size_t> child_ids;
+		FlashCpp::FlatHashTable<
+			size_t,
+			size_t,
+			std::hash<size_t>,
+			std::equal_to<size_t>,
+			64> ids_by_hash;
+	} storage;
+	struct Scratch {
+		explicit Scratch(std::pmr::memory_resource* resource)
+			: pattern_arguments(resource),
+			  base_arguments(resource),
+			  alias_identity(resource),
+			  substitution_parameter_shape(resource),
+			  previous_substitution_parameter_shape(resource),
+			  extended_template_params(resource),
+			  argument_buffer(resource),
+			  frames(resource),
+			  children(resource),
+			  postorder(resource) {}
+		std::pmr::vector<TemplateTypeArg> pattern_arguments;
+		std::pmr::vector<TemplateTypeArg> base_arguments;
+		std::pmr::vector<TemplateDeclId> alias_identity;
+		TemplateArgSubstitutionMap substitutions;
+		TemplateArgPackSubstitutionMap pack_substitutions;
+		std::pmr::vector<SubstitutionParameterKey> substitution_parameter_shape;
+		std::pmr::vector<SubstitutionParameterKey> previous_substitution_parameter_shape;
+		std::pmr::vector<TemplateParameterNode> extended_template_params;
+		std::pmr::vector<TemplateTypeArg> argument_buffer;
+		std::pmr::vector<BaseInstantiationFrame> frames;
+		std::pmr::vector<size_t> children;
+		std::pmr::vector<size_t> postorder;
+	} scratch;
+	explicit BaseInstantiationWorklist(std::pmr::memory_resource* resource)
+		: storage(resource), scratch(resource) {}
+};
+
+} // namespace
+
 bool Parser::preinstantiate_class_template_dependencies(std::string_view template_name,
 	std::span<const TemplateTypeArg> filled_args_for_pattern_match) {
 	bool preflighted = false;
@@ -435,65 +525,13 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 		!gTemplateRegistry.lookupExactSpecialization(
 			template_name,
 			filled_args_for_pattern_match).has_value()) {
-		struct BaseInstantiationArgumentIdentity {
-			enum class Kind : uint8_t {
-				Type,
-				Value,
-				Template,
-			};
-			Kind kind = Kind::Type;
-			TypeId type{};
-			TypeId value_type{};
-			int64_t value = 0;
-			TemplateDeclId template_decl{};
-			bool operator==(const BaseInstantiationArgumentIdentity&) const = default;
-		};
-		struct BaseInstantiationRequest {
-			StringHandle template_name{};
-			TemplateDeclId template_decl{};
-			size_t arguments_begin = 0;
-			size_t arguments_count = 0;
-			size_t identity_begin = 0;
-			size_t identity_count = 0;
-			size_t children_begin = 0;
-			size_t children_count = 0;
-			bool children_loaded = false;
-			enum class State : uint8_t {
-				Unvisited,
-				Active,
-				Completed,
-			};
-			State state = State::Unvisited;
-		};
-		struct BaseInstantiationFrame {
-			size_t request_id = 0;
-			size_t next_child = 0;
-		};
-		struct SubstitutionParameterKey {
-			std::string_view name;
-			bool is_pack = false;
-			bool operator==(const SubstitutionParameterKey&) const = default;
-		};
-		std::vector<BaseInstantiationRequest> requests;
-		std::vector<TemplateTypeArg> request_arguments;
-		std::vector<BaseInstantiationArgumentIdentity> request_identity_arguments;
-		std::vector<size_t> request_child_ids;
-		FlashCpp::FlatHashTable<
-			size_t,
-			size_t,
-			std::hash<size_t>,
-			std::equal_to<size_t>> request_ids_by_hash;
-		std::vector<BaseInstantiationArgumentIdentity> identity_scratch;
-		std::vector<TemplateTypeArg> pattern_arguments_scratch;
-		std::vector<TemplateTypeArg> base_arguments_scratch;
-		std::vector<TemplateDeclId> alias_identity_scratch;
-		TemplateArgSubstitutionMap substitutions_scratch;
-		TemplateArgPackSubstitutionMap pack_substitutions_scratch;
-		std::vector<SubstitutionParameterKey> substitution_parameter_shape_scratch;
-		std::vector<SubstitutionParameterKey> previous_substitution_parameter_shape;
+		alignas(std::max_align_t) std::array<std::byte, 4096> worklist_buffer{};
+		std::pmr::monotonic_buffer_resource worklist_resource(worklist_buffer.data(), worklist_buffer.size());
+		BaseInstantiationWorklist worklist(&worklist_resource);
 
 		auto make_request = [&](std::string_view requested_name,
-								std::vector<TemplateTypeArg>& requested_args)
+								std::pmr::vector<TemplateTypeArg>& requested_args,
+								size_t requested_owner_request)
 			-> std::optional<size_t> {
 			if (gTemplateRegistry.lookup_alias_template(requested_name).has_value()) {
 				return std::nullopt;
@@ -510,14 +548,18 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 			}
 
 			const TemplateDeclId template_decl = class_template.template_decl_id();
-			identity_scratch.clear();
-			identity_scratch.reserve(requested_args.size());
-			CanonicalTypeTable& canonical_types =
-				requireFrontendContext().canonicalTypes();
+			std::pmr::vector<BaseInstantiationArgumentIdentity>& identity_arguments = worklist.storage.identity_arguments;
+			const size_t identity_begin = identity_arguments.size();
+			identity_arguments.reserve(identity_begin + requested_args.size());
+			auto reject_identity = [&]() -> std::optional<size_t> {
+				identity_arguments.resize(identity_begin);
+				return std::nullopt;
+			};
+			CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
 			CanonicalTypeTransaction canonical_transaction(canonical_types);
 			for (const TemplateTypeArg& argument : requested_args) {
 				if (argument.is_dependent || argument.is_pack) {
-					return std::nullopt;
+					return reject_identity();
 				}
 				BaseInstantiationArgumentIdentity argument_identity;
 				if (argument.is_value) {
@@ -525,21 +567,17 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 						argument.valueIdentity();
 					if (value_identity.is_dependent ||
 						value_identity.kind != FlashCpp::NonTypeValueIdentityKind::Integral) {
-						return std::nullopt;
+						return reject_identity();
 					}
 					TypeIndex value_type_index = value_identity.value_type_index;
 					if (!value_type_index.is_valid()) {
 						value_type_index = nativeTypeIndex(argument.typeEnum());
 					}
-					TypeSpecifierNode value_type(
-						value_type_index.withCategory(value_type_index.category()),
-						0,
-						Token{},
-						CVQualifier::None,
-						ReferenceQualifier::None);
+					TypeSpecifierNode value_type(value_type_index.withCategory(value_type_index.category()), 0, Token{},
+						CVQualifier::None, ReferenceQualifier::None);
 					const std::optional<TypeId> imported_value_type = tryImportSupportedCanonical(canonical_types, value_type);
 					if (!imported_value_type.has_value()) {
-						return std::nullopt;
+						return reject_identity();
 					}
 					argument_identity.kind = BaseInstantiationArgumentIdentity::Kind::Value;
 					argument_identity.value_type = *imported_value_type;
@@ -551,7 +589,7 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 						!template_argument_entry->is<TemplateClassDeclarationNode>() ||
 						!template_argument_entry->as<TemplateClassDeclarationNode>()
 							 .has_template_decl_id()) {
-						return std::nullopt;
+						return reject_identity();
 					}
 					argument_identity.kind = BaseInstantiationArgumentIdentity::Kind::Template;
 					argument_identity.template_decl = template_argument_entry->as<
@@ -563,14 +601,23 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 					if (argument_type.has_member_class()) {
 						tryBindPublishedMemberClassEntity(argument_type);
 					}
-					const std::optional<TypeId> imported_type = tryImportSupportedCanonical(canonical_types, argument_type);
+					std::optional<TypeId> imported_type = tryImportSupportedCanonical(canonical_types, argument_type);
 					if (!imported_type.has_value()) {
-						return std::nullopt;
+						if (const TypeInfo* argument_type_info = tryGetTypeInfo(argument_type.type_index());
+							argument_type_info != nullptr && argument_type_info->isTemplateInstantiation()) {
+							const CanonicalTypeImport class_import = importCanonicalClassTypeInfo(canonical_types, *argument_type_info);
+							if (class_import.status == CanonicalTypeImportStatus::Supported) {
+								imported_type = class_import.type;
+							}
+						}
+					}
+					if (!imported_type.has_value()) {
+						return reject_identity();
 					}
 					argument_identity.kind = BaseInstantiationArgumentIdentity::Kind::Type;
 					argument_identity.type = *imported_type;
 				}
-				identity_scratch.push_back(argument_identity);
+				identity_arguments.push_back(argument_identity);
 			}
 			canonical_transaction.commit();
 
@@ -578,7 +625,11 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 				seed ^= value + 0x9e3779b9u + (seed << 6) + (seed >> 2);
 			};
 			size_t identity_hash = std::hash<uint32_t>{}(template_decl.value);
-			for (const BaseInstantiationArgumentIdentity& argument : identity_scratch) {
+			combine_hash(identity_hash, requested_owner_request == kNoBaseInstantiationRequest
+				? 0
+				: requested_owner_request + 1);
+			for (size_t identity_index = identity_begin; identity_index < identity_arguments.size(); ++identity_index) {
+				const BaseInstantiationArgumentIdentity& argument = identity_arguments[identity_index];
 				combine_hash(identity_hash, static_cast<size_t>(argument.kind));
 				combine_hash(identity_hash, argument.type.value);
 				combine_hash(identity_hash, argument.value_type.value);
@@ -587,26 +638,23 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 			}
 
 			std::optional<size_t> matching_request_id;
-			request_ids_by_hash.forEachValue(
+			worklist.storage.ids_by_hash.forEachValue(
 				identity_hash,
 				[&](size_t candidate_request_id) {
-					const BaseInstantiationRequest& existing = requests[candidate_request_id];
-					if (existing.template_decl != template_decl ||
-						existing.identity_count != identity_scratch.size()) {
+					const BaseInstantiationRequest& existing = worklist.storage.requests[candidate_request_id];
+					if (existing.template_decl != template_decl || existing.owner_request != requested_owner_request ||
+						existing.arguments_count != identity_arguments.size() - identity_begin) {
 						return false;
 					}
-					const auto existing_identity_begin =
-						request_identity_arguments.begin() + existing.identity_begin;
-					if (!std::equal(
-							identity_scratch.begin(),
-							identity_scratch.end(),
-							existing_identity_begin)) {
+					const auto existing_identity_begin = identity_arguments.begin() + existing.arguments_begin;
+					if (!std::equal(identity_arguments.begin() + identity_begin, identity_arguments.end(), existing_identity_begin)) {
 						return false;
 					}
 					matching_request_id = candidate_request_id;
 					return true;
 				});
 			if (matching_request_id.has_value()) {
+				identity_arguments.resize(identity_begin);
 				requested_args.clear();
 				return *matching_request_id;
 			}
@@ -614,27 +662,20 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 			BaseInstantiationRequest request;
 			request.template_name = StringTable::getOrInternStringHandle(requested_name);
 			request.template_decl = template_decl;
-			request.arguments_begin = request_arguments.size();
+			request.owner_request = requested_owner_request;
+			request.arguments_begin = worklist.storage.arguments.size();
 			request.arguments_count = requested_args.size();
-			request.identity_begin = request_identity_arguments.size();
-			request.identity_count = identity_scratch.size();
-			request_arguments.insert(
-				request_arguments.end(),
+			worklist.storage.arguments.insert(
+				worklist.storage.arguments.end(),
 				std::make_move_iterator(requested_args.begin()),
 				std::make_move_iterator(requested_args.end()));
-			request_identity_arguments.insert(
-				request_identity_arguments.end(),
-				identity_scratch.begin(),
-				identity_scratch.end());
 			requested_args.clear();
-			const size_t request_id = requests.size();
-			requests.push_back(request);
-			request_ids_by_hash.insert(identity_hash, request_id);
+			const size_t request_id = worklist.storage.requests.size();
+			worklist.storage.requests.push_back(request);
+			worklist.storage.ids_by_hash.insert(identity_hash, request_id);
 			return request_id;
 		};
-		auto find_pattern_struct = [](
-			const TemplateRegistry::SpecializationPatternMatch& pattern_match)
-			-> const StructDeclarationNode* {
+		auto find_pattern_struct = [](const TemplateRegistry::SpecializationPatternMatch& pattern_match) -> const StructDeclarationNode* {
 			if (pattern_match.node.is<StructDeclarationNode>()) {
 				return &pattern_match.node.as<StructDeclarationNode>();
 			}
@@ -645,14 +686,12 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 			return nullptr;
 		};
 		auto request_argument_span = [&](size_t request_id) {
-			const BaseInstantiationRequest& request = requests[request_id];
-			return std::span<const TemplateTypeArg>(request_arguments).subspan(
-				request.arguments_begin,
-				request.arguments_count);
+			const BaseInstantiationRequest& request = worklist.storage.requests[request_id];
+			return std::span<const TemplateTypeArg>(worklist.storage.arguments).subspan(request.arguments_begin, request.arguments_count);
 		};
 		auto resolve_alias_base = [&](std::string_view& current_name,
-								  std::vector<TemplateTypeArg>& requested_args) {
-			alias_identity_scratch.clear();
+								  std::pmr::vector<TemplateTypeArg>& requested_args) {
+			worklist.scratch.alias_identity.clear();
 			while (true) {
 				auto alias_entry = gTemplateRegistry.lookup_alias_template(current_name);
 				if (!alias_entry.has_value()) {
@@ -662,18 +701,13 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 					return false;
 				}
 				const TemplateAliasNode& alias_node = alias_entry->as<TemplateAliasNode>();
-				if (!tryEnterAliasTemplateIdentity(
-						alias_identity_scratch,
-						alias_node.template_decl_id()) ||
+				if (!tryEnterAliasTemplateIdentity(worklist.scratch.alias_identity, alias_node.template_decl_id()) ||
 					!alias_node.is_deferred() ||
 					alias_node.target_template_name().empty() ||
 					alias_node.hasDeferredMemberTarget()) {
 					return false;
 				}
-				auto target_arguments = materializeDeferredAliasTemplateArgs(
-					alias_node,
-					requested_args,
-					gTemplateRegistry.getOuterTemplateBinding(current_name));
+				auto target_arguments = materializeDeferredAliasTemplateArgs(alias_node, requested_args, gTemplateRegistry.getOuterTemplateBinding(current_name));
 				if (!target_arguments.has_value()) {
 					return false;
 				}
@@ -686,8 +720,8 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 			}
 		};
 		auto collect_children = [&](size_t request_id,
-								std::vector<size_t>& children) {
-			const StringHandle request_name_handle = requests[request_id].template_name;
+								std::pmr::vector<size_t>& children) {
+			const StringHandle request_name_handle = worklist.storage.requests[request_id].template_name;
 			const std::string_view request_name =
 				StringTable::getStringView(request_name_handle);
 			const std::span<const TemplateTypeArg> request_args =
@@ -697,33 +731,50 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 					request_name, ": ", reason);
 				return false;
 			};
-			if (gTemplateRegistry.lookupExactSpecialization(
-					request_name,
-					request_args).has_value()) {
+			if (gTemplateRegistry.lookupExactSpecialization(request_name, request_args).has_value()) {
 				return true;
 			}
-			auto pattern_match = gTemplateRegistry.matchSpecializationPatternWithBindings(
-				request_name,
-				request_args);
+			auto pattern_match = gTemplateRegistry.matchSpecializationPatternWithBindings(request_name, request_args);
 			const TemplateParameterVector* pattern_template_params = nullptr;
 			const StructDeclarationNode* pattern_struct = nullptr;
-			std::vector<TemplateTypeArg>& pattern_arguments =
-				pattern_arguments_scratch;
+			std::pmr::vector<TemplateTypeArg>& pattern_arguments =
+				worklist.scratch.pattern_arguments;
 			pattern_arguments.clear();
 			if (pattern_match.has_value()) {
 				const TemplatePattern& pattern = *pattern_match->pattern;
 				pattern_template_params = &pattern.template_params;
 				pattern_struct = find_pattern_struct(*pattern_match);
-				pattern_arguments.reserve(pattern.template_params.size());
-				for (const TemplateParameterNode& parameter : pattern.template_params) {
+				pattern_arguments.reserve(request_args.size());
+				size_t argument_index = 0;
+				for (size_t parameter_index = 0; parameter_index < pattern.template_params.size(); ++parameter_index) {
+					const TemplateParameterNode& parameter = pattern.template_params[parameter_index];
 					if (parameter.is_variadic()) {
-						return fail("matched pattern has a template pack");
+						if (worklist.storage.requests[request_id].owner_request == kNoBaseInstantiationRequest) {
+							return fail("matched pattern has a template pack");
+						}
+						size_t required_after = 0;
+						for (size_t after_index = parameter_index + 1; after_index < pattern.template_params.size(); ++after_index) {
+							if (!pattern.template_params[after_index].is_variadic()) {
+								++required_after;
+							}
+						}
+						const size_t remaining =
+							argument_index < request_args.size()
+								? request_args.size() - argument_index
+								: 0;
+						const size_t pack_count =
+							remaining > required_after ? remaining - required_after : 0;
+						for (size_t pack_index = 0; pack_index < pack_count; ++pack_index) {
+							pattern_arguments.push_back(request_args[argument_index++]);
+						}
+						continue;
 					}
 					auto binding = pattern_match->substitutions.find(parameter.nameHandle());
 					if (binding == pattern_match->substitutions.end()) {
 						return fail("matched pattern parameter has no concrete binding");
 					}
 					pattern_arguments.push_back(binding->second);
+					++argument_index;
 				}
 			} else {
 				auto primary_template_entry =
@@ -759,33 +810,70 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 				return fail("template declaration has no class body");
 			}
 
-			substitution_parameter_shape_scratch.clear();
-			for (const TemplateParameterNode& parameter : *pattern_template_params) {
-				const TemplateParameterNode* resolved_parameter =
-					tryGetTemplateParameterNode(parameter);
-				if (resolved_parameter != nullptr) {
-					substitution_parameter_shape_scratch.push_back(SubstitutionParameterKey{
-						resolved_parameter->name(),
-						resolved_parameter->is_variadic()});
+			std::pmr::vector<TemplateParameterNode>& extended_template_params_storage = worklist.scratch.extended_template_params;
+			extended_template_params_storage.clear();
+			std::span<const TemplateParameterNode> effective_template_params(*pattern_template_params);
+			std::span<const TemplateTypeArg> effective_pattern_arguments(pattern_arguments);
+			if (worklist.storage.requests[request_id].owner_request != kNoBaseInstantiationRequest) {
+				std::pmr::vector<size_t>& owner_chain = worklist.scratch.postorder;
+				const size_t owner_chain_begin = owner_chain.size();
+				for (size_t owner_id = worklist.storage.requests[request_id].owner_request;
+					 owner_id != kNoBaseInstantiationRequest;
+					 owner_id = worklist.storage.requests[owner_id].owner_request) {
+					owner_chain.push_back(owner_id);
 				}
+				std::reverse(owner_chain.begin() + owner_chain_begin, owner_chain.end());
+				std::pmr::vector<TemplateTypeArg>& owner_arguments = worklist.scratch.argument_buffer;
+				owner_arguments.clear();
+				for (size_t owner_index = owner_chain_begin; owner_index < owner_chain.size(); ++owner_index) {
+					const size_t owner_id = owner_chain[owner_index];
+					const BaseInstantiationRequest& owner_request = worklist.storage.requests[owner_id];
+					auto owner_template = gTemplateRegistry.lookupTemplate(owner_request.template_name);
+					if (!owner_template.has_value() ||
+						!owner_template->is<TemplateClassDeclarationNode>()) {
+						return fail("member owner class template is unavailable");
+					}
+					const TemplateParameterVector& owner_parameters = owner_template->as<TemplateClassDeclarationNode>().template_parameters();
+					extended_template_params_storage.insert(extended_template_params_storage.end(), owner_parameters.begin(), owner_parameters.end());
+					const std::span<const TemplateTypeArg> owner_request_arguments = request_argument_span(owner_id);
+					owner_arguments.insert(owner_arguments.end(), owner_request_arguments.begin(), owner_request_arguments.end());
+				}
+				owner_chain.resize(owner_chain_begin);
+				extended_template_params_storage.insert(extended_template_params_storage.end(), pattern_template_params->begin(), pattern_template_params->end());
+				pattern_arguments.insert(pattern_arguments.begin(), owner_arguments.begin(), owner_arguments.end());
+				effective_template_params = extended_template_params_storage;
+				effective_pattern_arguments = pattern_arguments;
 			}
-			if (substitution_parameter_shape_scratch != previous_substitution_parameter_shape) {
-				// Preserve map nodes when consecutive requests use the same parameter
-				// identities. buildTemplateArgSubstitutionMaps overwrites each binding.
-				substitutions_scratch.clear();
-				pack_substitutions_scratch.clear();
-				previous_substitution_parameter_shape.assign(
-					substitution_parameter_shape_scratch.begin(),
-					substitution_parameter_shape_scratch.end());
+
+			if (!pattern_struct->deferred_template_base_classes().empty()) {
+				worklist.scratch.substitution_parameter_shape.clear();
+				for (const TemplateParameterNode& parameter : effective_template_params) {
+					const TemplateParameterNode* resolved_parameter =
+						tryGetTemplateParameterNode(parameter);
+					if (resolved_parameter != nullptr) {
+						worklist.scratch.substitution_parameter_shape.push_back(SubstitutionParameterKey{
+							resolved_parameter->name(),
+							resolved_parameter->is_variadic()});
+					}
+				}
+				if (worklist.scratch.substitution_parameter_shape != worklist.scratch.previous_substitution_parameter_shape) {
+					// Preserve map nodes when consecutive requests use the same parameter
+					// identities. buildTemplateArgSubstitutionMaps overwrites each binding.
+					worklist.scratch.substitutions.clear();
+					worklist.scratch.pack_substitutions.clear();
+					worklist.scratch.previous_substitution_parameter_shape.assign(
+						worklist.scratch.substitution_parameter_shape.begin(),
+						worklist.scratch.substitution_parameter_shape.end());
+				}
+				buildTemplateArgSubstitutionMaps(
+					effective_template_params,
+					effective_pattern_arguments,
+					[](const TemplateParameterNode&, const TemplateTypeArg& argument) {
+						return argument;
+					},
+					worklist.scratch.substitutions,
+					worklist.scratch.pack_substitutions);
 			}
-			buildTemplateArgSubstitutionMaps(
-				*pattern_template_params,
-				pattern_arguments,
-				[](const TemplateParameterNode&, const TemplateTypeArg& argument) {
-					return argument;
-				},
-				substitutions_scratch,
-				pack_substitutions_scratch);
 
 			auto resolve_deferred_base_argument = [&](const TemplateArgumentNodeInfo& argument_info,
 												 std::optional<size_t> expansion_index,
@@ -818,9 +906,7 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 							}
 						TemplateTypeArg expanded_arg = pack_binding.args[*expansion_index];
 						if (argument_info.node.is<TypeSpecifierNode>()) {
-							expanded_arg = rebindDependentTemplateTypeArg(
-								expanded_arg,
-								TemplateTypeArg(argument_info.node.as<TypeSpecifierNode>()));
+							expanded_arg = rebindDependentTemplateTypeArg(expanded_arg, TemplateTypeArg(argument_info.node.as<TypeSpecifierNode>()));
 						}
 						expanded_arg.is_pack = false;
 						return expanded_arg;
@@ -830,16 +916,13 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 
 				if (argument_info.node.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_specifier = argument_info.node.as<TypeSpecifierNode>();
-					if (auto resolved_type = tryResolveDeferredBaseTypeArgFromMap(
-							type_specifier,
-							substitutions_scratch);
-						resolved_type.has_value()) {
+					if (auto resolved_type = tryResolveDeferredBaseTypeArgFromMap(type_specifier, worklist.scratch.substitutions); resolved_type.has_value()) {
 						return resolved_type;
 					}
 					if (auto resolved_type = tryMaterializeDeferredBaseTypeArg(
 							type_specifier,
-							*pattern_template_params,
-							pattern_arguments,
+							effective_template_params,
+							effective_pattern_arguments,
 							[](std::string_view,
 							   std::span<const TemplateTypeArg>) {
 								return std::string_view{};
@@ -855,14 +938,9 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 					return concrete_type;
 				}
 				if (argument_info.node.is<ExpressionNode>()) {
-					ASTNode substituted_argument = substituteTemplateParameters(
-						argument_info.node,
-						*pattern_template_params,
-						pattern_arguments);
+					ASTNode substituted_argument = substituteTemplateParameters(argument_info.node, effective_template_params, effective_pattern_arguments);
 					if (auto value = try_evaluate_constant_expression(substituted_argument)) {
-						return TemplateTypeArg::makeValue(
-							value->value,
-							makeDeferredBaseValueTypeIndex(value->type, value->type_index));
+						return TemplateTypeArg::makeValue(value->value, makeDeferredBaseValueTypeIndex(value->type, value->type_index));
 					}
 				}
 				return std::nullopt;
@@ -876,20 +954,17 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 				}
 				DeferredBasePackExpansionBindingInfo pack_bindings;
 				if (deferred_base.is_pack_expansion) {
-					pack_bindings = collectDeferredBasePackExpansionBindings(
-						deferred_base,
-						pack_substitutions_scratch);
+					pack_bindings = collectDeferredBasePackExpansionBindings(deferred_base, worklist.scratch.pack_substitutions);
 					if (pack_bindings.invalid || pack_bindings.pack_bindings.empty()) {
 						return fail("pack expansion has no consistent concrete bindings");
 					}
 				}
 				for (size_t expansion_index : templatePackExpansionIndices(pack_bindings)) {
-					std::vector<TemplateTypeArg>& base_arguments = base_arguments_scratch;
+					std::pmr::vector<TemplateTypeArg>& base_arguments = worklist.scratch.base_arguments;
 					base_arguments.clear();
 					base_arguments.reserve(deferred_base.template_arguments.size());
 					bool arguments_resolved = true;
-					for (const TemplateArgumentNodeInfo& argument_info :
-						 deferred_base.template_arguments) {
+					for (const TemplateArgumentNodeInfo& argument_info : deferred_base.template_arguments) {
 						auto resolved_argument = resolve_deferred_base_argument(
 							argument_info,
 							deferred_base.is_pack_expansion
@@ -964,26 +1039,26 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 							return fail("member alias target is not a template instantiation");
 						}
 						std::string_view target_template_name = StringTable::getStringView(alias_target_info->baseTemplateName());
-						std::vector<TemplateTypeArg> target_arguments =
-							materializePlaceholderTemplateArgs(
-								*alias_target_info,
-								owner_template.template_parameters(),
-								base_arguments);
+						std::pmr::vector<TemplateTypeArg>& target_arguments = worklist.scratch.argument_buffer;
+						materializePlaceholderTemplateArgsInto(
+							*alias_target_info,
+							owner_template.template_parameters(),
+							base_arguments,
+							target_arguments);
 						if (gTemplateRegistry.lookup_alias_template(target_template_name).has_value()) {
 							if (!resolve_alias_base(target_template_name, target_arguments)) {
 								return fail("member alias target chain could not be resolved");
 							}
 						}
-						auto target_request = make_request(target_template_name, target_arguments);
+						auto target_request = make_request(target_template_name, target_arguments, kNoBaseInstantiationRequest);
 						if (!target_request.has_value()) {
 							return fail("member alias target has no canonical instantiation identity");
 						}
 						children.push_back(*target_request);
 
-						std::vector<TemplateTypeArg> owner_arguments = base_arguments;
-						auto owner_request = make_request(
-							expanded_base_template_name,
-							owner_arguments);
+						std::pmr::vector<TemplateTypeArg>& owner_arguments = worklist.scratch.argument_buffer;
+						owner_arguments.assign(base_arguments.begin(), base_arguments.end());
+						auto owner_request = make_request(expanded_base_template_name, owner_arguments, kNoBaseInstantiationRequest);
 						if (!owner_request.has_value()) {
 							return fail("member-type owner has no canonical instantiation identity");
 						}
@@ -995,13 +1070,48 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 						!base_template_entry->is<TemplateClassDeclarationNode>()) {
 						continue;
 					}
-					auto child = make_request(expanded_base_template_name, base_arguments);
+					auto child = make_request(expanded_base_template_name, base_arguments, kNoBaseInstantiationRequest);
 					if (!child.has_value()) {
 						return fail("resolved base did not have a canonical instantiation identity");
 					}
 					children.push_back(*child);
 				}
 			}
+			auto materialize_argument_infos = [&](std::span<const TypeInfo::TemplateArgInfo> argument_infos,
+												 std::pmr::vector<TemplateTypeArg>& concrete_arguments) {
+				concrete_arguments.clear();
+				concrete_arguments.reserve(argument_infos.size());
+				for (const TypeInfo::TemplateArgInfo& argument_info : argument_infos) {
+					if (appendDirectTypePackExpansion(concrete_arguments, argument_info, effective_template_params, effective_pattern_arguments)) {
+						continue;
+					}
+					TemplateTypeArg concrete_argument = materializeTemplateArg(argument_info, effective_template_params, effective_pattern_arguments);
+					if (concrete_argument.is_dependent && !argument_info.is_value &&
+						argument_info.type_index.is_valid()) {
+						TypeSpecifierNode argument_spec = makeTypeSpecifierFromTemplateTypeArg(toTemplateTypeArg(argument_info), Token{});
+						if (auto materialized_argument = tryMaterializeDeferredBaseTypeArg(
+								argument_spec,
+								effective_template_params,
+								effective_pattern_arguments,
+								[this](std::string_view concrete_name, std::span<const TemplateTypeArg> concrete_args) {
+									auto instantiated = try_instantiate_class_template(concrete_name, concrete_args, false);
+									if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
+										return StringTable::getStringView(instantiated->as<StructDeclarationNode>().name());
+									}
+									return std::string_view{};
+								});
+							materialized_argument.has_value()) {
+							concrete_argument = std::move(*materialized_argument);
+						}
+					}
+					if (concrete_argument.is_dependent || concrete_argument.is_pack || concrete_argument.dependent_name.isValid()) {
+						concrete_arguments.clear();
+						return false;
+					}
+					concrete_arguments.push_back(std::move(concrete_argument));
+				}
+				return true;
+			};
 			for (const StructMemberDecl& member_decl : pattern_struct->members()) {
 				if (!member_decl.declaration.is<DeclarationNode>()) {
 					continue;
@@ -1015,100 +1125,163 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 				if (member_type_info == nullptr || !member_type_info->isTemplateInstantiation()) {
 					continue;
 				}
+				const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+					member_type_info->hasDependentQualifiedName()
+						? member_type_info->dependentQualifiedName()
+						: nullptr;
+				if (dependent_record != nullptr) {
+					const TypeInfo* owner_type_info =
+						dependent_record->owner_type.is_valid()
+							? tryGetTypeInfo(dependent_record->owner_type)
+							: nullptr;
+					if (owner_type_info == nullptr) {
+						continue;
+					}
+					std::pmr::vector<TemplateTypeArg>& owner_arguments = worklist.scratch.argument_buffer;
+					if (!materialize_argument_infos(dependent_record->owner_template_arguments, owner_arguments)) {
+						continue;
+					}
+					std::string_view owner_template_name = owner_type_info->isTemplateInstantiation()
+						? buildQualifiedNameFromHandle(owner_type_info->sourceNamespace(), StringTable::getStringView(owner_type_info->baseTemplateName()))
+						: StringTable::getStringView(owner_type_info->name());
+					if (owner_template_name.empty()) {
+						continue;
+					}
+					auto owner_request = make_request(owner_template_name, owner_arguments, kNoBaseInstantiationRequest);
+					if (!owner_request.has_value()) {
+						continue;
+					}
+					const TypeInfo::DependentQualifiedNameRecord::Member* terminal_member = nullptr;
+					for (const auto& member : dependent_record->member_chain) {
+						if (member.has_template_arguments) {
+							terminal_member = &member;
+						}
+					}
+					if (terminal_member == nullptr) {
+						if (*owner_request != request_id) children.push_back(*owner_request);
+						continue;
+					}
+					std::string_view member_template_name = lookup_direct_member_template_name(owner_type_info->name(), terminal_member->name);
+					std::pmr::vector<TemplateTypeArg>& member_arguments = worklist.scratch.argument_buffer;
+					if (member_template_name.empty() || !materialize_argument_infos(terminal_member->template_arguments, member_arguments)) {
+						if (*owner_request != request_id) children.push_back(*owner_request);
+						continue;
+					}
+					auto member_request = make_request(member_template_name, member_arguments, *owner_request);
+					if (!member_request.has_value()) {
+						if (*owner_request != request_id) children.push_back(*owner_request);
+						continue;
+					}
+					if (*owner_request != request_id) children.push_back(*owner_request);
+					if (*member_request != request_id) children.push_back(*member_request);
+					continue;
+				}
 				std::string_view member_template_name = buildQualifiedNameFromHandle(
 					member_type_info->sourceNamespace(), StringTable::getStringView(member_type_info->baseTemplateName()));
 				if (member_template_name.empty()) {
 					continue;
 				}
-				std::vector<TemplateTypeArg> member_arguments =
-					materializePlaceholderTemplateArgs(*member_type_info, *pattern_template_params, pattern_arguments);
+				std::pmr::vector<TemplateTypeArg>& member_arguments = worklist.scratch.argument_buffer;
+				materializePlaceholderTemplateArgsInto(*member_type_info, effective_template_params, effective_pattern_arguments, member_arguments);
 				const bool arguments_are_concrete = std::ranges::all_of(member_arguments,
 					[](const TemplateTypeArg& argument) { return !argument.is_dependent && !argument.is_pack; });
 				if (!arguments_are_concrete) {
 					continue;
 				}
-				auto member_request = make_request(member_template_name, member_arguments);
+				auto member_request = make_request(member_template_name, member_arguments, kNoBaseInstantiationRequest);
 				if (member_request.has_value() && *member_request != request_id) children.push_back(*member_request);
 			}
 			return true;
 		};
 
-		std::vector<TemplateTypeArg> root_arguments(
-			filled_args_for_pattern_match.begin(),
-			filled_args_for_pattern_match.end());
-		if (auto root = make_request(template_name, root_arguments);
+		std::pmr::vector<TemplateTypeArg>& root_arguments = worklist.scratch.argument_buffer;
+		root_arguments.assign(filled_args_for_pattern_match.begin(), filled_args_for_pattern_match.end());
+		if (auto root = make_request(template_name, root_arguments, kNoBaseInstantiationRequest);
 			root.has_value()) {
-			std::vector<BaseInstantiationFrame> frames;
-			std::vector<size_t> children_scratch;
-			std::vector<size_t> postorder;
-			frames.push_back(BaseInstantiationFrame{*root, 0});
+			worklist.scratch.frames.push_back(BaseInstantiationFrame{*root, 0});
 			bool worklist_complete = true;
-			while (!frames.empty() && worklist_complete) {
-				BaseInstantiationFrame& frame = frames.back();
+			while (!worklist.scratch.frames.empty() && worklist_complete) {
+				BaseInstantiationFrame& frame = worklist.scratch.frames.back();
 				const size_t request_id = frame.request_id;
-				if (requests[request_id].state == BaseInstantiationRequest::State::Completed) {
-					frames.pop_back();
+				if (worklist.storage.requests[request_id].state == BaseInstantiationRequest::State::Completed) {
+					worklist.scratch.frames.pop_back();
 					continue;
 				}
-				if (!requests[request_id].children_loaded) {
-					if (requests[request_id].state == BaseInstantiationRequest::State::Active) {
+				if (worklist.storage.requests[request_id].state == BaseInstantiationRequest::State::Unvisited) {
+					worklist.storage.requests[request_id].state = BaseInstantiationRequest::State::Active;
+					worklist.scratch.children.clear();
+					if (!collect_children(request_id, worklist.scratch.children)) {
 						worklist_complete = false;
 						break;
 					}
-					requests[request_id].state = BaseInstantiationRequest::State::Active;
-					children_scratch.clear();
-					if (!collect_children(request_id, children_scratch)) {
-						worklist_complete = false;
-						break;
-					}
-					requests[request_id].children_begin = request_child_ids.size();
-					requests[request_id].children_count = children_scratch.size();
-					request_child_ids.insert(
-						request_child_ids.end(),
-						children_scratch.begin(),
-						children_scratch.end());
-					requests[request_id].children_loaded = true;
+					worklist.storage.requests[request_id].children_begin = worklist.storage.child_ids.size();
+					worklist.storage.requests[request_id].children_count = worklist.scratch.children.size();
+					worklist.storage.child_ids.insert(worklist.storage.child_ids.end(), worklist.scratch.children.begin(), worklist.scratch.children.end());
 					continue;
 				}
-				if (frame.next_child < requests[request_id].children_count) {
-					const size_t child_id = request_child_ids[
-						requests[request_id].children_begin + frame.next_child++];
-					if (requests[child_id].state == BaseInstantiationRequest::State::Completed) {
+				if (frame.next_child < worklist.storage.requests[request_id].children_count) {
+					const size_t child_id = worklist.storage.child_ids[
+						worklist.storage.requests[request_id].children_begin + frame.next_child++];
+					if (worklist.storage.requests[child_id].state == BaseInstantiationRequest::State::Completed) {
 						continue;
 					}
-					if (requests[child_id].state == BaseInstantiationRequest::State::Active) {
+					if (worklist.storage.requests[child_id].state == BaseInstantiationRequest::State::Active) {
 						worklist_complete = false;
 						break;
 					}
-					frames.push_back(BaseInstantiationFrame{child_id, 0});
+					worklist.scratch.frames.push_back(BaseInstantiationFrame{child_id, 0});
 					continue;
 				}
-				requests[request_id].state = BaseInstantiationRequest::State::Completed;
-				postorder.push_back(request_id);
-				frames.pop_back();
+				worklist.storage.requests[request_id].state = BaseInstantiationRequest::State::Completed;
+				worklist.scratch.postorder.push_back(request_id);
+				worklist.scratch.frames.pop_back();
 			}
 
-			if (worklist_complete && postorder.size() > 1) {
+			if (worklist_complete && worklist.scratch.postorder.size() > 1) {
 			preflighted = true;
 				FLASH_LOG(Templates, Debug, "Deferred-base worklist collected ",
-					postorder.size(), " class instantiations for ", template_name);
+					worklist.scratch.postorder.size(), " class instantiations for ", template_name);
 				struct WorklistPreflightScope {
 					size_t& depth;
 					explicit WorklistPreflightScope(size_t& value) : depth(value) { ++depth; }
 					~WorklistPreflightScope() { --depth; }
 				} preflight_scope(template_base_worklist_preflight_depth_);
-				for (size_t index = 0; index + 1 < postorder.size(); ++index) {
-					const BaseInstantiationRequest& request = requests[postorder[index]];
-					auto materialized_base = try_instantiate_class_template(
+				auto instantiate_request = [&](const BaseInstantiationRequest& request) {
+					return try_instantiate_class_template(
 						StringTable::getStringView(request.template_name),
-						std::span<const TemplateTypeArg>(request_arguments).subspan(
-							request.arguments_begin,
-							request.arguments_count),
+						std::span<const TemplateTypeArg>(worklist.storage.arguments).subspan(request.arguments_begin, request.arguments_count),
 						false);
-					if (materialized_base.has_value() &&
-						materialized_base->is<StructDeclarationNode>() &&
-						shouldCommitTemplateInstantiationArtifacts()) {
-						registerAndNormalizeLateMaterializedTopLevelNode(*materialized_base);
+				};
+				for (size_t index = 0; index + 1 < worklist.scratch.postorder.size(); ++index) {
+					BaseInstantiationRequest& request = worklist.storage.requests[worklist.scratch.postorder[index]];
+					std::optional<ASTNode> materialized;
+					if (request.owner_request != kNoBaseInstantiationRequest) {
+						const BaseInstantiationRequest& owner_request = worklist.storage.requests[request.owner_request];
+						std::optional<OuterTemplateBinding> owner_binding =
+							owner_request.instantiated_name.isValid()
+								? buildOuterBindingForOwner(owner_request.instantiated_name)
+								: std::nullopt;
+						if (owner_binding.has_value()) {
+							TemplateRegistry::ScopedOuterTemplateBinding binding_scope(gTemplateRegistry, request.template_name, true);
+							binding_scope.binding() = std::move(*owner_binding);
+							materialized = instantiate_request(request);
+						} else {
+							materialized = instantiate_request(request);
+						}
+					} else {
+						materialized = instantiate_request(request);
+					}
+					if (materialized.has_value() &&
+						materialized->is<StructDeclarationNode>()) {
+						request.instantiated_name = materialized->as<StructDeclarationNode>().name();
+						if (shouldCommitTemplateInstantiationArtifacts()) {
+							registerAndNormalizeLateMaterializedTopLevelNode(*materialized);
+						}
+					} else {
+						request.instantiated_name = StringTable::getOrInternStringHandle(
+							get_instantiated_class_name(
+								StringTable::getStringView(request.template_name),
+								std::span<const TemplateTypeArg>(worklist.storage.arguments).subspan(request.arguments_begin, request.arguments_count)));
 					}
 				}
 			}

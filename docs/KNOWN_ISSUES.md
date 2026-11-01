@@ -122,15 +122,6 @@ ordinary path has not yet been replaced by the canonical
 
 ## Expression parsing can overflow a 1 MB native stack before callable sema
 
-The native `Canonical adapter imports the source corpus at publication` fixture
-overflows at 1 MB, including in a pre-change binary. Reduce parser frames and
-replace recursive syntax processing before expecting that corpus to fit.
-The member-template pack owner regression also overflows at 1 MB, including in
-a pre-change compiler binary; a 1.5 MB stack completes. A nested member alias
-(`Holder<Tag<N>>::Box` -> `Owner<T>::List`) still instantiates recursively
-inside each pre-instantiated `Chain`, so extending the worklist to member
-template alias targets remains necessary for 1 MB.
-
 The nested NTTP-field regression
 `test_nested_inner_value_pack_member_field_ret0.cpp` overflows during compilation
 with a 1 MB reserve. The nested type-pack field regression fits at 1 MB; that

@@ -1082,8 +1082,9 @@ using TemplateArgSubstitutionMap = std::unordered_map<std::string_view, Template
 using TemplateArgPackSubstitutionMap =
 	std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>>;
 
+template <typename AliasPathContainer>
 inline bool tryEnterAliasTemplateIdentity(
-	std::vector<TemplateDeclId>& alias_path,
+	AliasPathContainer& alias_path,
 	TemplateDeclId alias_decl_id) {
 	if (!alias_decl_id ||
 		std::find(alias_path.begin(), alias_path.end(), alias_decl_id) != alias_path.end()) {
