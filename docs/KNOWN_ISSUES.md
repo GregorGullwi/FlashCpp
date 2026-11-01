@@ -177,12 +177,14 @@ after a later failure, and nested callable signature objects are shared by the
 legacy representation. Establish owned candidate signature storage before
 extending rollback across that walk.
 
-Other candidate-local type, legacy AST, registry/cache, and parser publication
-still need an owned transaction boundary. `FrontendScratchTransaction` currently
-covers scratch, declaration/template identity, canonical types, and
-symbol/namespace publication; it does not make those other stores transactional.
-Do not wrap the whole materialization path in it or erase required dependency
-instantiations. Lockstep member and namespace-scope expansions now report
+`FrontendScratchTransaction` now also journals legacy type-registry publication:
+rollback restores name/native bindings and truncates newly published top-level
+`TypeInfo` rows. Cold type payload arenas, in-place rewrites of pre-existing
+`TypeInfo` rows, legacy AST nodes, and parser publication still need an owned
+transaction boundary, and production speculative parsing is not yet routed
+through it. Do not wrap the whole materialization path in the transaction or
+erase required dependency instantiations. Lockstep member and namespace-scope
+expansions now report
 `TemplatePackLengthMismatch` (#1820) when referenced packs differ in length.
 Expansion contexts that still use the flat legacy adapter remain dependent
 instead of producing the diagnostic.

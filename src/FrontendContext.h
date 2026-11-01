@@ -43,6 +43,7 @@ static_assert(sizeof(BinaryOperatorCallTarget) == 32);
 struct FrontendPublicationJournalMark {
 	size_t context_depth = 0;
 	size_t namespace_depth = 0;
+	size_t legacy_type_registry_depth = 0;
 };
 
 FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& context);
@@ -50,9 +51,11 @@ void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicat
 void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublicationJournalMark mark);
 
 // A frontend probe covers scratch storage, declaration publication, template
-// identity, and namespace/symbol publication on tables bound to this context.
-// Scope topology and persistent ScopeRecord changes remain outside the journal.
-// Nested commits remain provisional until the outer frontend probe commits.
+// identity, legacy type-registry publication, and namespace/symbol publication
+// on tables bound to this context. Scope topology, persistent ScopeRecord
+// changes, cold type payload arenas, and in-place rewrites of pre-existing
+// legacy TypeInfo rows remain outside the journal. Nested commits remain
+// provisional until the outer frontend probe commits.
 class FrontendScratchTransaction {
 public:
 	FrontendScratchTransaction(
