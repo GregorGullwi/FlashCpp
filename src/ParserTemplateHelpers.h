@@ -1853,8 +1853,12 @@ inline const TypeInfo* resolveDependentMemberPlaceholderAgainstOwnerArtifact(
 	if (use_dependent_member_chain) {
 		TypeIndex expected_owner_canonical;
 		if (dependent_record->owner_type.is_valid()) {
-			expected_owner_canonical = canonicalizeTemplateSignatureMatchTypeIndex(
-				dependent_record->owner_type);
+			const TypeInfo* recorded_owner_type_info = tryGetTypeInfo(dependent_record->owner_type);
+			if (recorded_owner_type_info != nullptr &&
+				!recorded_owner_type_info->isDependentPlaceholder()) {
+				expected_owner_canonical = canonicalizeTemplateSignatureMatchTypeIndex(
+					dependent_record->owner_type);
+			}
 		}
 		if (!expected_owner_canonical.is_valid() &&
 			dependent_record->owner_name.isValid()) {
@@ -2233,8 +2237,18 @@ inline bool dependentQualifiedNameRecordsMatchForSignature(
 		return false;
 	}
 
-	if (instantiated_record.owner_type.is_valid() ||
-		out_of_line_record.owner_type.is_valid()) {
+	const TypeInfo* instantiated_owner_type_info =
+		instantiated_record.owner_type.is_valid()
+			? tryGetTypeInfo(instantiated_record.owner_type)
+			: nullptr;
+	const TypeInfo* out_of_line_owner_type_info =
+		out_of_line_record.owner_type.is_valid()
+			? tryGetTypeInfo(out_of_line_record.owner_type)
+			: nullptr;
+	if (instantiated_owner_type_info != nullptr &&
+		out_of_line_owner_type_info != nullptr &&
+		!instantiated_owner_type_info->isDependentPlaceholder() &&
+		!out_of_line_owner_type_info->isDependentPlaceholder()) {
 		TypeIndex instantiated_owner =
 			canonicalizeTemplateSignatureMatchTypeIndex(instantiated_record.owner_type);
 		TypeIndex out_of_line_owner =

@@ -3771,6 +3771,14 @@ ParseResult Parser::parse_type_specifier() {
 										struct_parsing_context_stack_.back().struct_node);
 							}
 						}
+						if (!owner_type_index.is_valid() && !instantiated_name.empty()) {
+							auto owner_type_it = getTypesByNameMap().find(
+								StringTable::getOrInternStringHandle(instantiated_name));
+							if (owner_type_it != getTypesByNameMap().end() &&
+								owner_type_it->second != nullptr) {
+								owner_type_index = owner_type_it->second->registeredTypeIndex();
+							}
+						}
 						if (!classified_current_instantiation && is_dependent_template_param) {
 							owner_kind = TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter;
 						} else if (!classified_current_instantiation &&
