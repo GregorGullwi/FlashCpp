@@ -1,5 +1,3 @@
-#include <cstddef>
-
 struct SmallRecord {
 	char value;
 };
