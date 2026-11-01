@@ -5,6 +5,10 @@ struct UnionBits {
 		T second : 3;
 	};
 };
+struct DefaultBits {
+	bool enabled : 1 = false;
+	int value;
+};
 struct DirectBits {
 	short first : 3;
 	short second : 3;
@@ -33,5 +37,9 @@ int main() {
 	if (direct.uwide != 31) return 7;
 	direct.long_field = -1;
 	if (direct.long_field != -1) return 8;
+	DefaultBits defaults{};
+	if (defaults.enabled) return 9;
+	defaults.enabled = true;
+	if (!defaults.enabled) return 10;
 	return 0;
 }
