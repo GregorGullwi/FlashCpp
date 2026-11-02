@@ -265,12 +265,13 @@ Nested commits remain provisional until the outer transaction commits. The
 transaction does not roll back scope creation or cursor movement in `SymbolTable`
 or `ScopeRecord`, and production parsing does not yet route tentative declaration
 work through it. Integrate those boundaries before relying on the transaction
-for broad speculative parsing. `gNamespaceRegistry` is still process-global,
-while symbol journals are enlisted per `FrontendContext`: transactions spanning
-multiple live contexts are not isolated, and rolling back one context can undo
-namespace changes whose symbol-table writes belong to another. Keep publication
-transactions within one context until registry ownership or journal enlistment is
-moved to a shared coordinator.
+for broad speculative parsing. Namespace and legacy type registries remain
+process-global, while symbol journals are enlisted per `FrontendContext`.
+Overlapping frontend transactions from different contexts are rejected before
+opening global journals. Ordinary writes from another context are still not
+isolated: rolling back the owning context can undo global registry writes whose
+symbol-table writes belong to another. Keep publication work within one context
+until registry ownership or journal enlistment moves to a shared coordinator.
 
 ## Member-function-pointer address-of only lowers non-virtual, non-adjusted cases
 

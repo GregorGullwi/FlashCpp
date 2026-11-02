@@ -54,6 +54,8 @@ publication transaction snapshots newly publishable top-level `TypeInfo` rows,
 name bindings, and native-type bindings; commit promotes the snapshot, while
 rollback restores overwritten bindings, removes new ones, and truncates the row
 count. Nested commits remain provisional until the outer transaction commits.
+Overlapping publication transactions from different live frontend contexts are
+rejected before opening global journals; same-context nesting remains supported.
 Cold type payload arenas, in-place rewrites of pre-existing `TypeInfo` rows,
 legacy AST nodes, and parser state stay outside this first boundary. Native
 guards cover rollback, commit, overwritten bindings, nested commit, and
@@ -320,8 +322,9 @@ These seed adjacent slices; the authoritative inventory is
   are outside the journal. Nested commits stay provisional until the outer
   transaction commits; scope creation, cursor movement, and `ScopeRecord`
   publication are outside the boundary, production speculative parsing is not yet
-  integrated, and the process-global namespace and type-registry journals keep
-  transactions across multiple live `FrontendContext`s from being isolated. See
+  integrated. The namespace and type-registry journals remain process-global;
+  overlapping frontend transactions from different contexts are rejected, but
+  ordinary writes from another context are not isolated. See
   [known issues](KNOWN_ISSUES.md).
 - **Compiler bugs and bounded unsupported cases:** consult
   [known issues](KNOWN_ISSUES.md) before selecting adjacent work; add newly found
