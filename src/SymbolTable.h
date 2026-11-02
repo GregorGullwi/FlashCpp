@@ -294,7 +294,7 @@ public:
 	}
 
 	ScopeId currentScopeId() const {
-		// Scope slots are append-only until clear(); exit only moves the cursor.
+		// Committed scope slots survive exit; rollback discards provisional slots.
 		return ScopeId{static_cast<uint32_t>(current_scope_index_ + 1)};
 	}
 
@@ -314,7 +314,8 @@ public:
 	// namespace-registry publication. Tables use the same nested mark/log model
 	// as the existing declaration and template publication transactions.
 	size_t beginPublicationTransaction() {
-		publication_transaction_marks_.push_back(publication_mutations_.size());
+		publication_transaction_marks_.push_back({publication_mutations_.size(), scopes_.size(), current_scope_index_, last_lookup_scope_id_,
+			last_declaring_scope_id_});
 		return publication_transaction_marks_.size();
 	}
 
@@ -329,11 +330,18 @@ public:
 
 	void rollbackPublicationTransaction(size_t depth) {
 		validatePublicationTransactionDepth(depth);
-		const size_t mark = publication_transaction_marks_.back();
-		for (size_t index = publication_mutations_.size(); index > mark; --index) {
+		const PublicationCheckpoint checkpoint = publication_transaction_marks_.back();
+		for (size_t index = publication_mutations_.size(); index > checkpoint.mutation_count; --index) {
 			undoPublicationMutation(publication_mutations_[index - 1U]);
 		}
-		publication_mutations_.resize(mark);
+		publication_mutations_.resize(checkpoint.mutation_count);
+		// Symbol undo entries can refer to provisional scopes. Reclaim those
+		// slots only after every entry has been restored.
+		while (scopes_.size() > checkpoint.scope_count) scopes_.pop_back();
+		while (scope_metadata_.size() > checkpoint.scope_count) scope_metadata_.pop_back();
+		current_scope_index_ = checkpoint.current_scope_index;
+		last_lookup_scope_id_ = checkpoint.last_lookup_scope;
+		last_declaring_scope_id_ = checkpoint.last_declaring_scope;
 		publication_transaction_marks_.pop_back();
 		if (publication_transaction_marks_.empty()) {
 			publication_mutations_.clear();
@@ -1874,6 +1882,14 @@ public:
 	}
 
 private:
+	struct PublicationCheckpoint {
+		size_t mutation_count;
+		size_t scope_count;
+		size_t current_scope_index;
+		ScopeId last_lookup_scope;
+		ScopeId last_declaring_scope;
+	};
+
 	enum class PublicationMutationKind : uint8_t {
 		ScopeSymbols,
 		NamespaceSymbols,
@@ -2272,7 +2288,7 @@ private:
 	std::unordered_map<NamespaceHandle, std::unordered_map<StringHandle, std::vector<ASTNode>>> adl_only_symbols_;
 	// Flat set of all ADL-only function name handles for O(1) is_adl_only_function_name() queries.
 	std::unordered_set<StringHandle> adl_only_function_names_;
-	std::vector<size_t> publication_transaction_marks_;
+	std::vector<PublicationCheckpoint> publication_transaction_marks_;
 	std::vector<PublicationMutation> publication_mutations_;
 	std::vector<TypeSpecifierNode> previous_type_specifier_states_;
 

@@ -104,7 +104,8 @@ FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& 
 
 	context.publication_transaction_depth_ = context_depth;
 	gFrontendPublicationJournalOwner = &context;
-	return FrontendPublicationJournalMark{context_depth, namespace_depth, legacy_type_registry_depth};
+	return FrontendPublicationJournalMark{context_depth, namespace_depth, legacy_type_registry_depth, context.scope_records_.size(),
+		context.current_scope_id_};
 }
 
 void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicationJournalMark mark) {
@@ -133,6 +134,8 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 		++it) {
 		(*it)->rollbackPublicationTransaction(mark.context_depth);
 	}
+	while (context.scope_records_.size() > mark.scope_count) context.scope_records_.pop_back();
+	context.current_scope_id_ = mark.current_scope_id;
 	gNamespaceRegistry.rollbackPublicationTransaction(mark.namespace_depth);
 	rollbackLegacyTypeRegistryJournal(mark.legacy_type_registry_depth);
 	--context.publication_transaction_depth_;
@@ -216,7 +219,7 @@ void bindPersistentScopePublication(SymbolTable& table) {
 		table.clear();
 		return;
 	}
-	context->resetPersistentScopes();
+	if (context->scopeRecordCount() != 1 || context->currentScopeId() != ScopeId{1}) context->resetPersistentScopes();
 	if (table.scopeCount() != 1 || table.currentScopeId().value != 1) {
 		table.clear();
 	}

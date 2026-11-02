@@ -44,6 +44,8 @@ struct FrontendPublicationJournalMark {
 	size_t context_depth = 0;
 	size_t namespace_depth = 0;
 	size_t legacy_type_registry_depth = 0;
+	size_t scope_count = 0;
+	ScopeId current_scope_id{};
 };
 
 FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& context);
@@ -52,9 +54,9 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 
 // A frontend probe covers scratch storage, declaration publication, template
 // identity, legacy type-registry publication, and namespace/symbol publication
-// on tables bound to this context. Scope topology, persistent ScopeRecord
-// changes, cold type payload arenas, and in-place rewrites of pre-existing
-// legacy TypeInfo rows remain outside the journal. Nested commits remain
+// on tables bound to this context, including scope creation and cursors.
+// Cold type payload arenas and in-place rewrites of pre-existing legacy
+// TypeInfo rows remain outside the journal. Nested commits remain
 // provisional until the outer frontend probe commits.
 class FrontendScratchTransaction {
 public:
@@ -275,6 +277,9 @@ public:
 	}
 
 	void resetPersistentScopes() {
+		if (publication_transaction_depth_ != 0) {
+			throw InternalError("FrontendContext: reset scopes during publication transaction");
+		}
 		while (scope_records_.size() > 1) {
 			scope_records_.pop_back();
 		}
