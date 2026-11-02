@@ -56,6 +56,10 @@ rollback restores overwritten bindings, removes new ones, and truncates the row
 count. Nested commits remain provisional until the outer transaction commits.
 Overlapping publication transactions from different live frontend contexts are
 rejected before opening global journals; same-context nesting remains supported.
+Scope creation and cursor movement now share that boundary: symbol-map undo runs
+before provisional symbol-table slots and frontend `ScopeRecord`s are truncated.
+Rollback restores the current, lookup, and declaring cursors; nested commits stay
+provisional, and persistent-scope reset is rejected during an open transaction.
 Cold type payload arenas, in-place rewrites of pre-existing `TypeInfo` rows,
 legacy AST nodes, and parser state stay outside this first boundary. Native
 guards cover rollback, commit, overwritten bindings, nested commit, and
@@ -319,10 +323,10 @@ These seed adjacent slices; the authoritative inventory is
   rows and name/native bindings, bound `SymbolTable` publication maps, in-place
   global/namespace variable array type normalization, and namespace metadata.
   Cold type payload arenas and in-place rewrites of pre-existing `TypeInfo` rows
-  are outside the journal. Nested commits stay provisional until the outer
-  transaction commits; scope creation, cursor movement, and `ScopeRecord`
-  publication are outside the boundary, production speculative parsing is not yet
-  integrated. The namespace and type-registry journals remain process-global;
+  are outside the journal. Scope creation, cursor movement, and `ScopeRecord`
+  publication roll back together after symbol-map undo. Nested commits stay
+  provisional until the outer transaction commits; production speculative parsing
+  is not yet integrated. The namespace and type-registry journals remain process-global;
   overlapping frontend transactions from different contexts are rejected, but
   ordinary writes from another context are not isolated. See
   [known issues](KNOWN_ISSUES.md).

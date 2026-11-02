@@ -256,22 +256,32 @@ canonical through any remaining flat-consumer migration.
 
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 
-`FrontendScratchTransaction` now journals frontend scratch state,
-`DeclarationBuilder`, `TemplateDeclTable`, namespace registry creation and
-metadata, publication maps on `SymbolTable`s bound to its `FrontendContext`,
-and the in-place array-type normalization used when compatible global or
-namespace variable declarations are merged.
-Nested commits remain provisional until the outer transaction commits. The
-transaction does not roll back scope creation or cursor movement in `SymbolTable`
-or `ScopeRecord`, and production parsing does not yet route tentative declaration
-work through it. Integrate those boundaries before relying on the transaction
-for broad speculative parsing. Namespace and legacy type registries remain
-process-global, while symbol journals are enlisted per `FrontendContext`.
-Overlapping frontend transactions from different contexts are rejected before
-opening global journals. Ordinary writes from another context are still not
+Production parsing does not yet route tentative declaration work through
+`FrontendScratchTransaction`. Token state, diagnostics, legacy AST nodes, cold
+type payload arenas, and in-place rewrites of existing `TypeInfo` rows still need
+an owned rollback boundary before broad speculative parsing can rely on it.
+
+Namespace and legacy type registries remain process-global, while symbol journals
+are enlisted per `FrontendContext`. Ordinary writes from another context are not
 isolated: rolling back the owning context can undo global registry writes whose
 symbol-table writes belong to another. Keep publication work within one context
 until registry ownership or journal enlistment moves to a shared coordinator.
+
+## Bound symbol tables cannot publish independent scope topologies
+
+All tables bound to one `FrontendContext` share its scope ID sequence and cursor.
+If one table creates scopes, another table still at the root cannot append its
+own topology: its next local scope ID conflicts with the context arena. The
+current check throws after the local append. Keep one scope-producing table per
+context until scope ownership or the preflight rejection is made explicit.
+
+## Bound symbol-table destruction does not unregister from its frontend context
+
+`FrontendContext` retains raw pointers to bound `SymbolTable`s, and table
+destruction does not remove those pointers. Destroying a bound table before its
+context leaves stale entries for subsequent publication transactions and context
+teardown. Add lifetime-aware unregistration before allowing independently scoped
+bound tables; keep each bound table alive through its context in the meantime.
 
 ## Member-function-pointer address-of only lowers non-virtual, non-adjusted cases
 

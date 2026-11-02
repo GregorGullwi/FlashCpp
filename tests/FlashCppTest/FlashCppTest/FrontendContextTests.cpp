@@ -838,6 +838,201 @@ TEST_SUITE("FrontendContext") {
 	concept StoresDuplicateScopeId = requires(T scope) { scope.scope_id; };
 	static_assert(!StoresDuplicateScopeId<Scope>);
 
+	TEST_CASE("Scope publication rollback restores cursor topology and reuses provisional IDs") {
+		SymbolTable table;
+		FrontendContext context;
+		bindPersistentScopePublication(table);
+		table.enter_scope(ScopeType::Block);
+		const ScopeId retained_scope = table.currentScopeId();
+		const ScopeRecord retained_record = context.scopeRecord(retained_scope);
+		const size_t retained_count = table.scopeCount();
+		(void)table.lookup("scope_rollback_retained");
+		const ASTNode retained_node = ASTNode::emplace_node<ExpressionNode>(
+			NumericLiteralNode(Token{}, uint64_t{1}, TypeCategory::Int, TypeQualifier::None, 32));
+		REQUIRE(table.insert(std::string_view("scope_rollback_retained"), retained_node));
+
+		ScopeId provisional_scope{};
+		ScopeId provisional_namespace{};
+		ScopeId nested_scope{};
+		{
+			auto outer = context.beginScratchTransaction();
+			table.exit_scope();
+			table.enter_scope(ScopeType::Block);
+			provisional_scope = table.currentScopeId();
+			REQUIRE(provisional_scope.value == retained_count + 1);
+			table.enter_namespace("scope_rollback_namespace");
+			provisional_namespace = table.currentScopeId();
+			table.insert(std::string_view("scope_rollback_provisional"), retained_node);
+			(void)table.lookup("scope_rollback_missing");
+			const ScopeId speculative_lookup = table.lastLookupScopeId();
+			{
+				auto inner = context.beginScratchTransaction();
+				table.enter_scope(ScopeType::Block);
+				nested_scope = table.currentScopeId();
+				table.insert(std::string_view("scope_rollback_nested"), retained_node);
+				inner.commit();
+			}
+			table.exit_scope();
+			table.exit_scope();
+			table.exit_scope();
+			CHECK(table.currentScopeId() == ScopeId{1});
+			CHECK(table.lastLookupScopeId() == speculative_lookup);
+			outer.rollback();
+		}
+
+		CHECK(table.scopeCount() == retained_count);
+		CHECK(context.scopeRecordCount() == retained_count);
+		CHECK(table.currentScopeId() == retained_scope);
+		CHECK(context.currentScopeId() == retained_scope);
+		CHECK(table.lastLookupScopeId() == retained_scope);
+		CHECK(table.lastDeclaringScopeId() == retained_scope);
+		CHECK(context.scopeRecord(retained_scope).parent_id == retained_record.parent_id);
+		CHECK(context.scopeRecord(retained_scope).depth == retained_record.depth);
+		CHECK(context.findScopeRecord(provisional_scope) == nullptr);
+		CHECK(context.findScopeRecord(provisional_namespace) == nullptr);
+		CHECK(context.findScopeRecord(nested_scope) == nullptr);
+		CHECK(table.findScopeById(provisional_scope) == nullptr);
+		CHECK(table.findScopeById(provisional_namespace) == nullptr);
+		CHECK(table.findScopeById(nested_scope) == nullptr);
+		CHECK(table.lookup("scope_rollback_retained").has_value());
+		CHECK_FALSE(table.lookup("scope_rollback_provisional").has_value());
+		CHECK_FALSE(table.lookup("scope_rollback_nested").has_value());
+
+		{
+			auto retry = context.beginScratchTransaction();
+			table.exit_scope();
+			table.enter_scope(ScopeType::Function);
+			CHECK(table.currentScopeId() == provisional_scope);
+			CHECK(context.scopeRecord(provisional_scope).parent_id == ScopeId{1});
+			CHECK(context.scopeRecord(provisional_scope).depth == 2);
+			retry.commit();
+		}
+		CHECK(table.scopeCount() == retained_count + 1);
+		CHECK(context.scopeRecordCount() == retained_count + 1);
+		{
+			auto transaction = context.beginScratchTransaction();
+			CHECK_THROWS_AS(context.resetPersistentScopes(), InternalError);
+			CHECK(table.scopeCount() == retained_count + 1);
+			CHECK(context.scopeRecordCount() == retained_count + 1);
+			transaction.rollback();
+		}
+	}
+
+	TEST_CASE("Nested scope transaction rollback restores parent while outer commit survives") {
+		SymbolTable table;
+		FrontendContext context;
+		bindPersistentScopePublication(table);
+		table.enter_scope(ScopeType::Block);
+		const ScopeId parent_scope = table.currentScopeId();
+		const size_t parent_count = table.scopeCount();
+		auto outer = context.beginScratchTransaction();
+		table.enter_scope(ScopeType::Namespace);
+		const ScopeId outer_scope = table.currentScopeId();
+		{
+			auto inner = context.beginScratchTransaction();
+			table.enter_scope(ScopeType::Block);
+			const ScopeId rolled_back_scope = table.currentScopeId();
+			table.exit_scope();
+			inner.rollback();
+			CHECK(table.currentScopeId() == outer_scope);
+			CHECK(context.currentScopeId() == outer_scope);
+			CHECK(table.scopeCount() == parent_count + 1);
+			CHECK(context.findScopeRecord(rolled_back_scope) == nullptr);
+		}
+		outer.commit();
+		CHECK(table.currentScopeId() == outer_scope);
+		CHECK(context.scopeRecord(outer_scope).parent_id == parent_scope);
+		CHECK(table.scopeCount() == parent_count + 1);
+		CHECK(context.scopeRecordCount() == parent_count + 1);
+	}
+
+	TEST_CASE("Deep scope transaction rollback truncates iterative scope publication") {
+		SymbolTable table;
+		FrontendContext context;
+		bindPersistentScopePublication(table);
+		constexpr uint32_t depth = 1024;
+		{
+			auto transaction = context.beginScratchTransaction();
+			for (uint32_t index = 0; index < depth; ++index) table.enter_scope(ScopeType::Block);
+			REQUIRE(table.currentScopeId().value == depth + 1);
+			REQUIRE(context.scopeRecordCount() == depth + 1);
+			for (uint32_t index = 0; index < depth; ++index) table.exit_scope();
+			CHECK(table.currentScopeId() == ScopeId{1});
+			transaction.rollback();
+		}
+		CHECK(table.scopeCount() == 1);
+		CHECK(context.scopeRecordCount() == 1);
+		CHECK(table.currentScopeId() == ScopeId{1});
+		CHECK(context.currentScopeId() == ScopeId{1});
+		CHECK(table.findScopeById(ScopeId{2}) == nullptr);
+		CHECK(context.findScopeRecord(ScopeId{2}) == nullptr);
+	}
+
+	TEST_CASE("Unbound symbol table publication rollback truncates legacy scope metadata") {
+		SymbolTable table;
+		table.enter_scope(ScopeType::Block);
+		table.exit_scope();
+		const size_t original_count = table.scopeCount();
+		const ScopeId original_lookup = table.lastLookupScopeId();
+		const size_t transaction_depth = table.beginPublicationTransaction();
+		table.enter_scope(ScopeType::Namespace);
+		const ScopeId provisional_scope = table.currentScopeId();
+		CHECK(table.legacyScopeMetadata(provisional_scope).parent_id == ScopeId{1});
+		(void)table.lookup("unbound_scope_rollback_missing");
+		table.exit_scope();
+		table.rollbackPublicationTransaction(transaction_depth);
+		CHECK(table.scopeCount() == original_count);
+		CHECK(table.findScopeById(provisional_scope) == nullptr);
+		CHECK(table.lastLookupScopeId() == original_lookup);
+		CHECK(table.currentScopeId() == ScopeId{1});
+		CHECK_THROWS_AS(table.legacyScopeMetadata(provisional_scope), InternalError);
+	}
+
+	TEST_CASE("Late persistent scope binding rolls back with its frontend transaction") {
+		SymbolTable table;
+		FrontendContext context;
+		{
+			auto transaction = context.beginScratchTransaction();
+			bindPersistentScopePublication(table);
+			table.enter_scope(ScopeType::Block);
+			const ASTNode node = ASTNode::emplace_node<ExpressionNode>(NumericLiteralNode(Token{}, uint64_t{2}, TypeCategory::Int, TypeQualifier::None, 32));
+			REQUIRE(table.insert(std::string_view("late_scope_binding"), node));
+			transaction.rollback();
+		}
+		CHECK(table.scopeCount() == 1);
+		CHECK(context.scopeRecordCount() == 1);
+		CHECK(table.currentScopeId() == ScopeId{1});
+		CHECK(context.currentScopeId() == ScopeId{1});
+		CHECK_FALSE(table.lookup("late_scope_binding").has_value());
+		{
+			auto retry = context.beginScratchTransaction();
+			table.enter_scope(ScopeType::Function);
+			CHECK(table.currentScopeId() == ScopeId{2});
+			retry.commit();
+		}
+		CHECK(table.scopeCount() == 2);
+		CHECK(context.scopeRecord(ScopeId{2}).scope_type == ScopeType::Function);
+	}
+
+	TEST_CASE("Frontend rollback restores cursors of every bound symbol table") {
+		SymbolTable first_table;
+		SymbolTable second_table;
+		FrontendContext context;
+		bindPersistentScopePublication(first_table);
+		bindPersistentScopePublication(second_table);
+		{
+			auto transaction = context.beginScratchTransaction();
+			first_table.enter_scope(ScopeType::Block);
+			CHECK(second_table.currentScopeId() == ScopeId{1});
+			transaction.rollback();
+		}
+		CHECK(first_table.scopeCount() == 1);
+		CHECK(second_table.scopeCount() == 1);
+		CHECK(first_table.currentScopeId() == ScopeId{1});
+		CHECK(second_table.currentScopeId() == ScopeId{1});
+		CHECK(context.currentScopeId() == ScopeId{1});
+	}
+
 	TEST_CASE("Scope slot identities survive deep exit and sibling publication") {
 		FrontendContext context;
 		SymbolTable table;
