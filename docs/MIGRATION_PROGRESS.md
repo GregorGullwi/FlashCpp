@@ -65,6 +65,10 @@ on destruction, preserving undo of retained declaration changes. Context teardow
 detaches surviving tables. Tables are pinned, and parser/test
 resets use an explicit reset that rejects active table journals, detaches before
 clearing local state, and preserves the context's retained scope records.
+Scope entry preflights the proposed local scope ID and parent through the same
+context validation used at publication. A conflicting table is rejected before
+local scope/cursor changes or namespace creation/declaration; independent table
+topologies remain unsupported.
 Cold type payload arenas, in-place rewrites of pre-existing `TypeInfo` rows,
 legacy AST nodes, and parser state stay outside this first boundary. Native
 guards cover rollback, commit, overwritten bindings, nested commit, and

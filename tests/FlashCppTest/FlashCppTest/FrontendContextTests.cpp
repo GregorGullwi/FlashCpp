@@ -3676,6 +3676,74 @@ int main() {
 		CHECK(context.currentScopeId() == ScopeId{2});
 	}
 
+	TEST_CASE("Rejected idle bound scope entries leave shared publication unchanged") {
+		auto verifyRejectedEntry = [](int entry_kind) {
+			const size_t namespace_depth = gNamespaceRegistry.beginPublicationTransaction();
+			auto namespace_rollback = ScopeGuard([namespace_depth]() {
+				gNamespaceRegistry.rollbackPublicationTransaction(namespace_depth);
+			});
+			FrontendContext context;
+			SymbolTable owner;
+			SymbolTable idle;
+			owner.enablePersistentScopePublication();
+			bindPersistentScopePublication(idle);
+			owner.enter_scope(ScopeType::Block);
+			REQUIRE(context.scopeRecordCount() == 2u);
+			const ScopeId owner_scope = owner.currentScopeId();
+			const StringHandle name = StringTable::getOrInternStringHandle("idle_scope_entry_namespace");
+			const NamespaceHandle existing = gNamespaceRegistry.getOrCreateNamespace(NamespaceRegistry::GLOBAL_NAMESPACE, name);
+			REQUIRE_FALSE(gNamespaceRegistry.isDeclared(existing));
+			const size_t namespace_count = gNamespaceRegistry.currentSize();
+			if (entry_kind == 0) CHECK_THROWS_AS(idle.enter_scope(ScopeType::Block), InternalError);
+			if (entry_kind == 1) CHECK_THROWS_AS(idle.enter_namespace(existing), InternalError);
+			if (entry_kind == 2) CHECK_THROWS_AS(idle.enter_namespace(std::string_view("idle_scope_entry_new_namespace")), InternalError);
+			CHECK(gNamespaceRegistry.currentSize() == namespace_count);
+			CHECK_FALSE(gNamespaceRegistry.isDeclared(existing));
+			REQUIRE(idle.scopeCount() == 1u);
+			CHECK(idle.currentScopeId() == ScopeId{1});
+			CHECK_THROWS_AS(idle.legacyScopeMetadata(ScopeId{2}), InternalError);
+			CHECK(context.scopeRecordCount() == 2u);
+			CHECK(context.currentScopeId() == owner_scope);
+			CHECK(owner.currentScopeId() == owner_scope);
+			{
+				auto outer = context.beginScratchTransaction();
+				owner.enter_scope(ScopeType::Function);
+				{
+					auto inner = context.beginScratchTransaction();
+					owner.enter_scope(ScopeType::Block);
+					inner.rollback();
+				}
+				CHECK(owner.currentScopeId() == ScopeId{3});
+				outer.rollback();
+			}
+			CHECK(owner.currentScopeId() == owner_scope);
+			CHECK(context.currentScopeId() == owner_scope);
+		};
+		SUBCASE("Block scope") { verifyRejectedEntry(0); }
+		SUBCASE("Existing namespace handle") { verifyRejectedEntry(1); }
+		SUBCASE("New namespace spelling") { verifyRejectedEntry(2); }
+	}
+
+	TEST_CASE("Rejected idle bound entries remain atomic after deep owner growth") {
+		FrontendContext context;
+		SymbolTable owner;
+		SymbolTable idle;
+		owner.enablePersistentScopePublication();
+		bindPersistentScopePublication(idle);
+		for (uint32_t index = 0; index < 1024; ++index) owner.enter_scope(ScopeType::Block);
+		REQUIRE(context.scopeRecordCount() == 1025u);
+		const ScopeId owner_scope = owner.currentScopeId();
+		for (uint32_t attempt = 0; attempt < 24; ++attempt) {
+			CHECK_THROWS_AS(idle.enter_scope(ScopeType::Block), InternalError);
+			CHECK(idle.scopeCount() == 1u);
+			CHECK(idle.currentScopeId() == ScopeId{1});
+			CHECK_THROWS_AS(idle.legacyScopeMetadata(ScopeId{2}), InternalError);
+			CHECK(context.scopeRecordCount() == 1025u);
+			CHECK(context.currentScopeId() == owner_scope);
+			CHECK(owner.currentScopeId() == owner_scope);
+		}
+	}
+
 	TEST_CASE("Destroyed SymbolTable address reuse does not enlist a fresh table in stale journals") {
 		auto checkAddressReuse = [](bool rollback, bool nested) {
 			std::optional<SymbolTable> slot;
