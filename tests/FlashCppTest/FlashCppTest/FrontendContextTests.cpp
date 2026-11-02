@@ -1,3 +1,5 @@
+#include <deque>
+
 #include "CompilerIncludes.h"
 #include "CanonicalTypeAdapter.h"
 #include "FlatHashTable.h"
@@ -636,6 +638,47 @@ TEST_SUITE("FrontendContext") {
 		const auto committed_symbols = table.lookup_all(identifier);
 		REQUIRE(committed_symbols.size() == 1U);
 		CHECK(committed_symbols.front().raw_pointer() == existing_variable.raw_pointer());
+	}
+
+	TEST_CASE("Destroying SymbolTable rolls back open nested type normalization journals") {
+		const std::string_view identifier = "destroyed_table_array_redeclaration";
+		Token identifier_token(Token::Type::Identifier, identifier, 1, 1, 0);
+		auto make_variable = [&](bool type_has_unsized_array) {
+			TypeSpecifierNode type(TypeCategory::Int, TypeQualifier::None, 32, identifier_token, CVQualifier::None);
+			if (type_has_unsized_array) type.set_unsized_outer_array_dimension(true);
+			DeclarationNode declaration(type, identifier_token);
+			declaration.set_unsized_array(true);
+			ASTNode declaration_node = ASTNode::emplace_node<DeclarationNode>(declaration);
+			return ASTNode::emplace_node<VariableDeclarationNode>(declaration_node, std::nullopt, StorageClass::Extern);
+		};
+		auto run = [&](bool commit_outer) {
+			std::optional<SymbolTable> slot;
+			FrontendContext context;
+			slot.emplace();
+			bindPersistentScopePublication(*slot);
+			const ASTNode existing_variable = make_variable(false);
+			REQUIRE(slot->insert(identifier, existing_variable));
+			const auto& existing_type = existing_variable.as<VariableDeclarationNode>()
+				.declaration().type_specifier_node();
+			REQUIRE_FALSE(existing_type.is_array());
+
+			auto outer = context.beginScratchTransaction();
+			{
+				auto inner = context.beginScratchTransaction();
+				REQUIRE(slot->insert(identifier, make_variable(true)));
+				CHECK(existing_type.is_array());
+				CHECK(existing_type.has_unsized_outer_array_dimension());
+				inner.commit();
+			}
+			slot.reset();
+			CHECK_FALSE(existing_type.is_array());
+			CHECK_FALSE(existing_type.has_unsized_outer_array_dimension());
+			slot.emplace();
+			if (commit_outer) outer.commit();
+			else outer.rollback();
+		};
+		run(true);
+		run(false);
 	}
 
 	TEST_CASE("Frontend scratch commit preserves symbol and namespace publication") {
@@ -3564,6 +3607,170 @@ int main() {
 		CHECK_FALSE(table.persistentScopePublicationEnabled());
 		CHECK(table.scopeCount() == 2u);
 		CHECK(readScopeMetadata(table, ScopeId{2}).scope_type == ScopeType::Block);
+	}
+
+	static_assert(!std::is_copy_constructible_v<SymbolTable>);
+	static_assert(!std::is_copy_assignable_v<SymbolTable>);
+	static_assert(!std::is_move_constructible_v<SymbolTable>);
+	static_assert(!std::is_move_assignable_v<SymbolTable>);
+	static_assert(std::is_nothrow_destructible_v<SymbolTable>);
+
+	TEST_CASE("SymbolTable reset unbinds and resets state and supports rebinding") {
+		FrontendContext context;
+		SymbolTable table;
+		table.enablePersistentScopePublication();
+		table.enter_scope(ScopeType::Block);
+		REQUIRE(table.scopeCount() == 2u);
+		REQUIRE(context.scopeRecordCount() == 2u);
+		table.setDiagnosticEngine(context.diagnostics());
+
+		table.reset();
+		CHECK(table.scopeCount() == 1u);
+		CHECK(table.currentScopeId() == ScopeId{1});
+		CHECK_FALSE(table.persistentScopePublicationEnabled());
+		CHECK(table.persistentScopePublicationContext() == nullptr);
+		CHECK(context.scopeRecordCount() == 2u);
+
+		bindPersistentScopePublication(table);
+		auto transaction = context.beginScratchTransaction();
+		table.enter_scope(ScopeType::Block);
+		CHECK_THROWS_AS(table.reset(), InternalError);
+		CHECK(table.persistentScopePublicationContext() == &context);
+		CHECK(table.currentScopeId() == context.currentScopeId());
+		transaction.rollback();
+		CHECK(table.currentScopeId() == ScopeId{1});
+		CHECK(context.currentScopeId() == ScopeId{1});
+
+		table.reset();
+		CHECK(table.persistentScopePublicationContext() == nullptr);
+		FrontendContext fresh_context;
+		table.enablePersistentScopePublication();
+		auto fresh_transaction = fresh_context.beginScratchTransaction();
+		table.enter_scope(ScopeType::Function);
+		fresh_transaction.commit();
+		CHECK(table.currentScopeId() == fresh_context.currentScopeId());
+		CHECK(table.scopeCount() == 2u);
+	}
+
+	TEST_CASE("Resetting an idle bound SymbolTable preserves shared owner scopes") {
+		FrontendContext context;
+		SymbolTable owner;
+		SymbolTable idle_table;
+		owner.enablePersistentScopePublication();
+		bindPersistentScopePublication(idle_table);
+		owner.enter_scope(ScopeType::Block);
+		REQUIRE(context.scopeRecordCount() == 2u);
+		REQUIRE(owner.currentScopeId() == ScopeId{2});
+
+		idle_table.reset();
+		CHECK(context.scopeRecordCount() == 2u);
+		CHECK(context.currentScopeId() == ScopeId{2});
+		CHECK(owner.currentScopeId() == ScopeId{2});
+		CHECK(owner.persistentScopePublicationContext() == &context);
+
+		auto transaction = context.beginScratchTransaction();
+		owner.enter_scope(ScopeType::Function);
+		CHECK(owner.currentScopeId() == ScopeId{3});
+		transaction.rollback();
+		CHECK(owner.currentScopeId() == ScopeId{2});
+		CHECK(context.currentScopeId() == ScopeId{2});
+	}
+
+	TEST_CASE("Destroyed SymbolTable address reuse does not enlist a fresh table in stale journals") {
+		auto checkAddressReuse = [](bool rollback, bool nested) {
+			std::optional<SymbolTable> slot;
+			FrontendContext context;
+			slot.emplace();
+			slot->enablePersistentScopePublication();
+			slot.reset();
+			slot.emplace();
+			auto outer = context.beginScratchTransaction();
+			if (nested) {
+				auto inner = context.beginScratchTransaction();
+				CHECK_NOTHROW(slot->clear());
+				if (rollback) inner.rollback();
+				else inner.commit();
+			}
+			CHECK_NOTHROW(slot->clear());
+			if (rollback) outer.rollback();
+			else outer.commit();
+		};
+		checkAddressReuse(false, false);
+		checkAddressReuse(true, false);
+		checkAddressReuse(false, true);
+		checkAddressReuse(true, true);
+	}
+
+	TEST_CASE("Surviving SymbolTable can rebind after FrontendContext teardown") {
+		SymbolTable table;
+		{
+			FrontendContext context;
+			table.enablePersistentScopePublication();
+			REQUIRE(table.persistentScopePublicationEnabled());
+		}
+		CHECK_FALSE(table.persistentScopePublicationEnabled());
+		CHECK(table.persistentScopePublicationContext() == nullptr);
+		FrontendContext fresh_context;
+		table.enablePersistentScopePublication();
+		CHECK(table.persistentScopePublicationEnabled());
+		CHECK(table.persistentScopePublicationContext() == &fresh_context);
+		auto transaction = fresh_context.beginScratchTransaction();
+		table.enter_scope(ScopeType::Block);
+		transaction.commit();
+		CHECK(table.currentScopeId() == fresh_context.currentScopeId());
+		CHECK_NOTHROW(table.clear());
+	}
+
+	TEST_CASE("SymbolTable destruction during nested frontend transactions leaves no stale binding") {
+		auto run = [](bool rollback) {
+			std::optional<SymbolTable> slot;
+			FrontendContext context;
+			slot.emplace();
+			slot->enablePersistentScopePublication();
+			auto outer = context.beginScratchTransaction();
+			{
+				auto inner = context.beginScratchTransaction();
+				slot.reset();
+				slot.emplace();
+				CHECK_NOTHROW(slot->clear());
+				if (rollback) inner.rollback();
+				else inner.commit();
+			}
+			CHECK_NOTHROW(slot->clear());
+			if (rollback) outer.rollback();
+			else outer.commit();
+		};
+		run(false);
+		run(true);
+	}
+
+	TEST_CASE("Many SymbolTable lifetimes close frontend journals without stale pointers") {
+		auto checkTransactionClose = [](bool rollback) {
+			std::deque<SymbolTable> tables;
+			FrontendContext context;
+			for (size_t index = 0; index < 1024; ++index) {
+				tables.emplace_back();
+				tables.back().enablePersistentScopePublication();
+			}
+			auto transaction = context.beginScratchTransaction();
+			tables.clear();
+			if (rollback) transaction.rollback();
+			else transaction.commit();
+		};
+		checkTransactionClose(false);
+		checkTransactionClose(true);
+
+		std::deque<SymbolTable> surviving_tables;
+		{
+			FrontendContext context;
+			for (size_t index = 0; index < 1024; ++index) {
+				surviving_tables.emplace_back();
+				surviving_tables.back().enablePersistentScopePublication();
+			}
+		}
+		CHECK(std::all_of(surviving_tables.begin(), surviving_tables.end(), [](const SymbolTable& table) {
+			return !table.persistentScopePublicationEnabled();
+		}));
 	}
 
 	TEST_CASE("bindPersistentScopePublication resyncs an already-published table") {

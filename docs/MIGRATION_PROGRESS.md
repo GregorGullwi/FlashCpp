@@ -60,6 +60,11 @@ Scope creation and cursor movement now share that boundary: symbol-map undo runs
 before provisional symbol-table slots and frontend `ScopeRecord`s are truncated.
 Rollback restores the current, lookup, and declaring cursors; nested commits stay
 provisional, and persistent-scope reset is rejected during an open transaction.
+Bound symbol tables roll back their own unfinished journals before unregistering
+on destruction, preserving undo of retained declaration changes. Context teardown
+detaches surviving tables. Tables are pinned, and parser/test
+resets use an explicit reset that rejects active table journals, detaches before
+clearing local state, and preserves the context's retained scope records.
 Cold type payload arenas, in-place rewrites of pre-existing `TypeInfo` rows,
 legacy AST nodes, and parser state stay outside this first boundary. Native
 guards cover rollback, commit, overwritten bindings, nested commit, and

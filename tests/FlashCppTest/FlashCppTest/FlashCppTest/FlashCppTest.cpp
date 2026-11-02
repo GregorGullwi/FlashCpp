@@ -68,7 +68,7 @@ TEST_CASE("Windows large unwind allocations preserve the full byte count") {
 
 namespace {
 void isolateGlobalSymbolTable() {
-	gSymbolTable = SymbolTable();
+	gSymbolTable.reset();
 }
 
 struct GlobalSymbolTableIsolator : doctest::IReporter {

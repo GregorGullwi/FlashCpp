@@ -173,15 +173,34 @@ void FrontendContext::registerPersistentScopePublicationTable(SymbolTable& table
 }
 
 void FrontendContext::releasePersistentScopePublicationTables() {
-	for (SymbolTable* table : persistent_scope_publication_tables_) {
-		table->clearPersistentScopePublicationBinding();
+	while (!persistent_scope_publication_tables_.empty()) {
+		persistent_scope_publication_tables_.back()->clearPersistentScopePublicationBinding();
 	}
-	persistent_scope_publication_tables_.clear();
 }
 
-void SymbolTable::clearPersistentScopePublicationBinding() {
+SymbolTable::~SymbolTable() noexcept {
+	// Undo retained declaration changes before abandoning this table's journals.
+	while (!publication_transaction_marks_.empty()) rollbackPublicationTransaction(publication_transaction_marks_.size());
+	clearPersistentScopePublicationBinding();
+}
+
+void SymbolTable::clearPersistentScopePublicationBinding() noexcept {
+	if (persistent_scope_publication_context_ != nullptr) {
+		auto& tables = persistent_scope_publication_context_->persistent_scope_publication_tables_;
+		if (!tables.empty() && tables.back() == this) tables.pop_back();
+		else std::erase(tables, this);
+	}
 	publish_persistent_scopes_ = false;
 	persistent_scope_publication_context_ = nullptr;
+}
+
+void SymbolTable::reset() {
+	if (!publication_transaction_marks_.empty()) {
+		throw InternalError("SymbolTable: reset during publication transaction");
+	}
+	clearPersistentScopePublicationBinding();
+	clear();
+	diagnostics_ = nullptr;
 }
 
 void SymbolTable::enablePersistentScopePublication() {

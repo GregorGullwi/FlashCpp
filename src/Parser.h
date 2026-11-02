@@ -577,7 +577,7 @@ public:
 
 	ParseResult parse() {
 		resetTemplateInstantiationCounters();
-		gSymbolTable = SymbolTable();
+		gSymbolTable.reset();
 		gSymbolTable.setDiagnosticEngine(context_.diagnostics());
 		bindPersistentScopePublication(gSymbolTable);
 		register_builtin_functions();
