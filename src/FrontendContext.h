@@ -246,18 +246,17 @@ public:
 		return *record;
 	}
 
-	void recordPersistentScopeEnter(
-		ScopeId id,
-		ScopeId parent_id,
-		ScopeType scope_type,
-		uint32_t depth,
-		NamespaceHandle namespace_handle) {
+	void validatePersistentScopeEnter(ScopeId id, ScopeId parent_id) const {
 		if (!id || id.value != static_cast<uint32_t>(scope_records_.size() + 1u)) {
 			throw InternalError("FrontendContext: persistent ScopeId diverged from the scope arena");
 		}
 		if (!parent_id || findScopeRecord(parent_id) == nullptr) {
 			throw InternalError("FrontendContext: published scope parent is not in the arena");
 		}
+	}
+
+	void recordPersistentScopeEnter(ScopeId id, ScopeId parent_id, ScopeType scope_type, uint32_t depth, NamespaceHandle namespace_handle) {
+		validatePersistentScopeEnter(id, parent_id);
 		ScopeRecord record{};
 		record.id = id;
 		record.parent_id = parent_id;

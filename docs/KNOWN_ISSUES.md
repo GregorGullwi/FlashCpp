@@ -271,9 +271,9 @@ until registry ownership or journal enlistment moves to a shared coordinator.
 
 All tables bound to one `FrontendContext` share its scope ID sequence and cursor.
 If one table creates scopes, another table still at the root cannot append its
-own topology: its next local scope ID conflicts with the context arena. The
-current check throws after the local append. Keep one scope-producing table per
-context until scope ownership or the preflight rejection is made explicit.
+own topology: its next local scope ID conflicts with the context arena. Keep one
+scope-producing table per context until scopes and cursors have independent
+ownership.
 
 ## Member-function-pointer address-of only lowers non-virtual, non-adjusted cases
 

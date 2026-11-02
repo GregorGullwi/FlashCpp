@@ -245,6 +245,10 @@ void bindPersistentScopePublication(SymbolTable& table) {
 	table.enablePersistentScopePublication();
 }
 
+void validatePersistentScopeEnter(const SymbolTable& table, ScopeId id, ScopeId parent_id) {
+	requirePersistentScopePublicationContext(table).validatePersistentScopeEnter(id, parent_id);
+}
+
 void publishPersistentScopeEnter(
 	SymbolTable& table,
 	ScopeId id,

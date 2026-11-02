@@ -27,6 +27,7 @@ class FrontendContext;
 class SymbolTable;
 
 // Out-of-line in Globals.cpp so SymbolTable.h does not include FrontendContext.h.
+void validatePersistentScopeEnter(const SymbolTable& table, ScopeId id, ScopeId parent_id);
 void publishPersistentScopeEnter(
 	SymbolTable& table,
 	ScopeId id,
@@ -1463,6 +1464,7 @@ public:
 	}
 
 	void enter_scope(ScopeType scopeType) {
+		validateScopeEntryIfEnabled();
 		const ScopeMetadataView parent_metadata = scopeMetadataAtIndex(current_scope_index_);
 		const uint32_t new_depth = parent_metadata.depth + 1;
 		const ScopeId parent_id = currentScopeId();
@@ -1474,14 +1476,11 @@ public:
 				scopeType,
 				NamespaceHandle{NamespaceHandle::INVALID_HANDLE}});
 		current_scope_index_ = scopes_.size() - 1;
-		publishPersistentScopeEnterIfEnabled(
-			parent_id,
-			scopeType,
-			new_depth,
-			NamespaceHandle{NamespaceHandle::INVALID_HANDLE});
+		publishPersistentScopeEnterIfEnabled(parent_id, scopeType, new_depth, NamespaceHandle{NamespaceHandle::INVALID_HANDLE});
 	}
 
 	void enter_namespace(NamespaceHandle ns_handle) {
+		validateScopeEntryIfEnabled();
 		const ScopeMetadataView parent_metadata = scopeMetadataAtIndex(current_scope_index_);
 		const uint32_t new_depth = parent_metadata.depth + 1;
 		const ScopeId parent_id = currentScopeId();
@@ -1495,17 +1494,13 @@ public:
 			// redeclarations across reopened blocks. Do not preload into scope.symbols.
 		}
 		scopes_.push_back(std::move(scope));
-		appendScopeMetadata(
-			ScopeMetadataView{parent_id, new_depth, ScopeType::Namespace, ns_handle});
+		appendScopeMetadata(ScopeMetadataView{parent_id, new_depth, ScopeType::Namespace, ns_handle});
 		current_scope_index_ = scopes_.size() - 1;
-		publishPersistentScopeEnterIfEnabled(
-			parent_id,
-			ScopeType::Namespace,
-			new_depth,
-			ns_handle);
+		publishPersistentScopeEnterIfEnabled(parent_id, ScopeType::Namespace, new_depth, ns_handle);
 	}
 
 	void enter_namespace(std::string_view namespace_name) {
+		validateScopeEntryIfEnabled();
 		NamespaceHandle parent_handle = get_current_namespace_handle();
 		StringHandle name_handle = StringTable::getOrInternStringHandle(namespace_name);
 		NamespaceHandle ns_handle = gNamespaceRegistry.getOrCreateNamespace(parent_handle, name_handle);
@@ -1522,11 +1517,7 @@ public:
 					ScopeType::Namespace,
 					NamespaceHandle{NamespaceHandle::INVALID_HANDLE}});
 			current_scope_index_ = scopes_.size() - 1;
-			publishPersistentScopeEnterIfEnabled(
-				parent_id,
-				ScopeType::Namespace,
-				new_depth,
-				NamespaceHandle{NamespaceHandle::INVALID_HANDLE});
+			publishPersistentScopeEnterIfEnabled(parent_id, ScopeType::Namespace, new_depth, NamespaceHandle{NamespaceHandle::INVALID_HANDLE});
 			return;
 		}
 		enter_namespace(ns_handle);
@@ -2238,6 +2229,11 @@ private:
 	ScopeMetadataView scopeMetadataAtIndex(std::size_t scope_index) const {
 		return readScopeMetadata(*this, ScopeId{static_cast<uint32_t>(scope_index + 1)});
 	}
+	void validateScopeEntryIfEnabled() const {
+		if (!publish_persistent_scopes_) return;
+		validatePersistentScopeEnter(*this, ScopeId{static_cast<uint32_t>(scopes_.size() + 1u)}, currentScopeId());
+	}
+
 	void publishPersistentScopeEnterIfEnabled(
 		ScopeId parent_id,
 		ScopeType scope_type,
