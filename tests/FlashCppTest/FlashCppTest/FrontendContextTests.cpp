@@ -494,6 +494,69 @@ TEST_SUITE("FrontendContext") {
 		CHECK(findTypeByName(provisional_name) == nullptr);
 	}
 
+	TEST_CASE("Frontend scratch transactions reject overlapping context journals") {
+		clearLegacyTypeTablesForTesting();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+		initialize_native_types();
+		SymbolTable symbols;
+		FrontendContext first;
+		bindPersistentScopePublication(symbols);
+		FrontendContext second;
+		const size_t original_types = getTypeInfoCount();
+		const size_t original_namespaces = gNamespaceRegistry.currentSize();
+		const StringHandle type_name = StringTable::getOrInternStringHandle("frontend_tx_context_owner_type");
+		const StringHandle namespace_name = StringTable::getOrInternStringHandle("frontend_tx_context_owner_namespace");
+		const StringHandle nested_name = StringTable::getOrInternStringHandle("frontend_tx_context_owner_nested_type");
+		const ASTNode literal = ASTNode::emplace_node<ExpressionNode>(
+			NumericLiteralNode(Token{}, uint64_t{7}, TypeCategory::Int, TypeQualifier::None, 32));
+		{
+			auto outer = first.beginScratchTransaction();
+			const TypeCreationResult type = add_struct_type(type_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+			symbols.insert_into_namespace(NamespaceRegistry::GLOBAL_NAMESPACE, type_name, literal, false);
+			const NamespaceHandle ns = gNamespaceRegistry.getOrCreateNamespace(NamespaceRegistry::GLOBAL_NAMESPACE, namespace_name);
+			CHECK_THROWS_AS(second.beginScratchTransaction(), InternalError);
+			CHECK(findTypeByName(type_name) == &type.info);
+			CHECK(symbols.lookup_qualified(NamespaceRegistry::GLOBAL_NAMESPACE, type_name).has_value());
+			CHECK(gNamespaceRegistry.lookupNamespace(NamespaceRegistry::GLOBAL_NAMESPACE, namespace_name) == ns);
+			{
+				auto inner = first.beginScratchTransaction();
+				add_struct_type(nested_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+				inner.commit();
+			}
+			CHECK_THROWS_AS(second.beginScratchTransaction(), InternalError);
+			outer.rollback();
+		}
+		CHECK(getTypeInfoCount() == original_types);
+		CHECK_FALSE(symbols.lookup_qualified(NamespaceRegistry::GLOBAL_NAMESPACE, type_name).has_value());
+		CHECK(gNamespaceRegistry.currentSize() == original_namespaces);
+		CHECK(findTypeByName(type_name) == nullptr);
+		CHECK(findTypeByName(nested_name) == nullptr);
+		{
+			auto owner = second.beginScratchTransaction();
+			add_struct_type(type_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+			CHECK_THROWS_AS(first.beginScratchTransaction(), InternalError);
+			owner.commit();
+		}
+		CHECK(findTypeByName(type_name) != nullptr);
+		{
+			auto owner = first.beginScratchTransaction();
+			add_struct_type(nested_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+			owner.rollback();
+		}
+		CHECK(findTypeByName(type_name) != nullptr);
+		CHECK(findTypeByName(nested_name) == nullptr);
+		CHECK(getTypeInfoCount() == original_types + 1);
+		try {
+			auto owner = first.beginScratchTransaction();
+			add_struct_type(nested_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+			throw InternalError("frontend transaction owner unwind probe");
+		} catch (const InternalError&) {
+		}
+		CHECK(findTypeByName(nested_name) == nullptr);
+		auto retry = second.beginScratchTransaction();
+		retry.commit();
+	}
+
 	TEST_CASE("Legacy type registry journal rejects out-of-order completion") {
 		clearLegacyTypeTablesForTesting();
 		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });

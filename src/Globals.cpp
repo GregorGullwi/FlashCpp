@@ -53,6 +53,10 @@ InstantiationQueue gInstantiationQueue;
 // FrontendContext.h (and so this is not its own modular translation unit).
 namespace {
 
+// Namespace and legacy type journals are process-global until registry ownership
+// migrates. Reject overlapping owners rather than mixing context-local journals.
+FrontendContext* gFrontendPublicationJournalOwner = nullptr;
+
 FrontendContext& requireActiveFrontendContext() {
 	FrontendContext* context = FrontendContext::active();
 	if (context == nullptr) {
@@ -72,6 +76,9 @@ FrontendContext& requirePersistentScopePublicationContext(const SymbolTable& tab
 }
 
 FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& context) {
+	if (gFrontendPublicationJournalOwner != nullptr && gFrontendPublicationJournalOwner != &context) {
+		throw InternalError("FrontendContext: overlapping publication transactions require the same context");
+	}
 	const size_t context_depth = context.publication_transaction_depth_ + 1U;
 	const size_t namespace_depth = gNamespaceRegistry.beginPublicationTransaction();
 	const LegacyTypeRegistryJournalMark legacy_type_registry_depth = beginLegacyTypeRegistryJournal();
@@ -96,11 +103,12 @@ FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& 
 	}
 
 	context.publication_transaction_depth_ = context_depth;
+	gFrontendPublicationJournalOwner = &context;
 	return FrontendPublicationJournalMark{context_depth, namespace_depth, legacy_type_registry_depth};
 }
 
 void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicationJournalMark mark) {
-	if (context.publication_transaction_depth_ != mark.context_depth) {
+	if (gFrontendPublicationJournalOwner != &context || context.publication_transaction_depth_ != mark.context_depth) {
 		throw InternalError("FrontendContext: publication transactions must close in nesting order");
 	}
 	for (auto it = context.persistent_scope_publication_tables_.rbegin();
@@ -111,10 +119,13 @@ void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicat
 	gNamespaceRegistry.commitPublicationTransaction(mark.namespace_depth);
 	commitLegacyTypeRegistryJournal(mark.legacy_type_registry_depth);
 	--context.publication_transaction_depth_;
+	if (context.publication_transaction_depth_ == 0) {
+		gFrontendPublicationJournalOwner = nullptr;
+	}
 }
 
 void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublicationJournalMark mark) {
-	if (context.publication_transaction_depth_ != mark.context_depth) {
+	if (gFrontendPublicationJournalOwner != &context || context.publication_transaction_depth_ != mark.context_depth) {
 		throw InternalError("FrontendContext: publication transactions must close in nesting order");
 	}
 	for (auto it = context.persistent_scope_publication_tables_.rbegin();
@@ -125,6 +136,9 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 	gNamespaceRegistry.rollbackPublicationTransaction(mark.namespace_depth);
 	rollbackLegacyTypeRegistryJournal(mark.legacy_type_registry_depth);
 	--context.publication_transaction_depth_;
+	if (context.publication_transaction_depth_ == 0) {
+		gFrontendPublicationJournalOwner = nullptr;
+	}
 }
 
 void FrontendContext::registerPersistentScopePublicationTable(SymbolTable& table) {
