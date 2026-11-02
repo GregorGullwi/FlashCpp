@@ -275,14 +275,6 @@ own topology: its next local scope ID conflicts with the context arena. The
 current check throws after the local append. Keep one scope-producing table per
 context until scope ownership or the preflight rejection is made explicit.
 
-## Bound symbol-table destruction does not unregister from its frontend context
-
-`FrontendContext` retains raw pointers to bound `SymbolTable`s, and table
-destruction does not remove those pointers. Destroying a bound table before its
-context leaves stale entries for subsequent publication transactions and context
-teardown. Add lifetime-aware unregistration before allowing independently scoped
-bound tables; keep each bound table alive through its context in the meantime.
-
 ## Member-function-pointer address-of only lowers non-virtual, non-adjusted cases
 
 `int (S::*p)() = &S::f;` now materializes a runtime member-function pointer for

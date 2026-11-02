@@ -288,7 +288,19 @@ inline void stampLexicalScopeOnDeclaration(ASTNode& node, ScopeId scope_id) {
 } // namespace SymbolTableDetail
 
 class SymbolTable {
+	friend class FrontendContext;
+
 public:
+	SymbolTable() = default;
+	~SymbolTable() noexcept;
+	SymbolTable(const SymbolTable&) = delete;
+	SymbolTable& operator=(const SymbolTable&) = delete;
+	SymbolTable(SymbolTable&&) = delete;
+	SymbolTable& operator=(SymbolTable&&) = delete;
+
+	// Reset publication and diagnostic state without changing this table's address.
+	void reset();
+
 	void setDiagnosticEngine(DiagnosticEngine& diagnostics) {
 		diagnostics_ = &diagnostics;
 	}
@@ -350,8 +362,6 @@ public:
 	}
 
 	void enablePersistentScopePublication();
-
-	void clearPersistentScopePublicationBinding();
 
 	bool persistentScopePublicationEnabled() const {
 		return publish_persistent_scopes_;
@@ -1882,6 +1892,8 @@ public:
 	}
 
 private:
+	void clearPersistentScopePublicationBinding() noexcept;
+
 	struct PublicationCheckpoint {
 		size_t mutation_count;
 		size_t scope_count;
