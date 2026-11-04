@@ -20,8 +20,9 @@
 //   records own message and argument text through stable engine-side storage,
 //   notes (via pool indices), and a value-copy of the active
 //   template-instantiation context captured at report time.
-// - Nothing stored here escapes by pointer or reference except const views
-//   whose validity matches the engine lifetime.
+// - Text views and note-pool indices remain valid for the engine lifetime,
+//   including copies carried by CompileError. Record/note references follow
+//   vector invalidation rules; indices of rolled-back records are invalid.
 // - DiagnosticId values are stable forever and never derived from message
 //   text. New IDs must take unused numbers inside their family block so a
 //   later fixer registry keyed by DiagnosticId stays collision-free.
@@ -780,7 +781,11 @@ inline std::string renderDiagnosticMessage(
 	return std::string(builder.commit());
 }
 
+class DiagnosticTransaction;
+
 class DiagnosticEngine {
+	friend class DiagnosticTransaction;
+
 public:
 	// RAII frame for nested template-instantiation context. Frames snapshot
 	// into reported diagnostics by value, so unwinding cannot corrupt them.
@@ -829,8 +834,9 @@ public:
 		return index;
 	}
 
-	void attachNote(uint32_t diagnostic_index, DiagnosticId id, SourceLocation location,
-					std::string_view message_template, std::span<const DiagnosticArgument> arguments) {
+	void attachNote(uint32_t diagnostic_index, DiagnosticId id, SourceLocation location, std::string_view message_template,
+		std::span<const DiagnosticArgument> arguments) {
+		if (active_transaction_ != nullptr) recordNoteAttachment(diagnostic_index);
 		DiagnosticNote note;
 		note.id = id;
 		note.location = location;
@@ -874,9 +880,17 @@ public:
 	}
 
 private:
+	struct NoteAttachmentUndo {
+		size_t note_count;
+		uint32_t diagnostic_index;
+	};
+
+	void recordNoteAttachment(uint32_t diagnostic_index);
+
 	uint32_t append(Diagnostic diagnostic) {
-		++severity_counts_[static_cast<size_t>(diagnostic.severity)];
+		const DiagnosticSeverity severity = diagnostic.severity;
 		diagnostics_.push_back(std::move(diagnostic));
+		++severity_counts_[static_cast<size_t>(severity)];
 		return static_cast<uint32_t>(diagnostics_.size() - 1);
 	}
 
@@ -908,6 +922,32 @@ private:
 	std::vector<TemplateInstantiationFrame> template_context_;
 	std::deque<std::string> text_storage_;
 	size_t severity_counts_[4] = {0, 0, 0, 0};
+	std::vector<NoteAttachmentUndo> note_attachment_undos_;
+	DiagnosticTransaction* active_transaction_ = nullptr;
+};
+
+// Candidate-local record publication. Nested commits remain provisional;
+// backing text and notes stay engine-owned for escaped CompileError copies.
+// Template-context guards own their independent stack. Required instantiation
+// diagnostics must remain outside a candidate-local transaction.
+class DiagnosticTransaction {
+public:
+	explicit DiagnosticTransaction(DiagnosticEngine& engine);
+	~DiagnosticTransaction() noexcept;
+	DiagnosticTransaction(const DiagnosticTransaction&) = delete;
+	DiagnosticTransaction& operator=(const DiagnosticTransaction&) = delete;
+	DiagnosticTransaction(DiagnosticTransaction&&) = delete;
+	DiagnosticTransaction& operator=(DiagnosticTransaction&&) = delete;
+
+	void validateCompletion() const;
+	void commit();
+	void rollback();
+
+private:
+	DiagnosticEngine* engine_;
+	DiagnosticTransaction* parent_;
+	size_t diagnostic_count_;
+	size_t note_undo_count_;
 };
 
 // Resolve a location to "path:line:col: " using the translation-unit file

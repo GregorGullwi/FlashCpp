@@ -69,6 +69,11 @@ Scope entry preflights the proposed local scope ID and parent through the same
 context validation used at publication. A conflicting table is rejected before
 local scope/cursor changes or namespace creation/declaration; independent table
 topologies remain unsupported.
+Frontend scratch transactions also journal their context-owned diagnostic
+records, severity counts, and note attachments to retained diagnostics. Nested
+commits stay provisional, while template-context guards own their independent
+stack. Text and note backing storage remains live for legacy `CompileError`
+copies; the separate parser `CompileContext` engine is not automatically enlisted.
 Cold type payload arenas, in-place rewrites of pre-existing `TypeInfo` rows,
 legacy AST nodes, and parser state stay outside this first boundary. Native
 guards cover rollback, commit, overwritten bindings, nested commit, and
@@ -328,7 +333,8 @@ These seed adjacent slices; the authoritative inventory is
 ## Other open boundaries
 
 - **Scratch rollback and publication:** `FrontendScratchTransaction` journals
-  scratch state, `DeclarationBuilder`, `TemplateDeclTable`, legacy type-registry
+  scratch state, candidate diagnostic records and note attachments,
+  `DeclarationBuilder`, `TemplateDeclTable`, legacy type-registry
   rows and name/native bindings, bound `SymbolTable` publication maps, in-place
   global/namespace variable array type normalization, and namespace metadata.
   Cold type payload arenas and in-place rewrites of pre-existing `TypeInfo` rows
