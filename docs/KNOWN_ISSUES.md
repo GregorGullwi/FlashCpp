@@ -237,11 +237,13 @@ establish stack safety for these remaining forms.
 ## Legacy flat consumers cannot yet handle interleaved pointer/array declarators
 
 Canonical `TypeId` identity is authoritative where imported, but unmigrated
-consumers still read flat pointer/array projections. General IR object-storage
-consumers therefore fail closed for member storage of an interleaved
-pointer/array declarator. Other remaining flat readers also fail closed for
-non-projectable shapes; remove this entry when those consumers migrate and the
-compatibility projection fields are deleted.
+consumers still read flat pointer/array projections. Member layout and constexpr
+member sizing now consume the ordered declarator spine, so an interleaved member
+such as `int (*cells[3])[4]` keeps pointer-sized elements and pointer alignment
+instead of the flat base element size. Constexpr member typing also prefers the
+published member `TypeId` when one exists. Other remaining flat readers still
+fail closed for non-projectable shapes; remove this entry when those consumers
+migrate and the compatibility projection fields are deleted.
 
 The triviality and lifetime traits still read `StructTypeInfo` and need a
 published member-property schema. A lazy-constraint member-object-pointer trait

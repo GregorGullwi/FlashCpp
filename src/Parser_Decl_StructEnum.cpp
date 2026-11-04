@@ -3848,22 +3848,44 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 		} else if (type_spec.has_ordered_declarator() && !type_spec.declarator_components().empty() &&
 			type_spec.declarator_components().front().kind == DeclaratorComponentKind::Array) {
-			// Member-pointer declarators can keep their outer array suffix only in
-			// the ordered spine. Treat that spine as inline array storage so layout,
-			// initialization, and canonical import agree.
+			// C++20 [dcl.array]/[dcl.ptr]: the inline object is the outer array
+			// and each element is the type denoted by the remaining ordered spine.
+			// A pointer element keeps pointer size and alignment instead of the
+			// flat base type's size, so `int (*cells[3])[4]` occupies three
+			// pointers and aligns like a pointer object.
 			is_array = true;
-			for (const DeclaratorComponent& component : type_spec.declarator_components()) {
-				if (component.kind != DeclaratorComponentKind::Array) {
-					break;
-				}
+			TypeSpecifierNode element_type = type_spec;
+			size_t element_count = 1;
+			while (element_type.has_ordered_declarator() && !element_type.declarator_components().empty() &&
+				element_type.declarator_components().front().kind == DeclaratorComponentKind::Array) {
+				const DeclaratorComponent& component = element_type.declarator_components().front();
 				if (component.payload == 0) {
 					return errorf(DiagnosticId::ArrayBoundForMemberMustBePositive, decl.identifier_token(),
 						"Array bound for member '{}' must be greater than 0", decl.identifier_token().value());
 				}
 				const size_t dim_size = static_cast<size_t>(component.payload);
 				array_dimensions.push_back(dim_size);
-				member_size *= dim_size;
-				referenced_size_bits *= dim_size;
+				element_count *= dim_size;
+				element_type.remove_outermost_ordered_declarator_component();
+			}
+			const int element_size_bits = getTypeSpecSizeBits(element_type);
+			if (element_size_bits > 0) {
+				member_size = (static_cast<size_t>(element_size_bits) / 8) * element_count;
+				referenced_size_bits = static_cast<size_t>(element_size_bits) * element_count;
+				const bool pointer_element =
+					element_type.runtime_pointer_depth() > 0 ||
+					element_type.is_reference() ||
+					element_type.is_function_pointer() ||
+					element_type.is_member_function_pointer() ||
+					element_type.is_member_object_pointer_type();
+				member_alignment = pointer_element
+					? sizeof(void*)
+					: calculateResolvedMemberSizeAndAlignment(element_type, element_type.type_index()).alignment;
+			} else {
+				// Incomplete or still-dependent element types keep the previous
+				// deferral instead of inventing an object size.
+				member_size *= element_count;
+				referenced_size_bits *= element_count;
 			}
 		} else if (type_spec.has_pointee_array_declarator()) {
 			pointee_array_declarator = true;
