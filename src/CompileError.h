@@ -1,12 +1,14 @@
 #pragma once
 
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 
-#include "Diagnostics.h"
+#include "DiagnosticSnapshot.h"
 
 // Semantic compilation error - distinct from InternalError so convert() can let
 // these propagate unchanged while still catching internal codegen limitations.
@@ -30,44 +32,38 @@ public:
 		recordDiagnosticEmittedOutsideEngine();
 	}
 
-	// Bridge constructor: takes ownership of an engine-reported diagnostic.
-	// what() stays the rendered message so existing catch sites keep working;
-	// engine-aware catch sites print the located, note-attached rendering.
-	static CompileError fromStructuredDiagnostic(Diagnostic diagnostic) {
-		std::string rendered_message = renderDiagnosticMessage(
-			diagnostic.message_template, diagnostic.arguments);
-		return CompileError(std::move(rendered_message), std::move(diagnostic), BridgeTag{});
-	}
+	CompileError(const CompileError&) = default;
+	CompileError& operator=(const CompileError& other);
+	CompileError(CompileError&& other) noexcept;
+	CompileError& operator=(CompileError&& other) noexcept;
 
+	// Capture while the record is published. The resulting error owns its text
+	// and notes independently of the reporting engine.
+	static CompileError fromStructuredDiagnostic(const DiagnosticEngine& engine, uint32_t diagnostic_index);
+
+	// Note indices are local to structuredNotes(), not to a DiagnosticEngine.
 	const Diagnostic* structuredDiagnostic() const noexcept {
-		return has_structured_ ? &structured_ : nullptr;
+		return structured_ ? &structured_->diagnostic() : nullptr;
 	}
+	std::span<const DiagnosticNote> structuredNotes() const noexcept {
+		return structured_ ? structured_->notes() : std::span<const DiagnosticNote>{};
+	}
+	std::string renderStructuredDiagnostic(const std::deque<std::string>& file_paths) const;
 
 private:
 	struct BridgeTag {};
-
-	CompileError(std::string rendered_message, Diagnostic diagnostic, BridgeTag)
-		: std::runtime_error(std::move(rendered_message)),
-		  has_structured_(true),
-		  structured_(std::move(diagnostic)) {}
-
-	bool has_structured_ = false;
-	Diagnostic structured_{};
+	CompileError(std::string rendered_message, const DiagnosticEngine& engine, uint32_t diagnostic_index, BridgeTag);
+	std::optional<OwnedDiagnosticSnapshot> structured_;
 };
 
 // Single choke point for diagnostics that are recorded through the engine and
 // then cross an exception boundary. The engine keeps the accumulated record;
-// the returned error carries a value copy so catch sites can render located,
-// note-attached output without touching compiler state.
-inline CompileError makeStructuredCompileError(
-	DiagnosticEngine& engine,
-	DiagnosticId id,
-	DiagnosticSeverity severity,
-	SourceLocation location,
-	std::string_view message_template,
-	std::span<const DiagnosticArgument> arguments) {
+// the returned error owns a snapshot so catch sites can render located,
+// note-attached output independently of the reporting engine.
+inline CompileError makeStructuredCompileError(DiagnosticEngine& engine, DiagnosticId id, DiagnosticSeverity severity, SourceLocation location,
+	std::string_view message_template, std::span<const DiagnosticArgument> arguments) {
 	uint32_t diagnostic_index = engine.report(id, severity, location, message_template, arguments);
-	return CompileError::fromStructuredDiagnostic(engine.diagnostic(diagnostic_index));
+	return CompileError::fromStructuredDiagnostic(engine, diagnostic_index);
 }
 
 // Internal codegen limitation error - distinct from CompileError so convert()

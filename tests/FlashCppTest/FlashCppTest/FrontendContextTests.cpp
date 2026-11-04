@@ -6216,7 +6216,7 @@ TEST_SUITE("Diagnostics") {
 		FrontendContext context;
 		DiagnosticEngine& engine = context.diagnostics();
 		std::deque<std::string> paths{"exception.cpp"};
-		Diagnostic escaped_diagnostic;
+		std::optional<CompileError> escaped_error;
 		bool caught_error = false;
 		try {
 			auto transaction = context.beginScratchTransaction();
@@ -6233,7 +6233,7 @@ TEST_SUITE("Diagnostics") {
 			argument_text.assign("mutated");
 			note_template.assign("YYYYYYYYYYYY");
 			note_text.assign("changed");
-			throw CompileError::fromStructuredDiagnostic(engine.diagnostic(index));
+			throw CompileError::fromStructuredDiagnostic(engine, index);
 		} catch (const CompileError& error) {
 			caught_error = true;
 			const Diagnostic* diagnostic = error.structuredDiagnostic();
@@ -6241,7 +6241,7 @@ TEST_SUITE("Diagnostics") {
 			CHECK(diagnostic->id == DiagnosticId::TemplateStaticAssertFailure);
 			CHECK(diagnostic->severity == DiagnosticSeverity::Fatal);
 			CHECK(std::string(error.what()) == "dynamic error payload");
-			escaped_diagnostic = *diagnostic;
+			escaped_error.emplace(error);
 		}
 		CHECK(caught_error);
 		CHECK(engine.diagnostics().empty());
@@ -6256,11 +6256,159 @@ TEST_SUITE("Diagnostics") {
 			}
 			retry.rollback();
 		}
-		const std::string rendered = renderDiagnostic(escaped_diagnostic, engine, paths);
+		const std::string rendered = escaped_error->renderStructuredDiagnostic(paths);
 		CHECK(rendered.find("TemplateStaticAssertFailure") != std::string::npos);
 		CHECK(rendered.find("dynamic error payload") != std::string::npos);
 		CHECK(rendered.find("note: dynamic note detail") != std::string::npos);
 		CHECK(engine.diagnostics().empty());
+	}
+
+	TEST_CASE("Structured compile error metadata survives diagnostic engine destruction") {
+		std::string expected_template = "owned diagnostic template ";
+		expected_template.append(96, 't');
+		expected_template.append(" {}");
+		std::string expected_argument = "owned diagnostic argument ";
+		expected_argument.append(96, 'a');
+		std::optional<CompileError> escaped_error;
+		{
+			DiagnosticEngine engine;
+			const std::array<DiagnosticArgument, 1> arguments{DiagnosticArgument::text(expected_argument)};
+			const uint32_t index = engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error,
+				SourceLocation::fromParts(3, 7, 0), expected_template, arguments);
+			escaped_error.emplace(CompileError::fromStructuredDiagnostic(engine, index));
+		}
+
+		std::vector<std::string> churn;
+		churn.reserve(512);
+		for (uint32_t i = 0; i < 512u; ++i) churn.emplace_back(i % 2u == 0u ? 64u : 128u, static_cast<char>('A' + i % 26u));
+		const Diagnostic* diagnostic = escaped_error->structuredDiagnostic();
+		REQUIRE(diagnostic != nullptr);
+		CHECK(diagnostic->message_template == expected_template);
+		REQUIRE(diagnostic->arguments.size() == 1u);
+		CHECK(diagnostic->arguments[0].text_value == expected_argument);
+	}
+
+	TEST_CASE("Owned structured diagnostic snapshots preserve notes context and value semantics") {
+		const StringHandle interned = StringTable::getOrInternStringHandle("OwnedInternedName");
+		std::optional<CompileError> original;
+		std::deque<std::string> paths{"owned.cpp"};
+		{
+			DiagnosticEngine engine;
+			const uint32_t decoy = engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Warning, SourceLocation{},
+				"decoy", std::span<const DiagnosticArgument>{});
+			engine.attachNote(decoy, DiagnosticId::NoteToMatchOpeningBracket, SourceLocation{}, "decoy note", std::span<const DiagnosticArgument>{});
+			const StringHandle outer = StringTable::getOrInternStringHandle("OuterOwned<int>");
+			const StringHandle inner = StringTable::getOrInternStringHandle("InnerOwned<long>");
+			DiagnosticEngine::TemplateContextGuard outer_guard(engine, outer, SourceLocation::fromParts(2, 3, 0));
+			DiagnosticEngine::TemplateContextGuard inner_guard(engine, inner, SourceLocation::fromParts(4, 5, 0));
+			const std::string long_argument(96, 'L');
+			const std::string long_note(80, 'N');
+			const std::array<DiagnosticArgument, 5> arguments{
+				DiagnosticArgument::text("short"), DiagnosticArgument::text(""), DiagnosticArgument::text(long_argument),
+				DiagnosticArgument::signedInteger(-42), DiagnosticArgument::unsignedInteger(9000000000u)};
+			const uint32_t index = engine.reportWithRange(DiagnosticId::ExpectedCloseBracketAfterArraySize, DiagnosticSeverity::Error,
+				SourceLocation::fromParts(7, 9, 0), SourceRange::fromLocations(SourceLocation::fromParts(7, 2, 0), SourceLocation::fromParts(7, 9, 0)),
+				"owned {} {} {} {} {}", arguments);
+			const std::array<DiagnosticArgument, 4> note_arguments{
+				DiagnosticArgument::text("note short"), DiagnosticArgument::text(long_note),
+				DiagnosticArgument::signedInteger(-7), DiagnosticArgument::internedText(interned)};
+			engine.attachNote(index, DiagnosticId::NoteToMatchOpeningBracket, SourceLocation::fromParts(7, 2, 0),
+				"note {} {} {} {}", note_arguments);
+			for (uint32_t i = 0; i < 1024u; ++i) {
+				const std::array<DiagnosticArgument, 1> deep_note_argument{DiagnosticArgument::unsignedInteger(i)};
+				engine.attachNote(index, DiagnosticId::NoteToMatchOpeningBracket, SourceLocation::fromParts(8, i + 1u, 0),
+					"deep note {}", deep_note_argument);
+			}
+			original.emplace(CompileError::fromStructuredDiagnostic(engine, index));
+		}
+
+		const Diagnostic* snapshot = original->structuredDiagnostic();
+		REQUIRE(snapshot != nullptr);
+		CHECK(snapshot->location.line == 7u);
+		CHECK(snapshot->range.begin.column == 2u);
+		CHECK(snapshot->instantiation_context.size() == 2u);
+		CHECK(snapshot->instantiation_context[0].template_name == StringTable::getOrInternStringHandle("OuterOwned<int>"));
+		CHECK(snapshot->instantiation_context[1].template_name == StringTable::getOrInternStringHandle("InnerOwned<long>"));
+		REQUIRE(snapshot->note_indices.size() == 1025u);
+		CHECK(snapshot->note_indices[0] == 0u);
+		CHECK(original->structuredNotes().size() == 1025u);
+		CHECK(original->structuredNotes()[0].message_template == "note {} {} {} {}");
+		CHECK(original->structuredNotes()[0].arguments[3].value.interned_text == interned);
+		const std::string rendered = original->renderStructuredDiagnostic(paths);
+		CHECK(rendered.find("owned short  ") != std::string::npos);
+		CHECK(rendered.find("note: note note short") != std::string::npos);
+
+		CompileError copied = *original;
+		CompileError copy_assigned("assignment target");
+		copy_assigned = copied;
+		CompileError& copy_alias = copy_assigned;
+		copy_assigned = copy_alias;
+		CompileError moved = std::move(copy_assigned);
+		CHECK(copy_assigned.structuredDiagnostic() == nullptr);
+		CompileError move_assigned("move target");
+		move_assigned = std::move(moved);
+		CHECK(moved.structuredDiagnostic() == nullptr);
+		CompileError& move_alias = move_assigned;
+		move_assigned = std::move(move_alias);
+		original.reset();
+		CHECK(move_assigned.structuredNotes().size() == 1025u);
+		CHECK(move_assigned.renderStructuredDiagnostic(paths) == rendered);
+		CHECK(copied.structuredNotes().size() == 1025u);
+		CHECK(copied.renderStructuredDiagnostic(paths) == rendered);
+	}
+
+	TEST_CASE("Owned structured diagnostic snapshots preserve entirely empty text") {
+		std::optional<CompileError> original;
+		{
+			DiagnosticEngine engine;
+			const uint32_t index = engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error, SourceLocation{}, "",
+				std::span<const DiagnosticArgument>{});
+			engine.attachNote(index, DiagnosticId::NoteToMatchOpeningBracket, SourceLocation{}, "", std::span<const DiagnosticArgument>{});
+			original.emplace(CompileError::fromStructuredDiagnostic(engine, index));
+		}
+		CompileError copied = *original;
+		original.reset();
+		CompileError moved = std::move(copied);
+		REQUIRE(moved.structuredDiagnostic() != nullptr);
+		CHECK(moved.structuredDiagnostic()->message_template.empty());
+		REQUIRE(moved.structuredNotes().size() == 1u);
+		CHECK(moved.structuredNotes()[0].message_template.empty());
+		const std::deque<std::string> paths{"empty.cpp"};
+		CHECK(moved.renderStructuredDiagnostic(paths).find("note:") != std::string::npos);
+		CompileError legacy("legacy");
+		moved = legacy;
+		CHECK(moved.structuredDiagnostic() == nullptr);
+		CHECK(moved.structuredNotes().empty());
+		CHECK(std::string(moved.what()) == "legacy");
+	}
+
+	TEST_CASE("Deep template context snapshots remain owned after engine destruction") {
+		constexpr uint32_t context_depth = 1024u;
+		const StringHandle frame_name = StringTable::getOrInternStringHandle("DeepOwnedContextFrame");
+		std::optional<CompileError> escaped_error;
+		std::deque<std::string> paths{"deep-owned.cpp"};
+		{
+			DiagnosticEngine engine;
+			for (uint32_t i = 0; i < context_depth; ++i) {
+				engine.pushTemplateContext(frame_name, SourceLocation::fromParts(i + 1u, i % 80u + 1u, 0));
+			}
+			const uint32_t index = engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error,
+				SourceLocation::fromParts(1025u, 1, 0), "deep context snapshot", std::span<const DiagnosticArgument>{});
+			escaped_error.emplace(CompileError::fromStructuredDiagnostic(engine, index));
+			for (uint32_t i = 0; i < context_depth; ++i) engine.popTemplateContext();
+		}
+
+		const Diagnostic* snapshot = escaped_error->structuredDiagnostic();
+		REQUIRE(snapshot != nullptr);
+		REQUIRE(snapshot->instantiation_context.size() == context_depth);
+		CHECK(snapshot->instantiation_context.front().point_of_instantiation.line == 1u);
+		CHECK(snapshot->instantiation_context.back().point_of_instantiation.line == context_depth);
+		CompileError copied = *escaped_error;
+		CompileError moved = std::move(copied);
+		CHECK(copied.structuredDiagnostic() == nullptr);
+		CHECK(moved.structuredDiagnostic()->instantiation_context.size() == context_depth);
+		const std::string rendered = moved.renderStructuredDiagnostic(paths);
+		CHECK(rendered.find("DeepOwnedContextFrame") != std::string::npos);
 	}
 
 	TEST_CASE("Deep frontend diagnostic rollback truncates records and prefix note indices") {
@@ -6387,7 +6535,7 @@ TEST_SUITE("Diagnostics") {
 			declarator_argument);
 
 		try {
-			throw CompileError::fromStructuredDiagnostic(engine.diagnostic(index));
+			throw CompileError::fromStructuredDiagnostic(engine, index);
 		} catch (const CompileError& caught) {
 			CHECK(std::string(caught.what()) ==
 				  "Multiple __asm suffixes on declarator 'decl' are not supported");
@@ -6400,7 +6548,7 @@ TEST_SUITE("Diagnostics") {
 
 		// Copying the exception (throw does this implicitly) keeps the payload.
 		try {
-			throw CompileError::fromStructuredDiagnostic(engine.diagnostic(index));
+			throw CompileError::fromStructuredDiagnostic(engine, index);
 		} catch (const std::runtime_error& copied) {
 			const CompileError* compile_copy = dynamic_cast<const CompileError*>(&copied);
 			REQUIRE(compile_copy != nullptr);
@@ -6413,7 +6561,11 @@ TEST_SUITE("Diagnostics") {
 		uint64_t before = diagnosticsEmittedOutsideEngineCount();
 		{
 			CompileError legacy("legacy failure path");
-			(void)legacy;
+			const uint64_t after_legacy_construction = diagnosticsEmittedOutsideEngineCount();
+			CompileError legacy_copy = legacy;
+			CompileError& legacy_alias = legacy_copy;
+			legacy_copy = legacy_alias;
+			CHECK(diagnosticsEmittedOutsideEngineCount() == after_legacy_construction);
 		}
 		uint64_t after_legacy = diagnosticsEmittedOutsideEngineCount();
 		CHECK(after_legacy == before + 1);
@@ -6423,7 +6575,7 @@ TEST_SUITE("Diagnostics") {
 			uint32_t index = engine.report(
 				DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error,
 				SourceLocation::fromParts(1, 1, 0), "structured", {});
-			CompileError bridged = CompileError::fromStructuredDiagnostic(engine.diagnostic(index));
+			CompileError bridged = CompileError::fromStructuredDiagnostic(engine, index);
 			(void)bridged;
 		}
 		CHECK(diagnosticsEmittedOutsideEngineCount() == after_legacy);
@@ -6498,7 +6650,7 @@ TEST_SUITE("Diagnostics") {
 			CHECK(std::string(caught.what()) == "Cannot form a pointer to reference type");
 
 			std::deque<std::string> paths{"probe.cpp"};
-			std::string rendered = renderDiagnostic(*payload, local_context.diagnostics(), paths);
+			std::string rendered = caught.renderStructuredDiagnostic(paths);
 			CHECK(rendered.find("error: Cannot form a pointer to reference type [PointerToReferenceType#1001]") != std::string::npos);
 		}
 		CHECK(threw);

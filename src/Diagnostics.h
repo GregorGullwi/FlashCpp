@@ -21,8 +21,9 @@
 //   notes (via pool indices), and a value-copy of the active
 //   template-instantiation context captured at report time.
 // - Text views and note-pool indices remain valid for the engine lifetime,
-//   including copies carried by CompileError. Record/note references follow
-//   vector invalidation rules; indices of rolled-back records are invalid.
+//   for engine-backed records. Record/note references follow vector invalidation
+//   rules; indices of rolled-back records are invalid. Exception snapshots own
+//   their independent text and note storage.
 // - DiagnosticId values are stable forever and never derived from message
 //   text. New IDs must take unused numbers inside their family block so a
 //   later fixer registry keyed by DiagnosticId stays collision-free.
@@ -656,7 +657,7 @@ struct DiagnosticArgument {
 		uint64_t unsigned_value;
 		StringHandle interned_text;
 
-		Value() : signed_value(0) {}
+		Value() noexcept : signed_value(0) {}
 	} value{};
 
 	std::string_view text_value{};
@@ -871,6 +872,8 @@ public:
 		return note_pool_[pool_index];
 	}
 
+	std::span<const DiagnosticNote> notes() const noexcept { return note_pool_; }
+
 	size_t count(DiagnosticSeverity severity) const {
 		return severity_counts_[static_cast<size_t>(severity)];
 	}
@@ -927,7 +930,7 @@ private:
 };
 
 // Candidate-local record publication. Nested commits remain provisional;
-// backing text and notes stay engine-owned for escaped CompileError copies.
+// backing text and notes stay engine-owned for borrowed diagnostic views.
 // Template-context guards own their independent stack. Required instantiation
 // diagnostics must remain outside a candidate-local transaction.
 class DiagnosticTransaction {
@@ -967,10 +970,8 @@ inline void appendDiagnosticLocationPrefix(StringBuilder& builder,
 	builder.append(": ");
 }
 
-inline void appendRenderedDiagnosticLines(StringBuilder& builder,
-										  const Diagnostic& diagnostic,
-										  const DiagnosticEngine& engine,
-										  const std::deque<std::string>& file_paths) {
+inline void appendRenderedDiagnosticLines(StringBuilder& builder, const Diagnostic& diagnostic, std::span<const DiagnosticNote> notes,
+	const std::deque<std::string>& file_paths) {
 	appendDiagnosticLocationPrefix(builder, diagnostic.location, file_paths);
 	builder.append(diagnosticSeverityTag(diagnostic.severity));
 	builder.append(": ");
@@ -988,7 +989,7 @@ inline void appendRenderedDiagnosticLines(StringBuilder& builder,
 	}
 
 	for (uint32_t note_index : diagnostic.note_indices) {
-		const DiagnosticNote& note = engine.note(note_index);
+		const DiagnosticNote& note = notes[note_index];
 		builder.append('\n');
 		if (note.location.is_valid()) {
 			appendDiagnosticLocationPrefix(builder, note.location, file_paths);
@@ -1001,10 +1002,18 @@ inline void appendRenderedDiagnosticLines(StringBuilder& builder,
 	}
 }
 
-inline std::string renderDiagnostic(const Diagnostic& diagnostic,
-									const DiagnosticEngine& engine,
-									const std::deque<std::string>& file_paths) {
+inline void appendRenderedDiagnosticLines(StringBuilder& builder, const Diagnostic& diagnostic, const DiagnosticEngine& engine,
+	const std::deque<std::string>& file_paths) {
+	appendRenderedDiagnosticLines(builder, diagnostic, engine.notes(), file_paths);
+}
+
+inline std::string renderDiagnostic(const Diagnostic& diagnostic, std::span<const DiagnosticNote> notes,
+	const std::deque<std::string>& file_paths) {
 	StringBuilder builder;
-	appendRenderedDiagnosticLines(builder, diagnostic, engine, file_paths);
+	appendRenderedDiagnosticLines(builder, diagnostic, notes, file_paths);
 	return std::string(builder.commit());
+}
+
+inline std::string renderDiagnostic(const Diagnostic& diagnostic, const DiagnosticEngine& engine, const std::deque<std::string>& file_paths) {
+	return renderDiagnostic(diagnostic, engine.notes(), file_paths);
 }
