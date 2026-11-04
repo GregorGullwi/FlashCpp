@@ -602,6 +602,13 @@ std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNod
 		if (!member_result) {
 			return std::nullopt;
 		}
+		// Canonical member identity is authoritative, including interleaved
+		// pointer/array declarators whose flat projection cannot describe the
+		// element shape. Legacy members without a published TypeId keep the
+		// flat reconstruction below.
+		if (member_result.member->canonical_type_id) {
+			return typeSpecifierFromStructMemberProjection(*member_result.member);
+		}
 
 		TypeSpecifierNode member_type(
 			member_result.member->memberType(),

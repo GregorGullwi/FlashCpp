@@ -254,6 +254,10 @@ mismatched, unpublished, or unresolved owner facts.
      `new`/`new[]` now export canonical identities but still have documented flat
      projection refresh, nested-class, or unmigrated-shape gaps. Finish those
      consumers and remove the flat pointer/array fields they retain.
+   - Interleaved pointer/array member storage now sizes and aligns from the
+     ordered declarator spine, and constexpr member typing prefers the published
+     member `TypeId`. Other flat readers still need migration before the
+     projection fields can be removed.
    - Migrate the separate compatibility candidate gathering in the mixed
      member/free selector; deleting `findUnaryOperatorOverloadCompatibility`
      alone does not remove that dependency.
