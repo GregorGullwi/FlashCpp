@@ -13,6 +13,57 @@
 
 #include <algorithm>
 
+// Completion checks live here because Diagnostics.h is below CompileError.h.
+DiagnosticTransaction::DiagnosticTransaction(DiagnosticEngine& engine)
+	: engine_(&engine), parent_(engine.active_transaction_), diagnostic_count_(engine.diagnostics_.size()),
+	  note_undo_count_(engine.note_attachment_undos_.size()) {
+	engine.active_transaction_ = this;
+}
+
+DiagnosticTransaction::~DiagnosticTransaction() noexcept {
+	rollback();
+}
+
+void DiagnosticTransaction::validateCompletion() const {
+	if (engine_ != nullptr && engine_->active_transaction_ != this) {
+		throw InternalError("diagnostics: transactions must close in nesting order");
+	}
+}
+
+void DiagnosticTransaction::commit() {
+	if (engine_ == nullptr) return;
+	validateCompletion();
+	engine_->active_transaction_ = parent_;
+	if (parent_ == nullptr) engine_->note_attachment_undos_.clear();
+	engine_ = nullptr;
+}
+
+void DiagnosticTransaction::rollback() {
+	if (engine_ == nullptr) return;
+	validateCompletion();
+	for (size_t index = engine_->note_attachment_undos_.size(); index > note_undo_count_; --index) {
+		const auto& undo = engine_->note_attachment_undos_[index - 1];
+		if (undo.diagnostic_index >= diagnostic_count_) continue;
+		auto& notes = engine_->diagnostics_[undo.diagnostic_index].note_indices;
+		if (notes.size() < undo.note_count) throw InternalError("diagnostics: note attachment disappeared before rollback");
+		notes.resize(undo.note_count);
+	}
+	engine_->note_attachment_undos_.resize(note_undo_count_);
+	while (engine_->diagnostics_.size() > diagnostic_count_) {
+		auto& count = engine_->severity_counts_[static_cast<size_t>(engine_->diagnostics_.back().severity)];
+		if (count == 0) throw InternalError("diagnostics: severity count is inconsistent before rollback");
+		engine_->diagnostics_.pop_back();
+		--count;
+	}
+	engine_->active_transaction_ = parent_;
+	engine_ = nullptr;
+}
+
+void DiagnosticEngine::recordNoteAttachment(uint32_t diagnostic_index) {
+	if (diagnostic_index >= diagnostics_.size()) throw InternalError("diagnostics: note target is not a published diagnostic");
+	note_attachment_undos_.push_back({diagnostics_[diagnostic_index].note_indices.size(), diagnostic_index});
+}
+
 // Global debug flag
 bool g_enable_debug_output = false;
 

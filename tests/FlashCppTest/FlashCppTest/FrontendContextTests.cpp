@@ -6109,6 +6109,213 @@ TEST_SUITE("Diagnostics") {
 		CHECK(rendered.find("note: note detail") != std::string::npos);
 	}
 
+	TEST_CASE("Frontend diagnostic rollback restores prefix notes counts and retry indices") {
+		FrontendContext context;
+		DiagnosticEngine& engine = context.diagnostics();
+		const uint32_t prefix = engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Warning, SourceLocation::fromParts(1, 1, 0),
+			"prefix warning", std::span<const DiagnosticArgument>{});
+		engine.attachNote(prefix, DiagnosticId::NoteToMatchOpeningBracket, SourceLocation::fromParts(1, 2, 0), "prefix note",
+			std::span<const DiagnosticArgument>{});
+		const uint32_t old_note_index = engine.diagnostic(prefix).note_indices[0];
+		std::deque<std::string> paths{"rollback.cpp"};
+		const std::string old_rendered = renderDiagnostic(engine.diagnostic(prefix), engine, paths);
+
+		{
+			auto outer = context.beginScratchTransaction();
+			const uint32_t provisional = engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error, SourceLocation{}, "temporary error",
+				std::span<const DiagnosticArgument>{});
+			engine.attachNote(prefix, DiagnosticId::NoteToMatchOpeningBracket, SourceLocation{}, "temporary prefix note",
+				std::span<const DiagnosticArgument>{});
+			{
+				auto inner = context.beginScratchTransaction();
+				engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Fatal, SourceLocation{}, "temporary fatal",
+					std::span<const DiagnosticArgument>{});
+				inner.commit();
+			}
+			CHECK(provisional == 1u);
+			outer.rollback();
+		}
+
+		REQUIRE(engine.diagnostics().size() == 1u);
+		CHECK(engine.diagnostic(prefix).note_indices.size() == 1u);
+		CHECK(engine.diagnostic(prefix).note_indices[0] == old_note_index);
+		CHECK(engine.count(DiagnosticSeverity::Warning) == 1u);
+		CHECK(engine.count(DiagnosticSeverity::Error) == 0u);
+		CHECK(engine.count(DiagnosticSeverity::Fatal) == 0u);
+		CHECK(renderDiagnostic(engine.diagnostic(prefix), engine, paths) == old_rendered);
+		const uint32_t retry = engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error, SourceLocation{}, "retry error",
+			std::span<const DiagnosticArgument>{});
+		CHECK(retry == 1u);
+		CHECK(engine.diagnostic(retry).message_template == "retry error");
+	}
+
+	TEST_CASE("Diagnostic transactions reject out of order completion and recover") {
+		DiagnosticEngine engine;
+		DiagnosticTransaction outer(engine);
+		DiagnosticTransaction inner(engine);
+		CHECK_THROWS_AS(outer.commit(), InternalError);
+		CHECK_THROWS_AS(outer.rollback(), InternalError);
+		engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Warning, SourceLocation{}, "nested diagnostic",
+			std::span<const DiagnosticArgument>{});
+		inner.commit();
+		outer.rollback();
+		CHECK(engine.diagnostics().empty());
+		CHECK(engine.count(DiagnosticSeverity::Warning) == 0u);
+	}
+
+	TEST_CASE("Frontend completion rejects active manual diagnostic transaction before publication commit") {
+		FrontendContext context;
+		{
+			auto frontend = context.beginScratchTransaction();
+			context.canonicalTypes().builtin(CanonicalBuiltinKind::Int);
+			DiagnosticTransaction manual(context.diagnostics());
+			CHECK_THROWS_AS(frontend.commit(), InternalError);
+			CHECK_THROWS_AS(frontend.rollback(), InternalError);
+			manual.rollback();
+			frontend.rollback();
+		}
+		CHECK(context.canonicalTypes().size() == 0u);
+		CHECK(context.diagnostics().diagnostics().empty());
+	}
+
+	TEST_CASE("Nested frontend diagnostic rollback preserves outer commit and template contexts") {
+		FrontendContext context;
+		DiagnosticEngine& engine = context.diagnostics();
+		const StringHandle outer_name = StringTable::getOrInternStringHandle("OuterDiagnosticContext");
+		const StringHandle inner_name = StringTable::getOrInternStringHandle("InnerDiagnosticContext");
+		auto outer = context.beginScratchTransaction();
+		{
+			DiagnosticEngine::TemplateContextGuard guard(engine, outer_name, SourceLocation{});
+			const uint32_t outer_index = engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Warning, SourceLocation{}, "outer warning",
+				std::span<const DiagnosticArgument>{});
+			{
+				auto inner = context.beginScratchTransaction();
+				DiagnosticEngine::TemplateContextGuard nested_guard(engine, inner_name, SourceLocation{});
+				engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error, SourceLocation{}, "inner error",
+					std::span<const DiagnosticArgument>{});
+				engine.attachNote(outer_index, DiagnosticId::NoteToMatchOpeningBracket, SourceLocation{}, "discarded inner note",
+					std::span<const DiagnosticArgument>{});
+				CHECK(engine.templateContextDepth() == 2u);
+				inner.rollback();
+				CHECK(engine.templateContextDepth() == 2u);
+				CHECK(engine.diagnostic(outer_index).note_indices.empty());
+			}
+			CHECK(engine.templateContextDepth() == 1u);
+			CHECK(engine.diagnostic(outer_index).instantiation_context.size() == 1u);
+			CHECK(engine.diagnostic(outer_index).instantiation_context[0].template_name == outer_name);
+		}
+		outer.commit();
+		REQUIRE(engine.diagnostics().size() == 1u);
+		CHECK(engine.diagnostic(0).id == DiagnosticId::PointerToReferenceType);
+		CHECK(engine.diagnostic(0).message_template == "outer warning");
+		CHECK(engine.count(DiagnosticSeverity::Warning) == 1u);
+		CHECK(engine.count(DiagnosticSeverity::Error) == 0u);
+	}
+
+	TEST_CASE("Structured compile error survives frontend diagnostic rollback") {
+		FrontendContext context;
+		DiagnosticEngine& engine = context.diagnostics();
+		std::deque<std::string> paths{"exception.cpp"};
+		Diagnostic escaped_diagnostic;
+		bool caught_error = false;
+		try {
+			auto transaction = context.beginScratchTransaction();
+			std::string message_template = "dynamic error {}";
+			std::string argument_text = "payload";
+			std::string note_template = "dynamic note {}";
+			std::string note_text = "detail";
+			const std::array<DiagnosticArgument, 1> arguments{DiagnosticArgument::text(argument_text)};
+			const std::array<DiagnosticArgument, 1> note_arguments{DiagnosticArgument::text(note_text)};
+			const uint32_t index = engine.report(DiagnosticId::TemplateStaticAssertFailure, DiagnosticSeverity::Fatal, SourceLocation::fromParts(4, 8, 0),
+				message_template, arguments);
+			engine.attachNote(index, DiagnosticId::NoteToMatchOpeningBracket, SourceLocation::fromParts(4, 3, 0), note_template, note_arguments);
+			message_template.assign("XXXXXXXXXXXX");
+			argument_text.assign("mutated");
+			note_template.assign("YYYYYYYYYYYY");
+			note_text.assign("changed");
+			throw CompileError::fromStructuredDiagnostic(engine.diagnostic(index));
+		} catch (const CompileError& error) {
+			caught_error = true;
+			const Diagnostic* diagnostic = error.structuredDiagnostic();
+			REQUIRE(diagnostic != nullptr);
+			CHECK(diagnostic->id == DiagnosticId::TemplateStaticAssertFailure);
+			CHECK(diagnostic->severity == DiagnosticSeverity::Fatal);
+			CHECK(std::string(error.what()) == "dynamic error payload");
+			escaped_diagnostic = *diagnostic;
+		}
+		CHECK(caught_error);
+		CHECK(engine.diagnostics().empty());
+		CHECK(engine.count(DiagnosticSeverity::Fatal) == 0u);
+		{
+			auto retry = context.beginScratchTransaction();
+			for (uint32_t i = 0; i < 64u; ++i) {
+				const std::array<DiagnosticArgument, 1> arguments{DiagnosticArgument::unsignedInteger(i)};
+				const uint32_t index = engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error, SourceLocation{}, "retry message {}",
+					arguments);
+				engine.attachNote(index, DiagnosticId::NoteToMatchOpeningBracket, SourceLocation{}, "retry note {}", arguments);
+			}
+			retry.rollback();
+		}
+		const std::string rendered = renderDiagnostic(escaped_diagnostic, engine, paths);
+		CHECK(rendered.find("TemplateStaticAssertFailure") != std::string::npos);
+		CHECK(rendered.find("dynamic error payload") != std::string::npos);
+		CHECK(rendered.find("note: dynamic note detail") != std::string::npos);
+		CHECK(engine.diagnostics().empty());
+	}
+
+	TEST_CASE("Deep frontend diagnostic rollback truncates records and prefix note indices") {
+		FrontendContext context;
+		DiagnosticEngine& engine = context.diagnostics();
+		const uint32_t prefix = engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Warning, SourceLocation{}, "deep prefix",
+			std::span<const DiagnosticArgument>{});
+		engine.attachNote(prefix, DiagnosticId::NoteToMatchOpeningBracket, SourceLocation{}, "stable deep note", std::span<const DiagnosticArgument>{});
+		const uint32_t old_note_index = engine.diagnostic(prefix).note_indices[0];
+		{
+			auto transaction = context.beginScratchTransaction();
+			for (uint32_t i = 0; i < 1024u; ++i) {
+				const uint32_t index = engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error, SourceLocation{},
+					"deep temporary diagnostic", std::span<const DiagnosticArgument>{});
+				engine.attachNote(index, DiagnosticId::NoteToMatchOpeningBracket, SourceLocation{}, "deep temporary note", std::span<const DiagnosticArgument>{});
+				engine.attachNote(prefix, DiagnosticId::NoteToMatchOpeningBracket, SourceLocation{}, "temporary note on prefix",
+					std::span<const DiagnosticArgument>{});
+			}
+			transaction.rollback();
+		}
+		CHECK(engine.diagnostics().size() == 1u);
+		CHECK(engine.diagnostic(prefix).note_indices.size() == 1u);
+		CHECK(engine.diagnostic(prefix).note_indices[0] == old_note_index);
+		CHECK(engine.count(DiagnosticSeverity::Warning) == 1u);
+		CHECK(engine.count(DiagnosticSeverity::Error) == 0u);
+		const uint32_t retry = engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error, SourceLocation{}, "after deep rollback",
+			std::span<const DiagnosticArgument>{});
+		CHECK(retry == 1u);
+		CHECK(engine.diagnostic(retry).message_template == "after deep rollback");
+	}
+
+	TEST_CASE("Deep diagnostic transaction rollback restores prefix note indices") {
+		DiagnosticEngine engine;
+		const uint32_t prefix = engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Warning, SourceLocation{}, "deep direct prefix",
+			std::span<const DiagnosticArgument>{});
+		engine.attachNote(prefix, DiagnosticId::NoteToMatchOpeningBracket, SourceLocation{}, "stable direct note", std::span<const DiagnosticArgument>{});
+		const uint32_t old_note_index = engine.diagnostic(prefix).note_indices[0];
+		std::deque<DiagnosticTransaction> transactions;
+		for (uint32_t i = 0; i < 1024u; ++i) {
+			transactions.emplace_back(engine);
+			engine.attachNote(prefix, DiagnosticId::NoteToMatchOpeningBracket, SourceLocation{}, "nested direct note", std::span<const DiagnosticArgument>{});
+		}
+		while (transactions.size() > 1u) {
+			transactions.back().commit();
+			transactions.pop_back();
+		}
+		transactions.back().rollback();
+		transactions.pop_back();
+		CHECK(engine.diagnostics().size() == 1u);
+		CHECK(engine.diagnostic(prefix).note_indices.size() == 1u);
+		CHECK(engine.diagnostic(prefix).note_indices[0] == old_note_index);
+		CHECK(engine.count(DiagnosticSeverity::Warning) == 1u);
+		CHECK(engine.count(DiagnosticSeverity::Error) == 0u);
+	}
+
 	TEST_CASE("Notes attach through pool indices and render under the parent") {
 		DiagnosticEngine engine;
 		uint32_t index = engine.reportWithRange(

@@ -53,24 +53,24 @@ void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicat
 void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublicationJournalMark mark);
 
 // A frontend probe covers scratch storage, declaration publication, template
-// identity, legacy type-registry publication, and namespace/symbol publication
-// on tables bound to this context, including scope creation and cursors.
+// identity, candidate diagnostics, legacy type-registry publication, and
+// namespace/symbol publication on tables bound to this context, including
+// scope creation and cursors.
 // Cold type payload arenas and in-place rewrites of pre-existing legacy
 // TypeInfo rows remain outside the journal. Nested commits remain
 // provisional until the outer frontend probe commits.
 class FrontendScratchTransaction {
-public:
-	FrontendScratchTransaction(
-		FrontendContext& context,
-		MonotonicScratchArena& arena,
-		ScratchProbeRegistry& registry,
-		DeclarationBuilder& builder,
-		TemplateDeclTable& template_decls)
+	friend class FrontendContext;
+
+	FrontendScratchTransaction(FrontendContext& context, DiagnosticEngine& diagnostics, MonotonicScratchArena& arena, ScratchProbeRegistry& registry,
+		DeclarationBuilder& builder, TemplateDeclTable& template_decls)
 		: context_(context)
+		, diagnostics_(diagnostics)
 		, scratch_(arena, registry)
 		, publication_(builder)
 		, templates_(template_decls)
 		, publication_journal_mark_(beginFrontendPublicationJournal(context)) {}
+public:
 	~FrontendScratchTransaction() noexcept {
 		if (!completed_) {
 			rollback();
@@ -82,26 +82,31 @@ public:
 		if (completed_) {
 			return;
 		}
+		diagnostics_.validateCompletion();
 		publication_.commit();
 		templates_.commit();
 		scratch_.commit();
 		commitFrontendPublicationJournal(context_, publication_journal_mark_);
+		diagnostics_.commit();
 		completed_ = true;
 	}
 	void rollback() {
 		if (completed_) {
 			return;
 		}
+		diagnostics_.validateCompletion();
 		rollbackFrontendPublicationJournal(context_, publication_journal_mark_);
 		templates_.rollback();
 		publication_.rollback();
 		scratch_.rollback();
+		diagnostics_.rollback();
 		completed_ = true;
 	}
 	MonotonicScratchArena& arena() { return scratch_.arena(); }
 	ScratchProbeRegistry& registry() { return scratch_.registry(); }
 private:
 	FrontendContext& context_;
+	DiagnosticTransaction diagnostics_;
 	ScratchTransaction scratch_;
 	PublicationTransaction publication_;
 	TemplateDeclTableTransaction templates_;
@@ -144,9 +149,7 @@ public:
 	}
 
 	FrontendScratchTransaction beginScratchTransaction() {
-		return FrontendScratchTransaction(
-			*this,
-			scratch_arena_, scratch_registry_, declaration_builder_, template_decls_);
+		return FrontendScratchTransaction(*this, diagnostics_, scratch_arena_, scratch_registry_, declaration_builder_, template_decls_);
 	}
 
 	DiagnosticEngine& diagnostics() {
