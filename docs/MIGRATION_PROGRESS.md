@@ -72,8 +72,11 @@ topologies remain unsupported.
 Frontend scratch transactions also journal their context-owned diagnostic
 records, severity counts, and note attachments to retained diagnostics. Nested
 commits stay provisional, while template-context guards own their independent
-stack. Text and note backing storage remains live for legacy `CompileError`
-copies; the separate parser `CompileContext` engine is not automatically enlisted.
+stack. Structured `CompileError` values now own their text, referenced notes,
+and instantiation context independently of the engine, including across copies,
+moves, rollback, and engine destruction. Engine backing storage remains live for
+borrowed diagnostic views; the separate parser `CompileContext` engine is not
+automatically enlisted.
 Cold type payload arenas, in-place rewrites of pre-existing `TypeInfo` rows,
 legacy AST nodes, and parser state stay outside this first boundary. Native
 guards cover rollback, commit, overwritten bindings, nested commit, and

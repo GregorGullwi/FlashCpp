@@ -2186,8 +2186,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			lexer_.getSourceLocation(current_token_),
 			"Alias template instantiation exceeded the maximum depth",
 			{});
-		throw CompileError::fromStructuredDiagnostic(
-			diagnostics_engine.diagnostic(diagnostic_index));
+		throw CompileError::fromStructuredDiagnostic(diagnostics_engine, diagnostic_index);
 	}
 	struct AliasMaterializationDepthGuard {
 		size_t& depth;

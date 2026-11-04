@@ -2261,8 +2261,7 @@ std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantia
 				conflicting_member_address->identifier_token()),
 			message,
 			{});
-		throw CompileError::fromStructuredDiagnostic(
-			diagnostics_engine.diagnostic(diagnostic_index));
+		throw CompileError::fromStructuredDiagnostic(diagnostics_engine, diagnostic_index);
 	}
 
 	return std::nullopt;

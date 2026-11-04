@@ -262,10 +262,10 @@ arenas, and in-place rewrites of existing `TypeInfo` rows still need an owned
 rollback boundary before broad speculative parsing can rely on it.
 
 The separate parser `CompileContext` diagnostic engine is not enlisted by that
-frontend transaction. Diagnostic text and note backing storage is retained for
-engine-lifetime views carried by legacy `CompileError` copies. Reclaiming those speculative payloads
-requires independently owned exception snapshots; record rollback alone cannot
-release that storage safely.
+frontend transaction. Diagnostic text and note backing storage is still retained
+for borrowed engine-lifetime diagnostic views. Reclaiming speculative payloads
+requires a bounded lifetime contract for those views; record rollback alone
+cannot release that storage safely.
 
 Namespace and legacy type registries remain process-global, while symbol journals
 are enlisted per `FrontendContext`. Ordinary writes from another context are not

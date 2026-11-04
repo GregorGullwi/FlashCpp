@@ -558,11 +558,10 @@ int main_impl(int argc, char* argv[]) {
 			// are thrown as CompileError from within template instantiation during parsing.
 			parse_compile_error = true;
 			parse_compile_error_message = e.what();
-			if (const Diagnostic* structured_error = e.structuredDiagnostic()) {
+			if (e.structuredDiagnostic()) {
 				// Engine-rendered output already includes the instantiation
 				// context snapshot, so legacy unwinding notes are not appended.
-				parse_compile_error_structured_display = renderDiagnostic(
-					*structured_error, context.diagnostics(), lexer.file_paths());
+				parse_compile_error_structured_display = e.renderStructuredDiagnostic(lexer.file_paths());
 			}
 			parse_compile_error_notes = g_parser_instantiation_notes;
 			g_parser_instantiation_notes.clear();
@@ -625,9 +624,8 @@ int main_impl(int argc, char* argv[]) {
 			if (show_perf_stats) {
 				printOutsideDiagnosticTelemetry();
 			}
-			if (const Diagnostic* structured_error = e.structuredDiagnostic()) {
-				std::string rendered_error = renderDiagnostic(
-					*structured_error, context.diagnostics(), lexer.file_paths());
+			if (e.structuredDiagnostic()) {
+				std::string rendered_error = e.renderStructuredDiagnostic(lexer.file_paths());
 				FLASH_LOG(General, Error, rendered_error);
 				return exitCode(CompilerExitStatus::SourceRejected);
 			}
@@ -734,9 +732,8 @@ int main_impl(int argc, char* argv[]) {
 					FLASH_LOG(Codegen, Warning, "IR error for function '", node_desc,
 							  "' with unsubstituted placeholder signature types: ", e.what());
 				} else {
-					if (const Diagnostic* structured_error = e.structuredDiagnostic()) {
-						std::string rendered_error = renderDiagnostic(
-							*structured_error, context.diagnostics(), lexer.file_paths());
+					if (e.structuredDiagnostic()) {
+						std::string rendered_error = e.renderStructuredDiagnostic(lexer.file_paths());
 						FLASH_LOG(General, Error, rendered_error);
 					} else {
 						FLASH_LOG(General, Error, "Compile error in '", node_desc, "': ", e.what());

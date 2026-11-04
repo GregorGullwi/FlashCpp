@@ -13,6 +13,130 @@
 
 #include <algorithm>
 
+const Diagnostic& OwnedDiagnosticSnapshot::checkedDiagnostic(const DiagnosticEngine& engine, uint32_t diagnostic_index) {
+	if (diagnostic_index >= engine.diagnostics().size()) throw InternalError("diagnostic snapshot: record index is not published");
+	return engine.diagnostic(diagnostic_index);
+}
+
+OwnedDiagnosticSnapshot::OwnedDiagnosticSnapshot(const DiagnosticEngine& engine, uint32_t diagnostic_index)
+	: diagnostic_(checkedDiagnostic(engine, diagnostic_index)) {
+	const auto source_notes = engine.notes();
+	if (!diagnostic_.note_indices.empty() && diagnostic_.note_indices.size() - 1 > UINT32_MAX) {
+		throw InternalError("diagnostic snapshot: too many notes");
+	}
+	notes_.reserve(diagnostic_.note_indices.size());
+	for (uint32_t index : diagnostic_.note_indices) {
+		if (index >= source_notes.size()) throw InternalError("diagnostic snapshot: note index is not published");
+		notes_.push_back(source_notes[index]);
+	}
+	for (size_t index = 0; index < diagnostic_.note_indices.size(); ++index) diagnostic_.note_indices[index] = static_cast<uint32_t>(index);
+	captureText();
+}
+
+OwnedDiagnosticSnapshot::OwnedDiagnosticSnapshot(const OwnedDiagnosticSnapshot& other)
+	: diagnostic_(other.diagnostic_), notes_(other.notes_), text_(other.text_) {
+	rebindTextViews();
+}
+
+OwnedDiagnosticSnapshot& OwnedDiagnosticSnapshot::operator=(const OwnedDiagnosticSnapshot& other) {
+	if (this != &other) {
+		OwnedDiagnosticSnapshot copied(other);
+		*this = std::move(copied);
+	}
+	return *this;
+}
+
+OwnedDiagnosticSnapshot::OwnedDiagnosticSnapshot(OwnedDiagnosticSnapshot&& other) noexcept
+	: diagnostic_(std::move(other.diagnostic_)), notes_(std::move(other.notes_)), text_(std::move(other.text_)) {
+	other.clearMovedFrom();
+}
+
+OwnedDiagnosticSnapshot& OwnedDiagnosticSnapshot::operator=(OwnedDiagnosticSnapshot&& other) noexcept {
+	if (this != &other) {
+		diagnostic_ = std::move(other.diagnostic_);
+		notes_ = std::move(other.notes_);
+		text_ = std::move(other.text_);
+		other.clearMovedFrom();
+	}
+	return *this;
+}
+
+void OwnedDiagnosticSnapshot::captureText() {
+	size_t byte_count = 1;
+	forEachText([&](std::string_view text) {
+		if (text.size() > text_.max_size() - byte_count) throw InternalError("diagnostic snapshot: text exceeds owned buffer capacity");
+		byte_count += text.size();
+	});
+	text_.reserve(byte_count);
+	forEachText([&](std::string_view text) {
+		if (!text.empty()) text_.insert(text_.end(), text.begin(), text.end());
+	});
+	text_.push_back('\0');
+	rebindTextViews();
+}
+
+void OwnedDiagnosticSnapshot::rebindTextViews() {
+	if (text_.empty()) return;
+	size_t offset = 0;
+	forEachText([&](std::string_view& text) {
+		const size_t size = text.size();
+		if (size > text_.size() - 1 - offset) throw InternalError("diagnostic snapshot: invalid owned text layout");
+		text = std::string_view(text_.data() + offset, size);
+		offset += size;
+	});
+	if (offset != text_.size() - 1) throw InternalError("diagnostic snapshot: owned text layout has unused bytes");
+}
+
+void OwnedDiagnosticSnapshot::clearMovedFrom() noexcept {
+	diagnostic_.id = DiagnosticId::None;
+	diagnostic_.message_template = {};
+	diagnostic_.arguments.clear();
+	diagnostic_.note_indices.clear();
+	diagnostic_.instantiation_context.clear();
+	notes_.clear();
+	text_.clear();
+}
+
+std::string OwnedDiagnosticSnapshot::render(const std::deque<std::string>& file_paths) const {
+	return renderDiagnostic(diagnostic_, notes_, file_paths);
+}
+
+CompileError::CompileError(std::string rendered_message, const DiagnosticEngine& engine, uint32_t diagnostic_index, BridgeTag)
+	: std::runtime_error(std::move(rendered_message)), structured_(std::in_place, engine, diagnostic_index) {}
+
+CompileError CompileError::fromStructuredDiagnostic(const DiagnosticEngine& engine, uint32_t diagnostic_index) {
+	if (diagnostic_index >= engine.diagnostics().size()) throw InternalError("compile error: diagnostic index is not published");
+	const Diagnostic& diagnostic = engine.diagnostic(diagnostic_index);
+	return CompileError(renderDiagnosticMessage(diagnostic.message_template, diagnostic.arguments), engine, diagnostic_index, BridgeTag{});
+}
+
+CompileError& CompileError::operator=(const CompileError& other) {
+	if (this != &other) {
+		CompileError copied(other);
+		*this = std::move(copied);
+	}
+	return *this;
+}
+
+CompileError::CompileError(CompileError&& other) noexcept
+	: std::runtime_error(std::move(other)), structured_(std::move(other.structured_)) {
+	other.structured_.reset();
+}
+
+CompileError& CompileError::operator=(CompileError&& other) noexcept {
+	if (this != &other) {
+		std::runtime_error::operator=(std::move(other));
+		structured_ = std::move(other.structured_);
+		other.structured_.reset();
+	}
+	return *this;
+}
+
+std::string CompileError::renderStructuredDiagnostic(const std::deque<std::string>& file_paths) const {
+	if (!structured_) throw InternalError("compile error: no structured diagnostic to render");
+	return structured_->render(file_paths);
+}
+
 // Completion checks live here because Diagnostics.h is below CompileError.h.
 DiagnosticTransaction::DiagnosticTransaction(DiagnosticEngine& engine)
 	: engine_(&engine), parent_(engine.active_transaction_), diagnostic_count_(engine.diagnostics_.size()),

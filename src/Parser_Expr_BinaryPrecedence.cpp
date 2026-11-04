@@ -1742,8 +1742,7 @@ void Parser::consume_array_type_id_modifiers(
 				opening_bracket_location,
 				"to match this '['",
 				{});
-			throw CompileError::fromStructuredDiagnostic(
-				diagnostics_engine.diagnostic(bracket_diagnostic_index));
+			throw CompileError::fromStructuredDiagnostic(diagnostics_engine, bracket_diagnostic_index);
 		}
 	}
 }
