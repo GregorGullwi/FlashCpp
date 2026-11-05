@@ -555,7 +555,8 @@ ASTNode resolveRangedForLoopDeclNode(const VariableDeclarationNode& original_var
 	TypeSpecifierNode resolved_type = applyPlaceholderDeclaratorDeduction(
 		placeholder_type.type(),
 		placeholder_type,
-		deduced_type);
+		deduced_type,
+		false);
 
 	DeclarationNode& resolved_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(original_decl);
 	resolved_decl.set_type_node(resolved_type);

@@ -398,6 +398,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	// pointer/array fields and cold signature carry the complete shape), so only
 	// a non-projectable array/outer-callable object stays fail-closed here.
 	const bool ordered_array_object =
+		!type_node.is_reference() && !type_node.is_rvalue_reference() &&
 		type_node.has_ordered_declarator() &&
 		!type_node.ordered_declarator_has_legacy_projection() &&
 		orderedDeclaratorIsArrayObject(type_node);
@@ -1656,7 +1657,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	operands.emplace_back(type_node.is_rvalue_reference());
 	operands.emplace_back(owns_inline_array_storage);	// Add is_array flag
 
-		// For arrays, calculate total element count (product of all dimensions for multidimensional arrays)
+	// For arrays, calculate total element count (product of all dimensions for multidimensional arrays)
 	size_t array_count = has_ordered_array_storage ? ordered_array_element_count : 0;
 	if (owns_inline_array_storage && !has_ordered_array_storage) {
 		if (type_node.is_array() && !type_node.array_dimensions().empty()) {
@@ -1671,7 +1672,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		} else {
 			const auto& dims = decl.array_dimensions();
 			if (!dims.empty()) {
-					// Calculate total element count as product of all dimensions
+				// Calculate total element count as product of all dimensions
 				array_count = 1;
 				for (const auto& dim_expr : dims) {
 					ConstExpr::EvaluationContext ctx = makeEvalContext(symbol_table);
@@ -1692,27 +1693,27 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				}
 			}
 		}
+	}
 
-		if (array_count > 0) {
-				// Add element type, size, and count as operands
+	if (array_count > 0) {
+		// Add element type, size, and count as operands
+		operands.emplace_back(type_node.type());	 // element type
+		operands.emplace_back(size_in_bits);		 // element size
+		operands.emplace_back(static_cast<unsigned long long>(array_count));
+	} else if (decl.is_unsized_array() && node.initializer().has_value()) {
+		// Unsized array - get size from initializer list
+		const ASTNode& init_node = *node.initializer();
+		if (init_node.is<InitializerListNode>()) {
+			const InitializerListNode& init_list = init_node.as<InitializerListNode>();
+			array_count = init_list.initializers().size();
+			// Add the inferred size as an operand
 			operands.emplace_back(type_node.type());	 // element type
 			operands.emplace_back(size_in_bits);		 // element size
 			operands.emplace_back(static_cast<unsigned long long>(array_count));
-		} else if (decl.is_unsized_array() && node.initializer().has_value()) {
-				// Unsized array - get size from initializer list
-			const ASTNode& init_node = *node.initializer();
-			if (init_node.is<InitializerListNode>()) {
-				const InitializerListNode& init_list = init_node.as<InitializerListNode>();
-				array_count = init_list.initializers().size();
-					// Add the inferred size as an operand
-				operands.emplace_back(type_node.type());	 // element type
-				operands.emplace_back(size_in_bits);		 // element size
-				operands.emplace_back(static_cast<unsigned long long>(array_count));
-			}
 		}
 	}
 
-		// Add initializer if present (for non-arrays)
+	// Add initializer if present (for non-arrays)
 	if (node.initializer() && !owns_inline_array_storage) {
 		const ASTNode& init_node = *node.initializer();
 
@@ -2751,8 +2752,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 	VariableDeclOp decl_op;
 	decl_op.type_index = type_node.type_index();
-		// References and pointers are both 64-bit (pointer size on x64). An ordered array object sizes its frame
-		// from the element on the spine, not from the flat base type.
+	// References and pointers are both 64-bit (pointer size on x64). An ordered array object sizes its frame
+	// from the element on the spine, not from the flat base type.
 	decl_op.size_in_bits = SizeInBits{has_ordered_array_storage ? ordered_array_element_bits
 		: ((runtime_pointer_depth > 0 || type_node.is_reference()) ? 64 : static_cast<int>(type_node.size_in_bits()))};
 	decl_op.var_name = declared_spelling;

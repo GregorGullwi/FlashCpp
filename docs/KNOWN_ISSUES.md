@@ -245,11 +245,12 @@ published member `TypeId` when one exists.
 
 Local array objects now allocate their full ordered element count and a
 reference to such an array holds the array address instead of dereferencing it
-as a value. `auto` deduction from an interleaved array initializer and passing a
-non-projectable member array directly to a reference parameter still read the
-flat projection. Other remaining flat readers still fail closed for
-non-projectable shapes; remove this entry when those consumers migrate and the
-compatibility projection fields are deleted.
+as a value. Value `auto`, `auto&`, and `auto*` deduction preserve the ordered
+spine, including array decay and address-of. Passing a non-projectable member
+array directly to a reference parameter still reads the flat member projection.
+Other remaining flat readers still fail closed for non-projectable shapes;
+remove this entry when those consumers migrate and the compatibility projection
+fields are deleted.
 
 The triviality and lifetime traits still read `StructTypeInfo` and need a
 published member-property schema. A lazy-constraint member-object-pointer trait

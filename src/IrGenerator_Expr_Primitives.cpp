@@ -1294,12 +1294,12 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				// We can detect this by checking if a VariableDeclOp was generated with is_reference=true
 				// For now, we'll treat all references as parameters unless they fail the parameter test
 
-				// For references to arrays (e.g., int (&arr)[3]), the reference parameter
-				// already holds the array address directly. We don't dereference it.
-				// Array extents can live on either the declaration node or the type node,
-				// so check both representations before falling through to ordinary reference
-				// dereference handling. Non-projectable ordered referents such as
-				// int (* (&)[N])[M] only expose their outer array on the ordered spine.
+			// For references to arrays (e.g., int (&arr)[3]), the reference parameter
+			// already holds the array address directly. We don't dereference it.
+			// Array extents can live on either the declaration node or the type node,
+			// so check both representations before falling through to ordinary reference
+			// dereference handling. Non-projectable ordered referents such as
+			// int (* (&)[N])[M] only expose their outer array on the ordered spine.
 			if (decl_node.is_array_object() || type_node.is_array() || orderedReferenceRefersToArrayObject(type_node)) {
 					// Return the array reference as a 64-bit pointer
 				return makeExprResult(nativeTypeIndex(type_node.type()), SizeInBits{POINTER_SIZE_BITS}, toIrOperand(identifier_frame_name), PointerDepth{}, ValueStorage::ContainsData);
@@ -1506,12 +1506,12 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				FLASH_LOG_FORMAT(Codegen, Debug, "VariableDecl reference '{}': context={}",
 								 identifierNode.name(), context == ExpressionContext::LValueAddress ? "LValueAddress" : "Load");
 
-					// For references to arrays (e.g., int (&arr)[3]), the reference variable
-					// already holds the array address directly. We don't dereference it.
-					// Array extents can live on either the declaration node or the type node,
-					// so check both representations before treating this like an ordinary
-					// reference value. Non-projectable ordered referents such as
-					// int (* (&)[N])[M] only expose their outer array on the ordered spine.
+				// For references to arrays (e.g., int (&arr)[3]), the reference variable
+				// already holds the array address directly. We don't dereference it.
+				// Array extents can live on either the declaration node or the type node,
+				// so check both representations before treating this like an ordinary
+				// reference value. Non-projectable ordered referents such as
+				// int (* (&)[N])[M] only expose their outer array on the ordered spine.
 				if (decl_node.is_array_object() || type_node.is_array() || orderedReferenceRefersToArrayObject(type_node)) {
 						// Return the array reference as a 64-bit pointer
 					return makeExprResult(nativeTypeIndex(type_node.type()), SizeInBits{POINTER_SIZE_BITS}, toIrOperand(identifier_frame_name), PointerDepth{}, ValueStorage::ContainsData);

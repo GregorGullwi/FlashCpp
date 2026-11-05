@@ -4116,6 +4116,14 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					}
 				}
 			}
+			if (orderedDeclaratorIsArrayObject(result)) {
+				// C++20 [expr.unary.op]/3: &array keeps the array object and adds a
+				// pointer wrapper outside it. Only the ordered spine can describe
+				// an interleaved element such as int (*[N])[M].
+				result.prepend_ordered_declarator_component(DeclaratorComponent::pointer(CVQualifier::None));
+				result.set_reference_qualifier(ReferenceQualifier::None);
+				return result;
+			}
 			const bool operand_is_object_array =
 				result.is_array() &&
 				!result.has_pointee_array_declarator() &&
