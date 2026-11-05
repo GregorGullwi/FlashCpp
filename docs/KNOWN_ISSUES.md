@@ -241,9 +241,15 @@ consumers still read flat pointer/array projections. Member layout and constexpr
 member sizing now consume the ordered declarator spine, so an interleaved member
 such as `int (*cells[3])[4]` keeps pointer-sized elements and pointer alignment
 instead of the flat base element size. Constexpr member typing also prefers the
-published member `TypeId` when one exists. Other remaining flat readers still
-fail closed for non-projectable shapes; remove this entry when those consumers
-migrate and the compatibility projection fields are deleted.
+published member `TypeId` when one exists.
+
+Local array objects now allocate their full ordered element count and a
+reference to such an array holds the array address instead of dereferencing it
+as a value. `auto` deduction from an interleaved array initializer and passing a
+non-projectable member array directly to a reference parameter still read the
+flat projection. Other remaining flat readers still fail closed for
+non-projectable shapes; remove this entry when those consumers migrate and the
+compatibility projection fields are deleted.
 
 The triviality and lifetime traits still read `StructTypeInfo` and need a
 published member-property schema. A lazy-constraint member-object-pointer trait

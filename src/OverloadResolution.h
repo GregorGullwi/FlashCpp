@@ -2533,6 +2533,23 @@ inline void stripOrderedReference(TypeSpecifierNode& spec) {
 	spec.set_reference_qualifier(ReferenceQualifier::None);
 }
 
+// A reference whose referent is an array object, including the non-projectable
+// interleaved shape `int (* (&)[N])[M]`. The reference holds the array's
+// address directly, so identifier lowering must not dereference it as a value.
+inline bool orderedReferenceRefersToArrayObject(const TypeSpecifierNode& type) {
+	const std::span<const DeclaratorComponent> components = type.declarator_components();
+	size_t index = 0;
+	while (index < components.size() && (components[index].kind == DeclaratorComponentKind::LValueReference ||
+		components[index].kind == DeclaratorComponentKind::RValueReference)) {
+		++index;
+	}
+	if (index > 0) {
+		return index < components.size() && (components[index].kind == DeclaratorComponentKind::Array ||
+			components[index].kind == DeclaratorComponentKind::UnknownBoundArray);
+	}
+	return (type.is_reference() || type.is_rvalue_reference()) && type.is_array();
+}
+
 inline TypeId canonicalPromotedFixedEnumUnderlyingType(
 	CanonicalTypeTable& table,
 	TypeId underlying_type) {
