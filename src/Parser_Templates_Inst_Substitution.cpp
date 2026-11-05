@@ -815,8 +815,17 @@ bool Parser::hasTemplatedClassOwner(std::string_view template_name) {
 
 	const std::string_view owner_name = template_name.substr(0, last_colon);
 	auto owner_template_opt = gTemplateRegistry.lookupTemplate(owner_name);
-	return owner_template_opt.has_value() &&
-		owner_template_opt->is<TemplateClassDeclarationNode>();
+	if (owner_template_opt.has_value() &&
+		owner_template_opt->is<TemplateClassDeclarationNode>()) {
+		return true;
+	}
+	// Member templates parsed inside a partial-specialization pattern are keyed by
+	// the pattern struct name (for example Owner$pattern_P::List), which is not a
+	// template declaration itself. It still has a templated class owner: the base
+	// class template recorded for the pattern struct.
+	StringHandle owner_handle = StringTable::getOrInternStringHandle(owner_name);
+	return gTemplateRegistry.isPatternStructName(owner_handle) &&
+		gTemplateRegistry.getPatternBaseTemplateName(owner_handle).has_value();
 }
 
 std::string_view Parser::getClassTemplateInstanceKeyStem(std::string_view template_name) {

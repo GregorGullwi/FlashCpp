@@ -104,9 +104,9 @@ Runtime function-parameter fold replay still uses its separate legacy adapter.
 The legacy structural matcher still has its 64-level nested-argument guard.
 Alias and variable-template substitution still have flattened input adapters
 that need migration to grouped bindings; nested pack NTTP aliases remain
-unsupported through those adapters. A nested member-template declaration with
-a pack-expanded base such as `List : U...` is rejected by the parser; this syntax
-gap is separate from supported template-id bases.
+unsupported through those adapters. Member class-templates now parse
+pack-expanded bases such as `List : U...`; remaining base-template-id gaps are
+tracked separately.
 
 C++20 permits observable class-instantiation effects before a later deduction
 failure and requires errors in separately instantiated bodies to remain hard

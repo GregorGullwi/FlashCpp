@@ -4105,8 +4105,19 @@ ParseResult Parser::parse_type_specifier() {
 
 						// Member templates are registered on the primary class template name (e.g., Outer::Inner),
 						// while lookups here use the instantiated name (e.g., Outer$hash::Inner).
-						// Fall back to the primary outer template name when available.
+						// A selected partial specialization owns its own nested member templates, so prefer
+						// the registered pattern owner before falling back to the primary outer template.
 						auto parent_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
+						if (!member_template_opt.has_value()) {
+							auto pattern_name_opt = gTemplateRegistry.get_instantiation_pattern(
+								StringTable::getOrInternStringHandle(instantiated_name));
+							if (pattern_name_opt.has_value()) {
+								StringBuilder pattern_member_builder;
+								pattern_member_builder.append(*pattern_name_opt).append("::").append(member_name);
+								member_template_name_handle = StringTable::getOrInternStringHandle(pattern_member_builder.commit());
+								member_template_opt = gTemplateRegistry.lookupTemplate(StringTable::getStringView(member_template_name_handle));
+							}
+						}
 						if (!member_template_opt.has_value()) {
 							if (parent_type_it != getTypesByNameMap().end() && parent_type_it->second->isTemplateInstantiation()) {
 								StringBuilder template_member_builder;
