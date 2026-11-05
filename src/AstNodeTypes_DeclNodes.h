@@ -2131,6 +2131,11 @@ public:
 		has_unsized_outer_array_dimension_ = false;
 		array_dimensions_.assign(dims.begin(), dims.end());
 	}
+	void remove_outermost_array_dimension() {
+		if (!array_dimensions_.empty()) {
+			array_dimensions_.erase(array_dimensions_.begin());
+		}
+	}
 	bool has_unsized_outer_array_dimension() const { return has_unsized_outer_array_dimension_; }
 	void set_unsized_outer_array_dimension(bool has_unsized_outer_array_dimension) {
 		has_unsized_outer_array_dimension_ = has_unsized_outer_array_dimension;
@@ -3550,27 +3555,58 @@ inline TypeSpecifierNode finalizePlaceholderTypeDeduction(TypeCategory placehold
 	return deduced_type;
 }
 
+// C++20 [conv.array]/1 for value `auto` deduction: an array lvalue initializer
+// decays to a pointer to its first element. Reference declarators (auto&,
+// auto&&) bind the array itself and keep the ordered spine unchanged.
+inline void applyPlaceholderArrayDecay(TypeSpecifierNode& deduced_type) {
+	if (deduced_type.has_ordered_declarator() && !deduced_type.declarator_components().empty()) {
+		const DeclaratorComponentKind outer = deduced_type.declarator_components().front().kind;
+		if (outer == DeclaratorComponentKind::Array || outer == DeclaratorComponentKind::UnknownBoundArray) {
+			deduced_type.remove_outermost_ordered_declarator_component();
+			deduced_type.prepend_ordered_declarator_component(DeclaratorComponent::pointer(CVQualifier::None));
+		}
+		return;
+	}
+	if (deduced_type.has_pointee_array_declarator() || !deduced_type.is_array()) {
+		return;
+	}
+	const bool has_inner_extents = deduced_type.array_dimensions().size() > 1;
+	deduced_type.set_reference_qualifier(ReferenceQualifier::None);
+	deduced_type.add_pointer_level();
+	if (has_inner_extents) {
+		deduced_type.remove_outermost_array_dimension();
+		deduced_type.set_pointee_array_declarator(true);
+	} else {
+		deduced_type.set_array_dimensions({});
+	}
+}
+
 // Apply placeholder deduction for a variable declarator.
 // - `decltype(auto)` keeps the exact deduced expression type.
-// - value `auto` strips top-level reference/cv from the expression type.
+// - value `auto` strips top-level reference/cv from the expression type and
+//   applies the array-to-pointer conversion to an array initializer.
 // - reference declarators retain referred-to cv, combine declarator cv, and
 //   apply forwarding-reference collapsing (`auto&`, `const auto&`, `auto&&`).
 inline TypeSpecifierNode applyPlaceholderDeclaratorDeduction(
 	TypeCategory placeholder_cat,
 	const TypeSpecifierNode& declarator_type,
-	TypeSpecifierNode deduced_expr_type) {
+	TypeSpecifierNode deduced_expr_type,
+	bool decay_array_initializer) {
 	assert(isPlaceholderAutoType(placeholder_cat));
 	if (placeholder_cat == TypeCategory::DeclTypeAuto) {
 		return deduced_expr_type;
 	}
 
+	const ReferenceQualifier declarator_ref =
+		declarator_type.reference_qualifier();
+	if (decay_array_initializer && declarator_ref == ReferenceQualifier::None) {
+		applyPlaceholderArrayDecay(deduced_expr_type);
+	}
 	const ReferenceQualifier initializer_ref =
 		deduced_expr_type.reference_qualifier();
 	const CVQualifier initializer_cv = deduced_expr_type.cv_qualifier();
 	TypeSpecifierNode result =
 		finalizePlaceholderTypeDeduction(placeholder_cat, deduced_expr_type);
-	const ReferenceQualifier declarator_ref =
-		declarator_type.reference_qualifier();
 	if (declarator_ref == ReferenceQualifier::LValueReference ||
 		(declarator_ref == ReferenceQualifier::RValueReference &&
 		 initializer_ref == ReferenceQualifier::LValueReference)) {

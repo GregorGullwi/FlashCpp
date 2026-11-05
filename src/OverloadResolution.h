@@ -2547,7 +2547,14 @@ inline bool orderedReferenceRefersToArrayObject(const TypeSpecifierNode& type) {
 		return index < components.size() && (components[index].kind == DeclaratorComponentKind::Array ||
 			components[index].kind == DeclaratorComponentKind::UnknownBoundArray);
 	}
-	return (type.is_reference() || type.is_rvalue_reference()) && type.is_array();
+	if (!type.is_reference() && !type.is_rvalue_reference()) {
+		return false;
+	}
+	if (components.empty()) {
+		return type.is_array();
+	}
+	return components.front().kind == DeclaratorComponentKind::Array ||
+		components.front().kind == DeclaratorComponentKind::UnknownBoundArray;
 }
 
 inline TypeId canonicalPromotedFixedEnumUnderlyingType(
