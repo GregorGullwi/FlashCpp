@@ -412,6 +412,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 			alias_name_handle,
 			type_result.node().value());
 	}
+	promoteAliasTargetDeclaratorShape(alias_node.as<TemplateAliasNode>().target_type_node());
 
 	// Register the alias template with qualified name (ClassName::AliasName)
 	StringHandle owner_qualified_name = getStructQualifiedNameForRegistration(struct_node);

@@ -260,7 +260,10 @@ mismatched, unpublished, or unresolved owner facts.
      member aliases, and non-projectable ordered declarators. Class-type static
      constexpr member arguments now evaluate their brace initializer through the
      aggregate-construction path, so the typed value identity participates in
-     outer specialization matching.
+     outer specialization matching. Alias targets now promote their flat
+     pointer/reference shape to the ordered declarator spine before substitution,
+     so pointer-to-reference alias instantiations are diagnosed while valid
+     reference-to-pointer aliases still resolve.
    - Conditional array decay, builtin unary `*`/`&`, builtin `->`, and builtin
      `new`/`new[]` now export canonical identities but still have documented flat
      projection refresh, nested-class, or unmigrated-shape gaps. Finish those
