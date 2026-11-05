@@ -264,8 +264,11 @@ mismatched, unpublished, or unresolved owner facts.
      consumers and remove the flat pointer/array fields they retain.
    - Interleaved pointer/array member storage now sizes and aligns from the
      ordered declarator spine, and constexpr member typing prefers the published
-     member `TypeId`. Other flat readers still need migration before the
-     projection fields can be removed.
+     member `TypeId`. Local array objects also allocate from the ordered element
+     count and element size, and references to such arrays identify the array
+     address rather than dereferencing it as a value. Auto deduction from an
+     interleaved array initializer and direct member-array reference arguments
+     still read the flat projection; migrate them before removing the fields.
    - Migrate the separate compatibility candidate gathering in the mixed
      member/free selector; deleting `findUnaryOperatorOverloadCompatibility`
      alone does not remove that dependency.

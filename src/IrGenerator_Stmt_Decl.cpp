@@ -2751,8 +2751,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 	VariableDeclOp decl_op;
 	decl_op.type_index = type_node.type_index();
-		// References and pointers are both 64-bit (pointer size on x64)
-	decl_op.size_in_bits = SizeInBits{(runtime_pointer_depth > 0 || type_node.is_reference()) ? 64 : static_cast<int>(type_node.size_in_bits())};
+		// References and pointers are both 64-bit (pointer size on x64). An ordered array object sizes its frame
+		// from the element on the spine, not from the flat base type.
+	decl_op.size_in_bits = SizeInBits{has_ordered_array_storage ? ordered_array_element_bits
+		: ((runtime_pointer_depth > 0 || type_node.is_reference()) ? 64 : static_cast<int>(type_node.size_in_bits()))};
 	decl_op.var_name = declared_spelling;
 	decl_op.local_id = local_var_id;
 	decl_op.declared_name = decl.identifier_token().handle();
@@ -2765,15 +2767,15 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		decl_op.referenced_value_size_in_bits = SizeInBits{referenced_size_bits};
 	}
 	decl_op.pointer_depth = PointerDepth{static_cast<int>(runtime_pointer_depth)};
-	decl_op.is_array = decl.owns_inline_array_storage();
-	if (decl.owns_inline_array_storage() && operands.size() >= 10) {
+	decl_op.is_array = owns_inline_array_storage;
+	if (owns_inline_array_storage && operands.size() >= 10) {
 		decl_op.array_element_type_index = nativeTypeIndex(std::get<TypeCategory>(operands[7]));
 		decl_op.array_element_size = std::get<int>(operands[8]);
 		if (const auto* ull_val = std::get_if<unsigned long long>(&operands[9])) {
 			decl_op.array_count = *ull_val;
 		}
 	}
-	if (node.initializer() && !decl.owns_inline_array_storage() && operands.size() >= 11) {
+	if (node.initializer() && !owns_inline_array_storage && operands.size() >= 11) {
 			// For reference initialization, check if the initializer is an array element (arr[i])
 			// If so, we need to emit an ArrayElementAddress instruction to compute the actual address
 		if ((type_node.is_reference() || type_node.is_rvalue_reference()) &&
