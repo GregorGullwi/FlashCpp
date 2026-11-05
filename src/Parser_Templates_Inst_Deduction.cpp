@@ -12,10 +12,51 @@
 #include "TypeTraitEvaluator.h"
 
 #include <algorithm>
+#include <bit>
 #include <cassert>
 #include <numeric>
 
 namespace {
+
+// Candidate sets are usually very small. Keep maximality flags in a register
+// and fall back to heap storage only for unusually large overload sets.
+class CandidateMaximalityFlags {
+public:
+	explicit CandidateMaximalityFlags(size_t size) : size_(size) {
+		if (size_ <= 64) {
+			bits_ = size_ == 64 ? ~uint64_t{0} : (uint64_t{1} << size_) - 1;
+		} else {
+			overflow_.assign(size_, true);
+		}
+	}
+
+	bool isMaximal(size_t index) const {
+		if (size_ <= 64) {
+			return ((bits_ >> index) & 1u) != 0;
+		}
+		return overflow_[index];
+	}
+
+	void clear(size_t index) {
+		if (size_ <= 64) {
+			bits_ &= ~(uint64_t{1} << index);
+		} else {
+			overflow_[index] = false;
+		}
+	}
+
+	size_t count() const {
+		if (size_ <= 64) {
+			return static_cast<size_t>(std::popcount(bits_));
+		}
+		return static_cast<size_t>(std::ranges::count(overflow_, true));
+	}
+
+private:
+	size_t size_ = 0;
+	uint64_t bits_ = 0;
+	std::vector<bool> overflow_;
+};
 
 template <typename RegisterFn>
 void forEachEnvironmentBinding(
@@ -4875,6 +4916,9 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	}
 
 	std::optional<ASTNode> deferred_forward_declaration_result;
+	std::optional<std::pair<ASTNode, size_t>> first_non_sfinae_success;
+	std::vector<std::pair<ASTNode, size_t>> tied_non_sfinae_successes;
+	std::optional<int> non_sfinae_success_score;
 	for (size_t sorted_idx = 0; sorted_idx < overload_iteration_order.size(); ++sorted_idx) {
 		size_t overload_idx = overload_iteration_order[sorted_idx];
 		const ASTNode& template_node = all_templates[overload_idx];
@@ -4923,15 +4967,62 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 					}
 					continue;
 				}
-				// Non-SFINAE: success — return first good match.
 				FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Successfully instantiated overload {} for '{}'",
 								 recursion_depth, overload_idx, template_name);
-				return result;
+				const int score = computeTemplateFunctionSpecificity(template_func);
+				if (!non_sfinae_success_score.has_value()) {
+					non_sfinae_success_score = score;
+				} else if (score < *non_sfinae_success_score) {
+					break;
+				}
+				if (!first_non_sfinae_success.has_value()) {
+					first_non_sfinae_success.emplace(*result, overload_idx);
+				} else {
+					if (tied_non_sfinae_successes.empty()) {
+						tied_non_sfinae_successes.push_back(*first_non_sfinae_success);
+					}
+					tied_non_sfinae_successes.emplace_back(*result, overload_idx);
+				}
 			}
 		} else {
 			// Instantiation failed - try next overload (SFINAE)
 			FLASH_LOG_FORMAT(Templates, Trace, "[depth={}]: Overload {} failed substitution, trying next",
 							 recursion_depth, overload_idx);
+		}
+	}
+
+	if (first_non_sfinae_success.has_value()) {
+		if (tied_non_sfinae_successes.empty()) {
+			return first_non_sfinae_success->first;
+		}
+		CandidateMaximalityFlags is_maximal(tied_non_sfinae_successes.size());
+		for (size_t first = 0; first < tied_non_sfinae_successes.size(); ++first) {
+			for (size_t second = first + 1; second < tied_non_sfinae_successes.size(); ++second) {
+				const ASTNode& first_node = all_templates[tied_non_sfinae_successes[first].second];
+				const ASTNode& second_node = all_templates[tied_non_sfinae_successes[second].second];
+				if (!first_node.is<TemplateFunctionDeclarationNode>() ||
+					!second_node.is<TemplateFunctionDeclarationNode>()) {
+					continue;
+				}
+				const CanonicalTemplatePartialOrdering ordering =
+					semanticAnalysis().compareFunctionTemplatePartialOrdering(
+						first_node.as<TemplateFunctionDeclarationNode>(),
+						second_node.as<TemplateFunctionDeclarationNode>());
+				if (ordering == CanonicalTemplatePartialOrdering::FirstMoreSpecialized) {
+					is_maximal.clear(second);
+				} else if (ordering == CanonicalTemplatePartialOrdering::SecondMoreSpecialized) {
+					is_maximal.clear(first);
+				}
+			}
+		}
+		if (is_maximal.count() != 1) {
+			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Ambiguous ordinary template candidate set for '{}'", recursion_depth, template_name);
+			return std::nullopt;
+		}
+		for (size_t index = 0; index < tied_non_sfinae_successes.size(); ++index) {
+			if (is_maximal.isMaximal(index)) {
+				return tied_non_sfinae_successes[index].first;
+			}
 		}
 	}
 
@@ -4950,28 +5041,35 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		// reparse path has already rejected overloads whose return-type substitution
 		// failed (e.g. `enable_if<false>::type`), so any `= delete` candidate that
 		// reaches this collection step is a genuine explicit SFINAE sentinel.
-		std::vector<const SfinaeCandidateEntry*> best_non_deleted;
+		const SfinaeCandidateEntry* single_best_non_deleted = nullptr;
+		std::vector<const SfinaeCandidateEntry*> tied_best_non_deleted;
 		for (const auto& candidate : sfinae_candidates) {
-			if (candidate.specificity == best_specificity && !candidate.is_deleted) {
-				best_non_deleted.push_back(&candidate);
+			if (candidate.specificity != best_specificity || candidate.is_deleted) {
+				continue;
+			}
+			if (single_best_non_deleted == nullptr) {
+				single_best_non_deleted = &candidate;
+			} else {
+				if (tied_best_non_deleted.empty()) {
+					tied_best_non_deleted.push_back(single_best_non_deleted);
+				}
+				tied_best_non_deleted.push_back(&candidate);
 			}
 		}
-		if (best_non_deleted.empty()) {
+		if (single_best_non_deleted == nullptr) {
 			FLASH_LOG_FORMAT(Templates, Trace,
 				"[depth={}]: SFINAE failure for '{}': all best-specificity candidates are = delete (specificity={})",
 				recursion_depth, template_name, best_specificity);
 			return std::nullopt;
 		}
-		const SfinaeCandidateEntry* selected = nullptr;
-		if (best_non_deleted.size() == 1) {
-			selected = best_non_deleted.front();
-		} else {
+		const SfinaeCandidateEntry* selected = single_best_non_deleted;
+		if (!tied_best_non_deleted.empty()) {
 			// C++20 [temp.deduct.partial]: a non-unique maximal candidate is ambiguous. Do not resolve it by lookup or insertion order.
-			std::vector<bool> is_maximal(best_non_deleted.size(), true);
-			for (size_t first = 0; first < best_non_deleted.size(); ++first) {
-				for (size_t second = first + 1; second < best_non_deleted.size(); ++second) {
-					const ASTNode& first_node = all_templates[best_non_deleted[first]->overload_idx];
-					const ASTNode& second_node = all_templates[best_non_deleted[second]->overload_idx];
+			CandidateMaximalityFlags is_maximal(tied_best_non_deleted.size());
+			for (size_t first = 0; first < tied_best_non_deleted.size(); ++first) {
+				for (size_t second = first + 1; second < tied_best_non_deleted.size(); ++second) {
+					const ASTNode& first_node = all_templates[tied_best_non_deleted[first]->overload_idx];
+					const ASTNode& second_node = all_templates[tied_best_non_deleted[second]->overload_idx];
 					if (!first_node.is<TemplateFunctionDeclarationNode>() ||
 						!second_node.is<TemplateFunctionDeclarationNode>()) {
 						continue;
@@ -4981,28 +5079,20 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 							first_node.as<TemplateFunctionDeclarationNode>(),
 							second_node.as<TemplateFunctionDeclarationNode>());
 					if (ordering == CanonicalTemplatePartialOrdering::FirstMoreSpecialized) {
-						is_maximal[second] = false;
+						is_maximal.clear(second);
 					} else if (ordering == CanonicalTemplatePartialOrdering::SecondMoreSpecialized) {
-						is_maximal[first] = false;
+						is_maximal.clear(first);
 					}
 				}
 			}
-			size_t maximal_count = 0;
-			for (size_t index = 0; index < best_non_deleted.size(); ++index) {
-				if (!is_maximal[index]) {
-					continue;
-				}
-				++maximal_count;
-				selected = best_non_deleted[index];
-			}
-			if (maximal_count != 1) {
+			if (is_maximal.count() != 1) {
 				FLASH_LOG_FORMAT(Templates, Trace, "[depth={}]: SFINAE ambiguity for '{}': no unique maximal candidate at specificity={}",
 					recursion_depth, template_name, best_specificity);
 				return std::nullopt;
 			}
-			for (size_t index = 0; index < best_non_deleted.size(); ++index) {
-				if (is_maximal[index]) {
-					selected = best_non_deleted[index];
+			for (size_t index = 0; index < tied_best_non_deleted.size(); ++index) {
+				if (is_maximal.isMaximal(index)) {
+					selected = tied_best_non_deleted[index];
 					break;
 				}
 			}
