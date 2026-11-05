@@ -257,7 +257,10 @@ mismatched, unpublished, or unresolved owner facts.
    - Template argument and substitution storage: move lazy constraint lookup from
      name-based parameters to depth/index parameters, and finish canonical
      preservation through NTTP reconstruction, deferred bases, stored arguments,
-     member aliases, and non-projectable ordered declarators. Class-type static
+     member aliases, and non-projectable ordered declarators. Member
+     class-template base lists now accept pack-expanded bases such as `List : U...`,
+     and a selected partial owner resolves its own nested member class templates
+     instead of falling back to the primary owner's template. Class-type static
      constexpr member arguments now evaluate their brace initializer through the
      aggregate-construction path, so the typed value identity participates in
      outer specialization matching. Ordinary call candidate sorting now uses the

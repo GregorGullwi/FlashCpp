@@ -541,6 +541,18 @@ void populateOuterTemplateBinding(const TemplateEnvironment& environment, std::s
 	out_binding.params.clear();
 	out_binding.all_args.clear();
 
+	// Contexts may carry a native type as TypeIndex{0, category}. Publish the
+	// canonical native slot so substituted member types remain concrete.
+	auto canonicalizeArgument = [](TemplateTypeArg argument) {
+		if (!argument.is_value && !argument.type_index.is_valid()) {
+			TypeIndex native_index = nativeTypeIndex(argument.category());
+			if (native_index.is_valid()) {
+				argument.type_index = native_index;
+			}
+		}
+		return argument;
+	};
+
 	TemplateVector<const TemplateEnvironment*, 4> chain;
 	for (const TemplateEnvironment* current = &environment; current != nullptr; current = current->parent) {
 		chain.push_back(current);
@@ -555,23 +567,27 @@ void populateOuterTemplateBinding(const TemplateEnvironment& environment, std::s
 	out_binding.params.reserve(binding_count);
 	for (size_t scope_index = chain.size(); scope_index > 0; --scope_index) {
 		for (const TemplateBinding& binding : chain[scope_index - 1]->bindings) {
-			out_binding.bindings.push_back(binding);
+			TemplateBinding normalized_binding = binding;
+			for (TemplateTypeArg& argument : normalized_binding.args) {
+				argument = canonicalizeArgument(argument);
+			}
+			out_binding.bindings.push_back(normalized_binding);
 			out_binding.param_names.push_back(binding.name);
 
-			const TemplateTypeArg* first_arg = binding.args.empty() ? nullptr : &binding.args.front();
+			const TemplateTypeArg* first_arg = normalized_binding.args.empty() ? nullptr : &normalized_binding.args.front();
 			if (first_arg != nullptr) {
 				out_binding.param_args.push_back(*first_arg);
 			} else {
 				out_binding.param_args.push_back(TemplateTypeArg());
 			}
-			for (const TemplateTypeArg& arg : binding.args) {
+			for (const TemplateTypeArg& arg : normalized_binding.args) {
 				out_binding.all_args.push_back(arg);
 			}
 
 			const auto param = std::find_if(params.begin(), params.end(), [&](const TemplateParameterNode& candidate) {
 				return candidate.nameHandle() == binding.name && candidate.kind() == binding.kind;
 			});
-			TemplateParameterNode parameter = param != params.end() ? *param : makeOuterTemplateParameter(binding, first_arg);
+			TemplateParameterNode parameter = param != params.end() ? *param : makeOuterTemplateParameter(normalized_binding, first_arg);
 			if (parameter.is_variadic() != binding.is_pack) {
 				parameter.set_variadic(binding.is_pack);
 			}

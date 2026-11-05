@@ -5560,6 +5560,10 @@ ParseResult Parser::parse_member_struct_template_base_class_list(
 				struct_ref.add_base_class(base_class_name, TypeIndex{}, base_access, is_virtual_base, /*is_deferred=*/true);
 			}
 		}
+		// Variadic base pack expansion: struct List : Bases...
+		if (peek() == "..."_tok) {
+			advance();
+		}
 	} while (consume(","_tok));
 
 	return ParseResult::success();
