@@ -273,8 +273,11 @@ mismatched, unpublished, or unresolved owner facts.
      bounds are materialized onto the type specifier so canonical identity sees
      the array. Array-member lvalue-address lowering now emits the member address
      for every array member, so direct member-array reference arguments receive
-     a real address; other flat readers still need migration before the
-     projection fields can be removed.
+     a real address. Conditional array branches consume their annotated
+     array-to-pointer conversion without re-dereferencing the address temp, and
+     subscript lowering treats pointer-to-array declarators as scalar pointers
+     rather than array objects. Other flat readers still need migration before
+     the projection fields can be removed.
    - Migrate the separate compatibility candidate gathering in the mixed
      member/free selector; deleting `findUnaryOperatorOverloadCompatibility`
      alone does not remove that dependency.
