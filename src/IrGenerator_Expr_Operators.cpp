@@ -3424,6 +3424,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 	// Try to get pointer depth for pointer arithmetic
 	int lhs_pointer_depth = 0;
+	bool lhs_is_array_object = false;
 	const TypeSpecifierNode* lhs_type_node = nullptr;
 	std::optional<TypeSpecifierNode> lhs_fallback_type_node;
 	if (binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
@@ -3437,7 +3438,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				const auto& type_node = decl.type_specifier_node();
 				lhs_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());
 				// Arrays decay to pointers in expressions - treat them as pointer_depth == 1
-				if (decl.is_array() && lhs_pointer_depth == 0) {
+				lhs_is_array_object = sema_.declarationDenotesArrayObject(decl);
+				if (lhs_pointer_depth == 0 && lhs_is_array_object) {
 					lhs_pointer_depth = 1;
 				}
 				lhs_type_node = &type_node;
@@ -3446,7 +3448,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				const auto& type_node = decl.type_specifier_node();
 				lhs_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());
 				// Arrays decay to pointers in expressions - treat them as pointer_depth == 1
-				if (decl.is_array() && lhs_pointer_depth == 0) {
+				lhs_is_array_object = sema_.declarationDenotesArrayObject(decl);
+				if (lhs_pointer_depth == 0 && lhs_is_array_object) {
 					lhs_pointer_depth = 1;
 				}
 				lhs_type_node = &type_node;
@@ -3469,6 +3472,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 	// Try to get pointer depth and type node for RHS as well (for ptr - ptr and int + ptr)
 	int rhs_pointer_depth = 0;
+	bool rhs_is_array_object = false;
 	const TypeSpecifierNode* rhs_type_node = nullptr;
 	std::optional<TypeSpecifierNode> rhs_fallback_type_node;
 	if (binaryOperatorNode.get_rhs().is<ExpressionNode>()) {
@@ -3480,12 +3484,18 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				const auto& var_decl = symbol->as<VariableDeclarationNode>();
 				const auto& decl = var_decl.declaration();
 				const auto& type_node = decl.type_specifier_node();
-				rhs_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());
+				rhs_is_array_object = sema_.declarationDenotesArrayObject(decl);
+				rhs_pointer_depth = rhs_is_array_object
+					? 1
+					: static_cast<int>(type_node.runtime_pointer_depth());
 				rhs_type_node = &type_node;
 			} else if (symbol && symbol->is<DeclarationNode>()) {
 				const auto& decl = symbol->as<DeclarationNode>();
 				const auto& type_node = decl.type_specifier_node();
-				rhs_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());
+				rhs_is_array_object = sema_.declarationDenotesArrayObject(decl);
+				rhs_pointer_depth = rhs_is_array_object
+					? 1
+					: static_cast<int>(type_node.runtime_pointer_depth());
 				rhs_type_node = &type_node;
 			}
 		}
@@ -3605,13 +3615,23 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		// Determine element size
 		// Note: lhs_type_node->size_in_bits() returns the POINTER size (64), not the
 		// pointee size. Use getPointerElementSize which correctly uses the base type size.
-		size_t element_size;
-		if (lhs_pointer_depth > 1) {
+		size_t element_size = 0;
+		if (lhs_type_node) {
+			if (const std::optional<TypeSpecifierNode> pointee =
+					sema_.builtinDereferenceResultType(*lhs_type_node);
+				pointee.has_value()) {
+				const int pointee_size_bits = getTypeSpecSizeBits(*pointee);
+				if (pointee_size_bits > 0) {
+					element_size = static_cast<size_t>(pointee_size_bits / 8);
+				}
+			}
+		}
+		if (element_size == 0 && lhs_pointer_depth > 1) {
 			// Multi-level pointer: element is a pointer, so 8 bytes
 			element_size = 8;
-		} else if (lhs_type_node) {
+		} else if (element_size == 0 && lhs_type_node) {
 			element_size = static_cast<size_t>(getPointerElementSize(lhs_type_node->type_index(), lhs_pointer_depth));
-		} else {
+		} else if (element_size == 0) {
 			// Fallback: derive element size from operand's base type
 			int base_size_bits = get_type_size_bits(lhsCat);
 			element_size = base_size_bits / 8;
@@ -3643,6 +3663,14 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		IrOpcode ptr_opcode = (op == "+") ? IrOpcode::Add : IrOpcode::Subtract;
 		ir_.addInstruction(IrInstruction(ptr_opcode, std::move(ptr_arith_op), binaryOperatorNode.get_token()));
 
+		if (lhs_is_array_object && lhs_type_node != nullptr) {
+			// Publish the decayed pointer-to-element type, not a pointer to the
+			// flat base category.
+			TypeSpecifierNode result_type = *lhs_type_node;
+			applyArrayToPointerDecay(result_type);
+			return makeExprResult(result_type.type_index().withCategory(result_type.type()), SizeInBits{64}, IrOperand{result_var},
+				PointerDepth{static_cast<int>(result_type.runtime_pointer_depth())}, ValueStorage::ContainsData);
+		}
 		// Return pointer type with 64-bit size, preserving pointer depth from LHS
 		return makeExprResult(nativeTypeIndex(lhsCat), SizeInBits{64}, IrOperand{result_var}, PointerDepth{lhs_pointer_depth}, ValueStorage::ContainsData);
 	}
@@ -3653,12 +3681,22 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// mirror the ptr + int path but take type metadata from the RHS.
 	if (op == "+" && rhsSize == 64 && rhs_pointer_depth > 0 && is_integer_type(lhsCat)) {
 		// Right side is the pointer, left side is the integer offset.
-		size_t element_size;
-		if (rhs_pointer_depth > 1) {
+		size_t element_size = 0;
+		if (rhs_type_node) {
+			if (const std::optional<TypeSpecifierNode> pointee =
+					sema_.builtinDereferenceResultType(*rhs_type_node);
+				pointee.has_value()) {
+				const int pointee_size_bits = getTypeSpecSizeBits(*pointee);
+				if (pointee_size_bits > 0) {
+					element_size = static_cast<size_t>(pointee_size_bits / 8);
+				}
+			}
+		}
+		if (element_size == 0 && rhs_pointer_depth > 1) {
 			element_size = 8;
-		} else if (rhs_type_node) {
+		} else if (element_size == 0 && rhs_type_node) {
 			element_size = static_cast<size_t>(getPointerElementSize(rhs_type_node->type_index(), rhs_pointer_depth));
-		} else {
+		} else if (element_size == 0) {
 			int base_size_bits = get_type_size_bits(rhsCat);
 			element_size = base_size_bits / 8;
 			if (element_size == 0)
@@ -3681,6 +3719,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(ptr_arith_op), binaryOperatorNode.get_token()));
 
+		if (rhs_is_array_object && rhs_type_node != nullptr) {
+			TypeSpecifierNode result_type = *rhs_type_node;
+			applyArrayToPointerDecay(result_type);
+			return makeExprResult(result_type.type_index().withCategory(result_type.type()), SizeInBits{64}, IrOperand{result_var},
+				PointerDepth{static_cast<int>(result_type.runtime_pointer_depth())}, ValueStorage::ContainsData);
+		}
 		// Return pointer type with 64-bit size, preserving pointer depth from RHS
 		return makeExprResult(nativeTypeIndex(rhsCat), SizeInBits{64}, IrOperand{result_var}, PointerDepth{rhs_pointer_depth}, ValueStorage::ContainsData);
 	}

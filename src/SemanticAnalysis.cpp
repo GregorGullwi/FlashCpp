@@ -6931,6 +6931,20 @@ bool SemanticAnalysis::declarationDenotesArrayObject(const DeclarationNode& decl
 	return typeDenotesArrayObject(type);
 }
 
+std::optional<TypeSpecifierNode> SemanticAnalysis::builtinDereferenceResultType(const TypeSpecifierNode& operand_type) {
+	const CanonicalTypeId operand_id = canonicalizeType(operand_type);
+	if (!operand_id) {
+		return std::nullopt;
+	}
+	// Copy the descriptor off get(): indirection may intern a new descriptor and
+	// invalidate a live reference into the TypeContext arena.
+	const std::optional<CanonicalTypeDesc> result = canonicalBuiltinIndirection(type_context_.get(operand_id));
+	if (!result.has_value()) {
+		return std::nullopt;
+	}
+	return materializeTypeSpecifier(type_context_.get(type_context_.intern(*result)));
+}
+
 PointerToArrayShape SemanticAnalysis::pointerToArrayShape(const CanonicalTypeDesc& desc) const {
 	// Every projectable pointer-to-array shape now publishes structural
 	// identity, so a pointer-to-array descriptor that reached codegen without

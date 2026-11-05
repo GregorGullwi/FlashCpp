@@ -3738,15 +3738,39 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		}
 
 		if (lhs_type_opt.has_value() && rhs_type_opt.has_value()) {
-			const bool lhs_is_ptr = lhs_type_opt->pointer_depth() > 0;
-			const bool rhs_is_ptr = rhs_type_opt->pointer_depth() > 0;
+			// C++20 [expr.add]/[conv.array]: array operands decay to a pointer to
+			// their first element before pointer arithmetic. Preserve the ordered
+			// element shape, which may itself be a pointer-to-array.
+			auto as_pointer_operand = [](const TypeSpecifierNode& type) -> std::optional<TypeSpecifierNode> {
+				if (type.runtime_pointer_depth() > 0) {
+					return type;
+				}
+				if (type.has_ordered_declarator()) {
+					if (!orderedDeclaratorIsArrayObject(type)) {
+						return std::nullopt;
+					}
+					TypeSpecifierNode decayed = type;
+					applyArrayToPointerDecay(decayed);
+					return decayed;
+				}
+				if (type.is_array() && !type.has_pointee_array_declarator() && !type.is_reference()) {
+					TypeSpecifierNode decayed = type;
+					applyArrayToPointerDecay(decayed);
+					return decayed;
+				}
+				return std::nullopt;
+			};
+			const std::optional<TypeSpecifierNode> lhs_pointer = as_pointer_operand(*lhs_type_opt);
+			const std::optional<TypeSpecifierNode> rhs_pointer = as_pointer_operand(*rhs_type_opt);
+			const bool lhs_is_ptr = lhs_pointer.has_value();
+			const bool rhs_is_ptr = rhs_pointer.has_value();
 			if (lhs_is_ptr || rhs_is_ptr) {
 				if (op_kind == tok::Plus) {
 					if (lhs_is_ptr && !rhs_is_ptr) {
-						return *lhs_type_opt;
+						return *lhs_pointer;
 					}
 					if (rhs_is_ptr && !lhs_is_ptr) {
-						return *rhs_type_opt;
+						return *rhs_pointer;
 					}
 					// ptr + ptr is invalid
 					if (lhs_is_ptr && rhs_is_ptr) {
@@ -3755,7 +3779,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				}
 				if (op_kind == tok::Minus) {
 					if (lhs_is_ptr && !rhs_is_ptr) {
-						return *lhs_type_opt;
+						return *lhs_pointer;
 					}
 					if (lhs_is_ptr && rhs_is_ptr) {
 						// ptr - ptr requires compatible pointed-to types
@@ -4045,6 +4069,28 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 
 		// Handle dereference operator: *ptr -> removes one level of pointer/reference
 		if (op == "*") {
+			// C++20 [conv.array]/[expr.unary.op]/1: an array operand decays to a
+			// pointer to its first element and the indirection selects that
+			// element. The net result is the array element type, which for an
+			// interleaved array can itself be a pointer to an array.
+			if (orderedDeclaratorIsArrayObject(operand_type)) {
+				TypeSpecifierNode result = operand_type;
+				result.remove_outermost_ordered_declarator_component();
+				result.set_reference_qualifier(ReferenceQualifier::LValueReference);
+				return result;
+			}
+			if (!operand_type.has_ordered_declarator() && operand_type.is_array() &&
+				!operand_type.has_pointee_array_declarator()) {
+				TypeSpecifierNode result = operand_type;
+				if (result.array_dimensions().size() > 1) {
+					result.remove_outermost_array_dimension();
+					result.set_pointee_array_declarator(true);
+				} else {
+					result.set_array_dimensions({});
+				}
+				result.set_reference_qualifier(ReferenceQualifier::LValueReference);
+				return result;
+			}
 			if (operand_type.has_ordered_declarator() &&
 				!operand_type.ordered_declarator_has_legacy_projection() &&
 				!operand_type.declarator_components().empty() &&
