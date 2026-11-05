@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "SemanticAnalysis.h"
 #include "AstTraversal.h"
 #include "ConstExprEvaluator.h"
 #include "ExpressionSubstitutor.h"
@@ -3844,7 +3845,20 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			overload_iteration_order.begin(),
 			overload_iteration_order.end(),
 			[&](size_t lhs_idx, size_t rhs_idx) {
-				return scores[lhs_idx] > scores[rhs_idx];
+				if (scores[lhs_idx] != scores[rhs_idx]) {
+					return scores[lhs_idx] > scores[rhs_idx];
+				}
+				const ASTNode& lhs_node = all_templates[lhs_idx];
+				const ASTNode& rhs_node = all_templates[rhs_idx];
+				if (!lhs_node.is<TemplateFunctionDeclarationNode>() ||
+					!rhs_node.is<TemplateFunctionDeclarationNode>()) {
+					return false;
+				}
+				const CanonicalTemplatePartialOrdering ordering =
+					semanticAnalysis().compareFunctionTemplatePartialOrdering(
+						lhs_node.as<TemplateFunctionDeclarationNode>(),
+						rhs_node.as<TemplateFunctionDeclarationNode>());
+				return ordering == CanonicalTemplatePartialOrdering::FirstMoreSpecialized;
 			});
 	}
 
@@ -4600,7 +4614,20 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			overload_iteration_order.begin(),
 			overload_iteration_order.end(),
 			[&](size_t lhs_idx, size_t rhs_idx) {
-				return scores[lhs_idx] > scores[rhs_idx];
+				if (scores[lhs_idx] != scores[rhs_idx]) {
+					return scores[lhs_idx] > scores[rhs_idx];
+				}
+				const ASTNode& lhs_node = all_templates[lhs_idx];
+				const ASTNode& rhs_node = all_templates[rhs_idx];
+				if (!lhs_node.is<TemplateFunctionDeclarationNode>() ||
+					!rhs_node.is<TemplateFunctionDeclarationNode>()) {
+					return false;
+				}
+				const CanonicalTemplatePartialOrdering ordering =
+					semanticAnalysis().compareFunctionTemplatePartialOrdering(
+						lhs_node.as<TemplateFunctionDeclarationNode>(),
+						rhs_node.as<TemplateFunctionDeclarationNode>());
+				return ordering == CanonicalTemplatePartialOrdering::FirstMoreSpecialized;
 			});
 	}
 
@@ -4923,23 +4950,67 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		// reparse path has already rejected overloads whose return-type substitution
 		// failed (e.g. `enable_if<false>::type`), so any `= delete` candidate that
 		// reaches this collection step is a genuine explicit SFINAE sentinel.
-		const SfinaeCandidateEntry* best_non_deleted = nullptr;
+		std::vector<const SfinaeCandidateEntry*> best_non_deleted;
 		for (const auto& candidate : sfinae_candidates) {
 			if (candidate.specificity == best_specificity && !candidate.is_deleted) {
-				best_non_deleted = &candidate;
-				break;
+				best_non_deleted.push_back(&candidate);
 			}
 		}
-		if (!best_non_deleted) {
+		if (best_non_deleted.empty()) {
 			FLASH_LOG_FORMAT(Templates, Trace,
 				"[depth={}]: SFINAE failure for '{}': all best-specificity candidates are = delete (specificity={})",
 				recursion_depth, template_name, best_specificity);
 			return std::nullopt;
 		}
+		const SfinaeCandidateEntry* selected = nullptr;
+		if (best_non_deleted.size() == 1) {
+			selected = best_non_deleted.front();
+		} else {
+			// C++20 [temp.deduct.partial]: a non-unique maximal candidate is ambiguous. Do not resolve it by lookup or insertion order.
+			std::vector<bool> is_maximal(best_non_deleted.size(), true);
+			for (size_t first = 0; first < best_non_deleted.size(); ++first) {
+				for (size_t second = first + 1; second < best_non_deleted.size(); ++second) {
+					const ASTNode& first_node = all_templates[best_non_deleted[first]->overload_idx];
+					const ASTNode& second_node = all_templates[best_non_deleted[second]->overload_idx];
+					if (!first_node.is<TemplateFunctionDeclarationNode>() ||
+						!second_node.is<TemplateFunctionDeclarationNode>()) {
+						continue;
+					}
+					const CanonicalTemplatePartialOrdering ordering =
+						semanticAnalysis().compareFunctionTemplatePartialOrdering(
+							first_node.as<TemplateFunctionDeclarationNode>(),
+							second_node.as<TemplateFunctionDeclarationNode>());
+					if (ordering == CanonicalTemplatePartialOrdering::FirstMoreSpecialized) {
+						is_maximal[second] = false;
+					} else if (ordering == CanonicalTemplatePartialOrdering::SecondMoreSpecialized) {
+						is_maximal[first] = false;
+					}
+				}
+			}
+			size_t maximal_count = 0;
+			for (size_t index = 0; index < best_non_deleted.size(); ++index) {
+				if (!is_maximal[index]) {
+					continue;
+				}
+				++maximal_count;
+				selected = best_non_deleted[index];
+			}
+			if (maximal_count != 1) {
+				FLASH_LOG_FORMAT(Templates, Trace, "[depth={}]: SFINAE ambiguity for '{}': no unique maximal candidate at specificity={}",
+					recursion_depth, template_name, best_specificity);
+				return std::nullopt;
+			}
+			for (size_t index = 0; index < best_non_deleted.size(); ++index) {
+				if (is_maximal[index]) {
+					selected = best_non_deleted[index];
+					break;
+				}
+			}
+		}
 		FLASH_LOG_FORMAT(Templates, Trace,
 			"[depth={}]: SFINAE best match for '{}' is overload {} specificity={} deleted=false",
-			recursion_depth, template_name, best_non_deleted->overload_idx, best_specificity);
-		return best_non_deleted->result;
+			recursion_depth, template_name, selected->overload_idx, best_specificity);
+		return selected->result;
 	}
 
 	if (deferred_forward_declaration_result.has_value()) {
