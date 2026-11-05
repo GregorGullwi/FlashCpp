@@ -2404,10 +2404,7 @@ void Parser::applySubstitutedFunctionParameterArrayBounds(
 		}
 	}
 
-	if (!param_decl.is_array() || param_decl.array_dimension_count() <= 1) {
-		return;
-	}
-	if (!type_spec.has_pointee_array_declarator() || !type_spec.array_dimensions().empty()) {
+	if (!param_decl.is_array()) {
 		return;
 	}
 
@@ -2434,12 +2431,8 @@ void Parser::applySubstitutedFunctionParameterArrayBounds(
 		}
 		return {};
 	};
-
-	std::vector<size_t> resolved_dims;
-	const auto dimensions = param_decl.array_dimensions();
-	resolved_dims.reserve(dimensions.size() - 1);
-	for (size_t i = 1; i < dimensions.size(); ++i) {
-		const StringHandle dimension_parameter_name = bound_parameter_name(dimensions[i]);
+	auto resolve_dimension = [&](const ASTNode& dimension_expr) -> size_t {
+		const StringHandle dimension_parameter_name = bound_parameter_name(dimension_expr);
 		if (dimension_parameter_name.isValid()) {
 			if (const TemplateTypeArg* arg = findTemplateArgByName(
 					StringTable::getStringView(dimension_parameter_name),
@@ -2449,16 +2442,46 @@ void Parser::applySubstitutedFunctionParameterArrayBounds(
 				if (arg->value <= 0) {
 					report_unresolved_bound();
 				}
-				resolved_dims.push_back(static_cast<size_t>(arg->value));
-				continue;
+				return static_cast<size_t>(arg->value);
 			}
 		}
-		auto bound = evaluateDependentNTTPExpression(
-			dimensions[i], template_params, template_args);
+		auto bound = evaluateDependentNTTPExpression(dimension_expr, template_params, template_args);
 		if (!bound.has_value() || !bound->is_value || bound->value <= 0) {
 			report_unresolved_bound();
 		}
-		resolved_dims.push_back(static_cast<size_t>(bound->value));
+		return static_cast<size_t>(bound->value);
+	};
+
+	if (type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+		// A reference-to-array parameter keeps its bound outside the reference,
+		// but the instantiated type specifier can arrive as a bare T&. Publish
+		// the resolved bounds there so canonical identity sees the array.
+		if (type_spec.array_dimensions().empty()) {
+			std::vector<size_t> resolved_dims;
+			resolved_dims.reserve(param_decl.array_dimension_count());
+			for (const auto& dimension : param_decl.array_dimensions()) {
+				resolved_dims.push_back(resolve_dimension(dimension));
+			}
+			if (!resolved_dims.empty()) {
+				type_spec.set_array_dimensions(resolved_dims);
+			}
+			param_decl.set_array_dimensions({});
+		}
+		return;
+	}
+
+	if (param_decl.array_dimension_count() <= 1) {
+		return;
+	}
+	if (!type_spec.has_pointee_array_declarator() || !type_spec.array_dimensions().empty()) {
+		return;
+	}
+
+	std::vector<size_t> resolved_dims;
+	const auto dimensions = param_decl.array_dimensions();
+	resolved_dims.reserve(dimensions.size() - 1);
+	for (size_t i = 1; i < dimensions.size(); ++i) {
+		resolved_dims.push_back(resolve_dimension(dimensions[i]));
 	}
 	if (!resolved_dims.empty()) {
 		type_spec.set_pointee_array_dimensions(resolved_dims);

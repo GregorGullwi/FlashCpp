@@ -6928,13 +6928,7 @@ bool SemanticAnalysis::declarationDenotesArrayObject(const DeclarationNode& decl
 		// type specifier. Materialize them before asking canonical identity.
 		applyDeclarationArrayBoundsToTypeSpec(decl, type, *this);
 	}
-	if (typeDenotesArrayObject(type)) {
-		return true;
-	}
-	// Instantiated and parser-only declarations can still carry their array
-	// extents before canonical publication. Keep that fact in the semantic
-	// query so codegen does not inspect the declaration projection itself.
-	return decl.is_array_object() || type.is_array();
+	return typeDenotesArrayObject(type);
 }
 
 PointerToArrayShape SemanticAnalysis::pointerToArrayShape(const CanonicalTypeDesc& desc) const {
