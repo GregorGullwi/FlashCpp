@@ -2574,6 +2574,10 @@ TypeId CanonicalTypeTable::resolveNestedAliasGraphUnlocked(TypeId type) {
 		case CanonicalTypeKind::Pointer: {
 			const TypeId child = memo.at(memoKey(frame.scope, node.child));
 			if (child != node.child) {
+				const CanonicalTypeKind child_kind = nodeUnlocked(child).kind;
+				if (isReference(child_kind) || isInternalLink(child_kind)) {
+					throw InternalError("canonical type: substitution would form a pointer to a reference");
+				}
 				rebuilt = internUnlocked({
 					.child = child,
 					.kind = CanonicalTypeKind::Pointer,
@@ -3147,6 +3151,10 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 			if (child == node.child) {
 				rebuilt = frame.id;
 			} else {
+				const CanonicalTypeKind child_kind = nodeUnlocked(child).kind;
+				if (isReference(child_kind) || isInternalLink(child_kind)) {
+					throw InternalError("canonical type: substitution would form a pointer to a reference");
+				}
 				rebuilt = internUnlocked({
 					.child = child,
 					.kind = CanonicalTypeKind::Pointer,

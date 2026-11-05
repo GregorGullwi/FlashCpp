@@ -1518,6 +1518,9 @@ inline void checkSubstitution() {
 	require(table.substitute(param1, env, args) == floating);
 	require(table.substitute(foreign, env, args) == foreign);
 	require(table.substitute(integer, env, args) == integer);
+	const TypeId reference = table.reference(integer, ReferenceQualifier::LValueReference);
+	const TypeId reference_args[] = {reference};
+	rejects([&] { table.substitute(table.pointer(param0), env, reference_args); });
 
 	const TypeId spec = table.templateSpecialization(TemplateDeclId{11},
 		std::array<TypeId, 2>{param0, param1});
