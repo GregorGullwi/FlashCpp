@@ -239,6 +239,11 @@ public:
 	bool typeDenotesArrayObject(const TypeSpecifierNode& type);
 	bool declarationDenotesArrayObject(const DeclarationNode& decl);
 
+	// C++20 [expr.unary.op]/1 with [conv.array]: the result type of builtin
+	// unary * on the given operand type. Array operands decay before the
+	// indirection is applied.
+	std::optional<TypeSpecifierNode> builtinDereferenceResultType(const TypeSpecifierNode& operand_type);
+
 	// Resolve the pointer-to-array shape of a non-static data member. The member
 	// carries no canonical id, so its descriptor is interned (publishing
 	// structural identity) before the shape is read.

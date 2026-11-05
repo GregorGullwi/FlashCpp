@@ -256,8 +256,12 @@ instead of an unemitted temporary. Conditional array branches now consume their
 annotated array-to-pointer conversion without dereferencing the materialized
 address again. Subscript lowering distinguishes a pointer-to-array declarator
 from an array object even when the declaration retains array extents for its
-pointee. Other remaining flat readers still fail closed for non-projectable
-shapes;
+pointee. Builtin unary `*` consumes sema's canonical `[conv.array]` plus
+`[expr.unary.op]` result type, so an interleaved array selects a
+pointer-to-array element instead of the flat base type. Pointer arithmetic
+decays array operands to their ordered element type and scales offsets by the
+canonical pointee size. Other remaining flat readers still fail closed for
+non-projectable shapes;
 remove this entry when those consumers migrate and the compatibility projection
 fields are deleted.
 

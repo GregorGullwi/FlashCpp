@@ -2143,23 +2143,40 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 
 		// First, try to get pointer depth from operandIrOperands (for TempVar results from previous operations)
 		pointer_depth = operandIrOperands.pointer_depth.value;
-		// If pointer_depth is still 0, look up the pointer operand in the symbol table.
-		if (pointer_depth == 0 && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+		const TypeSpecifierNode* operand_decl_type = nullptr;
+		// Look up an identifier operand's declaration type for pointer depth and
+		// the sema-owned indirection result below.
+		if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
 				const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
-				auto symbol = symbol_table.lookup(identifier.name());
+				auto symbol = lookupSymbol(identifier.nameHandle());
 				if (symbol.has_value()) {
-					const TypeSpecifierNode* type_node = nullptr;
 					if (symbol->is<DeclarationNode>()) {
-						type_node = &symbol->as<DeclarationNode>().type_specifier_node();
+						operand_decl_type = &symbol->as<DeclarationNode>().type_specifier_node();
 					} else if (symbol->is<VariableDeclarationNode>()) {
-						type_node = &symbol->as<VariableDeclarationNode>().declaration().type_specifier_node();
+						operand_decl_type = &symbol->as<VariableDeclarationNode>().declaration().type_specifier_node();
 					}
-					if (type_node) {
-						pointer_depth = static_cast<int>(type_node->runtime_pointer_depth());
+					if (operand_decl_type != nullptr && pointer_depth == 0) {
+						pointer_depth = static_cast<int>(operand_decl_type->runtime_pointer_depth());
 					}
 				}
+			}
+		}
+		// Sema owns the [conv.array] + [expr.unary.op] result type. Use it to
+		// size the load and publish the result pointer depth, since a flat
+		// pointer depth cannot describe an interleaved pointee such as a
+		// pointer-to-array element.
+		std::optional<TypeSpecifierNode> sema_deref_result;
+		if (operand_decl_type != nullptr) {
+			sema_deref_result = sema_.builtinDereferenceResultType(*operand_decl_type);
+			if (sema_deref_result.has_value()) {
+				const int result_size_bits = getTypeSpecSizeBits(*sema_deref_result);
+				if (result_size_bits <= 0) {
+					throw InternalError("Dereference result type has no concrete object size");
+				}
+				element_size = result_size_bits;
+				pointer_depth = static_cast<int>(sema_deref_result->runtime_pointer_depth()) + 1;
 			}
 		}
 
@@ -2290,7 +2307,19 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 							throw InternalError("Dereference requires a complete array element size");
 						}
 						const std::optional<std::vector<size_t>> element_dimensions = canonical_types.arrayDimensions(array_node.child);
-						if (element_dimensions.has_value()) {
+						int result_pointer_depth = 0;
+						TypeIndex result_type_index = operand_desc.type_index.withCategory(operandType);
+						if (sema_deref_result.has_value()) {
+							// The canonical indirection already carries the element
+							// shape, including a pointer-to-array element whose flat
+							// base category is not the load width.
+							element_bits = getTypeSpecSizeBits(*sema_deref_result);
+							result_pointer_depth = static_cast<int>(sema_deref_result->runtime_pointer_depth());
+							result_type_index = sema_deref_result->type_index().withCategory(sema_deref_result->type());
+							if (element_bits <= 0) {
+								throw InternalError("Dereference result type has no concrete object size");
+							}
+						} else if (element_dimensions.has_value()) {
 							for (const size_t dimension : *element_dimensions) {
 								if (dimension == 0) {
 									continue;
@@ -2300,10 +2329,12 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 								}
 								element_bits *= static_cast<int>(dimension);
 							}
+						}
+						if (element_dimensions.has_value()) {
 							LValueInfo element_lvalue(LValueInfo::Kind::Indirect, address_base, 0);
 							setTempVarMetadata(array_address, TempVarMetadata::makeLValue(element_lvalue, TypeCategory::Invalid, 0));
-							return makeExprResult(operand_desc.type_index.withCategory(operandType), SizeInBits{element_bits}, IrOperand{array_address},
-								PointerDepth{}, ValueStorage::ContainsAddress);
+							return makeExprResult(result_type_index, SizeInBits{element_bits}, IrOperand{array_address},
+								PointerDepth{result_pointer_depth}, ValueStorage::ContainsAddress);
 						}
 						DereferenceOp element_load;
 						element_load.result = result_var;
@@ -2315,8 +2346,8 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 						ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(element_load), unaryOperatorNode.get_token()));
 						LValueInfo element_lvalue(LValueInfo::Kind::Indirect, array_address, 0);
 						setTempVarMetadata(result_var, TempVarMetadata::makeLValue(element_lvalue, TypeCategory::Invalid, 0));
-						return makeExprResult(operandIrOperands.type_index.withCategory(operandType), SizeInBits{element_bits}, IrOperand{result_var},
-							PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(result_type_index, SizeInBits{element_bits}, IrOperand{result_var},
+							PointerDepth{result_pointer_depth}, ValueStorage::ContainsData);
 					}
 				}
 				const PointerToArrayShape shape = sema_.pointerToArrayShape(operand_desc);

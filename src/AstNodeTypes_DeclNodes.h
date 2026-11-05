@@ -3562,7 +3562,7 @@ enum class PlaceholderArrayDeduction : uint8_t {
 	DecayToPointer
 };
 
-inline void applyPlaceholderArrayDecay(TypeSpecifierNode& deduced_type) {
+inline void applyArrayToPointerDecay(TypeSpecifierNode& deduced_type) {
 	if (deduced_type.has_ordered_declarator() && !deduced_type.declarator_components().empty()) {
 		const DeclaratorComponentKind outer = deduced_type.declarator_components().front().kind;
 		if (outer == DeclaratorComponentKind::Array || outer == DeclaratorComponentKind::UnknownBoundArray) {
@@ -3603,7 +3603,7 @@ inline TypeSpecifierNode applyPlaceholderDeclaratorDeduction(
 
 	const ReferenceQualifier declarator_ref = declarator_type.reference_qualifier();
 	if (array_deduction == PlaceholderArrayDeduction::DecayToPointer && declarator_ref == ReferenceQualifier::None) {
-		applyPlaceholderArrayDecay(deduced_expr_type);
+		applyArrayToPointerDecay(deduced_expr_type);
 	}
 	const ReferenceQualifier initializer_ref = deduced_expr_type.reference_qualifier();
 	const CVQualifier initializer_cv = deduced_expr_type.cv_qualifier();
