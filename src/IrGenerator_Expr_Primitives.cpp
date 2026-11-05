@@ -410,8 +410,7 @@ static TypeCategory resolveCodegenTypeCategory(const TypeSpecifierNode& type_nod
 }
 
 int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name) {
-	bool is_array_type = is_array || type_node.is_array() ||
-		orderedDeclaratorIsArrayObject(type_node);
+	const bool is_array_type = is_array || sema_.typeDenotesArrayObject(type_node);
 	int size_bits;
 
 	if (is_array_type || type_node.runtime_pointer_depth() > 0) {
@@ -691,10 +690,8 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					const auto& vd = fast_sym->as<VariableDeclarationNode>();
 					const auto& decl_n = vd.declaration();
 					const auto& type_n = decl_n.type_specifier_node();
-					const bool ordered_type = !type_n.ordered_declarator_has_legacy_projection();
 					const size_t runtime_pointer_depth = type_n.runtime_pointer_depth();
-					bool is_array_type = orderedDeclaratorIsArrayObject(type_n) ||
-						(!ordered_type && (decl_n.is_array_object() || type_n.is_array()));
+					const bool is_array_type = sema_.declarationDenotesArrayObject(decl_n);
 					bool is_ptr_or_ref = runtime_pointer_depth > 0 || type_n.is_reference() || type_n.is_function_pointer();
 					int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_n.size_in_bits());
 					TempVar result_temp = var_counter.next();
@@ -732,8 +729,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(type_n, identifier_handle)) {
 						return *enumerator_constant;
 					}
-					bool is_array_type = decl_n.is_array_object() || type_n.is_array() ||
-						orderedDeclaratorIsArrayObject(type_n);
+					const bool is_array_type = sema_.declarationDenotesArrayObject(decl_n);
 					int size_bits = (type_n.runtime_pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_n.size_in_bits());
 					TempVar result_temp = var_counter.next();
 					GlobalLoadOp op;
@@ -1230,8 +1226,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				// Generate GlobalLoad IR instruction
 			TempVar result_temp = var_counter.next();
 				// For arrays, result is a pointer (64-bit address)
-			bool is_array_type = decl_node.is_array_object() || type_node.is_array() ||
-				orderedDeclaratorIsArrayObject(type_node);
+			const bool is_array_type = sema_.declarationDenotesArrayObject(decl_node);
 			int size_bits = (type_node.runtime_pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_node.size_in_bits());
 			GlobalLoadOp op;
 			op.result.setType(type_node.category());
@@ -1446,8 +1441,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				// This is a global variable - generate GlobalLoad
 			TempVar result_temp = var_counter.next();
 				// For arrays, pointers, and references, result is a pointer (64-bit address)
-			bool is_array_type = decl_node.is_array_object() || type_node.is_array() ||
-				orderedDeclaratorIsArrayObject(type_node);
+			const bool is_array_type = sema_.declarationDenotesArrayObject(decl_node);
 			bool is_ptr_or_ref = type_node.runtime_pointer_depth() > 0 || type_node.is_reference() || type_node.is_function_pointer();
 			int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 			GlobalLoadOp op;
@@ -1651,8 +1645,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 		const size_t runtime_pointer_depth = type_node.runtime_pointer_depth();
 		const bool ordered_pointer =
 			!type_node.ordered_declarator_has_legacy_projection();
-		const bool is_array_type = is_array_decl || (!ordered_pointer && type_node.is_array()) ||
-			orderedDeclaratorIsArrayObject(type_node);
+		const bool is_array_type = is_array_decl || sema_.typeDenotesArrayObject(type_node);
 		const bool is_ptr_or_ref = runtime_pointer_depth > 0 || type_node.is_reference() || type_node.is_function_pointer();
 		const int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 		GlobalLoadOp op;
@@ -2161,8 +2154,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 		if (is_global) {
 				// Generate GlobalLoad for namespace-qualified global variable
 			TempVar result_temp = var_counter.next();
-			bool is_array_type = decl_node.is_array_object() || type_node.is_array() ||
-				orderedDeclaratorIsArrayObject(type_node);
+			const bool is_array_type = sema_.declarationDenotesArrayObject(decl_node);
 			bool is_ptr_or_ref = type_node.runtime_pointer_depth() > 0 || type_node.is_reference() || type_node.is_function_pointer();
 			int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 			GlobalLoadOp op;
@@ -2205,8 +2197,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 			// Namespace-scoped variables are always global
 			// Generate GlobalLoad for namespace-qualified global variable
 		TempVar result_temp = var_counter.next();
-		bool is_array_type = decl_node.is_array_object() || type_node.is_array() ||
-			orderedDeclaratorIsArrayObject(type_node);
+		const bool is_array_type = sema_.declarationDenotesArrayObject(decl_node);
 		bool is_ptr_or_ref = type_node.runtime_pointer_depth() > 0 || type_node.is_reference() || type_node.is_function_pointer();
 		int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 		GlobalLoadOp op;
