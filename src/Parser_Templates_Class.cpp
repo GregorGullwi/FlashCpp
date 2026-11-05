@@ -3879,12 +3879,21 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						continue;
 					} else if (peek() == "struct"_tok || peek() == "class"_tok || peek() == "union"_tok) {
 						SaveHandle nested_saved_pos = save_token_position();
-						advance(); // consume the class-key
+						const Token class_keyword = advance(); // consume the class-key
 						skip_cpp_attributes();
 						bool is_nested_declaration = false;
 						if (peek().is_identifier()) {
 							advance(); // consume the nested class name
 							is_nested_declaration = peek() == "{"_tok || peek() == ";"_tok || peek() == ":"_tok;
+						}
+						if (!is_nested_declaration && peek() == "{"_tok) {
+							advance(); // consume '{'
+							ParseResult anonymous_result = parse_anonymous_union_member_body(struct_ref, class_keyword.value() == "union", current_access);
+							if (anonymous_result.is_error()) {
+								return anonymous_result;
+							}
+							discard_saved_token(nested_saved_pos);
+							continue;
 						}
 						if (is_nested_declaration) {
 							restore_token_position(nested_saved_pos);

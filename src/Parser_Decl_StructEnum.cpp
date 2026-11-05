@@ -658,6 +658,291 @@ ParseResult Parser::validate_bitfield_declaration(const TypeSpecifierNode& type_
 	return ParseResult::success();
 }
 
+ParseResult Parser::parse_anonymous_union_member_body(
+	StructDeclarationNode& struct_ref,
+	bool is_union_keyword,
+	AccessSpecifier current_access) {
+	// True anonymous union/struct: struct { ... };
+	// Store the union info for processing during layout phase
+
+	// Mark the position where this anonymous union appears in the member list
+	size_t union_marker_index = struct_ref.members().size();
+	struct_ref.add_anonymous_union_marker(union_marker_index, is_union_keyword);
+
+	// Parse all members of the anonymous union and store their info
+	while (!peek().is_eof() && peek() != "}"_tok) {
+		// Check for nested anonymous union
+		if (peek().is_keyword() && (peek() == "union"_tok || peek() == "struct"_tok)) {
+			SaveHandle nested_saved_pos = save_token_position();
+			advance(); // consume 'union' or 'struct'
+
+			if (peek() == "{"_tok) {
+				// Nested anonymous union - parse recursively
+				advance(); // consume '{'
+
+				// Parse nested anonymous union members
+				while (!peek().is_eof() && peek() != "}"_tok) {
+					// Parse member type
+					auto nested_member_type_result = parse_type_specifier();
+					if (nested_member_type_result.is_error()) {
+						return nested_member_type_result;
+					}
+
+					if (!nested_member_type_result.node().has_value()) {
+						return ParseResult::error("Expected type specifier in nested anonymous union", current_token_);
+					}
+
+					// Handle pointer declarators
+					TypeSpecifierNode& nested_member_type_spec = nested_member_type_result.node()->as<TypeSpecifierNode>();
+					while (peek() == "*"_tok) {
+						advance(); // consume '*'
+						CVQualifier ptr_cv = parse_cv_qualifiers();
+						nested_member_type_spec.add_pointer_level(ptr_cv);
+					}
+
+					// Parse member name
+					auto nested_member_name_token = peek_info();
+					if (!nested_member_name_token.kind().is_identifier()) {
+						return ParseResult::error("Expected member name in nested anonymous union", nested_member_name_token);
+					}
+					advance(); // consume the member name
+
+					// Check for array declarator
+					std::vector<ASTNode> nested_array_dimensions;
+					while (peek() == "["_tok) {
+						advance(); // consume '['
+
+						// Parse the array size expression
+						ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+						if (size_result.is_error()) {
+							return size_result;
+						}
+						nested_array_dimensions.push_back(*size_result.node());
+
+						// Expect closing ']'
+						if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator || peek() != "]"_tok) {
+							return ParseResult::error("Expected ']' after array size", current_token_);
+						}
+						advance(); // consume ']'
+					}
+
+					// Create member declaration for nested union member
+					ASTNode nested_member_decl_node;
+					if (!nested_array_dimensions.empty()) {
+						nested_member_decl_node = emplace_node<DeclarationNode>(
+							*nested_member_type_result.node(), nested_member_name_token, std::move(nested_array_dimensions));
+					} else {
+						nested_member_decl_node = emplace_node<DeclarationNode>(*nested_member_type_result.node(), nested_member_name_token);
+					}
+					// Flatten nested union members into outer union/struct
+					struct_ref.add_member(nested_member_decl_node, current_access, std::nullopt);
+
+					// Expect semicolon
+					if (!consume(";"_tok)) {
+						return ParseResult::error("Expected ';' after nested anonymous union member", current_token_);
+					}
+				}
+
+				// Expect closing brace for nested union
+				if (!consume("}"_tok)) {
+					return ParseResult::error("Expected '}' after nested anonymous union members", peek_info());
+				}
+
+				// Expect semicolon after nested anonymous union
+				if (!consume(";"_tok)) {
+					return ParseResult::error("Expected ';' after nested anonymous union", current_token_);
+				}
+
+				discard_saved_token(nested_saved_pos);
+				continue; // Continue with next member of outer union
+			} else {
+				// Named union/struct - restore position and parse normally
+				restore_token_position(nested_saved_pos);
+			}
+		}
+
+		// Parse member type
+		auto anon_member_type_result = parse_type_specifier();
+		if (anon_member_type_result.is_error()) {
+			return anon_member_type_result;
+		}
+
+		if (!anon_member_type_result.node().has_value()) {
+			return ParseResult::error("Expected type specifier in anonymous union", current_token_);
+		}
+
+		// Handle pointer declarators
+		TypeSpecifierNode& anon_member_type_spec = anon_member_type_result.node()->as<TypeSpecifierNode>();
+		while (peek() == "*"_tok) {
+			advance(); // consume '*'
+			CVQualifier ptr_cv = parse_cv_qualifiers();
+			anon_member_type_spec.add_pointer_level(ptr_cv);
+		}
+
+		// Parse member name (allow unnamed bitfields: int : 0;)
+		auto anon_member_name_token = peek_info();
+		if (anon_member_name_token.kind().is_identifier()) {
+			advance(); // consume the member name
+		} else if (peek() == ":"_tok) {
+			anon_member_name_token = Token(Token::Type::Identifier, ""sv, current_token_.line(), current_token_.column(), current_token_.file_index());
+		} else {
+			return ParseResult::error("Expected member name in anonymous union", anon_member_name_token);
+		}
+
+		// Check for array declarator
+		std::vector<ASTNode> anon_array_dimensions;
+		while (peek() == "["_tok) {
+			advance(); // consume '['
+
+			// Parse the array size expression
+			ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			if (size_result.is_error()) {
+				return size_result;
+			}
+			anon_array_dimensions.push_back(*size_result.node());
+
+			// Expect closing ']'
+			if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator ||
+				peek() != "]"_tok) {
+				return ParseResult::error("Expected ']' after array size", current_token_);
+			}
+			advance(); // consume ']'
+		}
+
+		std::optional<size_t> bitfield_width;
+		if (peek() == ":"_tok) {
+			advance(); // consume ':'
+			auto width_result = parse_expression(4, ExpressionContext::Normal); // Precedence 4: stop before assignment (=) for default member initializers
+			if (width_result.is_error()) {
+				return width_result;
+			}
+			if (width_result.node().has_value()) {
+				ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
+				auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
+				if (!eval_result.success() || eval_result.as_int() < 0) {
+					return ParseResult::error("Bitfield width must be a non-negative integral constant expression", current_token_);
+				}
+				bitfield_width = static_cast<size_t>(eval_result.as_int());
+			}
+			ParseResult bitfield_result = validate_bitfield_declaration(anon_member_type_spec,
+				anon_member_name_token.value(), bitfield_width, anon_member_name_token);
+			if (bitfield_result.is_error()) {
+				return bitfield_result;
+			}
+		}
+
+		// Calculate member size and alignment
+		auto [member_size, member_alignment] = calculateResolvedMemberSizeAndAlignment(anon_member_type_spec, anon_member_type_spec.type_index());
+		size_t referenced_size_bits = anon_member_type_spec.size_in_bits();
+		if (bitfield_width.has_value() && *bitfield_width == 0) {
+			// Zero-width bitfields in anonymous unions are layout directives:
+			// they don't contribute storage and should not raise union alignment.
+			member_size = 0;
+			member_alignment = 1;
+		}
+
+		// For struct types, get size and alignment from the struct type info
+		if (!anon_member_type_spec.is_pointer() && !anon_member_type_spec.is_reference() && !anon_member_type_spec.is_rvalue_reference()) {
+			if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(anon_member_type_spec.type_index())) {
+				member_size = toSizeT(member_struct_info->sizeInBytes());
+				referenced_size_bits = member_struct_info->sizeInBits().value;
+				member_alignment = member_struct_info->alignment;
+			}
+		}
+
+		// For array members, multiply element size by array count and collect dimensions
+		bool is_array = false;
+		std::vector<size_t> array_dimensions;
+		// C++20 [dcl.ptr]/1: a pointer-to-array member keeps its
+		// bounds on the pointee without scaling storage.
+		bool pointee_array_declarator = false;
+		if (!anon_array_dimensions.empty()) {
+			if (anon_member_type_spec.has_pointee_array_declarator()) {
+				pointee_array_declarator = true;
+			} else {
+				is_array = true;
+			}
+			for (const auto& dim_expr : anon_array_dimensions) {
+				ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
+				auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
+				if (eval_result.success() && eval_result.as_int() > 0) {
+					size_t dim_size = static_cast<size_t>(eval_result.as_int());
+					array_dimensions.push_back(dim_size);
+					if (!pointee_array_declarator) {
+						member_size *= dim_size;
+						referenced_size_bits *= dim_size;
+					}
+				}
+			}
+		}
+
+		// Store the anonymous union member info for later processing during layout
+		ReferenceQualifier ref_qual = anon_member_type_spec.reference_qualifier();
+		if (ref_qual != ReferenceQualifier::None) {
+			referenced_size_bits = referenced_size_bits ? referenced_size_bits : (anon_member_type_spec.size_in_bits());
+		}
+
+		// Add DeclarationNode to struct_ref for symbol table and AST purposes
+		// During layout phase, these will be skipped (already processed as union members)
+		std::optional<ASTNode> anon_default_initializer;
+		const bool has_brace_initializer = peek() == "{"_tok;
+		if (has_brace_initializer || consume("="_tok)) {
+			ParseResult init_result = has_brace_initializer
+				? parse_brace_initializer(anon_member_type_spec)
+				: parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			if (init_result.is_error()) {
+				return init_result;
+			}
+			if (init_result.node().has_value()) {
+				anon_default_initializer = *init_result.node();
+			}
+		}
+
+		StringHandle member_name_handle = anon_member_name_token.handle();
+		const TypeId canonical_union_member_type_id = importCanonicalStructMemberType(
+			requireFrontendContext().canonicalTypes(), anon_member_type_spec, is_array, pointee_array_declarator, array_dimensions);
+		struct_ref.add_anonymous_union_member(
+			member_name_handle,
+			anon_member_type_spec.type_index().withCategory(anon_member_type_spec.type()),
+			member_size,
+			member_alignment,
+			bitfield_width,
+			canonical_union_member_type_id,
+			anon_default_initializer,
+			referenced_size_bits,
+			ref_qual,
+			is_array,
+			pointee_array_declarator,
+			static_cast<int>(anon_member_type_spec.pointer_depth()),
+			std::move(array_dimensions),
+			anon_member_type_spec.top_level_cv_qualifier());
+
+		ASTNode anon_member_decl_node;
+		if (!anon_array_dimensions.empty()) {
+			anon_member_decl_node = emplace_node<DeclarationNode>(*anon_member_type_result.node(), anon_member_name_token, std::move(anon_array_dimensions));
+		} else {
+			anon_member_decl_node = emplace_node<DeclarationNode>(*anon_member_type_result.node(), anon_member_name_token);
+		}
+		struct_ref.add_member(anon_member_decl_node, AccessSpecifier::Public, anon_default_initializer, bitfield_width);
+
+		// Expect semicolon
+		if (!consume(";"_tok)) {
+			return ParseResult::error("Expected ';' after anonymous union member", current_token_);
+		}
+	}
+
+	// Expect closing brace
+	if (!consume("}"_tok)) {
+		return ParseResult::error("Expected '}' after anonymous union members", peek_info());
+	}
+
+	// Expect semicolon after true anonymous union
+	if (!consume(";"_tok)) {
+		return ParseResult::error("Expected ';' after anonymous union", current_token_);
+	}
+	return ParseResult{};
+}
+
 ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, bool pre_is_inline) {
 #if WITH_PARSER_RUNTIME_STATS
 	FLASHCPP_PARSER_RUNTIME_PHASE(StructDeclaration);
@@ -1902,291 +2187,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						continue; // Skip to next member
 					}
 
-					// True anonymous union/struct: struct { ... };
-					// Store the union info for processing during layout phase
-
-					// Mark the position where this anonymous union appears in the member list
-					size_t union_marker_index = struct_ref.members().size();
-					struct_ref.add_anonymous_union_marker(union_marker_index, is_union_keyword);
-
-					// Parse all members of the anonymous union and store their info
-					while (!peek().is_eof() && peek() != "}"_tok) {
-						// Check for nested anonymous union
-						if (peek().is_keyword() &&
-							(peek() == "union"_tok || peek() == "struct"_tok)) {
-							SaveHandle nested_saved_pos = save_token_position();
-							advance(); // consume 'union' or 'struct'
-
-							if (peek() == "{"_tok) {
-								// Nested anonymous union - parse recursively
-								advance(); // consume '{'
-
-								// Parse nested anonymous union members
-								while (!peek().is_eof() && peek() != "}"_tok) {
-									// Parse member type
-									auto nested_member_type_result = parse_type_specifier();
-									if (nested_member_type_result.is_error()) {
-										return nested_member_type_result;
-									}
-
-									if (!nested_member_type_result.node().has_value()) {
-										return ParseResult::error("Expected type specifier in nested anonymous union", current_token_);
-									}
-
-									// Handle pointer declarators
-									TypeSpecifierNode& nested_member_type_spec = nested_member_type_result.node()->as<TypeSpecifierNode>();
-									while (peek() == "*"_tok) {
-										advance(); // consume '*'
-										CVQualifier ptr_cv = parse_cv_qualifiers();
-										nested_member_type_spec.add_pointer_level(ptr_cv);
-									}
-
-									// Parse member name
-									auto nested_member_name_token = peek_info();
-									if (!nested_member_name_token.kind().is_identifier()) {
-										return ParseResult::error("Expected member name in nested anonymous union", nested_member_name_token);
-									}
-									advance(); // consume the member name
-
-									// Check for array declarator
-									std::vector<ASTNode> nested_array_dimensions;
-									while (peek() == "["_tok) {
-										advance(); // consume '['
-
-										// Parse the array size expression
-										ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-										if (size_result.is_error()) {
-											return size_result;
-										}
-										nested_array_dimensions.push_back(*size_result.node());
-
-										// Expect closing ']'
-										if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator ||
-											peek() != "]"_tok) {
-											return ParseResult::error("Expected ']' after array size", current_token_);
-										}
-										advance(); // consume ']'
-									}
-
-									// Create member declaration for nested union member
-									ASTNode nested_member_decl_node;
-									if (!nested_array_dimensions.empty()) {
-										nested_member_decl_node = emplace_node<DeclarationNode>(*nested_member_type_result.node(), nested_member_name_token, std::move(nested_array_dimensions));
-									} else {
-										nested_member_decl_node = emplace_node<DeclarationNode>(*nested_member_type_result.node(), nested_member_name_token);
-									}
-									// Flatten nested union members into outer union/struct
-									struct_ref.add_member(nested_member_decl_node, current_access, std::nullopt);
-
-									// Expect semicolon
-									if (!consume(";"_tok)) {
-										return ParseResult::error("Expected ';' after nested anonymous union member", current_token_);
-									}
-								}
-
-								// Expect closing brace for nested union
-								if (!consume("}"_tok)) {
-									return ParseResult::error("Expected '}' after nested anonymous union members", peek_info());
-								}
-
-								// Expect semicolon after nested anonymous union
-								if (!consume(";"_tok)) {
-									return ParseResult::error("Expected ';' after nested anonymous union", current_token_);
-								}
-
-								discard_saved_token(nested_saved_pos);
-								continue; // Continue with next member of outer union
-							} else {
-								// Named union/struct - restore position and parse normally
-								restore_token_position(nested_saved_pos);
-							}
-						}
-
-						// Parse member type
-						auto anon_member_type_result = parse_type_specifier();
-						if (anon_member_type_result.is_error()) {
-							return anon_member_type_result;
-						}
-
-						if (!anon_member_type_result.node().has_value()) {
-							return ParseResult::error("Expected type specifier in anonymous union", current_token_);
-						}
-
-						// Handle pointer declarators
-						TypeSpecifierNode& anon_member_type_spec = anon_member_type_result.node()->as<TypeSpecifierNode>();
-						while (peek() == "*"_tok) {
-							advance(); // consume '*'
-							CVQualifier ptr_cv = parse_cv_qualifiers();
-							anon_member_type_spec.add_pointer_level(ptr_cv);
-						}
-
-						// Parse member name (allow unnamed bitfields: int : 0;)
-						auto anon_member_name_token = peek_info();
-						if (anon_member_name_token.kind().is_identifier()) {
-							advance(); // consume the member name
-						} else if (peek() == ":"_tok) {
-							anon_member_name_token = Token(
-								Token::Type::Identifier,
-								""sv,
-								current_token_.line(),
-								current_token_.column(),
-								current_token_.file_index());
-						} else {
-							return ParseResult::error("Expected member name in anonymous union", anon_member_name_token);
-						}
-
-						// Check for array declarator
-						std::vector<ASTNode> anon_array_dimensions;
-						while (peek() == "["_tok) {
-							advance(); // consume '['
-
-							// Parse the array size expression
-							ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-							if (size_result.is_error()) {
-								return size_result;
-							}
-							anon_array_dimensions.push_back(*size_result.node());
-
-							// Expect closing ']'
-							if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator ||
-								peek() != "]"_tok) {
-								return ParseResult::error("Expected ']' after array size", current_token_);
-							}
-							advance(); // consume ']'
-						}
-
-						std::optional<size_t> bitfield_width;
-						if (peek() == ":"_tok) {
-							advance(); // consume ':'
-							auto width_result = parse_expression(4, ExpressionContext::Normal); // Precedence 4: stop before assignment (=) for default member initializers
-							if (width_result.is_error()) {
-								return width_result;
-							}
-							if (width_result.node().has_value()) {
-								ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
-								auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
-								if (!eval_result.success() || eval_result.as_int() < 0) {
-									return ParseResult::error("Bitfield width must be a non-negative integral constant expression", current_token_);
-								}
-								bitfield_width = static_cast<size_t>(eval_result.as_int());
-							}
-							ParseResult bitfield_result = validate_bitfield_declaration(anon_member_type_spec,
-								anon_member_name_token.value(), bitfield_width, anon_member_name_token);
-							if (bitfield_result.is_error()) {
-								return bitfield_result;
-							}
-						}
-
-						// Calculate member size and alignment
-						auto [member_size, member_alignment] = calculateResolvedMemberSizeAndAlignment(
-							anon_member_type_spec, anon_member_type_spec.type_index());
-						size_t referenced_size_bits = anon_member_type_spec.size_in_bits();
-						if (bitfield_width.has_value() && *bitfield_width == 0) {
-							// Zero-width bitfields in anonymous unions are layout directives:
-							// they don't contribute storage and should not raise union alignment.
-							member_size = 0;
-							member_alignment = 1;
-						}
-
-						// For struct types, get size and alignment from the struct type info
-						if (!anon_member_type_spec.is_pointer() && !anon_member_type_spec.is_reference() && !anon_member_type_spec.is_rvalue_reference()) {
-							if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(anon_member_type_spec.type_index())) {
-								member_size = toSizeT(member_struct_info->sizeInBytes());
-								referenced_size_bits = member_struct_info->sizeInBits().value;
-								member_alignment = member_struct_info->alignment;
-							}
-						}
-
-						// For array members, multiply element size by array count and collect dimensions
-						bool is_array = false;
-						std::vector<size_t> array_dimensions;
-						// C++20 [dcl.ptr]/1: a pointer-to-array member keeps its
-						// bounds on the pointee without scaling storage.
-						bool pointee_array_declarator = false;
-						if (!anon_array_dimensions.empty()) {
-							if (anon_member_type_spec.has_pointee_array_declarator()) {
-								pointee_array_declarator = true;
-							} else {
-								is_array = true;
-							}
-							for (const auto& dim_expr : anon_array_dimensions) {
-								ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
-								auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
-								if (eval_result.success() && eval_result.as_int() > 0) {
-									size_t dim_size = static_cast<size_t>(eval_result.as_int());
-									array_dimensions.push_back(dim_size);
-									if (!pointee_array_declarator) {
-										member_size *= dim_size;
-										referenced_size_bits *= dim_size;
-									}
-								}
-							}
-						}
-
-						// Store the anonymous union member info for later processing during layout
-						ReferenceQualifier ref_qual = anon_member_type_spec.reference_qualifier();
-						if (ref_qual != ReferenceQualifier::None) {
-							referenced_size_bits = referenced_size_bits ? referenced_size_bits : (anon_member_type_spec.size_in_bits());
-						}
-
-						// Add DeclarationNode to struct_ref for symbol table and AST purposes
-						// During layout phase, these will be skipped (already processed as union members)
-						std::optional<ASTNode> anon_default_initializer;
-						const bool has_brace_initializer = peek() == "{"_tok;
-						if (has_brace_initializer || consume("="_tok)) {
-							ParseResult init_result = has_brace_initializer
-								? parse_brace_initializer(anon_member_type_spec)
-								: parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-							if (init_result.is_error()) {
-								return init_result;
-							}
-							if (init_result.node().has_value()) {
-								anon_default_initializer = *init_result.node();
-							}
-						}
-
-						StringHandle member_name_handle = anon_member_name_token.handle();
-						const TypeId canonical_union_member_type_id = importCanonicalStructMemberType(
-							requireFrontendContext().canonicalTypes(), anon_member_type_spec, is_array,
-							pointee_array_declarator, array_dimensions);
-						struct_ref.add_anonymous_union_member(
-							member_name_handle,
-							anon_member_type_spec.type_index().withCategory(anon_member_type_spec.type()),
-							member_size,
-							member_alignment,
-							bitfield_width,
-							canonical_union_member_type_id,
-							anon_default_initializer,
-							referenced_size_bits,
-							ref_qual,
-							is_array,
-							pointee_array_declarator,
-							static_cast<int>(anon_member_type_spec.pointer_depth()),
-							std::move(array_dimensions),
-							anon_member_type_spec.top_level_cv_qualifier());
-
-						ASTNode anon_member_decl_node;
-						if (!anon_array_dimensions.empty()) {
-							anon_member_decl_node = emplace_node<DeclarationNode>(*anon_member_type_result.node(), anon_member_name_token, std::move(anon_array_dimensions));
-						} else {
-							anon_member_decl_node = emplace_node<DeclarationNode>(*anon_member_type_result.node(), anon_member_name_token);
-						}
-						struct_ref.add_member(anon_member_decl_node, AccessSpecifier::Public, anon_default_initializer, bitfield_width);
-
-						// Expect semicolon
-						if (!consume(";"_tok)) {
-							return ParseResult::error("Expected ';' after anonymous union member", current_token_);
-						}
-					}
-
-					// Expect closing brace
-					if (!consume("}"_tok)) {
-						return ParseResult::error("Expected '}' after anonymous union members", peek_info());
-					}
-
-					// Expect semicolon after true anonymous union
-					if (!consume(";"_tok)) {
-						return ParseResult::error("Expected ';' after anonymous union", current_token_);
+					const ParseResult anonymous_result =
+						parse_anonymous_union_member_body(struct_ref, is_union_keyword, current_access);
+					if (anonymous_result.is_error()) {
+						return anonymous_result;
 					}
 
 					discard_saved_token(saved_pos);
@@ -5358,8 +5362,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 
 	while (!peek().is_eof() && peek() != "}"_tok) {
 		// Check for nested named anonymous struct/union: struct { ... } member_name;
-		if (peek().is_keyword() &&
-			(peek() == "union"_tok || peek() == "struct"_tok)) {
+		if (peek().is_keyword() && (peek() == "union"_tok || peek() == "struct"_tok)) {
 			SaveHandle nested_saved_pos = save_token_position();
 			bool nested_is_union = (peek() == "union"_tok);
 			advance(); // consume 'union' or 'struct'
