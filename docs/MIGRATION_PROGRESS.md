@@ -271,8 +271,10 @@ mismatched, unpublished, or unresolved owner facts.
      and array-object lowering reads the published canonical `TypeId`
      instead of the ordered spine. Instantiated reference-to-array parameter
      bounds are materialized onto the type specifier so canonical identity sees
-     the array. Direct member-array reference arguments still read the flat
-     member projection; migrate that consumer before removing the fields.
+     the array. Array-member lvalue-address lowering now emits the member address
+     for every array member, so direct member-array reference arguments receive
+     a real address; other flat readers still need migration before the
+     projection fields can be removed.
    - Migrate the separate compatibility candidate gathering in the mixed
      member/free selector; deleting `findUnaryOperatorOverloadCompatibility`
      alone does not remove that dependency.
