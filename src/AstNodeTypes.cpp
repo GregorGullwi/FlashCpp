@@ -1014,9 +1014,21 @@ namespace {
 
 struct LegacyTypeRegistryJournalFrame {
 	size_t type_info_count = 0;
+	size_t dependent_qualified_name_count = 0;
+	size_t template_arg_list_count = 0;
+	size_t cold_payload_count = 0;
+	size_t instantiation_context_count = 0;
+	std::array<size_t, kTemplateArgListInternInlineBucketCount + 1> template_arg_list_bucket_counts{};
 	std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual> names;
 	std::unordered_map<TypeCategory, const TypeInfo*> native_types;
 };
+
+template <typename Vector>
+void truncateChunkedVectorTo(Vector& vector, size_t count) {
+	while (vector.size() > count) {
+		vector.pop_back();
+	}
+}
 
 // Production speculative parsing is not yet routed through frontend
 // transactions, so this stack stays process-global and single-context, like
@@ -1028,6 +1040,15 @@ std::vector<LegacyTypeRegistryJournalFrame> gLegacyTypeRegistryJournal;
 LegacyTypeRegistryJournalMark beginLegacyTypeRegistryJournal() {
 	LegacyTypeRegistryJournalFrame frame;
 	frame.type_info_count = gTypeInfo.size();
+	frame.dependent_qualified_name_count = gDependentQualifiedNameRecords.size();
+	frame.template_arg_list_count = gTypeInfoTemplateArgLists.size();
+	frame.cold_payload_count = gTemplateArgInfoColdPayloads.size();
+	frame.instantiation_context_count = gInstantiationContexts.size();
+	for (size_t index = 0; index < kTemplateArgListInternInlineBucketCount; ++index) {
+		frame.template_arg_list_bucket_counts[index] = gTypeInfoTemplateArgListsBySize[index].size();
+	}
+	frame.template_arg_list_bucket_counts[kTemplateArgListInternInlineBucketCount] =
+		gTypeInfoTemplateArgListsBySizeOverflow.size();
 	frame.names = gTypesByName;
 	frame.native_types = gNativeTypes;
 	gLegacyTypeRegistryJournal.push_back(std::move(frame));
@@ -1052,6 +1073,20 @@ void rollbackLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark) {
 	while (gTypeInfo.size() > frame.type_info_count) {
 		gTypeInfo.pop_back();
 	}
+	// Index-keyed cold type payloads created by the discarded rows are
+	// unreachable once those rows are gone. Pointer-keyed StructTypeInfo and
+	// EnumTypeInfo arenas remain deferred because surviving rows or other cold
+	// records can hold pointers into them.
+	for (size_t index = 0; index < kTemplateArgListInternInlineBucketCount; ++index) {
+		truncateChunkedVectorTo(gTypeInfoTemplateArgListsBySize[index], frame.template_arg_list_bucket_counts[index]);
+	}
+	truncateChunkedVectorTo(
+		gTypeInfoTemplateArgListsBySizeOverflow,
+		frame.template_arg_list_bucket_counts[kTemplateArgListInternInlineBucketCount]);
+	truncateChunkedVectorTo(gTypeInfoTemplateArgLists, frame.template_arg_list_count);
+	truncateChunkedVectorTo(gTemplateArgInfoColdPayloads, frame.cold_payload_count);
+	truncateChunkedVectorTo(gInstantiationContexts, frame.instantiation_context_count);
+	truncateChunkedVectorTo(gDependentQualifiedNameRecords, frame.dependent_qualified_name_count);
 }
 
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesByNameMap() {

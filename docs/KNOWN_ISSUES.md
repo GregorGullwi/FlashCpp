@@ -120,10 +120,12 @@ extending rollback across that walk.
 
 `FrontendScratchTransaction` now also journals legacy type-registry publication:
 rollback restores name/native bindings and truncates newly published top-level
-`TypeInfo` rows. Cold type payload arenas, in-place rewrites of pre-existing
-`TypeInfo` rows, legacy AST nodes, and parser publication still need an owned
-transaction boundary, and production speculative parsing is not yet routed
-through it. Do not wrap the whole materialization path in the transaction or
+`TypeInfo` rows plus their index-keyed cold payloads (dependent-name records,
+template-argument lists and intern buckets, template-argument cold payloads, and
+instantiation contexts). The pointer-keyed legacy `StructTypeInfo`/`EnumTypeInfo`
+arenas, in-place rewrites of pre-existing `TypeInfo` rows, legacy AST nodes, and
+parser publication still need an owned transaction boundary, and production
+speculative parsing is not yet routed through it. Do not wrap the whole materialization path in the transaction or
 erase required dependency instantiations. Lockstep member and namespace-scope
 expansions now report
 `TemplatePackLengthMismatch` (#1820) when referenced packs differ in length.
