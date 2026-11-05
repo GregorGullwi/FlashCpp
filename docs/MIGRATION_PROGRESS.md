@@ -269,9 +269,10 @@ mismatched, unpublished, or unresolved owner facts.
      address rather than dereferencing it as a value. Value `auto`, `auto&`, and
      `auto*` deduction keep the ordered spine through array decay and address-of,
      and array-object lowering reads the published canonical `TypeId`
-     instead of the ordered spine. Direct member-array reference arguments still
-     read the flat member projection; migrate that consumer before removing the
-     fields.
+     instead of the ordered spine. Instantiated reference-to-array parameter
+     bounds are materialized onto the type specifier so canonical identity sees
+     the array. Direct member-array reference arguments still read the flat
+     member projection; migrate that consumer before removing the fields.
    - Migrate the separate compatibility candidate gathering in the mixed
      member/free selector; deleting `findUnaryOperatorOverloadCompatibility`
      alone does not remove that dependency.
