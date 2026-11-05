@@ -14,16 +14,6 @@ recover the method by generated name. The selected-partial lazy nested setup
 currently pairs effective parent parameters with local-only arguments.
 
 
-## Anonymous unions in partial class-template specializations lose their declarations
-
-The separate partial-specialization body parser in `Parser_Templates_Class.cpp`
-does not retain anonymous-union members in the pattern AST. For example,
-`template<class T> struct Partial<T*> { union { T first; T second; }; unsigned char tag; };`
-after a primary declaration gives `Partial<long long*>` the wrong size and omits
-its union fields. Reuse the normal class-member parser before publishing these
-specializations' field schemas; layout publication cannot recover absent declarations.
-Primary templates and their ordinary nested classes retain these static facts.
-
 ## Remaining dependent member-template field forms need concrete TypeInfo
 
 Direct type packs, supported nontrivial type-pack patterns, and lockstep

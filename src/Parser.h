@@ -1992,6 +1992,7 @@ private:
 	void finalize_function_after_definition(FunctionDeclarationNode& func_node, bool force_recompute_mangled_name = false);	// Finalize signature, then mangle
 	void compute_and_set_mangled_name(FunctionDeclarationNode& func_node, bool force_recompute = false);	 // Phase 6 (mangling): Generate and set mangled name
 	ParseResult parse_struct_declaration();	// Add struct declaration parser (entry point)
+	ParseResult parse_anonymous_union_member_body(StructDeclarationNode& struct_ref, bool is_union_keyword, AccessSpecifier current_access);
 	ParseResult parse_struct_declaration_with_specs(bool pre_is_constexpr, bool pre_is_inline);	// With pre-parsed specifiers
 	ParseResult validate_bitfield_declaration(const TypeSpecifierNode& type_spec, std::string_view member_name,
 		std::optional<size_t> bitfield_width, const Token& token);

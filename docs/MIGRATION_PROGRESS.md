@@ -296,8 +296,10 @@ mismatched, unpublished, or unresolved owner facts.
      member/free selector; deleting `findUnaryOperatorOverloadCompatibility`
      alone does not remove that dependency.
 
-3. **Complete importer and declarator coverage.** An ordered declarator around an
-   alias that is an array, reference, member pointer, or function keeps that
+3. **Complete importer and declarator coverage.** Partial-specialization bodies
+   now reuse the ordinary anonymous-union member parser, so union fields and
+   layout are published for selected specializations. An ordered declarator
+   around an alias that is an array, reference, member pointer, or function keeps that
    wrapper as the inner type. Remaining: a fully non-projectable ordered-spine
    `decltype` dereference (deferred to sema), and a call or xvalue operand whose
    value category the parser does not know at parse time.
