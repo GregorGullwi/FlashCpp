@@ -3785,6 +3785,17 @@ public:
 	bool owns_inline_array_storage() const {
 		return has_outer_array_extents() && !type_node_.is_reference();
 	}
+	// True when subscripting this entity indexes an array object's elements,
+	// including extents retained on either the declaration or the type node.
+	bool denotes_array_object() const {
+		return owns_inline_array_storage() || type_node_.is_array_object();
+	}
+	// True when the declared entity is a reference to an array. The reference
+	// stores the array's address, so subscripts index the referred-to array.
+	bool denotes_reference_to_array() const {
+		return (type_node_.is_reference() || type_node_.is_rvalue_reference()) &&
+			(is_array() || type_node_.is_array() || type_node_.has_pointee_array_declarator());
+	}
 	// Returns the first (outermost) dimension for backwards compatibility
 	const std::optional<ASTNode> array_size() const {
 		if (array_dimensions_.empty())

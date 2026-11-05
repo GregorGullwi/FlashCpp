@@ -1398,13 +1398,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 
 			// A pointer-to-array declarator stores its bound on the declaration
 			// node but denotes a scalar pointer object, not an array object.
-			const bool declares_array_extents = decl_ptr->is_array() || type_node.is_array();
-			const bool base_is_array_object = declares_array_extents && !type_node.has_pointee_array_declarator();
-			// A reference to an array is not an array object, but subscripting it
-			// still selects one element of the referred-to array.
-			const bool reference_to_array =
-				(type_node.is_reference() || type_node.is_rvalue_reference()) &&
-				(declares_array_extents || type_node.has_pointee_array_declarator());
+			const bool base_is_array_object = decl_ptr->denotes_array_object();
+			const bool reference_to_array = decl_ptr->denotes_reference_to_array();
 			const bool base_uses_array_elements = base_is_array_object || reference_to_array;
 			if (reference_to_array) {
 				base_holds_address = true;
