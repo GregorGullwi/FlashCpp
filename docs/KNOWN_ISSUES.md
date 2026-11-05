@@ -123,9 +123,11 @@ rollback restores name/native bindings and truncates newly published top-level
 `TypeInfo` rows plus their index-keyed cold payloads (dependent-name records,
 template-argument lists and intern buckets, template-argument cold payloads, and
 instantiation contexts). The pointer-keyed legacy `StructTypeInfo`/`EnumTypeInfo`
-arenas, in-place rewrites of pre-existing `TypeInfo` rows, legacy AST nodes, and
-parser publication still need an owned transaction boundary, and production
-speculative parsing is not yet routed through it. Do not wrap the whole materialization path in the transaction or
+arenas also truncate when the discarded range is unreachable; a range still
+referenced by a surviving row is retained instead of left dangling. In-place
+rewrites themselves, legacy AST nodes, and parser publication still need an owned
+transaction boundary, and production speculative parsing is not yet routed
+through it. Do not wrap the whole materialization path in the transaction or
 erase required dependency instantiations. Lockstep member and namespace-scope
 expansions now report
 `TemplatePackLengthMismatch` (#1820) when referenced packs differ in length.
@@ -224,9 +226,10 @@ canonical through any remaining flat-consumer migration.
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 
 Production parsing does not yet route tentative declaration work through
-`FrontendScratchTransaction`. Token state, legacy AST nodes, cold type payload
-arenas, and in-place rewrites of existing `TypeInfo` rows still need an owned
-rollback boundary before broad speculative parsing can rely on it.
+`FrontendScratchTransaction`. Token state, legacy AST nodes, and in-place rewrites
+of existing `TypeInfo` rows (including the cold records those rewrites retain)
+still need an owned rollback boundary before broad speculative parsing can rely
+on it.
 
 The separate parser `CompileContext` diagnostic engine is not enlisted by that
 frontend transaction. Diagnostic text and note backing storage is still retained

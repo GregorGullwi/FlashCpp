@@ -56,10 +56,11 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 // identity, candidate diagnostics, legacy type-registry publication, and
 // namespace/symbol publication on tables bound to this context, including
 // scope creation and cursors.
-// Index-keyed cold type payload stores are journaled with the registry; the
-// pointer-keyed legacy StructTypeInfo/EnumTypeInfo arenas and in-place rewrites
-// of pre-existing TypeInfo rows remain outside the journal. Nested commits
-// remain provisional until the outer frontend probe commits.
+// Cold type payload and record arenas are journaled with the registry when the
+// discarded range is unreachable. A pointer-keyed record range still referenced
+// by a surviving row through an in-place rewrite is retained instead of being
+// truncated. Those rewrites themselves remain outside the journal. Nested
+// commits remain provisional until the outer frontend probe commits.
 class FrontendScratchTransaction {
 	friend class FrontendContext;
 

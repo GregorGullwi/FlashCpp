@@ -566,6 +566,61 @@ TEST_SUITE("FrontendContext") {
 		CHECK(getTypeInfoTemplateArgsCount() == template_args_before + 1);
 	}
 
+	TEST_CASE("Frontend scratch rollback restores pointer-keyed cold record publication") {
+		clearLegacyTypeTablesForTesting();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+		initialize_native_types();
+		FrontendContext context;
+		const StringHandle retained_name = StringTable::getOrInternStringHandle("frontend_tx_cold_arena_retained");
+		TypeCreationResult retained = add_struct_type(retained_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+		retained.info.setStructInfo(
+			StructTypeInfo(retained_name, AccessSpecifier::Public, false, NamespaceRegistry::GLOBAL_NAMESPACE));
+		const size_t structs_before = getStructTypeInfoCount();
+		const size_t enums_before = getEnumTypeInfoCount();
+
+		const StringHandle provisional_name = StringTable::getOrInternStringHandle("frontend_tx_cold_arena_provisional");
+		const StringHandle provisional_enum_name = StringTable::getOrInternStringHandle("frontend_tx_cold_arena_enum");
+		{
+			auto transaction = context.beginScratchTransaction();
+			TypeCreationResult provisional = add_struct_type(provisional_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+			provisional.info.emplaceStructInfo(provisional_name, AccessSpecifier::Public, false, NamespaceRegistry::GLOBAL_NAMESPACE);
+			TypeCreationResult provisional_enum = add_user_type(provisional_enum_name, 32, NamespaceRegistry::GLOBAL_NAMESPACE);
+			provisional_enum.info.setEnumInfo(EnumTypeInfo(provisional_enum_name, false));
+			CHECK(getStructTypeInfoCount() == structs_before + 1);
+			CHECK(getEnumTypeInfoCount() == enums_before + 1);
+			transaction.rollback();
+		}
+
+		CHECK(getStructTypeInfoCount() == structs_before);
+		CHECK(getEnumTypeInfoCount() == enums_before);
+		CHECK(findTypeByName(provisional_name) == nullptr);
+		CHECK(findTypeByName(provisional_enum_name) == nullptr);
+		CHECK(retained.info.getStructInfo() != nullptr);
+	}
+
+	TEST_CASE("Frontend scratch rollback retains cold records referenced by surviving rows") {
+		clearLegacyTypeTablesForTesting();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+		initialize_native_types();
+		FrontendContext context;
+		const StringHandle survivor_name = StringTable::getOrInternStringHandle("frontend_tx_cold_arena_survivor");
+		TypeCreationResult survivor = add_struct_type(survivor_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+		const size_t structs_before = getStructTypeInfoCount();
+		{
+			auto transaction = context.beginScratchTransaction();
+			survivor.info.setStructInfo(
+				StructTypeInfo(survivor_name, AccessSpecifier::Public, false, NamespaceRegistry::GLOBAL_NAMESPACE));
+			CHECK(getStructTypeInfoCount() == structs_before + 1);
+			transaction.rollback();
+		}
+
+		// A pre-existing row was rewritten in place to the new record. The journal
+		// cannot restore that rewrite, so it retains the referenced cold range
+		// instead of leaving a dangling pointer.
+		CHECK(survivor.info.getStructInfo() != nullptr);
+		CHECK(getStructTypeInfoCount() >= structs_before + 1);
+	}
+
 	TEST_CASE("Frontend scratch transactions reject overlapping context journals") {
 		clearLegacyTypeTablesForTesting();
 		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });

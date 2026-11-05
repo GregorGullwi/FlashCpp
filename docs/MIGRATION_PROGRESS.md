@@ -80,16 +80,17 @@ automatically enlisted.
 Index-keyed cold type payload stores now share that journal: dependent qualified
 name records, template-argument lists with their intern buckets, template-argument
 cold payloads, and instantiation contexts truncate with the discarded rows. The
-pointer-keyed legacy `StructTypeInfo`/`EnumTypeInfo` arenas, in-place rewrites of
-pre-existing `TypeInfo` rows, legacy AST nodes, and parser state stay outside
-this boundary. Native guards cover rollback, commit, overwritten bindings, nested
-commit, cold-payload truncation, intern-bucket cleanup, and out-of-order
-completion.
+pointer-keyed legacy `StructTypeInfo`/`EnumTypeInfo` arenas also truncate when the
+discarded range is unreachable; a range still referenced by a surviving row or by
+an older nested/enclosing record is retained instead of left dangling. In-place
+rewrites of pre-existing `TypeInfo` rows, legacy AST nodes, and parser state stay
+outside this boundary. Native guards cover rollback, commit, overwritten
+bindings, nested commit, cold-payload truncation, intern-bucket cleanup,
+pointer-keyed truncation and retention, and out-of-order completion.
 
-The next slice must still give the remaining candidate-local pointer-keyed cold
-record arenas, in-place `TypeInfo` rewrites, legacy AST nodes, and parser
-artifacts an owned publication boundary before enabling a transaction around
-type-pack materialization. Required dependency instantiations must remain separate
+The next slice must still give the remaining candidate-local in-place `TypeInfo`
+rewrites, legacy AST nodes, and parser artifacts an owned publication boundary
+before enabling a transaction around type-pack materialization. Required dependency instantiations must remain separate
 from that candidate-local transaction; blanket rollback would violate observable
 C++20 instantiation effects. Lockstep member and namespace-scope length
 mismatches now produce `TemplatePackLengthMismatch` (#1820); remaining mismatch
@@ -377,10 +378,11 @@ These seed adjacent slices; the authoritative inventory is
 - **Scratch rollback and publication:** `FrontendScratchTransaction` journals
   scratch state, candidate diagnostic records and note attachments,
   `DeclarationBuilder`, `TemplateDeclTable`, legacy type-registry
-  rows and name/native bindings, index-keyed cold type payload stores, bound
+  rows and name/native bindings, index-keyed cold type payload stores, and
+  pointer-keyed legacy `StructTypeInfo`/`EnumTypeInfo` arenas (unreachable ranges
+  truncate; ranges referenced by a surviving row are retained), bound
   `SymbolTable` publication maps, in-place global/namespace variable array type
-  normalization, and namespace metadata. The pointer-keyed legacy
-  `StructTypeInfo`/`EnumTypeInfo` arenas and in-place rewrites of pre-existing
+  normalization, and namespace metadata. In-place rewrites of pre-existing
   `TypeInfo` rows are outside the journal. Scope creation, cursor movement, and `ScopeRecord`
   publication roll back together after symbol-map undo. Nested commits stay
   provisional until the outer transaction commits; production speculative parsing

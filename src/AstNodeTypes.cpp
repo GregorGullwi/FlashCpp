@@ -1018,6 +1018,8 @@ struct LegacyTypeRegistryJournalFrame {
 	size_t template_arg_list_count = 0;
 	size_t cold_payload_count = 0;
 	size_t instantiation_context_count = 0;
+	size_t struct_type_info_count = 0;
+	size_t enum_type_info_count = 0;
 	std::array<size_t, kTemplateArgListInternInlineBucketCount + 1> template_arg_list_bucket_counts{};
 	std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual> names;
 	std::unordered_map<TypeCategory, const TypeInfo*> native_types;
@@ -1028,6 +1030,47 @@ void truncateChunkedVectorTo(Vector& vector, size_t count) {
 	while (vector.size() > count) {
 		vector.pop_back();
 	}
+}
+
+// Pointer-keyed cold records can be reachable from a surviving TypeInfo row or
+// from an older nested/enclosing record when the discarded transaction rewrote
+// them in place. Retain the whole newly published range in that case so no
+// surviving pointer dangles; in-place rewrites remain outside the journal.
+bool hasSurvivingColdRecordReference(size_t struct_count, size_t enum_count) {
+	if (gStructTypeInfos.size() > struct_count) {
+		std::unordered_set<const StructTypeInfo*> discarded;
+		for (size_t index = struct_count; index < gStructTypeInfos.size(); ++index) {
+			discarded.insert(&gStructTypeInfos[index]);
+		}
+		for (size_t index = 0; index < struct_count; ++index) {
+			const StructTypeInfo& record = gStructTypeInfos[index];
+			if (record.getEnclosingClass() != nullptr && discarded.contains(record.getEnclosingClass())) return true;
+			for (const StructTypeInfo* nested : record.getNestedClasses()) {
+				if (discarded.contains(nested)) return true;
+			}
+			for (const StructMemberFunction* function : record.vtable) {
+				for (size_t new_index = struct_count; new_index < gStructTypeInfos.size(); ++new_index) {
+					const auto& functions = gStructTypeInfos[new_index].member_functions;
+					if (!functions.empty() && function >= functions.data() && function < functions.data() + functions.size()) {
+						return true;
+					}
+				}
+			}
+		}
+		for (const TypeInfo& row : gTypeInfo) {
+			if (row.getStructInfo() != nullptr && discarded.contains(row.getStructInfo())) return true;
+		}
+	}
+	if (gEnumTypeInfos.size() > enum_count) {
+		std::unordered_set<const EnumTypeInfo*> discarded;
+		for (size_t index = enum_count; index < gEnumTypeInfos.size(); ++index) {
+			discarded.insert(&gEnumTypeInfos[index]);
+		}
+		for (const TypeInfo& row : gTypeInfo) {
+			if (row.getEnumInfo() != nullptr && discarded.contains(row.getEnumInfo())) return true;
+		}
+	}
+	return false;
 }
 
 // Production speculative parsing is not yet routed through frontend
@@ -1044,6 +1087,8 @@ LegacyTypeRegistryJournalMark beginLegacyTypeRegistryJournal() {
 	frame.template_arg_list_count = gTypeInfoTemplateArgLists.size();
 	frame.cold_payload_count = gTemplateArgInfoColdPayloads.size();
 	frame.instantiation_context_count = gInstantiationContexts.size();
+	frame.struct_type_info_count = gStructTypeInfos.size();
+	frame.enum_type_info_count = gEnumTypeInfos.size();
 	for (size_t index = 0; index < kTemplateArgListInternInlineBucketCount; ++index) {
 		frame.template_arg_list_bucket_counts[index] = gTypeInfoTemplateArgListsBySize[index].size();
 	}
@@ -1073,10 +1118,13 @@ void rollbackLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark) {
 	while (gTypeInfo.size() > frame.type_info_count) {
 		gTypeInfo.pop_back();
 	}
-	// Index-keyed cold type payloads created by the discarded rows are
-	// unreachable once those rows are gone. Pointer-keyed StructTypeInfo and
-	// EnumTypeInfo arenas remain deferred because surviving rows or other cold
-	// records can hold pointers into them.
+	// Cold records created by the discarded rows are unreachable once those
+	// rows are gone, unless an in-place rewrite left a surviving pointer into
+	// them. Keep the new range in that case rather than dangling or fabricating
+	// a partial reclaim.
+	if (hasSurvivingColdRecordReference(frame.struct_type_info_count, frame.enum_type_info_count)) {
+		return;
+	}
 	for (size_t index = 0; index < kTemplateArgListInternInlineBucketCount; ++index) {
 		truncateChunkedVectorTo(gTypeInfoTemplateArgListsBySize[index], frame.template_arg_list_bucket_counts[index]);
 	}
@@ -1087,6 +1135,8 @@ void rollbackLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark) {
 	truncateChunkedVectorTo(gTemplateArgInfoColdPayloads, frame.cold_payload_count);
 	truncateChunkedVectorTo(gInstantiationContexts, frame.instantiation_context_count);
 	truncateChunkedVectorTo(gDependentQualifiedNameRecords, frame.dependent_qualified_name_count);
+	truncateChunkedVectorTo(gStructTypeInfos, frame.struct_type_info_count);
+	truncateChunkedVectorTo(gEnumTypeInfos, frame.enum_type_info_count);
 }
 
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesByNameMap() {
