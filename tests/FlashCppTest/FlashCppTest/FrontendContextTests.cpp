@@ -621,6 +621,38 @@ TEST_SUITE("FrontendContext") {
 		CHECK(getStructTypeInfoCount() >= structs_before + 1);
 	}
 
+	TEST_CASE("Frontend scratch rollback retains cold payloads referenced by surviving rows") {
+		clearLegacyTypeTablesForTesting();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+		initialize_native_types();
+		FrontendContext context;
+		const StringHandle survivor_name = StringTable::getOrInternStringHandle("frontend_tx_cold_payload_survivor");
+		TypeCreationResult survivor = add_struct_type(survivor_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+		const size_t lists_before = getTypeInfoTemplateArgsCount();
+		const size_t dependent_names_before = getDependentQualifiedNameRecordCount();
+		{
+			auto transaction = context.beginScratchTransaction();
+			TemplateArgInfoVector args;
+			TypeInfo::TemplateArgInfo argument;
+			argument.is_value = true;
+			argument.value = int64_t{13};
+			args.push_back(argument);
+			survivor.info.setTemplateInstantiationInfo(QualifiedIdentifier{}, std::move(args));
+			TypeInfo::DependentQualifiedNameRecord record{};
+			survivor.info.setDependentQualifiedName(std::move(record));
+			CHECK(getTypeInfoTemplateArgsCount() == lists_before + 1);
+			CHECK(getDependentQualifiedNameRecordCount() == dependent_names_before + 1);
+			transaction.rollback();
+		}
+
+		// The pre-existing row was rewritten in place, so its new cold references
+		// must stay valid even though the transaction itself rolled back.
+		CHECK(getTypeInfoTemplateArgsCount() >= lists_before + 1);
+		CHECK(getDependentQualifiedNameRecordCount() >= dependent_names_before + 1);
+		CHECK_FALSE(survivor.info.templateArgs().empty());
+		CHECK(survivor.info.dependentQualifiedName() != nullptr);
+	}
+
 	TEST_CASE("Frontend scratch transactions reject overlapping context journals") {
 		clearLegacyTypeTablesForTesting();
 		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });

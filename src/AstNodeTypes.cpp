@@ -11,6 +11,7 @@
 #include "Log.h"
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <iomanip>
 #include <sstream>
 #include <set>
@@ -1032,42 +1033,95 @@ void truncateChunkedVectorTo(Vector& vector, size_t count) {
 	}
 }
 
-// Pointer-keyed cold records can be reachable from a surviving TypeInfo row or
-// from an older nested/enclosing record when the discarded transaction rewrote
-// them in place. Retain the whole newly published range in that case so no
-// surviving pointer dangles; in-place rewrites remain outside the journal.
-bool hasSurvivingColdRecordReference(size_t struct_count, size_t enum_count) {
-	if (gStructTypeInfos.size() > struct_count) {
-		std::unordered_set<const StructTypeInfo*> discarded;
-		for (size_t index = struct_count; index < gStructTypeInfos.size(); ++index) {
-			discarded.insert(&gStructTypeInfos[index]);
-		}
-		for (size_t index = 0; index < struct_count; ++index) {
+bool isDiscardedStructRecord(const StructTypeInfo* record, size_t start) {
+	if (record == nullptr) return false;
+	for (size_t index = start; index < gStructTypeInfos.size(); ++index) {
+		if (&gStructTypeInfos[index] == record) return true;
+	}
+	return false;
+}
+
+bool isDiscardedEnumRecord(const EnumTypeInfo* record, size_t start) {
+	if (record == nullptr) return false;
+	for (size_t index = start; index < gEnumTypeInfos.size(); ++index) {
+		if (&gEnumTypeInfos[index] == record) return true;
+	}
+	return false;
+}
+
+bool isDiscardedInstantiationContext(const TypeInfo::InstantiationContext* context, size_t start) {
+	if (context == nullptr) return false;
+	for (size_t index = start; index < gInstantiationContexts.size(); ++index) {
+		if (&gInstantiationContexts[index] == context) return true;
+	}
+	return false;
+}
+
+bool templateArgReferencesColdPayload(const TypeInfo::TemplateArgInfo& argument, size_t start) {
+	return argument.cold_payload_index_ != TypeInfo::TemplateArgInfo::kNoColdPayload &&
+		argument.cold_payload_index_ >= start;
+}
+
+// A cold record or index is reachable from a surviving owner when an in-place
+// rewrite escaped the rows that the transaction discards. Retain the whole
+// newly published range in that case so nothing dangles. Allocation-free: this
+// runs from a noexcept rollback destructor.
+bool hasSurvivingColdReference(const LegacyTypeRegistryJournalFrame& frame) {
+	if (gStructTypeInfos.size() > frame.struct_type_info_count) {
+		for (size_t index = 0; index < frame.struct_type_info_count; ++index) {
 			const StructTypeInfo& record = gStructTypeInfos[index];
-			if (record.getEnclosingClass() != nullptr && discarded.contains(record.getEnclosingClass())) return true;
+			if (isDiscardedStructRecord(record.getEnclosingClass(), frame.struct_type_info_count)) return true;
 			for (const StructTypeInfo* nested : record.getNestedClasses()) {
-				if (discarded.contains(nested)) return true;
+				if (isDiscardedStructRecord(nested, frame.struct_type_info_count)) return true;
 			}
 			for (const StructMemberFunction* function : record.vtable) {
-				for (size_t new_index = struct_count; new_index < gStructTypeInfos.size(); ++new_index) {
+				for (size_t new_index = frame.struct_type_info_count; new_index < gStructTypeInfos.size(); ++new_index) {
 					const auto& functions = gStructTypeInfos[new_index].member_functions;
-					if (!functions.empty() && function >= functions.data() && function < functions.data() + functions.size()) {
-						return true;
-					}
+					if (functions.empty()) continue;
+					const auto less = std::less<const StructMemberFunction*>{};
+					if (!less(function, functions.data()) && less(function, functions.data() + functions.size())) return true;
 				}
 			}
 		}
+	}
+	if (gEnumTypeInfos.size() > frame.enum_type_info_count) {
 		for (const TypeInfo& row : gTypeInfo) {
-			if (row.getStructInfo() != nullptr && discarded.contains(row.getStructInfo())) return true;
+			if (isDiscardedEnumRecord(row.getEnumInfo(), frame.enum_type_info_count)) return true;
 		}
 	}
-	if (gEnumTypeInfos.size() > enum_count) {
-		std::unordered_set<const EnumTypeInfo*> discarded;
-		for (size_t index = enum_count; index < gEnumTypeInfos.size(); ++index) {
-			discarded.insert(&gEnumTypeInfos[index]);
+	for (const TypeInfo& row : gTypeInfo) {
+		if (isDiscardedStructRecord(row.getStructInfo(), frame.struct_type_info_count)) return true;
+		if (row.template_args_index_ != TypeInfo::kNoTemplateArgs &&
+			row.template_args_index_ >= frame.template_arg_list_count) return true;
+		if (row.instantiation_context_index_ != TypeInfo::kNoInstantiationContext &&
+			row.instantiation_context_index_ >= frame.instantiation_context_count) return true;
+		if (row.dependent_qualified_name_index_ != TypeInfo::kNoDependentQualifiedName &&
+			row.dependent_qualified_name_index_ >= frame.dependent_qualified_name_count) return true;
+	}
+	for (size_t index = 0; index < frame.template_arg_list_count; ++index) {
+		for (const TypeInfo::TemplateArgInfo& argument : gTypeInfoTemplateArgLists[index]) {
+			if (templateArgReferencesColdPayload(argument, frame.cold_payload_count)) return true;
 		}
-		for (const TypeInfo& row : gTypeInfo) {
-			if (row.getEnumInfo() != nullptr && discarded.contains(row.getEnumInfo())) return true;
+	}
+	for (size_t index = 0; index < frame.instantiation_context_count; ++index) {
+		const TypeInfo::InstantiationContext& context = gInstantiationContexts[index];
+		if (isDiscardedInstantiationContext(context.parent, frame.instantiation_context_count)) return true;
+		if (context.param_args_index != TypeInfo::kNoTemplateArgs && context.param_args_index >= frame.template_arg_list_count) return true;
+		for (const TypeInfo::InstantiationContext::Binding& binding : context.bindings) {
+			for (const TypeInfo::TemplateArgInfo& argument : binding.args) {
+				if (templateArgReferencesColdPayload(argument, frame.cold_payload_count)) return true;
+			}
+		}
+	}
+	for (size_t index = 0; index < frame.dependent_qualified_name_count; ++index) {
+		const TypeInfo::DependentQualifiedNameRecord& record = gDependentQualifiedNameRecords[index];
+		for (const TypeInfo::TemplateArgInfo& argument : record.owner_template_arguments) {
+			if (templateArgReferencesColdPayload(argument, frame.cold_payload_count)) return true;
+		}
+		for (const TypeInfo::DependentQualifiedNameRecord::Member& member : record.member_chain) {
+			for (const TypeInfo::TemplateArgInfo& argument : member.template_arguments) {
+				if (templateArgReferencesColdPayload(argument, frame.cold_payload_count)) return true;
+			}
 		}
 	}
 	return false;
@@ -1119,10 +1173,10 @@ void rollbackLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark) {
 		gTypeInfo.pop_back();
 	}
 	// Cold records created by the discarded rows are unreachable once those
-	// rows are gone, unless an in-place rewrite left a surviving pointer into
+	// rows are gone, unless an in-place rewrite left a surviving reference into
 	// them. Keep the new range in that case rather than dangling or fabricating
 	// a partial reclaim.
-	if (hasSurvivingColdRecordReference(frame.struct_type_info_count, frame.enum_type_info_count)) {
+	if (hasSurvivingColdReference(frame)) {
 		return;
 	}
 	for (size_t index = 0; index < kTemplateArgListInternInlineBucketCount; ++index) {

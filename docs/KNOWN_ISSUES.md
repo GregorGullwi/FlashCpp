@@ -124,8 +124,13 @@ rollback restores name/native bindings and truncates newly published top-level
 template-argument lists and intern buckets, template-argument cold payloads, and
 instantiation contexts). The pointer-keyed legacy `StructTypeInfo`/`EnumTypeInfo`
 arenas also truncate when the discarded range is unreachable; a range still
-referenced by a surviving row is retained instead of left dangling. In-place
-rewrites themselves, legacy AST nodes, and parser publication still need an owned
+referenced by a surviving row is retained instead of left dangling. Retention
+scans surviving `TypeInfo` cold indices, interned argument lists, instantiation
+contexts, and dependent-name records without allocating during rollback. Owners
+outside those stores, such as a `QualifiedIdentifierNode` or a copied
+`TemplateArgInfo` held by the AST/template registries, are not yet enumerable, so
+in-place rewrites of those owners remain outside the boundary. In-place rewrites
+themselves, legacy AST nodes, and parser publication still need an owned
 transaction boundary, and production speculative parsing is not yet routed
 through it. Do not wrap the whole materialization path in the transaction or
 erase required dependency instantiations. Lockstep member and namespace-scope

@@ -81,12 +81,16 @@ Index-keyed cold type payload stores now share that journal: dependent qualified
 name records, template-argument lists with their intern buckets, template-argument
 cold payloads, and instantiation contexts truncate with the discarded rows. The
 pointer-keyed legacy `StructTypeInfo`/`EnumTypeInfo` arenas also truncate when the
-discarded range is unreachable; a range still referenced by a surviving row or by
-an older nested/enclosing record is retained instead of left dangling. In-place
-rewrites of pre-existing `TypeInfo` rows, legacy AST nodes, and parser state stay
-outside this boundary. Native guards cover rollback, commit, overwritten
-bindings, nested commit, cold-payload truncation, intern-bucket cleanup,
-pointer-keyed truncation and retention, and out-of-order completion.
+discarded range is unreachable; a range still referenced by a surviving row, an
+older nested/enclosing record, or an older vtable is retained instead of left
+dangling. Retention scans surviving `TypeInfo` cold indices, interned argument
+lists, instantiation contexts, and dependent-name records via an allocation-free
+rollback path. Owners outside those stores, such as `QualifiedIdentifierNode` or
+copied `TemplateArgInfo` values held by AST/template registries, remain outside
+the boundary. Legacy AST nodes and parser state also stay outside. Native guards
+cover rollback, commit, overwritten bindings, nested commit, cold-payload
+truncation, intern-bucket cleanup, pointer-keyed truncation and retention,
+surviving-row retention, and out-of-order completion.
 
 The next slice must still give the remaining candidate-local in-place `TypeInfo`
 rewrites, legacy AST nodes, and parser artifacts an owned publication boundary
