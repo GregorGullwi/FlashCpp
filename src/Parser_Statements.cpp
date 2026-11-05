@@ -1781,7 +1781,7 @@ ParseResult Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSp
 					TypeCategory::Auto,
 					type_specifier,
 					*deduced_type_spec_opt,
-					true);
+					PlaceholderArrayDeduction::DecayToPointer);
 				FLASH_LOG(Parser, Debug, "Deduced auto variable type from initializer: type=",
 						  (int)type_specifier.type(), " size=", (int)type_specifier.size_in_bits());
 			} else {
@@ -1834,7 +1834,7 @@ ParseResult Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSp
 					TypeCategory::Auto,
 					type_specifier,
 					provisional,
-					true);
+					PlaceholderArrayDeduction::DecayToPointer);
 				FLASH_LOG(Parser, Debug, "Deduced auto variable type: type=",
 						  (int)type_specifier.type(), " size=", deduced_size);
 			}
@@ -1858,7 +1858,7 @@ ParseResult Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSp
 				TypeCategory::DeclTypeAuto,
 				type_specifier,
 				*deduced_type_spec_opt,
-				false);
+				PlaceholderArrayDeduction::PreserveArray);
 			if (type_specifier.size_in_bits() == 0 && type_specifier.pointer_depth() == 0 &&
 				!type_specifier.is_reference()) {
 				type_specifier.set_size_in_bits(get_type_size_bits(type_specifier.category()));

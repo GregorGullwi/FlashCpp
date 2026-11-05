@@ -1018,7 +1018,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 								placeholder_cat,
 								sub_decl_ref.type_specifier_node(),
 								*deduced_type,
-								true));
+								PlaceholderArrayDeduction::DecayToPointer));
 					}
 				} else if (!isDependentTemplateContext()) {
 					throw CompileError(std::string(StringBuilder()

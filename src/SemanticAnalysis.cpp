@@ -556,7 +556,7 @@ ASTNode resolveRangedForLoopDeclNode(const VariableDeclarationNode& original_var
 		placeholder_type.type(),
 		placeholder_type,
 		deduced_type,
-		false);
+		PlaceholderArrayDeduction::PreserveArray);
 
 	DeclarationNode& resolved_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(original_decl);
 	resolved_decl.set_type_node(resolved_type);
@@ -6908,6 +6908,33 @@ CanonicalTypeId SemanticAnalysis::canonicalizeTypeForImplicitConversion(const Ty
 TypeId SemanticAnalysis::canonicalStructuralTypeId(const TypeSpecifierNode& type) {
 	const CanonicalTypeId id = canonicalizeType(type);
 	return type_context_.get(id).structural_type_id;
+}
+
+bool SemanticAnalysis::typeDenotesArrayObject(const TypeSpecifierNode& type) {
+	const TypeId structural_type_id = canonicalStructuralTypeId(type);
+	if (!structural_type_id) {
+		return false;
+	}
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	const TypeId referent = canonicalTypeWithoutReference(table, structural_type_id);
+	const CanonicalTypeNode referent_node = table.node(stripCanonicalTopCv(table, referent).first);
+	return referent_node.kind == CanonicalTypeKind::Array;
+}
+
+bool SemanticAnalysis::declarationDenotesArrayObject(const DeclarationNode& decl) {
+	TypeSpecifierNode type = decl.type_specifier_node();
+	if (decl.is_array_object()) {
+		// The parser can keep array extents on the declaration instead of the
+		// type specifier. Materialize them before asking canonical identity.
+		applyDeclarationArrayBoundsToTypeSpec(decl, type, *this);
+	}
+	if (typeDenotesArrayObject(type)) {
+		return true;
+	}
+	// Instantiated and parser-only declarations can still carry their array
+	// extents before canonical publication. Keep that fact in the semantic
+	// query so codegen does not inspect the declaration projection itself.
+	return decl.is_array_object() || type.is_array();
 }
 
 PointerToArrayShape SemanticAnalysis::pointerToArrayShape(const CanonicalTypeDesc& desc) const {

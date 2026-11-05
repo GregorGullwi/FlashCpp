@@ -1300,7 +1300,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			// so check both representations before falling through to ordinary reference
 			// dereference handling. Non-projectable ordered referents such as
 			// int (* (&)[N])[M] only expose their outer array on the ordered spine.
-			if (decl_node.is_array_object() || type_node.is_array() || orderedReferenceRefersToArrayObject(type_node)) {
+			if (sema_.declarationDenotesArrayObject(decl_node)) {
 					// Return the array reference as a 64-bit pointer
 				return makeExprResult(nativeTypeIndex(type_node.type()), SizeInBits{POINTER_SIZE_BITS}, toIrOperand(identifier_frame_name), PointerDepth{}, ValueStorage::ContainsData);
 			}
@@ -1512,7 +1512,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				// so check both representations before treating this like an ordinary
 				// reference value. Non-projectable ordered referents such as
 				// int (* (&)[N])[M] only expose their outer array on the ordered spine.
-				if (decl_node.is_array_object() || type_node.is_array() || orderedReferenceRefersToArrayObject(type_node)) {
+				if (sema_.declarationDenotesArrayObject(decl_node)) {
 						// Return the array reference as a 64-bit pointer
 					return makeExprResult(nativeTypeIndex(type_node.type()), SizeInBits{POINTER_SIZE_BITS}, toIrOperand(identifier_frame_name), PointerDepth{}, ValueStorage::ContainsData);
 				}

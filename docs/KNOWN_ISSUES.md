@@ -246,8 +246,10 @@ published member `TypeId` when one exists.
 Local array objects now allocate their full ordered element count and a
 reference to such an array holds the array address instead of dereferencing it
 as a value. Value `auto`, `auto&`, and `auto*` deduction preserve the ordered
-spine, including array decay and address-of. Passing a non-projectable member
-array directly to a reference parameter still reads the flat member projection.
+spine, including array decay and address-of. Identifier lowering asks sema's
+published canonical `TypeId` whether the type denotes an array instead of
+re-reading ordered declarator syntax. Passing a non-projectable member array
+directly to a reference parameter still reads the flat member projection.
 Other remaining flat readers still fail closed for non-projectable shapes;
 remove this entry when those consumers migrate and the compatibility projection
 fields are deleted.

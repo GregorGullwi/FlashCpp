@@ -233,6 +233,12 @@ public:
 	// identity fails closed rather than reading the flat projection.
 	PointerToArrayShape pointerToArrayShape(const CanonicalTypeDesc& desc) const;
 
+	// Canonical array-object predicate. True for an array type and for a
+	// reference whose referent is an array. Codegen must not re-derive this from
+	// ordered declarator syntax; the published TypeId is authoritative.
+	bool typeDenotesArrayObject(const TypeSpecifierNode& type);
+	bool declarationDenotesArrayObject(const DeclarationNode& decl);
+
 	// Resolve the pointer-to-array shape of a non-static data member. The member
 	// carries no canonical id, so its descriptor is interned (publishing
 	// structural identity) before the shape is read.
