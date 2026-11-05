@@ -496,6 +496,76 @@ TEST_SUITE("FrontendContext") {
 		CHECK(findTypeByName(provisional_name) == nullptr);
 	}
 
+	TEST_CASE("Frontend scratch rollback restores cold type payload publication") {
+		clearLegacyTypeTablesForTesting();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+		initialize_native_types();
+		FrontendContext context;
+		const StringHandle retained_name = StringTable::getOrInternStringHandle("frontend_tx_cold_retained_type");
+		TypeCreationResult retained = add_user_type(retained_name, 32, NamespaceRegistry::GLOBAL_NAMESPACE);
+		TemplateArgInfoVector retained_args;
+		TypeInfo::TemplateArgInfo retained_arg;
+		retained_arg.is_value = true;
+		retained_arg.value = int64_t{7};
+		retained_args.push_back(retained_arg);
+		CHECK(storeTypeInfoTemplateArgs(retained_args) != TypeInfo::kNoTemplateArgs);
+		const size_t type_before = getTypeInfoCount();
+		const size_t dependent_name_before = getDependentQualifiedNameRecordCount();
+		const size_t template_args_before = getTypeInfoTemplateArgsCount();
+		const size_t cold_payload_before = getTemplateArgInfoColdPayloadCount();
+		const size_t instantiation_context_before = getInstantiationContextCount();
+
+		const StringHandle provisional_name = StringTable::getOrInternStringHandle("frontend_tx_cold_provisional_type");
+		{
+			auto transaction = context.beginScratchTransaction();
+			TypeCreationResult provisional = add_user_type(provisional_name, 32, NamespaceRegistry::GLOBAL_NAMESPACE);
+			TypeInfo::DependentQualifiedNameRecord record{};
+			provisional.info.setDependentQualifiedName(std::move(record));
+			TemplateArgInfoVector provisional_args;
+			TypeInfo::TemplateArgInfo provisional_arg;
+			provisional_arg.is_value = true;
+			provisional_arg.value = int64_t{11};
+			provisional_args.push_back(provisional_arg);
+			CHECK(storeTypeInfoTemplateArgs(provisional_args) == template_args_before);
+			storeInstantiationContext(TypeInfo::InstantiationContext{});
+			TypeInfo::TemplateArgInfoColdPayload payload;
+			payload.dependent_expr = ASTNode::emplace_node<ExpressionNode>(
+				NumericLiteralNode(Token{}, uint64_t{3}, TypeCategory::Int, TypeQualifier::None, 32));
+			storeTemplateArgInfoColdPayload(std::move(payload));
+			CHECK(getDependentQualifiedNameRecordCount() == dependent_name_before + 1);
+			CHECK(getTypeInfoTemplateArgsCount() == template_args_before + 1);
+			CHECK(getTemplateArgInfoColdPayloadCount() == cold_payload_before + 1);
+			CHECK(getInstantiationContextCount() == instantiation_context_before + 1);
+			{
+				auto nested = context.beginScratchTransaction();
+				TypeInfo::TemplateArgInfoColdPayload nested_payload;
+				nested_payload.dependent_expr = ASTNode::emplace_node<ExpressionNode>(
+					NumericLiteralNode(Token{}, uint64_t{5}, TypeCategory::Int, TypeQualifier::None, 32));
+				storeTemplateArgInfoColdPayload(std::move(nested_payload));
+				nested.commit();
+			}
+			transaction.rollback();
+		}
+
+		CHECK(getTypeInfoCount() == type_before);
+		CHECK(findTypeByName(retained_name) == &retained.info);
+		CHECK(findTypeByName(provisional_name) == nullptr);
+		CHECK(getDependentQualifiedNameRecordCount() == dependent_name_before);
+		CHECK(getTypeInfoTemplateArgsCount() == template_args_before);
+		CHECK(getTemplateArgInfoColdPayloadCount() == cold_payload_before);
+		CHECK(getInstantiationContextCount() == instantiation_context_before);
+
+		// The intern bucket entry created in the discarded transaction must not
+		// survive its truncated argument list.
+		TemplateArgInfoVector retry_args;
+		TypeInfo::TemplateArgInfo retry_arg;
+		retry_arg.is_value = true;
+		retry_arg.value = int64_t{11};
+		retry_args.push_back(retry_arg);
+		CHECK(storeTypeInfoTemplateArgs(retry_args) == template_args_before);
+		CHECK(getTypeInfoTemplateArgsCount() == template_args_before + 1);
+	}
+
 	TEST_CASE("Frontend scratch transactions reject overlapping context journals") {
 		clearLegacyTypeTablesForTesting();
 		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
