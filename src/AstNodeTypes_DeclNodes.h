@@ -2800,6 +2800,43 @@ inline void promoteDeclaratorShapeToOrdered(TypeSpecifierNode& type) {
 	type.set_ordered_declarator(std::move(components));
 }
 
+// Alias targets keep their existing flat array/callable representation until
+// those consumers migrate. Plain pointer/reference alias targets promote so
+// substitution preserves the modifier order, which is required to distinguish
+// a pointer-to-reference from a valid reference-to-pointer.
+inline void promoteAliasTargetDeclaratorShape(TypeSpecifierNode& target) {
+	if (target.has_ordered_declarator() || target.is_array() ||
+		target.has_pointee_array_declarator() ||
+		target.has_unsized_outer_array_dimension() ||
+		target.has_function_signature() || target.has_member_class()) {
+		return;
+	}
+	if (target.pointer_depth() == 0 && !target.is_reference()) {
+		return;
+	}
+	promoteDeclaratorShapeToOrdered(target);
+}
+
+// C++20 [dcl.ptr]/[dcl.ref]: a pointer component immediately outside a
+// reference component denotes a pointer to reference and is ill-formed.
+inline bool orderedDeclaratorFormsPointerToReference(const TypeSpecifierNode& type) {
+	if (!type.has_ordered_declarator()) {
+		return false;
+	}
+	const std::span<const DeclaratorComponent> components = type.declarator_components();
+	for (size_t index = 0; index + 1 < components.size(); ++index) {
+		if (components[index].kind != DeclaratorComponentKind::Pointer) {
+			continue;
+		}
+		const DeclaratorComponentKind inner = components[index + 1].kind;
+		if (inner == DeclaratorComponentKind::LValueReference ||
+			inner == DeclaratorComponentKind::RValueReference) {
+			return true;
+		}
+	}
+	return false;
+}
+
 inline void promoteDeclaratorShapeToOrdered(
 	TypeSpecifierNode& type,
 	std::span<const ASTNode> array_bound_expressions) {

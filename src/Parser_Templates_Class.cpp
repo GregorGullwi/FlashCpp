@@ -1698,6 +1698,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				StringTable::getOrInternStringHandle(alias_name),
 				type_result.node().value());
 		}
+		promoteAliasTargetDeclaratorShape(alias_node.as<TemplateAliasNode>().target_type_node());
 		alias_node.as<TemplateAliasNode>().setArrayBoundExpressions(std::move(alias_array_bound_expressions));
 
 		// A deferred alias whose target names the alias itself is directly

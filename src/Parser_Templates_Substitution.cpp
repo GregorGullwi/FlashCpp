@@ -580,6 +580,15 @@ ASTNode Parser::substituteTemplateParametersWithState(
 					arg.ref_qualifier,
 					type_spec.reference_qualifier()));
 			}
+			if (orderedDeclaratorFormsPointerToReference(substituted_spec)) {
+				throw makeStructuredCompileError(
+					context_.diagnostics(),
+					DiagnosticId::PointerToReferenceType,
+					DiagnosticSeverity::Error,
+					lexer_.getSourceLocation(type_spec.token()),
+					"Cannot form a pointer to reference type",
+					std::span<const DiagnosticArgument>{});
+			}
 			return emplace_node<TypeSpecifierNode>(substituted_spec);
 		};
 		const auto substituteSpecializationTypeArgs = [&](TypeSpecifierNode& type) {

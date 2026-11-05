@@ -118,14 +118,6 @@ packs reproduce; equivalent function-pointer aliases match correctly. Audit
 member callable argument identity at partial-specialization deduction rather
 than recognizing the trait spelling.
 
-## Alias-template substitution still accepts a pointer to reference
-
-Canonical structural substitution now fails closed when rebuilding a pointer
-whose substituted pointee is a reference. Source-level alias-template use such
-as `template<class T> using Ptr = T*; using X = Ptr<int&>;` is still accepted by
-the parser-owned alias path before canonical import and should report
-`PointerToReferenceType`.
-
 ## Pack substitution rollback and diagnostics remain incomplete
 
 Runtime function-parameter fold replay still uses its separate legacy adapter.
