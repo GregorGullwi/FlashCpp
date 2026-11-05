@@ -260,7 +260,9 @@ pointee. Builtin unary `*` consumes sema's canonical `[conv.array]` plus
 `[expr.unary.op]` result type, so an interleaved array selects a
 pointer-to-array element instead of the flat base type. Pointer arithmetic
 decays array operands to their ordered element type and scales offsets by the
-canonical pointee size. Other remaining flat readers still fail closed for
+canonical pointee size. Identifier and qualified-global array detection now
+consults the sema canonical declaration/type predicates instead of the flat or
+ordered projection. Other remaining flat readers still fail closed for
 non-projectable shapes;
 remove this entry when those consumers migrate and the compatibility projection
 fields are deleted.
