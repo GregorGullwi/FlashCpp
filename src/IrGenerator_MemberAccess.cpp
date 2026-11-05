@@ -1396,9 +1396,23 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				element_type_index = nativeTypeIndex(type_node.type());
 			}
 
+			// A pointer-to-array declarator stores its bound on the declaration
+			// node but denotes a scalar pointer object, not an array object.
+			const bool declares_array_extents = decl_ptr->is_array() || type_node.is_array();
+			const bool base_is_array_object = declares_array_extents && !type_node.has_pointee_array_declarator();
+			// A reference to an array is not an array object, but subscripting it
+			// still selects one element of the referred-to array.
+			const bool reference_to_array =
+				(type_node.is_reference() || type_node.is_rvalue_reference()) &&
+				(declares_array_extents || type_node.has_pointee_array_declarator());
+			const bool base_uses_array_elements = base_is_array_object || reference_to_array;
+			if (reference_to_array) {
+				base_holds_address = true;
+			}
+
 			// For array types, ALWAYS get the element size from type_node, not from array_operands
 			// array_operands[1] contains 64 (pointer size) for arrays, not the element size
-			if (decl_ptr->is_array() || type_node.is_array()) {
+			if (base_uses_array_elements) {
 				// Check if this is an array of pointers (e.g., int* ptrs[3])
 				// In this case, the element size should be the pointer size (64 bits), not the base type size
 				if (type_node.pointer_depth() > 0) {
@@ -1418,7 +1432,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			// we need pointer indirection
 			// NOTE: Local arrays with explicit size (e.g., int arr[3]) are NOT pointers
 			// EXCEPTION: Reference-to-array parameters (e.g., int (&arr)[3]) ARE pointers
-			if ((decl_ptr->is_array() || type_node.is_array()) && decl_ptr->array_size().has_value()) {
+			if (base_uses_array_elements && decl_ptr->array_size().has_value()) {
 				// Check if this is a reference to an array (parameter)
 				// References to arrays need pointer indirection
 				if (type_node.is_reference() || type_node.is_rvalue_reference()) {
@@ -1427,9 +1441,10 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				// Local arrays with explicit size are NOT pointers (they're actual arrays on stack)
 				// We don't set base_holds_address for non-reference arrays
 			}
-			// For pointer types or reference types (not arrays), get the pointee size
-			// BUT: Skip this if we already handled an array of pointers above (decl_ptr->is_array() case)
-			else if (!decl_ptr->is_array() && (type_node.runtime_pointer_depth() > 0 || type_node.is_reference() || type_node.is_rvalue_reference())) {
+			// For pointer types or reference types (not arrays), get the pointee size.
+			// A pointer-to-array declarator takes this branch even though the
+			// declaration retains array extents for its pointee.
+			else if (!base_uses_array_elements && (type_node.runtime_pointer_depth() > 0 || type_node.is_reference() || type_node.is_rvalue_reference())) {
 				if (type_node.runtime_pointer_depth() > 1) {
 					element_size_bits = POINTER_SIZE_BITS;
 					element_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth() - 1);

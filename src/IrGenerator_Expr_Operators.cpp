@@ -1603,16 +1603,16 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	// assignment stores the decayed pointer instead of copying the array
 	// object's bytes (which is what happened for an ordered pointer-to-array
 	// dereference whose elements are all null).
-	auto applyAnnotatedArrayDecay = [&](const ASTNode& branch_node, ExprResult& branch_result) {
+	auto applyAnnotatedArrayDecay = [&](const ASTNode& branch_node, ExprResult& branch_result) -> bool {
 		if (context == ExpressionContext::LValueAddress || !branch_node.is<ExpressionNode>())
-			return;
+			return false;
 		const void* key = static_cast<const void*>(&branch_node.as<ExpressionNode>());
 		const auto slot = sema_.getSlot(key);
 		if (!slot.has_value() || !slot->has_cast())
-			return;
+			return false;
 		const ImplicitCastInfo& ci = sema_.castInfoTable()[slot->cast_info_index.value - 1];
 		if (ci.cast_kind != StandardConversionKind::ArrayToPointer)
-			return;
+			return false;
 		// Identifier-backed arrays still name the object, so emit its address.
 		// TempVar-backed arrays (global loads, ordered pointer-to-array
 		// dereferences) already carry the runtime address.
@@ -1630,6 +1630,7 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 		// shared result temp: the second branch would otherwise read that temp as
 		// a reference and store through the first branch's address.
 		branch_result.storage = ValueStorage::ContainsAddress;
+		return true;
 	};
 
 	// Convert true result to common type if needed.
@@ -1640,7 +1641,7 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	if (context != ExpressionContext::LValueAddress &&
 		true_result.typeEnum() != common_type)
 		true_result = generateTypeConversion(true_result, true_result.category(), common_type, ternaryNode.get_token());
-	applyAnnotatedArrayDecay(ternaryNode.true_expr(), true_result);
+	const bool true_branch_decayed = applyAnnotatedArrayDecay(ternaryNode.true_expr(), true_result);
 
 	int result_size = 0;
 	if (context == ExpressionContext::LValueAddress) {
@@ -1690,7 +1691,7 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	assign_true_op.result = result_var;
 	assign_true_op.lhs = makeBranchLhs(IrValue(result_var));
 	assign_true_op.rhs = makeBranchRhs(true_result);
-	assign_true_op.dereference_rhs_references = context != ExpressionContext::LValueAddress;
+	assign_true_op.dereference_rhs_references = context != ExpressionContext::LValueAddress && !true_branch_decayed;
 	ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_true_op), ternaryNode.get_token()));
 
 	// Unconditional branch to end
@@ -1712,14 +1713,14 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	if (context != ExpressionContext::LValueAddress &&
 		false_result.typeEnum() != common_type)
 		false_result = generateTypeConversion(false_result, false_result.category(), common_type, ternaryNode.get_token());
-	applyAnnotatedArrayDecay(ternaryNode.false_expr(), false_result);
+	const bool false_branch_decayed = applyAnnotatedArrayDecay(ternaryNode.false_expr(), false_result);
 
 	// Assign false_expr result to result variable
 	AssignmentOp assign_false_op;
 	assign_false_op.result = result_var;
 	assign_false_op.lhs = makeBranchLhs(IrValue(result_var));
 	assign_false_op.rhs = makeBranchRhs(false_result);
-	assign_false_op.dereference_rhs_references = context != ExpressionContext::LValueAddress;
+	assign_false_op.dereference_rhs_references = context != ExpressionContext::LValueAddress && !false_branch_decayed;
 	ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_false_op), ternaryNode.get_token()));
 
 	// End label (merge point)
