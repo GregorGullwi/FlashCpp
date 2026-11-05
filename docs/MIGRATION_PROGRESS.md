@@ -262,7 +262,9 @@ mismatched, unpublished, or unresolved owner facts.
      aggregate-construction path, so the typed value identity participates in
      outer specialization matching. Ordinary call candidate sorting now uses the
      canonical `[temp.deduct.partial]` comparison as a tie-break when structural
-     specificity scores are equal. Alias targets now promote their flat
+     specificity scores are equal, and non-SFINAE tied candidate sets fail closed
+     when no unique maximal template remains instead of using lookup order. Alias
+     targets now promote their flat
      pointer/reference shape to the ordered declarator spine before substitution,
      so pointer-to-reference alias instantiations are diagnosed while valid
      reference-to-pointer aliases still resolve.
