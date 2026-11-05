@@ -267,9 +267,11 @@ mismatched, unpublished, or unresolved owner facts.
      member `TypeId`. Local array objects also allocate from the ordered element
      count and element size, and references to such arrays identify the array
      address rather than dereferencing it as a value. Value `auto`, `auto&`, and
-     `auto*` deduction keep the ordered spine through array decay and address-of.
-     Direct member-array reference arguments still read the flat member
-     projection; migrate that consumer before removing the fields.
+     `auto*` deduction keep the ordered spine through array decay and address-of,
+     and array-object lowering reads the published canonical `TypeId`
+     instead of the ordered spine. Direct member-array reference arguments still
+     read the flat member projection; migrate that consumer before removing the
+     fields.
    - Migrate the separate compatibility candidate gathering in the mixed
      member/free selector; deleting `findUnaryOperatorOverloadCompatibility`
      alone does not remove that dependency.

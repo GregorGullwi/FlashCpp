@@ -3555,9 +3555,13 @@ inline TypeSpecifierNode finalizePlaceholderTypeDeduction(TypeCategory placehold
 	return deduced_type;
 }
 
-// C++20 [conv.array]/1 for value `auto` deduction: an array lvalue initializer
-// decays to a pointer to its first element. Reference declarators (auto&,
-// auto&&) bind the array itself and keep the ordered spine unchanged.
+// C++20 [conv.array]/1 context for placeholder deduction. Value `auto` decays
+// an array initializer; reference declarators bind the array itself.
+enum class PlaceholderArrayDeduction : uint8_t {
+	PreserveArray,
+	DecayToPointer
+};
+
 inline void applyPlaceholderArrayDecay(TypeSpecifierNode& deduced_type) {
 	if (deduced_type.has_ordered_declarator() && !deduced_type.declarator_components().empty()) {
 		const DeclaratorComponentKind outer = deduced_type.declarator_components().front().kind;
@@ -3591,35 +3595,36 @@ inline TypeSpecifierNode applyPlaceholderDeclaratorDeduction(
 	TypeCategory placeholder_cat,
 	const TypeSpecifierNode& declarator_type,
 	TypeSpecifierNode deduced_expr_type,
-	bool decay_array_initializer) {
+	PlaceholderArrayDeduction array_deduction) {
 	assert(isPlaceholderAutoType(placeholder_cat));
 	if (placeholder_cat == TypeCategory::DeclTypeAuto) {
 		return deduced_expr_type;
 	}
 
-	const ReferenceQualifier declarator_ref =
-		declarator_type.reference_qualifier();
-	if (decay_array_initializer && declarator_ref == ReferenceQualifier::None) {
+	const ReferenceQualifier declarator_ref = declarator_type.reference_qualifier();
+	if (array_deduction == PlaceholderArrayDeduction::DecayToPointer && declarator_ref == ReferenceQualifier::None) {
 		applyPlaceholderArrayDecay(deduced_expr_type);
 	}
-	const ReferenceQualifier initializer_ref =
-		deduced_expr_type.reference_qualifier();
+	const ReferenceQualifier initializer_ref = deduced_expr_type.reference_qualifier();
 	const CVQualifier initializer_cv = deduced_expr_type.cv_qualifier();
-	TypeSpecifierNode result =
-		finalizePlaceholderTypeDeduction(placeholder_cat, deduced_expr_type);
-	if (declarator_ref == ReferenceQualifier::LValueReference ||
-		(declarator_ref == ReferenceQualifier::RValueReference &&
-		 initializer_ref == ReferenceQualifier::LValueReference)) {
+	TypeSpecifierNode result = finalizePlaceholderTypeDeduction(placeholder_cat, deduced_expr_type);
+	if (declarator_ref == ReferenceQualifier::LValueReference || (declarator_ref == ReferenceQualifier::RValueReference &&
+		initializer_ref == ReferenceQualifier::LValueReference)) {
 		result.set_reference_qualifier(ReferenceQualifier::LValueReference);
 	} else {
 		result.set_reference_qualifier(declarator_ref);
 	}
 	if (declarator_ref != ReferenceQualifier::None) {
-		result.set_cv_qualifier(static_cast<CVQualifier>(
-			static_cast<uint8_t>(initializer_cv) |
-			static_cast<uint8_t>(declarator_type.cv_qualifier())));
+		result.set_cv_qualifier(static_cast<CVQualifier>(static_cast<uint8_t>(initializer_cv) | static_cast<uint8_t>(declarator_type.cv_qualifier())));
 	} else if (declarator_type.cv_qualifier() != CVQualifier::None) {
 		result.set_cv_qualifier(declarator_type.cv_qualifier());
+	}
+	if (result.has_ordered_declarator() && !result.declarator_components().empty() && (result.is_reference() || result.is_rvalue_reference())) {
+		const DeclaratorComponentKind outer = result.declarator_components().front().kind;
+		if (outer != DeclaratorComponentKind::LValueReference && outer != DeclaratorComponentKind::RValueReference) {
+			result.prepend_ordered_declarator_component(result.is_rvalue_reference()
+				? DeclaratorComponent::rvalueReference() : DeclaratorComponent::lvalueReference());
+		}
 	}
 	return result;
 }
