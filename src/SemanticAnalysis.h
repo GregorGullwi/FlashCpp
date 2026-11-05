@@ -16,10 +16,12 @@ class CompileContext;
 class SymbolTable;
 
 TypeSpecifierNode materializeCanonicalTypeSpecifier(const CanonicalTypeDesc& desc);
+enum class CanonicalTemplatePartialOrdering : uint8_t;
 
 class StructDeclarationNode;
 struct UserDefinedConversionOperatorSelection;
 class FunctionDeclarationNode;
+class TemplateFunctionDeclarationNode;
 class ConstructorDeclarationNode;
 class IdentifierNode;
 class QualifiedIdentifierNode;
@@ -238,6 +240,11 @@ public:
 	// ordered declarator syntax; the published TypeId is authoritative.
 	bool typeDenotesArrayObject(const TypeSpecifierNode& type);
 	bool declarationDenotesArrayObject(const DeclarationNode& decl);
+
+	// C++20 [temp.deduct.partial] ordering between two function templates.
+	CanonicalTemplatePartialOrdering compareFunctionTemplatePartialOrdering(
+		const TemplateFunctionDeclarationNode& first,
+		const TemplateFunctionDeclarationNode& second);
 
 	// C++20 [expr.unary.op]/1 with [conv.array]: the result type of builtin
 	// unary * on the given operand type. Array operands decay before the

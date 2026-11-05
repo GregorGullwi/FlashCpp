@@ -260,7 +260,9 @@ mismatched, unpublished, or unresolved owner facts.
      member aliases, and non-projectable ordered declarators. Class-type static
      constexpr member arguments now evaluate their brace initializer through the
      aggregate-construction path, so the typed value identity participates in
-     outer specialization matching. Alias targets now promote their flat
+     outer specialization matching. Ordinary call candidate sorting now uses the
+     canonical `[temp.deduct.partial]` comparison as a tie-break when structural
+     specificity scores are equal. Alias targets now promote their flat
      pointer/reference shape to the ordered declarator spine before substitution,
      so pointer-to-reference alias instantiations are diagnosed while valid
      reference-to-pointer aliases still resolve.

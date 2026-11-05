@@ -79,16 +79,6 @@ is not replayed on the selected instantiation, so inherited members from that
 base are unavailable. Route deferred base replay through the full
 instantiated-owner path rather than the lazy nested-type helper.
 
-## Ordinary calls order concrete NTTP arguments by structural specificity
-
-Ordinary call selection now scores concrete non-type template arguments in
-parameter types above dependent patterns, so `choose(Cell<1u>*, T*)` wins over
-`choose(Cell<N>*, T*)` for a `Cell<1u>*` argument.
-`test_nttp_function_template_preference_ret0.cpp` pins this case. Two distinct
-dependent NTTP patterns with the same structural shape still tie because the
-ordinary path has not yet been replaced by the canonical
-[temp.deduct.partial] comparison used by the function-address query.
-
 ## Expression parsing can overflow a 1 MB native stack before callable sema
 
 The nested NTTP-field regression
