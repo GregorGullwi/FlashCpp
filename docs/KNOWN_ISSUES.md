@@ -79,15 +79,6 @@ is not replayed on the selected instantiation, so inherited members from that
 base are unavailable. Route deferred base replay through the full
 instantiated-owner path rather than the lazy nested-type helper.
 
-## Explicit casts of overloaded member-function addresses lose target identity
-
-`static_cast<int (Object::*)(int)>(&Object::first)` evaluates without retaining
-the selected overload target, so different overloads can collapse to one
-structural value. Target-typed initialization such as `IntKey key{&Object::first}`
-resolves correctly. Canonical structural import now selects overloads by
-signature when the target name survives; fixing the cast path belongs to
-expression sema (boundary 4).
-
 ## Ordinary calls order concrete NTTP arguments by structural specificity
 
 Ordinary call selection now scores concrete non-type template arguments in
