@@ -88,28 +88,6 @@ resolves correctly. Canonical structural import now selects overloads by
 signature when the target name survives; fixing the cast path belongs to
 expression sema (boundary 4).
 
-## Static constexpr data-member NTTP arguments fail specialization matching
-
-A static constexpr data member used directly as a template argument can be
-imported, but using it as an argument to another class template does not
-participate correctly in specialization matching. For example:
-
-```cpp
-struct Key { int value; };
-struct Holder { static constexpr Key key{5}; };
-template<Key Value> struct Base {};
-template<class A, class B> struct Same { static constexpr bool value = false; };
-template<class A> struct Same<A, A> { static constexpr bool value = true; };
-static_assert(Same<Base<Holder::key>, Base<Key{5}>>::value);
-```
-
-The direct `Base<Holder::key>` instantiation succeeds, but the `Same`
-comparison fails to resolve the selected specialization and reports an
-undefined qualified identifier. This affects scalar and bit-field members
-equally and is independent of the bit-field value conversion. Materialize the
-static member's typed value identity before building the outer specialization
-key.
-
 ## Ordinary calls order concrete NTTP arguments by structural specificity
 
 Ordinary call selection now scores concrete non-type template arguments in

@@ -7,6 +7,7 @@
 #include "OverloadResolution.h"
 #include "SemanticAnalysis.h"
 #include "TypeTraitEvaluator.h"
+#include "TypeSizeQuery.h"
 #include <algorithm>
 #include <limits>
 
@@ -48,6 +49,20 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 			in_progress.erase(key);
 		}
 	} qualified_lookup_guard{context.qualified_lookup_in_progress, qualified_lookup_key};
+
+	// Parser-owned static-member initializers may hold the concrete expression
+	// node directly instead of wrapping it in ExpressionNode. Adapt the direct
+	// form without allocating a new AST node.
+	auto evaluate_static_member_initializer = [&](const ASTNode& initializer) -> EvalResult {
+		if (initializer.is<ExpressionNode>()) {
+			return evaluate(initializer, context);
+		}
+		if (const ConstructorCallNode* constructor_call = initializer.get_if<ConstructorCallNode>()) {
+			ExpressionNode wrapped(*constructor_call);
+			return evaluate(ASTNode(&wrapped), context);
+		}
+		return evaluate(initializer, context);
+	};
 
 	struct QualifiedVariableTemplateArgsResult {
 		std::vector<TemplateTypeArg> template_args;
@@ -1098,7 +1113,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 							continue;
 						}
 						ScopedTemplateBindingsFromType owner_bindings(context, resolved_type_info);
-						return evaluate(*static_member_decl.initializer, context);
+						return evaluate_static_member_initializer(*static_member_decl.initializer);
 					}
 
 					return std::nullopt;
@@ -1303,7 +1318,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 								ScopedTemplateBindingsFromType owner_bindings(
 									context,
 									typeInfoForStaticMemberOwner(relookup_result.second, resolved_type_info));
-								return evaluate(relookup_result.first->initializer.value(), context);
+								return evaluate_static_member_initializer(relookup_result.first->initializer.value());
 							}
 						}
 					}
@@ -3069,6 +3084,27 @@ EvalResult Evaluator::evaluate_static_member_initializer_or_default(
 		return EvalResult::error("Circular dependency between static member initializers");
 	}
 	StaticMemberEvaluationGuard guard(&static_member);
+	auto evaluate_initializer = [&](const ASTNode& initializer) -> EvalResult {
+		if (initializer.is<ExpressionNode>()) {
+			return evaluate(initializer, context);
+		}
+		if (initializer.is<InitializerListNode>() && !static_member.is_array) {
+			// A class-type static member stores `Key{...}` as a bare initializer
+			// list. Evaluate it through the same aggregate-construction path as
+			// an explicitly written ConstructorCallNode.
+			ConstructorCallNode constructor_call(
+				makeStaticMemberSizeQueryTypeSpecifier(static_member),
+				initializer,
+				Token{});
+			ExpressionNode wrapped(constructor_call);
+			return evaluate(ASTNode(&wrapped), context);
+		}
+		if (const ConstructorCallNode* constructor_call = initializer.get_if<ConstructorCallNode>()) {
+			ExpressionNode wrapped(*constructor_call);
+			return evaluate(ASTNode(&wrapped), context);
+		}
+		return evaluate(initializer, context);
+	};
 
 	if (static_member.initializer.has_value()) {
 		if (context.current_depth >= context.max_recursion_depth) {
@@ -3081,7 +3117,7 @@ EvalResult Evaluator::evaluate_static_member_initializer_or_default(
 									static_member.array_dimensions,
 									static_member.initializer->as<InitializerListNode>(),
 									context)
-								: evaluate(static_member.initializer.value(), context);
+								: evaluate_initializer(static_member.initializer.value());
 		context.current_depth--;
 		if (!result.success() && IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
 			FLASH_LOG(ConstExpr, Debug, "Static member initializer evaluation failed: ", result.error_message);
@@ -3202,7 +3238,7 @@ EvalResult Evaluator::evaluate_static_member_from_struct(
 									static_member->array_dimensions,
 									static_member->initializer->as<InitializerListNode>(),
 									context)
-								: evaluate(*static_member->initializer, context);
+								: evaluate_static_member_initializer_or_default(*static_member, context);
 		context.current_depth--;
 		return result;
 	}

@@ -257,7 +257,10 @@ mismatched, unpublished, or unresolved owner facts.
    - Template argument and substitution storage: move lazy constraint lookup from
      name-based parameters to depth/index parameters, and finish canonical
      preservation through NTTP reconstruction, deferred bases, stored arguments,
-     member aliases, and non-projectable ordered declarators.
+     member aliases, and non-projectable ordered declarators. Class-type static
+     constexpr member arguments now evaluate their brace initializer through the
+     aggregate-construction path, so the typed value identity participates in
+     outer specialization matching.
    - Conditional array decay, builtin unary `*`/`&`, builtin `->`, and builtin
      `new`/`new[]` now export canonical identities but still have documented flat
      projection refresh, nested-class, or unmigrated-shape gaps. Finish those
