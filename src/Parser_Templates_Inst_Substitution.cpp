@@ -830,6 +830,7 @@ bool Parser::hasTemplatedClassOwner(std::string_view template_name) {
 
 std::string_view Parser::getClassTemplateInstanceKeyStem(std::string_view template_name) {
 	std::optional<ASTNode> identity_pattern;
+	std::string_view resolved_member_template_spelling;
 	const size_t separator = template_name.rfind("::");
 	const std::string_view legacy_key_stem = separator == std::string_view::npos
 		? template_name
@@ -897,6 +898,7 @@ std::string_view Parser::getClassTemplateInstanceKeyStem(std::string_view templa
 				owner_name.append("::"sv).append(member_name).commit();
 			identity_pattern = findClassTemplatePatternByIdentityChain(candidate_name);
 			if (identity_pattern.has_value()) {
+				resolved_member_template_spelling = candidate_name;
 				break;
 			}
 		}
@@ -913,8 +915,7 @@ std::string_view Parser::getClassTemplateInstanceKeyStem(std::string_view templa
 		if (primary.has_template_decl_id() &&
 			requireFrontendContext().templateDecls().hasConflictingPrimaryClassTemplate(
 				StringTable::getOrInternStringHandle(member_name), primary.template_decl_id())) {
-			return StringBuilder().append(member_name).append("$td"sv).append(
-				static_cast<uint64_t>(primary.template_decl_id().value)).commit();
+			return resolved_member_template_spelling.empty() ? template_name : resolved_member_template_spelling;
 		}
 	}
 
@@ -927,7 +928,7 @@ std::string_view Parser::getClassTemplateInstanceKeyStem(std::string_view templa
 // entries. Resolve the full spelling by identity (owner chain → class
 // EntityId or injected primary TemplateDeclId → findPrimaryVariableTemplate),
 // complete a lexical owner-chain suffix for partially qualified spellings,
-// and add a `$td<TemplateDeclId>` stem only when an actual same-spelling
+// and use the qualified owner spelling only when an actual same-spelling
 // collision between distinct class-owned or template-owned primaries exists.
 // Unambiguous and namespace/global spellings retain their legacy base key.
 std::string_view Parser::getVariableTemplateInstanceKeyStem(std::string_view template_name) {
@@ -957,6 +958,7 @@ std::string_view Parser::getVariableTemplateInstanceKeyStem(std::string_view tem
 
 	std::optional<TemplateDeclId> primary_decl = resolvePrimaryDecl(template_name);
 	bool resolved_by_identity = primary_decl.has_value();
+	std::string_view resolved_primary_spelling = resolved_by_identity ? template_name : std::string_view{};
 	if (!primary_decl.has_value()) {
 		// A bare member-template spelling is valid only through ordinary
 		// lexical lookup. A partially qualified spelling may omit outer class
@@ -996,6 +998,7 @@ std::string_view Parser::getVariableTemplateInstanceKeyStem(std::string_view tem
 			primary_decl = resolvePrimaryDecl(candidate_name);
 			if (primary_decl.has_value()) {
 				resolved_by_identity = true;
+				resolved_primary_spelling = candidate_name;
 				break;
 			}
 		}
@@ -1006,11 +1009,7 @@ std::string_view Parser::getVariableTemplateInstanceKeyStem(std::string_view tem
 			.hasConflictingMemberOwnedPrimaryVariableTemplate(
 				StringTable::getOrInternStringHandle(member_name),
 				*primary_decl)) {
-		return StringBuilder()
-			.append(member_name)
-			.append("$td"sv)
-			.append(static_cast<uint64_t>(primary_decl->value))
-			.commit();
+		return resolved_primary_spelling.empty() ? template_name : resolved_primary_spelling;
 	}
 
 	return legacy_key_stem;

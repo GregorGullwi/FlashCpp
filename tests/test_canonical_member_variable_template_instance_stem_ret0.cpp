@@ -2,9 +2,9 @@
 // must never share an instantiation-cache entry, even with identical template
 // arguments. The legacy instance name was keyed by the bare member stem
 // ("Meter$<args-hash>"), so the second use returned the first owner's cached
-// instance. The instance key stem is now collision-disambiguated with
-// `$td<TemplateDeclId>`, exactly like the class-template instance bridge,
-// while identity resolution answers each owner's own published template.
+// instance. The instance key stem is now collision-disambiguated with the
+// qualified owner spelling, while identity resolution answers each owner's own
+// published template.
 struct OuterA {
 	struct Inner {
 		template <int N>
