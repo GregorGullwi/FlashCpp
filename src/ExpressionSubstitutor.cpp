@@ -1698,6 +1698,11 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 	Parser::AliasTemplateMaterializationResult materialized_owner;
 	std::string_view owner_name =
 		StringTable::getStringView(dependent_name.owner_name);
+	auto owner_is_registered_template = [&](std::string_view candidate) {
+		return !candidate.empty() &&
+			(gTemplateRegistry.lookupTemplate(candidate).has_value() ||
+			 gTemplateRegistry.lookup_alias_template(candidate).has_value());
+	};
 	auto assign_owner_type =
 		[&](const TypeInfo* owner_type_info) {
 		if (owner_type_info == nullptr) {
@@ -1896,14 +1901,29 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 							owner_args.data(),
 							owner_args.size()));
 				if (materialized_owner.instantiated_name.empty() &&
-					materialized_owner.resolved_type_info == nullptr &&
-					!owner_args.empty()) {
-					materialized_owner.instantiated_name =
-						parser_.get_instantiated_class_name(owner_name, owner_args);
-					if (!materialized_owner.instantiated_name.empty()) {
+					(materialized_owner.resolved_type_info == nullptr ||
+					 !materialized_owner.resolved_type_info->name().isValid()) &&
+					(!owner_args.empty() || owner_is_registered_template(owner_name))) {
+					if (auto instantiated_owner = parser_.try_instantiate_class_template(owner_name, owner_args);
+						instantiated_owner.has_value() && instantiated_owner->is<StructDeclarationNode>()) {
+						materialized_owner.instantiated_name =
+							StringTable::getStringView(instantiated_owner->as<StructDeclarationNode>().name());
 						materialized_owner.resolved_type_info = findTypeByName(
-							StringTable::getOrInternStringHandle(
-								materialized_owner.instantiated_name));
+							StringTable::getOrInternStringHandle(materialized_owner.instantiated_name));
+					}
+					if (materialized_owner.instantiated_name.empty()) {
+						materialized_owner =
+							parser_.templateEngine().materializeTemplateInstantiationForLookup(
+								owner_name, owner_args);
+					}
+					if (materialized_owner.instantiated_name.empty()) {
+						materialized_owner.instantiated_name =
+							parser_.get_instantiated_class_name(owner_name, owner_args);
+						if (!materialized_owner.instantiated_name.empty()) {
+							materialized_owner.resolved_type_info = findTypeByName(
+								StringTable::getOrInternStringHandle(
+									materialized_owner.instantiated_name));
+						}
 					}
 				}
 				if (materialized_owner.instantiated_name.empty() &&
@@ -1929,7 +1949,10 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 			materializeDependentRecordTemplateArgs(
 				dependent_name.owner_template_arguments,
 				depth);
-		if (owner_args.empty() && !dependent_name.owner_template_arguments.empty()) {
+		const bool force_materialize_empty_owner =
+			owner_args.empty() && !dependent_name.owner_template_arguments.empty() && owner_is_registered_template(owner_name);
+		if (owner_args.empty() && !dependent_name.owner_template_arguments.empty() &&
+			!owner_is_registered_template(owner_name)) {
 			break;
 		}
 		if (templateArgsStillDependent(owner_args)) {
@@ -1955,15 +1978,34 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 				std::span<const TemplateTypeArg>(
 					owner_args.data(),
 					owner_args.size()));
-		if (materialized_owner.instantiated_name.empty() &&
-			materialized_owner.resolved_type_info == nullptr &&
-			!owner_args.empty()) {
-			materialized_owner.instantiated_name =
-				parser_.get_instantiated_class_name(owner_name, owner_args);
-			if (!materialized_owner.instantiated_name.empty()) {
+		if (force_materialize_empty_owner ||
+			(materialized_owner.instantiated_name.empty() &&
+			 (materialized_owner.resolved_type_info == nullptr ||
+			  !materialized_owner.resolved_type_info->name().isValid()) &&
+			 (!owner_args.empty() || owner_is_registered_template(owner_name)))) {
+			if (force_materialize_empty_owner) {
+				materialized_owner = {};
+			}
+			if (auto instantiated_owner = parser_.try_instantiate_class_template(owner_name, owner_args);
+				instantiated_owner.has_value() && instantiated_owner->is<StructDeclarationNode>()) {
+				materialized_owner.instantiated_name =
+					StringTable::getStringView(instantiated_owner->as<StructDeclarationNode>().name());
 				materialized_owner.resolved_type_info = findTypeByName(
-					StringTable::getOrInternStringHandle(
-						materialized_owner.instantiated_name));
+					StringTable::getOrInternStringHandle(materialized_owner.instantiated_name));
+			}
+			if (materialized_owner.instantiated_name.empty()) {
+				materialized_owner =
+					parser_.templateEngine().materializeTemplateInstantiationForLookup(
+						owner_name, owner_args);
+			}
+			if (materialized_owner.instantiated_name.empty()) {
+				materialized_owner.instantiated_name =
+					parser_.get_instantiated_class_name(owner_name, owner_args);
+				if (!materialized_owner.instantiated_name.empty()) {
+					materialized_owner.resolved_type_info = findTypeByName(
+						StringTable::getOrInternStringHandle(
+							materialized_owner.instantiated_name));
+				}
 			}
 		}
 		break;
@@ -2228,7 +2270,13 @@ ExpressionSubstitutor::lookupMaterializedDependentMember(const TypeInfo& type_in
 			member_chain.reserve(dependent_name->member_chain.size());
 			for (const auto& member_record : dependent_name->member_chain) {
 				QualifiedTypeMemberAccess member_access;
-				member_access.member_name = member_record.name;
+				StringHandle member_lookup_name = member_record.name;
+				const std::string_view member_lookup_spelling = StringTable::getStringView(member_lookup_name);
+				if (const size_t template_pos = member_lookup_spelling.find('<'); template_pos != std::string_view::npos) {
+					member_lookup_name = StringTable::getOrInternStringHandle(
+						member_lookup_spelling.substr(0, template_pos));
+				}
+				member_access.member_name = member_lookup_name;
 				if (member_record.has_template_arguments) {
 					if (materialized_owner.resolved_type_info == nullptr && std::ranges::any_of(member_record.template_arguments,
 						[](const TypeInfo::TemplateArgInfo& argument) { return argument.is_pack; })) return lookup;

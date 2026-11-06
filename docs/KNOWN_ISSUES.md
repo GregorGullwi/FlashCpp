@@ -18,9 +18,10 @@ representation; flat contiguous layout groups alone cannot distinguish an
 inactive outer union from an active outer variant containing an inactive inner
 union.
 
-Long double remains unsupported for structural values because the evaluator
-carries only a 64-bit representation, so it fails closed instead of aliasing
-through double bits.
+Long double structural values are explicitly deferred until the backend gains
+real long-double support. Do not extend structural identity carriers for a type
+whose representation collapses to double elsewhere; keep these cases fail-closed
+and track them with the broader long-double workstream.
 
 Non-null object/function pointer targets, ambiguous or virtual-base member
 pointers, and non-null object/function pointer array elements still need
@@ -57,12 +58,6 @@ materialization still needs smaller frames and bounded scheduling.
 Persistent payload handles and out-of-line argument vectors are not reclaimed
 when rolled-back probes abandon entries; they remain allocated until process
 exit. Spans into these vectors remain valid only until their next mutation.
-
-## Staged dependent alias expansions can lose pack elements
-
-A nested alias chain that expands two dependent type packs into one member
-template-id can materialize the wrong argument count. This remains deferred
-with the nontrivial and multi-pack member-template expansion work.
 
 ## Pack substitution rollback and diagnostics remain incomplete
 
