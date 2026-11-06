@@ -1889,10 +1889,28 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 	}
 
 	for (const BaseClassSpecifier& base : nested_struct.base_classes()) {
-		if (base.is_deferred) {
-			continue;
-		}
 		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+		if (base.is_deferred) {
+			base_type_info = nullptr;
+			bool matches_parent_parameter = false;
+			for (size_t param_index = 0;
+				 param_index < lazy_info->parent_template_params.size() && param_index < lazy_info->parent_template_args.size();
+				 ++param_index) {
+				if (lazy_info->parent_template_params[param_index].name() != base.name) {
+					continue;
+				}
+				matches_parent_parameter = true;
+				const TemplateTypeArg& base_arg = lazy_info->parent_template_args[param_index];
+				if (base_arg.type_index.is_valid()) {
+					base_type_info = tryGetTypeInfo(base_arg.type_index);
+				}
+				break;
+			}
+			if (!matches_parent_parameter) {
+				// A deferred template-id base is replayed from the full metadata below.
+				continue;
+			}
+		}
 		if (base_type_info == nullptr) {
 			base_type_info = findTypeByName(StringTable::getOrInternStringHandle(base.name));
 		}
@@ -1904,8 +1922,15 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 			base.access, base.is_virtual);
 	}
 
-	// Finalize layout
-	if (!nested_struct.base_classes().empty()) {
+	replayDeferredTemplateBasesForPattern(
+		nested_struct, std::span<const TemplateParameterNode>(lazy_info->parent_template_params.data(), lazy_info->parent_template_params.size()),
+		std::span<const TemplateTypeArg>(lazy_info->parent_template_args.data(), lazy_info->parent_template_args.size()),
+		std::span<const TemplateTypeArg>(lazy_info->parent_template_args.data(), lazy_info->parent_template_args.size()),
+		*nested_struct_info);
+
+	// Finalize layout. Deferred template bases are added to StructTypeInfo above
+	// and do not appear in the pattern AST's direct base list.
+	if (!nested_struct_info->base_classes.empty()) {
 		nested_struct_info->finalizeWithBases();
 	} else {
 		nested_struct_info->finalize();

@@ -87,6 +87,7 @@ To show IR, use `--log-level=Codegen:debug`
 * When creating tests, mix different native types and sizes with structs and templates to get good coverage of each feature.
 * PR Descriptions should be describing the solved problem in a descriptive way, not just listing bullet points. It should not contain a list of run tests, but describe what any added tests actually verify.
 * Keep lines at or under 150 characters; count each tab as one character.
+* Return statements must always be on their own line, even when the returned expression is short.
 * Any logical construct whose joined form is 150 characters or fewer (counting
   each tab as one character) MUST be written as a single line. This applies to
   function signatures and their calls, declarations and initializers, `for`

@@ -357,8 +357,9 @@ These seed adjacent slices; the authoritative inventory is
   and is not published for class-template specializations, which do publish the
   constructor schema.
 - Nested classes of selected partial specializations now publish direct members,
-  aliases, and non-deferred base layout. Deferred/template bases and other
-  advanced nested-body effects still need the full instantiated-owner path.
+  aliases, and replayed dependent deferred bases. Default member initializers,
+  base default construction, and other advanced nested-body effects still need
+  the full instantiated-owner path.
 - Class-template-owned direct, nested, and selected partial member
   specializations compose the full owner chain and keep member arguments
   separate. Concept-constrained type, concrete non-type literal, and pack member
