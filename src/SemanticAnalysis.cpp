@@ -6011,20 +6011,15 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 			using T = std::decay_t<decltype(e)>;
 			if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
 				const std::string_view op = e.op();
-				const bool is_arithmetic =
-					op == "+" || op == "-" || op == "*" || op == "/" || op == "%";
+				const bool is_arithmetic = tok::isArithmeticBinaryOp(op);
 				// C++20 [expr.bit.and], [expr.bit.or], [expr.bit.xor]:
 				// usual arithmetic conversions are performed on the operands.
-				const bool is_bitwise =
-					op == "&" || op == "|" || op == "^";
-				const bool is_comparison =
-					op == "<" || op == ">" || op == "<=" || op == ">=" ||
-					op == "==" || op == "!=";
-				const bool is_logical = op == "&&" || op == "||";
+				const bool is_bitwise = tok::isBitwiseBinaryOp(op);
+				const bool is_comparison = tok::isComparisonOp(op);
+				const bool is_logical = tok::isLogicalOp(op);
 				// C++20 [expr.shift]: shift operands undergo independent integral
 				// promotions, NOT usual arithmetic conversions.
-				const bool is_shift =
-					op == "<<" || op == ">>" || op == "<<=" || op == ">>=";
+				const bool is_shift = tok::isShiftOp(op) || tok::isShiftAssignmentOp(op);
 				const bool is_compound_assign = isCompoundAssignmentOp(op);
 				const bool is_assignment = op == "=" || is_compound_assign;
 				const bool needs_binary_type_inference =

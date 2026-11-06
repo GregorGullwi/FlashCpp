@@ -388,4 +388,30 @@ inline constexpr auto KW___try = TokenKind::kw(KeywordId::MSVC_Try);
 inline constexpr auto KW___except = TokenKind::kw(KeywordId::MSVC_Except);
 inline constexpr auto KW___finally = TokenKind::kw(KeywordId::MSVC_Finally);
 inline constexpr auto KW___leave = TokenKind::kw(KeywordId::MSVC_Leave);
+
+// Shared operator classification for parser typing, semantic analysis, and
+// lowering. Keep these lists centralized so the operator sets do not drift.
+inline constexpr bool isArithmeticBinaryOp(std::string_view op) {
+	return op == "+" || op == "-" || op == "*" || op == "/" || op == "%";
+}
+
+inline constexpr bool isBitwiseBinaryOp(std::string_view op) {
+	return op == "&" || op == "|" || op == "^";
+}
+
+inline constexpr bool isShiftOp(std::string_view op) {
+	return op == "<<" || op == ">>";
+}
+
+inline constexpr bool isShiftAssignmentOp(std::string_view op) {
+	return op == "<<=" || op == ">>=";
+}
+
+inline constexpr bool isComparisonOp(std::string_view op) {
+	return op == "<" || op == ">" || op == "<=" || op == ">=" || op == "==" || op == "!=";
+}
+
+inline constexpr bool isLogicalOp(std::string_view op) {
+	return op == "&&" || op == "||";
+}
 } // namespace tok

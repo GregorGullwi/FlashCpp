@@ -3807,9 +3807,9 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		}
 
 		const std::string_view builtin_op = binary.op();
-		const bool is_shift = builtin_op == "<<" || builtin_op == ">>";
-		const bool is_arithmetic = builtin_op == "*" || builtin_op == "/" || builtin_op == "+" || builtin_op == "-";
-		const bool is_bitwise = builtin_op == "%" || builtin_op == "&" || builtin_op == "|" || builtin_op == "^";
+		const bool is_shift = tok::isShiftOp(builtin_op);
+		const bool is_arithmetic = tok::isArithmeticBinaryOp(builtin_op);
+		const bool is_bitwise = tok::isBitwiseBinaryOp(builtin_op);
 		if ((is_shift || is_arithmetic || is_bitwise) && lhs_type_opt.has_value() && rhs_type_opt.has_value()) {
 			auto resolved_integral_category = [](const TypeSpecifierNode& type) -> TypeCategory {
 				if (type.category() != TypeCategory::Enum) {
