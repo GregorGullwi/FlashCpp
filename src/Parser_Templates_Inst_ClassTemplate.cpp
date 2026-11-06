@@ -3339,14 +3339,52 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			// For unqualified names like "Vec", derive from pattern_struct.name() which may
 			// store the qualified form "math::Vec" (same approach as the primary template path
 			// which uses class_decl.name()).
+			auto resolveDeclarationNamespace = [&](std::string_view qualified_name) -> NamespaceHandle {
+				std::string_view scope = qualified_name;
+				while (true) {
+					size_t separator = scope.rfind("::");
+					if (separator == std::string_view::npos) {
+						break;
+					}
+					scope = scope.substr(0, separator);
+					StringHandle scope_handle = StringTable::getOrInternStringHandle(scope);
+					auto scope_type_it = getTypesByNameMap().find(scope_handle);
+					if (scope_type_it != getTypesByNameMap().end() && scope_type_it->second->namespaceHandle().isValid()) {
+						return scope_type_it->second->namespaceHandle();
+					}
+					NamespaceHandle namespace_handle = NamespaceRegistry::GLOBAL_NAMESPACE;
+					bool all_components_are_namespaces = true;
+					size_t component_start = 0;
+					while (component_start < scope.size()) {
+						size_t component_end = scope.find("::", component_start);
+						std::string_view component = component_end == std::string_view::npos
+													 ? scope.substr(component_start)
+													 : scope.substr(component_start, component_end - component_start);
+						namespace_handle = gNamespaceRegistry.lookupNamespace(
+							namespace_handle, StringTable::getOrInternStringHandle(component));
+						if (!namespace_handle.isValid()) {
+							all_components_are_namespaces = false;
+							break;
+						}
+						component_start = component_end == std::string_view::npos
+											 ? scope.size()
+											 : component_end + 2;
+					}
+					if (all_components_are_namespaces) {
+						return namespace_handle;
+					}
+				}
+				return gSymbolTable.get_current_namespace_handle();
+			};
+
 			NamespaceHandle spec_decl_ns = gSymbolTable.get_current_namespace_handle();
 			{
 				if (template_name.find("::") != std::string_view::npos) {
-					spec_decl_ns = QualifiedIdentifier::fromQualifiedName(template_name, NamespaceRegistry::GLOBAL_NAMESPACE).namespace_handle;
+					spec_decl_ns = resolveDeclarationNamespace(template_name);
 				} else {
 					std::string_view decl_name = StringTable::getStringView(pattern_struct.name());
 					if (size_t pos = decl_name.rfind("::"); pos != std::string_view::npos) {
-						spec_decl_ns = QualifiedIdentifier::fromQualifiedName(decl_name, NamespaceRegistry::GLOBAL_NAMESPACE).namespace_handle;
+						spec_decl_ns = resolveDeclarationNamespace(decl_name);
 					}
 				}
 			}
@@ -6190,7 +6228,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 					StringBuilder().append(instantiated_name).append("::"sv).append(nested_pattern.name()).commit());
 				lazy_nested_info.nested_type_declaration = nested_class;
 				lazy_nested_info.parent_template_params = effective_pattern_template_params;
-				lazy_nested_info.parent_template_args.assign(template_args_for_member_copy.begin(), template_args_for_member_copy.end());
+				lazy_nested_info.parent_template_args.assign(effective_pattern_template_args.begin(), effective_pattern_template_args.end());
 				LazyNestedTypeRegistry::getInstance().registerLazyNestedType(lazy_nested_info);
 				if (!instantiateLazyNestedType(lazy_nested_info.parent_class_name, lazy_nested_info.nested_type_name).has_value()) {
 					throw InternalError("Selected partial nested class was not instantiated");

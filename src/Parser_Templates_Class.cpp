@@ -6320,27 +6320,36 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					}
 					continue;
 				}
-				// Handle nested struct/class declarations inside partial specialization body
-				// e.g., struct __type { ... };
-				if (keyword == "struct" || keyword == "class") {
-					// Skip the entire nested struct declaration including its body
-					advance(); // consume 'struct' or 'class'
-
-					// Skip struct name if present
+				// Handle nested struct/class/union declarations inside a partial
+				// specialization body. The nested body must be retained so the selected
+				// instantiation can publish it and register its member functions.
+				if (keyword == "struct" || keyword == "class" || keyword == "union") {
+					SaveHandle nested_saved_pos = save_token_position();
+					advance(); // consume the class-key
+					skip_cpp_attributes();
+					bool is_nested_declaration = false;
 					if (peek().is_identifier()) {
-						advance(); // consume struct name
+						advance(); // consume the nested class name
+						is_nested_declaration = peek() == "{"_tok ||
+							peek() == ";"_tok || peek() == ":"_tok;
 					}
-
-					// Skip to body or semicolon
-					if (peek() == "{"_tok) {
-						skip_balanced_braces();
+					if (is_nested_declaration) {
+						restore_token_position(nested_saved_pos);
+						auto saved_delayed_bodies = std::move(delayed_function_bodies_);
+						delayed_function_bodies_.clear();
+						auto nested_result = parse_struct_declaration();
+						delayed_function_bodies_ = std::move(saved_delayed_bodies);
+						if (nested_result.is_error()) {
+							return nested_result;
+						}
+						if (auto nested_node = nested_result.node()) {
+							auto& nested_struct = nested_node->as<StructDeclarationNode>();
+							nested_struct.set_enclosing_class(&member_struct_ref);
+							member_struct_ref.add_nested_class(*nested_node);
+						}
+						continue;
 					}
-
-					// Consume trailing semicolon
-					if (peek() == ";"_tok) {
-						advance();
-					}
-					continue;
+					restore_token_position(nested_saved_pos);
 				}
 				// Handle member type alias (using) declarations
 				if (keyword == "using") {

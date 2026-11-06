@@ -1,18 +1,16 @@
 # Known Issues
 
-## Nested methods under selected member partial specializations can miss emission
+## Namespace-qualified selected member partial nested methods still mismatch
 
-A nested class inside a selected member partial can parse its outer-dependent
-method but leave an unresolved method symbol at link time. Reduced shape:
-`template<class T> struct Owner { template<class U> struct Box {};
-template<class U> struct Box<U*> { struct Child { T echo(T value) { return value; } }; }; };`.
-After namespace aliases for `Owner<long long>::Box<int*>` and its `Child`, calling
-`child.echo(5000000000LL)` produces an unresolved `echo` on Windows. Direct member
-partial methods have separate signature coverage. Audit nested-class binding
-propagation and deferred body ownership before enabling this nested case; do not
-recover the method by generated name. The selected-partial lazy nested setup
-currently pairs effective parent parameters with local-only arguments.
-
+A nested class in a selected member partial now retains its body and publishes
+methods in the non-namespace case, including through source aliases. If the
+owning class template is inside a namespace, the call still mangles the nested
+method with the namespace (`ns::Box$hash::Child::echo`) while the emitted body is
+global (`Box$hash::Child::echo`), leaving an unresolved symbol. Reduced shape:
+wrap the `Owner`/`Box`/`Child` example from
+`test_selected_member_partial_nested_method_ret42.cpp` in `namespace ns` and call
+`Child::echo` through aliases. Align the lazy nested method's emitted namespace
+with the declaring-owner namespace.
 
 ## Remaining dependent member-template field forms need concrete TypeInfo
 

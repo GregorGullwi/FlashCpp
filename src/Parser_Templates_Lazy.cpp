@@ -767,6 +767,20 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 	ASTNode new_func_node = shell.function_node;
 	FunctionDeclarationNode& new_func_ref = *shell.function;
 	new_func_ref.set_lazy_member_registry_key(lazy_info.registry_key);
+	NamespaceHandle owner_namespace{};
+	if (const TypeInfo* owner_type_info = tryGetTypeInfo(instantiated_owner_type_index)) {
+		owner_namespace = owner_type_info->namespaceHandle();
+	}
+	if (!owner_namespace.isValid()) {
+		if (const TypeInfo* owner_type_info = findTypeByName(lazy_info.identity.instantiated_owner_name)) {
+			owner_namespace = owner_type_info->namespaceHandle();
+		}
+	}
+	if (owner_namespace.isValid()) {
+		new_func_ref.set_namespace_handle(owner_namespace);
+	} else if (func_decl.namespace_handle().isValid()) {
+		new_func_ref.set_namespace_handle(func_decl.namespace_handle());
+	}
 	// Apply cv before body replay so injected `this` and implicit-this overload
 	// ranking observe a const receiver inside const methods.
 	new_func_ref.set_is_const_member_function(lazy_info.identity.is_const_method);
@@ -1815,6 +1829,18 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 
 	// Create StructTypeInfo for the nested type in the cold arena
 	StructTypeInfo* nested_struct_info = &nested_type_info.emplaceStructInfo(lazy_info->qualified_name, nested_struct.default_access(), nested_struct.is_union(), decl_ns);
+
+	auto instantiated_nested_struct = emplace_node<StructDeclarationNode>(
+		nested_struct.name(),
+		nested_struct.is_class(),
+		nested_struct.is_union());
+	StructDeclarationNode& instantiated_nested_struct_ref = instantiated_nested_struct.as<StructDeclarationNode>();
+	nested_struct_info->declaration_node = &instantiated_nested_struct_ref;
+	instantiated_nested_struct_ref.set_injected_class_pattern_declaration(&nested_struct);
+	setOuterTemplateBindingsFromParams(
+		instantiated_nested_struct_ref,
+		lazy_info->parent_template_params,
+		lazy_info->parent_template_args);
 
 	// Process members with template parameter substitution
 	const TemplateParameterVector& parent_template_params_inline =

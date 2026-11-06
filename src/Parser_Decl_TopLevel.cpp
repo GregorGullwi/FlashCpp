@@ -1030,6 +1030,11 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 					// Also register with namespace-qualified name for type aliases defined in namespaces
 					NamespaceHandle namespace_handle = gSymbolTable.get_current_namespace_handle();
+					if (namespace_handle.isGlobal()) {
+						// A global alias must win over compiler-generated member/pattern entries
+						// that may already occupy the same simple lookup spelling.
+						getTypesByNameMap()[alias_token.handle()] = &alias_type_info;
+					}
 					if (!namespace_handle.isGlobal()) {
 						StringHandle alias_handle = alias_token.handle();
 						auto full_qualified_name = gNamespaceRegistry.buildQualifiedIdentifier(namespace_handle, alias_handle);
