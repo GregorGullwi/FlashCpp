@@ -204,6 +204,18 @@ public:
 		return hasConflictingMemberOwnedPrimary(DeclarationKind::Class, name, primary);
 	}
 
+	// The class-template instance-key bridge uses the simple primary spelling.
+	// Distinct primaries with that spelling can be owned by namespaces, classes,
+	// or enclosing templates, so disambiguate across every owner kind.
+	bool hasConflictingPrimaryClassTemplate(StringHandle name, TemplateDeclId primary) const {
+		for (const auto& [key, candidate] : ids_by_key_) {
+			if (key.name == name && key.kind == DeclarationKind::Class && candidate != primary) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	// Same test for member variable-template primaries feeding the
 	// variable-template instance-key stem. Class-owned and template-owned
 	// primaries both collide on the legacy simple-member stem; namespace

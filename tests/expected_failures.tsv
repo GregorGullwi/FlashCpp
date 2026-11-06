@@ -1,3 +1,1 @@
 test	stage	removal_boundary	reason
-test_injected_identity_namespace_collision_ret0.cpp	run	boundary-6	template registry aliases same-named namespace owners
-test_namespace_same_named_template_identity_ret0.cpp	run	boundary-6	template registry aliases same-named namespace owners

@@ -830,14 +830,12 @@ bool Parser::hasTemplatedClassOwner(std::string_view template_name) {
 
 std::string_view Parser::getClassTemplateInstanceKeyStem(std::string_view template_name) {
 	std::optional<ASTNode> identity_pattern;
-	bool resolved_by_identity = false;
 	const size_t separator = template_name.rfind("::");
 	const std::string_view legacy_key_stem = separator == std::string_view::npos
 		? template_name
 		: template_name.substr(separator + 2);
 	if (separator != std::string_view::npos) {
 		identity_pattern = findClassTemplatePatternByIdentityChain(template_name);
-		resolved_by_identity = identity_pattern.has_value();
 	}
 	if (!identity_pattern.has_value()) {
 		// A bare member-template spelling is valid only through ordinary lexical
@@ -847,9 +845,19 @@ std::string_view Parser::getClassTemplateInstanceKeyStem(std::string_view templa
 		const std::optional<ASTNode> registered_template =
 			gTemplateRegistry.lookupTemplate(template_name);
 		if (!registered_template.has_value() ||
-			!registered_template->is<TemplateClassDeclarationNode>() ||
-			!registered_template->as<TemplateClassDeclarationNode>()
-				.class_decl_node().is_nested()) {
+			!registered_template->is<TemplateClassDeclarationNode>()) {
+			return legacy_key_stem;
+		}
+		const TemplateClassDeclarationNode& registered_primary =
+			registered_template->as<TemplateClassDeclarationNode>();
+		if (!registered_primary.class_decl_node().is_nested()) {
+			const std::string_view member_name = separator == std::string_view::npos ? template_name : template_name.substr(separator + 2);
+			if (registered_primary.has_template_decl_id() &&
+				requireFrontendContext().templateDecls().hasConflictingPrimaryClassTemplate(
+					StringTable::getOrInternStringHandle(member_name), registered_primary.template_decl_id())) {
+				return StringBuilder().append(member_name).append("$td"sv).append(
+					static_cast<uint64_t>(registered_primary.template_decl_id().value)).commit();
+			}
 			return legacy_key_stem;
 		}
 		const std::string_view requested_owner = separator == std::string_view::npos
@@ -888,30 +896,24 @@ std::string_view Parser::getClassTemplateInstanceKeyStem(std::string_view templa
 				owner_name.append("::"sv).append(member_name).commit();
 			identity_pattern = findClassTemplatePatternByIdentityChain(candidate_name);
 			if (identity_pattern.has_value()) {
-				resolved_by_identity = true;
 				break;
 			}
 		}
 	}
 
-	if (identity_pattern.has_value() &&
-		identity_pattern->is<TemplateClassDeclarationNode>()) {
+	std::optional<ASTNode> primary_template = identity_pattern;
+	if (!primary_template.has_value()) {
+		primary_template = gTemplateRegistry.lookupTemplate(template_name);
+	}
+	if (primary_template.has_value() && primary_template->is<TemplateClassDeclarationNode>()) {
 		const TemplateClassDeclarationNode& primary =
-			identity_pattern->as<TemplateClassDeclarationNode>();
-		const std::string_view member_name = separator == std::string_view::npos
-			? template_name
-			: template_name.substr(separator + 2);
-		if (resolved_by_identity &&
-			primary.has_template_decl_id() &&
-			requireFrontendContext().templateDecls()
-				.hasConflictingMemberOwnedPrimaryClassTemplate(
-					StringTable::getOrInternStringHandle(member_name),
-					primary.template_decl_id())) {
-			return StringBuilder()
-				.append(member_name)
-				.append("$td"sv)
-				.append(static_cast<uint64_t>(primary.template_decl_id().value))
-				.commit();
+			primary_template->as<TemplateClassDeclarationNode>();
+		const std::string_view member_name = separator == std::string_view::npos ? template_name : template_name.substr(separator + 2);
+		if (primary.has_template_decl_id() &&
+			requireFrontendContext().templateDecls().hasConflictingPrimaryClassTemplate(
+				StringTable::getOrInternStringHandle(member_name), primary.template_decl_id())) {
+			return StringBuilder().append(member_name).append("$td"sv).append(
+				static_cast<uint64_t>(primary.template_decl_id().value)).commit();
 		}
 	}
 

@@ -362,6 +362,8 @@ These seed adjacent slices; the authoritative inventory is
   full instantiated-owner path.
 - Built-in operator classification for arithmetic, bitwise, shift, comparison,
   and logical operators is shared through `TokenKind.h`.
+- Same-spelled class templates in distinct namespaces now keep distinct
+  instantiation cache keys and generated names when their simple stems collide.
 - Unary `+`, `-`, and `~` now publish the promoted `int` result type through
   parser expression typing and constant evaluation, so `auto`, `decltype`, and
   call deduction observe the same integral promotion as semantic analysis.
