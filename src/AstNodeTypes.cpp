@@ -1039,6 +1039,12 @@ struct TypeInfoInPlaceSnapshot {
 	uint32_t template_args_index = TypeInfo::kNoTemplateArgs;
 	uint32_t dependent_qualified_name_index = TypeInfo::kNoDependentQualifiedName;
 	uint32_t instantiation_context_index = TypeInfo::kNoInstantiationContext;
+
+	TypeInfoInPlaceSnapshot() = default;
+	TypeInfoInPlaceSnapshot(TypeInfoInPlaceSnapshot&&) = default;
+	TypeInfoInPlaceSnapshot& operator=(TypeInfoInPlaceSnapshot&&) = default;
+	TypeInfoInPlaceSnapshot(const TypeInfoInPlaceSnapshot&) = delete;
+	TypeInfoInPlaceSnapshot& operator=(const TypeInfoInPlaceSnapshot&) = delete;
 };
 
 TypeInfoInPlaceSnapshot captureTypeInfoInPlaceSnapshot(TypeIndex index) {
@@ -1098,6 +1104,12 @@ struct LegacyTypeRegistryJournalFrame {
 	std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual> names;
 	std::unordered_map<TypeCategory, const TypeInfo*> native_types;
 	std::vector<TypeInfoInPlaceSnapshot> in_place_rewrites;
+
+	LegacyTypeRegistryJournalFrame() = default;
+	LegacyTypeRegistryJournalFrame(LegacyTypeRegistryJournalFrame&&) = default;
+	LegacyTypeRegistryJournalFrame& operator=(LegacyTypeRegistryJournalFrame&&) = default;
+	LegacyTypeRegistryJournalFrame(const LegacyTypeRegistryJournalFrame&) = delete;
+	LegacyTypeRegistryJournalFrame& operator=(const LegacyTypeRegistryJournalFrame&) = delete;
 };
 
 template <typename Vector>
