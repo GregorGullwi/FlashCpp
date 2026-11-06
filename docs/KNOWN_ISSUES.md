@@ -1,17 +1,5 @@
 # Known Issues
 
-## Namespace-qualified selected member partial nested methods still mismatch
-
-A nested class in a selected member partial now retains its body and publishes
-methods in the non-namespace case, including through source aliases. If the
-owning class template is inside a namespace, the call still mangles the nested
-method with the namespace (`ns::Box$hash::Child::echo`) while the emitted body is
-global (`Box$hash::Child::echo`), leaving an unresolved symbol. Reduced shape:
-wrap the `Owner`/`Box`/`Child` example from
-`test_selected_member_partial_nested_method_ret42.cpp` in `namespace ns` and call
-`Child::echo` through aliases. Align the lazy nested method's emitted namespace
-with the declaring-owner namespace.
-
 ## Remaining dependent member-template field forms need concrete TypeInfo
 
 Direct type packs, supported nontrivial type-pack patterns, and lockstep

@@ -767,20 +767,18 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 	ASTNode new_func_node = shell.function_node;
 	FunctionDeclarationNode& new_func_ref = *shell.function;
 	new_func_ref.set_lazy_member_registry_key(lazy_info.registry_key);
-	NamespaceHandle owner_namespace{};
-	if (const TypeInfo* owner_type_info = tryGetTypeInfo(instantiated_owner_type_index)) {
-		owner_namespace = owner_type_info->namespaceHandle();
+	const TypeInfo* owner_type_info = tryGetTypeInfo(instantiated_owner_type_index);
+	if (owner_type_info == nullptr) {
+		throw InternalError("Lazy member instantiation has no resolvable owner TypeIndex");
+	}
+	NamespaceHandle owner_namespace = owner_type_info->namespaceHandle();
+	if (!owner_namespace.isValid()) {
+		owner_namespace = func_decl.namespace_handle();
 	}
 	if (!owner_namespace.isValid()) {
-		if (const TypeInfo* owner_type_info = findTypeByName(lazy_info.identity.instantiated_owner_name)) {
-			owner_namespace = owner_type_info->namespaceHandle();
-		}
+		owner_namespace = NamespaceRegistry::GLOBAL_NAMESPACE;
 	}
-	if (owner_namespace.isValid()) {
-		new_func_ref.set_namespace_handle(owner_namespace);
-	} else if (func_decl.namespace_handle().isValid()) {
-		new_func_ref.set_namespace_handle(func_decl.namespace_handle());
-	}
+	new_func_ref.set_namespace_handle(owner_namespace);
 	// Apply cv before body replay so injected `this` and implicit-this overload
 	// ranking observe a const receiver inside const methods.
 	new_func_ref.set_is_const_member_function(lazy_info.identity.is_const_method);
