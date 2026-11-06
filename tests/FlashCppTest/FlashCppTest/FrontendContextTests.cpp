@@ -598,7 +598,7 @@ TEST_SUITE("FrontendContext") {
 		CHECK(retained.info.getStructInfo() != nullptr);
 	}
 
-	TEST_CASE("Frontend scratch rollback retains cold records referenced by surviving rows") {
+	TEST_CASE("Frontend scratch rollback restores in-place cold record bindings") {
 		clearLegacyTypeTablesForTesting();
 		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
 		initialize_native_types();
@@ -614,14 +614,12 @@ TEST_SUITE("FrontendContext") {
 			transaction.rollback();
 		}
 
-		// A pre-existing row was rewritten in place to the new record. The journal
-		// cannot restore that rewrite, so it retains the referenced cold range
-		// instead of leaving a dangling pointer.
-		CHECK(survivor.info.getStructInfo() != nullptr);
-		CHECK(getStructTypeInfoCount() >= structs_before + 1);
+		// The pre-existing row is restored before cold arenas truncate.
+		CHECK(survivor.info.getStructInfo() == nullptr);
+		CHECK(getStructTypeInfoCount() == structs_before);
 	}
 
-	TEST_CASE("Frontend scratch rollback retains cold payloads referenced by surviving rows") {
+	TEST_CASE("Frontend scratch rollback restores in-place cold payload bindings") {
 		clearLegacyTypeTablesForTesting();
 		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
 		initialize_native_types();
@@ -645,12 +643,65 @@ TEST_SUITE("FrontendContext") {
 			transaction.rollback();
 		}
 
-		// The pre-existing row was rewritten in place, so its new cold references
-		// must stay valid even though the transaction itself rolled back.
-		CHECK(getTypeInfoTemplateArgsCount() >= lists_before + 1);
-		CHECK(getDependentQualifiedNameRecordCount() >= dependent_names_before + 1);
+		// The pre-existing row is restored before cold arenas truncate.
+		CHECK(getTypeInfoTemplateArgsCount() == lists_before);
+		CHECK(getDependentQualifiedNameRecordCount() == dependent_names_before);
+		CHECK(survivor.info.templateArgs().empty());
+		CHECK(survivor.info.dependentQualifiedName() == nullptr);
+	}
+
+	TEST_CASE("Frontend scratch rollback restores direct mutable type row access") {
+		clearLegacyTypeTablesForTesting();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+		initialize_native_types();
+		FrontendContext context;
+		const StringHandle type_name = StringTable::getOrInternStringHandle("frontend_tx_direct_mutation_type");
+		TypeCreationResult survivor = add_struct_type(type_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+		const NamespaceHandle original_namespace = survivor.info.namespaceHandle();
+		const int original_size = survivor.info.fallback_size_bits_;
+		{
+			auto transaction = context.beginScratchTransaction();
+			TypeInfo& mutable_row = getTypeInfoMut(survivor.index);
+			REQUIRE(&mutable_row == &survivor.info);
+			const NamespaceHandle replacement_namespace = gNamespaceRegistry.getOrCreateNamespace(
+				NamespaceRegistry::GLOBAL_NAMESPACE,
+				StringTable::getOrInternStringHandle("frontend_tx_direct_mutation_namespace"));
+			mutable_row.setNamespaceHandle(replacement_namespace);
+			mutable_row.fallback_size_bits_ = original_size + 64;
+			transaction.rollback();
+		}
+		CHECK(survivor.info.namespaceHandle() == original_namespace);
+		CHECK(survivor.info.fallback_size_bits_ == original_size);
+	}
+
+	TEST_CASE("Frontend scratch rollback retains cold records for direct row writes") {
+		clearLegacyTypeTablesForTesting();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+		initialize_native_types();
+		FrontendContext context;
+		const StringHandle survivor_name = StringTable::getOrInternStringHandle("frontend_tx_bypass_survivor");
+		TypeCreationResult survivor = add_struct_type(survivor_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+		const size_t structs_before = getStructTypeInfoCount();
+		const size_t lists_before = getTypeInfoTemplateArgsCount();
+		{
+			auto transaction = context.beginScratchTransaction();
+			const StringHandle transient_name = StringTable::getOrInternStringHandle("frontend_tx_bypass_transient");
+			TypeCreationResult transient = add_struct_type(transient_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+			transient.info.createStructInfo(transient_name, AccessSpecifier::Public, false, NamespaceRegistry::GLOBAL_NAMESPACE);
+			TemplateArgInfoVector args;
+			TypeInfo::TemplateArgInfo argument;
+			argument.is_value = true;
+			argument.value = int64_t{17};
+			args.push_back(argument);
+			transient.info.setTemplateInstantiationInfo(QualifiedIdentifier{}, std::move(args));
+			survivor.info.struct_info_ = transient.info.getStructInfo();
+			survivor.info.template_args_index_ = transient.info.template_args_index_;
+			transaction.rollback();
+		}
+		CHECK(survivor.info.getStructInfo() != nullptr);
 		CHECK_FALSE(survivor.info.templateArgs().empty());
-		CHECK(survivor.info.dependentQualifiedName() != nullptr);
+		CHECK(getStructTypeInfoCount() >= structs_before + 1);
+		CHECK(getTypeInfoTemplateArgsCount() >= lists_before + 1);
 	}
 
 	TEST_CASE("Frontend scratch transactions reject overlapping context journals") {

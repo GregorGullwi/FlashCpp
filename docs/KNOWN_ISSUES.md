@@ -90,10 +90,10 @@ scans surviving `TypeInfo` cold indices, interned argument lists, instantiation
 contexts, and dependent-name records without allocating during rollback. Owners
 outside those stores, such as a `QualifiedIdentifierNode` or a copied
 `TemplateArgInfo` held by the AST/template registries, are not yet enumerable, so
-in-place rewrites of those owners remain outside the boundary. In-place rewrites
-themselves, legacy AST nodes, and parser publication still need an owned
-transaction boundary, and production speculative parsing is not yet routed
-through it. Do not wrap the whole materialization path in the transaction or
+in-place rewrites of those external owners remain outside the boundary. Legacy
+AST nodes, parser publication, and direct `TypeInfo` field writes that bypass
+the mutable accessor and mutator API still need an owned transaction boundary,
+and production speculative parsing is not yet routed through it. Do not wrap the whole materialization path in the transaction or
 erase required dependency instantiations. Lockstep member and namespace-scope
 expansions now report
 `TemplatePackLengthMismatch` (#1820) when referenced packs differ in length.
@@ -192,10 +192,11 @@ canonical through any remaining flat-consumer migration.
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 
 Production parsing does not yet route tentative declaration work through
-`FrontendScratchTransaction`. Token state, legacy AST nodes, and in-place rewrites
-of existing `TypeInfo` rows (including the cold records those rewrites retain)
-still need an owned rollback boundary before broad speculative parsing can rely
-on it.
+`FrontendScratchTransaction`. Token state, legacy AST nodes, parser publication,
+and in-place rewrites of owners outside the type registry still need an owned
+rollback boundary before broad speculative parsing can rely on it. Existing
+`TypeInfo` rows reached through the mutable accessor/mutator API are snapshotted
+and restored with their cold records.
 
 The separate parser `CompileContext` diagnostic engine is not enlisted by that
 frontend transaction. Diagnostic text and note backing storage is still retained
