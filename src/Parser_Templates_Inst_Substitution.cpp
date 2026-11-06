@@ -6739,11 +6739,11 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	NamespaceHandle decl_ns = gSymbolTable.get_current_namespace_handle();
 	{
 		if (template_name.find("::") != std::string_view::npos) {
-			decl_ns = QualifiedIdentifier::fromQualifiedName(template_name, NamespaceRegistry::GLOBAL_NAMESPACE).namespace_handle;
+			decl_ns = resolveDeclarationNamespaceForQualifiedName(template_name, decl_ns);
 		} else {
 			std::string_view decl_name = StringTable::getStringView(spec_struct.name());
 			if (size_t pos = decl_name.rfind("::"); pos != std::string_view::npos) {
-				decl_ns = QualifiedIdentifier::fromQualifiedName(decl_name, NamespaceRegistry::GLOBAL_NAMESPACE).namespace_handle;
+				decl_ns = resolveDeclarationNamespaceForQualifiedName(decl_name, decl_ns);
 			} else {
 				// Neither template_name nor spec_struct.name() contains "::".
 				// Look up the template's registered TypeInfo to get its declaration-site

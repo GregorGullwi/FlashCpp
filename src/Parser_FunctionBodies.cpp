@@ -3,6 +3,7 @@
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "ParserTemplateClassShared.h"
+#include "ParserTemplateHelpers.h"
 #include "TypeTraitEvaluator.h"
 // Helper method to register member functions in the symbol table
 // This implements C++20's complete-class context for inline member function bodies
@@ -698,48 +699,48 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node, bo
 		return;
 	}
 
-	// Resolve the declaration-site namespace handle for mangling.
-	// For member functions, only build namespace path if parent_struct_name doesn't already contain namespace
-	// (to avoid double-encoding the namespace in the mangled name)
+	// Resolve the declaration-site namespace handle for mangling. Member
+	// functions derive it from the declaring type; a nested-class parent name can
+	// contain "::" without embedding a namespace, so presence of "::" alone is not
+	// enough to suppress namespace encoding.
 	NamespaceHandle namespace_handle = NamespaceRegistry::GLOBAL_NAMESPACE;
-	bool should_get_namespace = true;
-
+	bool struct_found = false;
 	if (func_node.is_member_function()) {
-		std::string_view parent_name = func_node.parent_struct_name();
-		// If parent_struct_name already contains "::", namespace is embedded in struct name
-		// so we don't need to pass it separately
-		if (parent_name.find("::") != std::string_view::npos) {
-			should_get_namespace = false;
+		const std::string_view parent_name = func_node.parent_struct_name();
+		auto struct_name_handle = StringTable::getOrInternStringHandle(parent_name);
+		auto type_it = getTypesByNameMap().find(struct_name_handle);
+		if (type_it != getTypesByNameMap().end()) {
+			struct_found = true;
+			namespace_handle = type_it->second->namespaceHandle();
+		} else {
+			NamespaceHandle fallback_namespace = func_node.namespace_handle().isValid()
+													  ? func_node.namespace_handle()
+													  : gSymbolTable.get_current_namespace_handle();
+			namespace_handle = resolveDeclarationNamespaceForQualifiedName(parent_name, fallback_namespace);
+		}
+		if (namespace_handle.isValid() && !namespace_handle.isGlobal()) {
+			const std::string_view namespace_name = gNamespaceRegistry.getQualifiedName(namespace_handle);
+			if (!namespace_name.empty() &&
+				parent_name.size() > namespace_name.size() + 2 &&
+				parent_name.starts_with(namespace_name) &&
+				parent_name.substr(namespace_name.size(), 2) == "::") {
+				// The parent spelling already embeds the namespace, so keep it in the
+				// owner name and avoid encoding the namespace a second time.
+				namespace_handle = NamespaceRegistry::GLOBAL_NAMESPACE;
+			}
 		}
 	}
-
-	if (should_get_namespace) {
-		bool struct_found = false;
-		if (func_node.is_member_function()) {
-			// For member functions, always derive namespace from the struct's
-			// declaration-site NamespaceHandle rather than the current symbol table
-			// state. This ensures correctness when instantiating from a different
-			// namespace (e.g., instantiating calc::Holder<int> from main()).
-			std::string_view parent_name = func_node.parent_struct_name();
-			auto struct_name_handle = StringTable::getOrInternStringHandle(parent_name);
-			auto type_it = getTypesByNameMap().find(struct_name_handle);
-			if (type_it != getTypesByNameMap().end()) {
-				struct_found = true;
-				namespace_handle = type_it->second->namespaceHandle();
-			}
-		}
-		if (!struct_found) {
-			// For free functions, prefer the function's own namespace_handle (set at
-			// declaration time) over the current symbol table state. This ensures correct
-			// mangling when called during SFINAE reparse or template body reparse where
-			// artificial namespace scopes may be pushed onto the symbol table stack.
-			// Fall back to the current scope only when no namespace_handle was recorded.
-			NamespaceHandle func_ns = func_node.namespace_handle();
-			if (func_ns.isValid()) {
-				namespace_handle = func_ns;
-			} else {
-				namespace_handle = gSymbolTable.get_current_namespace_handle();
-			}
+	if (!struct_found) {
+		// For free functions, prefer the function's own namespace_handle (set at
+		// declaration time) over the current symbol table state. This ensures correct
+		// mangling when called during SFINAE reparse or template body reparse where
+		// artificial namespace scopes may be pushed onto the symbol table stack.
+		// Fall back to the current scope only when no namespace_handle was recorded.
+		NamespaceHandle func_ns = func_node.namespace_handle();
+		if (func_ns.isValid()) {
+			namespace_handle = func_ns;
+		} else {
+			namespace_handle = gSymbolTable.get_current_namespace_handle();
 		}
 	}
 

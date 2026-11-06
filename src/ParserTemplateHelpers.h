@@ -22,6 +22,52 @@
 #include "TemplatePackExpansion.h"
 
 
+// Resolve the declaration namespace for a possibly class-owned qualified name.
+// QualifiedIdentifier::fromQualifiedName treats every prefix as a namespace, but
+// member-template names such as Owner::Box use a class owner. Prefer the
+// namespace recorded on a resolved owner type, then fall back to a namespace path.
+inline NamespaceHandle resolveDeclarationNamespaceForQualifiedName(
+	std::string_view qualified_name,
+	NamespaceHandle fallback_namespace) {
+	std::string_view scope = qualified_name;
+	while (true) {
+		const size_t separator = scope.rfind("::");
+		if (separator == std::string_view::npos) {
+			break;
+		}
+		scope = scope.substr(0, separator);
+		if (scope.empty()) {
+			break;
+		}
+		if (const TypeInfo* scope_type = findTypeByName(StringTable::getOrInternStringHandle(scope));
+			scope_type != nullptr && scope_type->namespaceHandle().isValid()) {
+			return scope_type->namespaceHandle();
+		}
+		NamespaceHandle namespace_handle = NamespaceRegistry::GLOBAL_NAMESPACE;
+		bool all_components_are_namespaces = true;
+		size_t component_start = 0;
+		while (component_start < scope.size()) {
+			const size_t component_end = scope.find("::", component_start);
+			const std::string_view component = component_end == std::string_view::npos
+												 ? scope.substr(component_start)
+												 : scope.substr(component_start, component_end - component_start);
+			namespace_handle = gNamespaceRegistry.lookupNamespace(
+				namespace_handle, StringTable::getOrInternStringHandle(component));
+			if (!namespace_handle.isValid()) {
+				all_components_are_namespaces = false;
+				break;
+			}
+			component_start = component_end == std::string_view::npos
+								  ? scope.size()
+								  : component_end + 2;
+		}
+		if (all_components_are_namespaces) {
+			return namespace_handle;
+		}
+	}
+	return QualifiedIdentifier::fromQualifiedName(qualified_name, fallback_namespace).namespace_handle;
+}
+
 inline void buildTemplateParameterReplayState(
 	std::span<const TemplateParameterNode> template_params,
 	TemplateParamNameVector& template_param_names,
