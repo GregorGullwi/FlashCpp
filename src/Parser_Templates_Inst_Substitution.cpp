@@ -855,8 +855,9 @@ std::string_view Parser::getClassTemplateInstanceKeyStem(std::string_view templa
 			if (registered_primary.has_template_decl_id() &&
 				requireFrontendContext().templateDecls().hasConflictingPrimaryClassTemplate(
 					StringTable::getOrInternStringHandle(member_name), registered_primary.template_decl_id())) {
-				return StringBuilder().append(member_name).append("$td"sv).append(
-					static_cast<uint64_t>(registered_primary.template_decl_id().value)).commit();
+				// Namespace-qualified spellings are already unique; keep the
+				// declared spelling instead of encoding a numeric declaration id.
+				return template_name;
 			}
 			return legacy_key_stem;
 		}
