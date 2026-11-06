@@ -92,14 +92,20 @@ cover rollback, commit, overwritten bindings, nested commit, cold-payload
 truncation, intern-bucket cleanup, pointer-keyed truncation and retention,
 surviving-row retention, and out-of-order completion.
 
-The next slice must still give the remaining candidate-local in-place `TypeInfo`
-rewrites, legacy AST nodes, and parser artifacts an owned publication boundary
-before enabling a transaction around type-pack materialization. Required dependency instantiations must remain separate
-from that candidate-local transaction; blanket rollback would violate observable
-C++20 instantiation effects. Lockstep member and namespace-scope length
-mismatches now produce `TemplatePackLengthMismatch` (#1820); remaining mismatch
-contexts, alias/variable-template flattened adapters, and runtime
-function-parameter fold replay remain deferred.
+Candidate-local in-place `TypeInfo` row rewrites now snapshot the pre-existing row
+before mutation and restore it before cold arenas truncate, including rows reached
+through mutable accessors, `add_struct_type` reuse, and the `TypeInfo` mutator
+API. Native guards cover restored row fields, cold record and payload truncation,
+accessor capture, and retention when direct writes bypass that API. The next slice
+must still give legacy AST nodes, parser artifacts, and
+in-place rewrites of owners outside the type registry an owned publication
+boundary before enabling a transaction around type-pack materialization. Required
+dependency instantiations must remain separate from that candidate-local
+transaction; blanket rollback would violate observable C++20 instantiation
+effects. Lockstep member and namespace-scope length mismatches now produce
+`TemplatePackLengthMismatch` (#1820); remaining mismatch contexts,
+alias/variable-template flattened adapters, and runtime function-parameter fold
+replay remain deferred.
 Boundary 3A and 8A remain incomplete.
 
 Direct type-pack data members now retain empty/full packs, written CV/pointer
@@ -403,9 +409,9 @@ These seed adjacent slices; the authoritative inventory is
   rows and name/native bindings, index-keyed cold type payload stores, and
   pointer-keyed legacy `StructTypeInfo`/`EnumTypeInfo` arenas (unreachable ranges
   truncate; ranges referenced by a surviving row are retained), bound
-  `SymbolTable` publication maps, in-place global/namespace variable array type
-  normalization, and namespace metadata. In-place rewrites of pre-existing
-  `TypeInfo` rows are outside the journal. Scope creation, cursor movement, and `ScopeRecord`
+  `SymbolTable` publication maps, pre-existing `TypeInfo` row snapshots,
+  in-place global/namespace variable array type normalization, and namespace
+  metadata. Scope creation, cursor movement, and `ScopeRecord`
   publication roll back together after symbol-map undo. Nested commits stay
   provisional until the outer transaction commits; production speculative parsing
   is not yet integrated. The namespace and type-registry journals remain process-global;

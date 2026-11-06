@@ -319,10 +319,12 @@ const TypeInfo::DependentQualifiedNameRecord* TypeInfo::dependentQualifiedName()
 }
 
 void TypeInfo::clearDependentQualifiedName() {
+	journalLegacyTypeInfoInPlaceMutation(*this);
 	dependent_qualified_name_index_ = kNoDependentQualifiedName;
 }
 
 void TypeInfo::setDependentQualifiedName(DependentQualifiedNameRecord record) {
+	journalLegacyTypeInfoInPlaceMutation(*this);
 	dependent_qualified_name_index_ = storeDependentQualifiedNameRecord(std::move(record));
 }
 
@@ -631,11 +633,13 @@ const TemplateArgInfoVector& TypeInfo::templateArgs() const {
 }
 
 void TypeInfo::clearTemplateArgs() {
+	journalLegacyTypeInfoInPlaceMutation(*this);
 	template_args_index_ = kNoTemplateArgs;
 }
 
 void TypeInfo::setTemplateInstantiationInfo(QualifiedIdentifier base_template,
 											TemplateArgInfoVector args) {
+	journalLegacyTypeInfoInPlaceMutation(*this);
 	base_template_ = base_template;
 	template_args_index_ = storeTypeInfoTemplateArgs(std::move(args));
 }
@@ -732,6 +736,7 @@ TypeCreationResult add_struct_type(StringHandle name, NamespaceHandle ns) {
 	auto existing_it = gTypesByName.find(name);
 	if (existing_it != gTypesByName.end() && existing_it->second->name() == name) {
 		TypeInfo& existing = *existing_it->second;
+		journalLegacyTypeInfoInPlaceMutation(existing);
 		// Upgrade an incomplete class-template placeholder registered under the
 		// final instantiation name into a Struct identity so layout completion
 		// can attach StructTypeInfo in place (C++20 [temp.inst]).
@@ -805,6 +810,7 @@ const TypeInfo& getTypeInfo(TypeIndex idx) {
 
 TypeInfo& getTypeInfoMut(TypeIndex idx) {
 	assert(idx.index() < gTypeInfo.size() && "TypeIndex out of range");
+	journalLegacyTypeInfoInPlaceMutation(idx);
 	return gTypeInfo[idx.index()];
 }
 
@@ -819,6 +825,7 @@ TypeInfo* tryGetTypeInfoMut(TypeIndex idx) {
 	if (!idx.is_valid() || idx.index() >= gTypeInfo.size()) {
 		return nullptr;
 	}
+	journalLegacyTypeInfoInPlaceMutation(idx);
 	return &gTypeInfo[idx.index()];
 }
 
@@ -920,6 +927,7 @@ void update_type_alias_copy(
 	uint32_t size_bits,
 	const TypeSpecifierNode* alias_type_spec,
 	const TypeInfo* semantic_source_type_info) {
+	journalLegacyTypeInfoInPlaceMutation(alias_type_info);
 	const uint32_t alias_slot = alias_type_info.registeredTypeIndex().index();
 	alias_type_info.type_index_ = source_type_index;
 	alias_type_info.registered_type_index_ = TypeIndex{alias_slot, TypeCategory::TypeAlias};
@@ -1013,6 +1021,71 @@ TypeCreationResult add_empty_type_entry() {
 
 namespace {
 
+struct TypeInfoInPlaceSnapshot {
+	TypeIndex index;
+	StringHandle name;
+	NamespaceHandle namespace_handle;
+	TypeIndex type_index;
+	TypeIndex registered_type_index;
+	bool is_incomplete_instantiation = false;
+	DependentPlaceholderKind placeholder_kind = DependentPlaceholderKind::None;
+	bool is_type_alias = false;
+	StructTypeInfo* struct_info = nullptr;
+	EnumTypeInfo* enum_info = nullptr;
+	int fallback_size_bits = 0;
+	std::unique_ptr<TypeSpecifierNode> alias_type_spec;
+	std::optional<ASTNode> deferred_decltype_expression;
+	QualifiedIdentifier base_template;
+	uint32_t template_args_index = TypeInfo::kNoTemplateArgs;
+	uint32_t dependent_qualified_name_index = TypeInfo::kNoDependentQualifiedName;
+	uint32_t instantiation_context_index = TypeInfo::kNoInstantiationContext;
+};
+
+TypeInfoInPlaceSnapshot captureTypeInfoInPlaceSnapshot(TypeIndex index) {
+	const TypeInfo& row = gTypeInfo[index.index()];
+	TypeInfoInPlaceSnapshot snapshot;
+	snapshot.index = index;
+	snapshot.name = row.name_;
+	snapshot.namespace_handle = row.namespace_handle_;
+	snapshot.type_index = row.type_index_;
+	snapshot.registered_type_index = row.registered_type_index_;
+	snapshot.is_incomplete_instantiation = row.is_incomplete_instantiation_;
+	snapshot.placeholder_kind = row.placeholder_kind_;
+	snapshot.is_type_alias = row.is_type_alias_;
+	snapshot.struct_info = row.struct_info_;
+	snapshot.enum_info = row.enum_info_;
+	snapshot.fallback_size_bits = row.fallback_size_bits_;
+	if (row.alias_type_spec_ != nullptr) {
+		snapshot.alias_type_spec = std::make_unique<TypeSpecifierNode>(*row.alias_type_spec_);
+	}
+	snapshot.deferred_decltype_expression = row.deferred_decltype_expression_;
+	snapshot.base_template = row.base_template_;
+	snapshot.template_args_index = row.template_args_index_;
+	snapshot.dependent_qualified_name_index = row.dependent_qualified_name_index_;
+	snapshot.instantiation_context_index = row.instantiation_context_index_;
+	return snapshot;
+}
+
+void restoreTypeInfoInPlaceSnapshot(TypeInfoInPlaceSnapshot&& snapshot) {
+	TypeInfo& row = gTypeInfo[snapshot.index.index()];
+	row.name_ = snapshot.name;
+	row.namespace_handle_ = snapshot.namespace_handle;
+	row.type_index_ = snapshot.type_index;
+	row.registered_type_index_ = snapshot.registered_type_index;
+	row.is_incomplete_instantiation_ = snapshot.is_incomplete_instantiation;
+	row.placeholder_kind_ = snapshot.placeholder_kind;
+	row.is_type_alias_ = snapshot.is_type_alias;
+	row.struct_info_ = snapshot.struct_info;
+	row.enum_info_ = snapshot.enum_info;
+	row.fallback_size_bits_ = snapshot.fallback_size_bits;
+	row.alias_type_spec_ = std::move(snapshot.alias_type_spec);
+	row.deferred_decltype_expression_ = std::move(snapshot.deferred_decltype_expression);
+	row.base_template_ = snapshot.base_template;
+	row.template_args_index_ = snapshot.template_args_index;
+	row.dependent_qualified_name_index_ = snapshot.dependent_qualified_name_index;
+	row.instantiation_context_index_ = snapshot.instantiation_context_index;
+}
+
 struct LegacyTypeRegistryJournalFrame {
 	size_t type_info_count = 0;
 	size_t dependent_qualified_name_count = 0;
@@ -1024,6 +1097,7 @@ struct LegacyTypeRegistryJournalFrame {
 	std::array<size_t, kTemplateArgListInternInlineBucketCount + 1> template_arg_list_bucket_counts{};
 	std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual> names;
 	std::unordered_map<TypeCategory, const TypeInfo*> native_types;
+	std::vector<TypeInfoInPlaceSnapshot> in_place_rewrites;
 };
 
 template <typename Vector>
@@ -1134,6 +1208,35 @@ std::vector<LegacyTypeRegistryJournalFrame> gLegacyTypeRegistryJournal;
 
 } // namespace
 
+void journalLegacyTypeInfoInPlaceMutation(TypeIndex index) {
+	if (gLegacyTypeRegistryJournal.empty() || !index.is_valid() || index.index() >= gTypeInfo.size()) {
+		return;
+	}
+	for (LegacyTypeRegistryJournalFrame& frame : gLegacyTypeRegistryJournal) {
+		if (index.index() >= frame.type_info_count) {
+			continue;
+		}
+		bool already_captured = false;
+		for (const TypeInfoInPlaceSnapshot& snapshot : frame.in_place_rewrites) {
+			if (snapshot.index.index() == index.index()) {
+				already_captured = true;
+				break;
+			}
+		}
+		if (!already_captured) {
+			frame.in_place_rewrites.push_back(captureTypeInfoInPlaceSnapshot(index));
+		}
+	}
+}
+
+void journalLegacyTypeInfoInPlaceMutation(const TypeInfo& row) {
+	const TypeIndex index = row.registeredTypeIndex();
+	if (!index.is_valid() || index.index() >= gTypeInfo.size() || &gTypeInfo[index.index()] != &row) {
+		return;
+	}
+	journalLegacyTypeInfoInPlaceMutation(index);
+}
+
 LegacyTypeRegistryJournalMark beginLegacyTypeRegistryJournal() {
 	LegacyTypeRegistryJournalFrame frame;
 	frame.type_info_count = gTypeInfo.size();
@@ -1171,6 +1274,9 @@ void rollbackLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark) {
 	gNativeTypes = std::move(frame.native_types);
 	while (gTypeInfo.size() > frame.type_info_count) {
 		gTypeInfo.pop_back();
+	}
+	for (auto it = frame.in_place_rewrites.rbegin(); it != frame.in_place_rewrites.rend(); ++it) {
+		restoreTypeInfoInPlaceSnapshot(std::move(*it));
 	}
 	// Cold records created by the discarded rows are unreachable once those
 	// rows are gone, unless an in-place rewrite left a surviving reference into
@@ -2350,6 +2456,7 @@ StructTypeInfo& TypeInfo::emplaceStructInfo(StringHandle n, AccessSpecifier defa
 }
 
 void TypeInfo::attachStructInfo(StructTypeInfo& info) {
+	journalLegacyTypeInfoInPlaceMutation(*this);
 	if (struct_info_ != nullptr && struct_info_ != &info) {
 		FlashCpp::gLazyMemberResolver.invalidateEntriesOwnedBy(type_index_);
 	}
@@ -2380,6 +2487,7 @@ void TypeInfo::bindStructInfoOwnership() {
 }
 
 void TypeInfo::setStructInfo(StructTypeInfo info) {
+	journalLegacyTypeInfoInPlaceMutation(*this);
 	if (struct_info_ != nullptr) {
 		FlashCpp::gLazyMemberResolver.invalidateEntriesOwnedBy(type_index_);
 	}
@@ -2396,6 +2504,7 @@ void TypeInfo::setStructInfo(StructTypeInfo info) {
 }
 
 EnumTypeInfo& TypeInfo::createEnumInfo(StringHandle n, bool scoped) {
+	journalLegacyTypeInfoInPlaceMutation(*this);
 	EnumTypeInfo& info = gEnumTypeInfos.emplace_back(n, scoped);
 	fallback_size_bits_ = info.underlying_size.value;
 	enum_info_ = &info;
@@ -2403,6 +2512,7 @@ EnumTypeInfo& TypeInfo::createEnumInfo(StringHandle n, bool scoped) {
 }
 
 void TypeInfo::setEnumInfo(EnumTypeInfo info) {
+	journalLegacyTypeInfoInPlaceMutation(*this);
 	fallback_size_bits_ = info.underlying_size.value;
 	enum_info_ = &gEnumTypeInfos.push_back(std::move(info));
 }
@@ -2421,6 +2531,7 @@ void TypeInfo::setInstantiationContext(TemplateParamNameVector param_names,
 									   TemplateVector<TypeIndex, 4> parameter_type_indices,
 									   TemplateArgInfoVector param_args,
 									   const InstantiationContext* parent) {
+	journalLegacyTypeInfoInPlaceMutation(*this);
 	InstantiationContext ctx;
 	ctx.parent = parent;
 	ctx.param_names = param_names;
@@ -2504,6 +2615,7 @@ void TypeInfo::setInstantiationContext(TemplateParamNameVector param_names,
 
 void TypeInfo::setInstantiationContextFromEnvironment(const TemplateEnvironment& environment, std::span<const TemplateParameterNode> params,
 	const InstantiationContext* parent) {
+	journalLegacyTypeInfoInPlaceMutation(*this);
 	if (environment.parent != nullptr) {
 		throw InternalError("TypeInfo::setInstantiationContext requires a flattened template environment");
 	}

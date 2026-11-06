@@ -20,6 +20,8 @@ struct StructuralClassValue;
 struct StructTypeInfo;
 struct TypeInfo;
 struct TemplateEnvironment;
+void journalLegacyTypeInfoInPlaceMutation(TypeIndex index);
+void journalLegacyTypeInfoInPlaceMutation(const TypeInfo& row);
 class TemplateParameterNode;
 const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index);
 struct ImplicitSameTypeConstructors { ASTNode copy_constructor; ASTNode move_constructor; };
@@ -1340,7 +1342,10 @@ struct TypeInfo {
 
 	// Namespace this type was declared in
 	NamespaceHandle namespaceHandle() const { return namespace_handle_; }
-	void setNamespaceHandle(NamespaceHandle ns) { namespace_handle_ = ns; }
+	void setNamespaceHandle(NamespaceHandle ns) {
+		journalLegacyTypeInfoInPlaceMutation(*this);
+		namespace_handle_ = ns;
+	}
 
 	// Helper methods for template instantiations
 	bool isTemplateInstantiation() const { return base_template_.valid(); }
@@ -1385,7 +1390,10 @@ struct TypeInfo {
 	// Access the type-owned instantiation context (may be null).
 	const InstantiationContext* instantiationContext() const;
 	bool hasInstantiationContext() const { return instantiation_context_index_ != kNoInstantiationContext; }
-	void clearInstantiationContext() { instantiation_context_index_ = kNoInstantiationContext; }
+	void clearInstantiationContext() {
+		journalLegacyTypeInfoInPlaceMutation(*this);
+		instantiation_context_index_ = kNoInstantiationContext;
+	}
 	const TemplateArgInfo* findLegacyInstantiationArgByName(std::string_view param_name) const {
 		for (const auto* inst_ctx = instantiationContext(); inst_ctx; inst_ctx = inst_ctx->parent) {
 			const auto& args = inst_ctx->param_args();
@@ -1454,7 +1462,10 @@ struct TypeInfo {
 	// all constructors have been added; redundant with addConstructor when
 	// own_type_index_ was already set at emplace time).
 	void bindStructInfoOwnership();
-	void clearStructInfo() { struct_info_ = nullptr; }
+	void clearStructInfo() {
+		journalLegacyTypeInfoInPlaceMutation(*this);
+		struct_info_ = nullptr;
+	}
 
 	// Helper methods for enum types
 	bool isEnum() const { return category() == TypeCategory::Enum; }
@@ -1466,7 +1477,10 @@ struct TypeInfo {
 	EnumTypeInfo& createEnumInfo(StringHandle n, bool scoped);
 	// Move a stack-built or copied EnumTypeInfo into the arena and attach it.
 	void setEnumInfo(EnumTypeInfo info);
-	void clearEnumInfo() { enum_info_ = nullptr; }
+	void clearEnumInfo() {
+		journalLegacyTypeInfoInPlaceMutation(*this);
+		enum_info_ = nullptr;
+	}
 
 	SizeInBits sizeInBits() const {
 		if (const StructTypeInfo* struct_info = getStructInfo()) {
@@ -1583,10 +1597,11 @@ size_t getTypeInfoCount();				   // replaces gTypeInfo.size()
 void clearLegacyTypeTablesForTesting();
 
 // Candidate-local publication journal for the legacy type registry. Rollback
-// restores newly published top-level TypeInfo rows and name/native bindings.
-// In-place field rewrites of pre-existing rows and cold payload arenas remain
-// outside this first boundary; their unreachable bytes are allowed to persist.
-// Nesting is LIFO. A committed child is still undone by an outer rollback.
+// restores pre-existing TypeInfo rows touched through getTypeInfoMut,
+// tryGetTypeInfoMut, or the TypeInfo mutator API, then removes newly published
+// rows and name/native bindings. Direct field writes that bypass those entry
+// points remain outside this boundary. Nesting is LIFO. A committed child is
+// still undone by an outer rollback.
 using LegacyTypeRegistryJournalMark = size_t;
 LegacyTypeRegistryJournalMark beginLegacyTypeRegistryJournal();
 void commitLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark);
@@ -3034,18 +3049,22 @@ inline StringHandle getStructuredTypeName(const TypeSpecifierNode& type_spec) {
 }
 
 inline void TypeInfo::clearAliasTypeSpecifier() {
+	journalLegacyTypeInfoInPlaceMutation(*this);
 	alias_type_spec_.reset();
 }
 
 inline void TypeInfo::setAliasTypeSpecifier(const TypeSpecifierNode& type_spec) {
+	journalLegacyTypeInfoInPlaceMutation(*this);
 	alias_type_spec_ = std::make_unique<TypeSpecifierNode>(type_spec);
 }
 
 inline void TypeInfo::clearDeferredDecltypeExpression() {
+	journalLegacyTypeInfoInPlaceMutation(*this);
 	deferred_decltype_expression_.reset();
 }
 
 inline void TypeInfo::setDeferredDecltypeExpression(const ASTNode& expr) {
+	journalLegacyTypeInfoInPlaceMutation(*this);
 	deferred_decltype_expression_ = expr;
 }
 

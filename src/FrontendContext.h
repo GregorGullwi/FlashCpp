@@ -57,10 +57,10 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 // namespace/symbol publication on tables bound to this context, including
 // scope creation and cursors.
 // Cold type payload and record arenas are journaled with the registry when the
-// discarded range is unreachable. A pointer-keyed record range still referenced
-// by a surviving row through an in-place rewrite is retained instead of being
-// truncated. Those rewrites themselves remain outside the journal. Nested
-// commits remain provisional until the outer frontend probe commits.
+// discarded range is unreachable. Pre-existing TypeInfo rows touched through the
+// mutable accessor or mutator API are restored before truncation; a record range
+// still referenced by a row that bypassed that API is retained instead of being
+// truncated. Nested commits remain provisional until the outer probe commits.
 class FrontendScratchTransaction {
 	friend class FrontendContext;
 
