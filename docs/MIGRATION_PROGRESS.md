@@ -99,10 +99,15 @@ accessor capture, and retention when direct writes bypass that API.
 
 Legacy AST node storage now participates in the frontend journal. Rollback
 truncates nodes allocated after the mark to their exact byte offset, including
-nested commits, while committed nodes remain. The next slice must still give
-token/parser state, other parser artifacts, and in-place rewrites of owners
-outside the type registry an owned publication boundary before enabling a
-transaction around type-pack materialization. Required dependency instantiations
+nested commits, while committed nodes remain. A live `Parser` now binds its
+cursor journal to the active context; probe begin saves the lexer position,
+current token, and injected `>>` token, commit discards that save, and rollback
+restores it only while the parser is still bound. Nested commits stay
+provisional, and a parser destroyed before the probe closes is skipped. The next
+slice must still give other parser artifacts (top-level AST root lists and parse
+context stacks) and in-place rewrites of owners outside the type registry an
+owned publication boundary before enabling a transaction around type-pack
+materialization. Required dependency instantiations
 must remain separate from that candidate-local transaction; blanket rollback
 would violate observable C++20 instantiation effects. Lockstep member and
 namespace-scope length mismatches now produce `TemplatePackLengthMismatch`
@@ -412,9 +417,9 @@ These seed adjacent slices; the authoritative inventory is
   pointer-keyed legacy `StructTypeInfo`/`EnumTypeInfo` arenas (unreachable ranges
   truncate; ranges referenced by a surviving row are retained), bound
   `SymbolTable` publication maps, pre-existing `TypeInfo` row snapshots,
-  in-place global/namespace variable array type normalization, and namespace
-  metadata. Scope creation, cursor movement, and `ScopeRecord`
-  publication roll back together after symbol-map undo. Nested commits stay
+  in-place global/namespace variable array type normalization, namespace
+  metadata, and the active parser cursor. Scope creation, cursor movement, and
+  `ScopeRecord` publication roll back together after symbol-map undo. Nested commits stay
   provisional until the outer transaction commits; production speculative parsing
   is not yet integrated. The namespace and type-registry journals remain process-global;
   overlapping frontend transactions from different contexts are rejected, but

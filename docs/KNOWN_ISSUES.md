@@ -192,12 +192,14 @@ canonical through any remaining flat-consumer migration.
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 
 Production parsing does not yet route tentative declaration work through
-`FrontendScratchTransaction`. Token/parser cursor state, other parser artifacts,
-and in-place rewrites of owners outside the type registry still need an owned
-rollback boundary before broad speculative parsing can rely on it. Existing
-`TypeInfo` rows reached through the mutable accessor/mutator API are snapshotted
-and restored with their cold records, and legacy AST nodes allocated after the
-mark are truncated.
+`FrontendScratchTransaction`. Other parser artifacts (top-level AST root lists
+and parse context stacks) and in-place rewrites of owners outside the type
+registry still need an owned rollback boundary before broad speculative parsing
+can rely on it. A live `Parser` binds its lexer position, current token, and
+injected `>>` token to the active context, so probe rollback restores that
+cursor while the parser is still bound. Existing `TypeInfo` rows reached through
+the mutable accessor/mutator API are snapshotted and restored with their cold
+records, and legacy AST nodes allocated after the mark are truncated.
 
 The separate parser `CompileContext` diagnostic engine is not enlisted by that
 frontend transaction. Diagnostic text and note backing storage is still retained

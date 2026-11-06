@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "FrontendContext.h"
 #include "TemplateEngine.h"
 #include "MigrationStats.h"
 #include "CallNodeHelpers.h"
@@ -768,11 +769,48 @@ void collectLambdaCaptureCandidates(const ASTNode& node,
 	}
 }
 
+namespace {
+std::size_t flashcppSaveParserCursorThunk(void* parser) {
+	return static_cast<Parser*>(parser)->saveParserCursor();
+}
+void flashcppRestoreParserCursorThunk(void* parser, std::size_t handle) {
+	static_cast<Parser*>(parser)->restoreParserCursor(handle);
+}
+void flashcppDiscardParserCursorThunk(void* parser, std::size_t handle) {
+	static_cast<Parser*>(parser)->discardParserCursor(handle);
+}
+} // namespace
+
 Parser::Parser(Lexer& lexer, CompileContext& context, SemanticAnalysis& semantic_analysis)
 	: lexer_(lexer), context_(context), current_token_(lexer_.next_token()), semantic_analysis_(semantic_analysis) {
 	semantic_analysis_.attachParser(*this);
 	initialize_native_types();
 	ast_nodes_.reserve(default_ast_tree_size_);
+	if (FrontendContext* frontend = FrontendContext::active()) {
+		frontend->bindParserCursorJournal(ParserCursorJournalBinding{this,
+			&flashcppSaveParserCursorThunk,
+			&flashcppRestoreParserCursorThunk,
+			&flashcppDiscardParserCursorThunk});
+		cursor_journal_context_ = frontend;
+	}
+}
+
+Parser::~Parser() {
+	if (cursor_journal_context_ != nullptr) {
+		cursor_journal_context_->unbindParserCursorJournal(this);
+	}
+}
+
+std::size_t Parser::saveParserCursor() {
+	return save_token_position();
+}
+
+void Parser::restoreParserCursor(std::size_t handle) {
+	restore_lexer_position_only(handle);
+}
+
+void Parser::discardParserCursor(std::size_t handle) {
+	discard_saved_token(handle);
 }
 
 void Parser::attachTemplateEngine(TemplateEngine& engine) {
