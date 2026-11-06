@@ -87,25 +87,27 @@ dangling. Retention scans surviving `TypeInfo` cold indices, interned argument
 lists, instantiation contexts, and dependent-name records via an allocation-free
 rollback path. Owners outside those stores, such as `QualifiedIdentifierNode` or
 copied `TemplateArgInfo` values held by AST/template registries, remain outside
-the boundary. Legacy AST nodes and parser state also stay outside. Native guards
-cover rollback, commit, overwritten bindings, nested commit, cold-payload
-truncation, intern-bucket cleanup, pointer-keyed truncation and retention,
-surviving-row retention, and out-of-order completion.
+the boundary. Native guards cover rollback, commit, overwritten bindings, nested
+commit, cold-payload truncation, intern-bucket cleanup, pointer-keyed truncation
+and retention, surviving-row retention, and out-of-order completion.
 
 Candidate-local in-place `TypeInfo` row rewrites now snapshot the pre-existing row
 before mutation and restore it before cold arenas truncate, including rows reached
 through mutable accessors, `add_struct_type` reuse, and the `TypeInfo` mutator
 API. Native guards cover restored row fields, cold record and payload truncation,
-accessor capture, and retention when direct writes bypass that API. The next slice
-must still give legacy AST nodes, parser artifacts, and
-in-place rewrites of owners outside the type registry an owned publication
-boundary before enabling a transaction around type-pack materialization. Required
-dependency instantiations must remain separate from that candidate-local
-transaction; blanket rollback would violate observable C++20 instantiation
-effects. Lockstep member and namespace-scope length mismatches now produce
-`TemplatePackLengthMismatch` (#1820); remaining mismatch contexts,
-alias/variable-template flattened adapters, and runtime function-parameter fold
-replay remain deferred.
+accessor capture, and retention when direct writes bypass that API.
+
+Legacy AST node storage now participates in the frontend journal. Rollback
+truncates nodes allocated after the mark to their exact byte offset, including
+nested commits, while committed nodes remain. The next slice must still give
+token/parser state, other parser artifacts, and in-place rewrites of owners
+outside the type registry an owned publication boundary before enabling a
+transaction around type-pack materialization. Required dependency instantiations
+must remain separate from that candidate-local transaction; blanket rollback
+would violate observable C++20 instantiation effects. Lockstep member and
+namespace-scope length mismatches now produce `TemplatePackLengthMismatch`
+(#1820); remaining mismatch contexts, alias/variable-template flattened adapters,
+and runtime function-parameter fold replay remain deferred.
 Boundary 3A and 8A remain incomplete.
 
 Direct type-pack data members now retain empty/full packs, written CV/pointer

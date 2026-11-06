@@ -45,6 +45,7 @@ struct FrontendPublicationJournalMark {
 	size_t namespace_depth = 0;
 	size_t legacy_type_registry_depth = 0;
 	size_t scope_count = 0;
+	size_t legacy_ast_node_count = 0;
 	ScopeId current_scope_id{};
 };
 
@@ -60,7 +61,8 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 // discarded range is unreachable. Pre-existing TypeInfo rows touched through the
 // mutable accessor or mutator API are restored before truncation; a record range
 // still referenced by a row that bypassed that API is retained instead of being
-// truncated. Nested commits remain provisional until the outer probe commits.
+// truncated. Legacy AST nodes allocated after the mark are truncated. Nested
+// commits remain provisional until the outer probe commits.
 class FrontendScratchTransaction {
 	friend class FrontendContext;
 
