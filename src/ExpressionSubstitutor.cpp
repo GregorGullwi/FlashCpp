@@ -1797,47 +1797,6 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 			}
 			return false;
 		};
-	auto legacyOwnerRefersToCurrentOwnerType = [&]() -> bool {
-		if (!current_owner_type_name_.isValid()) {
-			return false;
-		}
-		std::string_view current_owner_name =
-			StringTable::getStringView(current_owner_type_name_);
-		if (owner_name.empty() || owner_name == current_owner_name) {
-			return true;
-		}
-		if (std::optional<StringHandle> owner_pattern_handle =
-				gTemplateRegistry.get_instantiation_pattern(
-					current_owner_type_name_);
-			owner_pattern_handle.has_value() &&
-			owner_name == StringTable::getStringView(*owner_pattern_handle)) {
-			return true;
-		}
-
-		const TypeInfo* current_owner_type_info =
-			findTypeByName(current_owner_type_name_);
-		if (current_owner_type_info == nullptr) {
-			return false;
-		}
-		const std::string_view current_base_template_name =
-			StringTable::getStringView(
-				current_owner_type_info->baseTemplateName());
-		if (!current_base_template_name.empty() &&
-			(owner_name == current_base_template_name ||
-			 extractBaseTemplateName(owner_name) ==
-				 current_base_template_name)) {
-			return true;
-		}
-
-		StringHandle qualified_base_template_handle =
-			gNamespaceRegistry.buildQualifiedIdentifier(
-				current_owner_type_info->sourceNamespace(),
-				current_owner_type_info->baseTemplateName());
-		const std::string_view qualified_base_template_name =
-			StringTable::getStringView(qualified_base_template_handle);
-		return !qualified_base_template_name.empty() &&
-			owner_name == qualified_base_template_name;
-	};
 	if (dependent_name.owner_template_arguments.empty()) {
 		if (auto owner_subst_it = param_map_.find(owner_name);
 			owner_subst_it != param_map_.end()) {
@@ -1862,25 +1821,38 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 				dependent_name.current_instantiation_declaration ==
 					current_owner_declaration_ &&
 				current_owner_type_name_.isValid()) {
-				materialized_owner.instantiated_name =
-					StringTable::getStringView(current_owner_type_name_);
-				materialized_owner.resolved_type_info =
-					findTypeByName(current_owner_type_name_);
+				materialized_owner.instantiated_name = StringTable::getStringView(current_owner_type_name_);
+				materialized_owner.resolved_type_info = findTypeByName(current_owner_type_name_);
 			}
 			break;
 		}
 
-		// Older expression-level records do not yet transport declaration identity.
-		// Keep their existing materialization behavior until those producers and
-		// replay contexts are migrated; records with complete identity never enter
-		// this compatibility path.
-		if (prefer_current_owner_type_name &&
-			legacyOwnerRefersToCurrentOwnerType()) {
-			materialized_owner.instantiated_name =
-				StringTable::getStringView(current_owner_type_name_);
-			materialized_owner.resolved_type_info =
-				findTypeByName(current_owner_type_name_);
-			break;
+		if (prefer_current_owner_type_name && current_owner_type_name_.isValid()) {
+			const TypeInfo* owner_type_info = tryGetTypeInfo(dependent_name.owner_type);
+			const StructTypeInfo* owner_struct_info = owner_type_info != nullptr ? owner_type_info->getStructInfo() : nullptr;
+			const StructDeclarationNode* owner_declaration = owner_struct_info != nullptr ? owner_struct_info->declaration_node : nullptr;
+			const TypeInfo* current_owner_type_info = findTypeByName(current_owner_type_name_);
+			const StructTypeInfo* current_owner_struct_info = current_owner_type_info != nullptr ? current_owner_type_info->getStructInfo() : nullptr;
+			const StructDeclarationNode* current_owner_declaration =
+				current_owner_declaration_ != nullptr
+					? current_owner_declaration_
+					: (current_owner_struct_info != nullptr ? current_owner_struct_info->declaration_node : nullptr);
+			auto pattern_declaration = [](const StructDeclarationNode* declaration) -> const StructDeclarationNode* {
+				if (declaration == nullptr) {
+					return nullptr;
+				}
+				const StructDeclarationNode* pattern = declaration->injected_class_pattern_declaration();
+				return pattern != nullptr ? pattern : declaration;
+			};
+			if (owner_declaration != nullptr && current_owner_declaration != nullptr &&
+				(owner_declaration == current_owner_declaration ||
+				 pattern_declaration(owner_declaration) == pattern_declaration(current_owner_declaration))) {
+				materialized_owner.instantiated_name =
+					StringTable::getStringView(current_owner_type_name_);
+				materialized_owner.resolved_type_info =
+					findTypeByName(current_owner_type_name_);
+				break;
+			}
 		}
 		if (!dependent_name.owner_template_arguments.empty()) {
 			TemplateArgumentVector owner_args =
