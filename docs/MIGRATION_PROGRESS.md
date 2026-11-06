@@ -360,6 +360,8 @@ These seed adjacent slices; the authoritative inventory is
   aliases, replayed dependent deferred bases, default member initializers, and
   base default construction. Other advanced nested-body effects still need the
   full instantiated-owner path.
+- Built-in operator classification for arithmetic, bitwise, shift, comparison,
+  and logical operators is shared through `TokenKind.h`.
 - Unary `+`, `-`, and `~` now publish the promoted `int` result type through
   parser expression typing and constant evaluation, so `auto`, `decltype`, and
   call deduction observe the same integral promotion as semantic analysis.
