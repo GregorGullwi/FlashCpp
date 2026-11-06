@@ -64,17 +64,6 @@ A nested alias chain that expands two dependent type packs into one member
 template-id can materialize the wrong argument count. This remains deferred
 with the nontrivial and multi-pack member-template expansion work.
 
-## Callable member signature arguments can fail specialization matching
-
-Callable member types also expose a separate matching discrepancy:
-`template<class R, class... A> struct Packed { R (*value)(A...); };` compares
-equal to the corresponding concrete function pointer through `__is_same`, but a
-generic `Same<T, T>` partial-specialization trait reports false when passed
-`decltype(Packed<long long>::value)` and `long long (*)()`. Both empty and full
-packs reproduce; equivalent function-pointer aliases match correctly. Audit
-member callable argument identity at partial-specialization deduction rather
-than recognizing the trait spelling.
-
 ## Pack substitution rollback and diagnostics remain incomplete
 
 Runtime function-parameter fold replay still uses its separate legacy adapter.

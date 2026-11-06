@@ -971,6 +971,29 @@ struct TemplateNameLookupResult {
 // Used by TemplateRegistry pattern matching (TemplateRegistry_Pattern.h) and
 // deferred body re-parsing during pattern-based instantiation
 // (Parser_Templates_Inst_ClassTemplate.cpp).
+// Legacy syntax can represent a single function pointer as its return type with
+// pointer_depth=1 plus a function signature, while canonical arguments use
+// FunctionPointer with pointer_depth=0. Normalize the rich TemplateTypeArg to
+// the canonical form before comparing deduced parameters.
+inline TemplateTypeArg canonicalizeFunctionPointerTemplateArg(TemplateTypeArg arg) {
+	if (arg.hasFunctionSignature() &&
+		arg.category() != TypeCategory::FunctionPointer &&
+		arg.category() != TypeCategory::MemberFunctionPointer &&
+		arg.pointer_depth > 0) {
+		arg.type_index = nativeTypeIndex(TypeCategory::FunctionPointer);
+		arg.setCategory(TypeCategory::FunctionPointer);
+		--arg.pointer_depth;
+		if (!arg.pointer_cv_qualifiers.empty()) {
+			TemplateVector<CVQualifier, 4> remaining;
+			for (size_t pointer_index = 1; pointer_index < arg.pointer_cv_qualifiers.size(); ++pointer_index) {
+				remaining.push_back(arg.pointer_cv_qualifiers[pointer_index]);
+			}
+			arg.pointer_cv_qualifiers = std::move(remaining);
+		}
+	}
+	return arg;
+}
+
 inline TemplateTypeArg deduceArgFromPattern(const TemplateTypeArg& concrete_arg, const TemplateTypeArg& pattern_arg) {
 	TemplateTypeArg deduced = concrete_arg;
 	if (pattern_arg.is_reference())
@@ -994,7 +1017,7 @@ inline TemplateTypeArg deduceArgFromPattern(const TemplateTypeArg& concrete_arg,
 		deduced.cv_qualifier = static_cast<CVQualifier>(
 			static_cast<uint8_t>(deduced.cv_qualifier) & ~static_cast<uint8_t>(pattern_arg.cv_qualifier));
 	}
-	return deduced;
+	return canonicalizeFunctionPointerTemplateArg(deduced);
 }
 
 // Find the TemplateTypeArg that was bound to a named template parameter.
