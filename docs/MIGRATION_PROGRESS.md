@@ -370,6 +370,8 @@ These seed adjacent slices; the authoritative inventory is
   substitute the generic element expression per concrete element, and lockstep
   expansion substitutes every referenced pack when the effective binding contains
   all of them, including enclosing and local packs retained as separate binding groups.
+  Callable member declarations normalize legacy return-type/pointer function-pointer
+  arguments to canonical callable identity for partial-specialization deduction.
   Callable-pack, non-type-parameter/alias/trailing-requires member partials and
   other dependent owner/member arguments remain deferred. Nested classes inside
   selected member partials now retain and publish their method bodies through
