@@ -60,18 +60,6 @@ enabling those graphs; keep evaluator and overload-selection rules separate.
 Extend the typed-value importer before deleting `legacyDerivedBaseOffset`;
 audit dependent and other non-integral specialization roots as well.
 
-## Selected-partial lazy nested classes skip default member initializers
-
-A nested class declared in a selected partial specialization replays direct
-members, aliases, and deferred bases, but its default member initializers are
-still dropped when it is materialized by the lazy nested-type helper. Reduced
-shape: `template<class T> struct Owner { struct Child {}; }; template<class T>
-struct Owner<T*> { struct Child { T own = 9; }; };` leaves
-`Owner<long long*>::Child{}.own` at zero instead of nine. Base default
-construction is skipped for the same path because the helper does not mark the
-instantiated class as needing its trivial default constructor. Route the
-remaining nested-body effects through the full instantiated-owner path.
-
 ## Expression parsing can overflow a 1 MB native stack before callable sema
 
 The nested NTTP-field regression

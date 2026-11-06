@@ -1,18 +1,18 @@
 // Nested classes declared in a selected partial specialization must replay
-// dependent deferred bases before layout and member lookup.
+// dependent deferred bases and their default member initializers before layout.
 struct DirectBase {
-	long long direct;
+	long long direct = 5;
 };
 
 template<class T>
 struct Base {
-	T value;
+	T value = 7;
 };
 
 template<class A, class B>
 struct PairBase {
-	A first;
-	B second;
+	A first = 11;
+	B second = 12;
 };
 
 template<class T>
@@ -23,7 +23,7 @@ struct Owner {
 template<class T>
 struct Owner<T*> {
 	struct Child : Base<T> {
-		T own;
+		T own = 9;
 	};
 };
 
@@ -50,27 +50,24 @@ struct PairOwner<T*> {
 template<class T>
 long long dependent_child_value() {
 	Owner<T*>::Child child{};
-	child.own = 9;
-	child.value = 5000000000LL;
 	return child.value + child.own;
 }
 
 int main() {
 	Owner<long long*>::Child child{};
+	if (child.value != 7 || child.own != 9) return 1;
 	child.value = 5000000000LL;
-	child.own = 9;
-	if (child.value != 5000000000LL || child.own != 9) return 1;
+	if (child.value != 5000000000LL) return 2;
 
 	DirectOwner<DirectBase*>::Direct direct{};
-	direct.direct = 5000000000LL;
-	if (direct.direct != 5000000000LL) return 2;
+	if (direct.direct != 5) return 3;
 
 	PairOwner<long long*>::Pair pair{};
+	if (pair.first != 11 || pair.second != 12) return 4;
 	pair.first = 5000000000LL;
-	pair.second = 3;
-	if (pair.first != 5000000000LL || pair.second != 3) return 3;
+	if (pair.first != 5000000000LL) return 5;
 
-	if (dependent_child_value<long long>() != 5000000009LL) return 4;
+	if (dependent_child_value<long long>() != 16) return 6;
 
 	return 42;
 }

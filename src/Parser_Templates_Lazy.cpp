@@ -1841,6 +1841,13 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		// Get the name from the identifier token
 		StringHandle member_name_handle = decl.identifier_token().handle();
 
+		// Substitute default member initializers with the parent's concrete args.
+		std::optional<ASTNode> substituted_default_initializer;
+		if (member_decl.default_initializer.has_value()) {
+			substituted_default_initializer = substituteTemplateParameters(*member_decl.default_initializer, lazy_info->parent_template_params,
+				lazy_info->parent_template_args);
+		}
+
 		// Add member to nested struct info
 		const TypeId canonical_member_type_id = importCanonicalStructMemberType(
 			requireFrontendContext().canonicalTypes(), substituted_type_spec, false, false, std::span<const size_t>{});
@@ -1851,7 +1858,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 			member_size,
 			member_alignment,
 			member_decl.access,
-			std::nullopt,  // No default initializer for now
+			std::move(substituted_default_initializer),
 			type_spec.reference_qualifier(),
 			member_size * 8,
 			false,  // is_array
@@ -1950,6 +1957,10 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 											 ? &nested_outer_snapshot
 											 : nullptr,
 										 shouldCommitTemplateInstantiationArtifacts());
+
+	if (!nested_struct_info->hasAnyConstructor()) {
+		nested_struct_info->needs_default_constructor = true;
+	}
 
 	nested_type_info.attachStructInfo(*nested_struct_info);
 	nested_type_info.bindStructInfoOwnership();
