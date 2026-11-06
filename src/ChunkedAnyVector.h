@@ -87,6 +87,27 @@ public:
 		return *p;
 	}
 
+	void pop_back() {
+		assert(!index_to_pointer.empty() && "ChunkedAnyVector::pop_back called on empty container");
+		auto& chunk = data.back();
+		char* chunk_start = chunk.data();
+		char* object_start = static_cast<char*>(index_to_pointer.back());
+		assert(object_start >= chunk_start && object_start < chunk_start + chunk.size());
+		chunk.resize(static_cast<std::size_t>(object_start - chunk_start));
+		if (chunk.empty()) {
+			data.pop_back();
+		}
+		index_to_pointer.pop_back();
+		index_to_type.pop_back();
+	}
+
+	void truncateTo(std::size_t count) {
+		assert(count <= size() && "ChunkedAnyVector::truncateTo cannot grow the container");
+		while (size() > count) {
+			pop_back();
+		}
+	}
+
 	template <typename F>
 	void visit(F&& f) const {
 		for (std::size_t i = 0; i < index_to_pointer.size(); ++i) {

@@ -704,6 +704,37 @@ TEST_SUITE("FrontendContext") {
 		CHECK(getTypeInfoTemplateArgsCount() >= lists_before + 1);
 	}
 
+	TEST_CASE("Frontend scratch rollback truncates legacy AST nodes") {
+		FrontendContext context;
+		const ASTNode survivor = ASTNode::emplace_node<ExpressionNode>(
+			NumericLiteralNode(Token{}, uint64_t{3}, TypeCategory::Int, TypeQualifier::None, 32));
+		const size_t baseline = gChunkedAnyStorage.size();
+		{
+			auto outer = context.beginScratchTransaction();
+			ASTNode outer_node = ASTNode::emplace_node<ExpressionNode>(
+				NumericLiteralNode(Token{}, uint64_t{5}, TypeCategory::Int, TypeQualifier::None, 32));
+			{
+				auto inner = context.beginScratchTransaction();
+				ASTNode inner_node = ASTNode::emplace_node<ExpressionNode>(
+					NumericLiteralNode(Token{}, uint64_t{7}, TypeCategory::Int, TypeQualifier::None, 32));
+				CHECK(gChunkedAnyStorage.size() == baseline + 2);
+				inner.rollback();
+				CHECK(gChunkedAnyStorage.size() == baseline + 1);
+			}
+			outer.rollback();
+		}
+		CHECK(gChunkedAnyStorage.size() == baseline);
+		CHECK(std::get<unsigned long long>(std::get<NumericLiteralNode>(survivor.as<ExpressionNode>()).value()) == 3ULL);
+
+		{
+			auto committed = context.beginScratchTransaction();
+			ASTNode committed_node = ASTNode::emplace_node<ExpressionNode>(
+				NumericLiteralNode(Token{}, uint64_t{11}, TypeCategory::Int, TypeQualifier::None, 32));
+			committed.commit();
+		}
+		CHECK(gChunkedAnyStorage.size() == baseline + 1);
+	}
+
 	TEST_CASE("Frontend scratch transactions reject overlapping context journals") {
 		clearLegacyTypeTablesForTesting();
 		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });

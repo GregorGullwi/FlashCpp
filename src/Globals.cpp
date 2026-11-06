@@ -280,7 +280,7 @@ FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& 
 	context.publication_transaction_depth_ = context_depth;
 	gFrontendPublicationJournalOwner = &context;
 	return FrontendPublicationJournalMark{context_depth, namespace_depth, legacy_type_registry_depth, context.scope_records_.size(),
-		context.current_scope_id_};
+		gChunkedAnyStorage.size(), context.current_scope_id_};
 }
 
 void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicationJournalMark mark) {
@@ -313,6 +313,7 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 	context.current_scope_id_ = mark.current_scope_id;
 	gNamespaceRegistry.rollbackPublicationTransaction(mark.namespace_depth);
 	rollbackLegacyTypeRegistryJournal(mark.legacy_type_registry_depth);
+	gChunkedAnyStorage.truncateTo(mark.legacy_ast_node_count);
 	--context.publication_transaction_depth_;
 	if (context.publication_transaction_depth_ == 0) {
 		gFrontendPublicationJournalOwner = nullptr;
