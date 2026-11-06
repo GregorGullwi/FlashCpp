@@ -183,9 +183,11 @@ specialization member-pointer shapes. Class values carry ordered base/member
 values with an explicit base count. Bit-fields normalize through declared type
 and published width; array values preserve element type and outer bound; union
 values key an explicit active variant or no-active state; float and double keep
-typed exact values. Long double and non-null pointer payloads remain fail-closed
-until their carriers can represent them. Canonical imports and tracing use
-iterative worklists and the documented 4,096-level guards.
+typed exact values. Long double structural values are explicitly out of scope
+until the compiler has real long-double support, so they stay fail-closed rather
+than aliasing through double. Non-null pointer payloads remain fail-closed until
+their carriers can represent them. Canonical imports and tracing use iterative
+worklists and the documented 4,096-level guards.
 
 Implicit copy/move construction and assignment are ODR-deferred. Semantic
 analysis publishes selected special-member uses by owner `TypeId`, and codegen
@@ -365,6 +367,9 @@ These seed adjacent slices; the authoritative inventory is
 - Same-spelled class and member templates under distinct owners now keep
   distinct instantiation cache keys and generated names through their qualified
   owner spellings rather than numeric `TemplateDeclId` suffixes.
+- Member alias target materialization now keeps grouped pack bindings, so
+  adjacent expansions such as `Pack<A..., B...>` preserve argument boundaries
+  for empty, trailing-empty, and multi-element packs.
 - Unary `+`, `-`, and `~` now publish the promoted `int` result type through
   parser expression typing and constant evaluation, so `auto`, `decltype`, and
   call deduction observe the same integral promotion as semantic analysis.

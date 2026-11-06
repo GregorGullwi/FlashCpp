@@ -2470,41 +2470,91 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		result.instantiated_name = StringTable::getStringView(rebound_type_info->name());
 		return true;
 	};
+	TemplateEnvironment grouped_alias_environment;
+	if (outer_binding != nullptr) {
+		grouped_alias_environment = buildTemplateEnvironment(*outer_binding);
+	}
+	if (alias_node != nullptr) {
+		TemplateEnvironment local_alias_environment = buildTemplateEnvironment(alias_node->template_parameters(), template_args, nullptr);
+		for (const TemplateBinding& binding : local_alias_environment.bindings) {
+			auto existing = std::find_if(
+				grouped_alias_environment.bindings.begin(),
+				grouped_alias_environment.bindings.end(),
+				[&](const TemplateBinding& candidate) { return candidate.name == binding.name; });
+			if (existing != grouped_alias_environment.bindings.end()) {
+				*existing = binding;
+			} else {
+				grouped_alias_environment.bindings.push_back(binding);
+			}
+		}
+	}
+
 	auto materializeTemplateArgsForLookup =
 		[&](const TypeInfo& source_type_info) -> std::vector<TemplateTypeArg> {
 		// Evaluator for dependent NTTP expressions (e.g. __is_final(Head) -> false).
 		// Uses the Parser's active substitution context so outer bindings like Head->Empty
 		// are visible even when the stored dependent_expr references the original param name.
 		auto materialize_args = [&](const TypeInfo& nested_source_type_info) {
-			return materializeTemplateArgs(
-				nested_source_type_info,
-				effective_template_params,
-				effective_template_args,
-			[this, owner_name = nested_source_type_info.name()](
-				StringHandle dependent_name,
-				const ASTNode& expr,
-				std::span<const ASTNode> params,
-				std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
-			TemplateParameterVector typed_params =
-				collectTemplateParameterNodes(params);
-			if (dependent_name.isValid()) {
-				if (auto folded = tryFoldDependentQualifiedStaticMemberNTTP(
-						dependent_name,
-						std::span<const TemplateParameterNode>(
-							typed_params.data(), typed_params.size()),
-						args);
-					folded.has_value()) {
-					return folded;
+			std::vector<TemplateTypeArg> grouped_args;
+			grouped_args.reserve(nested_source_type_info.templateArgs().size());
+			for (const TypeInfo::TemplateArgInfo& stored_arg : nested_source_type_info.templateArgs()) {
+				if (stored_arg.dependent_name.isValid()) {
+					auto binding_it = std::find_if(
+						grouped_alias_environment.bindings.begin(),
+						grouped_alias_environment.bindings.end(),
+						[&](const TemplateBinding& binding) { return binding.name == stored_arg.dependent_name; });
+					if (binding_it != grouped_alias_environment.bindings.end()) {
+						if (binding_it->is_pack) {
+							for (const TemplateTypeArg& pack_arg : binding_it->args) {
+								TemplateTypeArg concrete_arg = pack_arg;
+								if (!stored_arg.is_value && !pack_arg.is_value) {
+									concrete_arg = rebindDependentTemplateTypeArg(pack_arg, toTemplateTypeArg(stored_arg));
+								}
+								concrete_arg.is_pack = false;
+								grouped_args.push_back(std::move(concrete_arg));
+							}
+							continue;
+						}
+						if (binding_it->args.size() == 1) {
+							TemplateTypeArg concrete_arg = binding_it->args.front();
+							if (!stored_arg.is_value && !concrete_arg.is_value) {
+								concrete_arg = rebindDependentTemplateTypeArg(concrete_arg, toTemplateTypeArg(stored_arg));
+							}
+							grouped_args.push_back(std::move(concrete_arg));
+							continue;
+						}
+					}
 				}
+				grouped_args.push_back(materializeTemplateArg(
+					stored_arg,
+					effective_template_params,
+					effective_template_args,
+					[this, owner_name = nested_source_type_info.name()](
+						StringHandle dependent_name,
+						const ASTNode& expr,
+						std::span<const ASTNode> params,
+						std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
+						TemplateParameterVector typed_params =
+							collectTemplateParameterNodes(params);
+						if (dependent_name.isValid()) {
+							if (auto folded = tryFoldDependentQualifiedStaticMemberNTTP(
+									dependent_name,
+									std::span<const TemplateParameterNode>(
+										typed_params.data(), typed_params.size()),
+									args);
+								folded.has_value()) {
+								return folded;
+							}
+						}
+						return this->evaluateDependentNTTPExpression(
+							expr,
+							std::span<const TemplateParameterNode>(
+								typed_params.data(), typed_params.size()),
+							args,
+							owner_name);
+					}));
 			}
-			return this->evaluateDependentNTTPExpression(
-						expr,
-						std::span<const TemplateParameterNode>(
-							typed_params.data(),
-							typed_params.size()),
-						args,
-						owner_name);
-				});
+			return grouped_args;
 		};
 		std::vector<TemplateTypeArg> concrete_args =
 			materialize_args(source_type_info);
