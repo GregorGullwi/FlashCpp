@@ -3048,6 +3048,11 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 
 		return base_type;
 	}
+	std::string_view instantiateAndResolveBaseName(std::string_view base_template_name, std::span<TemplateTypeArg> base_args,
+		bool force_eager_instantiation);
+	void replayDeferredTemplateBasesForPattern(const StructDeclarationNode& pattern_struct, std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args_for_member_copy, std::span<const TemplateTypeArg> template_args, StructTypeInfo& struct_info);
+
 	// Try the primary deferred-base type-argument materialization path: first
 	// substitute template parameters into the type specifier, then materialize any
 	// incomplete template-instantiation placeholder through the provided concrete
