@@ -360,6 +360,9 @@ These seed adjacent slices; the authoritative inventory is
   aliases, replayed dependent deferred bases, default member initializers, and
   base default construction. Other advanced nested-body effects still need the
   full instantiated-owner path.
+- Unary `+`, `-`, and `~` now publish the promoted `int` result type through
+  parser expression typing and constant evaluation, so `auto`, `decltype`, and
+  call deduction observe the same integral promotion as semantic analysis.
 - Class-template-owned direct, nested, and selected partial member
   specializations compose the full owner chain and keep member arguments
   separate. Concept-constrained type, concrete non-type literal, and pack member

@@ -3806,6 +3806,53 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			}
 		}
 
+		const std::string_view builtin_op = binary.op();
+		const bool is_shift = builtin_op == "<<" || builtin_op == ">>";
+		const bool is_arithmetic = builtin_op == "*" || builtin_op == "/" || builtin_op == "+" || builtin_op == "-";
+		const bool is_bitwise = builtin_op == "%" || builtin_op == "&" || builtin_op == "|" || builtin_op == "^";
+		if ((is_shift || is_arithmetic || is_bitwise) && lhs_type_opt.has_value() && rhs_type_opt.has_value()) {
+			auto resolved_integral_category = [](const TypeSpecifierNode& type) -> TypeCategory {
+				if (type.category() != TypeCategory::Enum) {
+					return type.category();
+				}
+				const TypeInfo* type_info = tryGetTypeInfo(type.type_index());
+				const EnumTypeInfo* enum_info = type_info != nullptr ? type_info->getEnumInfo() : nullptr;
+				return enum_info != nullptr ? enum_info->underlying_type : TypeCategory::Invalid;
+			};
+			const TypeCategory lhs_category = resolved_integral_category(*lhs_type_opt);
+			const TypeCategory rhs_category = resolved_integral_category(*rhs_type_opt);
+			const bool lhs_integral = isIntegralType(lhs_category) || lhs_category == TypeCategory::Bool;
+			const bool rhs_integral = isIntegralType(rhs_category) || rhs_category == TypeCategory::Bool;
+			if (is_shift) {
+				if (lhs_integral && rhs_integral) {
+					const TypeCategory promoted_category = promote_integer_type(lhs_category);
+					return TypeSpecifierNode(
+						nativeTypeIndex(promoted_category),
+						SizeInBits{get_type_size_bits(promoted_category)},
+						Token{},
+						CVQualifier::None,
+						ReferenceQualifier::None);
+				}
+			} else {
+				const bool lhs_arithmetic = lhs_integral || isFloatingPointType(lhs_category);
+				const bool rhs_arithmetic = rhs_integral || isFloatingPointType(rhs_category);
+				const bool valid_operands = is_bitwise
+												? lhs_integral && rhs_integral
+												: lhs_arithmetic && rhs_arithmetic;
+				if (valid_operands) {
+					const TypeCategory common_category = get_common_type(lhs_category, rhs_category);
+					if (common_category != TypeCategory::Invalid) {
+						return TypeSpecifierNode(
+							nativeTypeIndex(common_category),
+							SizeInBits{get_type_size_bits(common_category)},
+							Token{},
+							CVQualifier::None,
+							ReferenceQualifier::None);
+					}
+				}
+			}
+		}
+
 		// For same-type operands, return the LHS type
 		if (lhs_type_opt.has_value()) {
 			if (rhs_type_opt.has_value() && lhs_type_opt->type() == rhs_type_opt->type()) {
@@ -4190,6 +4237,33 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				if (auto fp_type = build_function_pointer_type_from_struct(*struct_info, operand_type.token())) {
 					return *fp_type;
 				}
+			}
+		}
+
+		if (op == "!") {
+			return TypeSpecifierNode(
+				nativeTypeIndex(TypeCategory::Bool),
+				SizeInBits{get_type_size_bits(TypeCategory::Bool)},
+				Token{},
+				CVQualifier::None,
+				ReferenceQualifier::None);
+		}
+
+		// C++20 [expr.unary.op]: unary +, -, and ~ promote small integral
+		// operands to int before the result type is observed by auto/decltype.
+		if ((op == "+" || op == "-" || op == "~") &&
+			operand_type.pointer_levels().empty() &&
+			!operand_type.is_array() &&
+			!operand_type.is_reference() &&
+			(isIntegralType(operand_type.category()) || operand_type.category() == TypeCategory::Bool)) {
+			const TypeCategory promoted_category = promote_integer_type(operand_type.category());
+			if (promoted_category != operand_type.category()) {
+				return TypeSpecifierNode(
+					nativeTypeIndex(promoted_category),
+					SizeInBits{get_type_size_bits(promoted_category)},
+					operand_type.token(),
+					CVQualifier::None,
+					ReferenceQualifier::None);
 			}
 		}
 

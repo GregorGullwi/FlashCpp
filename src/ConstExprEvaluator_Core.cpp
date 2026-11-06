@@ -1966,6 +1966,25 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 		return operand_result;
 	}
 
+	if ((op == "+" || op == "-" || op == "~") &&
+		operand_result.exact_type.has_value() &&
+		operand_result.exact_type->pointer_levels().empty() &&
+		!operand_result.exact_type->is_array() &&
+		!operand_result.exact_type->is_reference()) {
+		const TypeCategory operand_category = operand_result.exact_type->category();
+		if (isIntegralType(operand_category) || operand_category == TypeCategory::Bool) {
+			const TypeCategory promoted_category = promote_integer_type(operand_category);
+			if (promoted_category != operand_category) {
+				TypeSpecifierNode promoted_type = *operand_result.exact_type;
+				promoted_type.set_type_index(nativeTypeIndex(promoted_category));
+				promoted_type.set_size_in_bits(get_type_size_bits(promoted_category));
+				promoted_type.set_reference_qualifier(ReferenceQualifier::None);
+				operand_result = EvalResult::from_int(operand_result.as_int());
+				operand_result.set_exact_type(promoted_type);
+			}
+		}
+	}
+
 	// Handle dereference (*): if the operand is a constexpr pointer, look up and evaluate the target variable.
 	if (op == "*") {
 		if (operand_result.pointer_to_var.isValid()) {
