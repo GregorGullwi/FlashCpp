@@ -254,6 +254,12 @@ FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& 
 	if (gFrontendPublicationJournalOwner != nullptr && gFrontendPublicationJournalOwner != &context) {
 		throw InternalError("FrontendContext: overlapping publication transactions require the same context");
 	}
+	ParserCursorJournalBinding parser_binding{};
+	size_t parser_cursor_handle = SIZE_MAX;
+	if (!context.parser_cursor_journals_.empty()) {
+		parser_binding = context.parser_cursor_journals_.back();
+		parser_cursor_handle = parser_binding.save(parser_binding.parser);
+	}
 	const size_t context_depth = context.publication_transaction_depth_ + 1U;
 	const size_t namespace_depth = gNamespaceRegistry.beginPublicationTransaction();
 	const LegacyTypeRegistryJournalMark legacy_type_registry_depth = beginLegacyTypeRegistryJournal();
@@ -274,13 +280,16 @@ FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& 
 		}
 		gNamespaceRegistry.rollbackPublicationTransaction(namespace_depth);
 		rollbackLegacyTypeRegistryJournal(legacy_type_registry_depth);
+		if (parser_binding.parser != nullptr) {
+			parser_binding.discard(parser_binding.parser, parser_cursor_handle);
+		}
 		throw;
 	}
 
 	context.publication_transaction_depth_ = context_depth;
 	gFrontendPublicationJournalOwner = &context;
 	return FrontendPublicationJournalMark{context_depth, namespace_depth, legacy_type_registry_depth, context.scope_records_.size(),
-		gChunkedAnyStorage.size(), context.current_scope_id_};
+		gChunkedAnyStorage.size(), parser_binding.parser, parser_cursor_handle, context.current_scope_id_};
 }
 
 void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicationJournalMark mark) {
@@ -294,6 +303,15 @@ void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicat
 	}
 	gNamespaceRegistry.commitPublicationTransaction(mark.namespace_depth);
 	commitLegacyTypeRegistryJournal(mark.legacy_type_registry_depth);
+	if (mark.parser_cursor_journal != nullptr && mark.parser_cursor_handle != SIZE_MAX) {
+		for (auto it = context.parser_cursor_journals_.rbegin(); it != context.parser_cursor_journals_.rend(); ++it) {
+			if (it->parser != mark.parser_cursor_journal) {
+				continue;
+			}
+			it->discard(it->parser, mark.parser_cursor_handle);
+			break;
+		}
+	}
 	--context.publication_transaction_depth_;
 	if (context.publication_transaction_depth_ == 0) {
 		gFrontendPublicationJournalOwner = nullptr;
@@ -314,6 +332,15 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 	gNamespaceRegistry.rollbackPublicationTransaction(mark.namespace_depth);
 	rollbackLegacyTypeRegistryJournal(mark.legacy_type_registry_depth);
 	gChunkedAnyStorage.truncateTo(mark.legacy_ast_node_count);
+	if (mark.parser_cursor_journal != nullptr && mark.parser_cursor_handle != SIZE_MAX) {
+		for (auto it = context.parser_cursor_journals_.rbegin(); it != context.parser_cursor_journals_.rend(); ++it) {
+			if (it->parser != mark.parser_cursor_journal) {
+				continue;
+			}
+			it->restore(it->parser, mark.parser_cursor_handle);
+			break;
+		}
+	}
 	--context.publication_transaction_depth_;
 	if (context.publication_transaction_depth_ == 0) {
 		gFrontendPublicationJournalOwner = nullptr;

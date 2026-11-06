@@ -735,6 +735,75 @@ TEST_SUITE("FrontendContext") {
 		CHECK(gChunkedAnyStorage.size() == baseline + 1);
 	}
 
+	TEST_CASE("Frontend scratch transactions save and restore a bound parser cursor") {
+		struct CursorJournalState {
+			size_t next_handle = 0;
+			std::vector<size_t> restored;
+			std::vector<size_t> discarded;
+
+			static size_t save(void* state) {
+				return ++static_cast<CursorJournalState*>(state)->next_handle;
+			}
+			static void restore(void* state, size_t handle) {
+				static_cast<CursorJournalState*>(state)->restored.push_back(handle);
+			}
+			static void discard(void* state, size_t handle) {
+				static_cast<CursorJournalState*>(state)->discarded.push_back(handle);
+			}
+		};
+
+		FrontendContext context;
+		CursorJournalState journal;
+		context.bindParserCursorJournal(ParserCursorJournalBinding{&journal, &CursorJournalState::save,
+			&CursorJournalState::restore, &CursorJournalState::discard});
+		CHECK(context.parserCursorJournalCount() == 1u);
+		{
+			auto outer = context.beginScratchTransaction();
+			CHECK(journal.next_handle == 1u);
+			{
+				auto inner = context.beginScratchTransaction();
+				CHECK(journal.next_handle == 2u);
+				inner.commit();
+				REQUIRE(journal.discarded.size() == 1u);
+				CHECK(journal.discarded[0] == 2u);
+			}
+			outer.rollback();
+			REQUIRE(journal.restored.size() == 1u);
+			CHECK(journal.restored[0] == 1u);
+		}
+		{
+			auto committed = context.beginScratchTransaction();
+			CHECK(journal.next_handle == 3u);
+			committed.commit();
+			REQUIRE(journal.discarded.size() == 2u);
+			CHECK(journal.discarded[1] == 3u);
+			REQUIRE(journal.restored.size() == 1u);
+			CHECK(journal.restored[0] == 1u);
+		}
+		context.unbindParserCursorJournal(&journal);
+		CHECK(context.parserCursorJournalCount() == 0u);
+	}
+
+	TEST_CASE("Parser binds its cursor journal to the active FrontendContext") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("parser_cursor_journal_binding_test.cpp");
+		const std::string code = "int parser_cursor_journal_value;";
+		Lexer lexer(code);
+		SemanticAnalysis parser_sema(test_context, gSymbolTable);
+		CHECK(context.parserCursorJournalCount() == 0u);
+		{
+			Parser parser(lexer, test_context, parser_sema);
+			CHECK(context.parserCursorJournalCount() == 1u);
+		}
+		CHECK(context.parserCursorJournalCount() == 0u);
+	}
+
 	TEST_CASE("Frontend scratch transactions reject overlapping context journals") {
 		clearLegacyTypeTablesForTesting();
 		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });

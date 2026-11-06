@@ -135,8 +135,9 @@ struct EvalResult;
 namespace SemanticValidation {
 std::optional<StringHandle> findInvalidConcreteSizeofTypeOperand(const ASTNode& root);
 }
-
+class FrontendContext;
 class SemanticAnalysis;
+
 
 // RAII helper to execute a cleanup function on scope exit
 // Usage: ScopeGuard guard([&]() { cleanup(); });
@@ -574,6 +575,13 @@ public:
 #endif
 
 	explicit Parser(Lexer& lexer, CompileContext& context, SemanticAnalysis& semantic_analysis);
+	~Parser();
+
+	// Frontend transaction boundary. These preserve the lexer position, current
+	// token, and injected '>>' token without touching the parser's AST root list.
+	std::size_t saveParserCursor();
+	void restoreParserCursor(std::size_t handle);
+	void discardParserCursor(std::size_t handle);
 
 	ParseResult parse() {
 		resetTemplateInstantiationCounters();
@@ -766,6 +774,7 @@ private:
 	std::vector<ASTNode> pending_semantic_roots_;
 	std::unordered_set<const void*> pending_semantic_root_keys_;
 	SemanticAnalysis& semantic_analysis_;
+	FrontendContext* cursor_journal_context_ = nullptr;
 	TemplateEngine* templateEngine_ = nullptr;
 	std::vector<ASTNode> ast_discarded_nodes_;  // Keep discarded nodes alive to prevent memory corruption
 	std::string last_error_;
