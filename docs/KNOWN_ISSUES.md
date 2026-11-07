@@ -217,7 +217,9 @@ before `set_outer_template_bindings` rewrites them. Pre-existing
 base, nested-class, body-state, or identity rewrites and restore it before AST
 storage truncates. `FunctionDeclarationNode` owners snapshot parameters,
 referenced declaration metadata, definition, lookup context, mangled name, NTTP
-arguments, body state, and flags.
+arguments, body state, and flags. Standalone `DeclarationNode` and
+`EnumDeclarationNode` owners snapshot declaration, array, alignment, name,
+scope, enumerator, underlying-type, and identity rewrites.
 Other in-place rewrites of owners outside the type registry still need an owned
 rollback boundary before broad speculative parsing can rely on it. Existing
 `TypeInfo` rows reached

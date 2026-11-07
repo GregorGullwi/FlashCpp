@@ -14,6 +14,7 @@ class TypeSpecifierNode;
 class ConstructorDeclarationNode;
 class StructDeclarationNode;
 class EnumDeclarationNode;
+class DeclarationNode;
 class FrontendContext;
 namespace FlashCpp {
 struct StructuralClassValue;
@@ -3873,6 +3874,8 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 // do additional work (e.g. namespace-qualified registration).
 TypeCreationResult register_type_alias(StringHandle name, const TypeSpecifierNode& type_spec, NamespaceHandle ns = NamespaceHandle{});
 
+void journalDeclarationNodeRewrite(DeclarationNode& node);
+
 class DeclarationNode {
 public:
 	DeclarationNode() = default;
@@ -3895,12 +3898,24 @@ public:
 		: DeclarationNode(type_node.as<TypeSpecifierNode>(), std::move(identifier), std::move(array_dimensions)) {}
 
 	ASTNode type_node() const { return ASTNode(&type_node_); }
-	TypeSpecifierNode& type_specifier_node() { return type_node_; }
+	TypeSpecifierNode& type_specifier_node() {
+		journalDeclarationNodeRewrite(*this);
+		return type_node_;
+	}
 	const TypeSpecifierNode& type_specifier_node() const { return type_node_; }
-	void set_type_node(const TypeSpecifierNode& type_node) { type_node_ = type_node; }
+	void set_type_node(const TypeSpecifierNode& type_node) {
+		journalDeclarationNodeRewrite(*this);
+		type_node_ = type_node;
+	}
 	const Token& identifier_token() const { return identifier_; }
-	void set_identifier_token(Token token) { identifier_ = std::move(token); }
-	void set_qualified_declarator_owner(StringHandle owner) { qualified_declarator_owner_ = owner; }
+	void set_identifier_token(Token token) {
+		journalDeclarationNodeRewrite(*this);
+		identifier_ = std::move(token);
+	}
+	void set_qualified_declarator_owner(StringHandle owner) {
+		journalDeclarationNodeRewrite(*this);
+		qualified_declarator_owner_ = owner;
+	}
 	StringHandle qualified_declarator_owner() const { return qualified_declarator_owner_; }
 	bool has_qualified_declarator_owner() const { return qualified_declarator_owner_.isValid(); }
 	uint32_t line_number() const { return identifier_.line(); }
@@ -3947,32 +3962,52 @@ public:
 	// Multidimensional array support
 	std::span<const ASTNode> array_dimensions() const { return array_dimensions_; }
 	size_t array_dimension_count() const { return array_dimensions_.size(); }
-	void add_array_dimension(ASTNode dim) { array_dimensions_.push_back(dim); }
-	void set_array_dimensions(std::vector<ASTNode> dims) { array_dimensions_ = std::move(dims); }
+	void add_array_dimension(ASTNode dim) {
+		journalDeclarationNodeRewrite(*this);
+		array_dimensions_.push_back(dim);
+	}
+	void set_array_dimensions(std::vector<ASTNode> dims) {
+		journalDeclarationNodeRewrite(*this);
+		array_dimensions_ = std::move(dims);
+	}
 
 	// Unsized array support (e.g., int arr[] = {1, 2, 3})
 	bool is_unsized_array() const { return is_unsized_array_; }
-	void set_unsized_array(bool unsized) { is_unsized_array_ = unsized; }
+	void set_unsized_array(bool unsized) {
+		journalDeclarationNodeRewrite(*this);
+		is_unsized_array_ = unsized;
+	}
 	bool is_noreturn_attribute() const { return (attribute_flags_ & 1u) != 0; }
 	void set_noreturn_attribute(bool is_noreturn) {
+		journalDeclarationNodeRewrite(*this);
 		attribute_flags_ = static_cast<uint8_t>((attribute_flags_ & ~1u) | static_cast<uint8_t>(is_noreturn));
 	}
 
 	// Alignment support
 	size_t custom_alignment() const { return custom_alignment_; }
-	void set_custom_alignment(size_t alignment) { custom_alignment_ = alignment; }
+	void set_custom_alignment(size_t alignment) {
+		journalDeclarationNodeRewrite(*this);
+		custom_alignment_ = alignment;
+	}
 
 	// Parameter pack support (for variadic function templates)
 	bool is_parameter_pack() const { return is_parameter_pack_; }
-	void set_parameter_pack(bool is_pack) { is_parameter_pack_ = is_pack; }
+	void set_parameter_pack(bool is_pack) {
+		journalDeclarationNodeRewrite(*this);
+		is_parameter_pack_ = is_pack;
+	}
 
 	// Default value support (for function parameters with default arguments)
 	bool has_default_value() const { return default_value_.has_value(); }
 	const ASTNode& default_value() const { return default_value_.value(); }
-	void set_default_value(ASTNode value) { default_value_ = value; }
+	void set_default_value(ASTNode value) {
+		journalDeclarationNodeRewrite(*this);
+		default_value_ = value;
+	}
 
 	// Copies declaration metadata (excluding type node and identifier token).
 	void copyMetadataFrom(const DeclarationNode& other) {
+		journalDeclarationNodeRewrite(*this);
 		custom_alignment_ = other.custom_alignment_;
 		is_parameter_pack_ = other.is_parameter_pack_;
 		is_unsized_array_ = other.is_unsized_array_;
@@ -3984,14 +4019,20 @@ public:
 	}
 
 	// Pre-computed external symbol name support (e.g. GNU __asm__("symbol") labels)
-	void set_mangled_name(std::string_view name) { mangled_name_ = StringTable::getOrInternStringHandle(name); }
+	void set_mangled_name(std::string_view name) {
+		journalDeclarationNodeRewrite(*this);
+		mangled_name_ = StringTable::getOrInternStringHandle(name);
+	}
 	std::string_view mangled_name() const { return mangled_name_.view(); }
 	StringHandle mangled_name_handle() const { return mangled_name_; }
 	bool has_mangled_name() const { return mangled_name_.isValid(); }
 
 	// Lexical scope at which this declaration was registered in SymbolTable.
 	ScopeId lexical_scope_id() const { return lexical_scope_id_; }
-	void set_lexical_scope_id(ScopeId scope_id) { lexical_scope_id_ = scope_id; }
+	void set_lexical_scope_id(ScopeId scope_id) {
+		journalDeclarationNodeRewrite(*this);
+		lexical_scope_id_ = scope_id;
+	}
 	bool has_lexical_scope_id() const { return static_cast<bool>(lexical_scope_id_); }
 
 private:

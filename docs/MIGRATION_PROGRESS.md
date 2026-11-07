@@ -141,8 +141,10 @@ member, base, nested-class, body-state, or identity rewrite in a transaction
 segment and restore it before AST storage truncates. `FunctionDeclarationNode`
 owners likewise snapshot parameters, the referenced declaration metadata,
 definition, lookup context, mangled name, NTTP arguments, body state, and
-declaration flags. Other in-place rewrites of
-owners outside the type registry still need an owned publication boundary before
+declaration flags. Standalone `DeclarationNode` and `EnumDeclarationNode`
+owners snapshot their declaration state before type, array, alignment, name,
+scope, enumerator, underlying-type, and identity rewrites. Other in-place
+rewrites of owners outside the type registry still need an owned publication boundary before
 enabling a transaction around type-pack materialization. Required dependency instantiations
 must remain separate from that candidate-local transaction; blanket rollback
 would violate observable C++20 instantiation effects. Lockstep member and
@@ -465,7 +467,8 @@ These seed adjacent slices; the authoritative inventory is
   template arguments, current function/linkage, calling-convention state,
   pre-existing `QualifiedIdentifierNode` field rewrites, AST owner
   outer-template binding rewrites, and whole-declaration snapshots for
-  pre-existing `StructDeclarationNode` and `FunctionDeclarationNode` rewrites.
+  pre-existing `StructDeclarationNode`, `FunctionDeclarationNode`, standalone
+  `DeclarationNode`, and `EnumDeclarationNode` rewrites.
   Scope creation, cursor movement, and `ScopeRecord` publication roll back
   together after symbol-map undo. Nested commits stay
   provisional until the outer transaction commits; production speculative parsing

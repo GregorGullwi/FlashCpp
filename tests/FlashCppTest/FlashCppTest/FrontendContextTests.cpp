@@ -1169,6 +1169,97 @@ TEST_SUITE("FrontendContext") {
 		CHECK(owner.is_materialized());
 	}
 
+	TEST_CASE("Frontend scratch rollback restores standalone declaration and enum rewrites") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+
+		FrontendContext context;
+		ScratchTransactionParserFixture fixture(context);
+		const TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		const StringHandle baseline_qualified = StringTable::getOrInternStringHandle("frontend_tx_baseline_owner");
+		const StringHandle outer_qualified = StringTable::getOrInternStringHandle("frontend_tx_outer_owner");
+		const StringHandle inner_qualified = StringTable::getOrInternStringHandle("frontend_tx_inner_owner");
+		const StringHandle enum_name = StringTable::getOrInternStringHandle("frontend_tx_enum_owner");
+		ASTNode declaration_node = ASTNode::emplace_node<DeclarationNode>(
+			int_type, Token(Token::Type::Identifier, std::string_view("frontend_tx_declaration_owner"), 1, 1, 0));
+		DeclarationNode& declaration = declaration_node.as<DeclarationNode>();
+		ASTNode enum_node = ASTNode::emplace_node<EnumDeclarationNode>(enum_name, false);
+		EnumDeclarationNode& enum_declaration = enum_node.as<EnumDeclarationNode>();
+		ASTNode dimension = ASTNode::emplace_node<ExpressionNode>(
+			NumericLiteralNode(Token{}, uint64_t{4}, TypeCategory::Int, TypeQualifier::None, 32));
+		ASTNode enumerator = ASTNode::emplace_node<ExpressionNode>(
+			NumericLiteralNode(Token{}, uint64_t{3}, TypeCategory::Int, TypeQualifier::None, 32));
+		declaration.set_mangled_name("frontend_tx_baseline_declaration");
+		declaration.set_qualified_declarator_owner(baseline_qualified);
+		declaration.set_custom_alignment(4);
+		{
+			auto outer = context.beginScratchTransaction();
+			declaration.set_mangled_name("frontend_tx_outer_declaration");
+			declaration.set_qualified_declarator_owner(outer_qualified);
+			declaration.add_array_dimension(dimension);
+			declaration.set_custom_alignment(8);
+			declaration.set_parameter_pack(true);
+			enum_declaration.set_underlying_type(int_type);
+			enum_declaration.add_enumerator(enumerator);
+			enum_declaration.set_is_forward_declaration(true);
+			enum_declaration.set_entity_id(EntityId{21});
+			CHECK(declaration.mangled_name() == "frontend_tx_outer_declaration");
+			CHECK(declaration.qualified_declarator_owner() == outer_qualified);
+			CHECK(declaration.array_dimensions().size() == 1u);
+			CHECK(declaration.custom_alignment() == 8u);
+			CHECK(declaration.is_parameter_pack());
+			REQUIRE(enum_declaration.underlying_type().has_value());
+			CHECK(enum_declaration.enumerators().size() == 1u);
+			CHECK(enum_declaration.is_forward_declaration());
+			CHECK(enum_declaration.entity_id() == EntityId{21});
+			{
+				auto inner = context.beginScratchTransaction();
+				declaration.set_mangled_name("frontend_tx_inner_declaration");
+				declaration.set_qualified_declarator_owner(inner_qualified);
+				declaration.set_custom_alignment(16);
+				enum_declaration.set_is_forward_declaration(false);
+				enum_declaration.set_entity_id(EntityId{22});
+				CHECK(declaration.mangled_name() == "frontend_tx_inner_declaration");
+				CHECK(declaration.qualified_declarator_owner() == inner_qualified);
+				CHECK(declaration.custom_alignment() == 16u);
+				CHECK_FALSE(enum_declaration.is_forward_declaration());
+				CHECK(enum_declaration.entity_id() == EntityId{22});
+				inner.rollback();
+			}
+			CHECK(declaration.mangled_name() == "frontend_tx_outer_declaration");
+			CHECK(declaration.qualified_declarator_owner() == outer_qualified);
+			CHECK(declaration.array_dimensions().size() == 1u);
+			CHECK(declaration.custom_alignment() == 8u);
+			CHECK(declaration.is_parameter_pack());
+			CHECK(enum_declaration.is_forward_declaration());
+			CHECK(enum_declaration.entity_id() == EntityId{21});
+			outer.rollback();
+		}
+		CHECK(declaration.mangled_name() == "frontend_tx_baseline_declaration");
+		CHECK(declaration.qualified_declarator_owner() == baseline_qualified);
+		CHECK(declaration.array_dimensions().empty());
+		CHECK(declaration.custom_alignment() == 4u);
+		CHECK_FALSE(declaration.is_parameter_pack());
+		CHECK_FALSE(enum_declaration.underlying_type().has_value());
+		CHECK(enum_declaration.enumerators().empty());
+		CHECK_FALSE(enum_declaration.is_forward_declaration());
+		CHECK(enum_declaration.entity_id() == EntityId{});
+
+		{
+			auto transaction = context.beginScratchTransaction();
+			declaration.set_mangled_name("frontend_tx_committed_declaration");
+			enum_declaration.add_enumerator(enumerator);
+			enum_declaration.set_is_forward_declaration(true);
+			transaction.commit();
+		}
+		CHECK(declaration.mangled_name() == "frontend_tx_committed_declaration");
+		CHECK(enum_declaration.enumerators().size() == 1u);
+		CHECK(enum_declaration.is_forward_declaration());
+	}
+
 	TEST_CASE("Frontend scratch rollback restores in-place qualified identifier rewrites") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();
