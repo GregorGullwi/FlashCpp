@@ -2480,12 +2480,15 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, member->type_index.category(), member_size_bits));
 	}
 
-	// Build MemberLoadOp
+	// Build MemberLoadOp. A pointer member loads the pointer object. The pointee
+	// class stays on the ExprResult so the next arrow names that class.
+	const MemberValueLoad loaded = classifyMemberValueLoad(*member);
 	MemberLoadOp member_load;
 	member_load.result.value = result_var;
-	member_load.result.type_index = member->type_index;
-	member_load.result.setType(member->type_index.category());
-	member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)}; // Convert bytes to bits
+	if (!loaded.loads_pointer_value) {
+		member_load.result.type_index = member->type_index;
+	}
+	applyMemberValueLoad(member_load, *member, loaded);
 
 	// Set base object, member name, and offset — using unwrapped values when applicable
 	auto& effective_base = did_unwrap ? ultimate_base : base_object;
@@ -2588,8 +2591,10 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 								PointerDepth{member->pointer_depth}, ValueStorage::ContainsData);
 	}
 
-	return makeMemberResult(SizeInBits{member_size_bits}, result_var, member->type_index,
-							PointerDepth{member->pointer_depth}, ValueStorage::ContainsData);
+	const int result_bits = loaded.loads_pointer_value ? loaded.size_bits : member_size_bits;
+	const PointerDepth result_depth = loaded.loads_pointer_value ? loaded.pointer_depth : PointerDepth{member->pointer_depth};
+	const TypeIndex result_type = loaded.loads_pointer_value ? loaded.semantic_type : member->type_index;
+	return makeMemberResult(SizeInBits{result_bits}, result_var, result_type, result_depth, ValueStorage::ContainsData);
 }
 
 std::optional<size_t> AstToIr::calculateArraySize(const DeclarationNode& decl) {

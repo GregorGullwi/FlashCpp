@@ -52,6 +52,37 @@ bool isSideEffectFreeConstexprCandidateNode(const ASTNode& node) {
 bool isSideEffectFreeConstexprCandidate(const ExpressionNode& expr) {
 	return isSideEffectFreeConstexprCandidateNode(ASTNode(&expr));
 }
+
+}
+
+// C++20 [dcl.ptr], [expr.ref]: a pointer member's value is the pointer object.
+// The MemberLoad must be that pointer-sized integer. Leaving the pointee class
+// on the instruction makes conversion keep the member slot's address.
+MemberValueLoad classifyMemberValueLoad(const StructMember& member) {
+	MemberValueLoad shape;
+	const bool pointer_object = member.pointer_depth > 0 && !member.is_reference() && !member.is_array;
+	if (pointer_object) {
+		shape.loads_pointer_value = true;
+		shape.size_bits = POINTER_SIZE_BITS;
+		shape.pointer_depth = PointerDepth{member.pointer_depth};
+		shape.semantic_type = member.type_index;
+		return shape;
+	}
+	shape.size_bits = static_cast<int>(member.size * 8);
+	shape.semantic_type = is_struct_type(member.type_index.category()) ? member.type_index : TypeIndex{};
+	return shape;
+}
+
+void applyMemberValueLoad(MemberLoadOp& load, const StructMember& member, const MemberValueLoad& shape) {
+	if (shape.loads_pointer_value) {
+		load.result.type_index = TypeIndex{};
+		load.result.setType(TypeCategory::UnsignedLongLong);
+		load.result.ir_type = IrType::Integer;
+		load.result.size_in_bits = SizeInBits{shape.size_bits};
+		return;
+	}
+	load.result.setType(member.type_index.category());
+	load.result.size_in_bits = SizeInBits{shape.size_bits};
 }
 
 ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
@@ -776,8 +807,8 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					TempVar result_temp = var_counter.next();
 					MemberLoadOp member_load;
 					member_load.result.value = result_temp;
-					member_load.result.setType(member->type_index.category());
-					member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
+					const MemberValueLoad loaded = classifyMemberValueLoad(*member);
+					applyMemberValueLoad(member_load, *member, loaded);
 					member_load.object = *this_ptr;
 					member_load.member_name = member->getName();
 					member_load.offset = static_cast<int>(result->adjusted_offset);
@@ -796,8 +827,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 						LValueInfo reference_lvalue_info(LValueInfo::Kind::Indirect, result_temp, 0);
 						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info, TypeCategory::Invalid, 0));
 					}
-					TypeIndex type_index = (is_struct_type(member->type_index.category())) ? member->type_index : TypeIndex{};
-					return makeIdentifierResult(member->memberType(), static_cast<int>(member->size * 8), result_temp, type_index);
+					return makeIdentifierResult(member->memberType(), loaded.size_bits, result_temp, loaded.semantic_type, loaded.pointer_depth);
 				}
 			}
 		}
@@ -817,13 +847,16 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					TempVar result_temp = var_counter.next();
 					MemberLoadOp member_load;
 					member_load.result.value = result_temp;
-					member_load.result.setType(member->type_index.category());
-					member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
+					const MemberValueLoad loaded = classifyMemberValueLoad(*member);
+					applyMemberValueLoad(member_load, *member, loaded);
 					member_load.object = StringTable::getOrInternStringHandle("this");
 					member_load.member_name = member->getName();
 					member_load.offset = static_cast<int>(result->adjusted_offset);
 					member_load.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					member_load.struct_type_info = nullptr;
+					if (loaded.loads_pointer_value) {
+						member_load.is_pointer_to_member = true;
+					}
 					ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 					LValueInfo lvalue_info(
 						LValueInfo::Kind::Member,
@@ -836,8 +869,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 						LValueInfo reference_lvalue_info(LValueInfo::Kind::Indirect, result_temp, 0);
 						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info, TypeCategory::Invalid, 0));
 					}
-					TypeIndex type_index = (is_struct_type(member->type_index.category())) ? member->type_index : TypeIndex{};
-					return makeIdentifierResult(member->memberType(), static_cast<int>(member->size * 8), result_temp, type_index);
+					return makeIdentifierResult(member->memberType(), loaded.size_bits, result_temp, loaded.semantic_type, loaded.pointer_depth);
 				}
 			}
 		}
@@ -984,14 +1016,16 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					TempVar result_temp = var_counter.next();
 					MemberLoadOp member_load;
 					member_load.result.value = result_temp;
-					member_load.result.setType(member->type_index.category());
-					member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
+					const MemberValueLoad loaded = classifyMemberValueLoad(*member);
+					applyMemberValueLoad(member_load, *member, loaded);
 					member_load.object = StringTable::getOrInternStringHandle("this");  // implicit this pointer
 					member_load.member_name = member->getName();
 					member_load.offset = static_cast<int>(result.adjusted_offset);
 					member_load.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					member_load.struct_type_info = nullptr;
-
+					if (loaded.loads_pointer_value) {
+						member_load.is_pointer_to_member = true;
+					}
 					ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 
 						// Mark as lvalue with member metadata for unified assignment handler
@@ -1010,8 +1044,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info, TypeCategory::Invalid, 0));
 					}
 
-					TypeIndex type_index = (is_struct_type(member->type_index.category())) ? member->type_index : TypeIndex{};
-					return makeIdentifierResult(member->memberType(), static_cast<int>(member->size * 8), result_temp, type_index);
+					return makeIdentifierResult(member->memberType(), loaded.size_bits, result_temp, loaded.semantic_type, loaded.pointer_depth);
 				}
 
 					// Check if this identifier is a static member
@@ -2056,8 +2089,8 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 						TempVar result_temp = var_counter.next();
 						MemberLoadOp member_load;
 						member_load.result.value = result_temp;
-						member_load.result.setType(member->type_index.category());
-						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
+						const MemberValueLoad loaded = classifyMemberValueLoad(*member);
+						applyMemberValueLoad(member_load, *member, loaded);
 						member_load.object = StringTable::getOrInternStringHandle("this");
 						member_load.member_name = member->getName();
 						member_load.offset = static_cast<int>(mr.adjusted_offset);
@@ -2080,10 +2113,9 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 						} else {
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 						}
-						TypeIndex type_index = is_struct_type(member->type_index.category()) ? member->type_index : TypeIndex{};
-						return makeExprResult(type_index.withCategory(member->memberType()),
-							SizeInBits{static_cast<int>(member->size * 8)}, IrOperand{result_temp},
-							PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(loaded.semantic_type.withCategory(member->memberType()),
+							SizeInBits{loaded.size_bits}, IrOperand{result_temp},
+							loaded.pointer_depth, ValueStorage::ContainsData);
 					}
 				}
 			}

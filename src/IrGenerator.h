@@ -188,6 +188,18 @@ enum class ExpressionContext {
 
 // Named constants for ABI-specific values used throughout code generation
 static constexpr int POINTER_SIZE_BITS = 64;
+
+// Runtime shape of a non-static data member load. Pointer objects load as
+// pointer-sized integers; the pointee type stays on the ExprResult.
+struct MemberValueLoad {
+	bool loads_pointer_value = false;
+	int size_bits = 0;
+	PointerDepth pointer_depth{};
+	TypeIndex semantic_type{};
+};
+
+MemberValueLoad classifyMemberValueLoad(const StructMember& member);
+void applyMemberValueLoad(MemberLoadOp& load, const StructMember& member, const MemberValueLoad& shape);
 static constexpr int SYSV_STRUCT_RETURN_THRESHOLD = 128;	 // Linux/SysV ABI: structs > 16 bytes returned via hidden pointer
 static constexpr int WIN64_STRUCT_RETURN_THRESHOLD = 64;	 // Windows x64: structs > 8 bytes returned via hidden pointer
 
