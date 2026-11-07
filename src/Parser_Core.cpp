@@ -796,6 +796,9 @@ std::size_t Parser::saveParserCursor() {
 	checkpoint.struct_parsing_context_count = struct_parsing_context_stack_.size();
 	checkpoint.current_function = current_function_;
 	checkpoint.linkage = current_linkage_;
+	checkpoint.class_template_pack_stack_count = class_template_pack_stack_.size();
+	checkpoint.lambda_capture_stack_count = lambda_capture_stack_.size();
+	checkpoint.calling_convention = last_calling_convention_;
 	if (!member_function_context_stack_.empty()) {
 		const MemberFunctionContext& context = member_function_context_stack_.back();
 		checkpoint.member_function_context_top_name = context.struct_name;
@@ -809,7 +812,14 @@ std::size_t Parser::saveParserCursor() {
 		checkpoint.struct_parsing_context_top_namespace = context.namespace_handle;
 	}
 	try {
-		frontend_publication_checkpoints_.push_back(checkpoint);
+		checkpoint.pending_explicit_template_args = pending_explicit_template_args_;
+		if (!class_template_pack_stack_.empty()) {
+			checkpoint.class_template_pack_stack_top = class_template_pack_stack_.back();
+		}
+		if (!lambda_capture_stack_.empty()) {
+			checkpoint.lambda_capture_stack_top = lambda_capture_stack_.back();
+		}
+		frontend_publication_checkpoints_.push_back(std::move(checkpoint));
 	} catch (...) {
 		discard_saved_token(handle);
 		throw;
@@ -851,10 +861,39 @@ void Parser::validateParserPublicationContexts(std::size_t handle, bool rollback
 			throw InternalError("Parser: struct parsing context prefix changed during publication");
 		}
 	}
+	if (class_template_pack_stack_.size() < checkpoint.class_template_pack_stack_count ||
+		lambda_capture_stack_.size() < checkpoint.lambda_capture_stack_count) {
+		throw InternalError("Parser: parser artifact stacks moved before their publication checkpoint");
+	}
+	if (checkpoint.class_template_pack_stack_count != 0) {
+		const std::vector<ClassTemplatePackInfo>& top = class_template_pack_stack_[checkpoint.class_template_pack_stack_count - 1];
+		if (top.size() != checkpoint.class_template_pack_stack_top.size()) {
+			throw InternalError("Parser: class template pack prefix changed during publication");
+		}
+		for (size_t index = 0; index < top.size(); ++index) {
+			if (top[index].pack_name != checkpoint.class_template_pack_stack_top[index].pack_name ||
+				top[index].pack_size != checkpoint.class_template_pack_stack_top[index].pack_size) {
+				throw InternalError("Parser: class template pack prefix changed during publication");
+			}
+		}
+	}
+	if (checkpoint.lambda_capture_stack_count != 0) {
+		if (!checkpoint.lambda_capture_stack_top.has_value() ||
+			lambda_capture_stack_[checkpoint.lambda_capture_stack_count - 1] != *checkpoint.lambda_capture_stack_top) {
+			throw InternalError("Parser: lambda capture prefix changed during publication");
+		}
+	}
 	if (!rollback) {
+		const bool pending_args_match = pending_explicit_template_args_.has_value() ==
+			checkpoint.pending_explicit_template_args.has_value() &&
+			(!pending_explicit_template_args_.has_value() ||
+				pending_explicit_template_args_->size() == checkpoint.pending_explicit_template_args->size());
 		if (member_function_context_stack_.size() != checkpoint.member_function_context_count ||
 			struct_parsing_context_stack_.size() != checkpoint.struct_parsing_context_count ||
-			current_function_ != checkpoint.current_function || current_linkage_ != checkpoint.linkage) {
+			class_template_pack_stack_.size() != checkpoint.class_template_pack_stack_count ||
+			lambda_capture_stack_.size() != checkpoint.lambda_capture_stack_count || current_function_ != checkpoint.current_function ||
+			current_linkage_ != checkpoint.linkage || last_calling_convention_ != checkpoint.calling_convention ||
+			!pending_args_match) {
 			throw InternalError("Parser: parse context changed before publication commit");
 		}
 	}
@@ -890,7 +929,7 @@ void Parser::validateParserPublicationRollback(std::size_t handle) const {
 
 void Parser::rollbackParserPublication(std::size_t handle) {
 	validateParserPublicationRollback(handle);
-	const FrontendPublicationCheckpoint& checkpoint = frontend_publication_checkpoints_.back();
+	FrontendPublicationCheckpoint& checkpoint = frontend_publication_checkpoints_.back();
 	const SavedToken& saved = *saved_tokens_[handle];
 	while (pending_semantic_roots_.size() > saved.pending_semantic_roots_size_) {
 		const void* key = pending_semantic_roots_.back().raw_pointer();
@@ -917,8 +956,16 @@ void Parser::rollbackParserPublication(std::size_t handle) {
 	while (struct_parsing_context_stack_.size() > checkpoint.struct_parsing_context_count) {
 		struct_parsing_context_stack_.pop_back();
 	}
+	while (class_template_pack_stack_.size() > checkpoint.class_template_pack_stack_count) {
+		class_template_pack_stack_.pop_back();
+	}
+	while (lambda_capture_stack_.size() > checkpoint.lambda_capture_stack_count) {
+		lambda_capture_stack_.pop_back();
+	}
 	current_function_ = checkpoint.current_function;
 	current_linkage_ = checkpoint.linkage;
+	last_calling_convention_ = checkpoint.calling_convention;
+	pending_explicit_template_args_ = std::move(checkpoint.pending_explicit_template_args);
 }
 
 void Parser::discardParserCursor(std::size_t handle) {

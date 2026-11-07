@@ -870,19 +870,22 @@ ParseResult Parser::parse_lambda_expression() {
 	}
 
 	// Push explicit captures onto the stack so createBoundIdentifier() can classify them.
+	ParseResult body_result;
 	{
-		std::unordered_map<StringHandle, LambdaCaptureNode::CaptureKind> capture_map;
-		for (const auto& capture : captures) {
-			if (capture.kind() == LambdaCaptureNode::CaptureKind::ByValue ||
-				capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
-				capture_map[capture.identifier_token().handle()] = capture.kind();
+		LambdaCaptureStackGuard capture_stack_guard(lambda_capture_stack_);
+		{
+			std::unordered_map<StringHandle, LambdaCaptureNode::CaptureKind> capture_map;
+			for (const auto& capture : captures) {
+				if (capture.kind() == LambdaCaptureNode::CaptureKind::ByValue ||
+					capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
+					capture_map[capture.identifier_token().handle()] = capture.kind();
+				}
+				// AllByValue, AllByReference, This, CopyThis are not identifier-based; skip here.
 			}
-			// AllByValue, AllByReference, This, CopyThis are not identifier-based; skip here.
+			capture_stack_guard.push(std::move(capture_map));
 		}
-		lambda_capture_stack_.push_back(std::move(capture_map));
+		body_result = parse_block();
 	}
-	ParseResult body_result = parse_block();
-	lambda_capture_stack_.pop_back();
 
 	// Remove parameters from symbol table after parsing body
 	gSymbolTable.exit_scope();

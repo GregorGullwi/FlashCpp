@@ -51,10 +51,85 @@ public:
 		parser.current_linkage_ = linkage;
 	}
 
+	size_t classTemplatePackDepthForTest() const {
+		return parser.class_template_pack_stack_.size();
+	}
+
+	size_t lambdaCaptureDepthForTest() const {
+		return parser.lambda_capture_stack_.size();
+	}
+
+	size_t classTemplatePackSizeForTest(size_t stack_index, size_t pack_index) const {
+		return parser.class_template_pack_stack_[stack_index][pack_index].pack_size;
+	}
+
+	bool lambdaCaptureContainsForTest(
+		size_t stack_index, StringHandle name, LambdaCaptureNode::CaptureKind kind) const {
+		const auto& captures = parser.lambda_capture_stack_[stack_index];
+		const auto found = captures.find(name);
+		return found != captures.end() && found->second == kind;
+	}
+
+	void pushClassTemplatePackForTest(std::string_view pack_name, size_t pack_size) {
+		parser.class_template_pack_stack_.push_back({Parser::ClassTemplatePackInfo{pack_name, pack_size}});
+	}
+
+	void pushLambdaCaptureForTest(StringHandle name, LambdaCaptureNode::CaptureKind kind) {
+		Parser::LambdaCaptureBindings captures;
+		captures.emplace(name, kind);
+		parser.lambda_capture_stack_.push_back(std::move(captures));
+	}
+
+	void openClassTemplatePackGuardForTest(std::string_view pack_name, size_t pack_size) {
+		class_pack_guard_for_test_.emplace(parser.class_template_pack_stack_);
+		class_pack_guard_for_test_->push({Parser::ClassTemplatePackInfo{pack_name, pack_size}});
+	}
+
+	void closeClassTemplatePackGuardForTest() {
+		class_pack_guard_for_test_.reset();
+	}
+
+	void openLambdaCaptureGuardForTest(StringHandle name, LambdaCaptureNode::CaptureKind kind) {
+		lambda_capture_guard_for_test_.emplace(parser.lambda_capture_stack_);
+		Parser::LambdaCaptureBindings captures;
+		captures.emplace(name, kind);
+		lambda_capture_guard_for_test_->push(std::move(captures));
+	}
+
+	void closeLambdaCaptureGuardForTest() {
+		lambda_capture_guard_for_test_.reset();
+	}
+
+	void setPendingTemplateArgsForTest(TemplateArgumentVector args) {
+		parser.pending_explicit_template_args_.emplace(std::move(args));
+	}
+
+	bool hasPendingTemplateArgsForTest() const {
+		return parser.pending_explicit_template_args_.has_value();
+	}
+
+	size_t pendingTemplateArgCountForTest() const {
+		return parser.pending_explicit_template_args_->size();
+	}
+
+	int64_t pendingTemplateArgValueForTest(size_t index) const {
+		return (*parser.pending_explicit_template_args_)[index].value;
+	}
+
+	CallingConvention callingConventionForTest() const {
+		return parser.last_calling_convention_;
+	}
+
+	void setCallingConventionForTest(CallingConvention convention) {
+		parser.last_calling_convention_ = convention;
+	}
+
 	CompileContext compile_context;
 	Lexer lexer;
 	SemanticAnalysis semantic_analysis;
 	Parser parser;
+	std::optional<Parser::ClassTemplatePackGuard> class_pack_guard_for_test_;
+	std::optional<Parser::LambdaCaptureStackGuard> lambda_capture_guard_for_test_;
 };
 
 } // namespace FlashCpp::Tests
