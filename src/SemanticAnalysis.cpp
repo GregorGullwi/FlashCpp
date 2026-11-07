@@ -795,9 +795,9 @@ std::optional<UserDefinedConversionOperatorSelection> trySelectCanonicalImplicit
 	return selected_conversion;
 }
 
-// Re-export a structural pointer or array so TypeContext::intern's flat refresh
-// republishes this identity. Intern drops a PublishedPointerArray id and rebuilds
-// it from the flat fields; those fields have to be the result, not the operand.
+// Re-export a structural result so TypeContext::intern's flat refresh can
+// republish pointer/array identities. Scalar results keep their adopted id.
+// The compatibility fields must describe the result, not the operand.
 CanonicalTypeDesc adoptPublishedStructuralType(CanonicalTypeDesc desc, TypeId structural_id) {
 	desc.structural_type_id = structural_id;
 	desc.ref_qualifier = ReferenceQualifier::None;
@@ -828,6 +828,12 @@ CanonicalTypeDesc adoptPublishedStructuralType(CanonicalTypeDesc desc, TypeId st
 		}
 	}
 	desc.has_unsized_outer_array_dimension = projected.has_unsized_outer_array_dimension();
+	// Scalar pointees have no pointer/array projection to refresh. Retain the
+	// adopted identity: intern would otherwise drop it without republishing it.
+	if (desc.pointer_levels.empty() && desc.array_dimensions.empty() && !desc.pointee_array_declarator &&
+		!desc.has_unsized_outer_array_dimension) {
+		desc.flags = clearFlag(desc.flags, CanonicalTypeFlags::PublishedPointerArray);
+	}
 	return desc;
 }
 
@@ -1549,11 +1555,10 @@ void dropPublishedPointerArrayIdentity(CanonicalTypeDesc& desc) {
 std::optional<CanonicalTypeDesc> canonicalBuiltinIndirection(CanonicalTypeDesc operand) {
 	const TypeId operand_type = resolveUnaryOperandStructuralType(operand);
 	if (!operand_type) {
-		// A nested class of a primary instantiation imports as a nested record
-		// under that specialization. A dependent pattern, or an instantiation
-		// whose owner cannot be imported, still denotes one pointer object, so
-		// pop that level. An array object has no pointer level; its element
-		// identity is the canonical peel, so a missing id stays a publication defect.
+		// Only an operand with no publishable identity reaches this compatibility
+		// peel. A dependent pattern or an instantiation whose owner cannot be
+		// imported still denotes one pointer object. An array object's element
+		// identity needs the canonical peel, so a missing id stays a publication defect.
 		if (!operand.pointer_levels.empty()) {
 			operand.ref_qualifier = ReferenceQualifier::None;
 			dropPublishedPointerArrayIdentity(operand);

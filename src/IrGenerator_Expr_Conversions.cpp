@@ -2004,6 +2004,16 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		// Address-of operator: &x
 		// Get the current pointer depth from operandIrOperands
 		unsigned long long operand_ptr_depth = static_cast<unsigned long long>(operandIrOperands.pointer_depth.value);
+		if (operandType == TypeCategory::FunctionPointer && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+			const auto slot = sema_.getSlot(&unaryOperatorNode.get_operand().as<ExpressionNode>());
+			if (slot.has_value() && slot->has_type()) {
+				const TypeId type = sema_.typeContext().get(slot->type_id).structural_type_id;
+				CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+				if (type && table.node(canonicalTypeWithoutReference(table, type)).kind == CanonicalTypeKind::Function) {
+					return operandIrOperands;
+				}
+			}
+		}
 		if (operandType == TypeCategory::FunctionPointer &&
 			operandIrOperands.storage == ValueStorage::ContainsAddress) {
 			return operandIrOperands;
@@ -2171,6 +2181,14 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		if (operand_decl_type != nullptr) {
 			sema_deref_result = sema_.builtinDereferenceResultType(*operand_decl_type);
 			if (sema_deref_result.has_value()) {
+				CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+				const CanonicalTypeImport imported = importCanonicalType(table, *sema_deref_result);
+				if (imported.status == CanonicalTypeImportStatus::Supported && table.node(imported.type).kind == CanonicalTypeKind::Function) {
+					// [expr.unary.op]: a function pointee is a designator. Its value
+					// is the callable address; functions have no object size or load.
+					return makeExprResult(nativeTypeIndex(TypeCategory::FunctionPointer), SizeInBits{POINTER_SIZE_BITS},
+						operandIrOperands.value, PointerDepth{}, ValueStorage::ContainsData);
+				}
 				const int result_size_bits = getTypeSpecSizeBits(*sema_deref_result);
 				if (result_size_bits <= 0) {
 					throw InternalError("Dereference result type has no concrete object size");
