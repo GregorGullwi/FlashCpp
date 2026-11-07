@@ -21,8 +21,6 @@ constexpr size_t kSyntheticTokenFileIndex = 0;
 constexpr std::string_view kNestedTypeAliasName = "type";
 constexpr size_t kInitializerListBeginMemberIndex = 0;
 constexpr size_t kInitializerListEndOrSizeMemberIndex = 1;
-constexpr const char* kMemberFunctionMaterializationLookupOp = "member function materialization lookup";
-constexpr const char* kMemberFunctionMaterializationReplayOp = "member function materialization replay";
 constexpr size_t kMaxReferenceAliasChainDepth = 8;
 
 inline const std::unordered_map<std::string_view, EvalResult>& emptyEvalBindings() {

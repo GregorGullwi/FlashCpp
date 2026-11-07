@@ -46,6 +46,10 @@ struct CallInfo;
 class SemanticAnalysis;
 class PostParseSemanticNormalizer;
 
+namespace ConstExpr {
+struct EvaluationContext;
+}
+
 namespace AggregateElements {
 struct Element;
 }
@@ -497,6 +501,7 @@ public:
 
 private:
 	friend class ParserSemanticServices;
+	friend struct ConstExpr::EvaluationContext;
 	friend class PostParseSemanticNormalizer;
 	void checkUnaryArithmeticOperator(const UnaryOperatorNode& unary_node);
 

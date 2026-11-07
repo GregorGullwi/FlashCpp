@@ -36,10 +36,7 @@ bool Evaluator::tryCollectConstexprOverloadResolutionArgTypes(
 	arg_types_out.clear();
 	arg_types_out.reserve(arguments.size());
 
-	auto sema_services =
-		context
-			.requireParserAttachedSema(kMemberFunctionMaterializationLookupOp)
-			.parserSemanticServices();
+	auto sema_services = context.semanticAnalysis().parserSemanticServices();
 	for (const ASTNode& argument : arguments) {
 		std::optional<TypeSpecifierNode> arg_type =
 			sema_services.getOverloadResolutionArgType(argument);
@@ -525,10 +522,8 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 				context,
 				mutable_bindings);
 		}
-		// POI resolution requires parser-owned context. Missing parser/sema is a
-		// contract violation and must hard-fail.
-		SemanticAnalysis& sema_ref =
-			context.requireParserOwnedSema("dependent unqualified member call POI resolution");
+		// Resolve point-of-instantiation queries through this context's semantic owner.
+		SemanticAnalysis& sema_ref = context.semanticAnalysis();
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
 		auto sema_services = sema_ref.parserSemanticServices();
@@ -555,7 +550,7 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 			break;
 		}
 		// Sema query was absent or not yet analyzed — fall back to parser POI lookup.
-		Parser& parser = *context.parser;
+		Parser& parser = context.parser;
 		std::vector<TypeSpecifierNode> arg_types;
 		if (!parser.tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
 			return EvalResult::error(
@@ -600,7 +595,7 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 
 	auto symbol_opt = lookup_function_symbol(call_expr, func_name, *context.symbols);
 	if (!symbol_opt.has_value()) {
-		if (call_expr.has_template_arguments() && context.parser) {
+		if (call_expr.has_template_arguments()) {
 			auto var_result = tryEvaluateAsVariableTemplate(func_name, call_expr, context);
 			if (var_result.success()) {
 				return var_result;
@@ -1231,10 +1226,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	}
 
 	StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
-	auto lookup_sema_services =
-		context
-			.requireParserAttachedSema(kMemberFunctionMaterializationLookupOp)
-			.parserSemanticServices();
+	auto lookup_sema_services = context.semanticAnalysis().parserSemanticServices();
 	lookup_sema_services.ensureMemberFunctionMaterialized(
 		bound_struct_info->name,
 		func_name_handle,
@@ -1355,10 +1347,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 			if (!actual_func->parent_struct_name().empty()) {
 				owner_name = StringTable::getOrInternStringHandle(actual_func->parent_struct_name());
 			}
-			auto replay_sema_services =
-				context
-					.requireParserAttachedSema(kMemberFunctionMaterializationReplayOp)
-					.parserSemanticServices();
+			auto replay_sema_services = context.semanticAnalysis().parserSemanticServices();
 			if (std::optional<ASTNode> refreshed =
 					replay_sema_services.ensureMemberFunctionMaterialized(owner_name, *actual_func);
 				refreshed.has_value() && refreshed->is<FunctionDeclarationNode>()) {
@@ -2081,11 +2070,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 	// Phase 5 Slice D: route lazy member-function materialization through the
 	// sema-owned helper so the evaluator no longer drives the
 	// instantiate/normalize/mark bookkeeping directly.
-	context
-		.requireParserAttachedSema(kMemberFunctionMaterializationLookupOp)
-		.parserSemanticServices()
-		.ensureMemberFunctionMaterialized(
-			context.struct_info->name, function_name_handle, std::nullopt);
+	context.semanticAnalysis().parserSemanticServices().ensureMemberFunctionMaterialized(context.struct_info->name, function_name_handle, std::nullopt);
 
 	auto findConstAwareCurrentStructCandidate =
 		[&](const StructTypeInfo* target_struct, bool detect_ambiguity) -> ResolvedMemberFunctionCandidate {
@@ -2108,10 +2093,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 		if (!result.function->parent_struct_name().empty()) {
 			owner_name = StringTable::getOrInternStringHandle(result.function->parent_struct_name());
 		}
-		context
-			.requireParserAttachedSema(kMemberFunctionMaterializationReplayOp)
-			.parserSemanticServices()
-			.ensureMemberFunctionMaterialized(owner_name, *result.function);
+		context.semanticAnalysis().parserSemanticServices().ensureMemberFunctionMaterialized(owner_name, *result.function);
 		result = findConstAwareCurrentStructCandidate(
 			context.struct_info,
 			detect_ambiguity_in_current_struct);

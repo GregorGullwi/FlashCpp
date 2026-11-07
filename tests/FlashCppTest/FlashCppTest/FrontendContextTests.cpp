@@ -7,6 +7,37 @@
 #include "doctest.h"
 
 TEST_SUITE("FrontendContext") {
+	TEST_CASE("Constexpr evaluation handles a manually built 64-level binary expression") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+
+		CompileContext compile_context;
+		const std::string code;
+		Lexer lexer(code);
+		SemanticAnalysis sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		ASTNode expression = ASTNode::emplace_node<ExpressionNode>(NumericLiteralNode(Token{}, uint64_t{0}, TypeCategory::Int, TypeQualifier::None, 32));
+		const Token plus_token(Token::Type::Operator, std::string_view("+"), 1, 1, 0);
+		for (uint64_t i = 0; i < 64; ++i) {
+			const ASTNode operand = ASTNode::emplace_node<ExpressionNode>(
+				NumericLiteralNode(Token{}, uint64_t{1}, TypeCategory::Int, TypeQualifier::None, 32));
+			expression = ASTNode::emplace_node<ExpressionNode>(BinaryOperatorNode(plus_token, expression, operand));
+		}
+
+		ConstExpr::EvaluationContext context(gSymbolTable, sema);
+		const ConstExpr::EvalResult result = ConstExpr::Evaluator::evaluate(expression, context);
+		REQUIRE(result.success());
+		CHECK(result.as_int() == 64);
+		CHECK(context.evaluation_depth == 0u);
+		CHECK(context.current_depth == 0u);
+		CHECK(context.step_count >= 64u);
+	}
+
 	TEST_CASE("Dependent expression batches roll back a late publication failure") {
 		FrontendContext context;
 		auto& expressions = context.dependentExpressions();

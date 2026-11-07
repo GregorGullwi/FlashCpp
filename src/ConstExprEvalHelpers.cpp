@@ -516,10 +516,7 @@ std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(
 			}
 		}
 	}
-	const bool can_try_dependent_expression_substitution =
-		dependent_arg.is_value &&
-		dependent_arg.dependent_expr.has_value() &&
-		context.parser != nullptr;
+	const bool can_try_dependent_expression_substitution = dependent_arg.is_value && dependent_arg.dependent_expr.has_value();
 	if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
 		FLASH_LOG(ConstExpr, Debug, "trySubstituteDependentTemplateArgForLookup: is_value=", dependent_arg.is_value,
 			", is_dependent=", dependent_arg.is_dependent,
@@ -588,7 +585,7 @@ std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(
 			evaluation_environment = select_lookup_environment();
 		}
 		if (evaluation_environment != nullptr) {
-			Parser& parser = *context.parser;
+			Parser& parser = context.parser;
 			ExpressionSubstitutor substitutor(*evaluation_environment, parser);
 			ASTNode substituted_expr = substitutor.substitute(*dependent_arg.dependent_expr);
 			auto saved_template_environment = context.template_environment;
@@ -611,11 +608,8 @@ std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(
 	}
 
 	if (!resolved_binding.has_value()) {
-		if (lookup_name.isValid() &&
-			owner_type_info != nullptr &&
-			owner_type_info->isTemplateInstantiation() &&
-			context.parser != nullptr) {
-			Parser& parser = *context.parser;
+		if (lookup_name.isValid() && owner_type_info != nullptr && owner_type_info->isTemplateInstantiation()) {
+			Parser& parser = context.parser;
 			TemplateParameterVector owner_template_params =
 				getTemplateParametersForTypeInfo(*owner_type_info, parser);
 			const size_t owner_pair_count = std::min(

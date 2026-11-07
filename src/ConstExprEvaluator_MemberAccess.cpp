@@ -141,10 +141,6 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 
 	auto tryInstantiateQualifiedMemberVariableTemplate =
 		[&](const TypeInfo* lookup_owner_type) -> std::optional<EvalResult> {
-		if (context.parser == nullptr) {
-			return std::nullopt;
-		}
-
 		QualifiedVariableTemplateArgsResult template_arg_result =
 			collectQualifiedVariableTemplateArgs(lookup_owner_type);
 		if (template_arg_result.error.has_value()) {
@@ -157,7 +153,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 		std::vector<TemplateTypeArg>& template_args =
 			template_arg_result.template_args;
 
-		Parser& parser = *context.parser;
+		Parser& parser = context.parser;
 		StringHandle owner_handle{};
 		if (lookup_owner_type != nullptr && lookup_owner_type->name().isValid()) {
 			owner_handle = lookup_owner_type->name();
@@ -245,7 +241,6 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 			}
 			auto materializeOwnerMemberChainPrefix = [&](StringHandle owner_handle) -> StringHandle {
 				if (!owner_handle.isValid() ||
-					context.parser == nullptr ||
 					dependent_record->member_chain.size() <= 1) {
 					return owner_handle;
 				}
@@ -297,9 +292,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				}
 
 				const TypeInfo* resolved_owner_type =
-					context.parser->resolveBaseClassMemberTypeChain(
-						StringTable::getStringView(owner_handle),
-						member_type_chain);
+					context.parser.resolveBaseClassMemberTypeChain(StringTable::getStringView(owner_handle), member_type_chain);
 				if (resolved_owner_type == nullptr &&
 					context.struct_info != nullptr &&
 					!context.struct_info->base_classes.empty()) {
@@ -313,10 +306,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 							!base_type_info->name().isValid()) {
 							continue;
 						}
-						resolved_owner_type =
-							context.parser->resolveBaseClassMemberTypeChain(
-								StringTable::getStringView(base_type_info->name()),
-								member_type_chain);
+						resolved_owner_type = context.parser.resolveBaseClassMemberTypeChain(StringTable::getStringView(base_type_info->name()), member_type_chain);
 						if (resolved_owner_type != nullptr) {
 							break;
 						}
@@ -332,17 +322,14 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				if (owner_arg.is_value || owner_arg.is_dependent) {
 					return {};
 				}
-				if (context.parser != nullptr) {
-					Parser::AliasTemplateMaterializationResult canonical_owner =
-						context.parser->templateEngine().materializeCanonicalOwnerTypeForLookup(owner_arg);
-					if (canonical_owner.canonicalNameHandle().isValid()) {
-						return canonical_owner.canonicalNameHandle();
-					}
-					if (canonical_owner.resolved_type_info != nullptr &&
-						canonical_owner.resolved_type_info->name().isValid()) {
-						return canonical_owner.resolved_type_info->name();
-					}
+				Parser::AliasTemplateMaterializationResult canonical_owner = context.parser.templateEngine().materializeCanonicalOwnerTypeForLookup(owner_arg);
+				if (canonical_owner.canonicalNameHandle().isValid()) {
+					return canonical_owner.canonicalNameHandle();
 				}
+				if (canonical_owner.resolved_type_info != nullptr && canonical_owner.resolved_type_info->name().isValid()) {
+					return canonical_owner.resolved_type_info->name();
+				}
+
 				if (owner_arg.type_index.is_valid()) {
 					if (const TypeInfo* owner_type_info = tryGetTypeInfo(owner_arg.type_index);
 						owner_type_info != nullptr && owner_type_info->name().isValid()) {
@@ -362,17 +349,12 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					}
 				}
 				if (dependent_record->owner_name.isValid()) {
-					if (context.parser != nullptr) {
-						Parser::ResolvedQualifiedOwner resolved_owner =
-							context.parser->templateEngine().resolveQualifiedOwnerForLookup(
-								StringTable::getStringView(
-									dependent_record->owner_name));
-						if (resolved_owner.resolved_from_current_context &&
-							resolved_owner.lookupNameHandle().isValid()) {
-							return materializeOwnerMemberChainPrefix(
-								resolved_owner.lookupNameHandle());
-						}
+					Parser::ResolvedQualifiedOwner resolved_owner =
+						context.parser.templateEngine().resolveQualifiedOwnerForLookup(StringTable::getStringView(dependent_record->owner_name));
+					if (resolved_owner.resolved_from_current_context && resolved_owner.lookupNameHandle().isValid()) {
+						return materializeOwnerMemberChainPrefix(resolved_owner.lookupNameHandle());
 					}
+
 					return materializeOwnerMemberChainPrefix(dependent_record->owner_name);
 				}
 				if (context.struct_info != nullptr && context.struct_info->name.isValid()) {
@@ -432,7 +414,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 			}
 		}
 
-		if (struct_handle.isValid() && context.parser != nullptr) {
+		if (struct_handle.isValid()) {
 			std::string_view qualified_owner_name = StringTable::getStringView(struct_handle);
 			size_t last_scope = qualified_owner_name.rfind("::");
 			if (last_scope != std::string_view::npos &&
@@ -441,10 +423,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					qualified_owner_name.substr(0, last_scope));
 				StringHandle nested_member_handle = StringTable::getOrInternStringHandle(
 					qualified_owner_name.substr(last_scope + 2));
-				if (const TypeInfo* inherited_alias_owner =
-						context.parser->lookup_inherited_type_alias(
-							outer_owner_handle,
-							nested_member_handle);
+				if (const TypeInfo* inherited_alias_owner = context.parser.lookup_inherited_type_alias(outer_owner_handle, nested_member_handle);
 					inherited_alias_owner != nullptr &&
 					inherited_alias_owner->name().isValid()) {
 					ResolvedAliasTypeInfo resolved_owner_alias = resolveAliasTypeInfo(
@@ -465,8 +444,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				first_colon + 2 < chain_full_name.size()) {
 				std::string_view base_name = chain_full_name.substr(0, first_colon);
 				std::string_view member_chain = chain_full_name.substr(first_colon + 2);
-				std::vector<QualifiedTypeMemberAccess> parsed_member_chain =
-					context.parser->buildQualifiedTypeMemberChain(member_chain);
+				std::vector<QualifiedTypeMemberAccess> parsed_member_chain = context.parser.buildQualifiedTypeMemberChain(member_chain);
 				if (!parsed_member_chain.empty()) {
 					std::vector<std::vector<TemplateTypeArg>> member_template_arg_storage(
 						parsed_member_chain.size());
@@ -515,19 +493,14 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 							}
 						}
 					}
-					if (const TypeInfo* resolved_chain_owner =
-							context.parser->resolveBaseClassMemberTypeChain(
-								base_name,
-								parsed_member_chain);
+					if (const TypeInfo* resolved_chain_owner = context.parser.resolveBaseClassMemberTypeChain(base_name, parsed_member_chain);
 						resolved_chain_owner != nullptr &&
 						resolved_chain_owner->name().isValid()) {
 						struct_handle = resolved_chain_owner->name();
 					} else if (context.struct_info != nullptr) {
 						if (context.struct_info->name.isValid()) {
 							if (const TypeInfo* resolved_from_current =
-									context.parser->resolveBaseClassMemberTypeChain(
-										StringTable::getStringView(context.struct_info->name),
-										parsed_member_chain);
+									context.parser.resolveBaseClassMemberTypeChain(StringTable::getStringView(context.struct_info->name), parsed_member_chain);
 								resolved_from_current != nullptr &&
 								resolved_from_current->name().isValid()) {
 								struct_handle = resolved_from_current->name();
@@ -544,9 +517,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 									continue;
 								}
 								if (const TypeInfo* resolved_from_base =
-										context.parser->resolveBaseClassMemberTypeChain(
-											StringTable::getStringView(base_type_info->name()),
-											parsed_member_chain);
+										context.parser.resolveBaseClassMemberTypeChain(StringTable::getStringView(base_type_info->name()), parsed_member_chain);
 									resolved_from_base != nullptr &&
 									resolved_from_base->name().isValid()) {
 									struct_handle = resolved_from_base->name();
@@ -582,20 +553,15 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						FLASH_LOG(ConstExpr, Debug, "Found type using short name '", short_name, "'");
 					}
 				}
-				if (struct_type_it == getTypesByNameMap().end() &&
-					context.parser != nullptr) {
+				if (struct_type_it == getTypesByNameMap().end()) {
 					std::string_view chain_full_name = StringTable::getStringView(struct_handle);
 					size_t first_colon = chain_full_name.find("::");
 					if (first_colon != std::string_view::npos &&
 						first_colon + 2 < chain_full_name.size()) {
 						std::string_view base_name = chain_full_name.substr(0, first_colon);
 						std::string_view member_chain = chain_full_name.substr(first_colon + 2);
-						std::vector<QualifiedTypeMemberAccess> parsed_member_chain =
-							context.parser->buildQualifiedTypeMemberChain(member_chain);
-						if (const TypeInfo* resolved_owner =
-								context.parser->resolveBaseClassMemberTypeChain(
-									base_name,
-									parsed_member_chain);
+						std::vector<QualifiedTypeMemberAccess> parsed_member_chain = context.parser.buildQualifiedTypeMemberChain(member_chain);
+						if (const TypeInfo* resolved_owner = context.parser.resolveBaseClassMemberTypeChain(base_name, parsed_member_chain);
 							resolved_owner != nullptr) {
 							chain_resolved_owner_type = resolved_owner;
 							if (resolved_owner->name().isValid()) {
@@ -608,9 +574,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						} else if (context.struct_info != nullptr &&
 								   context.struct_info->name.isValid()) {
 							if (const TypeInfo* resolved_from_current =
-									context.parser->resolveBaseClassMemberTypeChain(
-										StringTable::getStringView(context.struct_info->name),
-										parsed_member_chain);
+									context.parser.resolveBaseClassMemberTypeChain(StringTable::getStringView(context.struct_info->name), parsed_member_chain);
 								resolved_from_current != nullptr &&
 								resolved_from_current->name().isValid()) {
 								chain_resolved_owner_type = resolved_from_current;
@@ -648,10 +612,8 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				// context, but whose StructTypeInfo has not been materialized yet.
 				// Materialize that owner before looking for static members such as
 				// `__empty_not_final<_Head>::value`.
-				if (type_info->isTemplateInstantiation() &&
-					type_info->getStructInfo() == nullptr &&
-					context.parser != nullptr) {
-					Parser& parser = *context.parser;
+				if (type_info->isTemplateInstantiation() && type_info->getStructInfo() == nullptr) {
+					Parser& parser = context.parser;
 					auto materialize_template_arg_for_owner =
 						[&](auto&& self,
 							const TemplateTypeArg& source_arg,
@@ -876,9 +838,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 
 				auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
 				TypeIndex pre_materialization_type_index = resolved_type_info != nullptr ? resolved_type_info->type_index_ : TypeIndex{};
-				if (static_member != nullptr &&
-					owner_struct == struct_info &&
-					context.parser != nullptr) {
+				if (static_member != nullptr && owner_struct == struct_info) {
 					std::vector<QualifiedTypeMemberAccess> parsed_member_chain;
 					std::vector<std::vector<TemplateTypeArg>> member_template_arg_storage;
 					StringHandle dependent_owner_handle;
@@ -942,7 +902,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						if (first_colon != std::string_view::npos &&
 							first_colon + 2 < ns_full_name.size()) {
 							std::string_view member_chain = ns_full_name.substr(first_colon + 2);
-							parsed_member_chain = context.parser->buildQualifiedTypeMemberChain(member_chain);
+							parsed_member_chain = context.parser.buildQualifiedTypeMemberChain(member_chain);
 							has_member_chain = !parsed_member_chain.empty();
 						}
 					}
@@ -953,9 +913,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 								return;
 							}
 							const TypeInfo* resolved_owner =
-								context.parser->resolveBaseClassMemberTypeChain(
-									StringTable::getStringView(owner_handle),
-									parsed_member_chain);
+								context.parser.resolveBaseClassMemberTypeChain(StringTable::getStringView(owner_handle), parsed_member_chain);
 							if (resolved_owner == nullptr ||
 								resolved_owner->getStructInfo() == nullptr ||
 								!resolved_owner->name().isValid() ||
@@ -1004,7 +962,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				// instantiations), force-materialize them and retry the lookup.
 				// This handles cases like is_enum<T>::value where T's base integral_constant<bool,V>
 				// was only instantiated in ShapeOnly mode and has no recorded static members.
-				if (!static_member && context.parser != nullptr && !struct_info->base_classes.empty()) {
+				if (!static_member && !struct_info->base_classes.empty()) {
 					struct BaseToMaterialize {
 						std::string_view template_name;
 						std::vector<TemplateTypeArg> args;
@@ -1037,7 +995,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					bool any_materialized = false;
 					for (const auto& base_to_materialize : bases_to_materialize) {
 						FLASH_LOG(ConstExpr, Debug, "Force-materializing ShapeOnly base '", base_to_materialize.template_name, "' to find member '", StringTable::getStringView(member_handle), "'");
-						context.parser->templateEngine().materializeTemplateInstantiationForLookup(base_to_materialize.template_name, base_to_materialize.args);
+						context.parser.templateEngine().materializeTemplateInstantiationForLookup(base_to_materialize.template_name, base_to_materialize.args);
 						any_materialized = true;
 					}
 					if (any_materialized) {
@@ -1178,11 +1136,8 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						if (!nested_target_info && resolved_nested_alias.type_index.is_valid()) {
 							nested_target_info = tryGetTypeInfo(resolved_nested_alias.type_index);
 						}
-						if (nested_target_info != nullptr &&
-							nested_target_info->isTemplateInstantiation() &&
-							nested_target_info->getStructInfo() == nullptr &&
-							context.parser != nullptr) {
-							Parser& parser = *context.parser;
+						if (nested_target_info != nullptr && nested_target_info->isTemplateInstantiation() && nested_target_info->getStructInfo() == nullptr) {
+							Parser& parser = context.parser;
 							const TypeInfo* nested_lookup_owner = nested_target_info;
 							if (resolved_type_info != nullptr &&
 								resolved_type_info->hasInstantiationContext()) {
@@ -1302,24 +1257,15 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					// still contains unsubstituted template parameters (like _R1::num).
 					// The lazy system will substitute them and update the initializer.
 					// If the member is not in the lazy registry, this is a fast no-op.
-					if (context.parser != nullptr) {
-						bool did_lazy = context
-											.requireParserOwnedSema("qualified static member materialization")
-											.parserSemanticServices()
-											.tryInstantiateLazyStaticMember(
-												owner_struct->name,
-												member_handle);
-						if (did_lazy) {
-							context.normalizePendingSemanticRoots();
-							// Re-lookup the static member after instantiation
-							auto relookup_result = struct_info->findStaticMemberRecursive(member_handle);
-							if (relookup_result.first && relookup_result.first->initializer.has_value()) {
-								FLASH_LOG(ConstExpr, Debug, "After lazy instantiation, evaluating initializer");
-								ScopedTemplateBindingsFromType owner_bindings(
-									context,
-									typeInfoForStaticMemberOwner(relookup_result.second, resolved_type_info));
-								return evaluate_static_member_initializer(relookup_result.first->initializer.value());
-							}
+					bool did_lazy = context.semanticAnalysis().parserSemanticServices().tryInstantiateLazyStaticMember(owner_struct->name, member_handle);
+					if (did_lazy) {
+						context.normalizePendingSemanticRoots();
+						// Re-lookup the static member after instantiation
+						auto relookup_result = struct_info->findStaticMemberRecursive(member_handle);
+						if (relookup_result.first && relookup_result.first->initializer.has_value()) {
+							FLASH_LOG(ConstExpr, Debug, "After lazy instantiation, evaluating initializer");
+							ScopedTemplateBindingsFromType owner_bindings(context, typeInfoForStaticMemberOwner(relookup_result.second, resolved_type_info));
+							return evaluate_static_member_initializer(relookup_result.first->initializer.value());
 						}
 					}
 
@@ -1335,8 +1281,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						}
 					}
 
-					if (gEvaluatingStaticMembers.contains(static_member) &&
-						context.parser != nullptr) {
+					if (gEvaluatingStaticMembers.contains(static_member)) {
 						std::vector<QualifiedTypeMemberAccess> owner_chain;
 						std::vector<std::vector<TemplateTypeArg>> owner_chain_template_arg_storage;
 						StringHandle dependent_owner_handle;
@@ -1396,7 +1341,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 							if (first_colon != std::string_view::npos &&
 								first_colon + 2 < ns_full_name.size()) {
 								std::string_view member_chain = ns_full_name.substr(first_colon + 2);
-								owner_chain = context.parser->buildQualifiedTypeMemberChain(member_chain);
+								owner_chain = context.parser.buildQualifiedTypeMemberChain(member_chain);
 							}
 						}
 						if (!owner_chain.empty()) {
@@ -1405,10 +1350,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 								if (!owner_handle.isValid()) {
 									return std::nullopt;
 								}
-								const TypeInfo* resolved_owner =
-									context.parser->resolveBaseClassMemberTypeChain(
-										StringTable::getStringView(owner_handle),
-										owner_chain);
+								const TypeInfo* resolved_owner = context.parser.resolveBaseClassMemberTypeChain(StringTable::getStringView(owner_handle), owner_chain);
 								if (resolved_owner == nullptr ||
 									resolved_owner->getStructInfo() == nullptr) {
 									return std::nullopt;
@@ -1500,7 +1442,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 			}
 		}
 
-		if (looks_dependent && context.parser != nullptr) {
+		if (looks_dependent) {
 			// This might be a template instantiation with dependent arguments
 			// Treat it as template-dependent
 			return EvalResult::error("Template instantiation with dependent arguments in constant expression: " +
@@ -3613,10 +3555,7 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 	// Look up the actual member function in the struct's type info
 	const auto& arguments = call_expr.arguments();
 	StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
-	auto lookup_sema_services =
-		context
-			.requireParserAttachedSema(kMemberFunctionMaterializationLookupOp)
-			.parserSemanticServices();
+	auto lookup_sema_services = context.semanticAnalysis().parserSemanticServices();
 	ResolvedFunctionQueryResult sema_resolved_direct_query =
 		lookup_sema_services.getResolvedDirectCallQuery(&call_expr);
 	if (placeholder_func) {
@@ -3764,10 +3703,7 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 		} else if (declaring_struct_info != nullptr && declaring_struct_info->name.isValid()) {
 			owner_name = declaring_struct_info->name;
 		}
-		auto replay_sema_services =
-			context
-				.requireParserAttachedSema(kMemberFunctionMaterializationReplayOp)
-				.parserSemanticServices();
+		auto replay_sema_services = context.semanticAnalysis().parserSemanticServices();
 		if (std::optional<ASTNode> refreshed =
 				replay_sema_services.ensureMemberFunctionMaterialized(owner_name, *actual_func);
 			refreshed.has_value() && refreshed->is<FunctionDeclarationNode>()) {
