@@ -1283,6 +1283,8 @@ private:
 	void noteArenaBytes();
 
 	void checkTransactionThread() const;
+	void validateTransactionCompletion(size_t depth) const;
+	void validateTransactionDepthUnlocked(size_t depth) const;
 
 	size_t beginTransaction();
 
@@ -1385,6 +1387,7 @@ public:
 	CanonicalTypeTransaction& operator=(const CanonicalTypeTransaction&) = delete;
 	void commit();
 	void rollback();
+	void validateCompletion() const;
 private:
 	CanonicalTypeTable& table_;
 	size_t depth_;

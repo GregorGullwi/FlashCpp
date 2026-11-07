@@ -48,12 +48,13 @@ struct FrontendPublicationJournalMark {
 	size_t legacy_type_registry_depth = 0;
 	size_t scope_count = 0;
 	size_t legacy_ast_node_count = 0;
-	Parser* parser_publication_journal = nullptr;
+	Parser& parser_publication_journal;
 	size_t parser_publication_handle = SIZE_MAX;
 	ScopeId current_scope_id{};
 };
 
 FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& context);
+Parser& validateFrontendPublicationJournal(const FrontendContext& context, const FrontendPublicationJournalMark& mark, bool rollback);
 void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicationJournalMark mark);
 void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublicationJournalMark mark);
 
@@ -67,7 +68,7 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 // still referenced by a row that bypassed that API is retained instead of being
 // truncated. Legacy AST nodes allocated after the mark are truncated after
 // appended Parser roots are removed. A bound parser cursor is saved on begin,
-// discarded on commit, and restored on rollback when that parser is still bound.
+// discarded on commit, and restored on rollback. The parser must outlive the transaction.
 // Nested commits remain provisional until the outer probe commits.
 class FrontendScratchTransaction {
 	friend class FrontendContext;
@@ -92,7 +93,8 @@ public:
 		if (completed_) {
 			return;
 		}
-		diagnostics_.validateCompletion();
+		validateCompletion(false);
+		publication_.prepareCommit();
 		publication_.commit();
 		templates_.commit();
 		scratch_.commit();
@@ -104,7 +106,7 @@ public:
 		if (completed_) {
 			return;
 		}
-		diagnostics_.validateCompletion();
+		validateCompletion(true);
 		rollbackFrontendPublicationJournal(context_, publication_journal_mark_);
 		templates_.rollback();
 		publication_.rollback();
@@ -115,6 +117,13 @@ public:
 	MonotonicScratchArena& arena() { return scratch_.arena(); }
 	ScratchProbeRegistry& registry() { return scratch_.registry(); }
 private:
+	void validateCompletion(bool rollback) const {
+		diagnostics_.validateCompletion();
+		publication_.validateCompletion();
+		templates_.validateCompletion();
+		(void)validateFrontendPublicationJournal(context_, publication_journal_mark_, rollback);
+	}
+
 	FrontendContext& context_;
 	DiagnosticTransaction diagnostics_;
 	ScratchTransaction scratch_;
@@ -157,6 +166,7 @@ public:
 	}
 
 	FrontendScratchTransaction beginScratchTransaction() {
+		(void)requireParserPublicationJournal();
 		return FrontendScratchTransaction(*this, diagnostics_, scratch_arena_, scratch_registry_, declaration_builder_, template_decls_);
 	}
 
@@ -569,7 +579,8 @@ private:
 
 	void registerPersistentScopePublicationTable(SymbolTable& table);
 	void releasePersistentScopePublicationTables();
-	Parser* parserForPublicationMark(const FrontendPublicationJournalMark& mark) const;
+	Parser& requireParserPublicationJournal() const;
+	Parser& parserForPublicationMark(const FrontendPublicationJournalMark& mark) const;
 	bool hasOpenPublicationTransaction() const {
 		return publication_transaction_depth_ != 0;
 	}
@@ -595,6 +606,7 @@ private:
 	size_t publication_transaction_depth_ = 0;
 
 	friend FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& context);
+	friend Parser& validateFrontendPublicationJournal(const FrontendContext& context, const FrontendPublicationJournalMark& mark, bool rollback);
 	friend void commitFrontendPublicationJournal(
 		FrontendContext& context,
 		FrontendPublicationJournalMark mark);

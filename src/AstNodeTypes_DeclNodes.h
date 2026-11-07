@@ -1604,6 +1604,7 @@ void clearLegacyTypeTablesForTesting();
 // still undone by an outer rollback.
 using LegacyTypeRegistryJournalMark = size_t;
 LegacyTypeRegistryJournalMark beginLegacyTypeRegistryJournal();
+void validateLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark);
 void commitLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark);
 void rollbackLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark);
 

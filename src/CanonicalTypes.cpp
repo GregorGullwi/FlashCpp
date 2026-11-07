@@ -16,6 +16,12 @@ void CanonicalTypeTransaction::rollback() {
 	}
 }
 
+void CanonicalTypeTransaction::validateCompletion() const {
+	if (depth_ != 0) {
+		table_.validateTransactionCompletion(depth_);
+	}
+}
+
 // --- CanonicalTypeTable ---
 
 TypeId CanonicalTypeTable::builtin(CanonicalBuiltinKind kind) {
@@ -3754,10 +3760,7 @@ size_t CanonicalTypeTable::beginTransaction() {
 
 void CanonicalTypeTable::finishTransaction(size_t depth, bool commit) {
 	std::lock_guard lock(mutex_);
-	checkTransactionThread();
-	if (depth == 0 || depth != transaction_marks_.size()) {
-		throw InternalError("canonical type transactions must finish in nesting order");
-	}
+	validateTransactionDepthUnlocked(depth);
 	if (!commit) {
 		const TransactionMark mark = transaction_marks_.back();
 		while (enum_layout_update_history_.size() >
@@ -3827,6 +3830,18 @@ void CanonicalTypeTable::finishTransaction(size_t depth, bool commit) {
 	transaction_marks_.pop_back();
 	if (transaction_marks_.empty()) {
 		enum_layout_update_history_.clear();
+	}
+}
+
+void CanonicalTypeTable::validateTransactionCompletion(size_t depth) const {
+	std::lock_guard lock(mutex_);
+	validateTransactionDepthUnlocked(depth);
+}
+
+void CanonicalTypeTable::validateTransactionDepthUnlocked(size_t depth) const {
+	checkTransactionThread();
+	if (depth == 0 || depth != transaction_marks_.size()) {
+		throw InternalError("canonical type transactions must finish in nesting order");
 	}
 }
 

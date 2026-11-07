@@ -579,6 +579,7 @@ public:
 	std::size_t saveParserCursor();
 	void validateParserPublicationCheckpoint(std::size_t handle) const;
 	void restoreParserCursor(std::size_t handle);
+	void validateParserRootPublicationRollback(std::size_t handle) const;
 	void rollbackParserRootPublication(std::size_t handle);
 	void discardParserCursor(std::size_t handle);
 

@@ -449,6 +449,11 @@ public:
 			active_ = false;
 		}
 	}
+	void validateCompletion() const {
+		if (active_) {
+			table_.validateTransactionDepth(depth_);
+		}
+	}
 	void rollback() {
 		if (active_) {
 			table_.rollbackTransaction(depth_);

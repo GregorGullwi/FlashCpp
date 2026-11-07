@@ -60,6 +60,10 @@ Admission now unwinds every successfully opened parser, namespace, legacy-type,
 and table journal if a later acquisition fails, preserving any enclosing probe.
 Legacy journal frames stay stable during growth; rollback swaps saved maps back
 without constructing or moving a frame during exception cleanup.
+Completion first validates participating journal ownership, nesting, and parser
+rollback roots before closing or rewinding any component. Nested declaration
+commits prepare parent undo capacity first, then transfer owned parameter keys
+with no-throw moves so their payloads cannot allocate after canonical commit.
 Scope creation and cursor movement now share that boundary: symbol-map undo runs
 before provisional symbol-table slots and frontend `ScopeRecord`s are truncated.
 Rollback restores the current, lookup, and declaring cursors; nested commits stay
@@ -109,9 +113,10 @@ pending-semantic-root, and discarded-root lists. Rollback removes appended roots
 and their instantiated/pending keys before global AST storage truncation; nested
 commits remain provisional. Front insertion, pre-checkpoint erasure, pending
 root drain/clear, and transaction closure with a live parser-local checkpoint
-fail closed. Each `FrontendContext` binds at most one Parser, and clears that
-binding when the Parser is destroyed; context-only transactions journal only
-context-owned state. The next slice must give parser
+fail closed. Each `FrontendContext` binds at most one Parser. Full frontend
+transactions require that Parser to remain alive and bound until completion;
+admission without a Parser and detachment during a transaction are rejected.
+Publication marks and validation return a required Parser reference. The next slice must give parser
 context stacks and in-place rewrites of owners outside the type registry an
 owned publication boundary before enabling a transaction around type-pack
 materialization. Required dependency instantiations

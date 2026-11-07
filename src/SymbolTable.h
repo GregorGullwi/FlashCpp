@@ -332,6 +332,13 @@ public:
 		return publication_transaction_marks_.size();
 	}
 
+	void validatePublicationTransactionDepth(size_t depth) const {
+		if (publication_transaction_marks_.empty() || publication_transaction_marks_.size() != depth) {
+			throw InternalError("SymbolTable: transactions must close in nesting order");
+		}
+	}
+
+
 	void commitPublicationTransaction(size_t depth) {
 		validatePublicationTransactionDepth(depth);
 		publication_transaction_marks_.pop_back();
@@ -2118,11 +2125,6 @@ private:
 		recordPublicationMutation(std::move(mutation));
 	}
 
-	void validatePublicationTransactionDepth(size_t depth) const {
-		if (publication_transaction_marks_.empty() || publication_transaction_marks_.size() != depth) {
-			throw InternalError("SymbolTable: transactions must close in nesting order");
-		}
-	}
 
 	void undoPublicationMutation(PublicationMutation& mutation) {
 		switch (mutation.kind) {

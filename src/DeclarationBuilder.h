@@ -468,6 +468,8 @@ public:
 	PublicationTransaction& operator=(const PublicationTransaction&) = delete;
 
 	void commit();
+	void validateCompletion() const;
+	void prepareCommit();
 	void rollback() noexcept;
 
 private:
