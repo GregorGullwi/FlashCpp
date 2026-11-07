@@ -8715,14 +8715,8 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 		if (function_template.has_requires_clause()) {
 			const RequiresClauseNode& requires_clause =
 				function_template.requires_clause()->as<RequiresClauseNode>();
-			const ConstraintEvaluationResult constraint_result = evaluateConstraint(
-				requires_clause.constraint_expr(),
-				template_arguments,
-				parameter_names,
-				&parser(),
-				std::span<const TemplateParameterNode>(
-					template_parameters.data(),
-					template_parameters.size()));
+			const ConstraintEvaluationResult constraint_result = evaluateConstraint(requires_clause.constraint_expr(), template_arguments, parameter_names,
+				parser(), std::span<const TemplateParameterNode>( template_parameters.data(), template_parameters.size()));
 			if (!constraint_result.satisfied()) {
 				return false;
 			}
@@ -8798,10 +8792,7 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 					all_concept_constraints_satisfied = false;
 					return;
 				}
-				all_concept_constraints_satisfied = evaluateConstraint(
-					concept_declaration,
-					concept_arguments,
-					&parser()).satisfied();
+				all_concept_constraints_satisfied = evaluateConstraint(concept_declaration, concept_arguments, parser()).satisfied();
 			});
 		return all_concept_constraints_satisfied;
 	};

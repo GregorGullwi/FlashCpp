@@ -5851,8 +5851,8 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 			std::optional<TemplateArgumentVector> concrete_args =
 				context.parser.templateEngine().materializeConcreteCallTemplateArguments(call_expr.template_arguments());
 			if (concrete_args.has_value()) {
-				const ConstraintEvaluationResult constraint_result = evaluateConstraint(
-					concept_opt->as<ConceptDeclarationNode>(), *concrete_args, &context.parser);
+				const ConstraintEvaluationResult constraint_result = evaluateConstraint(concept_opt->as<ConceptDeclarationNode>(), *concrete_args,
+					context.parser);
 				return EvalResult::from_bool(constraint_result.satisfied());
 			}
 		}
