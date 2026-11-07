@@ -939,6 +939,68 @@ TEST_SUITE("FrontendContext") {
 		CHECK(qualified_identifier.dependentQualifiedName() == committed_record_pointer);
 	}
 
+	TEST_CASE("Frontend scratch rollback restores in-place outer template bindings") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+
+		FrontendContext context;
+		ScratchTransactionParserFixture fixture(context);
+		const StringHandle struct_name = StringTable::getOrInternStringHandle("frontend_tx_binding_owner");
+		ASTNode stored_node = ASTNode::emplace_node<StructDeclarationNode>(struct_name, false, false);
+		StructDeclarationNode& owner = stored_node.as<StructDeclarationNode>();
+		const StringHandle baseline_parameter = StringTable::getOrInternStringHandle("frontend_tx_baseline_param");
+		const StringHandle outer_parameter = StringTable::getOrInternStringHandle("frontend_tx_outer_param");
+		const StringHandle inner_parameter = StringTable::getOrInternStringHandle("frontend_tx_inner_param");
+		const StringHandle committed_parameter = StringTable::getOrInternStringHandle("frontend_tx_committed_param");
+
+		const auto make_argument = [](int64_t value) {
+			TypeInfo::TemplateArgInfo argument;
+			argument.is_value = true;
+			argument.value = value;
+			return argument;
+		};
+		const auto set_bindings = [&](StringHandle parameter, int64_t value) {
+			TemplateParamNameVector names;
+			names.push_back(parameter);
+			TemplateArgInfoVector args;
+			args.push_back(make_argument(value));
+			owner.set_outer_template_bindings(names, args);
+		};
+		set_bindings(baseline_parameter, 3);
+		REQUIRE(owner.outer_template_param_names().size() == 1u);
+		REQUIRE(owner.outer_template_args().size() == 1u);
+		REQUIRE(owner.outer_template_args()[0].intValue() == 3);
+
+		{
+			auto outer = context.beginScratchTransaction();
+			set_bindings(outer_parameter, 7);
+			CHECK(owner.outer_template_param_names()[0] == outer_parameter);
+			CHECK(owner.outer_template_args()[0].intValue() == 7);
+			{
+				auto inner = context.beginScratchTransaction();
+				set_bindings(inner_parameter, 11);
+				CHECK(owner.outer_template_args()[0].intValue() == 11);
+				inner.rollback();
+			}
+			CHECK(owner.outer_template_param_names()[0] == outer_parameter);
+			CHECK(owner.outer_template_args()[0].intValue() == 7);
+			outer.rollback();
+		}
+		CHECK(owner.outer_template_param_names()[0] == baseline_parameter);
+		CHECK(owner.outer_template_args()[0].intValue() == 3);
+
+		{
+			auto transaction = context.beginScratchTransaction();
+			set_bindings(committed_parameter, 13);
+			transaction.commit();
+		}
+		CHECK(owner.outer_template_param_names()[0] == committed_parameter);
+		CHECK(owner.outer_template_args()[0].intValue() == 13);
+	}
+
 	TEST_CASE("Frontend scratch rollback restores appended Parser root publication") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();
