@@ -2913,6 +2913,114 @@ TEST_CASE("Published pointer and array materialization follows canonical identit
 	CHECK(refreshed.array_extent == 99);
 }
 
+TEST_CASE("Builtin indirection retains the adopted structural pointee after interning") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	CompileContext test_context;
+	test_context.setInputFile("canonical_unary_adopted_pointee.cpp");
+	SemanticAnalysis sema(test_context, gSymbolTable);
+	CanonicalTypeTable& table = context.canonicalTypes();
+	TypeSpecifierNode operand(TypeCategory::Short, TypeQualifier::None, 16, Token{}, CVQualifier::Const);
+	const TypeId element = table.qualify(table.builtin(CanonicalBuiltinKind::Short), CVQualifier::Const);
+	const size_t dimensions[] = {2, 3};
+	const std::span<const size_t> inner_dimension(dimensions + 1, 1);
+	TypeId expected = element;
+	SUBCASE("Pointer yields its qualified scalar pointee") {
+		operand.add_pointer_level(CVQualifier::Volatile);
+	}
+	SUBCASE("Array decay and indirection remove exactly one bound") {
+		operand.set_array_dimensions(dimensions);
+		expected = table.array(element, 3);
+	}
+	SUBCASE("Pointer to array yields the whole array") {
+		operand.add_pointer_level(CVQualifier::None);
+		operand.set_pointee_array_declarator(true);
+		operand.set_pointee_array_dimensions(inner_dimension);
+		expected = table.array(element, 3);
+	}
+	SUBCASE("One dimensional array yields its qualified scalar element") {
+		operand.set_array_dimensions(inner_dimension);
+	}
+	SUBCASE("Deep pointer indirection retains a bounded structural walk") {
+		for (size_t depth = 0; depth < 4096; ++depth) {
+			operand.add_pointer_level(CVQualifier::None);
+			if (depth != 0) {
+				expected = table.pointer(expected);
+			}
+		}
+	}
+	const Token token(Token::Type::Identifier, std::string_view("indirection_operand"), 0, 0, 0);
+	const ASTNode identifier = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(token));
+	sema.registerCodegenSynthesizedLocalType(token.handle(), operand);
+	const Token star(Token::Type::Operator, std::string_view("*"), 0, 0, 0);
+	const ASTNode expression = ASTNode::emplace_node<ExpressionNode>(UnaryOperatorNode(star, identifier));
+	REQUIRE(sema.analyzeExpressionTypeQuery(expression).hasValue());
+	const auto slot = sema.getSlot(&expression.as<ExpressionNode>());
+	REQUIRE(slot.has_value());
+	const CanonicalTypeDesc& result = sema.typeContext().get(slot->type_id);
+	CHECK(result.structural_type_id == expected);
+	CHECK(result.ref_qualifier == ReferenceQualifier::None);
+	TypeContext reinterned;
+	CHECK(reinterned.get(reinterned.intern(result)).structural_type_id == expected);
+}
+
+TEST_CASE("Builtin indirection adopts a published nested class specialization pointee") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	CompileContext test_context;
+	test_context.setInputFile("canonical_nested_indirection.cpp");
+	Lexer lexer("template<class T> struct Holder { struct Nested { T value; }; }; Holder<short>::Nested object;");
+	SemanticAnalysis sema(test_context, gSymbolTable);
+	Parser parser(lexer, test_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	const auto object = gSymbolTable.lookup("object");
+	REQUIRE(object.has_value());
+	const DeclarationNode* declaration = get_decl_from_symbol(*object);
+	REQUIRE(declaration != nullptr);
+	TypeSpecifierNode operand = declaration->type_specifier_node();
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const CanonicalTypeImport expected = importCanonicalNominalComponent(table, operand, CanonicalTypeImportContext::Exact);
+	REQUIRE(expected.status == CanonicalTypeImportStatus::Supported);
+	REQUIRE(table.node(expected.type).kind == CanonicalTypeKind::NestedRecord);
+	operand.add_pointer_level(CVQualifier::None);
+	const Token token(Token::Type::Identifier, std::string_view("nested_pointer"), 0, 0, 0);
+	sema.registerCodegenSynthesizedLocalType(token.handle(), operand);
+	const ASTNode identifier = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(token));
+	const Token star(Token::Type::Operator, std::string_view("*"), 0, 0, 0);
+	const ASTNode expression = ASTNode::emplace_node<ExpressionNode>(UnaryOperatorNode(star, identifier));
+	REQUIRE(sema.analyzeExpressionTypeQuery(expression).hasValue());
+	const auto slot = sema.getSlot(&expression.as<ExpressionNode>());
+	REQUIRE(slot.has_value());
+	CHECK(sema.typeContext().get(slot->type_id).structural_type_id == expected.type);
+}
+
+TEST_CASE("Builtin indirection keeps only the unpublished nominal pointer compatibility peel") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	CompileContext test_context;
+	test_context.setInputFile("canonical_unpublished_indirection.cpp");
+	SemanticAnalysis sema(test_context, gSymbolTable);
+	TypeSpecifierNode operand(TypeCategory::Struct, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	SUBCASE("An unpublished pointer still removes one level") {
+		operand.add_pointer_level(CVQualifier::Const);
+		operand.add_pointer_level(CVQualifier::Volatile);
+		const auto result = sema.builtinDereferenceResultType(operand);
+		REQUIRE(result.has_value());
+		REQUIRE(result->pointer_levels().size() == 1);
+		CHECK(result->pointer_levels().front().cv_qualifier == CVQualifier::Const);
+		CHECK_FALSE(sema.canonicalStructuralTypeId(*result));
+	}
+	SUBCASE("An unpublished array object remains a publication defect") {
+		const size_t dimensions[] = {2, 3};
+		operand.set_array_dimensions(dimensions);
+		CHECK_THROWS_WITH_AS(sema.builtinDereferenceResultType(operand),
+			"dereference operand has no published structural identity", InternalError);
+	}
+}
+
 TEST_CASE("Published pointer materialization preserves deep declarator identity") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
