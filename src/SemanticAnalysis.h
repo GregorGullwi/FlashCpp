@@ -260,6 +260,7 @@ public:
 	// unary * on the given operand type. Array operands decay before the
 	// indirection is applied.
 	std::optional<TypeSpecifierNode> builtinDereferenceResultType(const TypeSpecifierNode& operand_type);
+	std::optional<TypeSpecifierNode> builtinDereferenceResultType(CanonicalTypeId operand_type_id);
 
 	// Resolve the pointer-to-array shape of a non-static data member. The member
 	// carries no canonical id, so its descriptor is interned (publishing

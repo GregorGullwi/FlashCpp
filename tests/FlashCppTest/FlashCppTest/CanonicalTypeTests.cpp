@@ -2958,6 +2958,13 @@ TEST_CASE("Builtin indirection retains the adopted structural pointee after inte
 	REQUIRE(sema.analyzeExpressionTypeQuery(expression).hasValue());
 	const auto slot = sema.getSlot(&expression.as<ExpressionNode>());
 	REQUIRE(slot.has_value());
+	const auto operand_slot = sema.getSlot(&identifier.as<ExpressionNode>());
+	REQUIRE(operand_slot.has_value());
+	const auto result_from_id = sema.builtinDereferenceResultType(operand_slot->type_id);
+	REQUIRE(result_from_id.has_value());
+	const CanonicalTypeImport imported_result = importCanonicalType(table, *result_from_id);
+	REQUIRE(imported_result.status == CanonicalTypeImportStatus::Supported);
+	CHECK(imported_result.type == expected);
 	const CanonicalTypeDesc& result = sema.typeContext().get(slot->type_id);
 	CHECK(result.structural_type_id == expected);
 	CHECK(result.ref_qualifier == ReferenceQualifier::None);

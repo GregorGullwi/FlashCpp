@@ -2177,25 +2177,32 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		// size the load and publish the result pointer depth, since a flat
 		// pointer depth cannot describe an interleaved pointee such as a
 		// pointer-to-array element.
-		std::optional<TypeSpecifierNode> sema_deref_result;
-		if (operand_decl_type != nullptr) {
-			sema_deref_result = sema_.builtinDereferenceResultType(*operand_decl_type);
-			if (sema_deref_result.has_value()) {
-				CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-				const CanonicalTypeImport imported = importCanonicalType(table, *sema_deref_result);
-				if (imported.status == CanonicalTypeImportStatus::Supported && table.node(imported.type).kind == CanonicalTypeKind::Function) {
-					// [expr.unary.op]: a function pointee is a designator. Its value
-					// is the callable address; functions have no object size or load.
-					return makeExprResult(nativeTypeIndex(TypeCategory::FunctionPointer), SizeInBits{POINTER_SIZE_BITS},
-						operandIrOperands.value, PointerDepth{}, ValueStorage::ContainsData);
-				}
-				const int result_size_bits = getTypeSpecSizeBits(*sema_deref_result);
-				if (result_size_bits <= 0) {
-					throw InternalError("Dereference result type has no concrete object size");
-				}
-				element_size = result_size_bits;
-				pointer_depth = static_cast<int>(sema_deref_result->runtime_pointer_depth()) + 1;
+		CanonicalTypeId operand_type_id{};
+		if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+			const auto slot = sema_.getSlot(&unaryOperatorNode.get_operand().as<ExpressionNode>());
+			if (slot.has_value() && slot->has_type()) {
+				operand_type_id = slot->type_id;
 			}
+		}
+		if (!operand_type_id && operand_decl_type != nullptr) {
+			operand_type_id = sema_.canonicalizeTypeForImplicitConversion(*operand_decl_type);
+		}
+		const std::optional<TypeSpecifierNode> sema_deref_result = sema_.builtinDereferenceResultType(operand_type_id);
+		if (sema_deref_result.has_value()) {
+			CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+			const CanonicalTypeImport imported = importCanonicalType(table, *sema_deref_result);
+			if (imported.status == CanonicalTypeImportStatus::Supported && table.node(imported.type).kind == CanonicalTypeKind::Function) {
+				// [expr.unary.op]: a function pointee is a designator. Its value
+				// is the callable address; functions have no object size or load.
+				return makeExprResult(nativeTypeIndex(TypeCategory::FunctionPointer), SizeInBits{POINTER_SIZE_BITS},
+					operandIrOperands.value, PointerDepth{}, ValueStorage::ContainsData);
+			}
+			const int result_size_bits = getTypeSpecSizeBits(*sema_deref_result);
+			if (result_size_bits <= 0) {
+				throw InternalError("Dereference result type has no concrete object size");
+			}
+			element_size = result_size_bits;
+			pointer_depth = static_cast<int>(sema_deref_result->runtime_pointer_depth()) + 1;
 		}
 
 		// After dereferencing, pointer_depth decreases by 1
@@ -2231,32 +2238,8 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		// whose immediate pointee is an array, which is the authority for
 		// suppressing the load ([expr.unary.op]/1).
 		if (pointer_depth <= 1 && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
-				// Sema owns expression typing ([expr.unary.op]/1): the operand's
-				// canonical descriptor is the single authority for declarator
-				// structure. Prefer an existing semantic slot; otherwise canonicalize
-				// the identifier's declaration type through the same pipeline.
-			const ExpressionNode& deref_operand_expr =
-				unaryOperatorNode.get_operand().as<ExpressionNode>();
-			CanonicalTypeId operand_type_id{};
-			if (const auto operand_slot = sema_.getSlot(&deref_operand_expr);
-				operand_slot.has_value() && operand_slot->has_type()) {
-				operand_type_id = operand_slot->type_id;
-			} else if (std::holds_alternative<IdentifierNode>(deref_operand_expr)) {
-				auto operand_symbol = symbol_table.lookup(
-					std::get<IdentifierNode>(deref_operand_expr).name());
-				const DeclarationNode* operand_decl = nullptr;
-				if (operand_symbol.has_value()) {
-					if (operand_symbol->is<DeclarationNode>()) {
-						operand_decl = &operand_symbol->as<DeclarationNode>();
-					} else if (operand_symbol->is<VariableDeclarationNode>()) {
-						operand_decl = &operand_symbol->as<VariableDeclarationNode>().declaration();
-					}
-				}
-				if (operand_decl != nullptr) {
-					operand_type_id = sema_.canonicalizeTypeForImplicitConversion(
-						operand_decl->type_specifier_node());
-				}
-			}
+			// Reuse the operand identity selected for indirection above. Array
+			// object detection and result sizing must describe the same operand.
 			if (operand_type_id) {
 				const CanonicalTypeDesc& operand_desc = sema_.typeContext().get(operand_type_id);
 				// [conv.array] then [expr.unary.op]: * on an array object designates
