@@ -17,58 +17,18 @@
 
 namespace ConstExpr {
 
-EvaluationContext::EvaluationContext(const SymbolTable& symbol_table)
-	: symbols(&symbol_table) {}
-
 EvaluationContext::EvaluationContext(const SymbolTable& symbol_table, Parser& parser_owner)
-	: symbols(&symbol_table),
-	  parser(&parser_owner),
-	  sema(&parser_owner.semanticAnalysis()) {}
+	: symbols(&symbol_table), parser(parser_owner) {}
 
 EvaluationContext::EvaluationContext(const SymbolTable& symbol_table, SemanticAnalysis& sema_owner)
-	: symbols(&symbol_table),
-	  sema(&sema_owner) {}
+	: EvaluationContext(symbol_table, sema_owner.parser()) {}
 
-SemanticAnalysis& EvaluationContext::requireSema(std::string_view operation) const {
-	if (sema == nullptr) {
-		throw InternalError(std::string("ConstExpr ") + std::string(operation) +
-							" requires a sema-backed EvaluationContext");
-	}
-	return *sema;
-}
-
-SemanticAnalysis& EvaluationContext::requireParserAttachedSema(std::string_view operation) const {
-	SemanticAnalysis& sema_ref = requireSema(operation);
-	if (!sema_ref.isParserAttached()) {
-		throw InternalError(std::string("ConstExpr ") + std::string(operation) +
-							" requires parser-attached semantic analysis");
-	}
-	return sema_ref;
-}
-
-SemanticAnalysis& EvaluationContext::requireParserOwnedSema(std::string_view operation) const {
-	if (parser == nullptr) {
-		throw InternalError(std::string("ConstExpr ") + std::string(operation) +
-							" requires a parser-owned EvaluationContext");
-	}
-	SemanticAnalysis& sema_ref = requireParserAttachedSema(operation);
-	if (&parser->semanticAnalysis() != &sema_ref) {
-		throw InternalError(std::string("ConstExpr ") + std::string(operation) +
-							" requires parser and sema from the same owner");
-	}
-	return sema_ref;
+SemanticAnalysis& EvaluationContext::semanticAnalysis() const {
+	return parser.semanticAnalysis();
 }
 
 void EvaluationContext::normalizePendingSemanticRoots() const {
-	if (parser != nullptr) {
-		requireParserOwnedSema("normalize pending semantic roots")
-			.parserSemanticServices()
-			.normalizePendingSemanticRoots();
-		return;
-	}
-	requireParserAttachedSema("normalize pending semantic roots")
-		.parserSemanticServices()
-		.normalizePendingSemanticRoots();
+	semanticAnalysis().parserSemanticServices().normalizePendingSemanticRoots();
 }
 
 namespace {
@@ -789,11 +749,7 @@ std::optional<size_t> resolveSizeofPackCount(
 	if (pack_name.empty()) {
 		return std::nullopt;
 	}
-	if (context.parser == nullptr) {
-		throw InternalError(
-			"resolveSizeofPackCount requires parser in evaluation context so pack-size registries can be queried");
-	}
-	Parser& parser = *context.parser;
+	Parser& parser = context.parser;
 
 	StringHandle pack_name_handle = StringTable::getOrInternStringHandle(pack_name);
 	if (const TemplateBinding* pack_binding =
@@ -1463,12 +1419,6 @@ EvalResult Evaluator::convertEvalResultToTargetType(const TypeSpecifierNode& tar
 // Main evaluation entry point
 // Evaluates a constant expression and returns the result
 EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& context) {
-	if (context.parser != nullptr) {
-		(void)context.requireParserOwnedSema("evaluate");
-	} else {
-		(void)context.requireSema("evaluate");
-	}
-
 	// Check complexity limit
 	if (++context.step_count > context.max_steps) {
 		return EvalResult::error("Constexpr evaluation exceeded complexity limit (infinite loop?)");
@@ -1519,9 +1469,7 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	// For UnaryOperatorNode
 	if (const auto* unary_op = std::get_if<UnaryOperatorNode>(&expr)) {
 		if (unary_op->op() == "+" || unary_op->op() == "-" || unary_op->op() == "~") {
-			if (context.parser != nullptr) {
-				context.parser->semanticAnalysis().ensureUnaryArithmeticOperatorResolved(*unary_op);
-			}
+			context.parser.semanticAnalysis().ensureUnaryArithmeticOperatorResolved(*unary_op);
 			if (const FunctionDeclarationNode* function = unary_op->resolved_arithmetic_operator()) {
 				ChunkedVector<ASTNode> arguments;
 				if (unary_op->arithmetic_operator_is_member()) {
@@ -2632,12 +2580,9 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 						static_cast<long long>(*size_in_bytes));
 				}
 			}
-			if (context.sema != nullptr) {
-				if (const std::optional<size_t> canonical_size =
-						context.sema->getExpressionSizeBytes(expr_node);
-					canonical_size.has_value()) {
-					return EvalResult::from_int(static_cast<long long>(*canonical_size));
-				}
+			if (const std::optional<size_t> canonical_size = context.semanticAnalysis().getExpressionSizeBytes(expr_node);
+				canonical_size.has_value()) {
+				return EvalResult::from_int(static_cast<long long>(*canonical_size));
 			}
 
 			// Handle identifier - get type from its declaration
@@ -3050,10 +2995,7 @@ EvalResult Evaluator::evaluate_resolved_function_call(
 		if (concrete_owner_name.isValid()) {
 			owner_name = concrete_owner_name;
 		}
-		if (std::optional<ASTNode> materialized =
-				context
-					.requireParserAttachedSema("resolved member-function call materialization")
-					.ensureMemberFunctionMaterialized(owner_name, *resolved_func);
+		if (std::optional<ASTNode> materialized = context.semanticAnalysis().ensureMemberFunctionMaterialized(owner_name, *resolved_func);
 			materialized.has_value() && materialized->is<FunctionDeclarationNode>()) {
 			resolved_func = &materialized->as<FunctionDeclarationNode>();
 		}
@@ -3174,9 +3116,6 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 
 	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 		auto trySelectFunctionTemplateSpecialization = [&]() -> const FunctionDeclarationNode* {
-			if (context.sema == nullptr || context.parser == nullptr) {
-				return nullptr;
-			}
 			auto tryBuildNoexceptCallArgType = [&](const ASTNode& argument) -> std::optional<TypeSpecifierNode> {
 				if (!argument.is<ExpressionNode>()) {
 					return std::nullopt;
@@ -3207,8 +3146,7 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 			};
 			OverloadResolutionArgTypeVector arg_types;
 			for (const ASTNode& argument : call_expr->arguments()) {
-				std::optional<TypeSpecifierNode> arg_type =
-					context.sema->getOverloadResolutionArgType(argument);
+				std::optional<TypeSpecifierNode> arg_type = context.semanticAnalysis().getOverloadResolutionArgType(argument);
 				if (!arg_type.has_value()) {
 					arg_type = tryBuildNoexceptCallArgType(argument);
 				}
@@ -3218,10 +3156,7 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 				arg_types.push_back(*arg_type);
 			}
 			if (call_expr->has_qualified_name()) {
-				if (std::optional<ASTNode> instantiated =
-						context.parser->templateEngine().tryInstantiateTemplate(
-							call_expr->qualified_name(),
-							arg_types);
+				if (std::optional<ASTNode> instantiated = context.parser.templateEngine().tryInstantiateTemplate(call_expr->qualified_name(), arg_types);
 					instantiated.has_value()) {
 					if (const FunctionDeclarationNode* function_decl =
 							get_function_decl_node(*instantiated);
@@ -3235,19 +3170,13 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 			if (callee_name.empty()) {
 				return nullptr;
 			}
-			if (std::optional<ASTNode> instantiated =
-					context.parser->templateEngine().tryInstantiateTemplate(
-						callee_name,
-						arg_types);
+			if (std::optional<ASTNode> instantiated = context.parser.templateEngine().tryInstantiateTemplate(callee_name, arg_types);
 				instantiated.has_value()) {
 				return get_function_decl_node(*instantiated);
 			}
 			return nullptr;
 		};
 		auto tryEvaluateInstantiatedExceptionSpecification = [&]() -> std::optional<bool> {
-			if (context.parser == nullptr) {
-				return std::nullopt;
-			}
 			auto lookup_template = [&]() -> std::optional<ASTNode> {
 				if (call_expr->has_qualified_name()) {
 					if (std::optional<ASTNode> templ =
@@ -3344,9 +3273,8 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 					continue;
 				}
 				std::optional<TypeSpecifierNode> arg_type;
-				if (context.sema != nullptr) {
-					arg_type = context.sema->getOverloadResolutionArgType(call_expr->arguments()[arg_index]);
-				}
+				arg_type = context.semanticAnalysis().getOverloadResolutionArgType(call_expr->arguments()[arg_index]);
+
 				if (!arg_type.has_value()) {
 					const ASTNode& argument = call_expr->arguments()[arg_index];
 					if (argument.is<ExpressionNode>()) {
@@ -3382,7 +3310,7 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 			if (std::ranges::any_of(deduced, [](bool value) { return !value; })) {
 				return std::nullopt;
 			}
-			ASTNode substituted_noexcept = context.parser->templateEngine().substituteTemplateParameters(
+			ASTNode substituted_noexcept = context.parser.templateEngine().substituteTemplateParameters(
 				func_decl.noexcept_expression()->node(),
 				template_params,
 				std::span<const TemplateTypeArg>(deduced_args.data(), deduced_args.size()));
@@ -3396,16 +3324,12 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 		// member as its callee. Resolve that pattern to the instantiated member
 		// through the receiver's type so its noexcept answer is authoritative.
 		auto tryResolveReceiverMemberNoexcept = [&]() -> std::optional<bool> {
-			if (context.parser == nullptr) {
-				return std::nullopt;
-			}
 			const CallInfo call_info = CallInfo::from(*call_expr);
 			std::optional<TypeSpecifierNode> receiver_type;
-			if (context.sema != nullptr) {
-				receiver_type = context.sema->getOverloadResolutionArgType(call_info.receiver);
-			}
+			receiver_type = context.semanticAnalysis().getOverloadResolutionArgType(call_info.receiver);
+
 			if (!receiver_type.has_value()) {
-				receiver_type = context.parser->get_expression_type(call_info.receiver);
+				receiver_type = context.parser.get_expression_type(call_info.receiver);
 			}
 			return tryResolveInstantiatedMemberNoexcept(call_info, receiver_type);
 		};
@@ -3434,29 +3358,22 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 			if (record.resolved_function != nullptr) {
 				return is_function_decl_noexcept(*record.resolved_function, context);
 			}
-			if (context.sema != nullptr && context.parser != nullptr) {
-				OverloadResolutionArgTypeVector arg_types;
-				bool collected_arg_types = true;
-				for (const ASTNode& argument : call_expr->arguments()) {
-					std::optional<TypeSpecifierNode> arg_type =
-						context.sema->getOverloadResolutionArgType(argument);
-					if (!arg_type.has_value()) {
-						collected_arg_types = false;
-						break;
-					}
-					arg_types.push_back(*arg_type);
+			OverloadResolutionArgTypeVector arg_types;
+			bool collected_arg_types = true;
+			for (const ASTNode& argument : call_expr->arguments()) {
+				std::optional<TypeSpecifierNode> arg_type = context.semanticAnalysis().getOverloadResolutionArgType(argument);
+				if (!arg_type.has_value()) {
+					collected_arg_types = false;
+					break;
 				}
-				if (collected_arg_types) {
-					if (std::optional<ASTNode> resolved_target =
-							context.parser->templateEngine().resolveDefinitionBoundOrdinaryCall(
-								record,
-								arg_types);
-						resolved_target.has_value()) {
-						if (const FunctionDeclarationNode* function_decl =
-								get_function_decl_node(*resolved_target);
-							function_decl != nullptr) {
-							return is_function_decl_noexcept(*function_decl, context);
-						}
+				arg_types.push_back(*arg_type);
+			}
+			if (collected_arg_types) {
+				if (std::optional<ASTNode> resolved_target = context.parser.templateEngine().resolveDefinitionBoundOrdinaryCall(record, arg_types);
+					resolved_target.has_value()) {
+					if (const FunctionDeclarationNode* function_decl = get_function_decl_node(*resolved_target);
+						function_decl != nullptr) {
+						return is_function_decl_noexcept(*function_decl, context);
 					}
 				}
 			}
@@ -3487,36 +3404,33 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 		}
 		// A class operand converted to the target type runs a user-defined
 		// conversion function whose exception specification decides the result.
-		if (context.parser != nullptr) {
-			std::optional<TypeSpecifierNode> operand_type;
-			if (context.sema != nullptr) {
-				operand_type = context.sema->getOverloadResolutionArgType(cast->expr());
-			}
-			if (!operand_type.has_value()) {
-				operand_type = context.parser->get_expression_type(cast->expr());
-			}
-			if (operand_type.has_value()) {
-				operand_type->limit_pointer_depth(0);
-				operand_type->set_reference_qualifier(ReferenceQualifier::None);
-				if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(operand_type->type_index())) {
-					const TypeIndex target = getCanonicalConversionTargetType(cast->target_type());
-					const StructMemberFunction* conversion = nullptr;
-					for (const StructMemberFunction& member : struct_info->member_functions) {
-						if (!member.is_conversion_operator() || member.conversion_target_type != target) {
-							continue;
-						}
-						if (conversion != nullptr) {
-							conversion = nullptr;  // ambiguous: fall back
-							break;
-						}
-						conversion = &member;
+		std::optional<TypeSpecifierNode> operand_type;
+		operand_type = context.semanticAnalysis().getOverloadResolutionArgType(cast->expr());
+
+		if (!operand_type.has_value()) {
+			operand_type = context.parser.get_expression_type(cast->expr());
+		}
+		if (operand_type.has_value()) {
+			operand_type->limit_pointer_depth(0);
+			operand_type->set_reference_qualifier(ReferenceQualifier::None);
+			if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(operand_type->type_index())) {
+				const TypeIndex target = getCanonicalConversionTargetType(cast->target_type());
+				const StructMemberFunction* conversion = nullptr;
+				for (const StructMemberFunction& member : struct_info->member_functions) {
+					if (!member.is_conversion_operator() || member.conversion_target_type != target) {
+						continue;
 					}
 					if (conversion != nullptr) {
-						return conversion->is_noexcept;
+						conversion = nullptr;  // ambiguous: fall back break;
 					}
+					conversion = &member;
+				}
+				if (conversion != nullptr) {
+					return conversion->is_noexcept;
 				}
 			}
 		}
+
 		return true;
 	}
 
@@ -3792,20 +3706,13 @@ std::optional<TypeSpecifierNode> Evaluator::tryGetExpressionType(
 std::optional<TypeSpecifierNode> Evaluator::tryQueryExpressionType(
 	const ASTNode& expr,
 	EvaluationContext& context) {
-	if (context.sema != nullptr) {
-		TypeSpecifierQueryResult sema_type_query =
-			context.sema->parserSemanticServices().getExpressionTypeQuery(expr);
-		if (sema_type_query.state == TypeSpecifierQueryResult::State::Available &&
-			sema_type_query.type.has_value() &&
-			sema_type_query.type->type() != TypeCategory::Invalid &&
-			!isPlaceholderAutoType(sema_type_query.type->type())) {
-			return sema_type_query.type;
-		}
+	TypeSpecifierQueryResult sema_type_query = context.semanticAnalysis().parserSemanticServices().getExpressionTypeQuery(expr);
+	if (sema_type_query.state == TypeSpecifierQueryResult::State::Available &&
+		sema_type_query.type.has_value() && sema_type_query.type->type() != TypeCategory::Invalid && !isPlaceholderAutoType(sema_type_query.type->type())) {
+		return sema_type_query.type;
 	}
-	if (context.parser != nullptr) {
-		return context.parser->get_expression_type(expr);
-	}
-	return std::nullopt;
+
+	return context.parser.get_expression_type(expr);
 }
 
 EvalResult Evaluator::evaluate_static_cast(const StaticCastNode& cast_node, EvaluationContext& context) {
@@ -4444,11 +4351,8 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		}
 
 		if ((!resolved_static_initializer.initializer || !resolved_static_initializer.initializer->has_value()) &&
-			context.parser && context.struct_info &&
-			context
-				.requireParserOwnedSema("static member materialization")
-				.parserSemanticServices()
-				.tryInstantiateLazyStaticMember(context.struct_info->name, name_handle)) {
+			context.struct_info &&
+			context.semanticAnalysis().parserSemanticServices().tryInstantiateLazyStaticMember(context.struct_info->name, name_handle)) {
 			context.normalizePendingSemanticRoots();
 			resolved_static_initializer = resolve_current_struct_static_initializer(
 				&identifier,
@@ -4649,17 +4553,9 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			return EvalResult::error("Static member has no initializer: " + std::string(var_name));
 		}
 
-		// Variable not found - might be a template parameter that hasn't been substituted yet
-		// Check if we have a parser context (indicates we're in template definition)
-		// Template parameters have short names (typically single letters like T, N, etc.)
-		// If the identifier looks like a template parameter, mark it as template-dependent
-		if (context.parser != nullptr || var_name.length() <= 2) {
-			// Likely a template parameter - return template-dependent error
-			return EvalResult::error("Template parameter or undefined variable in constant expression: " + std::string(var_name),
-									 EvalErrorType::TemplateDependentExpression);
-		}
-
-		return EvalResult::error("Undefined variable in constant expression: " + std::string(var_name));
+		// Unknown identifiers can remain dependent until template substitution.
+		return EvalResult::error("Template parameter or undefined variable in constant expression: " + std::string(var_name),
+			EvalErrorType::TemplateDependentExpression);
 	}
 
 	const ASTNode& symbol_node = symbol_opt.value();
@@ -5705,8 +5601,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_builtin_function_call(
 
 
 EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, const CallExprNode& call_expr, EvaluationContext& context) {
-	(void)context.requireParserOwnedSema("variable template instantiation");
-	Parser& parser = *context.parser;
+	Parser& parser = context.parser;
 
 	if (!call_expr.has_template_arguments()) {
 		return EvalResult::error("No template arguments for variable template");
@@ -5943,7 +5838,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		return *helper_eval;
 	}
 
-	if (call_expr.has_template_arguments() && context.parser != nullptr) {
+	if (call_expr.has_template_arguments()) {
 		auto concept_opt = gConceptRegistry.lookupConcept(qualified_name);
 		if (!concept_opt.has_value()) {
 			concept_opt = gConceptRegistry.lookupConcept(func_name);
@@ -5954,12 +5849,10 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		}
 		if (concept_opt.has_value() && concept_opt->is<ConceptDeclarationNode>()) {
 			std::optional<TemplateArgumentVector> concrete_args =
-				context.parser->templateEngine().materializeConcreteCallTemplateArguments(call_expr.template_arguments());
+				context.parser.templateEngine().materializeConcreteCallTemplateArguments(call_expr.template_arguments());
 			if (concrete_args.has_value()) {
 				const ConstraintEvaluationResult constraint_result = evaluateConstraint(
-					concept_opt->as<ConceptDeclarationNode>(),
-					*concrete_args,
-					context.parser);
+					concept_opt->as<ConceptDeclarationNode>(), *concrete_args, &context.parser);
 				return EvalResult::from_bool(constraint_result.satisfied());
 			}
 		}
@@ -6013,10 +5906,8 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 				context,
 				nullptr);
 		}
-		// POI resolution requires parser-owned context. Missing parser/sema is a
-		// contract violation and must hard-fail.
-		SemanticAnalysis& sema_ref =
-			context.requireParserOwnedSema("dependent unqualified call POI resolution");
+		// Resolve point-of-instantiation queries through this context's semantic owner.
+		SemanticAnalysis& sema_ref = context.semanticAnalysis();
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
 		auto sema_services = sema_ref.parserSemanticServices();
@@ -6042,7 +5933,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 			break;
 		}
 		// Sema query was absent or not yet analyzed — fall back to parser POI lookup.
-		Parser& parser = *context.parser;
+		Parser& parser = context.parser;
 		std::vector<TypeSpecifierNode> arg_types;
 		if (!parser.tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
 			return EvalResult::error(
@@ -6088,16 +5979,10 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 	// If not found in symbol table, try the global template registry
 	// This handles cases where a template function is defined but not yet instantiated
 	if (!symbol_opt.has_value()) {
-		Parser* parser = context.parser;
-		auto lookup_template = [parser](std::string_view lookup_name, TemplateNameLookupKind lookup_kind) -> std::optional<ASTNode> {
-			if (parser == nullptr) {
-				return std::nullopt;
-			}
+		Parser& parser = context.parser;
+		auto lookup_template = [&parser](std::string_view lookup_name, TemplateNameLookupKind lookup_kind) -> std::optional<ASTNode> {
 			const StringHandle lookup_name_handle = StringTable::getOrInternStringHandle(lookup_name);
-			TemplateNameLookupRequest request = parser->buildFunctionTemplateLookupRequest(
-				lookup_name_handle,
-				lookup_kind,
-				false);
+			TemplateNameLookupRequest request = parser.buildFunctionTemplateLookupRequest(lookup_name_handle, lookup_kind, false);
 			TemplateNameLookupResult lookup_result = gTemplateRegistry.lookupTemplateName(request);
 			return lookup_result.firstDeclarationOfKind(TemplateDeclarationKind::FunctionTemplate);
 		};
@@ -6204,46 +6089,25 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		}
 
 		if (call_expr.has_qualified_name()) {
-			if (context.sema != nullptr) {
-				if (context.sema->isParserAttached()) {
-					context.normalizePendingSemanticRoots();
-				}
-				const CallInfo call_info = CallInfo::from(call_expr);
-				if (const FunctionDeclarationNode* resolved_qualified_target =
-						context.sema->resolveSharedDirectCallTarget(
-							call_info,
-							nullptr,
-							context.struct_type_index);
-					resolved_qualified_target != nullptr) {
-					return evaluate_resolved_function_call(
-						*resolved_qualified_target,
-						call_expr.arguments(),
-						context,
-						nullptr);
-				}
+			context.normalizePendingSemanticRoots();
+
+			const CallInfo call_info = CallInfo::from(call_expr);
+			if (const FunctionDeclarationNode* resolved_qualified_target =
+					context.semanticAnalysis().resolveSharedDirectCallTarget(call_info, nullptr, context.struct_type_index);
+				resolved_qualified_target != nullptr) {
+				return evaluate_resolved_function_call(*resolved_qualified_target, call_expr.arguments(), context, nullptr);
 			}
 
-			if (context.parser) {
-				Parser& parser = *context.parser;
-				std::vector<TypeSpecifierNode> arg_types;
-				if (parser.tryCollectFunctionCallArgTypes(
-						call_expr.arguments(),
-						arg_types)) {
-					if (std::optional<ASTNode> resolved_template_call =
-							parser.templateEngine().resolveDeferredQualifiedTemplateCall(
-								call_expr.qualified_name(),
-								call_expr.template_arguments(),
-								call_expr.arguments(),
-								arg_types);
-						resolved_template_call.has_value()) {
-						context.normalizePendingSemanticRoots();
-						if (resolved_template_call->is<FunctionDeclarationNode>()) {
-							return evaluate_resolved_function_call(
-								resolved_template_call->as<FunctionDeclarationNode>(),
-								call_expr.arguments(),
-								context,
-								nullptr);
-						}
+			Parser& parser = context.parser;
+			std::vector<TypeSpecifierNode> arg_types;
+			if (parser.tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
+				if (std::optional<ASTNode> resolved_template_call =
+						parser.templateEngine().resolveDeferredQualifiedTemplateCall(
+							call_expr.qualified_name(), call_expr.template_arguments(), call_expr.arguments(), arg_types);
+					resolved_template_call.has_value()) {
+					context.normalizePendingSemanticRoots();
+					if (resolved_template_call->is<FunctionDeclarationNode>()) {
+						return evaluate_resolved_function_call(resolved_template_call->as<FunctionDeclarationNode>(), call_expr.arguments(), context, nullptr);
 					}
 				}
 			}
@@ -6252,7 +6116,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		// Try variable template instantiation before giving up
 		// Variable templates like __is_ratio_v<T> might not be in the symbol table
 		// but can be instantiated from the template registry
-		if (call_expr.has_template_arguments() && context.parser) {
+		if (call_expr.has_template_arguments()) {
 			auto var_template_result = tryEvaluateAsVariableTemplate(func_name, call_expr, context);
 			if (var_template_result.success())
 				return var_template_result;
@@ -6325,8 +6189,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		}
 
 		// No pre-instantiated version found - on-demand instantiation requires parser-owned context.
-		(void)context.requireParserOwnedSema("template call argument instantiation");
-		Parser& parser = *context.parser;
+		Parser& parser = context.parser;
 
 		// When the call carries explicit template arguments (e.g. f<T1,T2>()) try
 		// instantiation via try_instantiate_template_explicit first, before the

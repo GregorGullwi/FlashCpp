@@ -178,7 +178,8 @@ See `tests/test_constexpr_try_catch_ret0.cpp`.
 The evaluator lives in `src/ConstExprEvaluator*.cpp` (split into `_Core`, `_Members`, and header files). Central types:
 
 - **`EvalResult`** — carries a scalar value, optional `object_member_bindings` (for struct objects), `array_elements` (for arrays), `callable_lambda` / `callable_var_decl` / `callable_bindings` (for lambda/functor callables), and `pointer_to_var` (for pointers). All evaluation results pass through this type; copies are value-semantic and expensive for large objects.
-- **`EvaluationContext`** — holds the current binding maps (`local_bindings`, `global_bindings`), struct info for member function evaluation, recursion depth, and flags (`is_speculative`).
+- **`EvaluationContext`** — requires a live parser and obtains semantic services from that same owner. It holds binding maps, struct info,
+  evaluation depth, and flags (`is_speculative`); parserless evaluation is not a supported production mode.
 - **`evaluate_block_with_bindings`** — evaluates a sequence of statements, returning either a successful value (return statement) or a sentinel error. Loops, conditionals, switch, break/continue all terminate the block early via specific error sentinel strings (`kBreakExecuted`, `kContinueExecuted`, etc.).
 
 Key design constraint: the evaluator is a tree-walk interpreter with no heap or mutable global state between evaluations. Each constexpr call starts fresh from the AST and binding maps.

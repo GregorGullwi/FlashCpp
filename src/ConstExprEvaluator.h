@@ -550,12 +550,9 @@ struct EvaluationContext {
 	TemplateArgumentVector template_args;
 	TemplateEnvironment template_environment;
 
-	// Parser pointer for template instantiation (optional)
-	Parser* parser = nullptr;
-	SemanticAnalysis* sema = nullptr;
-	SemanticAnalysis& requireSema(std::string_view operation) const;
-	SemanticAnalysis& requireParserAttachedSema(std::string_view operation) const;
-	SemanticAnalysis& requireParserOwnedSema(std::string_view operation) const;
+	// Evaluation always shares its parser's semantic owner and instantiation services.
+	Parser& parser;
+	SemanticAnalysis& semanticAnalysis() const;
 	void normalizePendingSemanticRoots() const;
 
 	// Return type of the constexpr function currently being evaluated.
@@ -613,8 +610,7 @@ struct EvaluationContext {
 		return false;
 	}
 
-	// Constructor requires symbol table to prevent missing it
-	explicit EvaluationContext(const SymbolTable& symbol_table);
+	// The reporting parser must outlive this context and its copies.
 	EvaluationContext(const SymbolTable& symbol_table, Parser& parser_owner);
 	EvaluationContext(const SymbolTable& symbol_table, SemanticAnalysis& sema_owner);
 };

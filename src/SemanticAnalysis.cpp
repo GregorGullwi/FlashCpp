@@ -417,14 +417,9 @@ bool placeholderReturnTypesMatch(const TypeSpecifierNode& lhs, const TypeSpecifi
 	return true;
 }
 
-ConstExpr::EvaluationContext makePlaceholderReturnEvalContext(
-	SemanticAnalysis& sema,
-	SymbolTable& symbols,
-	Parser* parser,
+ConstExpr::EvaluationContext makePlaceholderReturnEvalContext(SemanticAnalysis& sema, SymbolTable& symbols,
 	std::unordered_map<std::string_view, ConstExpr::EvalResult>* constexpr_locals) {
-	ConstExpr::EvaluationContext eval_ctx = parser != nullptr
-		? ConstExpr::EvaluationContext(symbols, *parser)
-		: ConstExpr::EvaluationContext(symbols, sema);
+	ConstExpr::EvaluationContext eval_ctx(symbols, sema);
 	eval_ctx.local_bindings = constexpr_locals;
 	return eval_ctx;
 }
@@ -3618,11 +3613,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 	std::unordered_map<std::string_view, ConstExpr::EvalResult> constexpr_locals;
 
 	auto make_eval_ctx = [&]() {
-		return makePlaceholderReturnEvalContext(
-			*this,
-			symbols_,
-			parser_,
-			&constexpr_locals);
+		return makePlaceholderReturnEvalContext(*this, symbols_, &constexpr_locals);
 	};
 
 	auto get_expression_type_for_return = [&](const ASTNode& expr_node) -> std::optional<TypeSpecifierNode> {
@@ -5806,9 +5797,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 	ASTNode tuple_size_value_expr = ASTNode::emplace_node<ExpressionNode>(
 		QualifiedIdentifierNode(tuple_size_scope, tuple_size_value_token));
 
-	ConstExpr::EvaluationContext eval_ctx = parser_ != nullptr
-		? ConstExpr::EvaluationContext(symbols_, parser())
-		: ConstExpr::EvaluationContext(symbols_, *this);
+	ConstExpr::EvaluationContext eval_ctx(symbols_, *this);
 	auto eval_result = ConstExpr::Evaluator::evaluate(tuple_size_value_expr, eval_ctx);
 	if (!eval_result.success()) {
 		rejectStructuredBindingTupleProtocol("structured binding tuple-like protocol failed: cannot evaluate tuple_size::value");
