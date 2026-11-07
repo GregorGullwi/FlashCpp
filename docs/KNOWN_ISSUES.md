@@ -202,10 +202,13 @@ Production parsing does not yet route tentative declaration work through
 publication journal to its `FrontendContext`: transactions restore lexer/token
 state, top-level roots and instantiated tags, pending-root additions, and
 discarded-root handles before global AST storage truncates. Front insertion,
-pre-checkpoint root erasure, and pending-root drain/clear fail closed.
-Parser context stacks and in-place rewrites
-of owners outside the type registry still need an owned rollback boundary before
-broad speculative parsing can rely on it. Existing `TypeInfo` rows reached
+pre-checkpoint root erasure, and pending-root drain/clear fail closed. The same
+checkpoint restores the member-function and struct parse-context stack tails and
+the current function/linkage; commit requires them to return to the checkpoint.
+The class-template pack stack, lambda-capture stack, pending explicit template
+arguments, and calling-convention state remain outside the boundary, and
+in-place rewrites of owners outside the type registry still need an owned rollback
+boundary before broad speculative parsing can rely on it. Existing `TypeInfo` rows reached
 through the mutable accessor/mutator API are snapshotted and restored with their
 cold records, and legacy AST nodes allocated after the mark are truncated.
 

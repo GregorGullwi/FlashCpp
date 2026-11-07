@@ -790,8 +790,26 @@ std::size_t Parser::saveParserCursor() {
 		throw InternalError("Parser: cannot open frontend publication while a parser checkpoint is active");
 	}
 	const size_t handle = save_token_position();
+	FrontendPublicationCheckpoint checkpoint{};
+	checkpoint.token_handle = handle;
+	checkpoint.member_function_context_count = member_function_context_stack_.size();
+	checkpoint.struct_parsing_context_count = struct_parsing_context_stack_.size();
+	checkpoint.current_function = current_function_;
+	checkpoint.linkage = current_linkage_;
+	if (!member_function_context_stack_.empty()) {
+		const MemberFunctionContext& context = member_function_context_stack_.back();
+		checkpoint.member_function_context_top_name = context.struct_name;
+		checkpoint.member_function_context_top_type_index = context.struct_type_index;
+		checkpoint.member_function_context_top_struct_node = context.struct_node;
+	}
+	if (!struct_parsing_context_stack_.empty()) {
+		const StructParsingContext& context = struct_parsing_context_stack_.back();
+		checkpoint.struct_parsing_context_top_name = context.struct_name;
+		checkpoint.struct_parsing_context_top_struct_node = context.struct_node;
+		checkpoint.struct_parsing_context_top_namespace = context.namespace_handle;
+	}
 	try {
-		frontend_publication_handles_.push_back(handle);
+		frontend_publication_checkpoints_.push_back(checkpoint);
 	} catch (...) {
 		discard_saved_token(handle);
 		throw;
@@ -801,8 +819,8 @@ std::size_t Parser::saveParserCursor() {
 }
 
 void Parser::validateParserPublicationCheckpoint(std::size_t handle) const {
-	if (handle >= saved_tokens_.size() || !saved_tokens_[handle].has_value() || frontend_publication_handles_.empty() ||
-		frontend_publication_handles_.back() != handle) {
+	if (handle >= saved_tokens_.size() || !saved_tokens_[handle].has_value() || frontend_publication_checkpoints_.empty() ||
+		frontend_publication_checkpoints_.back().token_handle != handle) {
 		throw InternalError("Parser: publication checkpoint is not active or is out of order");
 	}
 	if (active_parser_local_checkpoint_count_ != 0) {
@@ -810,12 +828,44 @@ void Parser::validateParserPublicationCheckpoint(std::size_t handle) const {
 	}
 }
 
+void Parser::validateParserPublicationContexts(std::size_t handle, bool rollback) const {
+	validateParserPublicationCheckpoint(handle);
+	const FrontendPublicationCheckpoint& checkpoint = frontend_publication_checkpoints_.back();
+	if (member_function_context_stack_.size() < checkpoint.member_function_context_count ||
+		struct_parsing_context_stack_.size() < checkpoint.struct_parsing_context_count) {
+		throw InternalError("Parser: context stacks moved before their publication checkpoint");
+	}
+	if (checkpoint.member_function_context_count != 0) {
+		const MemberFunctionContext& top = member_function_context_stack_[checkpoint.member_function_context_count - 1];
+		if (top.struct_name != checkpoint.member_function_context_top_name ||
+			top.struct_type_index != checkpoint.member_function_context_top_type_index ||
+			top.struct_node != checkpoint.member_function_context_top_struct_node) {
+			throw InternalError("Parser: member function context prefix changed during publication");
+		}
+	}
+	if (checkpoint.struct_parsing_context_count != 0) {
+		const StructParsingContext& top = struct_parsing_context_stack_[checkpoint.struct_parsing_context_count - 1];
+		if (top.struct_name != checkpoint.struct_parsing_context_top_name ||
+			top.struct_node != checkpoint.struct_parsing_context_top_struct_node ||
+			top.namespace_handle != checkpoint.struct_parsing_context_top_namespace) {
+			throw InternalError("Parser: struct parsing context prefix changed during publication");
+		}
+	}
+	if (!rollback) {
+		if (member_function_context_stack_.size() != checkpoint.member_function_context_count ||
+			struct_parsing_context_stack_.size() != checkpoint.struct_parsing_context_count ||
+			current_function_ != checkpoint.current_function || current_linkage_ != checkpoint.linkage) {
+			throw InternalError("Parser: parse context changed before publication commit");
+		}
+	}
+}
+
 void Parser::restoreParserCursor(std::size_t handle) {
 	restore_lexer_position_only(handle);
 }
 
-void Parser::validateParserRootPublicationRollback(std::size_t handle) const {
-	validateParserPublicationCheckpoint(handle);
+void Parser::validateParserPublicationRollback(std::size_t handle) const {
+	validateParserPublicationContexts(handle, true);
 	const SavedToken& saved = *saved_tokens_[handle];
 	assertTopLevelNodeTrackingSynchronized();
 	if (saved.ast_nodes_size_ > ast_nodes_.size() || saved.pending_semantic_roots_size_ > pending_semantic_roots_.size() ||
@@ -838,8 +888,9 @@ void Parser::validateParserRootPublicationRollback(std::size_t handle) const {
 	}
 }
 
-void Parser::rollbackParserRootPublication(std::size_t handle) {
-	validateParserRootPublicationRollback(handle);
+void Parser::rollbackParserPublication(std::size_t handle) {
+	validateParserPublicationRollback(handle);
+	const FrontendPublicationCheckpoint& checkpoint = frontend_publication_checkpoints_.back();
 	const SavedToken& saved = *saved_tokens_[handle];
 	while (pending_semantic_roots_.size() > saved.pending_semantic_roots_size_) {
 		const void* key = pending_semantic_roots_.back().raw_pointer();
@@ -860,16 +911,24 @@ void Parser::rollbackParserRootPublication(std::size_t handle) {
 		ast_node_is_instantiated_.pop_back();
 	}
 	ast_discarded_nodes_.resize(saved.ast_discarded_nodes_size_);
+	while (member_function_context_stack_.size() > checkpoint.member_function_context_count) {
+		member_function_context_stack_.pop_back();
+	}
+	while (struct_parsing_context_stack_.size() > checkpoint.struct_parsing_context_count) {
+		struct_parsing_context_stack_.pop_back();
+	}
+	current_function_ = checkpoint.current_function;
+	current_linkage_ = checkpoint.linkage;
 }
 
 void Parser::discardParserCursor(std::size_t handle) {
 	validateParserPublicationCheckpoint(handle);
 	discard_saved_token(handle);
-	frontend_publication_handles_.pop_back();
+	frontend_publication_checkpoints_.pop_back();
 }
 
 bool Parser::frontendPublicationTransactionOpen() const {
-	return !frontend_publication_handles_.empty();
+	return !frontend_publication_checkpoints_.empty();
 }
 
 void Parser::requireNoOpenFrontendPublicationTransaction(std::string_view operation) const {
@@ -883,10 +942,10 @@ void Parser::requireTopLevelRootEraseSupported(size_t index) const {
 	if (!frontendPublicationTransactionOpen()) {
 		return;
 	}
-	if (frontend_publication_handles_.empty()) {
+	if (frontend_publication_checkpoints_.empty()) {
 		throw InternalError("Parser: frontend transaction is missing its root checkpoint");
 	}
-	const size_t handle = frontend_publication_handles_.back();
+	const size_t handle = frontend_publication_checkpoints_.back().token_handle;
 	if (handle >= saved_tokens_.size() || !saved_tokens_[handle].has_value()) {
 		throw InternalError("Parser: frontend root checkpoint is not active");
 	}
@@ -1472,7 +1531,7 @@ void Parser::discard_saved_token(SaveHandle handle) {
 #endif
 	if (handle < saved_tokens_.size() && saved_tokens_[handle].has_value()) {
 		const bool is_frontend_publication_checkpoint =
-			!frontend_publication_handles_.empty() && frontend_publication_handles_.back() == handle;
+			!frontend_publication_checkpoints_.empty() && frontend_publication_checkpoints_.back().token_handle == handle;
 		if (!is_frontend_publication_checkpoint) {
 			if (active_parser_local_checkpoint_count_ == 0) {
 				throw InternalError("Parser: local checkpoint count is inconsistent");

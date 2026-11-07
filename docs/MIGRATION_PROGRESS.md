@@ -120,8 +120,16 @@ Publication marks and validation return a required Parser reference. Both the
 frontend and bound Parser `CompileContext` diagnostic engines participate in
 admission unwind, completion preflight, and nested commit/rollback; diagnostic
 records, severity counts, and note attachments roll back together. Borrowed text
-and note backing storage retain their engine lifetime. The next slice must give parser
-context stacks and in-place rewrites of owners outside the type registry an
+and note backing storage retain their engine lifetime. The same checkpoint
+snapshots the member-function and struct parse-context stack sizes, their
+top-frame identity, `current_function_`, and `current_linkage_`; rollback
+truncates appended frames and restores the scalars, while commit requires them to
+return to the checkpoint. Member-function guards pop only the frame they pushed,
+so a rollback-truncated frame is not popped twice. Other parser artifacts such
+as the class-template pack stack, lambda-capture stack, pending explicit
+template arguments, and calling-convention state remain outside the boundary.
+The next slice must give
+in-place rewrites of owners outside the type registry an
 owned publication boundary before enabling a transaction around type-pack
 materialization. Required dependency instantiations
 must remain separate from that candidate-local transaction; blanket rollback
@@ -435,7 +443,8 @@ These seed adjacent slices; the authoritative inventory is
   truncate; ranges referenced by a surviving row are retained), bound
   `SymbolTable` publication maps, pre-existing `TypeInfo` row snapshots,
   in-place global/namespace variable array type normalization, namespace
-  metadata, and the active Parser's cursor plus append-only root publication.
+  metadata, and the active Parser's cursor, append-only root publication, parse
+  context stacks, and current function/linkage.
   Scope creation, cursor movement, and `ScopeRecord` publication roll back
   together after symbol-map undo. Nested commits stay
   provisional until the outer transaction commits; production speculative parsing
