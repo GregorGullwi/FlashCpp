@@ -1357,8 +1357,11 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 						POINTER_SIZE_BITS,
 						arraySubscriptNode.bracket_token())) {
 					array_result = *converted;
-					CanonicalTypeDesc element_desc = target_desc;
-					element_desc.pointer_levels.pop_back();
+					const CanonicalTypeId element_type_id = sema_.structPointerConversionElementType(cast_info.target_type_id);
+					if (!element_type_id) {
+						throw InternalError("Sema-selected struct-to-pointer subscript conversion has no element type");
+					}
+					const CanonicalTypeDesc& element_desc = sema_.typeContext().get(element_type_id);
 					element_type = element_desc.category();
 					element_type_index = element_desc.type_index.withCategory(element_type);
 					element_pointer_depth = static_cast<int>(element_desc.pointer_levels.size());

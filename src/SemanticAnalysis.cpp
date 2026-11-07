@@ -393,6 +393,8 @@ namespace {
 constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
 constexpr std::string_view kAnonymousNamespaceContext = "<anonymous namespace>";
 
+CanonicalTypeNode nodeUnderQualifiersAndReferences(CanonicalTypeTable& table, TypeId type_id);
+
 // Placeholder return-type finalization requires every return statement in the
 // body to deduce to the same full type identity, including cv/reference and
 // pointer qualifiers. This prevents plain `auto` and `decltype(auto)` from
@@ -1096,6 +1098,24 @@ static CanonicalTypeDesc makeBaseFromDesc(
 	return base_from_desc;
 }
 
+// [over.match.sub]: a class conversion produces a built-in subscript candidate
+// only when its result is a pointer. A published array object is not a pointer
+// conversion; a pointer-to-array is, even though it carries array bounds. A
+// flat pointer with no published identity keeps the legacy shape test.
+bool isStructPointerConversionResult(const CanonicalTypeDesc& desc) {
+	if (desc.structural_type_id) {
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		const CanonicalTypeNode node = nodeUnderQualifiersAndReferences(table, desc.structural_type_id);
+		if (node.kind == CanonicalTypeKind::Pointer) {
+			return node.child != TypeId{};
+		}
+		if (node.kind == CanonicalTypeKind::Array) {
+			return false;
+		}
+	}
+	return !desc.pointer_levels.empty() && desc.array_dimensions.empty();
+}
+
 // Returns true if a and b have the same element base type, ignoring CV
 // qualifiers on the pointed-to type. Used to determine whether two pointer-
 // returning conversion operators are truly distinct (ambiguous) or merely
@@ -1147,7 +1167,7 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 		if (!conv_op_return_type_id)
 			continue;
 		const CanonicalTypeDesc& return_desc = sema.typeContext().get(conv_op_return_type_id);
-		if (return_desc.pointer_levels.empty() || !return_desc.array_dimensions.empty())
+		if (!isStructPointerConversionResult(return_desc))
 			continue;
 		if (optional_target_desc && !(return_desc == *optional_target_desc))
 			continue;
@@ -1162,12 +1182,7 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 			}
 		}
 
-		TypeSpecifierNode element_type =
-			materializeTypeSpecifierWithMaxPointerDepth(
-				return_desc,
-				return_desc.pointer_levels.size() - 1);
-		const CanonicalTypeId element_type_id =
-			sema.canonicalizeTypeForImplicitConversion(element_type);
+		const CanonicalTypeId element_type_id = sema.structPointerConversionElementType(conv_op_return_type_id);
 		return PointerConversionInfo{conv_op_return_type_id, element_type_id, &function_decl};
 	}
 
@@ -1234,15 +1249,10 @@ static void collectAllStructPointerConversionOperators(
 		if (!conv_op_return_type_id)
 			continue;
 		const CanonicalTypeDesc& return_desc = sema.typeContext().get(conv_op_return_type_id);
-		if (return_desc.pointer_levels.empty() || !return_desc.array_dimensions.empty())
+		if (!isStructPointerConversionResult(return_desc))
 			continue;
 
-		TypeSpecifierNode element_type =
-			materializeTypeSpecifierWithMaxPointerDepth(
-				return_desc,
-				return_desc.pointer_levels.size() - 1);
-		const CanonicalTypeId element_type_id =
-			sema.canonicalizeTypeForImplicitConversion(element_type);
+		const CanonicalTypeId element_type_id = sema.structPointerConversionElementType(conv_op_return_type_id);
 		out_ops.push_back({conv_op_return_type_id, element_type_id, &function_decl});
 	}
 
@@ -7096,6 +7106,26 @@ std::optional<TypeSpecifierNode> tryBuildDirectLiteralQueryType(const ASTNode& n
 	}
 	return std::nullopt;
 }
+}
+
+CanonicalTypeId SemanticAnalysis::structPointerConversionElementType(CanonicalTypeId return_type_id) {
+	const CanonicalTypeDesc& return_desc = type_context_.get(return_type_id);
+	if (!isStructPointerConversionResult(return_desc)) {
+		return {};
+	}
+	// [expr.sub]: E1[E2] is an lvalue of the pointer's pointee, so a pointer to
+	// an array selects that array rather than its scalar element. Adopt the
+	// published structural pointee; a shape with only a flat pointer keeps the
+	// legacy one-level peel and no structural child.
+	if (return_desc.structural_type_id) {
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		const CanonicalTypeNode pointer_node = nodeUnderQualifiersAndReferences(table, return_desc.structural_type_id);
+		if (pointer_node.kind == CanonicalTypeKind::Pointer && pointer_node.child) {
+			return type_context_.intern(adoptPublishedStructuralType(return_desc, pointer_node.child));
+		}
+	}
+	TypeSpecifierNode element_type = materializeTypeSpecifierWithMaxPointerDepth(return_desc, return_desc.pointer_levels.size() - 1);
+	return canonicalizeTypeForImplicitConversion(element_type);
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNode& node) const {

@@ -239,6 +239,12 @@ public:
 	// identity fails closed rather than reading the flat projection.
 	PointerToArrayShape pointerToArrayShape(const CanonicalTypeDesc& desc) const;
 
+	// [over.match.sub] and [expr.sub]: the element type selected by a built-in
+	// subscript through a class conversion to a pointer. The published pointer's
+	// pointee is the result, so a pointer-to-array yields that array. Returns an
+	// invalid id when the conversion result is not a pointer.
+	CanonicalTypeId structPointerConversionElementType(CanonicalTypeId return_type_id);
+
 	// Canonical array-object predicate. True for an array type and for a
 	// reference whose referent is an array. Codegen must not re-derive this from
 	// ordered declarator syntax; the published TypeId is authoritative.
