@@ -592,32 +592,14 @@ std::vector<TypeSpecifierNode> Parser::apply_lvalue_reference_deduction(
 			}
 		}
 
-		// Check if this is an lvalue (for perfect forwarding deduction)
-		// Lvalues: named variables, array subscripts, member access, dereferences, string literals
-		// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
-		// Bare function identifiers are excluded — they decay to function pointers (rvalues).
-		if (i < args.size() && !is_bare_function && args[i].is<ExpressionNode>()) {
-			const ExpressionNode& expr = args[i].as<ExpressionNode>();
-			bool is_lvalue = std::visit([](const auto& inner) -> bool {
-				using T = std::decay_t<decltype(inner)>;
-				if constexpr (std::is_same_v<T, IdentifierNode>) {
-					return true;
-				} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-					return true;
-				} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-					return true;
-				} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-					return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
-				} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-					return true;
-				} else {
-					return false;
-				}
-			},
-										expr);
-
-			if (is_lvalue) {
-				arg_type_node.set_reference_qualifier(ReferenceQualifier::LValueReference);
+		// [temp.deduct.call]: an lvalue argument deduces T& and an xvalue or
+		// prvalue deduces T. A call keeps the reference of its return type, and
+		// a member of an xvalue stays an xvalue. Bare function identifiers decay
+		// to pointers instead of keeping the function-lvalue category.
+		if (i < args.size() && !is_bare_function) {
+			const ReferenceQualifier category = expressionValueCategoryQualifier(args[i]);
+			if (category != ReferenceQualifier::None) {
+				attachExpressionValueCategory(arg_type_node, category);
 			}
 		}
 

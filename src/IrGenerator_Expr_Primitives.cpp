@@ -7,20 +7,6 @@
 #include "OverloadResolution.h"
 
 namespace {
-bool isAssignmentLikeOperator(std::string_view op) {
-	return op == "=" ||
-		   op == "+=" ||
-		   op == "-=" ||
-		   op == "*=" ||
-		   op == "/=" ||
-		   op == "%=" ||
-		   op == "&=" ||
-		   op == "|=" ||
-		   op == "^=" ||
-		   op == "<<=" ||
-		   op == ">>=";
-}
-
 // Returns true when `call` is eligible for a constexpr folding attempt:
 //   - the callee is a resolved constexpr or consteval function, OR
 //   - the call is indirect (through a function pointer / constexpr lambda variable).
@@ -45,7 +31,7 @@ bool isSideEffectFreeConstexprCandidateNode(const ASTNode& node) {
 	return !AstTraversal::visitASTUntil(node, [](const ASTNode& current) -> bool {
 		if (current.is<BinaryOperatorNode>()) {
 			const std::string_view op = current.as<BinaryOperatorNode>().op();
-			return op == "," || isAssignmentLikeOperator(op);
+			return op == "," || tok::isAssignmentOp(op);
 		}
 		if (current.is<UnaryOperatorNode>()) {
 			const std::string_view op = current.as<UnaryOperatorNode>().op();

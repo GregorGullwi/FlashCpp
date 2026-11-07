@@ -3695,6 +3695,31 @@ inline void applyArrayToPointerDecay(TypeSpecifierNode& deduced_type) {
 	}
 }
 
+// Record an expression value category on the type decltype and overload
+// ranking read. An ordered spine keeps that category as its outermost
+// component; canonical import ignores a flat qualifier once components exist.
+inline void attachExpressionValueCategory(TypeSpecifierNode& type, ReferenceQualifier category) {
+	if (category == ReferenceQualifier::None) {
+		return;
+	}
+	type.set_reference_qualifier(category);
+	if (!type.has_ordered_declarator() || type.declarator_components().empty()) {
+		return;
+	}
+	const DeclaratorComponentKind outer = type.declarator_components().front().kind;
+	const bool category_already_outermost =
+		(category == ReferenceQualifier::LValueReference && outer == DeclaratorComponentKind::LValueReference) ||
+		(category == ReferenceQualifier::RValueReference && outer == DeclaratorComponentKind::RValueReference);
+	if (category_already_outermost) {
+		return;
+	}
+	if (outer == DeclaratorComponentKind::LValueReference || outer == DeclaratorComponentKind::RValueReference) {
+		type.remove_outermost_ordered_declarator_component();
+	}
+	type.prepend_ordered_declarator_component(category == ReferenceQualifier::RValueReference ?
+		DeclaratorComponent::rvalueReference() : DeclaratorComponent::lvalueReference());
+}
+
 // Apply placeholder deduction for a variable declarator.
 // - `decltype(auto)` keeps the exact deduced expression type.
 // - value `auto` strips top-level reference/cv from the expression type and

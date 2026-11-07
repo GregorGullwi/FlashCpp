@@ -3360,6 +3360,91 @@ std::optional<TypeSpecifierNode> Parser::tryBuildFunctionTemplateAddressType(
 	return function_type;
 }
 
+// [basic.lval], [expr.call], [expr.ref], [expr.comma]: the value category a
+// decltype operand or forwarding argument has. A call's category is its return
+// reference, an xvalue member stays an xvalue, and a reference member is an
+// lvalue. The walk is iterative; a subexpression type query does not re-enter
+// the expression already on the parser type stack.
+ReferenceQualifier Parser::expressionValueCategoryQualifier(const ASTNode& expr) {
+	const ASTNode* current = &expr;
+	bool through_non_arrow_member = false;
+	auto finish = [&](ReferenceQualifier category) {
+		if (through_non_arrow_member && category != ReferenceQualifier::LValueReference) {
+			return ReferenceQualifier::RValueReference;
+		}
+		return category;
+	};
+	auto names_reference_member = [&](const MemberAccessNode& member) {
+		if (expression_type_resolution_stack_.count(&member.object()) > 0) {
+			return false;
+		}
+		const std::optional<TypeSpecifierNode> object_type = get_expression_type(member.object());
+		if (!object_type.has_value() || !is_struct_type(object_type->category())) {
+			return false;
+		}
+		const auto resolved = FlashCpp::gLazyMemberResolver.resolve(TypeIndex{object_type->type_index().index()},
+			StringTable::getOrInternStringHandle(std::string(member.member_name())));
+		return resolved && resolved.member != nullptr && resolved.member->is_reference();
+	};
+	while (current->is<ExpressionNode>()) {
+		const ExpressionNode& node = current->as<ExpressionNode>();
+		if (const auto* member = std::get_if<MemberAccessNode>(&node)) {
+			if (member->is_arrow() || names_reference_member(*member)) {
+				return ReferenceQualifier::LValueReference;
+			}
+			through_non_arrow_member = true;
+			current = &member->object();
+			continue;
+		}
+		if (const auto* binary = std::get_if<BinaryOperatorNode>(&node)) {
+			if (binary->op() == ",") {
+				current = &binary->get_rhs();
+				continue;
+			}
+			if (tok::isAssignmentOp(binary->op())) {
+				return ReferenceQualifier::LValueReference;
+			}
+			break;
+		}
+		if (const auto* unary = std::get_if<UnaryOperatorNode>(&node)) {
+			const std::string_view op = unary->op();
+			if (op == "*" || ((op == "++" || op == "--") && unary->is_prefix())) {
+				return ReferenceQualifier::LValueReference;
+			}
+			return finish(ReferenceQualifier::None);
+		}
+		if (std::holds_alternative<IdentifierNode>(node) || std::holds_alternative<QualifiedIdentifierNode>(node) ||
+			std::holds_alternative<ArraySubscriptNode>(node) || std::holds_alternative<StringLiteralNode>(node)) {
+			return ReferenceQualifier::LValueReference;
+		}
+		if (const auto* call = std::get_if<CallExprNode>(&node)) {
+			ReferenceQualifier call_category = ReferenceQualifier::None;
+			if (expression_type_resolution_stack_.count(current) == 0) {
+				if (const std::optional<TypeSpecifierNode> call_type = get_expression_type(*current); call_type.has_value()) {
+					call_category = call_type->reference_qualifier();
+				}
+			} else if (call->has_parser_return_type_hint()) {
+				call_category = call->parser_return_type_hint()->reference_qualifier();
+			}
+			return finish(call_category);
+		}
+		if (const auto* static_cast_expr = std::get_if<StaticCastNode>(&node)) {
+			return finish(static_cast_expr->target_type().reference_qualifier());
+		}
+		if (const auto* const_cast_expr = std::get_if<ConstCastNode>(&node)) {
+			return finish(const_cast_expr->target_type().reference_qualifier());
+		}
+		if (const auto* reinterpret_cast_expr = std::get_if<ReinterpretCastNode>(&node)) {
+			return finish(reinterpret_cast_expr->target_type().reference_qualifier());
+		}
+		if (const auto* dynamic_cast_expr = std::get_if<DynamicCastNode>(&node)) {
+			return finish(dynamic_cast_expr->target_type().reference_qualifier());
+		}
+		break;
+	}
+	return finish(ReferenceQualifier::None);
+}
+
 // Helper to extract type from an expression for overload resolution
 std::optional<TypeSpecifierNode> newExpressionResultType(const NewExpressionNode& new_expr);
 
@@ -3412,7 +3497,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 
 	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
 	auto apply_member_access_value_category = [](TypeSpecifierNode& member_type, const TypeSpecifierNode& object_type, bool is_arrow,
-		CVQualifier declared_cv, bool adjust_value_category) {
+		CVQualifier declared_cv, bool adjust_value_category, ReferenceQualifier object_value_category) {
 			CVQualifier cv = declared_cv;
 			if (adjust_value_category && member_type.reference_qualifier() == ReferenceQualifier::None) {
 				cv |= object_type.cv_qualifier();
@@ -3429,16 +3514,14 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			if (!adjust_value_category) {
 				return;
 			}
-			if (member_type.reference_qualifier() != ReferenceQualifier::None) {
-				return;
-			}
-			if (is_arrow || object_type.is_lvalue_reference()) {
+			// [expr.ref]: a reference member is always an lvalue. A non-reference
+			// member follows the object, and a non-lvalue object yields an xvalue.
+			if (member_type.reference_qualifier() != ReferenceQualifier::None || is_arrow ||
+				object_value_category == ReferenceQualifier::LValueReference) {
 				member_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
 				return;
 			}
-			if (object_type.is_rvalue_reference()) {
-				member_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
-			}
+			member_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
 		};
 
 	// Handle different expression types
@@ -3679,6 +3762,11 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 
 		if (auto overload_return_type = get_overload_return_type(); overload_return_type.has_value()) {
 			return *overload_return_type;
+		}
+
+		// [expr.comma]: the result is the right operand, including its type.
+		if (binary.op() == ",") {
+			return rhs_type_opt;
 		}
 
 		// Comparison and logical operators always return bool
@@ -4140,13 +4228,28 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			}
 			if (operand_type.has_ordered_declarator() &&
 				!operand_type.ordered_declarator_has_legacy_projection() &&
-				!operand_type.declarator_components().empty() &&
-				operand_type.declarator_components().front().kind ==
-					DeclaratorComponentKind::Pointer) {
-				// Do not synthesize a flattened pointee for parser-time overload
-				// selection. Sema owns the canonical dereference and can select the
-				// call from its structural argument type.
-				return std::nullopt;
+				!operand_type.declarator_components().empty()) {
+				// [expr.unary.op]: indirection yields an lvalue of the pointee.
+				// Peel one pointer and keep the remaining ordered spine. A flat
+				// pointee would drop an array that sits on both sides of a pointer.
+				TypeSpecifierNode result = operand_type;
+				size_t component_index = 0;
+				const DeclaratorComponentKind front = result.declarator_components().front().kind;
+				if (front == DeclaratorComponentKind::LValueReference || front == DeclaratorComponentKind::RValueReference) {
+					component_index = 1;
+				}
+				if (component_index < result.declarator_components().size() &&
+					result.declarator_components()[component_index].kind == DeclaratorComponentKind::Pointer) {
+					if (component_index == 1) {
+						result.remove_outermost_ordered_declarator_component();
+					}
+					result.remove_outermost_ordered_declarator_component();
+					result.prepend_ordered_declarator_component(DeclaratorComponent::lvalueReference());
+					if (const int size_bits = getTypeSpecSizeBits(result); size_bits > 0) {
+						result.set_size_in_bits(size_bits);
+					}
+					return result;
+				}
 			}
 			if (operand_type.category() == TypeCategory::FunctionPointer &&
 				operand_type.pointer_levels().empty() &&
@@ -4518,17 +4621,10 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					// Return the member's type
 					// member->size is in bytes, TypeSpecifierNode expects bits
 					TypeSpecifierNode member_type = typeSpecifierFromStructMemberProjection(*member_result.member);
+					const ReferenceQualifier object_value_category = member_access.is_arrow() ? ReferenceQualifier::LValueReference :
+						expressionValueCategoryQualifier(object_node);
 					apply_member_access_value_category(member_type, object_type, member_access.is_arrow(),
-						member_result.member->member_cv_qualifier, !suppress_member_access_value_category_);
-					if (!suppress_member_access_value_category_) {
-						// C++20 [expr.ref]/4: non-arrow member access on a prvalue yields an xvalue
-						if (!member_access.is_arrow() &&
-							!object_type.is_lvalue_reference() &&
-							!object_type.is_rvalue_reference() &&
-							member_type.reference_qualifier() == ReferenceQualifier::None) {
-							member_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
-						}
-					}
+						member_result.member->member_cv_qualifier, !suppress_member_access_value_category_, object_value_category);
 					return member_type;
 				}
 
@@ -4584,7 +4680,10 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		} else if (member_pointer_type.is_array()) {
 			result.set_array_dimensions(member_pointer_type.array_dimensions());
 		}
-		apply_member_access_value_category(result, *object_type_opt, pointer_to_member_access.is_arrow(), CVQualifier::None, true);
+		const ReferenceQualifier object_value_category = pointer_to_member_access.is_arrow() ? ReferenceQualifier::LValueReference :
+			expressionValueCategoryQualifier(pointer_to_member_access.object());
+		apply_member_access_value_category(result, *object_type_opt, pointer_to_member_access.is_arrow(), CVQualifier::None, true,
+			object_value_category);
 		return result;
 	} else if (std::holds_alternative<NoexceptExprNode>(expr)) {
 		return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);

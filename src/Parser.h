@@ -1940,6 +1940,7 @@ private:
 	ParseResult parse_parameter_list(FlashCpp::ParsedParameterList& out_params, CallingConvention calling_convention = CallingConvention::Default);	// Phase 1: Unified parameter list parsing
 	FlashCpp::ParsedFunctionArguments parse_function_arguments(const FlashCpp::FunctionArgumentContext& ctx = {});  // Unified function call argument parsing
 	std::vector<TypeSpecifierNode> apply_lvalue_reference_deduction(const ChunkedVector<ASTNode>& args, std::span<const TypeSpecifierNode> arg_types);  // For template deduction: marks lvalue args with lvalue_reference for T&& forwarding
+	ReferenceQualifier expressionValueCategoryQualifier(const ASTNode& expr);
 	struct CppAttributeInfo {
 		bool has_no_unique_address = false;
 		bool has_noreturn = false;
