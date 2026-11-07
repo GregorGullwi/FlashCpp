@@ -56,6 +56,10 @@ rollback restores overwritten bindings, removes new ones, and truncates the row
 count. Nested commits remain provisional until the outer transaction commits.
 Overlapping publication transactions from different live frontend contexts are
 rejected before opening global journals; same-context nesting remains supported.
+Admission now unwinds every successfully opened parser, namespace, legacy-type,
+and table journal if a later acquisition fails, preserving any enclosing probe.
+Legacy journal frames stay stable during growth; rollback swaps saved maps back
+without constructing or moving a frame during exception cleanup.
 Scope creation and cursor movement now share that boundary: symbol-map undo runs
 before provisional symbol-table slots and frontend `ScopeRecord`s are truncated.
 Rollback restores the current, lookup, and declaring cursors; nested commits stay

@@ -1,16 +1,6 @@
-#include "AstNodeTypes.h"
-#include "CanonicalTypeAdapter.h"
-#include "FrontendContext.h"
-#include "MemberFunctionLookupShared.h"
-#include "LazyMemberResolver.h"
-#include "StringBuilder.h"
-#include "NameMangling.h"
-#include "NamespaceRegistry.h"
-#include "TemplateExpressionEquivalence.h"
-#include "TemplateEnvironment.h"
-#include "Log.h"
 #include <algorithm>
 #include <cstring>
+#include <deque>
 #include <functional>
 #include <iomanip>
 #include <sstream>
@@ -22,6 +12,17 @@
 #include <utility>
 #include <vector>
 
+#include "AstNodeTypes.h"
+#include "CanonicalTypeAdapter.h"
+#include "FrontendContext.h"
+#include "MemberFunctionLookupShared.h"
+#include "LazyMemberResolver.h"
+#include "StringBuilder.h"
+#include "NameMangling.h"
+#include "NamespaceRegistry.h"
+#include "TemplateExpressionEquivalence.h"
+#include "TemplateEnvironment.h"
+#include "Log.h"
 
 // Helper class for cycle detection in recursive member lookup
 // Uses RAII to manage the resolution stack
@@ -1106,8 +1107,8 @@ struct LegacyTypeRegistryJournalFrame {
 	std::vector<TypeInfoInPlaceSnapshot> in_place_rewrites;
 
 	LegacyTypeRegistryJournalFrame() = default;
-	LegacyTypeRegistryJournalFrame(LegacyTypeRegistryJournalFrame&&) = default;
-	LegacyTypeRegistryJournalFrame& operator=(LegacyTypeRegistryJournalFrame&&) = default;
+	LegacyTypeRegistryJournalFrame(LegacyTypeRegistryJournalFrame&&) = delete;
+	LegacyTypeRegistryJournalFrame& operator=(LegacyTypeRegistryJournalFrame&&) = delete;
 	LegacyTypeRegistryJournalFrame(const LegacyTypeRegistryJournalFrame&) = delete;
 	LegacyTypeRegistryJournalFrame& operator=(const LegacyTypeRegistryJournalFrame&) = delete;
 };
@@ -1216,7 +1217,7 @@ bool hasSurvivingColdReference(const LegacyTypeRegistryJournalFrame& frame) {
 // Production speculative parsing is not yet routed through frontend
 // transactions, so this stack stays process-global and single-context, like
 // gNamespaceRegistry. Keep one context's journal alive at a time.
-std::vector<LegacyTypeRegistryJournalFrame> gLegacyTypeRegistryJournal;
+std::deque<LegacyTypeRegistryJournalFrame> gLegacyTypeRegistryJournal;
 
 } // namespace
 
@@ -1250,22 +1251,26 @@ void journalLegacyTypeInfoInPlaceMutation(const TypeInfo& row) {
 }
 
 LegacyTypeRegistryJournalMark beginLegacyTypeRegistryJournal() {
-	LegacyTypeRegistryJournalFrame frame;
-	frame.type_info_count = gTypeInfo.size();
-	frame.dependent_qualified_name_count = gDependentQualifiedNameRecords.size();
-	frame.template_arg_list_count = gTypeInfoTemplateArgLists.size();
-	frame.cold_payload_count = gTemplateArgInfoColdPayloads.size();
-	frame.instantiation_context_count = gInstantiationContexts.size();
-	frame.struct_type_info_count = gStructTypeInfos.size();
-	frame.enum_type_info_count = gEnumTypeInfos.size();
-	for (size_t index = 0; index < kTemplateArgListInternInlineBucketCount; ++index) {
-		frame.template_arg_list_bucket_counts[index] = gTypeInfoTemplateArgListsBySize[index].size();
+	gLegacyTypeRegistryJournal.emplace_back();
+	LegacyTypeRegistryJournalFrame& frame = gLegacyTypeRegistryJournal.back();
+	try {
+		frame.type_info_count = gTypeInfo.size();
+		frame.dependent_qualified_name_count = gDependentQualifiedNameRecords.size();
+		frame.template_arg_list_count = gTypeInfoTemplateArgLists.size();
+		frame.cold_payload_count = gTemplateArgInfoColdPayloads.size();
+		frame.instantiation_context_count = gInstantiationContexts.size();
+		frame.struct_type_info_count = gStructTypeInfos.size();
+		frame.enum_type_info_count = gEnumTypeInfos.size();
+		for (size_t index = 0; index < kTemplateArgListInternInlineBucketCount; ++index) {
+			frame.template_arg_list_bucket_counts[index] = gTypeInfoTemplateArgListsBySize[index].size();
+		}
+		frame.template_arg_list_bucket_counts[kTemplateArgListInternInlineBucketCount] = gTypeInfoTemplateArgListsBySizeOverflow.size();
+		frame.names = gTypesByName;
+		frame.native_types = gNativeTypes;
+	} catch (...) {
+		gLegacyTypeRegistryJournal.pop_back();
+		throw;
 	}
-	frame.template_arg_list_bucket_counts[kTemplateArgListInternInlineBucketCount] =
-		gTypeInfoTemplateArgListsBySizeOverflow.size();
-	frame.names = gTypesByName;
-	frame.native_types = gNativeTypes;
-	gLegacyTypeRegistryJournal.push_back(std::move(frame));
 	return gLegacyTypeRegistryJournal.size();
 }
 
@@ -1280,10 +1285,10 @@ void rollbackLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark) {
 	if (mark == 0 || mark != gLegacyTypeRegistryJournal.size()) {
 		throw InternalError("legacy type registry journal: rollback depth is out of order");
 	}
-	LegacyTypeRegistryJournalFrame frame = std::move(gLegacyTypeRegistryJournal.back());
-	gLegacyTypeRegistryJournal.pop_back();
-	gTypesByName = std::move(frame.names);
-	gNativeTypes = std::move(frame.native_types);
+	// Restore directly from the stable frame; moving its maps could allocate during exception cleanup.
+	LegacyTypeRegistryJournalFrame& frame = gLegacyTypeRegistryJournal.back();
+	gTypesByName.swap(frame.names);
+	gNativeTypes.swap(frame.native_types);
 	while (gTypeInfo.size() > frame.type_info_count) {
 		gTypeInfo.pop_back();
 	}
@@ -1295,6 +1300,7 @@ void rollbackLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark) {
 	// them. Keep the new range in that case rather than dangling or fabricating
 	// a partial reclaim.
 	if (hasSurvivingColdReference(frame)) {
+		gLegacyTypeRegistryJournal.pop_back();
 		return;
 	}
 	for (size_t index = 0; index < kTemplateArgListInternInlineBucketCount; ++index) {
@@ -1309,6 +1315,7 @@ void rollbackLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark) {
 	truncateChunkedVectorTo(gDependentQualifiedNameRecords, frame.dependent_qualified_name_count);
 	truncateChunkedVectorTo(gStructTypeInfos, frame.struct_type_info_count);
 	truncateChunkedVectorTo(gEnumTypeInfos, frame.enum_type_info_count);
+	gLegacyTypeRegistryJournal.pop_back();
 }
 
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesByNameMap() {

@@ -1,10 +1,51 @@
 #include <deque>
 
+#if defined(_WIN32) && defined(_DEBUG)
+#include <crtdbg.h>
+#include <new>
+#endif
+
 #include "CompilerIncludes.h"
 #include "CanonicalTypeAdapter.h"
 #include "FlatHashTable.h"
 #include "ParserTemplateHelpers.h"
 #include "doctest.h"
+
+#if defined(_WIN32) && defined(_DEBUG)
+namespace {
+
+thread_local size_t gFailAllocationCountdown = 0;
+
+// Debug iterator metadata can allocate inside noexcept STL constructors.
+// Sweep recoverable journal payload allocations, excluding those tiny blocks.
+int failNthDebugAllocation(int allocation_type, void*, size_t allocation_size, int, long, const unsigned char*, int) {
+	if ((allocation_type == _HOOK_ALLOC || allocation_type == _HOOK_REALLOC) && allocation_size >= 32 && gFailAllocationCountdown != 0) {
+		--gFailAllocationCountdown;
+		if (gFailAllocationCountdown == 0) {
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
+class ScopedDebugAllocationFailure {
+public:
+	explicit ScopedDebugAllocationFailure(size_t allocation_index)
+		: previous_hook_(_CrtSetAllocHook(failNthDebugAllocation)) {
+		gFailAllocationCountdown = allocation_index;
+	}
+	~ScopedDebugAllocationFailure() {
+		gFailAllocationCountdown = 0;
+		_CrtSetAllocHook(previous_hook_);
+	}
+	ScopedDebugAllocationFailure(const ScopedDebugAllocationFailure&) = delete;
+	ScopedDebugAllocationFailure& operator=(const ScopedDebugAllocationFailure&) = delete;
+private:
+	_CRT_ALLOC_HOOK previous_hook_;
+};
+
+}
+#endif
 
 TEST_SUITE("FrontendContext") {
 	TEST_CASE("Constexpr evaluation handles a manually built 64-level binary expression") {
@@ -811,6 +852,124 @@ TEST_SUITE("FrontendContext") {
 		CHECK(parser.takePendingSemanticRoots().empty());
 		CHECK(parser.get_nodes()[0].raw_pointer() == survivor.raw_pointer());
 	}
+
+#if defined(_WIN32) && defined(_DEBUG)
+	TEST_CASE("Frontend transaction admission rolls back each injected allocation failure") {
+		initialize_native_types();
+		bool admission_completed = false;
+		size_t failed_admissions = 0;
+		bool parser_journal_clean = true;
+		bool namespace_journal_clean = true;
+		for (size_t allocation_index = 1; allocation_index <= 1024 && !admission_completed; ++allocation_index) {
+			FrontendContext context;
+			CompileContext compile_context;
+			const std::string code;
+			Lexer lexer(code);
+			SemanticAnalysis sema(compile_context, gSymbolTable);
+			Parser parser(lexer, compile_context, sema);
+			bool allocation_failed = false;
+			try {
+				auto transaction = [&]() {
+					ScopedDebugAllocationFailure allocation_failure(allocation_index);
+					return context.beginScratchTransaction();
+				}();
+				transaction.rollback();
+				admission_completed = true;
+			} catch (const std::bad_alloc&) {
+				allocation_failed = true;
+			}
+
+			if (allocation_failed) {
+				++failed_admissions;
+				try {
+					parser_journal_clean = parser.takePendingSemanticRoots().empty() && parser_journal_clean;
+				} catch (const InternalError&) {
+					parser_journal_clean = false;
+				}
+			} else {
+				parser_journal_clean = parser.takePendingSemanticRoots().empty() && parser_journal_clean;
+			}
+
+			const size_t namespace_depth = gNamespaceRegistry.beginPublicationTransaction();
+			namespace_journal_clean = (namespace_depth == 1) && namespace_journal_clean;
+			for (size_t depth = namespace_depth; depth != 0; --depth) {
+				gNamespaceRegistry.rollbackPublicationTransaction(depth);
+			}
+		}
+
+		CHECK(failed_admissions >= 2);
+		CHECK(admission_completed);
+		CHECK(parser_journal_clean);
+		CHECK(namespace_journal_clean);
+	}
+
+	TEST_CASE("Frontend nested admission failure preserves its outer transaction") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+		initialize_native_types();
+		bool admission_completed = false;
+		size_t failed_admissions = 0;
+		bool outer_state_survived = true;
+		const StringHandle type_name = StringTable::getOrInternStringHandle("frontend_nested_fault_type");
+		const StringHandle namespace_name = StringTable::getOrInternStringHandle("frontend_nested_fault_namespace");
+		for (size_t allocation_index = 1; allocation_index <= 1024 && !admission_completed; ++allocation_index) {
+			FrontendContext context;
+			bindPersistentScopePublication(gSymbolTable);
+			CompileContext compile_context;
+			const std::string code;
+			Lexer lexer(code);
+			SemanticAnalysis sema(compile_context, gSymbolTable);
+			Parser parser(lexer, compile_context, sema);
+			const size_t original_types = getTypeInfoCount();
+			const size_t original_type_names = getTypesByNameMap().size();
+			const size_t original_native_types = getNativeTypesMap().size();
+			const size_t original_namespaces = gNamespaceRegistry.currentSize();
+			auto outer = context.beginScratchTransaction();
+			const TypeCreationResult type = add_struct_type(type_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+			gSymbolTable.insert_into_namespace(NamespaceRegistry::GLOBAL_NAMESPACE, type_name,
+				ASTNode::emplace_node<ExpressionNode>(NumericLiteralNode(Token{}, uint64_t{5}, TypeCategory::Int, TypeQualifier::None, 32)), false);
+			const NamespaceHandle ns = gNamespaceRegistry.getOrCreateNamespace(NamespaceRegistry::GLOBAL_NAMESPACE, namespace_name);
+			const ASTNode root = ASTNode::emplace_node<ExpressionNode>(
+				NumericLiteralNode(Token{}, uint64_t{7}, TypeCategory::Int, TypeQualifier::None, 32));
+			parser.appendUserNode(root);
+			const size_t root_baseline = parser.get_nodes().size() - 1U;
+			bool allocation_failed = false;
+			try {
+				auto inner = [&]() {
+					ScopedDebugAllocationFailure allocation_failure(allocation_index);
+					return context.beginScratchTransaction();
+				}();
+				inner.rollback();
+				admission_completed = true;
+			} catch (const std::bad_alloc&) {
+				allocation_failed = true;
+			}
+
+			if (allocation_failed) {
+				++failed_admissions;
+				outer_state_survived = outer_state_survived && findTypeByName(type_name) == &type.info &&
+					gSymbolTable.lookup_qualified(NamespaceRegistry::GLOBAL_NAMESPACE, type_name).has_value() &&
+					gNamespaceRegistry.lookupNamespace(NamespaceRegistry::GLOBAL_NAMESPACE, namespace_name) == ns &&
+					parser.get_nodes().size() == root_baseline + 1U;
+				auto retry = context.beginScratchTransaction();
+				retry.rollback();
+			}
+
+			outer.rollback();
+			outer_state_survived = outer_state_survived && getTypeInfoCount() == original_types &&
+				getTypesByNameMap().size() == original_type_names && getNativeTypesMap().size() == original_native_types &&
+				!gSymbolTable.lookup_qualified(NamespaceRegistry::GLOBAL_NAMESPACE, type_name).has_value() &&
+				gNamespaceRegistry.currentSize() == original_namespaces && parser.get_nodes().size() == root_baseline;
+		}
+
+		CHECK(failed_admissions >= 2);
+		CHECK(admission_completed);
+		CHECK(outer_state_survived);
+	}
+#endif
 
 	TEST_CASE("Frontend scratch transactions reject overlapping context journals") {
 		clearLegacyTypeTablesForTesting();
