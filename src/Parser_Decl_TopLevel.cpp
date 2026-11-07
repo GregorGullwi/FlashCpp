@@ -987,7 +987,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 						// Check for CV-qualifiers after the *
 						CVQualifier ptr_cv = parse_cv_qualifiers();
 
-						type_spec.add_pointer_level(ptr_cv);
+						type_spec.add_pointer_to_denoted_type(ptr_cv);
 					}
 
 					std::vector<ASTNode> alias_array_dimensions;

@@ -466,7 +466,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 
 			// Parse cv-qualifiers after pointer
 			CVQualifier ptr_cv = parse_cv_qualifiers();
-			type_spec.add_pointer_level(ptr_cv);
+			type_spec.add_pointer_to_denoted_type(ptr_cv);
 		}
 
 		std::vector<ASTNode> alias_array_dimensions;
@@ -1720,7 +1720,7 @@ ParseResult Parser::parse_typedef_declaration() {
 									while (peek() == "*"_tok) {
 										advance(); // consume '*'
 										CVQualifier ptr_cv = parse_cv_qualifiers();
-										nested_member_type_spec.add_pointer_level(ptr_cv);
+										nested_member_type_spec.add_pointer_to_denoted_type(ptr_cv);
 									}
 
 									// Parse member name
@@ -1799,7 +1799,7 @@ ParseResult Parser::parse_typedef_declaration() {
 						while (peek() == "*"_tok) {
 							advance(); // consume '*'
 							CVQualifier ptr_cv = parse_cv_qualifiers();
-							anon_member_type_spec.add_pointer_level(ptr_cv);
+							anon_member_type_spec.add_pointer_to_denoted_type(ptr_cv);
 						}
 
 						// Parse member name
@@ -1903,7 +1903,7 @@ ParseResult Parser::parse_typedef_declaration() {
 				CVQualifier ptr_cv = parse_cv_qualifiers();
 
 				// Add pointer level to the type specifier
-				member_type_spec.add_pointer_level(ptr_cv);
+				member_type_spec.add_pointer_to_denoted_type(ptr_cv);
 			}
 
 			// A parenthesized declarator group (function pointer, pointer to

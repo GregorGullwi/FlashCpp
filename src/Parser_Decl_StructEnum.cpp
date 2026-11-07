@@ -697,7 +697,7 @@ ParseResult Parser::parse_anonymous_union_member_body(
 					while (peek() == "*"_tok) {
 						advance(); // consume '*'
 						CVQualifier ptr_cv = parse_cv_qualifiers();
-						nested_member_type_spec.add_pointer_level(ptr_cv);
+						nested_member_type_spec.add_pointer_to_denoted_type(ptr_cv);
 					}
 
 					// Parse member name
@@ -776,7 +776,7 @@ ParseResult Parser::parse_anonymous_union_member_body(
 		while (peek() == "*"_tok) {
 			advance(); // consume '*'
 			CVQualifier ptr_cv = parse_cv_qualifiers();
-			anon_member_type_spec.add_pointer_level(ptr_cv);
+			anon_member_type_spec.add_pointer_to_denoted_type(ptr_cv);
 		}
 
 		// Parse member name (allow unnamed bitfields: int : 0;)
@@ -2056,7 +2056,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							while (peek() == "*"_tok) {
 								advance(); // consume '*'
 								CVQualifier ptr_cv = parse_cv_qualifiers();
-								member_type_spec.add_pointer_level(ptr_cv);
+								member_type_spec.add_pointer_to_denoted_type(ptr_cv);
 							}
 
 							// Check for function pointer member pattern: type (*name)(params);
@@ -3632,7 +3632,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			while (peek() == "*"_tok) {
 				advance(); // consume '*'
 				CVQualifier ptr_cv = parse_cv_qualifiers();
-				var_type_spec.add_pointer_level(ptr_cv);
+				var_type_spec.add_pointer_to_denoted_type(ptr_cv);
 			}
 
 			auto var_name_token = advance();
@@ -5500,7 +5500,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 		while (peek() == "*"_tok) {
 			advance(); // consume '*'
 			CVQualifier ptr_cv = parse_cv_qualifiers();
-			member_type_spec.add_pointer_level(ptr_cv);
+			member_type_spec.add_pointer_to_denoted_type(ptr_cv);
 		}
 
 		// Check for function pointer member pattern: type (*name)(params);
