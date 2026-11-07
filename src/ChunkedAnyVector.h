@@ -121,6 +121,17 @@ public:
 		return index_to_pointer.size();
 	}
 
+	bool containsAddress(const void* address) const {
+		const char* target = static_cast<const char*>(address);
+		for (const auto& chunk : data) {
+			const char* begin = chunk.data();
+			if (target >= begin && target < begin + chunk.size()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	uint64_t usedBytes() const {
 		uint64_t total = 0;
 		for (const auto& chunk : data) {

@@ -297,8 +297,11 @@ FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& 
 
 	context.publication_transaction_depth_ = context_depth;
 	gFrontendPublicationJournalOwner = &context;
+	const size_t previous_rewrite_start = context.legacy_qualified_identifier_rewrite_segment_start_;
+	context.legacy_qualified_identifier_rewrite_segment_start_ = context.legacy_qualified_identifier_rewrites_.size();
 	return FrontendPublicationJournalMark{context_depth, namespace_depth, legacy_type_registry_depth, context.scope_records_.size(),
-		gChunkedAnyStorage.size(), parser_journal, parser_publication_handle, context.current_scope_id_};
+		gChunkedAnyStorage.size(), context.legacy_qualified_identifier_rewrites_.size(), previous_rewrite_start, parser_journal,
+		parser_publication_handle, context.current_scope_id_};
 }
 
 Parser& validateFrontendPublicationJournal(const FrontendContext& context, const FrontendPublicationJournalMark& mark, bool rollback) {
@@ -333,7 +336,11 @@ void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicat
 	parser.discardParserCursor(mark.parser_publication_handle);
 	--context.publication_transaction_depth_;
 	if (context.publication_transaction_depth_ == 0) {
+		context.legacy_qualified_identifier_rewrites_.clear();
+		context.legacy_qualified_identifier_rewrite_segment_start_ = 0;
 		gFrontendPublicationJournalOwner = nullptr;
+	} else {
+		context.legacy_qualified_identifier_rewrite_segment_start_ = mark.previous_legacy_qualified_identifier_rewrite_segment_start;
 	}
 }
 
@@ -349,12 +356,23 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 	context.current_scope_id_ = mark.current_scope_id;
 	gNamespaceRegistry.rollbackPublicationTransaction(mark.namespace_depth);
 	rollbackLegacyTypeRegistryJournal(mark.legacy_type_registry_depth);
+	for (size_t index = context.legacy_qualified_identifier_rewrites_.size(); index > mark.legacy_qualified_identifier_rewrite_count; --index) {
+		LegacyQualifiedIdentifierRewrite& rewrite = context.legacy_qualified_identifier_rewrites_[index - 1];
+		if (rewrite.node == nullptr || !rewrite.snapshot.has_value() || !gChunkedAnyStorage.containsAddress(rewrite.node)) {
+			continue;
+		}
+		*rewrite.node = std::move(*rewrite.snapshot);
+	}
+	context.legacy_qualified_identifier_rewrites_.resize(mark.legacy_qualified_identifier_rewrite_count);
 	gChunkedAnyStorage.truncateTo(mark.legacy_ast_node_count);
 	parser.restoreParserCursor(mark.parser_publication_handle);
 	parser.discardParserCursor(mark.parser_publication_handle);
 	--context.publication_transaction_depth_;
 	if (context.publication_transaction_depth_ == 0) {
+		context.legacy_qualified_identifier_rewrite_segment_start_ = 0;
 		gFrontendPublicationJournalOwner = nullptr;
+	} else {
+		context.legacy_qualified_identifier_rewrite_segment_start_ = mark.previous_legacy_qualified_identifier_rewrite_segment_start;
 	}
 }
 
@@ -363,6 +381,29 @@ Parser& FrontendContext::requireParserPublicationJournal() const {
 		throw InternalError("FrontendContext: publication requires a bound Parser");
 	}
 	return *parser_publication_journal_;
+}
+
+void FrontendContext::journalQualifiedIdentifierRewrite(QualifiedIdentifierNode& node) {
+	if (publication_transaction_depth_ == 0 || !gChunkedAnyStorage.containsAddress(&node)) {
+		return;
+	}
+	for (size_t index = legacy_qualified_identifier_rewrite_segment_start_; index < legacy_qualified_identifier_rewrites_.size(); ++index) {
+		if (legacy_qualified_identifier_rewrites_[index].node == &node) {
+			return;
+		}
+	}
+	LegacyQualifiedIdentifierRewrite rewrite;
+	rewrite.node = &node;
+	rewrite.snapshot.emplace(node);
+	legacy_qualified_identifier_rewrites_.push_back(std::move(rewrite));
+}
+
+void journalQualifiedIdentifierRewrite(QualifiedIdentifierNode& node) {
+	FrontendContext* context = FrontendContext::active();
+	if (context == nullptr) {
+		return;
+	}
+	context->journalQualifiedIdentifierRewrite(node);
 }
 
 Parser& FrontendContext::parserForPublicationMark(const FrontendPublicationJournalMark& mark) const {
