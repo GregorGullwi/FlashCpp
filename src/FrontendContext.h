@@ -17,6 +17,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <type_traits>
 #include <vector>
 
@@ -42,12 +43,19 @@ struct BinaryOperatorCallTarget {
 
 static_assert(sizeof(BinaryOperatorCallTarget) == 32);
 
+struct LegacyQualifiedIdentifierRewrite {
+	QualifiedIdentifierNode* node = nullptr;
+	std::optional<QualifiedIdentifierNode> snapshot;
+};
+
 struct FrontendPublicationJournalMark {
 	size_t context_depth = 0;
 	size_t namespace_depth = 0;
 	size_t legacy_type_registry_depth = 0;
 	size_t scope_count = 0;
 	size_t legacy_ast_node_count = 0;
+	size_t legacy_qualified_identifier_rewrite_count = 0;
+	size_t previous_legacy_qualified_identifier_rewrite_segment_start = 0;
 	Parser& parser_publication_journal;
 	size_t parser_publication_handle = SIZE_MAX;
 	ScopeId current_scope_id{};
@@ -583,6 +591,8 @@ private:
 	void releasePersistentScopePublicationTables();
 	Parser& requireParserPublicationJournal() const;
 	Parser& parserForPublicationMark(const FrontendPublicationJournalMark& mark) const;
+	void journalQualifiedIdentifierRewrite(QualifiedIdentifierNode& node);
+	friend void journalQualifiedIdentifierRewrite(QualifiedIdentifierNode& node);
 	bool hasOpenPublicationTransaction() const {
 		return publication_transaction_depth_ != 0;
 	}
@@ -604,6 +614,8 @@ private:
 	ChunkedVector<ScopeRecord, kScopeArenaChunkSize> scope_records_;
 	ScopeId current_scope_id_{1};
 	std::vector<SymbolTable*> persistent_scope_publication_tables_;
+	std::vector<LegacyQualifiedIdentifierRewrite> legacy_qualified_identifier_rewrites_;
+	size_t legacy_qualified_identifier_rewrite_segment_start_ = 0;
 	Parser* parser_publication_journal_ = nullptr;
 	size_t publication_transaction_depth_ = 0;
 

@@ -4065,6 +4065,9 @@ inline size_t computeMinRequiredArgs(const ParamContainer& params) {
 }
 
 // Qualified identifier node for namespace::identifier chains
+class QualifiedIdentifierNode;
+void journalQualifiedIdentifierRewrite(QualifiedIdentifierNode& node);
+
 class QualifiedIdentifierNode {
 public:
 	explicit QualifiedIdentifierNode(NamespaceHandle namespace_handle, Token identifier)
@@ -4081,9 +4084,11 @@ public:
 		return getDependentQualifiedNameRecord(dependent_qualified_name_index_);
 	}
 	void setDependentQualifiedName(TypeInfo::DependentQualifiedNameRecord record) {
+		journalQualifiedIdentifierRewrite(*this);
 		dependent_qualified_name_index_ = storeDependentQualifiedNameRecord(std::move(record));
 	}
 	void set_template_arguments(std::vector<ASTNode>&& template_args) {
+		journalQualifiedIdentifierRewrite(*this);
 		template_arguments_ = std::move(template_args);
 	}
 	std::span<const ASTNode> template_arguments() const { return template_arguments_; }

@@ -881,6 +881,64 @@ TEST_SUITE("FrontendContext") {
 		CHECK(parser.get_nodes().empty());
 	}
 
+	TEST_CASE("Frontend scratch rollback restores in-place qualified identifier rewrites") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+
+		FrontendContext context;
+		ScratchTransactionParserFixture fixture(context);
+		Token identifier_token(Token::Type::Identifier, std::string_view("frontend_qid"), 1, 1, 0);
+		ASTNode stored_node = ASTNode::emplace_node<ExpressionNode>(QualifiedIdentifierNode(NamespaceRegistry::GLOBAL_NAMESPACE, identifier_token));
+		QualifiedIdentifierNode& qualified_identifier = std::get<QualifiedIdentifierNode>(stored_node.as<ExpressionNode>());
+		const ASTNode template_argument = ASTNode::emplace_node<ExpressionNode>(
+			NumericLiteralNode(Token{}, uint64_t{5}, TypeCategory::Int, TypeQualifier::None, 32));
+
+		TypeInfo::DependentQualifiedNameRecord baseline_record{};
+		baseline_record.owner_name = StringTable::getOrInternStringHandle("frontend_tx_baseline_owner");
+		qualified_identifier.setDependentQualifiedName(baseline_record);
+		const TypeInfo::DependentQualifiedNameRecord* baseline_record_pointer = qualified_identifier.dependentQualifiedName();
+		REQUIRE(baseline_record_pointer != nullptr);
+		REQUIRE_FALSE(qualified_identifier.has_template_arguments());
+		{
+			auto outer = context.beginScratchTransaction();
+			TypeInfo::DependentQualifiedNameRecord outer_record{};
+			outer_record.owner_name = StringTable::getOrInternStringHandle("frontend_tx_outer_owner");
+			qualified_identifier.setDependentQualifiedName(outer_record);
+			qualified_identifier.set_template_arguments(std::vector<ASTNode>{template_argument});
+			const TypeInfo::DependentQualifiedNameRecord* outer_record_pointer = qualified_identifier.dependentQualifiedName();
+			REQUIRE(outer_record_pointer != baseline_record_pointer);
+			REQUIRE(qualified_identifier.has_template_arguments());
+			{
+				auto inner = context.beginScratchTransaction();
+				TypeInfo::DependentQualifiedNameRecord inner_record{};
+				inner_record.owner_name = StringTable::getOrInternStringHandle("frontend_tx_inner_owner");
+				qualified_identifier.setDependentQualifiedName(inner_record);
+				qualified_identifier.set_template_arguments(std::vector<ASTNode>{});
+				inner.rollback();
+			}
+			CHECK(qualified_identifier.dependentQualifiedName() == outer_record_pointer);
+			REQUIRE(qualified_identifier.has_template_arguments());
+			CHECK(qualified_identifier.template_arguments()[0].raw_pointer() == template_argument.raw_pointer());
+			outer.rollback();
+		}
+		CHECK(qualified_identifier.dependentQualifiedName() == baseline_record_pointer);
+		CHECK_FALSE(qualified_identifier.has_template_arguments());
+
+		TypeInfo::DependentQualifiedNameRecord committed_record{};
+		committed_record.owner_name = StringTable::getOrInternStringHandle("frontend_tx_committed_owner");
+		const TypeInfo::DependentQualifiedNameRecord* committed_record_pointer = nullptr;
+		{
+			auto transaction = context.beginScratchTransaction();
+			qualified_identifier.setDependentQualifiedName(committed_record);
+			committed_record_pointer = qualified_identifier.dependentQualifiedName();
+			transaction.commit();
+		}
+		CHECK(qualified_identifier.dependentQualifiedName() == committed_record_pointer);
+	}
+
 	TEST_CASE("Frontend scratch rollback restores appended Parser root publication") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

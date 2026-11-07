@@ -206,9 +206,12 @@ pre-checkpoint root erasure, and pending-root drain/clear fail closed. The same
 checkpoint restores the member-function and struct parse-context stack tails and
 the current function/linkage; commit requires them to return to the checkpoint.
 The class-template pack stack, lambda-capture stack, pending explicit template
-arguments, and calling-convention state remain outside the boundary, and
-in-place rewrites of owners outside the type registry still need an owned rollback
-boundary before broad speculative parsing can rely on it. Existing `TypeInfo` rows reached
+arguments, and calling-convention state remain outside the boundary.
+Pre-existing `QualifiedIdentifierNode` dependent-name and template-argument
+rewrites are now snapshotted per transaction segment and restored with rollback.
+Other in-place rewrites of owners outside the type registry, including copied
+`TemplateArgInfo` values held by AST/template registries, still need an owned
+rollback boundary before broad speculative parsing can rely on it. Existing `TypeInfo` rows reached
 through the mutable accessor/mutator API are snapshotted and restored with their
 cold records, and legacy AST nodes allocated after the mark are truncated.
 
