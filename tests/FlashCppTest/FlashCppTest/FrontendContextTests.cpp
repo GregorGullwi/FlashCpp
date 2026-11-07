@@ -986,6 +986,71 @@ TEST_SUITE("FrontendContext") {
 		CHECK(fixture.callingConventionForTest() == CallingConvention::Cdecl);
 	}
 
+	TEST_CASE("Frontend scratch rollback restores in-place struct declaration rewrites") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+
+		FrontendContext context;
+		ScratchTransactionParserFixture fixture(context);
+		const StringHandle owner_name = StringTable::getOrInternStringHandle("frontend_tx_struct_owner");
+		ASTNode owner_node = ASTNode::emplace_node<StructDeclarationNode>(owner_name, false, false);
+		StructDeclarationNode& owner = owner_node.as<StructDeclarationNode>();
+		ASTNode member = ASTNode::emplace_node<ExpressionNode>(
+			NumericLiteralNode(Token{}, uint64_t{7}, TypeCategory::Int, TypeQualifier::None, 32));
+		owner.mark_shape_only();
+		CHECK(owner.members().empty());
+		CHECK(owner.base_classes().empty());
+		CHECK_FALSE(owner.is_final());
+		CHECK_FALSE(owner.is_local_class());
+		CHECK(owner.struct_body_state_tag() == StructDeclarationNode::StructBodyStateTag::ShapeOnly);
+		{
+			auto outer = context.beginScratchTransaction();
+			owner.add_member(member, AccessSpecifier::Public);
+			owner.add_base_class("FrontendOuterBase", TypeIndex{}, AccessSpecifier::Public, false, false);
+			owner.set_is_final(true);
+			owner.mark_materialized();
+			CHECK(owner.members().size() == 1u);
+			CHECK(owner.base_classes().size() == 1u);
+			CHECK(owner.is_final());
+			CHECK(owner.struct_body_state_tag() == StructDeclarationNode::StructBodyStateTag::Materialized);
+			{
+				auto inner = context.beginScratchTransaction();
+				owner.add_member(member, AccessSpecifier::Private);
+				owner.add_base_class("FrontendInnerBase", TypeIndex{}, AccessSpecifier::Private, false, false);
+				owner.set_is_local_class(true);
+				CHECK(owner.members().size() == 2u);
+				CHECK(owner.base_classes().size() == 2u);
+				CHECK(owner.is_local_class());
+				inner.rollback();
+			}
+			CHECK(owner.members().size() == 1u);
+			CHECK(owner.base_classes().size() == 1u);
+			CHECK(owner.is_final());
+			CHECK_FALSE(owner.is_local_class());
+			CHECK(owner.struct_body_state_tag() == StructDeclarationNode::StructBodyStateTag::Materialized);
+			outer.rollback();
+		}
+		CHECK(owner.members().empty());
+		CHECK(owner.base_classes().empty());
+		CHECK_FALSE(owner.is_final());
+		CHECK_FALSE(owner.is_local_class());
+		CHECK(owner.struct_body_state_tag() == StructDeclarationNode::StructBodyStateTag::ShapeOnly);
+
+		{
+			auto transaction = context.beginScratchTransaction();
+			owner.add_member(member, AccessSpecifier::Public);
+			owner.set_is_final(true);
+			owner.mark_materialized();
+			transaction.commit();
+		}
+		CHECK(owner.members().size() == 1u);
+		CHECK(owner.is_final());
+		CHECK(owner.struct_body_state_tag() == StructDeclarationNode::StructBodyStateTag::Materialized);
+	}
+
 	TEST_CASE("Frontend scratch rollback restores in-place qualified identifier rewrites") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

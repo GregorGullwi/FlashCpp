@@ -135,7 +135,10 @@ and restore it before AST storage truncates; snapshots are deduplicated and
 stack-local or already-truncated nodes are skipped. Pre-existing AST declaration
 owners likewise journal their outer template parameter names, copied
 `TemplateArgInfo` arguments, and environment snapshot before `set_outer_template_bindings`
-rewrites them, with one snapshot per owner per segment. Other in-place rewrites of
+rewrites them, with one snapshot per owner per segment. Pre-existing
+`StructDeclarationNode` owners snapshot the whole declaration on their first
+member, base, nested-class, body-state, or identity rewrite in a transaction
+segment and restore it before AST storage truncates. Other in-place rewrites of
 owners outside the type registry still need an owned publication boundary before
 enabling a transaction around type-pack materialization. Required dependency instantiations
 must remain separate from that candidate-local transaction; blanket rollback
@@ -454,8 +457,9 @@ These seed adjacent slices; the authoritative inventory is
   metadata, the active Parser's cursor, append-only root publication, parse
   context stacks, class-template pack and lambda-capture stacks, pending explicit
   template arguments, current function/linkage, calling-convention state,
-  pre-existing `QualifiedIdentifierNode` field rewrites, and AST owner
-  outer-template binding rewrites.
+  pre-existing `QualifiedIdentifierNode` field rewrites, AST owner
+  outer-template binding rewrites, and whole-declaration snapshots for
+  pre-existing `StructDeclarationNode` rewrites.
   Scope creation, cursor movement, and `ScopeRecord` publication roll back
   together after symbol-map undo. Nested commits stay
   provisional until the outer transaction commits; production speculative parsing
