@@ -47,13 +47,19 @@ enabling those graphs; keep evaluator and overload-selection rules separate.
 Extend the typed-value importer before deleting `legacyDerivedBaseOffset`;
 audit dependent and other non-integral specialization roots as well.
 
-## Expression parsing can overflow a 1 MB native stack before callable sema
+## Expression parsing and constraint evaluation can overflow a 1 MB native stack
 
 The nested NTTP-field regression
 `test_nested_inner_value_pack_member_field_ret0.cpp` overflows during compilation
 with a 1 MB reserve. The nested type-pack field regression fits at 1 MB; that
 result does not establish stack safety for the NTTP path. Surrounding template
 materialization still needs smaller frames and bounded scheduling.
+Parenthesized `requires` operands in concept definitions can also overflow a
+1 MB stack in expression parsing before constraint evaluation starts, for example
+`Base<T> && (requires(T value) { value.probe(); } || __is_integral(T))`.
+Named-concept evaluation also retains native recursion: a 16-level chain of
+`Next<T> = Previous<T> && Base<T>` also crashes with a 1 MB compiler reserve,
+even with a builtin-trait leaf. Constraint traversal needs bounded scheduling as well.
 
 Persistent payload handles and out-of-line argument vectors are not reclaimed
 when rolled-back probes abandon entries; they remain allocated until process

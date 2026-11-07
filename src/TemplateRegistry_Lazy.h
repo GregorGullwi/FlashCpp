@@ -1297,11 +1297,8 @@ struct ConstraintEvaluationResult {
 	}
 };
 
-ConstraintEvaluationResult evaluateRequiresExpressionConstraint(
-	const RequiresExpressionNode& requires_expr,
-	const TemplateArgumentVector& template_args,
-	const TemplateParamNameViewVector& template_param_names,
-	Parser* parser,
+ConstraintEvaluationResult evaluateRequiresExpressionConstraint(const RequiresExpressionNode& requires_expr,
+	const TemplateArgumentVector& template_args, const TemplateParamNameViewVector& template_param_names, Parser& parser,
 	std::span<const TemplateParameterNode> template_params);
 
 // isIntegralType and isFloatingPointType moved to AstNodeTypes_TypeSystem.h
@@ -1937,17 +1934,11 @@ inline std::optional<long long> evaluateConstraintExpression(
 
 // Enhanced constraint evaluator for C++20 concepts
 // Evaluates constraints and provides detailed error messages when they fail
-inline ConstraintEvaluationResult evaluateConstraint(
-	const ConceptDeclarationNode& concept_node,
-	const TemplateArgumentVector& template_args,
-	Parser* parser = nullptr);
+inline ConstraintEvaluationResult evaluateConstraint(const ConceptDeclarationNode& concept_node, const TemplateArgumentVector& template_args,
+	Parser& parser);
 
-inline ConstraintEvaluationResult evaluateConstraint(
-	const ASTNode& constraint_expr,
-	const TemplateArgumentVector& template_args,
-	const TemplateParamNameViewVector& template_param_names = {},
-	Parser* parser = nullptr,
-	std::span<const TemplateParameterNode> template_params = {}) {
+inline ConstraintEvaluationResult evaluateConstraint(const ASTNode& constraint_expr, const TemplateArgumentVector& template_args,
+	const TemplateParamNameViewVector& template_param_names, Parser& parser, std::span<const TemplateParameterNode> template_params) {
 
 	FLASH_LOG(Templates, Trace, "evaluateConstraint: constraint type=", constraint_expr.type_name(), ", template_args.size()=", template_args.size());
 	for (size_t i = 0; i < template_param_names.size(); ++i) {
@@ -2045,12 +2036,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 
 		// Concept found - evaluate its constraint expression with the template arguments
 		const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
-		return evaluateConstraint(
-			concept_node.constraint_expr(),
-			template_args,
-			template_param_names,
-			parser,
-			concept_node.template_params());
+		return evaluateConstraint(concept_node.constraint_expr(), template_args, template_param_names, parser, concept_node.template_params());
 	}
 
 	// For member access nodes (e.g., std::is_integral_v<T>)
@@ -2304,11 +2290,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 
 	// For requires expressions: requires { expr; ... } or requires(params) { expr; ... }
 	if (constraint_expr.is<RequiresExpressionNode>()) {
-		return evaluateRequiresExpressionConstraint(
-			constraint_expr.as<RequiresExpressionNode>(),
-			template_args,
-			template_param_names,
-			parser,
+		return evaluateRequiresExpressionConstraint(constraint_expr.as<RequiresExpressionNode>(), template_args, template_param_names, parser,
 			template_params);
 	}
 
@@ -2554,10 +2536,8 @@ inline void appendDefaultConceptTemplateArguments(
 	}
 }
 
-inline ConstraintEvaluationResult evaluateConstraint(
-	const ConceptDeclarationNode& concept_node,
-	const TemplateArgumentVector& template_args,
-	Parser* parser) {
+inline ConstraintEvaluationResult evaluateConstraint(const ConceptDeclarationNode& concept_node, const TemplateArgumentVector& template_args,
+	Parser& parser) {
 	TemplateArgumentVector filled_args = template_args;
 	appendDefaultConceptTemplateArguments(concept_node.template_params(), filled_args);
 	TemplateParamNameViewVector derived_param_names;
@@ -2565,10 +2545,5 @@ inline ConstraintEvaluationResult evaluateConstraint(
 	for (const TemplateParameterNode& concept_param : concept_node.template_params()) {
 		derived_param_names.push_back(concept_param.name());
 	}
-	return evaluateConstraint(
-		concept_node.constraint_expr(),
-		filled_args,
-		derived_param_names,
-		parser,
-		concept_node.template_params());
+	return evaluateConstraint(concept_node.constraint_expr(), filled_args, derived_param_names, parser, concept_node.template_params());
 }

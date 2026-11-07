@@ -6794,11 +6794,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 						// Evaluate the concept constraint with the provided template arguments
 						const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
-						auto constraint_result = evaluateConstraint(
-							concept_node,
-							*template_args,
-							this
-						);
+						auto constraint_result = evaluateConstraint(concept_node, *template_args, *this);
 
 						// Create a BoolLiteralNode with the result
 						bool concept_satisfied = constraint_result.satisfied();
@@ -10946,11 +10942,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 								// Evaluate the concept constraint with the provided template arguments
 								const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
-								auto constraint_result = evaluateConstraint(
-									concept_node,
-									*explicit_template_args,
-									this
-								);
+								auto constraint_result = evaluateConstraint(concept_node, *explicit_template_args, *this);
 
 								// Create a BoolLiteralNode with the result
 								bool concept_satisfied = constraint_result.satisfied();
