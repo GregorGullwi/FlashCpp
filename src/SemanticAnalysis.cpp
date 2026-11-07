@@ -6931,7 +6931,10 @@ bool SemanticAnalysis::declarationDenotesArrayObject(const DeclarationNode& decl
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::builtinDereferenceResultType(const TypeSpecifierNode& operand_type) {
-	const CanonicalTypeId operand_id = canonicalizeType(operand_type);
+	return builtinDereferenceResultType(canonicalizeType(operand_type));
+}
+
+std::optional<TypeSpecifierNode> SemanticAnalysis::builtinDereferenceResultType(CanonicalTypeId operand_id) {
 	if (!operand_id) {
 		return std::nullopt;
 	}
