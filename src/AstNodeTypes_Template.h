@@ -1315,6 +1315,8 @@ struct StaticMemberDecl {
 	void setIsConstexpr(bool value) { is_constexpr = value; }
 };
 
+void journalStructDeclarationRewrite(StructDeclarationNode& node);
+
 class StructDeclarationNode {
 public:
 	explicit StructDeclarationNode(StringHandle name, bool is_class = false, bool is_union = false)
@@ -1325,10 +1327,12 @@ public:
 		return semantic_name_.isValid() ? semantic_name_ : name_;
 	}
 	void set_semantic_name(StringHandle semantic_name) {
+		journalStructDeclarationRewrite(*this);
 		semantic_name_ = semantic_name;
 	}
 	void set_injected_class_pattern_declaration(
 		const StructDeclarationNode* pattern_declaration) {
+		journalStructDeclarationRewrite(*this);
 		injected_class_pattern_declaration_ = pattern_declaration;
 	}
 	const StructDeclarationNode* injected_class_pattern_declaration() const {
@@ -1336,18 +1340,30 @@ public:
 	}
 	std::span<const StructMemberDecl> members() const { return members_; }
 	std::span<const StructMemberFunctionDecl> member_functions() const { return member_functions_; }
-	std::vector<StructMemberFunctionDecl>& member_functions() { return member_functions_; }
+	std::vector<StructMemberFunctionDecl>& member_functions() {
+		journalStructDeclarationRewrite(*this);
+		return member_functions_;
+	}
 	std::span<const BaseClassSpecifier> base_classes() const { return base_classes_; }
 	std::span<const DeferredBaseClassSpecifier> deferred_base_classes() const { return deferred_base_classes_; }
 	std::span<const DeferredTemplateBaseClassSpecifier> deferred_template_base_classes() const { return deferred_template_base_classes_; }
 	bool is_class() const { return is_class_; }
 	bool is_union() const { return is_union_; }
 	bool is_final() const { return is_final_; }
-	void set_is_final(bool final) { is_final_ = final; }
+	void set_is_final(bool final) {
+		journalStructDeclarationRewrite(*this);
+		is_final_ = final;
+	}
 	bool is_forward_declaration() const { return is_forward_declaration_; }
-	void set_is_forward_declaration(bool value) { is_forward_declaration_ = value; }
+	void set_is_forward_declaration(bool value) {
+		journalStructDeclarationRewrite(*this);
+		is_forward_declaration_ = value;
+	}
 	bool is_local_class() const { return is_local_class_; }
-	void set_is_local_class(bool value) { is_local_class_ = value; }
+	void set_is_local_class(bool value) {
+		journalStructDeclarationRewrite(*this);
+		is_local_class_ = value;
+	}
 	AccessSpecifier default_access() const {
 		return is_class_ ? AccessSpecifier::Private : AccessSpecifier::Public;
 	}
@@ -1362,11 +1378,13 @@ public:
 					std::optional<size_t> bitfield_width,
 					std::optional<ASTNode> bitfield_width_expr,
 					bool is_no_unique_address) {
+		journalStructDeclarationRewrite(*this);
 		members_.emplace_back(member, access, std::move(default_initializer), bitfield_width, is_no_unique_address);
 		members_.back().bitfield_width_expr = std::move(bitfield_width_expr);
 	}
 
 	void add_base_class(std::string_view base_name, TypeIndex base_type_index, AccessSpecifier access, bool is_virtual = false, bool is_deferred = false) {
+		journalStructDeclarationRewrite(*this);
 		base_classes_.emplace_back(base_name, base_type_index, access, is_virtual, 0, is_deferred);
 	}
 
@@ -1377,6 +1395,7 @@ public:
 		std::optional<SaveHandle> replay_position,
 		const TemplateDefinitionLookupContext& replay_definition_lookup_context,
 		TemplateReplayParameterState replay_template_parameters) {
+		journalStructDeclarationRewrite(*this);
 		deferred_base_classes_.emplace_back(
 			std::move(decltype_expr),
 			access,
@@ -1395,6 +1414,7 @@ public:
 										  std::optional<SaveHandle> replay_position,
 										  const TemplateDefinitionLookupContext& replay_definition_lookup_context,
 										  TemplateReplayParameterState replay_template_parameters) {
+		journalStructDeclarationRewrite(*this);
 		deferred_template_base_classes_.emplace_back(
 			base_template_name,
 			std::move(args),
@@ -1411,6 +1431,7 @@ public:
 							 bool is_virtual = false, bool is_pure_virtual = false,
 							 bool is_override = false, bool is_final = false,
 							 CVQualifier cv_qualifier = CVQualifier::None) {
+		journalStructDeclarationRewrite(*this);
 		auto& func_decl = member_functions_.emplace_back(function_decl, access, false, false);
 		func_decl.is_virtual = is_virtual;
 		func_decl.is_pure_virtual = is_pure_virtual;
@@ -1425,12 +1446,14 @@ public:
 	}
 
 	void add_constructor(ASTNode constructor_decl, AccessSpecifier access) {
+		journalStructDeclarationRewrite(*this);
 		auto& ctor = member_functions_.emplace_back(constructor_decl, access, true, false);
 		// Extract noexcept from the constructor declaration node
 		ctor.is_noexcept = constructor_decl.as<ConstructorDeclarationNode>().is_noexcept();
 	}
 
 	void add_destructor(ASTNode destructor_decl, AccessSpecifier access, bool is_virtual = false) {
+		journalStructDeclarationRewrite(*this);
 		auto& dtor_decl = member_functions_.emplace_back(destructor_decl, access, false, true);
 		dtor_decl.is_virtual = is_virtual;
 		// Extract noexcept from the destructor declaration node
@@ -1441,6 +1464,7 @@ public:
 							   bool is_virtual = false, bool is_pure_virtual = false,
 							   bool is_override = false, bool is_final = false,
 							   CVQualifier cv_qualifier = CVQualifier::None) {
+		journalStructDeclarationRewrite(*this);
 		auto& func_decl = member_functions_.emplace_back(function_decl, access, false, false, operator_kind);
 		func_decl.is_virtual = is_virtual;
 		func_decl.is_pure_virtual = is_pure_virtual;
@@ -1456,6 +1480,7 @@ public:
 
 	// Friend declaration support
 	void add_friend(ASTNode friend_decl) {
+		journalStructDeclarationRewrite(*this);
 		friend_declarations_.push_back(friend_decl);
 	}
 
@@ -1465,6 +1490,7 @@ public:
 
 	// Nested class support
 	void add_nested_class(ASTNode nested_class) {
+		journalStructDeclarationRewrite(*this);
 		if (nested_class.is<StructDeclarationNode>()) {
 			nested_class.as<StructDeclarationNode>().set_enclosing_class(this);
 		}
@@ -1475,15 +1501,18 @@ public:
 		return nested_classes_;
 	}
 	std::span<ASTNode> nested_classes() {
+		journalStructDeclarationRewrite(*this);
 		return nested_classes_;
 	}
 
 	// Type alias support
 	void add_type_alias(StringHandle alias_name, ASTNode type_node, AccessSpecifier access) {
+		journalStructDeclarationRewrite(*this);
 		type_aliases_.emplace_back(alias_name, type_node, access);
 	}
 
 	void add_type_alias(StringHandle alias_name, ASTNode type_node, std::vector<ASTNode> array_dimensions, AccessSpecifier access) {
+		journalStructDeclarationRewrite(*this);
 		type_aliases_.emplace_back(alias_name, type_node, std::move(array_dimensions), access);
 	}
 
@@ -1519,6 +1548,7 @@ private:
 							 std::optional<SaveHandle> initializer_position,
 							 const TemplateDefinitionLookupContext& initializer_definition_lookup_context,
 							 bool is_constexpr) {
+		journalStructDeclarationRewrite(*this);
 		static_members_.emplace_back(name, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth);
 		if (declaration.has_value()) {
 			static_members_.back().setDeclaration(std::move(*declaration));
@@ -1538,6 +1568,7 @@ public:
 
 	// Anonymous union support
 	void add_anonymous_union_marker(size_t member_index, bool is_union) {
+		journalStructDeclarationRewrite(*this);
 		anonymous_unions_.emplace_back(member_index, is_union);
 	}
 
@@ -1547,6 +1578,7 @@ public:
 		std::optional<size_t> bitfield_width, TypeId canonical_type_id, std::optional<ASTNode> default_initializer, size_t referenced_size_bits,
 		ReferenceQualifier reference_qualifier, bool is_array, bool pointee_array_declarator, int pointer_depth, std::vector<size_t> array_dimensions,
 		CVQualifier member_cv_qualifier) {
+		journalStructDeclarationRewrite(*this);
 		// Add to the last anonymous union that was created
 		if (!anonymous_unions_.empty()) {
 			anonymous_unions_.back().union_members.emplace_back(
@@ -1567,6 +1599,7 @@ public:
 	}
 
 	void set_enclosing_class(StructDeclarationNode* enclosing) {
+		journalStructDeclarationRewrite(*this);
 		enclosing_class_ = enclosing;
 	}
 
@@ -1575,9 +1608,18 @@ public:
 	}
 
 	// Deleted special member function tracking
-	void mark_deleted_default_constructor() { has_deleted_default_constructor_ = true; }
-	void mark_deleted_copy_constructor() { has_deleted_copy_constructor_ = true; }
-	void mark_deleted_move_constructor() { has_deleted_move_constructor_ = true; }
+	void mark_deleted_default_constructor() {
+		journalStructDeclarationRewrite(*this);
+		has_deleted_default_constructor_ = true;
+	}
+	void mark_deleted_copy_constructor() {
+		journalStructDeclarationRewrite(*this);
+		has_deleted_copy_constructor_ = true;
+	}
+	void mark_deleted_move_constructor() {
+		journalStructDeclarationRewrite(*this);
+		has_deleted_move_constructor_ = true;
+	}
 
 	bool has_deleted_default_constructor() const { return has_deleted_default_constructor_; }
 	bool has_deleted_copy_constructor() const { return has_deleted_copy_constructor_; }
@@ -1598,6 +1640,7 @@ public:
 	// Deferred static_assert support (for templates)
 	void add_deferred_static_assert(
 		ASTNode condition_expr, StringHandle message, StringHandle condition_text) {
+		journalStructDeclarationRewrite(*this);
 		deferred_static_asserts_.emplace_back(condition_expr, message, condition_text);
 	}
 
@@ -1639,6 +1682,7 @@ public:
 
 	void mark_shape_only() {
 		assert(struct_body_state_tag_ == StructBodyStateTag::NotMaterialized);
+		journalStructDeclarationRewrite(*this);
 		struct_body_state_tag_ = StructBodyStateTag::ShapeOnly;
 		ownership_phase_ = AstOwnershipPhase::ParserPattern;
 	}
@@ -1647,6 +1691,7 @@ public:
 		assert(struct_body_state_tag_ == StructBodyStateTag::NotMaterialized ||
 			   struct_body_state_tag_ == StructBodyStateTag::ShapeOnly ||
 			   struct_body_state_tag_ == StructBodyStateTag::Materialized);
+		journalStructDeclarationRewrite(*this);
 		struct_body_state_tag_ = StructBodyStateTag::Materialized;
 		ownership_phase_ = AstOwnershipPhase::ConcreteMaterialized;
 	}
@@ -1655,12 +1700,14 @@ public:
 	void markSemaNormalized() const {
 		assert(ownership_phase_ == AstOwnershipPhase::ConcreteMaterialized ||
 			ownership_phase_ == AstOwnershipPhase::SemaNormalized);
+		journalStructDeclarationRewrite(const_cast<StructDeclarationNode&>(*this));
 		ownership_phase_ = AstOwnershipPhase::SemaNormalized;
 	}
 
 	void mark_failed_substitution(StringHandle reason) {
 		assert(struct_body_state_tag_ == StructBodyStateTag::NotMaterialized ||
 			   struct_body_state_tag_ == StructBodyStateTag::ShapeOnly);
+		journalStructDeclarationRewrite(*this);
 		struct_body_state_tag_ = StructBodyStateTag::FailedSubstitution;
 		struct_substitution_failure_reason_ = reason;
 	}
@@ -1669,6 +1716,7 @@ public:
 
 	template <typename NameContainer, typename ArgContainer>
 	void set_outer_template_bindings(const NameContainer& template_param_names, const ArgContainer& template_args) {
+		journalStructDeclarationRewrite(*this);
 		journalOuterTemplateBindingRewrite(this, outer_template_param_names_, outer_template_args_, outer_template_environment_snapshot_node_);
 		outer_template_param_names_.clear();
 		outer_template_args_.clear();
@@ -1691,6 +1739,7 @@ public:
 	}
 
 	void set_outer_template_bindings(const TemplateEnvironmentSnapshotNode* snapshot_node) {
+		journalStructDeclarationRewrite(*this);
 		journalOuterTemplateBindingRewrite(this, outer_template_param_names_, outer_template_args_, outer_template_environment_snapshot_node_);
 		outer_template_environment_snapshot_node_ = snapshot_node;
 	}
@@ -1701,15 +1750,24 @@ public:
 	const TemplateArgInfoVector& outer_template_args() const { return outer_template_args_; }
 
 	ScopeId lexical_scope_id() const { return lexical_scope_id_; }
-	void set_lexical_scope_id(ScopeId scope_id) { lexical_scope_id_ = scope_id; }
+	void set_lexical_scope_id(ScopeId scope_id) {
+		journalStructDeclarationRewrite(*this);
+		lexical_scope_id_ = scope_id;
+	}
 	bool has_lexical_scope_id() const { return static_cast<bool>(lexical_scope_id_); }
 
 	EntityId entity_id() const { return entity_id_; }
-	void set_entity_id(EntityId entity_id) { entity_id_ = entity_id; }
+	void set_entity_id(EntityId entity_id) {
+		journalStructDeclarationRewrite(*this);
+		entity_id_ = entity_id;
+	}
 	bool has_entity_id() const { return static_cast<bool>(entity_id_); }
 
 	TemplateDeclId template_decl_id() const { return template_decl_id_; }
-	void set_template_decl_id(TemplateDeclId template_decl_id) { template_decl_id_ = template_decl_id; }
+	void set_template_decl_id(TemplateDeclId template_decl_id) {
+		journalStructDeclarationRewrite(*this);
+		template_decl_id_ = template_decl_id;
+	}
 	bool has_template_decl_id() const { return static_cast<bool>(template_decl_id_); }
 
 	// Canonical identity of an explicit (full) specialization: the primary class
@@ -1718,12 +1776,18 @@ public:
 	// classification. The specialization's own concrete arguments are read from
 	// outer_template_args().
 	TemplateDeclId canonical_specialization_owner_template_decl_id() const { return canonical_specialization_owner_template_decl_id_; }
-	void set_canonical_specialization_owner_template_decl_id(TemplateDeclId id) { canonical_specialization_owner_template_decl_id_ = id; }
+	void set_canonical_specialization_owner_template_decl_id(TemplateDeclId id) {
+		journalStructDeclarationRewrite(*this);
+		canonical_specialization_owner_template_decl_id_ = id;
+	}
 	bool has_canonical_specialization_owner() const { return static_cast<bool>(canonical_specialization_owner_template_decl_id_); }
 
 	// Parameter substitution identity of a partial pattern, never a class type owner.
 	TemplateDeclId partial_specialization_environment() const { return partial_specialization_environment_; }
-	void set_partial_specialization_environment(TemplateDeclId environment) { partial_specialization_environment_ = environment; }
+	void set_partial_specialization_environment(TemplateDeclId environment) {
+		journalStructDeclarationRewrite(*this);
+		partial_specialization_environment_ = environment;
+	}
 
 private:
 	StringHandle name_;	// Points directly into source text from lexer token

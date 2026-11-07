@@ -212,9 +212,12 @@ Pre-existing `QualifiedIdentifierNode` dependent-name and template-argument
 rewrites are now snapshotted per transaction segment and restored with rollback.
 Pre-existing AST declaration owners likewise snapshot their outer template
 parameter names, copied `TemplateArgInfo` arguments, and environment snapshot
-before `set_outer_template_bindings` rewrites them. Other in-place rewrites of
-owners outside the type registry still need an owned rollback boundary before
-broad speculative parsing can rely on it. Existing `TypeInfo` rows reached
+before `set_outer_template_bindings` rewrites them. Pre-existing
+`StructDeclarationNode` owners snapshot the whole declaration before member,
+base, nested-class, body-state, or identity rewrites and restore it before AST
+storage truncates. Other in-place rewrites of owners outside the type registry
+still need an owned rollback boundary before broad speculative parsing can rely
+on it. Existing `TypeInfo` rows reached
 through the mutable accessor/mutator API are snapshotted and restored with their
 cold records, and legacy AST nodes allocated after the mark are truncated.
 
