@@ -251,6 +251,12 @@ FrontendContext& requirePersistentScopePublicationContext(const SymbolTable& tab
 	return *context;
 }
 
+FrontendScratchTransaction FrontendContext::beginScratchTransaction() {
+	Parser& parser = requireParserPublicationJournal();
+	return FrontendScratchTransaction(*this, diagnostics_, parser.diagnostics(), scratch_arena_, scratch_registry_, declaration_builder_,
+		template_decls_);
+}
+
 FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& context) {
 	if (gFrontendPublicationJournalOwner != nullptr && gFrontendPublicationJournalOwner != &context) {
 		throw InternalError("FrontendContext: overlapping publication transactions require the same context");

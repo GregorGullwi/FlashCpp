@@ -6732,6 +6732,157 @@ TEST_SUITE("Diagnostics") {
 		CHECK(engine.count(DiagnosticSeverity::Warning) == 0u);
 	}
 
+	TEST_CASE("Frontend rollback removes diagnostics from the bound parser engine") {
+		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture(context);
+		DiagnosticEngine& engine = parser_fixture.parser.diagnostics();
+		{
+			auto transaction = context.beginScratchTransaction();
+			engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error, SourceLocation{}, "candidate diagnostic",
+				std::span<const DiagnosticArgument>{});
+			transaction.rollback();
+		}
+		CHECK(engine.diagnostics().empty());
+		CHECK(engine.count(DiagnosticSeverity::Error) == 0u);
+		CHECK_FALSE(engine.hasErrors());
+	}
+
+	TEST_CASE("Frontend rollback restores diagnostics in both engines and preserves borrowed prefix text") {
+		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
+		DiagnosticEngine& frontend_engine = context.diagnostics();
+		DiagnosticEngine& parser_engine = parser_fixture_context.parser.diagnostics();
+		const auto add_prefix = [](DiagnosticEngine& engine) {
+			const uint32_t index = engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Warning, SourceLocation{}, "stable prefix",
+				std::span<const DiagnosticArgument>{});
+			engine.attachNote(index, DiagnosticId::NoteToMatchOpeningBracket, SourceLocation{}, "stable prefix note",
+				std::span<const DiagnosticArgument>{});
+			return index;
+		};
+		const uint32_t frontend_prefix = add_prefix(frontend_engine);
+		const uint32_t parser_prefix = add_prefix(parser_engine);
+		const std::string_view frontend_text = frontend_engine.diagnostic(frontend_prefix).message_template;
+		const std::string_view frontend_note_text = frontend_engine.note(frontend_engine.diagnostic(frontend_prefix).note_indices[0]).message_template;
+		const std::string_view parser_text = parser_engine.diagnostic(parser_prefix).message_template;
+		const std::string_view parser_note_text = parser_engine.note(parser_engine.diagnostic(parser_prefix).note_indices[0]).message_template;
+		{
+			auto transaction = context.beginScratchTransaction();
+			const uint32_t frontend_temporary = frontend_engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error,
+				SourceLocation{}, "temporary frontend error", std::span<const DiagnosticArgument>{});
+			frontend_engine.attachNote(frontend_prefix, DiagnosticId::NoteToMatchOpeningBracket, SourceLocation{}, "temporary frontend note",
+				std::span<const DiagnosticArgument>{});
+			const uint32_t parser_temporary = parser_engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Fatal,
+				SourceLocation{}, "temporary parser fatal", std::span<const DiagnosticArgument>{});
+			parser_engine.attachNote(parser_prefix, DiagnosticId::NoteToMatchOpeningBracket, SourceLocation{}, "temporary parser note",
+				std::span<const DiagnosticArgument>{});
+			CHECK(frontend_temporary == 1u);
+			CHECK(parser_temporary == 1u);
+			transaction.rollback();
+		}
+		REQUIRE(frontend_engine.diagnostics().size() == 1u);
+		REQUIRE(parser_engine.diagnostics().size() == 1u);
+		CHECK(frontend_engine.diagnostic(frontend_prefix).note_indices.size() == 1u);
+		CHECK(parser_engine.diagnostic(parser_prefix).note_indices.size() == 1u);
+		CHECK(frontend_engine.count(DiagnosticSeverity::Warning) == 1u);
+		CHECK(frontend_engine.count(DiagnosticSeverity::Error) == 0u);
+		CHECK(parser_engine.count(DiagnosticSeverity::Warning) == 1u);
+		CHECK(parser_engine.count(DiagnosticSeverity::Fatal) == 0u);
+		CHECK(frontend_text == "stable prefix");
+		CHECK(frontend_note_text == "stable prefix note");
+		CHECK(parser_text == "stable prefix");
+		CHECK(parser_note_text == "stable prefix note");
+	}
+
+	TEST_CASE("Nested frontend diagnostic transactions commit and rollback across both engines") {
+		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
+		const std::array<DiagnosticEngine*, 2> engines{&context.diagnostics(), &parser_fixture_context.parser.diagnostics()};
+		for (DiagnosticEngine* engine_pointer : engines) {
+			DiagnosticEngine& engine = *engine_pointer;
+			auto outer = context.beginScratchTransaction();
+			engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Warning, SourceLocation{}, "outer provisional",
+				std::span<const DiagnosticArgument>{});
+			{
+				auto child = context.beginScratchTransaction();
+				engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error, SourceLocation{}, "child committed",
+					std::span<const DiagnosticArgument>{});
+				child.commit();
+			}
+			outer.rollback();
+			CHECK(engine.diagnostics().empty());
+			CHECK(engine.count(DiagnosticSeverity::Warning) == 0u);
+			CHECK(engine.count(DiagnosticSeverity::Error) == 0u);
+
+			auto committed_outer = context.beginScratchTransaction();
+			engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Warning, SourceLocation{}, "outer committed",
+				std::span<const DiagnosticArgument>{});
+			{
+				auto rolled_back_child = context.beginScratchTransaction();
+				engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Fatal, SourceLocation{}, "child rolled back",
+					std::span<const DiagnosticArgument>{});
+				rolled_back_child.rollback();
+			}
+			committed_outer.commit();
+			REQUIRE(engine.diagnostics().size() == 1u);
+			CHECK(engine.diagnostic(0).message_template == "outer committed");
+			CHECK(engine.count(DiagnosticSeverity::Warning) == 1u);
+			CHECK(engine.count(DiagnosticSeverity::Fatal) == 0u);
+		}
+	}
+
+	TEST_CASE("Manual parser diagnostic nesting rejects frontend completion without mutation and recovers") {
+		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
+		DiagnosticEngine& parser_engine = parser_fixture_context.parser.diagnostics();
+		const size_t scratch_before = context.scratchArena().currentBytes();
+		const size_t canonical_before = context.canonicalTypes().size();
+		const size_t roots_before = parser_fixture_context.parser.get_nodes().size();
+		{
+			auto frontend = context.beginScratchTransaction();
+			frontend.arena().allocate(8, alignof(uint64_t));
+			context.canonicalTypes().builtin(CanonicalBuiltinKind::Int);
+			parser_fixture_context.parser.appendUserNode(ASTNode::emplace_node<ExpressionNode>(
+				NumericLiteralNode(Token{}, uint64_t{23}, TypeCategory::Int, TypeQualifier::None, 32)));
+			DiagnosticTransaction manual_parser_transaction(parser_engine);
+			parser_engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Warning, SourceLocation{}, "manual nested diagnostic",
+				std::span<const DiagnosticArgument>{});
+			CHECK_THROWS_AS(frontend.commit(), InternalError);
+			CHECK_THROWS_AS(frontend.rollback(), InternalError);
+			CHECK(context.scratchArena().currentBytes() > scratch_before);
+			CHECK(context.canonicalTypes().size() > canonical_before);
+			CHECK(parser_fixture_context.parser.get_nodes().size() == roots_before + 1u);
+			manual_parser_transaction.rollback();
+			frontend.rollback();
+		}
+		CHECK(context.scratchArena().currentBytes() == scratch_before);
+		CHECK(context.canonicalTypes().size() == canonical_before);
+		CHECK(parser_fixture_context.parser.get_nodes().size() == roots_before);
+		CHECK(parser_engine.diagnostics().empty());
+		CHECK(context.diagnostics().diagnostics().empty());
+		{
+			auto recovery = context.beginScratchTransaction();
+			recovery.commit();
+		}
+	}
+
+	TEST_CASE("Rejected cross-context frontend admission unwinds both diagnostic transactions") {
+		FrontendContext first;
+		ScratchTransactionParserFixture first_parser(first);
+		auto outer = first.beginScratchTransaction();
+		{
+			FrontendContext second;
+			ScratchTransactionParserFixture second_parser(second);
+			DiagnosticTransaction frontend_diagnostics(second.diagnostics());
+			DiagnosticTransaction parser_diagnostics(second_parser.parser.diagnostics());
+			CHECK_THROWS_AS(second.beginScratchTransaction(), InternalError);
+			CHECK_NOTHROW(frontend_diagnostics.validateCompletion());
+			CHECK_NOTHROW(parser_diagnostics.validateCompletion());
+			parser_diagnostics.rollback();
+			frontend_diagnostics.rollback();
+		}
+		outer.rollback();
+	}
+
 	TEST_CASE("Frontend completion rejects active manual diagnostic transaction before publication commit") {
 		FrontendContext context;
 		ScratchTransactionParserFixture parser_fixture_context(context);

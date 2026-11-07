@@ -209,8 +209,7 @@ broad speculative parsing can rely on it. Existing `TypeInfo` rows reached
 through the mutable accessor/mutator API are snapshotted and restored with their
 cold records, and legacy AST nodes allocated after the mark are truncated.
 
-The separate parser `CompileContext` diagnostic engine is not enlisted by that
-frontend transaction. Diagnostic text and note backing storage is still retained
+Diagnostic text and note backing storage is still retained
 for borrowed engine-lifetime diagnostic views. Reclaiming speculative payloads
 requires a bounded lifetime contract for those views; record rollback alone
 cannot release that storage safely.
