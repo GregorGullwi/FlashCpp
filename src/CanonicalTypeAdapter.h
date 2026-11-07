@@ -692,15 +692,39 @@ inline EntityId resolveNamedTypeEntity(const TypeSpecifierNode& syntax) {
 	return {};
 }
 
+// Re-entering class-source import from a record specifier would import the
+// enclosing specialization while that import is already on the stack.
+inline int& canonicalClassSourceImportDepth() {
+	thread_local int depth = 0;
+	return depth;
+}
+
 // Opaque Record import for published class/struct types. Alias and unpublished
 // nominal forms stay deferred until their EntityId path lands.
 inline CanonicalTypeImport importCanonicalRecord(CanonicalTypeTable& table, const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
 	// An instantiated nested declaration shares its pattern EntityId across
-	// enclosing specializations. The class-source importer must recover its owner.
+	// enclosing specializations. The owner specialization makes the nested
+	// record distinct; a plain Record would collapse those specializations.
 	if (syntax.has_injected_class_declaration()) {
-		const StructDeclarationNode* pattern = syntax.injected_class_declaration()->injected_class_pattern_declaration();
+		const StructDeclarationNode* declaration = syntax.injected_class_declaration();
+		const StructDeclarationNode* pattern = declaration->injected_class_pattern_declaration();
 		if (pattern != nullptr && pattern->has_entity_id() && !pattern->has_template_decl_id()) {
-			return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+			if (canonicalClassSourceImportDepth() != 0) {
+				return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+			}
+			const CanonicalTypeImport imported_class = importCanonicalClassDeclaration(table, *declaration);
+			if (imported_class.status != CanonicalTypeImportStatus::Supported) {
+				return imported_class;
+			}
+			TypeId id = table.qualify(imported_class.type, syntax.cv_qualifier());
+			if (syntax.has_ordered_declarator()) {
+				return applyCanonicalOrderedDeclarator(table, id, syntax, context);
+			}
+			id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
+			if (syntax.reference_qualifier() != ReferenceQualifier::None) {
+				id = table.reference(id, syntax.reference_qualifier());
+			}
+			return {id, CanonicalTypeImportStatus::Supported};
 		}
 	}
 	const EntityId entity = resolveNamedTypeEntity(syntax);
@@ -2498,6 +2522,11 @@ inline CanonicalTypeImport importCanonicalClassSource(CanonicalTypeTable& table,
 	if ((root_type_info == nullptr) == (root_declaration == nullptr)) {
 		throw InternalError("canonical type adapter: class source must have one root");
 	}
+	struct ClassSourceImportDepthGuard {
+		explicit ClassSourceImportDepthGuard(int& depth) : depth_(depth) { ++depth_; }
+		~ClassSourceImportDepthGuard() { --depth_; }
+		int& depth_;
+	} depth_guard(canonicalClassSourceImportDepth());
 	struct PendingClassImport {
 		const StructDeclarationNode* declaration;
 		TemplateDeclId specialization_owner;

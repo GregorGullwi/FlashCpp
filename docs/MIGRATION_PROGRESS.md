@@ -392,8 +392,10 @@ These seed adjacent slices; the authoritative inventory is
   pointer is unimplemented.
 - Conditional array decay and builtin subscript element extraction are
   structural-only. An implicit class-template specialization's `*this` uses that
-  specialization, but a nested class of a primary instantiation still pops one
-  flat pointer level, and an array object without a published id fails closed.
+  specialization. A pointer to a nested class of that specialization is a
+  nested record under the specialization. A dependent class-template pattern,
+  or an instantiation whose owner cannot be imported, still pops one flat
+  pointer level, and an array object without a published id fails closed.
 - The canonical record constructor schema is published independently of the field
   schema. A constructor whose parameter types do not import structurally is
   skipped; consumers fall back only when no constructor is importable. The field
