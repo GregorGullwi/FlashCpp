@@ -106,6 +106,10 @@ private:
 using TemplateParameterVector = FlashCpp::OutOfLineVector<TemplateParameterNode>;
 using TemplateAstNodeVector = TemplateVector<ASTNode, 4>;
 
+class TemplateFunctionDeclarationNode;
+
+void journalTemplateFunctionDeclarationRewrite(TemplateFunctionDeclarationNode& node);
+
 // Template function declaration node - represents a function template
 class TemplateFunctionDeclarationNode {
 public:
@@ -116,7 +120,10 @@ public:
 		  function_declaration_(function_decl),
 		  requires_clause_(requires_clause) {}
 	const TemplateParameterVector& template_parameters() const { return template_parameters_; }
-	TemplateParameterVector& template_parameters() { return template_parameters_; }
+	TemplateParameterVector& template_parameters() {
+		journalTemplateFunctionDeclarationRewrite(*this);
+		return template_parameters_;
+	}
 	const ASTNode& function_declaration() const { return function_declaration_; }
 	const std::optional<ASTNode>& requires_clause() const { return requires_clause_; }
 	bool has_requires_clause() const { return requires_clause_.has_value(); }
@@ -130,9 +137,15 @@ public:
 	}
 
 	TemplateDeclId template_decl_id() const { return template_decl_id_; }
-	void set_template_decl_id(TemplateDeclId template_decl_id) { template_decl_id_ = template_decl_id; }
+	void set_template_decl_id(TemplateDeclId template_decl_id) {
+		journalTemplateFunctionDeclarationRewrite(*this);
+		template_decl_id_ = template_decl_id;
+	}
 	bool has_template_decl_id() const { return static_cast<bool>(template_decl_id_); }
-	void clear_template_decl_id() { template_decl_id_ = {}; }
+	void clear_template_decl_id() {
+		journalTemplateFunctionDeclarationRewrite(*this);
+		template_decl_id_ = {};
+	}
 
 private:
 	TemplateParameterVector template_parameters_;
@@ -202,6 +215,10 @@ inline TemplateVector<DeferredAliasMemberTemplateSegment, 4> makeDeferredAliasMe
 	}
 	return segments;
 }
+
+class TemplateAliasNode;
+
+void journalTemplateAliasDeclarationRewrite(TemplateAliasNode& node);
 
 class TemplateAliasNode {
 public:
@@ -296,7 +313,10 @@ public:
 	const TemplateParamNameVector& template_param_names() const { return template_param_names_; }
 	std::string_view alias_name() const { return alias_name_.view(); }
 	const TypeSpecifierNode& target_type() const { return target_type_; }
-	void setArrayBoundExpressions(std::vector<ASTNode> expressions) { array_bound_expressions_ = std::move(expressions); }
+	void setArrayBoundExpressions(std::vector<ASTNode> expressions) {
+		journalTemplateAliasDeclarationRewrite(*this);
+		array_bound_expressions_ = std::move(expressions);
+	}
 	std::span<const ASTNode> arrayBoundExpressions() const { return {array_bound_expressions_.data(), array_bound_expressions_.size()}; }
 
 	// Deferred instantiation support
@@ -316,11 +336,17 @@ public:
 	}
 
 	// Get the underlying TypeSpecifierNode
-	TypeSpecifierNode& target_type_node() { return target_type_; }
+	TypeSpecifierNode& target_type_node() {
+		journalTemplateAliasDeclarationRewrite(*this);
+		return target_type_;
+	}
 	const TypeSpecifierNode& target_type_node() const { return target_type_; }
 	TemplateDeclId template_decl_id() const { return template_decl_id_; }
 	bool has_template_decl_id() const { return static_cast<bool>(template_decl_id_); }
-	void set_template_decl_id(TemplateDeclId template_decl_id) { template_decl_id_ = template_decl_id; }
+	void set_template_decl_id(TemplateDeclId template_decl_id) {
+		journalTemplateAliasDeclarationRewrite(*this);
+		template_decl_id_ = template_decl_id;
+	}
 
 private:
 	TemplateParameterVector template_parameters_;
@@ -367,6 +393,10 @@ class TemplateClassDeclarationNode;
 class VariableDeclarationNode;
 
 // Variable template declaration: template<typename T> constexpr T pi = T(3.14159265358979323846);
+class TemplateVariableDeclarationNode;
+
+void journalTemplateVariableDeclarationRewrite(TemplateVariableDeclarationNode& node);
+
 class TemplateVariableDeclarationNode {
 public:
 	TemplateVariableDeclarationNode() = delete;
@@ -374,7 +404,10 @@ public:
 		: template_parameters_(std::move(template_params)), variable_declaration_(variable_decl) {}
 
 	const TemplateParameterVector& template_parameters() const { return template_parameters_; }
-	VariableDeclarationNode& variable_declaration() { return variable_declaration_.as<VariableDeclarationNode>(); }
+	VariableDeclarationNode& variable_declaration() {
+		journalTemplateVariableDeclarationRewrite(*this);
+		return variable_declaration_.as<VariableDeclarationNode>();
+	}
 	const VariableDeclarationNode& variable_declaration() const { return variable_declaration_.as<VariableDeclarationNode>(); }
 	bool has_initializer_replay_position() const { return initializer_replay_position_.has_value(); }
 	const std::optional<SaveHandle>& initializer_replay_position() const { return initializer_replay_position_; }
@@ -382,12 +415,16 @@ public:
 	void set_initializer_replay_metadata(
 		SaveHandle initializer_position,
 		const TemplateDefinitionLookupContext& definition_lookup_context) {
+		journalTemplateVariableDeclarationRewrite(*this);
 		initializer_replay_position_ = initializer_position;
 		initializer_definition_lookup_context_ = definition_lookup_context;
 	}
 
 	// Get the underlying VariableDeclarationNode
-	VariableDeclarationNode& variable_decl_node() { return variable_declaration_.as<VariableDeclarationNode>(); }
+	VariableDeclarationNode& variable_decl_node() {
+		journalTemplateVariableDeclarationRewrite(*this);
+		return variable_declaration_.as<VariableDeclarationNode>();
+	}
 	const VariableDeclarationNode& variable_decl_node() const { return variable_declaration_.as<VariableDeclarationNode>(); }
 
 private:
@@ -1179,6 +1216,10 @@ struct StructMemberFunctionDecl {
 };
 
 // Friend declaration node
+class FriendDeclarationNode;
+
+void journalFriendDeclarationRewrite(FriendDeclarationNode& node);
+
 class FriendDeclarationNode {
 public:
 	// Friend class declaration: friend class ClassName;
@@ -1194,6 +1235,7 @@ public:
 	StringHandle class_name() const { return class_name_; }
 	void set_class_declaration(
 		const StructDeclarationNode* class_declaration) {
+		journalFriendDeclarationRewrite(*this);
 		class_declaration_ = class_declaration;
 	}
 	const StructDeclarationNode* class_declaration() const {
@@ -1201,24 +1243,28 @@ public:
 	}
 	void set_class_template_arguments(
 		TemplateArgumentVector template_arguments) {
+		journalFriendDeclarationRewrite(*this);
 		class_template_arguments_ = std::move(template_arguments);
 	}
 	std::span<const TemplateTypeArg> class_template_arguments() const {
 		return class_template_arguments_;
 	}
 	void set_class_template_name(StringHandle template_name) {
+		journalFriendDeclarationRewrite(*this);
 		class_template_name_ = template_name;
 	}
 	StringHandle class_template_name() const {
 		return class_template_name_;
 	}
 	void set_class_type_index(TypeIndex type_index) {
+		journalFriendDeclarationRewrite(*this);
 		class_type_index_ = type_index;
 	}
 	TypeIndex class_type_index() const {
 		return class_type_index_;
 	}
 	void set_class_template_decl_id(TemplateDeclId template_decl_id) {
+		journalFriendDeclarationRewrite(*this);
 		class_template_decl_id_ = template_decl_id;
 	}
 	TemplateDeclId class_template_decl_id() const {
@@ -1226,7 +1272,10 @@ public:
 	}
 
 	// For friend functions, store the function declaration
-	void set_function_declaration(ASTNode decl) { function_decl_ = decl; }
+	void set_function_declaration(ASTNode decl) {
+		journalFriendDeclarationRewrite(*this);
+		function_decl_ = decl;
+	}
 	const std::optional<ASTNode>& function_declaration() const { return function_decl_; }
 
 private:
@@ -1826,6 +1875,8 @@ private:
 	TemplateDeclId canonical_specialization_owner_template_decl_id_;
 };
 
+void journalTemplateClassDeclarationRewrite(TemplateClassDeclarationNode& node);
+
 // Template class declaration node - represents a class template
 class TemplateClassDeclarationNode {
 public:
@@ -1835,7 +1886,10 @@ public:
 								 ASTNode class_decl)
 		: template_parameters_(std::move(template_params)), template_param_names_(std::move(param_names)), class_declaration_(class_decl) {}
 	const TemplateParameterVector& template_parameters() const { return template_parameters_; }
-	TemplateParameterVector& template_parameters() { return template_parameters_; }
+	TemplateParameterVector& template_parameters() {
+		journalTemplateClassDeclarationRewrite(*this);
+		return template_parameters_;
+	}
 	const TemplateParamNameViewVector& template_param_names() const { return template_param_names_; }
 	const ASTNode& class_declaration() const { return class_declaration_; }
 
@@ -1848,11 +1902,15 @@ public:
 	}
 
 	TemplateDeclId template_decl_id() const { return template_decl_id_; }
-	void set_template_decl_id(TemplateDeclId template_decl_id) { template_decl_id_ = template_decl_id; }
+	void set_template_decl_id(TemplateDeclId template_decl_id) {
+		journalTemplateClassDeclarationRewrite(*this);
+		template_decl_id_ = template_decl_id;
+	}
 	bool has_template_decl_id() const { return static_cast<bool>(template_decl_id_); }
 
 	// Deferred template body parsing support
 	void set_deferred_bodies(std::vector<DeferredTemplateMemberBody> bodies) {
+		journalTemplateClassDeclarationRewrite(*this);
 		deferred_bodies_ = std::move(bodies);
 	}
 	std::span<const DeferredTemplateMemberBody> deferred_bodies() const {

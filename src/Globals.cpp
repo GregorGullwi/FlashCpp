@@ -303,19 +303,41 @@ FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& 
 	const size_t previous_function_declaration_rewrite_start = context.legacy_function_declaration_rewrite_segment_start_;
 	const size_t previous_declaration_node_rewrite_start = context.legacy_declaration_node_rewrite_segment_start_;
 	const size_t previous_enum_declaration_rewrite_start = context.legacy_enum_declaration_rewrite_segment_start_;
+	const size_t previous_template_function_declaration_rewrite_start =
+		context.legacy_template_function_declaration_rewrite_segment_start_;
+	const size_t previous_template_class_declaration_rewrite_start =
+		context.legacy_template_class_declaration_rewrite_segment_start_;
+	const size_t previous_template_alias_declaration_rewrite_start =
+		context.legacy_template_alias_declaration_rewrite_segment_start_;
+	const size_t previous_template_variable_declaration_rewrite_start =
+		context.legacy_template_variable_declaration_rewrite_segment_start_;
+	const size_t previous_friend_declaration_rewrite_start = context.legacy_friend_declaration_rewrite_segment_start_;
 	context.legacy_qualified_identifier_rewrite_segment_start_ = context.legacy_qualified_identifier_rewrites_.size();
 	context.legacy_outer_template_binding_rewrite_segment_start_ = context.legacy_outer_template_binding_rewrites_.size();
 	context.legacy_struct_declaration_rewrite_segment_start_ = context.legacy_struct_declaration_rewrites_.size();
 	context.legacy_function_declaration_rewrite_segment_start_ = context.legacy_function_declaration_rewrites_.size();
 	context.legacy_declaration_node_rewrite_segment_start_ = context.legacy_declaration_node_rewrites_.size();
 	context.legacy_enum_declaration_rewrite_segment_start_ = context.legacy_enum_declaration_rewrites_.size();
+	context.legacy_template_function_declaration_rewrite_segment_start_ =
+		context.legacy_template_function_declaration_rewrites_.size();
+	context.legacy_template_class_declaration_rewrite_segment_start_ =
+		context.legacy_template_class_declaration_rewrites_.size();
+	context.legacy_template_alias_declaration_rewrite_segment_start_ = context.legacy_template_alias_declaration_rewrites_.size();
+	context.legacy_template_variable_declaration_rewrite_segment_start_ =
+		context.legacy_template_variable_declaration_rewrites_.size();
+	context.legacy_friend_declaration_rewrite_segment_start_ = context.legacy_friend_declaration_rewrites_.size();
 	return FrontendPublicationJournalMark{context_depth, namespace_depth, legacy_type_registry_depth, context.scope_records_.size(),
 		gChunkedAnyStorage.size(), context.legacy_qualified_identifier_rewrites_.size(), previous_rewrite_start,
 		context.legacy_outer_template_binding_rewrites_.size(), previous_template_binding_rewrite_start,
 		context.legacy_struct_declaration_rewrites_.size(), previous_struct_declaration_rewrite_start,
 		context.legacy_function_declaration_rewrites_.size(), previous_function_declaration_rewrite_start,
 		context.legacy_declaration_node_rewrites_.size(), previous_declaration_node_rewrite_start,
-		context.legacy_enum_declaration_rewrites_.size(), previous_enum_declaration_rewrite_start, parser_journal,
+		context.legacy_enum_declaration_rewrites_.size(), previous_enum_declaration_rewrite_start,
+		context.legacy_template_function_declaration_rewrites_.size(), previous_template_function_declaration_rewrite_start,
+		context.legacy_template_class_declaration_rewrites_.size(), previous_template_class_declaration_rewrite_start,
+		context.legacy_template_alias_declaration_rewrites_.size(), previous_template_alias_declaration_rewrite_start,
+		context.legacy_template_variable_declaration_rewrites_.size(), previous_template_variable_declaration_rewrite_start,
+		context.legacy_friend_declaration_rewrites_.size(), previous_friend_declaration_rewrite_start, parser_journal,
 		parser_publication_handle, context.current_scope_id_};
 }
 
@@ -363,6 +385,16 @@ void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicat
 		context.legacy_declaration_node_rewrite_segment_start_ = 0;
 		context.legacy_enum_declaration_rewrites_.clear();
 		context.legacy_enum_declaration_rewrite_segment_start_ = 0;
+		context.legacy_template_function_declaration_rewrites_.clear();
+		context.legacy_template_function_declaration_rewrite_segment_start_ = 0;
+		context.legacy_template_class_declaration_rewrites_.clear();
+		context.legacy_template_class_declaration_rewrite_segment_start_ = 0;
+		context.legacy_template_alias_declaration_rewrites_.clear();
+		context.legacy_template_alias_declaration_rewrite_segment_start_ = 0;
+		context.legacy_template_variable_declaration_rewrites_.clear();
+		context.legacy_template_variable_declaration_rewrite_segment_start_ = 0;
+		context.legacy_friend_declaration_rewrites_.clear();
+		context.legacy_friend_declaration_rewrite_segment_start_ = 0;
 		gFrontendPublicationJournalOwner = nullptr;
 	} else {
 		context.legacy_qualified_identifier_rewrite_segment_start_ = mark.previous_legacy_qualified_identifier_rewrite_segment_start;
@@ -371,6 +403,15 @@ void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicat
 		context.legacy_function_declaration_rewrite_segment_start_ = mark.previous_legacy_function_declaration_rewrite_segment_start;
 		context.legacy_declaration_node_rewrite_segment_start_ = mark.previous_legacy_declaration_node_rewrite_segment_start;
 		context.legacy_enum_declaration_rewrite_segment_start_ = mark.previous_legacy_enum_declaration_rewrite_segment_start;
+		context.legacy_template_function_declaration_rewrite_segment_start_ =
+			mark.previous_legacy_template_function_declaration_rewrite_segment_start;
+		context.legacy_template_class_declaration_rewrite_segment_start_ =
+			mark.previous_legacy_template_class_declaration_rewrite_segment_start;
+		context.legacy_template_alias_declaration_rewrite_segment_start_ =
+			mark.previous_legacy_template_alias_declaration_rewrite_segment_start;
+		context.legacy_template_variable_declaration_rewrite_segment_start_ =
+			mark.previous_legacy_template_variable_declaration_rewrite_segment_start;
+		context.legacy_friend_declaration_rewrite_segment_start_ = mark.previous_legacy_friend_declaration_rewrite_segment_start;
 	}
 }
 
@@ -439,6 +480,50 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 		*rewrite.owner = std::move(*rewrite.snapshot);
 	}
 	context.legacy_enum_declaration_rewrites_.resize(mark.legacy_enum_declaration_rewrite_count);
+	for (size_t index = context.legacy_template_function_declaration_rewrites_.size();
+		index > mark.legacy_template_function_declaration_rewrite_count; --index) {
+		LegacyTemplateFunctionDeclarationRewrite& rewrite = context.legacy_template_function_declaration_rewrites_[index - 1];
+		if (rewrite.owner == nullptr || !rewrite.snapshot.has_value() || !gChunkedAnyStorage.containsAddress(rewrite.owner)) {
+			continue;
+		}
+		*rewrite.owner = std::move(*rewrite.snapshot);
+	}
+	context.legacy_template_function_declaration_rewrites_.resize(mark.legacy_template_function_declaration_rewrite_count);
+	for (size_t index = context.legacy_template_class_declaration_rewrites_.size();
+		index > mark.legacy_template_class_declaration_rewrite_count; --index) {
+		LegacyTemplateClassDeclarationRewrite& rewrite = context.legacy_template_class_declaration_rewrites_[index - 1];
+		if (rewrite.owner == nullptr || !rewrite.snapshot.has_value() || !gChunkedAnyStorage.containsAddress(rewrite.owner)) {
+			continue;
+		}
+		*rewrite.owner = std::move(*rewrite.snapshot);
+	}
+	context.legacy_template_class_declaration_rewrites_.resize(mark.legacy_template_class_declaration_rewrite_count);
+	for (size_t index = context.legacy_template_alias_declaration_rewrites_.size();
+		index > mark.legacy_template_alias_declaration_rewrite_count; --index) {
+		LegacyTemplateAliasDeclarationRewrite& rewrite = context.legacy_template_alias_declaration_rewrites_[index - 1];
+		if (rewrite.owner == nullptr || !rewrite.snapshot.has_value() || !gChunkedAnyStorage.containsAddress(rewrite.owner)) {
+			continue;
+		}
+		*rewrite.owner = std::move(*rewrite.snapshot);
+	}
+	context.legacy_template_alias_declaration_rewrites_.resize(mark.legacy_template_alias_declaration_rewrite_count);
+	for (size_t index = context.legacy_template_variable_declaration_rewrites_.size();
+		index > mark.legacy_template_variable_declaration_rewrite_count; --index) {
+		LegacyTemplateVariableDeclarationRewrite& rewrite = context.legacy_template_variable_declaration_rewrites_[index - 1];
+		if (rewrite.owner == nullptr || !rewrite.snapshot.has_value() || !gChunkedAnyStorage.containsAddress(rewrite.owner)) {
+			continue;
+		}
+		*rewrite.owner = std::move(*rewrite.snapshot);
+	}
+	context.legacy_template_variable_declaration_rewrites_.resize(mark.legacy_template_variable_declaration_rewrite_count);
+	for (size_t index = context.legacy_friend_declaration_rewrites_.size(); index > mark.legacy_friend_declaration_rewrite_count; --index) {
+		LegacyFriendDeclarationRewrite& rewrite = context.legacy_friend_declaration_rewrites_[index - 1];
+		if (rewrite.owner == nullptr || !rewrite.snapshot.has_value() || !gChunkedAnyStorage.containsAddress(rewrite.owner)) {
+			continue;
+		}
+		*rewrite.owner = std::move(*rewrite.snapshot);
+	}
+	context.legacy_friend_declaration_rewrites_.resize(mark.legacy_friend_declaration_rewrite_count);
 	gChunkedAnyStorage.truncateTo(mark.legacy_ast_node_count);
 	parser.restoreParserCursor(mark.parser_publication_handle);
 	parser.discardParserCursor(mark.parser_publication_handle);
@@ -450,6 +535,11 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 		context.legacy_function_declaration_rewrite_segment_start_ = 0;
 		context.legacy_declaration_node_rewrite_segment_start_ = 0;
 		context.legacy_enum_declaration_rewrite_segment_start_ = 0;
+		context.legacy_template_function_declaration_rewrite_segment_start_ = 0;
+		context.legacy_template_class_declaration_rewrite_segment_start_ = 0;
+		context.legacy_template_alias_declaration_rewrite_segment_start_ = 0;
+		context.legacy_template_variable_declaration_rewrite_segment_start_ = 0;
+		context.legacy_friend_declaration_rewrite_segment_start_ = 0;
 		gFrontendPublicationJournalOwner = nullptr;
 	} else {
 		context.legacy_qualified_identifier_rewrite_segment_start_ = mark.previous_legacy_qualified_identifier_rewrite_segment_start;
@@ -458,6 +548,15 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 		context.legacy_function_declaration_rewrite_segment_start_ = mark.previous_legacy_function_declaration_rewrite_segment_start;
 		context.legacy_declaration_node_rewrite_segment_start_ = mark.previous_legacy_declaration_node_rewrite_segment_start;
 		context.legacy_enum_declaration_rewrite_segment_start_ = mark.previous_legacy_enum_declaration_rewrite_segment_start;
+		context.legacy_template_function_declaration_rewrite_segment_start_ =
+			mark.previous_legacy_template_function_declaration_rewrite_segment_start;
+		context.legacy_template_class_declaration_rewrite_segment_start_ =
+			mark.previous_legacy_template_class_declaration_rewrite_segment_start;
+		context.legacy_template_alias_declaration_rewrite_segment_start_ =
+			mark.previous_legacy_template_alias_declaration_rewrite_segment_start;
+		context.legacy_template_variable_declaration_rewrite_segment_start_ =
+			mark.previous_legacy_template_variable_declaration_rewrite_segment_start;
+		context.legacy_friend_declaration_rewrite_segment_start_ = mark.previous_legacy_friend_declaration_rewrite_segment_start;
 	}
 }
 
@@ -620,6 +719,125 @@ void journalEnumDeclarationRewrite(EnumDeclarationNode& node) {
 		return;
 	}
 	context->journalEnumDeclarationRewrite(node);
+}
+
+void FrontendContext::journalTemplateFunctionDeclarationRewrite(TemplateFunctionDeclarationNode& node) {
+	if (publication_transaction_depth_ == 0 || !gChunkedAnyStorage.containsAddress(&node)) {
+		return;
+	}
+	for (size_t index = legacy_template_function_declaration_rewrite_segment_start_;
+		index < legacy_template_function_declaration_rewrites_.size(); ++index) {
+		if (legacy_template_function_declaration_rewrites_[index].owner == &node) {
+			return;
+		}
+	}
+	LegacyTemplateFunctionDeclarationRewrite rewrite;
+	rewrite.owner = &node;
+	rewrite.snapshot.emplace(node);
+	legacy_template_function_declaration_rewrites_.push_back(std::move(rewrite));
+}
+
+void journalTemplateFunctionDeclarationRewrite(TemplateFunctionDeclarationNode& node) {
+	FrontendContext* context = FrontendContext::active();
+	if (context == nullptr) {
+		return;
+	}
+	context->journalTemplateFunctionDeclarationRewrite(node);
+}
+
+void FrontendContext::journalTemplateClassDeclarationRewrite(TemplateClassDeclarationNode& node) {
+	if (publication_transaction_depth_ == 0 || !gChunkedAnyStorage.containsAddress(&node)) {
+		return;
+	}
+	for (size_t index = legacy_template_class_declaration_rewrite_segment_start_;
+		index < legacy_template_class_declaration_rewrites_.size(); ++index) {
+		if (legacy_template_class_declaration_rewrites_[index].owner == &node) {
+			return;
+		}
+	}
+	LegacyTemplateClassDeclarationRewrite rewrite;
+	rewrite.owner = &node;
+	rewrite.snapshot.emplace(node);
+	legacy_template_class_declaration_rewrites_.push_back(std::move(rewrite));
+}
+
+void journalTemplateClassDeclarationRewrite(TemplateClassDeclarationNode& node) {
+	FrontendContext* context = FrontendContext::active();
+	if (context == nullptr) {
+		return;
+	}
+	context->journalTemplateClassDeclarationRewrite(node);
+}
+
+void FrontendContext::journalTemplateAliasDeclarationRewrite(TemplateAliasNode& node) {
+	if (publication_transaction_depth_ == 0 || !gChunkedAnyStorage.containsAddress(&node)) {
+		return;
+	}
+	for (size_t index = legacy_template_alias_declaration_rewrite_segment_start_;
+		index < legacy_template_alias_declaration_rewrites_.size(); ++index) {
+		if (legacy_template_alias_declaration_rewrites_[index].owner == &node) {
+			return;
+		}
+	}
+	LegacyTemplateAliasDeclarationRewrite rewrite;
+	rewrite.owner = &node;
+	rewrite.snapshot.emplace(node);
+	legacy_template_alias_declaration_rewrites_.push_back(std::move(rewrite));
+}
+
+void journalTemplateAliasDeclarationRewrite(TemplateAliasNode& node) {
+	FrontendContext* context = FrontendContext::active();
+	if (context == nullptr) {
+		return;
+	}
+	context->journalTemplateAliasDeclarationRewrite(node);
+}
+
+void FrontendContext::journalTemplateVariableDeclarationRewrite(TemplateVariableDeclarationNode& node) {
+	if (publication_transaction_depth_ == 0 || !gChunkedAnyStorage.containsAddress(&node)) {
+		return;
+	}
+	for (size_t index = legacy_template_variable_declaration_rewrite_segment_start_;
+		index < legacy_template_variable_declaration_rewrites_.size(); ++index) {
+		if (legacy_template_variable_declaration_rewrites_[index].owner == &node) {
+			return;
+		}
+	}
+	LegacyTemplateVariableDeclarationRewrite rewrite;
+	rewrite.owner = &node;
+	rewrite.snapshot.emplace(node);
+	legacy_template_variable_declaration_rewrites_.push_back(std::move(rewrite));
+}
+
+void journalTemplateVariableDeclarationRewrite(TemplateVariableDeclarationNode& node) {
+	FrontendContext* context = FrontendContext::active();
+	if (context == nullptr) {
+		return;
+	}
+	context->journalTemplateVariableDeclarationRewrite(node);
+}
+
+void FrontendContext::journalFriendDeclarationRewrite(FriendDeclarationNode& node) {
+	if (publication_transaction_depth_ == 0 || !gChunkedAnyStorage.containsAddress(&node)) {
+		return;
+	}
+	for (size_t index = legacy_friend_declaration_rewrite_segment_start_; index < legacy_friend_declaration_rewrites_.size(); ++index) {
+		if (legacy_friend_declaration_rewrites_[index].owner == &node) {
+			return;
+		}
+	}
+	LegacyFriendDeclarationRewrite rewrite;
+	rewrite.owner = &node;
+	rewrite.snapshot.emplace(node);
+	legacy_friend_declaration_rewrites_.push_back(std::move(rewrite));
+}
+
+void journalFriendDeclarationRewrite(FriendDeclarationNode& node) {
+	FrontendContext* context = FrontendContext::active();
+	if (context == nullptr) {
+		return;
+	}
+	context->journalFriendDeclarationRewrite(node);
 }
 
 void journalOuterTemplateBindingRewrite(void* owner, TemplateParamNameVector& names, TemplateArgInfoVector& args,

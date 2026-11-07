@@ -1260,6 +1260,152 @@ TEST_SUITE("FrontendContext") {
 		CHECK(enum_declaration.is_forward_declaration());
 	}
 
+	TEST_CASE("Frontend scratch rollback restores template declaration rewrites") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+
+		FrontendContext context;
+		ScratchTransactionParserFixture fixture(context);
+		const TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		DeclarationNode declaration(
+			int_type, Token(Token::Type::Identifier, std::string_view("frontend_tx_template_function"), 1, 1, 0));
+		ASTNode function_declaration = ASTNode::emplace_node<FunctionDeclarationNode>(declaration);
+		ASTNode template_function_node = ASTNode::emplace_node<TemplateFunctionDeclarationNode>(
+			TemplateParameterVector{}, function_declaration, std::nullopt);
+		TemplateFunctionDeclarationNode& template_function = template_function_node.as<TemplateFunctionDeclarationNode>();
+		const StringHandle class_name = StringTable::getOrInternStringHandle("frontend_tx_template_class");
+		ASTNode class_declaration = ASTNode::emplace_node<StructDeclarationNode>(class_name, false, false);
+		ASTNode template_class_node = ASTNode::emplace_node<TemplateClassDeclarationNode>(
+			TemplateParameterVector{}, TemplateParamNameViewVector{}, class_declaration);
+		TemplateClassDeclarationNode& template_class = template_class_node.as<TemplateClassDeclarationNode>();
+		const StringHandle parameter_name = StringTable::getOrInternStringHandle("T");
+		const Token parameter_token(Token::Type::Identifier, std::string_view("T"), 1, 1, 0);
+		template_function.set_template_decl_id(TemplateDeclId{1});
+		template_class.set_template_decl_id(TemplateDeclId{2});
+		{
+			auto outer = context.beginScratchTransaction();
+			template_function.template_parameters().push_back(TemplateParameterNode(parameter_name, parameter_token));
+			template_function.set_template_decl_id(TemplateDeclId{3});
+			template_class.template_parameters().push_back(TemplateParameterNode(parameter_name, parameter_token));
+			template_class.set_template_decl_id(TemplateDeclId{4});
+			CHECK(template_function.template_parameters().size() == 1u);
+			CHECK(template_function.template_decl_id() == TemplateDeclId{3});
+			CHECK(template_class.template_parameters().size() == 1u);
+			CHECK(template_class.template_decl_id() == TemplateDeclId{4});
+			{
+				auto inner = context.beginScratchTransaction();
+				template_function.template_parameters().push_back(TemplateParameterNode(parameter_name, parameter_token));
+				template_function.set_template_decl_id(TemplateDeclId{5});
+				template_class.template_parameters().push_back(TemplateParameterNode(parameter_name, parameter_token));
+				template_class.set_template_decl_id(TemplateDeclId{6});
+				CHECK(template_function.template_parameters().size() == 2u);
+				CHECK(template_function.template_decl_id() == TemplateDeclId{5});
+				CHECK(template_class.template_parameters().size() == 2u);
+				CHECK(template_class.template_decl_id() == TemplateDeclId{6});
+				inner.rollback();
+			}
+			CHECK(template_function.template_parameters().size() == 1u);
+			CHECK(template_function.template_decl_id() == TemplateDeclId{3});
+			CHECK(template_class.template_parameters().size() == 1u);
+			CHECK(template_class.template_decl_id() == TemplateDeclId{4});
+			outer.rollback();
+		}
+		CHECK(template_function.template_parameters().empty());
+		CHECK(template_function.template_decl_id() == TemplateDeclId{1});
+		CHECK(template_class.template_parameters().empty());
+		CHECK(template_class.template_decl_id() == TemplateDeclId{2});
+
+		{
+			auto transaction = context.beginScratchTransaction();
+			template_function.template_parameters().push_back(TemplateParameterNode(parameter_name, parameter_token));
+			template_function.set_template_decl_id(TemplateDeclId{7});
+			template_class.template_parameters().push_back(TemplateParameterNode(parameter_name, parameter_token));
+			template_class.set_template_decl_id(TemplateDeclId{8});
+			transaction.commit();
+		}
+		CHECK(template_function.template_parameters().size() == 1u);
+		CHECK(template_function.template_decl_id() == TemplateDeclId{7});
+		CHECK(template_class.template_parameters().size() == 1u);
+		CHECK(template_class.template_decl_id() == TemplateDeclId{8});
+	}
+
+	TEST_CASE("Frontend scratch rollback restores alias variable and friend declaration rewrites") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+
+		FrontendContext context;
+		ScratchTransactionParserFixture fixture(context);
+		const TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		const StringHandle alias_name = StringTable::getOrInternStringHandle("frontend_tx_template_alias");
+		ASTNode alias_node = ASTNode::emplace_node<TemplateAliasNode>(
+			TemplateParameterVector{}, TemplateParamNameVector{}, alias_name, int_type);
+		TemplateAliasNode& alias = alias_node.as<TemplateAliasNode>();
+		ASTNode variable_declaration = ASTNode::emplace_node<DeclarationNode>(
+			int_type, Token(Token::Type::Identifier, std::string_view("frontend_tx_template_variable"), 1, 1, 0));
+		ASTNode variable_node = ASTNode::emplace_node<VariableDeclarationNode>(
+			variable_declaration, std::nullopt, StorageClass::None);
+		ASTNode template_variable_node = ASTNode::emplace_node<TemplateVariableDeclarationNode>(
+			TemplateParameterVector{}, variable_node);
+		TemplateVariableDeclarationNode& template_variable = template_variable_node.as<TemplateVariableDeclarationNode>();
+		const StringHandle baseline_friend_name = StringTable::getOrInternStringHandle("frontend_tx_baseline_friend");
+		const StringHandle outer_friend_name = StringTable::getOrInternStringHandle("frontend_tx_outer_friend");
+		const StringHandle inner_friend_name = StringTable::getOrInternStringHandle("frontend_tx_inner_friend");
+		ASTNode friend_node = ASTNode::emplace_node<FriendDeclarationNode>(FriendKind::Class, baseline_friend_name);
+		FriendDeclarationNode& friend_declaration = friend_node.as<FriendDeclarationNode>();
+		ASTNode bound = ASTNode::emplace_node<ExpressionNode>(
+			NumericLiteralNode(Token{}, uint64_t{5}, TypeCategory::Int, TypeQualifier::None, 32));
+		alias.set_template_decl_id(TemplateDeclId{9});
+		friend_declaration.set_class_template_decl_id(TemplateDeclId{20});
+		friend_declaration.set_class_template_name(baseline_friend_name);
+		{
+			auto outer = context.beginScratchTransaction();
+			alias.set_template_decl_id(TemplateDeclId{10});
+			alias.setArrayBoundExpressions({bound});
+			template_variable.set_initializer_replay_metadata(1, TemplateDefinitionLookupContext{});
+			friend_declaration.set_class_template_decl_id(TemplateDeclId{21});
+			friend_declaration.set_class_template_name(outer_friend_name);
+			friend_declaration.set_function_declaration(bound);
+			CHECK(alias.template_decl_id() == TemplateDeclId{10});
+			CHECK(alias.arrayBoundExpressions().size() == 1u);
+			CHECK(template_variable.has_initializer_replay_position());
+			CHECK(friend_declaration.class_template_decl_id() == TemplateDeclId{21});
+			CHECK(friend_declaration.class_template_name() == outer_friend_name);
+			CHECK(friend_declaration.function_declaration().has_value());
+			{
+				auto inner = context.beginScratchTransaction();
+				alias.set_template_decl_id(TemplateDeclId{11});
+				alias.setArrayBoundExpressions({bound, bound});
+				template_variable.set_initializer_replay_metadata(2, TemplateDefinitionLookupContext{});
+				friend_declaration.set_class_template_decl_id(TemplateDeclId{22});
+				friend_declaration.set_class_template_name(inner_friend_name);
+				CHECK(alias.template_decl_id() == TemplateDeclId{11});
+				CHECK(alias.arrayBoundExpressions().size() == 2u);
+				CHECK(friend_declaration.class_template_decl_id() == TemplateDeclId{22});
+				CHECK(friend_declaration.class_template_name() == inner_friend_name);
+				inner.rollback();
+			}
+			CHECK(alias.template_decl_id() == TemplateDeclId{10});
+			CHECK(alias.arrayBoundExpressions().size() == 1u);
+			CHECK(template_variable.has_initializer_replay_position());
+			CHECK(friend_declaration.class_template_decl_id() == TemplateDeclId{21});
+			CHECK(friend_declaration.class_template_name() == outer_friend_name);
+			CHECK(friend_declaration.function_declaration().has_value());
+			outer.rollback();
+		}
+		CHECK(alias.template_decl_id() == TemplateDeclId{9});
+		CHECK(alias.arrayBoundExpressions().empty());
+		CHECK_FALSE(template_variable.has_initializer_replay_position());
+		CHECK(friend_declaration.class_template_decl_id() == TemplateDeclId{20});
+		CHECK(friend_declaration.class_template_name() == baseline_friend_name);
+		CHECK_FALSE(friend_declaration.function_declaration().has_value());
+	}
+
 	TEST_CASE("Frontend scratch rollback restores in-place qualified identifier rewrites") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

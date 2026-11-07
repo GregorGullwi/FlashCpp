@@ -219,7 +219,11 @@ storage truncates. `FunctionDeclarationNode` owners snapshot parameters,
 referenced declaration metadata, definition, lookup context, mangled name, NTTP
 arguments, body state, and flags. Standalone `DeclarationNode` and
 `EnumDeclarationNode` owners snapshot declaration, array, alignment, name,
-scope, enumerator, underlying-type, and identity rewrites.
+scope, enumerator, underlying-type, and identity rewrites. Template function
+and class declaration owners snapshot parameters, declaration IDs, and deferred
+bodies. Template alias and variable declarations snapshot bounds, replay
+metadata, and declaration IDs; friend declarations snapshot class, template,
+function, type, and declaration identity fields.
 Other in-place rewrites of owners outside the type registry still need an owned
 rollback boundary before broad speculative parsing can rely on it. Existing
 `TypeInfo` rows reached
