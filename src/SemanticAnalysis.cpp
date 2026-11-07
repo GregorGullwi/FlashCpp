@@ -10194,17 +10194,23 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				}
 
 				CanonicalTypeDesc result_desc = type_context_.get(member_pointer_type_id);
-				// The accessed member's type is the member pointer's pointee. Walk a reference wrapper: member-function
-				// publication stores that wrapper as the pointer type's canonical form.
+				// [expr.mptr.oper]: the result is the designated member. Walk a reference
+				// wrapper because member-function publication stores one. A published data
+				// member adopts that pointee, so its pointer and array shape come from the
+				// canonical type. A member function, or a pointer with no structural
+				// pointee, still peels one flat level.
+				bool adopted_data_member = false;
 				if (result_desc.structural_type_id) {
 					CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
 					const CanonicalTypeNode member_node = nodeUnderQualifiersAndReferences(table, result_desc.structural_type_id);
-					if (member_node.kind == CanonicalTypeKind::MemberObjectPointer ||
-						member_node.kind == CanonicalTypeKind::MemberFunctionPointer) {
+					if (member_node.kind == CanonicalTypeKind::MemberObjectPointer && member_node.child) {
+						result_desc = adoptPublishedStructuralType(result_desc, member_node.child);
+						adopted_data_member = true;
+					} else if (member_node.kind == CanonicalTypeKind::MemberObjectPointer || member_node.kind == CanonicalTypeKind::MemberFunctionPointer) {
 						result_desc.structural_type_id = member_node.child;
 					}
 				}
-				if (!result_desc.pointer_levels.empty()) {
+				if (!adopted_data_member && !result_desc.pointer_levels.empty()) {
 					result_desc.pointer_levels.pop_back();
 				}
 				if (!result_desc.function_signature.has_value() &&
