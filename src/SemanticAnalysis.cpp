@@ -10195,22 +10195,23 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 
 				CanonicalTypeDesc result_desc = type_context_.get(member_pointer_type_id);
 				// [expr.mptr.oper]: the result is the designated member. Walk a reference
-				// wrapper because member-function publication stores one. A published data
-				// member adopts that pointee, so its pointer and array shape come from the
-				// canonical type. A member function, or a pointer with no structural
-				// pointee, still peels one flat level.
-				bool adopted_data_member = false;
+				// wrapper because member-function publication stores one. A published
+				// member pointer adopts that pointee. A pointer with no structural
+				// pointee still peels one flat level.
+				bool adopted_pointee = false;
 				if (result_desc.structural_type_id) {
 					CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
 					const CanonicalTypeNode member_node = nodeUnderQualifiersAndReferences(table, result_desc.structural_type_id);
-					if (member_node.kind == CanonicalTypeKind::MemberObjectPointer && member_node.child) {
+					const bool member_pointer = member_node.kind == CanonicalTypeKind::MemberObjectPointer || member_node.kind ==
+						CanonicalTypeKind::MemberFunctionPointer;
+					if (member_pointer && member_node.child) {
 						result_desc = adoptPublishedStructuralType(result_desc, member_node.child);
-						adopted_data_member = true;
-					} else if (member_node.kind == CanonicalTypeKind::MemberObjectPointer || member_node.kind == CanonicalTypeKind::MemberFunctionPointer) {
+						adopted_pointee = true;
+					} else if (member_pointer) {
 						result_desc.structural_type_id = member_node.child;
 					}
 				}
-				if (!adopted_data_member && !result_desc.pointer_levels.empty()) {
+				if (!adopted_pointee && !result_desc.pointer_levels.empty()) {
 					result_desc.pointer_levels.pop_back();
 				}
 				if (!result_desc.function_signature.has_value() &&
