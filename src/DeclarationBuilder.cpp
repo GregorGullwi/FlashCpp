@@ -1,3 +1,5 @@
+#include <iterator>
+
 #include "DeclarationBuilder.h"
 
 #include "AstNodeTypes.h"
@@ -875,32 +877,48 @@ void PublicationTransaction::commit() {
 	if (committed_ || rolled_back_) {
 		return;
 	}
+	prepareCommit();
+	static_assert(std::is_nothrow_move_constructible_v<EntityUndo>);
+	static_assert(std::is_nothrow_move_constructible_v<DeclarationBuilder::EntityLookupKey>);
+	static_assert(std::is_nothrow_move_constructible_v<DeclarationBuilder::ParameterListKey>);
+	canonical_transaction_.commit();
+	if (parent_ != nullptr) {
+		parent_->entity_undos_.insert(parent_->entity_undos_.end(), std::make_move_iterator(entity_undos_.begin()),
+			std::make_move_iterator(entity_undos_.end()));
+		parent_->inserted_entity_lookups_.insert(parent_->inserted_entity_lookups_.end(),
+			std::make_move_iterator(inserted_entity_lookups_.begin()), std::make_move_iterator(inserted_entity_lookups_.end()));
+		parent_->inserted_parameter_lists_.insert(parent_->inserted_parameter_lists_.end(),
+			std::make_move_iterator(inserted_parameter_lists_.begin()), std::make_move_iterator(inserted_parameter_lists_.end()));
+	}
+	committed_ = true;
+	builder_.active_transaction_ = parent_;
+}
+
+void PublicationTransaction::validateCompletion() const {
+	if (committed_ || rolled_back_) {
+		return;
+	}
 	if (builder_.active_transaction_ != this) {
 		throw InternalError("PublicationTransaction: finish transactions in nesting order");
 	}
-	if (parent_ != nullptr) {
-		// Reserve every destination before transferring undo records. If reserve
-		// throws, the child can still roll back and the parent is unchanged.
-		parent_->entity_undos_.reserve(parent_->entity_undos_.size() + entity_undos_.size());
-		parent_->inserted_entity_lookups_.reserve(parent_->inserted_entity_lookups_.size() + inserted_entity_lookups_.size());
-		parent_->inserted_parameter_lists_.reserve(parent_->inserted_parameter_lists_.size() + inserted_parameter_lists_.size());
-		parent_->entity_undos_.insert(parent_->entity_undos_.end(), entity_undos_.begin(), entity_undos_.end());
-		parent_->inserted_entity_lookups_.insert(parent_->inserted_entity_lookups_.end(), inserted_entity_lookups_.begin(), inserted_entity_lookups_.end());
-		parent_->inserted_parameter_lists_.insert(parent_->inserted_parameter_lists_.end(), inserted_parameter_lists_.begin(), inserted_parameter_lists_.end());
+	canonical_transaction_.validateCompletion();
+}
+
+void PublicationTransaction::prepareCommit() {
+	validateCompletion();
+	if (committed_ || rolled_back_ || parent_ == nullptr) {
+		return;
 	}
-	canonical_transaction_.commit();
-	committed_ = true;
-	builder_.active_transaction_ = parent_;
+	parent_->entity_undos_.reserve(parent_->entity_undos_.size() + entity_undos_.size());
+	parent_->inserted_entity_lookups_.reserve(parent_->inserted_entity_lookups_.size() + inserted_entity_lookups_.size());
+	parent_->inserted_parameter_lists_.reserve(parent_->inserted_parameter_lists_.size() + inserted_parameter_lists_.size());
 }
 
 void PublicationTransaction::rollback() noexcept {
 	if (rolled_back_ || committed_) {
 		return;
 	}
-
-	if (builder_.active_transaction_ != this) {
-		std::terminate();
-	}
+	validateCompletion();
 
 	while (builder_.declarations_.size() > checkpoint_.declaration_count) {
 		builder_.declarations_.pop_back();

@@ -9,6 +9,7 @@
 #include "CanonicalTypeAdapter.h"
 #include "FlatHashTable.h"
 #include "ParserTemplateHelpers.h"
+#include "ScratchTransactionParserFixture.h"
 #include "doctest.h"
 
 #if defined(_WIN32) && defined(_DEBUG)
@@ -46,6 +47,8 @@ private:
 
 }
 #endif
+
+using FlashCpp::Tests::ScratchTransactionParserFixture;
 
 TEST_SUITE("FrontendContext") {
 	TEST_CASE("Constexpr evaluation handles a manually built 64-level binary expression") {
@@ -464,6 +467,7 @@ TEST_SUITE("FrontendContext") {
 		};
 		SymbolTable table;
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		bindPersistentScopePublication(table);
 
 		const StringHandle existing_namespace_name =
@@ -524,6 +528,7 @@ TEST_SUITE("FrontendContext") {
 		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
 		initialize_native_types();
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		const StringHandle retained_name = StringTable::getOrInternStringHandle("frontend_tx_retained_type");
 		const StringHandle alias_name = StringTable::getOrInternStringHandle("frontend_tx_type_alias_binding");
 		TypeCreationResult retained = add_struct_type(retained_name, NamespaceRegistry::GLOBAL_NAMESPACE);
@@ -573,6 +578,7 @@ TEST_SUITE("FrontendContext") {
 		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
 		initialize_native_types();
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		const StringHandle retained_name = StringTable::getOrInternStringHandle("frontend_tx_cold_retained_type");
 		TypeCreationResult retained = add_user_type(retained_name, 32, NamespaceRegistry::GLOBAL_NAMESPACE);
 		TemplateArgInfoVector retained_args;
@@ -643,6 +649,7 @@ TEST_SUITE("FrontendContext") {
 		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
 		initialize_native_types();
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		const StringHandle retained_name = StringTable::getOrInternStringHandle("frontend_tx_cold_arena_retained");
 		TypeCreationResult retained = add_struct_type(retained_name, NamespaceRegistry::GLOBAL_NAMESPACE);
 		retained.info.setStructInfo(
@@ -675,6 +682,7 @@ TEST_SUITE("FrontendContext") {
 		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
 		initialize_native_types();
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		const StringHandle survivor_name = StringTable::getOrInternStringHandle("frontend_tx_cold_arena_survivor");
 		TypeCreationResult survivor = add_struct_type(survivor_name, NamespaceRegistry::GLOBAL_NAMESPACE);
 		const size_t structs_before = getStructTypeInfoCount();
@@ -696,6 +704,7 @@ TEST_SUITE("FrontendContext") {
 		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
 		initialize_native_types();
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		const StringHandle survivor_name = StringTable::getOrInternStringHandle("frontend_tx_cold_payload_survivor");
 		TypeCreationResult survivor = add_struct_type(survivor_name, NamespaceRegistry::GLOBAL_NAMESPACE);
 		const size_t lists_before = getTypeInfoTemplateArgsCount();
@@ -727,6 +736,7 @@ TEST_SUITE("FrontendContext") {
 		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
 		initialize_native_types();
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		const StringHandle type_name = StringTable::getOrInternStringHandle("frontend_tx_direct_mutation_type");
 		TypeCreationResult survivor = add_struct_type(type_name, NamespaceRegistry::GLOBAL_NAMESPACE);
 		const NamespaceHandle original_namespace = survivor.info.namespaceHandle();
@@ -751,6 +761,7 @@ TEST_SUITE("FrontendContext") {
 		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
 		initialize_native_types();
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		const StringHandle survivor_name = StringTable::getOrInternStringHandle("frontend_tx_bypass_survivor");
 		TypeCreationResult survivor = add_struct_type(survivor_name, NamespaceRegistry::GLOBAL_NAMESPACE);
 		const size_t structs_before = getStructTypeInfoCount();
@@ -778,6 +789,7 @@ TEST_SUITE("FrontendContext") {
 
 	TEST_CASE("Frontend scratch rollback truncates legacy AST nodes") {
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		const ASTNode survivor = ASTNode::emplace_node<ExpressionNode>(
 			NumericLiteralNode(Token{}, uint64_t{3}, TypeCategory::Int, TypeQualifier::None, 32));
 		const size_t baseline = gChunkedAnyStorage.size();
@@ -969,6 +981,55 @@ TEST_SUITE("FrontendContext") {
 		CHECK(admission_completed);
 		CHECK(outer_state_survived);
 	}
+
+	TEST_CASE("Publication child commit preparation rolls back parameter keys after allocation failure") {
+		bool preparation_completed = false;
+		size_t failed_preparations = 0;
+		for (size_t allocation_index = 1; allocation_index <= 32 && !preparation_completed; ++allocation_index) {
+			FrontendContext context;
+			DeclarationBuilder& builder = context.declarationBuilder();
+			std::vector<ASTNode> parameters;
+			parameters.reserve(32);
+			for (size_t index = 0; index < 32; ++index) {
+				const TypeCategory category = index % 2 == 0 ? TypeCategory::Int : TypeCategory::LongLong;
+				const int size = category == TypeCategory::Int ? 32 : 64;
+				const TypeSpecifierNode type(category, TypeQualifier::None, size, Token{}, CVQualifier::None);
+				parameters.push_back(ASTNode::emplace_node<DeclarationNode>(type, Token{}));
+			}
+
+			const size_t original_parameter_lists = builder.telemetryParameterListInternCount();
+			const size_t original_canonical_types = context.canonicalTypes().size();
+			PublicationTransaction outer(builder);
+			{
+				PublicationTransaction child(builder);
+				builder.internParameterListSignature(parameters, false, &child);
+				bool allocation_failed = false;
+				try {
+					ScopedDebugAllocationFailure allocation_failure(allocation_index);
+					child.prepareCommit();
+					child.commit();
+				} catch (const std::bad_alloc&) {
+					allocation_failed = true;
+				}
+
+				if (allocation_failed) {
+					++failed_preparations;
+					child.rollback();
+					CHECK(builder.telemetryParameterListInternCount() == original_parameter_lists);
+					CHECK(context.canonicalTypes().size() == original_canonical_types);
+				} else {
+					preparation_completed = true;
+					CHECK(builder.telemetryParameterListInternCount() == original_parameter_lists + 1);
+				}
+			}
+			outer.rollback();
+			CHECK(builder.telemetryParameterListInternCount() == original_parameter_lists);
+			CHECK(context.canonicalTypes().size() == original_canonical_types);
+		}
+
+		CHECK(failed_preparations >= 1);
+		CHECK(preparation_completed);
+	}
 #endif
 
 	TEST_CASE("Frontend scratch transactions reject overlapping context journals") {
@@ -977,8 +1038,10 @@ TEST_SUITE("FrontendContext") {
 		initialize_native_types();
 		SymbolTable symbols;
 		FrontendContext first;
+		ScratchTransactionParserFixture parser_fixture_first(first);
 		bindPersistentScopePublication(symbols);
 		FrontendContext second;
+		ScratchTransactionParserFixture parser_fixture_second(second);
 		const size_t original_types = getTypeInfoCount();
 		const size_t original_namespaces = gNamespaceRegistry.currentSize();
 		const StringHandle type_name = StringTable::getOrInternStringHandle("frontend_tx_context_owner_type");
@@ -1034,6 +1097,19 @@ TEST_SUITE("FrontendContext") {
 		retry.commit();
 	}
 
+	TEST_CASE("Frontend scratch transactions require a bound parser") {
+		FrontendContext context;
+		CHECK_THROWS_AS(context.beginScratchTransaction(), InternalError);
+		ScratchTransactionParserFixture parser_fixture(context);
+		{
+			auto transaction = context.beginScratchTransaction();
+			CHECK_THROWS_AS(context.unbindParserPublicationJournal(parser_fixture.parser), InternalError);
+			transaction.rollback();
+		}
+		context.unbindParserPublicationJournal(parser_fixture.parser);
+		CHECK_THROWS_AS(context.beginScratchTransaction(), InternalError);
+	}
+
 	TEST_CASE("Legacy type registry journal rejects out-of-order completion") {
 		clearLegacyTypeTablesForTesting();
 		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
@@ -1069,6 +1145,7 @@ TEST_SUITE("FrontendContext") {
 
 		SymbolTable table;
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		bindPersistentScopePublication(table);
 		const ASTNode existing_variable = make_variable(false);
 		REQUIRE(table.insert(identifier, existing_variable));
@@ -1129,6 +1206,7 @@ TEST_SUITE("FrontendContext") {
 		auto run = [&](bool commit_outer) {
 			std::optional<SymbolTable> slot;
 			FrontendContext context;
+			ScratchTransactionParserFixture parser_fixture_context(context);
 			slot.emplace();
 			bindPersistentScopePublication(*slot);
 			const ASTNode existing_variable = make_variable(false);
@@ -1162,6 +1240,7 @@ TEST_SUITE("FrontendContext") {
 			NumericLiteralNode(token, 9ULL, TypeCategory::Int, TypeQualifier::None, 32));
 		SymbolTable table;
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		bindPersistentScopePublication(table);
 		const StringHandle namespace_name =
 			StringTable::getOrInternStringHandle("frontend_tx_committed_namespace");
@@ -1359,6 +1438,7 @@ TEST_SUITE("FrontendContext") {
 	TEST_CASE("Scope publication rollback restores cursor topology and reuses provisional IDs") {
 		SymbolTable table;
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		bindPersistentScopePublication(table);
 		table.enter_scope(ScopeType::Block);
 		const ScopeId retained_scope = table.currentScopeId();
@@ -1439,6 +1519,7 @@ TEST_SUITE("FrontendContext") {
 	TEST_CASE("Nested scope transaction rollback restores parent while outer commit survives") {
 		SymbolTable table;
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		bindPersistentScopePublication(table);
 		table.enter_scope(ScopeType::Block);
 		const ScopeId parent_scope = table.currentScopeId();
@@ -1467,6 +1548,7 @@ TEST_SUITE("FrontendContext") {
 	TEST_CASE("Deep scope transaction rollback truncates iterative scope publication") {
 		SymbolTable table;
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		bindPersistentScopePublication(table);
 		constexpr uint32_t depth = 1024;
 		{
@@ -1509,6 +1591,7 @@ TEST_SUITE("FrontendContext") {
 	TEST_CASE("Late persistent scope binding rolls back with its frontend transaction") {
 		SymbolTable table;
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		{
 			auto transaction = context.beginScratchTransaction();
 			bindPersistentScopePublication(table);
@@ -1536,6 +1619,7 @@ TEST_SUITE("FrontendContext") {
 		SymbolTable first_table;
 		SymbolTable second_table;
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		bindPersistentScopePublication(first_table);
 		bindPersistentScopePublication(second_table);
 		{
@@ -4092,6 +4176,7 @@ int main() {
 
 	TEST_CASE("SymbolTable reset unbinds and resets state and supports rebinding") {
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		SymbolTable table;
 		table.enablePersistentScopePublication();
 		table.enter_scope(ScopeType::Block);
@@ -4119,6 +4204,7 @@ int main() {
 		table.reset();
 		CHECK(table.persistentScopePublicationContext() == nullptr);
 		FrontendContext fresh_context;
+		ScratchTransactionParserFixture parser_fixture_fresh_context(fresh_context);
 		table.enablePersistentScopePublication();
 		auto fresh_transaction = fresh_context.beginScratchTransaction();
 		table.enter_scope(ScopeType::Function);
@@ -4129,6 +4215,7 @@ int main() {
 
 	TEST_CASE("Resetting an idle bound SymbolTable preserves shared owner scopes") {
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		SymbolTable owner;
 		SymbolTable idle_table;
 		owner.enablePersistentScopePublication();
@@ -4158,6 +4245,7 @@ int main() {
 				gNamespaceRegistry.rollbackPublicationTransaction(namespace_depth);
 			});
 			FrontendContext context;
+			ScratchTransactionParserFixture parser_fixture_context(context);
 			SymbolTable owner;
 			SymbolTable idle;
 			owner.enablePersistentScopePublication();
@@ -4223,6 +4311,7 @@ int main() {
 		auto checkAddressReuse = [](bool rollback, bool nested) {
 			std::optional<SymbolTable> slot;
 			FrontendContext context;
+			ScratchTransactionParserFixture parser_fixture_context(context);
 			slot.emplace();
 			slot->enablePersistentScopePublication();
 			slot.reset();
@@ -4254,6 +4343,7 @@ int main() {
 		CHECK_FALSE(table.persistentScopePublicationEnabled());
 		CHECK(table.persistentScopePublicationContext() == nullptr);
 		FrontendContext fresh_context;
+		ScratchTransactionParserFixture parser_fixture_fresh_context(fresh_context);
 		table.enablePersistentScopePublication();
 		CHECK(table.persistentScopePublicationEnabled());
 		CHECK(table.persistentScopePublicationContext() == &fresh_context);
@@ -4268,6 +4358,7 @@ int main() {
 		auto run = [](bool rollback) {
 			std::optional<SymbolTable> slot;
 			FrontendContext context;
+			ScratchTransactionParserFixture parser_fixture_context(context);
 			slot.emplace();
 			slot->enablePersistentScopePublication();
 			auto outer = context.beginScratchTransaction();
@@ -4291,6 +4382,7 @@ int main() {
 		auto checkTransactionClose = [](bool rollback) {
 			std::deque<SymbolTable> tables;
 			FrontendContext context;
+			ScratchTransactionParserFixture parser_fixture_context(context);
 			for (size_t index = 0; index < 1024; ++index) {
 				tables.emplace_back();
 				tables.back().enablePersistentScopePublication();
@@ -4306,6 +4398,7 @@ int main() {
 		std::deque<SymbolTable> surviving_tables;
 		{
 			FrontendContext context;
+			ScratchTransactionParserFixture parser_fixture_context(context);
 			for (size_t index = 0; index < 1024; ++index) {
 				surviving_tables.emplace_back();
 				surviving_tables.back().enablePersistentScopePublication();
@@ -6586,6 +6679,7 @@ TEST_SUITE("Diagnostics") {
 
 	TEST_CASE("Frontend diagnostic rollback restores prefix notes counts and retry indices") {
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		DiagnosticEngine& engine = context.diagnostics();
 		const uint32_t prefix = engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Warning, SourceLocation::fromParts(1, 1, 0),
 			"prefix warning", std::span<const DiagnosticArgument>{});
@@ -6640,6 +6734,7 @@ TEST_SUITE("Diagnostics") {
 
 	TEST_CASE("Frontend completion rejects active manual diagnostic transaction before publication commit") {
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		{
 			auto frontend = context.beginScratchTransaction();
 			context.canonicalTypes().builtin(CanonicalBuiltinKind::Int);
@@ -6653,8 +6748,95 @@ TEST_SUITE("Diagnostics") {
 		CHECK(context.diagnostics().diagnostics().empty());
 	}
 
+	TEST_CASE("Frontend rollback remains usable after rejected completion with a nested parser checkpoint") {
+		FrontendContext context;
+		CompileContext compile_context;
+		const std::string code;
+		Lexer lexer(code);
+		SemanticAnalysis sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const size_t scratch_before = context.scratchArena().currentBytes();
+		const size_t canonical_before = context.canonicalTypes().size();
+		const size_t roots_before = parser.get_nodes().size();
+		{
+			auto frontend = context.beginScratchTransaction();
+			frontend.arena().allocate(8, alignof(uint64_t));
+			context.canonicalTypes().builtin(CanonicalBuiltinKind::Int);
+			parser.appendUserNode(ASTNode::emplace_node<ExpressionNode>(
+				NumericLiteralNode(Token{}, uint64_t{17}, TypeCategory::Int, TypeQualifier::None, 32)));
+			const size_t saved_token = parser.saveParserCursor();
+			CHECK_THROWS_AS(frontend.commit(), InternalError);
+			parser.discardParserCursor(saved_token);
+			frontend.rollback();
+		}
+
+		CHECK(context.scratchArena().currentBytes() == scratch_before);
+		CHECK(context.canonicalTypes().size() == canonical_before);
+		CHECK(parser.get_nodes().size() == roots_before);
+		CHECK_FALSE(parser.parse().is_error());
+	}
+
+	TEST_CASE("Frontend rollback recovers after a nested component journal rejects completion") {
+		FrontendContext context;
+		CompileContext compile_context;
+		const std::string code;
+		Lexer lexer(code);
+		SemanticAnalysis sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, sema);
+		REQUIRE(!parser.parse().is_error());
+		const size_t scratch_before = context.scratchArena().currentBytes();
+		const size_t canonical_before = context.canonicalTypes().size();
+		const size_t roots_before = parser.get_nodes().size();
+		auto frontend = context.beginScratchTransaction();
+		frontend.arena().allocate(8, alignof(uint64_t));
+		context.canonicalTypes().builtin(CanonicalBuiltinKind::Int);
+		parser.appendUserNode(ASTNode::emplace_node<ExpressionNode>(
+			NumericLiteralNode(Token{}, uint64_t{19}, TypeCategory::Int, TypeQualifier::None, 32)));
+		const auto reject_completion = [&] {
+			CHECK_THROWS_AS(frontend.commit(), InternalError);
+			CHECK_THROWS_AS(frontend.rollback(), InternalError);
+			CHECK(context.scratchArena().currentBytes() > scratch_before);
+			CHECK(context.canonicalTypes().size() > canonical_before);
+			CHECK(parser.get_nodes().size() == roots_before + 1);
+		};
+
+		SUBCASE("template declaration journal") {
+			TemplateDeclTableTransaction nested_templates(context.templateDecls());
+			reject_completion();
+			nested_templates.rollback();
+		}
+		SUBCASE("canonical type journal") {
+			CanonicalTypeTransaction nested_types(context.canonicalTypes());
+			reject_completion();
+			nested_types.rollback();
+		}
+		SUBCASE("namespace journal") {
+			const size_t depth = gNamespaceRegistry.beginPublicationTransaction();
+			reject_completion();
+			gNamespaceRegistry.rollbackPublicationTransaction(depth);
+		}
+		SUBCASE("symbol table journal") {
+			const size_t depth = gSymbolTable.beginPublicationTransaction();
+			reject_completion();
+			gSymbolTable.rollbackPublicationTransaction(depth);
+		}
+		SUBCASE("legacy type journal") {
+			const auto mark = beginLegacyTypeRegistryJournal();
+			reject_completion();
+			rollbackLegacyTypeRegistryJournal(mark);
+		}
+
+		frontend.rollback();
+		CHECK(context.scratchArena().currentBytes() == scratch_before);
+		CHECK(context.canonicalTypes().size() == canonical_before);
+		CHECK(parser.get_nodes().size() == roots_before);
+	}
+
 	TEST_CASE("Nested frontend diagnostic rollback preserves outer commit and template contexts") {
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		DiagnosticEngine& engine = context.diagnostics();
 		const StringHandle outer_name = StringTable::getOrInternStringHandle("OuterDiagnosticContext");
 		const StringHandle inner_name = StringTable::getOrInternStringHandle("InnerDiagnosticContext");
@@ -6689,6 +6871,7 @@ TEST_SUITE("Diagnostics") {
 
 	TEST_CASE("Structured compile error survives frontend diagnostic rollback") {
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		DiagnosticEngine& engine = context.diagnostics();
 		std::deque<std::string> paths{"exception.cpp"};
 		std::optional<CompileError> escaped_error;
@@ -6888,6 +7071,7 @@ TEST_SUITE("Diagnostics") {
 
 	TEST_CASE("Deep frontend diagnostic rollback truncates records and prefix note indices") {
 		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture_context(context);
 		DiagnosticEngine& engine = context.diagnostics();
 		const uint32_t prefix = engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Warning, SourceLocation{}, "deep prefix",
 			std::span<const DiagnosticArgument>{});

@@ -435,6 +435,13 @@ public:
 		return transaction_marks_.size();
 	}
 
+	void validatePublicationTransactionDepth(size_t depth) const {
+		if (transaction_marks_.empty() || transaction_marks_.size() != depth) {
+			throw InternalError("namespace registry: transactions must close in nesting order");
+		}
+	}
+
+
 	void commitPublicationTransaction(size_t depth) {
 		validatePublicationTransactionDepth(depth);
 		transaction_marks_.pop_back();
@@ -476,11 +483,6 @@ private:
 		}
 	}
 
-	void validatePublicationTransactionDepth(size_t depth) const {
-		if (transaction_marks_.empty() || transaction_marks_.size() != depth) {
-			throw InternalError("namespace registry: transactions must close in nesting order");
-		}
-	}
 
 	void undoMutation(const Mutation& mutation) {
 		switch (mutation.kind) {

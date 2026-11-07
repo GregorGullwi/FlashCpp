@@ -6,6 +6,7 @@
 #include "ExpressionSubstitutor.h"
 #include "ParserTemplateClassShared.h"
 #include "ParserTemplateHelpers.h"
+#include "ScratchTransactionParserFixture.h"
 #include "../../architecture/CanonicalTypeTests.h"
 
 using OwnerPublicationMaterialization = decltype(std::declval<TemplateEngine&>().materializeTemplateInstantiationForLookup({}, {}));
@@ -2666,6 +2667,7 @@ TEST_CASE("Canonical integral values share the canonical transaction and account
 
 TEST_CASE("Canonical types participate in scratch rollback") {
 	FrontendContext context;
+	FlashCpp::Tests::ScratchTransactionParserFixture parser_fixture(context);
 	const auto before = context.canonicalTypes().size();
 	{
 		auto transaction = context.beginScratchTransaction();
@@ -9728,6 +9730,7 @@ TEST_CASE("Canonical adapter preserves supported identity and defers entire unsu
 
 TEST_CASE("Frontend scratch rolls back nested declaration and canonical registries together") {
 	FrontendContext context;
+	FlashCpp::Tests::ScratchTransactionParserFixture parser_fixture(context);
 	auto& builder = context.declarationBuilder();
 	auto& template_decls = context.templateDecls();
 	const auto stable = context.canonicalTypes().builtin(CanonicalBuiltinKind::Double);

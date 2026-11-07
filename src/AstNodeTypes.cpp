@@ -1274,17 +1274,19 @@ LegacyTypeRegistryJournalMark beginLegacyTypeRegistryJournal() {
 	return gLegacyTypeRegistryJournal.size();
 }
 
-void commitLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark) {
+void validateLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark) {
 	if (mark == 0 || mark != gLegacyTypeRegistryJournal.size()) {
-		throw InternalError("legacy type registry journal: commit depth is out of order");
+		throw InternalError("legacy type registry journal: completion depth is out of order");
 	}
+}
+
+void commitLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark) {
+	validateLegacyTypeRegistryJournal(mark);
 	gLegacyTypeRegistryJournal.pop_back();
 }
 
 void rollbackLegacyTypeRegistryJournal(LegacyTypeRegistryJournalMark mark) {
-	if (mark == 0 || mark != gLegacyTypeRegistryJournal.size()) {
-		throw InternalError("legacy type registry journal: rollback depth is out of order");
-	}
+	validateLegacyTypeRegistryJournal(mark);
 	// Restore directly from the stable frame; moving its maps could allocate during exception cleanup.
 	LegacyTypeRegistryJournalFrame& frame = gLegacyTypeRegistryJournal.back();
 	gTypesByName.swap(frame.names);

@@ -205,15 +205,9 @@ discarded-root handles before global AST storage truncates. Front insertion,
 pre-checkpoint root erasure, and pending-root drain/clear fail closed.
 Parser context stacks and in-place rewrites
 of owners outside the type registry still need an owned rollback boundary before
-broad speculative parsing can rely on it. Each context binds at most one live
-Parser; context-only transactions remain supported. Existing `TypeInfo` rows reached
+broad speculative parsing can rely on it. Existing `TypeInfo` rows reached
 through the mutable accessor/mutator API are snapshotted and restored with their
 cold records, and legacy AST nodes allocated after the mark are truncated.
-
-Transaction completion still needs an all-component preflight. `commit()` closes
-the builder, template-table, and scratch transactions before validating the parser
-checkpoint. A live parser-local checkpoint can reject that late step; discarding
-it and retrying rollback then leaves the earlier committed components intact.
 
 The separate parser `CompileContext` diagnostic engine is not enlisted by that
 frontend transaction. Diagnostic text and note backing storage is still retained

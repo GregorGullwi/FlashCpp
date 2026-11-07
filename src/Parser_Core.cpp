@@ -814,7 +814,7 @@ void Parser::restoreParserCursor(std::size_t handle) {
 	restore_lexer_position_only(handle);
 }
 
-void Parser::rollbackParserRootPublication(std::size_t handle) {
+void Parser::validateParserRootPublicationRollback(std::size_t handle) const {
 	validateParserPublicationCheckpoint(handle);
 	const SavedToken& saved = *saved_tokens_[handle];
 	assertTopLevelNodeTrackingSynchronized();
@@ -836,6 +836,11 @@ void Parser::rollbackParserRootPublication(std::size_t handle) {
 			throw InternalError("Parser: appended semantic root is missing its publication key");
 		}
 	}
+}
+
+void Parser::rollbackParserRootPublication(std::size_t handle) {
+	validateParserRootPublicationRollback(handle);
+	const SavedToken& saved = *saved_tokens_[handle];
 	while (pending_semantic_roots_.size() > saved.pending_semantic_roots_size_) {
 		const void* key = pending_semantic_roots_.back().raw_pointer();
 		if (pending_semantic_root_keys_.erase(key) != 1) {
