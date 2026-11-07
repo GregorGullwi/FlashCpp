@@ -10892,39 +10892,50 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 
 	// Fix up struct members whose types were unresolved nested classes.
 	// During member processing above, nested classes haven't been instantiated yet,
-	// so members of type "Wrapper::Nested" (with size 0) remain unresolved.
-	// Now that nested classes are registered as "Wrapper$hash::Nested", update those members.
+	// so members of type "Wrapper::Nested" remain the primary template's nested class.
+	// C++20 [temp.inst], [temp.local]: the nested class of this specialization is a
+	// different type. A complete object adopts its size. A pointer or reference is
+	// already pointer-sized ([dcl.ptr]) and only its pointee changes; the published
+	// id still names the pattern record, which is not this specialization.
 	{
 		StructTypeInfo* si = struct_info;
 		if (si) {
 			bool had_fixup = false;
 			for (auto& member : si->members) {
-				if (member.size == 0) {
-					if (const TypeInfo* mem_type_info = tryGetTypeInfo(member.type_index)) {
-						std::string_view mem_type_name = StringTable::getStringView(mem_type_info->name());
-						// Check if this is a nested class of the current template (e.g., "Wrapper::Nested")
-						if (mem_type_name.starts_with(template_name) && mem_type_name.size() > template_name.size() + 2 &&
-							mem_type_name.substr(template_name.size(), 2) == "::") {
-							std::string_view nested_name = mem_type_name.substr(template_name.size() + 2);
-							StringBuilder sb;
-							StringHandle resolved_handle = StringTable::getOrInternStringHandle(
-								sb.append(instantiated_name).append("::").append(nested_name).commit());
-							auto resolved_it = getTypesByNameMap().find(resolved_handle);
-							if (resolved_it != getTypesByNameMap().end()) {
-								const TypeInfo* resolved_type = resolved_it->second;
-								member.type_index = resolved_type->type_index_;
-								if (resolved_type->getStructInfo()) {
-									member.size = toSizeT(resolved_type->getStructInfo()->sizeInBytes());
-									member.alignment = resolved_type->getStructInfo()->alignment;
-								}
-								had_fixup = true;
-								FLASH_LOG(Templates, Trace, "Fixed nested class member '", StringTable::getStringView(member.name),
-										  "': ", mem_type_name, " -> ", StringTable::getStringView(resolved_handle),
-										  " (size=", member.size, ")");
-							}
-						}
-					}
+				const bool denotes_pointer = member.pointer_depth > 0 || member.is_reference();
+				if (member.size != 0 && !denotes_pointer) {
+					continue;
 				}
+				const TypeInfo* mem_type_info = tryGetTypeInfo(member.type_index);
+				if (mem_type_info == nullptr) {
+					continue;
+				}
+				std::string_view mem_type_name = StringTable::getStringView(mem_type_info->name());
+				if (!(mem_type_name.starts_with(template_name) && mem_type_name.size() > template_name.size() + 2 &&
+					mem_type_name.substr(template_name.size(), 2) == "::")) {
+					continue;
+				}
+				std::string_view nested_name = mem_type_name.substr(template_name.size() + 2);
+				StringBuilder sb;
+				StringHandle resolved_handle = StringTable::getOrInternStringHandle(sb.append(instantiated_name).append("::").append(nested_name).commit());
+				auto resolved_it = getTypesByNameMap().find(resolved_handle);
+				if (resolved_it == getTypesByNameMap().end()) {
+					continue;
+				}
+				const TypeInfo* resolved_type = resolved_it->second;
+				member.type_index = resolved_type->type_index_;
+				if (denotes_pointer) {
+					member.canonical_type_id = TypeId{};
+				} else {
+					if (resolved_type->getStructInfo()) {
+						member.size = toSizeT(resolved_type->getStructInfo()->sizeInBytes());
+						member.alignment = resolved_type->getStructInfo()->alignment;
+					}
+					had_fixup = true;
+				}
+				FLASH_LOG(Templates, Trace, "Fixed nested class member '", StringTable::getStringView(member.name),
+						  "': ", mem_type_name, " -> ", StringTable::getStringView(resolved_handle),
+						  " (size=", member.size, ")");
 			}
 
 			// Recalculate struct layout from scratch after nested class member fixup
