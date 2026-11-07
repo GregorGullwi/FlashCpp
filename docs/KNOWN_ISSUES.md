@@ -203,10 +203,11 @@ publication journal to its `FrontendContext`: transactions restore lexer/token
 state, top-level roots and instantiated tags, pending-root additions, and
 discarded-root handles before global AST storage truncates. Front insertion,
 pre-checkpoint root erasure, and pending-root drain/clear fail closed. The same
-checkpoint restores the member-function and struct parse-context stack tails and
-the current function/linkage; commit requires them to return to the checkpoint.
-The class-template pack stack, lambda-capture stack, pending explicit template
-arguments, and calling-convention state remain outside the boundary.
+checkpoint restores the member-function and struct parse-context stack tails,
+the class-template pack and lambda-capture stack tails, pending explicit
+template arguments, the current function/linkage, and the last calling
+convention; commit requires them to return to the checkpoint. The corresponding
+guards pop only frames they pushed after rollback truncation.
 Pre-existing `QualifiedIdentifierNode` dependent-name and template-argument
 rewrites are now snapshotted per transaction segment and restored with rollback.
 Pre-existing AST declaration owners likewise snapshot their outer template

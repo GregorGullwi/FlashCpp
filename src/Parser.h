@@ -1608,14 +1608,30 @@ private:
 	// RAII guard to push/pop class template pack info
 	struct ClassTemplatePackGuard {
 		std::vector<std::vector<ClassTemplatePackInfo>>& stack_;
+		size_t previous_size_ = 0;
 		bool active_ = false;
-		ClassTemplatePackGuard(std::vector<std::vector<ClassTemplatePackInfo>>& stack) : stack_(stack) {}
+		ClassTemplatePackGuard(std::vector<std::vector<ClassTemplatePackInfo>>& stack) : stack_(stack), previous_size_(stack.size()) {}
 		void push(std::vector<ClassTemplatePackInfo> info) {
 			stack_.push_back(std::move(info));
 			active_ = true;
 		}
 		~ClassTemplatePackGuard() {
-			if (active_ && !stack_.empty())
+			if (active_ && stack_.size() > previous_size_)
+				stack_.pop_back();
+		}
+	};
+
+	using LambdaCaptureBindings = std::unordered_map<StringHandle, LambdaCaptureNode::CaptureKind>;
+
+	struct LambdaCaptureStackGuard {
+		std::vector<LambdaCaptureBindings>& stack_;
+		size_t previous_size_ = 0;
+		explicit LambdaCaptureStackGuard(std::vector<LambdaCaptureBindings>& stack) : stack_(stack), previous_size_(stack.size()) {}
+		void push(LambdaCaptureBindings captures) {
+			stack_.push_back(std::move(captures));
+		}
+		~LambdaCaptureStackGuard() {
+			if (stack_.size() > previous_size_)
 				stack_.pop_back();
 		}
 	};
@@ -1662,7 +1678,7 @@ private:
 	// Stack tracking explicit lambda capture kinds while parsing lambda bodies.
 	// Each entry maps a captured variable's StringHandle to its CaptureKind.
 	// Pushed before parse_block() and popped after.
-	std::vector<std::unordered_map<StringHandle, LambdaCaptureNode::CaptureKind>> lambda_capture_stack_;
+	std::vector<LambdaCaptureBindings> lambda_capture_stack_;
 
 	// Track ASTNode addresses currently being processed in get_expression_type to prevent infinite recursion
 	mutable std::unordered_set<const void*> expression_type_resolution_stack_;
@@ -1823,6 +1839,12 @@ private:
 		StringHandle member_function_context_top_name{};
 		NamespaceHandle struct_parsing_context_top_namespace{};
 		Linkage linkage = Linkage::None;
+		size_t class_template_pack_stack_count = 0;
+		std::vector<ClassTemplatePackInfo> class_template_pack_stack_top;
+		size_t lambda_capture_stack_count = 0;
+		std::optional<LambdaCaptureBindings> lambda_capture_stack_top;
+		std::optional<TemplateArgumentVector> pending_explicit_template_args;
+		CallingConvention calling_convention = CallingConvention::Default;
 	};
 
 	struct SavedToken {

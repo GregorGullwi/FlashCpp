@@ -881,6 +881,111 @@ TEST_SUITE("FrontendContext") {
 		CHECK(parser.get_nodes().empty());
 	}
 
+	TEST_CASE("Frontend scratch rollback restores remaining parser publication artifacts") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+
+		FrontendContext context;
+		ScratchTransactionParserFixture fixture(context);
+		const StringHandle baseline_capture = StringTable::getOrInternStringHandle("frontend_tx_baseline_capture");
+		const StringHandle outer_capture = StringTable::getOrInternStringHandle("frontend_tx_outer_capture");
+		const StringHandle inner_capture = StringTable::getOrInternStringHandle("frontend_tx_inner_capture");
+		TemplateArgumentVector baseline_args;
+		baseline_args.push_back(TemplateTypeArg::makeValue(1, TypeCategory::Int));
+		fixture.setPendingTemplateArgsForTest(std::move(baseline_args));
+		fixture.setCallingConventionForTest(CallingConvention::Cdecl);
+
+		CHECK(fixture.classTemplatePackDepthForTest() == 0u);
+		CHECK(fixture.lambdaCaptureDepthForTest() == 0u);
+		REQUIRE(fixture.hasPendingTemplateArgsForTest());
+		CHECK(fixture.pendingTemplateArgCountForTest() == 1u);
+		CHECK(fixture.pendingTemplateArgValueForTest(0) == 1);
+		CHECK(fixture.callingConventionForTest() == CallingConvention::Cdecl);
+		{
+			auto outer = context.beginScratchTransaction();
+			fixture.pushClassTemplatePackForTest("OuterPack", 3);
+			fixture.pushLambdaCaptureForTest(outer_capture, LambdaCaptureNode::CaptureKind::ByReference);
+			TemplateArgumentVector outer_args;
+			outer_args.push_back(TemplateTypeArg::makeValue(7, TypeCategory::Int));
+			fixture.setPendingTemplateArgsForTest(std::move(outer_args));
+			fixture.setCallingConventionForTest(CallingConvention::Fastcall);
+			CHECK(fixture.classTemplatePackDepthForTest() == 1u);
+			CHECK(fixture.lambdaCaptureDepthForTest() == 1u);
+			CHECK(fixture.classTemplatePackSizeForTest(0, 0) == 3u);
+			CHECK(fixture.lambdaCaptureContainsForTest(0, outer_capture, LambdaCaptureNode::CaptureKind::ByReference));
+			REQUIRE(fixture.hasPendingTemplateArgsForTest());
+			CHECK(fixture.pendingTemplateArgValueForTest(0) == 7);
+			CHECK(fixture.callingConventionForTest() == CallingConvention::Fastcall);
+			{
+				auto inner = context.beginScratchTransaction();
+				fixture.pushClassTemplatePackForTest("InnerPack", 5);
+				fixture.pushLambdaCaptureForTest(inner_capture, LambdaCaptureNode::CaptureKind::ByValue);
+				TemplateArgumentVector inner_args;
+				inner_args.push_back(TemplateTypeArg::makeValue(11, TypeCategory::Int));
+				fixture.setPendingTemplateArgsForTest(std::move(inner_args));
+				fixture.setCallingConventionForTest(CallingConvention::Vectorcall);
+				CHECK(fixture.classTemplatePackDepthForTest() == 2u);
+				CHECK(fixture.lambdaCaptureDepthForTest() == 2u);
+				REQUIRE(fixture.hasPendingTemplateArgsForTest());
+				CHECK(fixture.pendingTemplateArgValueForTest(0) == 11);
+				CHECK(fixture.callingConventionForTest() == CallingConvention::Vectorcall);
+				inner.rollback();
+			}
+			CHECK(fixture.classTemplatePackDepthForTest() == 1u);
+			CHECK(fixture.lambdaCaptureDepthForTest() == 1u);
+			CHECK(fixture.classTemplatePackSizeForTest(0, 0) == 3u);
+			CHECK(fixture.lambdaCaptureContainsForTest(0, outer_capture, LambdaCaptureNode::CaptureKind::ByReference));
+			REQUIRE(fixture.hasPendingTemplateArgsForTest());
+			CHECK(fixture.pendingTemplateArgValueForTest(0) == 7);
+			CHECK(fixture.callingConventionForTest() == CallingConvention::Fastcall);
+			outer.rollback();
+		}
+		CHECK(fixture.classTemplatePackDepthForTest() == 0u);
+		CHECK(fixture.lambdaCaptureDepthForTest() == 0u);
+		REQUIRE(fixture.hasPendingTemplateArgsForTest());
+		CHECK(fixture.pendingTemplateArgValueForTest(0) == 1);
+		CHECK(fixture.callingConventionForTest() == CallingConvention::Cdecl);
+
+		fixture.pushClassTemplatePackForTest("BaselinePack", 2);
+		fixture.pushLambdaCaptureForTest(baseline_capture, LambdaCaptureNode::CaptureKind::ByValue);
+		{
+			auto transaction = context.beginScratchTransaction();
+			fixture.openClassTemplatePackGuardForTest("GuardPack", 9);
+			fixture.openLambdaCaptureGuardForTest(outer_capture, LambdaCaptureNode::CaptureKind::ByReference);
+			CHECK(fixture.classTemplatePackDepthForTest() == 2u);
+			CHECK(fixture.lambdaCaptureDepthForTest() == 2u);
+			transaction.rollback();
+			CHECK(fixture.classTemplatePackDepthForTest() == 1u);
+			CHECK(fixture.lambdaCaptureDepthForTest() == 1u);
+			fixture.closeClassTemplatePackGuardForTest();
+			fixture.closeLambdaCaptureGuardForTest();
+		}
+		CHECK(fixture.classTemplatePackDepthForTest() == 1u);
+		CHECK(fixture.lambdaCaptureDepthForTest() == 1u);
+		CHECK(fixture.classTemplatePackSizeForTest(0, 0) == 2u);
+		CHECK(fixture.lambdaCaptureContainsForTest(0, baseline_capture, LambdaCaptureNode::CaptureKind::ByValue));
+
+		{
+			auto transaction = context.beginScratchTransaction();
+			fixture.pushClassTemplatePackForTest("RejectedPack", 1);
+			fixture.pushLambdaCaptureForTest(inner_capture, LambdaCaptureNode::CaptureKind::ByValue);
+			TemplateArgumentVector rejected_args;
+			rejected_args.push_back(TemplateTypeArg::makeValue(13, TypeCategory::Int));
+			fixture.setPendingTemplateArgsForTest(std::move(rejected_args));
+			fixture.setCallingConventionForTest(CallingConvention::Vectorcall);
+			CHECK_THROWS_AS(transaction.commit(), InternalError);
+			transaction.rollback();
+		}
+		CHECK(fixture.classTemplatePackDepthForTest() == 1u);
+		CHECK(fixture.lambdaCaptureDepthForTest() == 1u);
+		REQUIRE(fixture.hasPendingTemplateArgsForTest());
+		CHECK(fixture.pendingTemplateArgValueForTest(0) == 1);
+		CHECK(fixture.callingConventionForTest() == CallingConvention::Cdecl);
+	}
+
 	TEST_CASE("Frontend scratch rollback restores in-place qualified identifier rewrites") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();
