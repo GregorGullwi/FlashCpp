@@ -99,6 +99,8 @@ private:
 	std::optional<ASTNode> value_;  // Optional initializer expression
 };
 
+void journalEnumDeclarationRewrite(EnumDeclarationNode& node);
+
 // Enum declaration node - represents enum or enum class
 class EnumDeclarationNode {
 public:
@@ -118,26 +120,36 @@ public:
 	TypeIndex type_index() const { return type_index_; }
 
 	void set_underlying_type(const TypeSpecifierNode& type) {
+		journalEnumDeclarationRewrite(*this);
 		underlying_type_ = type;
 	}
 
 	void set_is_forward_declaration(bool value) {
+		journalEnumDeclarationRewrite(*this);
 		is_forward_declaration_ = value;
 	}
 
 	void add_enumerator(ASTNode enumerator) {
+		journalEnumDeclarationRewrite(*this);
 		enumerators_.push_back(enumerator);
 	}
 
 	void set_type_index(TypeIndex idx) {
+		journalEnumDeclarationRewrite(*this);
 		type_index_ = idx;
 	}
 
 	ScopeId lexical_scope_id() const { return lexical_scope_id_; }
-	void set_lexical_scope_id(ScopeId scope_id) { lexical_scope_id_ = scope_id; }
+	void set_lexical_scope_id(ScopeId scope_id) {
+		journalEnumDeclarationRewrite(*this);
+		lexical_scope_id_ = scope_id;
+	}
 	bool has_lexical_scope_id() const { return static_cast<bool>(lexical_scope_id_); }
 	EntityId entity_id() const { return entity_id_; }
-	void set_entity_id(EntityId entity_id) { entity_id_ = entity_id; }
+	void set_entity_id(EntityId entity_id) {
+		journalEnumDeclarationRewrite(*this);
+		entity_id_ = entity_id;
+	}
 	bool has_entity_id() const { return static_cast<bool>(entity_id_); }
 
 private:

@@ -68,6 +68,16 @@ struct LegacyFunctionDeclarationRewrite {
 	std::optional<FunctionDeclarationJournalSnapshot> snapshot;
 };
 
+struct LegacyDeclarationNodeRewrite {
+	DeclarationNode* owner = nullptr;
+	std::optional<DeclarationNode> snapshot;
+};
+
+struct LegacyEnumDeclarationRewrite {
+	EnumDeclarationNode* owner = nullptr;
+	std::optional<EnumDeclarationNode> snapshot;
+};
+
 struct FrontendPublicationJournalMark {
 	size_t context_depth = 0;
 	size_t namespace_depth = 0;
@@ -82,6 +92,10 @@ struct FrontendPublicationJournalMark {
 	size_t previous_legacy_struct_declaration_rewrite_segment_start = 0;
 	size_t legacy_function_declaration_rewrite_count = 0;
 	size_t previous_legacy_function_declaration_rewrite_segment_start = 0;
+	size_t legacy_declaration_node_rewrite_count = 0;
+	size_t previous_legacy_declaration_node_rewrite_segment_start = 0;
+	size_t legacy_enum_declaration_rewrite_count = 0;
+	size_t previous_legacy_enum_declaration_rewrite_segment_start = 0;
 	Parser& parser_publication_journal;
 	size_t parser_publication_handle = SIZE_MAX;
 	ScopeId current_scope_id{};
@@ -629,6 +643,10 @@ private:
 	friend void journalStructDeclarationRewrite(StructDeclarationNode& node);
 	void journalFunctionDeclarationRewrite(FunctionDeclarationNode& node);
 	friend void journalFunctionDeclarationRewrite(FunctionDeclarationNode& node);
+	void journalDeclarationNodeRewrite(DeclarationNode& node);
+	friend void journalDeclarationNodeRewrite(DeclarationNode& node);
+	void journalEnumDeclarationRewrite(EnumDeclarationNode& node);
+	friend void journalEnumDeclarationRewrite(EnumDeclarationNode& node);
 	bool hasOpenPublicationTransaction() const {
 		return publication_transaction_depth_ != 0;
 	}
@@ -658,6 +676,10 @@ private:
 	size_t legacy_struct_declaration_rewrite_segment_start_ = 0;
 	std::vector<LegacyFunctionDeclarationRewrite> legacy_function_declaration_rewrites_;
 	size_t legacy_function_declaration_rewrite_segment_start_ = 0;
+	std::vector<LegacyDeclarationNodeRewrite> legacy_declaration_node_rewrites_;
+	size_t legacy_declaration_node_rewrite_segment_start_ = 0;
+	std::vector<LegacyEnumDeclarationRewrite> legacy_enum_declaration_rewrites_;
+	size_t legacy_enum_declaration_rewrite_segment_start_ = 0;
 	Parser* parser_publication_journal_ = nullptr;
 	size_t publication_transaction_depth_ = 0;
 
