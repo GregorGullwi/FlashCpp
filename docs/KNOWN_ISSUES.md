@@ -215,9 +215,12 @@ parameter names, copied `TemplateArgInfo` arguments, and environment snapshot
 before `set_outer_template_bindings` rewrites them. Pre-existing
 `StructDeclarationNode` owners snapshot the whole declaration before member,
 base, nested-class, body-state, or identity rewrites and restore it before AST
-storage truncates. Other in-place rewrites of owners outside the type registry
-still need an owned rollback boundary before broad speculative parsing can rely
-on it. Existing `TypeInfo` rows reached
+storage truncates. `FunctionDeclarationNode` owners snapshot parameters,
+referenced declaration metadata, definition, lookup context, mangled name, NTTP
+arguments, body state, and flags.
+Other in-place rewrites of owners outside the type registry still need an owned
+rollback boundary before broad speculative parsing can rely on it. Existing
+`TypeInfo` rows reached
 through the mutable accessor/mutator API are snapshotted and restored with their
 cold records, and legacy AST nodes allocated after the mark are truncated.
 

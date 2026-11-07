@@ -1051,6 +1051,124 @@ TEST_SUITE("FrontendContext") {
 		CHECK(owner.struct_body_state_tag() == StructDeclarationNode::StructBodyStateTag::Materialized);
 	}
 
+	TEST_CASE("Frontend scratch rollback restores in-place function declaration rewrites") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+
+		FrontendContext context;
+		ScratchTransactionParserFixture fixture(context);
+		const TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		DeclarationNode declaration(
+			int_type, Token(Token::Type::Identifier, std::string_view("frontend_tx_function_owner"), 1, 1, 0));
+		ASTNode owner_node = ASTNode::emplace_node<FunctionDeclarationNode>(declaration);
+		FunctionDeclarationNode& owner = owner_node.as<FunctionDeclarationNode>();
+		ASTNode block = ASTNode::emplace_node<BlockNode>();
+		const StringHandle baseline_key = StringTable::getOrInternStringHandle("frontend_tx_function_baseline_key");
+		const StringHandle outer_key = StringTable::getOrInternStringHandle("frontend_tx_function_outer_key");
+		const StringHandle inner_key = StringTable::getOrInternStringHandle("frontend_tx_function_inner_key");
+		owner.set_namespace_handle(NamespaceHandle{7});
+		owner.set_entity_id(EntityId{8});
+		owner.set_linkage(Linkage::C);
+		owner.set_calling_convention(CallingConvention::Cdecl);
+		owner.set_mangled_name("frontend_tx_baseline_mangled");
+		owner.set_non_type_template_args({1});
+		owner.set_lazy_member_registry_key(baseline_key);
+		owner.set_is_inline(true);
+		owner.decl_node().set_mangled_name("frontend_tx_baseline_declaration");
+		{
+			auto outer = context.beginScratchTransaction();
+			owner.set_namespace_handle(NamespaceHandle{9});
+			owner.decl_node().set_mangled_name("frontend_tx_outer_declaration");
+			owner.set_entity_id(EntityId{10});
+			owner.set_linkage(Linkage::CPlusPlus);
+			owner.set_calling_convention(CallingConvention::Fastcall);
+			owner.set_mangled_name("frontend_tx_outer_mangled");
+			owner.set_non_type_template_args({2, 3});
+			owner.set_lazy_member_registry_key(outer_key);
+			owner.set_is_template_pattern(true);
+			owner.set_is_inline(false);
+			owner.add_parameter_node(block);
+			REQUIRE(owner.set_definition(block));
+			CHECK(owner.namespace_handle() == NamespaceHandle{9});
+			CHECK(owner.entity_id() == EntityId{10});
+			CHECK(owner.decl_node().mangled_name() == "frontend_tx_outer_declaration");
+			CHECK(owner.linkage() == Linkage::CPlusPlus);
+			CHECK(owner.calling_convention() == CallingConvention::Fastcall);
+			CHECK(owner.mangled_name() == "frontend_tx_outer_mangled");
+			CHECK(owner.non_type_template_args().size() == 2u);
+			CHECK(owner.lazy_member_registry_key() == outer_key);
+			CHECK(owner.is_template_pattern());
+			CHECK_FALSE(owner.is_inline());
+			CHECK(owner.parameter_nodes().size() == 1u);
+			CHECK(owner.is_materialized());
+			{
+				auto inner = context.beginScratchTransaction();
+				owner.set_namespace_handle(NamespaceHandle{11});
+				owner.set_entity_id(EntityId{12});
+				owner.decl_node().set_mangled_name("frontend_tx_inner_declaration");
+				owner.set_linkage(Linkage::None);
+				owner.set_calling_convention(CallingConvention::Vectorcall);
+				owner.set_mangled_name("frontend_tx_inner_mangled");
+				owner.set_non_type_template_args({4});
+				owner.set_lazy_member_registry_key(inner_key);
+				owner.set_is_template_pattern(false);
+				CHECK(owner.namespace_handle() == NamespaceHandle{11});
+				CHECK(owner.entity_id() == EntityId{12});
+				CHECK(owner.decl_node().mangled_name() == "frontend_tx_inner_declaration");
+				CHECK(owner.linkage() == Linkage::None);
+				CHECK(owner.calling_convention() == CallingConvention::Vectorcall);
+				CHECK(owner.mangled_name() == "frontend_tx_inner_mangled");
+				CHECK(owner.non_type_template_args().size() == 1u);
+				CHECK(owner.lazy_member_registry_key() == inner_key);
+				CHECK_FALSE(owner.is_template_pattern());
+				inner.rollback();
+			}
+			CHECK(owner.namespace_handle() == NamespaceHandle{9});
+			CHECK(owner.entity_id() == EntityId{10});
+			CHECK(owner.decl_node().mangled_name() == "frontend_tx_outer_declaration");
+			CHECK(owner.linkage() == Linkage::CPlusPlus);
+			CHECK(owner.calling_convention() == CallingConvention::Fastcall);
+			CHECK(owner.mangled_name() == "frontend_tx_outer_mangled");
+			CHECK(owner.non_type_template_args().size() == 2u);
+			CHECK(owner.lazy_member_registry_key() == outer_key);
+			CHECK(owner.is_template_pattern());
+			CHECK_FALSE(owner.is_inline());
+			CHECK(owner.parameter_nodes().size() == 1u);
+			CHECK(owner.is_materialized());
+			outer.rollback();
+		}
+		CHECK(owner.namespace_handle() == NamespaceHandle{7});
+		CHECK(owner.entity_id() == EntityId{8});
+		CHECK(owner.decl_node().mangled_name() == "frontend_tx_baseline_declaration");
+		CHECK(owner.linkage() == Linkage::C);
+		CHECK(owner.calling_convention() == CallingConvention::Cdecl);
+		CHECK(owner.mangled_name() == "frontend_tx_baseline_mangled");
+		REQUIRE(owner.non_type_template_args().size() == 1u);
+		CHECK(owner.non_type_template_args()[0] == 1);
+		CHECK(owner.lazy_member_registry_key() == baseline_key);
+		CHECK_FALSE(owner.is_template_pattern());
+		CHECK(owner.is_inline());
+		CHECK(owner.parameter_nodes().empty());
+		CHECK_FALSE(owner.get_definition().has_value());
+		CHECK_FALSE(owner.is_materialized());
+
+		{
+			auto transaction = context.beginScratchTransaction();
+			owner.set_mangled_name("frontend_tx_committed_mangled");
+			owner.decl_node().set_mangled_name("frontend_tx_committed_declaration");
+			owner.add_parameter_node(block);
+			REQUIRE(owner.set_definition(block));
+			transaction.commit();
+		}
+		CHECK(owner.mangled_name() == "frontend_tx_committed_mangled");
+		CHECK(owner.decl_node().mangled_name() == "frontend_tx_committed_declaration");
+		CHECK(owner.parameter_nodes().size() == 1u);
+		CHECK(owner.is_materialized());
+	}
+
 	TEST_CASE("Frontend scratch rollback restores in-place qualified identifier rewrites") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

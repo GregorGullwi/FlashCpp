@@ -14,6 +14,7 @@ class TypeSpecifierNode;
 class ConstructorDeclarationNode;
 class StructDeclarationNode;
 class EnumDeclarationNode;
+class FrontendContext;
 namespace FlashCpp {
 struct StructuralClassValue;
 }
@@ -4429,6 +4430,10 @@ private:
 	bool is_synthetic_decl_list_ = false;
 };
 
+struct FunctionDeclarationJournalSnapshot;
+void journalFunctionDeclarationRewrite(FunctionDeclarationNode& node);
+void restoreFunctionDeclarationRewrite(FunctionDeclarationNode& node, const FunctionDeclarationJournalSnapshot& snapshot);
+
 class FunctionDeclarationNode {
 public:
 	enum ControlFlowFlags : uint8_t {
@@ -4451,21 +4456,30 @@ public:
 		return decl_node_;
 	}
 	DeclarationNode& decl_node() {
+		journalFunctionDeclarationRewrite(*this);
 		return decl_node_;
 	}
 
 	// Namespace this function was declared in
 	NamespaceHandle namespace_handle() const { return namespace_handle_; }
-	void set_namespace_handle(NamespaceHandle ns) { namespace_handle_ = ns; }
+	void set_namespace_handle(NamespaceHandle ns) {
+		journalFunctionDeclarationRewrite(*this);
+		namespace_handle_ = ns;
+	}
 	EntityId entity_id() const { return entity_id_; }
-	void set_entity_id(EntityId entity) { entity_id_ = entity; }
+	void set_entity_id(EntityId entity) {
+		journalFunctionDeclarationRewrite(*this);
+		entity_id_ = entity;
+	}
 	std::span<const ASTNode> parameter_nodes() const {
 		return parameter_nodes_;
 	}
 	std::span<ASTNode> parameter_nodes() {
+		journalFunctionDeclarationRewrite(*this);
 		return parameter_nodes_;
 	}
 	void add_parameter_node(ASTNode parameter_node) {
+		journalFunctionDeclarationRewrite(*this);
 		parameter_nodes_.push_back(parameter_node);
 	}
 	// Update parameter nodes from the definition (to use definition's parameter names)
@@ -4474,6 +4488,7 @@ public:
 		if (definition_params.size() != parameter_nodes_.size()) {
 			return; // Signature mismatch - shouldn't happen after validation
 		}
+		journalFunctionDeclarationRewrite(*this);
 		parameter_nodes_.assign(definition_params.begin(), definition_params.end());
 	}
 	const std::optional<ASTNode>& get_definition() const {
@@ -4488,6 +4503,7 @@ public:
 		assert(body_state_tag_ != BodyStateTag::FailedSubstitution);
 		assert(ownership_phase_ != AstOwnershipPhase::SemaNormalized);
 
+		journalFunctionDeclarationRewrite(*this);
 		definition_block_.emplace(block_node);
 		body_state_tag_ = BodyStateTag::Materialized;
 		if (!(is_template_pattern_ && ownership_phase_ == AstOwnershipPhase::ParserPattern)) {
@@ -4549,6 +4565,7 @@ public:
 	void mark_failed_substitution(StringHandle reason) {
 		assert(body_state_tag_ == BodyStateTag::NotMaterialized);
 		assert(!definition_block_.has_value());
+		journalFunctionDeclarationRewrite(*this);
 		body_state_tag_ = BodyStateTag::FailedSubstitution;
 		substitution_failure_reason_ = reason;
 	}
@@ -4559,29 +4576,46 @@ public:
 		return access_owner_type_index_;
 	}
 	void set_access_owner_type_index(TypeIndex type_index) const {
+		journalFunctionDeclarationRewrite(const_cast<FunctionDeclarationNode&>(*this));
 		access_owner_type_index_ = type_index;
 	}
 	std::string_view parent_struct_name() const { return parent_struct_name_; }
-	void set_semantic_owner_name(StringHandle owner_name) { semantic_owner_name_ = owner_name; }
+	void set_semantic_owner_name(StringHandle owner_name) {
+		journalFunctionDeclarationRewrite(*this);
+		semantic_owner_name_ = owner_name;
+	}
 	StringHandle semantic_owner_name() const { return semantic_owner_name_; }
 
 	// Implicit function support (for compiler-generated functions like operator=)
-	void set_is_implicit(bool implicit) { is_implicit_ = implicit; }
+	void set_is_implicit(bool implicit) {
+		journalFunctionDeclarationRewrite(*this);
+		is_implicit_ = implicit;
+	}
 	bool is_implicit() const { return is_implicit_; }
-	void set_is_explicitly_defaulted(bool explicitly_defaulted) { is_explicitly_defaulted_ = explicitly_defaulted; }
+	void set_is_explicitly_defaulted(bool explicitly_defaulted) {
+		journalFunctionDeclarationRewrite(*this);
+		is_explicitly_defaulted_ = explicitly_defaulted;
+	}
 	bool is_explicitly_defaulted() const { return is_explicitly_defaulted_; }
 
 	// Linkage support (C vs C++)
-	void set_linkage(Linkage linkage) { linkage_ = linkage; }
+	void set_linkage(Linkage linkage) {
+		journalFunctionDeclarationRewrite(*this);
+		linkage_ = linkage;
+	}
 	Linkage linkage() const { return linkage_; }
 
 	// Calling convention support (for Windows ABI and variadic validation)
-	void set_calling_convention(CallingConvention cc) { calling_convention_ = cc; }
+	void set_calling_convention(CallingConvention cc) {
+		journalFunctionDeclarationRewrite(*this);
+		calling_convention_ = cc;
+	}
 	CallingConvention calling_convention() const { return calling_convention_; }
 
 	// Template body position support (for delayed parsing of template bodies)
 	// Uses SaveHandle as handle (opaque ID from Parser's save_token_position())
 	void set_template_body_position(SaveHandle handle) {
+		journalFunctionDeclarationRewrite(*this);
 		has_template_body_ = true;
 		template_body_position_handle_ = handle;
 		if (!is_materialized() && ownership_phase_ != AstOwnershipPhase::SemaNormalized) {
@@ -4594,6 +4628,7 @@ public:
 	// Template declaration position support (for re-parsing function declarations during instantiation)
 	// Needed for SFINAE: re-parse return type with substituted template parameters
 	void set_template_declaration_position(SaveHandle handle) {
+		journalFunctionDeclarationRewrite(*this);
 		has_template_declaration_ = true;
 		template_declaration_position_handle_ = handle;
 	}
@@ -4603,63 +4638,105 @@ public:
 	// Needed for SFINAE: save position of trailing return type (the '->' token)
 	// so we can re-parse the trailing return type with concrete template parameters
 	void set_trailing_return_type_position(SaveHandle handle) {
+		journalFunctionDeclarationRewrite(*this);
 		trailing_return_type_position_handle_ = handle;
 	}
 	bool has_trailing_return_type_position() const { return trailing_return_type_position_handle_.has_value(); }
 	SaveHandle trailing_return_type_position() const { return *trailing_return_type_position_handle_; }
 
 	// Variadic function support (functions with ... ellipsis parameter)
-	void set_is_variadic(bool variadic) { is_variadic_ = variadic; }
+	void set_is_variadic(bool variadic) {
+		journalFunctionDeclarationRewrite(*this);
+		is_variadic_ = variadic;
+	}
 	bool is_variadic() const { return is_variadic_; }
 
 	// Constexpr/constinit/consteval support
-	void set_is_constexpr(bool is_constexpr) { is_constexpr_ = is_constexpr; }
+	void set_is_constexpr(bool is_constexpr) {
+		journalFunctionDeclarationRewrite(*this);
+		is_constexpr_ = is_constexpr;
+	}
 	bool is_constexpr() const { return is_constexpr_; }
 
-	void set_is_constinit(bool is_constinit) { is_constinit_ = is_constinit; }
+	void set_is_constinit(bool is_constinit) {
+		journalFunctionDeclarationRewrite(*this);
+		is_constinit_ = is_constinit;
+	}
 	bool is_constinit() const { return is_constinit_; }
 
-	void set_is_consteval(bool is_consteval) { is_consteval_ = is_consteval; }
+	void set_is_consteval(bool is_consteval) {
+		journalFunctionDeclarationRewrite(*this);
+		is_consteval_ = is_consteval;
+	}
 	bool is_consteval() const { return is_consteval_; }
 
 	// explicit specifier for conversion functions: an explicit conversion
 	// function is not viable for an implicit conversion ([class.conv.fct]/2).
-	void set_is_explicit(bool is_explicit) { is_explicit_ = is_explicit; }
+	void set_is_explicit(bool is_explicit) {
+		journalFunctionDeclarationRewrite(*this);
+		is_explicit_ = is_explicit;
+	}
 	bool is_explicit() const { return is_explicit_; }
 
 	// noexcept support
 	void set_is_noreturn(bool is_noreturn) {
+		journalFunctionDeclarationRewrite(*this);
 		control_flow_flags_ = static_cast<uint8_t>((control_flow_flags_ & ~ControlFlowNoReturn) |
 			(is_noreturn ? ControlFlowNoReturn : ControlFlowNone));
 	}
 	bool is_noreturn() const { return (control_flow_flags_ & ControlFlowNoReturn) != 0; }
-	void set_noexcept(bool is_noexcept) { is_noexcept_ = is_noexcept; }
+	void set_noexcept(bool is_noexcept) {
+		journalFunctionDeclarationRewrite(*this);
+		is_noexcept_ = is_noexcept;
+	}
 	bool is_noexcept() const { return is_noexcept_; }
-	void set_noexcept_expression(ExpressionHandle expr) { noexcept_expression_ = expr; }
-	void clear_noexcept_expression() { noexcept_expression_.reset(); }
+	void set_noexcept_expression(ExpressionHandle expr) {
+		journalFunctionDeclarationRewrite(*this);
+		noexcept_expression_ = expr;
+	}
+	void clear_noexcept_expression() {
+		journalFunctionDeclarationRewrite(*this);
+		noexcept_expression_.reset();
+	}
 	const std::optional<ExpressionHandle>& noexcept_expression() const { return noexcept_expression_; }
 	bool has_noexcept_expression() const { return noexcept_expression_.has_value(); }
 
 	// Static member function support
-	void set_is_static(bool is_static) { is_static_ = is_static; }
+	void set_is_static(bool is_static) {
+		journalFunctionDeclarationRewrite(*this);
+		is_static_ = is_static;
+	}
 	bool is_static() const { return is_static_; }
 
 	// C++ inline function: the `inline` specifier, an in-class definition
 	// (including first-declaration `= default`), or a friend defined in a class.
 	// Distinct from inline_always, which is an IR/codegen-only forced inlining marker.
-	void set_is_inline(bool is_inline) { is_inline_ = is_inline; }
+	void set_is_inline(bool is_inline) {
+		journalFunctionDeclarationRewrite(*this);
+		is_inline_ = is_inline;
+	}
 	bool is_inline() const { return is_inline_; }
 
 	// Hidden friend defined in a class (ADL-only). Distinct from member functions.
-	void set_is_hidden_friend(bool is_hidden_friend) { is_hidden_friend_ = is_hidden_friend; }
+	void set_is_hidden_friend(bool is_hidden_friend) {
+		journalFunctionDeclarationRewrite(*this);
+		is_hidden_friend_ = is_hidden_friend;
+	}
 	bool is_hidden_friend() const { return is_hidden_friend_; }
 
 	// Cv and ref qualifiers on member functions.
-	void set_is_const_member_function(bool v) { is_const_member_function_ = v; }
+	void set_is_const_member_function(bool v) {
+		journalFunctionDeclarationRewrite(*this);
+		is_const_member_function_ = v;
+	}
 	bool is_const_member_function() const { return is_const_member_function_; }
-	void set_is_volatile_member_function(bool v) { is_volatile_member_function_ = v; }
+	void set_is_volatile_member_function(bool v) {
+		journalFunctionDeclarationRewrite(*this);
+		is_volatile_member_function_ = v;
+	}
 	bool is_volatile_member_function() const { return is_volatile_member_function_; }
 	void set_function_reference_qualifier(ReferenceQualifier qualifier) {
+		journalFunctionDeclarationRewrite(*this);
 		function_reference_qualifier_ = qualifier;
 	}
 	ReferenceQualifier function_reference_qualifier() const {
@@ -4667,10 +4744,14 @@ public:
 	}
 
 	// Deleted function support (= delete)
-	void set_is_deleted(bool deleted) { is_deleted_ = deleted; }
+	void set_is_deleted(bool deleted) {
+		journalFunctionDeclarationRewrite(*this);
+		is_deleted_ = deleted;
+	}
 	bool is_deleted() const { return is_deleted_; }
 
 	void set_is_template_pattern(bool is_template_pattern) {
+		journalFunctionDeclarationRewrite(*this);
 		is_template_pattern_ = is_template_pattern;
 		if (is_template_pattern && ownership_phase_ != AstOwnershipPhase::SemaNormalized) {
 			ownership_phase_ = AstOwnershipPhase::ParserPattern;
@@ -4682,14 +4763,19 @@ public:
 	void markSemaNormalized() const {
 		assert(ownership_phase_ == AstOwnershipPhase::ConcreteMaterialized ||
 			ownership_phase_ == AstOwnershipPhase::SemaNormalized);
+		journalFunctionDeclarationRewrite(const_cast<FunctionDeclarationNode&>(*this));
 		ownership_phase_ = AstOwnershipPhase::SemaNormalized;
 	}
 
 	// Inline always support (for template instantiations that are pure expressions)
 	// When true, this function should always be inlined and never generate a call
-	void set_inline_always(bool inline_always) { inline_always_ = inline_always; }
+	void set_inline_always(bool inline_always) {
+		journalFunctionDeclarationRewrite(*this);
+		inline_always_ = inline_always;
+	}
 	bool is_inline_always() const { return inline_always_; }
 	void set_deduced_placeholder_return_type(TypeCategory placeholder_type) {
+		journalFunctionDeclarationRewrite(*this);
 		deduced_placeholder_return_type_ = placeholder_type;
 	}
 	TypeCategory deduced_placeholder_return_type() const {
@@ -4698,18 +4784,25 @@ public:
 
 	// Pre-computed mangled name for consistent access across all compiler stages
 	// Generated once during parsing, reused by CodeGen and ObjFileWriter
-	void set_mangled_name(std::string_view name) { mangled_name_ = name; }
+	void set_mangled_name(std::string_view name) {
+		journalFunctionDeclarationRewrite(*this);
+		mangled_name_ = name;
+	}
 	std::string_view mangled_name() const { return mangled_name_; }
 	bool has_mangled_name() const { return !mangled_name_.empty(); }
 
 	// Non-type template argument support for template specializations
 	// Used to generate correct mangled names for get<0>, get<1>, etc.
-	void set_non_type_template_args(std::vector<int64_t> args) { non_type_template_args_ = std::move(args); }
+	void set_non_type_template_args(std::vector<int64_t> args) {
+		journalFunctionDeclarationRewrite(*this);
+		non_type_template_args_ = std::move(args);
+	}
 	std::span<const int64_t> non_type_template_args() const { return non_type_template_args_; }
 	bool has_non_type_template_args() const { return !non_type_template_args_.empty(); }
 
 	template <typename NameContainer, typename ArgContainer>
 	void set_outer_template_bindings(const NameContainer& template_param_names, const ArgContainer& template_args) {
+		journalFunctionDeclarationRewrite(*this);
 		journalOuterTemplateBindingRewrite(this, outer_template_param_names_, outer_template_args_);
 		outer_template_param_names_.clear();
 		outer_template_args_.clear();
@@ -4733,7 +4826,10 @@ public:
 	bool has_outer_template_bindings() const { return !outer_template_args_.empty(); }
 	const TemplateParamNameVector& outer_template_param_names() const { return outer_template_param_names_; }
 	const TemplateArgInfoVector& outer_template_args() const { return outer_template_args_; }
-	void set_lazy_member_registry_key(StringHandle key) { lazy_member_registry_key_ = key; }
+	void set_lazy_member_registry_key(StringHandle key) {
+		journalFunctionDeclarationRewrite(*this);
+		lazy_member_registry_key_ = key;
+	}
 	StringHandle lazy_member_registry_key() const { return lazy_member_registry_key_; }
 	bool has_lazy_member_registry_key() const { return lazy_member_registry_key_.isValid(); }
 
@@ -4741,6 +4837,7 @@ public:
 	// Captured at parse time so that two-phase lookup during instantiation uses the
 	// definition namespace rather than the point-of-instantiation namespace.
 	void set_definition_lookup_context(const TemplateDefinitionLookupContext& ctx) {
+		journalFunctionDeclarationRewrite(*this);
 		definition_lookup_context_ = ctx;
 	}
 	const TemplateDefinitionLookupContext& definition_lookup_context() const {
@@ -4749,6 +4846,12 @@ public:
 	bool has_definition_lookup_context() const { return definition_lookup_context_.is_valid(); }
 
 private:
+	friend class FrontendContext;
+	FunctionDeclarationJournalSnapshot makeJournalSnapshot() const;
+	void restoreJournalSnapshot(const FunctionDeclarationJournalSnapshot& snapshot);
+	friend void journalFunctionDeclarationRewrite(FunctionDeclarationNode& node);
+	friend void restoreFunctionDeclarationRewrite(FunctionDeclarationNode& node, const FunctionDeclarationJournalSnapshot& snapshot);
+
 	DeclarationNode& decl_node_;
 	std::vector<ASTNode> parameter_nodes_;
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
@@ -4764,8 +4867,8 @@ private:
 
 	bool is_variadic_ = false;  // True if this function has ... ellipsis parameter
 	EntityId entity_id_{}; // Published free-function identity; empty for unmigrated declaration families.
-	SaveHandle template_body_position_handle_;  // Handle to saved position for template body (from Parser::save_token_position())
-	SaveHandle template_declaration_position_handle_;  // Handle to saved position for template declaration (for SFINAE)
+	SaveHandle template_body_position_handle_ = SIZE_MAX;  // Handle to saved position for template body (from Parser::save_token_position())
+	SaveHandle template_declaration_position_handle_ = SIZE_MAX;  // Handle to saved position for template declaration (for SFINAE)
 	std::optional<SaveHandle> trailing_return_type_position_handle_;	 // Handle to saved position for trailing return type '->'
 	bool is_constexpr_;
 	bool is_constinit_;
@@ -4796,6 +4899,156 @@ private:
 	StringHandle lazy_member_registry_key_;
 	TemplateDefinitionLookupContext definition_lookup_context_;  // Captured at parse time for nested member function templates
 };
+
+struct FunctionDeclarationJournalSnapshot {
+	DeclarationNode declaration;
+	std::vector<ASTNode> parameter_nodes;
+	std::optional<ASTNode> definition_block;
+	std::string_view parent_struct_name;
+	StringHandle semantic_owner_name;
+	TypeIndex access_owner_type_index;
+	NamespaceHandle namespace_handle;
+	EntityId entity_id;
+	SaveHandle template_body_position_handle = SIZE_MAX;
+	SaveHandle template_declaration_position_handle = SIZE_MAX;
+	std::optional<SaveHandle> trailing_return_type_position_handle;
+	std::optional<ExpressionHandle> noexcept_expression;
+	std::string_view mangled_name;
+	std::vector<int64_t> non_type_template_args;
+	TemplateParamNameVector outer_template_param_names;
+	TemplateArgInfoVector outer_template_args;
+	TemplateDefinitionLookupContext definition_lookup_context;
+	uint8_t control_flow_flags = 0;
+	TypeCategory deduced_placeholder_return_type = TypeCategory::Invalid;
+	ReferenceQualifier function_reference_qualifier = ReferenceQualifier::None;
+	Linkage linkage = Linkage::None;
+	CallingConvention calling_convention = CallingConvention::Default;
+	FunctionDeclarationNode::BodyStateTag body_state_tag = FunctionDeclarationNode::BodyStateTag::NotMaterialized;
+	AstOwnershipPhase ownership_phase = AstOwnershipPhase::ConcreteMaterialized;
+	StringHandle substitution_failure_reason;
+	StringHandle lazy_member_registry_key;
+	bool is_member_function = false;
+	bool is_implicit = false;
+	bool is_explicitly_defaulted = false;
+	bool has_template_body = false;
+	bool has_template_declaration = false;
+	bool is_variadic = false;
+	bool is_constexpr = false;
+	bool is_constinit = false;
+	bool is_consteval = false;
+	bool is_noexcept = false;
+	bool is_explicit = false;
+	bool is_deleted = false;
+	bool is_template_pattern = false;
+	bool is_static = false;
+	bool is_inline = false;
+	bool is_hidden_friend = false;
+	bool is_const_member_function = false;
+	bool is_volatile_member_function = false;
+	bool inline_always = false;
+};
+
+inline FunctionDeclarationJournalSnapshot FunctionDeclarationNode::makeJournalSnapshot() const {
+	FunctionDeclarationJournalSnapshot snapshot;
+	snapshot.declaration = decl_node_;
+	snapshot.parameter_nodes = parameter_nodes_;
+	snapshot.definition_block = definition_block_;
+	snapshot.parent_struct_name = parent_struct_name_;
+	snapshot.semantic_owner_name = semantic_owner_name_;
+	snapshot.access_owner_type_index = access_owner_type_index_;
+	snapshot.namespace_handle = namespace_handle_;
+	snapshot.entity_id = entity_id_;
+	snapshot.template_body_position_handle = template_body_position_handle_;
+	snapshot.template_declaration_position_handle = template_declaration_position_handle_;
+	snapshot.trailing_return_type_position_handle = trailing_return_type_position_handle_;
+	snapshot.noexcept_expression = noexcept_expression_;
+	snapshot.mangled_name = mangled_name_;
+	snapshot.non_type_template_args = non_type_template_args_;
+	snapshot.outer_template_param_names = outer_template_param_names_;
+	snapshot.outer_template_args = outer_template_args_;
+	snapshot.definition_lookup_context = definition_lookup_context_;
+	snapshot.control_flow_flags = control_flow_flags_;
+	snapshot.deduced_placeholder_return_type = deduced_placeholder_return_type_;
+	snapshot.function_reference_qualifier = function_reference_qualifier_;
+	snapshot.linkage = linkage_;
+	snapshot.calling_convention = calling_convention_;
+	snapshot.body_state_tag = body_state_tag_;
+	snapshot.ownership_phase = ownership_phase_;
+	snapshot.substitution_failure_reason = substitution_failure_reason_;
+	snapshot.lazy_member_registry_key = lazy_member_registry_key_;
+	snapshot.is_member_function = is_member_function_;
+	snapshot.is_implicit = is_implicit_;
+	snapshot.is_explicitly_defaulted = is_explicitly_defaulted_;
+	snapshot.has_template_body = has_template_body_;
+	snapshot.has_template_declaration = has_template_declaration_;
+	snapshot.is_variadic = is_variadic_;
+	snapshot.is_constexpr = is_constexpr_;
+	snapshot.is_constinit = is_constinit_;
+	snapshot.is_consteval = is_consteval_;
+	snapshot.is_noexcept = is_noexcept_;
+	snapshot.is_explicit = is_explicit_;
+	snapshot.is_deleted = is_deleted_;
+	snapshot.is_template_pattern = is_template_pattern_;
+	snapshot.is_static = is_static_;
+	snapshot.is_inline = is_inline_;
+	snapshot.is_hidden_friend = is_hidden_friend_;
+	snapshot.is_const_member_function = is_const_member_function_;
+	snapshot.is_volatile_member_function = is_volatile_member_function_;
+	snapshot.inline_always = inline_always_;
+	return snapshot;
+}
+
+inline void FunctionDeclarationNode::restoreJournalSnapshot(const FunctionDeclarationJournalSnapshot& snapshot) {
+	decl_node_ = snapshot.declaration;
+	parameter_nodes_ = snapshot.parameter_nodes;
+	definition_block_ = snapshot.definition_block;
+	parent_struct_name_ = snapshot.parent_struct_name;
+	semantic_owner_name_ = snapshot.semantic_owner_name;
+	access_owner_type_index_ = snapshot.access_owner_type_index;
+	namespace_handle_ = snapshot.namespace_handle;
+	entity_id_ = snapshot.entity_id;
+	template_body_position_handle_ = snapshot.template_body_position_handle;
+	template_declaration_position_handle_ = snapshot.template_declaration_position_handle;
+	trailing_return_type_position_handle_ = snapshot.trailing_return_type_position_handle;
+	noexcept_expression_ = snapshot.noexcept_expression;
+	mangled_name_ = snapshot.mangled_name;
+	non_type_template_args_ = snapshot.non_type_template_args;
+	outer_template_param_names_ = snapshot.outer_template_param_names;
+	outer_template_args_ = snapshot.outer_template_args;
+	definition_lookup_context_ = snapshot.definition_lookup_context;
+	control_flow_flags_ = snapshot.control_flow_flags;
+	deduced_placeholder_return_type_ = snapshot.deduced_placeholder_return_type;
+	function_reference_qualifier_ = snapshot.function_reference_qualifier;
+	linkage_ = snapshot.linkage;
+	calling_convention_ = snapshot.calling_convention;
+	body_state_tag_ = snapshot.body_state_tag;
+	ownership_phase_ = snapshot.ownership_phase;
+	substitution_failure_reason_ = snapshot.substitution_failure_reason;
+	lazy_member_registry_key_ = snapshot.lazy_member_registry_key;
+	is_member_function_ = snapshot.is_member_function;
+	is_implicit_ = snapshot.is_implicit;
+	is_explicitly_defaulted_ = snapshot.is_explicitly_defaulted;
+	has_template_body_ = snapshot.has_template_body;
+	has_template_declaration_ = snapshot.has_template_declaration;
+	is_variadic_ = snapshot.is_variadic;
+	is_constexpr_ = snapshot.is_constexpr;
+	is_constinit_ = snapshot.is_constinit;
+	is_consteval_ = snapshot.is_consteval;
+	is_noexcept_ = snapshot.is_noexcept;
+	is_explicit_ = snapshot.is_explicit;
+	is_deleted_ = snapshot.is_deleted;
+	is_template_pattern_ = snapshot.is_template_pattern;
+	is_static_ = snapshot.is_static;
+	is_inline_ = snapshot.is_inline;
+	is_hidden_friend_ = snapshot.is_hidden_friend;
+	is_const_member_function_ = snapshot.is_const_member_function;
+	is_volatile_member_function_ = snapshot.is_volatile_member_function;
+	inline_always_ = snapshot.inline_always;
+}
+
+inline void restoreFunctionDeclarationRewrite(FunctionDeclarationNode& node, const FunctionDeclarationJournalSnapshot& snapshot) {
+	node.restoreJournalSnapshot(snapshot);
+}
 
 
 // ============================================================================
