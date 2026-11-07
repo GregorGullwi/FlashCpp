@@ -354,8 +354,9 @@ mismatched, unpublished, or unresolved owner facts.
      size after ordered array decay. Identifier and qualified-global array
      detection now consume the sema canonical predicates instead of projection
      fields. A published member-pointer access adopts that member's canonical
-     type. A member pointer with no structural pointee still peels one flat
-     level. Other flat readers still need migration before the projection
+     type, and a published class-to-pointer subscript conversion adopts the
+     pointer's pointee. A pointer with no structural pointee still peels one
+     flat level. Other flat readers still need migration before the projection
      fields can be removed.
    - Migrate the separate compatibility candidate gathering in the mixed
      member/free selector; deleting `findUnaryOperatorOverloadCompatibility`
