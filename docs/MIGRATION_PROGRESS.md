@@ -131,10 +131,12 @@ template arguments, and calling-convention state remain outside the boundary.
 Pre-existing `QualifiedIdentifierNode` dependent-name and template-argument
 rewrites now snapshot the node on its first mutation in a transaction segment
 and restore it before AST storage truncates; snapshots are deduplicated and
-stack-local or already-truncated nodes are skipped. Other owners outside the type
-registry, including copied `TemplateArgInfo` values held by AST/template
-registries, still need an owned publication boundary before enabling a
-transaction around type-pack materialization. Required dependency instantiations
+stack-local or already-truncated nodes are skipped. Pre-existing AST declaration
+owners likewise journal their outer template parameter names, copied
+`TemplateArgInfo` arguments, and environment snapshot before `set_outer_template_bindings`
+rewrites them, with one snapshot per owner per segment. Other in-place rewrites of
+owners outside the type registry still need an owned publication boundary before
+enabling a transaction around type-pack materialization. Required dependency instantiations
 must remain separate from that candidate-local transaction; blanket rollback
 would violate observable C++20 instantiation effects. Lockstep member and
 namespace-scope length mismatches now produce `TemplatePackLengthMismatch`
@@ -447,8 +449,8 @@ These seed adjacent slices; the authoritative inventory is
   `SymbolTable` publication maps, pre-existing `TypeInfo` row snapshots,
   in-place global/namespace variable array type normalization, namespace
   metadata, the active Parser's cursor, append-only root publication, parse
-  context stacks, current function/linkage, and pre-existing
-  `QualifiedIdentifierNode` field rewrites.
+  context stacks, current function/linkage, pre-existing `QualifiedIdentifierNode`
+  field rewrites, and AST owner outer-template binding rewrites.
   Scope creation, cursor movement, and `ScopeRecord` publication roll back
   together after symbol-map undo. Nested commits stay
   provisional until the outer transaction commits; production speculative parsing

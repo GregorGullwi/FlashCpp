@@ -840,6 +840,7 @@ public:
 
 	template <typename NameContainer, typename ArgContainer>
 	void set_outer_template_bindings(const NameContainer& template_param_names, const ArgContainer& template_args) {
+		journalOuterTemplateBindingRewrite(this, outer_template_param_names_, outer_template_args_, outer_template_environment_snapshot_node_);
 		outer_template_param_names_.clear();
 		outer_template_args_.clear();
 		outer_template_param_names_.reserve(template_param_names.size());
@@ -861,6 +862,7 @@ public:
 	}
 
 	void set_outer_template_bindings(const TemplateEnvironmentSnapshotNode* snapshot_node) {
+		journalOuterTemplateBindingRewrite(this, outer_template_param_names_, outer_template_args_, outer_template_environment_snapshot_node_);
 		outer_template_environment_snapshot_node_ = snapshot_node;
 	}
 

@@ -1526,6 +1526,11 @@ struct TypeInfo {
 using TemplateArgInfoVector = TypeInfo::TemplateArgInfoVector;
 using TemplateArgInfoSingleVector = TypeInfo::TemplateArgInfoSingleVector;
 
+struct TemplateEnvironmentSnapshotNode;
+void journalOuterTemplateBindingRewrite(void* owner, TemplateParamNameVector& names, TemplateArgInfoVector& args,
+	const TemplateEnvironmentSnapshotNode*& snapshot_node);
+void journalOuterTemplateBindingRewrite(void* owner, TemplateParamNameVector& names, TemplateArgInfoVector& args);
+
 // Cold arena for DependentQualifiedNameRecord. Indices are stable; chunks stay packed
 // for linear/scattered reads without a unique_ptr malloc per record.
 uint32_t storeDependentQualifiedNameRecord(TypeInfo::DependentQualifiedNameRecord record);
@@ -4705,6 +4710,7 @@ public:
 
 	template <typename NameContainer, typename ArgContainer>
 	void set_outer_template_bindings(const NameContainer& template_param_names, const ArgContainer& template_args) {
+		journalOuterTemplateBindingRewrite(this, outer_template_param_names_, outer_template_args_);
 		outer_template_param_names_.clear();
 		outer_template_args_.clear();
 		outer_template_param_names_.reserve(template_param_names.size());

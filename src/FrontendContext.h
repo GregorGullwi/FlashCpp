@@ -48,6 +48,16 @@ struct LegacyQualifiedIdentifierRewrite {
 	std::optional<QualifiedIdentifierNode> snapshot;
 };
 
+struct LegacyOuterTemplateBindingRewrite {
+	void* owner = nullptr;
+	TemplateParamNameVector* names = nullptr;
+	TemplateArgInfoVector* args = nullptr;
+	const TemplateEnvironmentSnapshotNode** snapshot_node = nullptr;
+	std::optional<TemplateParamNameVector> names_snapshot;
+	std::optional<TemplateArgInfoVector> args_snapshot;
+	const TemplateEnvironmentSnapshotNode* snapshot_node_value = nullptr;
+};
+
 struct FrontendPublicationJournalMark {
 	size_t context_depth = 0;
 	size_t namespace_depth = 0;
@@ -56,6 +66,8 @@ struct FrontendPublicationJournalMark {
 	size_t legacy_ast_node_count = 0;
 	size_t legacy_qualified_identifier_rewrite_count = 0;
 	size_t previous_legacy_qualified_identifier_rewrite_segment_start = 0;
+	size_t legacy_outer_template_binding_rewrite_count = 0;
+	size_t previous_legacy_outer_template_binding_rewrite_segment_start = 0;
 	Parser& parser_publication_journal;
 	size_t parser_publication_handle = SIZE_MAX;
 	ScopeId current_scope_id{};
@@ -593,6 +605,12 @@ private:
 	Parser& parserForPublicationMark(const FrontendPublicationJournalMark& mark) const;
 	void journalQualifiedIdentifierRewrite(QualifiedIdentifierNode& node);
 	friend void journalQualifiedIdentifierRewrite(QualifiedIdentifierNode& node);
+	void journalOuterTemplateBindingRewrite(void* owner, TemplateParamNameVector& names, TemplateArgInfoVector& args,
+		const TemplateEnvironmentSnapshotNode*& snapshot_node);
+	friend void journalOuterTemplateBindingRewrite(void* owner, TemplateParamNameVector& names, TemplateArgInfoVector& args,
+		const TemplateEnvironmentSnapshotNode*& snapshot_node);
+	void journalOuterTemplateBindingRewrite(void* owner, TemplateParamNameVector& names, TemplateArgInfoVector& args);
+	friend void journalOuterTemplateBindingRewrite(void* owner, TemplateParamNameVector& names, TemplateArgInfoVector& args);
 	bool hasOpenPublicationTransaction() const {
 		return publication_transaction_depth_ != 0;
 	}
@@ -616,6 +634,8 @@ private:
 	std::vector<SymbolTable*> persistent_scope_publication_tables_;
 	std::vector<LegacyQualifiedIdentifierRewrite> legacy_qualified_identifier_rewrites_;
 	size_t legacy_qualified_identifier_rewrite_segment_start_ = 0;
+	std::vector<LegacyOuterTemplateBindingRewrite> legacy_outer_template_binding_rewrites_;
+	size_t legacy_outer_template_binding_rewrite_segment_start_ = 0;
 	Parser* parser_publication_journal_ = nullptr;
 	size_t publication_transaction_depth_ = 0;
 
