@@ -2526,10 +2526,18 @@ TEST_CASE("Selected partial nested class import preserves primary specialization
 		table.pointer(table.builtin(CanonicalBuiltinKind::Short)));
 	CHECK(table.templateArgumentType(table.templateSpecializationArguments(wide_owner_type)) ==
 		table.pointer(table.builtin(CanonicalBuiltinKind::LongLong)));
-	TypeSpecifierNode pointer_to_short(TypeCategory::Struct, TypeQualifier::None, SizeInBits{0}, Token{}, CVQualifier::None);
-	pointer_to_short.set_injected_class_declaration(short_nested);
+	const StringHandle nested_type_name = StringTable::getOrInternStringHandle("SelectedPartialShortOwner::Key");
+	const TypeCreationResult nested_created = add_struct_type(nested_type_name, NamespaceRegistry::GLOBAL_NAMESPACE);
+	StructTypeInfo& nested_record = nested_created.info.createStructInfo(
+		nested_type_name, AccessSpecifier::Public, false, NamespaceRegistry::GLOBAL_NAMESPACE);
+	nested_record.declaration_node = short_nested;
+	nested_record.layout_is_complete = true;
+	nested_record.total_size = SizeInBytes{1};
+	TypeSpecifierNode pointer_to_short(nested_created.info.registeredTypeIndex().withCategory(TypeCategory::Struct), TypeQualifier::None, SizeInBits{0},
+		Token{}, CVQualifier::None);
 	pointer_to_short.add_pointer_level(CVQualifier::None);
-	const CanonicalTypeImport pointer_import = importCanonicalType(table, pointer_to_short);
+	tryBindPublishedTypeEntity(pointer_to_short);
+	const CanonicalTypeImport pointer_import = importCanonicalNominalComponent(table, pointer_to_short, CanonicalTypeImportContext::Exact);
 	REQUIRE(pointer_import.status == CanonicalTypeImportStatus::Supported);
 	REQUIRE(table.node(pointer_import.type).kind == CanonicalTypeKind::Pointer);
 	CHECK(table.node(pointer_import.type).child == short_import.type);
