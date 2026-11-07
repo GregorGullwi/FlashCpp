@@ -2526,6 +2526,13 @@ TEST_CASE("Selected partial nested class import preserves primary specialization
 		table.pointer(table.builtin(CanonicalBuiltinKind::Short)));
 	CHECK(table.templateArgumentType(table.templateSpecializationArguments(wide_owner_type)) ==
 		table.pointer(table.builtin(CanonicalBuiltinKind::LongLong)));
+	TypeSpecifierNode pointer_to_short(TypeCategory::Struct, TypeQualifier::None, SizeInBits{0}, Token{}, CVQualifier::None);
+	pointer_to_short.set_injected_class_declaration(short_nested);
+	pointer_to_short.add_pointer_level(CVQualifier::None);
+	const CanonicalTypeImport pointer_import = importCanonicalType(table, pointer_to_short);
+	REQUIRE(pointer_import.status == CanonicalTypeImportStatus::Supported);
+	REQUIRE(table.node(pointer_import.type).kind == CanonicalTypeKind::Pointer);
+	CHECK(table.node(pointer_import.type).child == short_import.type);
 }
 
 TEST_CASE("Canonical integral arguments use converted value and canonical type identity") {

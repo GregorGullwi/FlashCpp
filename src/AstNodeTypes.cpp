@@ -1472,13 +1472,23 @@ void tryBindPublishedTypeEntity(TypeSpecifierNode& type_spec) {
 	}
 	if (type_spec.category() == TypeCategory::Struct) {
 		const StructTypeInfo* struct_info = type_info->getStructInfo();
-		if (struct_info == nullptr || struct_info->declaration_node == nullptr ||
-			!struct_info->declaration_node->has_entity_id()) {
+		if (struct_info == nullptr || struct_info->declaration_node == nullptr) {
 			return;
 		}
-		type_spec.set_type_entity(struct_info->declaration_node->entity_id());
+		const StructDeclarationNode* declaration = struct_info->declaration_node;
+		if (!declaration->has_entity_id()) {
+			// The pattern EntityId is shared by every enclosing specialization.
+			// Bind the instantiated declaration so record import recovers that owner
+			// instead of publishing one Record for all of them.
+			const StructDeclarationNode* pattern = declaration->injected_class_pattern_declaration();
+			if (pattern != nullptr && pattern->has_entity_id() && !pattern->has_template_decl_id() && declaration->enclosing_class() != nullptr) {
+				type_spec.set_injected_class_declaration(declaration);
+			}
+			return;
+		}
+		type_spec.set_type_entity(declaration->entity_id());
 		if (!type_spec.has_injected_class_declaration()) {
-			type_spec.set_injected_class_declaration(struct_info->declaration_node);
+			type_spec.set_injected_class_declaration(declaration);
 		}
 		return;
 	}

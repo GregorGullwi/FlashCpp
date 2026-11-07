@@ -882,9 +882,9 @@ std::optional<TypeId> canonicalUnaryDereference(CanonicalTypeTable& table, TypeI
 }
 
 // The operand descriptor is a local copy, so importing it cannot invalidate a
-// live TypeContext::get() reference. A pointer to a class the importer cannot
-// represent yet stays empty; the caller peels one flat pointer level for that
-// shape and still refuses an array object with no published identity.
+// live TypeContext::get() reference. A pointer the importer cannot represent
+// yet stays empty; the caller peels one flat pointer level for that shape and
+// still refuses an array object with no published identity.
 TypeId resolveUnaryOperandStructuralType(const CanonicalTypeDesc& desc) {
 	if (desc.structural_type_id) {
 		return desc.structural_type_id;
@@ -1539,11 +1539,11 @@ void dropPublishedPointerArrayIdentity(CanonicalTypeDesc& desc) {
 std::optional<CanonicalTypeDesc> canonicalBuiltinIndirection(CanonicalTypeDesc operand) {
 	const TypeId operand_type = resolveUnaryOperandStructuralType(operand);
 	if (!operand_type) {
-		// A nested class of a class-template instantiation has no per-specialization
-		// entity yet, and a dependent class-template pattern is not a concrete
-		// specialization. Those pointers still denote one pointer object, so pop
-		// that level. An array object has no pointer level; its element identity
-		// is the canonical peel, so a missing id stays a publication defect.
+		// A nested class of a primary instantiation imports as a nested record
+		// under that specialization. A dependent pattern, or an instantiation
+		// whose owner cannot be imported, still denotes one pointer object, so
+		// pop that level. An array object has no pointer level; its element
+		// identity is the canonical peel, so a missing id stays a publication defect.
 		if (!operand.pointer_levels.empty()) {
 			operand.ref_qualifier = ReferenceQualifier::None;
 			dropPublishedPointerArrayIdentity(operand);
