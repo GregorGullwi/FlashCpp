@@ -819,6 +819,68 @@ TEST_SUITE("FrontendContext") {
 		CHECK(gChunkedAnyStorage.size() == baseline + 1);
 	}
 
+	TEST_CASE("Frontend scratch rollback restores parser context publication") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+
+		FrontendContext context;
+		ScratchTransactionParserFixture fixture(context);
+		Parser& parser = fixture.parser;
+		const StringHandle member_context_name =
+			StringTable::getOrInternStringHandle("frontend_tx_member_context");
+		const StringHandle struct_context_name =
+			StringTable::getOrInternStringHandle("frontend_tx_struct_context");
+		const TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		DeclarationNode declaration(
+			int_type, Token(Token::Type::Identifier, std::string_view("frontend_tx_function"), 1, 1, 0));
+		FunctionDeclarationNode function(declaration);
+
+		CHECK(fixture.memberContextDepthForTest() == 0u);
+		CHECK(fixture.structContextDepthForTest() == 0u);
+		CHECK(fixture.currentFunctionForTest() == nullptr);
+		CHECK(fixture.currentLinkageForTest() == Linkage::None);
+		{
+			auto outer = context.beginScratchTransaction();
+			fixture.pushMemberContextForTest(member_context_name);
+			fixture.pushStructContextForTest(struct_context_name);
+			fixture.setCurrentFunctionForTest(&function);
+			fixture.setLinkageForTest(Linkage::C);
+			CHECK(fixture.memberContextDepthForTest() == 1u);
+			CHECK(fixture.structContextDepthForTest() == 1u);
+			{
+				auto inner = context.beginScratchTransaction();
+				fixture.pushMemberContextForTest(member_context_name);
+				fixture.pushStructContextForTest(struct_context_name);
+				fixture.setCurrentFunctionForTest(nullptr);
+				fixture.setLinkageForTest(Linkage::CPlusPlus);
+				CHECK(fixture.memberContextDepthForTest() == 2u);
+				CHECK(fixture.structContextDepthForTest() == 2u);
+				inner.rollback();
+			}
+			CHECK(fixture.memberContextDepthForTest() == 1u);
+			CHECK(fixture.structContextDepthForTest() == 1u);
+			CHECK(fixture.currentFunctionForTest() == &function);
+			CHECK(fixture.currentLinkageForTest() == Linkage::C);
+			outer.rollback();
+		}
+		CHECK(fixture.memberContextDepthForTest() == 0u);
+		CHECK(fixture.structContextDepthForTest() == 0u);
+		CHECK(fixture.currentFunctionForTest() == nullptr);
+		CHECK(fixture.currentLinkageForTest() == Linkage::None);
+
+		{
+			auto transaction = context.beginScratchTransaction();
+			fixture.pushMemberContextForTest(member_context_name);
+			CHECK_THROWS_AS(transaction.commit(), InternalError);
+			transaction.rollback();
+		}
+		CHECK(fixture.memberContextDepthForTest() == 0u);
+		CHECK(parser.get_nodes().empty());
+	}
+
 	TEST_CASE("Frontend scratch rollback restores appended Parser root publication") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

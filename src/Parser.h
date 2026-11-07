@@ -540,9 +540,14 @@ struct DeferredBaseReplayContextScope;
 
 class TemplateEngine;
 
+namespace FlashCpp::Tests {
+class ScratchTransactionParserFixture;
+}
+
 class Parser {
 	// Friend classes that need access to private members
 	friend class FrontendContext;
+	friend class FlashCpp::Tests::ScratchTransactionParserFixture;
 	friend class ExpressionSubstitutor;
 	friend class ConstExpr::Evaluator;  // Allow constexpr evaluator to instantiate templates
 	friend class TemplateInstantiationHelper;  // Allow shared template helper to instantiate templates
@@ -575,12 +580,14 @@ public:
 	explicit Parser(Lexer& lexer, CompileContext& context, SemanticAnalysis& semantic_analysis);
 	~Parser();
 
-	// Frontend publication boundary for the cursor and append-only root lists.
+	// Frontend publication boundary for the cursor, append-only roots, and
+	// parse-context stacks.
 	std::size_t saveParserCursor();
 	void validateParserPublicationCheckpoint(std::size_t handle) const;
+	void validateParserPublicationContexts(std::size_t handle, bool rollback) const;
 	void restoreParserCursor(std::size_t handle);
-	void validateParserRootPublicationRollback(std::size_t handle) const;
-	void rollbackParserRootPublication(std::size_t handle);
+	void validateParserPublicationRollback(std::size_t handle) const;
+	void rollbackParserPublication(std::size_t handle);
 	void discardParserCursor(std::size_t handle);
 
 	ParseResult parse() {
@@ -1804,6 +1811,20 @@ private:
 		const TemplateDefinitionLookupContext* previous_;
 	};
 
+	struct FrontendPublicationCheckpoint {
+		SaveHandle token_handle = SIZE_MAX;
+		size_t member_function_context_count = 0;
+		size_t struct_parsing_context_count = 0;
+		const FunctionDeclarationNode* current_function = nullptr;
+		const StructDeclarationNode* member_function_context_top_struct_node = nullptr;
+		const StructDeclarationNode* struct_parsing_context_top_struct_node = nullptr;
+		std::string_view struct_parsing_context_top_name{};
+		TypeIndex member_function_context_top_type_index{};
+		StringHandle member_function_context_top_name{};
+		NamespaceHandle struct_parsing_context_top_namespace{};
+		Linkage linkage = Linkage::None;
+	};
+
 	struct SavedToken {
 		Token current_token_;
 		Token injected_token_;  // Phase 5: Save injected token state for >> splitting
@@ -1820,7 +1841,7 @@ private:
 	// parse, so vector-indexed storage avoids hash lookup/allocation overhead in
 	// speculative parser save/restore hot paths.
 	std::vector<std::optional<SavedToken>> saved_tokens_;
-	std::vector<SaveHandle> frontend_publication_handles_;
+	std::vector<FrontendPublicationCheckpoint> frontend_publication_checkpoints_;
 	size_t active_parser_local_checkpoint_count_ = 0;
 	size_t next_save_handle_ = 0;  // Auto-incrementing handle generator
 
@@ -5499,7 +5520,8 @@ inline FlashCpp::FunctionParsingScopeGuard::FunctionParsingScopeGuard(
 	TypeIndex struct_type_index,
 	std::span<const ASTNode> params,
 	const FunctionDeclarationNode* current_function)
-	: parser_(parser), scope_(ScopeType::Function), pop_member_ctx_(has_member_context), saved_function_(parser.current_function_) {
+	: parser_(parser), scope_(ScopeType::Function), pop_member_ctx_(has_member_context), saved_function_(parser.current_function_),
+	  member_context_stack_size_after_push_(parser.member_function_context_stack_.size() + (has_member_context ? 1u : 0u)) {
 	parser_.current_function_ = current_function;
 	if (has_member_context) {
 		parser_.setup_member_function_context(struct_node, struct_name, struct_type_index, inject_this);
@@ -5508,7 +5530,9 @@ inline FlashCpp::FunctionParsingScopeGuard::FunctionParsingScopeGuard(
 }
 
 inline FlashCpp::FunctionParsingScopeGuard::~FunctionParsingScopeGuard() {
-	if (pop_member_ctx_) {
+	// A frontend rollback can truncate this frame. Only pop the frame this guard
+	// actually pushed; otherwise leave the restored baseline untouched.
+	if (pop_member_ctx_ && parser_.member_function_context_stack_.size() == member_context_stack_size_after_push_) {
 		parser_.member_function_context_stack_.pop_back();
 	}
 	parser_.current_function_ = saved_function_;

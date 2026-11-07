@@ -307,13 +307,16 @@ Parser& validateFrontendPublicationJournal(const FrontendContext& context, const
 	}
 	Parser& parser = context.parserForPublicationMark(mark);
 	parser.validateParserPublicationCheckpoint(mark.parser_publication_handle);
+	if (!rollback) {
+		parser.validateParserPublicationContexts(mark.parser_publication_handle, false);
+	}
 	for (const SymbolTable* table : context.persistent_scope_publication_tables_) {
 		table->validatePublicationTransactionDepth(mark.context_depth);
 	}
 	gNamespaceRegistry.validatePublicationTransactionDepth(mark.namespace_depth);
 	validateLegacyTypeRegistryJournal(mark.legacy_type_registry_depth);
 	if (rollback) {
-		parser.validateParserRootPublicationRollback(mark.parser_publication_handle);
+		parser.validateParserPublicationRollback(mark.parser_publication_handle);
 	}
 	return parser;
 }
@@ -341,7 +344,7 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 		++it) {
 		(*it)->rollbackPublicationTransaction(mark.context_depth);
 	}
-	parser.rollbackParserRootPublication(mark.parser_publication_handle);
+	parser.rollbackParserPublication(mark.parser_publication_handle);
 	while (context.scope_records_.size() > mark.scope_count) context.scope_records_.pop_back();
 	context.current_scope_id_ = mark.current_scope_id;
 	gNamespaceRegistry.rollbackPublicationTransaction(mark.namespace_depth);

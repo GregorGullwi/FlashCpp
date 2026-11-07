@@ -262,6 +262,7 @@ private:
 	SymbolTableScope scope_;
 	bool pop_member_ctx_;
 	const FunctionDeclarationNode* saved_function_;
+	size_t member_context_stack_size_after_push_ = 0;
 };
 
 // =============================================================================
