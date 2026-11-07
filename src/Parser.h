@@ -542,6 +542,7 @@ class TemplateEngine;
 
 class Parser {
 	// Friend classes that need access to private members
+	friend class FrontendContext;
 	friend class ExpressionSubstitutor;
 	friend class ConstExpr::Evaluator;  // Allow constexpr evaluator to instantiate templates
 	friend class TemplateInstantiationHelper;  // Allow shared template helper to instantiate templates
@@ -577,10 +578,11 @@ public:
 	explicit Parser(Lexer& lexer, CompileContext& context, SemanticAnalysis& semantic_analysis);
 	~Parser();
 
-	// Frontend transaction boundary. These preserve the lexer position, current
-	// token, and injected '>>' token without touching the parser's AST root list.
+	// Frontend publication boundary for the cursor and append-only root lists.
 	std::size_t saveParserCursor();
+	void validateParserPublicationCheckpoint(std::size_t handle) const;
 	void restoreParserCursor(std::size_t handle);
+	void rollbackParserRootPublication(std::size_t handle);
 	void discardParserCursor(std::size_t handle);
 
 	ParseResult parse() {
@@ -692,11 +694,13 @@ public:
 		return n;
 	}
 	std::vector<ASTNode> takePendingSemanticRoots() {
+		requireNoOpenFrontendPublicationTransaction("drain pending semantic roots");
 		std::vector<ASTNode> pending_roots = std::move(pending_semantic_roots_);
 		pending_semantic_root_keys_.clear();
 		return pending_roots;
 	}
 	void clearPendingSemanticRoots() {
+		requireNoOpenFrontendPublicationTransaction("clear pending semantic roots");
 		pending_semantic_roots_.clear();
 		pending_semantic_root_keys_.clear();
 	}
@@ -774,7 +778,7 @@ private:
 	std::vector<ASTNode> pending_semantic_roots_;
 	std::unordered_set<const void*> pending_semantic_root_keys_;
 	SemanticAnalysis& semantic_analysis_;
-	FrontendContext* cursor_journal_context_ = nullptr;
+	FrontendContext* publication_journal_context_ = nullptr;
 	TemplateEngine* templateEngine_ = nullptr;
 	std::vector<ASTNode> ast_discarded_nodes_;  // Keep discarded nodes alive to prevent memory corruption
 	std::string last_error_;
@@ -1806,6 +1810,8 @@ private:
 		Token current_token_;
 		Token injected_token_;  // Phase 5: Save injected token state for >> splitting
 		size_t ast_nodes_size_ = 0;
+		size_t pending_semantic_roots_size_ = 0;
+		size_t ast_discarded_nodes_size_ = 0;
 		TokenPosition lexer_position_;  // Store the lexer position with each save
 #if WITH_PARSER_RUNTIME_STATS
 		size_t tokens_advanced_at_save_ = 0;  // Snapshot of tokens_advanced for delta tracking
@@ -1816,6 +1822,8 @@ private:
 	// parse, so vector-indexed storage avoids hash lookup/allocation overhead in
 	// speculative parser save/restore hot paths.
 	std::vector<std::optional<SavedToken>> saved_tokens_;
+	std::vector<SaveHandle> frontend_publication_handles_;
+	size_t active_parser_local_checkpoint_count_ = 0;
 	size_t next_save_handle_ = 0;  // Auto-incrementing handle generator
 
 	Token consume_token();
@@ -3289,12 +3297,21 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 			return false;
 		}
 
-		auto [_, inserted] = pending_semantic_root_keys_.insert(root_key);
-		if (!inserted) {
+		if (pending_semantic_root_keys_.find(root_key) != pending_semantic_root_keys_.end()) {
 			return false;
 		}
 
 		pending_semantic_roots_.push_back(node);
+		try {
+			const auto [_, inserted] = pending_semantic_root_keys_.insert(root_key);
+			if (!inserted) {
+				pending_semantic_roots_.pop_back();
+				return false;
+			}
+		} catch (...) {
+			pending_semantic_roots_.pop_back();
+			throw;
+		}
 		return true;
 	}
 	// Returns true when the current instantiation mode permits committing artifacts.
@@ -3618,13 +3635,19 @@ public:
 	/// should migrate to this helper.
 	void appendUserNode(const ASTNode& node) {
 		assertTopLevelNodeTrackingSynchronized();
-		ast_nodes_.push_back(node);
 		ast_node_is_instantiated_.push_back(0);
+		try {
+			ast_nodes_.push_back(node);
+		} catch (...) {
+			ast_node_is_instantiated_.pop_back();
+			throw;
+		}
 	}
 
 	/// Erase the top-level AST node at `index`, keeping the parallel
 	/// instantiation-tag vector in sync. Used by token-save rollback.
 	void eraseTopLevelNodeAt(size_t index) {
+		requireTopLevelRootEraseSupported(index);
 		assertTopLevelNodeTrackingSynchronized();
 		if (index >= ast_nodes_.size()) {
 			return;
@@ -3651,24 +3674,48 @@ public:
 	void registerLateMaterializedTopLevelNode(const ASTNode& node) {
 		assertTopLevelNodeTrackingSynchronized();
 		validateLateMaterializedTopLevelNode(node);
-		if (const void* key = node.raw_pointer()) {
-			auto [_, inserted] = instantiated_node_keys_.insert(key);
-			if (!inserted) {
-				// Still make sure sema sees it (enqueuePendingSemanticRoot is
-				// itself dedup'd, so this is safe).
-				enqueuePendingSemanticRoot(node);
-				return;
-			}
+		const void* key = node.raw_pointer();
+		if (key != nullptr && instantiated_node_keys_.find(key) != instantiated_node_keys_.end()) {
+			// Still make sure sema sees it (enqueuePendingSemanticRoot is
+			// itself dedup'd, so this is safe).
+			enqueuePendingSemanticRoot(node);
+			return;
 		}
 		ast_nodes_.push_back(node);
-		ast_node_is_instantiated_.push_back(1);
-		enqueuePendingSemanticRoot(node);
+		try {
+			ast_node_is_instantiated_.push_back(1);
+		} catch (...) {
+			ast_nodes_.pop_back();
+			throw;
+		}
+		bool inserted_key = false;
+		try {
+			if (key != nullptr) {
+				const auto [_, inserted] = instantiated_node_keys_.insert(key);
+				if (!inserted) {
+					ast_node_is_instantiated_.pop_back();
+					ast_nodes_.pop_back();
+					enqueuePendingSemanticRoot(node);
+					return;
+				}
+				inserted_key = true;
+			}
+			enqueuePendingSemanticRoot(node);
+		} catch (...) {
+			if (inserted_key) {
+				instantiated_node_keys_.erase(key);
+			}
+			ast_node_is_instantiated_.pop_back();
+			ast_nodes_.pop_back();
+			throw;
+		}
 	}
 
 	/// Register a late-materialized AST node at the front of the node list.
 	/// Does NOT normalize immediately - use for dependencies that must be processed first.
 	/// Idempotent by raw_pointer() identity (see registerLateMaterializedTopLevelNode).
 	void registerLateMaterializedTopLevelNodeFront(const ASTNode& node) {
+		requireNoOpenFrontendPublicationTransaction("insert a top-level AST root at the front");
 		assertTopLevelNodeTrackingSynchronized();
 		validateLateMaterializedTopLevelNode(node);
 		if (const void* key = node.raw_pointer()) {
@@ -3699,6 +3746,10 @@ public:
 	}
 
 private:
+	void requireNoOpenFrontendPublicationTransaction(std::string_view operation) const;
+	void requireTopLevelRootEraseSupported(size_t index) const;
+	bool frontendPublicationTransactionOpen() const;
+
 	void assertTopLevelNodeTrackingSynchronized() const {
 		if (ast_nodes_.size() != ast_node_is_instantiated_.size()) {
 			throw InternalError("AST top-level node tracking vectors are out of sync");

@@ -9,6 +9,7 @@
 #include "TemplateTypes.h"
 #include "LegacyChunkedAnyStoragePolicyComplete.h"
 #include "FrontendContext.h"
+#include "Parser.h"
 #include "SymbolTable.h"
 
 #include <algorithm>
@@ -254,11 +255,10 @@ FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& 
 	if (gFrontendPublicationJournalOwner != nullptr && gFrontendPublicationJournalOwner != &context) {
 		throw InternalError("FrontendContext: overlapping publication transactions require the same context");
 	}
-	ParserCursorJournalBinding parser_binding{};
-	size_t parser_cursor_handle = SIZE_MAX;
-	if (!context.parser_cursor_journals_.empty()) {
-		parser_binding = context.parser_cursor_journals_.back();
-		parser_cursor_handle = parser_binding.save(parser_binding.parser);
+	Parser* parser_journal = context.parser_publication_journal_;
+	size_t parser_publication_handle = SIZE_MAX;
+	if (parser_journal != nullptr) {
+		parser_publication_handle = parser_journal->saveParserCursor();
 	}
 	const size_t context_depth = context.publication_transaction_depth_ + 1U;
 	const size_t namespace_depth = gNamespaceRegistry.beginPublicationTransaction();
@@ -280,8 +280,8 @@ FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& 
 		}
 		gNamespaceRegistry.rollbackPublicationTransaction(namespace_depth);
 		rollbackLegacyTypeRegistryJournal(legacy_type_registry_depth);
-		if (parser_binding.parser != nullptr) {
-			parser_binding.discard(parser_binding.parser, parser_cursor_handle);
+		if (parser_journal != nullptr) {
+			parser_journal->discardParserCursor(parser_publication_handle);
 		}
 		throw;
 	}
@@ -289,12 +289,16 @@ FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& 
 	context.publication_transaction_depth_ = context_depth;
 	gFrontendPublicationJournalOwner = &context;
 	return FrontendPublicationJournalMark{context_depth, namespace_depth, legacy_type_registry_depth, context.scope_records_.size(),
-		gChunkedAnyStorage.size(), parser_binding.parser, parser_cursor_handle, context.current_scope_id_};
+		gChunkedAnyStorage.size(), parser_journal, parser_publication_handle, context.current_scope_id_};
 }
 
 void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicationJournalMark mark) {
 	if (gFrontendPublicationJournalOwner != &context || context.publication_transaction_depth_ != mark.context_depth) {
 		throw InternalError("FrontendContext: publication transactions must close in nesting order");
+	}
+	Parser* parser = context.parserForPublicationMark(mark);
+	if (parser != nullptr) {
+		parser->validateParserPublicationCheckpoint(mark.parser_publication_handle);
 	}
 	for (auto it = context.persistent_scope_publication_tables_.rbegin();
 		it != context.persistent_scope_publication_tables_.rend();
@@ -303,14 +307,8 @@ void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicat
 	}
 	gNamespaceRegistry.commitPublicationTransaction(mark.namespace_depth);
 	commitLegacyTypeRegistryJournal(mark.legacy_type_registry_depth);
-	if (mark.parser_cursor_journal != nullptr && mark.parser_cursor_handle != SIZE_MAX) {
-		for (auto it = context.parser_cursor_journals_.rbegin(); it != context.parser_cursor_journals_.rend(); ++it) {
-			if (it->parser != mark.parser_cursor_journal) {
-				continue;
-			}
-			it->discard(it->parser, mark.parser_cursor_handle);
-			break;
-		}
+	if (parser != nullptr) {
+		parser->discardParserCursor(mark.parser_publication_handle);
 	}
 	--context.publication_transaction_depth_;
 	if (context.publication_transaction_depth_ == 0) {
@@ -322,29 +320,66 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 	if (gFrontendPublicationJournalOwner != &context || context.publication_transaction_depth_ != mark.context_depth) {
 		throw InternalError("FrontendContext: publication transactions must close in nesting order");
 	}
+	Parser* parser = context.parserForPublicationMark(mark);
+	if (parser != nullptr) {
+		parser->validateParserPublicationCheckpoint(mark.parser_publication_handle);
+	}
 	for (auto it = context.persistent_scope_publication_tables_.rbegin();
 		it != context.persistent_scope_publication_tables_.rend();
 		++it) {
 		(*it)->rollbackPublicationTransaction(mark.context_depth);
+	}
+	if (parser != nullptr) {
+		parser->rollbackParserRootPublication(mark.parser_publication_handle);
 	}
 	while (context.scope_records_.size() > mark.scope_count) context.scope_records_.pop_back();
 	context.current_scope_id_ = mark.current_scope_id;
 	gNamespaceRegistry.rollbackPublicationTransaction(mark.namespace_depth);
 	rollbackLegacyTypeRegistryJournal(mark.legacy_type_registry_depth);
 	gChunkedAnyStorage.truncateTo(mark.legacy_ast_node_count);
-	if (mark.parser_cursor_journal != nullptr && mark.parser_cursor_handle != SIZE_MAX) {
-		for (auto it = context.parser_cursor_journals_.rbegin(); it != context.parser_cursor_journals_.rend(); ++it) {
-			if (it->parser != mark.parser_cursor_journal) {
-				continue;
-			}
-			it->restore(it->parser, mark.parser_cursor_handle);
-			break;
-		}
+	if (parser != nullptr) {
+		parser->restoreParserCursor(mark.parser_publication_handle);
+		parser->discardParserCursor(mark.parser_publication_handle);
 	}
 	--context.publication_transaction_depth_;
 	if (context.publication_transaction_depth_ == 0) {
 		gFrontendPublicationJournalOwner = nullptr;
 	}
+}
+
+Parser* FrontendContext::parserForPublicationMark(const FrontendPublicationJournalMark& mark) const {
+	if (mark.parser_publication_journal == nullptr || mark.parser_publication_handle == SIZE_MAX ||
+		parser_publication_journal_ != mark.parser_publication_journal) {
+		return nullptr;
+	}
+	return mark.parser_publication_journal;
+}
+
+void FrontendContext::bindParserPublicationJournal(Parser& parser) {
+	if (parser_publication_journal_ != nullptr && parser_publication_journal_ != &parser) {
+		throw InternalError("FrontendContext: a different Parser is already bound");
+	}
+	if (publication_transaction_depth_ != 0 && parser_publication_journal_ == nullptr) {
+		throw InternalError("FrontendContext: cannot bind a Parser during publication");
+	}
+	parser_publication_journal_ = &parser;
+	parser.publication_journal_context_ = this;
+}
+
+void FrontendContext::unbindParserPublicationJournal(Parser& parser) {
+	if (parser_publication_journal_ == &parser) {
+		parser_publication_journal_ = nullptr;
+	}
+	parser.publication_journal_context_ = nullptr;
+}
+
+FrontendContext::~FrontendContext() {
+	if (parser_publication_journal_ != nullptr) {
+		parser_publication_journal_->publication_journal_context_ = nullptr;
+	}
+	parser_publication_journal_ = nullptr;
+	releasePersistentScopePublicationTables();
+	popActive(this);
 }
 
 void FrontendContext::registerPersistentScopePublicationTable(SymbolTable& table) {

@@ -799,13 +799,19 @@ TEST_SUITE("Parser") {
 				return 0;
 			})";
 
-		// Test with function return type
-		Lexer lexer1(code_with_return_type);
-		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
-		Parser parser1(lexer1, compile_context, parser_sema);
-		auto parse_result1 = parser1.parse();
-		CHECK(!parse_result1.is_error());
-		const auto& ast1 = parser1.get_nodes();
+		// Test with function return type, then destroy its Parser before binding
+		// the next Parser to the same FrontendContext.
+		std::vector<std::string_view> ast1_types;
+		{
+			Lexer lexer1(code_with_return_type);
+			SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+			Parser parser1(lexer1, compile_context, parser_sema);
+			auto parse_result1 = parser1.parse();
+			CHECK(!parse_result1.is_error());
+			for (const ASTNode& node : parser1.get_nodes()) {
+				ast1_types.push_back(node.type_name());
+			}
+		}
 
 		// Test with auto and trailing return type
 		Lexer lexer2(code_with_auto_return_type);
@@ -815,10 +821,10 @@ TEST_SUITE("Parser") {
 		CHECK(!parse_result2.is_error());
 		const auto& ast2 = parser2.get_nodes();
 
-		// Compare AST nodes
-		CHECK(ast1.size() == ast2.size());
-		for (std::size_t i = 0; i < ast1.size(); ++i) {
-			CHECK(typeid(ast1[i].type_name()) == typeid(ast2[i].type_name()));
+		// Compare the retained root kind names after the first Parser is gone.
+		CHECK(ast1_types.size() == ast2.size());
+		for (std::size_t i = 0; i < ast1_types.size(); ++i) {
+			CHECK(ast1_types[i] == ast2[i].type_name());
 		}
 	}
 

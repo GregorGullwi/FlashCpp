@@ -769,48 +769,125 @@ void collectLambdaCaptureCandidates(const ASTNode& node,
 	}
 }
 
-namespace {
-std::size_t flashcppSaveParserCursorThunk(void* parser) {
-	return static_cast<Parser*>(parser)->saveParserCursor();
-}
-void flashcppRestoreParserCursorThunk(void* parser, std::size_t handle) {
-	static_cast<Parser*>(parser)->restoreParserCursor(handle);
-}
-void flashcppDiscardParserCursorThunk(void* parser, std::size_t handle) {
-	static_cast<Parser*>(parser)->discardParserCursor(handle);
-}
-} // namespace
-
 Parser::Parser(Lexer& lexer, CompileContext& context, SemanticAnalysis& semantic_analysis)
 	: lexer_(lexer), context_(context), current_token_(lexer_.next_token()), semantic_analysis_(semantic_analysis) {
 	semantic_analysis_.attachParser(*this);
 	initialize_native_types();
 	ast_nodes_.reserve(default_ast_tree_size_);
 	if (FrontendContext* frontend = FrontendContext::active()) {
-		frontend->bindParserCursorJournal(ParserCursorJournalBinding{this,
-			&flashcppSaveParserCursorThunk,
-			&flashcppRestoreParserCursorThunk,
-			&flashcppDiscardParserCursorThunk});
-		cursor_journal_context_ = frontend;
+		frontend->bindParserPublicationJournal(*this);
 	}
 }
 
 Parser::~Parser() {
-	if (cursor_journal_context_ != nullptr) {
-		cursor_journal_context_->unbindParserCursorJournal(this);
+	if (publication_journal_context_ != nullptr) {
+		publication_journal_context_->unbindParserPublicationJournal(*this);
 	}
 }
 
 std::size_t Parser::saveParserCursor() {
-	return save_token_position();
+	if (active_parser_local_checkpoint_count_ != 0) {
+		throw InternalError("Parser: cannot open frontend publication while a parser checkpoint is active");
+	}
+	const size_t handle = save_token_position();
+	try {
+		frontend_publication_handles_.push_back(handle);
+	} catch (...) {
+		discard_saved_token(handle);
+		throw;
+	}
+	--active_parser_local_checkpoint_count_;
+	return handle;
+}
+
+void Parser::validateParserPublicationCheckpoint(std::size_t handle) const {
+	if (handle >= saved_tokens_.size() || !saved_tokens_[handle].has_value() || frontend_publication_handles_.empty() ||
+		frontend_publication_handles_.back() != handle) {
+		throw InternalError("Parser: publication checkpoint is not active or is out of order");
+	}
+	if (active_parser_local_checkpoint_count_ != 0) {
+		throw InternalError("Parser: publication checkpoint closed with a parser checkpoint still active");
+	}
 }
 
 void Parser::restoreParserCursor(std::size_t handle) {
 	restore_lexer_position_only(handle);
 }
 
+void Parser::rollbackParserRootPublication(std::size_t handle) {
+	validateParserPublicationCheckpoint(handle);
+	const SavedToken& saved = *saved_tokens_[handle];
+	assertTopLevelNodeTrackingSynchronized();
+	if (saved.ast_nodes_size_ > ast_nodes_.size() || saved.pending_semantic_roots_size_ > pending_semantic_roots_.size() ||
+		saved.ast_discarded_nodes_size_ > ast_discarded_nodes_.size()) {
+		throw InternalError("Parser: root publication collections moved before their checkpoint");
+	}
+	for (size_t index = saved.ast_nodes_size_; index < ast_nodes_.size(); ++index) {
+		if (ast_node_is_instantiated_[index] != 0) {
+			const void* key = ast_nodes_[index].raw_pointer();
+			if (key == nullptr || instantiated_node_keys_.find(key) == instantiated_node_keys_.end()) {
+				throw InternalError("Parser: appended instantiated root is missing its publication key");
+			}
+		}
+	}
+	for (size_t index = saved.pending_semantic_roots_size_; index < pending_semantic_roots_.size(); ++index) {
+		const void* key = pending_semantic_roots_[index].raw_pointer();
+		if (key == nullptr || pending_semantic_root_keys_.find(key) == pending_semantic_root_keys_.end()) {
+			throw InternalError("Parser: appended semantic root is missing its publication key");
+		}
+	}
+	while (pending_semantic_roots_.size() > saved.pending_semantic_roots_size_) {
+		const void* key = pending_semantic_roots_.back().raw_pointer();
+		if (pending_semantic_root_keys_.erase(key) != 1) {
+			throw InternalError("Parser: semantic root publication key disappeared before rollback");
+		}
+		pending_semantic_roots_.pop_back();
+	}
+	while (ast_nodes_.size() > saved.ast_nodes_size_) {
+		const size_t index = ast_nodes_.size() - 1;
+		if (ast_node_is_instantiated_[index] != 0) {
+			const void* key = ast_nodes_[index].raw_pointer();
+			if (instantiated_node_keys_.erase(key) != 1) {
+				throw InternalError("Parser: instantiated root publication key disappeared before rollback");
+			}
+		}
+		ast_nodes_.pop_back();
+		ast_node_is_instantiated_.pop_back();
+	}
+	ast_discarded_nodes_.resize(saved.ast_discarded_nodes_size_);
+}
+
 void Parser::discardParserCursor(std::size_t handle) {
+	validateParserPublicationCheckpoint(handle);
 	discard_saved_token(handle);
+	frontend_publication_handles_.pop_back();
+}
+
+bool Parser::frontendPublicationTransactionOpen() const {
+	return !frontend_publication_handles_.empty();
+}
+
+void Parser::requireNoOpenFrontendPublicationTransaction(std::string_view operation) const {
+	if (frontendPublicationTransactionOpen()) {
+		throw InternalError(std::string(StringBuilder().append("Parser: ").append(operation)
+			.append(" is not supported during frontend root publication").commit()));
+	}
+}
+
+void Parser::requireTopLevelRootEraseSupported(size_t index) const {
+	if (!frontendPublicationTransactionOpen()) {
+		return;
+	}
+	if (frontend_publication_handles_.empty()) {
+		throw InternalError("Parser: frontend transaction is missing its root checkpoint");
+	}
+	const size_t handle = frontend_publication_handles_.back();
+	if (handle >= saved_tokens_.size() || !saved_tokens_[handle].has_value()) {
+		throw InternalError("Parser: frontend root checkpoint is not active");
+	}
+	if (index < saved_tokens_[handle]->ast_nodes_size_) {
+		throw InternalError("Parser: cannot erase a pre-existing root during frontend publication");
+	}
 }
 
 void Parser::attachTemplateEngine(TemplateEngine& engine) {
@@ -1193,6 +1270,9 @@ Token Parser::expect(TokenKind kind) {
 }
 
 Parser::SaveHandle Parser::save_token_position() {
+	if (active_parser_local_checkpoint_count_ == SIZE_MAX) {
+		throw InternalError("Parser: too many active token checkpoints");
+	}
 #if WITH_PARSER_RUNTIME_STATS
 	std::chrono::high_resolution_clock::time_point start;
 	if (runtime_stats_enabled_) {
@@ -1211,7 +1291,9 @@ Parser::SaveHandle Parser::save_token_position() {
 	if (saved_tokens_.size() <= handle) {
 		saved_tokens_.resize(handle + 1);
 	}
-	saved_tokens_[handle] = SavedToken{current_token_, injected_token_, ast_nodes_.size(), lexer_pos};
+	saved_tokens_[handle] = SavedToken{current_token_, injected_token_, ast_nodes_.size(), pending_semantic_roots_.size(),
+		ast_discarded_nodes_.size(), lexer_pos};
+	++active_parser_local_checkpoint_count_;
 #if WITH_PARSER_RUNTIME_STATS
 	if (runtime_stats_enabled_) {
 		++runtime_stats_.save_count;
@@ -1384,6 +1466,14 @@ void Parser::discard_saved_token(SaveHandle handle) {
 	}
 #endif
 	if (handle < saved_tokens_.size() && saved_tokens_[handle].has_value()) {
+		const bool is_frontend_publication_checkpoint =
+			!frontend_publication_handles_.empty() && frontend_publication_handles_.back() == handle;
+		if (!is_frontend_publication_checkpoint) {
+			if (active_parser_local_checkpoint_count_ == 0) {
+				throw InternalError("Parser: local checkpoint count is inconsistent");
+			}
+			--active_parser_local_checkpoint_count_;
+		}
 		saved_tokens_[handle].reset();
 #if WITH_PARSER_RUNTIME_STATS
 		if (runtime_stats_enabled_) {

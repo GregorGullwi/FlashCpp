@@ -21,6 +21,7 @@
 #include <vector>
 
 class SymbolTable;
+class Parser;
 class FrontendContext;
 
 // Type IDs share the semantic pass lifetime of expression SemanticSlots. The
@@ -41,23 +42,14 @@ struct BinaryOperatorCallTarget {
 
 static_assert(sizeof(BinaryOperatorCallTarget) == 32);
 
-// Function-pointer boundary so the journal does not include Parser.h and does
-// not add a vtable to Parser. The parser pointer is also the binding identity.
-struct ParserCursorJournalBinding {
-	void* parser = nullptr;
-	size_t (*save)(void* parser) = nullptr;
-	void (*restore)(void* parser, size_t handle) = nullptr;
-	void (*discard)(void* parser, size_t handle) = nullptr;
-};
-
 struct FrontendPublicationJournalMark {
 	size_t context_depth = 0;
 	size_t namespace_depth = 0;
 	size_t legacy_type_registry_depth = 0;
 	size_t scope_count = 0;
 	size_t legacy_ast_node_count = 0;
-	void* parser_cursor_journal = nullptr;
-	size_t parser_cursor_handle = SIZE_MAX;
+	Parser* parser_publication_journal = nullptr;
+	size_t parser_publication_handle = SIZE_MAX;
 	ScopeId current_scope_id{};
 };
 
@@ -73,10 +65,10 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 // discarded range is unreachable. Pre-existing TypeInfo rows touched through the
 // mutable accessor or mutator API are restored before truncation; a record range
 // still referenced by a row that bypassed that API is retained instead of being
-// truncated. Legacy AST nodes allocated after the mark are truncated. A bound
-// parser cursor is saved on begin, discarded on commit, and restored on rollback
-// when that parser is still bound. Nested commits remain provisional until the
-// outer probe commits.
+// truncated. Legacy AST nodes allocated after the mark are truncated after
+// appended Parser roots are removed. A bound parser cursor is saved on begin,
+// discarded on commit, and restored on rollback when that parser is still bound.
+// Nested commits remain provisional until the outer probe commits.
 class FrontendScratchTransaction {
 	friend class FrontendContext;
 
@@ -137,6 +129,7 @@ private:
 // its own arenas and domain stats.
 class FrontendContext {
 	friend class SymbolTable;
+	friend class Parser;
 
 public:
 	// Policy headroom until production probes provide workload measurements.
@@ -148,10 +141,7 @@ public:
 		refreshScratchDomainStats();
 	}
 
-	~FrontendContext() {
-		releasePersistentScopePublicationTables();
-		popActive(this);
-	}
+	~FrontendContext();
 
 	FrontendContext(const FrontendContext&) = delete;
 	FrontendContext& operator=(const FrontendContext&) = delete;
@@ -170,28 +160,9 @@ public:
 		return FrontendScratchTransaction(*this, diagnostics_, scratch_arena_, scratch_registry_, declaration_builder_, template_decls_);
 	}
 
-	// A Parser binds its cursor while it is alive. The journal stores function
-	// pointers so it does not depend on Parser.h or add a vtable to Parser.
-	void bindParserCursorJournal(ParserCursorJournalBinding binding) {
-		if (binding.parser == nullptr || binding.save == nullptr || binding.restore == nullptr || binding.discard == nullptr) {
-			throw InternalError("FrontendContext: invalid parser cursor journal binding");
-		}
-		parser_cursor_journals_.push_back(binding);
-	}
-
-	void unbindParserCursorJournal(void* parser) {
-		for (size_t index = parser_cursor_journals_.size(); index > 0; --index) {
-			if (parser_cursor_journals_[index - 1].parser != parser) {
-				continue;
-			}
-			parser_cursor_journals_.erase(parser_cursor_journals_.begin() + static_cast<std::ptrdiff_t>(index - 1));
-			return;
-		}
-	}
-
-	size_t parserCursorJournalCount() const {
-		return parser_cursor_journals_.size();
-	}
+	// A context has one active Parser; a second instance must wait until it is unbound.
+	void bindParserPublicationJournal(Parser& parser);
+	void unbindParserPublicationJournal(Parser& parser);
 
 	DiagnosticEngine& diagnostics() {
 		return diagnostics_;
@@ -598,6 +569,10 @@ private:
 
 	void registerPersistentScopePublicationTable(SymbolTable& table);
 	void releasePersistentScopePublicationTables();
+	Parser* parserForPublicationMark(const FrontendPublicationJournalMark& mark) const;
+	bool hasOpenPublicationTransaction() const {
+		return publication_transaction_depth_ != 0;
+	}
 
 	std::array<DomainByteStats, 4> domain_stats_{};
 	std::array<uint64_t, static_cast<std::size_t>(SyntaxAstFamily::Count)> syntax_family_counts_{};
@@ -616,7 +591,7 @@ private:
 	ChunkedVector<ScopeRecord, kScopeArenaChunkSize> scope_records_;
 	ScopeId current_scope_id_{1};
 	std::vector<SymbolTable*> persistent_scope_publication_tables_;
-	std::vector<ParserCursorJournalBinding> parser_cursor_journals_;
+	Parser* parser_publication_journal_ = nullptr;
 	size_t publication_transaction_depth_ = 0;
 
 	friend FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& context);
