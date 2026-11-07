@@ -2262,7 +2262,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		std::string_view op = bin_op.op();
 
 		// Handle assignment operators specially (they modify bindings)
-		if (op == "=" || isCompoundAssignmentOp(op)) {
+		if (tok::isAssignmentOp(op)) {
 
 			// Helper: apply the assignment/compound-assignment operator to a target slot.
 			// Modifies `target` in place and returns the resulting value.

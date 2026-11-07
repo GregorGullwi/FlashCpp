@@ -407,6 +407,11 @@ inline constexpr bool isShiftAssignmentOp(std::string_view op) {
 	return op == "<<=" || op == ">>=";
 }
 
+inline constexpr bool isAssignmentOp(std::string_view op) {
+	return op == "=" || op == "+=" || op == "-=" || op == "*=" || op == "/=" || op == "%=" ||
+		op == "&=" || op == "|=" || op == "^=" || isShiftAssignmentOp(op);
+}
+
 inline constexpr bool isComparisonOp(std::string_view op) {
 	return op == "<" || op == ">" || op == "<=" || op == ">=" || op == "==" || op == "!=";
 }

@@ -6010,7 +6010,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				// promotions, NOT usual arithmetic conversions.
 				const bool is_shift = tok::isShiftOp(op) || tok::isShiftAssignmentOp(op);
 				const bool is_compound_assign = isCompoundAssignmentOp(op);
-				const bool is_assignment = op == "=" || is_compound_assign;
+				const bool is_assignment = tok::isAssignmentOp(op);
 				const bool needs_binary_type_inference =
 					(is_arithmetic || is_bitwise || is_comparison || is_compound_assign || is_shift) &&
 					e.get_lhs().template is<ExpressionNode>() &&

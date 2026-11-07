@@ -5268,30 +5268,6 @@ ParseResult Parser::parse_type_specifier() {
 	return ParseResult::error(error_msg, peek().is_eof() ? Token() : peek_info());
 }
 
-// [dcl.type.decltype]: whether a parenthesized operand is an lvalue. Covers the
-// id-expression, subscript, and dereference forms and member access on an
-// lvalue object; other shapes (calls, xvalues) keep the prvalue default.
-static bool decltypeOperandIsLvalue(const ASTNode& node) {
-	const ASTNode* current = &node;
-	while (current->is<ExpressionNode>()) {
-		const ExpressionNode& expr = current->as<ExpressionNode>();
-		if (std::holds_alternative<IdentifierNode>(expr) ||
-			std::holds_alternative<QualifiedIdentifierNode>(expr) ||
-			std::holds_alternative<ArraySubscriptNode>(expr)) {
-			return true;
-		}
-		if (const auto* unary = std::get_if<UnaryOperatorNode>(&expr)) {
-			return unary->op() == "*";
-		}
-		if (const auto* member = std::get_if<MemberAccessNode>(&expr)) {
-			current = &member->object();
-			continue;
-		}
-		return false;
-	}
-	return false;
-}
-
 ParseResult Parser::parse_decltype_specifier() {
 	// Parse decltype(expr) or decltype(auto) or __typeof__(expr) type specifier
 	// Example: decltype(x + y) result = x + y;
@@ -5415,6 +5391,7 @@ ParseResult Parser::parse_decltype_specifier() {
 	// decides the reference rule.
 	SaveHandle last_expr_start = save_token_position();
 	bool last_expr_starts_with_paren = (peek() == "("_tok);
+	bool decltype_operand_is_comma = false;
 	ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Decltype);
 	if (expr_result.is_error()) {
 		// If we're in a template context and the expression parsing fails (e.g., due to
@@ -5456,6 +5433,7 @@ ParseResult Parser::parse_decltype_specifier() {
 	// The comma here is the C++ comma operator, not an argument separator.
 	// The result type of decltype is the type of the last expression.
 	while (peek() == ","_tok) {
+		decltype_operand_is_comma = true;
 		advance(); // consume ','
 		SaveHandle comma_expr_pos = save_token_position();
 		discard_saved_token(last_expr_start);
@@ -5567,34 +5545,19 @@ ParseResult Parser::parse_decltype_specifier() {
 		return ParseResult::error("Could not deduce type from decltype expression", decltype_token);
 	}
 
-	// [dcl.type.decltype]: a parenthesized lvalue expression yields T&; the
-	// unparenthesized form yields the declared type. The parser keeps no
-	// parenthesization marker, so detect a fully parenthesized expression from
-	// its token range and apply the reference rule to an id-expression, which is
-	// always an lvalue. The detection uses the last comma-operator operand, the
-	// one whose type decltype takes.
-	if (last_expr_starts_with_paren) {
-		SaveHandle expr_end_pos = save_token_position();
-		restore_token_position(last_expr_start);
-		advance();  // consume the outer '('
-		int paren_depth = 1;
-		while (!peek().is_eof() && paren_depth > 0) {
-			if (peek() == "("_tok) {
-				++paren_depth;
-			} else if (peek() == ")"_tok) {
-				--paren_depth;
-				if (paren_depth == 0) {
-					advance();  // consume the matching ')'
-					break;
-				}
-			}
-			advance();
-		}
-		const bool fully_parenthesized = (peek() == ")"_tok);
-		restore_token_position(expr_end_pos);
-		if (fully_parenthesized && decltypeOperandIsLvalue(*decltype_expr)) {
-			type_spec_opt->set_reference_qualifier(
-				ReferenceQualifier::LValueReference);
+	// [dcl.type.decltype]: an unparenthesized id-expression or class member
+	// access names the declared type. Every other operand, including a call,
+	// an xvalue, and a comma expression, uses that operand's value category:
+	// an lvalue is T& and an xvalue is T&&.
+	const bool names_declared_entity = !decltype_operand_is_comma && !last_expr_starts_with_paren &&
+		decltype_expr->is<ExpressionNode>() &&
+		(std::holds_alternative<IdentifierNode>(decltype_expr->as<ExpressionNode>()) ||
+			std::holds_alternative<QualifiedIdentifierNode>(decltype_expr->as<ExpressionNode>()) ||
+			std::holds_alternative<MemberAccessNode>(decltype_expr->as<ExpressionNode>()));
+	if (!names_declared_entity) {
+		const ReferenceQualifier category = expressionValueCategoryQualifier(*decltype_expr);
+		if (category != ReferenceQualifier::None) {
+			attachExpressionValueCategory(*type_spec_opt, category);
 		}
 	}
 	discard_saved_token(last_expr_start);
