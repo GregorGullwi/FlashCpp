@@ -257,15 +257,16 @@ FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& 
 	}
 	Parser* parser_journal = context.parser_publication_journal_;
 	size_t parser_publication_handle = SIZE_MAX;
-	if (parser_journal != nullptr) {
-		parser_publication_handle = parser_journal->saveParserCursor();
-	}
 	const size_t context_depth = context.publication_transaction_depth_ + 1U;
-	const size_t namespace_depth = gNamespaceRegistry.beginPublicationTransaction();
-	const LegacyTypeRegistryJournalMark legacy_type_registry_depth = beginLegacyTypeRegistryJournal();
-
+	size_t namespace_depth = 0;
+	LegacyTypeRegistryJournalMark legacy_type_registry_depth = 0;
 	size_t opened_tables = 0;
 	try {
+		if (parser_journal != nullptr) {
+			parser_publication_handle = parser_journal->saveParserCursor();
+		}
+		namespace_depth = gNamespaceRegistry.beginPublicationTransaction();
+		legacy_type_registry_depth = beginLegacyTypeRegistryJournal();
 		for (SymbolTable* table : context.persistent_scope_publication_tables_) {
 			const size_t table_depth = table->beginPublicationTransaction();
 			if (table_depth != context_depth) {
@@ -278,9 +279,13 @@ FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& 
 		while (opened_tables > 0) {
 			context.persistent_scope_publication_tables_[--opened_tables]->rollbackPublicationTransaction(context_depth);
 		}
-		gNamespaceRegistry.rollbackPublicationTransaction(namespace_depth);
-		rollbackLegacyTypeRegistryJournal(legacy_type_registry_depth);
-		if (parser_journal != nullptr) {
+		if (legacy_type_registry_depth != 0) {
+			rollbackLegacyTypeRegistryJournal(legacy_type_registry_depth);
+		}
+		if (namespace_depth != 0) {
+			gNamespaceRegistry.rollbackPublicationTransaction(namespace_depth);
+		}
+		if (parser_journal != nullptr && parser_publication_handle != SIZE_MAX) {
 			parser_journal->discardParserCursor(parser_publication_handle);
 		}
 		throw;
