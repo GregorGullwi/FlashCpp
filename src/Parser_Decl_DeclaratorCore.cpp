@@ -676,7 +676,7 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 				{});
 			return ParseResult::error(message, current_token_);
 		}
-		type_spec.add_pointer_level(ptr_cv);
+		type_spec.add_pointer_to_denoted_type(ptr_cv);
 	}
 
 	// Parse postfix cv-qualifiers before pointers/references: Type const* or Type const&
@@ -911,7 +911,7 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 		array_dimensions.empty() && !is_unsized_array) {
 		if (auto type_node = type_specifier_result.node()) {
 			const TypeSpecifierNode& spec = type_node->as<TypeSpecifierNode>();
-			bool known_extents = spec.is_array() && !spec.has_pointee_array_declarator() &&
+			bool known_extents = spec.is_array_object() &&
 				!spec.array_dimensions().empty() &&
 				!spec.has_unsized_outer_array_dimension();
 			for (const size_t extent : spec.array_dimensions()) {
@@ -937,6 +937,29 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 	// Unwrap the optional ASTNode before passing it to emplace_node
 	if (auto node = type_specifier_result.node()) {
 		ASTNode decl_node;
+		if (!array_dimensions.empty()) {
+			if (TypeSpecifierNode* spec = node->get_if<TypeSpecifierNode>()) {
+				std::vector<size_t> outer_extents;
+				outer_extents.reserve(array_dimensions.size());
+				bool folded = true;
+				for (const ASTNode& dimension : array_dimensions) {
+					const auto extent = try_evaluate_constant_expression(dimension);
+					if (!extent.has_value() || extent->value <= 0) {
+						folded = false;
+						break;
+					}
+					outer_extents.push_back(static_cast<size_t>(extent->value));
+				}
+				if (folded && tryFormArrayOfPointerToArray(*spec, outer_extents)) {
+					const int bits = getTypeSpecSizeBits(*spec);
+					if (bits > 0) {
+						spec->set_size_in_bits(bits);
+					}
+					array_dimensions.clear();
+					is_unsized_array = false;
+				}
+			}
+		}
 		if (!array_dimensions.empty()) {
 			decl_node = emplace_node<DeclarationNode>(*node, identifier_token, std::move(array_dimensions));
 			if (is_unsized_array) {
@@ -2109,7 +2132,7 @@ ParseResult Parser::parse_declarator(
 		skip_noop_gnu_qualifiers();
 		ptr_cv |= parse_cv_qualifiers();
 
-		base_type.add_pointer_level(ptr_cv);
+		base_type.add_pointer_to_denoted_type(ptr_cv);
 	}
 
 	skip_noop_gnu_qualifiers();

@@ -1653,7 +1653,7 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 				"Cannot form a pointer to reference type",
 				{});
 		}
-		type_spec.add_pointer_level(ptr_cv);
+		type_spec.add_pointer_to_denoted_type(ptr_cv);
 	}
 	// Handle trailing CV-qualifiers before reference (e.g., Type volatile&, Type const&)
 	// Only consume const/volatile when followed by & or && (possibly with more cv-qualifiers)

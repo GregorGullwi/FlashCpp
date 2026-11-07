@@ -1924,6 +1924,14 @@ public:
 	}
 	void limit_pointer_depth(size_t max_depth) { pointer_levels_.resize(std::min(max_depth, pointer_levels_.size())); }
 	void add_pointer_level(CVQualifier cv = CVQualifier::None) { pointer_levels_.push_back(PointerLevel(cv)); }
+	// [dcl.ptr], [dcl.typedef]: `using Row = int[2]; Row*` points at that array.
+	// A ptr-operator on an array object makes the array the pointee.
+	void add_pointer_to_denoted_type(CVQualifier cv) {
+		if (is_array_object()) {
+			set_pointee_array_declarator(true);
+		}
+		add_pointer_level(cv);
+	}
 	void add_pointer_levels(int pointer_depth) {
 		while (pointer_depth) {
 			pointer_levels_.push_back(PointerLevel(CVQualifier::None));
@@ -3280,6 +3288,52 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 		resolved.type_index = current_type_index.withCategory(type_info->typeEnum());
 	}
 	return finalize();
+}
+
+// [dcl.array], [dcl.ptr]: `Row* p[N]` with `using Row = int[2]` is an array of
+// pointers to that array. One flat bounds list cannot hold both extents, so
+// the interleaved shape is an ordered declarator. The base identity is the
+// array element; the alias's stored size must not be applied again.
+inline bool tryFormArrayOfPointerToArray(TypeSpecifierNode& type, std::span<const size_t> outer_extents) {
+	if (outer_extents.empty() || type.has_ordered_declarator() || type.pointer_depth() == 0 || type.is_array_object()) {
+		return false;
+	}
+	for (const size_t extent : outer_extents) {
+		if (extent == 0) {
+			return false;
+		}
+	}
+	const bool use_site_has_array = type.has_pointee_array_declarator() || type.is_array() ||
+		type.has_unsized_outer_array_dimension();
+	const ResolvedAliasTypeInfo alias = resolveAliasTypeInfo(type.type_index());
+	const bool alias_has_array = alias.has_ordered_declarator || !alias.array_dimensions.empty() ||
+		alias.pointee_array_declarator;
+	if (!use_site_has_array && !alias_has_array) {
+		return false;
+	}
+	std::vector<DeclaratorComponent> components;
+	components.reserve(outer_extents.size() + type.pointer_depth() + alias.array_dimensions.size() + 1);
+	for (const size_t extent : outer_extents) {
+		components.push_back(DeclaratorComponent::array(extent));
+	}
+	appendDeclaratorShapeForSubstitution(type, components);
+	if (!use_site_has_array) {
+		if (alias.has_ordered_declarator) {
+			components.insert(components.end(), alias.ordered_declarator.begin(), alias.ordered_declarator.end());
+		} else {
+			for (const size_t extent : alias.array_dimensions) {
+				if (extent == 0) {
+					return false;
+				}
+				components.push_back(DeclaratorComponent::array(extent));
+			}
+		}
+	}
+	if (alias.type_index.is_valid()) {
+		type.set_type_index(alias.type_index);
+	}
+	type.set_ordered_declarator(std::move(components));
+	return true;
 }
 
 inline CVQualifier TypeSpecifierNode::pointee_cv_for_pointer_conversion() const {
