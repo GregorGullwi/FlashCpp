@@ -116,7 +116,11 @@ root drain/clear, and transaction closure with a live parser-local checkpoint
 fail closed. Each `FrontendContext` binds at most one Parser. Full frontend
 transactions require that Parser to remain alive and bound until completion;
 admission without a Parser and detachment during a transaction are rejected.
-Publication marks and validation return a required Parser reference. The next slice must give parser
+Publication marks and validation return a required Parser reference. Both the
+frontend and bound Parser `CompileContext` diagnostic engines participate in
+admission unwind, completion preflight, and nested commit/rollback; diagnostic
+records, severity counts, and note attachments roll back together. Borrowed text
+and note backing storage retain their engine lifetime. The next slice must give parser
 context stacks and in-place rewrites of owners outside the type registry an
 owned publication boundary before enabling a transaction around type-pack
 materialization. Required dependency instantiations
@@ -423,7 +427,8 @@ These seed adjacent slices; the authoritative inventory is
 ## Other open boundaries
 
 - **Scratch rollback and publication:** `FrontendScratchTransaction` journals
-  scratch state, candidate diagnostic records and note attachments,
+  scratch state, candidate diagnostic records and note attachments in both the
+  frontend and bound Parser engines,
   `DeclarationBuilder`, `TemplateDeclTable`, legacy type-registry
   rows and name/native bindings, index-keyed cold type payload stores, and
   pointer-keyed legacy `StructTypeInfo`/`EnumTypeInfo` arenas (unreachable ranges

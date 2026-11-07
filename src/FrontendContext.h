@@ -59,7 +59,7 @@ void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicat
 void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublicationJournalMark mark);
 
 // A frontend probe covers scratch storage, declaration publication, template
-// identity, candidate diagnostics, legacy type-registry publication, and
+// identity, candidate diagnostics in both the frontend and Parser engines, legacy type-registry publication, and
 // namespace/symbol publication on tables bound to this context, including
 // scope creation and cursors.
 // Cold type payload and record arenas are journaled with the registry when the
@@ -73,10 +73,11 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 class FrontendScratchTransaction {
 	friend class FrontendContext;
 
-	FrontendScratchTransaction(FrontendContext& context, DiagnosticEngine& diagnostics, MonotonicScratchArena& arena, ScratchProbeRegistry& registry,
-		DeclarationBuilder& builder, TemplateDeclTable& template_decls)
+	FrontendScratchTransaction(FrontendContext& context, DiagnosticEngine& diagnostics, DiagnosticEngine& parser_diagnostics,
+		MonotonicScratchArena& arena, ScratchProbeRegistry& registry, DeclarationBuilder& builder, TemplateDeclTable& template_decls)
 		: context_(context)
 		, diagnostics_(diagnostics)
+		, parser_diagnostics_(parser_diagnostics)
 		, scratch_(arena, registry)
 		, publication_(builder)
 		, templates_(template_decls)
@@ -99,6 +100,7 @@ public:
 		templates_.commit();
 		scratch_.commit();
 		commitFrontendPublicationJournal(context_, publication_journal_mark_);
+		parser_diagnostics_.commit();
 		diagnostics_.commit();
 		completed_ = true;
 	}
@@ -111,6 +113,7 @@ public:
 		templates_.rollback();
 		publication_.rollback();
 		scratch_.rollback();
+		parser_diagnostics_.rollback();
 		diagnostics_.rollback();
 		completed_ = true;
 	}
@@ -119,6 +122,7 @@ public:
 private:
 	void validateCompletion(bool rollback) const {
 		diagnostics_.validateCompletion();
+		parser_diagnostics_.validateCompletion();
 		publication_.validateCompletion();
 		templates_.validateCompletion();
 		(void)validateFrontendPublicationJournal(context_, publication_journal_mark_, rollback);
@@ -126,6 +130,7 @@ private:
 
 	FrontendContext& context_;
 	DiagnosticTransaction diagnostics_;
+	DiagnosticTransaction parser_diagnostics_;
 	ScratchTransaction scratch_;
 	PublicationTransaction publication_;
 	TemplateDeclTableTransaction templates_;
@@ -165,10 +170,7 @@ public:
 		return stack.back();
 	}
 
-	FrontendScratchTransaction beginScratchTransaction() {
-		(void)requireParserPublicationJournal();
-		return FrontendScratchTransaction(*this, diagnostics_, scratch_arena_, scratch_registry_, declaration_builder_, template_decls_);
-	}
+	FrontendScratchTransaction beginScratchTransaction();
 
 	// A context has one active Parser; a second instance must wait until it is unbound.
 	void bindParserPublicationJournal(Parser& parser);
