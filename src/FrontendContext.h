@@ -710,6 +710,7 @@ private:
 	friend void journalVariableDeclarationRewrite(VariableDeclarationNode& node);
 	void journalTypeSpecifierRewrite(TypeSpecifierNode& node);
 	friend void journalTypeSpecifierRewrite(TypeSpecifierNode& node);
+	friend void journalTypeSpecifierRewriteImpl(TypeSpecifierNode& node);
 	bool hasOpenPublicationTransaction() const {
 		return publication_transaction_depth_ != 0;
 	}
