@@ -225,8 +225,10 @@ arguments, body state, and flags. Standalone `DeclarationNode` and
 scope, enumerator, underlying-type, and identity rewrites. Template function
 and class declaration owners snapshot parameters, declaration IDs, and deferred
 bodies. Template alias and variable declarations snapshot bounds, replay
-metadata, and declaration IDs; friend declarations snapshot class, template,
-function, type, and declaration identity fields.
+metadata, and declaration IDs; standalone variable declarations snapshot their
+initializer, storage/linkage/constexpr flags, and outer bindings; friend
+declarations snapshot class, template, function, type, and declaration identity
+fields.
 Other in-place rewrites of owners outside the type registry still need an owned
 rollback boundary before broad speculative parsing can rely on it. Existing
 `TypeInfo` rows reached

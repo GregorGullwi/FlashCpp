@@ -445,35 +445,64 @@ enum class StorageClass {
 
 #include "TemplateEnvironment.h"
 
+class VariableDeclarationNode;
+
+void journalVariableDeclarationRewrite(VariableDeclarationNode& node);
+
 class VariableDeclarationNode {
 public:
 	explicit VariableDeclarationNode(ASTNode declaration_node, std::optional<ASTNode> initializer = std::nullopt, StorageClass storage_class = StorageClass::None)
 		: declaration_node_(declaration_node), initializer_(initializer), storage_class_(storage_class), is_constexpr_(false), is_constinit_(false) {}
 
-	DeclarationNode& declaration() { return declaration_node_.as<DeclarationNode>(); }
+	DeclarationNode& declaration() {
+		journalVariableDeclarationRewrite(*this);
+		return declaration_node_.as<DeclarationNode>();
+	}
 	const DeclarationNode& declaration() const { return declaration_node_.as<DeclarationNode>(); }
-	ASTNode& declaration_node() { return declaration_node_; }
+	ASTNode& declaration_node() {
+		journalVariableDeclarationRewrite(*this);
+		return declaration_node_;
+	}
 	const ASTNode& declaration_node() const { return declaration_node_; }
 	const std::optional<ASTNode>& initializer() const { return initializer_; }
 	StorageClass storage_class() const { return storage_class_; }
 	bool is_thread_local() const { return is_thread_local_; }
-	void set_initializer(std::optional<ASTNode> initializer) { initializer_ = std::move(initializer); }
-	void set_is_thread_local(bool is_thread_local) { is_thread_local_ = is_thread_local; }
+	void set_initializer(std::optional<ASTNode> initializer) {
+		journalVariableDeclarationRewrite(*this);
+		initializer_ = std::move(initializer);
+	}
+	void set_is_thread_local(bool is_thread_local) {
+		journalVariableDeclarationRewrite(*this);
+		is_thread_local_ = is_thread_local;
+	}
 
-	void set_is_constexpr(bool is_constexpr) { is_constexpr_ = is_constexpr; }
+	void set_is_constexpr(bool is_constexpr) {
+		journalVariableDeclarationRewrite(*this);
+		is_constexpr_ = is_constexpr;
+	}
 	bool is_constexpr() const { return is_constexpr_; }
 
-	void set_is_constinit(bool is_constinit) { is_constinit_ = is_constinit; }
+	void set_is_constinit(bool is_constinit) {
+		journalVariableDeclarationRewrite(*this);
+		is_constinit_ = is_constinit;
+	}
 	bool is_constinit() const { return is_constinit_; }
 
-	void set_linkage(Linkage linkage) { linkage_ = linkage; }
+	void set_linkage(Linkage linkage) {
+		journalVariableDeclarationRewrite(*this);
+		linkage_ = linkage;
+	}
 	Linkage linkage() const { return linkage_; }
 
-	void set_is_selectany(bool is_selectany) { is_selectany_ = is_selectany; }
+	void set_is_selectany(bool is_selectany) {
+		journalVariableDeclarationRewrite(*this);
+		is_selectany_ = is_selectany;
+	}
 	bool is_selectany() const { return is_selectany_; }
 
 	template <typename NameContainer, typename ArgContainer>
 	void set_outer_template_bindings(const NameContainer& template_param_names, const ArgContainer& template_args) {
+		journalVariableDeclarationRewrite(*this);
 		journalOuterTemplateBindingRewrite(this, outer_template_param_names_, outer_template_args_, outer_template_environment_snapshot_node_);
 		outer_template_param_names_.clear();
 		outer_template_args_.clear();
@@ -496,6 +525,7 @@ public:
 	}
 
 	void set_outer_template_bindings(const TemplateEnvironmentSnapshotNode* snapshot_node) {
+		journalVariableDeclarationRewrite(*this);
 		journalOuterTemplateBindingRewrite(this, outer_template_param_names_, outer_template_args_, outer_template_environment_snapshot_node_);
 		outer_template_environment_snapshot_node_ = snapshot_node;
 	}
