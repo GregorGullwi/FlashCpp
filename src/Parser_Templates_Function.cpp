@@ -1653,7 +1653,9 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 				if (sym.has_value()) {
 					if (sym->is<FunctionDeclarationNode>()) {
 						TypeIndex fp_type = nativeTypeIndex(TypeCategory::FunctionPointer);
-						auto identity = FlashCpp::NonTypeValueIdentity::makeFunctionPointer(fp_type, entity_handle);
+						const FunctionDeclarationNode& target = sym->as<FunctionDeclarationNode>();
+						auto identity = FlashCpp::NonTypeValueIdentity::makeFunctionPointer(fp_type, entity_handle, target.entity_id());
+						identity.canonical_function_type = tryImportCanonicalTargetFunctionType(requireFrontendContext().canonicalTypes(), target).value_or(TypeId{});
 						FLASH_LOG(Templates, Trace, "Address-of function '", id.name(), "' evaluated as FunctionPointer identity");
 						return ConstantValue{0, TypeCategory::FunctionPointer, fp_type, identity};
 					}

@@ -7715,6 +7715,7 @@ inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
 		case CanonicalTypeKind::MemberFunctionPointerValue:
 		case CanonicalTypeKind::NullptrValue:
 		case CanonicalTypeKind::FunctionPointerValue:
+		case CanonicalTypeKind::ObjectPointerValue:
 		case CanonicalTypeKind::ValueTemplateArg:
 		case CanonicalTypeKind::NonTypeTemplateArg:
 		case CanonicalTypeKind::TemplateTemplateArg:

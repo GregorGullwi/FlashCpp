@@ -229,8 +229,9 @@ virtual conversion has no published entry. `DerivedBaseConversionInfo` carries
 only the relation kind; runtime and constructor offsets use
 `tryFindPublishedDerivedBaseOffset`, which now requires the canonical class
 graph and fails closed when either endpoint cannot be imported. Non-null object
-pointer specialization arguments carry their published target EntityId so bases
-such as `Base<&global>` import canonically. Binary and range call selection store the published
+and function pointer specialization arguments carry their published target
+EntityId and function signature, so bases such as `Base<&global>` and
+`Base<&function>` import canonically. Binary and range call selection store the published
 `BinaryOperatorCallTarget.declaring_type` rather than an AST owner `TypeIndex`;
 codegen derives its ABI owner handle at that boundary.
 

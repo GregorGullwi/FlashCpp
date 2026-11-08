@@ -69,6 +69,7 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 	// dedicated fields so the roundtrip through toTemplateTypeArg is lossless.
 	info.value = arg.value;
 	info.nttp_expr = arg.nttp_expr;
+	info.nttp_canonical_function_type = arg.canonical_function_type;
 	if (arg.has_typed_value_identity) {
 		const auto& id = *arg.typedValueIdentity();
 		info.nttp_kind = id.kind;
@@ -76,6 +77,7 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 			info.nttp_entity_name = id.entity_name;
 		}
 		info.nttp_object_target = id.object_target;
+		info.nttp_canonical_function_type = id.canonical_function_type;
 		if (id.member_name.isValid()) {
 			info.nttp_member_name = id.member_name;
 		}
@@ -116,11 +118,13 @@ TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 	ta.member_class_name = arg.member_class_name;
 	ta.injected_class_declaration = arg.injected_class_declaration;
 	ta.nttp_expr = arg.nttp_expr;
+	ta.canonical_function_type = arg.nttp_canonical_function_type;
 	if (arg.is_value) {
 		const bool has_explicit_nttp_identity =
 			arg.nttp_kind != FlashCpp::NonTypeValueIdentityKind::Integral ||
 			arg.nttp_entity_name.isValid() ||
 			arg.nttp_object_target ||
+			arg.nttp_canonical_function_type ||
 			arg.nttp_member_name.isValid() ||
 			arg.nttp_pointer_offset != 0;
 		if (has_explicit_nttp_identity) {
@@ -128,7 +132,9 @@ TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 			switch (arg.nttp_kind) {
 			case FlashCpp::NonTypeValueIdentityKind::FunctionPointer:
 				if (arg.nttp_entity_name.isValid()) {
-					ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeFunctionPointer(arg.type_index, arg.nttp_entity_name));
+					auto identity = FlashCpp::NonTypeValueIdentity::makeFunctionPointer(arg.type_index, arg.nttp_entity_name, arg.nttp_object_target);
+					identity.canonical_function_type = arg.nttp_canonical_function_type;
+					ta.setValueIdentity(identity);
 				} else {
 					ta.value = arg.intValue();
 				}
