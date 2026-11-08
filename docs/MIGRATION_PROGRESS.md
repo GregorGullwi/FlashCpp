@@ -381,6 +381,12 @@ mismatched, unpublished, or unresolved owner facts.
      pointer's pointee. A pointer with no structural pointee still peels one
      flat level. Other flat readers still need migration before the projection
      fields can be removed.
+   - Class-scope using-declarations now retain their target base and member
+     spelling on `StructDeclarationNode` and copy that metadata into
+     instantiated class declarations. Unary `+`, `-`, `~`, and `->` lookup
+     consume it, so same-named base operators are disambiguated by the
+     using-declaration instead of all bases contributing candidates. General
+     member using-import lookup remains unsupported.
    - Migrate the separate compatibility candidate gathering in the mixed
      member/free selector; deleting `findUnaryOperatorOverloadCompatibility`
      alone does not remove that dependency.

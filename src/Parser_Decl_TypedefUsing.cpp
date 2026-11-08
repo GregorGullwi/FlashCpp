@@ -371,8 +371,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			// This makes the member accessible by its simple name even when the
 			// base class is a dependent type (template) that can't be resolved yet
 			if (!member_name.empty()) {
+				StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 				if (!struct_parsing_context_stack_.empty()) {
-					StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 					struct_parsing_context_stack_.back().imported_members.push_back(member_handle);
 
 					if (is_inheriting_constructor) {
@@ -383,6 +383,17 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					} else {
 						FLASH_LOG(Parser, Debug, "Using-declaration imports member '", member_name, "' into struct parsing context");
 					}
+				}
+				if (!is_inheriting_constructor && struct_ref != nullptr) {
+					TypeIndex target_type_index{};
+					for (const BaseClassSpecifier& base : struct_ref->base_classes()) {
+						if (base.name == base_class_name) {
+							target_type_index = base.type_index;
+							break;
+						}
+					}
+					struct_ref->add_class_using_declaration(
+						StringTable::getOrInternStringHandle(base_class_name), member_handle, target_type_index);
 				}
 			}
 
