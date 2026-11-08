@@ -910,13 +910,22 @@ void FrontendContext::journalTypeSpecifierRewrite(TypeSpecifierNode& node) {
 	legacy_type_specifier_rewrites_.push_back(std::move(rewrite));
 }
 
-void journalTypeSpecifierRewrite(TypeSpecifierNode& node) {
+void journalTypeSpecifierRewriteImpl(TypeSpecifierNode& node) {
 	FrontendContext* context = FrontendContext::active();
 	if (context == nullptr) {
 		return;
 	}
 	context->journalTypeSpecifierRewrite(node);
 }
+
+namespace {
+
+const bool type_specifier_rewrite_journal_hook_installed = []() {
+	gTypeSpecifierRewriteJournalHook = &journalTypeSpecifierRewriteImpl;
+	return true;
+}();
+
+} // namespace
 
 void journalOuterTemplateBindingRewrite(void* owner, TemplateParamNameVector& names, TemplateArgInfoVector& args,
 	const TemplateEnvironmentSnapshotNode*& snapshot_node) {

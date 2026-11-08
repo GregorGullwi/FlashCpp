@@ -1861,7 +1861,14 @@ struct PointerLevel {
 	explicit PointerLevel(CVQualifier cv) : cv_qualifier(cv) {}
 };
 
-void journalTypeSpecifierRewrite(TypeSpecifierNode& node);
+using TypeSpecifierRewriteJournalHook = void (*)(TypeSpecifierNode&);
+inline TypeSpecifierRewriteJournalHook gTypeSpecifierRewriteJournalHook = nullptr;
+
+inline void journalTypeSpecifierRewrite(TypeSpecifierNode& node) {
+	if (gTypeSpecifierRewriteJournalHook != nullptr) {
+		gTypeSpecifierRewriteJournalHook(node);
+	}
+}
 
 class TypeSpecifierNode {
 public:
