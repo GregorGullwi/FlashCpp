@@ -1406,6 +1406,78 @@ TEST_SUITE("FrontendContext") {
 		CHECK_FALSE(friend_declaration.function_declaration().has_value());
 	}
 
+	TEST_CASE("Frontend scratch rollback restores variable declaration rewrites") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+
+		FrontendContext context;
+		ScratchTransactionParserFixture fixture(context);
+		const TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		ASTNode declaration_node = ASTNode::emplace_node<DeclarationNode>(
+			int_type, Token(Token::Type::Identifier, std::string_view("frontend_tx_variable_owner"), 1, 1, 0));
+		ASTNode variable_node = ASTNode::emplace_node<VariableDeclarationNode>(
+			declaration_node, std::nullopt, StorageClass::None);
+		VariableDeclarationNode& variable = variable_node.as<VariableDeclarationNode>();
+		ASTNode initializer = ASTNode::emplace_node<ExpressionNode>(
+			NumericLiteralNode(Token{}, uint64_t{3}, TypeCategory::Int, TypeQualifier::None, 32));
+		CHECK_FALSE(variable.initializer().has_value());
+		CHECK(variable.storage_class() == StorageClass::None);
+		CHECK_FALSE(variable.is_constexpr());
+		CHECK_FALSE(variable.is_constinit());
+		CHECK_FALSE(variable.is_thread_local());
+		CHECK_FALSE(variable.is_selectany());
+		CHECK(variable.linkage() == Linkage::None);
+		{
+			auto outer = context.beginScratchTransaction();
+			variable.set_initializer(initializer);
+			variable.set_is_constexpr(true);
+			variable.set_linkage(Linkage::C);
+			variable.set_is_selectany(true);
+			variable.set_is_thread_local(true);
+			CHECK(variable.initializer().has_value());
+			CHECK(variable.is_constexpr());
+			CHECK(variable.is_thread_local());
+			CHECK(variable.is_selectany());
+			CHECK(variable.linkage() == Linkage::C);
+			{
+				auto inner = context.beginScratchTransaction();
+				variable.set_is_constinit(true);
+				variable.set_linkage(Linkage::CPlusPlus);
+				variable.set_is_selectany(false);
+				CHECK(variable.is_constinit());
+				CHECK(variable.linkage() == Linkage::CPlusPlus);
+				CHECK_FALSE(variable.is_selectany());
+				inner.rollback();
+			}
+			CHECK(variable.is_constexpr());
+			CHECK_FALSE(variable.is_constinit());
+			CHECK(variable.is_thread_local());
+			CHECK(variable.is_selectany());
+			CHECK(variable.linkage() == Linkage::C);
+			outer.rollback();
+		}
+		CHECK_FALSE(variable.initializer().has_value());
+		CHECK_FALSE(variable.is_constexpr());
+		CHECK_FALSE(variable.is_constinit());
+		CHECK_FALSE(variable.is_thread_local());
+		CHECK_FALSE(variable.is_selectany());
+		CHECK(variable.linkage() == Linkage::None);
+
+		{
+			auto transaction = context.beginScratchTransaction();
+			variable.set_initializer(initializer);
+			variable.set_is_constexpr(true);
+			variable.set_linkage(Linkage::CPlusPlus);
+			transaction.commit();
+		}
+		CHECK(variable.initializer().has_value());
+		CHECK(variable.is_constexpr());
+		CHECK(variable.linkage() == Linkage::CPlusPlus);
+	}
+
 	TEST_CASE("Frontend scratch rollback restores in-place qualified identifier rewrites") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();
