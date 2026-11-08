@@ -75,6 +75,7 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 		if (id.entity_name.isValid()) {
 			info.nttp_entity_name = id.entity_name;
 		}
+		info.nttp_object_target = id.object_target;
 		if (id.member_name.isValid()) {
 			info.nttp_member_name = id.member_name;
 		}
@@ -119,6 +120,7 @@ TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 		const bool has_explicit_nttp_identity =
 			arg.nttp_kind != FlashCpp::NonTypeValueIdentityKind::Integral ||
 			arg.nttp_entity_name.isValid() ||
+			arg.nttp_object_target ||
 			arg.nttp_member_name.isValid() ||
 			arg.nttp_pointer_offset != 0;
 		if (has_explicit_nttp_identity) {
@@ -140,7 +142,8 @@ TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 				break;
 			case FlashCpp::NonTypeValueIdentityKind::ObjectPointer:
 				if (arg.nttp_entity_name.isValid()) {
-					ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeObjectPointer(arg.type_index, arg.nttp_entity_name, arg.nttp_pointer_offset));
+					ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeObjectPointer(
+						arg.type_index, arg.nttp_entity_name, arg.nttp_pointer_offset, arg.nttp_object_target));
 				} else {
 					ta.value = arg.intValue();
 				}

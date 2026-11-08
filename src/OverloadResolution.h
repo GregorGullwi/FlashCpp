@@ -1486,84 +1486,13 @@ inline std::optional<int64_t> tryFindPublishedDerivedBaseOffset(
 	return tryFindPublishedDerivedBaseOffset(table, derived_import.type, base_import.type);
 }
 
-// Compatibility offset walk for a specialization base whose canonical type
-// cannot yet be imported. This keeps the fallback behind the offset query
-// instead of leaving a TypeIndex-derived value in the conversion plan.
-inline std::optional<int64_t> legacyDerivedBaseOffset(TypeIndex derived_type_index, TypeIndex base_type_index) {
+inline std::optional<int64_t> tryFindPublishedDerivedBaseOffset(CanonicalTypeTable& table, TypeIndex derived_type_index, TypeIndex base_type_index) {
 	const TypeInfo* derived_type_info = resolveAliasTypeInfo(derived_type_index).terminal_type_info;
 	const TypeInfo* base_type_info = resolveAliasTypeInfo(base_type_index).terminal_type_info;
 	if (derived_type_info == nullptr || base_type_info == nullptr) {
 		return std::nullopt;
 	}
-	const StructTypeInfo* derived_struct_info = derived_type_info->getStructInfo();
-	const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
-	if (derived_struct_info == nullptr || base_struct_info == nullptr) {
-		return std::nullopt;
-	}
-	const DerivedBaseConversionInfo conversion =
-		classifyDerivedBaseConversion(derived_type_index, base_type_index);
-	if (conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
-		const auto virtual_base_it = std::find_if(
-			derived_struct_info->virtual_bases.begin(),
-			derived_struct_info->virtual_bases.end(),
-			[&](const BaseClassSpecifier& base) { return base.type_index == base_type_index; });
-		if (virtual_base_it == derived_struct_info->virtual_bases.end()) {
-			return std::nullopt;
-		}
-		return static_cast<int64_t>(virtual_base_it->offset);
-	}
-	if (conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual) {
-		return std::nullopt;
-	}
-	struct PendingBase {
-		const StructTypeInfo* type;
-		int64_t offset;
-	};
-	std::vector<PendingBase> pending{{derived_struct_info, 0}};
-	std::vector<const StructTypeInfo*> visited;
-	for (size_t pending_index = 0; pending_index < pending.size(); ++pending_index) {
-		const PendingBase current = pending[pending_index];
-		if (current.type == base_struct_info) {
-			return current.offset;
-		}
-		if (std::find(visited.begin(), visited.end(), current.type) != visited.end()) {
-			continue;
-		}
-		visited.push_back(current.type);
-		for (const BaseClassSpecifier& base : current.type->base_classes) {
-			if (base.is_virtual || base.access != AccessSpecifier::Public || !base.type_index.is_valid()) {
-				continue;
-			}
-			const TypeInfo* base_type_info_for_walk = tryGetTypeInfo(base.type_index);
-			const StructTypeInfo* base_struct = base_type_info_for_walk ? base_type_info_for_walk->getStructInfo() : nullptr;
-			if (base_struct == nullptr) {
-				continue;
-			}
-			pending.push_back({
-				base_struct,
-				current.offset + static_cast<int64_t>(base.offset)});
-		}
-	}
-	return std::nullopt;
-}
-
-inline std::optional<int64_t> tryFindPublishedDerivedBaseOffset(CanonicalTypeTable& table, TypeIndex derived_type_index, TypeIndex base_type_index) {
-	const TypeInfo* derived_type_info = resolveAliasTypeInfo(derived_type_index).terminal_type_info;
-	const TypeInfo* base_type_info = resolveAliasTypeInfo(base_type_index).terminal_type_info;
-	if (derived_type_info != nullptr && base_type_info != nullptr) {
-		const std::optional<int64_t> published =
-			tryFindPublishedDerivedBaseOffset(table, *derived_type_info, *base_type_info);
-		if (published.has_value()) {
-			return published;
-		}
-	}
-	return legacyDerivedBaseOffset(derived_type_index, base_type_index);
-}
-
-// Return the finalized byte offset for a public base subobject.  Callers that
-// need diagnostics must use classifyDerivedBaseConversion() first.
-inline std::optional<int64_t> findPublicBaseSubobjectOffset(TypeIndex base_idx, TypeIndex derived_idx) {
-	return tryFindPublishedDerivedBaseOffset(requireFrontendContext().canonicalTypes(), derived_idx, base_idx);
+	return tryFindPublishedDerivedBaseOffset(table, *derived_type_info, *base_type_info);
 }
 
 inline size_t countMinRequiredParameters(std::span<const ASTNode> params) {

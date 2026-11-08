@@ -461,6 +461,7 @@ void copyTemplateArgInfoScalarFields(TypeInfo::TemplateArgInfo& dst, const TypeI
 	dst.injected_class_declaration = src.injected_class_declaration;
 	dst.nttp_kind = src.nttp_kind;
 	dst.nttp_entity_name = src.nttp_entity_name;
+	dst.nttp_object_target = src.nttp_object_target;
 	dst.nttp_member_name = src.nttp_member_name;
 	dst.nttp_pointer_offset = src.nttp_pointer_offset;
 	dst.structural_value = src.structural_value;
@@ -508,6 +509,7 @@ TypeInfo::TemplateArgInfo::TemplateArgInfo(const TemplateArgInfo& other)
 	  injected_class_declaration(other.injected_class_declaration),
 	  nttp_kind(other.nttp_kind),
 	  nttp_entity_name(other.nttp_entity_name),
+	  nttp_object_target(other.nttp_object_target),
 	  nttp_member_name(other.nttp_member_name),
 	  nttp_pointer_offset(other.nttp_pointer_offset),
 	  structural_value(other.structural_value),
@@ -536,6 +538,7 @@ TypeInfo::TemplateArgInfo::TemplateArgInfo(TemplateArgInfo&& other) noexcept
 	  injected_class_declaration(other.injected_class_declaration),
 	  nttp_kind(other.nttp_kind),
 	  nttp_entity_name(other.nttp_entity_name),
+	  nttp_object_target(other.nttp_object_target),
 	  nttp_member_name(other.nttp_member_name),
 	  nttp_pointer_offset(other.nttp_pointer_offset),
 	  structural_value(std::move(other.structural_value)),

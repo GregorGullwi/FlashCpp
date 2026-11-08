@@ -61,6 +61,7 @@ enum class DeclKind : uint8_t {
 	Function = 0,
 	Class = 1,
 	Enum = 2,
+	Variable = 3,
 	Count,
 };
 
@@ -72,6 +73,8 @@ inline std::string_view declKindLabel(DeclKind kind) {
 		return "class";
 	case DeclKind::Enum:
 		return "enum";
+	case DeclKind::Variable:
+		return "variable";
 	case DeclKind::Count:
 		break;
 	}
@@ -306,6 +309,8 @@ public:
 		PublicationTransaction& transaction);
 
 	PublishResult publishClass(const ClassDeclRequest& request, const SymbolTable& symbol_table);
+
+	PublishResult publishVariable(const ClassDeclRequest& request, const SymbolTable& symbol_table);
 
 	PreparedClassPublication prepareClassPublication(
 		const ClassDeclRequest& request,

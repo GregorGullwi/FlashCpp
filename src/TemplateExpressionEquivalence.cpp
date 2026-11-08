@@ -1059,6 +1059,9 @@ bool NonTypeValueIdentity::operator==(const NonTypeValueIdentity& other) const {
 	case NonTypeValueIdentityKind::Nullptr:
 		return true;
 	case NonTypeValueIdentityKind::ObjectPointer:
+		if (object_target || other.object_target) {
+			return object_target == other.object_target && pointer_offset == other.pointer_offset;
+		}
 		return entity_name == other.entity_name &&
 			   pointer_offset == other.pointer_offset;
 	case NonTypeValueIdentityKind::Reference:
@@ -1105,6 +1108,7 @@ size_t NonTypeValueIdentity::hash() const {
 		h ^= std::hash<StringHandle>{}(member_class_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
 	}
 	if (kind == NonTypeValueIdentityKind::ObjectPointer) {
+		h ^= std::hash<uint32_t>{}(object_target.value) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<int64_t>{}(pointer_offset) + 0x9e3779b9 + (h << 6) + (h >> 2);
 	}
 	if (function_signature.has_value()) {

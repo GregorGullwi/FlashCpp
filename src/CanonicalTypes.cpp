@@ -974,6 +974,25 @@ TypeId CanonicalTypeTable::nullPointerValue(TypeId pointer_type) {
 		.qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None, .array_extent = 0});
 }
 
+TypeId CanonicalTypeTable::objectPointerValue(TypeId pointer_type, EntityId target, int64_t element_offset) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const CanonicalTypeNode type = nodeUnlocked(pointer_type);
+	if (type.kind != CanonicalTypeKind::Pointer) {
+		throw InternalError("canonical type: object pointer value requires a pointer type");
+	}
+	if (!target) {
+		throw InternalError("canonical type: object pointer value requires a published target");
+	}
+	if (element_offset < std::numeric_limits<int32_t>::min() ||
+		element_offset > std::numeric_limits<int32_t>::max()) {
+		throw InternalError("canonical type: object pointer element offset exceeds canonical range");
+	}
+	return internUnlocked({.child = pointer_type, .kind = CanonicalTypeKind::ObjectPointerValue, .builtin = CanonicalBuiltinKind::Void,
+		.qualifiers = CVQualifier::None, .flags = CanonicalTypeNodeFlags::None,
+		.array_extent = packObjectPointerValueExtent(target, static_cast<int32_t>(element_offset))});
+}
+
 TypeId CanonicalTypeTable::memberObjectPointerValue(TypeId member_pointer_type, TypeId declaring_class, uint16_t member_ordinal) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
@@ -2101,7 +2120,7 @@ bool CanonicalTypeTable::isValueKind(CanonicalTypeKind kind) {
 	return kind == CanonicalTypeKind::IntegralValue || kind == CanonicalTypeKind::FloatingValue ||
 		kind == CanonicalTypeKind::NullPointerValue || kind == CanonicalTypeKind::MemberObjectPointerValue ||
 		kind == CanonicalTypeKind::MemberFunctionPointerValue || kind == CanonicalTypeKind::NullptrValue ||
-		kind == CanonicalTypeKind::FunctionPointerValue ||
+		kind == CanonicalTypeKind::FunctionPointerValue || kind == CanonicalTypeKind::ObjectPointerValue ||
 		kind == CanonicalTypeKind::StructuralValue || kind == CanonicalTypeKind::StructuralArrayValue ||
 		kind == CanonicalTypeKind::StructuralUnionValue;
 }
@@ -3062,6 +3081,7 @@ TypeId CanonicalTypeTable::substituteArgumentsUnlocked(TypeId type, TemplateDecl
 			case CanonicalTypeKind::MemberFunctionPointerValue:
 			case CanonicalTypeKind::NullptrValue:
 			case CanonicalTypeKind::FunctionPointerValue:
+			case CanonicalTypeKind::ObjectPointerValue:
 			case CanonicalTypeKind::ValueTemplateArg:
 			case CanonicalTypeKind::NonTypeTemplateArg:
 			case CanonicalTypeKind::TemplateTemplateArg:

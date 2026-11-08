@@ -2782,6 +2782,20 @@ inline CanonicalTypeImport importCanonicalClassSource(CanonicalTypeTable& table,
 		if (current.next_argument < source_arguments.size()) {
 			const size_t argument_index = current.next_argument;
 			const TypeInfo::TemplateArgInfo& argument = source_arguments[argument_index];
+			if (argument.is_value && !argument.is_pack &&
+				argument.nttp_kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer &&
+				argument.nttp_object_target &&
+				argument.nttp_pointer_offset >= std::numeric_limits<int32_t>::min() &&
+				argument.nttp_pointer_offset <= std::numeric_limits<int32_t>::max()) {
+				const CanonicalTypeImport pointer_import = importCanonicalFunctionComponentFromProjection(
+					table, argument.type_index, 1, ReferenceQualifier::None, CanonicalTypeImportContext::Exact);
+				if (pointer_import.status == CanonicalTypeImportStatus::Supported) {
+					current.arguments.push_back(CanonicalTemplateArgument::makeValue(table.objectPointerValue(
+						pointer_import.type, argument.nttp_object_target, argument.nttp_pointer_offset)));
+					++current.next_argument;
+					continue;
+				}
+			}
 			if (argument.is_value && !argument.is_pack && (argument.nttp_kind == FlashCpp::NonTypeValueIdentityKind::Integral ||
 				argument.nttp_kind == FlashCpp::NonTypeValueIdentityKind::StructuralClass) &&
 				!argument.dependent_name.isValid() && !argument.dependent_expr().has_value()) {
