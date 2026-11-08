@@ -151,18 +151,6 @@ substitution semantics with ordinary instantiation. Existing 1,024-level
 coverage for concrete pack-expanded bases and nested-class chains does not
 establish stack safety for these remaining forms.
 
-## Conditional function pointers can lose their type or callable address
-
-A conditional mixing a function-pointer data member with a local pointer of the
-same alias (`condition ? holder.callback : local`) can lose its exact result
-type and fail lowering with "Sema-normalized ternary expression missing exact
-result type". Function-address branches can instead select the integer return
-category and truncate the callable address. Separately, a literal-condition
-`true ? local : local` can store the condition register instead of reloading the
-local function pointer. These failures reproduce without unary indirection.
-Preserve canonical callable-pointer identity through conditional selection and
-audit register associations across conditional tests and branch assignments.
-
 ## Legacy flat consumers cannot yet handle interleaved pointer/array declarators
 
 Canonical `TypeId` identity is authoritative where imported, but unmigrated

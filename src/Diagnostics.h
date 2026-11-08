@@ -166,6 +166,7 @@ enum class DiagnosticId : uint32_t {
 	DeletedFunctionCall = 1321,
 	DeletedDefaultConstructorCall = 1322,
 	BitwiseNotRequiresIntegral = 1323,
+	IncompatibleConditionalFunctionPointers = 1324,
 
 	// Implicit enum conversion family (1401..1499).
 	ScopedEnumImplicitConversion = 1401,
@@ -448,6 +449,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "DeletedDefaultConstructorCall";
 	case DiagnosticId::BitwiseNotRequiresIntegral:
 		return "BitwiseNotRequiresIntegral";
+	case DiagnosticId::IncompatibleConditionalFunctionPointers:
+		return "IncompatibleConditionalFunctionPointers";
 	case DiagnosticId::ScopedEnumImplicitConversion:
 		return "ScopedEnumImplicitConversion";
 	case DiagnosticId::ScopedEnumBinaryOperand:
