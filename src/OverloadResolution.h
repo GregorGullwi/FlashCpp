@@ -6442,6 +6442,73 @@ inline OperatorOverloadResult findBinaryOperatorOverloadCompatibility(const Type
 	return OperatorOverloadResult(best_candidate->member_func, TypeId{}, best_candidate->owner_type_index);
 }
 
+inline bool classUsingDeclarationNamesOperator(const ClassUsingDeclaration& declaration, OverloadableOperator operator_kind) {
+	const std::string_view name = StringTable::getStringView(declaration.member_name);
+	const std::string_view suffix = overloadableOperatorToString(operator_kind);
+	return name.size() == 8 + suffix.size() && name.substr(0, 8) == "operator" && name.substr(8) == suffix;
+}
+
+inline bool classHasUsingDeclarationForOperator(const StructTypeInfo& struct_info, OverloadableOperator operator_kind) {
+	const StructDeclarationNode* declaration = struct_info.declaration_node;
+	if (declaration == nullptr) {
+		return false;
+	}
+	for (const ClassUsingDeclaration& using_declaration : declaration->class_using_declarations()) {
+		if (classUsingDeclarationNamesOperator(using_declaration, operator_kind)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+inline bool classUsingDeclarationTargetsBase(const ClassUsingDeclaration& declaration, const BaseClassSpecifier& base) {
+	if (declaration.target_type_index.is_valid() && declaration.target_type_index == base.type_index) {
+		return true;
+	}
+	return declaration.target_name.isValid() && base.name == StringTable::getStringView(declaration.target_name);
+}
+
+inline void appendCompatibilityUnaryOperatorBaseTypes(
+	const StructTypeInfo& struct_info, OverloadableOperator operator_kind, std::vector<TypeIndex>& pending_types) {
+	const StructDeclarationNode* declaration = struct_info.declaration_node;
+	if (declaration == nullptr) {
+		return;
+	}
+	for (const ClassUsingDeclaration& using_declaration : declaration->class_using_declarations()) {
+		if (!classUsingDeclarationNamesOperator(using_declaration, operator_kind)) {
+			continue;
+		}
+		for (const BaseClassSpecifier& base : struct_info.base_classes) {
+			if (base.type_index.is_valid() && classUsingDeclarationTargetsBase(using_declaration, base)) {
+				pending_types.push_back(base.type_index);
+			}
+		}
+	}
+}
+
+inline void appendCanonicalUnaryOperatorBaseTypes(
+	CanonicalTypeTable& table, const StructTypeInfo& struct_info, OverloadableOperator operator_kind, std::vector<TypeId>& pending_types) {
+	const StructDeclarationNode* declaration = struct_info.declaration_node;
+	if (declaration == nullptr) {
+		return;
+	}
+	for (const ClassUsingDeclaration& using_declaration : declaration->class_using_declarations()) {
+		if (!classUsingDeclarationNamesOperator(using_declaration, operator_kind)) {
+			continue;
+		}
+		for (const BaseClassSpecifier& base : struct_info.base_classes) {
+			if (!base.type_index.is_valid() || !classUsingDeclarationTargetsBase(using_declaration, base)) {
+				continue;
+			}
+			const TypeId base_type =
+				tryGetCanonicalOverloadClassTypeId(table, makeBinaryOperatorTypeSpecifier(base.type_index));
+			if (base_type && std::find(pending_types.begin(), pending_types.end(), base_type) == pending_types.end()) {
+				pending_types.push_back(base_type);
+			}
+		}
+	}
+}
+
 inline OperatorOverloadResult findUnaryOperatorOverloadCompatibility(const TypeSpecifierNode& operand_type_spec, OverloadableOperator operator_kind) {
 	const TypeIndex root_type_index = operand_type_spec.type_index();
 	std::vector<TypeIndex> pending_types;
@@ -6462,9 +6529,13 @@ inline OperatorOverloadResult findUnaryOperatorOverloadCompatibility(const TypeS
 				return OperatorOverloadResult(&member_func, TypeId{}, owner_type_index.withCategory(TypeCategory::Struct));
 			}
 		}
-		for (const BaseClassSpecifier& base : struct_info->base_classes) {
-			if (base.type_index.is_valid()) {
-				pending_types.push_back(base.type_index);
+		if (classHasUsingDeclarationForOperator(*struct_info, operator_kind)) {
+			appendCompatibilityUnaryOperatorBaseTypes(*struct_info, operator_kind, pending_types);
+		} else {
+			for (const BaseClassSpecifier& base : struct_info->base_classes) {
+				if (base.type_index.is_valid()) {
+					pending_types.push_back(base.type_index);
+				}
 			}
 		}
 	}
@@ -6486,15 +6557,17 @@ inline OperatorOverloadResult findUnaryOperatorOverload(const TypeSpecifierNode&
 	std::vector<TypeId> pending_types{root_type};
 	for (size_t pending_index = 0; pending_index < pending_types.size(); ++pending_index) {
 		const TypeId current_type = pending_types[pending_index];
-		if (!appendCanonicalOverloadBaseTypes(table, current_type, pending_types)) {
+		if (!table.hasClassBaseSchema(current_type)) {
 			return OperatorOverloadResult::no_overload();
 		}
 		const TypeInfo* const type_info = tryFindCanonicalOverloadClassTypeInfo(table, current_type);
-		if (type_info == nullptr) {
-			continue;
+		const StructTypeInfo* const struct_info = type_info != nullptr ? type_info->getStructInfo() : nullptr;
+		if (struct_info != nullptr && classHasUsingDeclarationForOperator(*struct_info, operator_kind)) {
+			appendCanonicalUnaryOperatorBaseTypes(table, *struct_info, operator_kind, pending_types);
+		} else if (!appendCanonicalOverloadBaseTypes(table, current_type, pending_types)) {
+			return OperatorOverloadResult::no_overload();
 		}
-		const StructTypeInfo* const struct_info = type_info->getStructInfo();
-		if (struct_info == nullptr) {
+		if (type_info == nullptr || struct_info == nullptr) {
 			continue;
 		}
 		for (const StructMemberFunction& member_func : struct_info->member_functions) {
@@ -6559,9 +6632,13 @@ inline OperatorOverloadResult findUnaryOperatorOverloadWithFreeFunction(
 					candidates.push_back({rank, &member_function, nullptr, TypeId{}, owner_type_index.withCategory(TypeCategory::Struct)});
 				}
 			}
-			for (const BaseClassSpecifier& base : struct_info->base_classes) {
-				if (base.type_index.is_valid()) {
-					pending_types.push_back(base.type_index);
+			if (classHasUsingDeclarationForOperator(*struct_info, operator_kind)) {
+				appendCompatibilityUnaryOperatorBaseTypes(*struct_info, operator_kind, pending_types);
+			} else {
+				for (const BaseClassSpecifier& base : struct_info->base_classes) {
+					if (base.type_index.is_valid()) {
+						pending_types.push_back(base.type_index);
+					}
 				}
 			}
 		}
@@ -6580,15 +6657,17 @@ inline OperatorOverloadResult findUnaryOperatorOverloadWithFreeFunction(
 			std::vector<TypeId> pending_types{operand_type_id};
 			for (size_t pending_index = 0; pending_index < pending_types.size(); ++pending_index) {
 				const TypeId owner_type_id = pending_types[pending_index];
-				if (!appendCanonicalOverloadBaseTypes(table, owner_type_id, pending_types)) {
+				if (!table.hasClassBaseSchema(owner_type_id)) {
 					return OperatorOverloadResult::no_overload();
 				}
 				const TypeInfo* const type_info = tryFindCanonicalOverloadClassTypeInfo(table, owner_type_id);
-				if (type_info == nullptr) {
-					continue;
+				const StructTypeInfo* const struct_info = type_info != nullptr ? type_info->getStructInfo() : nullptr;
+				if (struct_info != nullptr && classHasUsingDeclarationForOperator(*struct_info, operator_kind)) {
+					appendCanonicalUnaryOperatorBaseTypes(table, *struct_info, operator_kind, pending_types);
+				} else if (!appendCanonicalOverloadBaseTypes(table, owner_type_id, pending_types)) {
+					return OperatorOverloadResult::no_overload();
 				}
-				const StructTypeInfo* const struct_info = type_info->getStructInfo();
-				if (struct_info == nullptr) {
+				if (type_info == nullptr || struct_info == nullptr) {
 					continue;
 				}
 				for (const StructMemberFunction& member_function : struct_info->member_functions) {

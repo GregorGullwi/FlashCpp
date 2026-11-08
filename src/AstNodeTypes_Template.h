@@ -1394,6 +1394,14 @@ struct StaticMemberDecl {
 	void setIsConstexpr(bool value) { is_constexpr = value; }
 };
 
+// A class-scope using-declaration that names a member of a base class. The
+// target TypeIndex is invalid when the base spelling is dependent.
+struct ClassUsingDeclaration {
+	StringHandle target_name;
+	StringHandle member_name;
+	TypeIndex target_type_index{};
+};
+
 void journalStructDeclarationRewrite(StructDeclarationNode& node);
 
 class StructDeclarationNode {
@@ -1424,6 +1432,17 @@ public:
 		return member_functions_;
 	}
 	std::span<const BaseClassSpecifier> base_classes() const { return base_classes_; }
+	std::span<const ClassUsingDeclaration> class_using_declarations() const { return class_using_declarations_; }
+	void add_class_using_declaration(StringHandle target_name, StringHandle member_name, TypeIndex target_type_index) {
+		for (const ClassUsingDeclaration& existing : class_using_declarations_) {
+			if (existing.target_name == target_name && existing.member_name == member_name &&
+				existing.target_type_index == target_type_index) {
+				return;
+			}
+		}
+		journalStructDeclarationRewrite(*this);
+		class_using_declarations_.push_back({target_name, member_name, target_type_index});
+	}
 	std::span<const DeferredBaseClassSpecifier> deferred_base_classes() const { return deferred_base_classes_; }
 	std::span<const DeferredTemplateBaseClassSpecifier> deferred_template_base_classes() const { return deferred_template_base_classes_; }
 	bool is_class() const { return is_class_; }
@@ -1875,6 +1894,7 @@ private:
 	std::vector<StructMemberDecl> members_;
 	std::vector<StructMemberFunctionDecl> member_functions_;
 	std::vector<BaseClassSpecifier> base_classes_;  // Base classes for inheritance
+	TemplateVector<ClassUsingDeclaration, 2> class_using_declarations_;
 	std::vector<DeferredBaseClassSpecifier> deferred_base_classes_;	// Decltype base classes (for templates)
 	std::vector<DeferredTemplateBaseClassSpecifier> deferred_template_base_classes_;	 // Template-dependent base classes
 	std::vector<ASTNode> friend_declarations_;  // Friend declarations

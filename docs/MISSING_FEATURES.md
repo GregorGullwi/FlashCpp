@@ -462,7 +462,7 @@ int main() {
 
 **Fix**: Verify that `parse_enum_declaration` passes the correct anonymous namespace handle to `add_enum_type`. Add tests for anonymous namespace enum ADL.
 
-### Member using-declarations for inherited names not supported
+### Member using-declarations for inherited names are only partially supported
 
 **Severity**: Medium (conformance issue, affects idiomatic C++ inheritance patterns)
 
@@ -486,18 +486,23 @@ int main() {
 }
 ```
 
-FlashCpp currently parses `using X::Y;` inside a struct body and registers the member name
-in the struct parsing context (`imported_members`), but this path is designed for dependent
-template base classes (e.g., `using std::__is_integer<_Tp>::__value;`). It does **not**:
+FlashCpp parses `using X::Y;` inside a struct body and registers the member name in the
+struct parsing context (`imported_members`). Class-scope using-declarations are now also
+retained on `StructDeclarationNode` with their target base spelling and resolved base
+`TypeIndex`, and copied to instantiated class declarations. Unary `+`, `-`, `~`, and `->`
+lookup consumes that metadata, so a using-declaration can disambiguate same-named base
+operators instead of letting every base contribute a candidate.
 
-- Resolve `Base` as a base class of the enclosing struct
+General member function and member name lookup still does **not**:
+
 - Copy or alias the base-class member function overloads into the derived class's member
   function list
 - Interact with the name-hiding logic in `StructTypeInfo::findMemberFunctionRecursive` or
-  `searchStructMembers` to allow hidden overloads to become visible again
+  `searchStructMembers` to allow hidden non-operator overloads to become visible again
 
-Without this, derived classes that use `using Base::foo;` to bring base overloads into scope
-will not have those overloads available for overload resolution.
+Without that remaining work, derived classes that use `using Base::foo;` to bring base
+overloads into scope will not have those overloads available for general overload
+resolution.
 
 **Fix**: When parsing `using Base::member;` inside a struct body where `Base` is a known base
 class, copy the matching base-class `StructMemberFunction` entries into the derived struct's
