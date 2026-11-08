@@ -199,9 +199,10 @@ struct TemplateTypeArg {
 
 	// For function pointer types: stores the full function signature
 	FlashCpp::TemplateFunctionSignatureHandle function_signature_handle;
-	// Canonical target function type for a function-pointer NTTP value. This is
-	// publication metadata, not part of template-argument equivalence.
+	// Canonical target type/value metadata for pointer-to-member and function
+	// pointer NTTPs. Not part of template-argument equivalence.
 	TypeId canonical_function_type{};
+	TypeId canonical_member_pointer_value{};
 
 	// --- Accessors ---
 	// Returns the TypeCategory embedded in type_index.

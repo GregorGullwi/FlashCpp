@@ -70,6 +70,7 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 	info.value = arg.value;
 	info.nttp_expr = arg.nttp_expr;
 	info.nttp_canonical_function_type = arg.canonical_function_type;
+	info.nttp_canonical_member_pointer_value = arg.canonical_member_pointer_value;
 	if (arg.has_typed_value_identity) {
 		const auto& id = *arg.typedValueIdentity();
 		info.nttp_kind = id.kind;
@@ -78,6 +79,7 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 		}
 		info.nttp_object_target = id.object_target;
 		info.nttp_canonical_function_type = id.canonical_function_type;
+		info.nttp_canonical_member_pointer_value = id.canonical_member_pointer_value;
 		if (id.member_name.isValid()) {
 			info.nttp_member_name = id.member_name;
 		}
@@ -119,12 +121,14 @@ TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 	ta.injected_class_declaration = arg.injected_class_declaration;
 	ta.nttp_expr = arg.nttp_expr;
 	ta.canonical_function_type = arg.nttp_canonical_function_type;
+	ta.canonical_member_pointer_value = arg.nttp_canonical_member_pointer_value;
 	if (arg.is_value) {
 		const bool has_explicit_nttp_identity =
 			arg.nttp_kind != FlashCpp::NonTypeValueIdentityKind::Integral ||
 			arg.nttp_entity_name.isValid() ||
 			arg.nttp_object_target ||
 			arg.nttp_canonical_function_type ||
+			arg.nttp_canonical_member_pointer_value ||
 			arg.nttp_member_name.isValid() ||
 			arg.nttp_pointer_offset != 0;
 		if (has_explicit_nttp_identity) {
@@ -154,13 +158,16 @@ TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 					ta.value = arg.intValue();
 				}
 				break;
-			case FlashCpp::NonTypeValueIdentityKind::MemberPointer:
-				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeMemberPointer(
+			case FlashCpp::NonTypeValueIdentityKind::MemberPointer: {
+				FlashCpp::NonTypeValueIdentity identity = FlashCpp::NonTypeValueIdentity::makeMemberPointer(
 					arg.type_index,
 					arg.nttp_member_name,
 					arg.nttp_pointer_offset,
-					arg.member_class_name));
+					arg.member_class_name);
+				identity.canonical_member_pointer_value = arg.nttp_canonical_member_pointer_value;
+				ta.setValueIdentity(identity);
 				break;
+			}
 			case FlashCpp::NonTypeValueIdentityKind::Nullptr:
 				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeNullptr(arg.type_index));
 				break;

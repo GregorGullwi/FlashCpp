@@ -1217,9 +1217,13 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 				eval_result.pointer_offset);
 		} else if (eval_result.member_pointer_member.isValid() || eval_result.is_null_member_pointer) {
 			if (eval_result.member_pointer_member.isValid()) {
+				std::optional<TypeSpecifierNode> member_pointer_type = eval_result.exact_type;
+				if (!member_pointer_type.has_value()) {
+					member_pointer_type = get_expression_type(expr_node);
+				}
 				StringHandle member_class_name{};
-				if (eval_result.exact_type.has_value() && eval_result.exact_type->has_member_class()) {
-					member_class_name = eval_result.exact_type->member_class_name();
+				if (member_pointer_type.has_value() && member_pointer_type->has_member_class()) {
+					member_class_name = member_pointer_type->member_class_name();
 				}
 				if (!member_class_name.isValid()) {
 					member_class_name = inferMemberPointerClassNameFromNode(expr_node, inferMemberPointerClassNameFromNode);
@@ -1229,6 +1233,10 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 					eval_result.member_pointer_member,
 					eval_result.as_int(),
 					member_class_name);
+				if (member_pointer_type.has_value()) {
+					value.identity.canonical_member_pointer_value = tryImportCanonicalMemberPointerValue(
+						requireFrontendContext().canonicalTypes(), *member_pointer_type, eval_result.member_pointer_member).value_or(TypeId{});
+				}
 			} else {
 				// Null member pointer: emit a Nullptr-typed Integral identity (value=0)
 				// so that classifyExplicitTemplateArgumentsAgainstParameters handles it
