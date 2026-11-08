@@ -192,8 +192,14 @@ published member-property schema. A lazy-constraint member-object-pointer trait
 case remains unresolved because its member-owner identity is not published at
 materialization. The sema-owned construction traits
 (`__is_constructible`, `__is_trivially_constructible`, and
-`__is_nothrow_constructible`) need a canonical constructor-query path for
-variadic arguments and overload resolution. Concepts using unsupported
+`__is_nothrow_constructible`) answer exact matches, supported scalar and
+reference conversions, same-class by-value arguments, publicly derived by-value
+arguments over trivially copyable bases, and omitted default arguments from
+published constructor schemas. They still defer for user-defined converting
+constructors, non-trivially-copyable derived bases, incomplete schemas, and
+unresolved canonical types. Variadic constructors are not represented because
+the constructor AST does not retain the ellipsis, so argument counts beyond the
+named parameters remain a compatibility gap. Concepts using unsupported
 sema-owned traits must retain an explicit unknown outcome rather than treating
 it as satisfaction or failure. Static member semantic identity must remain
 canonical through any remaining flat-consumer migration.

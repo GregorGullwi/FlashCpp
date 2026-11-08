@@ -4489,6 +4489,101 @@ TEST_CASE("Canonical constructor schemas rank scalar reference temporaries witho
 	CHECK_FALSE(bool_result->value);
 }
 
+TEST_CASE("Canonical constructor schemas select by-value class arguments") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const EntityId base_entity{930};
+	const EntityId derived_entity{931};
+	const EntityId private_derived_entity{932};
+	const EntityId unrelated_entity{933};
+	const EntityId consumer_entity{934};
+	const EntityId nontrivial_base_entity{935};
+	const EntityId nontrivial_derived_entity{936};
+	const EntityId nontrivial_consumer_entity{937};
+	const EntityId defaulted_consumer_entity{938};
+	const TypeId base_type = table.record(base_entity);
+	const TypeId derived_type = table.record(derived_entity);
+	const TypeId private_derived_type = table.record(private_derived_entity);
+	const TypeId unrelated_type = table.record(unrelated_entity);
+	const TypeId consumer_type = table.record(consumer_entity);
+	const TypeId nontrivial_base_type = table.record(nontrivial_base_entity);
+	const TypeId nontrivial_derived_type = table.record(nontrivial_derived_entity);
+	const TypeId nontrivial_consumer_type = table.record(nontrivial_consumer_entity);
+	const TypeId defaulted_consumer_type = table.record(defaulted_consumer_entity);
+	const std::array<CanonicalClassBase, 1> public_base{{{base_type, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0}}};
+	const std::array<CanonicalClassBase, 1> private_base{{{base_type, CanonicalAccess::Private, CanonicalRecordBaseFlags::None, 0}}};
+	const std::array<CanonicalClassBase, 1> nontrivial_base{{{nontrivial_base_type, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0}}};
+	table.publishClassBaseSchema(base_type, {});
+	table.publishClassBaseSchema(derived_type, public_base);
+	table.publishClassBaseSchema(private_derived_type, private_base);
+	table.publishClassBaseSchema(unrelated_type, {});
+	table.publishClassBaseSchema(nontrivial_base_type, {});
+	table.publishClassBaseSchema(nontrivial_derived_type, nontrivial_base);
+	table.publishRecordProperties(base_type, CanonicalRecordFacts::TriviallyCopyable);
+	const std::array<TypeId, 1> base_parameters{base_type};
+	const std::array<CanonicalRecordConstructorSpec, 1> base_constructors{{{base_parameters, CanonicalRecordFunctionFlags::None, true}}};
+	table.publishRecordConstructors(consumer_type, base_constructors);
+	const std::array<TypeId, 1> nontrivial_parameters{nontrivial_base_type};
+	const std::array<CanonicalRecordConstructorSpec, 1> nontrivial_constructors{{{nontrivial_parameters, CanonicalRecordFunctionFlags::None, true}}};
+	table.publishRecordConstructors(nontrivial_consumer_type, nontrivial_constructors);
+	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId long_type = table.builtin(CanonicalBuiltinKind::Long);
+	const std::array<TypeId, 2> defaulted_parameters{int_type, long_type};
+	const std::array<CanonicalRecordConstructorSpec, 1> defaulted_constructors{{{defaulted_parameters, CanonicalRecordFunctionFlags::None, true, 1}}};
+	table.publishRecordConstructors(defaulted_consumer_type, defaulted_constructors);
+	auto class_specifier = [](TypeCategory category, EntityId entity) {
+		TypeSpecifierNode specifier(category, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		specifier.set_type_entity(entity);
+		return specifier;
+	};
+	const TypeSpecifierNode consumer = class_specifier(TypeCategory::Struct, consumer_entity);
+	const TypeSpecifierNode nontrivial_consumer = class_specifier(TypeCategory::Struct, nontrivial_consumer_entity);
+	const TypeSpecifierNode defaulted_consumer = class_specifier(TypeCategory::Struct, defaulted_consumer_entity);
+
+	TypeSpecifierNode argument = class_specifier(TypeCategory::Struct, derived_entity);
+	std::array<TypeSpecifierNode, 1> arguments{argument};
+	const auto constructible = evaluateConstructibility(TypeTraitKind::IsConstructible, consumer, arguments, ConstructibilityFallback::None);
+	REQUIRE(constructible.has_value());
+	CHECK(constructible->success);
+	CHECK(constructible->value);
+	const auto nothrow = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, consumer, arguments, ConstructibilityFallback::None);
+	REQUIRE(nothrow.has_value());
+	CHECK(nothrow->success);
+	CHECK(nothrow->value);
+
+	argument = class_specifier(TypeCategory::Struct, base_entity);
+	argument.set_cv_qualifier(CVQualifier::Const);
+	arguments[0] = argument;
+	const auto same_class = evaluateConstructibility(TypeTraitKind::IsConstructible, consumer, arguments, ConstructibilityFallback::None);
+	REQUIRE(same_class.has_value());
+	CHECK(same_class->success);
+	CHECK(same_class->value);
+
+	argument = class_specifier(TypeCategory::Struct, private_derived_entity);
+	arguments[0] = argument;
+	CHECK_FALSE(evaluateConstructibility(TypeTraitKind::IsConstructible, consumer, arguments, ConstructibilityFallback::None).has_value());
+
+	argument = class_specifier(TypeCategory::Struct, unrelated_entity);
+	arguments[0] = argument;
+	CHECK_FALSE(evaluateConstructibility(TypeTraitKind::IsConstructible, consumer, arguments, ConstructibilityFallback::None).has_value());
+
+	argument = class_specifier(TypeCategory::Struct, nontrivial_derived_entity);
+	arguments[0] = argument;
+	const auto nontrivial = evaluateConstructibility(TypeTraitKind::IsConstructible, nontrivial_consumer, arguments, ConstructibilityFallback::None);
+	CHECK_FALSE(nontrivial.has_value());
+
+	TypeSpecifierNode int_argument(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	std::array<TypeSpecifierNode, 1> defaulted_arguments{int_argument};
+	const auto defaulted = evaluateConstructibility(TypeTraitKind::IsConstructible, defaulted_consumer, defaulted_arguments,
+		ConstructibilityFallback::None);
+	REQUIRE(defaulted.has_value());
+	CHECK(defaulted->success);
+	CHECK(defaulted->value);
+	const auto defaulted_nothrow = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, defaulted_consumer,
+		defaulted_arguments, ConstructibilityFallback::None);
+	CHECK_FALSE(defaulted_nothrow.has_value());
+}
+
 TEST_CASE("Canonical direct reference binding preserves access cv and value category") {
 	CanonicalTypeTable table;
 	const TypeId base_type = table.record(EntityId{913});
