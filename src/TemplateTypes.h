@@ -560,6 +560,7 @@ struct NonTypeValueIdentity {
 	TypeIndex value_type_index = nativeTypeIndex(TypeCategory::Int);  // The full type identity of the value
 	StringHandle entity_name{};     // Named object/function for pointer/reference/function-pointer identities
 	EntityId object_target{};       // Published declaration identity for a non-null object pointer target
+	TypeId canonical_function_type{}; // Published target function type for a function pointer target
 	StringHandle member_name{};     // Class member for pointer-to-member identities
 	StringHandle member_class_name{}; // Declaring class for pointer-to-member identities
 	int64_t pointer_offset = 0;     // Array-element offset for object pointer identities
@@ -645,11 +646,16 @@ struct NonTypeValueIdentity {
 	}
 
 	static NonTypeValueIdentity makeFunctionPointer(TypeIndex type_index, StringHandle function_name) {
+		return makeFunctionPointer(type_index, function_name, EntityId{});
+	}
+
+	static NonTypeValueIdentity makeFunctionPointer(TypeIndex type_index, StringHandle function_name, EntityId target) {
 		NonTypeValueIdentity id;
 		id.kind = NonTypeValueIdentityKind::FunctionPointer;
 		id.value = 0;
 		id.value_type_index = type_index;
 		id.entity_name = function_name;
+		id.object_target = target;
 		id.is_dependent = false;
 		id.dependent_name = {};
 		return id;

@@ -44,9 +44,10 @@ closed: the canonical substitutor preserves those ExprIds and cannot replace a p
 its concrete value. Publish substitutable parameter/value identity before
 enabling those graphs; keep evaluator and overload-selection rules separate.
 
-Non-null object-pointer template arguments now carry a published target EntityId;
-canonical import fails closed for element offsets outside the canonical 32-bit
-range or targets without a published identity.
+Non-null object- and function-pointer template arguments now carry a published
+target EntityId; function pointers also carry their target signature. Canonical
+import fails closed for object-pointer element offsets outside the canonical
+32-bit range or targets without a published identity.
 
 ## Expression parsing and constraint evaluation can overflow a 1 MB native stack
 

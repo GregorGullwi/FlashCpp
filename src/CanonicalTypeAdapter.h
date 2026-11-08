@@ -1805,16 +1805,10 @@ inline std::optional<TypeId> tryImportCanonicalStructuralFloating(CanonicalTypeT
 	return table.floatingValue(field_type, bits);
 }
 
-// Address selection supplies the actual declaration. No lookup by spelling or
-// ABI symbol may manufacture the target's semantic identity at this boundary.
-inline std::optional<TypeId> tryImportCanonicalFunctionPointerValue(CanonicalTypeTable& table, TypeId pointer_type,
-	const FunctionDeclarationNode& target) {
+inline std::optional<FunctionSignature> canonicalFunctionSignatureFromTarget(const FunctionDeclarationNode& target) {
 	if (!target.entity_id() || target.is_member_function() || target.is_template_pattern() || target.is_deleted() || target.has_noexcept_expression()) {
 		return std::nullopt;
 	}
-	const CanonicalTypeNode pointer = table.node(pointer_type);
-	if (pointer.kind != CanonicalTypeKind::Pointer || table.node(pointer.child).kind != CanonicalTypeKind::Function) return std::nullopt;
-	CanonicalTypeTransaction transaction(table);
 	TypeSpecifierNode return_type = target.decl_node().type_specifier_node();
 	tryBindPublishedTypeEntity(return_type);
 	FunctionSignature signature;
@@ -1831,7 +1825,38 @@ inline std::optional<TypeId> tryImportCanonicalFunctionPointerValue(CanonicalTyp
 	signature.linkage = target.linkage();
 	signature.is_variadic = target.is_variadic();
 	signature.is_noexcept = target.is_noexcept();
-	const CanonicalTypeImport imported = importCanonicalFunctionSignature(table, signature, TypeId{});
+	return signature;
+}
+
+inline std::optional<TypeId> tryImportCanonicalTargetFunctionType(CanonicalTypeTable& table, const FunctionDeclarationNode& target) {
+	const std::optional<FunctionSignature> signature = canonicalFunctionSignatureFromTarget(target);
+	if (!signature.has_value()) {
+		return std::nullopt;
+	}
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalTypeImport imported = importCanonicalFunctionSignature(table, *signature, TypeId{});
+	if (imported.status != CanonicalTypeImportStatus::Supported || table.hasDependentTypeComponents(imported.type)) {
+		return std::nullopt;
+	}
+	transaction.commit();
+	return imported.type;
+}
+
+// Address selection supplies the actual declaration. No lookup by spelling or
+// ABI symbol may manufacture the target's semantic identity at this boundary.
+inline std::optional<TypeId> tryImportCanonicalFunctionPointerValue(CanonicalTypeTable& table, TypeId pointer_type,
+	const FunctionDeclarationNode& target) {
+	if (!target.entity_id() || target.is_member_function() || target.is_template_pattern() || target.is_deleted() || target.has_noexcept_expression()) {
+		return std::nullopt;
+	}
+	const CanonicalTypeNode pointer = table.node(pointer_type);
+	if (pointer.kind != CanonicalTypeKind::Pointer || table.node(pointer.child).kind != CanonicalTypeKind::Function) return std::nullopt;
+	const std::optional<FunctionSignature> signature = canonicalFunctionSignatureFromTarget(target);
+	if (!signature.has_value()) {
+		return std::nullopt;
+	}
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalTypeImport imported = importCanonicalFunctionSignature(table, *signature, TypeId{});
 	if (imported.status != CanonicalTypeImportStatus::Supported || table.hasDependentTypeComponents(imported.type) ||
 		!isCanonicalFunctionPointerTargetCompatible(table.node(imported.type), table.node(pointer.child))) {
 		return std::nullopt;
@@ -2782,6 +2807,16 @@ inline CanonicalTypeImport importCanonicalClassSource(CanonicalTypeTable& table,
 		if (current.next_argument < source_arguments.size()) {
 			const size_t argument_index = current.next_argument;
 			const TypeInfo::TemplateArgInfo& argument = source_arguments[argument_index];
+			if (argument.is_value && !argument.is_pack &&
+				argument.nttp_kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer &&
+				argument.nttp_object_target && argument.nttp_canonical_function_type &&
+				table.node(argument.nttp_canonical_function_type).kind == CanonicalTypeKind::Function) {
+				const TypeId pointer_type = table.pointer(argument.nttp_canonical_function_type);
+				current.arguments.push_back(CanonicalTemplateArgument::makeValue(table.functionPointerValue(
+					pointer_type, argument.nttp_object_target, argument.nttp_canonical_function_type)));
+				++current.next_argument;
+				continue;
+			}
 			if (argument.is_value && !argument.is_pack &&
 				argument.nttp_kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer &&
 				argument.nttp_object_target &&

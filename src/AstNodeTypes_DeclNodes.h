@@ -1203,6 +1203,7 @@ struct TypeInfo {
 		FlashCpp::NonTypeValueIdentityKind nttp_kind;  // Kind of the NTTP value identity
 		StringHandle nttp_entity_name;                 // Entity name for pointer/reference/function-pointer NTTPs
 		EntityId nttp_object_target{};                 // Published target identity for non-null object pointers
+		TypeId nttp_canonical_function_type{};         // Published target function type for function pointers
 		StringHandle nttp_member_name;                 // Member name for member-pointer NTTPs
 		int64_t nttp_pointer_offset;                   // Object-pointer element offset or member-pointer value offset
 		FlashCpp::StructuralClassValue* structural_value = nullptr;
