@@ -778,6 +778,71 @@ CanonicalTypeImport tryImportCanonicalTypeDesc(const CanonicalTypeDesc& desc) {
 	return importCanonicalType(requireFrontendContext().canonicalTypes(), syntax);
 }
 
+TypeId importConditionalCallableType(const CanonicalTypeDesc& desc) {
+	if (!desc.structural_type_id && !desc.function_signature.has_value()) {
+		return {};
+	}
+	const CanonicalTypeImport imported = tryImportCanonicalTypeDesc(desc);
+	if (imported.status != CanonicalTypeImportStatus::Supported) {
+		return {};
+	}
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	const TypeId type = canonicalTypeWithoutReference(table, imported.type);
+	const CanonicalTypeNode node = nodeUnderQualifiersAndReferences(table, type);
+	if (node.kind == CanonicalTypeKind::Function) {
+		return type;
+	}
+	if (node.kind == CanonicalTypeKind::Pointer && node.child &&
+		nodeUnderQualifiersAndReferences(table, node.child).kind == CanonicalTypeKind::Function) {
+		return type;
+	}
+	return {};
+}
+
+TypeId tryGetConditionalCallableGlvalueType(const CanonicalTypeDesc& lhs, const CanonicalTypeDesc& rhs, ValueCategory lhs_category,
+	ValueCategory rhs_category) {
+	if (lhs_category != rhs_category || lhs_category == ValueCategory::PRValue) {
+		return {};
+	}
+	const TypeId lhs_type = importConditionalCallableType(lhs);
+	const TypeId rhs_type = importConditionalCallableType(rhs);
+	if (!lhs_type || !rhs_type) {
+		return {};
+	}
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	if (stripCanonicalTopCv(table, lhs_type).first != stripCanonicalTopCv(table, rhs_type).first) {
+		return {};
+	}
+	const auto qualifier = lhs_category == ValueCategory::LValue ? ReferenceQualifier::LValueReference : ReferenceQualifier::RValueReference;
+	const TypeId lhs_reference = table.reference(lhs_type, qualifier);
+	const TypeId rhs_reference = table.reference(rhs_type, qualifier);
+	const auto lhs_to_rhs = tryBuildCanonicalDirectReferenceBindingPlan(table, lhs_reference, rhs_reference);
+	const auto rhs_to_lhs = tryBuildCanonicalDirectReferenceBindingPlan(table, rhs_reference, lhs_reference);
+	if (rhs_to_lhs.has_value() && rhs_to_lhs->is_valid) {
+		return lhs_type;
+	}
+	if (lhs_to_rhs.has_value() && lhs_to_rhs->is_valid) {
+		return rhs_type;
+	}
+	return {};
+}
+
+ValueCategory conditionalCallableOperandCategory(const SemanticAnalysis& sema, const ASTNode& operand, ValueCategory inferred) {
+	if (operand.is<ExpressionNode>()) {
+		const auto slot = sema.getSlot(&operand.as<ExpressionNode>());
+		if (slot.has_value() && slot->has_cast()) {
+			const CanonicalTypeId source_id = sema.castInfoTable()[slot->cast_info_index.value - 1].source_type_id;
+			if (source_id) {
+				const CanonicalTypeDesc source = sema.typeContext().get(source_id);
+				if (importConditionalCallableType(source)) {
+					return slot->value_category;
+				}
+			}
+		}
+	}
+	return inferred;
+}
+
 std::optional<UserDefinedConversionOperatorSelection> trySelectCanonicalImplicitConversionOperator(
 	const CanonicalTypeDesc& source_desc,
 	const TypeSpecifierNode& target_type) {
@@ -997,6 +1062,11 @@ std::optional<CanonicalTypeDesc> tryGetConditionalPointerType(
 				return adoptPublishedStructuralType(desc, table.pointer(structural_id));
 			}
 			if (node.kind == CanonicalTypeKind::Pointer || unqualified.kind == CanonicalTypeKind::Pointer) {
+				if (unqualified.child && nodeUnderQualifiersAndReferences(table, unqualified.child).kind == CanonicalTypeKind::Function) {
+					CanonicalTypeDesc pointer = adoptPublishedStructuralType(desc, stripCanonicalTopCv(table, structural_id).first);
+					pointer.flags = clearFlag(pointer.flags, CanonicalTypeFlags::PublishedPointerArray);
+					return pointer;
+				}
 				CanonicalTypeDesc pointer = desc;
 				pointer.structural_type_id = structural_id;
 				pointer.ref_qualifier = ReferenceQualifier::None;
@@ -7486,40 +7556,17 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 				return ValueCategory::PRValue;
 			}
 
-			const ValueCategory true_category = inferExpressionValueCategory(inner.true_expr());
-			const ValueCategory false_category = inferExpressionValueCategory(inner.false_expr());
+			const ValueCategory true_category = conditionalCallableOperandCategory(*this, inner.true_expr(), inferExpressionValueCategory(inner.true_expr()));
+			const ValueCategory false_category = conditionalCallableOperandCategory(*this, inner.false_expr(),
+				inferExpressionValueCategory(inner.false_expr()));
 			if (true_category != false_category || true_category == ValueCategory::PRValue) {
 				return ValueCategory::PRValue;
 			}
 			bool same_type = canonical_types_match(true_type_id, false_type_id);
 			if (!same_type) {
-				// Published members and cold callable descriptors can denote the
-				// same type. Strip references for comparison while retaining cv.
-				CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-				const auto importCallableType = [this, &table](CanonicalTypeId type_id) -> TypeId {
-					const CanonicalTypeDesc desc = type_context_.get(type_id);
-					if (!desc.structural_type_id && !desc.function_signature.has_value()) {
-						return {};
-					}
-					const CanonicalTypeImport imported = tryImportCanonicalTypeDesc(desc);
-					if (imported.status != CanonicalTypeImportStatus::Supported) {
-						return {};
-					}
-					const TypeId type = canonicalTypeWithoutReference(table, imported.type);
-					const CanonicalTypeNode node = nodeUnderQualifiersAndReferences(table, type);
-					if (node.kind == CanonicalTypeKind::Function) {
-						return type;
-					}
-					if (node.kind == CanonicalTypeKind::Pointer && node.child &&
-						nodeUnderQualifiersAndReferences(table, node.child).kind == CanonicalTypeKind::Function) {
-						return type;
-					}
-					return {};
-				};
-				const TypeId true_callable_type = importCallableType(true_type_id);
-				if (true_callable_type) {
-					same_type = true_callable_type == importCallableType(false_type_id);
-				}
+				const CanonicalTypeDesc true_desc = type_context_.get(true_type_id);
+				const CanonicalTypeDesc false_desc = type_context_.get(false_type_id);
+				same_type = static_cast<bool>(tryGetConditionalCallableGlvalueType(true_desc, false_desc, true_category, false_category));
 			}
 			return same_type ? true_category : ValueCategory::PRValue;
 		} else if constexpr (std::is_same_v<T, CallExprNode>) {
@@ -10760,7 +10807,14 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						return type_context_.intern(*pointer_result);
 					return {};
 				}
-				if (canonical_types_match(t_id, f_id))
+				const ValueCategory true_category = conditionalCallableOperandCategory(*this, e.true_expr(), inferExpressionValueCategory(e.true_expr()));
+				const ValueCategory false_category = conditionalCallableOperandCategory(*this, e.false_expr(), inferExpressionValueCategory(e.false_expr()));
+				if (const TypeId glvalue = tryGetConditionalCallableGlvalueType(t_desc, f_desc, true_category, false_category)) {
+					CanonicalTypeDesc result = adoptPublishedStructuralType(t_desc, glvalue);
+					result.flags = clearFlag(result.flags, CanonicalTypeFlags::PublishedPointerArray);
+					return type_context_.intern(result);
+				}
+				if (canonical_types_match(t_id, f_id) && !importConditionalCallableType(t_desc))
 					return t_id;
 				if (auto pointer_result = tryGetConditionalPointerType(
 					t_desc,
@@ -16327,6 +16381,14 @@ void SemanticAnalysis::tryAnnotateTernaryBranchConversions(const TernaryOperator
 
 	const CanonicalTypeDesc true_desc = type_context_.get(true_type_id);
 	const CanonicalTypeDesc false_desc = type_context_.get(false_type_id);
+
+	const ValueCategory true_category = conditionalCallableOperandCategory(*this, ternary_node.true_expr(),
+		inferExpressionValueCategory(ternary_node.true_expr()));
+	const ValueCategory false_category = conditionalCallableOperandCategory(*this, ternary_node.false_expr(),
+		inferExpressionValueCategory(ternary_node.false_expr()));
+	if (tryGetConditionalCallableGlvalueType(true_desc, false_desc, true_category, false_category)) {
+		return;
+	}
 
 	// C++20 [expr.cond]/3: array-to-pointer conversion is applied to the second
 	// and third operands before the common type is chosen. Annotate each array

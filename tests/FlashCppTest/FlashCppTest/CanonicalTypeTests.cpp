@@ -2985,6 +2985,75 @@ TEST_CASE("Conditional callable pointer types preserve their exact signature") {
 	CHECK(table.node(table.node(expected.type).child).kind == CanonicalTypeKind::Function);
 }
 
+TEST_CASE("Conditional callable glvalues preserve directional cv qualification") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	CompileContext test_context;
+	test_context.setInputFile("canonical_conditional_callable_cv.cpp");
+	Lexer lexer("using Callback = int (*)(short); Callback mutable_callback; extern const Callback constant_callback; "
+		"extern volatile Callback volatile_callback; extern const volatile Callback cv_callback; bool condition; "
+		"extern const int (*qualified_return)(short);");
+	SemanticAnalysis sema(test_context, gSymbolTable);
+	Parser parser(lexer, test_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	std::string_view true_name = "mutable_callback";
+	std::string_view false_name = "constant_callback";
+	CVQualifier expected_cv = CVQualifier::Const;
+	ValueCategory expected_category = ValueCategory::LValue;
+	SUBCASE("Mutable to const") {
+	}
+	SUBCASE("Const to mutable") {
+		true_name = "constant_callback";
+		false_name = "mutable_callback";
+	}
+	SUBCASE("Mutable to volatile") {
+		false_name = "volatile_callback";
+		expected_cv = CVQualifier::Volatile;
+	}
+	SUBCASE("Const to const volatile") {
+		true_name = "constant_callback";
+		false_name = "cv_callback";
+		expected_cv = CVQualifier::Const | CVQualifier::Volatile;
+	}
+	SUBCASE("Incomparable qualifiers produce a value") {
+		true_name = "constant_callback";
+		false_name = "volatile_callback";
+		expected_cv = CVQualifier::None;
+		expected_category = ValueCategory::PRValue;
+	}
+	SUBCASE("Return qualification does not qualify the pointer object") {
+		true_name = "qualified_return";
+		false_name = "qualified_return";
+		expected_cv = CVQualifier::None;
+	}
+	auto identifier = [](std::string_view spelling) {
+		return ASTNode::emplace_node<ExpressionNode>(IdentifierNode(Token(Token::Type::Identifier, spelling, 0, 0, 0)));
+	};
+	const Token question(Token::Type::Operator, std::string_view("?"), 0, 0, 0);
+	const ASTNode expression = ASTNode::emplace_node<ExpressionNode>(
+		TernaryOperatorNode(identifier("condition"), identifier(true_name), identifier(false_name), question));
+	const TypeSpecifierQueryResult query = sema.analyzeExpressionTypeQuery(expression);
+	REQUIRE(query.hasValue());
+	const auto slot = sema.getSlot(&expression.as<ExpressionNode>());
+	REQUIRE(slot.has_value());
+	CHECK(slot->value_category == expected_category);
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const CanonicalTypeImport actual = importCanonicalType(table, *query.type);
+	REQUIRE(actual.status == CanonicalTypeImportStatus::Supported);
+	const auto [unqualified, qualifiers] = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, actual.type));
+	CHECK(qualifiers == expected_cv);
+	const auto original_symbol = gSymbolTable.lookup(true_name);
+	REQUIRE(original_symbol.has_value());
+	const DeclarationNode* original_declaration = get_decl_from_symbol(*original_symbol);
+	REQUIRE(original_declaration != nullptr);
+	const CanonicalTypeImport original = importCanonicalType(table, original_declaration->type_specifier_node());
+	REQUIRE(original.status == CanonicalTypeImportStatus::Supported);
+	CHECK(unqualified == stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, original.type)).first);
+	REQUIRE(table.node(unqualified).kind == CanonicalTypeKind::Pointer);
+	CHECK(table.node(table.node(unqualified).child).kind == CanonicalTypeKind::Function);
+}
+
 TEST_CASE("Builtin indirection retains the adopted structural pointee after interning") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

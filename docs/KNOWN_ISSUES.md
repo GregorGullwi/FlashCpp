@@ -153,6 +153,16 @@ substitution semantics with ordinary instantiation. Existing 1,024-level
 coverage for concrete pack-expanded bases and nested-class chains does not
 establish stack safety for these remaining forms.
 
+## Callable aliases can apply return qualification to the pointer object
+
+With `using Callback = const int (*)(short)`, a mutable `Callback callback`
+can be treated as a const pointer object. Assigning another callback then
+incorrectly reports `AssignmentToConstObject` (1318). The equivalent direct
+declarator `const int (*callback)(short)` remains assignable. This reproduces
+without a conditional expression: preserve function-return qualification on the
+return-type subtree when materializing the alias instead of applying it to the
+outer pointer object.
+
 ## Legacy flat consumers cannot yet handle interleaved pointer/array declarators
 
 Canonical `TypeId` identity is authoritative where imported, but unmigrated
