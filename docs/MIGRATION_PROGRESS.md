@@ -331,9 +331,10 @@ mismatched, unpublished, or unresolved owner facts.
      defers to `StructTypeInfo` for user-defined converting constructors,
      non-trivially-copyable derived bases, incomplete schemas, and unresolved
      canonical types. A defaulted parameter whose expression may throw still
-     defers for the nothrow variant. Variadic constructors are not represented
-     because the constructor AST does not retain the ellipsis, so argument counts
-     beyond the named parameters remain a compatibility gap.
+     defers for the nothrow variant. Constructor schemas retain ellipsis and rank
+     supported extra arguments after conversions to named parameters. Class
+     arguments passed through ellipsis still defer until their initialization
+     and target-specific exception behavior can be decided structurally.
    - Template argument and substitution storage: move lazy constraint lookup from
      name-based parameters to depth/index parameters, and finish canonical
      preservation through NTTP reconstruction, deferred bases, stored arguments,

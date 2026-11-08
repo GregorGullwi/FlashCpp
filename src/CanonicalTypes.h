@@ -560,6 +560,7 @@ enum class CanonicalRecordFunctionFlags : uint8_t {
 	NonPublic = 1 << 2,
 	SchemaIncomplete = 1 << 3,
 	Explicit = 1 << 4,
+	Variadic = 1 << 5,
 };
 
 // Constructor schema entry for a completed record, keyed by the record's

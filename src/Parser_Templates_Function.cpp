@@ -526,6 +526,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				for (const auto& param : header.params.parameters) {
 					ctor_ref.add_parameter_node(param);
 				}
+				ctor_ref.set_is_variadic(header.params.is_variadic);
 				for (const auto& template_param : template_params) {
 					ctor_ref.add_template_parameter(template_param);
 				}

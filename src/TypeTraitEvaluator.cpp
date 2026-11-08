@@ -2730,13 +2730,15 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 	};
 	for (size_t index = 0; index < constructor_count; ++index) {
 		const CanonicalRecordConstructor constructor = table.recordConstructorAt(imported.type, index);
-		if (argument_types.size() < constructor.minimum_parameter_count || argument_types.size() > constructor.parameter_count) {
+		const bool is_variadic = hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Variadic);
+		if (argument_types.size() < constructor.minimum_parameter_count || (!is_variadic && argument_types.size() > constructor.parameter_count)) {
 			continue;
 		}
 		bool matches = true;
 		RankedConstructor candidate{constructor, {}};
 		candidate.argument_ranks.reserve(argument_types.size());
-		for (size_t parameter = 0; parameter < argument_types.size(); ++parameter) {
+		const size_t matched_parameter_count = std::min(argument_types.size(), static_cast<size_t>(constructor.parameter_count));
+		for (size_t parameter = 0; parameter < matched_parameter_count; ++parameter) {
 			const TypeId parameter_type = table.recordConstructorParameterAt(imported.type, index, parameter);
 			if (parameter_type == argument_types[parameter]) {
 				candidate.argument_ranks.push_back(ConversionRank::ExactMatch);
@@ -2817,6 +2819,24 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 				break;
 			}
 			candidate.argument_ranks.push_back(conversion.rank);
+		}
+		if (matches && is_variadic) {
+			for (size_t parameter = matched_parameter_count; parameter < argument_types.size(); ++parameter) {
+				TypeId argument_type = argument_types[parameter];
+				while (table.node(argument_type).kind == CanonicalTypeKind::LValueReference ||
+					table.node(argument_type).kind == CanonicalTypeKind::RValueReference || table.node(argument_type).kind == CanonicalTypeKind::Qualified) {
+					argument_type = table.node(argument_type).child;
+				}
+				const CanonicalTypeKind argument_kind = table.node(argument_type).kind;
+				if (argument_kind == CanonicalTypeKind::Builtin && table.node(argument_type).builtin == CanonicalBuiltinKind::Void) {
+					matches = false;
+					break;
+				}
+				if (isCanonicalClassTypeKind(argument_kind) || isDependentCanonicalNode(argument_kind)) {
+					return std::nullopt;
+				}
+				candidate.argument_ranks.push_back(ConversionRank::Ellipsis);
+			}
 		}
 		if (!matches) {
 			continue;

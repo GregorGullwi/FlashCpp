@@ -1,5 +1,20 @@
 # Known Issues
 
+## Unary operator candidate lookup does not preserve member-name hiding
+
+The member unary-operator gather visits base classes even when a derived class
+declares the same operator name. For example, `Base::operator-() const` remains
+viable for an lvalue `Derived` after `Derived::operator-() &&` should hide it.
+FlashCpp currently accepts that expression; it should reject it.
+
+The fix needs persistent class using-declaration provenance: `using Base::operator-`
+must explicitly restore the nominated overloads. The parser currently retains only
+the imported spelling in temporary class parsing state. Before replacing the
+candidate walk, preserve the nominated base identity through instantiation,
+implement member-name lookup sets with hiding and base ambiguity, and share those
+sets between canonical and compatibility unary consumers. Pruning every base as
+soon as a local operator is found would reject valid using-declarations.
+
 ## Remaining dependent member-template field forms need concrete TypeInfo
 
 Direct type packs, supported nontrivial type-pack patterns, and lockstep
@@ -197,10 +212,25 @@ reference conversions, same-class by-value arguments, publicly derived by-value
 arguments over trivially copyable bases, and omitted default arguments from
 published constructor schemas. They still defer for user-defined converting
 constructors, non-trivially-copyable derived bases, incomplete schemas, and
-unresolved canonical types. Variadic constructors are not represented because
-the constructor AST does not retain the ellipsis, so argument counts beyond the
-named parameters remain a compatibility gap. Concepts using unsupported
-sema-owned traits must retain an explicit unknown outcome rather than treating
+unresolved canonical types. Constructor schemas now retain ellipsis and rank
+supported extra arguments after conversions to named parameters. Class arguments
+passed through ellipsis still defer: their validity and exception behavior need
+argument-initialization facts and the target's conditionally supported call rules.
+Runtime constructor lowering still emits a fixed-arity signature and lacks
+ellipsis promotions and ABI handling. General constructor overload resolution
+therefore retains its previous arity restrictions; canonical trait support does
+not enable runtime calls with extra arguments.
+Inherited variadic constructors retain ellipsis in their candidate metadata, but
+their synthesized base initializer forwards only named parameters. Runtime
+forwarding of unnamed arguments remains unimplemented; the constructibility
+regressions query the overloads without invoking those wrappers.
+Constructor-template deduction also remains incomplete: a non-template class
+with `template<class T> C(T, ...)` currently reports false for
+`__is_constructible(C, int, double)`. An unspecialized constructor template must
+not be published as an ordinary constructor, even when none of its fixed
+parameter types mention the template parameter. Class-template constructors
+whose owner arguments are already substituted are covered by the new schemas.
+Concepts using unsupported sema-owned traits must retain an explicit unknown outcome rather than treating
 it as satisfaction or failure. Static member semantic identity must remain
 canonical through any remaining flat-consumer migration.
 

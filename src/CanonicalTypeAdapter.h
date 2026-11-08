@@ -3013,7 +3013,7 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 			continue;
 		}
 		const ConstructorDeclarationNode& constructor = member.function_declaration.as<ConstructorDeclarationNode>();
-		if (constructor.explicit_condition()) {
+		if (constructor.explicit_condition() || constructor.has_template_parameters()) {
 			has_incomplete_candidates = true;
 			continue;
 		}
@@ -3030,6 +3030,9 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 		}
 		if (constructor.is_explicit()) {
 			entry.flags = entry.flags | CanonicalRecordFunctionFlags::Explicit;
+		}
+		if (constructor.is_variadic()) {
+			entry.flags = entry.flags | CanonicalRecordFunctionFlags::Variadic;
 		}
 		bool importable = true;
 		for (size_t index = 0; index < constructor.parameter_nodes().size(); ++index) {

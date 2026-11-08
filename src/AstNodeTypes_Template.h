@@ -714,6 +714,10 @@ public:
 	void set_is_implicit(bool implicit) {
 		is_implicit_ = implicit;
 	}
+	void set_is_variadic(bool variadic) { is_variadic_ = variadic; }
+	bool is_variadic() const {
+		return is_variadic_;
+	}
 	void set_is_explicitly_defaulted(bool explicitly_defaulted) {
 		is_explicitly_defaulted_ = explicitly_defaulted;
 	}
@@ -941,6 +945,7 @@ private:
 	bool is_implicit_;  // True if this is an implicitly generated default constructor
 	bool is_explicitly_defaulted_ = false;  // True for user-declared constructors spelled '= default'
 	bool was_defaulted_on_first_declaration_ : 1 = false;
+	bool is_variadic_ : 1 = false;
 	bool is_noexcept_ = false;  // noexcept specifier
 	bool is_explicit_ = false;  // explicit specifier
 	ExprId explicit_condition_{}; // Dependent operand, owned by FrontendContext::dependentExpressions

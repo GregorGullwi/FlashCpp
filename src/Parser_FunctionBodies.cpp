@@ -944,6 +944,8 @@ StructMemberFunction* Parser::find_ctor_dtor_for_definition(
 		const ConstructorDeclarationNode& ctor = member.function_decl.as<ConstructorDeclarationNode>();
 		if (ctor.is_materialized())
 			continue;  // already defined
+		if (ctor.is_variadic() != params.is_variadic)
+			continue;
 		if (ctor.parameter_nodes().size() != param_count)
 			continue;
 

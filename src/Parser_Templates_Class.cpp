@@ -2500,6 +2500,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						for (const auto& param : header.params.parameters) {
 							ctor_ref.add_parameter_node(param);
 						}
+						ctor_ref.set_is_variadic(header.params.is_variadic);
 
 						// Enter scope with RAII guard; all paths exit through the guard (Priority 5)
 						FlashCpp::SymbolTableScope ctor_scope(ScopeType::Function);
@@ -4023,6 +4024,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						for (const auto& param : header.params.parameters) {
 							ctor_ref.add_parameter_node(param);
 						}
+						ctor_ref.set_is_variadic(header.params.is_variadic);
 
 						// Enter scope with RAII guard; all paths exit through the guard (Priority 5)
 						FlashCpp::SymbolTableScope ctor_scope(ScopeType::Function);
@@ -6581,6 +6583,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					for (const ASTNode& parameter : constructor_params.parameters) {
 						constructor_ref.add_parameter_node(parameter);
 					}
+					constructor_ref.set_is_variadic(constructor_params.is_variadic);
 
 					FlashCpp::MemberQualifiers constructor_quals;
 					FlashCpp::FunctionSpecifiers constructor_specs;
@@ -7226,6 +7229,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				for (const ASTNode& parameter : constructor_params.parameters) {
 					constructor_ref.add_parameter_node(parameter);
 				}
+				constructor_ref.set_is_variadic(constructor_params.is_variadic);
 				FlashCpp::MemberQualifiers constructor_quals;
 				FlashCpp::FunctionSpecifiers constructor_specs;
 				auto specs_result = parse_function_trailing_specifiers(

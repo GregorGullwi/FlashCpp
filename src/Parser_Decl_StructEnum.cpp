@@ -2616,11 +2616,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				for (const auto& param : params.parameters) {
 					ctor_ref.add_parameter_node(param);
 				}
-				// Note: Variadic constructors are extremely rare in C++ and not commonly used.
-				// The AST node type doesn't currently track variadic status for constructors.
-				// For now, we silently accept them without storing the variadic flag.
-				// If variadic constructor support becomes needed, ConstructorDeclarationNode
-				// can be extended with set_is_variadic() similar to FunctionDeclarationNode.
+				ctor_ref.set_is_variadic(params.is_variadic);
 
 				// Apply specifiers from member_specs
 				ctor_ref.set_explicit(member_specs & FlashCpp::MLS_Explicit);
@@ -4155,6 +4151,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 					derived_ctor_ref.add_parameter_node(param_decl_node);
 				}
+				derived_ctor_ref.set_is_variadic(base_ctor.is_variadic());
 
 				// Create base initializer to forward to base constructor
 				// This will call Base::Base(args...) where args are the parameters
