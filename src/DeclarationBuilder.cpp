@@ -237,7 +237,7 @@ bool DeclarationBuilder::isValidRequest(const ClassDeclRequest& request) const {
 	if (!request.name.isValid()) {
 		return false;
 	}
-	return request.kind == DeclKind::Class || request.kind == DeclKind::Enum;
+	return request.kind == DeclKind::Class || request.kind == DeclKind::Enum || request.kind == DeclKind::Variable;
 }
 
 DeclId DeclarationBuilder::allocateDeclaration(DeclarationRecord record) {
@@ -692,6 +692,12 @@ PublishResult DeclarationBuilder::publishClass(
 	const PublishResult result = commitClassPublication(prepared, transaction);
 	transaction.commit();
 	return result;
+}
+
+PublishResult DeclarationBuilder::publishVariable(
+	const ClassDeclRequest& request,
+	const SymbolTable& symbol_table) {
+	return publishClass(request, symbol_table);
 }
 
 TelemetryTypeId DeclarationBuilder::internDeclaratorType(const TypeSpecifierNode& type_spec) {

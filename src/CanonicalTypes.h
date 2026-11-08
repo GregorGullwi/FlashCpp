@@ -76,6 +76,9 @@ enum class CanonicalTypeKind : uint8_t {
 	FunctionPointerValue,
 	// Nested class identity: owner TypeId in child and declaring EntityId in extent.
 	NestedRecord,
+	// Non-null object pointer: child is its canonical Pointer type; extent packs
+	// the published target EntityId (low 32) and signed element offset (high 32).
+	ObjectPointerValue,
 };
 
 constexpr bool isCanonicalClassTypeKind(CanonicalTypeKind kind) {
@@ -244,6 +247,19 @@ inline uint16_t unpackMemberFunctionPointerValueOrdinal(uint64_t extent) {
 	return static_cast<uint16_t>(extent >> 32);
 }
 
+inline uint64_t packObjectPointerValueExtent(EntityId target, int32_t element_offset) {
+	return static_cast<uint64_t>(target.value) |
+		(static_cast<uint64_t>(static_cast<uint32_t>(element_offset)) << 32);
+}
+
+inline EntityId unpackObjectPointerValueTarget(uint64_t extent) {
+	return EntityId{static_cast<uint32_t>(extent)};
+}
+
+inline int32_t unpackObjectPointerValueOffset(uint64_t extent) {
+	return static_cast<int32_t>(static_cast<uint32_t>(extent >> 32));
+}
+
 inline uint64_t packDependentTemplateMemberExtent(TypeId name_link, TypeId arg_link) {
 	return static_cast<uint64_t>(name_link.value) |
 		(static_cast<uint64_t>(arg_link.value) << 32);
@@ -326,6 +342,8 @@ inline TypeId unpackDependentMemberAliasArgs(uint64_t array_extent) {
 // selected member function ordinal. NullptrValue is internal: child is the
 // canonical nullptr_t builtin and extent is zero. FunctionPointerValue is internal:
 // child is its declared function pointer type and extent is its target EntityId.
+// ObjectPointerValue is internal: child is its canonical pointer type and extent
+// packs the target object EntityId with its signed element offset.
 // ValueTemplateArg stores the
 // converted value TypeId in array_extent and the next link in child.
 struct CanonicalTypeNode {
@@ -683,6 +701,9 @@ public:
 	// Null value of the supplied canonical pointer-like type. Non-null function
 	// declaration targets use functionPointerValue separately.
 	TypeId nullPointerValue(TypeId pointer_type);
+	// Non-null object pointer: target is the published declaration EntityId and
+	// element_offset is the signed array-element adjustment.
+	TypeId objectPointerValue(TypeId pointer_type, EntityId target, int64_t element_offset);
 	// Data-member target of a canonical MemberObjectPointer type. The declaring
 	// class and ordinal are validated against that class's published field schema.
 	TypeId memberObjectPointerValue(TypeId member_pointer_type, TypeId declaring_class, uint16_t member_ordinal);

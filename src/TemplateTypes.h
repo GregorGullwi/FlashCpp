@@ -559,6 +559,7 @@ struct NonTypeValueIdentity {
 	int64_t value = 0;              // Integral value or ABI offset/sentinel for pointer-to-member
 	TypeIndex value_type_index = nativeTypeIndex(TypeCategory::Int);  // The full type identity of the value
 	StringHandle entity_name{};     // Named object/function for pointer/reference/function-pointer identities
+	EntityId object_target{};       // Published declaration identity for a non-null object pointer target
 	StringHandle member_name{};     // Class member for pointer-to-member identities
 	StringHandle member_class_name{}; // Declaring class for pointer-to-member identities
 	int64_t pointer_offset = 0;     // Array-element offset for object pointer identities
@@ -621,11 +622,16 @@ struct NonTypeValueIdentity {
 	}
 
 	static NonTypeValueIdentity makeObjectPointer(TypeIndex type_index, StringHandle target_name, int64_t offset) {
+		return makeObjectPointer(type_index, target_name, offset, EntityId{});
+	}
+
+	static NonTypeValueIdentity makeObjectPointer(TypeIndex type_index, StringHandle target_name, int64_t offset, EntityId target) {
 		NonTypeValueIdentity id;
 		id.kind = NonTypeValueIdentityKind::ObjectPointer;
 		id.value = 0;
 		id.value_type_index = type_index;
 		id.entity_name = target_name;
+		id.object_target = target;
 		id.pointer_offset = offset;
 		id.is_dependent = false;
 		id.dependent_name = {};

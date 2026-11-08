@@ -227,8 +227,10 @@ address/pointer adjustments, explicit `static_cast` lowering, and IRConverter
 validation consume `tryFindPublishedVirtualBaseIndex` and fail closed when a
 virtual conversion has no published entry. `DerivedBaseConversionInfo` carries
 only the relation kind; runtime and constructor offsets use
-`tryFindPublishedDerivedBaseOffset`, with the compatibility fallback centralized
-behind that query. Binary and range call selection store the published
+`tryFindPublishedDerivedBaseOffset`, which now requires the canonical class
+graph and fails closed when either endpoint cannot be imported. Non-null object
+pointer specialization arguments carry their published target EntityId so bases
+such as `Base<&global>` import canonically. Binary and range call selection store the published
 `BinaryOperatorCallTarget.declaring_type` rather than an AST owner `TypeIndex`;
 codegen derives its ABI owner handle at that boundary.
 

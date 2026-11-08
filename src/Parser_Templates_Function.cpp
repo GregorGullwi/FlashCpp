@@ -1664,7 +1664,25 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 						type_node = &sym->as<DeclarationNode>().type_specifier_node();
 					if (type_node) {
 						TypeIndex pointee_type = type_node->type_index().withCategory(type_node->type());
-						auto identity = FlashCpp::NonTypeValueIdentity::makeObjectPointer(pointee_type, entity_handle, 0);
+						EntityId object_target{};
+						const DeclarationNode* target_declaration = nullptr;
+						if (sym->is<VariableDeclarationNode>()) {
+							target_declaration = &sym->as<VariableDeclarationNode>().declaration();
+						} else if (sym->is<DeclarationNode>()) {
+							target_declaration = &sym->as<DeclarationNode>();
+						}
+						if (target_declaration != nullptr && target_declaration->has_lexical_scope_id()) {
+							ClassDeclRequest request{};
+							request.lexical_scope_id = target_declaration->lexical_scope_id();
+							request.name = target_declaration->identifier_token().handle();
+							request.is_definition = false;
+							request.kind = DeclKind::Variable;
+							const PublishResult published = requireFrontendContext().declarationBuilder().publishVariable(request, gSymbolTable);
+							if (published.status != PublishStatus::Rejected) {
+								object_target = published.entity_id;
+							}
+						}
+						auto identity = FlashCpp::NonTypeValueIdentity::makeObjectPointer(pointee_type, entity_handle, 0, object_target);
 						FLASH_LOG(Templates, Trace, "Address-of variable '", id.name(), "' evaluated as ObjectPointer identity");
 						return ConstantValue{0, type_node->type(), pointee_type, identity};
 					}

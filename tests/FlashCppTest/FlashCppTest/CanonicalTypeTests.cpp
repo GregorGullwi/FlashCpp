@@ -193,6 +193,28 @@ TEST_CASE("Canonical owner probing ends before required materialization effects"
 	CHECK(substituted.member_class_type_id() == owner);
 }
 
+TEST_CASE("Canonical object pointer values retain target identity and element offset") {
+	CanonicalTypeTable table;
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId pointer = table.pointer(integer);
+	const TypeId first = table.objectPointerValue(pointer, EntityId{11}, 0);
+	CHECK(first == table.objectPointerValue(pointer, EntityId{11}, 0));
+	CHECK(first != table.objectPointerValue(pointer, EntityId{12}, 0));
+	CHECK(first != table.objectPointerValue(pointer, EntityId{11}, 1));
+	const CanonicalTypeNode first_node = table.node(first);
+	REQUIRE(first_node.kind == CanonicalTypeKind::ObjectPointerValue);
+	CHECK(first_node.child == pointer);
+	CHECK(unpackObjectPointerValueTarget(first_node.array_extent) == EntityId{11});
+	CHECK(unpackObjectPointerValueOffset(first_node.array_extent) == 0);
+	const TypeId second = table.objectPointerValue(pointer, EntityId{12}, -3);
+	const CanonicalTypeNode second_node = table.node(second);
+	CHECK(unpackObjectPointerValueTarget(second_node.array_extent) == EntityId{12});
+	CHECK(unpackObjectPointerValueOffset(second_node.array_extent) == -3);
+	CHECK_THROWS_AS(table.objectPointerValue(integer, EntityId{11}, 0), InternalError);
+	CHECK_THROWS_AS(table.objectPointerValue(pointer, EntityId{}, 0), InternalError);
+	CHECK_THROWS_AS(table.objectPointerValue(pointer, EntityId{11}, int64_t{1} << 40), InternalError);
+}
+
 TEST_CASE("Published free function targets retain entity and canonical signature identity") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

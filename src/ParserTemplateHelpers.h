@@ -2248,6 +2248,7 @@ inline bool dependentQualifiedTemplateArgMatchesForSignature(
 		if (instantiated_arg.value != out_of_line_arg.value ||
 			instantiated_arg.nttp_kind != out_of_line_arg.nttp_kind ||
 			instantiated_arg.nttp_entity_name != out_of_line_arg.nttp_entity_name ||
+			instantiated_arg.nttp_object_target != out_of_line_arg.nttp_object_target ||
 			instantiated_arg.nttp_member_name != out_of_line_arg.nttp_member_name ||
 			instantiated_arg.nttp_pointer_offset != out_of_line_arg.nttp_pointer_offset) {
 			return false;
