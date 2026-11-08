@@ -324,10 +324,16 @@ mismatched, unpublished, or unresolved owner facts.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are
-     canonical; the argument-bearing record query still reads `StructTypeInfo`
-     through constructor overload resolution. Move the remaining selection and
-     exception facts onto published constructor schemas, including variadic and
-     omitted-default cases.
+     canonical. The argument-bearing record query resolves exact matches,
+     supported scalar and reference conversions, same-class by-value arguments,
+     publicly derived by-value arguments whose base is trivially copyable, and
+     omitted default arguments from published constructor schemas. It still
+     defers to `StructTypeInfo` for user-defined converting constructors,
+     non-trivially-copyable derived bases, incomplete schemas, and unresolved
+     canonical types. A defaulted parameter whose expression may throw still
+     defers for the nothrow variant. Variadic constructors are not represented
+     because the constructor AST does not retain the ellipsis, so argument counts
+     beyond the named parameters remain a compatibility gap.
    - Template argument and substitution storage: move lazy constraint lookup from
      name-based parameters to depth/index parameters, and finish canonical
      preservation through NTTP reconstruction, deferred bases, stored arguments,

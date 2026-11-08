@@ -2638,6 +2638,30 @@ TypeTraitResult evaluateRecordConstructibleFromArgs(TypeTraitKind kind, const St
 	return (!struct_info.has_vtable && !struct_info.hasUserDefinedConstructor()) ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
 }
 
+// [over.best.ics]/[conv.derived]: a by-value class parameter accepts a
+// same-class argument as an identity conversion and a publicly derived argument
+// through derived-to-base. The base copy/move path is not part of the outer
+// constructor schema, so require the published trivially-copyable fact; other
+// class pairs defer to the compatibility resolver.
+static std::optional<ConversionPlan> tryBuildCanonicalClassParameterConversionPlan(
+	CanonicalTypeTable& table, TypeId source_class, TypeId target_class) {
+	if (source_class == target_class) {
+		return ConversionPlan::exact_match();
+	}
+	const std::optional<DerivedBaseConversionKind> relation = classifyCanonicalDerivedBaseConversion(table, source_class, target_class);
+	if (!relation.has_value()) {
+		return std::nullopt;
+	}
+	if (*relation != DerivedBaseConversionKind::UniquePublicNonVirtual && *relation != DerivedBaseConversionKind::PublicVirtual) {
+		return std::nullopt;
+	}
+	if (!table.hasRecordProperties(target_class) ||
+		!hasCanonicalRecordFact(table.recordProperties(target_class).facts, CanonicalRecordFacts::TriviallyCopyable)) {
+		return std::nullopt;
+	}
+	return ConversionPlan{ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
+}
+
 // Canonical constructor query for complete schemas and supported standard conversion sequences.
 // Other overload shapes defer to the compatibility resolver.
 static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFromArgs(TypeTraitKind kind, const TypeSpecifierNode& target,
@@ -2767,6 +2791,18 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 				(target_kind == CanonicalTypeKind::Enum && !source_is_class && !isDependentCanonicalNode(source_kind))) {
 				matches = false;
 				break;
+			}
+			if (source_is_class && target_is_class) {
+				const std::optional<ConversionPlan> class_plan = tryBuildCanonicalClassParameterConversionPlan(table, source_base, target_base);
+				if (!class_plan.has_value()) {
+					return std::nullopt;
+				}
+				if (!class_plan->is_valid) {
+					matches = false;
+					break;
+				}
+				candidate.argument_ranks.push_back(class_plan->rank);
+				continue;
 			}
 			const bool may_need_compatibility_resolution = mayNeedCompatibilityResolution(source_kind) || mayNeedCompatibilityResolution(target_kind);
 			if (may_need_compatibility_resolution) {
