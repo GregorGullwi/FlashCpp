@@ -10432,3 +10432,68 @@ TEST_CASE("Canonical union value tracing bounds native stack across deep variant
 	FlashCpp::LogConfig::output_stream = output;
 	CHECK(trace.str().find("canonical-request-v2") != std::string::npos);
 }
+
+TEST_CASE("Canonical constructor literal defaults need no compatibility type") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	CompileContext compile_context;
+	compile_context.setInputFile("canonical_literal_defaults.cpp");
+	Lexer lexer("int mayThrow(); constexpr int constantValue() { return 3; }"
+		"struct ConstexprDefault { ConstexprDefault(short, int = constantValue()) noexcept {} };"
+		"struct Defaults { Defaults(short, double = 1.5, bool = true) noexcept {} };"
+		"struct Mixed { Mixed(short, double = mayThrow(), bool = true) noexcept {} };"
+		"struct Throwing { Throwing(short, long long = -17) noexcept(false) {} };"
+		"struct Value { Value(int) noexcept(false) {} }; struct ClassDefault { ClassDefault(short, Value = 7) noexcept {} };");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	const auto targetFor = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		REQUIRE(table.node(imported.type).kind == CanonicalTypeKind::Record);
+		TypeSpecifierNode target(TypeCategory::Struct, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+		target.set_type_entity(table.recordEntity(imported.type));
+		REQUIRE_FALSE(target.type_index().is_valid());
+		return target;
+	};
+	const std::array<TypeSpecifierNode, 2> arguments{TypeSpecifierNode(TypeCategory::Short, TypeQualifier::None, 16, Token{}, CVQualifier::None),
+		TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None)};
+	const auto nothrow = [&](std::string_view name, size_t count) {
+		return evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, targetFor(name),
+			std::span<const TypeSpecifierNode>(arguments.data(), count), ConstructibilityFallback::None);
+	};
+	const auto defaults = nothrow("Defaults", 1);
+	REQUIRE(defaults.has_value());
+	CHECK(defaults->success);
+	CHECK(defaults->value);
+	const auto mixed_supplied = nothrow("Mixed", 2);
+	REQUIRE(mixed_supplied.has_value());
+	CHECK(mixed_supplied->success);
+	CHECK(mixed_supplied->value);
+	CHECK_FALSE(nothrow("Mixed", 1).has_value());
+	CHECK_FALSE(nothrow("ConstexprDefault", 1).has_value());
+	CHECK_FALSE(nothrow("ClassDefault", 1).has_value());
+	const auto throwing = nothrow("Throwing", 1);
+	REQUIRE(throwing.has_value());
+	CHECK(throwing->success);
+	CHECK_FALSE(throwing->value);
+}
+
+TEST_CASE("Canonical constructor default exception proofs are bounded and immutable") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId record = table.record(EntityId{902001});
+	const std::array<TypeId, 2> parameters{table.builtin(CanonicalBuiltinKind::Int), table.builtin(CanonicalBuiltinKind::Double)};
+	CanonicalRecordConstructorSpec constructor{parameters, CanonicalRecordFunctionFlags::None, true, 1, 2};
+	CHECK_THROWS_AS(table.publishRecordConstructors(record, std::span<const CanonicalRecordConstructorSpec>(&constructor, 1)), InternalError);
+	CHECK_FALSE(table.hasRecordConstructors(record));
+	constructor.nothrow_default_count = 1;
+	table.publishRecordConstructors(record, std::span<const CanonicalRecordConstructorSpec>(&constructor, 1));
+	CHECK(table.recordConstructorAt(record, 0).nothrow_default_count == 1);
+	constructor.nothrow_default_count = 0;
+	CHECK_THROWS_AS(table.publishRecordConstructors(record, std::span<const CanonicalRecordConstructorSpec>(&constructor, 1)), InternalError);
+}

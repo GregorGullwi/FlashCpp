@@ -2734,6 +2734,18 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 		if (argument_types.size() < constructor.minimum_parameter_count || (!is_variadic && argument_types.size() > constructor.parameter_count)) {
 			continue;
 		}
+		if (argument_types.size() == 1 && constructor.parameter_count == 1 &&
+			hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Implicit)) {
+			const TypeId source = table.withoutTopLevelQualifiers(canonicalTypeWithoutReference(table, argument_types.front()));
+			const CanonicalTypeNode parameter = table.node(table.recordConstructorParameterAt(imported.type, index, 0));
+			const bool is_reference = parameter.kind == CanonicalTypeKind::LValueReference || parameter.kind == CanonicalTypeKind::RValueReference;
+			if (table.node(source).kind == CanonicalTypeKind::Builtin && is_reference && table.withoutTopLevelQualifiers(parameter.child) == imported.type) {
+				// A builtin source needs a converting constructor to form a class
+				// temporary. That constructor is already a better direct candidate
+				// than an implicit copy/move requiring that user-defined conversion.
+				continue;
+			}
+		}
 		bool matches = true;
 		RankedConstructor candidate{constructor, {}};
 		candidate.argument_ranks.reserve(argument_types.size());
@@ -2866,9 +2878,9 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 		return TypeTraitResult::success_true();
 	}
 	if (kind == TypeTraitKind::IsNothrowConstructible) {
-		if (argument_types.size() < selected.parameter_count) {
-			// The default argument expression may throw independently of the
-			// selected constructor's exception specification.
+		if (argument_types.size() + selected.nothrow_default_count < selected.parameter_count) {
+			// Only a published suffix proves every omitted parameter initializer
+			// cannot throw independently of the constructor's exception specification.
 			return std::nullopt;
 		}
 		if (hasCanonicalRecordFunctionFlag(selected.flags, CanonicalRecordFunctionFlags::Implicit) ||

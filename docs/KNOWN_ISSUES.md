@@ -230,6 +230,14 @@ with `template<class T> C(T, ...)` currently reports false for
 not be published as an ordinary constructor, even when none of its fixed
 parameter types mention the template parameter. Class-template constructors
 whose owner arguments are already substituted are covered by the new schemas.
+The canonical nothrow query proves arithmetic literal defaults (including unary
+signs) from a published trailing suffix. Reference defaults, general expressions,
+and class conversions still need initialization and exception facts. The legacy
+argument-bearing query ignores exceptions from omitted defaults: a constructor
+`C(int, int = mayThrow()) noexcept` can incorrectly report nothrow construction
+from one `int`. Preserve an unknown canonical result for that initializer until
+its expression and conversion can be classified; the compatibility answer remains
+an existing correctness gap.
 Concepts using unsupported sema-owned traits must retain an explicit unknown outcome rather than treating
 it as satisfaction or failure. Static member semantic identity must remain
 canonical through any remaining flat-consumer migration.
