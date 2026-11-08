@@ -9,6 +9,7 @@ struct SourceMemberStructInfoIndexMaps;
 
 inline void copyConstructorDeclarationFlags(const ConstructorDeclarationNode& source, ConstructorDeclarationNode& target) {
 	target.set_is_implicit(source.is_implicit());
+	target.set_is_variadic(source.is_variadic());
 	target.set_is_explicitly_defaulted(source.is_explicitly_defaulted());
 	target.set_was_defaulted_on_first_declaration(source.was_defaulted_on_first_declaration());
 	target.set_is_inline(source.is_inline());
