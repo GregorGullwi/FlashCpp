@@ -1521,10 +1521,13 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 		}
 		if (imported.status == CanonicalTypeImportStatus::Supported) {
 			const TypeId result_type = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, imported.type)).first;
-			result_is_function_designator = table.node(result_type).kind == CanonicalTypeKind::Function;
-			if (result_is_function_designator) {
-				// Same-type function glvalues keep their semantic function identity;
-				// the selected callable address has a pointer-sized IR representation.
+			const CanonicalTypeNode result_node = table.node(result_type);
+			result_is_function_designator = result_node.kind == CanonicalTypeKind::Function;
+			const bool result_is_function_pointer = result_node.kind == CanonicalTypeKind::Pointer &&
+				table.node(result_node.child).kind == CanonicalTypeKind::Function;
+			if (result_is_function_designator || result_is_function_pointer) {
+				// A function address keeps its pointer representation even when
+				// materialized syntax carries the function's return category.
 				common_cat = TypeCategory::FunctionPointer;
 			}
 		}

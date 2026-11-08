@@ -2913,6 +2913,56 @@ TEST_CASE("Published pointer and array materialization follows canonical identit
 	CHECK(refreshed.array_extent == 99);
 }
 
+TEST_CASE("Conditional callable pointer types preserve their exact signature") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	CompileContext test_context;
+	test_context.setInputFile("canonical_conditional_callable_pointer.cpp");
+	Lexer lexer("using Callback = int (*)(int); struct Holder { Callback callback; }; Holder holder; Callback local; bool condition; int target(int);");
+	SemanticAnalysis sema(test_context, gSymbolTable);
+	Parser parser(lexer, test_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	auto identifier = [](std::string_view spelling) {
+		return ASTNode::emplace_node<ExpressionNode>(IdentifierNode(Token(Token::Type::Identifier, spelling, 0, 0, 0)));
+	};
+	const ASTNode local = identifier("local");
+	const Token member_token(Token::Type::Identifier, std::string_view("callback"), 0, 0, 0);
+	ASTNode true_expr = ASTNode::emplace_node<ExpressionNode>(MemberAccessNode(identifier("holder"), member_token, false));
+	ASTNode false_expr = local;
+	bool is_glvalue = true;
+	SUBCASE("Member and local pointer") {
+	}
+	SUBCASE("Identical local pointers") {
+		true_expr = local;
+	}
+	SUBCASE("Function address expressions") {
+		is_glvalue = false;
+		const Token address(Token::Type::Operator, std::string_view("&"), 0, 0, 0);
+		true_expr = ASTNode::emplace_node<ExpressionNode>(UnaryOperatorNode(address, identifier("target")));
+		false_expr = ASTNode::emplace_node<ExpressionNode>(UnaryOperatorNode(address, identifier("target")));
+	}
+	const Token question(Token::Type::Operator, std::string_view("?"), 0, 0, 0);
+	const ASTNode expression = ASTNode::emplace_node<ExpressionNode>(TernaryOperatorNode(identifier("condition"), true_expr, false_expr, question));
+	const TypeSpecifierQueryResult query = sema.analyzeExpressionTypeQuery(expression);
+	REQUIRE(query.hasValue());
+	const auto slot = sema.getSlot(&expression.as<ExpressionNode>());
+	REQUIRE(slot.has_value());
+	CHECK(slot->value_category == (is_glvalue ? ValueCategory::LValue : ValueCategory::PRValue));
+	const auto local_symbol = gSymbolTable.lookup("local");
+	REQUIRE(local_symbol.has_value());
+	const DeclarationNode* declaration = get_decl_from_symbol(*local_symbol);
+	REQUIRE(declaration != nullptr);
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const CanonicalTypeImport expected = importCanonicalType(table, declaration->type_specifier_node());
+	const CanonicalTypeImport actual = importCanonicalType(table, *query.type);
+	REQUIRE(expected.status == CanonicalTypeImportStatus::Supported);
+	REQUIRE(actual.status == CanonicalTypeImportStatus::Supported);
+	CHECK(canonicalTypeWithoutReference(table, actual.type) == expected.type);
+	CHECK(table.node(expected.type).kind == CanonicalTypeKind::Pointer);
+	CHECK(table.node(table.node(expected.type).child).kind == CanonicalTypeKind::Function);
+}
+
 TEST_CASE("Builtin indirection retains the adopted structural pointee after interning") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

@@ -975,9 +975,15 @@ std::optional<CanonicalTypeDesc> tryGetConditionalPointerType(
 		if (auto decayed = decayArrayForConditional(desc)) {
 			return decayed;
 		}
-		if (desc.structural_type_id) {
+		TypeId structural_id = desc.structural_type_id;
+		if (!structural_id && desc.function_signature.has_value()) {
+			const CanonicalTypeImport imported = tryImportCanonicalTypeDesc(desc);
+			if (imported.status == CanonicalTypeImportStatus::Supported) {
+				structural_id = imported.type;
+			}
+		}
+		if (structural_id) {
 			CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-			TypeId structural_id = desc.structural_type_id;
 			CanonicalTypeNode node = table.node(structural_id);
 			while (node.child && (node.kind == CanonicalTypeKind::LValueReference || node.kind == CanonicalTypeKind::RValueReference)) {
 				structural_id = node.child;
@@ -986,6 +992,9 @@ std::optional<CanonicalTypeDesc> tryGetConditionalPointerType(
 			CanonicalTypeNode unqualified = node;
 			if (node.kind == CanonicalTypeKind::Qualified && node.child) {
 				unqualified = table.node(node.child);
+			}
+			if (node.kind == CanonicalTypeKind::Function) {
+				return adoptPublishedStructuralType(desc, table.pointer(structural_id));
 			}
 			if (node.kind == CanonicalTypeKind::Pointer || unqualified.kind == CanonicalTypeKind::Pointer) {
 				CanonicalTypeDesc pointer = desc;
@@ -7479,11 +7488,40 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 
 			const ValueCategory true_category = inferExpressionValueCategory(inner.true_expr());
 			const ValueCategory false_category = inferExpressionValueCategory(inner.false_expr());
-			const bool same_glvalue_type_and_category =
-				canonical_types_match(true_type_id, false_type_id) &&
-				true_category == false_category &&
-				true_category != ValueCategory::PRValue;
-			return same_glvalue_type_and_category ? true_category : ValueCategory::PRValue;
+			if (true_category != false_category || true_category == ValueCategory::PRValue) {
+				return ValueCategory::PRValue;
+			}
+			bool same_type = canonical_types_match(true_type_id, false_type_id);
+			if (!same_type) {
+				// Published members and cold callable descriptors can denote the
+				// same type. Strip references for comparison while retaining cv.
+				CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+				const auto importCallableType = [this, &table](CanonicalTypeId type_id) -> TypeId {
+					const CanonicalTypeDesc desc = type_context_.get(type_id);
+					if (!desc.structural_type_id && !desc.function_signature.has_value()) {
+						return {};
+					}
+					const CanonicalTypeImport imported = tryImportCanonicalTypeDesc(desc);
+					if (imported.status != CanonicalTypeImportStatus::Supported) {
+						return {};
+					}
+					const TypeId type = canonicalTypeWithoutReference(table, imported.type);
+					const CanonicalTypeNode node = nodeUnderQualifiersAndReferences(table, type);
+					if (node.kind == CanonicalTypeKind::Function) {
+						return type;
+					}
+					if (node.kind == CanonicalTypeKind::Pointer && node.child &&
+						nodeUnderQualifiersAndReferences(table, node.child).kind == CanonicalTypeKind::Function) {
+						return type;
+					}
+					return {};
+				};
+				const TypeId true_callable_type = importCallableType(true_type_id);
+				if (true_callable_type) {
+					same_type = true_callable_type == importCallableType(false_type_id);
+				}
+			}
+			return same_type ? true_category : ValueCategory::PRValue;
 		} else if constexpr (std::is_same_v<T, CallExprNode>) {
 			const FunctionDeclarationNode* func_decl = nullptr;
 			const ResolvedFunctionQueryResult direct_call_query = getResolvedDirectCallQuery(&inner);
@@ -16317,6 +16355,27 @@ void SemanticAnalysis::tryAnnotateTernaryBranchConversions(const TernaryOperator
 		if (!canonical_types_match(false_type_id, common_type_id))
 			tryAnnotateConversionByTypeId(ternary_node.false_expr(), common_type_id, false_type_id);
 		return;
+	}
+
+	// [expr.cond]: incompatible function pointer types have no composite pointer type.
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	const auto isFunctionPointer = [&table](const CanonicalTypeDesc& desc) {
+		if (!desc.structural_type_id && !desc.function_signature.has_value()) {
+			return false;
+		}
+		const CanonicalTypeImport imported = tryImportCanonicalTypeDesc(desc);
+		if (imported.status != CanonicalTypeImportStatus::Supported) {
+			return false;
+		}
+		const CanonicalTypeNode node = nodeUnderQualifiersAndReferences(table, imported.type);
+		if (node.kind != CanonicalTypeKind::Pointer || !node.child) {
+			return false;
+		}
+		return nodeUnderQualifiersAndReferences(table, node.child).kind == CanonicalTypeKind::Function;
+	};
+	if (isFunctionPointer(true_desc) && isFunctionPointer(false_desc)) {
+		throw makeStructuredCompileError(context_.diagnostics(), DiagnosticId::IncompatibleConditionalFunctionPointers, DiagnosticSeverity::Error,
+			SourceLocation::fromToken(ternary_node.get_token()), "conditional operands have incompatible function pointer types", {});
 	}
 
 	// Only handle primitive arithmetic types (not structs, pointers, etc.)

@@ -12271,7 +12271,13 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			// Get RHS source (function address or nullptr)
 		X64Register source_reg = allocateRegisterWithSpilling();
 
-		if (const auto* temp_var_ptr = std::get_if<TempVar>(&op.rhs.value)) {
+		if (const std::optional<VariableKey> rhs_key = variableKeyOf(op.rhs.value); rhs_key.has_value()) {
+			const VariableInfo* rhs_info = findVariableInfo(*rhs_key);
+			if (rhs_info == nullptr) {
+				throw InternalError("RHS variable not found in function pointer assignment");
+			}
+			emitMovFromFrame(source_reg, rhs_info->offset);
+		} else if (const auto* temp_var_ptr = std::get_if<TempVar>(&op.rhs.value)) {
 			TempVar rhs_var = *temp_var_ptr;
 			int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
 
@@ -12281,6 +12287,8 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 				// RHS is an immediate value (e.g., nullptr = 0)
 			unsigned long long rhs_value = *ull_val;
 			emitMovImm64(source_reg, rhs_value);
+		} else {
+			throw InternalError("Unsupported RHS type for function pointer assignment");
 		}
 
 		// Store source to LHS stack location (8 bytes for function pointer - always 64-bit)
