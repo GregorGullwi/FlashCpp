@@ -149,8 +149,10 @@ deferred bodies. Template alias and variable declarations snapshot their bounds,
 replay metadata, and declaration IDs; standalone variable declarations snapshot
 their initializer, storage/linkage/constexpr flags, and outer bindings; friend
 declarations snapshot their class, template, function, type, and declaration
-identity fields. Other in-place rewrites of owners outside the type registry
-still need an owned publication boundary before
+identity fields. Pre-existing `TypeSpecifierNode` owners snapshot the whole type
+shape on their first size, cv/pointer/array, declarator, specialization,
+dependent-name, member-class, or identity rewrite. Other in-place rewrites of
+owners outside the type registry still need an owned publication boundary before
 enabling a transaction around type-pack materialization. Required dependency instantiations
 must remain separate from that candidate-local transaction; blanket rollback
 would violate observable C++20 instantiation effects. Lockstep member and
@@ -479,7 +481,8 @@ These seed adjacent slices; the authoritative inventory is
   outer-template binding rewrites, and whole-declaration snapshots for
   pre-existing `StructDeclarationNode`, `FunctionDeclarationNode`, standalone
   `DeclarationNode`, `EnumDeclarationNode`, helper and template declarations,
-  standalone/template variable declarations, and friend declarations.
+  standalone/template variable declarations, friend declarations, and
+  pre-existing `TypeSpecifierNode` shapes.
   Scope creation, cursor movement, and `ScopeRecord` publication roll back
   together after symbol-map undo. Nested commits stay
   provisional until the outer transaction commits; production speculative parsing
