@@ -1478,6 +1478,69 @@ TEST_SUITE("FrontendContext") {
 		CHECK(variable.linkage() == Linkage::CPlusPlus);
 	}
 
+	TEST_CASE("Frontend scratch rollback restores type specifier rewrites") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		auto legacy_types = ScopeGuard([] { clearLegacyTypeTablesForTesting(); });
+
+		FrontendContext context;
+		ScratchTransactionParserFixture fixture(context);
+		ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(
+			TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		TypeSpecifierNode& type = type_node.as<TypeSpecifierNode>();
+		CHECK(type.category() == TypeCategory::Int);
+		CHECK(type.size_in_bits() == 32);
+		CHECK(type.cv_qualifier() == CVQualifier::None);
+		CHECK(type.pointer_depth() == 0u);
+		CHECK_FALSE(type.is_array());
+		CHECK(type.reference_qualifier() == ReferenceQualifier::None);
+		{
+			auto outer = context.beginScratchTransaction();
+			type.set_size_in_bits(64);
+			type.set_cv_qualifier(CVQualifier::Const);
+			type.add_pointer_level(CVQualifier::None);
+			CHECK(type.size_in_bits() == 64);
+			CHECK(type.cv_qualifier() == CVQualifier::Const);
+			CHECK(type.pointer_depth() == 1u);
+			{
+				auto inner = context.beginScratchTransaction();
+				type.add_pointer_level(CVQualifier::Volatile);
+				type.set_array(true, 4);
+				type.set_pack_expansion(true);
+				type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+				CHECK(type.pointer_depth() == 2u);
+				CHECK(type.is_array());
+				CHECK(type.array_dimension_count() == 1u);
+				CHECK(type.is_pack_expansion());
+				CHECK(type.reference_qualifier() == ReferenceQualifier::LValueReference);
+				inner.rollback();
+			}
+			CHECK(type.size_in_bits() == 64);
+			CHECK(type.cv_qualifier() == CVQualifier::Const);
+			CHECK(type.pointer_depth() == 1u);
+			CHECK_FALSE(type.is_array());
+			CHECK_FALSE(type.is_pack_expansion());
+			CHECK(type.reference_qualifier() == ReferenceQualifier::None);
+			outer.rollback();
+		}
+		CHECK(type.category() == TypeCategory::Int);
+		CHECK(type.size_in_bits() == 32);
+		CHECK(type.cv_qualifier() == CVQualifier::None);
+		CHECK(type.pointer_depth() == 0u);
+		CHECK_FALSE(type.is_array());
+
+		{
+			auto transaction = context.beginScratchTransaction();
+			type.set_cv_qualifier(CVQualifier::Volatile);
+			type.add_pointer_level(CVQualifier::Const);
+			transaction.commit();
+		}
+		CHECK(type.cv_qualifier() == CVQualifier::Volatile);
+		CHECK(type.pointer_depth() == 1u);
+	}
+
 	TEST_CASE("Frontend scratch rollback restores in-place qualified identifier rewrites") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

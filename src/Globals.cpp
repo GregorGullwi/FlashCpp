@@ -313,6 +313,7 @@ FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& 
 		context.legacy_template_variable_declaration_rewrite_segment_start_;
 	const size_t previous_friend_declaration_rewrite_start = context.legacy_friend_declaration_rewrite_segment_start_;
 	const size_t previous_variable_declaration_rewrite_start = context.legacy_variable_declaration_rewrite_segment_start_;
+	const size_t previous_type_specifier_rewrite_start = context.legacy_type_specifier_rewrite_segment_start_;
 	context.legacy_qualified_identifier_rewrite_segment_start_ = context.legacy_qualified_identifier_rewrites_.size();
 	context.legacy_outer_template_binding_rewrite_segment_start_ = context.legacy_outer_template_binding_rewrites_.size();
 	context.legacy_struct_declaration_rewrite_segment_start_ = context.legacy_struct_declaration_rewrites_.size();
@@ -328,6 +329,7 @@ FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& 
 		context.legacy_template_variable_declaration_rewrites_.size();
 	context.legacy_friend_declaration_rewrite_segment_start_ = context.legacy_friend_declaration_rewrites_.size();
 	context.legacy_variable_declaration_rewrite_segment_start_ = context.legacy_variable_declaration_rewrites_.size();
+	context.legacy_type_specifier_rewrite_segment_start_ = context.legacy_type_specifier_rewrites_.size();
 	return FrontendPublicationJournalMark{context_depth, namespace_depth, legacy_type_registry_depth, context.scope_records_.size(),
 		gChunkedAnyStorage.size(), context.legacy_qualified_identifier_rewrites_.size(), previous_rewrite_start,
 		context.legacy_outer_template_binding_rewrites_.size(), previous_template_binding_rewrite_start,
@@ -340,7 +342,8 @@ FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& 
 		context.legacy_template_alias_declaration_rewrites_.size(), previous_template_alias_declaration_rewrite_start,
 		context.legacy_template_variable_declaration_rewrites_.size(), previous_template_variable_declaration_rewrite_start,
 		context.legacy_friend_declaration_rewrites_.size(), previous_friend_declaration_rewrite_start,
-		context.legacy_variable_declaration_rewrites_.size(), previous_variable_declaration_rewrite_start, parser_journal,
+		context.legacy_variable_declaration_rewrites_.size(), previous_variable_declaration_rewrite_start,
+		context.legacy_type_specifier_rewrites_.size(), previous_type_specifier_rewrite_start, parser_journal,
 		parser_publication_handle, context.current_scope_id_};
 }
 
@@ -400,6 +403,8 @@ void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicat
 		context.legacy_friend_declaration_rewrite_segment_start_ = 0;
 		context.legacy_variable_declaration_rewrites_.clear();
 		context.legacy_variable_declaration_rewrite_segment_start_ = 0;
+		context.legacy_type_specifier_rewrites_.clear();
+		context.legacy_type_specifier_rewrite_segment_start_ = 0;
 		gFrontendPublicationJournalOwner = nullptr;
 	} else {
 		context.legacy_qualified_identifier_rewrite_segment_start_ = mark.previous_legacy_qualified_identifier_rewrite_segment_start;
@@ -418,6 +423,7 @@ void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicat
 			mark.previous_legacy_template_variable_declaration_rewrite_segment_start;
 		context.legacy_friend_declaration_rewrite_segment_start_ = mark.previous_legacy_friend_declaration_rewrite_segment_start;
 		context.legacy_variable_declaration_rewrite_segment_start_ = mark.previous_legacy_variable_declaration_rewrite_segment_start;
+		context.legacy_type_specifier_rewrite_segment_start_ = mark.previous_legacy_type_specifier_rewrite_segment_start;
 	}
 }
 
@@ -538,6 +544,14 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 		*rewrite.owner = std::move(*rewrite.snapshot);
 	}
 	context.legacy_variable_declaration_rewrites_.resize(mark.legacy_variable_declaration_rewrite_count);
+	for (size_t index = context.legacy_type_specifier_rewrites_.size(); index > mark.legacy_type_specifier_rewrite_count; --index) {
+		LegacyTypeSpecifierRewrite& rewrite = context.legacy_type_specifier_rewrites_[index - 1];
+		if (rewrite.owner == nullptr || !rewrite.snapshot.has_value() || !gChunkedAnyStorage.containsAddress(rewrite.owner)) {
+			continue;
+		}
+		*rewrite.owner = std::move(*rewrite.snapshot);
+	}
+	context.legacy_type_specifier_rewrites_.resize(mark.legacy_type_specifier_rewrite_count);
 	gChunkedAnyStorage.truncateTo(mark.legacy_ast_node_count);
 	parser.restoreParserCursor(mark.parser_publication_handle);
 	parser.discardParserCursor(mark.parser_publication_handle);
@@ -555,6 +569,7 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 		context.legacy_template_variable_declaration_rewrite_segment_start_ = 0;
 		context.legacy_friend_declaration_rewrite_segment_start_ = 0;
 		context.legacy_variable_declaration_rewrite_segment_start_ = 0;
+		context.legacy_type_specifier_rewrite_segment_start_ = 0;
 		gFrontendPublicationJournalOwner = nullptr;
 	} else {
 		context.legacy_qualified_identifier_rewrite_segment_start_ = mark.previous_legacy_qualified_identifier_rewrite_segment_start;
@@ -573,6 +588,7 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 			mark.previous_legacy_template_variable_declaration_rewrite_segment_start;
 		context.legacy_friend_declaration_rewrite_segment_start_ = mark.previous_legacy_friend_declaration_rewrite_segment_start;
 		context.legacy_variable_declaration_rewrite_segment_start_ = mark.previous_legacy_variable_declaration_rewrite_segment_start;
+		context.legacy_type_specifier_rewrite_segment_start_ = mark.previous_legacy_type_specifier_rewrite_segment_start;
 	}
 }
 
@@ -877,6 +893,29 @@ void journalVariableDeclarationRewrite(VariableDeclarationNode& node) {
 		return;
 	}
 	context->journalVariableDeclarationRewrite(node);
+}
+
+void FrontendContext::journalTypeSpecifierRewrite(TypeSpecifierNode& node) {
+	if (publication_transaction_depth_ == 0 || !gChunkedAnyStorage.containsAddress(&node)) {
+		return;
+	}
+	for (size_t index = legacy_type_specifier_rewrite_segment_start_; index < legacy_type_specifier_rewrites_.size(); ++index) {
+		if (legacy_type_specifier_rewrites_[index].owner == &node) {
+			return;
+		}
+	}
+	LegacyTypeSpecifierRewrite rewrite;
+	rewrite.owner = &node;
+	rewrite.snapshot.emplace(node);
+	legacy_type_specifier_rewrites_.push_back(std::move(rewrite));
+}
+
+void journalTypeSpecifierRewrite(TypeSpecifierNode& node) {
+	FrontendContext* context = FrontendContext::active();
+	if (context == nullptr) {
+		return;
+	}
+	context->journalTypeSpecifierRewrite(node);
 }
 
 void journalOuterTemplateBindingRewrite(void* owner, TemplateParamNameVector& names, TemplateArgInfoVector& args,

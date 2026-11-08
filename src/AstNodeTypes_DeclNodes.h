@@ -1861,6 +1861,8 @@ struct PointerLevel {
 	explicit PointerLevel(CVQualifier cv) : cv_qualifier(cv) {}
 };
 
+void journalTypeSpecifierRewrite(TypeSpecifierNode& node);
+
 class TypeSpecifierNode {
 public:
 	TypeSpecifierNode() = default;
@@ -1897,8 +1899,14 @@ public:
 	TypeCategory type() const { return type_index_.category(); }
 	SizeInBits sizeBits() const { return size_; }
 	int size_in_bits() const { return size_.value; }
-	void set_size_in_bits(SizeInBits size_in_bits) { size_ = size_in_bits; }
-	void set_size_in_bits(int size_in_bits) { size_ = SizeInBits{size_in_bits}; }
+	void set_size_in_bits(SizeInBits size_in_bits) {
+		journalTypeSpecifierRewrite(*this);
+		size_ = size_in_bits;
+	}
+	void set_size_in_bits(int size_in_bits) {
+		journalTypeSpecifierRewrite(*this);
+		size_ = SizeInBits{size_in_bits};
+	}
 	auto qualifier() const { return qualifier_; }
 	auto cv_qualifier() const { return cv_qualifier_; }
 	CVQualifier top_level_cv_qualifier() const {
@@ -1906,10 +1914,14 @@ public:
 			? cv_qualifier_
 			: pointer_levels_.back().cv_qualifier;
 	}
-	void set_cv_qualifier(CVQualifier cv) { cv_qualifier_ = cv; }
+	void set_cv_qualifier(CVQualifier cv) {
+		journalTypeSpecifierRewrite(*this);
+		cv_qualifier_ = cv;
+	}
 	// Adds a cv-qualifier using bitwise OR - safe to call multiple times with same qualifier
 	// (e.g., parsing "T const volatile" or accidentally "T const const" will just set the bits)
 	void add_cv_qualifier(CVQualifier cv) {
+		journalTypeSpecifierRewrite(*this);
 		cv_qualifier_ = static_cast<CVQualifier>(static_cast<uint8_t>(cv_qualifier_) | static_cast<uint8_t>(cv));
 	}
 	auto type_index() const { return type_index_; }
@@ -1933,27 +1945,39 @@ public:
 		}
 		return result;
 	}
-	void limit_pointer_depth(size_t max_depth) { pointer_levels_.resize(std::min(max_depth, pointer_levels_.size())); }
-	void add_pointer_level(CVQualifier cv = CVQualifier::None) { pointer_levels_.push_back(PointerLevel(cv)); }
+	void limit_pointer_depth(size_t max_depth) {
+		journalTypeSpecifierRewrite(*this);
+		pointer_levels_.resize(std::min(max_depth, pointer_levels_.size()));
+	}
+	void add_pointer_level(CVQualifier cv = CVQualifier::None) {
+		journalTypeSpecifierRewrite(*this);
+		pointer_levels_.push_back(PointerLevel(cv));
+	}
 	// [dcl.ptr], [dcl.typedef]: `using Row = int[2]; Row*` points at that array.
 	// A ptr-operator on an array object makes the array the pointee.
 	void add_pointer_to_denoted_type(CVQualifier cv) {
+		journalTypeSpecifierRewrite(*this);
 		if (is_array_object()) {
 			set_pointee_array_declarator(true);
 		}
 		add_pointer_level(cv);
 	}
 	void add_pointer_levels(int pointer_depth) {
+		journalTypeSpecifierRewrite(*this);
 		while (pointer_depth) {
 			pointer_levels_.push_back(PointerLevel(CVQualifier::None));
 			--pointer_depth;
 		}
 	}
 	void remove_pointer_level() {
+		journalTypeSpecifierRewrite(*this);
 		if (!pointer_levels_.empty())
 			pointer_levels_.pop_back();
 	}
-	void copy_pointer_levels_from(const TypeSpecifierNode& other) { pointer_levels_ = other.pointer_levels_; }
+	void copy_pointer_levels_from(const TypeSpecifierNode& other) {
+		journalTypeSpecifierRewrite(*this);
+		pointer_levels_ = other.pointer_levels_;
+	}
 
 	bool has_ordered_declarator() const { return !declarator_components_.empty(); }
 	std::span<const DeclaratorComponent> declarator_components() const {
@@ -2012,10 +2036,12 @@ public:
 		return depth;
 	}
 	void set_ordered_declarator(std::vector<DeclaratorComponent> components) {
+		journalTypeSpecifierRewrite(*this);
 		declarator_components_ = std::move(components);
 		rebuild_legacy_declarator_projection();
 	}
 	void rebindOrderedMemberOwner(EntityId source_entity, TypeId source_type, TypeId target_type) {
+		journalTypeSpecifierRewrite(*this);
 		if (!source_entity || !source_type || !target_type) throw InternalError("member owner rebinding requires published identities");
 		for (DeclaratorComponent& component : declarator_components_) {
 			if (component.memberOwnerEntity() != source_entity && component.memberOwnerType() != source_type) continue;
@@ -2025,10 +2051,12 @@ public:
 		rebuild_legacy_declarator_projection();
 	}
 	void clear_ordered_declarator() {
+		journalTypeSpecifierRewrite(*this);
 		declarator_components_.clear();
 		declarator_has_legacy_projection_ = true;
 	}
 	void clear_declarator_shape() {
+		journalTypeSpecifierRewrite(*this);
 		pointer_levels_.clear();
 		reference_qualifier_ = ReferenceQualifier::None;
 		is_array_ = false;
@@ -2063,6 +2091,7 @@ public:
 	bool is_lvalue_reference() const { return reference_qualifier_ == ReferenceQualifier::LValueReference; }
 	ReferenceQualifier reference_qualifier() const { return reference_qualifier_; }
 	void set_reference_qualifier(ReferenceQualifier qual) {
+		journalTypeSpecifierRewrite(*this);
 		reference_qualifier_ = qual;
 	}
 
@@ -2086,8 +2115,12 @@ public:
 			type_index_.category() != TypeCategory::MemberFunctionPointer &&
 			runtime_pointer_depth() == 1;
 	}
-	void clear_function_signature() { function_signature_.reset(); }
+	void clear_function_signature() {
+		journalTypeSpecifierRewrite(*this);
+		function_signature_.reset();
+	}
 	void set_function_signature(const FunctionSignature& sig) {
+		journalTypeSpecifierRewrite(*this);
 		function_signature_ = sig;
 		if (type_index_.category() != TypeCategory::MemberFunctionPointer ||
 			!member_class_name_.has_value() ||
@@ -2126,6 +2159,7 @@ public:
 		return is_reference() && is_array_ && !has_pointee_array_declarator();
 	}
 	void set_array(bool is_array, std::optional<size_t> array_size = std::nullopt) {
+		journalTypeSpecifierRewrite(*this);
 		is_array_ = is_array;
 		array_dimensions_.clear();
 		has_unsized_outer_array_dimension_ = false;
@@ -2139,6 +2173,7 @@ public:
 	// The declared entity itself is not an array object.
 	bool has_pointee_array_declarator() const { return pointee_array_declarator_; }
 	void set_pointee_array_declarator(bool has_pointee_array_declarator) {
+		journalTypeSpecifierRewrite(*this);
 		pointee_array_declarator_ = has_pointee_array_declarator;
 		if (has_pointee_array_declarator) {
 			is_array_ = false;
@@ -2152,15 +2187,18 @@ public:
 	// Stores the pointee bounds carried by a pointer-to-array declarator
 	// without changing the object-ness of the declared entity.
 	void set_pointee_array_dimensions(std::span<const size_t> dims) {
+		journalTypeSpecifierRewrite(*this);
 		array_dimensions_.assign(dims.begin(), dims.end());
 	}
 	// Multidimensional array support
 	void add_array_dimension(size_t size) {
+		journalTypeSpecifierRewrite(*this);
 		is_array_ = true;
 		has_unsized_outer_array_dimension_ = false;
 		array_dimensions_.push_back(size);
 	}
 	void set_array_dimensions(std::span<const size_t> dims) {
+		journalTypeSpecifierRewrite(*this);
 		is_array_ = !dims.empty();
 		has_unsized_outer_array_dimension_ = false;
 		array_dimensions_.assign(dims.begin(), dims.end());
@@ -2172,6 +2210,7 @@ public:
 	}
 	bool has_unsized_outer_array_dimension() const { return has_unsized_outer_array_dimension_; }
 	void set_unsized_outer_array_dimension(bool has_unsized_outer_array_dimension) {
+		journalTypeSpecifierRewrite(*this);
 		has_unsized_outer_array_dimension_ = has_unsized_outer_array_dimension;
 		// [dcl.ptr]/1: an unknown outer bound on the pointee of a
 		// parenthesized declarator (T (*)[][N]) does not make the declared
@@ -2192,7 +2231,10 @@ public:
 
 	// Pack expansion support (for variadic templates like Args...)
 	bool is_pack_expansion() const { return is_pack_expansion_; }
-	void set_pack_expansion(bool is_pack) { is_pack_expansion_ = is_pack; }
+	void set_pack_expansion(bool is_pack) {
+		journalTypeSpecifierRewrite(*this);
+		is_pack_expansion_ = is_pack;
+	}
 
 	// Scoped binding identity for a type template parameter such as T in T&&.
 	// Consumers resolve this handle against the active template parameter list,
@@ -2202,10 +2244,12 @@ public:
 	bool has_template_parameter_identity() const { return template_parameter_name_.isValid(); }
 	StringHandle template_parameter_name() const { return template_parameter_name_; }
 	void set_template_parameter_identity(StringHandle name) {
+		journalTypeSpecifierRewrite(*this);
 		clear_dependent_name_type();
 		template_parameter_name_ = name;
 	}
 	void clear_template_parameter_identity() {
+		journalTypeSpecifierRewrite(*this);
 		template_parameter_name_ = {};
 		clear_template_parameter_decl();
 	}
@@ -2213,12 +2257,14 @@ public:
 	TemplateDeclId template_decl_id() const { return template_decl_id_; }
 	uint32_t template_parameter_index() const { return template_parameter_index_; }
 	void set_template_parameter_decl(TemplateDeclId template_decl, uint32_t parameter_index) {
+		journalTypeSpecifierRewrite(*this);
 		clear_dependent_name_type();
 		clear_template_specialization();
 		template_decl_id_ = template_decl;
 		template_parameter_index_ = parameter_index;
 	}
 	void clear_template_parameter_decl() {
+		journalTypeSpecifierRewrite(*this);
 		template_decl_id_ = {};
 		template_parameter_index_ = 0;
 	}
@@ -2253,6 +2299,7 @@ public:
 		return specialization_owner_type_id_;
 	}
 	void set_specialization_owner_type_id(TypeId owner_type_id) {
+		journalTypeSpecifierRewrite(*this);
 		if (!owner_type_id) {
 			throw InternalError("type specifier: invalid specialization owner TypeId");
 		}
@@ -2353,6 +2400,7 @@ public:
 	void set_template_specialization(
 		TemplateDeclId primary,
 		std::vector<TypeSpecifierNode> type_args) {
+		journalTypeSpecifierRewrite(*this);
 		if (!primary) {
 			throw InternalError("type specifier: invalid specialization TemplateDeclId");
 		}
@@ -2371,12 +2419,14 @@ public:
 		TemplateDeclId primary,
 		TypeId owner_type_id,
 		std::vector<TypeSpecifierNode> type_args) {
+		journalTypeSpecifierRewrite(*this);
 		set_template_specialization(primary, std::move(type_args));
 		set_specialization_owner_type_id(owner_type_id);
 	}
 	void set_alias_template_specialization(
 		TemplateDeclId primary,
 		std::vector<TypeSpecifierNode> type_args) {
+		journalTypeSpecifierRewrite(*this);
 		set_template_specialization(primary, std::move(type_args));
 		specialization_is_alias_template_ = true;
 	}
@@ -2387,6 +2437,7 @@ public:
 		std::vector<SpecNonTypeArgument> nttp_args,
 		std::vector<TemplateDeclId> template_args,
 		std::vector<SpecDependentTemplateArg> dependent_template_args) {
+		journalTypeSpecifierRewrite(*this);
 		set_template_specialization_mixed(
 			primary,
 			std::move(arg_kinds),
@@ -2403,6 +2454,7 @@ public:
 		std::vector<SpecNonTypeArgument> nttp_args,
 		std::vector<TemplateDeclId> template_args,
 		std::vector<SpecDependentTemplateArg> dependent_template_args) {
+		journalTypeSpecifierRewrite(*this);
 		if (!primary) {
 			throw InternalError("type specifier: invalid specialization TemplateDeclId");
 		}
@@ -2459,6 +2511,7 @@ public:
 		specialization_dependent_template_args_ = std::move(dependent_template_args);
 	}
 	void clear_template_specialization() {
+		journalTypeSpecifierRewrite(*this);
 		specialization_template_decl_ = {};
 		specialization_is_alias_template_ = false;
 		specialization_owner_type_id_ = {};
@@ -2479,6 +2532,7 @@ public:
 	bool has_dependent_name_type() const { return static_cast<bool>(dependent_name_type_); }
 	TypeId dependent_name_type() const { return dependent_name_type_; }
 	void set_dependent_name_type(TypeId type) {
+		journalTypeSpecifierRewrite(*this);
 		if (!type) {
 			throw InternalError("type specifier: invalid dependent-name TypeId");
 		}
@@ -2486,7 +2540,10 @@ public:
 		clear_template_specialization();
 		dependent_name_type_ = type;
 	}
-	void clear_dependent_name_type() { dependent_name_type_ = {}; }
+	void clear_dependent_name_type() {
+		journalTypeSpecifierRewrite(*this);
+		dependent_name_type_ = {};
+	}
 
 	bool has_injected_class_declaration() const {
 		return injected_class_declaration_ != nullptr;
@@ -2495,9 +2552,11 @@ public:
 		return injected_class_declaration_;
 	}
 	void set_injected_class_declaration(const StructDeclarationNode* declaration) {
+		journalTypeSpecifierRewrite(*this);
 		injected_class_declaration_ = declaration;
 	}
 	void clear_injected_class_declaration() {
+		journalTypeSpecifierRewrite(*this);
 		injected_class_declaration_ = nullptr;
 	}
 	void copy_binding_identity_from(const TypeSpecifierNode& other) {
@@ -2522,6 +2581,7 @@ public:
 	bool has_member_class() const { return member_class_name_.has_value(); }
 	StringHandle member_class_name() const { return *member_class_name_; }
 	void set_member_class_name(StringHandle class_name) {
+		journalTypeSpecifierRewrite(*this);
 		member_class_name_ = class_name;
 		if (type_index_.category() == TypeCategory::MemberFunctionPointer &&
 			function_signature_.has_value() &&
@@ -2532,6 +2592,7 @@ public:
 	bool has_member_class_entity() const { return static_cast<bool>(member_class_entity_); }
 	EntityId member_class_entity() const { return member_class_entity_; }
 	void set_member_class_entity(EntityId entity_id) {
+		journalTypeSpecifierRewrite(*this);
 		member_class_entity_ = entity_id;
 		member_class_type_id_ = {};
 	}
@@ -2540,10 +2601,12 @@ public:
 	}
 	TypeId member_class_type_id() const { return member_class_type_id_; }
 	void set_member_class_type_id(TypeId type_id) {
+		journalTypeSpecifierRewrite(*this);
 		member_class_entity_ = {};
 		member_class_type_id_ = type_id;
 	}
 	void clear_member_class_identity() {
+		journalTypeSpecifierRewrite(*this);
 		member_class_name_.reset();
 		member_class_entity_ = {};
 		member_class_type_id_ = {};
@@ -2561,22 +2624,36 @@ public:
 		return *member_object_pointee_;
 	}
 	void set_member_object_pointee(const TypeSpecifierNode* pointee) {
+		journalTypeSpecifierRewrite(*this);
 		member_object_pointee_ = pointee;
 	}
-	void clear_member_object_pointee() { member_object_pointee_ = nullptr; }
+	void clear_member_object_pointee() {
+		journalTypeSpecifierRewrite(*this);
+		member_object_pointee_ = nullptr;
+	}
 	// Published class/struct identity for the named type itself (not a member owner).
 	bool has_type_entity() const { return static_cast<bool>(type_entity_); }
 	EntityId type_entity() const { return type_entity_; }
-	void set_type_entity(EntityId entity_id) { type_entity_ = entity_id; }
-	void clear_type_entity() { type_entity_ = {}; }
+	void set_type_entity(EntityId entity_id) {
+		journalTypeSpecifierRewrite(*this);
+		type_entity_ = entity_id;
+	}
+	void clear_type_entity() {
+		journalTypeSpecifierRewrite(*this);
+		type_entity_ = {};
+	}
 
 	void set_type_index(TypeIndex index) {
+		journalTypeSpecifierRewrite(*this);
 		if (template_parameter_name_.isValid() && index.index() != type_index_.index()) {
 			clear_template_parameter_identity();
 		}
 		type_index_ = index;
 	}
-	void set_category(TypeCategory cat) { type_index_ = type_index_.withCategory(cat); }
+	void set_category(TypeCategory cat) {
+		journalTypeSpecifierRewrite(*this);
+		type_index_ = type_index_.withCategory(cat);
+	}
 	const Token& token() const { return token_; }
 	void copy_indirection_from(const TypeSpecifierNode& other) {
 		pointer_levels_ = other.pointer_levels_;

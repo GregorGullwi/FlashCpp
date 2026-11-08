@@ -228,7 +228,9 @@ bodies. Template alias and variable declarations snapshot bounds, replay
 metadata, and declaration IDs; standalone variable declarations snapshot their
 initializer, storage/linkage/constexpr flags, and outer bindings; friend
 declarations snapshot class, template, function, type, and declaration identity
-fields.
+fields. Pre-existing `TypeSpecifierNode` owners snapshot the whole type shape
+before size, cv/pointer/array, declarator, specialization, dependent-name,
+member-class, or identity rewrites.
 Other in-place rewrites of owners outside the type registry still need an owned
 rollback boundary before broad speculative parsing can rely on it. Existing
 `TypeInfo` rows reached
