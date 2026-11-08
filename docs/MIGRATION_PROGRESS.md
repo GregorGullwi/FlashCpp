@@ -330,8 +330,10 @@ mismatched, unpublished, or unresolved owner facts.
      omitted default arguments from published constructor schemas. It still
      defers to `StructTypeInfo` for user-defined converting constructors,
      non-trivially-copyable derived bases, incomplete schemas, and unresolved
-     canonical types. A defaulted parameter whose expression may throw still
-     defers for the nothrow variant. Constructor schemas retain ellipsis and rank
+     canonical types. The nothrow query consumes a published suffix of arithmetic
+     literal defaults, including unary signs; other omitted initializers still
+     defer. Implicit copy/move candidates cannot obscure a builtin argument's
+     better direct converting constructor. Constructor schemas retain ellipsis and rank
      supported extra arguments after conversions to named parameters. Class
      arguments passed through ellipsis still defer until their initialization
      and target-specific exception behavior can be decided structurally.

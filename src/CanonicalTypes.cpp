@@ -1611,7 +1611,8 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 			const CanonicalRecordConstructor expected = record_constructors_[header.constructor_begin + index];
 			if (expected.parameter_begin != parameter_cursor || expected.parameter_count != constructors[index].parameter_types.size() ||
 				expected.minimum_parameter_count != minimumParameterCount(constructors[index]) || expected.flags != constructors[index].flags ||
-				expected.is_noexcept != static_cast<uint8_t>(constructors[index].is_noexcept ? 1 : 0)) {
+				expected.is_noexcept != static_cast<uint8_t>(constructors[index].is_noexcept ? 1 : 0) ||
+				expected.nothrow_default_count != constructors[index].nothrow_default_count) {
 				throw InternalError("canonical type: conflicting record constructor schema publication");
 			}
 			for (size_t parameter = 0; parameter < expected.parameter_count; ++parameter) {
@@ -1629,6 +1630,9 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 		const size_t minimum_parameter_count = minimumParameterCount(constructor);
 		if (parameter_count > std::numeric_limits<uint16_t>::max() || minimum_parameter_count > parameter_count) {
 			throw InternalError("canonical type: invalid record constructor arity");
+		}
+		if (constructor.nothrow_default_count > parameter_count - minimum_parameter_count) {
+			throw InternalError("canonical type: invalid nothrow constructor default count");
 		}
 		total_parameters += constructor.parameter_types.size();
 	}
@@ -1651,6 +1655,7 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 			.flags = constructor.flags,
 			.is_noexcept = static_cast<uint8_t>(constructor.is_noexcept ? 1 : 0),
 			.minimum_parameter_count = static_cast<uint16_t>(minimumParameterCount(constructor)),
+			.nothrow_default_count = constructor.nothrow_default_count,
 		};
 		appendSchemaEntryUnlocked(record_constructors_, live_record_constructor_count_, entry);
 		parameter_cursor += entry.parameter_count;

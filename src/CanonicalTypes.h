@@ -567,12 +567,14 @@ enum class CanonicalRecordFunctionFlags : uint8_t {
 // EntityId. Parameter identity is canonical (TypeId); spelling is absent.
 // `parameter_begin`/`parameter_count` index the table's flat parameter arena;
 // minimum_parameter_count accounts for trailing default arguments.
+// nothrow_default_count proves initialization of that many trailing defaults cannot throw.
 struct CanonicalRecordConstructor {
 	uint32_t parameter_begin;
 	uint16_t parameter_count;
 	CanonicalRecordFunctionFlags flags;
 	uint8_t is_noexcept;
 	uint16_t minimum_parameter_count;
+	uint16_t nothrow_default_count;
 	friend bool operator==(CanonicalRecordConstructor, CanonicalRecordConstructor) = default;
 };
 static_assert(sizeof(CanonicalRecordConstructor) == 12);
@@ -584,6 +586,7 @@ struct CanonicalRecordConstructorSpec {
 	bool is_noexcept = false;
 	// The max-value sentinel means every declared parameter is required.
 	uint16_t minimum_parameter_count = std::numeric_limits<uint16_t>::max();
+	uint16_t nothrow_default_count = 0;
 };
 
 inline CanonicalRecordFunctionFlags operator|(CanonicalRecordFunctionFlags a, CanonicalRecordFunctionFlags b) {

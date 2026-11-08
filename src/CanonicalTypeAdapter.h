@@ -2992,6 +2992,31 @@ inline bool tryPublishCanonicalRecordSubobjectTypes(CanonicalTypeTable& table, T
 	return true;
 }
 
+// Prove both literal evaluation and builtin arithmetic parameter initialization.
+// Other expressions and parameter families leave the exception fact unknown.
+inline bool isCanonicalNothrowLiteralDefault(const CanonicalTypeTable& table, TypeId parameter_type, const ASTNode& initializer) {
+	const CanonicalTypeNode parameter = table.node(table.withoutTopLevelQualifiers(parameter_type));
+	if (parameter.kind != CanonicalTypeKind::Builtin || parameter.builtin == CanonicalBuiltinKind::Void ||
+		parameter.builtin == CanonicalBuiltinKind::Nullptr || parameter.builtin == CanonicalBuiltinKind::Count) {
+		return false;
+	}
+	const ExpressionNode* expression = initializer.get_if<ExpressionNode>();
+	while (expression != nullptr) {
+		if (const NumericLiteralNode* literal = std::get_if<NumericLiteralNode>(expression)) {
+			return isArithmeticType(literal->type());
+		}
+		if (std::holds_alternative<BoolLiteralNode>(*expression)) {
+			return true;
+		}
+		const UnaryOperatorNode* unary = std::get_if<UnaryOperatorNode>(expression);
+		if (unary == nullptr || (unary->op() != "+" && unary->op() != "-")) {
+			return false;
+		}
+		expression = unary->get_operand().get_if<ExpressionNode>();
+	}
+	return false;
+}
+
 // Publish a completed class's constructor schema keyed by its canonical TypeId
 // (Record or TemplateSpecialization), read from the declaration node so no
 // StructTypeInfo is needed; implicit special members are added to it as well.
@@ -3004,6 +3029,7 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 		CanonicalRecordFunctionFlags flags = CanonicalRecordFunctionFlags::None;
 		bool is_noexcept = false;
 		uint16_t minimum_parameter_count = 0;
+		uint16_t nothrow_default_count = 0;
 	};
 	std::vector<PendingConstructor> pending;
 	pending.reserve(struct_decl.member_functions().size());
@@ -3066,6 +3092,13 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 				importable = false;
 				break;
 			}
+			const DeclarationNode* declaration = parameter.get_if<DeclarationNode>();
+			if (declaration != nullptr && declaration->has_default_value() &&
+				isCanonicalNothrowLiteralDefault(table, *imported, declaration->default_value())) {
+				++entry.nothrow_default_count;
+			} else {
+				entry.nothrow_default_count = 0;
+			}
 			entry.parameter_types.push_back(*imported);
 		}
 		if (!importable) {
@@ -3098,6 +3131,7 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 			.flags = flags,
 			.is_noexcept = entry.is_noexcept,
 			.minimum_parameter_count = entry.minimum_parameter_count,
+			.nothrow_default_count = entry.nothrow_default_count,
 		});
 	}
 	table.publishRecordConstructors(type, constructors);
