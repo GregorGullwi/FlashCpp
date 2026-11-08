@@ -2113,6 +2113,22 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberFunctionPointer(C
 	return table.memberFunctionPointerValue(field_type, *declaring_class, declaring_ordinal);
 }
 
+inline std::optional<TypeId> tryImportCanonicalMemberPointerValue(CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax, StringHandle member_name) {
+	const CanonicalTypeImport imported = importCanonicalType(table, syntax);
+	if (imported.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	const CanonicalTypeKind kind = table.node(imported.type).kind;
+	if (kind == CanonicalTypeKind::MemberObjectPointer) {
+		return tryImportCanonicalStructuralMemberObjectPointer(table, imported.type, member_name);
+	}
+	if (kind == CanonicalTypeKind::MemberFunctionPointer) {
+		return tryImportCanonicalStructuralMemberFunctionPointer(table, imported.type, member_name);
+	}
+	return std::nullopt;
+}
+
 inline std::optional<TypeId> tryImportCanonicalStructuralFieldValue(CanonicalTypeTable& table, TypeId field_type,
 	const FlashCpp::NonTypeValueIdentity& value, size_t storage_size, std::optional<uint8_t> bit_width) {
 	if (value.is_dependent) {
@@ -2807,6 +2823,13 @@ inline CanonicalTypeImport importCanonicalClassSource(CanonicalTypeTable& table,
 		if (current.next_argument < source_arguments.size()) {
 			const size_t argument_index = current.next_argument;
 			const TypeInfo::TemplateArgInfo& argument = source_arguments[argument_index];
+			if (argument.is_value && !argument.is_pack &&
+				argument.nttp_kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer &&
+				argument.nttp_canonical_member_pointer_value) {
+				current.arguments.push_back(CanonicalTemplateArgument::makeValue(argument.nttp_canonical_member_pointer_value));
+				++current.next_argument;
+				continue;
+			}
 			if (argument.is_value && !argument.is_pack &&
 				argument.nttp_kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer &&
 				argument.nttp_object_target && argument.nttp_canonical_function_type &&

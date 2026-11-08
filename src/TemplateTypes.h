@@ -561,6 +561,7 @@ struct NonTypeValueIdentity {
 	StringHandle entity_name{};     // Named object/function for pointer/reference/function-pointer identities
 	EntityId object_target{};       // Published declaration identity for a non-null object pointer target
 	TypeId canonical_function_type{}; // Published target function type for a function pointer target
+	TypeId canonical_member_pointer_value{}; // Published non-null member pointer value
 	StringHandle member_name{};     // Class member for pointer-to-member identities
 	StringHandle member_class_name{}; // Declaring class for pointer-to-member identities
 	int64_t pointer_offset = 0;     // Array-element offset for object pointer identities

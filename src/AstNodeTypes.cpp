@@ -463,6 +463,7 @@ void copyTemplateArgInfoScalarFields(TypeInfo::TemplateArgInfo& dst, const TypeI
 	dst.nttp_entity_name = src.nttp_entity_name;
 	dst.nttp_object_target = src.nttp_object_target;
 	dst.nttp_canonical_function_type = src.nttp_canonical_function_type;
+	dst.nttp_canonical_member_pointer_value = src.nttp_canonical_member_pointer_value;
 	dst.nttp_member_name = src.nttp_member_name;
 	dst.nttp_pointer_offset = src.nttp_pointer_offset;
 	dst.structural_value = src.structural_value;
@@ -512,6 +513,7 @@ TypeInfo::TemplateArgInfo::TemplateArgInfo(const TemplateArgInfo& other)
 	  nttp_entity_name(other.nttp_entity_name),
 	  nttp_object_target(other.nttp_object_target),
 	  nttp_canonical_function_type(other.nttp_canonical_function_type),
+	  nttp_canonical_member_pointer_value(other.nttp_canonical_member_pointer_value),
 	  nttp_member_name(other.nttp_member_name),
 	  nttp_pointer_offset(other.nttp_pointer_offset),
 	  structural_value(other.structural_value),
@@ -542,6 +544,7 @@ TypeInfo::TemplateArgInfo::TemplateArgInfo(TemplateArgInfo&& other) noexcept
 	  nttp_entity_name(other.nttp_entity_name),
 	  nttp_object_target(other.nttp_object_target),
 	  nttp_canonical_function_type(other.nttp_canonical_function_type),
+	  nttp_canonical_member_pointer_value(other.nttp_canonical_member_pointer_value),
 	  nttp_member_name(other.nttp_member_name),
 	  nttp_pointer_offset(other.nttp_pointer_offset),
 	  structural_value(std::move(other.structural_value)),
