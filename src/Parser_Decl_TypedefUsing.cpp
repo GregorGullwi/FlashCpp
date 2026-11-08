@@ -172,6 +172,11 @@ bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::s
 		func_sig.is_variadic = is_variadic;
 		apply_parsed_function_type_qualifiers(func_sig, qualifiers, specifiers);
 
+		// The leading cv/reference qualifiers belong to the return type subtree,
+		// which the signature just captured. The node now denotes the function
+		// pointer or reference object, so it must not retain them itself.
+		type_spec.set_cv_qualifier(CVQualifier::None);
+		type_spec.set_reference_qualifier(ReferenceQualifier::None);
 		type_spec.set_type_index(nativeTypeIndex(
 			is_function_ptr
 				? TypeCategory::FunctionPointer
@@ -231,6 +236,11 @@ bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::s
 	func_sig.calling_convention = calling_conv;
 	func_sig.is_variadic = is_variadic;
 	apply_parsed_function_type_qualifiers(func_sig, qualifiers, specifiers);
+
+	// The function type itself is unqualified; the leading cv/reference
+	// qualifiers belong to the return type subtree captured above.
+	type_spec.set_cv_qualifier(CVQualifier::None);
+	type_spec.set_reference_qualifier(ReferenceQualifier::None);
 	type_spec.set_type_index(nativeTypeIndex(TypeCategory::Function));
 	type_spec.set_size_in_bits(SizeInBits{});
 	type_spec.limit_pointer_depth(0);
