@@ -404,16 +404,10 @@ bool placeholderReturnTypesMatch(const TypeSpecifierNode& lhs, const TypeSpecifi
 		lhs.type_index() != rhs.type_index() ||
 		lhs.cv_qualifier() != rhs.cv_qualifier() ||
 		lhs.reference_qualifier() != rhs.reference_qualifier() ||
-		lhs.pointer_depth() != rhs.pointer_depth() ||
+		!lhs.has_same_pointer_shape(rhs) ||
 		!lhs.has_same_ordered_declarator(rhs) ||
 		!std::ranges::equal(lhs.array_dimensions(), rhs.array_dimensions())) {
 		return false;
-	}
-
-	for (size_t i = 0; i < lhs.pointer_depth(); ++i) {
-		if (lhs.pointer_levels()[i].cv_qualifier != rhs.pointer_levels()[i].cv_qualifier) {
-			return false;
-		}
 	}
 
 	return true;
@@ -3205,7 +3199,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const VariableDeclarationNo
 		return original_var_decl.declaration_node();
 	}
 
-	if (begin_return_type.pointer_depth() > 0) {
+	if (begin_return_type.runtime_pointer_depth() > 0) {
 		TypeSpecifierNode deduced_loop_type = begin_return_type;
 		deduced_loop_type.remove_pointer_level();
 		return resolveRangedForLoopDeclNode(original_var_decl, deduced_loop_type);
@@ -3239,7 +3233,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 	auto prepare_comparison = [&](const FunctionDeclarationNode& begin_decl, const FunctionDeclarationNode& end_decl) {
 		auto iterator_object_type = [](const TypeSpecifierNode& return_type) {
 			TypeSpecifierNode object = return_type;
-			if (object.pointer_depth() == 0) {
+			if (object.runtime_pointer_depth() == 0) {
 				object.set_cv_qualifier(CVQualifier::None);
 			}
 			object.set_reference_qualifier(ReferenceQualifier::LValueReference);
@@ -3354,7 +3348,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 				mutable_stmt.set_resolved_adl_end_function(&adl_end_decl);
 				const TypeSpecifierNode& begin_return_type = adl_begin_decl.decl_node().type_specifier_node();
 				const FunctionDeclarationNode* dereference_func = nullptr;
-				if (begin_return_type.pointer_depth() == 0) {
+				if (begin_return_type.runtime_pointer_depth() == 0) {
 					// C++20 [stmt.ranged] materializes the iterator as
 					// `auto __begin = begin-expr;`, so top-level cv/ref from the
 					// begin-expression does not make the iterator object const.
@@ -3415,7 +3409,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 
 	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_specifier_node();
 	const FunctionDeclarationNode* dereference_func = nullptr;
-	if (begin_return_type.pointer_depth() == 0) {
+	if (begin_return_type.runtime_pointer_depth() == 0) {
 		// C++20 [stmt.ranged] lowers to `auto __begin = range.begin();`, so the
 		// iterator object used for `*__begin` is not made const by a const range
 		// object or const-qualified begin() member function.

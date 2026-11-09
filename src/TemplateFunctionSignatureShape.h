@@ -17,15 +17,10 @@ inline bool sameTypeSpecifierShape(const TypeSpecifierNode& lhs, const TypeSpeci
 	if (lhs.category() != rhs.category() ||
 		lhs.cv_qualifier() != rhs.cv_qualifier() ||
 		lhs.reference_qualifier() != rhs.reference_qualifier() ||
-		lhs.pointer_levels().size() != rhs.pointer_levels().size() ||
+		!lhs.has_same_pointer_shape(rhs) ||
 		!lhs.has_same_ordered_declarator(rhs) ||
 		lhs.is_array() != rhs.is_array()) {
 		return false;
-	}
-	for (size_t i = 0; i < lhs.pointer_levels().size(); ++i) {
-		if (lhs.pointer_levels()[i].cv_qualifier != rhs.pointer_levels()[i].cv_qualifier) {
-			return false;
-		}
 	}
 	if (!std::ranges::equal(lhs.array_dimensions(), rhs.array_dimensions())) {
 		return false;
