@@ -1607,6 +1607,26 @@ inline std::optional<TypeId> tryImportSupportedCanonical(
 	return imported.type;
 }
 
+inline std::optional<TypeId> tryImportSupportedCanonicalWithClassFallback(
+	CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax) {
+	if (std::optional<TypeId> imported = tryImportSupportedCanonical(table, syntax)) {
+		return imported;
+	}
+	if (!is_struct_type(syntax.category()) || !syntax.type_index().is_valid()) {
+		return std::nullopt;
+	}
+	const TypeInfo* type_info = tryGetTypeInfo(syntax.type_index());
+	if (type_info == nullptr) {
+		return std::nullopt;
+	}
+	const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *type_info);
+	if (imported.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	return imported.type;
+}
+
 // Commit declaration identity before storing a TypeId on persistent member metadata.
 inline TypeId importCanonicalStructMemberType(CanonicalTypeTable& table, const TypeSpecifierNode& syntax) {
 	TypeSpecifierNode bound_syntax = syntax;
@@ -2995,12 +3015,29 @@ inline bool tryPublishCanonicalRecordSubobjectTypes(CanonicalTypeTable& table, T
 // Prove both literal evaluation and builtin arithmetic parameter initialization.
 // Other expressions and parameter families leave the exception fact unknown.
 inline bool isCanonicalNothrowLiteralDefault(const CanonicalTypeTable& table, TypeId parameter_type, const ASTNode& initializer) {
-	const CanonicalTypeNode parameter = table.node(table.withoutTopLevelQualifiers(parameter_type));
+	TypeId parameter_type_without_reference = table.withoutTopLevelQualifiers(parameter_type);
+	while (table.node(parameter_type_without_reference).kind == CanonicalTypeKind::LValueReference ||
+		table.node(parameter_type_without_reference).kind == CanonicalTypeKind::RValueReference) {
+		parameter_type_without_reference = table.withoutTopLevelQualifiers(table.node(parameter_type_without_reference).child);
+	}
+	const CanonicalTypeNode parameter = table.node(parameter_type_without_reference);
+	const ExpressionNode* expression = initializer.get_if<ExpressionNode>();
+	if (parameter.kind == CanonicalTypeKind::Pointer) {
+		if (expression == nullptr) {
+			return false;
+		}
+		const NumericLiteralNode* literal = std::get_if<NumericLiteralNode>(expression);
+		if (literal == nullptr) {
+			return false;
+		}
+		const NumericLiteralValue value = literal->value();
+		const auto* integral_value = std::get_if<unsigned long long>(&value);
+		return integral_value != nullptr && *integral_value == 0;
+	}
 	if (parameter.kind != CanonicalTypeKind::Builtin || parameter.builtin == CanonicalBuiltinKind::Void ||
 		parameter.builtin == CanonicalBuiltinKind::Nullptr || parameter.builtin == CanonicalBuiltinKind::Count) {
 		return false;
 	}
-	const ExpressionNode* expression = initializer.get_if<ExpressionNode>();
 	while (expression != nullptr) {
 		if (const NumericLiteralNode* literal = std::get_if<NumericLiteralNode>(expression)) {
 			return isArithmeticType(literal->type());
@@ -3110,6 +3147,59 @@ inline bool isCanonicalKnownThrowingDefault(CanonicalTypeTable& table, const AST
 	return false;
 }
 
+inline std::optional<TypeId> tryCanonicalDefaultLiteralType(CanonicalTypeTable& table, const ASTNode& initializer) {
+	const ExpressionNode* expression = initializer.get_if<ExpressionNode>();
+	if (expression == nullptr) {
+		return std::nullopt;
+	}
+	if (const NumericLiteralNode* literal = std::get_if<NumericLiteralNode>(expression)) {
+		const std::optional<CanonicalBuiltinKind> builtin = canonicalBuiltinForSignedness(literal->type());
+		if (builtin.has_value()) {
+			return table.builtin(*builtin);
+		}
+		return std::nullopt;
+	}
+	if (std::holds_alternative<BoolLiteralNode>(*expression)) {
+		return table.builtin(CanonicalBuiltinKind::Bool);
+	}
+	return std::nullopt;
+}
+
+// A class-typed default parameter performs an implicit conversion during
+// parameter initialization. If a simple literal selects one canonical
+// constructor and that constructor is not noexcept, the default is known to
+// throw independently of the enclosing constructor's exception specification.
+inline bool isCanonicalKnownThrowingConversionDefault(
+	CanonicalTypeTable& table, TypeId parameter_type, const ASTNode& initializer) {
+	parameter_type = table.withoutTopLevelQualifiers(parameter_type);
+	if (!isCanonicalClassTypeKind(table.node(parameter_type).kind) || !table.hasRecordConstructors(parameter_type)) {
+		return false;
+	}
+	const std::optional<TypeId> argument_type = tryCanonicalDefaultLiteralType(table, initializer);
+	if (!argument_type.has_value()) {
+		return false;
+	}
+	std::optional<bool> selected_nothrow;
+	size_t match_count = 0;
+	const size_t constructor_count = table.recordConstructorCount(parameter_type);
+	for (size_t index = 0; index < constructor_count; ++index) {
+		const CanonicalRecordConstructor candidate = table.recordConstructorAt(parameter_type, index);
+		if (hasCanonicalRecordFunctionFlag(candidate.flags, CanonicalRecordFunctionFlags::SchemaIncomplete)) {
+			return false;
+		}
+		const bool variadic = hasCanonicalRecordFunctionFlag(candidate.flags, CanonicalRecordFunctionFlags::Variadic);
+		if (1 < candidate.minimum_parameter_count || (!variadic && candidate.parameter_count < 1)) {
+			continue;
+		}
+		if (table.recordConstructorParameterAt(parameter_type, index, 0) != *argument_type) {
+			continue;
+		}
+		++match_count;
+		selected_nothrow = candidate.is_noexcept != 0;
+	}
+	return match_count == 1 && selected_nothrow.has_value() && !*selected_nothrow;
+}
+
 // Publish a completed class's constructor schema keyed by its canonical TypeId
 // (Record or TemplateSpecialization), read from the declaration node so no
 // StructTypeInfo is needed; implicit special members are added to it as well.
@@ -3170,7 +3260,11 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 				importable = false;
 				break;
 			}
-			std::optional<TypeId> imported = tryImportSupportedCanonical(table, *parameter_type);
+			const DeclarationNode* parameter_declaration = parameter.get_if<DeclarationNode>();
+			const bool parameter_has_default = parameter_declaration != nullptr && parameter_declaration->has_default_value();
+			std::optional<TypeId> imported = parameter_has_default
+				? tryImportSupportedCanonicalWithClassFallback(table, *parameter_type)
+				: tryImportSupportedCanonical(table, *parameter_type);
 			if (!imported.has_value() && constructor.is_implicit() && parameter_type->category() == TypeCategory::Struct &&
 				!parameter_type->is_pointer() && (parameter_type->is_lvalue_reference() || parameter_type->is_rvalue_reference())) {
 				TypeId parameter_object = type;
@@ -3186,13 +3280,15 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 				importable = false;
 				break;
 			}
-			const DeclarationNode* declaration = parameter.get_if<DeclarationNode>();
-			const bool has_default = declaration != nullptr && declaration->has_default_value();
+			const DeclarationNode* declaration = parameter_declaration;
+			const bool has_default = parameter_has_default;
 			if (has_default && isCanonicalNothrowLiteralDefault(table, *imported, declaration->default_value())) {
 				++entry.nothrow_default_count;
 			} else {
 				entry.nothrow_default_count = 0;
-				if (has_default && isCanonicalKnownThrowingDefault(table, declaration->default_value())) {
+				if (has_default &&
+					(isCanonicalKnownThrowingDefault(table, declaration->default_value()) ||
+					 isCanonicalKnownThrowingConversionDefault(table, *imported, declaration->default_value()))) {
 					entry.last_known_throwing_default = static_cast<uint16_t>(index);
 				}
 			}

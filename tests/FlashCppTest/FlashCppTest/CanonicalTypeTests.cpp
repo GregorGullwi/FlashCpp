@@ -10443,6 +10443,8 @@ TEST_CASE("Canonical constructor literal defaults need no compatibility type") {
 	Lexer lexer("int mayThrow(); constexpr int constantValue() { return 3; }"
 		"struct ConstexprDefault { ConstexprDefault(short, int = constantValue()) noexcept {} };"
 		"struct Defaults { Defaults(short, double = 1.5, bool = true) noexcept {} };"
+		"struct RefLiteral { RefLiteral(short, const int& = 7) noexcept {} };"
+		"struct PtrLiteral { PtrLiteral(short, int* = nullptr) noexcept {} };"
 		"struct Mixed { Mixed(short, double = mayThrow(), bool = true) noexcept {} };"
 		"struct Throwing { Throwing(short, long long = -17) noexcept(false) {} };"
 		"struct Value { Value(int) noexcept(false) {} }; struct ClassDefault { ClassDefault(short, Value = 7) noexcept {} };");
@@ -10470,6 +10472,14 @@ TEST_CASE("Canonical constructor literal defaults need no compatibility type") {
 	REQUIRE(defaults.has_value());
 	CHECK(defaults->success);
 	CHECK(defaults->value);
+	const auto ptr_literal = nothrow("PtrLiteral", 1);
+	REQUIRE(ptr_literal.has_value());
+	CHECK(ptr_literal->success);
+	CHECK(ptr_literal->value);
+	const auto ref_literal = nothrow("RefLiteral", 1);
+	REQUIRE(ref_literal.has_value());
+	CHECK(ref_literal->success);
+	CHECK(ref_literal->value);
 	const auto mixed_supplied = nothrow("Mixed", 2);
 	REQUIRE(mixed_supplied.has_value());
 	CHECK(mixed_supplied->success);
@@ -10482,7 +10492,10 @@ TEST_CASE("Canonical constructor literal defaults need no compatibility type") {
 	REQUIRE(constexpr_default.has_value());
 	CHECK(constexpr_default->success);
 	CHECK_FALSE(constexpr_default->value);
-	CHECK_FALSE(nothrow("ClassDefault", 1).has_value());
+	const auto class_default = nothrow("ClassDefault", 1);
+	REQUIRE(class_default.has_value());
+	CHECK(class_default->success);
+	CHECK_FALSE(class_default->value);
 	const auto throwing = nothrow("Throwing", 1);
 	REQUIRE(throwing.has_value());
 	CHECK(throwing->success);

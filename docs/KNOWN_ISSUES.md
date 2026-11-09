@@ -228,19 +228,25 @@ Inherited variadic constructors retain ellipsis in their candidate metadata, but
 their synthesized base initializer forwards only named parameters. Runtime
 forwarding of unnamed arguments remains unimplemented; the constructibility
 regressions query the overloads without invoking those wrappers.
-Constructor-template deduction also remains incomplete: a non-template class
-with `template<class T> C(T, ...)` currently reports false for
-`__is_constructible(C, int, double)`. An unspecialized constructor template must
-not be published as an ordinary constructor, even when none of its fixed
-parameter types mention the template parameter. Class-template constructors
+Constructor-template deduction now participates in the constructibility traits
+when every non-defaulted template parameter is deduced directly from a fixed
+parameter and remaining variadic arguments are non-class. Constrained
+constructors, non-direct dependent parameter patterns, and class arguments
+forwarded through ellipsis still defer. An unspecialized constructor template is
+not published as an ordinary canonical constructor. Class-template constructors
 whose owner arguments are already substituted are covered by the new schemas.
 The canonical nothrow query proves arithmetic literal defaults (including unary
 signs) from a published trailing suffix and rejects omitted defaults whose call,
 throw, new, resolved operator, member-access, subscript, ternary, or
 initializer-list expression is known to throw by recursing through its operands
-and elements. Unresolved constructor-call defaults, reference defaults, and
-unresolved operator selections still need initialization and exception facts;
-those shapes continue to defer until their canonical facts are published.
+and elements. It also rejects a class-typed default initialized from a
+numeric/bool literal when one canonical constructor matches exactly and is not
+noexcept. Arithmetic/bool literal defaults bound to references and null pointer
+literals bound to pointer defaults are also proven nothrow. Nonliteral
+constructor-call defaults, reference defaults requiring general conversion
+analysis, and unresolved operator selections still need initialization and
+exception facts; those shapes continue to defer until their canonical facts are
+published.
 Concepts using unsupported sema-owned traits must retain an explicit unknown outcome rather than treating
 it as satisfaction or failure. Static member semantic identity must remain
 canonical through any remaining flat-consumer migration.

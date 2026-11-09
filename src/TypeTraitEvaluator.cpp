@@ -2598,6 +2598,90 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalScalarConstructionFrom
 	return TypeTraitResult::success_false();
 }
 
+// Constructor templates need deduction before overload resolution can compare
+// them with ordinary constructors. This handles the direct-template-parameter
+// and ellipsis shapes whose fixed parameters are independently convertible;
+// constrained or non-direct dependent patterns still defer.
+static const ConstructorDeclarationNode* findMatchingSimpleConstructorTemplate(
+	const StructTypeInfo& struct_info, std::span<const TypeSpecifierNode> arguments) {
+	const ConstructorDeclarationNode* match = nullptr;
+	for (const StructMemberFunction& member : struct_info.member_functions) {
+		if (!member.is_constructor || !member.function_decl.is<ConstructorDeclarationNode>()) {
+			continue;
+		}
+		const ConstructorDeclarationNode& constructor = member.function_decl.as<ConstructorDeclarationNode>();
+		if (!constructor.has_template_parameters() || constructor.explicit_condition() || constructor.has_requires_clause()) {
+			continue;
+		}
+		const std::span<const ASTNode> parameters = constructor.parameter_nodes();
+		if (arguments.size() < countMinRequiredArgs(constructor) ||
+			(!constructor.is_variadic() && arguments.size() > parameters.size())) {
+			continue;
+		}
+		std::unordered_set<StringHandle> directly_deduced_parameters;
+		const size_t fixed_argument_count = std::min(arguments.size(), parameters.size());
+		for (size_t index = 0; index < fixed_argument_count; ++index) {
+			if (!parameters[index].is<DeclarationNode>()) {
+				continue;
+			}
+			const ASTNode& parameter_type_node = parameters[index].as<DeclarationNode>().type_node();
+			if (!parameter_type_node.is<TypeSpecifierNode>()) {
+				continue;
+			}
+			const TypeSpecifierNode& parameter_type = parameter_type_node.as<TypeSpecifierNode>();
+			if (isDirectCtorTemplateParameterMatch(member, parameter_type)) {
+				directly_deduced_parameters.insert(parameter_type.token().handle());
+			}
+		}
+		bool undeducible_parameter = false;
+		for (const TemplateParameterNode& template_parameter : constructor.template_parameters()) {
+			if (!template_parameter.has_default() &&
+				!directly_deduced_parameters.contains(template_parameter.nameHandle())) {
+				undeducible_parameter = true;
+				break;
+			}
+		}
+		if (undeducible_parameter) {
+			continue;
+		}
+		bool matches = true;
+		for (size_t index = 0; index < arguments.size(); ++index) {
+			if (index >= parameters.size()) {
+				if (is_struct_type(arguments[index].category())) {
+					matches = false;
+					break;
+				}
+				continue;
+			}
+			if (!parameters[index].is<DeclarationNode>()) {
+				matches = false;
+				break;
+			}
+			const ASTNode& parameter_type_node = parameters[index].as<DeclarationNode>().type_node();
+			if (!parameter_type_node.is<TypeSpecifierNode>()) {
+				matches = false;
+				break;
+			}
+			const TypeSpecifierNode& parameter_type = parameter_type_node.as<TypeSpecifierNode>();
+			if (isDirectCtorTemplateParameterMatch(member, parameter_type)) {
+				continue;
+			}
+			if (!buildConversionPlan(arguments[index], parameter_type, nullptr).is_valid) {
+				matches = false;
+				break;
+			}
+		}
+		if (!matches) {
+			continue;
+		}
+		if (match != nullptr) {
+			return nullptr;
+		}
+		match = &constructor;
+	}
+	return match;
+}
+
 // Shared record branch of the argument-bearing constructibility query. The
 // caller supplies the already-resolved argument types; a record target is
 // constructible when constructor-overload resolution finds a match, with the
@@ -2609,6 +2693,16 @@ TypeTraitResult evaluateRecordConstructibleFromArgs(TypeTraitKind kind, const St
 	}
 	const ConstructorOverloadResolutionResult ctor_resolution = resolve_constructor_overload(struct_info, arguments, false);
 	if (!ctor_resolution.has_match) {
+		const ConstructorDeclarationNode* template_match = findMatchingSimpleConstructorTemplate(struct_info, arguments);
+		if (template_match == nullptr) {
+			return TypeTraitResult::success_false();
+		}
+		if (kind == TypeTraitKind::IsConstructible) {
+			return TypeTraitResult::success_true();
+		}
+		if (kind == TypeTraitKind::IsNothrowConstructible) {
+			return template_match->is_noexcept() ? TypeTraitResult::success_true() : TypeTraitResult::success_false();
+		}
 		return TypeTraitResult::success_false();
 	}
 	if (kind == TypeTraitKind::IsConstructible) {
