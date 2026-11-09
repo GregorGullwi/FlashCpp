@@ -1,5 +1,9 @@
 # Known Issues
 
+This file is the authoritative inventory of unresolved gaps. Migration status
+and validation belong in `MIGRATION_PROGRESS.md`; that file should link here
+instead of restating issue details.
+
 ## Unary operator candidate lookup does not preserve member-name hiding
 
 The member unary-operator gather visits base classes even when a derived class
@@ -232,10 +236,11 @@ parameter types mention the template parameter. Class-template constructors
 whose owner arguments are already substituted are covered by the new schemas.
 The canonical nothrow query proves arithmetic literal defaults (including unary
 signs) from a published trailing suffix and rejects omitted defaults whose call,
-throw, or new expression is known to throw. Unresolved constructor-call defaults,
-reference defaults, general expressions, and class conversions still need
-initialization and exception facts; those shapes continue to defer until their
-canonical facts are published.
+throw, new, resolved operator, member-access, subscript, ternary, or
+initializer-list expression is known to throw by recursing through its operands
+and elements. Unresolved constructor-call defaults, reference defaults, and
+unresolved operator selections still need initialization and exception facts;
+those shapes continue to defer until their canonical facts are published.
 Concepts using unsupported sema-owned traits must retain an explicit unknown outcome rather than treating
 it as satisfaction or failure. Static member semantic identity must remain
 canonical through any remaining flat-consumer migration.

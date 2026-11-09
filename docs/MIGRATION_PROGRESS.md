@@ -3,8 +3,9 @@
 This is the handoff for agents continuing the migration. The
 [rearchitecture plan](2026-08-24-front-end-rearchitecture-plan.md) is
 authoritative for the design, boundaries, and exit criteria. This file records
-the current boundary state, remaining work, and validation contract; completed
-implementation history belongs in git and the regression suite.
+the current boundary state and validation contract; completed implementation
+history belongs in git and the regression suite. Unresolved gaps are documented
+only in [KNOWN_ISSUES](KNOWN_ISSUES.md); link there instead of restating them.
 
 ## Next 3A slice
 
@@ -85,94 +86,15 @@ and instantiation context independently of the engine, including across copies,
 moves, rollback, and engine destruction. Engine backing storage remains live for
 borrowed diagnostic views; the separate parser `CompileContext` engine is not
 automatically enlisted.
-Index-keyed cold type payload stores now share that journal: dependent qualified
-name records, template-argument lists with their intern buckets, template-argument
-cold payloads, and instantiation contexts truncate with the discarded rows. The
-pointer-keyed legacy `StructTypeInfo`/`EnumTypeInfo` arenas also truncate when the
-discarded range is unreachable; a range still referenced by a surviving row, an
-older nested/enclosing record, or an older vtable is retained instead of left
-dangling. Retention scans surviving `TypeInfo` cold indices, interned argument
-lists, instantiation contexts, and dependent-name records via an allocation-free
-rollback path. Owners outside those stores, such as `QualifiedIdentifierNode` or
-copied `TemplateArgInfo` values held by AST/template registries, remain outside
-the boundary. Native guards cover rollback, commit, overwritten bindings, nested
-commit, cold-payload truncation, intern-bucket cleanup, pointer-keyed truncation
-and retention, surviving-row retention, and out-of-order completion.
-
-Candidate-local in-place `TypeInfo` row rewrites now snapshot the pre-existing row
-before mutation and restore it before cold arenas truncate, including rows reached
-through mutable accessors, `add_struct_type` reuse, and the `TypeInfo` mutator
-API. Native guards cover restored row fields, cold record and payload truncation,
-accessor capture, and retention when direct writes bypass that API.
-
-Legacy AST node storage now participates in the frontend journal. Rollback
-truncates nodes allocated after the mark to their exact byte offset, including
-nested commits, while committed nodes remain. A Parser publication checkpoint
-also snapshots the lexer/current/injected-token state and the sizes of its root,
-pending-semantic-root, and discarded-root lists. Rollback removes appended roots
-and their instantiated/pending keys before global AST storage truncation; nested
-commits remain provisional. Front insertion, pre-checkpoint erasure, pending
-root drain/clear, and transaction closure with a live parser-local checkpoint
-fail closed. Each `FrontendContext` binds at most one Parser. Full frontend
-transactions require that Parser to remain alive and bound until completion;
-admission without a Parser and detachment during a transaction are rejected.
-Publication marks and validation return a required Parser reference. Both the
-frontend and bound Parser `CompileContext` diagnostic engines participate in
-admission unwind, completion preflight, and nested commit/rollback; diagnostic
-records, severity counts, and note attachments roll back together. Borrowed text
-and note backing storage retain their engine lifetime. The same checkpoint
-snapshots the member-function and struct parse-context stack sizes, their
-top-frame identity, `current_function_`, and `current_linkage_`; it also
-snapshots the class-template pack and lambda-capture stack sizes and top frames,
-pending explicit template arguments, and the last calling convention. Rollback
-truncates appended frames and restores the transient values, while commit
-requires them to return to the checkpoint. Member-function, class-template pack,
-and lambda-capture guards pop only frames they pushed, so a rollback-truncated
-frame is not popped twice.
-Pre-existing `QualifiedIdentifierNode` dependent-name and template-argument
-rewrites now snapshot the node on its first mutation in a transaction segment
-and restore it before AST storage truncates; snapshots are deduplicated and
-stack-local or already-truncated nodes are skipped. Pre-existing AST declaration
-owners likewise journal their outer template parameter names, copied
-`TemplateArgInfo` arguments, and environment snapshot before `set_outer_template_bindings`
-rewrites them, with one snapshot per owner per segment. Pre-existing
-`StructDeclarationNode` owners snapshot the whole declaration on their first
-member, base, nested-class, body-state, or identity rewrite in a transaction
-segment and restore it before AST storage truncates. `FunctionDeclarationNode`
-owners likewise snapshot parameters, the referenced declaration metadata,
-definition, lookup context, mangled name, NTTP arguments, body state, and
-declaration flags. Constructor and destructor declaration owners snapshot
-parameters, initializers, definitions, owning types, template and body metadata,
-flags, mangled names, and lazy registry keys. Standalone `DeclarationNode`,
-`EnumDeclarationNode`, and `TypedefDeclarationNode` owners snapshot their
-declaration state before type, array, alignment, name, scope, enumerator,
-underlying-type, and identity rewrites. Namespace declaration owners journal
-their appended declaration count. Mutable expression and statement owners share a
-type-erased snapshot journal for `IdentifierNode`, `BlockNode`,
-`InitializerListNode`, `TemplateParameterNode`, `CallExprNode`,
-`ConstructorCallNode`, `RangedForStatementNode`, `TryStatementNode`,
-`BinaryOperatorNode`, `UnaryOperatorNode`, and `IfStatementNode`; rollback
-restores and releases each snapshot before AST truncation. Template function and
-class declaration owners snapshot their parameters, declaration IDs, and
-deferred bodies. Template alias and variable declarations snapshot their bounds,
-replay metadata, and declaration IDs; standalone variable declarations snapshot
-their initializer, storage/linkage/constexpr flags, and outer bindings; friend
-declarations snapshot their class, template, function, type, and declaration
-identity fields. Pre-existing `TypeSpecifierNode` owners snapshot the whole type
-shape on their first size, cv/pointer/array, declarator, specialization,
-dependent-name, member-class, or identity rewrite. Direct `TypeSpecifierNode`
-container/index mutators and non-const type-specifier view accessors also journal
-the type or its owning AST node before mutation. The direct-write audit now finds
-no unjournaled mutators among allow-listed AST owners; future direct writes must
-use these accessors. The type-pack materialization transaction and
-required-dependency isolation are Boundary 8A work and remain deferred until
-Boundary 3A closes. Required dependency instantiations must remain separate from
-that candidate-local transaction; blanket rollback would violate observable C++20
-instantiation effects. Lockstep member and
-namespace-scope length mismatches now produce `TemplatePackLengthMismatch`
-(#1820); remaining mismatch contexts, alias/variable-template flattened adapters,
-and runtime function-parameter fold replay remain deferred.
-Boundary 3A and 8A remain incomplete.
+Scratch rollback now covers legacy type-registry rows and cold payloads, legacy
+AST storage, Parser publication checkpoints, bound parser diagnostics, and
+in-place rewrites for declaration, type-specifier, and mutable expression and
+statement owners. The authoritative coverage and remaining speculative-parsing
+gaps are maintained only in
+[KNOWN_ISSUES](KNOWN_ISSUES.md#production-speculative-parsing-is-not-yet-integrated-with-frontend-scratch-transactions).
+The type-pack materialization transaction and required-dependency isolation are
+Boundary 8A work and remain deferred until Boundary 3A closes. Boundary 3A and 8A
+remain incomplete.
 
 Direct type-pack data members now retain empty/full packs, written CV/pointer
 wrappers, enclosing-owner identity, and canonical subobject schemas. Coverage is
@@ -343,11 +265,10 @@ mismatched, unpublished, or unresolved owner facts.
      omitted default arguments from published constructor schemas. It still
      defers to `StructTypeInfo` for user-defined converting constructors,
      non-trivially-copyable derived bases, incomplete schemas, and unresolved
-     canonical types. The nothrow query consumes a published suffix of arithmetic
-     literal defaults, including unary signs, and rejects omitted defaults whose
-     call, throw, or new expression is known to throw; remaining omitted
-     initializers still defer. Implicit copy/move candidates cannot obscure a
-     builtin argument's
+     canonical types. The nothrow query consumes published arithmetic-literal and
+     known-throwing default-expression facts; remaining default-exception gaps are
+     tracked only in [KNOWN_ISSUES](KNOWN_ISSUES.md). Implicit copy/move candidates
+     cannot obscure a builtin argument's
      better direct converting constructor. Constructor schemas retain ellipsis and rank
      supported extra arguments after conversions to named parameters. Class
      arguments passed through ellipsis still defer until their initialization

@@ -3020,10 +3020,10 @@ inline bool isCanonicalNothrowLiteralDefault(const CanonicalTypeTable& table, Ty
 // Prove a default expression can throw when its call target is known not to be
 // noexcept. Unresolved targets stay unknown so the compatibility path is not
 // made less accurate for constructors whose defaults cannot yet be classified.
-inline bool isCanonicalKnownThrowingDefault(const ASTNode& initializer) {
+inline bool isCanonicalKnownThrowingDefault(CanonicalTypeTable& table, const ASTNode& initializer) {
 	if (initializer.is<InitializerListNode>()) {
 		for (const ASTNode& element : initializer.as<InitializerListNode>().initializers()) {
-			if (isCanonicalKnownThrowingDefault(element)) {
+			if (isCanonicalKnownThrowingDefault(table, element)) {
 				return true;
 			}
 		}
@@ -3045,7 +3045,7 @@ inline bool isCanonicalKnownThrowingDefault(const ASTNode& initializer) {
 			return true;
 		}
 		for (const ASTNode& argument : call->arguments()) {
-			if (isCanonicalKnownThrowingDefault(argument)) {
+			if (isCanonicalKnownThrowingDefault(table, argument)) {
 				return true;
 			}
 		}
@@ -3057,16 +3057,55 @@ inline bool isCanonicalKnownThrowingDefault(const ASTNode& initializer) {
 			return true;
 		}
 		for (const ASTNode& argument : constructor_call->arguments()) {
-			if (isCanonicalKnownThrowingDefault(argument)) {
+			if (isCanonicalKnownThrowingDefault(table, argument)) {
+				return true;
+			}
+		}
+		return false;
+	}
+	if (const BinaryOperatorNode* binary = std::get_if<BinaryOperatorNode>(expression)) {
+		if (const StructMemberFunction* member = binary->resolved_member_operator_overload();
+			member != nullptr && member->function_decl.is<FunctionDeclarationNode>() &&
+			!member->function_decl.as<FunctionDeclarationNode>().is_noexcept()) {
+			return true;
+		}
+		if (const FunctionDeclarationNode* function = binary->resolved_free_function_operator_overload();
+			function != nullptr && !function->is_noexcept()) {
+			return true;
+		}
+		return isCanonicalKnownThrowingDefault(table, binary->get_lhs()) ||
+			isCanonicalKnownThrowingDefault(table, binary->get_rhs());
+	}
+	if (const UnaryOperatorNode* unary = std::get_if<UnaryOperatorNode>(expression)) {
+		const FunctionDeclarationNode* function = unary->resolved_arithmetic_operator();
+		if (function != nullptr && !function->is_noexcept()) {
+			return true;
+		}
+		return isCanonicalKnownThrowingDefault(table, unary->get_operand());
+	}
+	if (const MemberAccessNode* member_access = std::get_if<MemberAccessNode>(expression)) {
+		return isCanonicalKnownThrowingDefault(table, member_access->object());
+	}
+	if (const PointerToMemberAccessNode* member_access = std::get_if<PointerToMemberAccessNode>(expression)) {
+		return isCanonicalKnownThrowingDefault(table, member_access->object()) ||
+			isCanonicalKnownThrowingDefault(table, member_access->member_pointer());
+	}
+	if (const ArraySubscriptNode* subscript = std::get_if<ArraySubscriptNode>(expression)) {
+		return isCanonicalKnownThrowingDefault(table, subscript->array_expr()) ||
+			isCanonicalKnownThrowingDefault(table, subscript->index_expr());
+	}
+	if (const InitializerListConstructionNode* construction = std::get_if<InitializerListConstructionNode>(expression)) {
+		for (const ASTNode& element : construction->elements()) {
+			if (isCanonicalKnownThrowingDefault(table, element)) {
 				return true;
 			}
 		}
 		return false;
 	}
 	if (const TernaryOperatorNode* ternary = std::get_if<TernaryOperatorNode>(expression)) {
-		return isCanonicalKnownThrowingDefault(ternary->condition()) ||
-			isCanonicalKnownThrowingDefault(ternary->true_expr()) ||
-			isCanonicalKnownThrowingDefault(ternary->false_expr());
+		return isCanonicalKnownThrowingDefault(table, ternary->condition()) ||
+			isCanonicalKnownThrowingDefault(table, ternary->true_expr()) ||
+			isCanonicalKnownThrowingDefault(table, ternary->false_expr());
 	}
 	return false;
 }
@@ -3153,7 +3192,7 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 				++entry.nothrow_default_count;
 			} else {
 				entry.nothrow_default_count = 0;
-				if (has_default && isCanonicalKnownThrowingDefault(declaration->default_value())) {
+				if (has_default && isCanonicalKnownThrowingDefault(table, declaration->default_value())) {
 					entry.last_known_throwing_default = static_cast<uint16_t>(index);
 				}
 			}
