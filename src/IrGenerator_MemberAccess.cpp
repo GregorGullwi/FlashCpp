@@ -1413,11 +1413,11 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			if (base_uses_array_elements) {
 				// Check if this is an array of pointers (e.g., int* ptrs[3])
 				// In this case, the element size should be the pointer size (64 bits), not the base type size
-				if (type_node.pointer_depth() > 0) {
+				if (type_node.hasPointerElement()) {
 					// Array of pointers: element size is always 64 bits (pointer size)
 					element_size_bits = 64;
 					// Track pointer depth for the array element (e.g., for int* arr[3], element has pointer_depth=1)
-					element_pointer_depth = type_node.pointer_depth();
+					element_pointer_depth = static_cast<int>(type_node.elementPointerDepth());
 				} else {
 					// Get the element size from type_node
 					element_size_bits = static_cast<int>(type_node.size_in_bits());
@@ -3092,9 +3092,9 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 	const TypeCategory type_category = type_spec.category();
 	bool is_reference = type_spec.is_reference();
 	bool is_rvalue_reference = type_spec.is_rvalue_reference();
-	size_t pointer_depth = type_spec.pointer_depth();
+	size_t pointer_depth = type_spec.runtime_pointer_depth();
 	auto getStructInfoIfPlainObject = [](const TypeSpecifierNode& spec) -> const StructTypeInfo* {
-		if (spec.category() != TypeCategory::Struct || spec.is_reference() || spec.pointer_depth() != 0 ||
+		if (spec.category() != TypeCategory::Struct || spec.is_reference() || spec.runtime_pointer_depth() != 0 ||
 			spec.type_index().index() >= getTypeInfoCount()) {
 			return nullptr;
 		}
@@ -3168,7 +3168,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 				result = (type_category == second_spec.category() &&
 						  is_reference == second_spec.is_reference() &&
 						  is_rvalue_reference == second_spec.is_rvalue_reference() &&
-						  pointer_depth == second_spec.pointer_depth() &&
+						  pointer_depth == second_spec.runtime_pointer_depth() &&
 						  type_spec.type_index() == second_spec.type_index() &&
 						  type_spec.is_array() == second_spec.is_array() &&
 						  type_spec.is_const() == second_spec.is_const() &&
@@ -3189,8 +3189,8 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 				TypeCategory to_type = to_spec.category();
 				bool from_is_ref = from_spec.is_reference();
 				bool to_is_ref = to_spec.is_reference();
-				size_t from_ptr_depth = from_spec.pointer_depth();
-				size_t to_ptr_depth = to_spec.pointer_depth();
+				size_t from_ptr_depth = from_spec.runtime_pointer_depth();
+				size_t to_ptr_depth = to_spec.runtime_pointer_depth();
 
 				// Same type is always convertible
 				if (from_type == to_type && from_is_ref == to_is_ref &&
@@ -3247,8 +3247,8 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 				TypeCategory to_type = to_spec.category();
 				bool from_is_ref = from_spec.is_reference();
 				bool to_is_ref = to_spec.is_reference();
-				size_t from_ptr_depth = from_spec.pointer_depth();
-				size_t to_ptr_depth = to_spec.pointer_depth();
+				size_t from_ptr_depth = from_spec.runtime_pointer_depth();
+				size_t to_ptr_depth = to_spec.runtime_pointer_depth();
 
 				// Same type is always nothrow convertible
 				if (from_type == to_type && from_is_ref == to_is_ref &&
@@ -3363,7 +3363,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 
 				// Same type is always layout compatible with itself
 				if (type_category == second_spec.category() &&
-					pointer_depth == second_spec.pointer_depth() &&
+					pointer_depth == second_spec.runtime_pointer_depth() &&
 					is_reference == second_spec.is_reference()) {
 					if (type_category == TypeCategory::Struct) {
 						result = (type_spec.type_index() == second_spec.type_index());
@@ -3373,7 +3373,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 				}
 				// Different standard layout types with same size
 				else if (isScalarType(type_category, is_reference, pointer_depth) &&
-						 isScalarType(second_spec.category(), second_spec.is_reference(), second_spec.pointer_depth())) {
+						 isScalarType(second_spec.category(), second_spec.is_reference(), second_spec.runtime_pointer_depth())) {
 					result = (type_spec.size_in_bits() == second_spec.size_in_bits());
 				}
 			}
