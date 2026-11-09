@@ -25,6 +25,9 @@ class SymbolTable;
 class Parser;
 class FrontendContext;
 
+template <typename T>
+void journalLegacyAstOwnerRewrite(T& owner);
+
 // Type IDs share the semantic pass lifetime of expression SemanticSlots. The
 // symbol is an emission key, not declaration identity. Declaring TypeId selects
 // the declaration bridge; no reference into the growable record arena escapes.
@@ -93,6 +96,18 @@ struct LegacyTypedefDeclarationRewrite {
 	ScopeId lexical_scope_id{};
 };
 
+struct LegacyNamespaceDeclarationRewrite {
+	NamespaceDeclarationNode* owner = nullptr;
+	size_t declaration_count = 0;
+};
+
+struct LegacyAstOwnerRewrite {
+	void* owner = nullptr;
+	void* snapshot = nullptr;
+	void (*restore)(void*, void*) = nullptr;
+	void (*destroy)(void*) = nullptr;
+};
+
 struct LegacyTemplateFunctionDeclarationRewrite {
 	TemplateFunctionDeclarationNode* owner = nullptr;
 	std::optional<TemplateFunctionDeclarationNode> snapshot;
@@ -152,6 +167,10 @@ struct FrontendPublicationJournalMark {
 	size_t previous_legacy_enum_declaration_rewrite_segment_start = 0;
 	size_t legacy_typedef_declaration_rewrite_count = 0;
 	size_t previous_legacy_typedef_declaration_rewrite_segment_start = 0;
+	size_t legacy_namespace_declaration_rewrite_count = 0;
+	size_t previous_legacy_namespace_declaration_rewrite_segment_start = 0;
+	size_t legacy_ast_owner_rewrite_count = 0;
+	size_t previous_legacy_ast_owner_rewrite_segment_start = 0;
 	size_t legacy_template_function_declaration_rewrite_count = 0;
 	size_t previous_legacy_template_function_declaration_rewrite_segment_start = 0;
 	size_t legacy_template_class_declaration_rewrite_count = 0;
@@ -184,8 +203,10 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 // discarded range is unreachable. Pre-existing TypeInfo rows touched through the
 // mutable accessor or mutator API are restored before truncation; a record range
 // still referenced by a row that bypassed that API is retained instead of being
-// truncated. Legacy AST nodes allocated after the mark are truncated after
-// appended Parser roots are removed. A bound parser cursor is saved on begin,
+// truncated. Pre-existing AST owners with journaled mutators are restored, and
+// remaining expression/statement owners use a type-erased snapshot journal.
+// Legacy AST nodes allocated after the mark are truncated after appended Parser
+// roots are removed. A bound parser cursor is saved on begin,
 // discarded on commit, and restored on rollback. The parser must outlive the transaction.
 // Nested commits remain provisional until the outer probe commits.
 class FrontendScratchTransaction {
@@ -723,6 +744,12 @@ private:
 	friend void journalEnumDeclarationRewrite(EnumDeclarationNode& node);
 	void journalTypedefDeclarationRewrite(TypedefDeclarationNode& node);
 	friend void journalTypedefDeclarationRewrite(TypedefDeclarationNode& node);
+	void journalNamespaceDeclarationRewrite(NamespaceDeclarationNode& node);
+	friend void journalNamespaceDeclarationRewrite(NamespaceDeclarationNode& node);
+	bool needsLegacyAstOwnerRewrite(void* owner) const;
+	void appendLegacyAstOwnerRewrite(LegacyAstOwnerRewrite rewrite);
+	template <typename T>
+	friend void journalLegacyAstOwnerRewrite(T& owner);
 	void journalTemplateFunctionDeclarationRewrite(TemplateFunctionDeclarationNode& node);
 	friend void journalTemplateFunctionDeclarationRewrite(TemplateFunctionDeclarationNode& node);
 	void journalTemplateClassDeclarationRewrite(TemplateClassDeclarationNode& node);
@@ -777,6 +804,10 @@ private:
 	size_t legacy_enum_declaration_rewrite_segment_start_ = 0;
 	std::vector<LegacyTypedefDeclarationRewrite> legacy_typedef_declaration_rewrites_;
 	size_t legacy_typedef_declaration_rewrite_segment_start_ = 0;
+	std::vector<LegacyNamespaceDeclarationRewrite> legacy_namespace_declaration_rewrites_;
+	size_t legacy_namespace_declaration_rewrite_segment_start_ = 0;
+	std::vector<LegacyAstOwnerRewrite> legacy_ast_owner_rewrites_;
+	size_t legacy_ast_owner_rewrite_segment_start_ = 0;
 	std::vector<LegacyTemplateFunctionDeclarationRewrite> legacy_template_function_declaration_rewrites_;
 	size_t legacy_template_function_declaration_rewrite_segment_start_ = 0;
 	std::vector<LegacyTemplateClassDeclarationRewrite> legacy_template_class_declaration_rewrites_;
