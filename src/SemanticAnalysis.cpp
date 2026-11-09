@@ -633,7 +633,7 @@ const ConstructorDeclarationNode* resolveUniqueArityConstructor(const StructType
 void setMaterializedTypeSpecifierSize(TypeSpecifierNode& type_node) {
 	int size_bits = 0;
 	if (type_node.reference_qualifier() != ReferenceQualifier::None ||
-		type_node.pointer_depth() > 0) {
+		type_node.runtime_pointer_depth() > 0) {
 		size_bits = 64;
 	} else if (type_node.category() == TypeCategory::Invalid) {
 		size_bits = 0;

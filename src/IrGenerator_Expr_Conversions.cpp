@@ -526,9 +526,9 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 			if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_specifier_node().is_array())) {
 				const TypeSpecifierNode& type_node = decl_ptr->type_specifier_node();
 				element_type_index = type_node.type_index();
-				if (type_node.pointer_depth() > 0) {
+				if (type_node.runtime_pointer_depth() > 0) {
 					element_size_bits = 64;
-					element_pointer_depth = type_node.pointer_depth();  // Track pointer depth
+					element_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());  // Track pointer depth
 				} else if (type_node.category() == TypeCategory::Struct) {
 					TypeIndex type_index_from_decl = type_node.type_index();
 					if (const TypeInfo* type_info = tryGetTypeInfo(type_index_from_decl)) {
@@ -1273,7 +1273,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 							if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_specifier_node().is_array())) {
 									// This is an array - calculate element size
 								const TypeSpecifierNode& type_node = decl_ptr->type_specifier_node();
-								if (type_node.pointer_depth() > 0) {
+								if (type_node.runtime_pointer_depth() > 0) {
 										// Array of pointers
 									element_size_bits = 64;
 								} else if (type_node.category() == TypeCategory::Struct) {
@@ -1566,7 +1566,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 				if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_specifier_node().is_array())) {
 						// This is an array - calculate element size
 					const TypeSpecifierNode& type_node = decl_ptr->type_specifier_node();
-					if (type_node.pointer_depth() > 0) {
+					if (type_node.runtime_pointer_depth() > 0) {
 							// Array of pointers
 						element_size_bits = 64;
 					} else if (type_node.category() == TypeCategory::Struct) {

@@ -293,10 +293,15 @@ mismatched, unpublished, or unresolved owner facts.
      pointer/reference shape to the ordered declarator spine before substitution,
      so pointer-to-reference alias instantiations are diagnosed while valid
      reference-to-pointer aliases still resolve.
-   - Conditional array decay, builtin unary `*`/`&`, builtin `->`, and builtin
-     `new`/`new[]` now export canonical identities but still have documented flat
-     projection refresh, nested-class, or unmigrated-shape gaps. Finish those
-     consumers and remove the flat pointer/array fields they retain.
+    - Conditional array decay, builtin unary `*`/`&`, builtin `->`, and builtin
+      `new`/`new[]` now export canonical identities but still have documented flat
+      projection refresh, nested-class, or unmigrated-shape gaps. Finish those
+      consumers and remove the flat pointer/array fields they retain.
+    - A first split migrates array-of-pointer element sizing in array subscript
+      lowering and `setMaterializedTypeSpecifierSize` from flat `pointer_depth()`
+      to `runtime_pointer_depth()`. Remaining flat readers in this family
+      (matches_signature pointer levels, range-for iterator object type, and
+      non-projectable ordered spines) are deferred.
    - Interleaved pointer/array member storage now sizes and aligns from the
      ordered declarator spine, and constexpr member typing prefers the published
      member `TypeId`. Local array objects also allocate from the ordered element
