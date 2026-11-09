@@ -4633,6 +4633,80 @@ TEST_CASE("Canonical constructor schemas rank class arguments through ellipsis")
 	CHECK_FALSE(evaluateConstructibility(TypeTraitKind::IsConstructible, consumer, arguments, ConstructibilityFallback::None).has_value());
 }
 
+TEST_CASE("Canonical constructor schemas accept derived arguments over non-trivial bases") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId base_type = table.record(EntityId{950});
+	const TypeId derived_type = table.record(EntityId{951});
+	const TypeId consumer_type = table.record(EntityId{952});
+	const TypeId private_base_type = table.record(EntityId{953});
+	const TypeId private_derived_type = table.record(EntityId{954});
+	const TypeId private_consumer_type = table.record(EntityId{955});
+	const TypeId incomplete_base_type = table.record(EntityId{956});
+	const TypeId incomplete_derived_type = table.record(EntityId{957});
+	const TypeId incomplete_consumer_type = table.record(EntityId{958});
+	const TypeId move_base_type = table.record(EntityId{959});
+	const TypeId move_derived_type = table.record(EntityId{960});
+	const TypeId move_consumer_type = table.record(EntityId{961});
+	auto publish_public_base = [&table](TypeId base, TypeId derived) {
+		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0}}};
+		table.publishClassBaseSchema(base, {});
+		table.publishClassBaseSchema(derived, bases);
+	};
+	auto publish_base_constructor = [&table](TypeId base, TypeId consumer, TypeId parameter, CanonicalRecordFunctionFlags flags) {
+		const std::array<TypeId, 1> base_parameters{parameter};
+		const std::array<CanonicalRecordConstructorSpec, 1> base_constructors{{{base_parameters, flags, true}}};
+		table.publishRecordConstructors(base, base_constructors);
+		const std::array<TypeId, 1> consumer_parameters{base};
+		const std::array<CanonicalRecordConstructorSpec, 1> consumer_constructors{{{consumer_parameters, CanonicalRecordFunctionFlags::None, true}}};
+		table.publishRecordConstructors(consumer, consumer_constructors);
+	};
+	publish_public_base(base_type, derived_type);
+	publish_public_base(private_base_type, private_derived_type);
+	publish_public_base(incomplete_base_type, incomplete_derived_type);
+	publish_public_base(move_base_type, move_derived_type);
+	const TypeId base_reference = table.reference(table.qualify(base_type, CVQualifier::Const), ReferenceQualifier::LValueReference);
+	const TypeId private_reference = table.reference(table.qualify(private_base_type, CVQualifier::Const), ReferenceQualifier::LValueReference);
+	const TypeId incomplete_reference = table.reference(table.qualify(incomplete_base_type, CVQualifier::Const), ReferenceQualifier::LValueReference);
+	const TypeId move_reference = table.reference(move_base_type, ReferenceQualifier::RValueReference);
+	publish_base_constructor(base_type, consumer_type, base_reference, CanonicalRecordFunctionFlags::None);
+	publish_base_constructor(private_base_type, private_consumer_type, private_reference, CanonicalRecordFunctionFlags::NonPublic);
+	publish_base_constructor(incomplete_base_type, incomplete_consumer_type, incomplete_reference, CanonicalRecordFunctionFlags::SchemaIncomplete);
+	publish_base_constructor(move_base_type, move_consumer_type, move_reference, CanonicalRecordFunctionFlags::None);
+	auto class_specifier = [](EntityId entity) {
+		TypeSpecifierNode specifier(TypeCategory::Struct, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		specifier.set_type_entity(entity);
+		return specifier;
+	};
+	auto evaluate = [&table](TypeTraitKind kind, TypeSpecifierNode consumer, TypeSpecifierNode argument) {
+		std::array<TypeSpecifierNode, 1> arguments{argument};
+		return evaluateConstructibility(kind, consumer, arguments, ConstructibilityFallback::None);
+	};
+	TypeSpecifierNode derived_argument = class_specifier(EntityId{951});
+	const auto rvalue = evaluate(TypeTraitKind::IsConstructible, class_specifier(EntityId{952}), derived_argument);
+	REQUIRE(rvalue.has_value());
+	CHECK(rvalue->success);
+	CHECK(rvalue->value);
+	const auto nothrow = evaluate(TypeTraitKind::IsNothrowConstructible, class_specifier(EntityId{952}), derived_argument);
+	REQUIRE(nothrow.has_value());
+	CHECK(nothrow->success);
+	CHECK(nothrow->value);
+	derived_argument.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	const auto lvalue = evaluate(TypeTraitKind::IsConstructible, class_specifier(EntityId{952}), derived_argument);
+	REQUIRE(lvalue.has_value());
+	CHECK(lvalue->success);
+	CHECK(lvalue->value);
+	CHECK_FALSE(evaluate(TypeTraitKind::IsConstructible, class_specifier(EntityId{955}), derived_argument).has_value());
+	CHECK_FALSE(evaluate(TypeTraitKind::IsConstructible, class_specifier(EntityId{958}), derived_argument).has_value());
+	TypeSpecifierNode move_argument = class_specifier(EntityId{960});
+	const auto move_rvalue = evaluate(TypeTraitKind::IsConstructible, class_specifier(EntityId{961}), move_argument);
+	REQUIRE(move_rvalue.has_value());
+	CHECK(move_rvalue->success);
+	CHECK(move_rvalue->value);
+	move_argument.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	CHECK_FALSE(evaluate(TypeTraitKind::IsConstructible, class_specifier(EntityId{961}), move_argument).has_value());
+}
+
 TEST_CASE("Canonical direct reference binding preserves access cv and value category") {
 	CanonicalTypeTable table;
 	const TypeId base_type = table.record(EntityId{913});
