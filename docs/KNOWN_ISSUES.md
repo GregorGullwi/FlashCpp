@@ -4,20 +4,16 @@ This file is the authoritative inventory of unresolved gaps. Migration status
 and validation belong in `MIGRATION_PROGRESS.md`; that file should link here
 instead of restating issue details.
 
-## Unary operator candidate lookup does not preserve member-name hiding
+## Operator candidate lookup still lacks complete member-name provenance
 
-The member unary-operator gather now stops at the first class that declares the
-operator name unless a `using Base::operator-` declaration explicitly restores
-nominated base overloads. Direct non-template classes therefore reject hidden
-base operators and continue to accept restored using-declarations.
-
-Remaining work is persistent using-declaration provenance through template
-instantiation and replay. The parser still retains only imported spelling in
-temporary class parsing state for some instantiated forms, so member-name lookup
-sets with hiding and base ambiguity are not yet shared across every canonical
-and compatibility unary consumer. Binary and assignment operator gathers have
-the same hiding requirement; their expression viability paths need a separate
-lookup audit.
+Direct unary, binary, and assignment operator lookup now stop at the first class
+that declares the operator name, while using-declarations restore only nominated
+base overloads. Remaining work is persistent using-declaration provenance through
+template instantiation and replay. The parser still retains only imported
+spelling in temporary class parsing state for some instantiated forms, so
+member-name lookup sets with hiding and base ambiguity are not yet shared across
+every canonical and compatibility consumer. Requires-expression assignment
+viability also follows a separate acceptance path that needs its own audit.
 
 ## Remaining dependent member-template field forms need concrete TypeInfo
 
