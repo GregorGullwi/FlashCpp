@@ -991,6 +991,11 @@ template void journalLegacyAstOwnerRewrite<TryStatementNode>(TryStatementNode&);
 template void journalLegacyAstOwnerRewrite<BinaryOperatorNode>(BinaryOperatorNode&);
 template void journalLegacyAstOwnerRewrite<UnaryOperatorNode>(UnaryOperatorNode&);
 template void journalLegacyAstOwnerRewrite<IfStatementNode>(IfStatementNode&);
+template void journalLegacyAstOwnerRewrite<OffsetofExprNode>(OffsetofExprNode&);
+template void journalLegacyAstOwnerRewrite<StaticCastNode>(StaticCastNode&);
+template void journalLegacyAstOwnerRewrite<DynamicCastNode>(DynamicCastNode&);
+template void journalLegacyAstOwnerRewrite<ConstCastNode>(ConstCastNode&);
+template void journalLegacyAstOwnerRewrite<ReinterpretCastNode>(ReinterpretCastNode&);
 
 void FrontendContext::journalTemplateFunctionDeclarationRewrite(TemplateFunctionDeclarationNode& node) {
 	if (publication_transaction_depth_ == 0 || !gChunkedAnyStorage.containsAddress(&node)) {

@@ -2079,11 +2079,13 @@ public:
 		if (declarator_components_.empty()) {
 			return false;
 		}
+		journalTypeSpecifierRewrite(*this);
 		declarator_components_.erase(declarator_components_.begin());
 		rebuild_legacy_declarator_projection();
 		return true;
 	}
 	void prepend_ordered_declarator_component(DeclaratorComponent component) {
+		journalTypeSpecifierRewrite(*this);
 		declarator_components_.insert(declarator_components_.begin(), component);
 		rebuild_legacy_declarator_projection();
 	}
@@ -2190,6 +2192,7 @@ public:
 		}
 	}
 	void markPointeeArrayAsArrayObject() {
+		journalTypeSpecifierRewrite(*this);
 		pointee_array_declarator_ = false;
 		is_array_ = true;
 	}
@@ -2213,9 +2216,11 @@ public:
 		array_dimensions_.assign(dims.begin(), dims.end());
 	}
 	void remove_outermost_array_dimension() {
-		if (!array_dimensions_.empty()) {
-			array_dimensions_.erase(array_dimensions_.begin());
+		if (array_dimensions_.empty()) {
+			return;
 		}
+		journalTypeSpecifierRewrite(*this);
+		array_dimensions_.erase(array_dimensions_.begin());
 	}
 	bool has_unsized_outer_array_dimension() const { return has_unsized_outer_array_dimension_; }
 	void set_unsized_outer_array_dimension(bool has_unsized_outer_array_dimension) {
@@ -2354,6 +2359,7 @@ public:
 		return specialization_type_args_[type_index];
 	}
 	TypeSpecifierNode& specialization_arg_type(size_t index) {
+		journalTypeSpecifierRewrite(*this);
 		if (!specialization_arg_is_type(index)) {
 			throw InternalError("type specifier: expected type specialization argument");
 		}
@@ -2569,6 +2575,7 @@ public:
 		injected_class_declaration_ = nullptr;
 	}
 	void copy_binding_identity_from(const TypeSpecifierNode& other) {
+		journalTypeSpecifierRewrite(*this);
 		dependent_name_type_ = other.dependent_name_type_;
 		template_parameter_name_ = other.template_parameter_name_;
 		template_decl_id_ = other.template_decl_id_;
@@ -2665,6 +2672,7 @@ public:
 	}
 	const Token& token() const { return token_; }
 	void copy_indirection_from(const TypeSpecifierNode& other) {
+		journalTypeSpecifierRewrite(*this);
 		pointer_levels_ = other.pointer_levels_;
 		reference_qualifier_ = other.reference_qualifier_;
 		is_array_ = other.is_array_;
@@ -2692,6 +2700,7 @@ public:
 
 private:
 	void rebuild_legacy_declarator_projection() {
+		journalTypeSpecifierRewrite(*this);
 		pointer_levels_.clear();
 		reference_qualifier_ = ReferenceQualifier::None;
 		is_array_ = false;
@@ -2834,7 +2843,10 @@ public:
 	// For concept constraints on auto parameters (C++20)
 	bool has_concept_constraint() const { return !concept_constraint_.empty(); }
 	std::string_view concept_constraint() const { return concept_constraint_; }
-	void set_concept_constraint(std::string_view constraint) { concept_constraint_ = constraint; }
+	void set_concept_constraint(std::string_view constraint) {
+		journalTypeSpecifierRewrite(*this);
+		concept_constraint_ = constraint;
+	}
 };
 
 inline void appendDeclaratorShapeForSubstitution(
@@ -5446,7 +5458,10 @@ public:
 		: ConstructorCallNode(type_node.as<TypeSpecifierNode>(), aggregate_initializer, called_from_token) {}
 
 	const TypeSpecifierNode& type_node() const { return type_node_; }
-	TypeSpecifierNode& type_specifier_node() { return type_node_; }
+	TypeSpecifierNode& type_specifier_node() {
+		journalLegacyAstOwnerRewrite(*this);
+		return type_node_;
+	}
 	const TypeSpecifierNode& type_specifier_node() const { return type_node_; }
 	const auto& arguments() const { return arguments_; }
 	bool isAggregateInitialization() const { return (flags_ & AggregateInitialization) != 0; }

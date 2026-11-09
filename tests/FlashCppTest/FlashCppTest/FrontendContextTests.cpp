@@ -1861,6 +1861,88 @@ TEST_SUITE("FrontendContext") {
 		CHECK(type.pointer_depth() == 1u);
 	}
 
+	TEST_CASE("Frontend scratch rollback restores direct type specifier mutations") {
+		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture(context);
+		ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(
+			TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		TypeSpecifierNode& type = type_node.as<TypeSpecifierNode>();
+		const std::array<size_t, 2> dimensions{3, 4};
+		type.set_array_dimensions(dimensions);
+		TypeSpecifierNode source(TypeCategory::Double, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		source.add_pointer_level(CVQualifier::Const);
+		{
+			auto transaction = context.beginScratchTransaction();
+			type.remove_outermost_array_dimension();
+			type.set_pointee_array_declarator(true);
+			type.markPointeeArrayAsArrayObject();
+			type.set_concept_constraint("frontend_tx_direct_concept");
+			CHECK(type.array_dimension_count() == 1u);
+			CHECK(type.pointer_depth() == 0u);
+			CHECK(type.has_concept_constraint());
+			type.copy_indirection_from(source);
+			CHECK(type.array_dimension_count() == 0u);
+			CHECK(type.pointer_depth() == 1u);
+			transaction.rollback();
+		}
+		REQUIRE(type.array_dimension_count() == 2u);
+		CHECK(type.array_dimensions()[0] == 3u);
+		CHECK(type.array_dimensions()[1] == 4u);
+		CHECK_FALSE(type.has_pointee_array_declarator());
+		CHECK(type.is_array());
+		CHECK_FALSE(type.has_concept_constraint());
+		CHECK(type.pointer_depth() == 0u);
+
+		ASTNode ordered_node = ASTNode::emplace_node<TypeSpecifierNode>(
+			TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		TypeSpecifierNode& ordered = ordered_node.as<TypeSpecifierNode>();
+		ordered.set_ordered_declarator({DeclaratorComponent::pointer(CVQualifier::None)});
+		{
+			auto transaction = context.beginScratchTransaction();
+			ordered.prepend_ordered_declarator_component(DeclaratorComponent::lvalueReference());
+			CHECK(ordered.declarator_components().size() == 2u);
+			REQUIRE(ordered.remove_outermost_ordered_declarator_component());
+			CHECK(ordered.declarator_components().size() == 1u);
+			transaction.rollback();
+		}
+		CHECK(ordered.declarator_components().size() == 1u);
+	}
+
+	TEST_CASE("Frontend scratch rollback restores mutable type specifier accessors") {
+		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture(context);
+		const TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		const auto make_expression = [] {
+			return ASTNode::emplace_node<ExpressionNode>(
+				NumericLiteralNode(Token{}, uint64_t{1}, TypeCategory::Int, TypeQualifier::None, 32));
+		};
+		ASTNode constructor_call_node = ASTNode::emplace_node<ConstructorCallNode>(int_type, ChunkedVector<ASTNode>{}, Token{});
+		ConstructorCallNode& constructor_call = constructor_call_node.as<ConstructorCallNode>();
+		const StringHandle parameter_name = StringTable::getOrInternStringHandle("frontend_tx_mutable_type_parameter");
+		ASTNode parameter_node = ASTNode::emplace_node<TemplateParameterNode>(parameter_name, int_type, Token{});
+		TemplateParameterNode& parameter = parameter_node.as<TemplateParameterNode>();
+		ASTNode cast_node = ASTNode::emplace_node<StaticCastNode>(int_type, make_expression(), Token{});
+		StaticCastNode& cast = cast_node.as<StaticCastNode>();
+		ASTNode offsetof_node = ASTNode::emplace_node<OffsetofExprNode>(int_type, std::vector<Token>{}, Token{});
+		OffsetofExprNode& offsetof_node_ref = offsetof_node.as<OffsetofExprNode>();
+		{
+			auto transaction = context.beginScratchTransaction();
+			constructor_call.type_specifier_node().set_size_in_bits(64);
+			parameter.type_specifier_node().set_size_in_bits(64);
+			cast.target_type_node().set_size_in_bits(64);
+			offsetof_node_ref.type_specifier_node().set_size_in_bits(64);
+			CHECK(constructor_call.type_node().size_in_bits() == 64);
+			CHECK(parameter.type_specifier_node().size_in_bits() == 64);
+			CHECK(cast.target_type_node().size_in_bits() == 64);
+			CHECK(offsetof_node_ref.type_specifier_node().size_in_bits() == 64);
+			transaction.rollback();
+		}
+		CHECK(constructor_call.type_node().size_in_bits() == 32);
+		CHECK(parameter.type_specifier_node().size_in_bits() == 32);
+		CHECK(cast.target_type_node().size_in_bits() == 32);
+		CHECK(offsetof_node_ref.type_specifier_node().size_in_bits() == 32);
+	}
+
 	TEST_CASE("Frontend scratch rollback restores in-place qualified identifier rewrites") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

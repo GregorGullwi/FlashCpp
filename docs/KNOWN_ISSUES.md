@@ -284,8 +284,9 @@ fields. Pre-existing `TypeSpecifierNode` owners snapshot the whole type shape
 before size, cv/pointer/array, declarator, specialization, dependent-name,
 member-class, or identity rewrites.
 All allow-listed AST owner classes now expose their mutations through journaled
-accessors. Direct field writes that bypass those accessors still need migration
-before broad speculative parsing can rely on the rollback boundary. Existing
+accessors. Direct `TypeSpecifierNode` mutators and non-const type-specifier view
+accessors journal the type or its owning node before mutation. The direct-write
+audit now finds no unjournaled mutators among allow-listed AST owners. Existing
 `TypeInfo` rows reached
 through the mutable accessor/mutator API are snapshotted and restored with their
 cold records, and legacy AST nodes allocated after the mark are truncated.

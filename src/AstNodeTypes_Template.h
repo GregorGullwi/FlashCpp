@@ -62,7 +62,10 @@ public:
 
 	// For non-type parameters
 	bool has_type() const { return type_node_.has_value(); }
-	TypeSpecifierNode& type_specifier_node() { return type_node_.value(); }
+	TypeSpecifierNode& type_specifier_node() {
+		journalLegacyAstOwnerRewrite(*this);
+		return type_node_.value();
+	}
 	const TypeSpecifierNode& type_specifier_node() const { return type_node_.value(); }
 
 	// For template template parameters
@@ -148,6 +151,7 @@ public:
 
 	// Get the underlying FunctionDeclarationNode
 	FunctionDeclarationNode& function_decl_node() {
+		journalTemplateFunctionDeclarationRewrite(*this);
 		return function_declaration_.as<FunctionDeclarationNode>();
 	}
 	const FunctionDeclarationNode& function_decl_node() const {
@@ -2057,6 +2061,7 @@ public:
 
 	// Get the underlying StructDeclarationNode
 	StructDeclarationNode& class_decl_node() {
+		journalTemplateClassDeclarationRewrite(*this);
 		return class_declaration_.as<StructDeclarationNode>();
 	}
 	const StructDeclarationNode& class_decl_node() const {
