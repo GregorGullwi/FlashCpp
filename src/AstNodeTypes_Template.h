@@ -654,6 +654,8 @@ struct DelegatingInitializer {
 };
 
 // Constructor declaration node
+void journalConstructorDeclarationRewrite(ConstructorDeclarationNode& node);
+
 class ConstructorDeclarationNode {
 public:
 	ConstructorDeclarationNode() = delete;
@@ -674,6 +676,7 @@ public:
 	bool was_defaulted_on_first_declaration() const { return was_defaulted_on_first_declaration_; }
 
 	void add_parameter_node(ASTNode parameter_node) {
+		journalConstructorDeclarationRewrite(*this);
 		parameter_nodes_.push_back(parameter_node);
 	}
 
@@ -683,20 +686,24 @@ public:
 		if (definition_params.size() != parameter_nodes_.size()) {
 			return; // Signature mismatch - shouldn't happen after validation
 		}
+		journalConstructorDeclarationRewrite(*this);
 		parameter_nodes_.assign(definition_params.begin(), definition_params.end());
 	}
 
 	void add_member_initializer(std::string_view member_name, ASTNode initializer_expr) {
+		journalConstructorDeclarationRewrite(*this);
 		member_initializers_.emplace_back(member_name, initializer_expr);
 		updateInitializerOwnershipPhase();
 	}
 
 	void add_base_initializer(StringHandle base_name, std::vector<ASTNode> args) {
+		journalConstructorDeclarationRewrite(*this);
 		base_initializers_.emplace_back(base_name, std::move(args));
 		updateInitializerOwnershipPhase();
 	}
 
 	void set_delegating_initializer(std::vector<ASTNode> args) {
+		journalConstructorDeclarationRewrite(*this);
 		delegating_initializer_.emplace(std::move(args));
 		updateInitializerOwnershipPhase();
 	}
@@ -705,6 +712,7 @@ public:
 		std::vector<MemberInitializer> member_initializers,
 		std::vector<BaseInitializer> base_initializers,
 		std::optional<DelegatingInitializer> delegating_initializer) {
+		journalConstructorDeclarationRewrite(*this);
 		member_initializers_ = std::move(member_initializers);
 		base_initializers_ = std::move(base_initializers);
 		delegating_initializer_ = std::move(delegating_initializer);
@@ -712,19 +720,26 @@ public:
 	}
 
 	void set_is_implicit(bool implicit) {
+		journalConstructorDeclarationRewrite(*this);
 		is_implicit_ = implicit;
 	}
-	void set_is_variadic(bool variadic) { is_variadic_ = variadic; }
+	void set_is_variadic(bool variadic) {
+		journalConstructorDeclarationRewrite(*this);
+		is_variadic_ = variadic;
+	}
 	bool is_variadic() const {
 		return is_variadic_;
 	}
 	void set_is_explicitly_defaulted(bool explicitly_defaulted) {
+		journalConstructorDeclarationRewrite(*this);
 		is_explicitly_defaulted_ = explicitly_defaulted;
 	}
 	void set_was_defaulted_on_first_declaration(bool was_defaulted) {
+		journalConstructorDeclarationRewrite(*this);
 		was_defaulted_on_first_declaration_ = was_defaulted;
 	}
 	void set_owning_type_index(TypeIndex owning_type_index) {
+		journalConstructorDeclarationRewrite(*this);
 		owning_type_index_ = owning_type_index;
 	}
 
@@ -735,6 +750,7 @@ public:
 	bool set_definition(ASTNode block_node) {
 		if (definition_block_.has_value())
 			return false;
+		journalConstructorDeclarationRewrite(*this);
 		assert(body_state_tag_ != BodyStateTag::FailedSubstitution);
 		assert(ownership_phase_ != AstOwnershipPhase::SemaNormalized);
 		definition_block_.emplace(block_node);
@@ -773,6 +789,7 @@ public:
 
 	// Record a substitution failure on a freshly-cloned instantiation node.
 	void mark_failed_substitution(StringHandle reason) {
+		journalConstructorDeclarationRewrite(*this);
 		assert(body_state_tag_ == BodyStateTag::NotMaterialized);
 		assert(!definition_block_.has_value());
 		body_state_tag_ = BodyStateTag::FailedSubstitution;
@@ -780,47 +797,76 @@ public:
 	}
 
 	// Pre-computed mangled name for consistent access across all compiler stages
-	void set_mangled_name(std::string_view name) { mangled_name_ = name; }
+	void set_mangled_name(std::string_view name) {
+		journalConstructorDeclarationRewrite(*this);
+		mangled_name_ = name;
+	}
 	std::string_view mangled_name() const { return mangled_name_; }
 	bool has_mangled_name() const { return !mangled_name_.empty(); }
 
 	// noexcept specifier support
-	void set_noexcept(bool is_noexcept) { is_noexcept_ = is_noexcept; }
+	void set_noexcept(bool is_noexcept) {
+		journalConstructorDeclarationRewrite(*this);
+		is_noexcept_ = is_noexcept;
+	}
 	bool is_noexcept() const { return is_noexcept_; }
 	// A dependent noexcept(expr) operand is retained until a class-template
 	// specialization substitutes it, then re-evaluated to set is_noexcept.
-	void set_noexcept_expression(ExpressionHandle expr) { noexcept_expression_ = expr; }
+	void set_noexcept_expression(ExpressionHandle expr) {
+		journalConstructorDeclarationRewrite(*this);
+		noexcept_expression_ = expr;
+	}
 	const std::optional<ExpressionHandle>& noexcept_expression() const { return noexcept_expression_; }
 	bool has_noexcept_expression() const { return noexcept_expression_.has_value(); }
-	void clear_noexcept_expression() { noexcept_expression_.reset(); }
+	void clear_noexcept_expression() {
+		journalConstructorDeclarationRewrite(*this);
+		noexcept_expression_.reset();
+	}
 
 	// explicit specifier support (for future use)
-	void set_explicit(bool is_explicit) { is_explicit_ = is_explicit; }
+	void set_explicit(bool is_explicit) {
+		journalConstructorDeclarationRewrite(*this);
+		is_explicit_ = is_explicit;
+	}
 	bool is_explicit() const { return is_explicit_; }
-	void set_explicit_condition(ExprId condition) { explicit_condition_ = condition; }
+	void set_explicit_condition(ExprId condition) {
+		journalConstructorDeclarationRewrite(*this);
+		explicit_condition_ = condition;
+	}
 	ExprId explicit_condition() const { return explicit_condition_; }
 
 	// constexpr specifier support (for future use)
-	void set_constexpr(bool is_constexpr) { is_constexpr_ = is_constexpr; }
+	void set_constexpr(bool is_constexpr) {
+		journalConstructorDeclarationRewrite(*this);
+		is_constexpr_ = is_constexpr;
+	}
 	bool is_constexpr() const { return is_constexpr_; }
 
 	// C++ inline constructor: `inline`, an in-class definition (including
 	// first-declaration `= default`), or an inherited constructor.
-	void set_is_inline(bool is_inline) { is_inline_ = is_inline; }
+	void set_is_inline(bool is_inline) {
+		journalConstructorDeclarationRewrite(*this);
+		is_inline_ = is_inline;
+	}
 	bool is_inline() const { return is_inline_; }
 
 	// requires clause support (C++20)
-	void set_requires_clause(ASTNode requires_clause) { requires_clause_ = requires_clause; }
+	void set_requires_clause(ASTNode requires_clause) {
+		journalConstructorDeclarationRewrite(*this);
+		requires_clause_ = requires_clause;
+	}
 	const std::optional<ASTNode>& requires_clause() const { return requires_clause_; }
 	bool has_requires_clause() const { return requires_clause_.has_value(); }
 
 	void set_template_parameters(const TemplateParameterVector& template_parameters) {
+		journalConstructorDeclarationRewrite(*this);
 		template_parameters_ = template_parameters;
 		if (ownership_phase_ != AstOwnershipPhase::SemaNormalized) {
 			ownership_phase_ = AstOwnershipPhase::ParserPattern;
 		}
 	}
 	void add_template_parameter(const TemplateParameterNode& template_parameter) {
+		journalConstructorDeclarationRewrite(*this);
 		template_parameters_.push_back(template_parameter);
 		if (ownership_phase_ != AstOwnershipPhase::SemaNormalized) {
 			ownership_phase_ = AstOwnershipPhase::ParserPattern;
@@ -832,6 +878,7 @@ public:
 	// Template body position: for member function template constructors whose bodies
 	// are deferred to instantiation time (two-phase lookup, C++ §13.9.2).
 	void set_template_body_position(SaveHandle handle) {
+		journalConstructorDeclarationRewrite(*this);
 		has_template_body_ = true;
 		template_body_position_handle_ = handle;
 		if (!is_materialized() && ownership_phase_ != AstOwnershipPhase::SemaNormalized) {
@@ -845,7 +892,10 @@ public:
 	void markSemaNormalized() const {
 		assert(ownership_phase_ == AstOwnershipPhase::ConcreteMaterialized ||
 			ownership_phase_ == AstOwnershipPhase::SemaNormalized);
-		ownership_phase_ = AstOwnershipPhase::SemaNormalized;
+		if (ownership_phase_ != AstOwnershipPhase::SemaNormalized) {
+			journalConstructorDeclarationRewrite(const_cast<ConstructorDeclarationNode&>(*this));
+			ownership_phase_ = AstOwnershipPhase::SemaNormalized;
+		}
 	}
 
 	bool hasParserDeferredInitializerPack() const {
@@ -871,6 +921,7 @@ public:
 		return false;
 	}
 	void set_template_initializer_list_position(SaveHandle handle) {
+		journalConstructorDeclarationRewrite(*this);
 		has_template_initializer_list_ = true;
 		template_initializer_list_position_handle_ = handle;
 		if (!is_materialized() && ownership_phase_ != AstOwnershipPhase::SemaNormalized) {
@@ -912,10 +963,14 @@ public:
 	const TemplateEnvironmentSnapshotNode* outer_template_environment_snapshot() const { return outer_template_environment_snapshot_node_; }
 	const TemplateParamNameVector& outer_template_param_names() const { return outer_template_param_names_; }
 	const TemplateArgInfoVector& outer_template_args() const { return outer_template_args_; }
-	void set_lazy_member_registry_key(StringHandle key) { lazy_member_registry_key_ = key; }
+	void set_lazy_member_registry_key(StringHandle key) {
+		journalConstructorDeclarationRewrite(*this);
+		lazy_member_registry_key_ = key;
+	}
 	StringHandle lazy_member_registry_key() const { return lazy_member_registry_key_; }
 	bool has_lazy_member_registry_key() const { return lazy_member_registry_key_.isValid(); }
 	void set_template_specialization_source(const ConstructorDeclarationNode* source) {
+		journalConstructorDeclarationRewrite(*this);
 		template_specialization_source_ = source;
 	}
 	const ConstructorDeclarationNode* template_specialization_source() const {
@@ -971,6 +1026,9 @@ private:
 };
 
 // Destructor declaration node
+class DestructorDeclarationNode;
+void journalDestructorDeclarationRewrite(DestructorDeclarationNode& node);
+
 class DestructorDeclarationNode {
 public:
 	DestructorDeclarationNode() = delete;
@@ -988,6 +1046,7 @@ public:
 	bool set_definition(ASTNode block_node) {
 		if (definition_block_.has_value())
 			return false;
+		journalDestructorDeclarationRewrite(*this);
 		assert(body_state_tag_ != BodyStateTag::FailedSubstitution);
 		assert(ownership_phase_ != AstOwnershipPhase::SemaNormalized);
 		definition_block_.emplace(block_node);
@@ -1027,6 +1086,7 @@ public:
 	// Set when the destructor's body is deferred during template class parsing
 	// so that it can be replayed and materialized during template instantiation.
 	void set_template_body_position(SaveHandle handle) {
+		journalDestructorDeclarationRewrite(*this);
 		template_body_position_ = handle;
 		has_template_body_ = true;
 		if (!is_materialized() && ownership_phase_ != AstOwnershipPhase::SemaNormalized) {
@@ -1040,7 +1100,10 @@ public:
 	void markSemaNormalized() const {
 		assert(ownership_phase_ == AstOwnershipPhase::ConcreteMaterialized ||
 			ownership_phase_ == AstOwnershipPhase::SemaNormalized);
-		ownership_phase_ = AstOwnershipPhase::SemaNormalized;
+		if (ownership_phase_ != AstOwnershipPhase::SemaNormalized) {
+			journalDestructorDeclarationRewrite(const_cast<DestructorDeclarationNode&>(*this));
+			ownership_phase_ = AstOwnershipPhase::SemaNormalized;
+		}
 	}
 
 	// Diagnostic payload for a cached substitution failure.
@@ -1048,6 +1111,7 @@ public:
 
 	// Record a substitution failure on a freshly-cloned instantiation node.
 	void mark_failed_substitution(StringHandle reason) {
+		journalDestructorDeclarationRewrite(*this);
 		assert(body_state_tag_ == BodyStateTag::NotMaterialized);
 		assert(!definition_block_.has_value());
 		body_state_tag_ = BodyStateTag::FailedSubstitution;
@@ -1055,7 +1119,10 @@ public:
 	}
 
 	// Pre-computed mangled name for consistent access across all compiler stages
-	void set_mangled_name(StringHandle name) { mangled_name_ = name; }
+	void set_mangled_name(StringHandle name) {
+		journalDestructorDeclarationRewrite(*this);
+		mangled_name_ = name;
+	}
 	StringHandle mangled_name() const { return mangled_name_; }
 	bool has_mangled_name() const { return mangled_name_.isValid(); }
 
@@ -1069,24 +1136,43 @@ public:
 	// specifier the effective noexcept status must be inferred from base/member
 	// destructors (C++20 [except.spec]/7), so callers should use
 	// isStructNothrowDestructible() instead of reading is_noexcept() directly.
-	void set_noexcept(bool is_noexcept) { is_noexcept_ = is_noexcept; }
+	void set_noexcept(bool is_noexcept) {
+		journalDestructorDeclarationRewrite(*this);
+		is_noexcept_ = is_noexcept;
+	}
 	bool is_noexcept() const { return is_noexcept_; }
-	void set_noexcept_expression(ExpressionHandle expr) { noexcept_expression_ = expr; }
+	void set_noexcept_expression(ExpressionHandle expr) {
+		journalDestructorDeclarationRewrite(*this);
+		noexcept_expression_ = expr;
+	}
 	const std::optional<ExpressionHandle>& noexcept_expression() const { return noexcept_expression_; }
 	bool has_noexcept_expression() const { return noexcept_expression_.has_value(); }
-	void clear_noexcept_expression() { noexcept_expression_.reset(); }
-	void set_has_noexcept_specifier(bool v) { has_noexcept_specifier_ = v; }
+	void clear_noexcept_expression() {
+		journalDestructorDeclarationRewrite(*this);
+		noexcept_expression_.reset();
+	}
+	void set_has_noexcept_specifier(bool v) {
+		journalDestructorDeclarationRewrite(*this);
+		has_noexcept_specifier_ = v;
+	}
 	bool has_noexcept_specifier() const { return has_noexcept_specifier_; }
 
-	void set_is_constexpr(bool v) { is_constexpr_ = v; }
+	void set_is_constexpr(bool v) {
+		journalDestructorDeclarationRewrite(*this);
+		is_constexpr_ = v;
+	}
 	bool is_constexpr() const { return is_constexpr_; }
 
 	// C++ inline destructor: `inline` or an in-class definition (including
 	// first-declaration `= default`).
-	void set_is_inline(bool is_inline) { is_inline_ = is_inline; }
+	void set_is_inline(bool is_inline) {
+		journalDestructorDeclarationRewrite(*this);
+		is_inline_ = is_inline;
+	}
 	bool is_inline() const { return is_inline_; }
 	// Only first-declaration `= default` can produce a trivial destructor.
 	void set_was_defaulted_on_first_declaration(bool was_defaulted) {
+		journalDestructorDeclarationRewrite(*this);
 		was_defaulted_on_first_declaration_ = was_defaulted;
 	}
 	bool was_defaulted_on_first_declaration() const { return was_defaulted_on_first_declaration_; }
@@ -1123,7 +1209,10 @@ public:
 	const TemplateEnvironmentSnapshotNode* outer_template_environment_snapshot() const { return outer_template_environment_snapshot_node_; }
 	const TemplateParamNameVector& outer_template_param_names() const { return outer_template_param_names_; }
 	const TemplateArgInfoVector& outer_template_args() const { return outer_template_args_; }
-	void set_lazy_member_registry_key(StringHandle key) { lazy_member_registry_key_ = key; }
+	void set_lazy_member_registry_key(StringHandle key) {
+		journalDestructorDeclarationRewrite(*this);
+		lazy_member_registry_key_ = key;
+	}
 	StringHandle lazy_member_registry_key() const { return lazy_member_registry_key_; }
 	bool has_lazy_member_registry_key() const { return lazy_member_registry_key_.isValid(); }
 

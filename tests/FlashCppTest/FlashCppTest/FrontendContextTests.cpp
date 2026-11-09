@@ -1169,6 +1169,113 @@ TEST_SUITE("FrontendContext") {
 		CHECK(owner.is_materialized());
 	}
 
+	TEST_CASE("Frontend scratch rollback restores constructor and destructor declaration rewrites") {
+		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture(context);
+		const StringHandle owner_name = StringTable::getOrInternStringHandle("frontend_tx_constructor_owner");
+		ASTNode constructor_node = ASTNode::emplace_node<ConstructorDeclarationNode>(owner_name, owner_name);
+		ConstructorDeclarationNode& constructor = constructor_node.as<ConstructorDeclarationNode>();
+		ASTNode destructor_node = ASTNode::emplace_node<DestructorDeclarationNode>(owner_name, owner_name);
+		DestructorDeclarationNode& destructor = destructor_node.as<DestructorDeclarationNode>();
+		ASTNode block = ASTNode::emplace_node<BlockNode>();
+		const StringHandle baseline_key = StringTable::getOrInternStringHandle("frontend_tx_constructor_baseline_key");
+		const StringHandle outer_key = StringTable::getOrInternStringHandle("frontend_tx_constructor_outer_key");
+		const StringHandle destructor_baseline = StringTable::getOrInternStringHandle("frontend_tx_destructor_baseline");
+		const StringHandle destructor_outer = StringTable::getOrInternStringHandle("frontend_tx_destructor_outer");
+		const StringHandle destructor_inner = StringTable::getOrInternStringHandle("frontend_tx_destructor_inner");
+		const StringHandle destructor_committed = StringTable::getOrInternStringHandle("frontend_tx_destructor_committed");
+		constructor.set_owning_type_index(TypeIndex{7, TypeCategory::Struct});
+		constructor.set_mangled_name("frontend_tx_constructor_baseline");
+		constructor.set_lazy_member_registry_key(baseline_key);
+		constructor.set_noexcept(false);
+		destructor.set_mangled_name(destructor_baseline);
+		destructor.set_lazy_member_registry_key(baseline_key);
+		destructor.set_is_constexpr(false);
+		const StringHandle baseline_parameter = StringTable::getOrInternStringHandle("frontend_tx_constructor_baseline_param");
+		const StringHandle outer_parameter = StringTable::getOrInternStringHandle("frontend_tx_constructor_outer_param");
+		const StringHandle inner_parameter = StringTable::getOrInternStringHandle("frontend_tx_constructor_inner_param");
+		const auto set_bindings = [](auto& owner, StringHandle parameter, int64_t value) {
+			TemplateParamNameVector names;
+			names.push_back(parameter);
+			TemplateArgInfoVector args;
+			TypeInfo::TemplateArgInfo argument;
+			argument.is_value = true;
+			argument.value = value;
+			args.push_back(argument);
+			owner.set_outer_template_bindings(names, args);
+		};
+		set_bindings(constructor, baseline_parameter, 3);
+		set_bindings(destructor, baseline_parameter, 3);
+		{
+			auto outer = context.beginScratchTransaction();
+			constructor.set_owning_type_index(TypeIndex{9, TypeCategory::Struct});
+			constructor.set_mangled_name("frontend_tx_constructor_outer");
+			constructor.set_lazy_member_registry_key(outer_key);
+			constructor.set_is_implicit(true);
+			constructor.set_is_variadic(true);
+			constructor.set_is_explicitly_defaulted(true);
+			constructor.set_noexcept(true);
+			constructor.add_parameter_node(block);
+			REQUIRE(constructor.set_definition(block));
+			destructor.set_mangled_name(destructor_outer);
+			destructor.set_lazy_member_registry_key(outer_key);
+			destructor.set_is_constexpr(true);
+			destructor.set_is_inline(true);
+			REQUIRE(destructor.set_definition(block));
+			set_bindings(constructor, outer_parameter, 7);
+			set_bindings(destructor, outer_parameter, 7);
+			{
+				auto inner = context.beginScratchTransaction();
+				constructor.set_mangled_name("frontend_tx_constructor_inner");
+				destructor.set_mangled_name(destructor_inner);
+				destructor.set_noexcept(false);
+				set_bindings(constructor, inner_parameter, 11);
+				set_bindings(destructor, inner_parameter, 11);
+				inner.rollback();
+			}
+			CHECK(constructor.mangled_name() == "frontend_tx_constructor_outer");
+			CHECK(constructor.lazy_member_registry_key() == outer_key);
+			CHECK(constructor.get_definition().has_value());
+			CHECK(destructor.mangled_name() == destructor_outer);
+			CHECK(destructor.lazy_member_registry_key() == outer_key);
+			CHECK(destructor.is_noexcept());
+			CHECK(destructor.get_definition().has_value());
+			CHECK(constructor.outer_template_param_names()[0] == outer_parameter);
+			CHECK(constructor.outer_template_args()[0].intValue() == 7);
+			CHECK(destructor.outer_template_param_names()[0] == outer_parameter);
+			CHECK(destructor.outer_template_args()[0].intValue() == 7);
+			outer.rollback();
+		}
+		CHECK(constructor.owning_type_index() == TypeIndex{7, TypeCategory::Struct});
+		CHECK(constructor.mangled_name() == "frontend_tx_constructor_baseline");
+		CHECK(constructor.lazy_member_registry_key() == baseline_key);
+		CHECK_FALSE(constructor.is_implicit());
+		CHECK_FALSE(constructor.is_variadic());
+		CHECK_FALSE(constructor.is_explicitly_defaulted());
+		CHECK_FALSE(constructor.is_noexcept());
+		CHECK(constructor.parameter_nodes().empty());
+		CHECK_FALSE(constructor.get_definition().has_value());
+		CHECK(destructor.mangled_name() == destructor_baseline);
+		CHECK(destructor.lazy_member_registry_key() == baseline_key);
+		CHECK(destructor.is_noexcept());
+		CHECK_FALSE(destructor.is_constexpr());
+		CHECK_FALSE(destructor.is_inline());
+		CHECK_FALSE(destructor.get_definition().has_value());
+		CHECK(constructor.outer_template_param_names()[0] == baseline_parameter);
+		CHECK(constructor.outer_template_args()[0].intValue() == 3);
+		CHECK(destructor.outer_template_param_names()[0] == baseline_parameter);
+		CHECK(destructor.outer_template_args()[0].intValue() == 3);
+
+		{
+			auto committed = context.beginScratchTransaction();
+			constructor.set_mangled_name("frontend_tx_constructor_committed");
+			destructor.set_mangled_name(destructor_committed);
+			committed.commit();
+		}
+		CHECK(constructor.mangled_name() == "frontend_tx_constructor_committed");
+		CHECK(destructor.mangled_name() == destructor_committed);
+	}
+
 	TEST_CASE("Frontend scratch rollback restores standalone declaration and enum rewrites") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

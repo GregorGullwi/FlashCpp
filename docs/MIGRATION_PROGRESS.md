@@ -141,7 +141,9 @@ member, base, nested-class, body-state, or identity rewrite in a transaction
 segment and restore it before AST storage truncates. `FunctionDeclarationNode`
 owners likewise snapshot parameters, the referenced declaration metadata,
 definition, lookup context, mangled name, NTTP arguments, body state, and
-declaration flags. Standalone `DeclarationNode` and `EnumDeclarationNode`
+declaration flags. Constructor and destructor declaration owners snapshot
+parameters, initializers, definitions, owning types, template and body metadata,
+flags, mangled names, and lazy registry keys. Standalone `DeclarationNode` and `EnumDeclarationNode`
 owners snapshot their declaration state before type, array, alignment, name,
 scope, enumerator, underlying-type, and identity rewrites. Template function
 and class declaration owners snapshot their parameters, declaration IDs, and

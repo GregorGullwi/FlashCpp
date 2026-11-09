@@ -68,6 +68,16 @@ struct LegacyFunctionDeclarationRewrite {
 	std::optional<FunctionDeclarationJournalSnapshot> snapshot;
 };
 
+struct LegacyConstructorDeclarationRewrite {
+	ConstructorDeclarationNode* owner = nullptr;
+	std::optional<ConstructorDeclarationNode> snapshot;
+};
+
+struct LegacyDestructorDeclarationRewrite {
+	DestructorDeclarationNode* owner = nullptr;
+	std::optional<DestructorDeclarationNode> snapshot;
+};
+
 struct LegacyDeclarationNodeRewrite {
 	DeclarationNode* owner = nullptr;
 	std::optional<DeclarationNode> snapshot;
@@ -127,6 +137,10 @@ struct FrontendPublicationJournalMark {
 	size_t previous_legacy_struct_declaration_rewrite_segment_start = 0;
 	size_t legacy_function_declaration_rewrite_count = 0;
 	size_t previous_legacy_function_declaration_rewrite_segment_start = 0;
+	size_t legacy_constructor_declaration_rewrite_count = 0;
+	size_t previous_legacy_constructor_declaration_rewrite_segment_start = 0;
+	size_t legacy_destructor_declaration_rewrite_count = 0;
+	size_t previous_legacy_destructor_declaration_rewrite_segment_start = 0;
 	size_t legacy_declaration_node_rewrite_count = 0;
 	size_t previous_legacy_declaration_node_rewrite_segment_start = 0;
 	size_t legacy_enum_declaration_rewrite_count = 0;
@@ -692,6 +706,10 @@ private:
 	friend void journalStructDeclarationRewrite(StructDeclarationNode& node);
 	void journalFunctionDeclarationRewrite(FunctionDeclarationNode& node);
 	friend void journalFunctionDeclarationRewrite(FunctionDeclarationNode& node);
+	void journalConstructorDeclarationRewrite(ConstructorDeclarationNode& node);
+	friend void journalConstructorDeclarationRewrite(ConstructorDeclarationNode& node);
+	void journalDestructorDeclarationRewrite(DestructorDeclarationNode& node);
+	friend void journalDestructorDeclarationRewrite(DestructorDeclarationNode& node);
 	void journalDeclarationNodeRewrite(DeclarationNode& node);
 	friend void journalDeclarationNodeRewrite(DeclarationNode& node);
 	void journalEnumDeclarationRewrite(EnumDeclarationNode& node);
@@ -740,6 +758,10 @@ private:
 	size_t legacy_struct_declaration_rewrite_segment_start_ = 0;
 	std::vector<LegacyFunctionDeclarationRewrite> legacy_function_declaration_rewrites_;
 	size_t legacy_function_declaration_rewrite_segment_start_ = 0;
+	std::vector<LegacyConstructorDeclarationRewrite> legacy_constructor_declaration_rewrites_;
+	size_t legacy_constructor_declaration_rewrite_segment_start_ = 0;
+	std::vector<LegacyDestructorDeclarationRewrite> legacy_destructor_declaration_rewrites_;
+	size_t legacy_destructor_declaration_rewrite_segment_start_ = 0;
 	std::vector<LegacyDeclarationNodeRewrite> legacy_declaration_node_rewrites_;
 	size_t legacy_declaration_node_rewrite_segment_start_ = 0;
 	std::vector<LegacyEnumDeclarationRewrite> legacy_enum_declaration_rewrites_;

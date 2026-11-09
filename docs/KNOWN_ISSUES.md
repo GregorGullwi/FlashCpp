@@ -264,7 +264,9 @@ before `set_outer_template_bindings` rewrites them. Pre-existing
 base, nested-class, body-state, or identity rewrites and restore it before AST
 storage truncates. `FunctionDeclarationNode` owners snapshot parameters,
 referenced declaration metadata, definition, lookup context, mangled name, NTTP
-arguments, body state, and flags. Standalone `DeclarationNode` and
+arguments, body state, and flags. Constructor and destructor declaration owners
+snapshot parameters, initializers, definitions, owning types, template and body
+metadata, flags, mangled names, and lazy registry keys. Standalone `DeclarationNode` and
 `EnumDeclarationNode` owners snapshot declaration, array, alignment, name,
 scope, enumerator, underlying-type, and identity rewrites. Template function
 and class declaration owners snapshot parameters, declaration IDs, and deferred
