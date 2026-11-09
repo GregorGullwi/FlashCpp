@@ -1612,7 +1612,8 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 			if (expected.parameter_begin != parameter_cursor || expected.parameter_count != constructors[index].parameter_types.size() ||
 				expected.minimum_parameter_count != minimumParameterCount(constructors[index]) || expected.flags != constructors[index].flags ||
 				expected.is_noexcept != static_cast<uint8_t>(constructors[index].is_noexcept ? 1 : 0) ||
-				expected.nothrow_default_count != constructors[index].nothrow_default_count) {
+				expected.nothrow_default_count != constructors[index].nothrow_default_count ||
+				expected.last_known_throwing_default != constructors[index].last_known_throwing_default) {
 				throw InternalError("canonical type: conflicting record constructor schema publication");
 			}
 			for (size_t parameter = 0; parameter < expected.parameter_count; ++parameter) {
@@ -1633,6 +1634,10 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 		}
 		if (constructor.nothrow_default_count > parameter_count - minimum_parameter_count) {
 			throw InternalError("canonical type: invalid nothrow constructor default count");
+		}
+		if (constructor.last_known_throwing_default != std::numeric_limits<uint16_t>::max() &&
+			constructor.last_known_throwing_default >= parameter_count) {
+			throw InternalError("canonical type: invalid known-throwing constructor default index");
 		}
 		total_parameters += constructor.parameter_types.size();
 	}
@@ -1656,6 +1661,7 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 			.is_noexcept = static_cast<uint8_t>(constructor.is_noexcept ? 1 : 0),
 			.minimum_parameter_count = static_cast<uint16_t>(minimumParameterCount(constructor)),
 			.nothrow_default_count = constructor.nothrow_default_count,
+			.last_known_throwing_default = constructor.last_known_throwing_default,
 		};
 		appendSchemaEntryUnlocked(record_constructors_, live_record_constructor_count_, entry);
 		parameter_cursor += entry.parameter_count;

@@ -1086,6 +1086,15 @@ template AST pattern + substitution environment + semantic context
 
 The new path cannot access the lexer or parser cursor.
 
+Boundary ownership: required-dependency instantiation isolation belongs to 8A.
+Completed instantiations are observable required effects under [temp.deduct] and
+[temp.inst] and cannot be rolled back with candidate-local state. A
+candidate-local transaction may surround type-pack expansion or materialization
+only after required dependency effects have an independent commit channel.
+Probe-mode gating that merely avoids wrapping required effects is a transition
+aid, not the target design. Until that channel exists, the type-pack
+materialization transaction stays deferred and must not be scheduled as 3A work.
+
 Migration order:
 
 1. class templates with data members and aliases;

@@ -575,9 +575,10 @@ struct CanonicalRecordConstructor {
 	uint8_t is_noexcept;
 	uint16_t minimum_parameter_count;
 	uint16_t nothrow_default_count;
+	uint16_t last_known_throwing_default;
 	friend bool operator==(CanonicalRecordConstructor, CanonicalRecordConstructor) = default;
 };
-static_assert(sizeof(CanonicalRecordConstructor) == 12);
+static_assert(sizeof(CanonicalRecordConstructor) == 16);
 
 // Publication input for one constructor.
 struct CanonicalRecordConstructorSpec {
@@ -587,6 +588,7 @@ struct CanonicalRecordConstructorSpec {
 	// The max-value sentinel means every declared parameter is required.
 	uint16_t minimum_parameter_count = std::numeric_limits<uint16_t>::max();
 	uint16_t nothrow_default_count = 0;
+	uint16_t last_known_throwing_default = std::numeric_limits<uint16_t>::max();
 };
 
 inline CanonicalRecordFunctionFlags operator|(CanonicalRecordFunctionFlags a, CanonicalRecordFunctionFlags b) {
