@@ -3017,6 +3017,60 @@ inline bool isCanonicalNothrowLiteralDefault(const CanonicalTypeTable& table, Ty
 	return false;
 }
 
+// Prove a default expression can throw when its call target is known not to be
+// noexcept. Unresolved targets stay unknown so the compatibility path is not
+// made less accurate for constructors whose defaults cannot yet be classified.
+inline bool isCanonicalKnownThrowingDefault(const ASTNode& initializer) {
+	if (initializer.is<InitializerListNode>()) {
+		for (const ASTNode& element : initializer.as<InitializerListNode>().initializers()) {
+			if (isCanonicalKnownThrowingDefault(element)) {
+				return true;
+			}
+		}
+		return false;
+	}
+	const ExpressionNode* expression = initializer.get_if<ExpressionNode>();
+	if (expression == nullptr) {
+		return false;
+	}
+	if (std::holds_alternative<ThrowExpressionNode>(*expression) || std::holds_alternative<NewExpressionNode>(*expression)) {
+		return true;
+	}
+	if (const CallExprNode* call = std::get_if<CallExprNode>(expression)) {
+		const FunctionDeclarationNode* function = call->callee().function_declaration_or_null();
+		if (function != nullptr && !function->is_noexcept()) {
+			return true;
+		}
+		if (function == nullptr && call->call_kind() == CalleeKind::IndirectCall) {
+			return true;
+		}
+		for (const ASTNode& argument : call->arguments()) {
+			if (isCanonicalKnownThrowingDefault(argument)) {
+				return true;
+			}
+		}
+		return false;
+	}
+	if (const ConstructorCallNode* constructor_call = std::get_if<ConstructorCallNode>(expression)) {
+		const ConstructorDeclarationNode* constructor = constructor_call->resolved_constructor();
+		if (constructor != nullptr && !constructor->is_noexcept()) {
+			return true;
+		}
+		for (const ASTNode& argument : constructor_call->arguments()) {
+			if (isCanonicalKnownThrowingDefault(argument)) {
+				return true;
+			}
+		}
+		return false;
+	}
+	if (const TernaryOperatorNode* ternary = std::get_if<TernaryOperatorNode>(expression)) {
+		return isCanonicalKnownThrowingDefault(ternary->condition()) ||
+			isCanonicalKnownThrowingDefault(ternary->true_expr()) ||
+			isCanonicalKnownThrowingDefault(ternary->false_expr());
+	}
+	return false;
+}
+
 // Publish a completed class's constructor schema keyed by its canonical TypeId
 // (Record or TemplateSpecialization), read from the declaration node so no
 // StructTypeInfo is needed; implicit special members are added to it as well.
@@ -3030,6 +3084,7 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 		bool is_noexcept = false;
 		uint16_t minimum_parameter_count = 0;
 		uint16_t nothrow_default_count = 0;
+		uint16_t last_known_throwing_default = std::numeric_limits<uint16_t>::max();
 	};
 	std::vector<PendingConstructor> pending;
 	pending.reserve(struct_decl.member_functions().size());
@@ -3093,11 +3148,14 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 				break;
 			}
 			const DeclarationNode* declaration = parameter.get_if<DeclarationNode>();
-			if (declaration != nullptr && declaration->has_default_value() &&
-				isCanonicalNothrowLiteralDefault(table, *imported, declaration->default_value())) {
+			const bool has_default = declaration != nullptr && declaration->has_default_value();
+			if (has_default && isCanonicalNothrowLiteralDefault(table, *imported, declaration->default_value())) {
 				++entry.nothrow_default_count;
 			} else {
 				entry.nothrow_default_count = 0;
+				if (has_default && isCanonicalKnownThrowingDefault(declaration->default_value())) {
+					entry.last_known_throwing_default = static_cast<uint16_t>(index);
+				}
 			}
 			entry.parameter_types.push_back(*imported);
 		}
@@ -3132,6 +3190,7 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 			.is_noexcept = entry.is_noexcept,
 			.minimum_parameter_count = entry.minimum_parameter_count,
 			.nothrow_default_count = entry.nothrow_default_count,
+			.last_known_throwing_default = entry.last_known_throwing_default,
 		});
 	}
 	table.publishRecordConstructors(type, constructors);

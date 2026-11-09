@@ -2879,8 +2879,13 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 	}
 	if (kind == TypeTraitKind::IsNothrowConstructible) {
 		if (argument_types.size() + selected.nothrow_default_count < selected.parameter_count) {
-			// Only a published suffix proves every omitted parameter initializer
-			// cannot throw independently of the constructor's exception specification.
+			// A constructor whose omitted default is known to throw cannot be
+			// nothrow-constructible. Other unproven defaults keep the compatibility
+			// answer until their exception facts are published.
+			if (selected.last_known_throwing_default != std::numeric_limits<uint16_t>::max() &&
+				selected.last_known_throwing_default >= argument_types.size()) {
+				return TypeTraitResult::success_false();
+			}
 			return std::nullopt;
 		}
 		if (hasCanonicalRecordFunctionFlag(selected.flags, CanonicalRecordFunctionFlags::Implicit) ||

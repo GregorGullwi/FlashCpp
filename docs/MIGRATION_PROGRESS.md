@@ -164,10 +164,11 @@ dependent-name, member-class, or identity rewrite. Direct `TypeSpecifierNode`
 container/index mutators and non-const type-specifier view accessors also journal
 the type or its owning AST node before mutation. The direct-write audit now finds
 no unjournaled mutators among allow-listed AST owners; future direct writes must
-use these accessors. The transaction around type-pack materialization is the next
-boundary step. Required dependency instantiations
-must remain separate from that candidate-local transaction; blanket rollback
-would violate observable C++20 instantiation effects. Lockstep member and
+use these accessors. The type-pack materialization transaction and
+required-dependency isolation are Boundary 8A work and remain deferred until
+Boundary 3A closes. Required dependency instantiations must remain separate from
+that candidate-local transaction; blanket rollback would violate observable C++20
+instantiation effects. Lockstep member and
 namespace-scope length mismatches now produce `TemplatePackLengthMismatch`
 (#1820); remaining mismatch contexts, alias/variable-template flattened adapters,
 and runtime function-parameter fold replay remain deferred.
@@ -343,8 +344,10 @@ mismatched, unpublished, or unresolved owner facts.
      defers to `StructTypeInfo` for user-defined converting constructors,
      non-trivially-copyable derived bases, incomplete schemas, and unresolved
      canonical types. The nothrow query consumes a published suffix of arithmetic
-     literal defaults, including unary signs; other omitted initializers still
-     defer. Implicit copy/move candidates cannot obscure a builtin argument's
+     literal defaults, including unary signs, and rejects omitted defaults whose
+     call, throw, or new expression is known to throw; remaining omitted
+     initializers still defer. Implicit copy/move candidates cannot obscure a
+     builtin argument's
      better direct converting constructor. Constructor schemas retain ellipsis and rank
      supported extra arguments after conversions to named parameters. Class
      arguments passed through ellipsis still defer until their initialization

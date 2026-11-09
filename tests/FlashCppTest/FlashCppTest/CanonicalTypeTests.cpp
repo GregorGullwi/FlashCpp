@@ -10474,8 +10474,14 @@ TEST_CASE("Canonical constructor literal defaults need no compatibility type") {
 	REQUIRE(mixed_supplied.has_value());
 	CHECK(mixed_supplied->success);
 	CHECK(mixed_supplied->value);
-	CHECK_FALSE(nothrow("Mixed", 1).has_value());
-	CHECK_FALSE(nothrow("ConstexprDefault", 1).has_value());
+	const auto mixed_omitted = nothrow("Mixed", 1);
+	REQUIRE(mixed_omitted.has_value());
+	CHECK(mixed_omitted->success);
+	CHECK_FALSE(mixed_omitted->value);
+	const auto constexpr_default = nothrow("ConstexprDefault", 1);
+	REQUIRE(constexpr_default.has_value());
+	CHECK(constexpr_default->success);
+	CHECK_FALSE(constexpr_default->value);
 	CHECK_FALSE(nothrow("ClassDefault", 1).has_value());
 	const auto throwing = nothrow("Throwing", 1);
 	REQUIRE(throwing.has_value());
