@@ -420,6 +420,10 @@ private:
 };
 
 // Typedef declaration node: typedef existing_type new_name;
+class TypedefDeclarationNode;
+void journalTypedefDeclarationRewrite(TypedefDeclarationNode& node);
+void restoreTypedefDeclarationRewrite(TypedefDeclarationNode& node, ScopeId lexical_scope_id);
+
 class TypedefDeclarationNode {
 public:
 	explicit TypedefDeclarationNode(const TypeSpecifierNode& type_node, Token alias_name)
@@ -430,14 +434,23 @@ public:
 	const Token& alias_token() const { return alias_name_; }
 
 	ScopeId lexical_scope_id() const { return lexical_scope_id_; }
-	void set_lexical_scope_id(ScopeId scope_id) { lexical_scope_id_ = scope_id; }
+	void set_lexical_scope_id(ScopeId scope_id) {
+		journalTypedefDeclarationRewrite(*this);
+		lexical_scope_id_ = scope_id;
+	}
 	bool has_lexical_scope_id() const { return static_cast<bool>(lexical_scope_id_); }
 
 private:
+	friend void restoreTypedefDeclarationRewrite(TypedefDeclarationNode& node, ScopeId lexical_scope_id);
+
 	TypeSpecifierNode type_node_;	// The underlying type (TypeSpecifierNode)
 	Token alias_name_;   // The new type alias name
 	ScopeId lexical_scope_id_;
 };
+
+inline void restoreTypedefDeclarationRewrite(TypedefDeclarationNode& node, ScopeId lexical_scope_id) {
+	node.lexical_scope_id_ = lexical_scope_id;
+}
 
 // ============================================================================
 // Exception Handling Support

@@ -143,11 +143,11 @@ owners likewise snapshot parameters, the referenced declaration metadata,
 definition, lookup context, mangled name, NTTP arguments, body state, and
 declaration flags. Constructor and destructor declaration owners snapshot
 parameters, initializers, definitions, owning types, template and body metadata,
-flags, mangled names, and lazy registry keys. Standalone `DeclarationNode` and `EnumDeclarationNode`
-owners snapshot their declaration state before type, array, alignment, name,
-scope, enumerator, underlying-type, and identity rewrites. Template function
-and class declaration owners snapshot their parameters, declaration IDs, and
-deferred bodies. Template alias and variable declarations snapshot their bounds,
+flags, mangled names, and lazy registry keys. Standalone `DeclarationNode`,
+`EnumDeclarationNode`, and `TypedefDeclarationNode` owners snapshot their
+declaration state before type, array, alignment, name, scope, enumerator,
+underlying-type, and identity rewrites. Template function and class declaration
+owners snapshot their parameters, declaration IDs, and deferred bodies. Template alias and variable declarations snapshot their bounds,
 replay metadata, and declaration IDs; standalone variable declarations snapshot
 their initializer, storage/linkage/constexpr flags, and outer bindings; friend
 declarations snapshot their class, template, function, type, and declaration

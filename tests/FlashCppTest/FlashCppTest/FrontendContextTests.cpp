@@ -1367,6 +1367,34 @@ TEST_SUITE("FrontendContext") {
 		CHECK(enum_declaration.is_forward_declaration());
 	}
 
+	TEST_CASE("Frontend scratch rollback restores typedef declaration rewrites") {
+		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture(context);
+		const TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		const Token alias_token(Token::Type::Identifier, std::string_view("frontend_tx_typedef_alias"), 1, 1, 0);
+		ASTNode node = ASTNode::emplace_node<TypedefDeclarationNode>(int_type, alias_token);
+		TypedefDeclarationNode& typedef_decl = node.as<TypedefDeclarationNode>();
+		typedef_decl.set_lexical_scope_id(ScopeId{3});
+		{
+			auto outer = context.beginScratchTransaction();
+			typedef_decl.set_lexical_scope_id(ScopeId{5});
+			{
+				auto inner = context.beginScratchTransaction();
+				typedef_decl.set_lexical_scope_id(ScopeId{7});
+				inner.rollback();
+			}
+			CHECK(typedef_decl.lexical_scope_id() == ScopeId{5});
+			outer.rollback();
+		}
+		CHECK(typedef_decl.lexical_scope_id() == ScopeId{3});
+		{
+			auto committed = context.beginScratchTransaction();
+			typedef_decl.set_lexical_scope_id(ScopeId{11});
+			committed.commit();
+		}
+		CHECK(typedef_decl.lexical_scope_id() == ScopeId{11});
+	}
+
 	TEST_CASE("Frontend scratch rollback restores template declaration rewrites") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();
