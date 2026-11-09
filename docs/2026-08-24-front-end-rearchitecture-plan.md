@@ -1095,6 +1095,12 @@ Probe-mode gating that merely avoids wrapping required effects is a transition
 aid, not the target design. Until that channel exists, the type-pack
 materialization transaction stays deferred and must not be scheduled as 3A work.
 
+Requires-expression semantic validation must force any pending class-template
+instantiation and using-declaration rebinding before operator-name lookup.
+Direct expressions over an instantiated class already see
+`using Base<T>::operator-`, but constraint validation can run before that
+instantiation and must not report a false unsatisfied requirement.
+
 Migration order:
 
 1. class templates with data members and aliases;
