@@ -2319,7 +2319,7 @@ static TypeTraitResult evaluateAssignableTrait(
 		TypeTraitEval::isScalarType(
 			assigned_type.category(),
 			false,
-			assigned_type.pointer_depth()) &&
+			assigned_type.runtime_pointer_depth()) &&
 		(areSameTypeTraitOperands(assigned_type, source_type) ||
 		 can_convert_type(source_type, assigned_type).is_valid);
 	if (scalar_assignment) {
@@ -2333,7 +2333,7 @@ static TypeTraitResult evaluateAssignableTrait(
 		structInfoFromTypeIndex(assigned_type.type_index());
 	if (!assigned_struct ||
 		assigned_struct->is_union ||
-		assigned_type.pointer_depth() != 0 ||
+		assigned_type.runtime_pointer_depth() != 0 ||
 		!areSameTypeTraitOperands(assigned_type, source_object_type)) {
 		return TypeTraitResult::success_false();
 	}
@@ -2502,11 +2502,11 @@ bool constructibleFromArgument(
 			return false;
 		}
 	}
-	if (target.pointer_depth() > 0) {
-		if (arg.pointer_depth() == 0) {
+	if (target.runtime_pointer_depth() > 0) {
+		if (arg.runtime_pointer_depth() == 0) {
 			return arg.category() == TypeCategory::Nullptr;
 		}
-		if (arg.pointer_depth() != target.pointer_depth()) {
+		if (arg.runtime_pointer_depth() != target.runtime_pointer_depth()) {
 			return false;
 		}
 		if (target.category() != arg.category() &&
@@ -3055,7 +3055,7 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalConstructibleFromArgs(
 	}
 	// A reference or scalar target accepts at most one source type and uses the
 	// implicit conversion rules rather than constructor overload resolution.
-	if (target.is_reference() || TypeTraitEval::isScalarType(target.category(), target.is_reference(), target.pointer_depth())) {
+	if (target.is_reference() || TypeTraitEval::isScalarType(target.category(), target.is_reference(), target.runtime_pointer_depth())) {
 		if (arguments.size() != 1) {
 			return TypeTraitResult::success_false();
 		}
@@ -3103,13 +3103,13 @@ std::optional<TypeTraitResult> evaluateConstructibility(
 	ConstructibilityFallback fallback) {
 	const bool is_reference_target = target.is_reference();
 	const bool is_scalar_target = TypeTraitEval::isScalarType(
-		target.category(), target.is_reference(), target.pointer_depth());
+		target.category(), target.is_reference(), target.runtime_pointer_depth());
 	const StructTypeInfo* struct_info = structInfoFromTypeIndex(target.type_index());
 	// The compatibility path rejects a union or pointer-shaped record before a
 	// published fact can answer; the canonical-only path does not apply it.
 	if (fallback == ConstructibilityFallback::Sema &&
 		!is_reference_target && !is_scalar_target &&
-		(!struct_info || struct_info->is_union || target.pointer_depth() != 0)) {
+		(!struct_info || struct_info->is_union || target.runtime_pointer_depth() != 0)) {
 		return TypeTraitResult::success_false();
 	}
 	if (const std::optional<TypeTraitResult> canonical =
