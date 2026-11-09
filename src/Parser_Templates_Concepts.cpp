@@ -332,6 +332,13 @@ ConstraintEvaluationResult evaluateRequiresExpressionConstraint(const RequiresEx
 
 	auto isValidRequirementExpression = [&](const ASTNode& expr_node) {
 		try {
+			const BinaryOperatorNode* binary = expr_node.is<BinaryOperatorNode>()
+				? &expr_node.as<BinaryOperatorNode>()
+				: std::get_if<BinaryOperatorNode>(expr_node.get_if<ExpressionNode>());
+			if (binary != nullptr && isAssignOperator(binary->operator_kind()) &&
+				(binary->has_no_match_operator_overload() || binary->has_ambiguous_operator_overload())) {
+				return false;
+			}
 			TypeSpecifierQueryResult type_query = parser.semanticAnalysis().analyzeExpressionTypeQuery(expr_node);
 
 			if (expr_node.is<ExpressionNode>()) {

@@ -6678,13 +6678,7 @@ inline OperatorOverloadResult findUnaryOperatorOverloadWithFreeFunction(
 				if (!table.hasClassBaseSchema(owner_type_id)) {
 					return OperatorOverloadResult::no_overload();
 				}
-				if (!table.hasClassBaseSchema(owner_type_id)) {
-					return OperatorOverloadResult::no_overload();
-				}
-				if (!table.hasClassBaseSchema(owner_type_id)) {
-			return OperatorOverloadResult::no_overload();
-		}
-		const TypeInfo* const type_info = tryFindCanonicalOverloadClassTypeInfo(table, owner_type_id);
+				const TypeInfo* const type_info = tryFindCanonicalOverloadClassTypeInfo(table, owner_type_id);
 				const StructTypeInfo* const struct_info = type_info != nullptr ? type_info->getStructInfo() : nullptr;
 				if (struct_info != nullptr && classHasUsingDeclarationForOperator(*struct_info, operator_kind)) {
 					appendCanonicalUnaryOperatorBaseTypes(table, *struct_info, operator_kind, pending_types);
@@ -7031,10 +7025,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(const T
 				if (!table.hasClassBaseSchema(owner_type_id)) {
 					return OperatorOverloadResult::no_overload();
 				}
-				if (!table.hasClassBaseSchema(owner_type_id)) {
-			return OperatorOverloadResult::no_overload();
-		}
-		const TypeInfo* const type_info = tryFindCanonicalOverloadClassTypeInfo(table, owner_type_id);
+				const TypeInfo* const type_info = tryFindCanonicalOverloadClassTypeInfo(table, owner_type_id);
 				const StructTypeInfo* const struct_info = type_info != nullptr ? type_info->getStructInfo() : nullptr;
 				if (struct_info != nullptr && classHasUsingDeclarationForOperator(*struct_info, operator_kind)) {
 					appendCanonicalUnaryOperatorBaseTypes(table, *struct_info, operator_kind, pending_types);
