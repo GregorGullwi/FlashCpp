@@ -4707,6 +4707,78 @@ TEST_CASE("Canonical constructor schemas accept derived arguments over non-trivi
 	CHECK_FALSE(evaluate(TypeTraitKind::IsConstructible, class_specifier(EntityId{961}), move_argument).has_value());
 }
 
+TEST_CASE("Canonical constructor schemas use converting constructors for unrelated arguments") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId source_type = table.record(EntityId{962});
+	const TypeId target_type = table.record(EntityId{963});
+	const TypeId outer_type = table.record(EntityId{964});
+	const TypeId explicit_target_type = table.record(EntityId{965});
+	const TypeId explicit_outer_type = table.record(EntityId{966});
+	const TypeId private_target_type = table.record(EntityId{967});
+	const TypeId private_outer_type = table.record(EntityId{968});
+	const TypeId incomplete_target_type = table.record(EntityId{969});
+	const TypeId incomplete_outer_type = table.record(EntityId{970});
+	const TypeId plain_target_type = table.record(EntityId{971});
+	const TypeId plain_outer_type = table.record(EntityId{972});
+	table.publishClassBaseSchema(source_type, {});
+	table.publishClassBaseSchema(target_type, {});
+	table.publishClassBaseSchema(explicit_target_type, {});
+	table.publishClassBaseSchema(private_target_type, {});
+	table.publishClassBaseSchema(incomplete_target_type, {});
+	table.publishClassBaseSchema(plain_target_type, {});
+	auto publish_outer = [&table](TypeId target, TypeId outer) {
+		const std::array<TypeId, 1> parameters{target};
+		const std::array<CanonicalRecordConstructorSpec, 1> constructors{{{parameters, CanonicalRecordFunctionFlags::None, true}}};
+		table.publishRecordConstructors(outer, constructors);
+	};
+	const std::array<TypeId, 1> source_parameters{source_type};
+	const std::array<CanonicalRecordConstructorSpec, 1> explicit_constructors{{{source_parameters, CanonicalRecordFunctionFlags::Explicit, true}}};
+	const std::array<CanonicalRecordConstructorSpec, 1> private_constructors{{{source_parameters, CanonicalRecordFunctionFlags::NonPublic, true}}};
+	const std::array<CanonicalRecordConstructorSpec, 1> incomplete_constructors{{
+		{source_parameters, CanonicalRecordFunctionFlags::SchemaIncomplete, true}}};
+	const TypeId target_copy_parameter = table.reference(table.qualify(target_type, CVQualifier::Const), ReferenceQualifier::LValueReference);
+	const std::array<TypeId, 1> target_copy_parameters{target_copy_parameter};
+	const std::array<CanonicalRecordConstructorSpec, 2> target_constructors{{
+		{target_copy_parameters, CanonicalRecordFunctionFlags::Implicit, true},
+		{source_parameters, CanonicalRecordFunctionFlags::None, true}}};
+	table.publishRecordConstructors(target_type, target_constructors);
+	table.publishRecordConstructors(explicit_target_type, explicit_constructors);
+	table.publishRecordConstructors(private_target_type, private_constructors);
+	table.publishRecordConstructors(incomplete_target_type, incomplete_constructors);
+	const TypeId plain_copy_parameter = table.reference(table.qualify(plain_target_type, CVQualifier::Const), ReferenceQualifier::LValueReference);
+	const std::array<TypeId, 1> plain_copy_parameters{plain_copy_parameter};
+	const std::array<CanonicalRecordConstructorSpec, 1> plain_constructors{{{plain_copy_parameters, CanonicalRecordFunctionFlags::Implicit, true}}};
+	table.publishRecordConstructors(plain_target_type, plain_constructors);
+	publish_outer(target_type, outer_type);
+	publish_outer(explicit_target_type, explicit_outer_type);
+	publish_outer(private_target_type, private_outer_type);
+	publish_outer(incomplete_target_type, incomplete_outer_type);
+	publish_outer(plain_target_type, plain_outer_type);
+	auto class_specifier = [](EntityId entity) {
+		TypeSpecifierNode specifier(TypeCategory::Struct, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		specifier.set_type_entity(entity);
+		return specifier;
+	};
+	auto evaluate = [&table](TypeTraitKind kind, TypeSpecifierNode consumer, TypeSpecifierNode argument) {
+		std::array<TypeSpecifierNode, 1> arguments{argument};
+		return evaluateConstructibility(kind, consumer, arguments, ConstructibilityFallback::None);
+	};
+	const TypeSpecifierNode source_argument = class_specifier(EntityId{962});
+	const auto constructible = evaluate(TypeTraitKind::IsConstructible, class_specifier(EntityId{964}), source_argument);
+	REQUIRE(constructible.has_value());
+	CHECK(constructible->success);
+	CHECK(constructible->value);
+	const auto nothrow = evaluate(TypeTraitKind::IsNothrowConstructible, class_specifier(EntityId{964}), source_argument);
+	REQUIRE(nothrow.has_value());
+	CHECK(nothrow->success);
+	CHECK(nothrow->value);
+	CHECK_FALSE(evaluate(TypeTraitKind::IsConstructible, class_specifier(EntityId{966}), source_argument).has_value());
+	CHECK_FALSE(evaluate(TypeTraitKind::IsConstructible, class_specifier(EntityId{968}), source_argument).has_value());
+	CHECK_FALSE(evaluate(TypeTraitKind::IsConstructible, class_specifier(EntityId{970}), source_argument).has_value());
+	CHECK_FALSE(evaluate(TypeTraitKind::IsConstructible, class_specifier(EntityId{972}), source_argument).has_value());
+}
+
 TEST_CASE("Canonical direct reference binding preserves access cv and value category") {
 	CanonicalTypeTable table;
 	const TypeId base_type = table.record(EntityId{913});

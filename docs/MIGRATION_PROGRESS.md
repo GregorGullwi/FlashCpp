@@ -262,11 +262,11 @@ mismatched, unpublished, or unresolved owner facts.
      canonical. The argument-bearing record query resolves exact matches,
      supported scalar and reference conversions, same-class by-value arguments,
      publicly derived by-value arguments whose base publishes a usable public
-     copy or move constructor, and omitted default arguments from published
-     constructor schemas. It still defers to `StructTypeInfo` for user-defined
-     converting constructors, derived bases whose copy/move facts are unpublished
-     or inaccessible, incomplete schemas, and unresolved canonical types. The
-     nothrow query consumes published arithmetic-literal and
+     copy or move constructor, unrelated class arguments with exactly one viable
+     non-explicit public converting constructor, and omitted default arguments
+     from published constructor schemas. Residual fallback shapes are tracked in
+     [KNOWN_ISSUES](KNOWN_ISSUES.md). The nothrow query consumes
+     published arithmetic-literal and
      known-throwing default-expression facts; remaining default-exception gaps are
      tracked only in [KNOWN_ISSUES](KNOWN_ISSUES.md). Implicit copy/move candidates
      cannot obscure a builtin argument's

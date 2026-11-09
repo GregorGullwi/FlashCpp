@@ -214,10 +214,15 @@ materialization. The sema-owned construction traits
 (`__is_constructible`, `__is_trivially_constructible`, and
 `__is_nothrow_constructible`) answer exact matches, supported scalar and
 reference conversions, same-class by-value arguments, publicly derived by-value
-arguments whose base publishes a usable public copy or move constructor, and
-omitted default arguments from published constructor schemas. They still defer
-for user-defined converting constructors, derived bases whose copy/move facts are
-unpublished or inaccessible, incomplete schemas, and unresolved canonical types.
+arguments whose base publishes a usable public copy or move constructor,
+unrelated class arguments with exactly one viable non-explicit public converting
+constructor, and omitted default arguments from published constructor schemas.
+They still defer for conversion-operator targets, multiple or undecidable
+converting candidates, derived bases whose copy/move facts are unpublished or
+inaccessible, incomplete schemas, and unresolved canonical types. Explicit and
+deleted converting constructors stay fail-closed. Inaccessible converting
+constructors are not accepted canonically but still defer to the compatibility
+resolver, which currently reports them as constructible.
 Constructor schemas now retain ellipsis and rank
 extra arguments through the ellipsis conversion sequence, including class types.
 Passing a class through `...` is conditionally supported, so constructibility
