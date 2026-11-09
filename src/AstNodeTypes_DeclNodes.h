@@ -2066,6 +2066,11 @@ public:
 		}
 		return depth;
 	}
+	// Pointer depth of the element type of an array declarator. For a legacy
+	// (non-ordered) declarator this is the flat pointer depth. For an ordered
+	// declarator the outer array components are stripped first, so an
+	// interleaved array of pointers reports the element's pointer depth even
+	// when the array itself has no leading pointer component.
 	size_t elementPointerDepth() const {
 		if (!has_ordered_declarator()) {
 			return pointer_levels_.size();
@@ -3248,6 +3253,26 @@ struct ResolvedAliasTypeInfo {
 	TypeCategory typeEnum() const { return type_index.category(); }
 	bool isArray() const {
 		return !pointee_array_declarator && !array_dimensions.empty();
+	}
+	size_t runtimePointerDepth() const {
+		if (!has_ordered_declarator || ordered_declarator.empty()) {
+			return pointer_depth;
+		}
+		size_t index = 0;
+		while (index < ordered_declarator.size() &&
+			(ordered_declarator[index].kind == DeclaratorComponentKind::Array ||
+			 ordered_declarator[index].kind == DeclaratorComponentKind::UnknownBoundArray)) {
+			++index;
+		}
+		size_t depth = 0;
+		while (index < ordered_declarator.size() &&
+			(ordered_declarator[index].kind == DeclaratorComponentKind::Pointer ||
+			 ordered_declarator[index].kind == DeclaratorComponentKind::MemberObjectPointer ||
+			 ordered_declarator[index].kind == DeclaratorComponentKind::MemberFunctionPointer)) {
+			++depth;
+			++index;
+		}
+		return depth;
 	}
 	bool has_member_class_owner() const {
 		return static_cast<bool>(member_class_type_id) ||

@@ -2029,7 +2029,7 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 	CVQualifier type_cv = type_spec.cv_qualifier();
 	bool is_reference = type_spec.is_reference();
 	bool is_rvalue_reference = type_spec.is_rvalue_reference();
-	size_t pointer_depth = type_spec.pointer_depth();
+	size_t pointer_depth = type_spec.runtime_pointer_depth();
 	bool is_array = type_spec.is_array();
 	std::optional<size_t> array_size = type_spec.array_size();
 	const ResolvedAliasTypeInfo resolved_trait_type =
@@ -2046,7 +2046,7 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			is_rvalue_reference =
 				resolved_trait_type.reference_qualifier == ReferenceQualifier::RValueReference;
 		}
-		pointer_depth += resolved_trait_type.pointer_depth;
+		pointer_depth += resolved_trait_type.runtimePointerDepth();
 		if (!is_array && resolved_trait_type.isArray()) {
 			is_array = true;
 			if (!resolved_trait_type.array_dimensions.empty()) {
