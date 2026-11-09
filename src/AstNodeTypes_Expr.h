@@ -342,7 +342,10 @@ public:
 		: OffsetofExprNode(type_node.as<TypeSpecifierNode>(), std::move(member_path), offsetof_token) {}
 
 	const TypeSpecifierNode& type_node() const { return type_node_; }
-	TypeSpecifierNode& type_specifier_node() { return type_node_; }
+	TypeSpecifierNode& type_specifier_node() {
+		journalLegacyAstOwnerRewrite(*this);
+		return type_node_;
+	}
 	const TypeSpecifierNode& type_specifier_node() const { return type_node_; }
 	std::span<const Token> member_path() const { return member_path_; }
 	const Token& offsetof_token() const { return offsetof_token_; }
@@ -704,7 +707,10 @@ public:
 		: StaticCastNode(target_type.as<TypeSpecifierNode>(), expr, cast_token) {}
 
 	const TypeSpecifierNode& target_type() const { return target_type_; }
-	TypeSpecifierNode& target_type_node() { return target_type_; }
+	TypeSpecifierNode& target_type_node() {
+		journalLegacyAstOwnerRewrite(*this);
+		return target_type_;
+	}
 	const TypeSpecifierNode& target_type_node() const { return target_type_; }
 	const ASTNode& expr() const { return expr_; }
 	const Token& cast_token() const { return cast_token_; }
@@ -724,7 +730,10 @@ public:
 		: DynamicCastNode(target_type.as<TypeSpecifierNode>(), expr, cast_token) {}
 
 	const TypeSpecifierNode& target_type() const { return target_type_; }
-	TypeSpecifierNode& target_type_node() { return target_type_; }
+	TypeSpecifierNode& target_type_node() {
+		journalLegacyAstOwnerRewrite(*this);
+		return target_type_;
+	}
 	const TypeSpecifierNode& target_type_node() const { return target_type_; }
 	const ASTNode& expr() const { return expr_; }
 	const Token& cast_token() const { return cast_token_; }
@@ -744,7 +753,10 @@ public:
 		: ConstCastNode(target_type.as<TypeSpecifierNode>(), expr, cast_token) {}
 
 	const TypeSpecifierNode& target_type() const { return target_type_; }
-	TypeSpecifierNode& target_type_node() { return target_type_; }
+	TypeSpecifierNode& target_type_node() {
+		journalLegacyAstOwnerRewrite(*this);
+		return target_type_;
+	}
 	const TypeSpecifierNode& target_type_node() const { return target_type_; }
 	const ASTNode& expr() const { return expr_; }
 	const Token& cast_token() const { return cast_token_; }
@@ -764,7 +776,10 @@ public:
 		: ReinterpretCastNode(target_type.as<TypeSpecifierNode>(), expr, cast_token) {}
 
 	const TypeSpecifierNode& target_type() const { return target_type_; }
-	TypeSpecifierNode& target_type_node() { return target_type_; }
+	TypeSpecifierNode& target_type_node() {
+		journalLegacyAstOwnerRewrite(*this);
+		return target_type_;
+	}
 	const TypeSpecifierNode& target_type_node() const { return target_type_; }
 	const ASTNode& expr() const { return expr_; }
 	const Token& cast_token() const { return cast_token_; }

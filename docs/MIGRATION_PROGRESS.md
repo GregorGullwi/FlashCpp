@@ -160,10 +160,12 @@ their initializer, storage/linkage/constexpr flags, and outer bindings; friend
 declarations snapshot their class, template, function, type, and declaration
 identity fields. Pre-existing `TypeSpecifierNode` owners snapshot the whole type
 shape on their first size, cv/pointer/array, declarator, specialization,
-dependent-name, member-class, or identity rewrite. All allow-listed AST owner
-classes now expose their mutations through journaled accessors. Remaining direct
-field writes that bypass those accessors need migration before enabling a
-transaction around type-pack materialization. Required dependency instantiations
+dependent-name, member-class, or identity rewrite. Direct `TypeSpecifierNode`
+container/index mutators and non-const type-specifier view accessors also journal
+the type or its owning AST node before mutation. The direct-write audit now finds
+no unjournaled mutators among allow-listed AST owners; future direct writes must
+use these accessors. The transaction around type-pack materialization is the next
+boundary step. Required dependency instantiations
 must remain separate from that candidate-local transaction; blanket rollback
 would violate observable C++20 instantiation effects. Lockstep member and
 namespace-scope length mismatches now produce `TemplatePackLengthMismatch`
