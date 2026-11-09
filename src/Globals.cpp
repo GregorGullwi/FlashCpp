@@ -311,6 +311,7 @@ FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& 
 	const size_t previous_destructor_declaration_rewrite_start = context.legacy_destructor_declaration_rewrite_segment_start_;
 	const size_t previous_declaration_node_rewrite_start = context.legacy_declaration_node_rewrite_segment_start_;
 	const size_t previous_enum_declaration_rewrite_start = context.legacy_enum_declaration_rewrite_segment_start_;
+	const size_t previous_typedef_declaration_rewrite_start = context.legacy_typedef_declaration_rewrite_segment_start_;
 	const size_t previous_template_function_declaration_rewrite_start =
 		context.legacy_template_function_declaration_rewrite_segment_start_;
 	const size_t previous_template_class_declaration_rewrite_start =
@@ -330,6 +331,7 @@ FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& 
 	context.legacy_destructor_declaration_rewrite_segment_start_ = context.legacy_destructor_declaration_rewrites_.size();
 	context.legacy_declaration_node_rewrite_segment_start_ = context.legacy_declaration_node_rewrites_.size();
 	context.legacy_enum_declaration_rewrite_segment_start_ = context.legacy_enum_declaration_rewrites_.size();
+	context.legacy_typedef_declaration_rewrite_segment_start_ = context.legacy_typedef_declaration_rewrites_.size();
 	context.legacy_template_function_declaration_rewrite_segment_start_ =
 		context.legacy_template_function_declaration_rewrites_.size();
 	context.legacy_template_class_declaration_rewrite_segment_start_ =
@@ -349,6 +351,7 @@ FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& 
 		context.legacy_destructor_declaration_rewrites_.size(), previous_destructor_declaration_rewrite_start,
 		context.legacy_declaration_node_rewrites_.size(), previous_declaration_node_rewrite_start,
 		context.legacy_enum_declaration_rewrites_.size(), previous_enum_declaration_rewrite_start,
+		context.legacy_typedef_declaration_rewrites_.size(), previous_typedef_declaration_rewrite_start,
 		context.legacy_template_function_declaration_rewrites_.size(), previous_template_function_declaration_rewrite_start,
 		context.legacy_template_class_declaration_rewrites_.size(), previous_template_class_declaration_rewrite_start,
 		context.legacy_template_alias_declaration_rewrites_.size(), previous_template_alias_declaration_rewrite_start,
@@ -407,6 +410,8 @@ void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicat
 		context.legacy_declaration_node_rewrite_segment_start_ = 0;
 		context.legacy_enum_declaration_rewrites_.clear();
 		context.legacy_enum_declaration_rewrite_segment_start_ = 0;
+		context.legacy_typedef_declaration_rewrites_.clear();
+		context.legacy_typedef_declaration_rewrite_segment_start_ = 0;
 		context.legacy_template_function_declaration_rewrites_.clear();
 		context.legacy_template_function_declaration_rewrite_segment_start_ = 0;
 		context.legacy_template_class_declaration_rewrites_.clear();
@@ -431,6 +436,7 @@ void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicat
 		context.legacy_destructor_declaration_rewrite_segment_start_ = mark.previous_legacy_destructor_declaration_rewrite_segment_start;
 		context.legacy_declaration_node_rewrite_segment_start_ = mark.previous_legacy_declaration_node_rewrite_segment_start;
 		context.legacy_enum_declaration_rewrite_segment_start_ = mark.previous_legacy_enum_declaration_rewrite_segment_start;
+		context.legacy_typedef_declaration_rewrite_segment_start_ = mark.previous_legacy_typedef_declaration_rewrite_segment_start;
 		context.legacy_template_function_declaration_rewrite_segment_start_ =
 			mark.previous_legacy_template_function_declaration_rewrite_segment_start;
 		context.legacy_template_class_declaration_rewrite_segment_start_ =
@@ -528,6 +534,14 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 		*rewrite.owner = std::move(*rewrite.snapshot);
 	}
 	context.legacy_enum_declaration_rewrites_.resize(mark.legacy_enum_declaration_rewrite_count);
+	for (size_t index = context.legacy_typedef_declaration_rewrites_.size(); index > mark.legacy_typedef_declaration_rewrite_count; --index) {
+		LegacyTypedefDeclarationRewrite& rewrite = context.legacy_typedef_declaration_rewrites_[index - 1];
+		if (rewrite.owner == nullptr || !gChunkedAnyStorage.containsAddress(rewrite.owner)) {
+			continue;
+		}
+		restoreTypedefDeclarationRewrite(*rewrite.owner, rewrite.lexical_scope_id);
+	}
+	context.legacy_typedef_declaration_rewrites_.resize(mark.legacy_typedef_declaration_rewrite_count);
 	for (size_t index = context.legacy_template_function_declaration_rewrites_.size();
 		index > mark.legacy_template_function_declaration_rewrite_count; --index) {
 		LegacyTemplateFunctionDeclarationRewrite& rewrite = context.legacy_template_function_declaration_rewrites_[index - 1];
@@ -601,6 +615,7 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 		context.legacy_destructor_declaration_rewrite_segment_start_ = 0;
 		context.legacy_declaration_node_rewrite_segment_start_ = 0;
 		context.legacy_enum_declaration_rewrite_segment_start_ = 0;
+		context.legacy_typedef_declaration_rewrite_segment_start_ = 0;
 		context.legacy_template_function_declaration_rewrite_segment_start_ = 0;
 		context.legacy_template_class_declaration_rewrite_segment_start_ = 0;
 		context.legacy_template_alias_declaration_rewrite_segment_start_ = 0;
@@ -618,6 +633,7 @@ void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublic
 		context.legacy_destructor_declaration_rewrite_segment_start_ = mark.previous_legacy_destructor_declaration_rewrite_segment_start;
 		context.legacy_declaration_node_rewrite_segment_start_ = mark.previous_legacy_declaration_node_rewrite_segment_start;
 		context.legacy_enum_declaration_rewrite_segment_start_ = mark.previous_legacy_enum_declaration_rewrite_segment_start;
+		context.legacy_typedef_declaration_rewrite_segment_start_ = mark.previous_legacy_typedef_declaration_rewrite_segment_start;
 		context.legacy_template_function_declaration_rewrite_segment_start_ =
 			mark.previous_legacy_template_function_declaration_rewrite_segment_start;
 		context.legacy_template_class_declaration_rewrite_segment_start_ =
@@ -837,6 +853,29 @@ void journalEnumDeclarationRewrite(EnumDeclarationNode& node) {
 		return;
 	}
 	context->journalEnumDeclarationRewrite(node);
+}
+
+void FrontendContext::journalTypedefDeclarationRewrite(TypedefDeclarationNode& node) {
+	if (publication_transaction_depth_ == 0 || !gChunkedAnyStorage.containsAddress(&node)) {
+		return;
+	}
+	for (size_t index = legacy_typedef_declaration_rewrite_segment_start_; index < legacy_typedef_declaration_rewrites_.size(); ++index) {
+		if (legacy_typedef_declaration_rewrites_[index].owner == &node) {
+			return;
+		}
+	}
+	LegacyTypedefDeclarationRewrite rewrite;
+	rewrite.owner = &node;
+	rewrite.lexical_scope_id = node.lexical_scope_id();
+	legacy_typedef_declaration_rewrites_.push_back(rewrite);
+}
+
+void journalTypedefDeclarationRewrite(TypedefDeclarationNode& node) {
+	FrontendContext* context = activePublicationJournalContext();
+	if (context == nullptr) {
+		return;
+	}
+	context->journalTypedefDeclarationRewrite(node);
 }
 
 void FrontendContext::journalTemplateFunctionDeclarationRewrite(TemplateFunctionDeclarationNode& node) {

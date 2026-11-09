@@ -88,6 +88,11 @@ struct LegacyEnumDeclarationRewrite {
 	std::optional<EnumDeclarationNode> snapshot;
 };
 
+struct LegacyTypedefDeclarationRewrite {
+	TypedefDeclarationNode* owner = nullptr;
+	ScopeId lexical_scope_id{};
+};
+
 struct LegacyTemplateFunctionDeclarationRewrite {
 	TemplateFunctionDeclarationNode* owner = nullptr;
 	std::optional<TemplateFunctionDeclarationNode> snapshot;
@@ -145,6 +150,8 @@ struct FrontendPublicationJournalMark {
 	size_t previous_legacy_declaration_node_rewrite_segment_start = 0;
 	size_t legacy_enum_declaration_rewrite_count = 0;
 	size_t previous_legacy_enum_declaration_rewrite_segment_start = 0;
+	size_t legacy_typedef_declaration_rewrite_count = 0;
+	size_t previous_legacy_typedef_declaration_rewrite_segment_start = 0;
 	size_t legacy_template_function_declaration_rewrite_count = 0;
 	size_t previous_legacy_template_function_declaration_rewrite_segment_start = 0;
 	size_t legacy_template_class_declaration_rewrite_count = 0;
@@ -714,6 +721,8 @@ private:
 	friend void journalDeclarationNodeRewrite(DeclarationNode& node);
 	void journalEnumDeclarationRewrite(EnumDeclarationNode& node);
 	friend void journalEnumDeclarationRewrite(EnumDeclarationNode& node);
+	void journalTypedefDeclarationRewrite(TypedefDeclarationNode& node);
+	friend void journalTypedefDeclarationRewrite(TypedefDeclarationNode& node);
 	void journalTemplateFunctionDeclarationRewrite(TemplateFunctionDeclarationNode& node);
 	friend void journalTemplateFunctionDeclarationRewrite(TemplateFunctionDeclarationNode& node);
 	void journalTemplateClassDeclarationRewrite(TemplateClassDeclarationNode& node);
@@ -766,6 +775,8 @@ private:
 	size_t legacy_declaration_node_rewrite_segment_start_ = 0;
 	std::vector<LegacyEnumDeclarationRewrite> legacy_enum_declaration_rewrites_;
 	size_t legacy_enum_declaration_rewrite_segment_start_ = 0;
+	std::vector<LegacyTypedefDeclarationRewrite> legacy_typedef_declaration_rewrites_;
+	size_t legacy_typedef_declaration_rewrite_segment_start_ = 0;
 	std::vector<LegacyTemplateFunctionDeclarationRewrite> legacy_template_function_declaration_rewrites_;
 	size_t legacy_template_function_declaration_rewrite_segment_start_ = 0;
 	std::vector<LegacyTemplateClassDeclarationRewrite> legacy_template_class_declaration_rewrites_;
