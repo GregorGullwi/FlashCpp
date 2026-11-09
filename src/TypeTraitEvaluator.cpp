@@ -2760,7 +2760,7 @@ static bool isUsableCanonicalClassCopyConstructor(
 	return table.withoutTopLevelQualifiers(parameter.child) == target_class;
 }
 
-static std::optional<ConversionPlan> tryBuildCanonicalClassParameterConversionPlan(
+static std::optional<ConversionPlan> tryBuildCanonicalClassStandardConversionPlan(
 	CanonicalTypeTable& table, TypeId source_class, TypeId target_class, bool source_is_lvalue) {
 	if (source_class == target_class) {
 		return ConversionPlan::exact_match();
@@ -2794,6 +2794,111 @@ static std::optional<ConversionPlan> tryBuildCanonicalClassParameterConversionPl
 		}
 	}
 	return std::nullopt;
+}
+
+// One argument of a non-explicit converting constructor must be reachable
+// through a standard conversion sequence; a second user-defined conversion is
+// not allowed in the same implicit conversion sequence.
+static std::optional<ConversionPlan> tryCanonicalStandardParameterConversionPlan(
+	CanonicalTypeTable& table, TypeId source_argument, TypeId parameter_type) {
+	const CanonicalTypeKind parameter_kind = table.node(parameter_type).kind;
+	if (parameter_kind == CanonicalTypeKind::LValueReference || parameter_kind == CanonicalTypeKind::RValueReference) {
+		return tryBuildCanonicalReferenceArgumentConversionPlan(table, source_argument, parameter_type);
+	}
+	TypeId source_type = source_argument;
+	bool source_is_lvalue = false;
+	while (table.node(source_type).kind == CanonicalTypeKind::LValueReference || table.node(source_type).kind == CanonicalTypeKind::RValueReference) {
+		source_is_lvalue = table.node(source_type).kind == CanonicalTypeKind::LValueReference;
+		source_type = table.node(source_type).child;
+	}
+	const TypeId source_base = table.withoutTopLevelQualifiers(source_type);
+	const TypeId target_base = table.withoutTopLevelQualifiers(parameter_type);
+	const CanonicalTypeKind source_kind = table.node(source_base).kind;
+	const CanonicalTypeKind target_kind = table.node(target_base).kind;
+	const bool source_is_class = source_kind == CanonicalTypeKind::Record || source_kind == CanonicalTypeKind::TemplateSpecialization;
+	const bool target_is_class = target_kind == CanonicalTypeKind::Record || target_kind == CanonicalTypeKind::TemplateSpecialization;
+	if (source_is_class && target_is_class) {
+		return tryBuildCanonicalClassStandardConversionPlan(table, source_base, target_base, source_is_lvalue);
+	}
+	if (source_kind == CanonicalTypeKind::Enum && target_kind == CanonicalTypeKind::Builtin) {
+		return tryBuildCanonicalEnumToBuiltinConversionPlan(table, source_argument, parameter_type);
+	}
+	const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, source_argument, parameter_type);
+	if (conversion.is_valid) {
+		return conversion;
+	}
+	if (containsUnresolvedConversionType(table, source_argument) || containsUnresolvedConversionType(table, parameter_type)) {
+		return std::nullopt;
+	}
+	return conversion;
+}
+
+static bool isCanonicalReferenceToClass(const CanonicalTypeTable& table, TypeId type, TypeId target_class) {
+	const CanonicalTypeNode node = table.node(type);
+	if ((node.kind != CanonicalTypeKind::LValueReference && node.kind != CanonicalTypeKind::RValueReference) || !node.child) {
+		return false;
+	}
+	return table.withoutTopLevelQualifiers(node.child) == target_class;
+}
+
+// [over.ics.user]/[class.conv.ctor]: one non-explicit public constructor of the
+// target class can provide the user-defined conversion for an unrelated class
+// argument. Deleted, incomplete, ambiguous, or undecidable candidate conversions
+// defer so sema keeps the compatibility answer.
+static std::optional<ConversionPlan> tryBuildCanonicalUserDefinedClassConversionPlan(
+	CanonicalTypeTable& table, TypeId source_argument, TypeId target_class) {
+	if (!table.hasRecordConstructors(target_class)) {
+		return std::nullopt;
+	}
+	const size_t constructor_count = table.recordConstructorCount(target_class);
+	for (size_t index = 0; index < constructor_count; ++index) {
+		if (hasCanonicalRecordFunctionFlag(table.recordConstructorAt(target_class, index).flags, CanonicalRecordFunctionFlags::SchemaIncomplete)) {
+			return std::nullopt;
+		}
+	}
+	size_t viable_count = 0;
+	bool has_undecidable = false;
+	for (size_t index = 0; index < constructor_count; ++index) {
+		const CanonicalRecordConstructor constructor = table.recordConstructorAt(target_class, index);
+		if (hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Explicit) ||
+			hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::NonPublic) ||
+			constructor.minimum_parameter_count > 1 || constructor.parameter_count == 0) {
+			continue;
+		}
+		const TypeId parameter = table.recordConstructorParameterAt(target_class, index, 0);
+		// A copy/move constructor cannot convert an unrelated class argument.
+		if (isCanonicalReferenceToClass(table, parameter, target_class)) {
+			continue;
+		}
+		const std::optional<ConversionPlan> plan = tryCanonicalStandardParameterConversionPlan(table, source_argument, parameter);
+		if (!plan.has_value()) {
+			has_undecidable = true;
+			continue;
+		}
+		if (plan->is_valid) {
+			++viable_count;
+		}
+	}
+	if (viable_count != 1 || has_undecidable) {
+		return std::nullopt;
+	}
+	return ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+}
+
+static std::optional<ConversionPlan> tryBuildCanonicalClassParameterConversionPlan(
+	CanonicalTypeTable& table, TypeId source_argument, TypeId target_class) {
+	TypeId source_type = source_argument;
+	bool source_is_lvalue = false;
+	while (table.node(source_type).kind == CanonicalTypeKind::LValueReference || table.node(source_type).kind == CanonicalTypeKind::RValueReference) {
+		source_is_lvalue = table.node(source_type).kind == CanonicalTypeKind::LValueReference;
+		source_type = table.node(source_type).child;
+	}
+	const TypeId source_class = table.withoutTopLevelQualifiers(source_type);
+	if (const std::optional<ConversionPlan> standard = tryBuildCanonicalClassStandardConversionPlan(table, source_class, target_class,
+			source_is_lvalue)) {
+		return standard;
+	}
+	return tryBuildCanonicalUserDefinedClassConversionPlan(table, source_argument, target_class);
 }
 
 // Canonical constructor query for complete schemas and supported standard conversion sequences.
@@ -2890,7 +2995,6 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 				candidate.argument_ranks.push_back(ConversionRank::ExactMatch);
 				continue;
 			}
-			const bool source_is_lvalue = table.node(argument_types[parameter]).kind == CanonicalTypeKind::LValueReference;
 			TypeId source_type = argument_types[parameter];
 			while (table.node(source_type).kind == CanonicalTypeKind::LValueReference || table.node(source_type).kind == CanonicalTypeKind::RValueReference) {
 				source_type = table.node(source_type).child;
@@ -2942,7 +3046,7 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 				break;
 			}
 			if (source_is_class && target_is_class) {
-				const std::optional<ConversionPlan> class_plan = tryBuildCanonicalClassParameterConversionPlan(table, source_base, target_base, source_is_lvalue);
+				const std::optional<ConversionPlan> class_plan = tryBuildCanonicalClassParameterConversionPlan(table, argument_types[parameter], target_base);
 				if (!class_plan.has_value()) {
 					return std::nullopt;
 				}
