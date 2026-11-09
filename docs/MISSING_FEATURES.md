@@ -2,12 +2,12 @@
 
 This document tracks missing C++20 features and implementation gaps in FlashCpp.
 
-**Last Updated**: 2026-03-05
-**Overall C++20 Conformance Grade**: **A**
+**Last Updated**: 2026-11-09 (re-verified against `arch/flat-consumer-gaps` @ e5e8f5c7)
+**Overall C++20 Conformance Grade**: **A** for core language; standard-library compatibility is the main gap
 - **Parser**: 97% complete
 - **AST**: 97% complete
 - **Code Generation**: 90% complete
-- **Standard Library**: 81% of headers compile on Linux/GCC mode
+- **Standard Library**: 21 of 71 bare `#include` probes compile on Windows/MSVC (2026-11-09); Linux/GCC not re-verified
 
 ## Summary
 
@@ -17,7 +17,7 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 1. Coroutines (keywords recognized, parsing incomplete)
 2. Modules (not implemented)
 3. Some code generation edge cases
-4. Advanced standard library features (ranges, coroutines)
+4. Standard-library compatibility (many MSVC STL headers now fail or crash; see Standard Library Support)
 
 ---
 
@@ -63,7 +63,9 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 - User-defined `operator<=>` with custom return types: ✅ Works
 - Reversed operand order and self-comparison: ✅ Works
 - Template struct `operator<=>`: ✅ Works
-- `std::strong_ordering`/`std::weak_ordering`/`std::partial_ordering` return types: ✅ Works (`<compare>` header compiles)
+- `std::strong_ordering`/`std::weak_ordering`/`std::partial_ordering` return types: ✅ Works in
+  reduced tests (manual ordering stand-ins); the real `<compare>` header currently fails
+  (verified 2026-11-09), so it cannot be used directly
 
 **Modern Syntax (A)**
 - Constexpr if: `if constexpr (condition)` with nesting
@@ -111,7 +113,8 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 **OOP Features (A)**
 - Classes and structs: Full support
 - Inheritance: Single, multiple, virtual inheritance
-- Virtual functions: Full support with vtables
+- Virtual functions: Supported with vtables; `override` validation currently fails for a
+  function that overrides through a base with virtual inheritance (see Known Issues)
 - Abstract classes: Pure virtual functions
 - Constructors and destructors: Full support
 - Conversion operators: Full support
@@ -143,24 +146,48 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
   - Complex dependent types: May have issues
 - Advanced pack expansion patterns:
   - Simple pack expansion: Works
-  - Nested pack expansion: May have issues
-  - Pack expansion in complex contexts: May have issues
+  - Nested pack expansion: Works for the verified multi-pack lockstep cases
+    (`Outer<Inner<Ts>...>`, `Combine<Outer<Ts>..., Inner<Ts>...>`); deeper dependent contexts
+    may still fail
+  - Pack expansion in complex contexts: Partially works
 
 **Coroutines (20% complete)**
 - Keywords recognized: `co_await`, `co_yield`, `co_return`
-- Basic parsing skeleton exists
+- Verified 2026-11-09: the `<coroutine>` header itself parses, but any coroutine body still fails.
+  `co_await std::suspend_never{}` errors with `Missing identifier` on the operand, and
+  `co_yield 1;` errors with `Missing identifier: co_yield`.
 - Full expression parsing and code generation not implemented
 - Coroutine frame management not implemented
 - Awaitable type checking not implemented
-- Required for: `<coroutine>` header support
+- Required for: usable `<coroutine>` support (a clean header include is not sufficient)
 
 **Standard Library Support**
-- Linux/GCC mode (55/68 headers compile, 81%):
-  - Compiling: `<limits>`, `<type_traits>`, `<compare>`, `<version>`, `<source_location>`, `<numbers>`, `<initializer_list>`, `<optional>`, `<any>`, `<utility>`, `<concepts>`, `<bit>`, `<string_view>`, `<string>`, `<algorithm>`, `<span>`, `<tuple>`, `<vector>`, `<map>`, `<set>`, `<iostream>`, `<atomic>`, `<new>`, `<exception>`, `<typeinfo>`, `<typeindex>`, `<numeric>`, `<variant>` pending fix, `<cset*>`, `<c*>` C headers, `<barrier>`, `<latch>`, `<stdfloat>`, `<spanstream>`, `<print>`, `<expected>`, `<text_encoding>`, `<stacktrace>`, and more
-  - Parse errors remaining: `<ratio>`, `<array>`, `<memory>`, `<functional>`, `<ranges>`, `<chrono>`, `<shared_mutex>`, `<coroutine>`, `<variant>`
-- MSVC/Windows mode: Limited support (most headers fail on MSVC-specific constructs)
+- The per-header matrix lives in `tests/std/README_STANDARD_HEADERS.md`, but that table is
+  stale relative to the current branch and must be re-run before being trusted. Several headers
+  it lists as passing (`<limits>`, `<tuple>`, `<utility>`, `<compare>`, `<new>`, `<exception>`)
+  now fail, and several it lists as parse/link errors now crash with stack overflow.
+- Windows/MSVC mode (bare `#include <header>` + empty `main`, verified 2026-11-09 on MSVC STL
+  14.44.35207): 21 of 71 probes compile. Compiling: the C wrappers (`<cstddef>`, `<cstdint>`,
+  `<cstdlib>`, `<cstring>`, `<climits>`, `<cstdio>`, `<cmath>`, `<cassert>`, `<cerrno>`,
+  `<cfloat>`), plus `<type_traits>`, `<initializer_list>`, `<concepts>`, `<coroutine>`, `<bit>`,
+  `<source_location>`, `<version>`, `<ratio>`, `<numbers>`, `<mdspan>`, and `<generator>`.
+- Windows/MSVC first stops for the remaining headers: `bad_any_cast during template struct
+  parsing` (`<limits>`, `<vector>`, `<deque>`, `<list>`, `<set>`, `<ranges>`, `<chrono>`,
+  `<thread>`, `<mutex>`, `<future>`, `<shared_mutex>`), `Fatal error: canonical type:
+  conflicting record property publication` (`<tuple>`, `<map>`, `<functional>`,
+  `<scoped_allocator>`), missing intrinsics (`_InterlockedCompareExchange128` in `<atomic>`,
+  `<barrier>`, `<latch>`; `_BitScanReverse64` in `<charconv>`), `__std_type_info_name`
+  (`<any>`, `<memory>`), and stack-overflow crashes (`<array>`, `<optional>`, `<variant>`,
+  `<string>`, `<string_view>`, `<iostream>`, `<istream>`, `<ostream>`, `<sstream>`,
+  `<fstream>`, `<span>`, `<algorithm>`, `<numeric>`, `<iterator>`, `<queue>`, `<stdexcept>`,
+  `<filesystem>`, `<regex>`, `<format>`, `<system_error>`).
+- Linux/GCC mode: not re-verified in this audit. A WSL clang++/libstdc++13 build failed even
+  `<type_traits>` with `Template instantiation iteration limit exceeded`, so the previous
+  "55/68 headers (81%)" figure is unverified and should be treated as stale.
 - `<type_traits>`: Good support (most common traits work, 37+ intrinsics)
-- `<utility>`: `std::forward`, `std::move`, `std::swap` work
+- `<utility>`: including `<utility>` itself currently stops at MSVC `utility:10081`
+  (`explicit specifier is not a constant expression`); `std::forward`, `std::move`, and
+  `std::swap` remain covered by reduced tests and paths that do not pull in that constructor.
 
 ### Not Implemented ❌
 
@@ -171,6 +198,8 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 - No module interface/unit separation
 - Traditional header-based compilation only
 - Required for: C++20 module system
+- Verified 2026-11-09: `export module mymodule;` is rejected with
+  `Unexpected token in type specifier: 'export'`.
 
 **Ranges Library (range views/adaptors)**
 - Range concepts: Implemented (via `<concepts>`)
@@ -185,18 +214,29 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
   - `std::ranges::find`
   - `std::ranges::count`
   - Other algorithms
+- Verified 2026-11-09: `#include <ranges>` itself fails during parsing on Windows/MSVC
+  (`bad_any_cast during template struct parsing`, then `Unsupported template declaration type`),
+  so no adaptor or algorithm can be used yet.
 
 **Advanced C++20 Features**
 - Comparison category types enforcement:
-  - `std::strong_ordering` parsing: works via `<compare>` header
+  - `std::strong_ordering` parsing: works with reduced stand-ins; the real `<compare>` header
+    currently fails (verified 2026-11-09)
   - Compiler-synthesized comparison categories: Not auto-selected
 - Some constexpr evaluation edge cases
-- Constexpr `std::string` and `std::vector`
+- Constexpr `std::string` and `std::vector`: unusable because `<string>` currently fails/crashes;
+  there are no dedicated constexpr-string tests
 - Advanced SFINAE patterns (very complex cases)
 
 **MSVC Standard Library Compatibility**
-- Most MSVC headers fail at parse time due to SAL annotations, `_When_` macros, and UCRT wrapper patterns
-- Current top blockers: SAL macro parse path, UCRT formatted I/O wrapper call resolution, MSVC STL `yvals.h` compatibility
+- Verified 2026-11-09: 21/71 bare-include probes compile. Most failures are now template/sema
+  internal errors, missing intrinsics, or stack-overflow crashes rather than SAL macro parsing.
+- Current top blockers: `bad_any_cast during template struct parsing` (`<limits>` and most
+  containers), `conflicting record property publication` (`<tuple>`, `<map>`, `<functional>`),
+  `_InterlockedCompareExchange128` / `_BitScanReverse64` intrinsics, `__std_type_info_name`,
+  and unbounded alias/template materialization recursion (stack overflow in
+  `<array>`/`<optional>`/`<variant>`/`<string>`/`<span>`).
+- SAL annotations and UCRT formatted I/O wrappers are no longer the first stop for these probes.
 
 ---
 
@@ -204,11 +244,14 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 
 ### High Priority (Blocking Real-World Code)
 
-1. **Standard Library Remaining Parse Errors**
-   - Fix aggregate brace initialization for template types (`std::array<int,5> arr = {1,2,3,4,5}`)
-   - Fix dependent base class resolution in template structs
-   - Fix variable template evaluation in `static_assert` contexts
-   - Fix `<variant>` struct/class definition parse error
+1. **Standard Library Failures (verified 2026-11-09, Windows/MSVC)**
+   - Fix the `bad_any_cast during template struct parsing` internal error that first stops
+     `<limits>` and most container headers
+   - Fix `canonical type: conflicting record property publication` (`<tuple>`, `<map>`,
+     `<functional>`)
+   - Bound alias/template materialization recursion to remove stack-overflow crashes
+     (`<array>`, `<optional>`, `<variant>`, `<string>`, `<span>`)
+   - Model MSVC intrinsics `_InterlockedCompareExchange128` and `_BitScanReverse64`
 
 2. **MSVC Standard Library Compatibility**
    - Improve SAL annotation handling
@@ -255,11 +298,16 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
    - Unify the general user-defined conversion selection path across sema and codegen
      so that all implicit-conversion-sequence selection is owned entirely by sema and
      codegen only emits the already-selected conversion.
+   - Verified 2026-11-09 still present: a class with `operator int*()` used as `obj + 1`
+     is rejected with `Operator+ not defined for operand types`, while subscript `obj[1]`
+     works when the same class returns `int*`.
 
 10. **Conversion Operators Returning Array References**
     - Support `operator T(&)[N]()` (conversion operator returning a reference to array)
       in contexts that require array-to-pointer conversion (e.g. built-in subscript).
     - Currently only pointer-returning conversion operators are handled.
+    - Verified 2026-11-09 still present: `operator int(&)[3]()` is rejected at parse time
+      with `Expected type specifier`; `operator int*()` in a subscript works.
 
 ---
 
@@ -364,7 +412,9 @@ Code Reuse Opportunities:
 
 ## Test Coverage
 
-**Total Test Cases: 1280+** (1250+ `.cpp` files in `tests/`, plus 34 standard header tests in `tests/std/`)
+**Total Test Cases: ~4,100** (4,095 `.cpp` files directly under `tests/` — 3,856 `test_*` files,
+of which 493 encode expected diagnostics — plus 72 `.cpp` probes in `tests/std/` and 14
+multi-TU case directories; counted 2026-11-09).
 
 Categories with Good Coverage:
 - Basic arithmetic: ✅
@@ -380,7 +430,7 @@ Categories with Good Coverage:
 - Range-based for: ✅
 
 Categories with Partial Coverage:
-- Standard library headers: ⚠️ (55/68 on Linux/GCC, limited on MSVC)
+- Standard library headers: ⚠️ (21/71 bare-include probes on Windows/MSVC; Linux/GCC unverified)
 - Complex templates: ⚠️
 - Constexpr evaluation edge cases: ⚠️
 
@@ -421,9 +471,10 @@ When implementing a missing feature:
 **ELF Writer**: `src/ElfFileWriter.h` - ELF object file generation (exception tables, DWARF)
 **LSDA Generator**: `src/LSDAGenerator.h` - Language-Specific Data Area for exceptions
 
-**Test Directory**: `tests/` - Test suite (1200+ test cases)
+**Test Directory**: `tests/` - Test suite (~4,100 test cases)
 - `tests/cpp20_integration/` - C++20 feature tests
 - `tests/std/` - Standard library header tests
+- `tests/std/README_STANDARD_HEADERS.md` - Per-header status matrix (re-run before trusting; see Standard Library Support)
 - `tests/test_type_traits_intrinsics.cpp` - Type trait intrinsics
 - `tests/test_sfinae_*.cpp` - SFINAE test cases
 - `tests/test_exceptions_*.cpp` - Exception handling tests
@@ -433,34 +484,29 @@ When implementing a missing feature:
 
 ## Known Issues
 
-### Enum ADL may fail for enums in anonymous namespaces
+### Enum ADL for anonymous namespaces — verified working (2026-11-09)
 
-**Severity**: Low (conformance issue, edge case)
+**Severity**: None observed (previously Low)
 
-Enum ADL (`src/SymbolTable.h`, `lookup_adl` and `lookup_adl_only`) relies on `TypeInfo::namespaceHandle()` returning the correct enclosing namespace for enum types. This is set by `add_enum_type()` in `src/AstNodeTypes.cpp`, which receives a `NamespaceHandle` from the parser.
+Enum ADL (`src/SymbolTable.h`, `lookup_adl` and `lookup_adl_only`) relies on
+`TypeInfo::namespaceHandle()` returning the correct enclosing namespace for enum types. This is
+set by `add_enum_type()` in `src/AstNodeTypes.cpp`, which receives a `NamespaceHandle` from the
+parser.
 
 Enums declared inside named namespaces and enums nested inside class bodies within named
-namespaces now work correctly (fixed 2026-03-18 — nested enum qualified-name registration
-walks the full `struct_parsing_context_stack_`).
+namespaces work (fixed 2026-03-18 — nested enum qualified-name registration walks the full
+`struct_parsing_context_stack_`).
 
-However, **enums in anonymous namespaces** have not been verified. Anonymous namespaces have a
-unique internal handle. If this handle is not correctly propagated, ADL would fail to find
-functions in the anonymous namespace.
+The previously unverified anonymous-namespace case now works:
 
-**Example** (untested):
-```cpp
-namespace {
-    enum class Color { Red, Green, Blue };
-    int classify(Color c) { return static_cast<int>(c); }
-}
-int main() {
-    // ADL should find the anonymous-namespace classify() because
-    // Color's associated namespace is the anonymous namespace.
-    return classify(Color::Red);
-}
-```
+- `tests/test_adl_anonymous_enum_ret0.cpp` passes (unscoped enum in an anonymous namespace).
+- The documented example with a scoped `enum class Color` and an unqualified
+  `classify(Color::Red)` also compiles and resolves.
 
-**Fix**: Verify that `parse_enum_declaration` passes the correct anonymous namespace handle to `add_enum_type`. Add tests for anonymous namespace enum ADL.
+Caveat: anonymous-namespace members are injected into the enclosing namespace by an implicit
+using-directive, so ordinary unqualified lookup can find `classify` even if ADL fails. The
+existing test remains the regression guard; a call that can only succeed through ADL is not
+currently covered.
 
 ### Member using-declarations for inherited names are only partially supported
 
@@ -486,6 +532,10 @@ int main() {
 }
 ```
 
+Verified 2026-11-09: the example above still fails. `d.getValue(10)` reports
+`No matching member function for call to 'getValue'` (`NoViableMemberFunctionCall#1705`), while
+`d.getValue()` succeeds. The operator-lookup cases listed below continue to pass.
+
 FlashCpp parses `using X::Y;` inside a struct body and registers the member name in the
 struct parsing context (`imported_members`). Class-scope using-declarations are now also
 retained on `StructDeclarationNode` with their target base spelling and resolved base
@@ -509,3 +559,33 @@ class, copy the matching base-class `StructMemberFunction` entries into the deri
 `member_functions` list (or add a separate `using_imported_members` list consulted during
 lookup). Update `findMemberFunctionRecursive` and `searchStructMembers` to include
 using-imported members before applying the name-hiding early-return.
+
+### `override` is not validated through virtual inheritance
+
+**Severity**: Medium (rejects valid C++; discovered 2026-11-09 while verifying "virtual
+functions: full support")
+
+A member function marked `override` is rejected when the overridden virtual function is reached
+through a base class that itself uses virtual inheritance:
+
+```cpp
+struct Base {
+    virtual int value() const { return 1; }
+};
+
+struct Mid : virtual Base {
+    int value() const override { return 2; }   // OK
+};
+
+struct Leaf : Mid {
+    int value() const override { return 3; }   // error: does not override any base class function
+};
+```
+
+`Leaf::value` overrides `Mid::value` (and `Base::value`), so the program is valid. Removing the
+`override` keyword makes it compile and run with correct virtual dispatch (`p->value()` returns
+3). Override validation therefore does not collect the base-class virtual functions correctly
+when virtual inheritance is in the ancestry.
+
+**Fix**: Include virtual-base members (or their final overriders) in the base-function set
+consulted by `override` validation, and add a regression that covers a virtual-base chain.
