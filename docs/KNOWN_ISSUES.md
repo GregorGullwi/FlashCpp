@@ -6,18 +6,18 @@ instead of restating issue details.
 
 ## Unary operator candidate lookup does not preserve member-name hiding
 
-The member unary-operator gather visits base classes even when a derived class
-declares the same operator name. For example, `Base::operator-() const` remains
-viable for an lvalue `Derived` after `Derived::operator-() &&` should hide it.
-FlashCpp currently accepts that expression; it should reject it.
+The member unary-operator gather now stops at the first class that declares the
+operator name unless a `using Base::operator-` declaration explicitly restores
+nominated base overloads. Direct non-template classes therefore reject hidden
+base operators and continue to accept restored using-declarations.
 
-The fix needs persistent class using-declaration provenance: `using Base::operator-`
-must explicitly restore the nominated overloads. The parser currently retains only
-the imported spelling in temporary class parsing state. Before replacing the
-candidate walk, preserve the nominated base identity through instantiation,
-implement member-name lookup sets with hiding and base ambiguity, and share those
-sets between canonical and compatibility unary consumers. Pruning every base as
-soon as a local operator is found would reject valid using-declarations.
+Remaining work is persistent using-declaration provenance through template
+instantiation and replay. The parser still retains only imported spelling in
+temporary class parsing state for some instantiated forms, so member-name lookup
+sets with hiding and base ambiguity are not yet shared across every canonical
+and compatibility unary consumer. Binary and assignment operator gathers have
+the same hiding requirement; their expression viability paths need a separate
+lookup audit.
 
 ## Remaining dependent member-template field forms need concrete TypeInfo
 

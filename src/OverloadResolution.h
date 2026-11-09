@@ -6448,6 +6448,15 @@ inline bool classUsingDeclarationNamesOperator(const ClassUsingDeclaration& decl
 	return name.size() == 8 + suffix.size() && name.substr(0, 8) == "operator" && name.substr(8) == suffix;
 }
 
+inline bool classHasLocalOperatorName(const StructTypeInfo& struct_info, OverloadableOperator operator_kind) {
+	for (const StructMemberFunction& member_function : struct_info.member_functions) {
+		if (member_function.operator_kind == operator_kind) {
+			return true;
+		}
+	}
+	return false;
+}
+
 inline bool classHasUsingDeclarationForOperator(const StructTypeInfo& struct_info, OverloadableOperator operator_kind) {
 	const StructDeclarationNode* declaration = struct_info.declaration_node;
 	if (declaration == nullptr) {
@@ -6634,7 +6643,7 @@ inline OperatorOverloadResult findUnaryOperatorOverloadWithFreeFunction(
 			}
 			if (classHasUsingDeclarationForOperator(*struct_info, operator_kind)) {
 				appendCompatibilityUnaryOperatorBaseTypes(*struct_info, operator_kind, pending_types);
-			} else {
+			} else if (!classHasLocalOperatorName(*struct_info, operator_kind)) {
 				for (const BaseClassSpecifier& base : struct_info->base_classes) {
 					if (base.type_index.is_valid()) {
 						pending_types.push_back(base.type_index);
@@ -6664,8 +6673,10 @@ inline OperatorOverloadResult findUnaryOperatorOverloadWithFreeFunction(
 				const StructTypeInfo* const struct_info = type_info != nullptr ? type_info->getStructInfo() : nullptr;
 				if (struct_info != nullptr && classHasUsingDeclarationForOperator(*struct_info, operator_kind)) {
 					appendCanonicalUnaryOperatorBaseTypes(table, *struct_info, operator_kind, pending_types);
-				} else if (!appendCanonicalOverloadBaseTypes(table, owner_type_id, pending_types)) {
-					return OperatorOverloadResult::no_overload();
+				} else if (struct_info == nullptr || !classHasLocalOperatorName(*struct_info, operator_kind)) {
+					if (!appendCanonicalOverloadBaseTypes(table, owner_type_id, pending_types)) {
+						return OperatorOverloadResult::no_overload();
+					}
 				}
 				if (type_info == nullptr || struct_info == nullptr) {
 					continue;
