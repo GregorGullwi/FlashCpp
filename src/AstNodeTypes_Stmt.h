@@ -69,12 +69,14 @@ public:
 		: initialization_style_(style) {}
 
 	void add_initializer(ASTNode init_expr) {
+		journalLegacyAstOwnerRewrite(*this);
 		initializers_.push_back(init_expr);
 		is_designated_.push_back(false);
 		member_names_.push_back(StringHandle());	 // Invalid StringHandle for positional initializers
 	}
 
 	void add_designated_initializer(StringHandle member_name, ASTNode init_expr) {
+		journalLegacyAstOwnerRewrite(*this);
 		initializers_.push_back(init_expr);
 		is_designated_.push_back(true);
 		member_names_.push_back(member_name);
@@ -108,7 +110,10 @@ public:
 	}
 
 	const ConstructorDeclarationNode* resolved_constructor() const { return resolved_constructor_; }
-	void set_resolved_constructor(const ConstructorDeclarationNode* ctor) const { resolved_constructor_ = ctor; }
+	void set_resolved_constructor(const ConstructorDeclarationNode* ctor) const {
+		journalLegacyAstOwnerRewrite(const_cast<InitializerListNode&>(*this));
+		resolved_constructor_ = ctor;
+	}
 	bool is_brace_init() const { return initialization_style_ == InitializationStyle::Brace; }
 	bool is_paren_init() const { return initialization_style_ == InitializationStyle::Paren; }
 
@@ -182,7 +187,10 @@ public:
 	bool is_constexpr() const { return is_constexpr_; }
 	bool has_constexpr_condition_value() const { return constexpr_condition_value_.has_value(); }
 	bool constexpr_condition_value() const { return *constexpr_condition_value_; }
-	void set_constexpr_condition_value(bool value) const { constexpr_condition_value_ = value; }
+	void set_constexpr_condition_value(bool value) const {
+		journalLegacyAstOwnerRewrite(const_cast<IfStatementNode&>(*this));
+		constexpr_condition_value_ = value;
+	}
 
 private:
 	ASTNode condition_;
@@ -273,29 +281,35 @@ public:
 	bool has_init_statement() const { return init_statement_.has_value(); }
 	const std::optional<TypeSpecifierNode>& resolved_range_type() const { return resolved_range_type_; }
 	void set_resolved_range_type(std::optional<TypeSpecifierNode> type) {
+		journalLegacyAstOwnerRewrite(*this);
 		resolved_range_type_ = std::move(type);
 	}
 	const FunctionDeclarationNode* resolved_dereference_function() const { return resolved_dereference_function_; }
 	BinaryOperatorCallTargetId resolved_comparison_target() const { return resolved_comparison_target_; }
 	bool resolved_comparison_negates_equality() const { return resolved_comparison_negates_equality_; }
 	void set_resolved_comparison_target(BinaryOperatorCallTargetId target, bool negate_equality) {
+		journalLegacyAstOwnerRewrite(*this);
 		resolved_comparison_target_ = target;
 		resolved_comparison_negates_equality_ = negate_equality;
 	}
 	void set_resolved_dereference_function(const FunctionDeclarationNode* func) {
+		journalLegacyAstOwnerRewrite(*this);
 		resolved_dereference_function_ = func;
 	}
 
 	const FunctionDeclarationNode* resolved_member_begin_function() const { return resolved_member_begin_function_; }
 	const FunctionDeclarationNode* resolved_member_end_function() const { return resolved_member_end_function_; }
 	void set_resolved_member_begin_function(const FunctionDeclarationNode* func) {
+		journalLegacyAstOwnerRewrite(*this);
 		resolved_member_begin_function_ = func;
 	}
 	void set_resolved_member_end_function(const FunctionDeclarationNode* func) {
+		journalLegacyAstOwnerRewrite(*this);
 		resolved_member_end_function_ = func;
 	}
 	bool resolved_begin_is_const() const { return resolved_begin_is_const_; }
 	void set_resolved_begin_is_const(bool value) {
+		journalLegacyAstOwnerRewrite(*this);
 		resolved_begin_is_const_ = value;
 	}
 
@@ -304,9 +318,11 @@ public:
 	const FunctionDeclarationNode* resolved_adl_begin_function() const { return resolved_adl_begin_function_; }
 	const FunctionDeclarationNode* resolved_adl_end_function() const { return resolved_adl_end_function_; }
 	void set_resolved_adl_begin_function(const FunctionDeclarationNode* func) {
+		journalLegacyAstOwnerRewrite(*this);
 		resolved_adl_begin_function_ = func;
 	}
 	void set_resolved_adl_end_function(const FunctionDeclarationNode* func) {
+		journalLegacyAstOwnerRewrite(*this);
 		resolved_adl_end_function_ = func;
 	}
 
@@ -529,7 +545,10 @@ public:
 
 	// C++20 [except.handle]/15: in a constructor/destructor function-try-block,
 	// control reaching the end of a catch handler implicitly rethrows.
-	void set_is_ctor_dtor_function_try() { is_ctor_dtor_function_try_ = true; }
+	void set_is_ctor_dtor_function_try() {
+		journalLegacyAstOwnerRewrite(*this);
+		is_ctor_dtor_function_try_ = true;
+	}
 	bool is_ctor_dtor_function_try() const { return is_ctor_dtor_function_try_; }
 
 private:

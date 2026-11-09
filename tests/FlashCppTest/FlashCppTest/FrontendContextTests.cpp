@@ -1395,6 +1395,191 @@ TEST_SUITE("FrontendContext") {
 		CHECK(typedef_decl.lexical_scope_id() == ScopeId{11});
 	}
 
+	TEST_CASE("Frontend scratch rollback restores expression owner rewrites") {
+		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture(context);
+		const auto make_expression = [](uint64_t value) {
+			return ASTNode::emplace_node<ExpressionNode>(
+				NumericLiteralNode(Token{}, value, TypeCategory::Int, TypeQualifier::None, 32));
+		};
+		const Token identifier_token(Token::Type::Identifier, std::string_view("frontend_tx_owner_name"), 1, 1, 0);
+
+		ASTNode identifier_node = ASTNode::emplace_node<IdentifierNode>(identifier_token);
+		IdentifierNode& identifier = identifier_node.as<IdentifierNode>();
+		ASTNode binary_node = ASTNode::emplace_node<BinaryOperatorNode>(Token{}, make_expression(1), make_expression(2));
+		BinaryOperatorNode& binary = binary_node.as<BinaryOperatorNode>();
+		ASTNode unary_node = ASTNode::emplace_node<UnaryOperatorNode>(Token{}, make_expression(3));
+		UnaryOperatorNode& unary = unary_node.as<UnaryOperatorNode>();
+		ASTNode if_node = ASTNode::emplace_node<IfStatementNode>(make_expression(1), make_expression(2));
+		IfStatementNode& if_statement = if_node.as<IfStatementNode>();
+		const TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		const DeclarationNode callee_declaration(int_type, identifier_token);
+		ASTNode call_node = ASTNode::emplace_node<CallExprNode>(
+			CalleeDescriptor::freeFunction(callee_declaration), ChunkedVector<ASTNode>{}, Token{});
+		CallExprNode& call = call_node.as<CallExprNode>();
+		ASTNode constructor_call_node = ASTNode::emplace_node<ConstructorCallNode>(int_type, ChunkedVector<ASTNode>{}, Token{});
+		ConstructorCallNode& constructor_call = constructor_call_node.as<ConstructorCallNode>();
+		ASTNode initializer_list_node = ASTNode::emplace_node<InitializerListNode>();
+		InitializerListNode& initializer_list = initializer_list_node.as<InitializerListNode>();
+
+		{
+			auto outer = context.beginScratchTransaction();
+			identifier.set_binding(IdentifierBinding::Global);
+			identifier.set_resolved_name(StringTable::getOrInternStringHandle("frontend_tx_resolved_name"));
+			binary.set_no_match_operator_overload();
+			unary.mark_arithmetic_operator_validated();
+			if_statement.set_constexpr_condition_value(true);
+			call.add_argument(make_expression(4));
+			call.set_mangled_name("frontend_tx_call_mangled");
+			call.set_qualified_name("frontend_tx::call");
+			call.set_template_arguments(std::vector<ASTNode>{make_expression(5)});
+			call.set_deferred_overload_resolution();
+			call.set_definition_lookup_record(FunctionCallDefinitionLookupRecord{});
+			constructor_call.add_argument(make_expression(6));
+			initializer_list.add_initializer(make_expression(7));
+			{
+				auto inner = context.beginScratchTransaction();
+				identifier.set_binding(IdentifierBinding::Local);
+				binary.set_ambiguous_operator_overload();
+				call.set_mangled_name("frontend_tx_inner_call_mangled");
+				initializer_list.add_initializer(make_expression(8));
+				inner.rollback();
+			}
+			CHECK(identifier.binding() == IdentifierBinding::Global);
+			CHECK(binary.has_no_match_operator_overload());
+			CHECK(call.mangled_name() == "frontend_tx_call_mangled");
+			CHECK(call.arguments().size() == 1u);
+			CHECK(initializer_list.size() == 1u);
+			outer.rollback();
+		}
+		CHECK(identifier.binding() == IdentifierBinding::Unresolved);
+		CHECK_FALSE(identifier.resolved_name().isValid());
+		CHECK_FALSE(binary.has_recorded_operator_overload_resolution());
+		CHECK_FALSE(unary.arithmetic_operator_is_validated());
+		CHECK_FALSE(if_statement.has_constexpr_condition_value());
+		CHECK(call.arguments().empty());
+		CHECK_FALSE(call.has_mangled_name());
+		CHECK_FALSE(call.has_qualified_name());
+		CHECK_FALSE(call.has_template_arguments());
+		CHECK_FALSE(call.defers_overload_resolution());
+		CHECK_FALSE(call.has_definition_lookup_record());
+		CHECK(constructor_call.arguments().empty());
+		CHECK(initializer_list.size() == 0u);
+
+		{
+			auto committed = context.beginScratchTransaction();
+			identifier.set_binding(IdentifierBinding::Local);
+			initializer_list.add_initializer(make_expression(9));
+			committed.commit();
+		}
+		CHECK(identifier.binding() == IdentifierBinding::Local);
+		CHECK(initializer_list.size() == 1u);
+	}
+
+	TEST_CASE("Frontend scratch rollback restores statement and parameter owner rewrites") {
+		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture(context);
+		const auto make_expression = [](uint64_t value) {
+			return ASTNode::emplace_node<ExpressionNode>(
+				NumericLiteralNode(Token{}, value, TypeCategory::Int, TypeQualifier::None, 32));
+		};
+		const TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		ASTNode block_node = ASTNode::emplace_node<BlockNode>();
+		BlockNode& block = block_node.as<BlockNode>();
+		block.add_statement_node(make_expression(1));
+		ASTNode ranged_for_node = ASTNode::emplace_node<RangedForStatementNode>(
+			make_expression(2), make_expression(3), block_node, Token{});
+		RangedForStatementNode& ranged_for = ranged_for_node.as<RangedForStatementNode>();
+		ASTNode try_node = ASTNode::emplace_node<TryStatementNode>(block_node, std::vector<ASTNode>{}, Token{});
+		TryStatementNode& try_statement = try_node.as<TryStatementNode>();
+		const StringHandle parameter_name = StringTable::getOrInternStringHandle("frontend_tx_generic_parameter");
+		ASTNode parameter_node = ASTNode::emplace_node<TemplateParameterNode>(parameter_name, Token{});
+		TemplateParameterNode& parameter = parameter_node.as<TemplateParameterNode>();
+
+		{
+			auto outer = context.beginScratchTransaction();
+			block.add_statement_node(make_expression(4));
+			block.set_synthetic_decl_list(true);
+			ranged_for.set_resolved_range_type(std::optional<TypeSpecifierNode>(int_type));
+			ranged_for.set_resolved_begin_is_const(true);
+			try_statement.set_is_ctor_dtor_function_try();
+			parameter.set_registered_type_index(TypeIndex{5, TypeCategory::Struct});
+			parameter.set_default_value(make_expression(5));
+			parameter.set_default_value_position(SaveHandle{42});
+			parameter.set_variadic(true);
+			parameter.set_concept_constraint("frontend_tx_concept");
+			parameter.set_concept_args(std::vector<ASTNode>{make_expression(6)});
+			{
+				auto inner = context.beginScratchTransaction();
+				block.add_statement_node(make_expression(7));
+				ranged_for.set_resolved_begin_is_const(false);
+				parameter.set_variadic(false);
+				inner.rollback();
+			}
+			CHECK(block.get_statements().size() == 2u);
+			CHECK(block.is_synthetic_decl_list());
+			CHECK(ranged_for.resolved_begin_is_const());
+			CHECK(ranged_for.resolved_range_type().has_value());
+			CHECK(try_statement.is_ctor_dtor_function_try());
+			CHECK(parameter.is_variadic());
+			outer.rollback();
+		}
+		CHECK(block.get_statements().size() == 1u);
+		CHECK_FALSE(block.is_synthetic_decl_list());
+		CHECK_FALSE(ranged_for.resolved_begin_is_const());
+		CHECK_FALSE(ranged_for.resolved_range_type().has_value());
+		CHECK_FALSE(try_statement.is_ctor_dtor_function_try());
+		CHECK_FALSE(parameter.registered_type_index().is_valid());
+		CHECK_FALSE(parameter.has_default());
+		CHECK_FALSE(parameter.has_default_value_position());
+		CHECK_FALSE(parameter.is_variadic());
+		CHECK_FALSE(parameter.has_concept_constraint());
+		CHECK_FALSE(parameter.has_concept_args());
+
+		{
+			auto committed = context.beginScratchTransaction();
+			block.add_statement_node(make_expression(8));
+			try_statement.set_is_ctor_dtor_function_try();
+			parameter.set_variadic(true);
+			committed.commit();
+		}
+		CHECK(block.get_statements().size() == 2u);
+		CHECK(try_statement.is_ctor_dtor_function_try());
+		CHECK(parameter.is_variadic());
+	}
+
+	TEST_CASE("Frontend scratch rollback truncates namespace declaration additions") {
+		FrontendContext context;
+		ScratchTransactionParserFixture parser_fixture(context);
+		ASTNode namespace_node = ASTNode::emplace_node<NamespaceDeclarationNode>(std::string_view("frontend_tx_namespace"));
+		NamespaceDeclarationNode& namespace_decl = namespace_node.as<NamespaceDeclarationNode>();
+		const auto make_declaration = [](uint64_t value) {
+			return ASTNode::emplace_node<ExpressionNode>(
+				NumericLiteralNode(Token{}, value, TypeCategory::Int, TypeQualifier::None, 32));
+		};
+		namespace_decl.add_declaration(make_declaration(3));
+		{
+			auto outer = context.beginScratchTransaction();
+			namespace_decl.add_declaration(make_declaration(5));
+			{
+				auto inner = context.beginScratchTransaction();
+				namespace_decl.add_declaration(make_declaration(7));
+				CHECK(namespace_decl.declarations().size() == 3u);
+				inner.rollback();
+			}
+			CHECK(namespace_decl.declarations().size() == 2u);
+			outer.rollback();
+		}
+		REQUIRE(namespace_decl.declarations().size() == 1u);
+		CHECK(std::get<unsigned long long>(std::get<NumericLiteralNode>(namespace_decl.declarations()[0].as<ExpressionNode>()).value()) == 3ULL);
+		{
+			auto committed = context.beginScratchTransaction();
+			namespace_decl.add_declaration(make_declaration(11));
+			committed.commit();
+		}
+		CHECK(namespace_decl.declarations().size() == 2u);
+	}
+
 	TEST_CASE("Frontend scratch rollback restores template declaration rewrites") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

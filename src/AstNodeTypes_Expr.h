@@ -3,6 +3,10 @@
 #include "AstNodeTypes_Template.h"
 
 // Namespace declaration node
+class NamespaceDeclarationNode;
+void journalNamespaceDeclarationRewrite(NamespaceDeclarationNode& node);
+void restoreNamespaceDeclarationRewrite(NamespaceDeclarationNode& node, size_t declaration_count);
+
 class NamespaceDeclarationNode {
 public:
 	explicit NamespaceDeclarationNode(std::string_view name)
@@ -14,13 +18,20 @@ public:
 	bool is_anonymous() const { return name_.empty(); }
 
 	void add_declaration(ASTNode decl) {
+		journalNamespaceDeclarationRewrite(*this);
 		declarations_.push_back(decl);
 	}
 
 private:
+	friend void restoreNamespaceDeclarationRewrite(NamespaceDeclarationNode& node, size_t declaration_count);
+
 	std::string_view name_;	// Points directly into source text from lexer token (empty for anonymous namespaces)
 	std::vector<ASTNode> declarations_;	// Declarations within the namespace
 };
+
+inline void restoreNamespaceDeclarationRewrite(NamespaceDeclarationNode& node, size_t declaration_count) {
+	node.declarations_.resize(declaration_count);
+}
 
 // Using directive node: using namespace std;
 class UsingDirectiveNode {

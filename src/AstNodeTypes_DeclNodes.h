@@ -16,6 +16,8 @@ class StructDeclarationNode;
 class EnumDeclarationNode;
 class DeclarationNode;
 class FrontendContext;
+template <typename T>
+void journalLegacyAstOwnerRewrite(T& owner);
 namespace FlashCpp {
 struct StructuralClassValue;
 }
@@ -4169,9 +4171,15 @@ public:
 	std::optional<Token> try_get_parent_token() { return parent_token_; }
 
 	IdentifierBinding binding() const { return binding_; }
-	void set_binding(IdentifierBinding b) { binding_ = b; }
+	void set_binding(IdentifierBinding b) {
+		journalLegacyAstOwnerRewrite(*this);
+		binding_ = b;
+	}
 	StringHandle resolved_name() const { return resolved_name_; }
-	void set_resolved_name(StringHandle h) { resolved_name_ = h; }
+	void set_resolved_name(StringHandle h) {
+		journalLegacyAstOwnerRewrite(*this);
+		resolved_name_ = h;
+	}
 	bool is_resolved() const { return binding_ != IdentifierBinding::Unresolved; }
 
 private:
@@ -4330,9 +4338,13 @@ public:
 
 	TypeId resolved_member_operator_owner() const { return resolved_member_operator_owner_; }
 	BinaryOperatorCallTargetId resolved_operator_call_target() const { return resolved_operator_call_target_; }
-	void set_resolved_operator_call_target(BinaryOperatorCallTargetId target) const { resolved_operator_call_target_ = target; }
+	void set_resolved_operator_call_target(BinaryOperatorCallTargetId target) const {
+		journalLegacyAstOwnerRewrite(const_cast<BinaryOperatorNode&>(*this));
+		resolved_operator_call_target_ = target;
+	}
 
 	void set_resolved_member_operator_overload(const StructMemberFunction* overload, TypeId owner) {
+		journalLegacyAstOwnerRewrite(*this);
 		resolved_operator_call_target_ = {};
 		resolved_member_operator_owner_ = owner;
 		resolved_member_operator_overload_ = overload;
@@ -4344,6 +4356,7 @@ public:
 	}
 
 	void set_resolved_free_function_operator_overload(const FunctionDeclarationNode* overload) {
+		journalLegacyAstOwnerRewrite(*this);
 		resolved_operator_call_target_ = {};
 		resolved_free_function_operator_overload_ = overload;
 		resolved_member_operator_overload_ = nullptr;
@@ -4355,10 +4368,12 @@ public:
 	}
 
 	void set_recorded_equality_rewrite_negate(bool value) {
+		journalLegacyAstOwnerRewrite(*this);
 		semantic_rewrite_neq_to_eq_ = value;
 	}
 
 	void set_no_match_operator_overload() {
+		journalLegacyAstOwnerRewrite(*this);
 		resolved_operator_call_target_ = {};
 		resolved_member_operator_overload_ = nullptr;
 		resolved_member_operator_owner_ = {};
@@ -4368,6 +4383,7 @@ public:
 	}
 
 	void set_ambiguous_operator_overload() {
+		journalLegacyAstOwnerRewrite(*this);
 		resolved_operator_call_target_ = {};
 		resolved_member_operator_overload_ = nullptr;
 		resolved_member_operator_owner_ = {};
@@ -4377,6 +4393,7 @@ public:
 	}
 
 	void clear_semantic_operator_resolution() {
+		journalLegacyAstOwnerRewrite(*this);
 		resolved_operator_call_target_ = {};
 		resolved_member_operator_overload_ = nullptr;
 		resolved_member_operator_owner_ = {};
@@ -4386,6 +4403,7 @@ public:
 	}
 
 	void copy_semantic_operator_resolution_from(const BinaryOperatorNode& other) {
+		journalLegacyAstOwnerRewrite(*this);
 		resolved_operator_call_target_ = other.resolved_operator_call_target_;
 		resolved_member_operator_overload_ = other.resolved_member_operator_overload_;
 		resolved_member_operator_owner_ = other.resolved_member_operator_owner_;
@@ -4422,9 +4440,13 @@ public:
 	bool has_arithmetic_operator_resolution() const { return arithmetic_operator_state_ != ArithmeticOperatorResolution::Unresolved; }
 	bool arithmetic_operator_is_member() const { return arithmetic_operator_state_ == ArithmeticOperatorResolution::Member; }
 	bool arithmetic_operator_is_validated() const { return arithmetic_operator_validated_; }
-	void mark_arithmetic_operator_validated() const { arithmetic_operator_validated_ = true; }
+	void mark_arithmetic_operator_validated() const {
+		journalLegacyAstOwnerRewrite(const_cast<UnaryOperatorNode&>(*this));
+		arithmetic_operator_validated_ = true;
+	}
 	const FunctionDeclarationNode* resolved_arithmetic_operator() const { return resolved_arithmetic_operator_; }
 	void set_resolved_arithmetic_operator(const FunctionDeclarationNode* function, bool is_member) const {
+		journalLegacyAstOwnerRewrite(const_cast<UnaryOperatorNode&>(*this));
 		resolved_arithmetic_operator_ = function;
 		arithmetic_operator_validated_ = false;
 		arithmetic_operator_state_ = function == nullptr ? ArithmeticOperatorResolution::Builtin :
@@ -4435,6 +4457,7 @@ public:
 	}
 	void set_resolved_addressed_function(
 		const FunctionDeclarationNode* function) {
+		journalLegacyAstOwnerRewrite(*this);
 		resolved_addressed_function_ = function;
 	}
 
@@ -4548,10 +4571,16 @@ public:
 	explicit BlockNode() {}
 
 	const auto& get_statements() const { return statements_; }
-	void add_statement_node(ASTNode node) { statements_.push_back(node); }
+	void add_statement_node(ASTNode node) {
+		journalLegacyAstOwnerRewrite(*this);
+		statements_.push_back(node);
+	}
 
 	bool is_synthetic_decl_list() const { return is_synthetic_decl_list_; }
-	void set_synthetic_decl_list(bool v) { is_synthetic_decl_list_ = v; }
+	void set_synthetic_decl_list(bool v) {
+		journalLegacyAstOwnerRewrite(*this);
+		is_synthetic_decl_list_ = v;
+	}
 
 private:
 	ChunkedVector<ASTNode, 128, 256> statements_;
@@ -5298,31 +5327,42 @@ public:
 
 	// --- Arguments ---
 	const ChunkedVector<ASTNode>& arguments() const { return arguments_; }
-	void add_argument(ASTNode argument) { arguments_.push_back(argument); }
+	void add_argument(ASTNode argument) {
+		journalLegacyAstOwnerRewrite(*this);
+		arguments_.push_back(argument);
+	}
 
 	// --- Source token ---
 	Token called_from() const { return called_from_; }
 
 	// --- Pre-computed mangled name ---
-	void set_mangled_name(std::string_view name) { mangled_name_ = StringTable::getOrInternStringHandle(name); }
+	void set_mangled_name(std::string_view name) {
+		journalLegacyAstOwnerRewrite(*this);
+		mangled_name_ = StringTable::getOrInternStringHandle(name);
+	}
 	std::string_view mangled_name() const { return mangled_name_.view(); }
 	StringHandle mangled_name_handle() const { return mangled_name_; }
 	bool has_mangled_name() const { return mangled_name_.isValid(); }
 
 	// --- Qualified source name ---
-	void set_qualified_name(std::string_view name) { qualified_name_ = StringTable::getOrInternStringHandle(name); }
+	void set_qualified_name(std::string_view name) {
+		journalLegacyAstOwnerRewrite(*this);
+		qualified_name_ = StringTable::getOrInternStringHandle(name);
+	}
 	std::string_view qualified_name() const { return qualified_name_.view(); }
 	StringHandle qualified_name_handle() const { return qualified_name_; }
 	bool has_qualified_name() const { return qualified_name_.isValid(); }
 
 	// --- Explicit template arguments ---
 	void set_template_arguments(std::vector<ASTNode>&& template_args) {
+		journalLegacyAstOwnerRewrite(*this);
 		template_arguments_ = std::move(template_args);
 	}
 	std::span<const ASTNode> template_arguments() const { return template_arguments_; }
 	bool has_template_arguments() const { return !template_arguments_.empty(); }
 
 	void set_parser_return_type_hint(const TypeSpecifierNode& type_hint) {
+		journalLegacyAstOwnerRewrite(*this);
 		parser_return_type_hint_ = type_hint;
 	}
 	const std::optional<TypeSpecifierNode>& parser_return_type_hint() const {
@@ -5332,6 +5372,7 @@ public:
 		return parser_return_type_hint_.has_value();
 	}
 	void set_deferred_overload_resolution() {
+		journalLegacyAstOwnerRewrite(*this);
 		call_flags_ |= kDeferredOverloadResolution;
 	}
 	bool defers_overload_resolution() const {
@@ -5340,6 +5381,7 @@ public:
 
 	// --- Definition-context lookup record ---
 	void set_definition_lookup_record(const FunctionCallDefinitionLookupRecord& record) {
+		journalLegacyAstOwnerRewrite(*this);
 		definition_lookup_record_ = record;
 	}
 	const std::optional<FunctionCallDefinitionLookupRecord>& definition_lookup_record() const {
@@ -5349,6 +5391,7 @@ public:
 
 	void set_dependent_unqualified_lookup_record(
 		const DependentUnqualifiedCallLookupRecord& record) {
+		journalLegacyAstOwnerRewrite(*this);
 		dependent_unqualified_lookup_record_ = record;
 	}
 	const std::optional<DependentUnqualifiedCallLookupRecord>& dependent_unqualified_lookup_record() const {
@@ -5359,6 +5402,7 @@ public:
 	}
 	void set_dependent_qualified_lookup_record(
 		const TypeInfo::DependentQualifiedNameRecord& record) {
+		journalLegacyAstOwnerRewrite(*this);
 		dependent_qualified_lookup_record_index_ =
 			storeDependentQualifiedNameRecord(record);
 	}
@@ -5410,8 +5454,14 @@ public:
 	ConstructorCallNode withSubstitutedTypeAndArguments(const TypeSpecifierNode& type_node, ChunkedVector<ASTNode>&& arguments) const;
 	const ConstructorDeclarationNode* resolved_constructor() const { return resolved_constructor_; }
 
-	void add_argument(ASTNode argument) { arguments_.push_back(argument); }
-	void set_resolved_constructor(const ConstructorDeclarationNode* ctor) const { resolved_constructor_ = ctor; }
+	void add_argument(ASTNode argument) {
+		journalLegacyAstOwnerRewrite(*this);
+		arguments_.push_back(argument);
+	}
+	void set_resolved_constructor(const ConstructorDeclarationNode* ctor) const {
+		journalLegacyAstOwnerRewrite(const_cast<ConstructorCallNode&>(*this));
+		resolved_constructor_ = ctor;
+	}
 
 	Token called_from() const { return called_from_; }
 

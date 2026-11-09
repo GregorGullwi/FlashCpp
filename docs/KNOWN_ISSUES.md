@@ -269,16 +269,23 @@ snapshot parameters, initializers, definitions, owning types, template and body
 metadata, flags, mangled names, and lazy registry keys. Standalone
 `DeclarationNode`, `EnumDeclarationNode`, and `TypedefDeclarationNode` owners
 snapshot declaration, array, alignment, name, scope, enumerator, underlying-type,
-and identity rewrites. Template function and class declaration owners snapshot
-parameters, declaration IDs, and deferred bodies. Template alias and variable declarations snapshot bounds, replay
+and identity rewrites. Namespace declaration owners journal their appended
+declaration count. Mutable expression and statement owners share a type-erased
+snapshot journal for `IdentifierNode`, `BlockNode`, `InitializerListNode`,
+`TemplateParameterNode`, `CallExprNode`, `ConstructorCallNode`,
+`RangedForStatementNode`, `TryStatementNode`, `BinaryOperatorNode`,
+`UnaryOperatorNode`, and `IfStatementNode`; rollback restores and releases each
+snapshot before AST truncation. Template function and class declaration owners
+snapshot parameters, declaration IDs, and deferred bodies. Template alias and variable declarations snapshot bounds, replay
 metadata, and declaration IDs; standalone variable declarations snapshot their
 initializer, storage/linkage/constexpr flags, and outer bindings; friend
 declarations snapshot class, template, function, type, and declaration identity
 fields. Pre-existing `TypeSpecifierNode` owners snapshot the whole type shape
 before size, cv/pointer/array, declarator, specialization, dependent-name,
 member-class, or identity rewrites.
-Other in-place rewrites of owners outside the type registry still need an owned
-rollback boundary before broad speculative parsing can rely on it. Existing
+All allow-listed AST owner classes now expose their mutations through journaled
+accessors. Direct field writes that bypass those accessors still need migration
+before broad speculative parsing can rely on the rollback boundary. Existing
 `TypeInfo` rows reached
 through the mutable accessor/mutator API are snapshotted and restored with their
 cold records, and legacy AST nodes allocated after the mark are truncated.

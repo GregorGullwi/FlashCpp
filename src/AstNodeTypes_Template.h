@@ -55,7 +55,10 @@ public:
 	StringHandle nameHandle() const { return name_; }
 	Token token() const { return token_; }
 	TypeIndex registered_type_index() const { return registered_type_index_; }
-	void set_registered_type_index(TypeIndex type_index) { registered_type_index_ = type_index; }
+	void set_registered_type_index(TypeIndex type_index) {
+		journalLegacyAstOwnerRewrite(*this);
+		registered_type_index_ = type_index;
+	}
 
 	// For non-type parameters
 	bool has_type() const { return type_node_.has_value(); }
@@ -68,25 +71,40 @@ public:
 	// For default arguments
 	bool has_default() const { return default_value_.has_value(); }
 	ASTNode default_value() const { return default_value_.value(); }
-	void set_default_value(ASTNode value) { default_value_ = value; }
+	void set_default_value(ASTNode value) {
+		journalLegacyAstOwnerRewrite(*this);
+		default_value_ = value;
+	}
 
 	// Lexer position for re-parsing dependent default type arguments during SFINAE
 	bool has_default_value_position() const { return default_value_position_.has_value(); }
 	SaveHandle default_value_position() const { return *default_value_position_; }
-	void set_default_value_position(SaveHandle pos) { default_value_position_ = pos; }
+	void set_default_value_position(SaveHandle pos) {
+		journalLegacyAstOwnerRewrite(*this);
+		default_value_position_ = pos;
+	}
 
 	// For variadic templates (parameter packs)
 	bool is_variadic() const { return is_variadic_; }
-	void set_variadic(bool variadic) { is_variadic_ = variadic; }
+	void set_variadic(bool variadic) {
+		journalLegacyAstOwnerRewrite(*this);
+		is_variadic_ = variadic;
+	}
 
 	// For concept constraints (C++20)
 	bool has_concept_constraint() const { return concept_constraint_.has_value(); }
 	std::string_view concept_constraint() const { return concept_constraint_.value(); }
-	void set_concept_constraint(std::string_view constraint) { concept_constraint_ = constraint; }
+	void set_concept_constraint(std::string_view constraint) {
+		journalLegacyAstOwnerRewrite(*this);
+		concept_constraint_ = constraint;
+	}
 
 	// For concept template arguments (e.g., Concept<U> T stores {U})
 	std::span<const ASTNode> concept_args() const { return concept_args_; }
-	void set_concept_args(std::vector<ASTNode> args) { concept_args_ = std::move(args); }
+	void set_concept_args(std::vector<ASTNode> args) {
+		journalLegacyAstOwnerRewrite(*this);
+		concept_args_ = std::move(args);
+	}
 	bool has_concept_args() const { return !concept_args_.empty(); }
 
 private:

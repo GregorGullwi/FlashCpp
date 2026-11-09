@@ -146,16 +146,24 @@ parameters, initializers, definitions, owning types, template and body metadata,
 flags, mangled names, and lazy registry keys. Standalone `DeclarationNode`,
 `EnumDeclarationNode`, and `TypedefDeclarationNode` owners snapshot their
 declaration state before type, array, alignment, name, scope, enumerator,
-underlying-type, and identity rewrites. Template function and class declaration
-owners snapshot their parameters, declaration IDs, and deferred bodies. Template alias and variable declarations snapshot their bounds,
+underlying-type, and identity rewrites. Namespace declaration owners journal
+their appended declaration count. Mutable expression and statement owners share a
+type-erased snapshot journal for `IdentifierNode`, `BlockNode`,
+`InitializerListNode`, `TemplateParameterNode`, `CallExprNode`,
+`ConstructorCallNode`, `RangedForStatementNode`, `TryStatementNode`,
+`BinaryOperatorNode`, `UnaryOperatorNode`, and `IfStatementNode`; rollback
+restores and releases each snapshot before AST truncation. Template function and
+class declaration owners snapshot their parameters, declaration IDs, and
+deferred bodies. Template alias and variable declarations snapshot their bounds,
 replay metadata, and declaration IDs; standalone variable declarations snapshot
 their initializer, storage/linkage/constexpr flags, and outer bindings; friend
 declarations snapshot their class, template, function, type, and declaration
 identity fields. Pre-existing `TypeSpecifierNode` owners snapshot the whole type
 shape on their first size, cv/pointer/array, declarator, specialization,
-dependent-name, member-class, or identity rewrite. Other in-place rewrites of
-owners outside the type registry still need an owned publication boundary before
-enabling a transaction around type-pack materialization. Required dependency instantiations
+dependent-name, member-class, or identity rewrite. All allow-listed AST owner
+classes now expose their mutations through journaled accessors. Remaining direct
+field writes that bypass those accessors need migration before enabling a
+transaction around type-pack materialization. Required dependency instantiations
 must remain separate from that candidate-local transaction; blanket rollback
 would violate observable C++20 instantiation effects. Lockstep member and
 namespace-scope length mismatches now produce `TemplatePackLengthMismatch`
