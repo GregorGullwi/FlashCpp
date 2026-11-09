@@ -526,9 +526,9 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 			if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_specifier_node().is_array())) {
 				const TypeSpecifierNode& type_node = decl_ptr->type_specifier_node();
 				element_type_index = type_node.type_index();
-				if (type_node.runtime_pointer_depth() > 0) {
+				if (type_node.hasPointerElement()) {
 					element_size_bits = 64;
-					element_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());  // Track pointer depth
+					element_pointer_depth = static_cast<int>(type_node.elementPointerDepth());  // Track pointer depth
 				} else if (type_node.category() == TypeCategory::Struct) {
 					TypeIndex type_index_from_decl = type_node.type_index();
 					if (const TypeInfo* type_info = tryGetTypeInfo(type_index_from_decl)) {
@@ -1153,7 +1153,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && type_node) {
 			const auto binding_info = resolveGlobalOrStaticBinding(identifier);
 			if (binding_info.is_global_or_static && binding_info.type_index.category() != TypeCategory::Void && binding_info.size_in_bits.is_set()) {
-				int size_bits = (type_node->pointer_depth() > 0 || type_node->is_reference() || type_node->is_function_pointer())
+				int size_bits = (type_node->runtime_pointer_depth() > 0 || type_node->is_reference() || type_node->is_function_pointer())
 									? 64
 									: static_cast<int>(type_node->size_in_bits());
 
@@ -1170,7 +1170,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 													LValueInfo(LValueInfo::Kind::Global, binding_info.store_name, 0),
 													type_node->category(), size_bits));
 
-				out = makeExprResult(type_node->type_index(), SizeInBits{size_bits}, IrOperand{result_temp}, PointerDepth{static_cast<int>(type_node->pointer_depth())}, ValueStorage::ContainsData);
+				out = makeExprResult(type_node->type_index(), SizeInBits{size_bits}, IrOperand{result_temp}, PointerDepth{static_cast<int>(type_node->runtime_pointer_depth())}, ValueStorage::ContainsData);
 				return true;
 			}
 		}
@@ -1273,7 +1273,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 							if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_specifier_node().is_array())) {
 									// This is an array - calculate element size
 								const TypeSpecifierNode& type_node = decl_ptr->type_specifier_node();
-								if (type_node.runtime_pointer_depth() > 0) {
+								if (type_node.hasPointerElement()) {
 										// Array of pointers
 									element_size_bits = 64;
 								} else if (type_node.category() == TypeCategory::Struct) {
@@ -1566,7 +1566,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 				if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_specifier_node().is_array())) {
 						// This is an array - calculate element size
 					const TypeSpecifierNode& type_node = decl_ptr->type_specifier_node();
-					if (type_node.runtime_pointer_depth() > 0) {
+					if (type_node.hasPointerElement()) {
 							// Array of pointers
 						element_size_bits = 64;
 					} else if (type_node.category() == TypeCategory::Struct) {
