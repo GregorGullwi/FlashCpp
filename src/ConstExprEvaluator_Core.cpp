@@ -220,7 +220,7 @@ std::optional<size_t> tryGetConstexprTypeAlignment(const TypeSpecifierNode& type
 	// aligned entity on x64, whatever its pointee.  The parser-set
 	// size_in_bits() describes the base type before declarator postfixes were
 	// applied, so it must not win over the pointer shape.
-	if (aligned_type.pointer_depth() > 0 ||
+	if (aligned_type.runtime_pointer_depth() > 0 ||
 		aligned_type.reference_qualifier() != ReferenceQualifier::None) {
 		return 8;
 	}
@@ -2293,7 +2293,7 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 			};
 
 			if (type_spec.token().type() == Token::Type::Identifier &&
-				type_spec.pointer_depth() == 0 &&
+				type_spec.runtime_pointer_depth() == 0 &&
 				!type_spec.is_array() &&
 				type_spec.reference_qualifier() == ReferenceQualifier::None) {
 				std::string_view type_name = type_spec.token().value();
@@ -2765,7 +2765,7 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 
 			// C++20 [expr.alignof]: a pointer or reference object is always a
 			// 64-bit aligned entity on x64, whatever its pointee.
-			if (type_spec.pointer_depth() > 0 ||
+			if (type_spec.runtime_pointer_depth() > 0 ||
 				type_spec.reference_qualifier() != ReferenceQualifier::None) {
 				return EvalResult::from_int(8);
 			}
@@ -2812,7 +2812,7 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 								// C++20 [expr.alignof]: a pointer or reference
 								// object is always a 64-bit aligned entity on
 								// x64, whatever its pointee.
-								if (type_spec.pointer_depth() > 0 ||
+								if (type_spec.runtime_pointer_depth() > 0 ||
 									type_spec.reference_qualifier() != ReferenceQualifier::None) {
 									return EvalResult::from_int(8);
 								}
@@ -3518,7 +3518,7 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 
 	// Handle empty constructor calls (default/value initialization): Type{}
 	if (args.size() == 0) {
-		if (type_spec.pointer_depth() > 0) {
+		if (type_spec.runtime_pointer_depth() > 0) {
 			EvalResult result = EvalResult::from_uint(0);
 			result.set_exact_type(type_spec);
 			return result;
@@ -3637,7 +3637,7 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 	// Handle struct types with arguments: delegate to materialize_constructor_object_value
 	// which first attempts user-defined constructor matching and falls back to aggregate
 	// initialization only when no matching constructor is found.
-	if (is_struct_type(type_spec.category()) && type_spec.pointer_depth() == 0) {
+	if (is_struct_type(type_spec.category()) && type_spec.runtime_pointer_depth() == 0) {
 		return materialize_constructor_object_value(ctor_call, context);
 	}
 

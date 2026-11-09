@@ -2913,7 +2913,7 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 					const TypeSpecifierNode& param_type = param_decl.type_specifier_node();
 					if (cast_type.type() != param_type.type() ||
 						cast_type.type_index() != param_type.type_index() ||
-						cast_type.pointer_depth() != param_type.pointer_depth()) {
+						cast_type.runtime_pointer_depth() != param_type.runtime_pointer_depth()) {
 						matches_cast_targets = false;
 						break;
 					}
