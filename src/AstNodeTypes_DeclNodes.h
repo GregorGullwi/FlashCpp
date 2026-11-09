@@ -2023,6 +2023,28 @@ public:
 		}
 		return true;
 	}
+	// Centralized runtime-aware pointer-shape comparison for consumers that
+	// still bridge ordered and legacy declarators. Ordered declarators compare
+	// their full ordered spine through has_same_ordered_declarator(); legacy
+	// declarators compare flat pointer levels. Mixed ordered/legacy pairs fall
+	// back to the flat projection comparison already performed by
+	// has_same_ordered_declarator().
+	bool has_same_pointer_shape(const TypeSpecifierNode& other) const {
+		if (runtime_pointer_depth() != other.runtime_pointer_depth()) {
+			return false;
+		}
+		if (!has_ordered_declarator() || !other.has_ordered_declarator()) {
+			if (pointer_depth() != other.pointer_depth()) {
+				return false;
+			}
+			for (size_t index = 0; index < pointer_depth(); ++index) {
+				if (pointer_levels_[index].cv_qualifier != other.pointer_levels_[index].cv_qualifier) {
+					return false;
+				}
+			}
+		}
+		return true;
+	}
 	bool ordered_declarator_has_legacy_projection() const {
 		return !has_ordered_declarator() || declarator_has_legacy_projection_;
 	}
