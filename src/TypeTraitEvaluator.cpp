@@ -2647,7 +2647,11 @@ static const ConstructorDeclarationNode* findMatchingSimpleConstructorTemplate(
 		bool matches = true;
 		for (size_t index = 0; index < arguments.size(); ++index) {
 			if (index >= parameters.size()) {
-				if (is_struct_type(arguments[index].category())) {
+				// [over.ics.ellipsis]: extra arguments use the ellipsis conversion
+				// sequence. A class argument is conditionally supported and adds no
+				// copy/move requirement, so it does not reject a variadic template
+				// constructor here.
+				if (isDependentTypeTraitOperand(arguments[index])) {
 					matches = false;
 					break;
 				}
@@ -2938,7 +2942,12 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 					matches = false;
 					break;
 				}
-				if (isCanonicalClassTypeKind(argument_kind) || isDependentCanonicalNode(argument_kind)) {
+				// [over.ics.ellipsis]: every remaining argument uses the ellipsis
+				// conversion sequence regardless of class or scalar type. Passing a
+				// class through ... is conditionally supported, so it does not add a
+				// copy/move requirement to constructibility; dependent arguments
+				// still need substitution before they can be classified.
+				if (isDependentCanonicalNode(argument_kind)) {
 					return std::nullopt;
 				}
 				candidate.argument_ranks.push_back(ConversionRank::Ellipsis);

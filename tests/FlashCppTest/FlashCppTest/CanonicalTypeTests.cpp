@@ -4584,6 +4584,55 @@ TEST_CASE("Canonical constructor schemas select by-value class arguments") {
 	CHECK_FALSE(defaulted_nothrow.has_value());
 }
 
+TEST_CASE("Canonical constructor schemas rank class arguments through ellipsis") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const EntityId safe_entity{940};
+	const EntityId noisy_entity{941};
+	const EntityId class_entity{942};
+	const TypeId safe_type = table.record(safe_entity);
+	const TypeId noisy_type = table.record(noisy_entity);
+	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
+	const std::array<TypeId, 1> parameters{int_type};
+	const std::array<CanonicalRecordConstructorSpec, 1> safe_constructors{{{parameters, CanonicalRecordFunctionFlags::Variadic, true}}};
+	const std::array<CanonicalRecordConstructorSpec, 1> noisy_constructors{{{parameters, CanonicalRecordFunctionFlags::Variadic, false}}};
+	table.publishRecordConstructors(safe_type, safe_constructors);
+	table.publishRecordConstructors(noisy_type, noisy_constructors);
+	auto class_specifier = [](TypeCategory category, EntityId entity) {
+		TypeSpecifierNode specifier(category, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		specifier.set_type_entity(entity);
+		return specifier;
+	};
+	TypeSpecifierNode int_argument(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	TypeSpecifierNode class_argument = class_specifier(TypeCategory::Struct, class_entity);
+	std::array<TypeSpecifierNode, 2> arguments{int_argument, class_argument};
+	TypeSpecifierNode consumer = class_specifier(TypeCategory::Struct, safe_entity);
+	const auto constructible = evaluateConstructibility(TypeTraitKind::IsConstructible, consumer, arguments, ConstructibilityFallback::None);
+	REQUIRE(constructible.has_value());
+	CHECK(constructible->success);
+	CHECK(constructible->value);
+	const auto nothrow_safe = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, consumer, arguments, ConstructibilityFallback::None);
+	REQUIRE(nothrow_safe.has_value());
+	CHECK(nothrow_safe->success);
+	CHECK(nothrow_safe->value);
+	const auto trivial = evaluateConstructibility(TypeTraitKind::IsTriviallyConstructible, consumer, arguments, ConstructibilityFallback::None);
+	REQUIRE(trivial.has_value());
+	CHECK(trivial->success);
+	CHECK_FALSE(trivial->value);
+
+	consumer = class_specifier(TypeCategory::Struct, noisy_entity);
+	const auto nothrow_noisy = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, consumer, arguments, ConstructibilityFallback::None);
+	REQUIRE(nothrow_noisy.has_value());
+	CHECK(nothrow_noisy->success);
+	CHECK_FALSE(nothrow_noisy->value);
+
+	TypeSpecifierNode dependent(TypeCategory::Template, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	dependent.set_template_parameter_decl(TemplateDeclId{943}, 0);
+	arguments[1] = dependent;
+	consumer = class_specifier(TypeCategory::Struct, safe_entity);
+	CHECK_FALSE(evaluateConstructibility(TypeTraitKind::IsConstructible, consumer, arguments, ConstructibilityFallback::None).has_value());
+}
+
 TEST_CASE("Canonical direct reference binding preserves access cv and value category") {
 	CanonicalTypeTable table;
 	const TypeId base_type = table.record(EntityId{913});
