@@ -535,7 +535,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		// has a pointer/callable element (for example `int (*a[2])(int)`), so its
 		// element still occupies one machine word even though the declared
 		// entity's own outermost wrapper is the array (runtime_pointer_depth()==0).
-		const bool has_pointer_element = type_node.is_array() && type_node.pointer_depth() > 0;
+		const bool has_pointer_element = type_node.is_array() && type_node.hasPointerElement();
 		if (has_ordered_array_storage) {
 			op.size_in_bits = SizeInBits{ordered_array_element_bits};
 		} else if (runtime_pointer_depth > 0 || type_node.is_reference() || type_node.is_function_pointer() || has_pointer_element) {
@@ -948,7 +948,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					// An array whose element is a pointer or callable stores one absolute address
 					// relocation per element instead of a raw scalar value.
 					bool handled_as_pointer_array = false;
-					if (type_node.is_function_pointer() || (type_node.is_array() && type_node.pointer_depth() > 0)) {
+					if (type_node.is_function_pointer() || (type_node.is_array() && type_node.hasPointerElement())) {
 						std::vector<DataRelocation> element_relocations;
 						element_relocations.reserve(initializers.size());
 						bool all_resolved = !initializers.empty();
@@ -1644,7 +1644,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	// For pointers, allocate 64 bits (pointer size on x64), not the pointed-to type size.
 	// An array object whose flat projection carries non-empty pointer levels has a
 	// pointer/callable element even though the entity's outermost wrapper is the array.
-	const bool has_pointer_element = type_node.is_array() && type_node.pointer_depth() > 0;
+	const bool has_pointer_element = type_node.is_array() && type_node.hasPointerElement();
 	int size_in_bits = has_ordered_array_storage
 		? ordered_array_element_bits
 		: ((runtime_pointer_depth > 0 || has_pointer_element) ? 64 : static_cast<int>(type_node.size_in_bits()));

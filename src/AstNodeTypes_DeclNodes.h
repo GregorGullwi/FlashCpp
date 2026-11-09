@@ -2044,6 +2044,29 @@ public:
 		}
 		return depth;
 	}
+	size_t elementPointerDepth() const {
+		if (!has_ordered_declarator()) {
+			return pointer_levels_.size();
+		}
+		size_t index = 0;
+		while (index < declarator_components_.size() &&
+			(declarator_components_[index].kind == DeclaratorComponentKind::Array ||
+			 declarator_components_[index].kind == DeclaratorComponentKind::UnknownBoundArray)) {
+			++index;
+		}
+		size_t depth = 0;
+		while (index < declarator_components_.size() &&
+			(declarator_components_[index].kind == DeclaratorComponentKind::Pointer ||
+			 declarator_components_[index].kind == DeclaratorComponentKind::MemberObjectPointer ||
+			 declarator_components_[index].kind == DeclaratorComponentKind::MemberFunctionPointer)) {
+			++depth;
+			++index;
+		}
+		return depth;
+	}
+	bool hasPointerElement() const {
+		return elementPointerDepth() > 0;
+	}
 	void set_ordered_declarator(std::vector<DeclaratorComponent> components) {
 		journalTypeSpecifierRewrite(*this);
 		declarator_components_ = std::move(components);
