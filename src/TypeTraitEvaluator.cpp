@@ -2739,10 +2739,29 @@ TypeTraitResult evaluateRecordConstructibleFromArgs(TypeTraitKind kind, const St
 // [over.best.ics]/[conv.derived]: a by-value class parameter accepts a
 // same-class argument as an identity conversion and a publicly derived argument
 // through derived-to-base. The base copy/move path is not part of the outer
-// constructor schema, so require the published trivially-copyable fact; other
-// class pairs defer to the compatibility resolver.
+// constructor schema, so require a usable public copy constructor; an rvalue
+// source may also use a move constructor. Unpublished or incomplete base schemas
+// defer to the compatibility resolver.
+static bool isUsableCanonicalClassCopyConstructor(
+	CanonicalTypeTable& table, TypeId owner, size_t index, TypeId target_class, bool accept_move) {
+	const CanonicalRecordConstructor constructor = table.recordConstructorAt(owner, index);
+	if (constructor.parameter_count != 1 ||
+		hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::NonPublic) ||
+		hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Explicit) ||
+		hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::SchemaIncomplete)) {
+		return false;
+	}
+	const CanonicalTypeNode parameter = table.node(table.recordConstructorParameterAt(owner, index, 0));
+	if (!parameter.child ||
+		(parameter.kind != CanonicalTypeKind::LValueReference &&
+			(parameter.kind != CanonicalTypeKind::RValueReference || !accept_move))) {
+		return false;
+	}
+	return table.withoutTopLevelQualifiers(parameter.child) == target_class;
+}
+
 static std::optional<ConversionPlan> tryBuildCanonicalClassParameterConversionPlan(
-	CanonicalTypeTable& table, TypeId source_class, TypeId target_class) {
+	CanonicalTypeTable& table, TypeId source_class, TypeId target_class, bool source_is_lvalue) {
 	if (source_class == target_class) {
 		return ConversionPlan::exact_match();
 	}
@@ -2753,11 +2772,28 @@ static std::optional<ConversionPlan> tryBuildCanonicalClassParameterConversionPl
 	if (*relation != DerivedBaseConversionKind::UniquePublicNonVirtual && *relation != DerivedBaseConversionKind::PublicVirtual) {
 		return std::nullopt;
 	}
-	if (!table.hasRecordProperties(target_class) ||
-		!hasCanonicalRecordFact(table.recordProperties(target_class).facts, CanonicalRecordFacts::TriviallyCopyable)) {
+	if (!table.hasRecordConstructors(target_class)) {
+		// An unpublished constructor schema can still prove the implicit copy/move
+		// path from the trivially-copyable fact; otherwise the compatibility
+		// resolver owns the answer.
+		if (table.hasRecordProperties(target_class) &&
+			hasCanonicalRecordFact(table.recordProperties(target_class).facts, CanonicalRecordFacts::TriviallyCopyable)) {
+			return ConversionPlan{ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
+		}
 		return std::nullopt;
 	}
-	return ConversionPlan{ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
+	const size_t constructor_count = table.recordConstructorCount(target_class);
+	for (size_t index = 0; index < constructor_count; ++index) {
+		if (hasCanonicalRecordFunctionFlag(table.recordConstructorAt(target_class, index).flags, CanonicalRecordFunctionFlags::SchemaIncomplete)) {
+			return std::nullopt;
+		}
+	}
+	for (size_t index = 0; index < constructor_count; ++index) {
+		if (isUsableCanonicalClassCopyConstructor(table, target_class, index, target_class, !source_is_lvalue)) {
+			return ConversionPlan{ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
+		}
+	}
+	return std::nullopt;
 }
 
 // Canonical constructor query for complete schemas and supported standard conversion sequences.
@@ -2854,6 +2890,7 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 				candidate.argument_ranks.push_back(ConversionRank::ExactMatch);
 				continue;
 			}
+			const bool source_is_lvalue = table.node(argument_types[parameter]).kind == CanonicalTypeKind::LValueReference;
 			TypeId source_type = argument_types[parameter];
 			while (table.node(source_type).kind == CanonicalTypeKind::LValueReference || table.node(source_type).kind == CanonicalTypeKind::RValueReference) {
 				source_type = table.node(source_type).child;
@@ -2905,7 +2942,7 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 				break;
 			}
 			if (source_is_class && target_is_class) {
-				const std::optional<ConversionPlan> class_plan = tryBuildCanonicalClassParameterConversionPlan(table, source_base, target_base);
+				const std::optional<ConversionPlan> class_plan = tryBuildCanonicalClassParameterConversionPlan(table, source_base, target_base, source_is_lvalue);
 				if (!class_plan.has_value()) {
 					return std::nullopt;
 				}
