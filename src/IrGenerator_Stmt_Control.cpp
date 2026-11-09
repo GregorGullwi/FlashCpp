@@ -927,7 +927,7 @@ void AstToIr::visitRangedForArray(const RangedForStatementNode& node, std::strin
 
 		// Calculate the actual element size for pointer arithmetic
 	int element_size_bits;
-	if (array_type.pointer_depth() > 0) {
+	if (array_type.hasPointerElement()) {
 			// Array of pointers - element size is pointer size (64 bits)
 		element_size_bits = 64;
 	} else if (array_type.category() == TypeCategory::Struct) {
