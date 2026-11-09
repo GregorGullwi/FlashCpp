@@ -8,12 +8,13 @@ instead of restating issue details.
 
 Direct unary, binary, and assignment operator lookup now stop at the first class
 that declares the operator name, while using-declarations restore only nominated
-base overloads. Remaining work is persistent using-declaration provenance through
-template instantiation and replay. The parser still retains only imported
+base overloads. Requires-expression assignment viability consumes the resolved
+no-match or ambiguous operator state instead of accepting the expression from its
+left-hand type alone. Remaining work is persistent using-declaration provenance
+through template instantiation and replay. The parser still retains only imported
 spelling in temporary class parsing state for some instantiated forms, so
 member-name lookup sets with hiding and base ambiguity are not yet shared across
-every canonical and compatibility consumer. Requires-expression assignment
-viability also follows a separate acceptance path that needs its own audit.
+every canonical and compatibility consumer.
 
 ## Remaining dependent member-template field forms need concrete TypeInfo
 

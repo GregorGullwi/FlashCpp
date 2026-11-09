@@ -17,8 +17,18 @@ struct Derived : Base {
 	Derived& operator=(NonConvertible) { return *this; }
 };
 
+struct HiddenDerived : Base {
+	HiddenDerived& operator=(NonConvertible) { return *this; }
+};
+
+template<class T>
+concept AssignsInt = requires(T& value) { value = 1; };
+
+static_assert(!AssignsInt<HiddenDerived>);
+static_assert(AssignsInt<Derived>);
+
 int main() {
 	Derived value;
 	value = 7;
-	return value.value == 7 ? 0 : 1;
+	return value.value == 7 && !AssignsInt<HiddenDerived> ? 0 : 1;
 }
