@@ -269,10 +269,12 @@ mismatched, unpublished, or unresolved owner facts.
      known-throwing default-expression facts; remaining default-exception gaps are
      tracked only in [KNOWN_ISSUES](KNOWN_ISSUES.md). Implicit copy/move candidates
      cannot obscure a builtin argument's
-     better direct converting constructor. Constructor schemas retain ellipsis and rank
-     supported extra arguments after conversions to named parameters. Class
-     arguments passed through ellipsis still defer until their initialization
-     and target-specific exception behavior can be decided structurally.
+     better direct converting constructor. Constructor schemas retain ellipsis
+     and rank extra arguments through the ellipsis conversion sequence, including
+     class types. Passing a class through `...` is conditionally supported, so
+     constructibility adds no copy/move requirement and the selected
+     constructor's exception specification decides the nothrow answer. Dependent
+     extra arguments still defer.
    - Template argument and substitution storage: move lazy constraint lookup from
      name-based parameters to depth/index parameters, and finish canonical
      preservation through NTTP reconstruction, deferred bases, stored arguments,

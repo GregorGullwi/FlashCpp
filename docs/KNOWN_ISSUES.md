@@ -218,9 +218,10 @@ arguments over trivially copyable bases, and omitted default arguments from
 published constructor schemas. They still defer for user-defined converting
 constructors, non-trivially-copyable derived bases, incomplete schemas, and
 unresolved canonical types. Constructor schemas now retain ellipsis and rank
-supported extra arguments after conversions to named parameters. Class arguments
-passed through ellipsis still defer: their validity and exception behavior need
-argument-initialization facts and the target's conditionally supported call rules.
+extra arguments through the ellipsis conversion sequence, including class types.
+Passing a class through `...` is conditionally supported, so constructibility
+adds no copy/move requirement and the selected constructor's exception
+specification decides the nothrow answer. Dependent extra arguments still defer.
 Runtime constructor lowering still emits a fixed-arity signature and lacks
 ellipsis promotions and ABI handling. General constructor overload resolution
 therefore retains its previous arity restrictions; canonical trait support does
@@ -231,11 +232,12 @@ forwarding of unnamed arguments remains unimplemented; the constructibility
 regressions query the overloads without invoking those wrappers.
 Constructor-template deduction now participates in the constructibility traits
 when every non-defaulted template parameter is deduced directly from a fixed
-parameter and remaining variadic arguments are non-class. Constrained
-constructors, non-direct dependent parameter patterns, and class arguments
-forwarded through ellipsis still defer. An unspecialized constructor template is
-not published as an ordinary canonical constructor. Class-template constructors
-whose owner arguments are already substituted are covered by the new schemas.
+parameter and remaining variadic arguments are ranked through the ellipsis
+conversion sequence, including class types. Constrained constructors and
+non-direct dependent parameter patterns still defer. An unspecialized constructor
+template is not published as an ordinary canonical constructor. Class-template
+constructors whose owner arguments are already substituted are covered by the
+new schemas.
 The canonical nothrow query proves arithmetic literal defaults (including unary
 signs) from a published trailing suffix and rejects omitted defaults whose call,
 throw, new, resolved operator, member-access, subscript, ternary, or
