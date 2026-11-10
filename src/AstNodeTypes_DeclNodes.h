@@ -2929,7 +2929,7 @@ inline void appendDeclaratorShapeForSubstitution(
 		}
 	};
 	auto append_pointers = [&]() {
-		if (type.has_member_class() && type.pointer_depth() != 0) {
+		if (type.has_member_class() && type.runtime_pointer_depth() != 0) {
 			TypeSpecifierNode member_pointer_type = type;
 			tryBindPublishedMemberClassEntity(member_pointer_type);
 			if (!member_pointer_type.has_member_class_entity() &&
@@ -2993,7 +2993,7 @@ inline void promoteAliasTargetDeclaratorShape(TypeSpecifierNode& target) {
 		target.has_function_signature() || target.has_member_class()) {
 		return;
 	}
-	if (target.pointer_depth() == 0 && !target.is_reference()) {
+	if (target.runtime_pointer_depth() == 0 && !target.is_reference()) {
 		return;
 	}
 	promoteDeclaratorShapeToOrdered(target);
@@ -3474,7 +3474,7 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 // the interleaved shape is an ordered declarator. The base identity is the
 // array element; the alias's stored size must not be applied again.
 inline bool tryFormArrayOfPointerToArray(TypeSpecifierNode& type, std::span<const size_t> outer_extents) {
-	if (outer_extents.empty() || type.has_ordered_declarator() || type.pointer_depth() == 0 || type.is_array_object()) {
+	if (outer_extents.empty() || type.has_ordered_declarator() || type.runtime_pointer_depth() == 0 || type.is_array_object()) {
 		return false;
 	}
 	for (const size_t extent : outer_extents) {
@@ -3838,7 +3838,7 @@ inline TypeSpecifierNode finalizePlaceholderTypeDeduction(TypeCategory placehold
 	}
 
 	deduced_type.set_reference_qualifier(ReferenceQualifier::None);
-	if (deduced_type.pointer_depth() == 0 && !deduced_type.is_array()) {
+	if (deduced_type.runtime_pointer_depth() == 0 && !deduced_type.is_array()) {
 		deduced_type.set_cv_qualifier(CVQualifier::None);
 	}
 	return deduced_type;
@@ -3998,7 +3998,7 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 			: static_cast<int>(size_bits);
 	}
 	// Pointers are always 64 bits on x64 regardless of the pointee type
-	if (type_spec.pointer_depth() > 0) {
+	if (type_spec.runtime_pointer_depth() > 0) {
 		return 64;
 	}
 	TypeCategory t = type_spec.type();
