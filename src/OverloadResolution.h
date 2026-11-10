@@ -6570,7 +6570,7 @@ inline OperatorOverloadResult findUnaryOperatorOverload(const TypeSpecifierNode&
 	CanonicalTypeTransaction transaction(table);
 	const TypeId root_type = tryGetCanonicalOverloadClassTypeId(table, operand_type_spec);
 	if (!root_type) {
-		return findUnaryOperatorOverloadCompatibility(operand_type_spec, operator_kind);
+		return OperatorOverloadResult::no_overload();
 	}
 	std::vector<TypeId> pending_types{root_type};
 	for (size_t pending_index = 0; pending_index < pending_types.size(); ++pending_index) {
@@ -6768,7 +6768,7 @@ inline OperatorOverloadResult findBinaryOperatorOverload(const TypeSpecifierNode
 	CanonicalTypeTransaction transaction(table);
 	const TypeId left_type_id = tryGetCanonicalOverloadClassTypeId(table, left_type_spec);
 	if (!left_type_id) {
-		return findBinaryOperatorOverloadCompatibility(left_type_spec, right_type_spec, operator_kind, right_argument);
+		return OperatorOverloadResult::no_overload();
 	}
 
 	struct OperatorCandidate {
