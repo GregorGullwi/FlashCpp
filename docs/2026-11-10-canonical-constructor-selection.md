@@ -73,6 +73,11 @@ Selection results now carry a reason code for missing, empty, or incomplete
 schemas, undecidable or ambiguous candidates, and outright no-match results. A
 native selection matrix covers those outcomes across the policy combinations.
 
+Constructor parameter publication now uses one import policy: non-implicit
+constructors may use the class fallback, while implicit constructors preserve
+owner identity and synthesize a self reference when strict import fails. This
+removes the default/non-default and implicit/non-implicit import drift.
+
 Remaining: continue with the remaining architecture items below.
 
 ## Remaining architecture items
@@ -80,4 +85,3 @@ Remaining: continue with the remaining architecture items below.
 - Canonical expression-fact table keyed by `ExprId`/`TypeId` for nothrow/throwing/unknown.
 - Member-function and conversion-operator schemas so operator lookup and user-defined conversion share one source of truth.
 - Per-candidate `Unimportable` / `Conditional` / `Deleted` status and arity ranges instead of global `SchemaIncomplete`.
-- One import policy, including the class fallback, for every schema parameter.
