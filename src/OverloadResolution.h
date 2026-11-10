@@ -3389,6 +3389,8 @@ trySelectUserDefinedConversionOperator(const TypeSpecifierNode& source_type, con
 			if (selected_conversion.has_value()) {
 				transaction.commit();
 			}
+			// Canonical import covers this source; do not fall back to the
+			// compatibility walk even when no canonical conversion is found.
 			return selected_conversion;
 		}
 	}
