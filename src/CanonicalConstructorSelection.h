@@ -198,19 +198,26 @@ inline std::optional<ConversionPlan> tryCanonicalStandardParameterConversionPlan
 	return conversion;
 }
 
+enum class CanonicalConstructorParameterMatch : uint8_t {
+	Match,
+	NoMatch,
+	Unknown,
+	KnownThrowing,
+};
+
 // [over.ics.user]/[class.conv.ctor]: one non-explicit public constructor of the
-// target class can provide the user-defined conversion for an unrelated class
-// argument. Deleted, incomplete, ambiguous, or undecidable candidate conversions
-// defer so sema keeps the compatibility answer.
-inline std::optional<ConversionPlan> tryBuildCanonicalUserDefinedClassConversionPlan(
-	CanonicalTypeTable& table, TypeId source_argument, TypeId target_class) {
+// target class can provide the user-defined conversion for an argument. Deleted,
+// incomplete, ambiguous, or undecidable candidate conversions defer so sema
+// keeps the compatibility answer.
+inline CanonicalConstructorParameterMatch matchCanonicalUserDefinedClassConversion(
+	CanonicalTypeTable& table, TypeId source_argument, TypeId target_class, ConversionPlan& plan) {
 	if (!table.hasRecordConstructors(target_class)) {
-		return std::nullopt;
+		return CanonicalConstructorParameterMatch::Unknown;
 	}
 	const size_t constructor_count = table.recordConstructorCount(target_class);
 	for (size_t index = 0; index < constructor_count; ++index) {
 		if (hasCanonicalRecordFunctionFlag(table.recordConstructorAt(target_class, index).flags, CanonicalRecordFunctionFlags::SchemaIncomplete)) {
-			return std::nullopt;
+			return CanonicalConstructorParameterMatch::Unknown;
 		}
 	}
 	size_t viable_count = 0;
@@ -227,19 +234,33 @@ inline std::optional<ConversionPlan> tryBuildCanonicalUserDefinedClassConversion
 		if (isCanonicalReferenceToClass(table, parameter, target_class)) {
 			continue;
 		}
-		const std::optional<ConversionPlan> plan = tryCanonicalStandardParameterConversionPlan(table, source_argument, parameter);
-		if (!plan.has_value()) {
+		const std::optional<ConversionPlan> candidate_plan = tryCanonicalStandardParameterConversionPlan(table, source_argument, parameter);
+		if (!candidate_plan.has_value()) {
 			has_undecidable = true;
 			continue;
 		}
-		if (plan->is_valid) {
+		if (candidate_plan->is_valid) {
 			++viable_count;
 		}
 	}
-	if (viable_count != 1 || has_undecidable) {
+	if (has_undecidable) {
+		return CanonicalConstructorParameterMatch::Unknown;
+	}
+	if (viable_count != 1) {
+		return CanonicalConstructorParameterMatch::NoMatch;
+	}
+	plan = ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+	return CanonicalConstructorParameterMatch::Match;
+}
+
+inline std::optional<ConversionPlan> tryBuildCanonicalUserDefinedClassConversionPlan(
+	CanonicalTypeTable& table, TypeId source_argument, TypeId target_class) {
+	ConversionPlan plan;
+	if (matchCanonicalUserDefinedClassConversion(table, source_argument, target_class, plan) !=
+		CanonicalConstructorParameterMatch::Match) {
 		return std::nullopt;
 	}
-	return ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+	return plan;
 }
 
 inline std::optional<ConversionPlan> tryBuildCanonicalClassParameterConversionPlan(
@@ -257,13 +278,6 @@ inline std::optional<ConversionPlan> tryBuildCanonicalClassParameterConversionPl
 	}
 	return tryBuildCanonicalUserDefinedClassConversionPlan(table, source_argument, target_class);
 }
-
-enum class CanonicalConstructorParameterMatch : uint8_t {
-	Match,
-	NoMatch,
-	Unknown,
-	KnownThrowing,
-};
 
 inline CanonicalConstructorSelection selectCanonicalConstructor(
 	CanonicalTypeTable& table, TypeId target_class, std::span<const CanonicalConstructorArgument> arguments,
@@ -348,6 +362,20 @@ inline CanonicalConstructorParameterMatch matchCanonicalConstructorParameter(
 	const bool source_is_class = source_kind == CanonicalTypeKind::Record || source_kind == CanonicalTypeKind::TemplateSpecialization;
 	const bool target_is_class = target_kind == CanonicalTypeKind::Record || target_kind == CanonicalTypeKind::TemplateSpecialization;
 	const CanonicalTypeKind parameter_kind = table.node(parameter_type).kind;
+	if ((source_kind == CanonicalTypeKind::Builtin || source_kind == CanonicalTypeKind::Enum) && target_is_class &&
+		hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::AllowUserDefinedArgumentConversion)) {
+		ConversionPlan user_defined_plan;
+		const CanonicalConstructorParameterMatch user_defined = matchCanonicalUserDefinedClassConversion(
+			table, argument.type, target_base, user_defined_plan);
+		if (user_defined == CanonicalConstructorParameterMatch::Match) {
+			plan = user_defined_plan;
+			return CanonicalConstructorParameterMatch::Match;
+		}
+		if (user_defined == CanonicalConstructorParameterMatch::NoMatch) {
+			return CanonicalConstructorParameterMatch::NoMatch;
+		}
+		return CanonicalConstructorParameterMatch::Unknown;
+	}
 	if (parameter_kind == CanonicalTypeKind::LValueReference || parameter_kind == CanonicalTypeKind::RValueReference) {
 		if (source_kind == CanonicalTypeKind::Enum && target_is_class) {
 			return CanonicalConstructorParameterMatch::NoMatch;
@@ -479,19 +507,6 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 		}
 		if (arguments.size() > constructor.parameter_count && (!is_variadic || !allow_ellipsis)) {
 			continue;
-		}
-		if (arguments.size() == 1 && arguments.front().type && constructor.parameter_count == 1 &&
-			hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Implicit)) {
-			const TypeId source = table.withoutTopLevelQualifiers(canonicalTypeWithoutReference(table, arguments.front().type));
-			const CanonicalTypeNode parameter = table.node(table.recordConstructorParameterAt(target_class, index, 0));
-			const bool is_reference = parameter.kind == CanonicalTypeKind::LValueReference || parameter.kind == CanonicalTypeKind::RValueReference;
-			if (table.node(source).kind == CanonicalTypeKind::Builtin && is_reference && table.withoutTopLevelQualifiers(parameter.child) == target_class) {
-				// A builtin source needs a converting constructor to form a class
-				// temporary. That constructor is already a better direct candidate
-				// than an implicit copy/move requiring that user-defined conversion.
-				// Temporary: the generic matcher does not rank builtin->class UDCs yet.
-				continue;
-			}
 		}
 		Candidate candidate{index, constructor, is_copy_or_move,
 			hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Implicit) ||
