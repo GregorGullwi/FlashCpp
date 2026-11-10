@@ -21,6 +21,7 @@ enum class CanonicalConstructorSelectionPolicy : uint8_t {
 	AllowEllipsis = 1 << 2,
 	IncludeCopyMoveConstructors = 1 << 3,
 	RequireCompleteSchema = 1 << 4,
+	LiteralArgumentsOnly = 1 << 5,
 };
 
 inline CanonicalConstructorSelectionPolicy operator|(CanonicalConstructorSelectionPolicy a, CanonicalConstructorSelectionPolicy b) {
@@ -40,6 +41,7 @@ enum class CanonicalConstructorSelectionStatus : uint8_t {
 struct CanonicalConstructorArgument {
 	TypeId type;
 	bool is_lvalue;
+	CanonicalDefaultException exception;
 };
 
 struct CanonicalConstructorSelection {
@@ -51,6 +53,8 @@ struct CanonicalConstructorSelection {
 	uint16_t omitted_default_count = 0;
 	bool omitted_defaults_nothrow = false;
 	bool omitted_defaults_known_throwing = false;
+	bool saw_known_throwing_candidate = false;
+	bool selected_uses_class_parameter = false;
 	std::vector<ConversionRank> argument_ranks;
 };
 
@@ -258,11 +262,76 @@ enum class CanonicalConstructorParameterMatch : uint8_t {
 	Match,
 	NoMatch,
 	Unknown,
+	KnownThrowing,
 };
+
+inline CanonicalConstructorSelection selectCanonicalConstructor(
+	CanonicalTypeTable& table, TypeId target_class, std::span<const CanonicalConstructorArgument> arguments,
+	CanonicalConstructorSelectionPolicy policy);
+
+// A scalar literal can initialize a class-typed constructor parameter through
+// one non-explicit public converting constructor. The nested selection reuses
+// the same service, and a throwing nested constructor or omitted throwing
+// default makes the conversion known throwing.
+inline std::optional<bool> tryCanonicalScalarToClassArgumentConversionNoexcept(
+	CanonicalTypeTable& table, TypeId argument_type, TypeId target_class) {
+	if (!table.hasRecordConstructors(target_class) || !table.hasRecordProperties(target_class)) {
+		return std::nullopt;
+	}
+	if (!hasCanonicalRecordFact(table.recordProperties(target_class).facts, CanonicalRecordFacts::NothrowDestructible)) {
+		return false;
+	}
+	const CanonicalConstructorArgument selection_argument{argument_type, false, CanonicalDefaultException::Unknown};
+	const CanonicalConstructorSelection selection = selectCanonicalConstructor(
+		table, target_class, std::span<const CanonicalConstructorArgument>(&selection_argument, 1),
+		CanonicalConstructorSelectionPolicy::RequireCompleteSchema);
+	if (selection.status != CanonicalConstructorSelectionStatus::Selected) {
+		return std::nullopt;
+	}
+	if (!selection.is_noexcept || selection.omitted_defaults_known_throwing) {
+		return false;
+	}
+	if (selection.omitted_default_count > 0 && !selection.omitted_defaults_nothrow) {
+		return std::nullopt;
+	}
+	return true;
+}
 
 inline CanonicalConstructorParameterMatch matchCanonicalConstructorParameter(
 	CanonicalTypeTable& table, const CanonicalConstructorArgument& argument, TypeId parameter_type,
 	CanonicalConstructorSelectionPolicy policy, ConversionPlan& plan) {
+	if (hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::LiteralArgumentsOnly)) {
+		if (argument.exception != CanonicalDefaultException::Nothrow) {
+			return CanonicalConstructorParameterMatch::Unknown;
+		}
+		TypeId literal_parameter_object = parameter_type;
+		while (table.node(literal_parameter_object).kind == CanonicalTypeKind::LValueReference ||
+			table.node(literal_parameter_object).kind == CanonicalTypeKind::RValueReference) {
+			literal_parameter_object = table.node(literal_parameter_object).child;
+		}
+		const TypeId literal_target = table.withoutTopLevelQualifiers(literal_parameter_object);
+		const CanonicalTypeKind literal_target_kind = table.node(literal_target).kind;
+		if (literal_target_kind == CanonicalTypeKind::Builtin) {
+			plan = ConversionPlan::exact_match();
+			return CanonicalConstructorParameterMatch::Match;
+		}
+		if (!argument.type) {
+			return CanonicalConstructorParameterMatch::Unknown;
+		}
+		if (isCanonicalClassTypeKind(literal_target_kind)) {
+			const std::optional<bool> conversion =
+				tryCanonicalScalarToClassArgumentConversionNoexcept(table, argument.type, literal_target);
+			if (!conversion.has_value()) {
+				return CanonicalConstructorParameterMatch::Unknown;
+			}
+			if (!*conversion) {
+				return CanonicalConstructorParameterMatch::KnownThrowing;
+			}
+			plan = ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+			return CanonicalConstructorParameterMatch::Match;
+		}
+		return CanonicalConstructorParameterMatch::Unknown;
+	}
 	TypeId source_type = argument.type;
 	while (table.node(source_type).kind == CanonicalTypeKind::LValueReference || table.node(source_type).kind == CanonicalTypeKind::RValueReference) {
 		source_type = table.node(source_type).child;
@@ -381,14 +450,17 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 		uint16_t omitted_default_count;
 		bool omitted_defaults_nothrow;
 		bool omitted_defaults_known_throwing;
+		bool uses_class_parameter;
 		std::vector<ConversionRank> argument_ranks;
 	};
 	const bool include_copy_move = hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::IncludeCopyMoveConstructors);
 	const bool allow_explicit = hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::AllowExplicit);
 	const bool allow_ellipsis = hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::AllowEllipsis);
+	const bool literal_only = hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::LiteralArgumentsOnly);
 	std::vector<Candidate> best_candidates;
 	best_candidates.reserve(constructor_count);
 	bool saw_unknown = false;
+	bool saw_known_throwing = false;
 	for (size_t index = 0; index < constructor_count; ++index) {
 		const CanonicalRecordConstructor constructor = table.recordConstructorAt(target_class, index);
 		if (!allow_explicit && hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Explicit)) {
@@ -408,7 +480,7 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 		if (arguments.size() > constructor.parameter_count && (!is_variadic || !allow_ellipsis)) {
 			continue;
 		}
-		if (arguments.size() == 1 && constructor.parameter_count == 1 &&
+		if (arguments.size() == 1 && arguments.front().type && constructor.parameter_count == 1 &&
 			hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Implicit)) {
 			const TypeId source = table.withoutTopLevelQualifiers(canonicalTypeWithoutReference(table, arguments.front().type));
 			const CanonicalTypeNode parameter = table.node(table.recordConstructorParameterAt(target_class, index, 0));
@@ -417,18 +489,23 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 				// A builtin source needs a converting constructor to form a class
 				// temporary. That constructor is already a better direct candidate
 				// than an implicit copy/move requiring that user-defined conversion.
+				// Temporary: the generic matcher does not rank builtin->class UDCs yet.
 				continue;
 			}
 		}
 		Candidate candidate{index, constructor, is_copy_or_move,
 			hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Implicit) ||
 				hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::ExplicitlyDefaulted),
-			constructor.is_noexcept != 0, 0, false, false, {}};
+			constructor.is_noexcept != 0, 0, false, false, false, {}};
 		candidate.argument_ranks.reserve(arguments.size());
 		bool matches = true;
 		const size_t matched_parameter_count = std::min(arguments.size(), static_cast<size_t>(constructor.parameter_count));
 		for (size_t parameter = 0; parameter < matched_parameter_count; ++parameter) {
 			const TypeId parameter_type = table.recordConstructorParameterAt(target_class, index, parameter);
+			if (literal_only && isCanonicalReferenceToClass(table, parameter_type, target_class)) {
+				matches = false;
+				break;
+			}
 			ConversionPlan plan;
 			const CanonicalConstructorParameterMatch match = matchCanonicalConstructorParameter(table, arguments[parameter], parameter_type, policy, plan);
 			if (match == CanonicalConstructorParameterMatch::Unknown) {
@@ -436,9 +513,23 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 				matches = false;
 				break;
 			}
+			if (match == CanonicalConstructorParameterMatch::KnownThrowing) {
+				saw_known_throwing = true;
+				matches = false;
+				break;
+			}
 			if (match == CanonicalConstructorParameterMatch::NoMatch) {
 				matches = false;
 				break;
+			}
+			if (literal_only) {
+				TypeId parameter_object = parameter_type;
+				while (table.node(parameter_object).kind == CanonicalTypeKind::LValueReference ||
+					table.node(parameter_object).kind == CanonicalTypeKind::RValueReference) {
+					parameter_object = table.node(parameter_object).child;
+				}
+				candidate.uses_class_parameter = candidate.uses_class_parameter ||
+					isCanonicalClassTypeKind(table.node(table.withoutTopLevelQualifiers(parameter_object)).kind);
 			}
 			candidate.argument_ranks.push_back(plan.rank);
 		}
@@ -447,6 +538,15 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 		}
 		if (arguments.size() > constructor.parameter_count) {
 			for (size_t parameter = matched_parameter_count; parameter < arguments.size(); ++parameter) {
+				if (literal_only) {
+					if (arguments[parameter].exception != CanonicalDefaultException::Nothrow) {
+						saw_unknown = true;
+						matches = false;
+						break;
+					}
+					candidate.argument_ranks.push_back(ConversionRank::Ellipsis);
+					continue;
+				}
 				TypeId argument_type = arguments[parameter].type;
 				while (table.node(argument_type).kind == CanonicalTypeKind::LValueReference ||
 					table.node(argument_type).kind == CanonicalTypeKind::RValueReference || table.node(argument_type).kind == CanonicalTypeKind::Qualified) {
@@ -469,12 +569,21 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 			continue;
 		}
 		if (arguments.size() < constructor.parameter_count) {
-			const size_t omitted = static_cast<size_t>(constructor.parameter_count) - arguments.size();
-			candidate.omitted_default_count = static_cast<uint16_t>(omitted);
-			candidate.omitted_defaults_nothrow = constructor.nothrow_default_count >= omitted;
-			candidate.omitted_defaults_known_throwing = !candidate.omitted_defaults_nothrow &&
-				constructor.last_known_throwing_default != std::numeric_limits<uint16_t>::max() &&
-				static_cast<size_t>(constructor.last_known_throwing_default) >= arguments.size();
+			candidate.omitted_default_count = static_cast<uint16_t>(static_cast<size_t>(constructor.parameter_count) - arguments.size());
+			candidate.omitted_defaults_nothrow = true;
+			candidate.omitted_defaults_known_throwing = false;
+			for (size_t parameter = arguments.size(); parameter < constructor.parameter_count; ++parameter) {
+				const size_t default_index = parameter - constructor.minimum_parameter_count;
+				const CanonicalDefaultException exception = canonicalConstructorDefaultException(constructor, default_index);
+				if (exception == CanonicalDefaultException::KnownThrowing) {
+					candidate.omitted_defaults_nothrow = false;
+					candidate.omitted_defaults_known_throwing = true;
+					break;
+				}
+				if (exception == CanonicalDefaultException::Unknown) {
+					candidate.omitted_defaults_nothrow = false;
+				}
+			}
 		}
 		if (std::ranges::any_of(best_candidates, [&candidate](const Candidate& current) {
 			return compareCanonicalConversionRanks(current.argument_ranks, candidate.argument_ranks) > 0;
@@ -486,6 +595,7 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 		});
 		best_candidates.push_back(std::move(candidate));
 	}
+	result.saw_known_throwing_candidate = saw_known_throwing;
 	if (saw_unknown) {
 		result.status = CanonicalConstructorSelectionStatus::Unknown;
 		return result;
@@ -507,6 +617,7 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 	result.omitted_default_count = selected.omitted_default_count;
 	result.omitted_defaults_nothrow = selected.omitted_defaults_nothrow;
 	result.omitted_defaults_known_throwing = selected.omitted_defaults_known_throwing;
+	result.selected_uses_class_parameter = selected.uses_class_parameter;
 	result.argument_ranks = selected.argument_ranks;
 	return result;
 }

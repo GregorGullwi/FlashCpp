@@ -1612,8 +1612,7 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 			if (expected.parameter_begin != parameter_cursor || expected.parameter_count != constructors[index].parameter_types.size() ||
 				expected.minimum_parameter_count != minimumParameterCount(constructors[index]) || expected.flags != constructors[index].flags ||
 				expected.is_noexcept != static_cast<uint8_t>(constructors[index].is_noexcept ? 1 : 0) ||
-				expected.nothrow_default_count != constructors[index].nothrow_default_count ||
-				expected.last_known_throwing_default != constructors[index].last_known_throwing_default) {
+				expected.default_exception_bits != constructors[index].default_exception_bits) {
 				throw InternalError("canonical type: conflicting record constructor schema publication");
 			}
 			for (size_t parameter = 0; parameter < expected.parameter_count; ++parameter) {
@@ -1632,12 +1631,13 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 		if (parameter_count > std::numeric_limits<uint16_t>::max() || minimum_parameter_count > parameter_count) {
 			throw InternalError("canonical type: invalid record constructor arity");
 		}
-		if (constructor.nothrow_default_count > parameter_count - minimum_parameter_count) {
-			throw InternalError("canonical type: invalid nothrow constructor default count");
-		}
-		if (constructor.last_known_throwing_default != std::numeric_limits<uint16_t>::max() &&
-			constructor.last_known_throwing_default >= parameter_count) {
-			throw InternalError("canonical type: invalid known-throwing constructor default index");
+		const size_t default_count = parameter_count - minimum_parameter_count;
+		const size_t encoded_defaults = std::min<size_t>(default_count, 16);
+		for (size_t default_index = 0; default_index < encoded_defaults; ++default_index) {
+			const uint8_t value = (constructor.default_exception_bits >> (default_index * 2)) & 0x3u;
+			if (value == 3) {
+				throw InternalError("canonical type: invalid constructor default exception classification");
+			}
 		}
 		total_parameters += constructor.parameter_types.size();
 	}
@@ -1660,8 +1660,7 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 			.flags = constructor.flags,
 			.is_noexcept = static_cast<uint8_t>(constructor.is_noexcept ? 1 : 0),
 			.minimum_parameter_count = static_cast<uint16_t>(minimumParameterCount(constructor)),
-			.nothrow_default_count = constructor.nothrow_default_count,
-			.last_known_throwing_default = constructor.last_known_throwing_default,
+			.default_exception_bits = constructor.default_exception_bits,
 		};
 		appendSchemaEntryUnlocked(record_constructors_, live_record_constructor_count_, entry);
 		parameter_cursor += entry.parameter_count;

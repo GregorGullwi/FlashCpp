@@ -47,14 +47,26 @@ constructibility query uses it. Default-exception fact evaluation now lives in
 service without pulling `OverloadResolution.h` into `CanonicalTypeAdapter.h`.
 Scalar-to-class default conversion already selects through the service.
 
-Remaining: route the constructor-call default loop through the service, replace
-`nothrow_default_count` / `last_known_throwing_default` with per-default
-classification, and then continue with the remaining architecture items below.
+The constructor schema now stores a compact 2-bit per-default exception
+classification (nothrow / known-throwing / unknown) relative to
+`minimum_parameter_count`, replacing `nothrow_default_count` /
+`last_known_throwing_default`. The publisher, selection service, and call-default
+evaluator all read the per-default facts.
+
+The constructor-call default evaluator now selects through the service with the
+`LiteralArgumentsOnly` policy and one scalar-to-class hop. Known-throwing and
+unknown candidates propagate through the service result instead of a separate
+candidate loop.
+
+Remaining: continue with the remaining architecture items below.
 
 ## Remaining architecture items
 
 - Canonical expression-fact table keyed by `ExprId`/`TypeId` for nothrow/throwing/unknown.
 - Member-function and conversion-operator schemas so operator lookup and user-defined conversion share one source of truth.
 - Per-candidate `Unimportable` / `Conditional` / `Deleted` status and arity ranges instead of global `SchemaIncomplete`.
+- Replace the one-argument implicit copy/move guard in `selectCanonicalConstructor`
+  with general scalar/enum-to-class user-defined conversion ranking; the guard is
+  temporary compensation for that conversion not yet being modeled.
 - One import policy, including the class fallback, for every schema parameter.
 - Selection tracing with reason codes and a native selection matrix test.
