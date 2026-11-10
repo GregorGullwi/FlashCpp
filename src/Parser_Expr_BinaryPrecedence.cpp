@@ -2195,7 +2195,7 @@ ParseResult Parser::parse_static_member_block(
 	// Calculate size and alignment for the static member (handles pointers/references correctly)
 	auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
 	ReferenceQualifier ref_qual = type_spec.reference_qualifier();
-	int ptr_depth = static_cast<int>(type_spec.pointer_depth());
+	int ptr_depth = static_cast<int>(type_spec.runtime_pointer_depth());
 	bool is_array = decl.is_array() || type_spec.is_array();
 	std::vector<size_t> array_dimensions;
 	if (decl.is_array()) {

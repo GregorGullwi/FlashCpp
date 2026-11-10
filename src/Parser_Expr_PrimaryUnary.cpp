@@ -86,7 +86,7 @@ std::optional<StringHandle> SemanticValidation::findInvalidConcreteSizeofTypeOpe
 
 		const TypeSpecifierNode& type_spec =
 			sizeof_expression->type_or_expr().as<TypeSpecifierNode>();
-		if (type_spec.pointer_depth() > 0) {
+		if (type_spec.runtime_pointer_depth() > 0) {
 			return AstTraversal::VisitDecision::Continue;
 		}
 
@@ -258,7 +258,7 @@ ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view
 								FunctionSignature mfp_sig;
 								mfp_sig.setReturnType(makeFunctionType(type_spec));
 								mfp_sig.return_type_index = type_spec.type_index();
-								mfp_sig.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
+								mfp_sig.return_pointer_depth = static_cast<int>(type_spec.runtime_pointer_depth());
 								mfp_sig.return_reference_qualifier = type_spec.reference_qualifier();
 								mfp_sig.setParameterTypes(std::move(mfp_params));
 								apply_parsed_function_type_qualifiers(
