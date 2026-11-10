@@ -1894,6 +1894,9 @@ inline bool hasConvertingConstructorFrom(const TypeSpecifierNode& target_type_sp
 				if (canonical_constructor_result.has_value()) {
 					return *canonical_constructor_result;
 				}
+				// Canonical import covers this class pair; do not fall back to
+				// compatibility constructor selection when canonical has no answer.
+				return false;
 			}
 		}
 	}
