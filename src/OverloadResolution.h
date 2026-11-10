@@ -4224,9 +4224,37 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 						// Per C++20 [conv.ref]/4: derived lvalue ref binds to base lvalue ref
 						// (standard derived-to-base reference conversion).
 						if (!from_is_rvalue && !to_is_rvalue &&
-							from.pointer_depth() == 0 && to.pointer_depth() == 0 &&
-							hasUsablePublicDerivedBaseConversion(from_base_index, to_base_index)) {
-							return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
+							from.pointer_depth() == 0 && to.pointer_depth() == 0) {
+							FrontendContext* const db_context = FrontendContext::active();
+							if (db_context != nullptr) {
+								CanonicalTypeTable& db_table = db_context->canonicalTypes();
+								CanonicalTypeTransaction db_transaction(db_table);
+								const CanonicalTypeImport db_from_import = importCanonicalType(db_table, from);
+								const CanonicalTypeImport db_to_import = importCanonicalType(db_table, to);
+								if (db_from_import.status == CanonicalTypeImportStatus::Supported &&
+									db_to_import.status == CanonicalTypeImportStatus::Supported) {
+									const TypeId db_from_class = stripCanonicalTopCv(db_table, canonicalTypeWithoutReference(db_table, db_from_import.type)).first;
+									const TypeId db_to_class = stripCanonicalTopCv(db_table, canonicalTypeWithoutReference(db_table, db_to_import.type)).first;
+									const CanonicalTypeKind db_from_kind = db_table.node(db_from_class).kind;
+									const CanonicalTypeKind db_to_kind = db_table.node(db_to_class).kind;
+									const bool both_classes = (db_from_kind == CanonicalTypeKind::Record || db_from_kind == CanonicalTypeKind::TemplateSpecialization) &&
+										(db_to_kind == CanonicalTypeKind::Record || db_to_kind == CanonicalTypeKind::TemplateSpecialization);
+									if (both_classes) {
+										const auto db_conversion = classifyCanonicalDerivedBaseConversion(db_table, db_from_class, db_to_class);
+										if (db_conversion == DerivedBaseConversionKind::UniquePublicNonVirtual ||
+											db_conversion == DerivedBaseConversionKind::PublicVirtual) {
+											db_transaction.commit();
+											return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
+										}
+										db_transaction.commit();
+										// Canonical covers this class pair; do not fall back.
+										return ConversionPlan::no_match();
+									}
+								}
+							}
+							if (hasUsablePublicDerivedBaseConversion(from_base_index, to_base_index)) {
+								return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
+							}
 						}
 						if (const auto selected_conversion = trySelectUserDefinedConversionOperator(from, to, false);
 							selected_conversion.has_value()) {
