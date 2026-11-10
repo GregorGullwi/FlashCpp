@@ -10767,8 +10767,12 @@ struct OuterThrowingClassParamDefault { OuterThrowingClassParamDefault(int, Nest
 	check_nothrow("OuterClassParamDefault");
 	const auto [throwing_class_target, throwing_class_constructor] =
 		two_parameter_constructor("OuterThrowingClassParamDefault");
-	CHECK(throwing_class_constructor.nothrow_default_count == 0);
-	(void)throwing_class_target;
+	CHECK(throwing_class_constructor.last_known_throwing_default == 1);
+	const auto throwing_class = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, throwing_class_target,
+		arguments, ConstructibilityFallback::None);
+	REQUIRE(throwing_class.has_value());
+	CHECK(throwing_class->success);
+	CHECK_FALSE(throwing_class->value);
 	const auto [outer_throwing_target, outer_throwing_constructor] = two_parameter_constructor("OuterNestedThrowing");
 	CHECK(outer_throwing_constructor.last_known_throwing_default == 1);
 	const auto outer_throwing = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, outer_throwing_target,

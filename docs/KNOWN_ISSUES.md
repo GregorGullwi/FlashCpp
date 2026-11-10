@@ -261,11 +261,13 @@ function with scalar literal arguments are also proven nothrow. A nested
 constructor call whose parameter is a class now proves nothrow when one scalar
 literal reaches it through the unique public non-explicit `noexcept` converting
 constructor; constructors with user-provided struct parameters use the canonical
-class fallback when the direct parameter import is unavailable. Known-throwing
-class-parameter conversions still defer, as do deeper class conversions, omitted
-nested defaults without published exception facts, non-literal call arguments,
-reference defaults requiring general conversion analysis, and unresolved
-operator selections until their canonical facts are published.
+class fallback when the direct parameter import is unavailable. A known-throwing
+scalar-to-class conversion now produces a known-throwing default instead of
+deferring. Deeper class conversions, omitted nested defaults without published
+exception facts, non-literal call arguments, reference defaults requiring general
+conversion analysis, and unresolved operator selections still need initialization
+and exception facts; those shapes continue to defer until their canonical facts
+are published.
 Concepts using unsupported sema-owned traits must retain an explicit unknown outcome rather than treating
 it as satisfaction or failure. Static member semantic identity must remain
 canonical through any remaining flat-consumer migration.
