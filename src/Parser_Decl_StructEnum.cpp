@@ -913,7 +913,7 @@ ParseResult Parser::parse_anonymous_union_member_body(
 			ref_qual,
 			is_array,
 			pointee_array_declarator,
-			static_cast<int>(anon_member_type_spec.pointer_depth()),
+			static_cast<int>(anon_member_type_spec.runtime_pointer_depth()),
 			std::move(array_dimensions),
 			anon_member_type_spec.top_level_cv_qualifier());
 
@@ -2491,7 +2491,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				}
 			}
 			ReferenceQualifier ref_qual = type_spec.reference_qualifier();
-			int ptr_depth = static_cast<int>(type_spec.pointer_depth());
+			int ptr_depth = static_cast<int>(type_spec.runtime_pointer_depth());
 
 			if (is_static_constexpr) {
 				if (!init_expr_opt.has_value()) {
@@ -3930,7 +3930,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			is_array,
 			array_dimensions,
 			pointee_array_declarator,
-			static_cast<int>(type_spec.pointer_depth()),
+			static_cast<int>(type_spec.runtime_pointer_depth()),
 			member_decl.bitfield_width,
 			type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt,
 			member_decl.is_no_unique_address,
@@ -5577,7 +5577,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 			!resolved_array_dimensions.empty() && !pointee_array_declarator, // is_array
 			std::move(resolved_array_dimensions), // array_dimensions
 			pointee_array_declarator,
-			static_cast<int>(member_type_spec.pointer_depth()),
+			static_cast<int>(member_type_spec.runtime_pointer_depth()),
 			std::nullopt, // bitfield_width
 			member_type_spec.top_level_cv_qualifier()
 		});
