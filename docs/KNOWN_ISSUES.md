@@ -256,8 +256,10 @@ initialized by a constructor call with scalar literal arguments now publish
 nothrow or known-throwing facts from the unique canonical constructor candidate;
 omitted nested defaults consume the nested constructor's published
 nothrow/known-throwing facts. Canonical record facts now publish
-`NothrowDestructible`. Defaults whose nested call uses a class-typed parameter
-conversion, omitted nested defaults without published exception facts, reference
+`NothrowDestructible`. Defaults initialized by a call to a known noexcept
+function with scalar literal arguments are also proven nothrow. Defaults whose
+nested call uses a class-typed parameter conversion, omitted nested defaults
+without published exception facts, non-literal call arguments, reference
 defaults requiring general conversion analysis, and unresolved operator
 selections still need initialization and exception facts; those shapes continue
 to defer until their canonical facts are published.

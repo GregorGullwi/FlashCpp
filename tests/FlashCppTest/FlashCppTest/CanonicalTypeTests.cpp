@@ -10704,9 +10704,13 @@ TEST_CASE("Canonical constructor defaults prove noexcept class constructor calls
 	CompileContext compile_context;
 	compile_context.setInputFile("canonical_nothrow_ctor_call_default.cpp");
 	Lexer lexer(R"(
+int make_value() noexcept { return 1; }
+int make_throwing_value() noexcept(false) { return 1; }
 struct NothrowArg { NothrowArg(int) noexcept {} };
 struct ThrowingArg { ThrowingArg(int) noexcept(false) {} };
 struct NothrowDefault { NothrowDefault(int, NothrowArg = NothrowArg(1)) noexcept {} };
+struct NothrowCallDefault { NothrowCallDefault(int, int value = make_value()) noexcept {} };
+struct ThrowingCallDefault { ThrowingCallDefault(int, int value = make_throwing_value()) noexcept {} };
 struct NestedNothrowDefaults { NestedNothrowDefaults(int, NothrowArg = NothrowArg(1)) noexcept {} };
 struct NestedThrowingDefaults { NestedThrowingDefaults(int, ThrowingArg = ThrowingArg(1)) noexcept {} };
 struct OuterNestedNothrow { OuterNestedNothrow(int, NestedNothrowDefaults = NestedNothrowDefaults(1)) noexcept {} };
@@ -10753,6 +10757,7 @@ struct OuterNestedThrowing { OuterNestedThrowing(int, NestedThrowingDefaults = N
 	};
 	check_nothrow("NothrowDefault");
 	check_nothrow("OuterNestedNothrow");
+	check_nothrow("NothrowCallDefault");
 	const auto [outer_throwing_target, outer_throwing_constructor] = two_parameter_constructor("OuterNestedThrowing");
 	CHECK(outer_throwing_constructor.last_known_throwing_default == 1);
 	const auto outer_throwing = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, outer_throwing_target,
@@ -10760,6 +10765,13 @@ struct OuterNestedThrowing { OuterNestedThrowing(int, NestedThrowingDefaults = N
 	REQUIRE(outer_throwing.has_value());
 	CHECK(outer_throwing->success);
 	CHECK_FALSE(outer_throwing->value);
+	const auto [call_throwing_target, call_throwing_constructor] = two_parameter_constructor("ThrowingCallDefault");
+	CHECK(call_throwing_constructor.last_known_throwing_default == 1);
+	const auto call_throwing = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, call_throwing_target,
+		arguments, ConstructibilityFallback::None);
+	REQUIRE(call_throwing.has_value());
+	CHECK(call_throwing->success);
+	CHECK_FALSE(call_throwing->value);
 }
 
 TEST_CASE("Canonical constructor default exception proofs are bounded and immutable") {
