@@ -13,6 +13,55 @@
 #include "MigrationStats.h"
 #include "OverloadResolution.h"
 
+// Canonical probe shared with overload resolution. Defined here because this
+// unit can include both OverloadResolution.h and the constructor-selection
+// service without creating a header cycle.
+std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgument(const TypeSpecifierNode& target_type,
+	const TypeSpecifierNode& source_type, const ASTNode* argument_node) {
+	FrontendContext& context = requireFrontendContext();
+	CanonicalTypeTable& table = context.canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	TypeSpecifierNode canonical_target = target_type;
+	TypeSpecifierNode canonical_source = source_type;
+	tryBindPublishedTypeEntity(canonical_target);
+	tryBindPublishedTypeEntity(canonical_source);
+	const CanonicalTypeImport target_import = importCanonicalTypeWithClassFallback(table, canonical_target);
+	const CanonicalTypeImport source_import = importCanonicalTypeWithClassFallback(table, canonical_source);
+	if (target_import.status != CanonicalTypeImportStatus::Supported || source_import.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	const TypeId target_class = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, target_import.type)).first;
+	const CanonicalTypeKind target_kind = table.node(target_class).kind;
+	if (target_kind != CanonicalTypeKind::Record && target_kind != CanonicalTypeKind::TemplateSpecialization) {
+		return false;
+	}
+	if (!table.hasRecordConstructors(target_class)) {
+		return std::nullopt;
+	}
+	bool has_incomplete_schema = false;
+	const size_t constructor_count = table.recordConstructorCount(target_class);
+	for (size_t index = 0; index < constructor_count; ++index) {
+		if (hasCanonicalRecordFunctionFlag(table.recordConstructorAt(target_class, index).flags, CanonicalRecordFunctionFlags::SchemaIncomplete)) {
+			has_incomplete_schema = true;
+			break;
+		}
+	}
+	const bool source_is_lvalue = table.node(source_import.type).kind == CanonicalTypeKind::LValueReference;
+	const bool is_null_pointer_constant = argument_node != nullptr && isIntegerLiteralZeroNullPointerConstant(*argument_node) &&
+		(source_type.category() == TypeCategory::Nullptr || isIntegralType(source_type.category()));
+	const CanonicalConstructorArgument argument{source_import.type, source_is_lvalue, is_null_pointer_constant, CanonicalDefaultException::Unknown};
+	const CanonicalConstructorSelection selection = selectCanonicalConstructor(table, target_class,
+		std::span<const CanonicalConstructorArgument>(&argument, 1), CanonicalConstructorSelectionPolicy::AllowUserDefinedArgumentConversion |
+			CanonicalConstructorSelectionPolicy::ExistenceOnly);
+	if (selection.status == CanonicalConstructorSelectionStatus::Selected) {
+		return true;
+	}
+	if (selection.status == CanonicalConstructorSelectionStatus::Unknown || has_incomplete_schema) {
+		return std::nullopt;
+	}
+	return false;
+}
+
 namespace TypeTraitEval {
 
 inline bool isScalarType(TypeCategory cat, bool is_reference, size_t pointer_depth) {
@@ -103,7 +152,7 @@ std::optional<bool> tryCanonicalConstructorCallDefaultNoexcept(CanonicalTypeTabl
 		const CanonicalDefaultException exception = isCanonicalNothrowLiteralExpression(argument)
 			? CanonicalDefaultException::Nothrow
 			: CanonicalDefaultException::Unknown;
-		selection_arguments.push_back({argument_type.value_or(TypeId{}), false, exception});
+		selection_arguments.push_back({argument_type.value_or(TypeId{}), false, false, exception});
 	}
 	const CanonicalConstructorSelection selection = selectCanonicalConstructor(
 		table, *imported, selection_arguments,
@@ -3047,7 +3096,7 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 			return std::nullopt;
 		}
 		const bool is_lvalue = table.node(*imported_argument).kind == CanonicalTypeKind::LValueReference;
-		selection_arguments.push_back(CanonicalConstructorArgument{*imported_argument, is_lvalue, CanonicalDefaultException::Unknown});
+		selection_arguments.push_back(CanonicalConstructorArgument{*imported_argument, is_lvalue, false, CanonicalDefaultException::Unknown});
 	}
 	const CanonicalConstructorSelection selection = selectCanonicalConstructor(
 		table,

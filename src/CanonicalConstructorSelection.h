@@ -22,6 +22,7 @@ enum class CanonicalConstructorSelectionPolicy : uint8_t {
 	IncludeCopyMoveConstructors = 1 << 3,
 	RequireCompleteSchema = 1 << 4,
 	LiteralArgumentsOnly = 1 << 5,
+	ExistenceOnly = 1 << 6,
 };
 
 inline CanonicalConstructorSelectionPolicy operator|(CanonicalConstructorSelectionPolicy a, CanonicalConstructorSelectionPolicy b) {
@@ -41,6 +42,7 @@ enum class CanonicalConstructorSelectionStatus : uint8_t {
 struct CanonicalConstructorArgument {
 	TypeId type;
 	bool is_lvalue;
+	bool is_null_pointer_constant;
 	CanonicalDefaultException exception;
 };
 
@@ -295,7 +297,7 @@ inline std::optional<bool> tryCanonicalScalarToClassArgumentConversionNoexcept(
 	if (!hasCanonicalRecordFact(table.recordProperties(target_class).facts, CanonicalRecordFacts::NothrowDestructible)) {
 		return false;
 	}
-	const CanonicalConstructorArgument selection_argument{argument_type, false, CanonicalDefaultException::Unknown};
+	const CanonicalConstructorArgument selection_argument{argument_type, false, false, CanonicalDefaultException::Unknown};
 	const CanonicalConstructorSelection selection = selectCanonicalConstructor(
 		table, target_class, std::span<const CanonicalConstructorArgument>(&selection_argument, 1),
 		CanonicalConstructorSelectionPolicy::RequireCompleteSchema);
@@ -346,19 +348,24 @@ inline CanonicalConstructorParameterMatch matchCanonicalConstructorParameter(
 		}
 		return CanonicalConstructorParameterMatch::Unknown;
 	}
-	TypeId source_type = argument.type;
-	while (table.node(source_type).kind == CanonicalTypeKind::LValueReference || table.node(source_type).kind == CanonicalTypeKind::RValueReference) {
-		source_type = table.node(source_type).child;
-	}
-	const TypeId source_base = table.withoutTopLevelQualifiers(source_type);
 	TypeId parameter_object = parameter_type;
 	while (table.node(parameter_object).kind == CanonicalTypeKind::LValueReference ||
 		table.node(parameter_object).kind == CanonicalTypeKind::RValueReference) {
 		parameter_object = table.node(parameter_object).child;
 	}
 	const TypeId target_base = table.withoutTopLevelQualifiers(parameter_object);
-	const CanonicalTypeKind source_kind = table.node(source_base).kind;
 	const CanonicalTypeKind target_kind = table.node(target_base).kind;
+	TypeId effective_source = argument.type;
+	if (argument.is_null_pointer_constant && (target_kind == CanonicalTypeKind::Pointer || target_kind == CanonicalTypeKind::MemberObjectPointer ||
+		 target_kind == CanonicalTypeKind::MemberFunctionPointer)) {
+		effective_source = table.builtin(CanonicalBuiltinKind::Nullptr);
+	}
+	TypeId source_type = effective_source;
+	while (table.node(source_type).kind == CanonicalTypeKind::LValueReference || table.node(source_type).kind == CanonicalTypeKind::RValueReference) {
+		source_type = table.node(source_type).child;
+	}
+	const TypeId source_base = table.withoutTopLevelQualifiers(source_type);
+	const CanonicalTypeKind source_kind = table.node(source_base).kind;
 	const bool source_is_class = source_kind == CanonicalTypeKind::Record || source_kind == CanonicalTypeKind::TemplateSpecialization;
 	const bool target_is_class = target_kind == CanonicalTypeKind::Record || target_kind == CanonicalTypeKind::TemplateSpecialization;
 	const CanonicalTypeKind parameter_kind = table.node(parameter_type).kind;
@@ -366,7 +373,7 @@ inline CanonicalConstructorParameterMatch matchCanonicalConstructorParameter(
 		hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::AllowUserDefinedArgumentConversion)) {
 		ConversionPlan user_defined_plan;
 		const CanonicalConstructorParameterMatch user_defined = matchCanonicalUserDefinedClassConversion(
-			table, argument.type, target_base, user_defined_plan);
+			table, effective_source, target_base, user_defined_plan);
 		if (user_defined == CanonicalConstructorParameterMatch::Match) {
 			plan = user_defined_plan;
 			return CanonicalConstructorParameterMatch::Match;
@@ -380,7 +387,7 @@ inline CanonicalConstructorParameterMatch matchCanonicalConstructorParameter(
 		if (source_kind == CanonicalTypeKind::Enum && target_is_class) {
 			return CanonicalConstructorParameterMatch::NoMatch;
 		}
-		const std::optional<ConversionPlan> binding = tryBuildCanonicalReferenceArgumentConversionPlan(table, argument.type, parameter_type);
+		const std::optional<ConversionPlan> binding = tryBuildCanonicalReferenceArgumentConversionPlan(table, effective_source, parameter_type);
 		if (!binding.has_value()) {
 			return CanonicalConstructorParameterMatch::Unknown;
 		}
@@ -391,7 +398,7 @@ inline CanonicalConstructorParameterMatch matchCanonicalConstructorParameter(
 		return CanonicalConstructorParameterMatch::Match;
 	}
 	if (source_kind == CanonicalTypeKind::Enum && target_kind == CanonicalTypeKind::Builtin) {
-		const std::optional<ConversionPlan> conversion = tryBuildCanonicalEnumToBuiltinConversionPlan(table, argument.type, parameter_type);
+		const std::optional<ConversionPlan> conversion = tryBuildCanonicalEnumToBuiltinConversionPlan(table, effective_source, parameter_type);
 		if (!conversion.has_value()) {
 			return CanonicalConstructorParameterMatch::Unknown;
 		}
@@ -424,12 +431,12 @@ inline CanonicalConstructorParameterMatch matchCanonicalConstructorParameter(
 	if (mayNeedCanonicalCompatibilityResolution(source_kind) || mayNeedCanonicalCompatibilityResolution(target_kind)) {
 		return CanonicalConstructorParameterMatch::Unknown;
 	}
-	const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, argument.type, parameter_type);
+	const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, effective_source, parameter_type);
 	if (conversion.is_valid) {
 		plan = conversion;
 		return CanonicalConstructorParameterMatch::Match;
 	}
-	if (containsUnresolvedConversionType(table, argument.type) || containsUnresolvedConversionType(table, parameter_type)) {
+	if (containsUnresolvedConversionType(table, effective_source) || containsUnresolvedConversionType(table, parameter_type)) {
 		return CanonicalConstructorParameterMatch::Unknown;
 	}
 	return CanonicalConstructorParameterMatch::NoMatch;
@@ -460,6 +467,7 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 	}
 	const size_t constructor_count = table.recordConstructorCount(target_class);
 	if (constructor_count == 0) {
+		result.status = CanonicalConstructorSelectionStatus::NoMatch;
 		return result;
 	}
 	if (hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::RequireCompleteSchema)) {
@@ -485,6 +493,7 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 	const bool allow_explicit = hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::AllowExplicit);
 	const bool allow_ellipsis = hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::AllowEllipsis);
 	const bool literal_only = hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::LiteralArgumentsOnly);
+	const bool existence_only = hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::ExistenceOnly);
 	std::vector<Candidate> best_candidates;
 	best_candidates.reserve(constructor_count);
 	bool saw_unknown = false;
@@ -611,17 +620,24 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 		best_candidates.push_back(std::move(candidate));
 	}
 	result.saw_known_throwing_candidate = saw_known_throwing;
-	if (saw_unknown) {
-		result.status = CanonicalConstructorSelectionStatus::Unknown;
-		return result;
-	}
-	if (best_candidates.empty()) {
-		result.status = CanonicalConstructorSelectionStatus::NoMatch;
-		return result;
-	}
-	if (best_candidates.size() > 1) {
-		result.status = CanonicalConstructorSelectionStatus::Unknown;
-		return result;
+	if (existence_only) {
+		if (best_candidates.empty()) {
+			result.status = saw_unknown ? CanonicalConstructorSelectionStatus::Unknown : CanonicalConstructorSelectionStatus::NoMatch;
+			return result;
+		}
+	} else {
+		if (saw_unknown) {
+			result.status = CanonicalConstructorSelectionStatus::Unknown;
+			return result;
+		}
+		if (best_candidates.empty()) {
+			result.status = CanonicalConstructorSelectionStatus::NoMatch;
+			return result;
+		}
+		if (best_candidates.size() > 1) {
+			result.status = CanonicalConstructorSelectionStatus::Unknown;
+			return result;
+		}
 	}
 	const Candidate& selected = best_candidates.front();
 	result.status = CanonicalConstructorSelectionStatus::Selected;

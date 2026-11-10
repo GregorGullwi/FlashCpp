@@ -29,6 +29,7 @@ One canonical selection service answers: *which constructor, if any, accepts the
 - `IncludeCopyMoveConstructors`: normal construction includes them; converting-constructor lookup excludes them.
 - `RequireCompleteSchema`: any incomplete schema defers unless a later compositional-schema slice narrows it.
 - `LiteralArgumentsOnly`: default-exception analysis only classifies scalar literal/call arguments.
+- `ExistenceOnly`: reports a definite viable candidate even when another candidate is undecidable; used by viability probes, not overload selection.
 
 ## Migration order
 
@@ -37,7 +38,7 @@ One canonical selection service answers: *which constructor, if any, accepts the
 3. Migrate `tryBuildCanonicalUserDefinedClassConversionPlan` to the service with implicit-conversion policy.
 4. Move the default-exception helpers out of `CanonicalTypeAdapter.h` into a `.cpp` that can include `OverloadResolution.h`, then use the service with literal/call arguments.
 5. Add a compact per-default exception classification (nothrow / known-throwing / unknown) to the constructor schema and remove `nothrow_default_count` / `last_known_throwing_default` once all readers migrate.
-6. Later: use the same service for the `OverloadResolution.h` implicit converting-constructor probe and the compatibility path.
+6. Use the same service for the `OverloadResolution.h` implicit converting-constructor probe; the compatibility path remains.
 
 ## Status
 
@@ -62,6 +63,11 @@ Scalar and enum arguments now build the same explicit user-defined conversion
 plan as class arguments. Copy/move constructors are ranked through that plan
 instead of being dropped by a one-argument shape guard, so a direct scalar
 constructor wins naturally.
+
+The `OverloadResolution.h` implicit converting-constructor probe now selects
+through the service with `ExistenceOnly`. An integer literal zero is passed as a
+null-pointer-constant argument fact, so a pointer parameter receives the
+`nullptr_t` conversion only where the language rule applies.
 
 Remaining: continue with the remaining architecture items below.
 

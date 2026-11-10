@@ -1780,78 +1780,8 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceArgumentConversio
 	return conversion;
 }
 
-inline std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgument(const TypeSpecifierNode& target_type,
-	const TypeSpecifierNode& source_type, const ASTNode* argument_node) {
-	FrontendContext& context = requireFrontendContext();
-	CanonicalTypeTable& table = context.canonicalTypes();
-	CanonicalTypeTransaction transaction(table);
-	TypeSpecifierNode canonical_target = target_type;
-	TypeSpecifierNode canonical_source = source_type;
-	tryBindPublishedTypeEntity(canonical_target);
-	tryBindPublishedTypeEntity(canonical_source);
-	const CanonicalTypeImport target_import = importCanonicalTypeWithClassFallback(table, canonical_target);
-	const CanonicalTypeImport source_import = importCanonicalTypeWithClassFallback(table, canonical_source);
-	if (target_import.status != CanonicalTypeImportStatus::Supported || source_import.status != CanonicalTypeImportStatus::Supported) {
-		return std::nullopt;
-	}
-	const TypeId target_class = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, target_import.type)).first;
-	const CanonicalTypeKind target_kind = table.node(target_class).kind;
-	if (target_kind != CanonicalTypeKind::Record && target_kind != CanonicalTypeKind::TemplateSpecialization) {
-		return false;
-	}
-	if (!table.hasRecordConstructors(target_class)) {
-		return std::nullopt;
-	}
-	const size_t constructor_count = table.recordConstructorCount(target_class);
-	bool has_incomplete_schema = false;
-	bool has_unsupported_candidate = false;
-	for (size_t index = 0; index < constructor_count; ++index) {
-		const CanonicalRecordConstructor constructor = table.recordConstructorAt(target_class, index);
-		if (hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::SchemaIncomplete)) {
-			has_incomplete_schema = true;
-		}
-		if (hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Explicit) ||
-			constructor.parameter_count == 0 || constructor.minimum_parameter_count > 1) {
-			continue;
-		}
-		const TypeId parameter_type = table.recordConstructorParameterAt(target_class, index, 0);
-		TypeId effective_source = source_import.type;
-		const TypeId parameter_object = stripCanonicalTopCv(table, parameter_type).first;
-		const CanonicalTypeKind parameter_kind = table.node(parameter_object).kind;
-		const bool parameter_is_pointer_like = parameter_kind == CanonicalTypeKind::Pointer || parameter_kind == CanonicalTypeKind::MemberObjectPointer ||
-			parameter_kind == CanonicalTypeKind::MemberFunctionPointer;
-		if (argument_node != nullptr && isIntegerLiteralZeroNullPointerConstant(*argument_node) &&
-			(source_type.category() == TypeCategory::Nullptr || isIntegralType(source_type.category())) && parameter_is_pointer_like) {
-			effective_source = table.builtin(CanonicalBuiltinKind::Nullptr);
-		}
-		const auto reference_binding = tryBuildCanonicalReferenceArgumentConversionPlan(table, effective_source, parameter_type);
-		if (reference_binding.has_value()) {
-			if (reference_binding->is_valid) {
-				return true;
-			}
-			continue;
-		}
-		const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, effective_source, parameter_type);
-		if (conversion.is_valid) {
-			return true;
-		}
-		const TypeId source_object = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, effective_source)).first;
-		const CanonicalTypeKind source_kind = table.node(source_object).kind;
-		const bool source_is_supported = source_kind == CanonicalTypeKind::Builtin || source_kind == CanonicalTypeKind::Enum ||
-			source_kind == CanonicalTypeKind::Pointer || source_kind == CanonicalTypeKind::MemberObjectPointer ||
-			source_kind == CanonicalTypeKind::MemberFunctionPointer;
-		const bool parameter_is_supported = parameter_kind == CanonicalTypeKind::Builtin || parameter_kind == CanonicalTypeKind::Enum ||
-			parameter_kind == CanonicalTypeKind::Pointer || parameter_kind == CanonicalTypeKind::MemberObjectPointer ||
-			parameter_kind == CanonicalTypeKind::MemberFunctionPointer;
-		if (!source_is_supported || !parameter_is_supported) {
-			has_unsupported_candidate = true;
-		}
-	}
-	if (has_incomplete_schema || has_unsupported_candidate) {
-		return std::nullopt;
-	}
-	return false;
-}
+std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgument(const TypeSpecifierNode& target_type,
+	const TypeSpecifierNode& source_type, const ASTNode* argument_node);
 
 // Check if target_struct has a non-explicit converting constructor whose first parameter
 // accepts source_type and whose remaining parameters are all defaulted, OR if source

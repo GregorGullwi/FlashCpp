@@ -3,6 +3,7 @@
 #include "TemplateExpressionEquivalence.h"
 #include "doctest.h"
 #include "CanonicalTypeAdapter.h"
+#include "CanonicalConstructorSelection.h"
 #include "ExpressionSubstitutor.h"
 #include "ParserTemplateClassShared.h"
 #include "ParserTemplateHelpers.h"
@@ -10803,4 +10804,48 @@ TEST_CASE("Canonical constructor default exception proofs are bounded and immuta
 	CHECK(canonicalConstructorDefaultException(table.recordConstructorAt(record, 0), 0) == CanonicalDefaultException::Nothrow);
 	constructor.default_exception_bits = static_cast<uint32_t>(CanonicalDefaultException::KnownThrowing);
 	CHECK_THROWS_AS(table.publishRecordConstructors(record, std::span<const CanonicalRecordConstructorSpec>(&constructor, 1)), InternalError);
+}
+
+TEST_CASE("Canonical constructor selection existence policy keeps a definite match beside unknown candidates") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId unsupported_parameter = table.record(EntityId{903001});
+	const TypeId target = table.record(EntityId{903002});
+	const std::array<TypeId, 1> scalar_parameter{int_type};
+	const std::array<TypeId, 1> unsupported_parameters{unsupported_parameter};
+	const std::array<CanonicalRecordConstructorSpec, 2> constructors{
+		CanonicalRecordConstructorSpec{std::span<const TypeId>(scalar_parameter.data(), scalar_parameter.size()), CanonicalRecordFunctionFlags::None,
+			false},
+		CanonicalRecordConstructorSpec{std::span<const TypeId>(unsupported_parameters.data(), unsupported_parameters.size()),
+			CanonicalRecordFunctionFlags::None, false},
+	};
+	table.publishRecordConstructors(target, constructors);
+	const CanonicalConstructorArgument argument{int_type, false, false, CanonicalDefaultException::Unknown};
+	const std::span<const CanonicalConstructorArgument> arguments(&argument, 1);
+	const CanonicalConstructorSelection existence = selectCanonicalConstructor(table, target, arguments,
+		CanonicalConstructorSelectionPolicy::AllowUserDefinedArgumentConversion |
+			CanonicalConstructorSelectionPolicy::ExistenceOnly);
+	CHECK(existence.status == CanonicalConstructorSelectionStatus::Selected);
+	CHECK(existence.constructor_index == 0);
+	const CanonicalConstructorSelection strict = selectCanonicalConstructor(table, target, arguments,
+		CanonicalConstructorSelectionPolicy::AllowUserDefinedArgumentConversion);
+	CHECK(strict.status == CanonicalConstructorSelectionStatus::Unknown);
+}
+
+TEST_CASE("Canonical constructor selection treats integer zero as a null pointer constant") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
+	const std::array<TypeId, 1> pointer_parameters{table.pointer(int_type)};
+	const std::array<CanonicalRecordConstructorSpec, 1> constructors{
+		CanonicalRecordConstructorSpec{std::span<const TypeId>(pointer_parameters.data(), pointer_parameters.size()), CanonicalRecordFunctionFlags::None,
+			false},
+	};
+	const TypeId target = table.record(EntityId{903003});
+	table.publishRecordConstructors(target, constructors);
+	const CanonicalConstructorArgument argument{int_type, false, true, CanonicalDefaultException::Unknown};
+	const CanonicalConstructorSelection selection = selectCanonicalConstructor(table, target,
+		std::span<const CanonicalConstructorArgument>(&argument, 1), CanonicalConstructorSelectionPolicy::None);
+	CHECK(selection.status == CanonicalConstructorSelectionStatus::Selected);
 }
