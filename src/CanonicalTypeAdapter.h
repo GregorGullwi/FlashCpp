@@ -2068,10 +2068,63 @@ inline bool tryPublishCanonicalMemberFunctionSignatures(CanonicalTypeTable& tabl
 	}
 	std::vector<TypeId> signatures;
 	signatures.reserve(record.member_functions.size());
+	std::vector<CanonicalMemberFunctionSpec> functions;
+	functions.reserve(record.member_functions.size());
 	for (const StructMemberFunction& function : record.member_functions) {
 		signatures.push_back(tryImportCanonicalMemberFunctionSignature(table, function, environment, arguments));
+		if (function.is_constructor || function.is_destructor) {
+			continue;
+		}
+		CanonicalMemberFunctionSpec spec;
+		spec.signature = signatures.back();
+		if (function.access != AccessSpecifier::Public) {
+			spec.flags = spec.flags | CanonicalMemberFunctionFlags::NonPublic;
+		}
+		if (function.is_explicit) {
+			spec.flags = spec.flags | CanonicalMemberFunctionFlags::Explicit;
+		}
+		if (function.is_virtual) {
+			spec.flags = spec.flags | CanonicalMemberFunctionFlags::Virtual;
+		}
+		if (function.is_pure_virtual) {
+			spec.flags = spec.flags | CanonicalMemberFunctionFlags::PureVirtual;
+		}
+		if (function.is_override) {
+			spec.flags = spec.flags | CanonicalMemberFunctionFlags::Override;
+		}
+		if (function.is_final) {
+			spec.flags = spec.flags | CanonicalMemberFunctionFlags::Final;
+		}
+		if (function.is_conversion_operator()) {
+			spec.flags = spec.flags | CanonicalMemberFunctionFlags::ConversionOperator;
+		}
+		if (const FunctionDeclarationNode* declaration = function.function_decl.get_if<FunctionDeclarationNode>()) {
+			if (declaration->is_static()) {
+				spec.flags = spec.flags | CanonicalMemberFunctionFlags::Static;
+			}
+			if (declaration->is_constexpr()) {
+				spec.flags = spec.flags | CanonicalMemberFunctionFlags::Constexpr;
+			}
+			if (declaration->is_variadic()) {
+				spec.flags = spec.flags | CanonicalMemberFunctionFlags::Variadic;
+			}
+			if (declaration->is_deleted()) {
+				spec.flags = spec.flags | CanonicalMemberFunctionFlags::Deleted;
+			}
+			if (declaration->is_explicitly_defaulted()) {
+				spec.flags = spec.flags | CanonicalMemberFunctionFlags::Defaulted;
+			}
+		}
+		spec.operator_kind = static_cast<uint8_t>(function.operator_kind);
+		spec.cv_qualifier = function.cv_qualifier;
+		spec.ref_qualifier = function.ref_qualifier;
+		if (spec.operator_kind == 0 && !function.is_conversion_operator()) {
+			spec.name = function.getName().view();
+		}
+		functions.push_back(spec);
 	}
 	table.publishMemberFunctionSignatures(owner, signatures);
+	table.publishMemberFunctionSchema(owner, functions);
 	transaction.commit();
 	return true;
 }

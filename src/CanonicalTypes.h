@@ -553,6 +553,54 @@ struct CanonicalNamedTypeMemberSpec {
 	TypeId type;
 };
 
+enum class CanonicalMemberFunctionFlags : uint16_t {
+	None = 0,
+	Static = 1 << 0,
+	Constexpr = 1 << 1,
+	Explicit = 1 << 2,
+	Deleted = 1 << 3,
+	Virtual = 1 << 4,
+	PureVirtual = 1 << 5,
+	NonPublic = 1 << 6,
+	Variadic = 1 << 7,
+	Override = 1 << 8,
+	Final = 1 << 9,
+	Defaulted = 1 << 10,
+	ConversionOperator = 1 << 11,
+};
+
+// Canonical member-function entry keyed by declaring class TypeId. Identity is
+// the signature TypeId plus lookup content (name or operator kind) and
+// qualification flags. `name` is a NameBytes link, empty for operators.
+struct CanonicalMemberFunction {
+	TypeId signature;
+	TypeId name;
+	CanonicalMemberFunctionFlags flags;
+	uint8_t operator_kind;
+	CVQualifier cv_qualifier;
+	ReferenceQualifier ref_qualifier;
+	uint8_t reserved = 0;
+	friend bool operator==(CanonicalMemberFunction, CanonicalMemberFunction) = default;
+};
+
+// Publication input for one member function. Spelling is lookup content only.
+struct CanonicalMemberFunctionSpec {
+	std::string_view name;
+	TypeId signature;
+	CanonicalMemberFunctionFlags flags = CanonicalMemberFunctionFlags::None;
+	uint8_t operator_kind = 0;
+	CVQualifier cv_qualifier = CVQualifier::None;
+	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
+};
+
+inline bool hasCanonicalMemberFunctionFlag(CanonicalMemberFunctionFlags flags, CanonicalMemberFunctionFlags bit) {
+	return (static_cast<uint16_t>(flags) & static_cast<uint16_t>(bit)) != 0;
+}
+
+inline CanonicalMemberFunctionFlags operator|(CanonicalMemberFunctionFlags a, CanonicalMemberFunctionFlags b) {
+	return static_cast<CanonicalMemberFunctionFlags>(static_cast<uint16_t>(a) | static_cast<uint16_t>(b));
+}
+
 enum class CanonicalRecordFunctionFlags : uint8_t {
 	None = 0,
 	Implicit = 1 << 0,
@@ -1031,6 +1079,19 @@ public:
 	size_t memberFunctionSignatureCount(TypeId type) const;
 	TypeId memberFunctionSignatureAt(TypeId type, size_t ordinal) const;
 
+	// Canonical member-function schema keyed by declaring class TypeId. Entries
+	// carry lookup content (name or operator kind), signature identity, and
+	// qualification flags so operator and conversion lookup can share one source.
+	void publishMemberFunctionSchema(TypeId type, std::span<const CanonicalMemberFunctionSpec> functions);
+
+	bool hasMemberFunctionSchema(TypeId type) const;
+
+	size_t memberFunctionSchemaCount(TypeId type) const;
+
+	CanonicalMemberFunction memberFunctionAt(TypeId type, size_t index) const;
+
+	std::optional<size_t> tryFindMemberFunctionByOperator(TypeId type, uint8_t operator_kind) const;
+
 	bool hasRecordSubobjectTypes(TypeId type) const;
 
 	size_t recordSubobjectMemberCount(TypeId type) const;
@@ -1146,6 +1207,16 @@ private:
 	};
 	static_assert(sizeof(CanonicalNamedTypeMemberSchemaHeader) == 16);
 
+	struct CanonicalMemberFunctionSchemaHeader {
+		TypeId type;
+		uint32_t function_begin;
+		uint16_t function_count;
+		uint16_t reserved;
+		uint32_t reserved2;
+		friend bool operator==(CanonicalMemberFunctionSchemaHeader, CanonicalMemberFunctionSchemaHeader) = default;
+	};
+	static_assert(sizeof(CanonicalMemberFunctionSchemaHeader) == 16);
+
 	struct CanonicalRecordConstructorSchemaHeader {
 		TypeId type;
 		uint32_t constructor_begin;
@@ -1177,6 +1248,8 @@ private:
 		size_t record_constructor_count;
 		size_t record_constructor_parameter_count;
 		size_t expression_exception_fact_count;
+		size_t member_function_schema_count;
+		size_t member_function_count;
 	};
 
 	struct CanonicalEnumLayoutUpdate {
@@ -1414,6 +1487,8 @@ private:
 	size_t live_record_constructor_count_ = 0;
 	size_t live_record_constructor_parameter_count_ = 0;
 	size_t live_expression_exception_fact_count_ = 0;
+	size_t live_member_function_schema_count_ = 0;
+	size_t live_member_function_count_ = 0;
 	SemanticArenaAccounting* accounting_ = nullptr;
 	std::vector<TransactionMark> transaction_marks_;
 	std::vector<CanonicalEnumLayoutUpdate> enum_layout_update_history_;
@@ -1466,6 +1541,10 @@ private:
 	// chunk keeps small trait queries cheap while allowing growth.
 	ChunkedVector<CanonicalExpressionExceptionFact, 16> expression_exception_facts_;
 	std::unordered_map<uint32_t, size_t> expression_exception_fact_ids_;
+	// Member-function schema samples: 16 headers / 32 entries per chunk.
+	ChunkedVector<CanonicalMemberFunctionSchemaHeader, 16> member_function_schema_headers_;
+	ChunkedVector<CanonicalMemberFunction, 32> member_functions_;
+	std::unordered_map<uint32_t, size_t> member_function_schema_ids_;
 };
 
 // Checkpoints publish only when the surrounding transaction commits. Nested

@@ -11087,3 +11087,45 @@ TEST_CASE("Known-throwing default analysis consumes canonical operator operand f
 	const ASTNode binary = ASTNode::emplace_node<ExpressionNode>(BinaryOperatorNode(plus_token, lhs, rhs));
 	CHECK(isCanonicalKnownThrowingDefault(table, binary));
 }
+
+TEST_CASE("Canonical member-function schema publishes lookup metadata") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId owner = table.record(EntityId{906001});
+	const std::array<CanonicalMemberFunctionSpec, 2> functions{
+		CanonicalMemberFunctionSpec{
+			.name = "size",
+			.signature = int_type,
+			.flags = CanonicalMemberFunctionFlags::Constexpr,
+			.cv_qualifier = CVQualifier::Const,
+		},
+		CanonicalMemberFunctionSpec{.signature = int_type, .flags = CanonicalMemberFunctionFlags::ConversionOperator},
+	};
+	table.publishMemberFunctionSchema(owner, functions);
+	REQUIRE(table.hasMemberFunctionSchema(owner));
+	CHECK(table.memberFunctionSchemaCount(owner) == 2);
+	const CanonicalMemberFunction first = table.memberFunctionAt(owner, 0);
+	CHECK(hasCanonicalMemberFunctionFlag(first.flags, CanonicalMemberFunctionFlags::Constexpr));
+	CHECK(first.cv_qualifier == CVQualifier::Const);
+	CHECK(first.name);
+	CHECK(first.signature == int_type);
+
+	const TypeId operator_owner = table.record(EntityId{906002});
+	const std::array<CanonicalMemberFunctionSpec, 1> operator_functions{
+		CanonicalMemberFunctionSpec{.signature = int_type, .operator_kind = 7},
+	};
+	table.publishMemberFunctionSchema(operator_owner, operator_functions);
+	const std::optional<size_t> found = table.tryFindMemberFunctionByOperator(operator_owner, 7);
+	REQUIRE(found.has_value());
+	CHECK(*found == 0);
+
+	const TypeId temporary_owner = table.record(EntityId{906003});
+	{
+		CanonicalTypeTransaction transaction(table);
+		table.publishMemberFunctionSchema(temporary_owner, functions);
+		CHECK(table.hasMemberFunctionSchema(temporary_owner));
+		transaction.rollback();
+	}
+	CHECK_FALSE(table.hasMemberFunctionSchema(temporary_owner));
+}

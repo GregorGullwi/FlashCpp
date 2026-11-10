@@ -92,8 +92,13 @@ before re-analysis, and publishes positive facts for later queries. Recursive
 known-throwing analysis consumes cached facts for operator and call
 subexpressions before re-walking them.
 
+The canonical table now also publishes a member-function schema keyed by
+declaring class TypeId. Entries carry the canonical signature, a NameBytes
+lookup name or operator kind, cv/ref qualifiers, and static, virtual, explicit,
+deleted, variadic, and conversion-operator flags.
+
 Remaining: continue with the remaining architecture items below.
 
 ## Remaining architecture items
 
-- Member-function and conversion-operator schemas so operator lookup and user-defined conversion share one source of truth.
+- Migrate operator lookup and user-defined conversion to the canonical member-function schema.
