@@ -1751,6 +1751,53 @@ TypeId CanonicalTypeTable::recordConstructorParameterAt(TypeId type, size_t cons
 	return record_constructor_parameters_[constructor.parameter_begin + parameter_index];
 }
 
+void CanonicalTypeTable::publishExpressionExceptionFact(ExprId expression, CanonicalDefaultException exception) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	if (!expression) {
+		throw InternalError("canonical type: empty expression fact identity");
+	}
+	if (exception == CanonicalDefaultException::Unknown) {
+		throw InternalError("canonical type: unknown expression fact is absence");
+	}
+	const auto existing = expression_exception_fact_ids_.find(expression.value);
+	if (existing != expression_exception_fact_ids_.end()) {
+		if (expression_exception_facts_[existing->second].exception != exception) {
+			throw InternalError("canonical type: conflicting expression exception fact publication");
+		}
+		return;
+	}
+	const size_t index = live_expression_exception_fact_count_;
+	appendSchemaEntryUnlocked(expression_exception_facts_, live_expression_exception_fact_count_,
+		CanonicalExpressionExceptionFact{expression, exception});
+	try {
+		expression_exception_fact_ids_.emplace(expression.value, index);
+	} catch (...) {
+		live_expression_exception_fact_count_ = index;
+		throw;
+	}
+	noteArenaBytes();
+}
+
+bool CanonicalTypeTable::hasExpressionExceptionFact(ExprId expression) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	return expression && expression_exception_fact_ids_.contains(expression.value);
+}
+
+CanonicalDefaultException CanonicalTypeTable::expressionExceptionFact(ExprId expression) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	if (!expression) {
+		return CanonicalDefaultException::Unknown;
+	}
+	const auto found = expression_exception_fact_ids_.find(expression.value);
+	if (found == expression_exception_fact_ids_.end()) {
+		return CanonicalDefaultException::Unknown;
+	}
+	return expression_exception_facts_[found->second].exception;
+}
+
 void CanonicalTypeTable::publishClassBaseSchema(TypeId class_type,
 	std::span<const CanonicalClassBase> bases) {
 	std::lock_guard lock(mutex_);
@@ -3761,7 +3808,8 @@ uint64_t CanonicalTypeTable::usedBytesUnlocked() const {
 		static_cast<uint64_t>(live_named_type_member_count_) * sizeof(CanonicalNamedTypeMember) +
 		static_cast<uint64_t>(live_record_constructor_schema_count_) * sizeof(CanonicalRecordConstructorSchemaHeader) +
 		static_cast<uint64_t>(live_record_constructor_count_) * sizeof(CanonicalRecordConstructor) +
-		static_cast<uint64_t>(live_record_constructor_parameter_count_) * sizeof(TypeId);
+		static_cast<uint64_t>(live_record_constructor_parameter_count_) * sizeof(TypeId) +
+		static_cast<uint64_t>(live_expression_exception_fact_count_) * sizeof(CanonicalExpressionExceptionFact);
 }
 
 uint64_t CanonicalTypeTable::reservedBytesUnlocked() const {
@@ -3775,6 +3823,7 @@ uint64_t CanonicalTypeTable::reservedBytesUnlocked() const {
 		named_type_member_schema_headers_.reservedBytes() +
 		named_type_members_.reservedBytes() +
 		record_constructor_schema_headers_.reservedBytes() + record_constructors_.reservedBytes() + record_constructor_parameters_.reservedBytes() +
+		expression_exception_facts_.reservedBytes() +
 		static_cast<uint64_t>(enum_layout_update_history_.capacity()) *
 			sizeof(CanonicalEnumLayoutUpdate);
 }
@@ -3812,6 +3861,7 @@ size_t CanonicalTypeTable::beginTransaction() {
 		live_named_type_member_schema_count_,
 		live_named_type_member_count_,
 		live_record_constructor_schema_count_, live_record_constructor_count_, live_record_constructor_parameter_count_,
+		live_expression_exception_fact_count_,
 	});
 	transaction_owner_ = std::this_thread::get_id();
 	return transaction_marks_.size();
@@ -3884,6 +3934,11 @@ void CanonicalTypeTable::finishTransaction(size_t depth, bool commit) {
 		}
 		live_record_constructor_count_ = mark.record_constructor_count;
 		live_record_constructor_parameter_count_ = mark.record_constructor_parameter_count;
+		while (live_expression_exception_fact_count_ > mark.expression_exception_fact_count) {
+			expression_exception_fact_ids_.erase(
+				expression_exception_facts_[live_expression_exception_fact_count_ - 1].expression.value);
+			--live_expression_exception_fact_count_;
+		}
 		noteArenaBytes();
 	}
 	transaction_marks_.pop_back();

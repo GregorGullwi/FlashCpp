@@ -84,9 +84,13 @@ range and no parameter types, so the service only defers when that range can
 match, and deleted candidates are non-viable instead of poisoning the schema.
 `RequireCompleteSchema` is scoped to matching arities as well.
 
+The canonical table now owns a transactional, immutable expression-exception
+fact table keyed by `ExprId`; a missing fact means Unknown. TypeId-level
+exception facts remain in the record-property schema.
+
 Remaining: continue with the remaining architecture items below.
 
 ## Remaining architecture items
 
-- Canonical expression-fact table keyed by `ExprId`/`TypeId` for nothrow/throwing/unknown.
+- Publish and consume expression exception facts from default and operator analysis.
 - Member-function and conversion-operator schemas so operator lookup and user-defined conversion share one source of truth.

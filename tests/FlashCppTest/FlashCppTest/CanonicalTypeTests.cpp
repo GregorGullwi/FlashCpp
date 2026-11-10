@@ -11019,3 +11019,38 @@ TEST_CASE("Canonical constructor selection scopes non-complete statuses by arity
 	CHECK(required_matching.status == CanonicalConstructorSelectionStatus::Unknown);
 	CHECK(required_matching.reason == CanonicalConstructorSelectionReason::IncompleteSchema);
 }
+
+TEST_CASE("Canonical expression exception facts are transactional and immutable") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const ExprId first{1};
+	const ExprId second{2};
+	const ExprId third{3};
+	CHECK_FALSE(table.hasExpressionExceptionFact(first));
+	CHECK(table.expressionExceptionFact(first) == CanonicalDefaultException::Unknown);
+
+	table.publishExpressionExceptionFact(first, CanonicalDefaultException::Nothrow);
+	CHECK(table.hasExpressionExceptionFact(first));
+	CHECK(table.expressionExceptionFact(first) == CanonicalDefaultException::Nothrow);
+	CHECK_NOTHROW(table.publishExpressionExceptionFact(first, CanonicalDefaultException::Nothrow));
+	CHECK_THROWS_AS(table.publishExpressionExceptionFact(first, CanonicalDefaultException::KnownThrowing), InternalError);
+	CHECK_THROWS_AS(table.publishExpressionExceptionFact(second, CanonicalDefaultException::Unknown), InternalError);
+	CHECK_THROWS_AS(table.publishExpressionExceptionFact(ExprId{}, CanonicalDefaultException::Nothrow), InternalError);
+
+	{
+		CanonicalTypeTransaction transaction(table);
+		table.publishExpressionExceptionFact(second, CanonicalDefaultException::KnownThrowing);
+		CHECK(table.hasExpressionExceptionFact(second));
+		transaction.rollback();
+	}
+	CHECK_FALSE(table.hasExpressionExceptionFact(second));
+	CHECK(table.hasExpressionExceptionFact(first));
+
+	{
+		CanonicalTypeTransaction transaction(table);
+		table.publishExpressionExceptionFact(third, CanonicalDefaultException::KnownThrowing);
+		transaction.commit();
+	}
+	CHECK(table.hasExpressionExceptionFact(third));
+	CHECK(table.expressionExceptionFact(third) == CanonicalDefaultException::KnownThrowing);
+}
