@@ -3239,7 +3239,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					false,
 					member_pointee_dimensions,
 					member_pointee_array_declarator,
-					static_cast<int>(type_spec.pointer_depth()),
+					static_cast<int>(type_spec.runtime_pointer_depth()),
 					member_decl.bitfield_width,
 					type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt,
 					member_decl.is_no_unique_address,
@@ -4737,7 +4737,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					false,
 					member_pointee_dimensions,
 					member_pointee_array_declarator,
-					static_cast<int>(type_spec.pointer_depth()),
+					static_cast<int>(type_spec.runtime_pointer_depth()),
 					member_decl.bitfield_width,
 					type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt,
 					member_decl.is_no_unique_address,
@@ -6518,7 +6518,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 							}
 						}
 						ReferenceQualifier ref_qual = type_spec.reference_qualifier();
-						int ptr_depth = static_cast<int>(type_spec.pointer_depth());
+						int ptr_depth = static_cast<int>(type_spec.runtime_pointer_depth());
 
 						// Add to struct's static members
 						StringHandle static_member_name_handle = decl.identifier_token().handle();
@@ -7149,7 +7149,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						init_expr_opt,
 						cv_qual,
 						type_spec.reference_qualifier(),
-						/* ptr_depth */ static_cast<int>(type_spec.pointer_depth()),
+						/* ptr_depth */ static_cast<int>(type_spec.runtime_pointer_depth()),
 						is_array,
 						array_dimensions,
 						/* declaration */ *type_and_name_result.node(),
