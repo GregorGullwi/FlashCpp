@@ -165,7 +165,7 @@ bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::s
 		FunctionSignature func_sig;
 		func_sig.setReturnType(makeFunctionType(type_spec));
 		func_sig.return_type_index = type_spec.type_index();
-		func_sig.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
+		func_sig.return_pointer_depth = static_cast<int>(type_spec.runtime_pointer_depth());
 		func_sig.return_reference_qualifier = type_spec.reference_qualifier();
 		func_sig.setParameterTypes(std::move(param_types));
 		func_sig.calling_convention = calling_conv;
@@ -230,7 +230,7 @@ bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::s
 	FunctionSignature func_sig;
 	func_sig.setReturnType(makeFunctionType(type_spec));
 	func_sig.return_type_index = type_spec.type_index();
-	func_sig.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
+	func_sig.return_pointer_depth = static_cast<int>(type_spec.runtime_pointer_depth());
 	func_sig.return_reference_qualifier = type_spec.reference_qualifier();
 	func_sig.setParameterTypes(std::move(param_types));
 	func_sig.calling_convention = calling_conv;
@@ -778,7 +778,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					false,
 					member_pointee_dimensions,
 					member_pointee_array_declarator,
-					static_cast<int>(member_type_spec.pointer_depth()),
+					static_cast<int>(member_type_spec.runtime_pointer_depth()),
 					member_decl.bitfield_width,
 					member_type_spec.has_function_signature() ? std::optional(member_type_spec.function_signature()) : std::nullopt,
 					false,
@@ -2158,7 +2158,7 @@ ParseResult Parser::parse_typedef_declaration() {
 				member_is_array,
 				member_array_dimensions,
 				member_pointee_array_declarator,
-				static_cast<int>(member_type_spec.pointer_depth()),
+				static_cast<int>(member_type_spec.runtime_pointer_depth()),
 				member_decl.bitfield_width,
 				member_type_spec.has_function_signature() ? std::optional(member_type_spec.function_signature()) : std::nullopt,
 				false,
