@@ -86,11 +86,13 @@ match, and deleted candidates are non-viable instead of poisoning the schema.
 
 The canonical table now owns a transactional, immutable expression-exception
 fact table keyed by `ExprId`; a missing fact means Unknown. TypeId-level
-exception facts remain in the record-property schema.
+exception facts remain in the record-property schema. Default-argument
+classification interns each default expression, consumes an existing fact
+before re-analysis, and publishes positive facts for later queries.
 
 Remaining: continue with the remaining architecture items below.
 
 ## Remaining architecture items
 
-- Publish and consume expression exception facts from default and operator analysis.
+- Consume expression exception facts from operator analysis.
 - Member-function and conversion-operator schemas so operator lookup and user-defined conversion share one source of truth.
