@@ -694,7 +694,7 @@ static int computeTemplateFunctionSpecificity(const TemplateFunctionDeclarationN
 			score += 1;
 		}
 
-		score += static_cast<int>(ts.pointer_depth());
+		score += static_cast<int>(ts.runtime_pointer_depth());
 		if (ts.is_lvalue_reference()) score += 1;
 		if (ts.is_rvalue_reference()) score += 1;
 		if (ts.is_const()) score += 1;

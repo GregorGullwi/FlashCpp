@@ -264,7 +264,7 @@ inline void mixReplaySourceParamKey(uint64_t& key, const ASTNode& param) {
 			key ^= value + 0x9E3779B97F4A7C15ull + (key << 6) + (key >> 2);
 		};
 		mix(static_cast<uint64_t>(decl.type_specifier_node().type_index().index()));
-		mix(static_cast<uint64_t>(decl.type_specifier_node().pointer_depth()));
+		mix(static_cast<uint64_t>(decl.type_specifier_node().runtime_pointer_depth()));
 		mix(static_cast<uint64_t>(decl.type_specifier_node().reference_qualifier()));
 	}
 }
@@ -322,7 +322,7 @@ inline std::optional<uint64_t> sourceMemberLocationKey(const ASTNode& member) {
 			const TypeSpecifierNode& ts = param.as<DeclarationNode>().type_specifier_node();
 			mix(static_cast<uint64_t>(ts.token().handle().handle));
 			mix(static_cast<uint64_t>(ts.type_index().index()));
-			mix(static_cast<uint64_t>(ts.pointer_depth()));
+			mix(static_cast<uint64_t>(ts.runtime_pointer_depth()));
 			mix(static_cast<uint64_t>(ts.reference_qualifier()));
 		} else {
 			mix(static_cast<uint64_t>(std::hash<std::string_view>{}(param.type_name())));
@@ -1375,7 +1375,7 @@ inline std::optional<TemplateTypeArg> tryResolveDeferredBaseTypeArgFromMap(
 	}
 
 	TemplateTypeArg resolved_type_arg = subst_it->second;
-	resolved_type_arg.pointer_depth = type_spec.pointer_depth();
+	resolved_type_arg.pointer_depth = type_spec.runtime_pointer_depth();
 	resolved_type_arg.ref_qualifier = type_spec.reference_qualifier();
 	resolved_type_arg.cv_qualifier = type_spec.cv_qualifier();
 	return resolved_type_arg;
@@ -1641,7 +1641,7 @@ inline void mergeAliasIndirectionForSignatureValidation(
 inline SignatureValidationIndirection computeSignatureValidationIndirection(
 	const TypeSpecifierNode& type_spec) {
 	SignatureValidationIndirection effective;
-	effective.pointer_depth = type_spec.pointer_depth();
+	effective.pointer_depth = type_spec.runtime_pointer_depth();
 	effective.reference_qualifier = type_spec.reference_qualifier();
 	effective.cv_qualifier = type_spec.cv_qualifier();
 	effective.pointer_level_cv_qualifiers.reserve(type_spec.pointer_levels().size());
@@ -3808,7 +3808,7 @@ inline void Parser::substituteAndCopyMemberFunctionParameters(
 			// adjustment rules while keeping pointer/reference signatures stable for
 			// out-of-line replay attachment and mangling.
 			const bool is_by_value_parameter =
-				substituted_param_type.pointer_depth() == 0 &&
+				substituted_param_type.runtime_pointer_depth() == 0 &&
 				!substituted_param_type.is_reference() &&
 				!substituted_param_type.is_rvalue_reference();
 			if (is_by_value_parameter) {
