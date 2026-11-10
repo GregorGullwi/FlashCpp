@@ -864,7 +864,7 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 	if (peek() == "["_tok) {
 		if (std::optional<ASTNode> type_node = type_specifier_result.node()) {
 			const TypeSpecifierNode& spec = type_node->as<TypeSpecifierNode>();
-			if (spec.category() == TypeCategory::Function && spec.has_function_signature() && spec.pointer_depth() == 0 &&
+			if (spec.category() == TypeCategory::Function && spec.has_function_signature() && spec.runtime_pointer_depth() == 0 &&
 				!spec.is_reference() && !spec.has_member_class()) {
 				return error(DiagnosticId::FunctionTypeDeclarator, identifier_token,
 					"An array cannot have a function type as its element type");
@@ -1716,7 +1716,7 @@ ParseResult Parser::parse_declarator(
 						// reference to it is well-formed. An array of that function,
 						// or a function returning it, is not.
 						if (base_type.has_function_signature() && base_type.category() == TypeCategory::Function &&
-							!base_type.has_member_class() && base_type.pointer_depth() == 0 &&
+							!base_type.has_member_class() && base_type.runtime_pointer_depth() == 0 &&
 							base_type.reference_qualifier() == ReferenceQualifier::None && !completed.empty()) {
 							const DeclaratorComponentKind innermost = completed.back().kind;
 							if (innermost == DeclaratorComponentKind::Array || innermost == DeclaratorComponentKind::UnknownBoundArray ||
@@ -2172,7 +2172,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 	// [dcl.fct]: a function type may be named by a typedef and then pointed or
 	// referred to. It cannot be a function's return type or an array element.
 	const bool bare_function = base_type.category() == TypeCategory::Function && base_type.has_function_signature() &&
-		base_type.pointer_depth() == 0 && !base_type.is_reference() && !base_type.has_member_class();
+		base_type.runtime_pointer_depth() == 0 && !base_type.is_reference() && !base_type.has_member_class();
 	if (bare_function && peek() == "("_tok) {
 		return error(DiagnosticId::FunctionTypeDeclarator, identifier, "A function cannot have a function type as its return type");
 	}
@@ -2215,7 +2215,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 		FunctionSignature sig;
 		sig.setReturnType(makeFunctionType(base_type));
 		sig.return_type_index = return_type_index;
-		sig.return_pointer_depth = static_cast<int>(base_type.pointer_depth());
+		sig.return_pointer_depth = static_cast<int>(base_type.runtime_pointer_depth());
 		sig.return_reference_qualifier = base_type.reference_qualifier();
 		sig.setParameterTypes(std::move(param_types));
 		sig.linkage = linkage;
