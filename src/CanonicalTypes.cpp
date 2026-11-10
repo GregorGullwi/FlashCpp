@@ -1798,6 +1798,116 @@ CanonicalDefaultException CanonicalTypeTable::expressionExceptionFact(ExprId exp
 	return expression_exception_facts_[found->second].exception;
 }
 
+void CanonicalTypeTable::publishMemberFunctionSchema(TypeId type, std::span<const CanonicalMemberFunctionSpec> functions) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	if (!type || functions.size() > std::numeric_limits<uint16_t>::max()) {
+		throw InternalError("canonical type: invalid member-function schema");
+	}
+	if (!isCanonicalClassTypeKind(nodeUnlocked(type).kind)) {
+		throw InternalError("canonical type: member-function schema owner is not a class type");
+	}
+	std::vector<CanonicalMemberFunction> packed;
+	packed.reserve(functions.size());
+	for (const CanonicalMemberFunctionSpec& function : functions) {
+		const TypeId name_link = function.name.empty() ? TypeId{} : packIdentifierBytesUnlocked(function.name);
+		packed.push_back({
+			.signature = function.signature,
+			.name = name_link,
+			.flags = function.flags,
+			.operator_kind = function.operator_kind,
+			.cv_qualifier = function.cv_qualifier,
+			.ref_qualifier = function.ref_qualifier,
+			.reserved = 0,
+		});
+	}
+	const auto existing = member_function_schema_ids_.find(type.value);
+	if (existing != member_function_schema_ids_.end()) {
+		const CanonicalMemberFunctionSchemaHeader header = member_function_schema_headers_[existing->second];
+		if (header.function_count != packed.size()) {
+			throw InternalError("canonical type: conflicting member-function schema publication");
+		}
+		for (size_t index = 0; index < packed.size(); ++index) {
+			if (member_functions_[header.function_begin + index] != packed[index]) {
+				throw InternalError("canonical type: conflicting member-function schema publication");
+			}
+		}
+		return;
+	}
+	const uint32_t function_begin = static_cast<uint32_t>(live_member_function_count_);
+	if (static_cast<uint64_t>(function_begin) + packed.size() > std::numeric_limits<uint32_t>::max()) {
+		throw InternalError("canonical type: member-function schema arena exhausted");
+	}
+	for (const CanonicalMemberFunction& function : packed) {
+		appendSchemaEntryUnlocked(member_functions_, live_member_function_count_, function);
+	}
+	const CanonicalMemberFunctionSchemaHeader header{
+		.type = type,
+		.function_begin = function_begin,
+		.function_count = static_cast<uint16_t>(packed.size()),
+		.reserved = 0,
+		.reserved2 = 0,
+	};
+	const size_t header_index = live_member_function_schema_count_;
+	appendSchemaEntryUnlocked(member_function_schema_headers_, live_member_function_schema_count_, header);
+	try {
+		member_function_schema_ids_.emplace(type.value, header_index);
+	} catch (...) {
+		live_member_function_schema_count_ = header_index;
+		live_member_function_count_ = function_begin;
+		noteArenaBytes();
+		throw;
+	}
+	noteArenaBytes();
+}
+
+bool CanonicalTypeTable::hasMemberFunctionSchema(TypeId type) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	return type && member_function_schema_ids_.contains(type.value);
+}
+
+size_t CanonicalTypeTable::memberFunctionSchemaCount(TypeId type) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const auto found = member_function_schema_ids_.find(type.value);
+	if (!type || found == member_function_schema_ids_.end()) {
+		throw InternalError("canonical type: class has no member-function schema");
+	}
+	return member_function_schema_headers_[found->second].function_count;
+}
+
+CanonicalMemberFunction CanonicalTypeTable::memberFunctionAt(TypeId type, size_t index) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const auto found = member_function_schema_ids_.find(type.value);
+	if (!type || found == member_function_schema_ids_.end()) {
+		throw InternalError("canonical type: class has no member-function schema");
+	}
+	const CanonicalMemberFunctionSchemaHeader header = member_function_schema_headers_[found->second];
+	if (index >= header.function_count) {
+		throw InternalError("canonical type: member-function index out of range");
+	}
+	return member_functions_[header.function_begin + index];
+}
+
+std::optional<size_t> CanonicalTypeTable::tryFindMemberFunctionByOperator(TypeId type, uint8_t operator_kind) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const auto found = member_function_schema_ids_.find(type.value);
+	if (!type || found == member_function_schema_ids_.end()) {
+		return std::nullopt;
+	}
+	const CanonicalMemberFunctionSchemaHeader header = member_function_schema_headers_[found->second];
+	for (size_t index = 0; index < header.function_count; ++index) {
+		const CanonicalMemberFunction& function = member_functions_[header.function_begin + index];
+		if (function.operator_kind == operator_kind) {
+			return index;
+		}
+	}
+	return std::nullopt;
+}
+
 void CanonicalTypeTable::publishClassBaseSchema(TypeId class_type,
 	std::span<const CanonicalClassBase> bases) {
 	std::lock_guard lock(mutex_);
@@ -3809,7 +3919,9 @@ uint64_t CanonicalTypeTable::usedBytesUnlocked() const {
 		static_cast<uint64_t>(live_record_constructor_schema_count_) * sizeof(CanonicalRecordConstructorSchemaHeader) +
 		static_cast<uint64_t>(live_record_constructor_count_) * sizeof(CanonicalRecordConstructor) +
 		static_cast<uint64_t>(live_record_constructor_parameter_count_) * sizeof(TypeId) +
-		static_cast<uint64_t>(live_expression_exception_fact_count_) * sizeof(CanonicalExpressionExceptionFact);
+		static_cast<uint64_t>(live_expression_exception_fact_count_) * sizeof(CanonicalExpressionExceptionFact) +
+		static_cast<uint64_t>(live_member_function_schema_count_) * sizeof(CanonicalMemberFunctionSchemaHeader) +
+		static_cast<uint64_t>(live_member_function_count_) * sizeof(CanonicalMemberFunction);
 }
 
 uint64_t CanonicalTypeTable::reservedBytesUnlocked() const {
@@ -3824,6 +3936,7 @@ uint64_t CanonicalTypeTable::reservedBytesUnlocked() const {
 		named_type_members_.reservedBytes() +
 		record_constructor_schema_headers_.reservedBytes() + record_constructors_.reservedBytes() + record_constructor_parameters_.reservedBytes() +
 		expression_exception_facts_.reservedBytes() +
+		member_function_schema_headers_.reservedBytes() + member_functions_.reservedBytes() +
 		static_cast<uint64_t>(enum_layout_update_history_.capacity()) *
 			sizeof(CanonicalEnumLayoutUpdate);
 }
@@ -3862,6 +3975,7 @@ size_t CanonicalTypeTable::beginTransaction() {
 		live_named_type_member_count_,
 		live_record_constructor_schema_count_, live_record_constructor_count_, live_record_constructor_parameter_count_,
 		live_expression_exception_fact_count_,
+		live_member_function_schema_count_, live_member_function_count_,
 	});
 	transaction_owner_ = std::this_thread::get_id();
 	return transaction_marks_.size();
@@ -3939,6 +4053,12 @@ void CanonicalTypeTable::finishTransaction(size_t depth, bool commit) {
 				expression_exception_facts_[live_expression_exception_fact_count_ - 1].expression.value);
 			--live_expression_exception_fact_count_;
 		}
+		while (live_member_function_schema_count_ > mark.member_function_schema_count) {
+			member_function_schema_ids_.erase(
+				member_function_schema_headers_[live_member_function_schema_count_ - 1].type.value);
+			--live_member_function_schema_count_;
+		}
+		live_member_function_count_ = mark.member_function_count;
 		noteArenaBytes();
 	}
 	transaction_marks_.pop_back();
