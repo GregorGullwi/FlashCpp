@@ -39,6 +39,18 @@ One canonical selection service answers: *which constructor, if any, accepts the
 5. Add a compact per-default exception classification (nothrow / known-throwing / unknown) to the constructor schema and remove `nothrow_default_count` / `last_known_throwing_default` once all readers migrate.
 6. Later: use the same service for the `OverloadResolution.h` implicit converting-constructor probe and the compatibility path.
 
+## Status
+
+The constructor-selection service is implemented and the argument-bearing
+constructibility query uses it. Default-exception fact evaluation now lives in
+`TypeTraitEvaluator.cpp` behind `CanonicalDefaultFacts.h`, so it can include the
+service without pulling `OverloadResolution.h` into `CanonicalTypeAdapter.h`.
+Scalar-to-class default conversion already selects through the service.
+
+Remaining: route the constructor-call default loop through the service, replace
+`nothrow_default_count` / `last_known_throwing_default` with per-default
+classification, and then continue with the remaining architecture items below.
+
 ## Remaining architecture items
 
 - Canonical expression-fact table keyed by `ExprId`/`TypeId` for nothrow/throwing/unknown.

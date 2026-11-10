@@ -65,6 +65,426 @@ inline bool isUnsigned(TypeCategory cat) {
 }
 
 } // namespace TypeTraitEval
+std::optional<TypeId> tryCanonicalDefaultLiteralType(CanonicalTypeTable& table, const ASTNode& initializer);
+
+bool isCanonicalNothrowLiteralExpression(const ASTNode& initializer) {
+	const ExpressionNode* expression = initializer.get_if<ExpressionNode>();
+	while (expression != nullptr) {
+		if (const NumericLiteralNode* literal = std::get_if<NumericLiteralNode>(expression)) {
+			return isArithmeticType(literal->type());
+		}
+		if (std::holds_alternative<BoolLiteralNode>(*expression)) {
+			return true;
+		}
+		const UnaryOperatorNode* unary = std::get_if<UnaryOperatorNode>(expression);
+		if (unary == nullptr || (unary->op() != "+" && unary->op() != "-")) {
+			return false;
+		}
+		expression = unary->get_operand().get_if<ExpressionNode>();
+	}
+	return false;
+}
+
+// A scalar literal can initialize a class-typed constructor parameter through
+// one non-explicit public converting constructor whose first parameter is
+// scalar. Deeper class conversions, ambiguity, and unproven defaults stay
+// unknown so the outer call default keeps deferring.
+std::optional<bool> tryCanonicalScalarConvertingConstructorNoexcept(CanonicalTypeTable& table, TypeId target_class, const ASTNode& argument) {
+	if (!isCanonicalNothrowLiteralExpression(argument) || !table.hasRecordConstructors(target_class)) {
+		return std::nullopt;
+	}
+	const std::optional<TypeId> argument_type = tryCanonicalDefaultLiteralType(table, argument);
+	if (!argument_type.has_value()) {
+		return std::nullopt;
+	}
+	if (!table.hasRecordProperties(target_class)) {
+		return std::nullopt;
+	}
+	if (!hasCanonicalRecordFact(table.recordProperties(target_class).facts, CanonicalRecordFacts::NothrowDestructible)) {
+		return false;
+	}
+	const CanonicalConstructorArgument selection_argument{*argument_type, false};
+	const CanonicalConstructorSelection selection = selectCanonicalConstructor(
+		table, target_class, std::span<const CanonicalConstructorArgument>(&selection_argument, 1),
+		CanonicalConstructorSelectionPolicy::RequireCompleteSchema);
+	if (selection.status != CanonicalConstructorSelectionStatus::Selected) {
+		return std::nullopt;
+	}
+	if (!selection.is_noexcept || selection.omitted_defaults_known_throwing) {
+		return false;
+	}
+	if (selection.omitted_default_count > 0 && !selection.omitted_defaults_nothrow) {
+		return std::nullopt;
+	}
+	return true;
+}
+
+// A class-typed default may be a constructor call that sema has not resolved
+// yet. Resolve it from the constructed class's published schema when every
+// argument is a scalar literal and exactly one public non-explicit constructor
+// with a scalar parameter is viable. A null result leaves the exception fact
+// unknown.
+std::optional<bool> tryCanonicalConstructorCallDefaultNoexcept(CanonicalTypeTable& table, const ConstructorCallNode& call) {
+	const std::optional<TypeId> imported = tryImportSupportedCanonicalWithClassFallback(table, call.type_node());
+	if (!imported.has_value() || !table.hasRecordConstructors(*imported)) {
+		return std::nullopt;
+	}
+	const size_t constructor_count = table.recordConstructorCount(*imported);
+	for (size_t index = 0; index < constructor_count; ++index) {
+		if (hasCanonicalRecordFunctionFlag(table.recordConstructorAt(*imported, index).flags, CanonicalRecordFunctionFlags::SchemaIncomplete)) {
+			return std::nullopt;
+		}
+	}
+	const auto& arguments = call.arguments();
+	size_t viable_count = 0;
+	size_t known_throwing_candidate_count = 0;
+	size_t undecidable_candidate_count = 0;
+	bool selected_noexcept = false;
+	bool selected_defaults_nothrow = false;
+	bool selected_defaults_known_throwing = false;
+	bool selected_uses_class_parameter = false;
+	for (size_t index = 0; index < constructor_count; ++index) {
+		const CanonicalRecordConstructor constructor = table.recordConstructorAt(*imported, index);
+		if (hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Explicit) ||
+			hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::NonPublic) ||
+			arguments.size() < constructor.minimum_parameter_count ||
+			(!hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Variadic) && arguments.size() > constructor.parameter_count)) {
+			continue;
+		}
+		bool matches = true;
+		bool candidate_known_throwing = false;
+		bool candidate_undecidable = false;
+		bool candidate_uses_class_parameter = false;
+		const size_t matched_parameter_count = std::min(arguments.size(), static_cast<size_t>(constructor.parameter_count));
+		for (size_t parameter = 0; parameter < matched_parameter_count; ++parameter) {
+			const TypeId parameter_type = table.recordConstructorParameterAt(*imported, index, parameter);
+			const CanonicalTypeNode raw_parameter = table.node(parameter_type);
+			if ((raw_parameter.kind == CanonicalTypeKind::LValueReference || raw_parameter.kind == CanonicalTypeKind::RValueReference) &&
+				raw_parameter.child && table.withoutTopLevelQualifiers(raw_parameter.child) == *imported) {
+				matches = false;
+				break;  // copy/move constructor, not a converting constructor
+			}
+			TypeId parameter_object = parameter_type;
+			while (table.node(parameter_object).kind == CanonicalTypeKind::LValueReference ||
+				table.node(parameter_object).kind == CanonicalTypeKind::RValueReference) {
+				parameter_object = table.node(parameter_object).child;
+			}
+			const TypeId parameter_target = table.withoutTopLevelQualifiers(parameter_object);
+			const CanonicalTypeNode parameter_node = table.node(parameter_target);
+			if (parameter_node.kind == CanonicalTypeKind::Builtin) {
+				if (!isCanonicalNothrowLiteralExpression(arguments[parameter])) {
+					matches = false;
+					candidate_undecidable = true;
+					break;
+				}
+			} else if (isCanonicalClassTypeKind(parameter_node.kind)) {
+				const std::optional<bool> conversion = tryCanonicalScalarConvertingConstructorNoexcept(table, parameter_target, arguments[parameter]);
+				if (!conversion.has_value()) {
+					matches = false;
+					candidate_undecidable = true;
+					break;
+				}
+				if (!*conversion) {
+					matches = false;
+					candidate_known_throwing = true;
+					break;
+				}
+				candidate_uses_class_parameter = true;
+			} else {
+				matches = false;
+				candidate_undecidable = true;
+				break;
+			}
+		}
+		if (matches) {
+			for (size_t parameter = matched_parameter_count; parameter < arguments.size(); ++parameter) {
+				if (!isCanonicalNothrowLiteralExpression(arguments[parameter])) {
+					matches = false;
+					candidate_undecidable = true;
+					break;
+				}
+			}
+		}
+		if (!matches) {
+			if (candidate_known_throwing) {
+				++known_throwing_candidate_count;
+			} else if (candidate_undecidable) {
+				++undecidable_candidate_count;
+			}
+			continue;
+		}
+		++viable_count;
+		selected_noexcept = constructor.is_noexcept != 0;
+		selected_defaults_nothrow = true;
+		selected_defaults_known_throwing = false;
+		selected_uses_class_parameter = candidate_uses_class_parameter;
+		if (arguments.size() < constructor.parameter_count) {
+			const size_t omitted = static_cast<size_t>(constructor.parameter_count) - arguments.size();
+			selected_defaults_nothrow = constructor.nothrow_default_count >= omitted;
+			selected_defaults_known_throwing = !selected_defaults_nothrow && constructor.last_known_throwing_default != std::numeric_limits<uint16_t>::max() &&
+				static_cast<size_t>(constructor.last_known_throwing_default) >= arguments.size();
+		}
+	}
+	if (viable_count == 0) {
+		if (known_throwing_candidate_count > 0 && undecidable_candidate_count == 0) {
+			return false;
+		}
+		return std::nullopt;
+	}
+	if (viable_count != 1) {
+		return std::nullopt;
+	}
+	if ((known_throwing_candidate_count > 0 || undecidable_candidate_count > 0) && selected_uses_class_parameter) {
+		return std::nullopt;
+	}
+	if (!selected_noexcept || selected_defaults_known_throwing) {
+		return false;
+	}
+	if (!selected_defaults_nothrow) {
+		return std::nullopt;
+	}
+	return true;
+}
+
+// A call default is nothrow when the resolved target is noexcept, its return
+// type has no user-defined conversion, and every argument is a scalar literal.
+bool isCanonicalNothrowCallDefault(const CallExprNode& call) {
+	const FunctionDeclarationNode* function = call.callee().function_declaration_or_null();
+	if (function == nullptr || !function->is_noexcept()) {
+		return false;
+	}
+	const ASTNode& return_type_node = function->decl_node().type_node();
+	if (!return_type_node.is<TypeSpecifierNode>() || is_struct_type(return_type_node.as<TypeSpecifierNode>().category())) {
+		return false;
+	}
+	for (const ASTNode& argument : call.arguments()) {
+		if (!isCanonicalNothrowLiteralExpression(argument)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// Prove both literal evaluation and builtin arithmetic parameter initialization.
+// A class-typed default may also be a fully specified call to a noexcept
+// constructor whose scalar literal arguments and destructor are nothrow.
+// Other expressions and parameter families leave the exception fact unknown.
+bool isCanonicalNothrowLiteralDefault(CanonicalTypeTable& table, TypeId parameter_type, const ASTNode& initializer) {
+	TypeId parameter_type_without_reference = table.withoutTopLevelQualifiers(parameter_type);
+	while (table.node(parameter_type_without_reference).kind == CanonicalTypeKind::LValueReference ||
+		table.node(parameter_type_without_reference).kind == CanonicalTypeKind::RValueReference) {
+		parameter_type_without_reference = table.withoutTopLevelQualifiers(table.node(parameter_type_without_reference).child);
+	}
+	const CanonicalTypeNode parameter = table.node(parameter_type_without_reference);
+	const ExpressionNode* expression = initializer.get_if<ExpressionNode>();
+	if (!isCanonicalClassTypeKind(parameter.kind) && expression != nullptr) {
+		if (const CallExprNode* call = std::get_if<CallExprNode>(expression)) {
+			return isCanonicalNothrowCallDefault(*call);
+		}
+	}
+	if (parameter.kind == CanonicalTypeKind::Pointer) {
+		if (expression == nullptr) {
+			return false;
+		}
+		const NumericLiteralNode* literal = std::get_if<NumericLiteralNode>(expression);
+		if (literal == nullptr) {
+			return false;
+		}
+		const NumericLiteralValue value = literal->value();
+		const auto* integral_value = std::get_if<unsigned long long>(&value);
+		return integral_value != nullptr && *integral_value == 0;
+	}
+	if (isCanonicalClassTypeKind(parameter.kind)) {
+		if (expression == nullptr || !table.hasRecordProperties(parameter_type_without_reference) ||
+			!hasCanonicalRecordFact(table.recordProperties(parameter_type_without_reference).facts, CanonicalRecordFacts::NothrowDestructible)) {
+			return false;
+		}
+		const ConstructorCallNode* constructor_call = std::get_if<ConstructorCallNode>(expression);
+		if (constructor_call == nullptr) {
+			return false;
+		}
+		const ConstructorDeclarationNode* constructor = constructor_call->resolved_constructor();
+		if (constructor == nullptr) {
+			return tryCanonicalConstructorCallDefaultNoexcept(table, *constructor_call).value_or(false);
+		}
+		if (!constructor->is_noexcept()) {
+			return false;
+		}
+		const std::span<const ASTNode> parameters = constructor->parameter_nodes();
+		const auto& arguments = constructor_call->arguments();
+		if (arguments.size() != parameters.size()) {
+			return false;  // omitted nested defaults may throw independently
+		}
+		for (size_t index = 0; index < arguments.size(); ++index) {
+			if (!parameters[index].is<DeclarationNode>()) {
+				return false;
+			}
+			const TypeSpecifierNode& nested_parameter = parameters[index].as<DeclarationNode>().type_specifier_node();
+			if (is_struct_type(nested_parameter.category()) || !isCanonicalNothrowLiteralExpression(arguments[index])) {
+				return false;
+			}
+		}
+		return true;
+	}
+	if (parameter.kind != CanonicalTypeKind::Builtin || parameter.builtin == CanonicalBuiltinKind::Void ||
+		parameter.builtin == CanonicalBuiltinKind::Nullptr || parameter.builtin == CanonicalBuiltinKind::Count) {
+		return false;
+	}
+	return isCanonicalNothrowLiteralExpression(initializer);
+}
+
+// Prove a default expression can throw when its call target is known not to be
+// noexcept. Unresolved targets stay unknown so the compatibility path is not
+// made less accurate for constructors whose defaults cannot yet be classified.
+bool isCanonicalKnownThrowingDefault(CanonicalTypeTable& table, const ASTNode& initializer) {
+	if (initializer.is<InitializerListNode>()) {
+		for (const ASTNode& element : initializer.as<InitializerListNode>().initializers()) {
+			if (isCanonicalKnownThrowingDefault(table, element)) {
+				return true;
+			}
+		}
+		return false;
+	}
+	const ExpressionNode* expression = initializer.get_if<ExpressionNode>();
+	if (expression == nullptr) {
+		return false;
+	}
+	if (std::holds_alternative<ThrowExpressionNode>(*expression) || std::holds_alternative<NewExpressionNode>(*expression)) {
+		return true;
+	}
+	if (const CallExprNode* call = std::get_if<CallExprNode>(expression)) {
+		const FunctionDeclarationNode* function = call->callee().function_declaration_or_null();
+		if (function != nullptr && !function->is_noexcept()) {
+			return true;
+		}
+		if (function == nullptr && call->call_kind() == CalleeKind::IndirectCall) {
+			return true;
+		}
+		for (const ASTNode& argument : call->arguments()) {
+			if (isCanonicalKnownThrowingDefault(table, argument)) {
+				return true;
+			}
+		}
+		return false;
+	}
+	if (const ConstructorCallNode* constructor_call = std::get_if<ConstructorCallNode>(expression)) {
+		const ConstructorDeclarationNode* constructor = constructor_call->resolved_constructor();
+		if (constructor != nullptr) {
+			if (!constructor->is_noexcept()) {
+				return true;
+			}
+		} else {
+			const std::optional<TypeId> constructed = tryImportSupportedCanonicalWithClassFallback(table, constructor_call->type_node());
+			if (constructed.has_value() && table.hasRecordProperties(*constructed) &&
+				!hasCanonicalRecordFact(table.recordProperties(*constructed).facts, CanonicalRecordFacts::NothrowDestructible)) {
+				return true;
+			}
+			if (const std::optional<bool> noexcept_result = tryCanonicalConstructorCallDefaultNoexcept(table, *constructor_call);
+				noexcept_result.has_value() && !*noexcept_result) {
+				return true;
+			}
+		}
+		for (const ASTNode& argument : constructor_call->arguments()) {
+			if (isCanonicalKnownThrowingDefault(table, argument)) {
+				return true;
+			}
+		}
+		return false;
+	}
+	if (const BinaryOperatorNode* binary = std::get_if<BinaryOperatorNode>(expression)) {
+		if (const StructMemberFunction* member = binary->resolved_member_operator_overload();
+			member != nullptr && member->function_decl.is<FunctionDeclarationNode>() && !member->function_decl.as<FunctionDeclarationNode>().is_noexcept()) {
+			return true;
+		}
+		if (const FunctionDeclarationNode* function = binary->resolved_free_function_operator_overload();
+			function != nullptr && !function->is_noexcept()) {
+			return true;
+		}
+		return isCanonicalKnownThrowingDefault(table, binary->get_lhs()) || isCanonicalKnownThrowingDefault(table, binary->get_rhs());
+	}
+	if (const UnaryOperatorNode* unary = std::get_if<UnaryOperatorNode>(expression)) {
+		const FunctionDeclarationNode* function = unary->resolved_arithmetic_operator();
+		if (function != nullptr && !function->is_noexcept()) {
+			return true;
+		}
+		return isCanonicalKnownThrowingDefault(table, unary->get_operand());
+	}
+	if (const MemberAccessNode* member_access = std::get_if<MemberAccessNode>(expression)) {
+		return isCanonicalKnownThrowingDefault(table, member_access->object());
+	}
+	if (const PointerToMemberAccessNode* member_access = std::get_if<PointerToMemberAccessNode>(expression)) {
+		return isCanonicalKnownThrowingDefault(table, member_access->object()) || isCanonicalKnownThrowingDefault(table, member_access->member_pointer());
+	}
+	if (const ArraySubscriptNode* subscript = std::get_if<ArraySubscriptNode>(expression)) {
+		return isCanonicalKnownThrowingDefault(table, subscript->array_expr()) || isCanonicalKnownThrowingDefault(table, subscript->index_expr());
+	}
+	if (const InitializerListConstructionNode* construction = std::get_if<InitializerListConstructionNode>(expression)) {
+		for (const ASTNode& element : construction->elements()) {
+			if (isCanonicalKnownThrowingDefault(table, element)) {
+				return true;
+			}
+		}
+		return false;
+	}
+	if (const TernaryOperatorNode* ternary = std::get_if<TernaryOperatorNode>(expression)) {
+		return isCanonicalKnownThrowingDefault(table, ternary->condition()) || isCanonicalKnownThrowingDefault(table, ternary->true_expr()) ||
+			isCanonicalKnownThrowingDefault(table, ternary->false_expr());
+	}
+	return false;
+}
+
+std::optional<TypeId> tryCanonicalDefaultLiteralType(CanonicalTypeTable& table, const ASTNode& initializer) {
+	const ExpressionNode* expression = initializer.get_if<ExpressionNode>();
+	if (expression == nullptr) {
+		return std::nullopt;
+	}
+	if (const NumericLiteralNode* literal = std::get_if<NumericLiteralNode>(expression)) {
+		const std::optional<CanonicalBuiltinKind> builtin = canonicalBuiltinForSignedness(literal->type());
+		if (builtin.has_value()) {
+			return table.builtin(*builtin);
+		}
+		return std::nullopt;
+	}
+	if (std::holds_alternative<BoolLiteralNode>(*expression)) {
+		return table.builtin(CanonicalBuiltinKind::Bool);
+	}
+	return std::nullopt;
+}
+
+// A class-typed default parameter performs an implicit conversion during
+// parameter initialization. If a simple literal selects one canonical
+// constructor and that constructor is not noexcept, the default is known to
+// throw independently of the enclosing constructor's exception specification.
+bool isCanonicalKnownThrowingConversionDefault(CanonicalTypeTable& table, TypeId parameter_type, const ASTNode& initializer) {
+	parameter_type = table.withoutTopLevelQualifiers(parameter_type);
+	if (!isCanonicalClassTypeKind(table.node(parameter_type).kind) || !table.hasRecordConstructors(parameter_type)) {
+		return false;
+	}
+	const std::optional<TypeId> argument_type = tryCanonicalDefaultLiteralType(table, initializer);
+	if (!argument_type.has_value()) {
+		return false;
+	}
+	std::optional<bool> selected_nothrow;
+	size_t match_count = 0;
+	const size_t constructor_count = table.recordConstructorCount(parameter_type);
+	for (size_t index = 0; index < constructor_count; ++index) {
+		const CanonicalRecordConstructor candidate = table.recordConstructorAt(parameter_type, index);
+		if (hasCanonicalRecordFunctionFlag(candidate.flags, CanonicalRecordFunctionFlags::SchemaIncomplete)) {
+			return false;
+		}
+		const bool variadic = hasCanonicalRecordFunctionFlag(candidate.flags, CanonicalRecordFunctionFlags::Variadic);
+		if (1 < candidate.minimum_parameter_count || (!variadic && candidate.parameter_count < 1)) {
+			continue;
+		}
+		if (table.recordConstructorParameterAt(parameter_type, index, 0) != *argument_type) {
+			continue;
+		}
+		++match_count;
+		selected_nothrow = candidate.is_noexcept != 0;
+	}
+	return match_count == 1 && selected_nothrow.has_value() && !*selected_nothrow;
+}
+
 
 namespace {
 
