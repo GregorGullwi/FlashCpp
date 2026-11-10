@@ -37,13 +37,13 @@ def write_text(path, text):
 # whether a translation unit can reuse the pristine object: a mutation that
 # leaves a TU's inputs byte-identical cannot change that TU's object.
 PROJECT_FILES = ("CanonicalTypes.h", "CanonicalTypes.cpp", "CanonicalTypeAdapter.h",
-                 "ArenaAccounting.h", "TemplateDeclTable.h", "FrontendContext.h",
-                 "ArenaDomains.h", "DeclarationBuilder.h")
+                 "CanonicalDefaultFacts.h", "ArenaAccounting.h", "TemplateDeclTable.h",
+                 "FrontendContext.h", "ArenaDomains.h", "DeclarationBuilder.h")
 # The regression source includes the adapter and template tables; the
 # implementation only includes CanonicalTypes.h (which pulls ArenaAccounting.h).
-TEST_TU_INPUTS = ("CanonicalTypes.h", "CanonicalTypeAdapter.h", "ArenaAccounting.h",
-                  "TemplateDeclTable.h", "FrontendContext.h", "ArenaDomains.h",
-                  "DeclarationBuilder.h")
+TEST_TU_INPUTS = ("CanonicalTypes.h", "CanonicalTypeAdapter.h", "CanonicalDefaultFacts.h",
+                  "ArenaAccounting.h", "TemplateDeclTable.h", "FrontendContext.h",
+                  "ArenaDomains.h", "DeclarationBuilder.h")
 IMPL_TU_INPUTS = ("CanonicalTypes.h", "CanonicalTypes.cpp", "ArenaAccounting.h")
 OBJECT_SUFFIX = ".obj" if sys.platform == "win32" else ".o"
 
