@@ -3611,7 +3611,7 @@ inline bool TypeSpecifierNode::matches_signature(const TypeSpecifierNode& other)
 		if (effective.category == TypeCategory::Invalid) {
 			effective.category = type_spec.type_index_.category();
 		}
-		effective.pointer_depth = type_spec.pointer_levels_.size() + resolved_alias.pointer_depth;
+		effective.pointer_depth = type_spec.runtime_pointer_depth() + resolved_alias.runtimePointerDepth();
 		effective.cv_qualifier = type_spec.cv_qualifier_ | resolved_alias.cv_qualifier;
 		effective.reference_qualifier = type_spec.reference_qualifier_ != ReferenceQualifier::None
 			? type_spec.reference_qualifier_
