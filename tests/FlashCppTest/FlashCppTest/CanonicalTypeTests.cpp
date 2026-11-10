@@ -11099,8 +11099,9 @@ TEST_CASE("Canonical member-function schema publishes lookup metadata") {
 			.signature = int_type,
 			.flags = CanonicalMemberFunctionFlags::Constexpr,
 			.cv_qualifier = CVQualifier::Const,
+			.ordinal = 3,
 		},
-		CanonicalMemberFunctionSpec{.signature = int_type, .flags = CanonicalMemberFunctionFlags::ConversionOperator},
+		CanonicalMemberFunctionSpec{.signature = int_type, .flags = CanonicalMemberFunctionFlags::ConversionOperator, .ordinal = 5},
 	};
 	table.publishMemberFunctionSchema(owner, functions);
 	REQUIRE(table.hasMemberFunctionSchema(owner));
@@ -11110,6 +11111,12 @@ TEST_CASE("Canonical member-function schema publishes lookup metadata") {
 	CHECK(first.cv_qualifier == CVQualifier::Const);
 	CHECK(first.name);
 	CHECK(first.signature == int_type);
+	CHECK(first.ordinal == 3);
+	CHECK(table.hasMemberFunctionName(owner, "size"));
+	CHECK_FALSE(table.hasMemberFunctionName(owner, "missing"));
+	const std::optional<uint16_t> named = table.tryFindMemberFunctionByNameAndSignature(owner, "size", int_type);
+	REQUIRE(named.has_value());
+	CHECK(*named == 3);
 
 	const TypeId operator_owner = table.record(EntityId{906002});
 	const std::array<CanonicalMemberFunctionSpec, 1> operator_functions{

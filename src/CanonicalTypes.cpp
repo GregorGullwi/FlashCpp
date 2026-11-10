@@ -1819,6 +1819,7 @@ void CanonicalTypeTable::publishMemberFunctionSchema(TypeId type, std::span<cons
 			.cv_qualifier = function.cv_qualifier,
 			.ref_qualifier = function.ref_qualifier,
 			.reserved = 0,
+			.ordinal = function.ordinal,
 		});
 	}
 	const auto existing = member_function_schema_ids_.find(type.value);
@@ -1903,6 +1904,41 @@ std::optional<size_t> CanonicalTypeTable::tryFindMemberFunctionByOperator(TypeId
 		const CanonicalMemberFunction& function = member_functions_[header.function_begin + index];
 		if (function.operator_kind == operator_kind) {
 			return index;
+		}
+	}
+	return std::nullopt;
+}
+
+bool CanonicalTypeTable::hasMemberFunctionName(TypeId type, std::string_view name) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const auto found = member_function_schema_ids_.find(type.value);
+	if (!type || found == member_function_schema_ids_.end()) {
+		return false;
+	}
+	const CanonicalMemberFunctionSchemaHeader header = member_function_schema_headers_[found->second];
+	for (size_t index = 0; index < header.function_count; ++index) {
+		const CanonicalMemberFunction& function = member_functions_[header.function_begin + index];
+		if (function.name && nameBytesEqualUnlocked(function.name, name)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+std::optional<uint16_t> CanonicalTypeTable::tryFindMemberFunctionByNameAndSignature(
+	TypeId type, std::string_view name, TypeId signature) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const auto found = member_function_schema_ids_.find(type.value);
+	if (!type || found == member_function_schema_ids_.end()) {
+		return std::nullopt;
+	}
+	const CanonicalMemberFunctionSchemaHeader header = member_function_schema_headers_[found->second];
+	for (size_t index = 0; index < header.function_count; ++index) {
+		const CanonicalMemberFunction& function = member_functions_[header.function_begin + index];
+		if (function.signature == signature && function.name && nameBytesEqualUnlocked(function.name, name)) {
+			return function.ordinal;
 		}
 	}
 	return std::nullopt;
