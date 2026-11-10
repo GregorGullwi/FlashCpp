@@ -627,7 +627,7 @@ ParseResult Parser::parse_template_parameter() {
 						FunctionSignature func_sig;
 						func_sig.setReturnType(makeFunctionType(nttp_type));
 						func_sig.return_type_index = nttp_type.type_index();
-						func_sig.return_pointer_depth = static_cast<int>(nttp_type.pointer_depth());
+						func_sig.return_pointer_depth = static_cast<int>(nttp_type.runtime_pointer_depth());
 						func_sig.return_reference_qualifier = nttp_type.reference_qualifier();
 						func_sig.setParameterTypes(std::move(fp_param_types));
 						func_sig.calling_convention = fp_calling_convention;
@@ -712,7 +712,7 @@ ParseResult Parser::parse_template_parameter() {
 								FunctionSignature mfp_sig;
 								mfp_sig.setReturnType(makeFunctionType(nttp_type));
 								mfp_sig.return_type_index = nttp_type.type_index();
-								mfp_sig.return_pointer_depth = static_cast<int>(nttp_type.pointer_depth());
+								mfp_sig.return_pointer_depth = static_cast<int>(nttp_type.runtime_pointer_depth());
 								mfp_sig.return_reference_qualifier = nttp_type.reference_qualifier();
 								mfp_sig.setParameterTypes(std::move(mfp_param_types));
 								mfp_sig.calling_convention = fp_calling_convention;
@@ -2964,7 +2964,7 @@ try_type_template_argument_parse:
 						FunctionSignature func_sig;
 						func_sig.setReturnType(makeFunctionType(type_node));
 						func_sig.return_type_index = type_node.type_index();
-						func_sig.return_pointer_depth = static_cast<int>(type_node.pointer_depth());
+						func_sig.return_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());
 						func_sig.return_reference_qualifier = type_node.reference_qualifier();
 						func_sig.setParameterTypes(std::move(param_types));
 						func_sig.calling_convention = paren_calling_convention;
@@ -3029,7 +3029,7 @@ try_type_template_argument_parse:
 					FunctionSignature func_sig;
 					func_sig.setReturnType(makeFunctionType(type_node));
 					func_sig.return_type_index = type_node.type_index();
-					func_sig.return_pointer_depth = static_cast<int>(type_node.pointer_depth());
+					func_sig.return_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());
 					func_sig.return_reference_qualifier = type_node.reference_qualifier();
 					func_sig.setParameterTypes(std::move(func_param_types));
 					func_sig.calling_convention = direct_function_calling_convention;
