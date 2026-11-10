@@ -214,7 +214,7 @@ private:
 		const bool reference = element.declared_type.is_reference();
 		element.is_array = !reference && (member.is_array || isArrayObjectType(element.declared_type));
 		element.dimensions = element.declared_type.array_dimensions();
-		const bool pointer_like = element.declared_type.pointer_depth() > 0 || reference;
+		const bool pointer_like = element.declared_type.runtime_pointer_depth() > 0 || reference;
 		const bool embeds_object = !element.is_array && !pointer_like;
 		element.struct_info = (element.is_array || embeds_object) ? tryGetStructTypeInfo(element.type_index) : nullptr;
 		element.is_aggregate = element.is_array || (!pointer_like && element.struct_info != nullptr && element.struct_info->isAggregate());
@@ -236,7 +236,7 @@ private:
 		element.is_array = isArrayObjectType(element.declared_type);
 		element.dimensions = element.declared_type.array_dimensions();
 		element.root_element = frame.root_element;
-		const bool pointer_like = element.declared_type.pointer_depth() > 0 || element.declared_type.is_reference();
+		const bool pointer_like = element.declared_type.runtime_pointer_depth() > 0 || element.declared_type.is_reference();
 		element.struct_info = (pointer_like || element.is_array) ? nullptr : tryGetStructTypeInfo(element.type_index);
 		element.is_aggregate = element.is_array || (!pointer_like && element.struct_info != nullptr && element.struct_info->isAggregate());
 		element.has_elements = element.is_array ? true : (element.is_aggregate && hasAggregateElements(*element.struct_info));

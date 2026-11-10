@@ -771,7 +771,7 @@ ParseResult Parser::parse_function_declaration_with_storage_specs(
 	// nodes from it instead of parsing a token list.
 	const TypeSpecifierNode declared_type = declaration_node.type_specifier_node();
 	const bool bare_function = declared_type.category() == TypeCategory::Function && declared_type.has_function_signature() &&
-		declared_type.pointer_depth() == 0 && declared_type.reference_qualifier() == ReferenceQualifier::None &&
+		declared_type.runtime_pointer_depth() == 0 && declared_type.reference_qualifier() == ReferenceQualifier::None &&
 		!declared_type.has_member_class();
 	// [dcl.fct]: `using F = int(int); F fv;` declares int fv(int). A parameter
 	// list makes the return type a function, and the typedef cannot define it.

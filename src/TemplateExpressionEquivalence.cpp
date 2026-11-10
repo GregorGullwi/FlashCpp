@@ -193,7 +193,7 @@ bool equalTypeSpecifierIdentityImpl(const TypeSpecifierNode& lhs, const TypeSpec
 		lhs.qualifier() != rhs.qualifier() ||
 		lhs.cv_qualifier() != rhs.cv_qualifier() ||
 		lhs.reference_qualifier() != rhs.reference_qualifier() ||
-		lhs.pointer_depth() != rhs.pointer_depth() ||
+		lhs.runtime_pointer_depth() != rhs.runtime_pointer_depth() ||
 		lhs.is_array() != rhs.is_array() ||
 		lhs.has_unsized_outer_array_dimension() != rhs.has_unsized_outer_array_dimension() ||
 		lhs.array_dimension_count() != rhs.array_dimension_count() ||
@@ -244,7 +244,7 @@ size_t hashTypeSpecifierIdentityImpl(const TypeSpecifierNode& type) {
 	hashCombine(seed, std::hash<uint8_t>{}(static_cast<uint8_t>(type.qualifier())));
 	hashCombine(seed, std::hash<uint8_t>{}(static_cast<uint8_t>(type.cv_qualifier())));
 	hashCombine(seed, std::hash<uint8_t>{}(static_cast<uint8_t>(type.reference_qualifier())));
-	hashCombine(seed, std::hash<size_t>{}(type.pointer_depth()));
+	hashCombine(seed, std::hash<size_t>{}(type.runtime_pointer_depth()));
 	for (const PointerLevel& level : type.pointer_levels()) {
 		hashCombine(seed, std::hash<uint8_t>{}(static_cast<uint8_t>(level.cv_qualifier)));
 	}

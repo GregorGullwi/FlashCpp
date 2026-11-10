@@ -515,7 +515,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 				? substituted_callable_type_node.as<TypeSpecifierNode>()
 				: original_type_spec;
 		FLASH_LOG(Templates, Trace, "  substituteTemplateParameters TypeSpecifierNode: cat=", static_cast<int>(type_spec.category()),
-			" token='", type_spec.token().value(), "' pointer_depth=", static_cast<int>(type_spec.pointer_depth()));
+			" token='", type_spec.token().value(), "' pointer_depth=", static_cast<int>(type_spec.runtime_pointer_depth()));
 		const auto makeTypeSpecifierFromTemplateArg = [&](const TemplateTypeArg& arg) -> ASTNode {
 			Token substituted_token = type_spec.token();
 			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {

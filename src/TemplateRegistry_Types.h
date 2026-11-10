@@ -349,7 +349,7 @@ struct TemplateTypeArg {
 		: type_index(TypeIndex{}), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_dimensions(), member_pointer_kind(MemberPointerKind::None), member_class_name(), injected_class_declaration(nullptr), is_value(false), value(0), has_typed_value_identity(false), typed_value_identity_handle(), is_pack(false), is_dependent(false), dependent_name(), is_template_template_arg(false), template_name_handle() {}
 
 	explicit TemplateTypeArg(const TypeSpecifierNode& type_spec)
-		: type_index(makeTypeIndex(type_spec.type_index().withCategory(type_spec.type()))), ref_qualifier(type_spec.reference_qualifier()), pointer_depth(type_spec.pointer_depth()), pointer_cv_qualifiers(), cv_qualifier(type_spec.cv_qualifier()), is_array(type_spec.is_array()), pointee_array_declarator(type_spec.has_pointee_array_declarator()), array_dimensions(type_spec.array_dimensions().begin(), type_spec.array_dimensions().end()), member_pointer_kind(MemberPointerKind::None), member_class_name(type_spec.has_member_class() ? type_spec.member_class_name() : StringHandle{}), injected_class_declaration(type_spec.injected_class_declaration()), is_value(false), value(0), has_typed_value_identity(false), typed_value_identity_handle(), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle(), function_signature_handle() {
+		: type_index(makeTypeIndex(type_spec.type_index().withCategory(type_spec.type()))), ref_qualifier(type_spec.reference_qualifier()), pointer_depth(type_spec.runtime_pointer_depth()), pointer_cv_qualifiers(), cv_qualifier(type_spec.cv_qualifier()), is_array(type_spec.is_array()), pointee_array_declarator(type_spec.has_pointee_array_declarator()), array_dimensions(type_spec.array_dimensions().begin(), type_spec.array_dimensions().end()), member_pointer_kind(MemberPointerKind::None), member_class_name(type_spec.has_member_class() ? type_spec.member_class_name() : StringHandle{}), injected_class_declaration(type_spec.injected_class_declaration()), is_value(false), value(0), has_typed_value_identity(false), typed_value_identity_handle(), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle(), function_signature_handle() {
 		for (const auto& level : type_spec.pointer_levels()) {
 			pointer_cv_qualifiers.push_back(level.cv_qualifier);
 		}
@@ -1627,7 +1627,7 @@ inline TemplateTypeArg resolveTypeInfoToTemplateArg(
 inline bool typeSpecifierPreservesSurfaceModifiers(
 	const TypeSpecifierNode& type_spec) {
 	return type_spec.has_ordered_declarator() ||
-		type_spec.pointer_depth() != 0 ||
+		type_spec.runtime_pointer_depth() != 0 ||
 		type_spec.reference_qualifier() != ReferenceQualifier::None ||
 		type_spec.cv_qualifier() != CVQualifier::None ||
 		type_spec.is_array() ||

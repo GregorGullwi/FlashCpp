@@ -209,7 +209,7 @@ inline bool variableTypesCompatible(
 		return false;
 	}
 
-	if (first.pointer_depth() != second.pointer_depth()) {
+	if (first.runtime_pointer_depth() != second.runtime_pointer_depth()) {
 		return false;
 	}
 	const auto first_pointers = first.pointer_levels();
@@ -1384,7 +1384,7 @@ public:
 		if (actual.category() == TypeCategory::Struct && actual.type_index() != expected.type_index())
 			return false;
 		// Pointer depth must match (e.g. int vs int* vs int**)
-		if (actual.pointer_depth() != expected.pointer_depth())
+		if (actual.runtime_pointer_depth() != expected.runtime_pointer_depth())
 			return false;
 		// Reference qualifier must match (e.g. int& vs int&& vs int)
 		if (actual.reference_qualifier() != expected.reference_qualifier())

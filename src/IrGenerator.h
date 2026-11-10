@@ -166,7 +166,7 @@ struct LambdaInfo {
 					stored_type.cv_qualifier() == type_node.cv_qualifier() &&
 					stored_type.reference_qualifier() == type_node.reference_qualifier() &&
 					std::ranges::equal(stored_type.array_dimensions(), type_node.array_dimensions()) &&
-					stored_type.pointer_depth() == type_node.pointer_depth()) {
+					stored_type.runtime_pointer_depth() == type_node.runtime_pointer_depth()) {
 					return;
 				}
 				stored_type = type_node;

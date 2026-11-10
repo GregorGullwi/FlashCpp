@@ -496,7 +496,7 @@ private:
 			}
 			ParameterMapping decorated = *base_mapping;
 			decorated.kind = MappingKind::DependentType;
-			decorated.pointer_depth = static_cast<uint8_t>(type.pointer_depth());
+			decorated.pointer_depth = static_cast<uint8_t>(type.runtime_pointer_depth());
 			decorated.cv_qualifier = type.cv_qualifier();
 			decorated.ref_qualifier = type.reference_qualifier();
 			return decorated;
