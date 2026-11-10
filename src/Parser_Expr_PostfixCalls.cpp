@@ -51,7 +51,7 @@ std::optional<ValueCategory> inferPostfixExpressionValueCategory(Parser& parser,
 	if (!type.has_value()) {
 		return std::nullopt;
 	}
-	if (type->pointer_depth() > 0 || type->is_lvalue_reference() || orderedDeclaratorIsLvalueReference(*type)) {
+	if (type->runtime_pointer_depth() > 0 || type->is_lvalue_reference() || orderedDeclaratorIsLvalueReference(*type)) {
 		return ValueCategory::LValue;
 	}
 	return type->is_rvalue_reference() ? ValueCategory::XValue : ValueCategory::PRValue;
@@ -234,7 +234,7 @@ void attachResolvedMemberCallMetadata(
 const TypeInfo* tryResolveConcreteStructOwnerType(const TypeSpecifierNode& type_spec, bool allow_pointers) {
 	if (type_spec.is_function_pointer() ||
 		type_spec.has_function_signature() ||
-		(!allow_pointers && type_spec.pointer_depth() > 0) ||
+		(!allow_pointers && type_spec.runtime_pointer_depth() > 0) ||
 		type_spec.is_array() ||
 		!type_spec.type_index().is_valid()) {
 		return nullptr;
