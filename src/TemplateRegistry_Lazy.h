@@ -1499,10 +1499,10 @@ inline std::optional<long long> evaluateConstraintExpression(
 
 					static std::optional<long long> applyTypeSpecSizeAdjustments(
 						const TypeSpecifierNode& type_spec, long long base_size) {
-						if (type_spec.has_function_signature() && type_spec.pointer_depth() == 0) {
+						if (type_spec.has_function_signature() && type_spec.runtime_pointer_depth() == 0) {
 							return std::nullopt;
 						}
-						if (type_spec.pointer_depth() > 0 ||
+						if (type_spec.runtime_pointer_depth() > 0 ||
 							type_spec.type() == TypeCategory::FunctionPointer ||
 							type_spec.type() == TypeCategory::MemberFunctionPointer ||
 							type_spec.type() == TypeCategory::MemberObjectPointer) {
@@ -2134,7 +2134,7 @@ inline ConstraintEvaluationResult evaluateConstraint(const ASTNode& constraint_e
 						// reference collapsing match ordinary substitution (`T*`
 						// becomes the bound type with one extra pointer level).
 						TemplateTypeArg pattern;
-						pattern.pointer_depth = static_cast<uint8_t>(type_spec.pointer_depth());
+						pattern.pointer_depth = static_cast<uint8_t>(type_spec.runtime_pointer_depth());
 						pattern.cv_qualifier = type_spec.cv_qualifier();
 						pattern.ref_qualifier = type_spec.reference_qualifier();
 						for (const PointerLevel& pointer_level : type_spec.pointer_levels()) {
@@ -2145,7 +2145,7 @@ inline ConstraintEvaluationResult evaluateConstraint(const ASTNode& constraint_e
 						TemplateTypeArg type_arg;
 						type_arg.type_index = type_spec.type_index();
 						type_arg.ref_qualifier = type_spec.reference_qualifier();
-						type_arg.pointer_depth = type_spec.pointer_depth();
+						type_arg.pointer_depth = type_spec.runtime_pointer_depth();
 						type_arg.cv_qualifier = type_spec.cv_qualifier();
 						concept_args.push_back(type_arg);
 					}
@@ -2325,7 +2325,7 @@ inline ConstraintEvaluationResult evaluateConstraint(const ASTNode& constraint_e
 					}
 				}
 			}
-			return {ts.type(), ts.type_index(), static_cast<uint8_t>(ts.pointer_depth()),
+			return {ts.type(), ts.type_index(), static_cast<uint8_t>(ts.runtime_pointer_depth()),
 					ts.reference_qualifier(), ts.cv_qualifier()};
 		};
 
