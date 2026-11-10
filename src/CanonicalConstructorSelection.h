@@ -126,7 +126,8 @@ inline bool isCanonicalReferenceToClass(const CanonicalTypeTable& table, TypeId 
 }
 
 inline bool isCanonicalCopyOrMoveConstructor(const CanonicalTypeTable& table, TypeId owner, size_t index) {
-	return table.recordConstructorAt(owner, index).parameter_count == 1 &&
+	const CanonicalRecordConstructor constructor = table.recordConstructorAt(owner, index);
+	return constructor.status == CanonicalRecordConstructorStatus::Complete && constructor.parameter_count == 1 &&
 		isCanonicalReferenceToClass(table, table.recordConstructorParameterAt(owner, index, 0), owner);
 }
 
@@ -138,9 +139,9 @@ inline bool isCanonicalCopyOrMoveConstructor(const CanonicalTypeTable& table, Ty
 // defer to the compatibility resolver.
 inline bool isUsableCanonicalClassCopyConstructor(CanonicalTypeTable& table, TypeId owner, size_t index, TypeId target_class, bool accept_move) {
 	const CanonicalRecordConstructor constructor = table.recordConstructorAt(owner, index);
-	if (constructor.parameter_count != 1 || hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::NonPublic) ||
-		hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Explicit) ||
-		hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::SchemaIncomplete)) {
+	if (constructor.status != CanonicalRecordConstructorStatus::Complete || constructor.parameter_count != 1 ||
+		hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::NonPublic) ||
+		hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Explicit)) {
 		return false;
 	}
 	const CanonicalTypeNode parameter = table.node(table.recordConstructorParameterAt(owner, index, 0));
@@ -175,7 +176,12 @@ inline std::optional<ConversionPlan> tryBuildCanonicalClassStandardConversionPla
 	}
 	const size_t constructor_count = table.recordConstructorCount(target_class);
 	for (size_t index = 0; index < constructor_count; ++index) {
-		if (hasCanonicalRecordFunctionFlag(table.recordConstructorAt(target_class, index).flags, CanonicalRecordFunctionFlags::SchemaIncomplete)) {
+		const CanonicalRecordConstructor constructor = table.recordConstructorAt(target_class, index);
+		if (constructor.status == CanonicalRecordConstructorStatus::Deleted) {
+			continue;
+		}
+		if (constructor.status != CanonicalRecordConstructorStatus::Complete &&
+			canonicalConstructorArityMatches(constructor, 1)) {
 			return std::nullopt;
 		}
 	}
@@ -241,15 +247,19 @@ inline CanonicalConstructorParameterMatch matchCanonicalUserDefinedClassConversi
 		return CanonicalConstructorParameterMatch::Unknown;
 	}
 	const size_t constructor_count = table.recordConstructorCount(target_class);
-	for (size_t index = 0; index < constructor_count; ++index) {
-		if (hasCanonicalRecordFunctionFlag(table.recordConstructorAt(target_class, index).flags, CanonicalRecordFunctionFlags::SchemaIncomplete)) {
-			return CanonicalConstructorParameterMatch::Unknown;
-		}
-	}
 	size_t viable_count = 0;
 	bool has_undecidable = false;
 	for (size_t index = 0; index < constructor_count; ++index) {
 		const CanonicalRecordConstructor constructor = table.recordConstructorAt(target_class, index);
+		if (constructor.status == CanonicalRecordConstructorStatus::Deleted) {
+			continue;
+		}
+		if (constructor.status != CanonicalRecordConstructorStatus::Complete) {
+			if (canonicalConstructorArityMatches(constructor, 1)) {
+				has_undecidable = true;
+			}
+			continue;
+		}
 		if (hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Explicit) ||
 			hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::NonPublic) ||
 			constructor.minimum_parameter_count > 1 || constructor.parameter_count == 0) {
@@ -498,7 +508,10 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 	}
 	if (hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::RequireCompleteSchema)) {
 		for (size_t index = 0; index < constructor_count; ++index) {
-			if (hasCanonicalRecordFunctionFlag(table.recordConstructorAt(target_class, index).flags, CanonicalRecordFunctionFlags::SchemaIncomplete)) {
+			const CanonicalRecordConstructor constructor = table.recordConstructorAt(target_class, index);
+			if (constructor.status != CanonicalRecordConstructorStatus::Complete &&
+				constructor.status != CanonicalRecordConstructorStatus::Deleted &&
+				canonicalConstructorArityMatches(constructor, arguments.size())) {
 				result.reason = CanonicalConstructorSelectionReason::IncompleteSchema;
 				return result;
 			}
@@ -527,6 +540,15 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 	bool saw_known_throwing = false;
 	for (size_t index = 0; index < constructor_count; ++index) {
 		const CanonicalRecordConstructor constructor = table.recordConstructorAt(target_class, index);
+		if (constructor.status == CanonicalRecordConstructorStatus::Deleted) {
+			continue;
+		}
+		if (constructor.status != CanonicalRecordConstructorStatus::Complete) {
+			if (canonicalConstructorArityMatches(constructor, arguments.size())) {
+				saw_unknown = true;
+			}
+			continue;
+		}
 		if (!allow_explicit && hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Explicit)) {
 			continue;
 		}

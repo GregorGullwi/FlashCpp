@@ -1595,9 +1595,14 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 	if (!isCanonicalClassTypeKind(type_kind)) {
 		throw InternalError("canonical type: constructor schema requires a class type");
 	}
-	const auto minimumParameterCount = [](const CanonicalRecordConstructorSpec& constructor) {
-		return constructor.minimum_parameter_count == std::numeric_limits<uint16_t>::max()
+	const auto declaredParameterCount = [](const CanonicalRecordConstructorSpec& constructor) {
+		return constructor.declared_parameter_count == std::numeric_limits<uint16_t>::max()
 			? constructor.parameter_types.size()
+			: static_cast<size_t>(constructor.declared_parameter_count);
+	};
+	const auto minimumParameterCount = [&declaredParameterCount](const CanonicalRecordConstructorSpec& constructor) {
+		return constructor.minimum_parameter_count == std::numeric_limits<uint16_t>::max()
+			? declaredParameterCount(constructor)
 			: static_cast<size_t>(constructor.minimum_parameter_count);
 	};
 	const auto existing = record_constructor_schema_ids_.find(type.value);
@@ -1609,27 +1614,41 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 		uint32_t parameter_cursor = header.parameter_begin;
 		for (size_t index = 0; index < constructors.size(); ++index) {
 			const CanonicalRecordConstructor expected = record_constructors_[header.constructor_begin + index];
-			if (expected.parameter_begin != parameter_cursor || expected.parameter_count != constructors[index].parameter_types.size() ||
+			const size_t parameter_count = declaredParameterCount(constructors[index]);
+			const bool complete = constructors[index].status == CanonicalRecordConstructorStatus::Complete;
+			if (expected.parameter_begin != parameter_cursor || expected.parameter_count != parameter_count ||
 				expected.minimum_parameter_count != minimumParameterCount(constructors[index]) || expected.flags != constructors[index].flags ||
 				expected.is_noexcept != static_cast<uint8_t>(constructors[index].is_noexcept ? 1 : 0) ||
+				expected.status != constructors[index].status ||
 				expected.default_exception_bits != constructors[index].default_exception_bits) {
 				throw InternalError("canonical type: conflicting record constructor schema publication");
 			}
-			for (size_t parameter = 0; parameter < expected.parameter_count; ++parameter) {
+			if (complete && expected.parameter_count != constructors[index].parameter_types.size()) {
+				throw InternalError("canonical type: conflicting record constructor schema publication");
+			}
+			for (size_t parameter = 0; parameter < (complete ? parameter_count : 0); ++parameter) {
 				if (record_constructor_parameters_[expected.parameter_begin + parameter] != constructors[index].parameter_types[parameter]) {
 					throw InternalError("canonical type: conflicting record constructor schema publication");
 				}
 			}
-			parameter_cursor += expected.parameter_count;
+			parameter_cursor += complete ? expected.parameter_count : 0;
 		}
 		return;
 	}
 	size_t total_parameters = 0;
 	for (const CanonicalRecordConstructorSpec& constructor : constructors) {
-		const size_t parameter_count = constructor.parameter_types.size();
+		const size_t parameter_count = declaredParameterCount(constructor);
 		const size_t minimum_parameter_count = minimumParameterCount(constructor);
+		const bool complete = constructor.status == CanonicalRecordConstructorStatus::Complete;
 		if (parameter_count > std::numeric_limits<uint16_t>::max() || minimum_parameter_count > parameter_count) {
 			throw InternalError("canonical type: invalid record constructor arity");
+		}
+		if (complete) {
+			if (constructor.parameter_types.size() != parameter_count) {
+				throw InternalError("canonical type: invalid record constructor parameter payload");
+			}
+		} else if (!constructor.parameter_types.empty()) {
+			throw InternalError("canonical type: invalid record constructor parameter payload");
 		}
 		const size_t default_count = parameter_count - minimum_parameter_count;
 		const size_t encoded_defaults = std::min<size_t>(default_count, 16);
@@ -1651,19 +1670,26 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 	}
 	uint32_t parameter_cursor = parameter_begin;
 	for (const CanonicalRecordConstructorSpec& constructor : constructors) {
-		for (const TypeId parameter : constructor.parameter_types) {
-			appendSchemaEntryUnlocked(record_constructor_parameters_, live_record_constructor_parameter_count_, parameter);
+		const bool complete = constructor.status == CanonicalRecordConstructorStatus::Complete;
+		if (complete) {
+			for (const TypeId parameter : constructor.parameter_types) {
+				appendSchemaEntryUnlocked(record_constructor_parameters_, live_record_constructor_parameter_count_, parameter);
+			}
 		}
+		const uint16_t parameter_count = static_cast<uint16_t>(declaredParameterCount(constructor));
 		const CanonicalRecordConstructor entry{
 			.parameter_begin = parameter_cursor,
-			.parameter_count = static_cast<uint16_t>(constructor.parameter_types.size()),
+			.parameter_count = parameter_count,
 			.flags = constructor.flags,
 			.is_noexcept = static_cast<uint8_t>(constructor.is_noexcept ? 1 : 0),
+			.status = constructor.status,
 			.minimum_parameter_count = static_cast<uint16_t>(minimumParameterCount(constructor)),
 			.default_exception_bits = constructor.default_exception_bits,
 		};
 		appendSchemaEntryUnlocked(record_constructors_, live_record_constructor_count_, entry);
-		parameter_cursor += entry.parameter_count;
+		if (complete) {
+			parameter_cursor += parameter_count;
+		}
 	}
 	const CanonicalRecordConstructorSchemaHeader header{
 		.type = type,
@@ -1716,6 +1742,9 @@ TypeId CanonicalTypeTable::recordConstructorParameterAt(TypeId type, size_t cons
 		throw InternalError("canonical type: constructor index out of range");
 	}
 	const CanonicalRecordConstructor constructor = record_constructors_[header.constructor_begin + constructor_index];
+	if (constructor.status != CanonicalRecordConstructorStatus::Complete) {
+		throw InternalError("canonical type: constructor has no parameter types");
+	}
 	if (parameter_index >= constructor.parameter_count) {
 		throw InternalError("canonical type: constructor parameter index out of range");
 	}

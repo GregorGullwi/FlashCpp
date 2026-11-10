@@ -558,9 +558,15 @@ enum class CanonicalRecordFunctionFlags : uint8_t {
 	Implicit = 1 << 0,
 	ExplicitlyDefaulted = 1 << 1,
 	NonPublic = 1 << 2,
-	SchemaIncomplete = 1 << 3,
 	Explicit = 1 << 4,
 	Variadic = 1 << 5,
+};
+
+enum class CanonicalRecordConstructorStatus : uint8_t {
+	Complete,
+	Unimportable,
+	Conditional,
+	Deleted,
 };
 
 // Constructor schema entry for a completed record, keyed by the record's
@@ -568,7 +574,8 @@ enum class CanonicalRecordFunctionFlags : uint8_t {
 // `parameter_begin`/`parameter_count` index the table's flat parameter arena;
 // minimum_parameter_count accounts for trailing default arguments. The 2-bit
 // fields in default_exception_bits classify at most 16 defaults relative to
-// minimum_parameter_count; later defaults stay Unknown.
+// minimum_parameter_count; later defaults stay Unknown. Non-complete status
+// entries carry only an arity range: they have no parameter types.
 enum class CanonicalDefaultException : uint8_t {
 	Unknown = 0,
 	Nothrow = 1,
@@ -580,6 +587,7 @@ struct CanonicalRecordConstructor {
 	uint16_t parameter_count;
 	CanonicalRecordFunctionFlags flags;
 	uint8_t is_noexcept;
+	CanonicalRecordConstructorStatus status;
 	uint16_t minimum_parameter_count;
 	uint32_t default_exception_bits;
 	friend bool operator==(CanonicalRecordConstructor, CanonicalRecordConstructor) = default;
@@ -614,6 +622,10 @@ struct CanonicalRecordConstructorSpec {
 	// The max-value sentinel means every declared parameter is required.
 	uint16_t minimum_parameter_count = std::numeric_limits<uint16_t>::max();
 	uint32_t default_exception_bits = 0;
+	CanonicalRecordConstructorStatus status = CanonicalRecordConstructorStatus::Complete;
+	// The max-value sentinel derives the count from parameter_types. Status
+	// entries use it to publish an arity range without parameter types.
+	uint16_t declared_parameter_count = std::numeric_limits<uint16_t>::max();
 };
 
 inline CanonicalRecordFunctionFlags operator|(CanonicalRecordFunctionFlags a, CanonicalRecordFunctionFlags b) {
@@ -621,6 +633,17 @@ inline CanonicalRecordFunctionFlags operator|(CanonicalRecordFunctionFlags a, Ca
 }
 inline bool hasCanonicalRecordFunctionFlag(CanonicalRecordFunctionFlags flags, CanonicalRecordFunctionFlags bit) {
 	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
+}
+
+inline bool canonicalConstructorArityMatches(const CanonicalRecordConstructor& constructor, size_t argument_count) {
+	if (argument_count < constructor.minimum_parameter_count) {
+		return false;
+	}
+	if (argument_count > constructor.parameter_count &&
+		!hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Variadic)) {
+		return false;
+	}
+	return true;
 }
 
 inline CanonicalRecordMemberFlags operator|(CanonicalRecordMemberFlags a, CanonicalRecordMemberFlags b) {

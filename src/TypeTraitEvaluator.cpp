@@ -38,14 +38,6 @@ std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgument(cons
 	if (!table.hasRecordConstructors(target_class)) {
 		return std::nullopt;
 	}
-	bool has_incomplete_schema = false;
-	const size_t constructor_count = table.recordConstructorCount(target_class);
-	for (size_t index = 0; index < constructor_count; ++index) {
-		if (hasCanonicalRecordFunctionFlag(table.recordConstructorAt(target_class, index).flags, CanonicalRecordFunctionFlags::SchemaIncomplete)) {
-			has_incomplete_schema = true;
-			break;
-		}
-	}
 	const bool source_is_lvalue = table.node(source_import.type).kind == CanonicalTypeKind::LValueReference;
 	const bool is_null_pointer_constant = argument_node != nullptr && isIntegerLiteralZeroNullPointerConstant(*argument_node) &&
 		(source_type.category() == TypeCategory::Nullptr || isIntegralType(source_type.category()));
@@ -56,7 +48,7 @@ std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgument(cons
 	if (selection.status == CanonicalConstructorSelectionStatus::Selected) {
 		return true;
 	}
-	if (selection.status == CanonicalConstructorSelectionStatus::Unknown || has_incomplete_schema) {
+	if (selection.status == CanonicalConstructorSelectionStatus::Unknown) {
 		return std::nullopt;
 	}
 	return false;
@@ -401,8 +393,14 @@ bool isCanonicalKnownThrowingConversionDefault(CanonicalTypeTable& table, TypeId
 	const size_t constructor_count = table.recordConstructorCount(parameter_type);
 	for (size_t index = 0; index < constructor_count; ++index) {
 		const CanonicalRecordConstructor candidate = table.recordConstructorAt(parameter_type, index);
-		if (hasCanonicalRecordFunctionFlag(candidate.flags, CanonicalRecordFunctionFlags::SchemaIncomplete)) {
-			return false;
+		if (candidate.status == CanonicalRecordConstructorStatus::Deleted) {
+			continue;
+		}
+		if (candidate.status != CanonicalRecordConstructorStatus::Complete) {
+			if (canonicalConstructorArityMatches(candidate, 1)) {
+				return false;
+			}
+			continue;
 		}
 		const bool variadic = hasCanonicalRecordFunctionFlag(candidate.flags, CanonicalRecordFunctionFlags::Variadic);
 		if (1 < candidate.minimum_parameter_count || (!variadic && candidate.parameter_count < 1)) {
