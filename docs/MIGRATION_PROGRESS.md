@@ -267,8 +267,9 @@ mismatched, unpublished, or unresolved owner facts.
      from published constructor schemas. Residual fallback shapes are tracked in
      [KNOWN_ISSUES](KNOWN_ISSUES.md). The nothrow query consumes published
      default-exception facts, including class constructor-call defaults with
-     omitted nested defaults, noexcept call-expression defaults, and the
-     `NothrowDestructible` record fact. Implicit copy/move candidates
+     omitted nested defaults, one scalar-to-class parameter conversion, noexcept
+     call-expression defaults, and the `NothrowDestructible` record fact.
+     Implicit copy/move candidates
      cannot obscure a builtin argument's
      better direct converting constructor. Constructor schemas retain ellipsis
      and rank extra arguments through the ellipsis conversion sequence, including
