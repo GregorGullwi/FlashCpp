@@ -14,6 +14,22 @@ struct ThrowingDtorArg {
 	~ThrowingDtorArg() noexcept(false) {}
 };
 
+struct NestedNothrowDefaults {
+	NestedNothrowDefaults(int, NothrowArg = NothrowArg(1)) noexcept {}
+};
+
+struct NestedThrowingDefaults {
+	NestedThrowingDefaults(int, ThrowingArg = ThrowingArg(1)) noexcept {}
+};
+
+struct OuterNestedNothrow {
+	OuterNestedNothrow(int, NestedNothrowDefaults = NestedNothrowDefaults(1)) noexcept {}
+};
+
+struct OuterNestedThrowing {
+	OuterNestedThrowing(int, NestedThrowingDefaults = NestedThrowingDefaults(1)) noexcept {}
+};
+
 struct NothrowDefault {
 	NothrowDefault(int, NothrowArg = NothrowArg(1)) noexcept {}
 };
@@ -34,6 +50,8 @@ static_assert(__is_nothrow_constructible(NothrowDefault, int), "noexcept nested 
 static_assert(__is_nothrow_constructible(NothrowRefDefault, int), "noexcept nested constructor bound to a reference");
 static_assert(!__is_nothrow_constructible(ThrowingDefault, int), "throwing nested constructor");
 static_assert(!__is_nothrow_constructible(ThrowingDtorDefault, int), "throwing temporary destructor");
+static_assert(__is_nothrow_constructible(OuterNestedNothrow, int), "omitted nested default is proven nothrow");
+static_assert(!__is_nothrow_constructible(OuterNestedThrowing, int), "omitted nested default is known throwing");
 
 int main() {
 	return 0;

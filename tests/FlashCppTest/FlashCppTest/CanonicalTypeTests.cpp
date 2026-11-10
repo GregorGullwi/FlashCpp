@@ -10705,7 +10705,12 @@ TEST_CASE("Canonical constructor defaults prove noexcept class constructor calls
 	compile_context.setInputFile("canonical_nothrow_ctor_call_default.cpp");
 	Lexer lexer(R"(
 struct NothrowArg { NothrowArg(int) noexcept {} };
+struct ThrowingArg { ThrowingArg(int) noexcept(false) {} };
 struct NothrowDefault { NothrowDefault(int, NothrowArg = NothrowArg(1)) noexcept {} };
+struct NestedNothrowDefaults { NestedNothrowDefaults(int, NothrowArg = NothrowArg(1)) noexcept {} };
+struct NestedThrowingDefaults { NestedThrowingDefaults(int, ThrowingArg = ThrowingArg(1)) noexcept {} };
+struct OuterNestedNothrow { OuterNestedNothrow(int, NestedNothrowDefaults = NestedNothrowDefaults(1)) noexcept {} };
+struct OuterNestedThrowing { OuterNestedThrowing(int, NestedThrowingDefaults = NestedThrowingDefaults(1)) noexcept {} };
 )");
 	SemanticAnalysis sema(compile_context, gSymbolTable);
 	Parser parser(lexer, compile_context, sema);
@@ -10720,26 +10725,41 @@ struct NothrowDefault { NothrowDefault(int, NothrowArg = NothrowArg(1)) noexcept
 		REQUIRE(spec.has_type_entity());
 		return spec;
 	};
-	const TypeSpecifierNode target = class_specifier("NothrowDefault");
-	const CanonicalTypeImport imported = importCanonicalType(table, target);
-	REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
-	REQUIRE(table.hasRecordConstructors(imported.type));
-	std::optional<CanonicalRecordConstructor> selected;
-	for (size_t index = 0; index < table.recordConstructorCount(imported.type); ++index) {
-		const CanonicalRecordConstructor constructor = table.recordConstructorAt(imported.type, index);
-		if (constructor.parameter_count == 2) {
-			selected = constructor;
+	auto two_parameter_constructor = [&table, &class_specifier](std::string_view name) {
+		const TypeSpecifierNode target = class_specifier(name);
+		const CanonicalTypeImport imported = importCanonicalType(table, target);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		REQUIRE(table.hasRecordConstructors(imported.type));
+		std::optional<CanonicalRecordConstructor> selected;
+		for (size_t index = 0; index < table.recordConstructorCount(imported.type); ++index) {
+			const CanonicalRecordConstructor constructor = table.recordConstructorAt(imported.type, index);
+			if (constructor.parameter_count == 2) {
+				selected = constructor;
+			}
 		}
-	}
-	REQUIRE(selected.has_value());
-	CHECK(selected->nothrow_default_count == 1);
+		REQUIRE(selected.has_value());
+		return std::pair<TypeSpecifierNode, CanonicalRecordConstructor>{target, *selected};
+	};
 	TypeSpecifierNode argument(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 	std::array<TypeSpecifierNode, 1> arguments{argument};
-	const auto result = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, target, arguments,
-		ConstructibilityFallback::None);
-	REQUIRE(result.has_value());
-	CHECK(result->success);
-	CHECK(result->value);
+	auto check_nothrow = [&](std::string_view name) {
+		const auto [target, constructor] = two_parameter_constructor(name);
+		CHECK(constructor.nothrow_default_count == 1);
+		const auto result = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, target, arguments,
+			ConstructibilityFallback::None);
+		REQUIRE(result.has_value());
+		CHECK(result->success);
+		CHECK(result->value);
+	};
+	check_nothrow("NothrowDefault");
+	check_nothrow("OuterNestedNothrow");
+	const auto [outer_throwing_target, outer_throwing_constructor] = two_parameter_constructor("OuterNestedThrowing");
+	CHECK(outer_throwing_constructor.last_known_throwing_default == 1);
+	const auto outer_throwing = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, outer_throwing_target,
+		arguments, ConstructibilityFallback::None);
+	REQUIRE(outer_throwing.has_value());
+	CHECK(outer_throwing->success);
+	CHECK_FALSE(outer_throwing->value);
 }
 
 TEST_CASE("Canonical constructor default exception proofs are bounded and immutable") {
