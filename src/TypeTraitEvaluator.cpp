@@ -1888,6 +1888,9 @@ CanonicalRecordFacts computeCanonicalRecordFactsWithLookup(const StructTypeInfo&
 	if (struct_info.has_deleted_destructor) {
 		facts |= CanonicalRecordFacts::DestructorDeleted;
 	}
+	if (isStructNothrowDestructibleImpl(&struct_info)) {
+		facts |= CanonicalRecordFacts::NothrowDestructible;
+	}
 	if (hasTrivialSpecialMemberSetForCopying(&struct_info)) {
 		facts |= CanonicalRecordFacts::TrivialCopyingSpecialMembers;
 	}

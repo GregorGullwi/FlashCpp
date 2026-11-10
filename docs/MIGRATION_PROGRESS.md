@@ -265,10 +265,9 @@ mismatched, unpublished, or unresolved owner facts.
      copy or move constructor, unrelated class arguments with exactly one viable
      non-explicit public converting constructor, and omitted default arguments
      from published constructor schemas. Residual fallback shapes are tracked in
-     [KNOWN_ISSUES](KNOWN_ISSUES.md). The nothrow query consumes
-     published arithmetic-literal and
-     known-throwing default-expression facts; remaining default-exception gaps are
-     tracked only in [KNOWN_ISSUES](KNOWN_ISSUES.md). Implicit copy/move candidates
+     [KNOWN_ISSUES](KNOWN_ISSUES.md). The nothrow query consumes published
+     default-exception facts, including class constructor-call defaults and the
+     `NothrowDestructible` record fact. Implicit copy/move candidates
      cannot obscure a builtin argument's
      better direct converting constructor. Constructor schemas retain ellipsis
      and rank extra arguments through the ellipsis conversion sequence, including
