@@ -1682,6 +1682,7 @@ private:
 
 	// Track ASTNode addresses currently being processed in get_expression_type to prevent infinite recursion
 	mutable std::unordered_set<const void*> expression_type_resolution_stack_;
+	bool resolving_overload_in_get_expression_type_ = false;
 
 	// Track template aliases currently being resolved to prevent infinite recursion
 	std::unordered_set<std::string_view> resolving_aliases_;
