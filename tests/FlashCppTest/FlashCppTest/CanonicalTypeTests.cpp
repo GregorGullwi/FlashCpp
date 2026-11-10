@@ -4190,7 +4190,14 @@ TEST_CASE("Converting constructor class checks cannot recover unpublished inheri
 		CHECK_FALSE(hasConvertingConstructorFrom(receiver_spec, derived_spec));
 	}
 	SUBCASE("Incomplete constructor schemas fail closed when canonical covers the pair") {
-		const std::array<CanonicalRecordConstructorSpec, 1> constructors{{{{}, CanonicalRecordFunctionFlags::SchemaIncomplete, false}}};
+		const std::array<CanonicalRecordConstructorSpec, 1> constructors{
+			CanonicalRecordConstructorSpec{
+				.parameter_types = {},
+				.is_noexcept = false,
+				.status = CanonicalRecordConstructorStatus::Conditional,
+				.declared_parameter_count = 1,
+			},
+		};
 		table.publishRecordConstructors(receiver, constructors);
 		derived_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);
 		CHECK_FALSE(tryHasCanonicalImplicitConvertingConstructorForArgument(receiver_spec, derived_spec, nullptr).has_value());
@@ -4662,17 +4669,30 @@ TEST_CASE("Canonical constructor schemas accept derived arguments over non-trivi
 		const std::array<CanonicalRecordConstructorSpec, 1> consumer_constructors{{{consumer_parameters, CanonicalRecordFunctionFlags::None, true}}};
 		table.publishRecordConstructors(consumer, consumer_constructors);
 	};
+	auto publish_base_incomplete_constructor = [&table](TypeId base, TypeId consumer) {
+		const std::array<CanonicalRecordConstructorSpec, 1> base_constructors{
+			CanonicalRecordConstructorSpec{
+				.parameter_types = {},
+				.is_noexcept = true,
+				.status = CanonicalRecordConstructorStatus::Conditional,
+				.declared_parameter_count = 1,
+			},
+		};
+		table.publishRecordConstructors(base, base_constructors);
+		const std::array<TypeId, 1> consumer_parameters{base};
+		const std::array<CanonicalRecordConstructorSpec, 1> consumer_constructors{{{consumer_parameters, CanonicalRecordFunctionFlags::None, true}}};
+		table.publishRecordConstructors(consumer, consumer_constructors);
+	};
 	publish_public_base(base_type, derived_type);
 	publish_public_base(private_base_type, private_derived_type);
 	publish_public_base(incomplete_base_type, incomplete_derived_type);
 	publish_public_base(move_base_type, move_derived_type);
 	const TypeId base_reference = table.reference(table.qualify(base_type, CVQualifier::Const), ReferenceQualifier::LValueReference);
 	const TypeId private_reference = table.reference(table.qualify(private_base_type, CVQualifier::Const), ReferenceQualifier::LValueReference);
-	const TypeId incomplete_reference = table.reference(table.qualify(incomplete_base_type, CVQualifier::Const), ReferenceQualifier::LValueReference);
 	const TypeId move_reference = table.reference(move_base_type, ReferenceQualifier::RValueReference);
 	publish_base_constructor(base_type, consumer_type, base_reference, CanonicalRecordFunctionFlags::None);
 	publish_base_constructor(private_base_type, private_consumer_type, private_reference, CanonicalRecordFunctionFlags::NonPublic);
-	publish_base_constructor(incomplete_base_type, incomplete_consumer_type, incomplete_reference, CanonicalRecordFunctionFlags::SchemaIncomplete);
+	publish_base_incomplete_constructor(incomplete_base_type, incomplete_consumer_type);
 	publish_base_constructor(move_base_type, move_consumer_type, move_reference, CanonicalRecordFunctionFlags::None);
 	auto class_specifier = [](EntityId entity) {
 		TypeSpecifierNode specifier(TypeCategory::Struct, TypeQualifier::None, 32, Token{}, CVQualifier::None);
@@ -4736,8 +4756,14 @@ TEST_CASE("Canonical constructor schemas use converting constructors for unrelat
 	const std::array<TypeId, 1> source_parameters{source_type};
 	const std::array<CanonicalRecordConstructorSpec, 1> explicit_constructors{{{source_parameters, CanonicalRecordFunctionFlags::Explicit, true}}};
 	const std::array<CanonicalRecordConstructorSpec, 1> private_constructors{{{source_parameters, CanonicalRecordFunctionFlags::NonPublic, true}}};
-	const std::array<CanonicalRecordConstructorSpec, 1> incomplete_constructors{{
-		{source_parameters, CanonicalRecordFunctionFlags::SchemaIncomplete, true}}};
+	const std::array<CanonicalRecordConstructorSpec, 1> incomplete_constructors{
+		CanonicalRecordConstructorSpec{
+			.parameter_types = {},
+			.is_noexcept = true,
+			.status = CanonicalRecordConstructorStatus::Conditional,
+			.declared_parameter_count = 1,
+		},
+	};
 	const TypeId target_copy_parameter = table.reference(table.qualify(target_type, CVQualifier::Const), ReferenceQualifier::LValueReference);
 	const std::array<TypeId, 1> target_copy_parameters{target_copy_parameter};
 	const std::array<CanonicalRecordConstructorSpec, 2> target_constructors{{
@@ -10873,7 +10899,12 @@ TEST_CASE("Canonical constructor selection reports reason codes across the polic
 
 	const TypeId incomplete_schema = table.record(EntityId{904003});
 	const std::array<CanonicalRecordConstructorSpec, 1> incomplete_constructors{
-		CanonicalRecordConstructorSpec{{}, CanonicalRecordFunctionFlags::SchemaIncomplete, false},
+		CanonicalRecordConstructorSpec{
+			.parameter_types = {},
+			.is_noexcept = false,
+			.status = CanonicalRecordConstructorStatus::Conditional,
+			.declared_parameter_count = 1,
+		},
 	};
 	table.publishRecordConstructors(incomplete_schema, incomplete_constructors);
 	const CanonicalConstructorSelection incomplete =
@@ -10920,4 +10951,71 @@ TEST_CASE("Canonical constructor selection reports reason codes across the polic
 		CanonicalConstructorSelectionPolicy::AllowUserDefinedArgumentConversion |
 			CanonicalConstructorSelectionPolicy::ExistenceOnly);
 	CHECK(existence.status == CanonicalConstructorSelectionStatus::Selected);
+}
+
+TEST_CASE("Canonical constructor selection scopes non-complete statuses by arity") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
+	const std::array<TypeId, 1> int_parameters{int_type};
+	const CanonicalConstructorArgument argument{int_type, false, false, CanonicalDefaultException::Unknown};
+	const std::span<const CanonicalConstructorArgument> arguments(&argument, 1);
+	const CanonicalRecordConstructorSpec complete_int{int_parameters, CanonicalRecordFunctionFlags::None, false};
+	const CanonicalRecordConstructorSpec conditional_one{
+		.parameter_types = {},
+		.is_noexcept = false,
+		.status = CanonicalRecordConstructorStatus::Conditional,
+		.declared_parameter_count = 1,
+	};
+	const CanonicalRecordConstructorSpec conditional_two{
+		.parameter_types = {},
+		.is_noexcept = false,
+		.status = CanonicalRecordConstructorStatus::Conditional,
+		.declared_parameter_count = 2,
+	};
+	const CanonicalRecordConstructorSpec deleted_one{
+		.parameter_types = {},
+		.is_noexcept = true,
+		.status = CanonicalRecordConstructorStatus::Deleted,
+		.declared_parameter_count = 1,
+	};
+
+	const std::array<CanonicalRecordConstructorSpec, 2> unrelated_conditional{complete_int, conditional_two};
+	const TypeId unrelated_target = table.record(EntityId{905001});
+	table.publishRecordConstructors(unrelated_target, unrelated_conditional);
+	const CanonicalConstructorSelection unrelated =
+		selectCanonicalConstructor(table, unrelated_target, arguments, CanonicalConstructorSelectionPolicy::None);
+	CHECK(unrelated.status == CanonicalConstructorSelectionStatus::Selected);
+	CHECK(unrelated.constructor_index == 0);
+
+	const std::array<CanonicalRecordConstructorSpec, 2> matching_conditional{complete_int, conditional_one};
+	const TypeId matching_target = table.record(EntityId{905002});
+	table.publishRecordConstructors(matching_target, matching_conditional);
+	const CanonicalConstructorSelection matching =
+		selectCanonicalConstructor(table, matching_target, arguments, CanonicalConstructorSelectionPolicy::None);
+	CHECK(matching.status == CanonicalConstructorSelectionStatus::Unknown);
+	CHECK(matching.reason == CanonicalConstructorSelectionReason::UndecidableCandidate);
+
+	const std::array<CanonicalRecordConstructorSpec, 2> deleted_with_complete{complete_int, deleted_one};
+	const TypeId deleted_target = table.record(EntityId{905003});
+	table.publishRecordConstructors(deleted_target, deleted_with_complete);
+	const CanonicalConstructorSelection deleted =
+		selectCanonicalConstructor(table, deleted_target, arguments, CanonicalConstructorSelectionPolicy::None);
+	CHECK(deleted.status == CanonicalConstructorSelectionStatus::Selected);
+	CHECK(deleted.constructor_index == 0);
+
+	const std::array<CanonicalRecordConstructorSpec, 1> deleted_only{deleted_one};
+	const TypeId deleted_only_target = table.record(EntityId{905004});
+	table.publishRecordConstructors(deleted_only_target, deleted_only);
+	const CanonicalConstructorSelection deleted_only_selection =
+		selectCanonicalConstructor(table, deleted_only_target, arguments, CanonicalConstructorSelectionPolicy::None);
+	CHECK(deleted_only_selection.status == CanonicalConstructorSelectionStatus::NoMatch);
+
+	const CanonicalConstructorSelection required_unrelated = selectCanonicalConstructor(
+		table, unrelated_target, arguments, CanonicalConstructorSelectionPolicy::RequireCompleteSchema);
+	CHECK(required_unrelated.status == CanonicalConstructorSelectionStatus::Selected);
+	const CanonicalConstructorSelection required_matching = selectCanonicalConstructor(
+		table, matching_target, arguments, CanonicalConstructorSelectionPolicy::RequireCompleteSchema);
+	CHECK(required_matching.status == CanonicalConstructorSelectionStatus::Unknown);
+	CHECK(required_matching.reason == CanonicalConstructorSelectionReason::IncompleteSchema);
 }

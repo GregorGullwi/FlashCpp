@@ -78,10 +78,15 @@ constructors may use the class fallback, while implicit constructors preserve
 owner identity and synthesize a self reference when strict import fails. This
 removes the default/non-default and implicit/non-implicit import drift.
 
+Constructor schema entries now carry a per-candidate status: complete,
+unimportable, conditional, or deleted. Non-complete entries publish an arity
+range and no parameter types, so the service only defers when that range can
+match, and deleted candidates are non-viable instead of poisoning the schema.
+`RequireCompleteSchema` is scoped to matching arities as well.
+
 Remaining: continue with the remaining architecture items below.
 
 ## Remaining architecture items
 
 - Canonical expression-fact table keyed by `ExprId`/`TypeId` for nothrow/throwing/unknown.
 - Member-function and conversion-operator schemas so operator lookup and user-defined conversion share one source of truth.
-- Per-candidate `Unimportable` / `Conditional` / `Deleted` status and arity ranges instead of global `SchemaIncomplete`.

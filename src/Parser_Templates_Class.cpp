@@ -3322,7 +3322,9 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				if (imported_specialization.status == CanonicalTypeImportStatus::Supported) {
 					(void)tryPublishCanonicalRecordProperties(canonical_types, imported_specialization.type, *struct_info_ptr);
 					(void)tryPublishCanonicalClassBaseSchema(canonical_types, imported_specialization.type, *struct_info_ptr);
-					(void)tryPublishCanonicalRecordConstructors(canonical_types, imported_specialization.type, struct_ref, struct_info_ptr->has_deleted_constructor);
+					(void)tryPublishCanonicalRecordConstructors(canonical_types, imported_specialization.type, struct_ref,
+						struct_info_ptr->has_deleted_default_constructor, struct_info_ptr->has_deleted_copy_constructor,
+						struct_info_ptr->has_deleted_move_constructor);
 				}
 			}
 
