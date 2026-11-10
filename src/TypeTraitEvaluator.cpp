@@ -257,10 +257,25 @@ bool isCanonicalNothrowLiteralDefault(CanonicalTypeTable& table, TypeId paramete
 	return isCanonicalNothrowLiteralExpression(initializer);
 }
 
+// Read-only expression-fact lookup for recursive default analysis. A known
+// throwing fact short-circuits deeper operator and call analysis; a nothrow
+// fact settles the expression without re-walking its operands.
+CanonicalDefaultException cachedExpressionExceptionFact(CanonicalTypeTable& table, const ASTNode& expression) {
+	FrontendContext* context = FrontendContext::active();
+	if (context == nullptr || !expression.is<ExpressionNode>()) {
+		return CanonicalDefaultException::Unknown;
+	}
+	return table.expressionExceptionFact(context->dependentExpressions().intern(expression));
+}
+
 // Prove a default expression can throw when its call target is known not to be
 // noexcept. Unresolved targets stay unknown so the compatibility path is not
 // made less accurate for constructors whose defaults cannot yet be classified.
 bool isCanonicalKnownThrowingDefault(CanonicalTypeTable& table, const ASTNode& initializer) {
+	if (const CanonicalDefaultException cached = cachedExpressionExceptionFact(table, initializer);
+		cached != CanonicalDefaultException::Unknown) {
+		return cached == CanonicalDefaultException::KnownThrowing;
+	}
 	if (initializer.is<InitializerListNode>()) {
 		for (const ASTNode& element : initializer.as<InitializerListNode>().initializers()) {
 			if (isCanonicalKnownThrowingDefault(table, element)) {

@@ -11073,3 +11073,17 @@ TEST_CASE("Canonical expression exception facts publish and consume default anal
 	const ASTNode empty;
 	CHECK(canonicalExpressionExceptionFact(table, empty) == CanonicalDefaultException::Unknown);
 }
+
+TEST_CASE("Known-throwing default analysis consumes canonical operator operand facts") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	ASTNode lhs = ASTNode::emplace_node<ExpressionNode>(
+		NumericLiteralNode(Token{}, 1ULL, TypeCategory::Int, TypeQualifier::None, 32));
+	const ASTNode rhs = ASTNode::emplace_node<ExpressionNode>(
+		NumericLiteralNode(Token{}, 2ULL, TypeCategory::Int, TypeQualifier::None, 32));
+	const ExprId lhs_id = frontend.dependentExpressions().intern(lhs);
+	table.publishExpressionExceptionFact(lhs_id, CanonicalDefaultException::KnownThrowing);
+	const Token plus_token(Token::Type::Operator, std::string_view("+"), 1, 1, 0);
+	const ASTNode binary = ASTNode::emplace_node<ExpressionNode>(BinaryOperatorNode(plus_token, lhs, rhs));
+	CHECK(isCanonicalKnownThrowingDefault(table, binary));
+}
