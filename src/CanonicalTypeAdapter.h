@@ -3119,7 +3119,7 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 				CanonicalDefaultException exception = CanonicalDefaultException::Unknown;
 				if (isCanonicalNothrowLiteralDefault(table, *imported, declaration->default_value())) {
 					exception = CanonicalDefaultException::Nothrow;
-				} else if (isCanonicalKnownThrowingDefault(table, declaration->default_value()) ||
+				} else if (canonicalExpressionExceptionFact(table, declaration->default_value()) == CanonicalDefaultException::KnownThrowing ||
 						   isCanonicalKnownThrowingConversionDefault(table, *imported, declaration->default_value())) {
 					exception = CanonicalDefaultException::KnownThrowing;
 				}

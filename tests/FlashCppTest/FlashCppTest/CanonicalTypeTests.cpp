@@ -11054,3 +11054,22 @@ TEST_CASE("Canonical expression exception facts are transactional and immutable"
 	CHECK(table.hasExpressionExceptionFact(third));
 	CHECK(table.expressionExceptionFact(third) == CanonicalDefaultException::KnownThrowing);
 }
+
+TEST_CASE("Canonical expression exception facts publish and consume default analysis") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const ASTNode literal = ASTNode::emplace_node<ExpressionNode>(
+		NumericLiteralNode(Token{}, 7ULL, TypeCategory::Int, TypeQualifier::None, 32));
+	CHECK(canonicalExpressionExceptionFact(table, literal) == CanonicalDefaultException::Nothrow);
+	const ExprId literal_id = frontend.dependentExpressions().intern(literal);
+	CHECK(table.expressionExceptionFact(literal_id) == CanonicalDefaultException::Nothrow);
+
+	const ASTNode cached = ASTNode::emplace_node<ExpressionNode>(
+		NumericLiteralNode(Token{}, 9ULL, TypeCategory::Int, TypeQualifier::None, 32));
+	const ExprId cached_id = frontend.dependentExpressions().intern(cached);
+	table.publishExpressionExceptionFact(cached_id, CanonicalDefaultException::KnownThrowing);
+	CHECK(canonicalExpressionExceptionFact(table, cached) == CanonicalDefaultException::KnownThrowing);
+
+	const ASTNode empty;
+	CHECK(canonicalExpressionExceptionFact(table, empty) == CanonicalDefaultException::Unknown);
+}

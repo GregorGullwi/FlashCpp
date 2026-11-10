@@ -357,6 +357,28 @@ bool isCanonicalKnownThrowingDefault(CanonicalTypeTable& table, const ASTNode& i
 	return false;
 }
 
+CanonicalDefaultException canonicalExpressionExceptionFact(CanonicalTypeTable& table, const ASTNode& expression) {
+	FrontendContext* context = FrontendContext::active();
+	if (context == nullptr || !expression.is<ExpressionNode>()) {
+		return CanonicalDefaultException::Unknown;
+	}
+	const ExprId identity = context->dependentExpressions().intern(expression);
+	const CanonicalDefaultException cached = table.expressionExceptionFact(identity);
+	if (cached != CanonicalDefaultException::Unknown) {
+		return cached;
+	}
+	CanonicalDefaultException fact = CanonicalDefaultException::Unknown;
+	if (isCanonicalNothrowLiteralExpression(expression)) {
+		fact = CanonicalDefaultException::Nothrow;
+	} else if (isCanonicalKnownThrowingDefault(table, expression)) {
+		fact = CanonicalDefaultException::KnownThrowing;
+	}
+	if (fact != CanonicalDefaultException::Unknown) {
+		table.publishExpressionExceptionFact(identity, fact);
+	}
+	return fact;
+}
+
 std::optional<TypeId> tryCanonicalDefaultLiteralType(CanonicalTypeTable& table, const ASTNode& initializer) {
 	const ExpressionNode* expression = initializer.get_if<ExpressionNode>();
 	if (expression == nullptr) {
