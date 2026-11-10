@@ -3122,9 +3122,12 @@ inline std::optional<bool> tryCanonicalConstructorCallDefaultNoexcept(CanonicalT
 	}
 	const auto& arguments = call.arguments();
 	size_t viable_count = 0;
+	size_t known_throwing_candidate_count = 0;
+	size_t undecidable_candidate_count = 0;
 	bool selected_noexcept = false;
 	bool selected_defaults_nothrow = false;
 	bool selected_defaults_known_throwing = false;
+	bool selected_uses_class_parameter = false;
 	for (size_t index = 0; index < constructor_count; ++index) {
 		const CanonicalRecordConstructor constructor = table.recordConstructorAt(*imported, index);
 		if (hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Explicit) ||
@@ -3135,6 +3138,9 @@ inline std::optional<bool> tryCanonicalConstructorCallDefaultNoexcept(CanonicalT
 			continue;
 		}
 		bool matches = true;
+		bool candidate_known_throwing = false;
+		bool candidate_undecidable = false;
+		bool candidate_uses_class_parameter = false;
 		const size_t matched_parameter_count = std::min(arguments.size(), static_cast<size_t>(constructor.parameter_count));
 		for (size_t parameter = 0; parameter < matched_parameter_count; ++parameter) {
 			const TypeId parameter_type = table.recordConstructorParameterAt(*imported, index, parameter);
@@ -3156,36 +3162,51 @@ inline std::optional<bool> tryCanonicalConstructorCallDefaultNoexcept(CanonicalT
 			if (parameter_node.kind == CanonicalTypeKind::Builtin) {
 				if (!isCanonicalNothrowLiteralExpression(arguments[parameter])) {
 					matches = false;
+					candidate_undecidable = true;
 					break;
 				}
 			} else if (isCanonicalClassTypeKind(parameter_node.kind)) {
 				const std::optional<bool> conversion =
 					tryCanonicalScalarConvertingConstructorNoexcept(table, parameter_target, arguments[parameter]);
-				if (!conversion.has_value() || !*conversion) {
+				if (!conversion.has_value()) {
 					matches = false;
+					candidate_undecidable = true;
 					break;
 				}
+				if (!*conversion) {
+					matches = false;
+					candidate_known_throwing = true;
+					break;
+				}
+				candidate_uses_class_parameter = true;
 			} else {
 				matches = false;
+				candidate_undecidable = true;
 				break;
 			}
 		}
-		if (!matches) {
-			continue;
-		}
-		for (size_t parameter = matched_parameter_count; parameter < arguments.size(); ++parameter) {
-			if (!isCanonicalNothrowLiteralExpression(arguments[parameter])) {
-				matches = false;
-				break;
+		if (matches) {
+			for (size_t parameter = matched_parameter_count; parameter < arguments.size(); ++parameter) {
+				if (!isCanonicalNothrowLiteralExpression(arguments[parameter])) {
+					matches = false;
+					candidate_undecidable = true;
+					break;
+				}
 			}
 		}
 		if (!matches) {
+			if (candidate_known_throwing) {
+				++known_throwing_candidate_count;
+			} else if (candidate_undecidable) {
+				++undecidable_candidate_count;
+			}
 			continue;
 		}
 		++viable_count;
 		selected_noexcept = constructor.is_noexcept != 0;
 		selected_defaults_nothrow = true;
 		selected_defaults_known_throwing = false;
+		selected_uses_class_parameter = candidate_uses_class_parameter;
 		if (arguments.size() < constructor.parameter_count) {
 			const size_t omitted = static_cast<size_t>(constructor.parameter_count) - arguments.size();
 			selected_defaults_nothrow = constructor.nothrow_default_count >= omitted;
@@ -3194,7 +3215,16 @@ inline std::optional<bool> tryCanonicalConstructorCallDefaultNoexcept(CanonicalT
 				static_cast<size_t>(constructor.last_known_throwing_default) >= arguments.size();
 		}
 	}
+	if (viable_count == 0) {
+		if (known_throwing_candidate_count > 0 && undecidable_candidate_count == 0) {
+			return false;
+		}
+		return std::nullopt;
+	}
 	if (viable_count != 1) {
+		return std::nullopt;
+	}
+	if ((known_throwing_candidate_count > 0 || undecidable_candidate_count > 0) && selected_uses_class_parameter) {
 		return std::nullopt;
 	}
 	if (!selected_noexcept || selected_defaults_known_throwing) {
