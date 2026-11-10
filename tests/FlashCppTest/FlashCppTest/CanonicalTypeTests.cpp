@@ -10697,6 +10697,51 @@ TEST_CASE("Canonical constructor literal defaults need no compatibility type") {
 	CHECK_FALSE(throwing->value);
 }
 
+TEST_CASE("Canonical constructor defaults prove noexcept class constructor calls") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	CompileContext compile_context;
+	compile_context.setInputFile("canonical_nothrow_ctor_call_default.cpp");
+	Lexer lexer(R"(
+struct NothrowArg { NothrowArg(int) noexcept {} };
+struct NothrowDefault { NothrowDefault(int, NothrowArg = NothrowArg(1)) noexcept {} };
+)");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	auto class_specifier = [](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		TypeSpecifierNode spec(TypeCategory::Struct, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+		spec.set_type_index(info->registeredTypeIndex());
+		tryBindPublishedTypeEntity(spec);
+		REQUIRE(spec.has_type_entity());
+		return spec;
+	};
+	const TypeSpecifierNode target = class_specifier("NothrowDefault");
+	const CanonicalTypeImport imported = importCanonicalType(table, target);
+	REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+	REQUIRE(table.hasRecordConstructors(imported.type));
+	std::optional<CanonicalRecordConstructor> selected;
+	for (size_t index = 0; index < table.recordConstructorCount(imported.type); ++index) {
+		const CanonicalRecordConstructor constructor = table.recordConstructorAt(imported.type, index);
+		if (constructor.parameter_count == 2) {
+			selected = constructor;
+		}
+	}
+	REQUIRE(selected.has_value());
+	CHECK(selected->nothrow_default_count == 1);
+	TypeSpecifierNode argument(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	std::array<TypeSpecifierNode, 1> arguments{argument};
+	const auto result = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, target, arguments,
+		ConstructibilityFallback::None);
+	REQUIRE(result.has_value());
+	CHECK(result->success);
+	CHECK(result->value);
+}
+
 TEST_CASE("Canonical constructor default exception proofs are bounded and immutable") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();

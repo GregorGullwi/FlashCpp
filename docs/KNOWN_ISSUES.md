@@ -251,11 +251,14 @@ initializer-list expression is known to throw by recursing through its operands
 and elements. It also rejects a class-typed default initialized from a
 numeric/bool literal when one canonical constructor matches exactly and is not
 noexcept. Arithmetic/bool literal defaults bound to references and null pointer
-literals bound to pointer defaults are also proven nothrow. Nonliteral
-constructor-call defaults, reference defaults requiring general conversion
-analysis, and unresolved operator selections still need initialization and
-exception facts; those shapes continue to defer until their canonical facts are
-published.
+literals bound to pointer defaults are also proven nothrow. Class-typed defaults
+initialized by a fully specified constructor call with scalar literal arguments
+now publish nothrow or known-throwing facts from the unique canonical constructor
+candidate; canonical record facts now publish `NothrowDestructible`. Defaults
+whose nested call uses a class-typed parameter conversion, omitted nested
+defaults, reference defaults requiring general conversion analysis, and
+unresolved operator selections still need initialization and exception facts;
+those shapes continue to defer until their canonical facts are published.
 Concepts using unsupported sema-owned traits must retain an explicit unknown outcome rather than treating
 it as satisfaction or failure. Static member semantic identity must remain
 canonical through any remaining flat-consumer migration.
