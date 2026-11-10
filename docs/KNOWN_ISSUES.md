@@ -218,6 +218,18 @@ semantics (boundary 4): sema should own operator-overload resolution and result
 types, and the parser should only consume the resolved type. Re-evaluate and
 remove this re-resolution when boundary 4 starts.
 
+## Binary operator compatibility fallback removal is blocked
+
+Removing `gatherCompatibilityMembers()` from the `!left_type_id` path in
+`findBinaryOperatorOverloadWithFreeFunction` (OverloadResolution.h) breaks
+`test_inherited_operator_published_graph_ret0.cpp`: the canonical path finds
+the inherited operator but `sizeof(decltype(specialized + 5))` does not equal
+`sizeof(long long)`. The alias-resolution fix for `tryGetCanonicalOverloadClassTypeId`
+and the inherited-result-type fix in `get_overload_return_type` are in place,
+but the canonical binary path still produces the wrong result type for inherited
+operators on specialized aliases. The fallback stays until the result-type
+derivation is fixed. This is a boundary 3A item-1 sub-task.
+
 The triviality and lifetime traits still read `StructTypeInfo` and need a
 published member-property schema. A lazy-constraint member-object-pointer trait
 case remains unresolved because its member-owner identity is not published at
