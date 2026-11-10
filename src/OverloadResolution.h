@@ -3910,11 +3910,11 @@ inline ConversionPlan buildOrderedDeclaratorCompatibilityPlan(
 	stripOrderedReference(from_value);
 	if (orderedDeclaratorIsArrayObject(from_value) &&
 		(orderedDeclaratorIsPointerObject(to) ||
-			(to.category() == TypeCategory::Void && to.pointer_depth() == 1 &&
+			(to.category() == TypeCategory::Void && to.runtime_pointer_depth() == 1 &&
 				!to.is_reference()))) {
 		TypeSpecifierNode decayed_from = from_value;
 		decayOrderedArrayToPointer(decayed_from);
-		if (to.category() == TypeCategory::Void && to.pointer_depth() == 1 &&
+		if (to.category() == TypeCategory::Void && to.runtime_pointer_depth() == 1 &&
 			!to.is_function_pointer() && !to.is_reference()) {
 			const std::optional<CVQualifier> pointee_cv =
 				orderedPointerVoidPointeeCv(decayed_from);
@@ -3967,7 +3967,7 @@ inline ConversionPlan buildOrderedDeclaratorCompatibilityPlan(
 	if (!from_value.has_ordered_declarator()) {
 		return ConversionPlan::no_match();
 	}
-	if (to.category() == TypeCategory::Void && to.pointer_depth() == 1 &&
+	if (to.category() == TypeCategory::Void && to.runtime_pointer_depth() == 1 &&
 		!to.is_function_pointer() && !to.is_reference()) {
 		const std::optional<CVQualifier> pointee_cv =
 			orderedPointerVoidPointeeCv(from_value);
@@ -4199,7 +4199,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
 				from_resolved_index != to_resolved_index) {
 				// Derived* → Base* is a valid pointer conversion (C++20 [conv.ptr]/3).
-				if (from.pointer_depth() == 1 && to.pointer_depth() == 1 &&
+				if (from.runtime_pointer_depth() == 1 && to.runtime_pointer_depth() == 1 &&
 					hasUsablePublicDerivedBaseConversion(from_resolved_index, to_resolved_index)) {
 					return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
 				}
@@ -4215,7 +4215,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
 				from_resolved_index != to_resolved_index) {
 				// Derived* → Base* is valid with const qualification adjustment too.
-				if (from.pointer_depth() == 1 && to.pointer_depth() == 1 &&
+				if (from.runtime_pointer_depth() == 1 && to.runtime_pointer_depth() == 1 &&
 					pointee_qualification_is_added &&
 					hasUsablePublicDerivedBaseConversion(from_resolved_index, to_resolved_index)) {
 					return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
