@@ -487,6 +487,7 @@
     <ClInclude Include="src\TemplateFunctionSignatureShape.h" />
     <ClInclude Include="src\CanonicalTypeAdapter.h" />
     <ClInclude Include="src\CanonicalConstructorSelection.h" />
+    <ClInclude Include="src\CanonicalDefaultFacts.h" />
     <ClInclude Include="src\CanonicalTypeTraits.h" />
     <ClInclude Include="src\ArenaAccounting.h" />
     <ClInclude Include="src\TypeQualifiers.h" />

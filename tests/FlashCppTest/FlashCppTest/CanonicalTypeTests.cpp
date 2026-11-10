@@ -10754,7 +10754,7 @@ struct OuterThrowingClassParamDefault { OuterThrowingClassParamDefault(int, Nest
 	std::array<TypeSpecifierNode, 1> arguments{argument};
 	auto check_nothrow = [&](std::string_view name) {
 		const auto [target, constructor] = two_parameter_constructor(name);
-		CHECK(constructor.nothrow_default_count == 1);
+		CHECK_MESSAGE(constructor.nothrow_default_count == 1, name);
 		const auto result = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, target, arguments,
 			ConstructibilityFallback::None);
 		REQUIRE(result.has_value());
