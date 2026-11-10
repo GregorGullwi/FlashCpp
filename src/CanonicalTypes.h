@@ -580,10 +580,12 @@ struct CanonicalMemberFunction {
 	CVQualifier cv_qualifier;
 	ReferenceQualifier ref_qualifier;
 	uint8_t reserved = 0;
+	uint16_t ordinal = 0;
 	friend bool operator==(CanonicalMemberFunction, CanonicalMemberFunction) = default;
 };
 
 // Publication input for one member function. Spelling is lookup content only.
+// `ordinal` is the declaring record's member-function ordinal.
 struct CanonicalMemberFunctionSpec {
 	std::string_view name;
 	TypeId signature;
@@ -591,6 +593,7 @@ struct CanonicalMemberFunctionSpec {
 	uint8_t operator_kind = 0;
 	CVQualifier cv_qualifier = CVQualifier::None;
 	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
+	uint16_t ordinal = 0;
 };
 
 inline bool hasCanonicalMemberFunctionFlag(CanonicalMemberFunctionFlags flags, CanonicalMemberFunctionFlags bit) {
@@ -1091,6 +1094,10 @@ public:
 	CanonicalMemberFunction memberFunctionAt(TypeId type, size_t index) const;
 
 	std::optional<size_t> tryFindMemberFunctionByOperator(TypeId type, uint8_t operator_kind) const;
+
+	bool hasMemberFunctionName(TypeId type, std::string_view name) const;
+
+	std::optional<uint16_t> tryFindMemberFunctionByNameAndSignature(TypeId type, std::string_view name, TypeId signature) const;
 
 	bool hasRecordSubobjectTypes(TypeId type) const;
 

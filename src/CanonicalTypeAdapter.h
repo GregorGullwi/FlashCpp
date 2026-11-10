@@ -2070,13 +2070,15 @@ inline bool tryPublishCanonicalMemberFunctionSignatures(CanonicalTypeTable& tabl
 	signatures.reserve(record.member_functions.size());
 	std::vector<CanonicalMemberFunctionSpec> functions;
 	functions.reserve(record.member_functions.size());
-	for (const StructMemberFunction& function : record.member_functions) {
+	for (size_t function_index = 0; function_index < record.member_functions.size(); ++function_index) {
+		const StructMemberFunction& function = record.member_functions[function_index];
 		signatures.push_back(tryImportCanonicalMemberFunctionSignature(table, function, environment, arguments));
 		if (function.is_constructor || function.is_destructor) {
 			continue;
 		}
 		CanonicalMemberFunctionSpec spec;
 		spec.signature = signatures.back();
+		spec.ordinal = static_cast<uint16_t>(function_index);
 		if (function.access != AccessSpecifier::Public) {
 			spec.flags = spec.flags | CanonicalMemberFunctionFlags::NonPublic;
 		}
@@ -2153,22 +2155,9 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberFunctionPointer(C
 			continue;
 		}
 		if (!tryPublishCanonicalMemberFunctionSignatures(table, current.type, *current.record)) return std::nullopt;
-		bool has_name = false;
-		std::optional<uint16_t> matched_ordinal;
-		for (size_t index = 0; index < current.record->member_functions.size(); ++index) {
-			const StructMemberFunction& function = current.record->member_functions[index];
-			if (function.getName() != member_name) {
-				continue;
-			}
-			has_name = true;
-			if (table.memberFunctionSignatureAt(current.type, index) != expected_signature) {
-				continue;
-			}
-			if (matched_ordinal.has_value() || index > UINT16_MAX) {
-				return std::nullopt;
-			}
-			matched_ordinal = static_cast<uint16_t>(index);
-		}
+		const bool has_name = table.hasMemberFunctionName(current.type, member_name.view());
+		const std::optional<uint16_t> matched_ordinal =
+			has_name ? table.tryFindMemberFunctionByNameAndSignature(current.type, member_name.view(), expected_signature) : std::nullopt;
 		if (has_name) {
 			if (!matched_ordinal.has_value() || declaring_class.has_value()) {
 				return std::nullopt;

@@ -94,8 +94,10 @@ subexpressions before re-walking them.
 
 The canonical table now also publishes a member-function schema keyed by
 declaring class TypeId. Entries carry the canonical signature, a NameBytes
-lookup name or operator kind, cv/ref qualifiers, and static, virtual, explicit,
-deleted, variadic, and conversion-operator flags.
+lookup name or operator kind, cv/ref qualifiers, ordinal, and static, virtual,
+explicit, deleted, variadic, and conversion-operator flags. Structural
+member-function-pointer import now resolves names and signatures through this
+schema instead of walking legacy member declarations.
 
 Remaining: continue with the remaining architecture items below.
 
