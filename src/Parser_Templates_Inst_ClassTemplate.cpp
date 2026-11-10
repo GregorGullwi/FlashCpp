@@ -7828,7 +7828,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 											TemplateTypeArg inst_arg;
 											inst_arg.type_index = inst_it->second->registeredTypeIndex();
 											inst_arg.type_index.setCategory(inst_it->second->typeEnum());
-											inst_arg.pointer_depth = type_spec.pointer_depth();
+											inst_arg.pointer_depth = type_spec.runtime_pointer_depth();
 											inst_arg.ref_qualifier = type_spec.reference_qualifier();
 											inst_arg.cv_qualifier = type_spec.cv_qualifier();
 											resolved_args.push_back(inst_arg);
@@ -7858,7 +7858,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 										if (inst_it != getTypesByNameMap().end()) {
 											TemplateTypeArg inst_arg;
 											inst_arg.type_index = inst_it->second->type_index_.withCategory(TypeCategory::Struct);
-											inst_arg.pointer_depth = type_spec.pointer_depth();
+											inst_arg.pointer_depth = type_spec.runtime_pointer_depth();
 											inst_arg.ref_qualifier = type_spec.reference_qualifier();
 											inst_arg.cv_qualifier = type_spec.cv_qualifier();
 											resolved_args.push_back(inst_arg);
@@ -8828,7 +8828,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			: canonical_member_type_id;
 		struct_info->addMember(member_name_handle, stored_member_type_index, concrete_member_type_id, member_size, member_alignment, member_decl.access,
 			substituted_default_initializer, ref_qual, referenced_size_bits, is_array_member, std::move(resolved_array_dimensions),
-			member_pointee_array_declarator, static_cast<int>(substituted_type_spec.pointer_depth()),
+			member_pointee_array_declarator, static_cast<int>(substituted_type_spec.runtime_pointer_depth()),
 			resolve_bitfield_width(member_decl, effective_template_params, effective_template_args),
 			getCanonicalFunctionPointerSignature(substituted_type_spec), member_decl.is_no_unique_address, substituted_type_spec.top_level_cv_qualifier());
 		if (hasStoredTemplatePackExpansion(tryGetTypeInfo(type_spec.type_index()))) {
@@ -9770,7 +9770,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 									resolved_category = resolved_type_info->typeEnum();
 								}
 								resolved_arg.type_index = resolved_type_index.withCategory(resolved_category);
-								resolved_arg.pointer_depth = type_spec.pointer_depth();
+								resolved_arg.pointer_depth = type_spec.runtime_pointer_depth();
 								resolved_arg.ref_qualifier = type_spec.reference_qualifier();
 								resolved_arg.cv_qualifier = type_spec.cv_qualifier();
 								resolved_arg.is_pack = arg_info.is_pack;
@@ -9965,7 +9965,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 					is_array_member,
 					resolved_array_dimensions,
 					member_pointee_array_declarator,
-					static_cast<int>(substituted_type_spec.pointer_depth()),
+					static_cast<int>(substituted_type_spec.runtime_pointer_depth()),
 					resolve_bitfield_width(member_decl, template_params, template_args_to_use),
 					getCanonicalFunctionPointerSignature(substituted_type_spec),
 					member_decl.is_no_unique_address,
@@ -10860,7 +10860,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 					auto& stored_member = parsed_nested_info->members[member_idx];
 					stored_member.type_index = resolved_member_type_index;
 					stored_member.reference_qualifier = substituted_type_spec.reference_qualifier();
-					stored_member.pointer_depth = static_cast<int>(substituted_type_spec.pointer_depth());
+					stored_member.pointer_depth = static_cast<int>(substituted_type_spec.runtime_pointer_depth());
 					stored_member.is_array = is_array_member;
 					stored_member.array_dimensions = resolved_array_dimensions;
 					stored_member.pointee_array_declarator = member_pointee_array_declarator;
@@ -14222,7 +14222,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 					substituted_initializer,
 					type_spec.cv_qualifier(),
 					type_spec.reference_qualifier(),
-					/* ptr_depth */ static_cast<int>(type_spec.pointer_depth()),
+					/* ptr_depth */ static_cast<int>(type_spec.runtime_pointer_depth()),
 					is_array,
 					array_dimensions,
 					out_of_line_var.declaration,
