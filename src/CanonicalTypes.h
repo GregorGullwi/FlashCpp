@@ -628,6 +628,14 @@ struct CanonicalRecordConstructorSpec {
 	uint16_t declared_parameter_count = std::numeric_limits<uint16_t>::max();
 };
 
+// Canonical exception fact for one stamped expression identity. Facts are
+// immutable and transaction-scoped; absence means Unknown.
+struct CanonicalExpressionExceptionFact {
+	ExprId expression;
+	CanonicalDefaultException exception;
+	friend bool operator==(CanonicalExpressionExceptionFact, CanonicalExpressionExceptionFact) = default;
+};
+
 inline CanonicalRecordFunctionFlags operator|(CanonicalRecordFunctionFlags a, CanonicalRecordFunctionFlags b) {
 	return static_cast<CanonicalRecordFunctionFlags>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
 }
@@ -1048,6 +1056,14 @@ public:
 
 	TypeId recordConstructorParameterAt(TypeId type, size_t constructor_index, size_t parameter_index) const;
 
+	// Canonical expression exception facts keyed by ExprId. Facts are immutable;
+	// republishing a conflicting value throws. A missing fact is Unknown.
+	void publishExpressionExceptionFact(ExprId expression, CanonicalDefaultException exception);
+
+	bool hasExpressionExceptionFact(ExprId expression) const;
+
+	CanonicalDefaultException expressionExceptionFact(ExprId expression) const;
+
 	// Publish nested type members (typedef / using / nested class targets) keyed by
 	// EntityId. Identifier content is NameBytes; StringHandle is never stored.
 	// Equal republish is idempotent; conflicting content throws. Layout is not
@@ -1160,6 +1176,7 @@ private:
 		size_t record_constructor_schema_count;
 		size_t record_constructor_count;
 		size_t record_constructor_parameter_count;
+		size_t expression_exception_fact_count;
 	};
 
 	struct CanonicalEnumLayoutUpdate {
@@ -1396,6 +1413,7 @@ private:
 	size_t live_record_constructor_schema_count_ = 0;
 	size_t live_record_constructor_count_ = 0;
 	size_t live_record_constructor_parameter_count_ = 0;
+	size_t live_expression_exception_fact_count_ = 0;
 	SemanticArenaAccounting* accounting_ = nullptr;
 	std::vector<TransactionMark> transaction_marks_;
 	std::vector<CanonicalEnumLayoutUpdate> enum_layout_update_history_;
@@ -1444,6 +1462,10 @@ private:
 	ChunkedVector<CanonicalRecordConstructor, 16> record_constructors_;
 	ChunkedVector<TypeId, 32> record_constructor_parameters_;
 	std::unordered_map<uint32_t, size_t> record_constructor_schema_ids_;
+	// Expression exception facts are sparse and keyed by ExprId; 16 entries per
+	// chunk keeps small trait queries cheap while allowing growth.
+	ChunkedVector<CanonicalExpressionExceptionFact, 16> expression_exception_facts_;
+	std::unordered_map<uint32_t, size_t> expression_exception_fact_ids_;
 };
 
 // Checkpoints publish only when the surrounding transaction commits. Nested
