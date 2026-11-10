@@ -5924,9 +5924,12 @@ inline void bindSelfTypeRewritePair(
 
 inline TypeId tryGetCanonicalOverloadClassTypeId(CanonicalTypeTable& table, const TypeSpecifierNode& syntax) {
 	TypeSpecifierNode canonical_syntax = syntax;
-	if (const TypeInfo* const source_type_info = tryGetTypeInfo(syntax.type_index());
-		source_type_info != nullptr && source_type_info->isTypeAlias()) {
-		const ResolvedAliasTypeInfo alias = resolveAliasTypeInfo(syntax.type_index());
+	const TypeInfo* const source_type_info = tryGetTypeInfo(syntax.type_index());
+	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(syntax.type_index());
+	const bool is_alias = source_type_info != nullptr && (source_type_info->isTypeAlias() ||
+		(resolved_alias.terminal_type_info != nullptr && resolved_alias.terminal_type_info != source_type_info));
+	if (is_alias) {
+		const ResolvedAliasTypeInfo alias = resolved_alias;
 		if (alias.pointer_depth != 0 || alias.reference_qualifier != ReferenceQualifier::None ||
 			alias.has_ordered_declarator || alias.isArray() || alias.pointee_array_declarator ||
 			alias.function_signature.has_value() || alias.has_member_class_owner()) {
