@@ -5413,7 +5413,7 @@ private:	 // Resume private methods
 				// so we must verify via EnumTypeInfo::findEnumerator before classifying.
 			{
 				const auto& ts = decl.type_specifier_node();
-				if (ts.category() == TypeCategory::Enum && !ts.is_reference() && ts.pointer_depth() == 0) {
+				if (ts.category() == TypeCategory::Enum && !ts.is_reference() && ts.runtime_pointer_depth() == 0) {
 					if (const TypeInfo* ti = tryGetTypeInfo(ts.type_index())) {
 						const EnumTypeInfo* enum_info = ti->getEnumInfo();
 						if (enum_info && enum_info->findEnumerator(token.handle())) {

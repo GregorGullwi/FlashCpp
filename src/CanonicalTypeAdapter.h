@@ -197,7 +197,7 @@ inline void appendOrderedAliasDeclaratorShape(std::vector<DeclaratorComponent>& 
 		}
 	};
 	auto append_pointers = [&]() {
-		if (alias.has_member_class() && alias.pointer_depth() != 0) {
+		if (alias.has_member_class() && alias.runtime_pointer_depth() != 0) {
 			TypeSpecifierNode member_pointer_type = alias;
 			tryBindPublishedMemberClassEntity(member_pointer_type);
 			CVQualifier member_cv = member_pointer_type.pointer_levels().empty() ?

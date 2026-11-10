@@ -185,7 +185,7 @@ void applyOuterTypeModifiers(TypeSpecifierNode& target, const TypeSpecifierNode&
 			target.set_injected_class_declaration(
 				source.injected_class_declaration());
 		}
-		target.add_pointer_levels(static_cast<int>(source.pointer_depth()));
+		target.add_pointer_levels(static_cast<int>(source.runtime_pointer_depth()));
 		target.add_cv_qualifier(source.cv_qualifier());
 		if (source.reference_qualifier() != ReferenceQualifier::None) {
 			target.set_reference_qualifier(source.reference_qualifier());

@@ -307,7 +307,7 @@ inline int requireConcreteAliasResolvedTypeSizeBits(const TypeSpecifierNode& typ
 		.append(", type_index_category=")
 		.append(static_cast<int64_t>(type_spec.type_index().category()))
 		.append(", pointer_depth=")
-		.append(static_cast<int64_t>(type_spec.pointer_depth()));
+		.append(static_cast<int64_t>(type_spec.runtime_pointer_depth()));
 	if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
 		message.append(", type_name=")
 			.append(type_info->name())
@@ -332,7 +332,7 @@ inline int requireConcreteAliasResolvedTypeSizeBits(const TypeSpecifierNode& typ
 										.append(", type_index_category=")
 										.append(static_cast<int64_t>(type_spec.type_index().category()))
 										.append(", pointer_depth=")
-										.append(static_cast<int64_t>(type_spec.pointer_depth()))
+										.append(static_cast<int64_t>(type_spec.runtime_pointer_depth()))
 										.append(")")
 										.commit()));*/
 }

@@ -570,7 +570,7 @@ void Parser::appendFunctionCallArgType(const ASTNode& arg_node, std::vector<Type
 						candidate.reference_qualifier() != ReferenceQualifier::None) {
 						return true;
 					}
-					if (current.pointer_depth() == 0 && candidate.pointer_depth() > 0) {
+					if (current.runtime_pointer_depth() == 0 && candidate.runtime_pointer_depth() > 0) {
 						return true;
 					}
 					if (!current.has_function_signature() && candidate.has_function_signature()) {

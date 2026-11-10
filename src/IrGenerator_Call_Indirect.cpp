@@ -1219,7 +1219,7 @@ ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExp
 		return nullptr;
 	};
 	auto sameTypeSpec = [&](const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
-		if (lhs.pointer_depth() != rhs.pointer_depth() ||
+		if (lhs.runtime_pointer_depth() != rhs.runtime_pointer_depth() ||
 			lhs.reference_qualifier() != rhs.reference_qualifier() ||
 			lhs.cv_qualifier() != rhs.cv_qualifier()) {
 			return false;

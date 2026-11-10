@@ -3671,7 +3671,7 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 bool Evaluator::typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
 	if (lhs.type() != rhs.type() ||
 		lhs.type_index() != rhs.type_index() ||
-		lhs.pointer_depth() != rhs.pointer_depth() ||
+		lhs.runtime_pointer_depth() != rhs.runtime_pointer_depth() ||
 		!std::ranges::equal(lhs.array_dimensions(), rhs.array_dimensions()) ||
 		lhs.has_member_class() != rhs.has_member_class() ||
 		lhs.has_function_signature() != rhs.has_function_signature()) {
