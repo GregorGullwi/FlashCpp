@@ -6554,6 +6554,15 @@ inline OperatorOverloadResult findUnaryOperatorOverload(const TypeSpecifierNode&
 		if (type_info == nullptr || struct_info == nullptr) {
 			continue;
 		}
+		tryPublishCanonicalMemberFunctionSignatures(table, current_type, *struct_info);
+		if (const std::optional<size_t> schema_index = table.tryFindMemberFunctionByOperator(current_type,
+			static_cast<uint8_t>(operator_kind)); schema_index.has_value()) {
+			const CanonicalMemberFunction function = table.memberFunctionAt(current_type, *schema_index);
+			if (function.ordinal < struct_info->member_functions.size()) {
+				return OperatorOverloadResult(&struct_info->member_functions[function.ordinal], current_type, type_info->registeredTypeIndex().
+					withCategory(TypeCategory::Struct));
+			}
+		}
 		for (const StructMemberFunction& member_func : struct_info->member_functions) {
 			if (member_func.operator_kind == operator_kind) {
 				return OperatorOverloadResult(&member_func, current_type, type_info->registeredTypeIndex().withCategory(TypeCategory::Struct));

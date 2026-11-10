@@ -97,10 +97,12 @@ declaring class TypeId. Entries carry the canonical signature, a NameBytes
 lookup name or operator kind, cv/ref qualifiers, ordinal, and static, virtual,
 explicit, deleted, variadic, and conversion-operator flags. Structural
 member-function-pointer import now resolves names and signatures through this
-schema instead of walking legacy member declarations.
+schema instead of walking legacy member declarations, and canonical unary
+operator lookup resolves member operators by canonical operator kind and maps
+back through the stored ordinal.
 
 Remaining: continue with the remaining architecture items below.
 
 ## Remaining architecture items
 
-- Migrate operator lookup and user-defined conversion to the canonical member-function schema.
+- Migrate binary operator lookup and user-defined conversion to the canonical member-function schema.
