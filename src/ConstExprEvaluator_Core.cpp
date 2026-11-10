@@ -7196,7 +7196,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			//   T* p = arr;
 			// When the initializer evaluates to an array value, materialize a pointer
 			// to the array origin so later pointer operations/member access work.
-			if ((decl_type_spec.is_pointer() || decl_type_spec.pointer_depth() > 0) && init_result.is_array) {
+			if ((decl_type_spec.is_pointer() || decl_type_spec.runtime_pointer_depth() > 0) && init_result.is_array) {
 				StringHandle origin = init_result.array_origin_var;
 				if (!origin.isValid()) {
 					const std::string_view origin_name = getIdentifierNameFromAstNode(init_expr);
