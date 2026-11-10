@@ -3074,11 +3074,14 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 			}
 			const DeclarationNode* parameter_declaration = parameter.get_if<DeclarationNode>();
 			const bool parameter_has_default = parameter_declaration != nullptr && parameter_declaration->has_default_value();
-			std::optional<TypeId> imported = parameter_has_default
+			// One import policy for every constructor parameter: non-implicit
+			// constructors may use the class fallback; implicit constructors keep the
+			// owner identity and synthesize a self reference when strict import fails.
+			const bool allow_class_fallback = !constructor.is_implicit();
+			std::optional<TypeId> imported = parameter_has_default && allow_class_fallback
 				? tryImportSupportedCanonicalWithClassFallback(table, *parameter_type)
 				: tryImportSupportedCanonical(table, *parameter_type);
-			if (!imported.has_value() && !constructor.is_implicit() &&
-				parameter_type->category() == TypeCategory::Struct) {
+			if (!imported.has_value() && allow_class_fallback) {
 				imported = tryImportSupportedCanonicalWithClassFallback(table, *parameter_type);
 			}
 			if (!imported.has_value() && constructor.is_implicit() && parameter_type->category() == TypeCategory::Struct &&
