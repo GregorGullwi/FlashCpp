@@ -3051,6 +3051,8 @@ inline std::optional<bool> tryCanonicalConstructorCallDefaultNoexcept(CanonicalT
 	const auto& arguments = call.arguments();
 	size_t viable_count = 0;
 	bool selected_noexcept = false;
+	bool selected_defaults_nothrow = false;
+	bool selected_defaults_known_throwing = false;
 	for (size_t index = 0; index < constructor_count; ++index) {
 		const CanonicalRecordConstructor constructor = table.recordConstructorAt(*imported, index);
 		if (hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Explicit) ||
@@ -3089,11 +3091,26 @@ inline std::optional<bool> tryCanonicalConstructorCallDefaultNoexcept(CanonicalT
 		}
 		++viable_count;
 		selected_noexcept = constructor.is_noexcept != 0;
+		selected_defaults_nothrow = true;
+		selected_defaults_known_throwing = false;
+		if (arguments.size() < constructor.parameter_count) {
+			const size_t omitted = static_cast<size_t>(constructor.parameter_count) - arguments.size();
+			selected_defaults_nothrow = constructor.nothrow_default_count >= omitted;
+			selected_defaults_known_throwing = !selected_defaults_nothrow &&
+				constructor.last_known_throwing_default != std::numeric_limits<uint16_t>::max() &&
+				static_cast<size_t>(constructor.last_known_throwing_default) >= arguments.size();
+		}
 	}
 	if (viable_count != 1) {
 		return std::nullopt;
 	}
-	return selected_noexcept;
+	if (!selected_noexcept || selected_defaults_known_throwing) {
+		return false;
+	}
+	if (!selected_defaults_nothrow) {
+		return std::nullopt;
+	}
+	return true;
 }
 
 // Prove both literal evaluation and builtin arithmetic parameter initialization.
