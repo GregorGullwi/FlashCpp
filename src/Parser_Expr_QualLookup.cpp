@@ -3715,6 +3715,12 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		auto rhs_type_opt = get_expression_type(binary.get_rhs());
 
 		auto get_overload_return_type = [&]() -> std::optional<TypeSpecifierNode> {
+			if (!binary.has_resolved_member_operator_overload() && !binary.has_resolved_free_function_operator_overload() &&
+				!resolving_overload_in_get_expression_type_) {
+				resolving_overload_in_get_expression_type_ = true;
+				annotateConcreteBinaryOperatorOverload(const_cast<BinaryOperatorNode&>(binary));
+				resolving_overload_in_get_expression_type_ = false;
+			}
 			if (binary.has_resolved_member_operator_overload()) {
 				const StructMemberFunction* member_overload = binary.resolved_member_operator_overload();
 				if (!member_overload || !member_overload->function_decl.is<FunctionDeclarationNode>()) {
