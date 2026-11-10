@@ -58,6 +58,11 @@ The constructor-call default evaluator now selects through the service with the
 unknown candidates propagate through the service result instead of a separate
 candidate loop.
 
+Scalar and enum arguments now build the same explicit user-defined conversion
+plan as class arguments. Copy/move constructors are ranked through that plan
+instead of being dropped by a one-argument shape guard, so a direct scalar
+constructor wins naturally.
+
 Remaining: continue with the remaining architecture items below.
 
 ## Remaining architecture items
@@ -65,8 +70,5 @@ Remaining: continue with the remaining architecture items below.
 - Canonical expression-fact table keyed by `ExprId`/`TypeId` for nothrow/throwing/unknown.
 - Member-function and conversion-operator schemas so operator lookup and user-defined conversion share one source of truth.
 - Per-candidate `Unimportable` / `Conditional` / `Deleted` status and arity ranges instead of global `SchemaIncomplete`.
-- Replace the one-argument implicit copy/move guard in `selectCanonicalConstructor`
-  with general scalar/enum-to-class user-defined conversion ranking; the guard is
-  temporary compensation for that conversion not yet being modeled.
 - One import policy, including the class fallback, for every schema parameter.
 - Selection tracing with reason codes and a native selection matrix test.
