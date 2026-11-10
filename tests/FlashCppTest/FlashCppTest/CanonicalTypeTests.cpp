@@ -4189,12 +4189,12 @@ TEST_CASE("Converting constructor class checks cannot recover unpublished inheri
 		table.publishRecordConstructors(receiver, {});
 		CHECK_FALSE(hasConvertingConstructorFrom(receiver_spec, derived_spec));
 	}
-	SUBCASE("Incomplete constructor schemas retain compatibility selection") {
+	SUBCASE("Incomplete constructor schemas fail closed when canonical covers the pair") {
 		const std::array<CanonicalRecordConstructorSpec, 1> constructors{{{{}, CanonicalRecordFunctionFlags::SchemaIncomplete, false}}};
 		table.publishRecordConstructors(receiver, constructors);
 		derived_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);
 		CHECK_FALSE(tryHasCanonicalImplicitConvertingConstructorForArgument(receiver_spec, derived_spec, nullptr).has_value());
-		CHECK(hasConvertingConstructorFrom(receiver_spec, derived_spec));
+		CHECK_FALSE(hasConvertingConstructorFrom(receiver_spec, derived_spec));
 	}
 	CHECK_FALSE(table.hasRecordProperties(derived));
 }
