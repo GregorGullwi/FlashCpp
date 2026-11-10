@@ -10715,6 +10715,12 @@ struct NestedNothrowDefaults { NestedNothrowDefaults(int, NothrowArg = NothrowAr
 struct NestedThrowingDefaults { NestedThrowingDefaults(int, ThrowingArg = ThrowingArg(1)) noexcept {} };
 struct OuterNestedNothrow { OuterNestedNothrow(int, NestedNothrowDefaults = NestedNothrowDefaults(1)) noexcept {} };
 struct OuterNestedThrowing { OuterNestedThrowing(int, NestedThrowingDefaults = NestedThrowingDefaults(1)) noexcept {} };
+struct ConvertedArg { ConvertedArg(int) noexcept {} };
+struct ThrowingConvertedArg { ThrowingConvertedArg(int) noexcept(false) {} };
+struct NestedClassParam { NestedClassParam(ConvertedArg) noexcept {} };
+struct NestedThrowingClassParam { NestedThrowingClassParam(ThrowingConvertedArg) noexcept {} };
+struct OuterClassParamDefault { OuterClassParamDefault(int, NestedClassParam = NestedClassParam(1)) noexcept {} };
+struct OuterThrowingClassParamDefault { OuterThrowingClassParamDefault(int, NestedThrowingClassParam = NestedThrowingClassParam(1)) noexcept {} };
 )");
 	SemanticAnalysis sema(compile_context, gSymbolTable);
 	Parser parser(lexer, compile_context, sema);
@@ -10758,6 +10764,11 @@ struct OuterNestedThrowing { OuterNestedThrowing(int, NestedThrowingDefaults = N
 	check_nothrow("NothrowDefault");
 	check_nothrow("OuterNestedNothrow");
 	check_nothrow("NothrowCallDefault");
+	check_nothrow("OuterClassParamDefault");
+	const auto [throwing_class_target, throwing_class_constructor] =
+		two_parameter_constructor("OuterThrowingClassParamDefault");
+	CHECK(throwing_class_constructor.nothrow_default_count == 0);
+	(void)throwing_class_target;
 	const auto [outer_throwing_target, outer_throwing_constructor] = two_parameter_constructor("OuterNestedThrowing");
 	CHECK(outer_throwing_constructor.last_known_throwing_default == 1);
 	const auto outer_throwing = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, outer_throwing_target,

@@ -30,6 +30,18 @@ struct OuterNestedThrowing {
 	OuterNestedThrowing(int, NestedThrowingDefaults = NestedThrowingDefaults(1)) noexcept {}
 };
 
+struct ConvertedArg {
+	ConvertedArg(int) noexcept {}
+};
+
+struct NestedClassParam {
+	NestedClassParam(ConvertedArg) noexcept {}
+};
+
+struct OuterClassParamDefault {
+	OuterClassParamDefault(int, NestedClassParam = NestedClassParam(1)) noexcept {}
+};
+
 struct NothrowDefault {
 	NothrowDefault(int, NothrowArg = NothrowArg(1)) noexcept {}
 };
@@ -52,6 +64,7 @@ static_assert(!__is_nothrow_constructible(ThrowingDefault, int), "throwing neste
 static_assert(!__is_nothrow_constructible(ThrowingDtorDefault, int), "throwing temporary destructor");
 static_assert(__is_nothrow_constructible(OuterNestedNothrow, int), "omitted nested default is proven nothrow");
 static_assert(!__is_nothrow_constructible(OuterNestedThrowing, int), "omitted nested default is known throwing");
+static_assert(__is_nothrow_constructible(OuterClassParamDefault, int), "class parameter conversion is proven nothrow");
 
 int main() {
 	return 0;

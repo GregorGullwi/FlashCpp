@@ -3032,6 +3032,78 @@ inline bool isCanonicalNothrowLiteralExpression(const ASTNode& initializer) {
 	return false;
 }
 
+// A scalar literal can initialize a class-typed constructor parameter through
+// one non-explicit public converting constructor whose first parameter is
+// scalar. Deeper class conversions, ambiguity, and unproven defaults stay
+// unknown so the outer call default keeps deferring.
+inline std::optional<bool> tryCanonicalScalarConvertingConstructorNoexcept(
+	CanonicalTypeTable& table, TypeId target_class, const ASTNode& argument) {
+	if (!isCanonicalNothrowLiteralExpression(argument) || !table.hasRecordConstructors(target_class)) {
+		return std::nullopt;
+	}
+	if (!table.hasRecordProperties(target_class)) {
+		return std::nullopt;
+	}
+	if (!hasCanonicalRecordFact(table.recordProperties(target_class).facts, CanonicalRecordFacts::NothrowDestructible)) {
+		return false;
+	}
+	const size_t constructor_count = table.recordConstructorCount(target_class);
+	for (size_t index = 0; index < constructor_count; ++index) {
+		if (hasCanonicalRecordFunctionFlag(table.recordConstructorAt(target_class, index).flags, CanonicalRecordFunctionFlags::SchemaIncomplete)) {
+			return std::nullopt;
+		}
+	}
+	size_t viable_count = 0;
+	bool selected_noexcept = false;
+	bool selected_defaults_nothrow = false;
+	bool selected_defaults_known_throwing = false;
+	for (size_t index = 0; index < constructor_count; ++index) {
+		const CanonicalRecordConstructor constructor = table.recordConstructorAt(target_class, index);
+		if (hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Explicit) ||
+			hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::NonPublic) ||
+			constructor.minimum_parameter_count > 1 || constructor.parameter_count == 0) {
+			continue;
+		}
+		const TypeId parameter_type = table.recordConstructorParameterAt(target_class, index, 0);
+		const CanonicalTypeNode parameter_raw = table.node(parameter_type);
+		if ((parameter_raw.kind == CanonicalTypeKind::LValueReference ||
+				parameter_raw.kind == CanonicalTypeKind::RValueReference) &&
+			parameter_raw.child &&
+			table.withoutTopLevelQualifiers(parameter_raw.child) == target_class) {
+			continue;  // copy/move constructor, not a converting constructor
+		}
+		TypeId parameter_object = parameter_type;
+		while (table.node(parameter_object).kind == CanonicalTypeKind::LValueReference ||
+			table.node(parameter_object).kind == CanonicalTypeKind::RValueReference) {
+			parameter_object = table.node(parameter_object).child;
+		}
+		if (table.node(table.withoutTopLevelQualifiers(parameter_object)).kind != CanonicalTypeKind::Builtin) {
+			continue;
+		}
+		++viable_count;
+		selected_noexcept = constructor.is_noexcept != 0;
+		selected_defaults_nothrow = true;
+		selected_defaults_known_throwing = false;
+		if (constructor.parameter_count > 1) {
+			const size_t omitted = static_cast<size_t>(constructor.parameter_count) - 1;
+			selected_defaults_nothrow = constructor.nothrow_default_count >= omitted;
+			selected_defaults_known_throwing = !selected_defaults_nothrow &&
+				constructor.last_known_throwing_default != std::numeric_limits<uint16_t>::max() &&
+				static_cast<size_t>(constructor.last_known_throwing_default) >= 1;
+		}
+	}
+	if (viable_count != 1) {
+		return std::nullopt;
+	}
+	if (!selected_noexcept || selected_defaults_known_throwing) {
+		return false;
+	}
+	if (!selected_defaults_nothrow) {
+		return std::nullopt;
+	}
+	return true;
+}
+
 // A class-typed default may be a constructor call that sema has not resolved
 // yet. Resolve it from the constructed class's published schema when every
 // argument is a scalar literal and exactly one public non-explicit constructor
@@ -3066,13 +3138,34 @@ inline std::optional<bool> tryCanonicalConstructorCallDefaultNoexcept(CanonicalT
 		const size_t matched_parameter_count = std::min(arguments.size(), static_cast<size_t>(constructor.parameter_count));
 		for (size_t parameter = 0; parameter < matched_parameter_count; ++parameter) {
 			const TypeId parameter_type = table.recordConstructorParameterAt(*imported, index, parameter);
+			const CanonicalTypeNode raw_parameter = table.node(parameter_type);
+			if ((raw_parameter.kind == CanonicalTypeKind::LValueReference ||
+					raw_parameter.kind == CanonicalTypeKind::RValueReference) &&
+				raw_parameter.child &&
+				table.withoutTopLevelQualifiers(raw_parameter.child) == *imported) {
+				matches = false;
+				break;  // copy/move constructor, not a converting constructor
+			}
 			TypeId parameter_object = parameter_type;
 			while (table.node(parameter_object).kind == CanonicalTypeKind::LValueReference ||
 				table.node(parameter_object).kind == CanonicalTypeKind::RValueReference) {
 				parameter_object = table.node(parameter_object).child;
 			}
-			const CanonicalTypeNode parameter_node = table.node(table.withoutTopLevelQualifiers(parameter_object));
-			if (parameter_node.kind != CanonicalTypeKind::Builtin || !isCanonicalNothrowLiteralExpression(arguments[parameter])) {
+			const TypeId parameter_target = table.withoutTopLevelQualifiers(parameter_object);
+			const CanonicalTypeNode parameter_node = table.node(parameter_target);
+			if (parameter_node.kind == CanonicalTypeKind::Builtin) {
+				if (!isCanonicalNothrowLiteralExpression(arguments[parameter])) {
+					matches = false;
+					break;
+				}
+			} else if (isCanonicalClassTypeKind(parameter_node.kind)) {
+				const std::optional<bool> conversion =
+					tryCanonicalScalarConvertingConstructorNoexcept(table, parameter_target, arguments[parameter]);
+				if (!conversion.has_value() || !*conversion) {
+					matches = false;
+					break;
+				}
+			} else {
 				matches = false;
 				break;
 			}
@@ -3428,6 +3521,10 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 			std::optional<TypeId> imported = parameter_has_default
 				? tryImportSupportedCanonicalWithClassFallback(table, *parameter_type)
 				: tryImportSupportedCanonical(table, *parameter_type);
+			if (!imported.has_value() && !constructor.is_implicit() &&
+				parameter_type->category() == TypeCategory::Struct) {
+				imported = tryImportSupportedCanonicalWithClassFallback(table, *parameter_type);
+			}
 			if (!imported.has_value() && constructor.is_implicit() && parameter_type->category() == TypeCategory::Struct &&
 				!parameter_type->is_pointer() && (parameter_type->is_lvalue_reference() || parameter_type->is_rvalue_reference())) {
 				TypeId parameter_object = type;
