@@ -10849,3 +10849,75 @@ TEST_CASE("Canonical constructor selection treats integer zero as a null pointer
 		std::span<const CanonicalConstructorArgument>(&argument, 1), CanonicalConstructorSelectionPolicy::None);
 	CHECK(selection.status == CanonicalConstructorSelectionStatus::Selected);
 }
+
+TEST_CASE("Canonical constructor selection reports reason codes across the policy matrix") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
+	const CanonicalConstructorArgument argument{int_type, false, false, CanonicalDefaultException::Unknown};
+	const std::span<const CanonicalConstructorArgument> arguments(&argument, 1);
+	const auto select = [&](TypeId target, CanonicalConstructorSelectionPolicy policy) {
+		return selectCanonicalConstructor(table, target, arguments, policy);
+	};
+
+	const TypeId missing_schema = table.record(EntityId{904001});
+	const CanonicalConstructorSelection missing = select(missing_schema, CanonicalConstructorSelectionPolicy::None);
+	CHECK(missing.status == CanonicalConstructorSelectionStatus::Unknown);
+	CHECK(missing.reason == CanonicalConstructorSelectionReason::MissingSchema);
+
+	const TypeId empty_schema = table.record(EntityId{904002});
+	table.publishRecordConstructors(empty_schema, {});
+	const CanonicalConstructorSelection empty = select(empty_schema, CanonicalConstructorSelectionPolicy::None);
+	CHECK(empty.status == CanonicalConstructorSelectionStatus::NoMatch);
+	CHECK(empty.reason == CanonicalConstructorSelectionReason::EmptySchema);
+
+	const TypeId incomplete_schema = table.record(EntityId{904003});
+	const std::array<CanonicalRecordConstructorSpec, 1> incomplete_constructors{
+		CanonicalRecordConstructorSpec{{}, CanonicalRecordFunctionFlags::SchemaIncomplete, false},
+	};
+	table.publishRecordConstructors(incomplete_schema, incomplete_constructors);
+	const CanonicalConstructorSelection incomplete =
+		select(incomplete_schema, CanonicalConstructorSelectionPolicy::RequireCompleteSchema);
+	CHECK(incomplete.status == CanonicalConstructorSelectionStatus::Unknown);
+	CHECK(incomplete.reason == CanonicalConstructorSelectionReason::IncompleteSchema);
+
+	const std::array<TypeId, 1> int_parameters{int_type};
+	const std::array<CanonicalRecordConstructorSpec, 1> explicit_constructors{
+		CanonicalRecordConstructorSpec{int_parameters, CanonicalRecordFunctionFlags::Explicit, false},
+	};
+	const TypeId explicit_target = table.record(EntityId{904004});
+	table.publishRecordConstructors(explicit_target, explicit_constructors);
+	const CanonicalConstructorSelection excluded = select(explicit_target, CanonicalConstructorSelectionPolicy::None);
+	CHECK(excluded.status == CanonicalConstructorSelectionStatus::NoMatch);
+	CHECK(excluded.reason == CanonicalConstructorSelectionReason::NoViableCandidate);
+	const CanonicalConstructorSelection allowed =
+		select(explicit_target, CanonicalConstructorSelectionPolicy::AllowExplicit);
+	CHECK(allowed.status == CanonicalConstructorSelectionStatus::Selected);
+
+	const std::array<CanonicalRecordConstructorSpec, 2> ambiguous_constructors{
+		CanonicalRecordConstructorSpec{int_parameters, CanonicalRecordFunctionFlags::None, false},
+		CanonicalRecordConstructorSpec{int_parameters, CanonicalRecordFunctionFlags::None, false},
+	};
+	const TypeId ambiguous_target = table.record(EntityId{904005});
+	table.publishRecordConstructors(ambiguous_target, ambiguous_constructors);
+	const CanonicalConstructorSelection ambiguous = select(ambiguous_target, CanonicalConstructorSelectionPolicy::None);
+	CHECK(ambiguous.status == CanonicalConstructorSelectionStatus::Unknown);
+	CHECK(ambiguous.reason == CanonicalConstructorSelectionReason::AmbiguousCandidate);
+
+	const TypeId unsupported_parameter = table.record(EntityId{904006});
+	const std::array<TypeId, 1> unsupported_parameters{unsupported_parameter};
+	const std::array<CanonicalRecordConstructorSpec, 2> mixed_constructors{
+		CanonicalRecordConstructorSpec{int_parameters, CanonicalRecordFunctionFlags::None, false},
+		CanonicalRecordConstructorSpec{unsupported_parameters, CanonicalRecordFunctionFlags::None, false},
+	};
+	const TypeId mixed_target = table.record(EntityId{904007});
+	table.publishRecordConstructors(mixed_target, mixed_constructors);
+	const CanonicalConstructorSelection mixed =
+		select(mixed_target, CanonicalConstructorSelectionPolicy::AllowUserDefinedArgumentConversion);
+	CHECK(mixed.status == CanonicalConstructorSelectionStatus::Unknown);
+	CHECK(mixed.reason == CanonicalConstructorSelectionReason::UndecidableCandidate);
+	const CanonicalConstructorSelection existence = select(mixed_target,
+		CanonicalConstructorSelectionPolicy::AllowUserDefinedArgumentConversion |
+			CanonicalConstructorSelectionPolicy::ExistenceOnly);
+	CHECK(existence.status == CanonicalConstructorSelectionStatus::Selected);
+}
