@@ -3948,7 +3948,7 @@ inline ConversionPlan buildOrderedDeclaratorCompatibilityPlan(
 	// an array or function object reaches bool through decay first. The decoded
 	// address is tested against zero by the boolean conversion.
 	if (to.category() == TypeCategory::Bool && !to.is_reference() &&
-		to.pointer_depth() == 0 && !to.has_ordered_declarator() &&
+		to.runtime_pointer_depth() == 0 && !to.has_ordered_declarator() &&
 		to.array_dimensions().empty()) {
 		TypeSpecifierNode converted_from = from_value;
 		if (orderedDeclaratorIsFunctionObject(converted_from)) {
@@ -4104,7 +4104,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	// rejected by their category-only guards. std::nullptr_t is not in the
 	// [conv.bool] source list, so it deliberately does not convert here.
 	if (to.category() == TypeCategory::Bool && !to.is_reference() &&
-		!to.is_array() && to.pointer_depth() == 0 &&
+		!to.is_array() && to.runtime_pointer_depth() == 0 &&
 		(from.is_array() || from.is_pointer() || from.is_function_pointer())) {
 		return {ConversionRank::Conversion, StandardConversionKind::BooleanConversion, true};
 	}
@@ -5600,7 +5600,7 @@ inline OverloadResolutionResult resolve_member_overload_with_argument_nodes(
 
 	const bool object_is_const = memberObjectTypeIsConst(object_type);
 	const bool object_is_volatile = memberObjectTypeIsVolatile(object_type);
-	const bool object_is_lvalue = object_type.pointer_depth() > 0 || object_type.is_lvalue_reference() ||
+	const bool object_is_lvalue = object_type.runtime_pointer_depth() > 0 || object_type.is_lvalue_reference() ||
 		orderedDeclaratorIsLvalueReference(object_type);
 
 	for (const ASTNode& overload : overloads) {

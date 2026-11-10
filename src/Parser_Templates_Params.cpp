@@ -3986,7 +3986,7 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 						if (identity.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr) {
 							identity.kind = FlashCpp::NonTypeValueIdentityKind::MemberPointer;
 						}
-					} else if (param.type_specifier_node().pointer_depth() > 0 &&
+					} else if (param.type_specifier_node().runtime_pointer_depth() > 0 &&
 							   identity.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr) {
 						identity.kind = FlashCpp::NonTypeValueIdentityKind::ObjectPointer;
 					}
@@ -4092,7 +4092,7 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 			return;
 		}
 		const TypeSpecifierNode& target = parameter.type_specifier_node();
-		if ((!is_integer_type(target.type()) && target.type() != TypeCategory::Bool) || target.pointer_depth() != 0 ||
+		if ((!is_integer_type(target.type()) && target.type() != TypeCategory::Bool) || target.runtime_pointer_depth() != 0 ||
 			target.reference_qualifier() != ReferenceQualifier::None) {
 			return;
 		}

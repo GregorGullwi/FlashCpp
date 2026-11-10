@@ -2090,7 +2090,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		auto direct_param_it = tparam_nodes_by_name.find(direct_fp_type_name);
 		if (direct_param_it != tparam_nodes_by_name.end() &&
 			direct_param_it->second->kind() == TemplateParameterKind::Type &&
-			direct_fp_type.pointer_depth() == 0) {
+			direct_fp_type.runtime_pointer_depth() == 0) {
 			// Only mark a template type parameter as positionally deducible when the
 			// function-parameter type is NOT pointer-qualified (i.e. T, T&, const T& etc.).
 			// For pointer patterns like U* or U**, the base name U is the underlying type
@@ -2190,7 +2190,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 			// outermost argument bound is not part of T.
 			const bool parameter_is_pointer_to_array =
 				fp_type.has_pointee_array_declarator() ||
-				fp_type.pointer_depth() > 0;
+				fp_type.runtime_pointer_depth() > 0;
 			const size_t concrete_dim_offset =
 				parameter_is_pointer_to_array ? 1 : 0;
 			if (pattern_dim_count + concrete_dim_offset <= concrete_dim_count) {
@@ -2272,7 +2272,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		const TypeSpecifierNode& ca_type = arg_types[concrete_arg_index];
 
 		// Deduce through pointer-qualified parameters such as P = T* and A = int*.
-		if (fp_type.pointer_depth() > 0 && !fp_type.is_array() && !fp_decl.is_array()) {
+		if (fp_type.runtime_pointer_depth() > 0 && !fp_type.is_array() && !fp_decl.is_array()) {
 			TypeIndex fp_idx = fp_type.type_index();
 			const TypeInfo* fp_type_info = tryGetTypeInfo(fp_idx);
 			StringHandle fp_name = fp_type_info != nullptr ? fp_type_info->name() : StringHandle{};
@@ -2316,7 +2316,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		// Pointer-to-template (T*) cases are handled via substitution elsewhere.
 		// Array declarators use a separate deduction path so T in T(&)[N] binds to the
 		// element type instead of the whole array type.
-		if (fp_type.pointer_depth() != 0 || fp_type.is_array() || fp_decl.is_array())
+		if (fp_type.runtime_pointer_depth() != 0 || fp_type.is_array() || fp_decl.is_array())
 			continue;
 
 		StringHandle fp_name = getStructuredTypeName(fp_type);
