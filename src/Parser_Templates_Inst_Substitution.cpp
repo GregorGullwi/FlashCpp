@@ -364,7 +364,7 @@ TemplateTypeArg templateTypeArgFromEvalResult(
 	const TypeCategory target_category = target_type.type();
 	if (target_category == TypeCategory::Invalid ||
 		isPlaceholderAutoType(target_category) ||
-		target_type.pointer_depth() != 0 ||
+		target_type.runtime_pointer_depth() != 0 ||
 		target_type.reference_qualifier() != ReferenceQualifier::None ||
 		target_type.has_function_signature() ||
 		target_type.has_member_class()) {

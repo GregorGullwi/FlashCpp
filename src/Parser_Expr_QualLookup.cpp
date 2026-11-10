@@ -4660,7 +4660,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		}
 
 		const TypeSpecifierNode& member_pointer_type = *member_pointer_type_opt;
-		if (!member_pointer_type.has_member_class() || member_pointer_type.runtime_pointer_depth() == 0 ||
+		if (!member_pointer_type.has_member_class() || member_pointer_type.pointer_depth() == 0 ||
 			member_pointer_type.is_member_function_pointer() || member_pointer_type.has_function_signature()) {
 			return std::nullopt;
 		}
@@ -4671,7 +4671,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			member_pointer_type.sizeBits(),
 			member_pointer_type.token(),
 			member_pointer_type.cv_qualifier());
-		for (size_t i = 1; i < member_pointer_type.runtime_pointer_depth(); ++i) {
+		for (size_t i = 1; i < member_pointer_type.pointer_depth(); ++i) {
 			result.add_pointer_level(member_pointer_type.pointer_levels()[i].cv_qualifier);
 		}
 		if (member_pointer_type.has_pointee_array_declarator()) {
