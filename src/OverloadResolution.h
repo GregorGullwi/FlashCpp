@@ -4224,7 +4224,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 						// Per C++20 [conv.ref]/4: derived lvalue ref binds to base lvalue ref
 						// (standard derived-to-base reference conversion).
 						if (!from_is_rvalue && !to_is_rvalue &&
-							from.pointer_depth() == 0 && to.pointer_depth() == 0) {
+							from.runtime_pointer_depth() == 0 && to.runtime_pointer_depth() == 0) {
 							FrontendContext* const db_context = FrontendContext::active();
 							if (db_context != nullptr) {
 								CanonicalTypeTable& db_table = db_context->canonicalTypes();
@@ -7201,7 +7201,7 @@ inline FlashCpp::TypeIndexArg makeTypeIndexArgFromSpec(const TypeSpecifierNode& 
 	arg.type_index = FlashCpp::canonicalizeTemplateIdentityTypeIndex(spec.type_index());
 	arg.cv_qualifier = spec.cv_qualifier();
 	arg.ref_qualifier = spec.reference_qualifier();
-	arg.pointer_depth = static_cast<uint8_t>(std::min(spec.pointer_depth(), size_t(255)));
+	arg.pointer_depth = static_cast<uint8_t>(std::min(spec.runtime_pointer_depth(), size_t(255)));
 	// Include array info - critical for differentiating T[] from T[N] from T
 	arg.is_array = spec.is_array();
 	arg.pointee_array_declarator = spec.has_pointee_array_declarator();
@@ -7928,7 +7928,7 @@ inline int computeFunctionTemplateSpecificity(const TemplateFunctionDeclarationN
 			score += 1;
 		}
 
-		score += static_cast<int>(ts.pointer_depth());
+		score += static_cast<int>(ts.runtime_pointer_depth());
 		if (ts.is_lvalue_reference()) score += 1;
 		if (ts.is_rvalue_reference()) score += 1;
 		if (ts.is_const()) score += 1;
