@@ -3113,6 +3113,25 @@ inline std::optional<bool> tryCanonicalConstructorCallDefaultNoexcept(CanonicalT
 	return true;
 }
 
+// A call default is nothrow when the resolved target is noexcept, its return
+// type has no user-defined conversion, and every argument is a scalar literal.
+inline bool isCanonicalNothrowCallDefault(const CallExprNode& call) {
+	const FunctionDeclarationNode* function = call.callee().function_declaration_or_null();
+	if (function == nullptr || !function->is_noexcept()) {
+		return false;
+	}
+	const ASTNode& return_type_node = function->decl_node().type_node();
+	if (!return_type_node.is<TypeSpecifierNode>() || is_struct_type(return_type_node.as<TypeSpecifierNode>().category())) {
+		return false;
+	}
+	for (const ASTNode& argument : call.arguments()) {
+		if (!isCanonicalNothrowLiteralExpression(argument)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 // Prove both literal evaluation and builtin arithmetic parameter initialization.
 // A class-typed default may also be a fully specified call to a noexcept
 // constructor whose scalar literal arguments and destructor are nothrow.
@@ -3125,6 +3144,11 @@ inline bool isCanonicalNothrowLiteralDefault(CanonicalTypeTable& table, TypeId p
 	}
 	const CanonicalTypeNode parameter = table.node(parameter_type_without_reference);
 	const ExpressionNode* expression = initializer.get_if<ExpressionNode>();
+	if (!isCanonicalClassTypeKind(parameter.kind) && expression != nullptr) {
+		if (const CallExprNode* call = std::get_if<CallExprNode>(expression)) {
+			return isCanonicalNothrowCallDefault(*call);
+		}
+	}
 	if (parameter.kind == CanonicalTypeKind::Pointer) {
 		if (expression == nullptr) {
 			return false;
