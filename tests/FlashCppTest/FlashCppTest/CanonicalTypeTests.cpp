@@ -10754,7 +10754,8 @@ struct OuterThrowingClassParamDefault { OuterThrowingClassParamDefault(int, Nest
 	std::array<TypeSpecifierNode, 1> arguments{argument};
 	auto check_nothrow = [&](std::string_view name) {
 		const auto [target, constructor] = two_parameter_constructor(name);
-		CHECK_MESSAGE(constructor.nothrow_default_count == 1, name);
+		CHECK_MESSAGE(canonicalConstructorDefaultCount(constructor) == 1, name);
+		CHECK_MESSAGE(canonicalConstructorDefaultException(constructor, 0) == CanonicalDefaultException::Nothrow, name);
 		const auto result = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, target, arguments,
 			ConstructibilityFallback::None);
 		REQUIRE(result.has_value());
@@ -10767,21 +10768,21 @@ struct OuterThrowingClassParamDefault { OuterThrowingClassParamDefault(int, Nest
 	check_nothrow("OuterClassParamDefault");
 	const auto [throwing_class_target, throwing_class_constructor] =
 		two_parameter_constructor("OuterThrowingClassParamDefault");
-	CHECK(throwing_class_constructor.last_known_throwing_default == 1);
+	CHECK(canonicalConstructorDefaultException(throwing_class_constructor, 0) == CanonicalDefaultException::KnownThrowing);
 	const auto throwing_class = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, throwing_class_target,
 		arguments, ConstructibilityFallback::None);
 	REQUIRE(throwing_class.has_value());
 	CHECK(throwing_class->success);
 	CHECK_FALSE(throwing_class->value);
 	const auto [outer_throwing_target, outer_throwing_constructor] = two_parameter_constructor("OuterNestedThrowing");
-	CHECK(outer_throwing_constructor.last_known_throwing_default == 1);
+	CHECK(canonicalConstructorDefaultException(outer_throwing_constructor, 0) == CanonicalDefaultException::KnownThrowing);
 	const auto outer_throwing = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, outer_throwing_target,
 		arguments, ConstructibilityFallback::None);
 	REQUIRE(outer_throwing.has_value());
 	CHECK(outer_throwing->success);
 	CHECK_FALSE(outer_throwing->value);
 	const auto [call_throwing_target, call_throwing_constructor] = two_parameter_constructor("ThrowingCallDefault");
-	CHECK(call_throwing_constructor.last_known_throwing_default == 1);
+	CHECK(canonicalConstructorDefaultException(call_throwing_constructor, 0) == CanonicalDefaultException::KnownThrowing);
 	const auto call_throwing = evaluateConstructibility(TypeTraitKind::IsNothrowConstructible, call_throwing_target,
 		arguments, ConstructibilityFallback::None);
 	REQUIRE(call_throwing.has_value());
@@ -10794,12 +10795,12 @@ TEST_CASE("Canonical constructor default exception proofs are bounded and immuta
 	CanonicalTypeTable& table = frontend.canonicalTypes();
 	const TypeId record = table.record(EntityId{902001});
 	const std::array<TypeId, 2> parameters{table.builtin(CanonicalBuiltinKind::Int), table.builtin(CanonicalBuiltinKind::Double)};
-	CanonicalRecordConstructorSpec constructor{parameters, CanonicalRecordFunctionFlags::None, true, 1, 2};
+	CanonicalRecordConstructorSpec constructor{parameters, CanonicalRecordFunctionFlags::None, true, 1, 3};
 	CHECK_THROWS_AS(table.publishRecordConstructors(record, std::span<const CanonicalRecordConstructorSpec>(&constructor, 1)), InternalError);
 	CHECK_FALSE(table.hasRecordConstructors(record));
-	constructor.nothrow_default_count = 1;
+	constructor.default_exception_bits = static_cast<uint32_t>(CanonicalDefaultException::Nothrow);
 	table.publishRecordConstructors(record, std::span<const CanonicalRecordConstructorSpec>(&constructor, 1));
-	CHECK(table.recordConstructorAt(record, 0).nothrow_default_count == 1);
-	constructor.nothrow_default_count = 0;
+	CHECK(canonicalConstructorDefaultException(table.recordConstructorAt(record, 0), 0) == CanonicalDefaultException::Nothrow);
+	constructor.default_exception_bits = static_cast<uint32_t>(CanonicalDefaultException::KnownThrowing);
 	CHECK_THROWS_AS(table.publishRecordConstructors(record, std::span<const CanonicalRecordConstructorSpec>(&constructor, 1)), InternalError);
 }

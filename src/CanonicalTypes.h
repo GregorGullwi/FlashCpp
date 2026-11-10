@@ -566,19 +566,45 @@ enum class CanonicalRecordFunctionFlags : uint8_t {
 // Constructor schema entry for a completed record, keyed by the record's
 // EntityId. Parameter identity is canonical (TypeId); spelling is absent.
 // `parameter_begin`/`parameter_count` index the table's flat parameter arena;
-// minimum_parameter_count accounts for trailing default arguments.
-// nothrow_default_count proves initialization of that many trailing defaults cannot throw.
+// minimum_parameter_count accounts for trailing default arguments. The 2-bit
+// fields in default_exception_bits classify at most 16 defaults relative to
+// minimum_parameter_count; later defaults stay Unknown.
+enum class CanonicalDefaultException : uint8_t {
+	Unknown = 0,
+	Nothrow = 1,
+	KnownThrowing = 2,
+};
+
 struct CanonicalRecordConstructor {
 	uint32_t parameter_begin;
 	uint16_t parameter_count;
 	CanonicalRecordFunctionFlags flags;
 	uint8_t is_noexcept;
 	uint16_t minimum_parameter_count;
-	uint16_t nothrow_default_count;
-	uint16_t last_known_throwing_default;
+	uint32_t default_exception_bits;
 	friend bool operator==(CanonicalRecordConstructor, CanonicalRecordConstructor) = default;
 };
 static_assert(sizeof(CanonicalRecordConstructor) == 16);
+
+inline size_t canonicalConstructorDefaultCount(const CanonicalRecordConstructor& constructor) {
+	return static_cast<size_t>(constructor.parameter_count) - constructor.minimum_parameter_count;
+}
+
+inline CanonicalDefaultException canonicalConstructorDefaultException(const CanonicalRecordConstructor& constructor, size_t default_index) {
+	if (default_index >= 16) {
+		return CanonicalDefaultException::Unknown;
+	}
+	return static_cast<CanonicalDefaultException>((constructor.default_exception_bits >> (default_index * 2)) & 0x3u);
+}
+
+inline void setCanonicalDefaultException(uint32_t& bits, size_t default_index, CanonicalDefaultException exception) {
+	if (default_index >= 16) {
+		return;
+	}
+	const uint32_t shift = static_cast<uint32_t>(default_index * 2);
+	const uint32_t mask = 0x3u << shift;
+	bits = (bits & ~mask) | (static_cast<uint32_t>(exception) << shift);
+}
 
 // Publication input for one constructor.
 struct CanonicalRecordConstructorSpec {
@@ -587,8 +613,7 @@ struct CanonicalRecordConstructorSpec {
 	bool is_noexcept = false;
 	// The max-value sentinel means every declared parameter is required.
 	uint16_t minimum_parameter_count = std::numeric_limits<uint16_t>::max();
-	uint16_t nothrow_default_count = 0;
-	uint16_t last_known_throwing_default = std::numeric_limits<uint16_t>::max();
+	uint32_t default_exception_bits = 0;
 };
 
 inline CanonicalRecordFunctionFlags operator|(CanonicalRecordFunctionFlags a, CanonicalRecordFunctionFlags b) {

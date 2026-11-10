@@ -278,7 +278,8 @@ mismatched, unpublished, or unresolved owner facts.
      constructor's exception specification decides the nothrow answer. Dependent
      extra arguments still defer.
    - Constructor-candidate matching is being consolidated into one canonical
-     service with a tri-state result and policy-driven rules; see
+     service with a tri-state result and policy-driven rules, including
+     literal-only call-default selection; see
      [canonical constructor selection](2026-11-10-canonical-constructor-selection.md).
    - Template argument and substitution storage: move lazy constraint lookup from
      name-based parameters to depth/index parameters, and finish canonical
