@@ -39,6 +39,29 @@ enum class CanonicalConstructorSelectionStatus : uint8_t {
 	Unknown,
 };
 
+enum class CanonicalConstructorSelectionReason : uint8_t {
+	None,
+	MissingSchema,
+	EmptySchema,
+	IncompleteSchema,
+	UndecidableCandidate,
+	AmbiguousCandidate,
+	NoViableCandidate,
+};
+
+inline const char* canonicalConstructorSelectionReasonName(CanonicalConstructorSelectionReason reason) {
+	switch (reason) {
+	case CanonicalConstructorSelectionReason::None: return "none";
+	case CanonicalConstructorSelectionReason::MissingSchema: return "missing-schema";
+	case CanonicalConstructorSelectionReason::EmptySchema: return "empty-schema";
+	case CanonicalConstructorSelectionReason::IncompleteSchema: return "incomplete-schema";
+	case CanonicalConstructorSelectionReason::UndecidableCandidate: return "undecidable-candidate";
+	case CanonicalConstructorSelectionReason::AmbiguousCandidate: return "ambiguous-candidate";
+	case CanonicalConstructorSelectionReason::NoViableCandidate: return "no-viable-candidate";
+	}
+	return "unknown";
+}
+
 struct CanonicalConstructorArgument {
 	TypeId type;
 	bool is_lvalue;
@@ -48,6 +71,7 @@ struct CanonicalConstructorArgument {
 
 struct CanonicalConstructorSelection {
 	CanonicalConstructorSelectionStatus status = CanonicalConstructorSelectionStatus::Unknown;
+	CanonicalConstructorSelectionReason reason = CanonicalConstructorSelectionReason::None;
 	size_t constructor_index = 0;
 	bool is_copy_or_move = false;
 	bool is_implicit_or_defaulted = false;
@@ -463,16 +487,19 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 	CanonicalConstructorSelectionPolicy policy) {
 	CanonicalConstructorSelection result;
 	if (!table.hasRecordConstructors(target_class)) {
+		result.reason = CanonicalConstructorSelectionReason::MissingSchema;
 		return result;
 	}
 	const size_t constructor_count = table.recordConstructorCount(target_class);
 	if (constructor_count == 0) {
 		result.status = CanonicalConstructorSelectionStatus::NoMatch;
+		result.reason = CanonicalConstructorSelectionReason::EmptySchema;
 		return result;
 	}
 	if (hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::RequireCompleteSchema)) {
 		for (size_t index = 0; index < constructor_count; ++index) {
 			if (hasCanonicalRecordFunctionFlag(table.recordConstructorAt(target_class, index).flags, CanonicalRecordFunctionFlags::SchemaIncomplete)) {
+				result.reason = CanonicalConstructorSelectionReason::IncompleteSchema;
 				return result;
 			}
 		}
@@ -623,19 +650,24 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 	if (existence_only) {
 		if (best_candidates.empty()) {
 			result.status = saw_unknown ? CanonicalConstructorSelectionStatus::Unknown : CanonicalConstructorSelectionStatus::NoMatch;
+			result.reason = saw_unknown ? CanonicalConstructorSelectionReason::UndecidableCandidate
+										: CanonicalConstructorSelectionReason::NoViableCandidate;
 			return result;
 		}
 	} else {
 		if (saw_unknown) {
 			result.status = CanonicalConstructorSelectionStatus::Unknown;
+			result.reason = CanonicalConstructorSelectionReason::UndecidableCandidate;
 			return result;
 		}
 		if (best_candidates.empty()) {
 			result.status = CanonicalConstructorSelectionStatus::NoMatch;
+			result.reason = CanonicalConstructorSelectionReason::NoViableCandidate;
 			return result;
 		}
 		if (best_candidates.size() > 1) {
 			result.status = CanonicalConstructorSelectionStatus::Unknown;
+			result.reason = CanonicalConstructorSelectionReason::AmbiguousCandidate;
 			return result;
 		}
 	}

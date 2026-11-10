@@ -69,6 +69,10 @@ through the service with `ExistenceOnly`. An integer literal zero is passed as a
 null-pointer-constant argument fact, so a pointer parameter receives the
 `nullptr_t` conversion only where the language rule applies.
 
+Selection results now carry a reason code for missing, empty, or incomplete
+schemas, undecidable or ambiguous candidates, and outright no-match results. A
+native selection matrix covers those outcomes across the policy combinations.
+
 Remaining: continue with the remaining architecture items below.
 
 ## Remaining architecture items
@@ -77,4 +81,3 @@ Remaining: continue with the remaining architecture items below.
 - Member-function and conversion-operator schemas so operator lookup and user-defined conversion share one source of truth.
 - Per-candidate `Unimportable` / `Conditional` / `Deleted` status and arity ranges instead of global `SchemaIncomplete`.
 - One import policy, including the class fallback, for every schema parameter.
-- Selection tracing with reason codes and a native selection matrix test.
