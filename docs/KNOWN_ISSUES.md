@@ -207,6 +207,17 @@ non-projectable shapes;
 remove this entry when those consumers migrate and the compatibility projection
 fields are deleted.
 
+## Decltype operator overload resolution is parser-owned
+
+`get_overload_return_type` in `Parser_Expr_QualLookup.cpp` re-resolves a binary
+operator overload via `annotateConcreteBinaryOperatorOverload` when it is not
+already resolved, guarded by `resolving_overload_in_get_expression_type_`. This
+keeps `sizeof(decltype(expr))` working for inherited operators on specialized
+class templates, but it is a parser-level workaround. The proper owner is
+semantics (boundary 4): sema should own operator-overload resolution and result
+types, and the parser should only consume the resolved type. Re-evaluate and
+remove this re-resolution when boundary 4 starts.
+
 The triviality and lifetime traits still read `StructTypeInfo` and need a
 published member-property schema. A lazy-constraint member-object-pointer trait
 case remains unresolved because its member-owner identity is not published at
