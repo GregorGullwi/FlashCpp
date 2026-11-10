@@ -3504,7 +3504,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			}
 			// The declared member type retains its pointee qualification.
 			// [expr.ref] qualifies the pointer object, not its pointee.
-			if (member_type.pointer_depth() == 0) {
+			if (member_type.runtime_pointer_depth() == 0) {
 				member_type.add_cv_qualifier(cv);
 			} else {
 				cv |= member_type.pointer_levels().back().cv_qualifier;

@@ -1659,7 +1659,7 @@ void Parser::inferUnsizedArraySizeFromInitializer(const DeclarationNode& decl_no
 		const auto* string_literal = std::get_if<StringLiteralNode>(&init_expr);
 		if (!string_literal ||
 			type_specifier.category() != TypeCategory::Char ||
-			type_specifier.pointer_depth() != 0 ||
+			type_specifier.runtime_pointer_depth() != 0 ||
 			type_specifier.array_dimension_count() > 0) {
 			return;
 		}
@@ -1859,7 +1859,7 @@ ParseResult Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSp
 				type_specifier,
 				*deduced_type_spec_opt,
 				PlaceholderArrayDeduction::PreserveArray);
-			if (type_specifier.size_in_bits() == 0 && type_specifier.pointer_depth() == 0 &&
+			if (type_specifier.size_in_bits() == 0 && type_specifier.runtime_pointer_depth() == 0 &&
 				!type_specifier.is_reference()) {
 				type_specifier.set_size_in_bits(get_type_size_bits(type_specifier.category()));
 			}
