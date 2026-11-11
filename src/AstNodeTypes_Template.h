@@ -1,8 +1,11 @@
 #pragma once
 struct TemplateEnvironmentSnapshotNode;
+#include <algorithm>
+#include <ranges>
 #include <span>
 #include <type_traits>
 #include "AstNodeTypes_DeclNodes.h"
+#include "InlineVector.h"
 
 // Defined after ExpressionNode is declared in AstNodeTypes.h.  Constructor
 // initializer storage uses this narrow query to keep parser-owned pack
@@ -1531,6 +1534,90 @@ inline bool classUsingDeclarationTargetsBase(const ClassUsingDeclaration& declar
 		return false;
 	}
 	return declaration.target_base_ordinal == (base.source_ordinal == BaseClassSpecifier::NoSourceOrdinal ? base_index : base.source_ordinal);
+}
+
+inline size_t classUsingDeclarationBaseOffset(const StructTypeInfo& owner, const BaseClassSpecifier& base) {
+	if (!base.is_virtual) {
+		return base.offset;
+	}
+	for (const BaseClassSpecifier& virtual_base : owner.virtual_bases) {
+		if (virtual_base.type_index == base.type_index) {
+			return virtual_base.offset;
+		}
+	}
+	return base.offset;
+}
+
+// Resolve the base(s) nominated by one using-declaration. Resolved target
+// types may name an indirect base, so walk the reachable base graph by type
+// identity; dependent targets keep the source declaration ordinal.
+template <typename Visitor>
+bool visitClassUsingDeclarationTargets(const StructTypeInfo& owner, const ClassUsingDeclaration& declaration, Visitor&& visitor) {
+	if (!declaration.target_type_index.is_valid()) {
+		bool found_target = false;
+		for (size_t base_index = 0; base_index < owner.base_classes.size(); ++base_index) {
+			const BaseClassSpecifier& base = owner.base_classes[base_index];
+			if (!classUsingDeclarationTargetsBase(declaration, base, base_index)) {
+				continue;
+			}
+			if (const StructTypeInfo* base_info = tryGetStructTypeInfo(base.type_index)) {
+				visitor(*base_info, classUsingDeclarationBaseOffset(owner, base));
+				found_target = true;
+			}
+		}
+		return found_target;
+	}
+
+	bool found_target = false;
+	for (size_t base_index = 0; base_index < owner.base_classes.size(); ++base_index) {
+		const BaseClassSpecifier& base = owner.base_classes[base_index];
+		if (!classUsingDeclarationTargetsBase(declaration, base, base_index)) {
+			continue;
+		}
+		if (const StructTypeInfo* base_info = tryGetStructTypeInfo(base.type_index)) {
+			visitor(*base_info, classUsingDeclarationBaseOffset(owner, base));
+			found_target = true;
+		}
+	}
+	if (found_target) {
+		return true;
+	}
+
+	TemplateVector<const StructTypeInfo*, 8> pending;
+	TemplateVector<size_t, 8> pending_offsets;
+	TemplateVector<const StructTypeInfo*, 8> visited;
+	for (const BaseClassSpecifier& base : owner.base_classes) {
+		if (const StructTypeInfo* base_info = tryGetStructTypeInfo(base.type_index)) {
+			pending.push_back(base_info);
+			pending_offsets.push_back(classUsingDeclarationBaseOffset(owner, base));
+		}
+	}
+	while (!pending.empty()) {
+		const StructTypeInfo* current = pending.back();
+		const size_t current_offset = pending_offsets.back();
+		pending.pop_back();
+		pending_offsets.pop_back();
+		if (current == nullptr || std::ranges::find(visited, current) != visited.end()) {
+			continue;
+		}
+		visited.push_back(current);
+		for (const BaseClassSpecifier& base : current->base_classes) {
+			const size_t offset = current_offset + classUsingDeclarationBaseOffset(*current, base);
+			const StructTypeInfo* base_info = tryGetStructTypeInfo(base.type_index);
+			if (base.type_index == declaration.target_type_index) {
+				if (base_info != nullptr) {
+					visitor(*base_info, offset);
+					found_target = true;
+				}
+				continue;
+			}
+			if (base_info != nullptr) {
+				pending.push_back(base_info);
+				pending_offsets.push_back(offset);
+			}
+		}
+	}
+	return found_target;
 }
 
 void journalStructDeclarationRewrite(StructDeclarationNode& node);

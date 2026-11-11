@@ -3806,15 +3806,7 @@ bool visitUsingDeclarationTargets(const StructTypeInfo& info, StringHandle membe
 			continue;
 		}
 		found_using_declaration = true;
-		for (size_t base_index = 0; base_index < info.base_classes.size(); ++base_index) {
-			const BaseClassSpecifier& base = info.base_classes[base_index];
-			if (!classUsingDeclarationTargetsBase(using_declaration, base, base_index)) {
-				continue;
-			}
-			if (const StructTypeInfo* base_info = resolveBaseStructInfo(base)) {
-				visitor(*base_info, base);
-			}
-		}
+		visitClassUsingDeclarationTargets(info, using_declaration, visitor);
 	}
 	return found_using_declaration;
 }
@@ -3879,20 +3871,11 @@ std::optional<StructMember> StructTypeInfo::findMemberRecursive(StringHandle mem
 
 	std::optional<StructMember> using_member;
 	const bool has_using_declaration = visitUsingDeclarationTargets(*this, member_name,
-		[&](const StructTypeInfo& base_info, const BaseClassSpecifier& base) {
+		[&](const StructTypeInfo& base_info, size_t base_offset) {
 			if (using_member.has_value()) {
 				return;
 			}
 			if (auto base_member = base_info.findMemberRecursive(member_name)) {
-				size_t base_offset = base.offset;
-				if (base.is_virtual) {
-					for (const BaseClassSpecifier& virtual_base : virtual_bases) {
-						if (virtual_base.type_index == base.type_index) {
-							base_offset = virtual_base.offset;
-							break;
-						}
-					}
-				}
 				base_member->offset += base_offset;
 				using_member = base_member;
 			}
@@ -3956,7 +3939,7 @@ std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::find
 
 	std::pair<const StructStaticMember*, const StructTypeInfo*> using_static_member{nullptr, nullptr};
 	const bool has_using_declaration = visitUsingDeclarationTargets(*this, member_name,
-		[&](const StructTypeInfo& base_info, const BaseClassSpecifier&) {
+		[&](const StructTypeInfo& base_info, size_t) {
 			if (using_static_member.first != nullptr) {
 				return;
 			}
@@ -4001,7 +3984,7 @@ std::pair<const StructMemberFunction*, const StructTypeInfo*> StructTypeInfo::fi
 
 	std::pair<const StructMemberFunction*, const StructTypeInfo*> using_member_function{nullptr, nullptr};
 	const bool has_using_declaration = visitUsingDeclarationTargets(*this, func_name,
-		[&](const StructTypeInfo& base_info, const BaseClassSpecifier&) {
+		[&](const StructTypeInfo& base_info, size_t) {
 			if (using_member_function.first != nullptr) {
 				return;
 			}
