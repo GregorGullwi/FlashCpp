@@ -1740,6 +1740,13 @@ inline CanonicalTypeImport importCanonicalTypeWithClassFallback(CanonicalTypeTab
 }
 
 inline CanonicalTypeImport importCanonicalStructuralTraitOperand(CanonicalTypeTable& table, const TypeSpecifierNode& syntax) {
+	if (syntax.has_member_class() && !syntax.has_member_class_entity() && !syntax.has_member_class_type_id()) {
+		TypeSpecifierNode bound_syntax = syntax;
+		tryBindPublishedMemberClassEntity(bound_syntax);
+		if (bound_syntax.has_member_class_entity() || bound_syntax.has_member_class_type_id()) {
+			return importCanonicalTypeWithClassFallback(table, bound_syntax);
+		}
+	}
 	return importCanonicalTypeWithClassFallback(table, syntax);
 }
 

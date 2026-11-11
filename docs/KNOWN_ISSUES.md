@@ -220,9 +220,9 @@ expression type and the parser should only consume it.
 ## Remaining flat trait consumers
 
 The triviality and lifetime traits still read `StructTypeInfo` and need a
-published member-property schema. A lazy-constraint member-object-pointer trait
-case remains unresolved because its member-owner identity is not published at
-materialization. The sema-owned construction traits
+published member-property schema. Explicit member-object-pointer template
+arguments publish ordered owner identity only when the pointee has no outer
+pointer or array wrapper. The sema-owned construction traits
 (`__is_constructible`, `__is_trivially_constructible`, and
 `__is_nothrow_constructible`) answer exact matches, supported scalar and
 reference conversions, same-class by-value arguments, publicly derived by-value

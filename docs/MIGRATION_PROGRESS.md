@@ -515,7 +515,9 @@ Run the host-native migration-counter and identity-inventory scripts under
 entry within baseline. `canonical_structural_trait_fallback` is 0 on the
 structural-trait and lazy-constraint regressions; residual lazy-constraint
 fallbacks are the constructibility probes, which need the canonical
-constructor-query path. The inline dollar-recovery inventory and canonical-adapter
+constructor-query path. Explicit member-object-pointer template arguments now
+publish their declaring-class identity through an ordered declarator before
+canonical trait import. The inline dollar-recovery inventory and canonical-adapter
 source corpus remain within their supported/deferred baselines. The fixed adapter
 corpus remains 26 supported and zero deferred. Gate 0's Windows and ELF
 multi-translation-unit checks remain required compatibility evidence. See the
