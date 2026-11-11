@@ -3607,6 +3607,10 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCallInternal(
 		false);
 	call_op.applyFunctionControlFlow(func_decl);
 	call_op.result_destination = result_destination;
+	call_op.returns_pointer = conversion_return_type.runtime_pointer_depth() > 0;
+	if (call_op.returns_pointer) {
+		call_op.return_size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+	}
 	const bool conversion_returns_reference = conversion_return_type.is_reference() || conversion_return_type.is_rvalue_reference();
 	if (conversion_returns_reference) {
 		populateReferenceReturnInfo(call_op, conversion_return_type);

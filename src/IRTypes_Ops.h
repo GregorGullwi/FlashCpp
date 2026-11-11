@@ -563,6 +563,7 @@ struct CallOp {
 	bool is_indirect_call = false;		   // 1 byte - True if calling through function pointer/reference
 	bool returns_reference = false;		// 1 byte - True if function returns T& or T&&
 	bool returns_rvalue_reference = false; // 1 byte - True if function returns T&&
+	bool returns_pointer = false; // Pointer prvalue, including pointers to nominal types
 	std::optional<TempVar> return_slot;	// Optional temp var representing the return slot location
 	std::optional<LocalVarId> result_destination;	// Direct object result for guaranteed copy elision
 

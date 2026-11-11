@@ -5128,12 +5128,9 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			// `const void*` is TypeCategory::Void with a 64-bit pointer size; skipping
 			// that store drops the callee's RAX before the caller compares it.
 		if (!returns_valueless_void && !call_op.usesReturnSlot()) {
-			if (call_op.returns_reference) {
-					// A reference result is a 64-bit pointer in RAX, never a by-value
-					// aggregate. Store it directly; running SysV struct classification
-					// on the referent (e.g. a polymorphic Base) would misclassify it
-					// and emit no store, leaving the result slot uninitialized.
-				emitMovToFrameBySize(X64Register::RAX, result_offset, 64);
+			if (call_op.returns_reference || call_op.returns_pointer) {
+				// Pointer and reference results use RAX regardless of their nominal pointee type.
+				emitMovToFrameBySize(X64Register::RAX, result_offset, POINTER_SIZE_BITS);
 			} else if (isFloatingPointType(call_op.return_type_index.category())) {
 					// Float return value is in XMM0
 				bool is_float = (call_op.return_type_index.category() == TypeCategory::Float);
