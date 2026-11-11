@@ -2693,7 +2693,7 @@ inline void checkMemberObjectPointerValues() {
 	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
 	const EntityId entity{40331};
 	const TypeId owner = table.record(entity);
-	table.publishRecordLayout({entity, 8, 8, 8, 4, 2, 0, CanonicalRecordLayoutFlags::None, 0});
+	table.publishRecordLayout({entity, 8, 8, 8, 4, 2, 0, CanonicalRecordLayoutFlags::None});
 	const CanonicalRecordMember members[] = {
 		{integer, 0, 4, 0, 0, CanonicalAccess::Public, CanonicalRecordMemberFlags::None},
 		{integer, 4, 4, 0, 0, CanonicalAccess::Public, CanonicalRecordMemberFlags::None},
@@ -2711,7 +2711,7 @@ inline void checkMemberObjectPointerValues() {
 	require(first != second);
 	const EntityId base_entity{40335};
 	const TypeId base_owner = table.record(base_entity);
-	table.publishRecordLayout({base_entity, 4, 4, 4, 4, 1, 0, CanonicalRecordLayoutFlags::None, 0});
+	table.publishRecordLayout({base_entity, 4, 4, 4, 4, 1, 0, CanonicalRecordLayoutFlags::None});
 	const CanonicalRecordMember base_member{integer, 0, 4, 0, 0, CanonicalAccess::Public, CanonicalRecordMemberFlags::None};
 	table.publishRecordFieldSchema(table.record(base_entity), std::span<const CanonicalRecordMember>(&base_member, 1), {});
 	const TypeId inherited = table.memberObjectPointerValue(member_pointer, base_owner, 0);
@@ -2725,7 +2725,7 @@ inline void checkMemberObjectPointerValues() {
 	require(rejects(member_pointer, integer, 0));
 	const EntityId bitfield_entity{40332};
 	const TypeId bitfield_owner = table.record(bitfield_entity);
-	table.publishRecordLayout({bitfield_entity, 4, 4, 4, 4, 1, 0, CanonicalRecordLayoutFlags::None, 0});
+	table.publishRecordLayout({bitfield_entity, 4, 4, 4, 4, 1, 0, CanonicalRecordLayoutFlags::None});
 	const CanonicalRecordMember bitfield_member{integer, 0, 4, 3, 0, CanonicalAccess::Public, CanonicalRecordMemberFlags::Bitfield};
 	table.publishRecordFieldSchema(table.record(bitfield_entity), std::span<const CanonicalRecordMember>(&bitfield_member, 1), {});
 	require(rejects(table.memberObjectPointer(bitfield_owner, integer), bitfield_owner, 0));
@@ -2910,7 +2910,7 @@ inline void checkUnionValues() {
 		{integer, 8, 4, 0, 0, CanonicalAccess::Public, start},
 		{integer, 8, 4, 0, 0, CanonicalAccess::Public, end},
 	}};
-	table.publishRecordLayout({entity, 12, 12, 12, 4, 5, 0, CanonicalRecordLayoutFlags::None, 0});
+	table.publishRecordLayout({entity, 12, 12, 12, 4, 5, 0, CanonicalRecordLayoutFlags::None});
 	table.publishRecordFieldSchema(table.record(entity), members, {});
 	const TypeId zero = table.integralValue(integer, 0);
 	const TypeId one = table.integralValue(integer, 1);
@@ -2953,7 +2953,7 @@ inline void checkUnionValues() {
 	const TypeId array_value = table.structuralArrayValue(array_type, elements);
 	const EntityId array_entity{40205};
 	const TypeId array_owner = table.record(array_entity);
-	table.publishRecordLayout({array_entity, 8, 8, 8, 4, 1, 0, CanonicalRecordLayoutFlags::Union, 0});
+	table.publishRecordLayout({array_entity, 8, 8, 8, 4, 1, 0, CanonicalRecordLayoutFlags::Union});
 	const CanonicalRecordMember array_member{array_type, 0, 8, 0, 0, CanonicalAccess::Public, start | CanonicalRecordMemberFlags::UnionGroupEnd};
 	table.publishRecordFieldSchema(table.record(array_entity), std::span<const CanonicalRecordMember>(&array_member, 1), {});
 	const TypeId active_array = table.structuralUnionValue(array_owner, 0, uint16_t{0}, array_value);
@@ -2963,7 +2963,7 @@ inline void checkUnionValues() {
 	uint32_t invalid_entity = 40210;
 	const auto invalid_schema = [&](std::array<CanonicalRecordMember, 5> invalid) {
 		const EntityId target{invalid_entity++};
-		table.publishRecordLayout({target, 12, 12, 12, 4, 5, 0, CanonicalRecordLayoutFlags::None, 0});
+		table.publishRecordLayout({target, 12, 12, 12, 4, 5, 0, CanonicalRecordLayoutFlags::None});
 		try { table.publishRecordFieldSchema(table.record(target), invalid, {}); } catch (const InternalError&) { return true; }
 		return false;
 	};
@@ -2984,7 +2984,7 @@ inline void checkUnionValues() {
 	{
 		CanonicalTypeTransaction transaction(table);
 		const EntityId temporary{40204};
-		table.publishRecordLayout({temporary, 12, 12, 12, 4, 5, 0, CanonicalRecordLayoutFlags::None, 0});
+		table.publishRecordLayout({temporary, 12, 12, 12, 4, 5, 0, CanonicalRecordLayoutFlags::None});
 		table.publishRecordFieldSchema(table.record(temporary), members, {});
 		(void)table.structuralUnionValue(table.record(temporary), 0, uint16_t{1}, one);
 	}

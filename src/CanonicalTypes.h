@@ -410,7 +410,6 @@ struct CanonicalRecordLayout {
 	uint16_t member_count;
 	uint16_t direct_base_count;
 	CanonicalRecordLayoutFlags flags;
-	uint8_t reserved = 0;
 	friend bool operator==(CanonicalRecordLayout, CanonicalRecordLayout) = default;
 };
 
@@ -421,7 +420,6 @@ struct CanonicalEnumLayout {
 	uint32_t size_bytes;
 	uint16_t enumerator_count;
 	CanonicalEnumLayoutFlags flags;
-	uint8_t reserved = 0;
 	friend bool operator==(CanonicalEnumLayout, CanonicalEnumLayout) = default;
 };
 
@@ -509,8 +507,6 @@ struct CanonicalRecordBase {
 	uint32_t offset_bytes;
 	CanonicalAccess access;
 	CanonicalRecordBaseFlags flags;
-	uint16_t reserved = 0;
-	uint32_t reserved2 = 0;
 	friend bool operator==(CanonicalRecordBase, CanonicalRecordBase) = default;
 };
 
@@ -521,7 +517,6 @@ struct CanonicalClassBase {
 	TypeId type;
 	CanonicalAccess access;
 	CanonicalRecordBaseFlags flags;
-	uint16_t reserved = 0;
 	uint32_t offset_bytes = 0;
 	friend bool operator==(CanonicalClassBase, CanonicalClassBase) = default;
 };
@@ -542,8 +537,6 @@ struct CanonicalVirtualBase {
 struct CanonicalNamedTypeMember {
 	TypeId type;
 	TypeId name;
-	uint32_t reserved = 0;
-	uint32_t reserved2 = 0;
 	friend bool operator==(CanonicalNamedTypeMember, CanonicalNamedTypeMember) = default;
 };
 
@@ -567,6 +560,7 @@ enum class CanonicalMemberFunctionFlags : uint16_t {
 	Final = 1 << 9,
 	Defaulted = 1 << 10,
 	ConversionOperator = 1 << 11,
+	ConversionTarget = 1 << 12,
 };
 
 // Canonical member-function entry keyed by declaring class TypeId. Identity is
@@ -579,10 +573,11 @@ struct CanonicalMemberFunction {
 	uint8_t operator_kind;
 	CVQualifier cv_qualifier;
 	ReferenceQualifier ref_qualifier;
-	uint8_t reserved = 0;
 	uint16_t ordinal = 0;
+	TypeId conversion_target;
 	friend bool operator==(CanonicalMemberFunction, CanonicalMemberFunction) = default;
 };
+static_assert(sizeof(CanonicalMemberFunction) == 20);
 
 // Publication input for one member function. Spelling is lookup content only.
 // `ordinal` is the declaring record's member-function ordinal.
@@ -594,6 +589,7 @@ struct CanonicalMemberFunctionSpec {
 	CVQualifier cv_qualifier = CVQualifier::None;
 	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
 	uint16_t ordinal = 0;
+	TypeId conversion_target = TypeId{};
 };
 
 inline bool hasCanonicalMemberFunctionFlag(CanonicalMemberFunctionFlags flags, CanonicalMemberFunctionFlags bit) {
@@ -746,12 +742,12 @@ static_assert(std::is_trivially_copyable_v<CanonicalNamedTypeMember>);
 static_assert(sizeof(CanonicalRecordLayout) == 24);
 static_assert(sizeof(CanonicalEnumLayout) == 20);
 static_assert(sizeof(CanonicalRecordMember) == 16);
-static_assert(sizeof(CanonicalRecordBase) == 16);
+static_assert(sizeof(CanonicalRecordBase) == 12);
 static_assert(sizeof(CanonicalRecordProperties) == 8);
 static_assert(sizeof(CanonicalClassBase) == 12);
 static_assert(sizeof(CanonicalVirtualBase) == 8);
 static_assert(std::is_trivially_copyable_v<CanonicalVirtualBase>);
-static_assert(sizeof(CanonicalNamedTypeMember) == 16);
+static_assert(sizeof(CanonicalNamedTypeMember) == 8);
 
 class CanonicalTypeTransaction;
 
@@ -1173,23 +1169,17 @@ private:
 		TypeId class_type;
 		uint32_t base_begin;
 		uint16_t base_count;
-		uint16_t reserved;
-		uint32_t reserved2;
-		friend bool operator==(CanonicalClassBaseSchemaHeader,
-			CanonicalClassBaseSchemaHeader) = default;
+		friend bool operator==(CanonicalClassBaseSchemaHeader, CanonicalClassBaseSchemaHeader) = default;
 	};
-	static_assert(sizeof(CanonicalClassBaseSchemaHeader) == 16);
+	static_assert(sizeof(CanonicalClassBaseSchemaHeader) == 12);
 
 	struct CanonicalVirtualBaseSchemaHeader {
 		TypeId class_type;
 		uint32_t base_begin;
 		uint16_t base_count;
-		uint16_t reserved;
-		uint32_t reserved2;
-		friend bool operator==(CanonicalVirtualBaseSchemaHeader,
-			CanonicalVirtualBaseSchemaHeader) = default;
+		friend bool operator==(CanonicalVirtualBaseSchemaHeader, CanonicalVirtualBaseSchemaHeader) = default;
 	};
-	static_assert(sizeof(CanonicalVirtualBaseSchemaHeader) == 16);
+	static_assert(sizeof(CanonicalVirtualBaseSchemaHeader) == 12);
 
 	enum class CanonicalClassTypeSchemaKind : uint16_t { Subobjects, MemberFunctions };
 
@@ -1198,38 +1188,31 @@ private:
 		uint32_t member_begin;
 		uint16_t member_count;
 		CanonicalClassTypeSchemaKind kind;
-		uint32_t reserved2;
 		friend bool operator==(CanonicalClassTypeSchemaHeader, CanonicalClassTypeSchemaHeader) = default;
 	};
-	static_assert(sizeof(CanonicalClassTypeSchemaHeader) == 16);
+	static_assert(sizeof(CanonicalClassTypeSchemaHeader) == 12);
 
 	struct CanonicalNamedTypeMemberSchemaHeader {
 		EntityId entity;
 		uint32_t member_begin;
 		uint16_t member_count;
-		uint16_t reserved;
-		uint32_t reserved2;
-		friend bool operator==(CanonicalNamedTypeMemberSchemaHeader,
-			CanonicalNamedTypeMemberSchemaHeader) = default;
+		friend bool operator==(CanonicalNamedTypeMemberSchemaHeader, CanonicalNamedTypeMemberSchemaHeader) = default;
 	};
-	static_assert(sizeof(CanonicalNamedTypeMemberSchemaHeader) == 16);
+	static_assert(sizeof(CanonicalNamedTypeMemberSchemaHeader) == 12);
 
 	struct CanonicalMemberFunctionSchemaHeader {
 		TypeId type;
 		uint32_t function_begin;
 		uint16_t function_count;
-		uint16_t reserved;
-		uint32_t reserved2;
 		friend bool operator==(CanonicalMemberFunctionSchemaHeader, CanonicalMemberFunctionSchemaHeader) = default;
 	};
-	static_assert(sizeof(CanonicalMemberFunctionSchemaHeader) == 16);
+	static_assert(sizeof(CanonicalMemberFunctionSchemaHeader) == 12);
 
 	struct CanonicalRecordConstructorSchemaHeader {
 		TypeId type;
 		uint32_t constructor_begin;
 		uint32_t parameter_begin;
 		uint16_t constructor_count;
-		uint16_t reserved;
 		friend bool operator==(CanonicalRecordConstructorSchemaHeader, CanonicalRecordConstructorSchemaHeader) = default;
 	};
 	static_assert(sizeof(CanonicalRecordConstructorSchemaHeader) == 16);

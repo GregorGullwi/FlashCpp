@@ -2074,6 +2074,17 @@ inline bool tryPublishCanonicalMemberFunctionSignatures(CanonicalTypeTable& tabl
 		}
 		if (function.is_conversion_operator()) {
 			spec.flags = spec.flags | CanonicalMemberFunctionFlags::ConversionOperator;
+			const FunctionDeclarationNode* declaration = function.function_decl.get_if<FunctionDeclarationNode>();
+			if (declaration != nullptr) {
+				const TypeSpecifierNode& return_type = declaration->decl_node().type_specifier_node();
+				TypeSpecifierNode canonical_return_type = return_type;
+				tryBindPublishedTypeEntity(canonical_return_type);
+				const CanonicalTypeImport return_type_import = importCanonicalTypeWithClassFallback(table, canonical_return_type);
+				if (return_type_import.status == CanonicalTypeImportStatus::Supported) {
+					spec.flags = spec.flags | CanonicalMemberFunctionFlags::ConversionTarget;
+					spec.signature = return_type_import.type;
+				}
+			}
 		}
 		if (const FunctionDeclarationNode* declaration = function.function_decl.get_if<FunctionDeclarationNode>()) {
 			if (declaration->is_static()) {
@@ -3423,7 +3434,6 @@ inline bool tryPublishCanonicalClassBaseSchema(CanonicalTypeTable& table, TypeId
 				imported_base.type,
 				access,
 				flags,
-				0,
 				static_cast<uint32_t>(base.offset)});
 
 			const bool has_base_object_facts = table.hasRecordProperties(imported_base.type) && table.hasRecordSubobjectTypes(imported_base.type);
