@@ -978,6 +978,7 @@ struct BaseClassSpecifier {
 	bool is_virtual;			 // True for virtual inheritance (Phase 3)
 	size_t offset;			   // Offset of base subobject in derived class
 	bool is_deferred;			  // True for template parameters (resolved at instantiation)
+	SourceLocation source_location{};  // Declaring base-specifier location when parsed from source
 
 	BaseClassSpecifier(std::string_view n, TypeIndex tidx, AccessSpecifier acc, bool virt = false, size_t off = 0, bool deferred = false)
 		: name(n), type_index(tidx), access(acc), is_virtual(virt), offset(off), is_deferred(deferred) {}

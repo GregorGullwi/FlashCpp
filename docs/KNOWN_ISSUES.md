@@ -590,23 +590,3 @@ while parsing the template argument list. A reduced friend/ADL form reaches an
 incorrect constructor diagnostic. These parser/lookup gaps prevent a source-level
 friend-effect regression here; native tests retain a successfully instantiated
 `Check<Good>` after a later class-body error without rolling back its cache entry.
-
-## `override` validation does not traverse virtual base classes
-
-A member function marked `override` is rejected when the overridden virtual
-function is reached through a base class that itself has a virtual base:
-
-```cpp
-struct Base { virtual int value() const { return 1; } };
-struct Mid : virtual Base { int value() const override { return 2; } };  // accepted
-struct Leaf : Mid { int value() const override { return 3; } };          // rejected
-```
-
-`Leaf::value` overrides `Mid::value` (and `Base::value`); Clang C++20 accepts
-the program and virtual dispatch through a `Base*` returns 3. FlashCpp reports
-`function 'value' marked 'override' but does not override any base class function
-in class 'Leaf'`. Removing `override` makes the same program compile and dispatch
-correctly, so the defect is confined to override validation's base-function set.
-The fix is to collect virtual-base members (or their final overriders) before
-deciding that no function is overridden. Discovered 2026-11-09 while verifying
-the "virtual functions: full support" claim.

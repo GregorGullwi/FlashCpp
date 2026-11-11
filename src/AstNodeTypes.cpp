@@ -3429,6 +3429,8 @@ bool StructTypeInfo::finalizeWithBases() {
 		if (!seen_direct_bases.insert(base.type_index).second) {
 			finalization_error_ = "duplicate direct base class '" + std::string(base.name) +
 								  "' in class '" + std::string(StringTable::getStringView(getName())) + "'";
+			finalization_error_kind_ = StructFinalizationErrorKind::DuplicateDirectBase;
+			finalization_error_location_ = base.source_location;
 			return false;
 		}
 	}
@@ -3563,6 +3565,55 @@ bool StructTypeInfo::buildVTable() {
 	// Step 2: Process this class's virtual functions. Keep going with an empty
 	// member list so inherited pure virtuals still determine abstractness and
 	// inherited vtables receive their symbol metadata.
+	auto memberFunctionSourceLocation = [](const StructMemberFunction& function) -> SourceLocation {
+		if (function.function_decl.is<FunctionDeclarationNode>()) {
+			return SourceLocation::fromToken(function.function_decl.as<FunctionDeclarationNode>().decl_node().identifier_token());
+		}
+		return SourceLocation{};
+	};
+	auto reportFinalOverrideError = [this, &success](StringHandle function_name, const SourceLocation& location) {
+		std::string error_msg = "cannot override final function '" +
+								std::string(StringTable::getStringView(function_name)) + "' in class '" +
+								std::string(StringTable::getStringView(getName())) + "'";
+		FLASH_LOG(Parser, Error, error_msg);
+		finalization_error_ = error_msg;
+		finalization_error_kind_ = StructFinalizationErrorKind::OverrideFinalFunction;
+		finalization_error_location_ = location;
+		success = false;
+	};
+	auto findIndirectBaseVirtualFunction = [this](StringHandle function_name) -> const StructMemberFunction* {
+		std::vector<const StructTypeInfo*> pending;
+		std::unordered_set<const StructTypeInfo*> visited;
+		for (const BaseClassSpecifier& base : base_classes) {
+			if (base.is_deferred || base.type_index.index() >= gTypeInfo.size()) {
+				continue;
+			}
+			if (const StructTypeInfo* base_info = gTypeInfo[base.type_index.index()].getStructInfo()) {
+				pending.push_back(base_info);
+			}
+		}
+		while (!pending.empty()) {
+			const StructTypeInfo* current = pending.back();
+			pending.pop_back();
+			if (current == nullptr || !visited.insert(current).second) {
+				continue;
+			}
+			for (const StructMemberFunction* base_func : current->vtable) {
+				if (base_func != nullptr && base_func->getName() == function_name) {
+					return base_func;
+				}
+			}
+			for (const BaseClassSpecifier& base : current->base_classes) {
+				if (base.is_deferred || base.type_index.index() >= gTypeInfo.size()) {
+					continue;
+				}
+				if (const StructTypeInfo* base_info = gTypeInfo[base.type_index.index()].getStructInfo()) {
+					pending.push_back(base_info);
+				}
+			}
+		}
+		return nullptr;
+	};
 	for (auto& func : member_functions) {
 		// Skip constructors (they can't be virtual in the vtable sense)
 		if (func.is_constructor) {
@@ -3624,12 +3675,7 @@ bool StructTypeInfo::buildVTable() {
 			// Check if base function is final
 			if (base_func_ptr && base_func_ptr->is_final) {
 				// Error: attempting to override a final function
-				std::string error_msg = "cannot override final function '" +
-										std::string(StringTable::getStringView(func_name)) + "' in class '" +
-										std::string(StringTable::getStringView(getName())) + "'";
-				FLASH_LOG(Parser, Error, error_msg);
-				finalization_error_ = error_msg;
-				success = false;
+				reportFinalOverrideError(func_name, memberFunctionSourceLocation(func));
 			}
 
 			// Override existing vtable entry
@@ -3637,12 +3683,7 @@ bool StructTypeInfo::buildVTable() {
 			func.vtable_index = override_index;
 		} else if (overrides_secondary_base) {
 			if (base_func_ptr && base_func_ptr->is_final) {
-				std::string error_msg = "cannot override final function '" +
-										std::string(StringTable::getStringView(func_name)) + "' in class '" +
-										std::string(StringTable::getStringView(getName())) + "'";
-				FLASH_LOG(Parser, Error, error_msg);
-				finalization_error_ = error_msg;
-				success = false;
+				reportFinalOverrideError(func_name, memberFunctionSourceLocation(func));
 			}
 
 			// Secondary-base overrides are emitted into the secondary vtable, not the
@@ -3659,6 +3700,10 @@ bool StructTypeInfo::buildVTable() {
 			if (any_base_potentially_incomplete) {
 				// Base class vtable may be incomplete (template base classes are deferred
 				// during parsing). Defer the check to instantiation time.
+			} else if (const StructMemberFunction* indirect_base_func = findIndirectBaseVirtualFunction(func_name)) {
+				if (indirect_base_func->is_final) {
+					reportFinalOverrideError(func_name, memberFunctionSourceLocation(func));
+				}
 			} else {
 				// Error: 'override' specified but no base function to override
 				// Enforces [class.virtual]/4: ill-formed if override doesn't match
@@ -3668,6 +3713,8 @@ bool StructTypeInfo::buildVTable() {
 										std::string(StringTable::getStringView(getName())) + "'";
 				FLASH_LOG(Parser, Error, error_msg);
 				finalization_error_ = error_msg;
+				finalization_error_kind_ = StructFinalizationErrorKind::OverrideSpecifierNoBase;
+				finalization_error_location_ = memberFunctionSourceLocation(func);
 				success = false;
 			}
 		}
@@ -3704,6 +3751,8 @@ bool StructTypeInfo::rebuildVTable() {
 	is_abstract = false;
 	vtable_symbol = {};
 	finalization_error_.clear();
+	finalization_error_kind_ = StructFinalizationErrorKind::None;
+	finalization_error_location_ = SourceLocation{};
 	for (StructMemberFunction& function : member_functions) {
 		function.vtable_index = -1;
 	}

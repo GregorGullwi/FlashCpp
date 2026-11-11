@@ -117,6 +117,13 @@ struct ImplicitDefaultConstructorSemanticRecord {
 };
 
 // Struct type information
+enum class StructFinalizationErrorKind : uint8_t {
+	None,
+	DuplicateDirectBase,
+	OverrideFinalFunction,
+	OverrideSpecifierNoBase,
+};
+
 struct StructTypeInfo {
 	StringHandle name;
 	NamespaceHandle namespace_handle;  // Namespace this struct was declared in
@@ -188,6 +195,8 @@ struct StructTypeInfo {
 
 	// Error tracking for semantic errors detected during finalization
 	std::string finalization_error_;	 // Non-empty if semantic error occurred during finalization
+	StructFinalizationErrorKind finalization_error_kind_ = StructFinalizationErrorKind::None;
+	SourceLocation finalization_error_location_{};
 
 	// Cached type_index from the owning TypeInfo, set by TypeInfo::createStructInfo() /
 	// TypeInfo::setStructInfo(). Avoids fragile gTypesByName lookups in isOwnTypeIndex().
@@ -458,6 +467,8 @@ struct StructTypeInfo {
 	// Check if finalization had errors
 	bool hasFinalizationError() const { return !finalization_error_.empty(); }
 	const std::string& getFinalizationError() const { return finalization_error_; }
+	StructFinalizationErrorKind getFinalizationErrorKind() const { return finalization_error_kind_; }
+	const SourceLocation& getFinalizationErrorLocation() const { return finalization_error_location_; }
 
 	SizeInBits sizeInBits() const { return toBits(sizeInBytes()); }
 	// Use this when later layout needs the furthest offset already reserved by either
