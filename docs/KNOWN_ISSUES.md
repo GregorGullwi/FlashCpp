@@ -4,14 +4,6 @@ This file is the authoritative inventory of unresolved gaps. Migration status
 and validation belong in `MIGRATION_PROGRESS.md`; that file should link here
 instead of restating issue details.
 
-## Dependent conversion operators can miss class-pointer tail annotation
-
-A class template with a conversion operator written as `operator T*()` can
-rank as viable for a call taking a base pointer of the instantiated `T`.
-Semantic annotation can still miss the selected conversion and report an
-internal error while lowering the call. The class-pointer tail works when
-the conversion operator has a concrete written return type.
-
 ## Builtin logical OR can evaluate a guarded pointer dereference
 
 In `return !p || *p == 42;`, lowering emits the dereference before the
