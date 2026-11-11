@@ -6690,9 +6690,7 @@ inline OperatorOverloadResult findUnaryOperatorOverloadWithFreeFunction(
 		CanonicalTypeTable& table = context->canonicalTypes();
 		canonical_transaction.emplace(table);
 		operand_type_id = tryGetCanonicalOverloadClassTypeId(table, operand_type_spec);
-		if (!operand_type_id) {
-			gatherCompatibilityMembers();
-		} else {
+		if (operand_type_id) {
 			std::vector<TypeId> pending_types{operand_type_id};
 			for (size_t pending_index = 0; pending_index < pending_types.size(); ++pending_index) {
 				const TypeId owner_type_id = pending_types[pending_index];
