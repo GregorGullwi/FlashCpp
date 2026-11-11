@@ -6491,13 +6491,11 @@ inline bool classHasUsingDeclarationForOperator(const StructTypeInfo& struct_inf
 	return false;
 }
 
-inline bool classUsingDeclarationTargetsBase(
-	const ClassUsingDeclaration& declaration, const BaseClassSpecifier& base, size_t base_index) {
+inline bool classUsingDeclarationTargetsBase(const ClassUsingDeclaration& declaration, const BaseClassSpecifier& base, size_t base_index) {
 	if (declaration.target_type_index.is_valid()) {
 		return declaration.target_type_index == base.type_index;
 	}
-	return declaration.target_base_ordinal != ClassUsingDeclaration::NoTargetBaseOrdinal &&
-		declaration.target_base_ordinal == base_index;
+	return declaration.target_base_ordinal != ClassUsingDeclaration::NoTargetBaseOrdinal && declaration.target_base_ordinal == base_index;
 }
 
 inline void appendCompatibilityUnaryOperatorBaseTypes(

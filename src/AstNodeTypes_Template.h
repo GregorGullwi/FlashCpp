@@ -1554,8 +1554,7 @@ public:
 	}
 	std::span<const BaseClassSpecifier> base_classes() const { return base_classes_; }
 	std::span<const ClassUsingDeclaration> class_using_declarations() const { return class_using_declarations_; }
-	void add_class_using_declaration(StringHandle target_name, StringHandle member_name, TypeIndex target_type_index,
-		uint16_t target_base_ordinal) {
+	void add_class_using_declaration(StringHandle target_name, StringHandle member_name, TypeIndex target_type_index, uint16_t target_base_ordinal) {
 		for (const ClassUsingDeclaration& existing : class_using_declarations_) {
 			if (existing.target_name == target_name && existing.member_name == member_name &&
 				existing.target_type_index == target_type_index && existing.target_base_ordinal == target_base_ordinal) {
