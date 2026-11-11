@@ -339,9 +339,6 @@ mismatched, unpublished, or unresolved owner facts.
      consume it, so same-named base operators are disambiguated by the
      using-declaration instead of all bases contributing candidates. General
      member using-import lookup remains unsupported.
-   - Migrate the separate compatibility candidate gathering in the mixed
-     member/free selector; deleting `findUnaryOperatorOverloadCompatibility`
-     alone does not remove that dependency.
 
 3. **Complete importer and declarator coverage.** Partial-specialization bodies
    now reuse the ordinary anonymous-union member parser, so union fields and
