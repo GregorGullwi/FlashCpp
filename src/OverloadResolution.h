@@ -2984,6 +2984,18 @@ inline bool canonicalMemberFunctionIsConversionOperator(const CanonicalMemberFun
 	return member.is_conversion_operator();
 }
 
+inline bool canonicalClassHasLocalOperatorName(CanonicalTypeTable& table, TypeId owner, OverloadableOperator operator_kind) {
+	if (!table.hasMemberFunctionSchema(owner)) {
+		return false;
+	}
+	if (operator_kind == OverloadableOperator::Assign) {
+		return table.tryFindMemberFunctionByOperator(owner, static_cast<uint8_t>(OverloadableOperator::Assign)).has_value() ||
+			table.tryFindMemberFunctionByOperator(owner, static_cast<uint8_t>(OverloadableOperator::CopyAssign)).has_value() ||
+			table.tryFindMemberFunctionByOperator(owner, static_cast<uint8_t>(OverloadableOperator::MoveAssign)).has_value();
+	}
+	return table.tryFindMemberFunctionByOperator(owner, static_cast<uint8_t>(operator_kind)).has_value();
+}
+
 inline std::optional<UserDefinedConversionOperatorSelection>
 trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const TypeSpecifierNode& target_type, bool allow_explicit) {
 	if (!source_type_id) {
@@ -6747,9 +6759,12 @@ inline OperatorOverloadResult findUnaryOperatorOverloadWithFreeFunction(
 				}
 				const TypeInfo* const type_info = tryFindCanonicalOverloadClassTypeInfo(table, owner_type_id);
 				const StructTypeInfo* const struct_info = type_info != nullptr ? type_info->getStructInfo() : nullptr;
+				const bool has_local_operator = struct_info != nullptr && (classHasLocalOperatorName(*struct_info, operator_kind) ||
+					(table.hasMemberFunctionSchema(owner_type_id) &&
+						canonicalClassHasLocalOperatorName(table, owner_type_id, operator_kind)));
 				if (struct_info != nullptr && classHasUsingDeclarationForOperator(*struct_info, operator_kind)) {
 					appendCanonicalUnaryOperatorBaseTypes(table, *struct_info, operator_kind, pending_types);
-				} else if (struct_info == nullptr || !classHasLocalOperatorName(*struct_info, operator_kind)) {
+				} else if (struct_info == nullptr || !has_local_operator) {
 					if (!appendCanonicalOverloadBaseTypes(table, owner_type_id, pending_types)) {
 						return OperatorOverloadResult::no_overload();
 					}
@@ -6859,9 +6874,12 @@ inline OperatorOverloadResult findBinaryOperatorOverload(const TypeSpecifierNode
 		}
 		const TypeInfo* const type_info = tryFindCanonicalOverloadClassTypeInfo(table, owner_type_id);
 		const StructTypeInfo* const struct_info = type_info != nullptr ? type_info->getStructInfo() : nullptr;
+		const bool has_local_operator = struct_info != nullptr && (classHasLocalOperatorName(*struct_info, operator_kind) ||
+			(table.hasMemberFunctionSchema(owner_type_id) &&
+				canonicalClassHasLocalOperatorName(table, owner_type_id, operator_kind)));
 		if (struct_info != nullptr && classHasUsingDeclarationForOperator(*struct_info, operator_kind)) {
 			appendCanonicalUnaryOperatorBaseTypes(table, *struct_info, operator_kind, pending_types);
-		} else if (struct_info == nullptr || !classHasLocalOperatorName(*struct_info, operator_kind)) {
+		} else if (struct_info == nullptr || !has_local_operator) {
 			if (!appendCanonicalOverloadBaseTypes(table, owner_type_id, pending_types)) {
 				return OperatorOverloadResult::no_overload();
 			}
@@ -7099,9 +7117,12 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(const T
 				}
 				const TypeInfo* const type_info = tryFindCanonicalOverloadClassTypeInfo(table, owner_type_id);
 				const StructTypeInfo* const struct_info = type_info != nullptr ? type_info->getStructInfo() : nullptr;
+				const bool has_local_operator = struct_info != nullptr && (classHasLocalOperatorName(*struct_info, operator_kind) ||
+					(table.hasMemberFunctionSchema(owner_type_id) &&
+						canonicalClassHasLocalOperatorName(table, owner_type_id, operator_kind)));
 				if (struct_info != nullptr && classHasUsingDeclarationForOperator(*struct_info, operator_kind)) {
 					appendCanonicalUnaryOperatorBaseTypes(table, *struct_info, operator_kind, pending_types);
-				} else if (struct_info == nullptr || !classHasLocalOperatorName(*struct_info, operator_kind)) {
+				} else if (struct_info == nullptr || !has_local_operator) {
 					if (!appendCanonicalOverloadBaseTypes(table, owner_type_id, pending_types)) {
 						return OperatorOverloadResult::no_overload();
 					}
