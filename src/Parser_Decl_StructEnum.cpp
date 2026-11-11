@@ -1385,6 +1385,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					// Add base class to struct node and type info
 					struct_ref.add_base_class(resolved_base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
 					struct_info->addBaseClass(resolved_base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
+					struct_info->base_classes.back().source_location = SourceLocation::fromToken(base_name_token);
 
 					// Continue to next base class - skip the rest of the loop body
 					continue;
@@ -4594,18 +4595,24 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	if (!finalize_success) {
 		const std::string& finalization_error = struct_info->getFinalizationError();
 		DiagnosticId diagnostic_id = DiagnosticId::None;
-		if (finalization_error.find("marked 'override' but does not override") != std::string::npos) {
+		switch (struct_info->getFinalizationErrorKind()) {
+		case StructFinalizationErrorKind::OverrideSpecifierNoBase:
 			diagnostic_id = DiagnosticId::OverrideSpecifierNoBase;
-		} else if (finalization_error.starts_with("cannot override final function")) {
+			break;
+		case StructFinalizationErrorKind::OverrideFinalFunction:
 			diagnostic_id = DiagnosticId::OverrideFinalFunction;
-		} else if (finalization_error.starts_with("duplicate direct base class")) {
+			break;
+		case StructFinalizationErrorKind::DuplicateDirectBase:
 			diagnostic_id = DiagnosticId::DuplicateDirectBaseClass;
+			break;
+		case StructFinalizationErrorKind::None:
+			break;
 		}
 		if (diagnostic_id != DiagnosticId::None) {
 			context_.diagnostics().report(
 				diagnostic_id,
 				DiagnosticSeverity::Error,
-				SourceLocation(),
+				struct_info->getFinalizationErrorLocation(),
 				finalization_error,
 				{});
 		}

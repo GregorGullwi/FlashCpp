@@ -2194,6 +2194,7 @@ ParseResult Parser::validate_and_add_base_class(
 			bool is_deferred = true;
 			struct_ref.add_base_class(base_class_name, TypeIndex{}, base_access, is_virtual_base, is_deferred);
 			struct_info->addBaseClass(base_class_name, TypeIndex{}, base_access, is_virtual_base, is_deferred);
+			struct_info->base_classes.back().source_location = SourceLocation::fromToken(error_token);
 			return ParseResult::success();
 		}
 		return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", error_token);
@@ -2279,6 +2280,7 @@ ParseResult Parser::validate_and_add_base_class(
 	bool is_deferred = is_template_param || is_dependent_type_alias;
 	struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access, is_virtual_base, is_deferred);
 	struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access, is_virtual_base, is_deferred);
+	struct_info->base_classes.back().source_location = SourceLocation::fromToken(error_token);
 
 	return ParseResult::success();
 }
