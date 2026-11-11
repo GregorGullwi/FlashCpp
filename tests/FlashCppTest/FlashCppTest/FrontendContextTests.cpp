@@ -1,3 +1,4 @@
+#include <array>
 #include <deque>
 
 #if defined(_WIN32) && defined(_DEBUG)
@@ -6866,6 +6867,101 @@ int main() {
 		CHECK(found_member_object_pointer);
 		CHECK(context.declarationBuilder().entityKindCounts()[
 			static_cast<std::size_t>(DeclKind::Class)] >= 1u);
+	}
+
+	TEST_CASE("Parsed member pointer identity survives declaration and string insertion order") {
+		constexpr std::array<std::string_view, 2> owner_names{"IdentityOrderLeft", "IdentityOrderRight"};
+		constexpr std::array<std::string_view, 2> owners{
+			"struct IdentityOrderLeft { int field; long other; };\n",
+			"struct IdentityOrderRight { int field; };\n",
+		};
+		constexpr std::array<std::string_view, 4> function_names{
+			"identity_order_left", "identity_order_right", "identity_order_other", "identity_order_repeat",
+		};
+		constexpr std::array<std::string_view, 4> functions{
+			"void identity_order_left(int IdentityOrderLeft::* member);\n",
+			"void identity_order_right(int IdentityOrderRight::* member);\n",
+			"void identity_order_other(long IdentityOrderLeft::* member);\n",
+			"void identity_order_repeat(int IdentityOrderLeft::* value);\n",
+		};
+		const auto check_order = [&](bool reverse_parse, bool reverse_strings) {
+			CAPTURE(reverse_parse);
+			CAPTURE(reverse_strings);
+			clearLegacyTypeTablesForTesting();
+			gTemplateRegistry.clear();
+			gConceptRegistry.clear();
+			gSymbolTable.clear();
+			auto clear_globals = ScopeGuard([] {
+				gSymbolTable.clear();
+				clearLegacyTypeTablesForTesting();
+			});
+			FrontendContext context;
+			const size_t first = reverse_parse ? 1 : 0;
+			const size_t second = 1 - first;
+			// Give each parse fresh handles for these test-only spellings.
+			std::array<StringHandle, 2> handles;
+			const size_t first_spelling = reverse_strings ? 1 : 0;
+			const size_t second_spelling = 1 - first_spelling;
+			handles[first_spelling] = StringTable::createStringHandle(owner_names[first_spelling]);
+			handles[second_spelling] = StringTable::createStringHandle(owner_names[second_spelling]);
+			CHECK(handles[first_spelling].handle < handles[second_spelling].handle);
+			std::string code(owners[first]);
+			code.append(owners[second]);
+			for (size_t index = 0; index < functions.size(); ++index) {
+				code.append(functions[reverse_parse ? functions.size() - 1 - index : index]);
+			}
+
+			CompileContext test_context;
+			test_context.setInputFile("member_pointer_identity_order.cpp");
+			Lexer lexer(code);
+			SemanticAnalysis sema(test_context, gSymbolTable);
+			{
+				Parser parser(lexer, test_context, sema);
+				REQUIRE(!parser.parse().is_error());
+			}
+
+			std::array<EntityId, 2> entities;
+			for (size_t index = 0; index < entities.size(); ++index) {
+				const auto found = getTypesByNameMap().find(handles[index]);
+				REQUIRE(found != getTypesByNameMap().end());
+				const StructTypeInfo* owner = found->second->getStructInfo();
+				REQUIRE(owner != nullptr);
+				REQUIRE(owner->declaration_node != nullptr);
+				REQUIRE(owner->declaration_node->has_entity_id());
+				entities[index] = owner->declaration_node->entity_id();
+			}
+			CHECK(entities[first].value < entities[second].value);
+
+			CanonicalTypeTable& table = context.canonicalTypes();
+			const size_t parsed_type_count = table.size();
+			std::array<TypeId, 4> types;
+			for (size_t index = 0; index < types.size(); ++index) {
+				const std::vector<ASTNode> declarations = gSymbolTable.lookup_all(function_names[index]);
+				REQUIRE(declarations.size() == 1u);
+				REQUIRE(declarations[0].is<FunctionDeclarationNode>());
+				const auto parameters = declarations[0].as<FunctionDeclarationNode>().parameter_nodes();
+				REQUIRE(parameters.size() == 1u);
+				REQUIRE(parameters[0].is<DeclarationNode>());
+				const auto& parameter = parameters[0].as<DeclarationNode>().type_specifier_node();
+				const CanonicalTypeImport imported = importCanonicalFunctionParameterType(table, parameter);
+				REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+				types[index] = imported.type;
+				REQUIRE(table.node(imported.type).kind == CanonicalTypeKind::MemberObjectPointer);
+				const TypeId owner = table.memberPointerOwner(imported.type);
+				const CanonicalTypeNode pointee = table.node(table.memberPointerPointee(imported.type));
+				CHECK(table.recordEntity(owner) == entities[index == 1 ? 1 : 0]);
+				CHECK(pointee.kind == CanonicalTypeKind::Builtin);
+				CHECK(pointee.builtin == (index == 2 ? CanonicalBuiltinKind::Long : CanonicalBuiltinKind::Int));
+			}
+			CHECK(table.size() == parsed_type_count);
+			CHECK(types[0] == types[3]);
+			CHECK(types[0] != types[1]);
+			CHECK(types[0] != types[2]);
+		};
+		check_order(false, false);
+		check_order(false, true);
+		check_order(true, false);
+		check_order(true, true);
 	}
 
 	TEST_CASE("DeclarationBuilder merges compatible function redeclaration into one EntityId") {
