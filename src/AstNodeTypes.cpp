@@ -3582,8 +3582,8 @@ bool StructTypeInfo::buildVTable() {
 		success = false;
 	};
 	auto findIndirectBaseVirtualFunction = [this](StringHandle function_name) -> const StructMemberFunction* {
-		std::vector<const StructTypeInfo*> pending;
-		std::unordered_set<const StructTypeInfo*> visited;
+		TemplateVector<const StructTypeInfo*, 8> pending;
+		TemplateVector<const StructTypeInfo*, 8> visited;
 		for (const BaseClassSpecifier& base : base_classes) {
 			if (base.is_deferred || base.type_index.index() >= gTypeInfo.size()) {
 				continue;
@@ -3595,9 +3595,10 @@ bool StructTypeInfo::buildVTable() {
 		while (!pending.empty()) {
 			const StructTypeInfo* current = pending.back();
 			pending.pop_back();
-			if (current == nullptr || !visited.insert(current).second) {
+			if (current == nullptr || std::ranges::find(visited, current) != visited.end()) {
 				continue;
 			}
+			visited.push_back(current);
 			for (const StructMemberFunction* base_func : current->vtable) {
 				if (base_func != nullptr && base_func->getName() == function_name) {
 					return base_func;
