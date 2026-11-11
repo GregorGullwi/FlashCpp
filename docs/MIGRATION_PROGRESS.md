@@ -336,11 +336,12 @@ mismatched, unpublished, or unresolved owner facts.
    - Class-scope using-declarations now retain their target base and member
      spelling on `StructDeclarationNode` and copy that metadata into
      instantiated class declarations. The source base-declaration ordinal
-     survives instantiation, so dependent and alias-spelled bases restore the
-     nominated operator without matching instantiated type spellings. Unary
-     `+`, `-`, `~`, and `->` lookup consume it, so same-named base operators are
-     disambiguated by the using-declaration instead of all bases contributing
-     candidates. General member using-import lookup remains unsupported.
+     survives instantiation, so dependent, alias-spelled, and pack-expanded
+     bases restore nominated members without matching instantiated type
+     spellings. Unary `+`, `-`, `~`, and `->` lookup, ordinary member-function
+     lookup, data-member lookup, and static-member lookup consume it, so
+     same-named base members are disambiguated by the using-declaration instead
+     of all bases contributing candidates.
 
 3. **Complete importer and declarator coverage.** Partial-specialization bodies
    now reuse the ordinary anonymous-union member parser, so union fields and

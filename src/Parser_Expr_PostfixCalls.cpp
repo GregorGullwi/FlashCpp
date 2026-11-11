@@ -1558,23 +1558,21 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 				const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 				if (struct_info) {
 					StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name_token.value());
-					bool has_any_local_overload = false;
+					const ConstAwareMemberCandidateSet visible_candidates = collectConstAwareVisibleMemberFunctionCandidates(
+						struct_info, member_name_handle, false, true,
+						[](const StructMemberFunction& member_func, const FunctionDeclarationNode&) {
+							return !member_func.is_constructor && !member_func.is_destructor;
+						});
+					bool has_any_visible_overload = !visible_candidates.compatible.empty();
 					bool has_arity_match = false;
-					for (const auto& mf : struct_info->member_functions) {
-						if (mf.is_constructor || mf.is_destructor)
-							continue;
-						if (mf.getName() != member_name_handle)
-							continue;
-						has_any_local_overload = true;
-						// Check if this overload accepts the argument count
-						if (const auto* candidate = get_function_decl_node(mf.function_decl)) {
-							if (functionAcceptsArgumentCount(*candidate, args.size())) {
-								has_arity_match = true;
-								break;
-							}
+					for (const StructMemberFunction* candidate : visible_candidates.compatible) {
+						const FunctionDeclarationNode* candidate_decl = candidate != nullptr ? get_function_decl_node(candidate->function_decl) : nullptr;
+						if (candidate_decl != nullptr && functionAcceptsArgumentCount(*candidate_decl, args.size())) {
+							has_arity_match = true;
+							break;
 						}
 					}
-					if (has_any_local_overload && !has_arity_match) {
+					if (has_any_visible_overload && !has_arity_match) {
 						const std::string message =
 							"No matching member function for call to '" + std::string(member_name_token.value()) + "'";
 						context_.diagnostics().report(

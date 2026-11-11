@@ -1923,7 +1923,8 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		getTypesByNameMap().insert_or_assign(qualified_alias_name, &alias_type_info);
 	}
 
-	for (const BaseClassSpecifier& base : nested_struct.base_classes()) {
+	for (size_t nested_base_index = 0; nested_base_index < nested_struct.base_classes().size(); ++nested_base_index) {
+		const BaseClassSpecifier& base = nested_struct.base_classes()[nested_base_index];
 		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
 		if (base.is_deferred) {
 			base_type_info = nullptr;
@@ -1955,6 +1956,9 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		nested_struct_info->addBaseClass(
 			StringTable::getStringView(base_type_info->name()), base_type_info->registeredTypeIndex().withCategory(base_type_info->typeEnum()),
 			base.access, base.is_virtual);
+		if (nested_base_index < BaseClassSpecifier::NoSourceOrdinal) {
+			nested_struct_info->base_classes.back().source_ordinal = static_cast<uint16_t>(nested_base_index);
+		}
 	}
 
 	replayDeferredTemplateBasesForPattern(

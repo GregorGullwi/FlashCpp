@@ -13,11 +13,14 @@ no-match or ambiguous operator state instead of accepting the expression from it
 left-hand type alone. Class using-declarations now retain the source base
 declaration ordinal through template instantiation, so dependent and
 alias-spelled bases restore the nominated operator after rebinding without
-matching instantiated type spellings. Pack-expanded base using-declarations,
-general member using-import lookup, and hiding sets for forms that a
-requires-expression evaluates before class rebinding remain unsupported.
-Forcing that evaluation ordering overlaps Boundary 8A class-template
-instantiation.
+matching instantiated type spellings. Pack-expanded base using-declarations and
+general member using-import lookup now consume the same nominated-base identity,
+so hidden base operators, member functions, data members, and static members are
+restored for direct and instantiated classes. Using-declarations that name an
+indirect base class still need non-direct target resolution. Hiding sets for
+forms that a requires-expression evaluates before class rebinding remain
+unsupported; forcing that evaluation ordering overlaps Boundary 8A
+class-template instantiation.
 
 ## Remaining dependent member-template field forms need concrete TypeInfo
 
