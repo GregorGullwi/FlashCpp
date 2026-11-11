@@ -13876,45 +13876,30 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 		return;
 	}
 
-	if (!tryAnnotateCopyInitConvertingConstructor(arg, param_type_id,
-												  context_description, arg_type_id)) {
-		const bool annotated_standard_conversion =
-			tryAnnotateConversionByTypeId(arg, param_type_id, arg_type_id);
+	if (!tryAnnotateCopyInitConvertingConstructor(arg, param_type_id, context_description, arg_type_id)) {
+		const bool annotated_standard_conversion = tryAnnotateConversionByTypeId(arg, param_type_id, arg_type_id);
 		diagnoseScopedEnumConversion(arg, param_type_id, context_description, arg_type_id);
-		if (!annotated_standard_conversion &&
-			arg_binding_type.has_value() &&
-			param_type_id) {
+		if (!annotated_standard_conversion && arg_binding_type.has_value() && param_type_id) {
 			TypeSpecifierNode arg_value_type = *arg_binding_type;
 			arg_value_type.set_reference_qualifier(ReferenceQualifier::None);
 			TypeSpecifierNode param_value_type = param_type;
 			param_value_type.set_reference_qualifier(ReferenceQualifier::None);
-			const ConversionPlan plan =
-				buildConversionPlan(arg_value_type, param_value_type);
+			const ConversionPlan plan = buildConversionPlan(arg_value_type, param_value_type);
 			// A user-defined conversion (conversion operator, possibly followed by a
 			// derived-to-base tail) must be recorded with the selected function so
-			// codegen can lower it. Select against the real parameter node, which still
-			// carries a member-pointer signature that a reconstructed type would lose.
-			if (plan.is_valid &&
-				plan.rank == ConversionRank::UserDefined &&
-				arg_type_id &&
-				arg_value_type.type_index().is_valid()) {
-				const auto selected_conversion = trySelectCanonicalImplicitConversionOperator(
-					type_context_.get(arg_type_id), param_value_type);
+			// codegen can lower it. Reuse ranking's selector and type nodes so
+			// dependent return types and member-pointer signatures survive selection.
+			if (plan.is_valid && plan.rank == ConversionRank::UserDefined && arg_type_id && arg_value_type.type_index().is_valid()) {
+				const auto selected_conversion = trySelectUserDefinedConversionOperator(arg_value_type, param_value_type, false);
 				if (selected_conversion.has_value() && !selected_conversion->ambiguous &&
 					annotateSelectedConversionOperator(arg, arg_type_id, param_type_id, *selected_conversion)) {
 					return;
 				}
 			}
-			if (plan.is_valid &&
-				plan.rank != ConversionRank::UserDefined &&
-				plan.kind != StandardConversionKind::None) {
-				SemanticSlot slot =
-					getSlot(getExpressionKey(arg)).value_or(SemanticSlot{});
+			if (plan.is_valid && plan.rank != ConversionRank::UserDefined && plan.kind != StandardConversionKind::None) {
+				SemanticSlot slot = getSlot(getExpressionKey(arg)).value_or(SemanticSlot{});
 				slot.type_id = param_type_id;
-				slot.cast_info_index = allocateNonUserDefinedCastInfo(
-					arg_type_id,
-					param_type_id,
-					plan.kind);
+				slot.cast_info_index = allocateNonUserDefinedCastInfo(arg_type_id, param_type_id, plan.kind);
 				slot.value_category = ValueCategory::PRValue;
 				setSlot(getExpressionKey(arg), slot);
 			}

@@ -263,8 +263,9 @@ mismatched, unpublished, or unresolved owner facts.
    Class-pointer tails rank through the published canonical base graph, check
    access after selection, and preserve null for fixed-offset and virtual-base
    adjustments in lowering.
-   [Dependent conversion operators](KNOWN_ISSUES.md#dependent-conversion-operators-can-miss-class-pointer-tail-annotation)
-   still have an annotation gap.
+   By-value call annotation reuses the ranking selector for dependent
+   conversion operators such as `operator T*()`, preserving the selected
+   function and base-pointer adjustment through lowering.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are
