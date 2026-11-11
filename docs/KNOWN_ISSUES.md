@@ -10,15 +10,14 @@ Direct unary, binary, and assignment operator lookup now stop at the first class
 that declares the operator name, while using-declarations restore only nominated
 base overloads. Requires-expression assignment viability consumes the resolved
 no-match or ambiguous operator state instead of accepting the expression from its
-left-hand type alone. Remaining work is persistent using-declaration provenance
-through template instantiation and replay. The parser still retains only imported
-spelling in temporary class parsing state for some instantiated forms, so
-member-name lookup sets with hiding and base ambiguity are not yet shared across
-every canonical and compatibility consumer. Direct expressions over an already
-instantiated class can use `using Base<T>::operator-` correctly, but
-requires-expression validation may run before that instantiation/rebinding and
-therefore reports the requirement false. Forcing that ordering overlaps
-Boundary 8A class-template instantiation.
+left-hand type alone. Class using-declarations now retain the source base
+declaration ordinal through template instantiation, so dependent and
+alias-spelled bases restore the nominated operator after rebinding without
+matching instantiated type spellings. Pack-expanded base using-declarations,
+general member using-import lookup, and hiding sets for forms that a
+requires-expression evaluates before class rebinding remain unsupported.
+Forcing that evaluation ordering overlaps Boundary 8A class-template
+instantiation.
 
 ## Remaining dependent member-template field forms need concrete TypeInfo
 
