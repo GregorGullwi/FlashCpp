@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AstNodeTypes_DeclNodes.h"
+#include "AstNodeTypes_Template.h"
 #include "InlineVector.h"
 #include "SymbolTable.h"
 #include <algorithm>
@@ -67,8 +68,7 @@ void visitStructHierarchyDepthFirst(
 	TemplateVector<const StructTypeInfo*, 8> visited;
 	auto recurse = [&](const StructTypeInfo* current_struct_info,
 		const auto& self) -> void {
-		if (current_struct_info == nullptr ||
-			std::ranges::find(visited, current_struct_info) != visited.end()) {
+		if (current_struct_info == nullptr || std::ranges::find(visited, current_struct_info) != visited.end()) {
 			return;
 		}
 		visited.push_back(current_struct_info);
@@ -80,6 +80,52 @@ void visitStructHierarchyDepthFirst(
 		}
 	};
 	recurse(root_struct_info, recurse);
+}
+
+// Member-name lookup applies class using-declarations as nominated base
+// edges: a using-declaration for the requested name replaces the normal base
+// walk for that name, while unrelated names keep ordinary hiding semantics.
+template <typename VisitFn>
+void visitVisibleMemberHierarchy(const StructTypeInfo* root_struct_info, StringHandle member_name_handle,
+	bool stop_at_first_local_name_set, VisitFn&& visit) {
+	TemplateVector<const StructTypeInfo*, 8> pending;
+	TemplateVector<const StructTypeInfo*, 8> visited;
+	if (root_struct_info != nullptr) {
+		pending.push_back(root_struct_info);
+	}
+	while (!pending.empty()) {
+		const StructTypeInfo* current_struct_info = pending.back();
+		pending.pop_back();
+		if (current_struct_info == nullptr || std::ranges::find(visited, current_struct_info) != visited.end()) {
+			continue;
+		}
+		visited.push_back(current_struct_info);
+		const bool found_local_name = visit(*current_struct_info);
+
+		bool traversed_using_base = false;
+		if (const StructDeclarationNode* declaration = current_struct_info->declaration_node) {
+			for (const ClassUsingDeclaration& using_declaration : declaration->class_using_declarations()) {
+				if (using_declaration.member_name != member_name_handle) {
+					continue;
+				}
+				traversed_using_base = true;
+				for (size_t base_index = 0; base_index < current_struct_info->base_classes.size(); ++base_index) {
+					const BaseClassSpecifier& base = current_struct_info->base_classes[base_index];
+					if (classUsingDeclarationTargetsBase(using_declaration, base, base_index)) {
+						pending.push_back(tryGetStructTypeInfo(base.type_index));
+					}
+				}
+			}
+		}
+		if (traversed_using_base || (found_local_name && stop_at_first_local_name_set)) {
+			continue;
+		}
+		for (const BaseClassSpecifier& base : current_struct_info->base_classes) {
+			if (!base.is_deferred) {
+				pending.push_back(tryGetStructTypeInfo(base.type_index));
+			}
+		}
+	}
 }
 
 inline void appendUniqueMemberFunctionOverloadNodes(
@@ -109,40 +155,34 @@ DefinitionPreferredMemberOverloadSet collectVisibleMemberFunctionOverloadNodes(
 		return result;
 	}
 
-	visitStructHierarchyDepthFirst(root_struct_info, [&](const StructTypeInfo& current_struct_info) {
-		bool found_local_overload = false;
-		for (const auto& member_func : current_struct_info.member_functions) {
-			if (member_func.getName() != member_name_handle ||
-				!member_func.function_decl.is<FunctionDeclarationNode>()) {
-				continue;
-			}
-
-			const auto& func_decl =
-				member_func.function_decl.as<FunctionDeclarationNode>();
-			if (!accept_candidate(member_func, func_decl)) {
-				continue;
-			}
-
-			found_local_overload = true;
-			if (result.first == nullptr) {
-				result.first = &func_decl;
-			}
-			appendUniqueOverloadNode(result.all, member_func.function_decl);
-			if (func_decl.get_definition().has_value()) {
-				if (result.first_definition == nullptr) {
-					result.first_definition = &func_decl;
+	visitVisibleMemberHierarchy(root_struct_info, member_name_handle, stop_at_first_local_name_set,
+		[&](const StructTypeInfo& current_struct_info) {
+			bool found_local_overload = false;
+			for (const auto& member_func : current_struct_info.member_functions) {
+				if (member_func.getName() != member_name_handle ||
+					!member_func.function_decl.is<FunctionDeclarationNode>()) {
+					continue;
 				}
-				appendUniqueOverloadNode(
-					result.definition_preferred,
-					member_func.function_decl);
-			}
-		}
 
-		if (found_local_overload && stop_at_first_local_name_set) {
-			return false;
-		}
-		return true;
-	});
+				const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+				if (!accept_candidate(member_func, func_decl)) {
+					continue;
+				}
+
+				found_local_overload = true;
+				if (result.first == nullptr) {
+					result.first = &func_decl;
+				}
+				appendUniqueOverloadNode(result.all, member_func.function_decl);
+				if (func_decl.get_definition().has_value()) {
+					if (result.first_definition == nullptr) {
+						result.first_definition = &func_decl;
+					}
+					appendUniqueOverloadNode(result.definition_preferred, member_func.function_decl);
+				}
+			}
+			return found_local_overload;
+		});
 	return result;
 }
 
@@ -220,47 +260,43 @@ ConstAwareMemberCandidateSet collectConstAwareVisibleMemberFunctionCandidates(
 		return result;
 	}
 
-	visitStructHierarchyDepthFirst(root_struct_info, [&](const StructTypeInfo& current_struct_info) {
-		bool found_local_overload = false;
-		for (const auto& member_func : current_struct_info.member_functions) {
-			if (member_func.is_constructor ||
-				member_func.is_destructor ||
-				member_func.getName() != member_name_handle ||
-				!member_func.function_decl.is<FunctionDeclarationNode>()) {
-				continue;
-			}
-
-			const auto& func_decl =
-				member_func.function_decl.as<FunctionDeclarationNode>();
-			if (!accept_candidate(member_func, func_decl)) {
-				continue;
-			}
-
-			found_local_overload = true;
-			if (func_decl.is_static()) {
-				appendUniqueMemberFunctionCandidate(result.preferred, &member_func);
-				appendUniqueMemberFunctionCandidate(result.compatible, &member_func);
-				continue;
-			}
-			if (receiver_is_const) {
-				if (!func_decl.is_const_member_function()) {
+	visitVisibleMemberHierarchy(root_struct_info, member_name_handle, stop_at_first_local_name_set,
+		[&](const StructTypeInfo& current_struct_info) {
+			bool found_local_overload = false;
+			for (const auto& member_func : current_struct_info.member_functions) {
+				if (member_func.is_constructor ||
+					member_func.is_destructor ||
+					member_func.getName() != member_name_handle ||
+					!member_func.function_decl.is<FunctionDeclarationNode>()) {
 					continue;
 				}
-				appendUniqueMemberFunctionCandidate(result.preferred, &member_func);
+
+				const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+				if (!accept_candidate(member_func, func_decl)) {
+					continue;
+				}
+
+				found_local_overload = true;
+				if (func_decl.is_static()) {
+					appendUniqueMemberFunctionCandidate(result.preferred, &member_func);
+					appendUniqueMemberFunctionCandidate(result.compatible, &member_func);
+					continue;
+				}
+				if (receiver_is_const) {
+					if (!func_decl.is_const_member_function()) {
+						continue;
+					}
+					appendUniqueMemberFunctionCandidate(result.preferred, &member_func);
+					appendUniqueMemberFunctionCandidate(result.compatible, &member_func);
+					continue;
+				}
+
 				appendUniqueMemberFunctionCandidate(result.compatible, &member_func);
-				continue;
+				if (!func_decl.is_const_member_function()) {
+					appendUniqueMemberFunctionCandidate(result.preferred, &member_func);
+				}
 			}
-
-			appendUniqueMemberFunctionCandidate(result.compatible, &member_func);
-			if (!func_decl.is_const_member_function()) {
-				appendUniqueMemberFunctionCandidate(result.preferred, &member_func);
-			}
-		}
-
-		if (found_local_overload && stop_at_first_local_name_set) {
-			return false;
-		}
-		return true;
-	});
+			return found_local_overload;
+		});
 	return result;
 }

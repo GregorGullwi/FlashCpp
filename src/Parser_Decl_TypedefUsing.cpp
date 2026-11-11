@@ -384,6 +384,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 						FLASH_LOG(Parser, Debug, "Using-declaration imports member '", member_name, "' into struct parsing context");
 					}
 				}
+				const bool is_using_pack_expansion = peek() == "..."_tok;
 				if (!is_inheriting_constructor && struct_ref != nullptr) {
 					const std::span<const BaseClassSpecifier> base_classes = struct_ref->base_classes();
 					const StringHandle base_class_handle = StringTable::getOrInternStringHandle(base_class_name);
@@ -391,7 +392,9 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					uint16_t target_base_ordinal = ClassUsingDeclaration::NoTargetBaseOrdinal;
 					for (size_t base_index = 0; base_index < base_classes.size(); ++base_index) {
 						if (base_classes[base_index].name == base_class_name && base_index < ClassUsingDeclaration::NoTargetBaseOrdinal) {
-							target_type_index = base_classes[base_index].type_index;
+							if (!base_classes[base_index].is_deferred) {
+								target_type_index = base_classes[base_index].type_index;
+							}
 							target_base_ordinal = static_cast<uint16_t>(base_index);
 							break;
 						}
@@ -400,7 +403,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 						const std::span<const DeferredTemplateBaseClassSpecifier> deferred_bases = struct_ref->deferred_template_base_classes();
 						for (size_t base_index = 0; base_index < deferred_bases.size(); ++base_index) {
 							const DeferredTemplateBaseClassSpecifier& deferred_base = deferred_bases[base_index];
-							if (deferred_base.is_pack_expansion || deferred_base.base_template_name != base_class_handle) {
+							if (deferred_base.base_template_name != base_class_handle || deferred_base.is_pack_expansion != is_using_pack_expansion) {
 								continue;
 							}
 							const size_t ordinal = base_classes.size() + base_index;

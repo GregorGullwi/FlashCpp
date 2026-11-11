@@ -972,12 +972,15 @@ enum class FriendKind {
 
 // Base class specifier for inheritance
 struct BaseClassSpecifier {
+	static constexpr uint16_t NoSourceOrdinal = 0xFFFF;
+
 	std::string_view name;		   // Base class name
 	TypeIndex type_index;		  // Index into gTypeInfo for base class type
 	AccessSpecifier access;		// Inheritance access (public/protected/private)
 	bool is_virtual;			 // True for virtual inheritance (Phase 3)
 	size_t offset;			   // Offset of base subobject in derived class
 	bool is_deferred;			  // True for template parameters (resolved at instantiation)
+	uint16_t source_ordinal = NoSourceOrdinal;  // Source base-declaration ordinal after instantiation
 	SourceLocation source_location{};  // Declaring base-specifier location when parsed from source
 
 	BaseClassSpecifier(std::string_view n, TypeIndex tidx, AccessSpecifier acc, bool virt = false, size_t off = 0, bool deferred = false)

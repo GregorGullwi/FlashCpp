@@ -6970,7 +6970,8 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	// binds all template parameters, so its base classes refer to concrete types
 	// already present in the type table - we just need to mirror them onto the new
 	// instantiation so member lookup walks the correct inheritance chain.
-	for (const auto& base : spec_struct.base_classes()) {
+	for (size_t spec_base_index = 0; spec_base_index < spec_struct.base_classes().size(); ++spec_base_index) {
+		const BaseClassSpecifier& base = spec_struct.base_classes()[spec_base_index];
 		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
 		if (base_type_info == nullptr) {
 			throw InternalError(
@@ -6982,6 +6983,9 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			base_type_info->registeredTypeIndex().withCategory(base_type_info->typeEnum()),
 			base.access,
 			base.is_virtual);
+		if (spec_base_index < BaseClassSpecifier::NoSourceOrdinal) {
+			struct_info->base_classes.back().source_ordinal = static_cast<uint16_t>(spec_base_index);
+		}
 	}
 
 	// Check if there's an explicit constructor - if not, we need to generate a default one

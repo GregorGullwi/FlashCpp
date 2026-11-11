@@ -270,6 +270,37 @@ private:
 				continue;
 			}
 
+			bool traversed_using_base = false;
+			if (const StructDeclarationNode* declaration = current_struct->declaration_node) {
+				for (const ClassUsingDeclaration& using_declaration : declaration->class_using_declarations()) {
+					if (using_declaration.member_name != member_name) {
+						continue;
+					}
+					traversed_using_base = true;
+					for (size_t base_index = 0; base_index < current_struct->base_classes.size(); ++base_index) {
+						const BaseClassSpecifier& base = current_struct->base_classes[base_index];
+						if (!classUsingDeclarationTargetsBase(using_declaration, base, base_index)) {
+							continue;
+						}
+						if (const StructTypeInfo* base_info = resolveStructInfo(base.type_index, base.name, current_struct->getNamespaceHandle())) {
+							size_t base_offset = base.offset;
+							if (base.is_virtual) {
+								for (const BaseClassSpecifier& virtual_base : current_struct->virtual_bases) {
+									if (virtual_base.type_index == base.type_index) {
+										base_offset = virtual_base.offset;
+										break;
+									}
+								}
+							}
+							to_visit.push({base_info, current_offset + base_offset});
+						}
+					}
+				}
+			}
+			if (traversed_using_base) {
+				continue;
+			}
+
 			// virtual_bases is the complete object's deduplicated virtual-subobject
 			// set.  Search it from the root only; traversing a non-virtual base's
 			// virtual bases would rediscover the same shared subobject through each

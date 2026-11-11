@@ -3794,6 +3794,31 @@ const StructTypeInfo* resolveBaseStructInfo(const BaseClassSpecifier& base) {
 	return resolved_type->getStructInfo();
 }
 
+template <typename Visitor>
+bool visitUsingDeclarationTargets(const StructTypeInfo& info, StringHandle member_name, Visitor&& visitor) {
+	const StructDeclarationNode* declaration = info.declaration_node;
+	if (declaration == nullptr) {
+		return false;
+	}
+	bool found_using_declaration = false;
+	for (const ClassUsingDeclaration& using_declaration : declaration->class_using_declarations()) {
+		if (using_declaration.member_name != member_name) {
+			continue;
+		}
+		found_using_declaration = true;
+		for (size_t base_index = 0; base_index < info.base_classes.size(); ++base_index) {
+			const BaseClassSpecifier& base = info.base_classes[base_index];
+			if (!classUsingDeclarationTargetsBase(using_declaration, base, base_index)) {
+				continue;
+			}
+			if (const StructTypeInfo* base_info = resolveBaseStructInfo(base)) {
+				visitor(*base_info, base);
+			}
+		}
+	}
+	return found_using_declaration;
+}
+
 }
 
 TypeSpecifierNode typeSpecifierFromStructMemberProjection(const StructMember& member) {
@@ -3852,6 +3877,33 @@ std::optional<StructMember> StructTypeInfo::findMemberRecursive(StringHandle mem
 		}
 	}
 
+	std::optional<StructMember> using_member;
+	const bool has_using_declaration = visitUsingDeclarationTargets(*this, member_name,
+		[&](const StructTypeInfo& base_info, const BaseClassSpecifier& base) {
+			if (using_member.has_value()) {
+				return;
+			}
+			if (auto base_member = base_info.findMemberRecursive(member_name)) {
+				size_t base_offset = base.offset;
+				if (base.is_virtual) {
+					for (const BaseClassSpecifier& virtual_base : virtual_bases) {
+						if (virtual_base.type_index == base.type_index) {
+							base_offset = virtual_base.offset;
+							break;
+						}
+					}
+				}
+				base_member->offset += base_offset;
+				using_member = base_member;
+			}
+		});
+	if (using_member.has_value()) {
+		return using_member;
+	}
+	if (has_using_declaration) {
+		return std::nullopt;
+	}
+
 	for (const auto& virtual_base : virtual_bases) {
 		if (virtual_base.type_index.index() >= gTypeInfo.size()) {
 			continue;
@@ -3902,6 +3954,21 @@ std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::find
 		}
 	}
 
+	std::pair<const StructStaticMember*, const StructTypeInfo*> using_static_member{nullptr, nullptr};
+	const bool has_using_declaration = visitUsingDeclarationTargets(*this, member_name,
+		[&](const StructTypeInfo& base_info, const BaseClassSpecifier&) {
+			if (using_static_member.first != nullptr) {
+				return;
+			}
+			using_static_member = base_info.findStaticMemberRecursive(member_name);
+		});
+	if (using_static_member.first != nullptr) {
+		return using_static_member;
+	}
+	if (has_using_declaration) {
+		return {nullptr, nullptr};
+	}
+
 	// Then, check base class static members
 	for (const auto& base : base_classes) {
 		const StructTypeInfo* base_info = resolveBaseStructInfo(base);
@@ -3930,6 +3997,21 @@ std::pair<const StructMemberFunction*, const StructTypeInfo*> StructTypeInfo::fi
 	// overloads, do not continue into bases for the same name.
 	if (const StructMemberFunction* member_function = findMemberFunction(func_name)) {
 		return {member_function, this};
+	}
+
+	std::pair<const StructMemberFunction*, const StructTypeInfo*> using_member_function{nullptr, nullptr};
+	const bool has_using_declaration = visitUsingDeclarationTargets(*this, func_name,
+		[&](const StructTypeInfo& base_info, const BaseClassSpecifier&) {
+			if (using_member_function.first != nullptr) {
+				return;
+			}
+			using_member_function = base_info.findMemberFunctionRecursive(func_name);
+		});
+	if (using_member_function.first != nullptr) {
+		return using_member_function;
+	}
+	if (has_using_declaration) {
+		return {nullptr, nullptr};
 	}
 
 	// Then, check base class member functions.

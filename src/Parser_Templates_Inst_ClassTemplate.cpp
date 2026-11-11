@@ -1339,7 +1339,9 @@ void Parser::replayDeferredTemplateBasesForPattern(
 			spec_name_subst_map,
 			spec_pack_subst_map);
 
-		for (const auto& deferred_base : pattern_struct.deferred_template_base_classes()) {
+		for (size_t deferred_index = 0; deferred_index < pattern_struct.deferred_template_base_classes().size(); ++deferred_index) {
+			const DeferredTemplateBaseClassSpecifier& deferred_base = pattern_struct.deferred_template_base_classes()[deferred_index];
+			const size_t source_ordinal = pattern_struct.base_classes().size() + deferred_index;
 			std::string_view base_tpl_name = StringTable::getStringView(deferred_base.base_template_name);
 			FLASH_LOG_FORMAT(Templates, Trace, "Processing deferred template base '{}' ({} args)",
 							 base_tpl_name, deferred_base.template_arguments.size());
@@ -1586,6 +1588,9 @@ void Parser::replayDeferredTemplateBasesForPattern(
 
 				if (final_base_type != nullptr) {
 					struct_info->addBaseClass(final_base_name, final_base_type->type_index_, deferred_base.access, deferred_base.is_virtual);
+					if (source_ordinal < BaseClassSpecifier::NoSourceOrdinal) {
+						struct_info->base_classes.back().source_ordinal = static_cast<uint16_t>(source_ordinal);
+					}
 					FLASH_LOG_FORMAT(Templates, Debug, "Added deferred template base '{}' -> '{}'", base_tpl_name, final_base_name);
 				} else {
 					FLASH_LOG(Templates, Warning, "Deferred template base '", base_inst_name, "' not found after instantiation");
@@ -3382,7 +3387,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			// Handle base classes from the pattern
 			// Base classes need to be instantiated with concrete template arguments
 			FLASH_LOG(Templates, Trace, "Pattern has ", pattern_struct.base_classes().size(), " base classes");
-			for (const auto& pattern_base : pattern_struct.base_classes()) {
+			for (size_t pattern_base_index = 0; pattern_base_index < pattern_struct.base_classes().size(); ++pattern_base_index) {
+				const BaseClassSpecifier& pattern_base = pattern_struct.base_classes()[pattern_base_index];
 				// IMPORTANT: pattern_base.name might be a string_view pointing to freed memory!
 				// Convert to string immediately to avoid issues
 				std::string base_name_str;
@@ -3477,6 +3483,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 				if (base_type_it != getTypesByNameMap().end()) {
 					const TypeInfo* base_type_info = base_type_it->second;
 					struct_info->addBaseClass(base_class_name, base_type_info->type_index_, pattern_base.access, pattern_base.is_virtual);
+					if (pattern_base_index < BaseClassSpecifier::NoSourceOrdinal) {
+						struct_info->base_classes.back().source_ordinal = static_cast<uint16_t>(pattern_base_index);
+					}
 				} else {
 					FLASH_LOG(Templates, Error, "Base class ", base_class_name, " not found in getTypesByNameMap()");
 				}
@@ -7365,7 +7374,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 	// Handle base classes from the primary template
 	// Base classes need to be instantiated with concrete template arguments
 	FLASH_LOG(Templates, Trace, "Primary template has ", class_decl.base_classes().size(), " base classes");
-	for (const auto& base : class_decl.base_classes()) {
+	for (size_t base_declaration_index = 0; base_declaration_index < class_decl.base_classes().size(); ++base_declaration_index) {
+		const BaseClassSpecifier& base = class_decl.base_classes()[base_declaration_index];
 		std::string_view base_class_name = base.name;
 		FLASH_LOG(Templates, Trace, "Processing primary template base class: ", base_class_name);
 
@@ -7423,6 +7433,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 					recorded_base_index,
 					base.access,
 					base.is_virtual);
+				if (base_declaration_index < BaseClassSpecifier::NoSourceOrdinal) {
+					struct_info->base_classes.back().source_ordinal = static_cast<uint16_t>(base_declaration_index);
+				}
 				FLASH_LOG(Templates, Trace, "Resolved deferred base '", base_class_name,
 						  "' to concrete type '", StringTable::getStringView(recorded_base_type->name()),
 						  "' with type_index=", recorded_base_index);
@@ -7466,6 +7479,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 							unresolved_base->registeredTypeIndex(),
 							base.access,
 							base.is_virtual);
+						if (base_declaration_index < BaseClassSpecifier::NoSourceOrdinal) {
+							struct_info->base_classes.back().source_ordinal = static_cast<uint16_t>(base_declaration_index);
+						}
 						FLASH_LOG(Templates, Trace, "Preserved unresolved deferred base '", base_class_name,
 								  "' as placeholder '", StringTable::getStringView(unresolved_base->name()), "'");
 						found = true;
@@ -7500,6 +7516,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 					recorded_base_index,
 					base.access,
 					base.is_virtual);
+				if (base_declaration_index < BaseClassSpecifier::NoSourceOrdinal) {
+					struct_info->base_classes.back().source_ordinal = static_cast<uint16_t>(base_declaration_index);
+				}
 				FLASH_LOG(Templates, Trace, "Added base class: ", StringTable::getStringView(recorded_base_type->name()),
 						  " with type_index=", recorded_base_index);
 			} else {
@@ -7529,7 +7548,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			return false;
 		};
 
-		for (const auto& deferred_base : class_decl.deferred_template_base_classes()) {
+		for (size_t deferred_index = 0; deferred_index < class_decl.deferred_template_base_classes().size(); ++deferred_index) {
+			const DeferredTemplateBaseClassSpecifier& deferred_base = class_decl.deferred_template_base_classes()[deferred_index];
+			const size_t source_ordinal = class_decl.base_classes().size() + deferred_index;
+			auto recordSourceOrdinal = [&]() {
+				if (source_ordinal < BaseClassSpecifier::NoSourceOrdinal) {
+					struct_info->base_classes.back().source_ordinal = static_cast<uint16_t>(source_ordinal);
+				}
+			};
 			FLASH_LOG_FORMAT(Templates, Trace, "Processing deferred template base '{}' with {} template args",
 							 StringTable::getStringView(deferred_base.base_template_name), deferred_base.template_arguments.size());
 			DeferredBaseReplayContextScope deferred_base_replay_scope(
@@ -8399,6 +8425,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 						resolved_type->type_index_,
 						deferred_base.access,
 						deferred_base.is_virtual);
+					recordSourceOrdinal();
 					continue;
 				}
 
@@ -8413,6 +8440,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 				auto base_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(final_base_name));
 				if (base_type_it != getTypesByNameMap().end()) {
 					struct_info->addBaseClass(final_base_name, base_type_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
+					recordSourceOrdinal();
 				} else {
 					FLASH_LOG(Templates, Warning, "Deferred template base type not found: ", final_base_name);
 				}
@@ -9623,7 +9651,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			auto add_nested_base_class = [&](const TypeInfo& base_type_info,
 											 TypeIndex base_type_index,
 											 AccessSpecifier access,
-											 bool is_virtual) {
+											 bool is_virtual,
+											 uint16_t source_ordinal) {
 				auto [recorded_base_type, recorded_base_index] =
 					canonicalizeRecordedBase(&base_type_info, base_type_index);
 				nested_struct_info->addBaseClass(
@@ -9631,6 +9660,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 					recorded_base_index,
 					access,
 					is_virtual);
+				if (source_ordinal != BaseClassSpecifier::NoSourceOrdinal) {
+					nested_struct_info->base_classes.back().source_ordinal = source_ordinal;
+				}
 				instantiated_nested_struct_ref.add_base_class(
 					StringTable::getStringView(recorded_base_type->name()),
 					recorded_base_index,
@@ -9638,7 +9670,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 					is_virtual);
 			};
 
-			for (const auto& base : nested_struct.base_classes()) {
+			for (size_t nested_base_index = 0; nested_base_index < nested_struct.base_classes().size(); ++nested_base_index) {
+				const BaseClassSpecifier& base = nested_struct.base_classes()[nested_base_index];
+				const uint16_t nested_source_ordinal = nested_base_index < BaseClassSpecifier::NoSourceOrdinal
+					? static_cast<uint16_t>(nested_base_index)
+					: BaseClassSpecifier::NoSourceOrdinal;
 				std::string_view base_class_name = base.name;
 				if (base.is_deferred) {
 					ensure_substitution_maps();
@@ -9655,7 +9691,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 							*concrete_type,
 							concrete_arg.type_index.withCategory(concrete_type->typeEnum()),
 							base.access,
-							base.is_virtual);
+							base.is_virtual,
+							nested_source_ordinal);
 						return true;
 					};
 
@@ -9681,6 +9718,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 								base.access,
 								base.is_virtual,
 								true);
+							if (nested_source_ordinal != BaseClassSpecifier::NoSourceOrdinal) {
+								nested_struct_info->base_classes.back().source_ordinal = nested_source_ordinal;
+							}
 							instantiated_nested_struct_ref.add_base_class(
 								StringTable::getStringView(unresolved_base->name()),
 								unresolved_base->registeredTypeIndex(),
@@ -9698,14 +9738,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 							*base_type_it->second,
 							base_type_it->second->registeredTypeIndex().withCategory(base_type_it->second->typeEnum()),
 							base.access,
-							base.is_virtual);
+							base.is_virtual,
+							nested_source_ordinal);
 					}
 				}
 			}
 
 			if (!nested_struct.deferred_template_base_classes().empty()) {
 				ensure_substitution_maps();
-				for (const auto& deferred_base : nested_struct.deferred_template_base_classes()) {
+				for (size_t nested_deferred_index = 0; nested_deferred_index < nested_struct.deferred_template_base_classes().size(); ++nested_deferred_index) {
+					const DeferredTemplateBaseClassSpecifier& deferred_base =
+						nested_struct.deferred_template_base_classes()[nested_deferred_index];
+					const size_t nested_deferred_ordinal = nested_struct.base_classes().size() + nested_deferred_index;
+					const uint16_t nested_deferred_source_ordinal = nested_deferred_ordinal < BaseClassSpecifier::NoSourceOrdinal
+						? static_cast<uint16_t>(nested_deferred_ordinal)
+						: BaseClassSpecifier::NoSourceOrdinal;
 					DeferredBaseReplayContextScope deferred_base_replay_scope(
 						*this,
 						deferred_base,
@@ -9853,7 +9900,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 							*resolved_base_type,
 							resolved_base_type->registeredTypeIndex().withCategory(resolved_base_type->typeEnum()),
 							deferred_base.access,
-							deferred_base.is_virtual);
+							deferred_base.is_virtual,
+							nested_deferred_source_ordinal);
 					}
 				}
 			}

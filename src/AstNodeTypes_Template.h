@@ -1523,6 +1523,16 @@ struct ClassUsingDeclaration {
 	uint16_t target_base_ordinal = NoTargetBaseOrdinal;
 };
 
+inline bool classUsingDeclarationTargetsBase(const ClassUsingDeclaration& declaration, const BaseClassSpecifier& base, size_t base_index) {
+	if (declaration.target_type_index.is_valid()) {
+		return declaration.target_type_index == base.type_index;
+	}
+	if (declaration.target_base_ordinal == ClassUsingDeclaration::NoTargetBaseOrdinal) {
+		return false;
+	}
+	return declaration.target_base_ordinal == (base.source_ordinal == BaseClassSpecifier::NoSourceOrdinal ? base_index : base.source_ordinal);
+}
+
 void journalStructDeclarationRewrite(StructDeclarationNode& node);
 
 class StructDeclarationNode {
