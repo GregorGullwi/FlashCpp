@@ -207,16 +207,14 @@ non-projectable shapes;
 remove this entry when those consumers migrate and the compatibility projection
 fields are deleted.
 
-## Decltype operator overload resolution is parser-owned
+## Decltype operator overload result typing is parser-owned
 
-`get_overload_return_type` in `Parser_Expr_QualLookup.cpp` re-resolves a binary
-operator overload via `annotateConcreteBinaryOperatorOverload` when it is not
-already resolved, guarded by `resolving_overload_in_get_expression_type_`. This
-keeps `sizeof(decltype(expr))` working for inherited operators on specialized
-class templates, but it is a parser-level workaround. The proper owner is
-semantics (boundary 4): sema should own operator-overload resolution and result
-types, and the parser should only consume the resolved type. Re-evaluate and
-remove this re-resolution when boundary 4 starts.
+`get_overload_return_type` in `Parser_Expr_QualLookup.cpp` still derives a binary
+operator's result type by reading the resolved member or free declaration's
+return type and resolving self-references. The direct re-resolution workaround is
+gone now that canonical operator lookup handles specialized aliases, but the
+proper owner remains semantics (boundary 4): sema should publish the resolved
+expression type and the parser should only consume it.
 
 ## Remaining flat trait consumers
 
