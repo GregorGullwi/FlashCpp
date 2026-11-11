@@ -6491,11 +6491,13 @@ inline bool classHasUsingDeclarationForOperator(const StructTypeInfo& struct_inf
 	return false;
 }
 
-inline bool classUsingDeclarationTargetsBase(const ClassUsingDeclaration& declaration, const BaseClassSpecifier& base) {
-	if (declaration.target_type_index.is_valid() && declaration.target_type_index == base.type_index) {
-		return true;
+inline bool classUsingDeclarationTargetsBase(
+	const ClassUsingDeclaration& declaration, const BaseClassSpecifier& base, size_t base_index) {
+	if (declaration.target_type_index.is_valid()) {
+		return declaration.target_type_index == base.type_index;
 	}
-	return declaration.target_name.isValid() && base.name == StringTable::getStringView(declaration.target_name);
+	return declaration.target_base_ordinal != ClassUsingDeclaration::NoTargetBaseOrdinal &&
+		declaration.target_base_ordinal == base_index;
 }
 
 inline void appendCompatibilityUnaryOperatorBaseTypes(
@@ -6508,8 +6510,9 @@ inline void appendCompatibilityUnaryOperatorBaseTypes(
 		if (!classUsingDeclarationNamesOperator(using_declaration, operator_kind)) {
 			continue;
 		}
-		for (const BaseClassSpecifier& base : struct_info.base_classes) {
-			if (base.type_index.is_valid() && classUsingDeclarationTargetsBase(using_declaration, base)) {
+		for (size_t base_index = 0; base_index < struct_info.base_classes.size(); ++base_index) {
+			const BaseClassSpecifier& base = struct_info.base_classes[base_index];
+			if (base.type_index.is_valid() && classUsingDeclarationTargetsBase(using_declaration, base, base_index)) {
 				pending_types.push_back(base.type_index);
 			}
 		}
@@ -6526,8 +6529,9 @@ inline void appendCanonicalUnaryOperatorBaseTypes(
 		if (!classUsingDeclarationNamesOperator(using_declaration, operator_kind)) {
 			continue;
 		}
-		for (const BaseClassSpecifier& base : struct_info.base_classes) {
-			if (!base.type_index.is_valid() || !classUsingDeclarationTargetsBase(using_declaration, base)) {
+		for (size_t base_index = 0; base_index < struct_info.base_classes.size(); ++base_index) {
+			const BaseClassSpecifier& base = struct_info.base_classes[base_index];
+			if (!base.type_index.is_valid() || !classUsingDeclarationTargetsBase(using_declaration, base, base_index)) {
 				continue;
 			}
 			const TypeId base_type =

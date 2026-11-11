@@ -1511,11 +1511,16 @@ struct StaticMemberDecl {
 };
 
 // A class-scope using-declaration that names a member of a base class. The
-// target TypeIndex is invalid when the base spelling is dependent.
+// target TypeIndex is invalid when the base spelling is dependent; the source
+// base-declaration ordinal survives instantiation and identifies the concrete
+// base by declaration order.
 struct ClassUsingDeclaration {
+	static constexpr uint16_t NoTargetBaseOrdinal = 0xFFFF;
+
 	StringHandle target_name;
 	StringHandle member_name;
 	TypeIndex target_type_index{};
+	uint16_t target_base_ordinal = NoTargetBaseOrdinal;
 };
 
 void journalStructDeclarationRewrite(StructDeclarationNode& node);
@@ -1549,15 +1554,16 @@ public:
 	}
 	std::span<const BaseClassSpecifier> base_classes() const { return base_classes_; }
 	std::span<const ClassUsingDeclaration> class_using_declarations() const { return class_using_declarations_; }
-	void add_class_using_declaration(StringHandle target_name, StringHandle member_name, TypeIndex target_type_index) {
+	void add_class_using_declaration(StringHandle target_name, StringHandle member_name, TypeIndex target_type_index,
+		uint16_t target_base_ordinal) {
 		for (const ClassUsingDeclaration& existing : class_using_declarations_) {
 			if (existing.target_name == target_name && existing.member_name == member_name &&
-				existing.target_type_index == target_type_index) {
+				existing.target_type_index == target_type_index && existing.target_base_ordinal == target_base_ordinal) {
 				return;
 			}
 		}
 		journalStructDeclarationRewrite(*this);
-		class_using_declarations_.push_back({target_name, member_name, target_type_index});
+		class_using_declarations_.push_back({target_name, member_name, target_type_index, target_base_ordinal});
 	}
 	std::span<const DeferredBaseClassSpecifier> deferred_base_classes() const { return deferred_base_classes_; }
 	std::span<const DeferredTemplateBaseClassSpecifier> deferred_template_base_classes() const { return deferred_template_base_classes_; }
