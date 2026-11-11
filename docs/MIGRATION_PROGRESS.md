@@ -341,7 +341,8 @@ mismatched, unpublished, or unresolved owner facts.
      spellings. Unary `+`, `-`, `~`, and `->` lookup, ordinary member-function
      lookup, data-member lookup, and static-member lookup consume it, so
      same-named base members are disambiguated by the using-declaration instead
-     of all bases contributing candidates.
+     of all bases contributing candidates. Resolved indirect base targets are
+     found by type identity across the reachable base graph.
 
 3. **Complete importer and declarator coverage.** Partial-specialization bodies
    now reuse the ordinary anonymous-union member parser, so union fields and

@@ -413,6 +413,17 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 							break;
 						}
 					}
+					if (!target_type_index.is_valid() && target_base_ordinal == ClassUsingDeclaration::NoTargetBaseOrdinal) {
+						if (const TypeInfo* indirect_base_info = findTypeByName(base_class_handle)) {
+							const TypeIndex indirect_base_index = indirect_base_info->registeredTypeIndex();
+							for (const BaseClassSpecifier& base : base_classes) {
+								if (base.type_index == indirect_base_index || isTransitivelyDerivedFromAnyAccess(base.type_index, indirect_base_index)) {
+									target_type_index = indirect_base_index;
+									break;
+								}
+							}
+						}
+					}
 					struct_ref->add_class_using_declaration(base_class_handle, member_handle, target_type_index, target_base_ordinal);
 				}
 			}

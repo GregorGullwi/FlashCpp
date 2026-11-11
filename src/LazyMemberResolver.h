@@ -277,24 +277,10 @@ private:
 						continue;
 					}
 					traversed_using_base = true;
-					for (size_t base_index = 0; base_index < current_struct->base_classes.size(); ++base_index) {
-						const BaseClassSpecifier& base = current_struct->base_classes[base_index];
-						if (!classUsingDeclarationTargetsBase(using_declaration, base, base_index)) {
-							continue;
-						}
-						if (const StructTypeInfo* base_info = resolveStructInfo(base.type_index, base.name, current_struct->getNamespaceHandle())) {
-							size_t base_offset = base.offset;
-							if (base.is_virtual) {
-								for (const BaseClassSpecifier& virtual_base : current_struct->virtual_bases) {
-									if (virtual_base.type_index == base.type_index) {
-										base_offset = virtual_base.offset;
-										break;
-									}
-								}
-							}
-							to_visit.push({base_info, current_offset + base_offset});
-						}
-					}
+					visitClassUsingDeclarationTargets(*current_struct, using_declaration,
+						[&](const StructTypeInfo& base_info, size_t base_offset) {
+							to_visit.push({&base_info, current_offset + base_offset});
+						});
 				}
 			}
 			if (traversed_using_base) {

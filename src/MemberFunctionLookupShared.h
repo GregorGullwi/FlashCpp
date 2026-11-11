@@ -109,12 +109,8 @@ void visitVisibleMemberHierarchy(const StructTypeInfo* root_struct_info, StringH
 					continue;
 				}
 				traversed_using_base = true;
-				for (size_t base_index = 0; base_index < current_struct_info->base_classes.size(); ++base_index) {
-					const BaseClassSpecifier& base = current_struct_info->base_classes[base_index];
-					if (classUsingDeclarationTargetsBase(using_declaration, base, base_index)) {
-						pending.push_back(tryGetStructTypeInfo(base.type_index));
-					}
-				}
+				visitClassUsingDeclarationTargets(*current_struct_info, using_declaration,
+					[&](const StructTypeInfo& base_info, size_t) { pending.push_back(&base_info); });
 			}
 		}
 		if (traversed_using_base || (found_local_name && stop_at_first_local_name_set)) {
