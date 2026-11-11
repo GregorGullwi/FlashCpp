@@ -277,12 +277,13 @@ mismatched, unpublished, or unresolved owner facts.
      constructibility adds no copy/move requirement and the selected
      constructor's exception specification decides the nothrow answer. Dependent
      extra arguments still defer.
-   - Constructor-candidate matching is being consolidated into one canonical
-     service with a tri-state result and policy-driven rules, including
-     literal-only call-default selection, the overload-resolution
-     converting-constructor probe, and per-candidate schema status with
-     arity-scoped deferral; see
-     [canonical constructor selection](2026-11-10-canonical-constructor-selection.md).
+   - Constructor-candidate matching is consolidated into one canonical service
+     with a tri-state result and policy-driven rules, including literal-only
+     call-default selection, the overload-resolution converting-constructor
+     probe, and per-candidate schema status with arity-scoped deferral. The
+     canonical member-function schema now supplies unary, binary, and assignment
+     operator lookup plus user-defined conversion lookup, mapping stored member
+     ordinals back to declarations for conversion ranking.
    - Template argument and substitution storage: move lazy constraint lookup from
      name-based parameters to depth/index parameters, and finish canonical
      preservation through NTTP reconstruction, deferred bases, stored arguments,

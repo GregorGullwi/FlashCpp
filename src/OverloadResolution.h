@@ -2941,6 +2941,47 @@ inline const TypeInfo* tryFindCanonicalOverloadClassTypeInfo(CanonicalTypeTable&
 	return nullptr;
 }
 
+// Enumerate a record's member functions through the canonical member-function
+// schema. The schema supplies the lookup identity and ordinal; the legacy
+// declaration remains the payload for AST-level conversion ranking. A record
+// whose schema cannot be published keeps the legacy walk as a fallback.
+template <typename Predicate, typename Visitor>
+inline void forEachCanonicalMemberFunction(CanonicalTypeTable& table, TypeId owner, const StructTypeInfo& record,
+	Predicate&& predicate, Visitor&& visitor) {
+	if (tryPublishCanonicalMemberFunctionSignatures(table, owner, record)) {
+		const size_t count = table.memberFunctionSchemaCount(owner);
+		for (size_t index = 0; index < count; ++index) {
+			const CanonicalMemberFunction function = table.memberFunctionAt(owner, index);
+			if (function.ordinal >= record.member_functions.size()) {
+				continue;
+			}
+			const StructMemberFunction& member = record.member_functions[function.ordinal];
+			if (predicate(&function, member)) {
+				visitor(member);
+			}
+		}
+		return;
+	}
+	for (const StructMemberFunction& member : record.member_functions) {
+		if (predicate(nullptr, member)) {
+			visitor(member);
+		}
+	}
+}
+
+inline bool canonicalMemberFunctionMatchesOperator(
+	const CanonicalMemberFunction* function, const StructMemberFunction& member, OverloadableOperator operator_kind) {
+	const OverloadableOperator candidate_kind = function ? static_cast<OverloadableOperator>(function->operator_kind) : member.operator_kind;
+	return operator_kind == OverloadableOperator::Assign ? isAssignOperator(candidate_kind) : candidate_kind == operator_kind;
+}
+
+inline bool canonicalMemberFunctionIsConversionOperator(const CanonicalMemberFunction* function, const StructMemberFunction& member) {
+	if (function != nullptr) {
+		return hasCanonicalMemberFunctionFlag(function->flags, CanonicalMemberFunctionFlags::ConversionOperator);
+	}
+	return member.is_conversion_operator();
+}
+
 inline std::optional<UserDefinedConversionOperatorSelection>
 trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const TypeSpecifierNode& target_type, bool allow_explicit) {
 	if (!source_type_id) {
@@ -3004,58 +3045,62 @@ trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const Typ
 		if (struct_info == nullptr) {
 			continue;
 		}
-		for (const StructMemberFunction& member_function : struct_info->member_functions) {
-			if (!member_function.is_conversion_operator() || !member_function.function_decl.is<FunctionDeclarationNode>()) {
-				continue;
-			}
-			const FunctionDeclarationNode& function = member_function.function_decl.as<FunctionDeclarationNode>();
-			if (!allow_explicit && (member_function.is_explicit || function.is_explicit())) {
-				continue;
-			}
-			if (!member_function.conversion_target_type.is_valid()) {
-				continue;
-			}
-			const TypeSpecifierNode& return_type = function.decl_node().type_specifier_node();
-			TypeSpecifierNode canonical_return_type = return_type;
-			tryBindPublishedTypeEntity(canonical_return_type);
-			const CanonicalTypeImport return_type_import = importCanonicalTypeWithClassFallback(table, canonical_return_type);
-			if (return_type_import.status != CanonicalTypeImportStatus::Supported) {
-				continue;
-			}
-			const TypeId conversion_target = return_type_import.type;
-			auto nearest_declaration = std::find_if(
-				nearest_declarations.begin(),
-				nearest_declarations.end(),
-				[conversion_target](const NearestDeclaration& declaration) {
-					return declaration.conversion_target == conversion_target;
-				});
-			if (nearest_declaration == nearest_declarations.end()) {
-				nearest_declarations.push_back({conversion_target, pending_type.depth});
-			} else {
-				nearest_declaration->depth = std::min(nearest_declaration->depth, pending_type.depth);
-			}
-			if (std::find(visited_functions.begin(), visited_functions.end(), &function) != visited_functions.end()) {
-				continue;
-			}
-			visited_functions.push_back(&function);
-			const uint8_t member_cv_bits = static_cast<uint8_t>(member_function.cv_qualifier);
-			if ((source_cv_bits & ~member_cv_bits) != 0) {
-				continue;
-			}
-			const std::optional<ConversionPlan> trailing_plan = tryBuildCanonicalConversionFunctionTailPlan(return_type, target_type);
-			if (!trailing_plan.has_value() || !trailing_plan->is_valid || trailing_plan->rank == ConversionRank::UserDefined) {
-				continue;
-			}
+		forEachCanonicalMemberFunction(table, pending_type.type, *struct_info,
+			[](const CanonicalMemberFunction* schema, const StructMemberFunction& member_function) {
+				return canonicalMemberFunctionIsConversionOperator(schema, member_function);
+			},
+			[&](const StructMemberFunction& member_function) {
+				if (!member_function.function_decl.is<FunctionDeclarationNode>()) {
+					return;
+				}
+				const FunctionDeclarationNode& function = member_function.function_decl.as<FunctionDeclarationNode>();
+				if (!allow_explicit && (member_function.is_explicit || function.is_explicit())) {
+					return;
+				}
+				if (!member_function.conversion_target_type.is_valid()) {
+					return;
+				}
+				const TypeSpecifierNode& return_type = function.decl_node().type_specifier_node();
+				TypeSpecifierNode canonical_return_type = return_type;
+				tryBindPublishedTypeEntity(canonical_return_type);
+				const CanonicalTypeImport return_type_import = importCanonicalTypeWithClassFallback(table, canonical_return_type);
+				if (return_type_import.status != CanonicalTypeImportStatus::Supported) {
+					return;
+				}
+				const TypeId conversion_target = return_type_import.type;
+				auto nearest_declaration = std::find_if(
+					nearest_declarations.begin(),
+					nearest_declarations.end(),
+					[conversion_target](const NearestDeclaration& declaration) {
+						return declaration.conversion_target == conversion_target;
+					});
+				if (nearest_declaration == nearest_declarations.end()) {
+					nearest_declarations.push_back({conversion_target, pending_type.depth});
+				} else {
+					nearest_declaration->depth = std::min(nearest_declaration->depth, pending_type.depth);
+				}
+				if (std::find(visited_functions.begin(), visited_functions.end(), &function) != visited_functions.end()) {
+					return;
+				}
+				visited_functions.push_back(&function);
+				const uint8_t member_cv_bits = static_cast<uint8_t>(member_function.cv_qualifier);
+				if ((source_cv_bits & ~member_cv_bits) != 0) {
+					return;
+				}
+				const std::optional<ConversionPlan> trailing_plan = tryBuildCanonicalConversionFunctionTailPlan(return_type, target_type);
+				if (!trailing_plan.has_value() || !trailing_plan->is_valid || trailing_plan->rank == ConversionRank::UserDefined) {
+					return;
+				}
 
-			UserDefinedConversionOperatorSelection candidate;
-			candidate.function = &function;
-			candidate.declaring_type = pending_type.type;
-			candidate.trailing_standard_kind = trailing_plan->kind;
-			candidate.trailing_standard_rank = trailing_plan->rank;
-			candidate.member_cv_qualifier = member_function.cv_qualifier;
-			candidate.access = member_function.access;
-			candidates.push_back({candidate, conversion_target, pending_type.depth});
-		}
+				UserDefinedConversionOperatorSelection candidate;
+				candidate.function = &function;
+				candidate.declaring_type = pending_type.type;
+				candidate.trailing_standard_kind = trailing_plan->kind;
+				candidate.trailing_standard_rank = trailing_plan->rank;
+				candidate.member_cv_qualifier = member_function.cv_qualifier;
+				candidate.access = member_function.access;
+				candidates.push_back({candidate, conversion_target, pending_type.depth});
+			});
 		const size_t base_count = table.classBaseCount(pending_type.type);
 		for (size_t base_index = 0; base_index < base_count; ++base_index) {
 			pending_types.push_back({
@@ -6665,20 +6710,24 @@ inline OperatorOverloadResult findUnaryOperatorOverloadWithFreeFunction(
 				if (type_info == nullptr || struct_info == nullptr) {
 					continue;
 				}
-				for (const StructMemberFunction& member_function : struct_info->member_functions) {
-					if (member_function.operator_kind != operator_kind || !member_function.function_decl.is<FunctionDeclarationNode>()) {
-						continue;
-					}
-					const auto& function = member_function.function_decl.as<FunctionDeclarationNode>();
-					if (!function.parameter_nodes().empty()) {
-						continue;
-					}
-					const ConversionRank rank = rankImplicitObjectToOperator(operand_type_spec, member_function, operand_type_id, owner_type_id);
-					if (rank != ConversionRank::NoMatch) {
-						candidates.push_back({rank, &member_function, nullptr, owner_type_id,
-							type_info->registeredTypeIndex().withCategory(TypeCategory::Struct)});
-					}
-				}
+				forEachCanonicalMemberFunction(table, owner_type_id, *struct_info,
+					[operator_kind](const CanonicalMemberFunction* schema, const StructMemberFunction& member_function) {
+						return canonicalMemberFunctionMatchesOperator(schema, member_function, operator_kind);
+					},
+					[&](const StructMemberFunction& member_function) {
+						if (!member_function.function_decl.is<FunctionDeclarationNode>()) {
+							return;
+						}
+						const auto& function = member_function.function_decl.as<FunctionDeclarationNode>();
+						if (!function.parameter_nodes().empty()) {
+							return;
+						}
+						const ConversionRank rank = rankImplicitObjectToOperator(operand_type_spec, member_function, operand_type_id, owner_type_id);
+						if (rank != ConversionRank::NoMatch) {
+							candidates.push_back({rank, &member_function, nullptr, owner_type_id,
+								type_info->registeredTypeIndex().withCategory(TypeCategory::Struct)});
+						}
+					});
 			}
 		}
 	}
@@ -6773,39 +6822,42 @@ inline OperatorOverloadResult findBinaryOperatorOverload(const TypeSpecifierNode
 		if (type_info == nullptr || struct_info == nullptr) {
 			continue;
 		}
-		for (const StructMemberFunction& member_func : struct_info->member_functions) {
-			if (operator_kind == OverloadableOperator::Assign) {
-				if (!isAssignOperator(member_func.operator_kind))
-					continue;
-			} else if (member_func.operator_kind != operator_kind) {
-				continue;
-			}
+		forEachCanonicalMemberFunction(table, owner_type_id, *struct_info,
+			[operator_kind](const CanonicalMemberFunction* schema, const StructMemberFunction& member_func) {
+				return canonicalMemberFunctionMatchesOperator(schema, member_func, operator_kind);
+			},
+			[&](const StructMemberFunction& member_func) {
+				if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
+					return;
+				}
 
-			if (!member_func.function_decl.is<FunctionDeclarationNode>())
-				continue;
+				const auto& params = member_func.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
+				if (params.empty() || !params[0].is<DeclarationNode>()) {
+					return;
+				}
+				if (countMinRequiredArgs(member_func.function_decl.as<FunctionDeclarationNode>()) > 1) {
+					return;
+				}
 
-			const auto& params = member_func.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
-			if (params.empty() || !params[0].is<DeclarationNode>())
-				continue;
-			if (countMinRequiredArgs(member_func.function_decl.as<FunctionDeclarationNode>()) > 1)
-				continue;
+				const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
+				if (!param_type_node.is<TypeSpecifierNode>()) {
+					return;
+				}
 
-			const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
-			if (!param_type_node.is<TypeSpecifierNode>())
-				continue;
+				ConversionRank lhs_rank = rankImplicitObjectToOperator(left_type_spec, member_func, left_type_id, owner_type_id);
+				if (lhs_rank == ConversionRank::NoMatch) {
+					return;
+				}
 
-			ConversionRank lhs_rank = rankImplicitObjectToOperator(left_type_spec, member_func, left_type_id, owner_type_id);
-			if (lhs_rank == ConversionRank::NoMatch)
-				continue;
+				const TypeSpecifierNode& rhs_param_spec = param_type_node.as<TypeSpecifierNode>();
+				ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(right_type_spec, rhs_param_spec, owner_type_id, right_argument);
+				if (rhs_rank == ConversionRank::NoMatch) {
+					return;
+				}
 
-			const TypeSpecifierNode& rhs_param_spec = param_type_node.as<TypeSpecifierNode>();
-			ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(right_type_spec, rhs_param_spec, owner_type_id, right_argument);
-			if (rhs_rank == ConversionRank::NoMatch)
-				continue;
-
-			candidates.push_back({lhs_rank, rhs_rank, &member_func, &rhs_param_spec, owner_type_id,
-				type_info->registeredTypeIndex().withCategory(TypeCategory::Struct)});
-		}
+				candidates.push_back({lhs_rank, rhs_rank, &member_func, &rhs_param_spec, owner_type_id,
+					type_info->registeredTypeIndex().withCategory(TypeCategory::Struct)});
+			});
 	}
 
 	if (candidates.empty()) {
@@ -7012,37 +7064,34 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(const T
 				if (type_info == nullptr || struct_info == nullptr) {
 					continue;
 				}
-				for (const StructMemberFunction& member_func : struct_info->member_functions) {
-					if (operator_kind == OverloadableOperator::Assign) {
-						if (!isAssignOperator(member_func.operator_kind)) {
-							continue;
+				forEachCanonicalMemberFunction(table, owner_type_id, *struct_info,
+					[operator_kind](const CanonicalMemberFunction* schema, const StructMemberFunction& member_func) {
+						return canonicalMemberFunctionMatchesOperator(schema, member_func, operator_kind);
+					},
+					[&](const StructMemberFunction& member_func) {
+						if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
+							return;
 						}
-					} else if (member_func.operator_kind != operator_kind) {
-						continue;
-					}
-					if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
-						continue;
-					}
-					const FunctionDeclarationNode& function = member_func.function_decl.as<FunctionDeclarationNode>();
-					const auto& params = function.parameter_nodes();
-					if (params.empty() || !params[0].is<DeclarationNode>() || countMinRequiredArgs(function) > 1) {
-						continue;
-					}
-					const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
-					if (!param_type_node.is<TypeSpecifierNode>()) {
-						continue;
-					}
-					const ConversionRank lhs_rank = rankImplicitObjectToOperator(left_type_spec, member_func, left_type_id, owner_type_id);
-					if (lhs_rank == ConversionRank::NoMatch) {
-						continue;
-					}
-					const TypeSpecifierNode& rhs_param_spec = param_type_node.as<TypeSpecifierNode>();
-					const ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(right_type_spec, rhs_param_spec, owner_type_id, right_argument);
-					if (rhs_rank != ConversionRank::NoMatch) {
-					candidates.push_back({lhs_rank, rhs_rank, &member_func, nullptr, false, &rhs_param_spec, owner_type_id,
-						type_info->registeredTypeIndex().withCategory(TypeCategory::Struct)});
-					}
-				}
+						const FunctionDeclarationNode& function = member_func.function_decl.as<FunctionDeclarationNode>();
+						const auto& params = function.parameter_nodes();
+						if (params.empty() || !params[0].is<DeclarationNode>() || countMinRequiredArgs(function) > 1) {
+							return;
+						}
+						const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
+						if (!param_type_node.is<TypeSpecifierNode>()) {
+							return;
+						}
+						const ConversionRank lhs_rank = rankImplicitObjectToOperator(left_type_spec, member_func, left_type_id, owner_type_id);
+						if (lhs_rank == ConversionRank::NoMatch) {
+							return;
+						}
+						const TypeSpecifierNode& rhs_param_spec = param_type_node.as<TypeSpecifierNode>();
+						const ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(right_type_spec, rhs_param_spec, owner_type_id, right_argument);
+						if (rhs_rank != ConversionRank::NoMatch) {
+							candidates.push_back({lhs_rank, rhs_rank, &member_func, nullptr, false, &rhs_param_spec, owner_type_id,
+								type_info->registeredTypeIndex().withCategory(TypeCategory::Struct)});
+						}
+					});
 			}
 		}
 	}
