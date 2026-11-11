@@ -1260,10 +1260,15 @@ inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
 // surrounding transaction so a deferred declarator retains no new wrappers.
 inline CanonicalTypeImport importCanonicalShapedBase(CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context, TypeId id) {
+	if (!isValidCVQualifier(syntax.cv_qualifier())) {
+		return {{}, CanonicalTypeImportStatus::Invalid};
+	}
+	if (syntax.has_ordered_declarator()) {
+		return applyCanonicalOrderedDeclarator(table, table.qualify(id, syntax.cv_qualifier()), syntax, context);
+	}
 	const auto reference = syntax.reference_qualifier();
-	if (!isValidCVQualifier(syntax.cv_qualifier()) ||
-		(reference != ReferenceQualifier::None && reference != ReferenceQualifier::LValueReference &&
-			reference != ReferenceQualifier::RValueReference)) {
+	if (reference != ReferenceQualifier::None && reference != ReferenceQualifier::LValueReference &&
+		reference != ReferenceQualifier::RValueReference) {
 		return {{}, CanonicalTypeImportStatus::Invalid};
 	}
 	for (const auto& pointer : syntax.pointer_levels()) {
@@ -1292,9 +1297,6 @@ inline CanonicalTypeImport importCanonicalShapedBase(CanonicalTypeTable& table,
 		}
 	}
 	id = table.qualify(id, syntax.cv_qualifier());
-	if (syntax.has_ordered_declarator()) {
-		return applyCanonicalOrderedDeclarator(table, id, syntax, context);
-	}
 	id = applyCanonicalPointerArrayReference(
 		table, id, syntax, context, has_ordinary_array, has_pointee_array);
 	return {id, CanonicalTypeImportStatus::Supported};
@@ -1317,37 +1319,6 @@ inline CanonicalTypeImport importCanonicalTemplateSpecialization(CanonicalTypeTa
 	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
 	if (!syntax.has_template_specialization()) {
 		return {{}, CanonicalTypeImportStatus::Unresolved};
-	}
-	const auto reference = syntax.reference_qualifier();
-	if (!isValidCVQualifier(syntax.cv_qualifier()) ||
-		(reference != ReferenceQualifier::None && reference != ReferenceQualifier::LValueReference &&
-			reference != ReferenceQualifier::RValueReference)) {
-		return {{}, CanonicalTypeImportStatus::Invalid};
-	}
-	for (const auto& pointer : syntax.pointer_levels()) {
-		if (!isValidCVQualifier(pointer.cv_qualifier)) {
-			return {{}, CanonicalTypeImportStatus::Invalid};
-		}
-	}
-	const bool has_ordinary_array = syntax.is_array() && !syntax.has_pointee_array_declarator();
-	const bool has_pointee_array = syntax.has_pointee_array_declarator();
-	const bool has_array_shape = has_ordinary_array || has_pointee_array ||
-		!syntax.array_dimensions().empty() || syntax.has_unsized_outer_array_dimension();
-	if (has_array_shape) {
-		if ((!has_ordinary_array && !has_pointee_array) ||
-			(syntax.has_unsized_outer_array_dimension() && !has_ordinary_array && !has_pointee_array) ||
-			(has_pointee_array && syntax.pointer_levels().empty())) {
-			return {{}, CanonicalTypeImportStatus::Invalid};
-		}
-		if (has_ordinary_array && syntax.array_dimensions().empty() &&
-			!syntax.has_unsized_outer_array_dimension()) {
-			return {{}, CanonicalTypeImportStatus::UnmigratedArray};
-		}
-		for (const size_t extent : syntax.array_dimensions()) {
-			if (extent == 0) {
-				return {{}, CanonicalTypeImportStatus::UnmigratedArray};
-			}
-		}
 	}
 	std::vector<CanonicalTemplateArgument> argument_ids;
 	argument_ids.reserve(syntax.specialization_arg_count());
@@ -1404,10 +1375,7 @@ inline CanonicalTypeImport importCanonicalTemplateSpecialization(CanonicalTypeTa
 	} else {
 		id = table.templateSpecialization(syntax.specialization_template_decl(), argument_ids);
 	}
-	id = table.qualify(id, syntax.cv_qualifier());
-	id = applyCanonicalPointerArrayReference(
-		table, id, syntax, context, has_ordinary_array, has_pointee_array);
-	return {id, CanonicalTypeImportStatus::Supported};
+	return importCanonicalShapedBase(table, syntax, context, id);
 }
 
 // Boundary-3A adapter: inspect only resolved declarator structure. Unsupported

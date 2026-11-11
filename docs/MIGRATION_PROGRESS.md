@@ -256,6 +256,11 @@ mismatched, unpublished, or unresolved owner facts.
    user-defined constructor paths; complete derived-to-base and callable tails.
    Keep compatibility only for shapes the canonical importer or declaration
    bridge cannot represent, and audit those boundaries before deleting them.
+   Conversion-operator value tails now reuse the imported return and target
+   `TypeId`s for exact matches, builtin conversions, and supported callable and
+   class-value conversions. A runtime regression checks that an instantiated
+   conversion returning `short` wins by promotion over one returning `long long`.
+   Class-pointer tails still need [base adjustment in lowering](KNOWN_ISSUES.md#conversion-function-tails-lack-dedicated-class-pointer-base-adjustment).
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are
@@ -353,12 +358,20 @@ mismatched, unpublished, or unresolved owner facts.
    keeps the value category [expr.call] and [expr.ref] give it.
    `UnsupportedStaticMemberType` (1020) remains the fail-closed guard for
    canonical type families not yet imported.
+   Stamped template specializations now use the shared ordered declarator
+   applicator. The native guard preserves inner array bounds and pointer CV,
+   and checks that parameter adjustment decays only the outer array. Field
+   substitution checks the owning specialization as well as the member's
+   arguments before publishing a concrete type.
 
 4. **Close and mutation-validate the 3A exit criteria.** Prove independence from
    parser/context stacks, parse order, and string-table insertion order; cover
    the remaining pointer-to-member, function, dependent, and template families;
    and remove the flat pointer-level and array-dimension fields from migrated
    semantic paths.
+   A native member-pointer regression independently reverses declaration and
+   string insertion order, then checks owner and pointee identity after parser
+   teardown. Other type families still need equivalent coverage.
 
 Before declaring 3A complete, check every exit criterion in the plan and read its
 [parallel architecture experiment](2026-08-24-parallel-front-end-architecture-experiment.md).

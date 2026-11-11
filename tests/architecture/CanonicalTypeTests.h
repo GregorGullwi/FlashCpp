@@ -717,6 +717,30 @@ inline void checkAdapter() {
 		table.templateSpecialization(TemplateDeclId{11}, expected_args)));
 	require(imported_specialization.type != table.pointer(
 		table.templateSpecialization(TemplateDeclId{12}, expected_args)));
+	TypeSpecifierNode ordered_specialization = stamped_specialization;
+	ordered_specialization.set_ordered_declarator({
+		DeclaratorComponent::array(2),
+		DeclaratorComponent::pointer(CVQualifier::Const),
+		DeclaratorComponent::array(3),
+		DeclaratorComponent::pointer(CVQualifier::None),
+	});
+	require(!ordered_specialization.ordered_declarator_has_legacy_projection());
+	const TypeId pair_type = table.templateSpecialization(TemplateDeclId{11}, expected_args);
+	const TypeId pointer_to_pair_pointer_array = table.pointer(table.array(table.pointer(pair_type), 3));
+	const TypeId const_element = table.qualify(pointer_to_pair_pointer_array, CVQualifier::Const);
+	require(importCanonicalType(table, ordered_specialization).type == table.array(const_element, 2));
+	require(importCanonicalFunctionParameterType(table, ordered_specialization).type == table.pointer(const_element));
+	constexpr size_t ordered_specialization_depth = 4096;
+	std::vector<DeclaratorComponent> deep_specialization_shape(ordered_specialization_depth,
+		DeclaratorComponent::pointer(CVQualifier::None));
+	deep_specialization_shape[1] = DeclaratorComponent::array(3);
+	ordered_specialization.set_ordered_declarator(deep_specialization_shape);
+	TypeId expected_deep_specialization = pair_type;
+	for (auto component = deep_specialization_shape.rbegin(); component != deep_specialization_shape.rend(); ++component) {
+		expected_deep_specialization = component->kind == DeclaratorComponentKind::Array ? table.array(expected_deep_specialization, 3)
+			: table.pointer(expected_deep_specialization);
+	}
+	require(importCanonicalType(table, ordered_specialization).type == expected_deep_specialization);
 	const TypeId member_owner_short = table.templateSpecialization(
 		TemplateDeclId{401}, std::array<TypeId, 1>{table.builtin(CanonicalBuiltinKind::Short)});
 	const TypeId member_owner_long = table.templateSpecialization(

@@ -433,7 +433,7 @@ inline TypeId substituteCanonicalStructMemberType(CanonicalTypeTable& table, Typ
 	const bool needs_substitution = table.hasDependentTypeComponents(pattern);
 	if (needs_substitution && !environment)
 		return {};
-	// Field publication currently supports structural declarators and primary
+	// Field publication supports structural declarators and class template
 	// specializations. Lookup-dependent tips require a later producer boundary.
 	std::vector<TypeId> pending{pattern};
 	std::unordered_set<uint32_t> visited;
@@ -470,7 +470,10 @@ inline TypeId substituteCanonicalStructMemberType(CanonicalTypeTable& table, Typ
 			pending.push_back(table.memberPointerOwner(current));
 			pending.push_back(node.child);
 			break;
-		case CanonicalTypeKind::TemplateSpecialization:
+		case CanonicalTypeKind::TemplateSpecialization: {
+			if (const TypeId owner = table.templateSpecializationOwner(current)) {
+				pending.push_back(owner);
+			}
 			for (TypeId link = table.templateSpecializationArguments(current); link; link = table.templateArgumentNext(link)) {
 				if (table.templateArgumentKind(link) == CanonicalTemplateArgKind::Type) {
 					pending.push_back(table.templateArgumentType(link));
@@ -482,6 +485,7 @@ inline TypeId substituteCanonicalStructMemberType(CanonicalTypeTable& table, Typ
 				}
 			}
 			break;
+		}
 		default:
 			return {};
 		}

@@ -4,6 +4,14 @@ This file is the authoritative inventory of unresolved gaps. Migration status
 and validation belong in `MIGRATION_PROGRESS.md`; that file should link here
 instead of restating issue details.
 
+## Conversion-function tails lack dedicated class-pointer base adjustment
+
+A conversion function can return a derived-class pointer that then converts
+to a base-class pointer. The selected conversion-function lowering handles
+base subobjects for value and reference tails. Pointer tails need their own
+base adjustment that preserves null pointers for both fixed-offset and virtual
+base paths before canonical ranking can cover this shape fully.
+
 ## Operator candidate lookup still lacks complete member-name provenance
 
 Direct unary, binary, and assignment operator lookup now stop at the first class

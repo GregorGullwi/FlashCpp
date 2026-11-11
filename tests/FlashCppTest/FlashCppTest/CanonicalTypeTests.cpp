@@ -1690,6 +1690,31 @@ TEST_CASE("Canonical member field substitution rejects incomplete and unresolved
 	CHECK(substituteCanonicalStructMemberType(table, deep, environment, arguments) == expected);
 }
 
+TEST_CASE("Canonical member field substitution checks member specialization owners") {
+	clearLegacyTypeTablesForTesting();
+	FrontendContext context;
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const TemplateDeclId environment{73};
+	const TemplateDeclId owner_template{74};
+	const TemplateDeclId member_template{75};
+	const TypeId parameter = table.templateParameter(environment, 0);
+	const CanonicalTemplateArgument member_arguments[] = {CanonicalTemplateArgument::makeType(parameter)};
+	const CanonicalTemplateArgument opaque_arguments[] = {CanonicalTemplateArgument::makeNonType(ExprId{91})};
+	const TypeId opaque_owner = table.templateSpecialization(owner_template, opaque_arguments);
+	const TypeId opaque_pattern = table.memberTemplateSpecialization(member_template, opaque_owner, member_arguments);
+	TemplateTypeArg arguments[1];
+	arguments[0].type_index = nativeTypeIndex(TypeCategory::Short);
+	const size_t before = table.size();
+	CHECK_FALSE(substituteCanonicalStructMemberType(table, opaque_pattern, environment, arguments));
+	CHECK(table.size() == before);
+	const TypeId owner = table.templateSpecialization(owner_template, member_arguments);
+	const TypeId pattern = table.memberTemplateSpecialization(member_template, owner, member_arguments);
+	const TypeId concrete = substituteCanonicalStructMemberType(table, pattern, environment, arguments);
+	const CanonicalTemplateArgument concrete_arguments[] = {CanonicalTemplateArgument::makeType(table.builtin(CanonicalBuiltinKind::Short))};
+	const TypeId concrete_owner = table.templateSpecialization(owner_template, concrete_arguments);
+	CHECK(concrete == table.memberTemplateSpecialization(member_template, concrete_owner, concrete_arguments));
+}
+
 TEST_CASE("Partial specialization member pointer patterns retain published parameter environments") {
 	MESSAGE("sizeof(StructDeclarationNode)=", sizeof(StructDeclarationNode), "; sizeof(TemplateDeclTable)=", sizeof(TemplateDeclTable));
 	clearLegacyTypeTablesForTesting();
