@@ -801,6 +801,32 @@ ExprResult AstToIr::adjustDerivedToBasePointer(
 			add_offset.result = var_counter.next();
 			const TempVar adjusted_pointer = std::get<TempVar>(add_offset.result);
 			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), source_token));
+
+			const TypedValue source_value = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, toIrValue(source_pointer.value));
+			const TempVar is_null_value = var_counter.next();
+			BinaryOp compare_null;
+			compare_null.lhs = source_value;
+			compare_null.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, 0ULL);
+			compare_null.result = is_null_value;
+			ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(compare_null), source_token));
+
+			const uint32_t label_id = var_counter.next().var_number;
+			const StringHandle null_label = StringTable::createStringHandle(
+				StringBuilder().append("derived_to_base_pointer_null_").append(static_cast<uint64_t>(label_id)));
+			const StringHandle end_label = StringTable::createStringHandle(
+				StringBuilder().append("derived_to_base_pointer_adjusted_").append(static_cast<uint64_t>(label_id)));
+			CondBranchOp branch;
+			branch.label_true = null_label;
+			branch.label_false = end_label;
+			branch.condition = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, IrValue(is_null_value));
+			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(branch), source_token));
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = null_label}, source_token));
+			AssignmentOp preserve_null;
+			preserve_null.result = adjusted_pointer;
+			preserve_null.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, IrValue(adjusted_pointer));
+			preserve_null.rhs = source_value;
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(preserve_null), source_token));
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = end_label}, source_token));
 			adjusted_value = adjusted_pointer;
 		}
 	}

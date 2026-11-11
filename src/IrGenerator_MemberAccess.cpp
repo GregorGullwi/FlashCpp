@@ -3809,6 +3809,12 @@ std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCallInterna
 		return adjustDerivedToBaseAddress(std::move(*result), conversion_return_type_index, destination_desc.type_index,
 			SizeInBits{target_size_bits}, token);
 	}
+	if (cast_info.trailing_standard_conversion == StandardConversionKind::DerivedToBase &&
+		conversion_return_type.runtime_pointer_depth() == 1 && destination_desc.pointer_levels.size() == 1 &&
+		conversion_return_type.category() == TypeCategory::Struct && destination_desc.category() == TypeCategory::Struct) {
+		return adjustDerivedToBasePointer(std::move(*result), conversion_return_type_index,
+			destination_desc.type_index, PointerDepth{static_cast<int>(destination_desc.pointer_levels.size())}, token);
+	}
 	if (cast_info.trailing_standard_conversion == StandardConversionKind::PointerConversion) {
 		const CanonicalTypeDesc& conversion_return_desc = sema_.typeContext().get(conversion_return_type_id);
 		if (sema_.isMemberObjectPointerType(conversion_return_type_id) && sema_.isMemberObjectPointerType(cast_info.target_type_id)) {

@@ -260,7 +260,11 @@ mismatched, unpublished, or unresolved owner facts.
    `TypeId`s for exact matches, builtin conversions, and supported callable and
    class-value conversions. A runtime regression checks that an instantiated
    conversion returning `short` wins by promotion over one returning `long long`.
-   Class-pointer tails still need [base adjustment in lowering](KNOWN_ISSUES.md#conversion-function-tails-lack-dedicated-class-pointer-base-adjustment).
+   Class-pointer tails rank through the published canonical base graph, check
+   access after selection, and preserve null for fixed-offset and virtual-base
+   adjustments in lowering.
+   [Dependent conversion operators](KNOWN_ISSUES.md#dependent-conversion-operators-can-miss-class-pointer-tail-annotation)
+   still have an annotation gap.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are

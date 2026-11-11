@@ -3792,6 +3792,29 @@ inline std::optional<ConversionPlan> tryBuildCanonicalConversionValueTailPlan(Ca
 	}
 	const CanonicalTypeKind source_kind = table.node(source).kind;
 	const CanonicalTypeKind target_kind = table.node(target).kind;
+	const auto is_class = [&table](TypeId type) {
+		const CanonicalTypeKind kind = table.node(type).kind;
+		return kind == CanonicalTypeKind::Record || kind == CanonicalTypeKind::TemplateSpecialization;
+	};
+	if (source_kind == CanonicalTypeKind::Pointer && target_kind == CanonicalTypeKind::Pointer) {
+		const auto [source_pointee, source_cv] = stripCanonicalTopCv(table, table.node(source).child);
+		const auto [target_pointee, target_cv] = stripCanonicalTopCv(table, table.node(target).child);
+		if (source_pointee != target_pointee && is_class(source_pointee) && is_class(target_pointee)) {
+			if ((static_cast<uint8_t>(source_cv) & ~static_cast<uint8_t>(target_cv)) != 0) {
+				return ConversionPlan::no_match();
+			}
+			const auto base_conversion = classifyCanonicalDerivedBaseConversion(table, source_pointee, target_pointee);
+			if (!base_conversion.has_value()) {
+				return std::nullopt;
+			}
+			if (base_conversion == DerivedBaseConversionKind::UniquePublicNonVirtual || base_conversion == DerivedBaseConversionKind::PublicVirtual ||
+				base_conversion == DerivedBaseConversionKind::Inaccessible) {
+				// [class.access.general] applies accessibility after overload selection.
+				return ConversionPlan{ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
+			}
+			return ConversionPlan::no_match();
+		}
+	}
 	if (source_kind == CanonicalTypeKind::AliasTemplateSpecialization || target_kind == CanonicalTypeKind::AliasTemplateSpecialization) {
 		return std::nullopt;
 	}
@@ -3804,10 +3827,6 @@ inline std::optional<ConversionPlan> tryBuildCanonicalConversionValueTailPlan(Ca
 		}
 		return buildCanonicalStructuralConversionPlan(table, source, target);
 	}
-	const auto is_class = [&table](TypeId type) {
-		const CanonicalTypeKind kind = table.node(type).kind;
-		return kind == CanonicalTypeKind::Record || kind == CanonicalTypeKind::TemplateSpecialization;
-	};
 	if (is_class(source) && is_class(target)) {
 		if (!table.hasClassBaseSchema(source) || !table.hasClassBaseSchema(target)) {
 			return std::nullopt;
