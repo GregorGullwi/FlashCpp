@@ -11708,18 +11708,26 @@ bool SemanticAnalysis::checkSelectedConversionOperatorAccess(
 		// must itself be accessible. Ranking keeps inaccessible paths viable so
 		// access applies after selection; diagnose an inaccessible base here.
 		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-		const TypeSpecifierNode return_type = selected_conversion.function->decl_node().type_specifier_node();
-		const TypeSpecifierNode target_type = materializeTypeSpecifier(type_context_.get(target_type_id));
+		TypeSpecifierNode return_type = selected_conversion.function->decl_node().type_specifier_node();
+		TypeSpecifierNode target_type = materializeTypeSpecifier(type_context_.get(target_type_id));
+		tryBindPublishedTypeEntity(return_type);
+		tryBindPublishedTypeEntity(target_type);
 		const CanonicalTypeImport return_import = importCanonicalOverloadNominalType(table, return_type);
 		const CanonicalTypeImport target_import = importCanonicalOverloadNominalType(table, target_type);
 		if (return_import.status == CanonicalTypeImportStatus::Supported && target_import.status == CanonicalTypeImportStatus::Supported) {
-			const TypeId return_class = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, return_import.type)).first;
-			const TypeId target_class = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, target_import.type)).first;
+			TypeId return_class = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, return_import.type)).first;
+			TypeId target_class = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, target_import.type)).first;
+			const bool is_pointer_tail = table.node(return_class).kind == CanonicalTypeKind::Pointer &&
+				table.node(target_class).kind == CanonicalTypeKind::Pointer;
+			if (is_pointer_tail) {
+				return_class = stripCanonicalTopCv(table, table.node(return_class).child).first;
+				target_class = stripCanonicalTopCv(table, table.node(target_class).child).first;
+			}
 			const std::optional<DerivedBaseConversionKind> base_conversion = classifyCanonicalDerivedBaseConversion(table, return_class, target_class);
 			if (base_conversion == DerivedBaseConversionKind::Inaccessible) {
 				throw makeStructuredCompileError(
 					context_.diagnostics(),
-					DiagnosticId::InaccessibleDerivedToBaseConversion,
+					is_pointer_tail ? DiagnosticId::InaccessibleDerivedToBasePointerConversion : DiagnosticId::InaccessibleDerivedToBaseConversion,
 					DiagnosticSeverity::Error,
 					SourceLocation::fromToken(access_token),
 					"Cannot convert to an inaccessible base class",
@@ -12026,6 +12034,15 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 		!target_is_member_object_pointer &&
 		!to_desc.pointer_levels.empty() &&
 		to_desc.array_dimensions.empty()) {
+		if (from_desc.pointer_levels.empty() && from_desc.array_dimensions.empty() && to_desc.category() == TypeCategory::Struct &&
+			to_desc.pointer_levels.size() == 1) {
+			const TypeSpecifierNode target_type = materializeTypeSpecifier(to_desc);
+			const auto selected_conversion = trySelectCanonicalImplicitConversionOperator(from_desc, target_type);
+			if (selected_conversion.has_value()) {
+				return !selected_conversion->ambiguous &&
+					annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
+			}
+		}
 		// Run sema-owned conversion-operator selection once and record the
 		// chosen function on the cast info. Codegen consumes this selection
 		// directly rather than re-running lookup.
