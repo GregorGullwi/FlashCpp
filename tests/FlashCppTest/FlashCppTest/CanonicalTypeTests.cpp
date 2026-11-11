@@ -899,7 +899,7 @@ namespace {
 void publishTestClassBases(CanonicalTypeTable& table, EntityId entity, std::span<const CanonicalRecordBase> record_bases) {
 	std::vector<CanonicalClassBase> bases;
 	for (const CanonicalRecordBase& base : record_bases) {
-		bases.push_back({table.record(base.entity), base.access, base.flags, 0, base.offset_bytes});
+		bases.push_back({table.record(base.entity), base.access, base.flags, base.offset_bytes});
 	}
 	table.publishClassBaseSchema(table.record(entity), bases);
 }
@@ -3263,16 +3263,16 @@ TEST_CASE("Canonical TypeIds rank by-value derived-to-base conversions") {
 	const EntityId derived_entity{802};
 	const CanonicalRecordBase base_link{
 		base_entity, 0, CanonicalAccess::Public,
-		CanonicalRecordBaseFlags::None, 0, 0};
+		CanonicalRecordBaseFlags::None};
 	const std::array<CanonicalRecordBase, 1> derived_bases{base_link};
 	table.publishRecordLayout(CanonicalRecordLayout{
-		base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None, 0});
+		base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None});
 	table.publishRecordFieldSchema(table.record(base_entity), std::span<const CanonicalRecordMember>{}, std::span<const CanonicalRecordBase>{});
 	table.publishRecordLayout(CanonicalRecordLayout{
-		derived_entity, 1, 1, 1, 1, 0, 1, CanonicalRecordLayoutFlags::None, 0});
+		derived_entity, 1, 1, 1, 1, 0, 1, CanonicalRecordLayoutFlags::None});
 	table.publishRecordFieldSchema(table.record(derived_entity), std::span<const CanonicalRecordMember>{}, derived_bases);
 	table.publishClassBaseSchema(table.record(base_entity), {});
-	const std::array<CanonicalClassBase, 1> class_bases{{{table.record(base_entity), CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+	const std::array<CanonicalClassBase, 1> class_bases{{{table.record(base_entity), CanonicalAccess::Public, CanonicalRecordBaseFlags::None}}};
 	table.publishClassBaseSchema(table.record(derived_entity), class_bases);
 
 	TypeSpecifierNode derived(
@@ -3307,13 +3307,13 @@ TEST_CASE("TypeId inheritance classification requires published class-base schem
 	const TypeId base = table.record(base_entity);
 	const TypeId derived = table.record(derived_entity);
 	const TypeId intermediate = table.record(EntityId{98503});
-	const std::array<CanonicalClassBase, 1> base_link{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
-	const std::array<CanonicalClassBase, 1> intermediate_link{{intermediate, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+	const std::array<CanonicalClassBase, 1> base_link{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}};
+	const std::array<CanonicalClassBase, 1> intermediate_link{{intermediate, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}};
 	auto publish_entity_schema = [&](bool related) {
-		table.publishRecordLayout({base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None, 0});
+		table.publishRecordLayout({base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None});
 		table.publishRecordFieldSchema(table.record(base_entity), {}, {});
-		table.publishRecordLayout({derived_entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(related), CanonicalRecordLayoutFlags::None, 0});
-		const std::array<CanonicalRecordBase, 1> bases{{base_entity, 0, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+		table.publishRecordLayout({derived_entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(related), CanonicalRecordLayoutFlags::None});
+		const std::array<CanonicalRecordBase, 1> bases{{base_entity, 0, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}};
 		table.publishRecordFieldSchema(table.record(derived_entity), {},
 			related ? std::span<const CanonicalRecordBase>(bases) : std::span<const CanonicalRecordBase>{});
 	};
@@ -3345,7 +3345,7 @@ TEST_CASE("TypeId inheritance classification requires published class-base schem
 	SUBCASE("Specialization targets require their own schema") {
 		const std::array<CanonicalTemplateArgument, 1> arguments{{CanonicalTemplateArgument::makeType(table.builtin(CanonicalBuiltinKind::Int))}};
 		const TypeId specialized_base = table.templateSpecialization(TemplateDeclId{98504}, arguments);
-		const std::array<CanonicalClassBase, 1> bases{{specialized_base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+		const std::array<CanonicalClassBase, 1> bases{{specialized_base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}};
 		table.publishClassBaseSchema(derived, bases);
 		CHECK(classifyCanonicalDerivedBaseConversion(table, specialized_base, specialized_base) == DerivedBaseConversionKind::UniquePublicNonVirtual);
 		CHECK_FALSE(classifyCanonicalDerivedBaseConversion(table, derived, specialized_base).has_value());
@@ -3448,10 +3448,10 @@ TEST_CASE("Nominal object conversion queries require published class graphs") {
 		CHECK_FALSE(table.hasClassBaseSchema(derived));
 	}
 	SUBCASE("Entity-only graphs cannot stand in for class schemas") {
-		table.publishRecordLayout(CanonicalRecordLayout{base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None, 0});
+		table.publishRecordLayout(CanonicalRecordLayout{base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None});
 		table.publishRecordFieldSchema(table.record(base_entity), {}, {});
-		table.publishRecordLayout(CanonicalRecordLayout{derived_entity, 1, 1, 1, 1, 0, 1, CanonicalRecordLayoutFlags::None, 0});
-		const std::array<CanonicalRecordBase, 1> bases{{{base_entity, 0, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+		table.publishRecordLayout(CanonicalRecordLayout{derived_entity, 1, 1, 1, 1, 0, 1, CanonicalRecordLayoutFlags::None});
+		const std::array<CanonicalRecordBase, 1> bases{{{base_entity, 0, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}}};
 		table.publishRecordFieldSchema(table.record(derived_entity), {}, bases);
 		CHECK_FALSE(tryBuildCanonicalProjectableConversionPlan(source, target).has_value());
 		CHECK_FALSE(table.hasClassBaseSchema(derived));
@@ -3461,7 +3461,7 @@ TEST_CASE("Nominal object conversion queries require published class graphs") {
 		SUBCASE("Nonvirtual") {}
 		SUBCASE("Virtual") { flags = CanonicalRecordBaseFlags::Virtual; }
 		table.publishClassBaseSchema(base, {});
-		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, flags, 0, 0}}};
+		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, flags, 0}}};
 		table.publishClassBaseSchema(derived, bases);
 		check_standard();
 	}
@@ -3469,7 +3469,7 @@ TEST_CASE("Nominal object conversion queries require published class graphs") {
 		table.publishClassBaseSchema(base, {});
 		SUBCASE("Unrelated") { table.publishClassBaseSchema(derived, {}); }
 		SUBCASE("Private") {
-			const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Private, CanonicalRecordBaseFlags::None, 0, 0}}};
+			const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Private, CanonicalRecordBaseFlags::None}}};
 			table.publishClassBaseSchema(derived, bases);
 		}
 		CHECK_FALSE(tryBuildCanonicalProjectableConversionPlan(source, target).has_value());
@@ -3479,7 +3479,7 @@ TEST_CASE("Nominal object conversion queries require published class graphs") {
 		TypeId previous = base;
 		for (uint32_t depth = 0; depth < 4096; ++depth) {
 			const TypeId next = table.record(EntityId{120000 + depth});
-			const std::array<CanonicalClassBase, 1> bases{{{previous, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+			const std::array<CanonicalClassBase, 1> bases{{{previous, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}}};
 			table.publishClassBaseSchema(next, bases);
 			previous = next;
 		}
@@ -3502,7 +3502,7 @@ TEST_CASE("Record pointer conversion queries consume published TypeId class grap
 	TypeSpecifierNode target(TypeCategory::Struct, TypeQualifier::None, 8, Token{}, CVQualifier::None);
 	target.set_type_entity(base_entity);
 	target.add_pointer_level(CVQualifier::None);
-	const std::array<CanonicalClassBase, 1> public_bases{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+	const std::array<CanonicalClassBase, 1> public_bases{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}};
 	auto check_plan = [&](bool valid) {
 		const size_t types_before = table.size();
 		const auto plan = tryBuildCanonicalProjectableConversionPlan(source, target);
@@ -3516,10 +3516,10 @@ TEST_CASE("Record pointer conversion queries consume published TypeId class grap
 		CHECK(table.size() == types_before);
 	};
 	auto publish_entity_graph = [&](bool related) {
-		table.publishRecordLayout({base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None, 0});
+		table.publishRecordLayout({base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None});
 		table.publishRecordFieldSchema(table.record(base_entity), {}, {});
-		table.publishRecordLayout({derived_entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(related), CanonicalRecordLayoutFlags::None, 0});
-		const std::array<CanonicalRecordBase, 1> bases{{base_entity, 0, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+		table.publishRecordLayout({derived_entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(related), CanonicalRecordLayoutFlags::None});
+		const std::array<CanonicalRecordBase, 1> bases{{base_entity, 0, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}};
 		table.publishRecordFieldSchema(table.record(derived_entity), {},
 			related ? std::span<const CanonicalRecordBase>(bases) : std::span<const CanonicalRecordBase>{});
 	};
@@ -3538,7 +3538,7 @@ TEST_CASE("Record pointer conversion queries consume published TypeId class grap
 	}
 	SUBCASE("Public virtual base uses the TypeId graph") {
 		table.publishClassBaseSchema(base, {});
-		const std::array<CanonicalClassBase, 1> bases{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::Virtual, 0, 0}};
+		const std::array<CanonicalClassBase, 1> bases{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::Virtual}};
 		table.publishClassBaseSchema(derived, bases);
 		check_plan(true);
 	}
@@ -3546,11 +3546,11 @@ TEST_CASE("Record pointer conversion queries consume published TypeId class grap
 		publish_entity_graph(true);
 		table.publishClassBaseSchema(base, {});
 		SUBCASE("Private") {
-			const std::array<CanonicalClassBase, 1> bases{{base, CanonicalAccess::Private, CanonicalRecordBaseFlags::None, 0, 0}};
+			const std::array<CanonicalClassBase, 1> bases{{base, CanonicalAccess::Private, CanonicalRecordBaseFlags::None}};
 			table.publishClassBaseSchema(derived, bases);
 		}
 		SUBCASE("Protected") {
-			const std::array<CanonicalClassBase, 1> bases{{base, CanonicalAccess::Protected, CanonicalRecordBaseFlags::None, 0, 0}};
+			const std::array<CanonicalClassBase, 1> bases{{base, CanonicalAccess::Protected, CanonicalRecordBaseFlags::None}};
 			table.publishClassBaseSchema(derived, bases);
 		}
 		SUBCASE("Unrelated") { table.publishClassBaseSchema(derived, {}); }
@@ -3562,7 +3562,7 @@ TEST_CASE("Record pointer conversion queries consume published TypeId class grap
 		SUBCASE("Target") { table.publishClassBaseSchema(derived, public_bases); }
 		SUBCASE("Intermediate") {
 			table.publishClassBaseSchema(base, {});
-			const std::array<CanonicalClassBase, 1> bases{{intermediate, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+			const std::array<CanonicalClassBase, 1> bases{{intermediate, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}};
 			table.publishClassBaseSchema(derived, bases);
 		}
 		check_plan(false);
@@ -3572,7 +3572,7 @@ TEST_CASE("Record pointer conversion queries consume published TypeId class grap
 		table.publishClassBaseSchema(base, {});
 		table.publishClassBaseSchema(intermediate, public_bases);
 		const std::array<CanonicalClassBase, 2> bases{{public_bases[0],
-			{intermediate, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+			{intermediate, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}}};
 		table.publishClassBaseSchema(derived, bases);
 		check_plan(false);
 	}
@@ -3606,7 +3606,7 @@ TEST_CASE("Record pointer conversion queries consume published TypeId class grap
 	SUBCASE("A specialization intermediate retains its TypeId identity") {
 		const std::array<CanonicalTemplateArgument, 1> arguments{{CanonicalTemplateArgument::makeType(table.builtin(CanonicalBuiltinKind::Double))}};
 		const TypeId specialization = table.templateSpecialization(TemplateDeclId{98604}, arguments);
-		const std::array<CanonicalClassBase, 1> bases{{specialization, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+		const std::array<CanonicalClassBase, 1> bases{{specialization, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}};
 		table.publishClassBaseSchema(base, {});
 		table.publishClassBaseSchema(specialization, public_bases);
 		table.publishClassBaseSchema(derived, bases);
@@ -3617,7 +3617,7 @@ TEST_CASE("Record pointer conversion queries consume published TypeId class grap
 		TypeId previous = base;
 		for (uint32_t depth = 0; depth < 4096; ++depth) {
 			const TypeId next = table.record(EntityId{130000 + depth});
-			const std::array<CanonicalClassBase, 1> bases{{previous, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+			const std::array<CanonicalClassBase, 1> bases{{previous, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}};
 			table.publishClassBaseSchema(next, bases);
 			previous = next;
 		}
@@ -3663,7 +3663,7 @@ TEST_CASE("Specialization object conversion queries cannot publish missing base 
 	REQUIRE(importCanonicalOverloadNominalType(table, source).type == imported.type);
 	const TypeId base = importCanonicalType(table, target).type;
 	table.publishClassBaseSchema(base, {});
-	const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+	const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}}};
 	table.publishClassBaseSchema(imported.type, bases);
 	const auto plan = tryBuildCanonicalProjectableConversionPlan(source, target);
 	REQUIRE(plan.has_value());
@@ -3712,7 +3712,7 @@ TEST_CASE("Canonical record constructor schema publishes by TypeId") {
 	CanonicalTypeTable& table = frontend.canonicalTypes();
 	const EntityId entity{901};
 	table.publishRecordLayout(CanonicalRecordLayout{
-		entity, 4, 4, 4, 4, 0, 0, CanonicalRecordLayoutFlags::None, 0});
+		entity, 4, 4, 4, 4, 0, 0, CanonicalRecordLayoutFlags::None});
 	const TypeId record_type = table.record(entity);
 
 	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
@@ -3795,10 +3795,10 @@ TEST_CASE("Conversion function base tails consume published TypeId graphs") {
 	auto publish_entity_graph = [&]() {
 		const EntityId base_entity = table.recordEntity(base);
 		const EntityId derived_entity = table.recordEntity(derived);
-		table.publishRecordLayout(CanonicalRecordLayout{base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None, 0});
+		table.publishRecordLayout(CanonicalRecordLayout{base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None});
 		table.publishRecordFieldSchema(table.record(base_entity), {}, {});
-		table.publishRecordLayout(CanonicalRecordLayout{derived_entity, 1, 1, 1, 1, 0, 1, CanonicalRecordLayoutFlags::None, 0});
-		const std::array<CanonicalRecordBase, 1> bases{{{base_entity, 0, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+		table.publishRecordLayout(CanonicalRecordLayout{derived_entity, 1, 1, 1, 1, 0, 1, CanonicalRecordLayoutFlags::None});
+		const std::array<CanonicalRecordBase, 1> bases{{{base_entity, 0, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}}};
 		table.publishRecordFieldSchema(table.record(derived_entity), {}, bases);
 	};
 	SUBCASE("Missing class schemas defer despite legacy declarations") {
@@ -3824,7 +3824,7 @@ TEST_CASE("Conversion function base tails consume published TypeId graphs") {
 		SUBCASE("Nonvirtual") {}
 		SUBCASE("Virtual") { flags = CanonicalRecordBaseFlags::Virtual; }
 		table.publishClassBaseSchema(base, {});
-		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, flags, 0, 0}}};
+		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, flags, 0}}};
 		table.publishClassBaseSchema(derived, bases);
 		check_plan(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, base_spec), true);
 		check_plan(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, reference_target), true);
@@ -3840,7 +3840,7 @@ TEST_CASE("Conversion function base tails consume published TypeId graphs") {
 	}
 	SUBCASE("Inaccessible tails rank before access checks") {
 		table.publishClassBaseSchema(base, {});
-		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Private, CanonicalRecordBaseFlags::None, 0, 0}}};
+		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Private, CanonicalRecordBaseFlags::None}}};
 		table.publishClassBaseSchema(derived, bases);
 		check_plan(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, base_spec), true);
 		check_plan(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, reference_target), true);
@@ -3849,7 +3849,7 @@ TEST_CASE("Conversion function base tails consume published TypeId graphs") {
 	SUBCASE("A missing intermediate schema defers") {
 		table.publishClassBaseSchema(base, {});
 		const TypeId middle = table.record(EntityId{98401});
-		const std::array<CanonicalClassBase, 1> bases{{{middle, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+		const std::array<CanonicalClassBase, 1> bases{{{middle, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}}};
 		table.publishClassBaseSchema(derived, bases);
 		CHECK_FALSE(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, base_spec).has_value());
 		CHECK_FALSE(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, reference_target).has_value());
@@ -3858,12 +3858,12 @@ TEST_CASE("Conversion function base tails consume published TypeId graphs") {
 		table.publishClassBaseSchema(base, {});
 		const TypeId left = table.record(EntityId{98402});
 		const TypeId right = table.record(EntityId{98403});
-		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}}};
 		table.publishClassBaseSchema(left, bases);
 		table.publishClassBaseSchema(right, bases);
 		const std::array<CanonicalClassBase, 2> paths{{
-			{left, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0},
-			{right, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+			{left, CanonicalAccess::Public, CanonicalRecordBaseFlags::None},
+			{right, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}}};
 		table.publishClassBaseSchema(derived, paths);
 		check_plan(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, base_spec), false);
 		check_plan(tryBuildCanonicalConversionFunctionTailPlan(derived_spec, reference_target), false);
@@ -3873,7 +3873,7 @@ TEST_CASE("Conversion function base tails consume published TypeId graphs") {
 		TypeId previous = base;
 		for (uint32_t depth = 0; depth < 4096; ++depth) {
 			const TypeId next = table.record(EntityId{110000 + depth});
-			const std::array<CanonicalClassBase, 1> bases{{{previous, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+			const std::array<CanonicalClassBase, 1> bases{{{previous, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}}};
 			table.publishClassBaseSchema(next, bases);
 			previous = next;
 		}
@@ -3921,7 +3921,7 @@ struct Hidden : Base { operator int(); };
 	const TypeId hidden = importCanonicalType(table, hidden_spec).type;
 	const TypeId other = importCanonicalType(table, other_spec).type;
 	const TypeSpecifierNode integer(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
-	const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+	const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}}};
 	SUBCASE("Canonical lookup cannot publish an absent graph") {
 		CHECK_FALSE(trySelectCanonicalUserDefinedConversionOperator(derived, integer, false).has_value());
 		CHECK_FALSE(table.hasClassBaseSchema(base));
@@ -3963,7 +3963,7 @@ struct Hidden : Base { operator int(); };
 	}
 	SUBCASE("A private base retains its candidate for access checking after selection") {
 		table.publishClassBaseSchema(base, {});
-		const std::array<CanonicalClassBase, 1> private_bases{{{base, CanonicalAccess::Private, CanonicalRecordBaseFlags::None, 0, 0}}};
+		const std::array<CanonicalClassBase, 1> private_bases{{{base, CanonicalAccess::Private, CanonicalRecordBaseFlags::None}}};
 		table.publishClassBaseSchema(derived, private_bases);
 		const auto selected = trySelectUserDefinedConversionOperator(derived_spec, integer, false);
 		REQUIRE(selected.has_value());
@@ -3972,7 +3972,7 @@ struct Hidden : Base { operator int(); };
 	}
 	SUBCASE("A virtual base retains its candidate") {
 		table.publishClassBaseSchema(base, {});
-		const std::array<CanonicalClassBase, 1> virtual_bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::Virtual, 0, 0}}};
+		const std::array<CanonicalClassBase, 1> virtual_bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::Virtual}}};
 		table.publishClassBaseSchema(derived, virtual_bases);
 		const auto selected = trySelectUserDefinedConversionOperator(derived_spec, integer, false);
 		REQUIRE(selected.has_value());
@@ -3982,8 +3982,8 @@ struct Hidden : Base { operator int(); };
 		table.publishClassBaseSchema(base, {});
 		table.publishClassBaseSchema(other, {});
 		const std::array<CanonicalClassBase, 2> ambiguous_bases{{
-			{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0},
-			{other, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+			{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None},
+			{other, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}}};
 		table.publishClassBaseSchema(derived, ambiguous_bases);
 		const auto selected = trySelectUserDefinedConversionOperator(derived_spec, integer, false);
 		REQUIRE(selected.has_value());
@@ -4031,7 +4031,7 @@ struct Derived : Base {};
 	const TypeId other = importCanonicalType(table, other_spec).type;
 	const TypeId derived = importCanonicalType(table, derived_spec).type;
 	const TypeSpecifierNode integer(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
-	const std::array<CanonicalClassBase, 1> bases{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+	const std::array<CanonicalClassBase, 1> bases{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}};
 	auto check_lookup = [&](const TypeInfo* expected_owner) {
 		const size_t types_before = table.size();
 		const std::array<bool, 3> schemas_before{table.hasClassBaseSchema(base), table.hasClassBaseSchema(other), table.hasClassBaseSchema(derived)};
@@ -4088,7 +4088,7 @@ struct Derived : Base {};
 	}
 	SUBCASE("Published graph can select a different declaration owner") {
 		table.publishClassBaseSchema(other, {});
-		const std::array<CanonicalClassBase, 1> other_bases{{other, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+		const std::array<CanonicalClassBase, 1> other_bases{{other, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}};
 		table.publishClassBaseSchema(derived, other_bases);
 		check_lookup(tryGetTypeInfo(other_spec.type_index()));
 	}
@@ -4175,19 +4175,19 @@ TEST_CASE("Converting constructor class checks cannot recover unpublished inheri
 	}
 	SUBCASE("Published public inheritance needs no constructor facts") {
 		table.publishClassBaseSchema(base, {});
-		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}}};
 		table.publishClassBaseSchema(derived, bases);
 		CHECK(hasConvertingConstructorFrom(base_spec, derived_spec));
 	}
 	SUBCASE("Published private inheritance overrides legacy public inheritance") {
 		table.publishClassBaseSchema(base, {});
-		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Private, CanonicalRecordBaseFlags::None, 0, 0}}};
+		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Private, CanonicalRecordBaseFlags::None}}};
 		table.publishClassBaseSchema(derived, bases);
 		CHECK_FALSE(hasConvertingConstructorFrom(base_spec, derived_spec));
 	}
 	SUBCASE("Published virtual inheritance remains viable") {
 		table.publishClassBaseSchema(base, {});
-		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::Virtual, 0, 0}}};
+		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::Virtual}}};
 		table.publishClassBaseSchema(derived, bases);
 		CHECK(hasConvertingConstructorFrom(base_spec, derived_spec));
 	}
@@ -4195,12 +4195,12 @@ TEST_CASE("Converting constructor class checks cannot recover unpublished inheri
 		table.publishClassBaseSchema(base, {});
 		const TypeId left = table.record(EntityId{98301});
 		const TypeId right = table.record(EntityId{98302});
-		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+		const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}}};
 		table.publishClassBaseSchema(left, bases);
 		table.publishClassBaseSchema(right, bases);
 		const std::array<CanonicalClassBase, 2> paths{{
-			{left, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0},
-			{right, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}}};
+			{left, CanonicalAccess::Public, CanonicalRecordBaseFlags::None},
+			{right, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}}};
 		table.publishClassBaseSchema(derived, paths);
 		CHECK_FALSE(hasConvertingConstructorFrom(base_spec, derived_spec));
 	}
@@ -4919,7 +4919,7 @@ TEST_CASE("Canonical record constructor schema is independent of the field schem
 	CanonicalTypeTable& table = frontend.canonicalTypes();
 	const EntityId entity{903};
 	table.publishRecordLayout(CanonicalRecordLayout{
-		entity, 4, 4, 4, 4, 0, 0, CanonicalRecordLayoutFlags::None, 0});
+		entity, 4, 4, 4, 4, 0, 0, CanonicalRecordLayoutFlags::None});
 	// No field schema is published (as for an unimportable member record); the constructor schema still publishes from the type node.
 	CHECK_FALSE(table.hasRecordFieldSchema(table.record(entity)));
 	const TypeId record_type = table.record(entity);
@@ -5480,11 +5480,11 @@ TEST_CASE("Canonical TypeIds bind pointer conversion temporaries to references")
 	const std::array<CanonicalRecordBase, 1> derived_bases{
 		CanonicalRecordBase{
 			base_entity, 0, CanonicalAccess::Public,
-			CanonicalRecordBaseFlags::None, 0, 0}};
+			CanonicalRecordBaseFlags::None}};
 	auto publish_record = [&table](EntityId entity, std::span<const CanonicalRecordBase> bases) {
 		table.publishRecordLayout(CanonicalRecordLayout{
 			entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(bases.size()),
-			CanonicalRecordLayoutFlags::None, 0});
+			CanonicalRecordLayoutFlags::None});
 		table.publishRecordFieldSchema(table.record(entity), std::span<const CanonicalRecordMember>{}, bases);
 		publishTestClassBases(table, entity, bases);
 	};
@@ -6317,7 +6317,7 @@ TEST_CASE("Canonical member pointer owner planning rejects absent schemas despit
 	CHECK_FALSE(function_plan->is_valid);
 	CHECK_FALSE(buildConversionPlan(source_function, target_function).is_valid);
 	table.publishClassBaseSchema(base, {});
-	const std::array<CanonicalClassBase, 1> bases{CanonicalClassBase{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0, 0}};
+	const std::array<CanonicalClassBase, 1> bases{CanonicalClassBase{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}};
 	table.publishClassBaseSchema(derived, bases);
 	const auto published = tryBuildCanonicalMemberPointerConversionPlan(table, source, target);
 	REQUIRE(published.has_value());
@@ -6332,7 +6332,7 @@ TEST_CASE("Canonical member pointer owner planning rejects absent schemas despit
 	for (uint32_t depth = 0; depth < 4096; ++depth) {
 		const TypeId next = table.record(EntityId{100000 + depth});
 		const std::array<CanonicalClassBase, 1> next_bases{CanonicalClassBase{deep_owner, CanonicalAccess::Public,
-			CanonicalRecordBaseFlags::None, 0, 0}};
+			CanonicalRecordBaseFlags::None}};
 		table.publishClassBaseSchema(next, next_bases);
 		deep_owner = next;
 	}
@@ -6357,20 +6357,20 @@ TEST_CASE("Canonical TypeIds plan member function pointer base conversions") {
 	auto publish_record = [&table](EntityId entity, std::span<const CanonicalRecordBase> bases) {
 		table.publishRecordLayout(CanonicalRecordLayout{
 			entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(bases.size()),
-			CanonicalRecordLayoutFlags::None, 0});
+			CanonicalRecordLayoutFlags::None});
 		table.publishRecordFieldSchema(table.record(entity), std::span<const CanonicalRecordMember>{}, bases);
 		publishTestClassBases(table, entity, bases);
 	};
 	auto public_base = [](EntityId entity, CanonicalRecordBaseFlags flags) {
 		return CanonicalRecordBase{
-			entity, 0, CanonicalAccess::Public, flags, 0, 0};
+			entity, 0, CanonicalAccess::Public, flags};
 	};
 	const std::array<CanonicalRecordBase, 1> base_link{
 		public_base(base_owner, CanonicalRecordBaseFlags::None)};
 	const std::array<CanonicalRecordBase, 1> private_base_link{
 		CanonicalRecordBase{
 			base_owner, 0, CanonicalAccess::Private,
-			CanonicalRecordBaseFlags::None, 0, 0}};
+			CanonicalRecordBaseFlags::None}};
 	const std::array<CanonicalRecordBase, 1> virtual_base_link{
 		public_base(base_owner, CanonicalRecordBaseFlags::Virtual)};
 	const std::array<CanonicalRecordBase, 2> ambiguous_base_links{
@@ -6480,14 +6480,14 @@ TEST_CASE("Canonical TypeIds convert non-projectable ordered member-pointer owne
 	const EntityId private_derived_owner{842};
 	const CanonicalRecordBase public_base{
 		base_owner, 0, CanonicalAccess::Public,
-		CanonicalRecordBaseFlags::None, 0, 0};
+		CanonicalRecordBaseFlags::None};
 	const CanonicalRecordBase private_base{
 		base_owner, 0, CanonicalAccess::Private,
-		CanonicalRecordBaseFlags::None, 0, 0};
+		CanonicalRecordBaseFlags::None};
 	auto publish_record = [&table](EntityId entity, std::span<const CanonicalRecordBase> bases) {
 		table.publishRecordLayout(CanonicalRecordLayout{
 			entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(bases.size()),
-			CanonicalRecordLayoutFlags::None, 0});
+			CanonicalRecordLayoutFlags::None});
 		table.publishRecordFieldSchema(table.record(entity), std::span<const CanonicalRecordMember>{}, bases);
 		publishTestClassBases(table, entity, bases);
 	};
@@ -6990,11 +6990,11 @@ TEST_CASE("Canonical TypeIds bind member-pointer conversion temporaries to refer
 	const std::array<CanonicalRecordBase, 1> derived_bases{
 		CanonicalRecordBase{
 			base_owner, 0, CanonicalAccess::Public,
-			CanonicalRecordBaseFlags::None, 0, 0}};
+			CanonicalRecordBaseFlags::None}};
 	auto publish_record = [&table](EntityId entity, std::span<const CanonicalRecordBase> bases) {
 		table.publishRecordLayout(CanonicalRecordLayout{
 			entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(bases.size()),
-			CanonicalRecordLayoutFlags::None, 0});
+			CanonicalRecordLayoutFlags::None});
 		table.publishRecordFieldSchema(table.record(entity), std::span<const CanonicalRecordMember>{}, bases);
 		publishTestClassBases(table, entity, bases);
 	};
@@ -10653,7 +10653,7 @@ TEST_CASE("Canonical union value tracing bounds native stack across deep variant
 	for (uint32_t index = 0; index < depth; ++index) {
 		const EntityId entity{500000 + index};
 		const TypeId owner = table.record(entity);
-		table.publishRecordLayout({entity, 4, 4, 4, 4, 1, 0, CanonicalRecordLayoutFlags::Union, 0});
+		table.publishRecordLayout({entity, 4, 4, 4, 4, 1, 0, CanonicalRecordLayoutFlags::Union});
 		const CanonicalRecordMember member{member_type, 0, 4, 0, 0, CanonicalAccess::Public, flags};
 		table.publishRecordFieldSchema(table.record(entity), std::span<const CanonicalRecordMember>(&member, 1), {});
 		payload = table.structuralUnionValue(owner, 0, uint16_t{0}, payload);
@@ -11159,5 +11159,19 @@ TEST_CASE("Canonical member-function schema publishes lookup metadata") {
 		CHECK(table.hasMemberFunctionSchema(temporary_owner));
 		transaction.rollback();
 	}
-	CHECK_FALSE(table.hasMemberFunctionSchema(temporary_owner));
+	const TypeId conversion_owner = table.record(EntityId{906004});
+	const std::array<CanonicalMemberFunctionSpec, 1> conversion_functions{
+		CanonicalMemberFunctionSpec{
+			.signature = int_type,
+			.flags = CanonicalMemberFunctionFlags::ConversionOperator | CanonicalMemberFunctionFlags::ConversionTarget,
+			.conversion_target = int_type,
+		},
+	};
+	table.publishMemberFunctionSchema(conversion_owner, conversion_functions);
+	const CanonicalMemberFunction conversion = table.memberFunctionAt(conversion_owner, 0);
+	CHECK(hasCanonicalMemberFunctionFlag(conversion.flags, CanonicalMemberFunctionFlags::ConversionOperator));
+	CHECK(hasCanonicalMemberFunctionFlag(conversion.flags, CanonicalMemberFunctionFlags::ConversionTarget));
+	CHECK(conversion.conversion_target == int_type);
+	CHECK(conversion.name == TypeId{});
+
 }

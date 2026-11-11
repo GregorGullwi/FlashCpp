@@ -1696,7 +1696,7 @@ void CanonicalTypeTable::publishRecordConstructors(TypeId type, std::span<const 
 		.constructor_begin = constructor_begin,
 		.parameter_begin = parameter_begin,
 		.constructor_count = static_cast<uint16_t>(constructors.size()),
-		.reserved = 0,
+
 	};
 	const size_t header_index = live_record_constructor_schema_count_;
 	appendSchemaEntryUnlocked(record_constructor_schema_headers_, live_record_constructor_schema_count_, header);
@@ -1818,8 +1818,8 @@ void CanonicalTypeTable::publishMemberFunctionSchema(TypeId type, std::span<cons
 			.operator_kind = function.operator_kind,
 			.cv_qualifier = function.cv_qualifier,
 			.ref_qualifier = function.ref_qualifier,
-			.reserved = 0,
 			.ordinal = function.ordinal,
+			.conversion_target = function.conversion_target,
 		});
 	}
 	const auto existing = member_function_schema_ids_.find(type.value);
@@ -1846,8 +1846,8 @@ void CanonicalTypeTable::publishMemberFunctionSchema(TypeId type, std::span<cons
 		.type = type,
 		.function_begin = function_begin,
 		.function_count = static_cast<uint16_t>(packed.size()),
-		.reserved = 0,
-		.reserved2 = 0,
+
+
 	};
 	const size_t header_index = live_member_function_schema_count_;
 	appendSchemaEntryUnlocked(member_function_schema_headers_, live_member_function_schema_count_, header);
@@ -1960,7 +1960,6 @@ void CanonicalTypeTable::publishClassBaseSchema(TypeId class_type,
 			(base.access != CanonicalAccess::Public &&
 				base.access != CanonicalAccess::Protected &&
 				base.access != CanonicalAccess::Private) ||
-			base.reserved != 0 ||
 			(static_cast<uint8_t>(base.flags) &
 				~static_cast<uint8_t>(CanonicalRecordBaseFlags::Virtual)) != 0) {
 			throw InternalError("canonical type: invalid class base schema edge");
@@ -1996,8 +1995,8 @@ void CanonicalTypeTable::publishClassBaseSchema(TypeId class_type,
 		.class_type = class_type,
 		.base_begin = base_begin,
 		.base_count = static_cast<uint16_t>(bases.size()),
-		.reserved = 0,
-		.reserved2 = 0,
+
+
 	};
 	const size_t header_index = live_class_base_schema_count_;
 	appendSchemaEntryUnlocked(
@@ -2085,8 +2084,8 @@ void CanonicalTypeTable::publishVirtualBaseSchema(TypeId class_type, std::span<c
 		.class_type = class_type,
 		.base_begin = base_begin,
 		.base_count = static_cast<uint16_t>(virtual_bases.size()),
-		.reserved = 0,
-		.reserved2 = 0,
+
+
 	};
 	const size_t header_index = live_virtual_base_schema_count_;
 	appendSchemaEntryUnlocked(virtual_base_schema_headers_, live_virtual_base_schema_count_, header);
@@ -2180,7 +2179,7 @@ void CanonicalTypeTable::publishClassTypeSchemaUnlocked(TypeId type, std::span<c
 	const size_t header_index = live_class_type_schema_count_;
 	try {
 		for (const TypeId entry : entries) appendSchemaEntryUnlocked(class_type_schema_types_, live_class_type_schema_entry_count_, entry);
-		const CanonicalClassTypeSchemaHeader header{type, member_begin, static_cast<uint16_t>(entries.size()), kind, 0};
+		const CanonicalClassTypeSchemaHeader header{type, member_begin, static_cast<uint16_t>(entries.size()), kind};
 		appendSchemaEntryUnlocked(class_type_schema_headers_, live_class_type_schema_count_, header);
 		const auto [_, inserted] = class_type_schema_ids_.emplace(key, header_index);
 		if (!inserted) throw InternalError("canonical type: duplicate class type schema publication");
@@ -2297,8 +2296,8 @@ void CanonicalTypeTable::publishRecordNamedTypeMembers(EntityId entity,
 		.entity = entity,
 		.member_begin = member_begin,
 		.member_count = static_cast<uint16_t>(packed.size()),
-		.reserved = 0,
-		.reserved2 = 0,
+
+
 	};
 	const size_t header_index = live_named_type_member_schema_count_;
 	appendSchemaEntryUnlocked(named_type_member_schema_headers_,
