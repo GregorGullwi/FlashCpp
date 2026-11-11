@@ -5943,6 +5943,7 @@ inline TypeId tryGetCanonicalOverloadClassTypeId(CanonicalTypeTable& table, cons
 		canonical_syntax.set_type_index(alias.type_index);
 		canonical_syntax.set_cv_qualifier(canonical_syntax.cv_qualifier() | alias.cv_qualifier);
 	}
+	canonical_syntax.set_reference_qualifier(ReferenceQualifier::None);
 	tryBindPublishedTypeEntity(canonical_syntax);
 	const CanonicalTypeImport imported = importCanonicalOverloadNominalType(table, canonical_syntax);
 	if (imported.status != CanonicalTypeImportStatus::Supported) {
@@ -7043,9 +7044,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(const T
 		canonical_transaction.emplace(table);
 		left_type_id = tryGetCanonicalOverloadClassTypeId(table, left_type_spec);
 		right_type_id = tryGetCanonicalOverloadClassTypeId(table, right_type_spec);
-		if (!left_type_id) {
-			gatherCompatibilityMembers();
-		} else {
+		if (left_type_id) {
 			std::vector<TypeId> pending_types{left_type_id};
 			for (size_t pending_index = 0; pending_index < pending_types.size(); ++pending_index) {
 				const TypeId owner_type_id = pending_types[pending_index];
