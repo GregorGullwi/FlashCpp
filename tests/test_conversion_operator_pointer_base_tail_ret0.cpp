@@ -20,6 +20,10 @@ struct VirtualSource {
 	operator Virtual*() const { return pointer; }
 };
 
+Virtual* passVirtualPointer(Virtual* pointer) {
+	return pointer;
+}
+
 bool checkFixed(const Base<short>* actual, const Base<short>* expected) {
 	if (actual != expected) {
 		return false;
@@ -55,7 +59,7 @@ int main() {
 	if (!checkFixed(FixedSource{nullptr}, null_fixed)) {
 		return 2;
 	}
-	if (!checkVirtual(VirtualSource{&virtual_base}, expected_virtual)) {
+	if (!checkVirtual(VirtualSource{passVirtualPointer(&virtual_base)}, expected_virtual)) {
 		return 3;
 	}
 	if (!checkVirtual(VirtualSource{nullptr}, null_virtual)) {

@@ -118,9 +118,10 @@ static TypeIndex getCallReturnTypeIndex(const TypeSpecifierNode& return_type) {
 
 void AstToIr::populateCallReturnInfo(CallOp& call_op, const TypeSpecifierNode& return_type) {
 	const TypeSpecifierNode normalized_return_type = normalizeCallReturnType(return_type);
+	call_op.returns_pointer = normalized_return_type.runtime_pointer_depth() > 0;
 	call_op.return_type_index = getCallReturnTypeIndex(normalized_return_type);
 	call_op.return_size_in_bits = SizeInBits{
-		(normalized_return_type.runtime_pointer_depth() > 0 ||
+		(call_op.returns_pointer ||
 		 normalized_return_type.is_reference() ||
 		 normalized_return_type.is_rvalue_reference())
 			? POINTER_SIZE_BITS
