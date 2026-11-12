@@ -305,7 +305,9 @@ mismatched, unpublished, or unresolved owner facts.
      probe, and per-candidate schema status with arity-scoped deferral. The
      canonical member-function schema now supplies unary, binary, and assignment
      operator lookup plus user-defined conversion lookup, mapping stored member
-     ordinals back to declarations for conversion ranking.
+     ordinals back to declarations for conversion ranking. Conversion operators
+     now carry their canonical conversion target in that schema instead of
+     relying on the legacy return type.
    - Template argument and substitution storage: move lazy constraint lookup from
      name-based parameters to depth/index parameters, and finish canonical
      preservation through NTTP reconstruction, deferred bases, stored arguments,

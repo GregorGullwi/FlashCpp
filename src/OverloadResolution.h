@@ -3062,11 +3062,14 @@ trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const Typ
 		if (struct_info == nullptr) {
 			continue;
 		}
+		const CanonicalMemberFunction* current_conversion_schema = nullptr;
 		forEachCanonicalMemberFunction(table, pending_type.type, *struct_info,
-			[](const CanonicalMemberFunction* schema, const StructMemberFunction& member_function) {
+			[&current_conversion_schema](const CanonicalMemberFunction* schema, const StructMemberFunction& member_function) {
+				current_conversion_schema = schema;
 				return canonicalMemberFunctionIsConversionOperator(schema, member_function);
 			},
 			[&](const StructMemberFunction& member_function) {
+				const CanonicalMemberFunction* schema = current_conversion_schema;
 				if (!member_function.function_decl.is<FunctionDeclarationNode>()) {
 					return;
 				}
@@ -3074,17 +3077,22 @@ trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const Typ
 				if (!allow_explicit && (member_function.is_explicit || function.is_explicit())) {
 					return;
 				}
-				if (!member_function.conversion_target_type.is_valid()) {
-					return;
-				}
 				const TypeSpecifierNode& return_type = function.decl_node().type_specifier_node();
-				TypeSpecifierNode canonical_return_type = return_type;
-				tryBindPublishedTypeEntity(canonical_return_type);
-				const CanonicalTypeImport return_type_import = importCanonicalTypeWithClassFallback(table, canonical_return_type);
-				if (return_type_import.status != CanonicalTypeImportStatus::Supported) {
-					return;
+				TypeId conversion_target{};
+				if (schema != nullptr && hasCanonicalMemberFunctionFlag(schema->flags, CanonicalMemberFunctionFlags::ConversionTarget)) {
+					conversion_target = schema->conversion_target;
+				} else {
+					if (!member_function.conversion_target_type.is_valid()) {
+						return;
+					}
+					TypeSpecifierNode canonical_return_type = return_type;
+					tryBindPublishedTypeEntity(canonical_return_type);
+					const CanonicalTypeImport return_type_import = importCanonicalTypeWithClassFallback(table, canonical_return_type);
+					if (return_type_import.status != CanonicalTypeImportStatus::Supported) {
+						return;
+					}
+					conversion_target = return_type_import.type;
 				}
-				const TypeId conversion_target = return_type_import.type;
 				auto nearest_declaration = std::find_if(
 					nearest_declarations.begin(),
 					nearest_declarations.end(),

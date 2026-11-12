@@ -2085,7 +2085,7 @@ inline bool tryPublishCanonicalMemberFunctionSignatures(CanonicalTypeTable& tabl
 				const CanonicalTypeImport return_type_import = importCanonicalTypeWithClassFallback(table, canonical_return_type);
 				if (return_type_import.status == CanonicalTypeImportStatus::Supported) {
 					spec.flags = spec.flags | CanonicalMemberFunctionFlags::ConversionTarget;
-					spec.signature = return_type_import.type;
+					spec.conversion_target = return_type_import.type;
 				}
 			}
 		}
