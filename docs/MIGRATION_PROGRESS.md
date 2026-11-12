@@ -288,7 +288,9 @@ mismatched, unpublished, or unresolved owner facts.
      constructor's exception specification decides the nothrow answer. Dependent
      extra arguments still defer. Non-public candidates now participate in
      canonical overload ranking, so an inaccessible better match is not replaced
-     by a worse public candidate.
+     by a worse public candidate. Direct conversion-operator argument
+     conversions rank the operator result into the parameter, so an inaccessible
+     or deleted best operator rejects the constructor instead of deferring.
    - Constructor-candidate matching is consolidated into one canonical service
      with a tri-state result and policy-driven rules, including literal-only
      call-default selection, the overload-resolution converting-constructor

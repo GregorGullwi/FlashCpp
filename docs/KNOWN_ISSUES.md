@@ -232,9 +232,12 @@ reference conversions, same-class by-value arguments, publicly derived by-value
 arguments whose base publishes a usable public copy or move constructor,
 unrelated class arguments with exactly one viable non-explicit public converting
 constructor, and omitted default arguments from published constructor schemas.
-They still defer for conversion-operator targets, multiple or undecidable
-converting candidates, derived bases whose copy/move facts are unpublished or
-inaccessible, incomplete schemas, and unresolved canonical types. Non-public
+Direct conversion operators now rank by the standard conversion from their
+result to the parameter; the best inaccessible or deleted operator makes the
+conversion ill-formed, and explicit operators stay out of implicit argument
+conversions. Inherited conversion operators, multiple or undecidable converting
+candidates, derived bases whose copy/move facts are unpublished or inaccessible,
+incomplete schemas, and unresolved canonical types still defer. Non-public
 constructor candidates now participate in canonical overload ranking, so an
 inaccessible better match makes the queried construction ill-formed instead of
 letting a worse public candidate decide. Deleted converting constructors still
