@@ -822,14 +822,6 @@ bool isCanonicalNonClassSubobject(CanonicalTypeKind kind) {
 
 std::optional<bool> canonicalRecordDestructionProperty(CanonicalTraitProperty property, const CanonicalTypeTable& table, TypeId root_type) {
 	const TypeId unqualified_root = table.withoutTopLevelQualifiers(root_type);
-	if (property == CanonicalTraitProperty::IsDestructible) {
-		if (!table.hasRecordProperties(unqualified_root)) {
-			return std::nullopt;
-		}
-		const CanonicalRecordFacts facts = table.recordProperties(unqualified_root).facts;
-		return !hasCanonicalRecordFact(facts, CanonicalRecordFacts::DestructorDeleted) &&
-			!hasCanonicalRecordFact(facts, CanonicalRecordFacts::DestructorNonPublic);
-	}
 	std::vector<TypeId> pending{unqualified_root};
 	std::unordered_set<uint32_t> visited;
 	while (!pending.empty()) {
@@ -864,6 +856,42 @@ std::optional<bool> canonicalRecordDestructionProperty(CanonicalTraitProperty pr
 		if (!is_virtual_query && (hasCanonicalRecordFact(facts, CanonicalRecordFacts::DestructorDeleted) ||
 			(is_root && hasCanonicalRecordFact(facts, CanonicalRecordFacts::DestructorNonPublic)))) {
 			return false;
+		}
+		if (!is_virtual_query && node.kind == CanonicalTypeKind::Record &&
+			!hasCanonicalRecordFact(facts, CanonicalRecordFacts::DestructorNonTrivial)) {
+			bool is_union_like = false;
+			if (table.hasRecordFieldSchema(current)) {
+				for (size_t index = 0; index < table.recordSubobjectMemberCount(current); ++index) {
+					if (hasCanonicalRecordMemberFlag(table.recordMemberAt(current, index).flags, CanonicalRecordMemberFlags::UnionVariant)) {
+						is_union_like = true;
+						break;
+					}
+				}
+			}
+			if (!is_union_like) {
+				const EntityId entity = table.recordEntity(current);
+				is_union_like = entity && table.hasRecordLayout(entity) &&
+					hasCanonicalRecordLayoutFlag(table.recordLayout(entity).flags, CanonicalRecordLayoutFlags::Union);
+			}
+			if (is_union_like) {
+				if (!table.hasRecordFieldSchema(current)) {
+					return std::nullopt;
+				}
+				for (size_t index = 0; index < table.recordSubobjectMemberCount(current); ++index) {
+					const CanonicalRecordMember member = table.recordMemberAt(current, index);
+					if (!hasCanonicalRecordMemberFlag(member.flags, CanonicalRecordMemberFlags::UnionVariant)) {
+						continue;
+					}
+					const std::optional<bool> member_trivial = canonicalRecordDestructionProperty(
+						CanonicalTraitProperty::IsTriviallyDestructible, table, member.type);
+					if (!member_trivial.has_value()) {
+						return std::nullopt;
+					}
+					if (!*member_trivial) {
+						return false;
+					}
+				}
+			}
 		}
 		if (property == CanonicalTraitProperty::IsTriviallyDestructible || property == CanonicalTraitProperty::HasTrivialDestructor) {
 			if (hasCanonicalRecordFact(facts, CanonicalRecordFacts::DestructorNonTrivial) ||
@@ -1939,10 +1967,29 @@ bool isStructEmptyImpl(const FactsLookup& facts_lookup, const StructTypeInfo* st
 		if (current == nullptr || !visited.insert(current)) {
 			continue;
 		}
-		const bool has_nonzero_size_data_member =
-			std::ranges::any_of(current->members, [](const StructMember& member) {
-				return !StructTypeInfo::isZeroWidthBitfield(member.bitfield_width);
-			});
+		bool has_nonzero_size_data_member = false;
+		for (const StructMember& member : current->members) {
+			if (StructTypeInfo::isZeroWidthBitfield(member.bitfield_width)) {
+				continue;
+			}
+			if (member.is_no_unique_address && !member.is_array && member.pointer_depth == 0 && !member.is_reference()) {
+				if (const std::optional<CanonicalRecordFacts> facts = facts_lookup.forType(member.type_index); facts.has_value()) {
+					if (!hasCanonicalRecordFact(*facts, CanonicalRecordFacts::Empty)) {
+						has_nonzero_size_data_member = true;
+						break;
+					}
+					continue;
+				}
+				const TypeInfo* member_type = tryGetTypeInfo(member.type_index);
+				const StructTypeInfo* member_struct = member_type == nullptr ? nullptr : member_type->getStructInfo();
+				if (member_struct != nullptr) {
+					pending.push_back(member_struct);
+					continue;
+				}
+			}
+			has_nonzero_size_data_member = true;
+			break;
+		}
 		if (current->is_union || has_nonzero_size_data_member || current->has_vtable) {
 			return false;
 		}
@@ -2262,11 +2309,32 @@ bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
 	return isStructNothrowDestructibleImpl(struct_info);
 }
 
+bool unionHasDeletedImplicitDestructor(const StructTypeInfo& struct_info) {
+	if (const StructMemberFunction* destructor = struct_info.findDestructor();
+		destructor != nullptr && destructor->function_decl.is<DestructorDeclarationNode>() &&
+		!destructor->function_decl.as<DestructorDeclarationNode>().was_defaulted_on_first_declaration()) {
+		return false;
+	}
+	for (const StructMember& member : struct_info.members) {
+		if ((!struct_info.is_union && !member.anonymous_union_group_index.has_value()) ||
+			StructTypeInfo::isZeroWidthBitfield(member.bitfield_width) ||
+			member.pointer_depth > 0 || member.is_reference()) {
+			continue;
+		}
+		const TypeInfo* member_type = tryGetTypeInfo(member.type_index);
+		const StructTypeInfo* member_struct = member_type == nullptr ? nullptr : member_type->getStructInfo();
+		if (member_struct != nullptr && !isStructTriviallyDestructibleImpl(member_struct)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 template <typename FactsLookup>
 CanonicalRecordFacts computeCanonicalRecordFactsWithLookup(const StructTypeInfo& struct_info, const FactsLookup& facts_lookup) {
 	CanonicalRecordFacts facts = CanonicalRecordFacts::None;
 	const bool is_standard_layout = isStructStandardLayoutWithPublishedFacts(facts_lookup, &struct_info);
-	if (struct_info.has_deleted_destructor) {
+	if (struct_info.has_deleted_destructor || (struct_info.is_union && unionHasDeletedImplicitDestructor(struct_info))) {
 		facts |= CanonicalRecordFacts::DestructorDeleted;
 	}
 	if (isStructNothrowDestructibleImpl(&struct_info)) {
