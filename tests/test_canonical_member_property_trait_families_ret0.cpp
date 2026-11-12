@@ -1,0 +1,26 @@
+struct Empty {};
+struct Trivial { int x; };
+struct NonTrivialCtor { NonTrivialCtor() {} };
+struct NonTrivialCopy { NonTrivialCopy(const NonTrivialCopy&) {} };
+struct Virtual { virtual ~Virtual() {} };
+struct DeletedDtor { ~DeletedDtor() = delete; };
+struct PrivateDtor { private: ~PrivateDtor(); };
+struct Standard { int x; private: int y; };
+struct Pod { int x; };
+static_assert(__is_empty(Empty));
+static_assert(!__is_empty(Trivial));
+static_assert(__is_trivial(Trivial));
+static_assert(!__is_trivial(NonTrivialCtor));
+static_assert(__is_trivially_copyable(Trivial));
+static_assert(!__is_trivially_copyable(NonTrivialCopy));
+static_assert(__is_standard_layout(Trivial));
+static_assert(!__is_standard_layout(Standard));
+static_assert(__is_pod(Pod));
+static_assert(!__is_pod(NonTrivialCtor));
+static_assert(__is_destructible(Empty));
+static_assert(__is_trivially_destructible(Trivial));
+static_assert(!__is_destructible(DeletedDtor));
+static_assert(!__is_trivially_destructible(DeletedDtor));
+static_assert(__has_virtual_destructor(Virtual));
+static_assert(__is_polymorphic(Virtual));
+int main() { return 0; }

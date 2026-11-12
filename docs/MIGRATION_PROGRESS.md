@@ -557,7 +557,13 @@ copy/trivial/POD classification while destructibility still rejects it, and a
 defaulted copy or move constructor no longer clears trivial-copyability.
 Explicit member-object-pointer template arguments now
 publish their declaring-class identity through an ordered declarator before
-canonical trait import, including pointer- and array-wrapped pointees. The inline dollar-recovery inventory and canonical-adapter
+canonical trait import, including pointer- and array-wrapped pointees.
+Published record facts now have direct regression coverage for the triviality,
+standard-layout, POD, empty, destructor, virtual, deleted, and inaccessible
+constructor families: `test_canonical_member_property_trait_families_ret0.cpp`,
+`test_canonical_inaccessible_converting_constructor_ret0.cpp`, and the native
+`Canonical record property facts publish trait families` /
+`Canonical constructibility rejects inaccessible converting constructors` tests. The inline dollar-recovery inventory and canonical-adapter
 source corpus remain within their supported/deferred baselines. The fixed adapter
 corpus remains 26 supported and zero deferred. Gate 0's Windows and ELF
 multi-translation-unit checks remain required compatibility evidence. See the
