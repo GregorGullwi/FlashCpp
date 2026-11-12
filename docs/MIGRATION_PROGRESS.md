@@ -289,8 +289,12 @@ mismatched, unpublished, or unresolved owner facts.
      extra arguments still defer. Non-public candidates now participate in
      canonical overload ranking, so an inaccessible better match is not replaced
      by a worse public candidate. Direct conversion-operator argument
-     conversions rank the operator result into the parameter, so an inaccessible
-     or deleted best operator rejects the constructor instead of deferring.
+     conversions rank the operator result into the parameter, including
+     operators declared on non-virtual bases, so an inaccessible or deleted best
+     operator rejects the constructor instead of deferring. The constructor
+     parameter class fallback now reapplies the declared reference, pointer, and
+     array shape, so a user-provided reference parameter keeps its reference
+     identity in the published schema.
    - Constructor-candidate matching is consolidated into one canonical service
      with a tri-state result and policy-driven rules, including literal-only
      call-default selection, the overload-resolution converting-constructor

@@ -1576,9 +1576,8 @@ inline std::optional<TypeId> tryImportSupportedCanonical(
 	return imported.type;
 }
 
-inline std::optional<TypeId> tryImportSupportedCanonicalWithClassFallback(
-	CanonicalTypeTable& table,
-	const TypeSpecifierNode& syntax) {
+inline std::optional<TypeId> tryImportSupportedCanonicalWithClassFallback(CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
 	if (std::optional<TypeId> imported = tryImportSupportedCanonical(table, syntax)) {
 		return imported;
 	}
@@ -1593,7 +1592,11 @@ inline std::optional<TypeId> tryImportSupportedCanonicalWithClassFallback(
 	if (imported.status != CanonicalTypeImportStatus::Supported) {
 		return std::nullopt;
 	}
-	return imported.type;
+	const CanonicalTypeImport shaped = importCanonicalShapedBase(table, syntax, context, imported.type);
+	if (shaped.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	return shaped.type;
 }
 
 // Commit declaration identity before storing a TypeId on persistent member metadata.
@@ -3121,10 +3124,10 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 			// owner identity and synthesize a self reference when strict import fails.
 			const bool allow_class_fallback = !constructor.is_implicit();
 			std::optional<TypeId> imported = parameter_has_default && allow_class_fallback
-				? tryImportSupportedCanonicalWithClassFallback(table, *parameter_type)
+				? tryImportSupportedCanonicalWithClassFallback(table, *parameter_type, CanonicalTypeImportContext::FunctionParameter)
 				: tryImportSupportedCanonical(table, *parameter_type);
 			if (!imported.has_value() && allow_class_fallback) {
-				imported = tryImportSupportedCanonicalWithClassFallback(table, *parameter_type);
+				imported = tryImportSupportedCanonicalWithClassFallback(table, *parameter_type, CanonicalTypeImportContext::FunctionParameter);
 			}
 			if (!imported.has_value() && constructor.is_implicit() && parameter_type->category() == TypeCategory::Struct &&
 				!parameter_type->is_pointer() && (parameter_type->is_lvalue_reference() || parameter_type->is_rvalue_reference())) {
