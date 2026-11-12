@@ -2931,9 +2931,25 @@ try_type_template_argument_parse:
 
 						if (consume("]"_tok)) {
 							// Successfully parsed T(*)[] or T(*)[N]
-							// This is a pointer to array - add pointer level and mark as array
-							type_node.add_pointer_level(CVQualifier::None);
-							type_node.set_array(true, ptr_array_size);
+							if (is_member_ptr) {
+								type_node.set_member_class_name(member_ptr_class_token.handle());
+								tryBindPublishedMemberClassEntity(type_node);
+								std::vector<DeclaratorComponent> components;
+								components.push_back(type_node.has_member_class_type_id()
+									? DeclaratorComponent::memberPointer(type_node.member_class_type_id(), false, CVQualifier::None)
+									: DeclaratorComponent::memberPointer(type_node.member_class_entity(), false, CVQualifier::None));
+								components.push_back(ptr_array_size.has_value() ? DeclaratorComponent::array(*ptr_array_size) : DeclaratorComponent::unknownBoundArray());
+								for (const PointerLevel& level : type_node.pointer_levels()) {
+									components.push_back(DeclaratorComponent::pointer(level.cv_qualifier));
+								}
+								type_node.limit_pointer_depth(0);
+								type_node.set_array(false, std::nullopt);
+								type_node.set_ordered_declarator(std::move(components));
+							} else {
+								// This is a pointer to array - add pointer level and mark as array
+								type_node.add_pointer_level(CVQualifier::None);
+								type_node.set_array(true, ptr_array_size);
+							}
 							discard_saved_token(paren_saved_pos);
 							FLASH_LOG(Parser, Debug, "Parsed pointer-to-array type T(*)[]");
 						} else {
