@@ -243,9 +243,11 @@ constructor candidates now participate in canonical overload ranking, so an
 inaccessible better match makes the queried construction ill-formed instead of
 letting a worse public candidate decide. Deleted converting constructors are
 published with parameter schemas for non-template classes, so a deleted better
-match rejects construction. Class-template instantiations still copy only the
-deleted special-member flags, so a deleted general constructor in an instantiated
-template remains a followup.
+match rejects construction. Primary class-template instantiations now clone and
+substitute deleted general constructor parameters, including dependent parameter
+types. Partial-specialization patterns still expose only deleted special-member
+flags on the declaration, so a deleted general constructor in a partial
+specialization remains a followup.
 Constructor schemas now retain ellipsis and rank
 extra arguments through the ellipsis conversion sequence, including class types.
 Passing a class through `...` is conditionally supported, so constructibility

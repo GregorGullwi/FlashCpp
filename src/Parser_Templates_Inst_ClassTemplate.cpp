@@ -2402,6 +2402,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 		}
 	};
 
+	// Clone deleted general constructor declarations for a specialization.
+	auto clone_deleted_constructors = [&](StructTypeInfo& target, const StructTypeInfo& source, const TypeInfo& owner_type_info,
+		StringHandle instantiated_name, const auto& template_params, const auto& template_args) {
+		for (const StructTypeInfo::DeletedConstructor& deleted : source.deleted_constructors) {
+			const ConstructorDeclarationNode& orig_ctor = *deleted.declaration;
+			auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(instantiated_name, orig_ctor.name());
+			setOuterTemplateBindingsFromParams(new_ctor_ref, template_params, template_args);
+			const size_t saved_pack_info = pack_param_info_.size();
+			substituteAndCopyParams(orig_ctor.parameter_nodes(), new_ctor_ref, template_params, template_args,
+				makeCurrentInstantiationTypeRewrite(orig_ctor, owner_type_info.registeredTypeIndex()));
+			pack_param_info_.resize(saved_pack_info);
+			copyInstantiatedConstructorDeclarationFlags(orig_ctor, new_ctor_ref, template_params, template_args);
+			materializeInstantiatedConstructorNoexcept(new_ctor_ref, orig_ctor, template_params, template_args);
+			target.deleted_constructors.push_back({&new_ctor_ref, deleted.access});
+		}
+	};
+
 	// Helper: substitute a single initializer argument, expanding PackExpansionExprNode
 	// into multiple arguments when present.  Appends result(s) to `out`.
 	auto substituteInitArg = [&](
@@ -3654,8 +3671,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 					// Handle constructor - create a substituted copy so StructTypeInfo
 					// has correct parameter types for name mangling and codegen.
 					const ConstructorDeclarationNode& orig_ctor = mem_func.function_declaration.as<ConstructorDeclarationNode>();
-					auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-						instantiated_name, orig_ctor.name());
+					auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(instantiated_name, orig_ctor.name());
 					setOuterTemplateBindingsFromParams(new_ctor_ref, effective_member_copy_template_params, effective_member_copy_template_args);
 					if (orig_ctor.has_template_parameters()) {
 						new_ctor_ref.set_template_parameters(orig_ctor.template_parameters());
@@ -3669,7 +3685,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 					}
 					size_t saved_pack_info = pack_param_info_.size();
 					substituteAndCopyParams(orig_ctor.parameter_nodes(), new_ctor_ref, effective_member_copy_template_params, effective_member_copy_template_args,
-						makeCurrentInstantiationTypeRewrite(orig_ctor, struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct)));
+						makeCurrentInstantiationTypeRewrite(orig_ctor, struct_type_info.registeredTypeIndex()));
 					const std::vector<PackParamInfo> ctor_pack_param_info = pack_param_info_;
 					substituteAndCopyInitializers(orig_ctor, new_ctor_ref, effective_member_copy_template_params, effective_member_copy_template_args,
 						std::span<const PackParamInfo>(ctor_pack_param_info.data(), ctor_pack_param_info.size()));
@@ -3839,6 +3855,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 					}
 					if (pattern_struct_info->has_deleted_destructor) {
 						struct_info->has_deleted_destructor = true;
+					}
+					if (!pattern_struct_info->deleted_constructors.empty()) {
+						clone_deleted_constructors(*struct_info, *pattern_struct_info, struct_type_info, instantiated_name,
+							effective_member_copy_template_params, effective_member_copy_template_args);
 					}
 					FLASH_LOG(Templates, Trace, "Copied deleted constructor flags from pattern StructTypeInfo: default=",
 							  pattern_struct_info->has_deleted_default_constructor, ", copy=",
@@ -14793,17 +14813,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 		auto tpl_ti = getTypesByNameMap().find(StringTable::getOrInternStringHandle(template_name));
 		if (tpl_ti != getTypesByNameMap().end()) {
 			if (const StructTypeInfo* tpl_si = tpl_ti->second->getStructInfo()) {
-			if (tpl_si->has_deleted_constructor)
-				struct_info_ptr->has_deleted_constructor = true;
-			if (tpl_si->has_deleted_default_constructor)
-				struct_info_ptr->has_deleted_default_constructor = true;
-			if (tpl_si->has_deleted_copy_constructor)
-				struct_info_ptr->has_deleted_copy_constructor = true;
-			if (tpl_si->has_deleted_move_constructor)
-				struct_info_ptr->has_deleted_move_constructor = true;
+				if (tpl_si->has_deleted_constructor) {
+					struct_info_ptr->has_deleted_constructor = true;
+				}
+				if (tpl_si->has_deleted_default_constructor) {
+					struct_info_ptr->has_deleted_default_constructor = true;
+				}
+				if (tpl_si->has_deleted_copy_constructor) {
+					struct_info_ptr->has_deleted_copy_constructor = true;
+				}
+				if (tpl_si->has_deleted_move_constructor) {
+					struct_info_ptr->has_deleted_move_constructor = true;
+				}
+				if (struct_info_ptr->deleted_constructors.empty()) {
+					clone_deleted_constructors(*struct_info_ptr, *tpl_si, struct_type_info, instantiated_name,
+						effective_template_params, effective_template_args);
+				}
 			}
 		}
 	}
+
 	const TypeIndex self_type_index =
 		struct_info_ptr->own_type_index_.value_or(struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct));
 	synthesize_implicit_copy_constructor_if_needed(
