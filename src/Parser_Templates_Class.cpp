@@ -3323,8 +3323,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					(void)tryPublishCanonicalRecordProperties(canonical_types, imported_specialization.type, *struct_info_ptr);
 					(void)tryPublishCanonicalClassBaseSchema(canonical_types, imported_specialization.type, *struct_info_ptr);
 					(void)tryPublishCanonicalRecordConstructors(canonical_types, imported_specialization.type, struct_ref,
-						struct_info_ptr->deleted_constructors, struct_info_ptr->has_deleted_default_constructor,
-						struct_info_ptr->has_deleted_copy_constructor, struct_info_ptr->has_deleted_move_constructor);
+						struct_info_ptr->deleted_constructors, struct_info_ptr->deletedSpecialMemberFlags());
 				}
 			}
 

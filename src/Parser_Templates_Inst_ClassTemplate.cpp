@@ -14927,8 +14927,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 				canonical_types, imported_specialization.type, *struct_info_ptr);
 			(void)tryPublishCanonicalClassBaseSchema(canonical_types, imported_specialization.type, *struct_info_ptr);
 			(void)tryPublishCanonicalRecordConstructors(canonical_types, imported_specialization.type, instantiated_struct.as<StructDeclarationNode>(),
-				struct_info_ptr->deleted_constructors, struct_info_ptr->has_deleted_default_constructor,
-				struct_info_ptr->has_deleted_copy_constructor, struct_info_ptr->has_deleted_move_constructor);
+				struct_info_ptr->deleted_constructors, struct_info_ptr->deletedSpecialMemberFlags());
 		}
 	}
 
