@@ -3050,8 +3050,7 @@ inline bool tryPublishCanonicalRecordSubobjectTypes(CanonicalTypeTable& table, T
 // Constructors whose parameter types do not import structurally are skipped; the
 // schema stays unpublished when none import.
 inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, TypeId type, const StructDeclarationNode& struct_decl,
-	std::span<const StructTypeInfo::DeletedConstructor> deleted_constructors,
-	bool has_deleted_default_constructor, bool has_deleted_copy_constructor, bool has_deleted_move_constructor) {
+	std::span<const StructTypeInfo::DeletedConstructor> deleted_constructors, DeletedConstructorFlags deleted_special_members) {
 	struct PendingConstructor {
 		std::vector<TypeId> parameter_types;
 		CanonicalRecordFunctionFlags flags = CanonicalRecordFunctionFlags::None;
@@ -3175,7 +3174,7 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 			append_constructor(*deleted.declaration, deleted.access, true);
 		}
 	}
-	if (has_deleted_default_constructor) {
+	if (hasDeletedConstructorFlag(deleted_special_members, DeletedConstructorFlags::Default)) {
 		PendingConstructor entry;
 		entry.status = CanonicalRecordConstructorStatus::Deleted;
 		entry.is_noexcept = true;
@@ -3183,7 +3182,7 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 		entry.minimum_parameter_count = 0;
 		pending.push_back(std::move(entry));
 	}
-	if (has_deleted_copy_constructor) {
+	if (hasDeletedConstructorFlag(deleted_special_members, DeletedConstructorFlags::Copy)) {
 		PendingConstructor entry;
 		entry.status = CanonicalRecordConstructorStatus::Deleted;
 		entry.is_noexcept = true;
@@ -3191,7 +3190,7 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 		entry.minimum_parameter_count = 1;
 		pending.push_back(std::move(entry));
 	}
-	if (has_deleted_move_constructor) {
+	if (hasDeletedConstructorFlag(deleted_special_members, DeletedConstructorFlags::Move)) {
 		PendingConstructor entry;
 		entry.status = CanonicalRecordConstructorStatus::Deleted;
 		entry.is_noexcept = true;

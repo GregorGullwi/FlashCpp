@@ -124,6 +124,28 @@ enum class StructFinalizationErrorKind : uint8_t {
 	OverrideSpecifierNoBase,
 };
 
+// Which deleted special constructor(s) a class declared. A class can delete
+// more than one, so the publication path consumes the combined mask.
+enum class DeletedConstructorFlags : uint8_t {
+	None = 0,
+	Default = 1 << 0,
+	Copy = 1 << 1,
+	Move = 1 << 2,
+};
+
+inline DeletedConstructorFlags operator|(DeletedConstructorFlags a, DeletedConstructorFlags b) {
+	return static_cast<DeletedConstructorFlags>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+}
+
+inline DeletedConstructorFlags& operator|=(DeletedConstructorFlags& a, DeletedConstructorFlags b) {
+	a = a | b;
+	return a;
+}
+
+inline bool hasDeletedConstructorFlag(DeletedConstructorFlags flags, DeletedConstructorFlags bit) {
+	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
+}
+
 struct StructTypeInfo {
 	struct DeletedConstructor {
 		const ConstructorDeclarationNode* declaration = nullptr;
@@ -427,15 +449,31 @@ struct StructTypeInfo {
 	}
 
 	// Mark a constructor as deleted
-	void markConstructorDeleted(bool is_copy, bool is_move, bool is_default) {
+	void markConstructorDeleted(DeletedConstructorFlags flags) {
 		has_deleted_constructor = true;
-		if (is_copy) {
-			has_deleted_copy_constructor = true;
-		} else if (is_move) {
-			has_deleted_move_constructor = true;
-		} else if (is_default) {
+		if (hasDeletedConstructorFlag(flags, DeletedConstructorFlags::Default)) {
 			has_deleted_default_constructor = true;
 		}
+		if (hasDeletedConstructorFlag(flags, DeletedConstructorFlags::Copy)) {
+			has_deleted_copy_constructor = true;
+		}
+		if (hasDeletedConstructorFlag(flags, DeletedConstructorFlags::Move)) {
+			has_deleted_move_constructor = true;
+		}
+	}
+
+	DeletedConstructorFlags deletedSpecialMemberFlags() const {
+		DeletedConstructorFlags flags = DeletedConstructorFlags::None;
+		if (has_deleted_default_constructor) {
+			flags |= DeletedConstructorFlags::Default;
+		}
+		if (has_deleted_copy_constructor) {
+			flags |= DeletedConstructorFlags::Copy;
+		}
+		if (has_deleted_move_constructor) {
+			flags |= DeletedConstructorFlags::Move;
+		}
+		return flags;
 	}
 
 	// Mark an assignment operator as deleted
