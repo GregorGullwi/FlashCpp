@@ -181,9 +181,7 @@ struct StructTypeInfo {
 	ImplicitDefaultConstructorSemanticRecord implicit_default_constructor;
 
 	// Deleted special member functions tracking
-	bool has_deleted_default_constructor = false;  // True if default constructor is = delete
-	bool has_deleted_copy_constructor = false;	   // True if copy constructor is = delete
-	bool has_deleted_move_constructor = false;	   // True if move constructor is = delete
+	DeletedConstructorFlags deleted_special_members = DeletedConstructorFlags::None;
 	bool has_deleted_copy_assignment = false;	  // True if copy assignment operator is = delete
 	bool has_deleted_move_assignment = false;	  // True if move assignment operator is = delete
 	bool has_deleted_destructor = false;			 // True if destructor is = delete
@@ -451,29 +449,7 @@ struct StructTypeInfo {
 	// Mark a constructor as deleted
 	void markConstructorDeleted(DeletedConstructorFlags flags) {
 		has_deleted_constructor = true;
-		if (hasDeletedConstructorFlag(flags, DeletedConstructorFlags::Default)) {
-			has_deleted_default_constructor = true;
-		}
-		if (hasDeletedConstructorFlag(flags, DeletedConstructorFlags::Copy)) {
-			has_deleted_copy_constructor = true;
-		}
-		if (hasDeletedConstructorFlag(flags, DeletedConstructorFlags::Move)) {
-			has_deleted_move_constructor = true;
-		}
-	}
-
-	DeletedConstructorFlags deletedSpecialMemberFlags() const {
-		DeletedConstructorFlags flags = DeletedConstructorFlags::None;
-		if (has_deleted_default_constructor) {
-			flags |= DeletedConstructorFlags::Default;
-		}
-		if (has_deleted_copy_constructor) {
-			flags |= DeletedConstructorFlags::Copy;
-		}
-		if (has_deleted_move_constructor) {
-			flags |= DeletedConstructorFlags::Move;
-		}
-		return flags;
+		deleted_special_members |= flags;
 	}
 
 	// Mark an assignment operator as deleted
@@ -491,13 +467,13 @@ struct StructTypeInfo {
 	}
 
 	// Check if default constructor is deleted
-	bool isDefaultConstructorDeleted() const { return has_deleted_default_constructor; }
+	bool isDefaultConstructorDeleted() const { return hasDeletedConstructorFlag(deleted_special_members, DeletedConstructorFlags::Default); }
 
 	// Check if copy constructor is deleted
-	bool isCopyConstructorDeleted() const { return has_deleted_copy_constructor; }
+	bool isCopyConstructorDeleted() const { return hasDeletedConstructorFlag(deleted_special_members, DeletedConstructorFlags::Copy); }
 
 	// Check if move constructor is deleted
-	bool isMoveConstructorDeleted() const { return has_deleted_move_constructor; }
+	bool isMoveConstructorDeleted() const { return hasDeletedConstructorFlag(deleted_special_members, DeletedConstructorFlags::Move); }
 
 	// Check if copy assignment is deleted
 	bool isCopyAssignmentDeleted() const { return has_deleted_copy_assignment; }

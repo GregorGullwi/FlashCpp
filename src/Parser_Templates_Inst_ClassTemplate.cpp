@@ -3809,22 +3809,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			// Copy deleted special member function flags from the pattern AST node
 			// This is especially important for partial specializations where deleted constructors
 			// are tracked in the AST node but not yet in StructTypeInfo
-			FLASH_LOG(Templates, Trace, "Checking pattern AST node for deleted constructors: default=",
-					  pattern_struct.has_deleted_default_constructor(), ", copy=",
-					  pattern_struct.has_deleted_copy_constructor(), ", move=",
-					  pattern_struct.has_deleted_move_constructor());
-			if (pattern_struct.has_deleted_default_constructor()) {
-				struct_info->has_deleted_default_constructor = true;
+			const DeletedConstructorFlags pattern_deleted_special_members = pattern_struct.deletedSpecialMemberFlags();
+			struct_info->deleted_special_members |= pattern_deleted_special_members;
+			if (pattern_deleted_special_members != DeletedConstructorFlags::None) {
 				struct_info->has_deleted_constructor = true;
-				FLASH_LOG(Templates, Trace, "Copied has_deleted_default_constructor from pattern AST node");
-			}
-			if (pattern_struct.has_deleted_copy_constructor()) {
-				struct_info->has_deleted_copy_constructor = true;
-				struct_info->has_deleted_constructor = true;
-			}
-			if (pattern_struct.has_deleted_move_constructor()) {
-				struct_info->has_deleted_move_constructor = true;
-				struct_info->has_deleted_constructor = true;
+				FLASH_LOG(Templates, Trace, "Copied deleted constructor flags from pattern AST node: mask=",
+						  static_cast<int>(pattern_deleted_special_members));
 			}
 
 			// Also copy deleted constructor flags from the pattern's StructTypeInfo (if available)
@@ -3835,15 +3825,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 				const StructTypeInfo* pattern_struct_info = pattern_type_info->getStructInfo();
 				if (pattern_struct_info) {
 					// Copy deleted constructor flags from pattern
-					if (pattern_struct_info->has_deleted_default_constructor) {
-						struct_info->has_deleted_default_constructor = true;
-					}
-					if (pattern_struct_info->has_deleted_copy_constructor) {
-						struct_info->has_deleted_copy_constructor = true;
-					}
-					if (pattern_struct_info->has_deleted_move_constructor) {
-						struct_info->has_deleted_move_constructor = true;
-					}
+					struct_info->deleted_special_members |= pattern_struct_info->deleted_special_members;
 					if (pattern_struct_info->has_deleted_copy_assignment) {
 						struct_info->has_deleted_copy_assignment = true;
 					}
@@ -3860,9 +3842,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 						clone_deleted_constructors(*struct_info, *pattern_struct_info, struct_type_info, instantiated_name,
 							effective_member_copy_template_params, effective_member_copy_template_args);
 					}
-					FLASH_LOG(Templates, Trace, "Copied deleted constructor flags from pattern StructTypeInfo: default=",
-							  pattern_struct_info->has_deleted_default_constructor, ", copy=",
-							  pattern_struct_info->has_deleted_copy_constructor);
+					FLASH_LOG(Templates, Trace, "Copied deleted constructor flags from pattern StructTypeInfo: mask=",
+							  static_cast<int>(pattern_struct_info->deleted_special_members));
 					synthesize_implicit_copy_constructor_if_needed(
 						*struct_info,
 						struct_type_info.registeredTypeIndex(),
@@ -14796,16 +14777,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 	// Deleted constructors are not added to member_functions (they use continue).
 	// Check both the StructDeclarationNode (set by Parser_Templates_Class.cpp specialization paths)
 	// and the template pattern's StructTypeInfo (set by Parser_Decl_StructEnum.cpp for primary templates).
-	if (class_decl.has_deleted_default_constructor()) {
-		struct_info_ptr->has_deleted_default_constructor = true;
-		struct_info_ptr->has_deleted_constructor = true;
-	}
-	if (class_decl.has_deleted_copy_constructor()) {
-		struct_info_ptr->has_deleted_copy_constructor = true;
-		struct_info_ptr->has_deleted_constructor = true;
-	}
-	if (class_decl.has_deleted_move_constructor()) {
-		struct_info_ptr->has_deleted_move_constructor = true;
+	const DeletedConstructorFlags class_decl_deleted_special_members = class_decl.deletedSpecialMemberFlags();
+	struct_info_ptr->deleted_special_members |= class_decl_deleted_special_members;
+	if (class_decl_deleted_special_members != DeletedConstructorFlags::None) {
 		struct_info_ptr->has_deleted_constructor = true;
 	}
 	// Also check the template pattern's StructTypeInfo (primary template path stores flags there).
@@ -14816,15 +14790,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 				if (tpl_si->has_deleted_constructor) {
 					struct_info_ptr->has_deleted_constructor = true;
 				}
-				if (tpl_si->has_deleted_default_constructor) {
-					struct_info_ptr->has_deleted_default_constructor = true;
-				}
-				if (tpl_si->has_deleted_copy_constructor) {
-					struct_info_ptr->has_deleted_copy_constructor = true;
-				}
-				if (tpl_si->has_deleted_move_constructor) {
-					struct_info_ptr->has_deleted_move_constructor = true;
-				}
+				struct_info_ptr->deleted_special_members |= tpl_si->deleted_special_members;
 				if (struct_info_ptr->deleted_constructors.empty()) {
 					clone_deleted_constructors(*struct_info_ptr, *tpl_si, struct_type_info, instantiated_name,
 						effective_template_params, effective_template_args);
@@ -14956,7 +14922,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 				canonical_types, imported_specialization.type, *struct_info_ptr);
 			(void)tryPublishCanonicalClassBaseSchema(canonical_types, imported_specialization.type, *struct_info_ptr);
 			(void)tryPublishCanonicalRecordConstructors(canonical_types, imported_specialization.type, instantiated_struct.as<StructDeclarationNode>(),
-				struct_info_ptr->deleted_constructors, struct_info_ptr->deletedSpecialMemberFlags());
+				struct_info_ptr->deleted_constructors, struct_info_ptr->deleted_special_members);
 		}
 	}
 

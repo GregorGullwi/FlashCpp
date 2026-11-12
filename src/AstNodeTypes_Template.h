@@ -1941,6 +1941,20 @@ public:
 	bool has_deleted_copy_constructor() const { return has_deleted_copy_constructor_; }
 	bool has_deleted_move_constructor() const { return has_deleted_move_constructor_; }
 
+	DeletedConstructorFlags deletedSpecialMemberFlags() const {
+		DeletedConstructorFlags flags = DeletedConstructorFlags::None;
+		if (has_deleted_default_constructor_) {
+			flags |= DeletedConstructorFlags::Default;
+		}
+		if (has_deleted_copy_constructor_) {
+			flags |= DeletedConstructorFlags::Copy;
+		}
+		if (has_deleted_move_constructor_) {
+			flags |= DeletedConstructorFlags::Move;
+		}
+		return flags;
+	}
+
 	bool is_nested() const {
 		return enclosing_class_ != nullptr;
 	}
