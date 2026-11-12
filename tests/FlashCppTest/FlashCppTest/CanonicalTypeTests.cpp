@@ -3707,6 +3707,104 @@ TEST_CASE("Canonical class base publication defers and later fills object facts"
 	CHECK(deferred_table.classBaseAt(imported.type, 0).type == base_type);
 }
 
+TEST_CASE("Canonical record property facts publish trait families") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream fixture("tests/test_canonical_member_property_trait_families_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	CompileContext compile_context;
+	compile_context.setInputFile("canonical_member_property_trait_families.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto record_facts = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		REQUIRE(table.hasRecordProperties(imported.type));
+		return table.recordProperties(imported.type).facts;
+	};
+	const auto has = [](CanonicalRecordFacts facts, CanonicalRecordFacts bit) {
+		return hasCanonicalRecordFact(facts, bit);
+	};
+	const CanonicalRecordFacts trivial = record_facts("Trivial");
+	CHECK(has(trivial, CanonicalRecordFacts::StandardLayout));
+	CHECK(has(trivial, CanonicalRecordFacts::HasTrivialDestructor));
+	CHECK(has(trivial, CanonicalRecordFacts::TrivialDefaultConstructor));
+	CHECK(has(trivial, CanonicalRecordFacts::TrivialCopyingSpecialMembers));
+	CHECK_FALSE(has(trivial, CanonicalRecordFacts::Empty));
+	const CanonicalRecordFacts nontrivial_ctor = record_facts("NonTrivialCtor");
+	CHECK(has(nontrivial_ctor, CanonicalRecordFacts::HasTrivialDestructor));
+	CHECK_FALSE(has(nontrivial_ctor, CanonicalRecordFacts::TrivialDefaultConstructor));
+	CHECK(has(nontrivial_ctor, CanonicalRecordFacts::TrivialCopyingSpecialMembers));
+	const CanonicalRecordFacts nontrivial_copy = record_facts("NonTrivialCopy");
+	CHECK_FALSE(has(nontrivial_copy, CanonicalRecordFacts::TrivialCopyingSpecialMembers));
+	CHECK(has(record_facts("Empty"), CanonicalRecordFacts::Empty));
+	const CanonicalRecordFacts standard = record_facts("Standard");
+	CHECK_FALSE(has(standard, CanonicalRecordFacts::StandardLayout));
+	const CanonicalRecordFacts pod = record_facts("Pod");
+	CHECK(has(pod, CanonicalRecordFacts::StandardLayout));
+	CHECK(has(pod, CanonicalRecordFacts::HasTrivialDestructor));
+	CHECK(has(pod, CanonicalRecordFacts::TrivialDefaultConstructor));
+	CHECK(has(pod, CanonicalRecordFacts::TrivialCopyingSpecialMembers));
+	const CanonicalRecordFacts polymorphic = record_facts("Virtual");
+	CHECK(has(polymorphic, CanonicalRecordFacts::Polymorphic));
+	CHECK(has(polymorphic, CanonicalRecordFacts::DestructorVirtual));
+	CHECK(has(polymorphic, CanonicalRecordFacts::DestructorNonTrivial));
+	CHECK_FALSE(has(polymorphic, CanonicalRecordFacts::StandardLayout));
+	const CanonicalRecordFacts deleted_dtor = record_facts("DeletedDtor");
+	CHECK(has(deleted_dtor, CanonicalRecordFacts::DestructorDeleted));
+	const CanonicalRecordFacts private_dtor = record_facts("PrivateDtor");
+	CHECK(has(private_dtor, CanonicalRecordFacts::DestructorNonPublic));
+}
+TEST_CASE("Canonical constructibility rejects inaccessible converting constructors") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const EntityId target_entity{960};
+	const EntityId source_entity{961};
+	const TypeId target_type = table.record(target_entity);
+	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId double_type = table.builtin(CanonicalBuiltinKind::Double);
+	std::array<std::array<TypeId, 1>, 2> parameter_storage{{
+		{int_type},
+		{double_type},
+	}};
+	const std::array<CanonicalRecordConstructorSpec, 2> constructors{{
+		{std::span<const TypeId>(parameter_storage[0]), CanonicalRecordFunctionFlags::None, true},
+		{std::span<const TypeId>(parameter_storage[1]), CanonicalRecordFunctionFlags::NonPublic, true},
+	}};
+	table.publishRecordConstructors(target_type, constructors);
+	const auto class_specifier = [](EntityId entity) {
+		TypeSpecifierNode specifier(TypeCategory::Struct, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		specifier.set_type_entity(entity);
+		return specifier;
+	};
+	const TypeSpecifierNode target = class_specifier(target_entity);
+	std::array<TypeSpecifierNode, 1> arguments{TypeSpecifierNode(TypeCategory::Double, TypeQualifier::None, 64, Token{}, CVQualifier::None)};
+	const auto constructible =
+		evaluateConstructibility(TypeTraitKind::IsConstructible, target, arguments, ConstructibilityFallback::None);
+	REQUIRE(constructible.has_value());
+	CHECK(constructible->success);
+	CHECK_FALSE(constructible->value);
+	const auto trivially_constructible =
+		evaluateConstructibility(TypeTraitKind::IsTriviallyConstructible, target, arguments, ConstructibilityFallback::None);
+	REQUIRE(trivially_constructible.has_value());
+	CHECK_FALSE(trivially_constructible->value);
+	arguments[0] = TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	const auto public_constructible =
+		evaluateConstructibility(TypeTraitKind::IsConstructible, target, arguments, ConstructibilityFallback::None);
+	REQUIRE(public_constructible.has_value());
+	CHECK(public_constructible->value);
+	const TypeId source_type = table.record(source_entity);
+	CHECK(source_type != target_type);
+}
 TEST_CASE("Canonical record constructor schema publishes by TypeId") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();
