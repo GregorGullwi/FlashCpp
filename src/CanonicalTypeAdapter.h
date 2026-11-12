@@ -3050,6 +3050,7 @@ inline bool tryPublishCanonicalRecordSubobjectTypes(CanonicalTypeTable& table, T
 // Constructors whose parameter types do not import structurally are skipped; the
 // schema stays unpublished when none import.
 inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, TypeId type, const StructDeclarationNode& struct_decl,
+	std::span<const StructTypeInfo::DeletedConstructor> deleted_constructors,
 	bool has_deleted_default_constructor, bool has_deleted_copy_constructor, bool has_deleted_move_constructor) {
 	struct PendingConstructor {
 		std::vector<TypeId> parameter_types;
@@ -3061,15 +3062,11 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 		uint16_t parameter_count = 0;
 	};
 	std::vector<PendingConstructor> pending;
-	pending.reserve(struct_decl.member_functions().size());
-	for (const StructMemberFunctionDecl& member : struct_decl.member_functions()) {
-		if (!member.is_constructor || !member.function_declaration.is<ConstructorDeclarationNode>()) {
-			continue;
-		}
-		const ConstructorDeclarationNode& constructor = member.function_declaration.as<ConstructorDeclarationNode>();
+	pending.reserve(struct_decl.member_functions().size() + deleted_constructors.size());
+	auto append_constructor = [&](const ConstructorDeclarationNode& constructor, AccessSpecifier access, bool deleted) {
 		PendingConstructor entry;
 		entry.is_noexcept = constructor.is_noexcept();
-		if (member.access != AccessSpecifier::Public) {
+		if (access != AccessSpecifier::Public) {
 			entry.flags = entry.flags | CanonicalRecordFunctionFlags::NonPublic;
 		}
 		if (constructor.is_explicit()) {
@@ -3084,12 +3081,15 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 		if (constructor.is_explicitly_defaulted()) {
 			entry.flags = entry.flags | CanonicalRecordFunctionFlags::ExplicitlyDefaulted;
 		}
+		if (deleted) {
+			entry.flags = entry.flags | CanonicalRecordFunctionFlags::Deleted;
+		}
 		if (constructor.parameter_nodes().size() > std::numeric_limits<uint16_t>::max()) {
 			entry.status = CanonicalRecordConstructorStatus::Unimportable;
 			entry.parameter_count = std::numeric_limits<uint16_t>::max();
 			entry.minimum_parameter_count = std::numeric_limits<uint16_t>::max();
 			pending.push_back(std::move(entry));
-			continue;
+			return;
 		}
 		entry.parameter_count = static_cast<uint16_t>(constructor.parameter_nodes().size());
 		entry.minimum_parameter_count = entry.parameter_count;
@@ -3103,7 +3103,7 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 		if (constructor.explicit_condition() || constructor.has_template_parameters()) {
 			entry.status = CanonicalRecordConstructorStatus::Conditional;
 			pending.push_back(std::move(entry));
-			continue;
+			return;
 		}
 		bool importable = true;
 		for (size_t index = 0; index < constructor.parameter_nodes().size(); ++index) {
@@ -3161,10 +3161,19 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 		if (!importable) {
 			entry.status = CanonicalRecordConstructorStatus::Unimportable;
 			entry.parameter_types.clear();
-			pending.push_back(std::move(entry));
-			continue;
 		}
 		pending.push_back(std::move(entry));
+	};
+	for (const StructMemberFunctionDecl& member : struct_decl.member_functions()) {
+		if (!member.is_constructor || !member.function_declaration.is<ConstructorDeclarationNode>()) {
+			continue;
+		}
+		append_constructor(member.function_declaration.as<ConstructorDeclarationNode>(), member.access, false);
+	}
+	for (const StructTypeInfo::DeletedConstructor& deleted : deleted_constructors) {
+		if (deleted.declaration != nullptr) {
+			append_constructor(*deleted.declaration, deleted.access, true);
+		}
 	}
 	if (has_deleted_default_constructor) {
 		PendingConstructor entry;

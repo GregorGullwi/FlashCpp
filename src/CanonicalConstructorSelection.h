@@ -49,6 +49,7 @@ enum class CanonicalConstructorSelectionReason : uint8_t {
 	AmbiguousCandidate,
 	NoViableCandidate,
 	InaccessibleCandidate,
+	DeletedCandidate,
 };
 
 inline const char* canonicalConstructorSelectionReasonName(CanonicalConstructorSelectionReason reason) {
@@ -61,6 +62,7 @@ inline const char* canonicalConstructorSelectionReasonName(CanonicalConstructorS
 	case CanonicalConstructorSelectionReason::AmbiguousCandidate: return "ambiguous-candidate";
 	case CanonicalConstructorSelectionReason::NoViableCandidate: return "no-viable-candidate";
 	case CanonicalConstructorSelectionReason::InaccessibleCandidate: return "inaccessible-candidate";
+	case CanonicalConstructorSelectionReason::DeletedCandidate: return "deleted-candidate";
 	}
 	return "unknown";
 }
@@ -265,6 +267,9 @@ inline CanonicalConstructorParameterMatch matchCanonicalUserDefinedClassConversi
 	for (size_t index = 0; index < constructor_count; ++index) {
 		const CanonicalRecordConstructor constructor = table.recordConstructorAt(target_class, index);
 		if (constructor.status == CanonicalRecordConstructorStatus::Deleted) {
+			continue;
+		}
+		if (hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Deleted)) {
 			continue;
 		}
 		if (constructor.status != CanonicalRecordConstructorStatus::Complete) {
@@ -870,7 +875,8 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 			return result;
 		}
 		if (std::ranges::none_of(best_candidates, [](const Candidate& candidate) {
-				return !hasCanonicalRecordFunctionFlag(candidate.constructor.flags, CanonicalRecordFunctionFlags::NonPublic);
+				return !hasCanonicalRecordFunctionFlag(candidate.constructor.flags, CanonicalRecordFunctionFlags::NonPublic) &&
+					!hasCanonicalRecordFunctionFlag(candidate.constructor.flags, CanonicalRecordFunctionFlags::Deleted);
 			})) {
 			result.status = CanonicalConstructorSelectionStatus::NoMatch;
 			result.reason = CanonicalConstructorSelectionReason::InaccessibleCandidate;
@@ -894,6 +900,11 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 		}
 	}
 	const Candidate& selected = best_candidates.front();
+	if (!existence_only && hasCanonicalRecordFunctionFlag(selected.constructor.flags, CanonicalRecordFunctionFlags::Deleted)) {
+		result.status = CanonicalConstructorSelectionStatus::NoMatch;
+		result.reason = CanonicalConstructorSelectionReason::DeletedCandidate;
+		return result;
+	}
 	if (!existence_only && hasCanonicalRecordFunctionFlag(selected.constructor.flags, CanonicalRecordFunctionFlags::NonPublic)) {
 		result.status = CanonicalConstructorSelectionStatus::NoMatch;
 		result.reason = CanonicalConstructorSelectionReason::InaccessibleCandidate;

@@ -605,6 +605,7 @@ enum class CanonicalRecordFunctionFlags : uint8_t {
 	Implicit = 1 << 0,
 	ExplicitlyDefaulted = 1 << 1,
 	NonPublic = 1 << 2,
+	Deleted = 1 << 3,
 	Explicit = 1 << 4,
 	Variadic = 1 << 5,
 };

@@ -434,6 +434,9 @@ bool isCanonicalKnownThrowingConversionDefault(CanonicalTypeTable& table, TypeId
 		if (candidate.status == CanonicalRecordConstructorStatus::Deleted) {
 			continue;
 		}
+		if (hasCanonicalRecordFunctionFlag(candidate.flags, CanonicalRecordFunctionFlags::Deleted)) {
+			continue;
+		}
 		if (candidate.status != CanonicalRecordConstructorStatus::Complete) {
 			if (canonicalConstructorArityMatches(candidate, 1)) {
 				return false;
