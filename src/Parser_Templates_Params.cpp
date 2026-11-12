@@ -2792,8 +2792,13 @@ try_type_template_argument_parse:
 		MemberPointerKind member_pointer_kind = MemberPointerKind::None;
 
 		// Detect pointer-to-member declarator: ClassType::*
+		SaveHandle member_saved_pos = save_token_position();
+		const size_t member_saved_pointer_levels = type_node.pointer_levels().size();
+		while (peek() == "*"_tok) {
+			advance();
+			type_node.add_pointer_level(CVQualifier::None);
+		}
 		if (peek().is_identifier()) {
-			SaveHandle member_saved_pos = save_token_position();
 			Token owner_token = peek_info();
 			advance(); // consume class/struct identifier
 			if (peek() == "::"_tok) {
@@ -2801,22 +2806,24 @@ try_type_template_argument_parse:
 				if (peek() == "*"_tok) {
 					advance(); // consume '*'
 					member_pointer_kind = MemberPointerKind::Object;
-					if (type_node.pointer_levels().empty() && !type_node.has_ordered_declarator()) {
-						const MemberPointerOwnerParse owner = parseMemberPointerOwnerAfterName(owner_token);
-						applyMemberPointerOwner(type_node, owner);
-						std::vector<DeclaratorComponent> components;
-						components.push_back(type_node.has_member_class_type_id()
-							? DeclaratorComponent::memberPointer(type_node.member_class_type_id(), false, CVQualifier::None)
-							: DeclaratorComponent::memberPointer(type_node.member_class_entity(), false, CVQualifier::None));
-						type_node.set_ordered_declarator(std::move(components));
-					} else {
-						type_node.add_pointer_level(CVQualifier::None);
+					const MemberPointerOwnerParse owner = parseMemberPointerOwnerAfterName(owner_token);
+					applyMemberPointerOwner(type_node, owner);
+					std::vector<DeclaratorComponent> components;
+					components.push_back(type_node.has_member_class_type_id()
+						? DeclaratorComponent::memberPointer(type_node.member_class_type_id(), false, CVQualifier::None)
+						: DeclaratorComponent::memberPointer(type_node.member_class_entity(), false, CVQualifier::None));
+					for (const PointerLevel& level : type_node.pointer_levels()) {
+						components.push_back(DeclaratorComponent::pointer(level.cv_qualifier));
 					}
+					type_node.limit_pointer_depth(0);
+					type_node.set_ordered_declarator(std::move(components));
 				} else {
 					restore_token_position(member_saved_pos);
+					type_node.limit_pointer_depth(member_saved_pointer_levels);
 				}
 			} else {
 				restore_token_position(member_saved_pos);
+				type_node.limit_pointer_depth(member_saved_pointer_levels);
 			}
 		}
 
