@@ -1759,6 +1759,64 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 			: ValueStorage::ContainsData);
 }
 
+ExprResult AstToIr::generateLogicalOperatorIr(const BinaryOperatorNode& binaryOperatorNode) {
+	static size_t logical_counter = 0;
+	const Token token = binaryOperatorNode.get_token();
+	const bool is_and = binaryOperatorNode.op() == "&&";
+	const StringHandle short_label = StringTable::createStringHandle(StringBuilder().append("logical_short_").append(logical_counter));
+	const StringHandle rhs_label = StringTable::createStringHandle(StringBuilder().append("logical_rhs_").append(logical_counter));
+	const StringHandle end_label = StringTable::createStringHandle(StringBuilder().append("logical_end_").append(logical_counter));
+	++logical_counter;
+
+	ExprResult lhs_result = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>(), ExpressionContext::Load);
+	lhs_result = applyConditionBoolConversion(std::move(lhs_result), binaryOperatorNode.get_lhs(), token);
+	TempVar result_var = var_counter.next();
+
+	const StringHandle true_label = is_and ? rhs_label : short_label;
+	const StringHandle false_label = is_and ? short_label : rhs_label;
+	CondBranchOp branch;
+	branch.condition = toTypedValue(lhs_result);
+	branch.label_true = true_label;
+	branch.label_false = false_label;
+	ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(branch), token));
+
+	auto emitShortAssignment = [&]() {
+		AssignmentOp short_assignment;
+		short_assignment.result = result_var;
+		short_assignment.lhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, IrValue(result_var));
+		short_assignment.rhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, static_cast<unsigned long long>(is_and ? 0 : 1));
+		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(short_assignment), token));
+	};
+	auto emitRhsAssignment = [&]() {
+		ExprResult rhs_result = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>(), ExpressionContext::Load);
+		rhs_result = applyConditionBoolConversion(std::move(rhs_result), binaryOperatorNode.get_rhs(), token);
+		AssignmentOp rhs_assignment;
+		rhs_assignment.result = result_var;
+		rhs_assignment.lhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, IrValue(result_var));
+		rhs_assignment.rhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, toIrValue(rhs_result.value));
+		rhs_assignment.dereference_rhs_references = false;
+		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(rhs_assignment), token));
+	};
+
+	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = true_label}, token));
+	if (is_and) {
+		emitRhsAssignment();
+	} else {
+		emitShortAssignment();
+	}
+	ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = end_label}, token));
+
+	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = false_label}, token));
+	if (is_and) {
+		emitShortAssignment();
+	} else {
+		emitRhsAssignment();
+	}
+
+	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = end_label}, token));
+	return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+}
+
 ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode) {
 	const auto& op = binaryOperatorNode.op();
 
@@ -1773,6 +1831,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 		// Return the right-hand side result
 		return rhsExprResult;
+	}
+
+	// Logical AND/OR are built-in control-flow operators: the right operand must
+	// not be evaluated when the left operand already determines the result.
+	if (op == "&&" || op == "||") {
+		return generateLogicalOperatorIr(binaryOperatorNode);
 	}
 
 	// Special handling for assignment to array subscript or member access
@@ -3730,28 +3794,6 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		}
 		// Return pointer type with 64-bit size, preserving pointer depth from RHS
 		return makeExprResult(nativeTypeIndex(rhsCat), SizeInBits{64}, IrOperand{result_var}, PointerDepth{rhs_pointer_depth}, ValueStorage::ContainsData);
-	}
-
-	// Check for logical operations BEFORE type promotions
-	// Logical operations should preserve boolean types without promotion
-	// C++20 [expr.log.and], [expr.log.or]: each operand is contextually
-	// converted to bool.
-	if (op == "&&" || op == "||") {
-		// Convert operands to bool when they are not already bool-compatible.
-		// Reuse applyConditionBoolConversion which checks sema annotations and
-		// falls back to local float→int conversion when needed.
-		lhsExprResult = applyConditionBoolConversion(lhsExprResult, binaryOperatorNode.get_lhs(), binaryOperatorNode.get_token());
-		rhsExprResult = applyConditionBoolConversion(rhsExprResult, binaryOperatorNode.get_rhs(), binaryOperatorNode.get_token());
-
-		TempVar result_var = var_counter.next();
-		BinaryOp bin_op{
-			.lhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, toIrValue(lhsExprResult.value)),
-			.rhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, toIrValue(rhsExprResult.value)),
-			.result = result_var,
-		};
-		IrOpcode opcode = (op == "&&") ? IrOpcode::LogicalAnd : IrOpcode::LogicalOr;
-		ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
-		return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData); // Logical operations return bool8
 	}
 
 	// Special handling for pointer compound assignment (ptr += int or ptr -= int)
