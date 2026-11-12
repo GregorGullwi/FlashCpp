@@ -4,12 +4,6 @@ This file is the authoritative inventory of unresolved gaps. Migration status
 and validation belong in `MIGRATION_PROGRESS.md`; that file should link here
 instead of restating issue details.
 
-## Builtin logical OR can evaluate a guarded pointer dereference
-
-In `return !p || *p == 42;`, lowering emits the dereference before the
-logical OR. A null argument can fault even though the left operand is true
-and C++ requires the right operand to be skipped.
-
 ## Operator candidate lookup still lacks complete member-name provenance
 
 Direct unary, binary, and assignment operator lookup now stop at the first class

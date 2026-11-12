@@ -413,6 +413,7 @@ private:
 									   ExpressionContext context = ExpressionContext::Load);
 	ExprResult generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode,
 										ExpressionContext context);
+	ExprResult generateLogicalOperatorIr(const BinaryOperatorNode& binaryOperatorNode);
 	ExprResult generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode);
 	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> param_types, bool is_variadic, StringHandle struct_name, NamespaceHandle namespace_handle, bool is_const_method);
 	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, std::span<const ASTNode> param_nodes, bool is_variadic, StringHandle struct_name, NamespaceHandle namespace_handle, bool is_const_method);

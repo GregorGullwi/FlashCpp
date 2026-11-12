@@ -417,7 +417,9 @@ These seed adjacent slices; the authoritative inventory is
   base default construction. Other advanced nested-body effects still need the
   full instantiated-owner path.
 - Built-in operator classification for arithmetic, bitwise, shift, comparison,
-  and logical operators is shared through `TokenKind.h`.
+  and logical operators is shared through `TokenKind.h`. Built-in `&&` and `||`
+  lower through short-circuit IR blocks, so the right operand is evaluated only
+  when the left operand does not determine the result.
 - Same-spelled class and member templates under distinct owners now keep
   distinct instantiation cache keys and generated names through their qualified
   owner spellings rather than numeric `TemplateDeclId` suffixes.
