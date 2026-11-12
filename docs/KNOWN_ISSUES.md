@@ -234,10 +234,12 @@ unrelated class arguments with exactly one viable non-explicit public converting
 constructor, and omitted default arguments from published constructor schemas.
 They still defer for conversion-operator targets, multiple or undecidable
 converting candidates, derived bases whose copy/move facts are unpublished or
-inaccessible, incomplete schemas, and unresolved canonical types. Explicit and
-deleted converting constructors stay fail-closed. Inaccessible converting
-constructors are not accepted canonically but still defer to the compatibility
-resolver, which currently reports them as constructible.
+inaccessible, incomplete schemas, and unresolved canonical types. Non-public
+constructor candidates now participate in canonical overload ranking, so an
+inaccessible better match makes the queried construction ill-formed instead of
+letting a worse public candidate decide. Deleted converting constructors still
+lack published parameter schemas, so a deleted better match can still be hidden
+by a worse public candidate before the compatibility resolver runs.
 Constructor schemas now retain ellipsis and rank
 extra arguments through the ellipsis conversion sequence, including class types.
 Passing a class through `...` is conditionally supported, so constructibility

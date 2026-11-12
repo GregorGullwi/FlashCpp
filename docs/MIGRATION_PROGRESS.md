@@ -286,7 +286,9 @@ mismatched, unpublished, or unresolved owner facts.
      class types. Passing a class through `...` is conditionally supported, so
      constructibility adds no copy/move requirement and the selected
      constructor's exception specification decides the nothrow answer. Dependent
-     extra arguments still defer.
+     extra arguments still defer. Non-public candidates now participate in
+     canonical overload ranking, so an inaccessible better match is not replaced
+     by a worse public candidate.
    - Constructor-candidate matching is consolidated into one canonical service
      with a tri-state result and policy-driven rules, including literal-only
      call-default selection, the overload-resolution converting-constructor

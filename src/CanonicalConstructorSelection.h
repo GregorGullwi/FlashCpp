@@ -47,6 +47,7 @@ enum class CanonicalConstructorSelectionReason : uint8_t {
 	UndecidableCandidate,
 	AmbiguousCandidate,
 	NoViableCandidate,
+	InaccessibleCandidate,
 };
 
 inline const char* canonicalConstructorSelectionReasonName(CanonicalConstructorSelectionReason reason) {
@@ -58,6 +59,7 @@ inline const char* canonicalConstructorSelectionReasonName(CanonicalConstructorS
 	case CanonicalConstructorSelectionReason::UndecidableCandidate: return "undecidable-candidate";
 	case CanonicalConstructorSelectionReason::AmbiguousCandidate: return "ambiguous-candidate";
 	case CanonicalConstructorSelectionReason::NoViableCandidate: return "no-viable-candidate";
+	case CanonicalConstructorSelectionReason::InaccessibleCandidate: return "inaccessible-candidate";
 	}
 	return "unknown";
 }
@@ -523,6 +525,7 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 		bool is_copy_or_move;
 		bool is_implicit_or_defaulted;
 		bool is_noexcept;
+		bool is_public;
 		uint16_t omitted_default_count;
 		bool omitted_defaults_nothrow;
 		bool omitted_defaults_known_throwing;
@@ -552,9 +555,6 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 		if (!allow_explicit && hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Explicit)) {
 			continue;
 		}
-		if (hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::NonPublic)) {
-			continue;
-		}
 		const bool is_copy_or_move = isCanonicalCopyOrMoveConstructor(table, target_class, index);
 		if (!include_copy_move && is_copy_or_move) {
 			continue;
@@ -569,7 +569,9 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 		Candidate candidate{index, constructor, is_copy_or_move,
 			hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Implicit) ||
 				hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::ExplicitlyDefaulted),
-			constructor.is_noexcept != 0, 0, false, false, false, {}};
+			constructor.is_noexcept != 0,
+			!hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::NonPublic),
+			0, false, false, false, {}};
 		candidate.argument_ranks.reserve(arguments.size());
 		bool matches = true;
 		const size_t matched_parameter_count = std::min(arguments.size(), static_cast<size_t>(constructor.parameter_count));
@@ -676,6 +678,11 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 										: CanonicalConstructorSelectionReason::NoViableCandidate;
 			return result;
 		}
+		if (std::ranges::none_of(best_candidates, [](const Candidate& candidate) { return candidate.is_public; })) {
+			result.status = CanonicalConstructorSelectionStatus::NoMatch;
+			result.reason = CanonicalConstructorSelectionReason::InaccessibleCandidate;
+			return result;
+		}
 	} else {
 		if (saw_unknown) {
 			result.status = CanonicalConstructorSelectionStatus::Unknown;
@@ -694,6 +701,11 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 		}
 	}
 	const Candidate& selected = best_candidates.front();
+	if (!existence_only && !selected.is_public) {
+		result.status = CanonicalConstructorSelectionStatus::NoMatch;
+		result.reason = CanonicalConstructorSelectionReason::InaccessibleCandidate;
+		return result;
+	}
 	result.status = CanonicalConstructorSelectionStatus::Selected;
 	result.constructor_index = selected.index;
 	result.is_copy_or_move = selected.is_copy_or_move;
