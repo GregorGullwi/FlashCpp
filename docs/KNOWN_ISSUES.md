@@ -219,8 +219,11 @@ expression type and the parser should only consume it.
 
 ## Remaining flat trait consumers
 
-The triviality and lifetime traits still read `StructTypeInfo` and need a
-published member-property schema. Explicit member-object-pointer template
+The triviality and lifetime facts are published, including a trivial-destructor
+fact that ignores access and deletion while destructibility applies them. The
+publisher still derives these facts from `StructTypeInfo`, so the member-property
+schema remains the boundary that must replace those reads before the
+compatibility classifiers can be removed. Explicit member-object-pointer template
 arguments publish ordered owner identity for pointer- and array-wrapped pointees.
 The sema-owned construction traits
 (`__is_constructible`, `__is_trivially_constructible`, and

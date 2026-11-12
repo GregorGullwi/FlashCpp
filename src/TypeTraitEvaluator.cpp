@@ -1195,9 +1195,11 @@ std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property, cons
 			}
 			return std::nullopt;
 		}
+		if (property == CanonicalTraitProperty::HasTrivialDestructor) {
+			return hasCanonicalRecordFact(table.recordProperties(peeled).facts, CanonicalRecordFacts::HasTrivialDestructor);
+		}
 		if (property == CanonicalTraitProperty::IsDestructible || property == CanonicalTraitProperty::IsTriviallyDestructible ||
-			property == CanonicalTraitProperty::IsNothrowDestructible || property == CanonicalTraitProperty::HasTrivialDestructor ||
-			property == CanonicalTraitProperty::HasVirtualDestructor) {
+			property == CanonicalTraitProperty::IsNothrowDestructible || property == CanonicalTraitProperty::HasVirtualDestructor) {
 			return canonicalRecordDestructionProperty(property, table, peeled);
 		}
 		if (property == CanonicalTraitProperty::IsTriviallyCopyable ||
@@ -1479,13 +1481,11 @@ bool hasVirtualBaseClass(const StructTypeInfo& struct_info) {
 	return false;
 }
 
-bool hasTrivialSpecialMemberSetForCopying(const StructTypeInfo* struct_info) {
-	if (!struct_info || struct_info->has_vtable || hasVirtualBaseClass(*struct_info) ||
-		struct_info->hasCopyConstructor() ||
-		struct_info->hasMoveConstructor() ||
-		struct_info->hasCopyAssignmentOperator() ||
-		struct_info->hasMoveAssignmentOperator() ||
-		struct_info->has_deleted_destructor) {
+// A destructor is trivial when it is not user-provided and is not virtual;
+// access and deletion are irrelevant to triviality ([class.dtor]). Subobject
+// triviality is checked by walking the record graph.
+bool hasTrivialDestructorDeclaration(const StructTypeInfo* struct_info) {
+	if (!struct_info) {
 		return false;
 	}
 	if (const StructMemberFunction* destructor = struct_info->findDestructor()) {
@@ -1494,6 +1494,37 @@ bool hasTrivialSpecialMemberSetForCopying(const StructTypeInfo* struct_info) {
 			destructor->function_decl.as<DestructorDeclarationNode>().was_defaulted_on_first_declaration();
 	}
 	return true;
+}
+
+bool isNontrivialDeclaredSpecialMember(const StructMemberFunction* function) {
+	if (function == nullptr) {
+		return false;
+	}
+	if (function->is_constructor) {
+		if (!function->function_decl.is<ConstructorDeclarationNode>()) {
+			return true;
+		}
+		const ConstructorDeclarationNode& declaration = function->function_decl.as<ConstructorDeclarationNode>();
+		return !declaration.is_explicitly_defaulted();
+	}
+	if (!function->function_decl.is<FunctionDeclarationNode>()) {
+		return true;
+	}
+	const FunctionDeclarationNode& declaration = function->function_decl.as<FunctionDeclarationNode>();
+	return !declaration.is_explicitly_defaulted() && !declaration.is_deleted();
+}
+
+bool hasTrivialSpecialMemberSetForCopying(const StructTypeInfo* struct_info) {
+	if (!struct_info || struct_info->has_vtable || hasVirtualBaseClass(*struct_info)) {
+		return false;
+	}
+	if (isNontrivialDeclaredSpecialMember(struct_info->findCopyConstructor()) ||
+		isNontrivialDeclaredSpecialMember(struct_info->findMoveConstructor()) ||
+		isNontrivialDeclaredSpecialMember(struct_info->findCopyAssignmentOperator()) ||
+		isNontrivialDeclaredSpecialMember(struct_info->findMoveAssignmentOperator())) {
+		return false;
+	}
+	return hasTrivialDestructorDeclaration(struct_info);
 }
 
 bool hasTrivialDefaultConstructor(const StructTypeInfo* struct_info) {
@@ -1932,6 +1963,10 @@ bool allRecordSubobjectsSatisfy(const StructTypeInfo* struct_info, Pred pred) {
 	return true;
 }
 
+bool isStructHasTrivialDestructorImpl(const StructTypeInfo* struct_info) {
+	return allRecordSubobjectsSatisfy(struct_info, [](const StructTypeInfo* current) { return hasTrivialDestructorDeclaration(current); });
+}
+
 // C++20 class-property walks use an explicit worklist because record nesting
 // comes from source input and is not bounded by the native stack. Pointer and
 // reference members are scalar indirections and do not add record edges.
@@ -2346,6 +2381,9 @@ CanonicalRecordFacts computeCanonicalRecordFactsWithLookup(const StructTypeInfo&
 	if (hasTrivialDefaultConstructor(&struct_info)) {
 		facts |= CanonicalRecordFacts::TrivialDefaultConstructor;
 	}
+	if (isStructHasTrivialDestructorImpl(&struct_info)) {
+		facts |= CanonicalRecordFacts::HasTrivialDestructor;
+	}
 	if (const StructMemberFunction* destructor = struct_info.findDestructor()) {
 		if (destructor->access != AccessSpecifier::Public) {
 			facts |= CanonicalRecordFacts::DestructorNonPublic;
@@ -2671,11 +2709,18 @@ TypeTraitResult evaluateTypeTrait(
 		break;
 
 	case TypeTraitKind::IsTriviallyDestructible:
-	case TypeTraitKind::HasTrivialDestructor:
 		if (isScalarType(cat, is_reference, pointer_depth)) {
 			result = true;
 		} else if (struct_info && !is_reference && pointer_depth == 0) {
 			result = isStructTriviallyDestructibleImpl(struct_info);
+		}
+		break;
+
+	case TypeTraitKind::HasTrivialDestructor:
+		if (isScalarType(cat, is_reference, pointer_depth)) {
+			result = true;
+		} else if (struct_info && !is_reference && pointer_depth == 0) {
+			result = isStructHasTrivialDestructorImpl(struct_info);
 		}
 		break;
 
