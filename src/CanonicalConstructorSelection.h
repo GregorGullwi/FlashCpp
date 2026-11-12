@@ -239,6 +239,9 @@ enum class CanonicalConstructorParameterMatch : uint8_t {
 	KnownThrowing,
 };
 
+inline CanonicalConstructorParameterMatch matchCanonicalDirectConversionOperator(
+	CanonicalTypeTable& table, TypeId source_class, TypeId target_type, ConversionPlan& plan);
+
 // [over.ics.user]/[class.conv.ctor]: one non-explicit public constructor of the
 // target class can provide the user-defined conversion for an argument. Deleted,
 // incomplete, ambiguous, or undecidable candidate conversions defer so sema
@@ -248,6 +251,13 @@ inline CanonicalConstructorParameterMatch matchCanonicalUserDefinedClassConversi
 	if (!table.hasRecordConstructors(target_class)) {
 		return CanonicalConstructorParameterMatch::Unknown;
 	}
+	TypeId source_type = source_argument;
+	while (table.node(source_type).kind == CanonicalTypeKind::LValueReference || table.node(source_type).kind == CanonicalTypeKind::RValueReference) {
+		source_type = table.node(source_type).child;
+	}
+	const TypeId source_class = table.withoutTopLevelQualifiers(source_type);
+	const CanonicalTypeKind source_kind = table.node(source_class).kind;
+	const bool source_is_class = source_kind == CanonicalTypeKind::Record || source_kind == CanonicalTypeKind::TemplateSpecialization;
 	const size_t constructor_count = table.recordConstructorCount(target_class);
 	size_t viable_count = 0;
 	bool has_undecidable = false;
@@ -272,6 +282,25 @@ inline CanonicalConstructorParameterMatch matchCanonicalUserDefinedClassConversi
 		if (isCanonicalReferenceToClass(table, parameter, target_class)) {
 			continue;
 		}
+		const CanonicalTypeKind parameter_kind = table.node(parameter).kind;
+		const bool parameter_is_reference = parameter_kind == CanonicalTypeKind::LValueReference || parameter_kind == CanonicalTypeKind::RValueReference;
+		if (source_is_class && !parameter_is_reference) {
+			const TypeId parameter_base = table.withoutTopLevelQualifiers(parameter);
+			const CanonicalTypeKind parameter_base_kind = table.node(parameter_base).kind;
+			if (parameter_base_kind != CanonicalTypeKind::Record && parameter_base_kind != CanonicalTypeKind::TemplateSpecialization) {
+				ConversionPlan operator_plan;
+				const CanonicalConstructorParameterMatch conversion_operator = matchCanonicalDirectConversionOperator(
+					table, source_class, parameter, operator_plan);
+				if (conversion_operator == CanonicalConstructorParameterMatch::Unknown) {
+					has_undecidable = true;
+					continue;
+				}
+				if (conversion_operator == CanonicalConstructorParameterMatch::Match) {
+					++viable_count;
+				}
+				continue;
+			}
+		}
 		const std::optional<ConversionPlan> candidate_plan = tryCanonicalStandardParameterConversionPlan(table, source_argument, parameter);
 		if (!candidate_plan.has_value()) {
 			has_undecidable = true;
@@ -288,6 +317,86 @@ inline CanonicalConstructorParameterMatch matchCanonicalUserDefinedClassConversi
 		return CanonicalConstructorParameterMatch::NoMatch;
 	}
 	plan = ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+	return CanonicalConstructorParameterMatch::Match;
+}
+
+// A class argument can reach a non-class parameter through a direct conversion
+// operator. Inherited operators stay undecidable so the compatibility resolver
+// keeps the final answer. Among direct operators, only the best standard
+// conversion from the operator's result to the parameter participates; a
+// selected inaccessible or deleted operator makes the conversion ill-formed.
+inline CanonicalConstructorParameterMatch matchCanonicalDirectConversionOperator(
+	CanonicalTypeTable& table, TypeId source_class, TypeId target_type, ConversionPlan& plan) {
+	const StructTypeInfo* source_record = tryResolveCanonicalMemberPointerOwnerRecord(table, source_class);
+	if (source_record == nullptr || !tryPublishCanonicalMemberFunctionSignatures(table, source_class, *source_record)) {
+		return CanonicalConstructorParameterMatch::Unknown;
+	}
+	if (table.hasClassBaseSchema(source_class) && table.classBaseCount(source_class) != 0) {
+		return CanonicalConstructorParameterMatch::Unknown;
+	}
+	std::optional<ConversionRank> best_rank;
+	size_t best_count = 0;
+	bool best_public = false;
+	bool best_deleted = false;
+	for (size_t index = 0; index < table.memberFunctionSchemaCount(source_class); ++index) {
+		const CanonicalMemberFunction function = table.memberFunctionAt(source_class, index);
+		if (!hasCanonicalMemberFunctionFlag(function.flags, CanonicalMemberFunctionFlags::ConversionOperator) ||
+			!hasCanonicalMemberFunctionFlag(function.flags, CanonicalMemberFunctionFlags::ConversionTarget) ||
+			hasCanonicalMemberFunctionFlag(function.flags, CanonicalMemberFunctionFlags::Explicit)) {
+			continue;
+		}
+		const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, function.signature, target_type);
+		if (!conversion.is_valid) {
+			continue;
+		}
+		if (!best_rank.has_value() || conversion.rank < *best_rank) {
+			best_rank = conversion.rank;
+			best_count = 1;
+			best_public = !hasCanonicalMemberFunctionFlag(function.flags, CanonicalMemberFunctionFlags::NonPublic);
+			best_deleted = hasCanonicalMemberFunctionFlag(function.flags, CanonicalMemberFunctionFlags::Deleted);
+		} else if (conversion.rank == *best_rank) {
+			++best_count;
+		}
+	}
+	if (best_count > 1) {
+		return CanonicalConstructorParameterMatch::Unknown;
+	}
+	if (best_count == 0 || !best_public || best_deleted) {
+		return CanonicalConstructorParameterMatch::NoMatch;
+	}
+	plan = ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+	return CanonicalConstructorParameterMatch::Match;
+}
+
+// A class argument can also reach a class parameter through a converting
+// constructor of the target or a conversion operator of the source. The two
+// paths are aggregated here so a copy/move reference candidate can be ruled out
+// instead of deferring on every unrelated class argument.
+inline CanonicalConstructorParameterMatch matchCanonicalClassValueConversion(
+	CanonicalTypeTable& table, TypeId source_argument, TypeId target_class, ConversionPlan& plan) {
+	ConversionPlan constructor_plan;
+	const CanonicalConstructorParameterMatch constructor = matchCanonicalUserDefinedClassConversion(
+		table, source_argument, target_class, constructor_plan);
+	TypeId source_type = source_argument;
+	while (table.node(source_type).kind == CanonicalTypeKind::LValueReference || table.node(source_type).kind == CanonicalTypeKind::RValueReference) {
+		source_type = table.node(source_type).child;
+	}
+	const TypeId source_class = table.withoutTopLevelQualifiers(source_type);
+	ConversionPlan operator_plan;
+	const CanonicalConstructorParameterMatch conversion_operator = matchCanonicalDirectConversionOperator(
+		table, source_class, target_class, operator_plan);
+	if (constructor == CanonicalConstructorParameterMatch::Unknown || conversion_operator == CanonicalConstructorParameterMatch::Unknown) {
+		return CanonicalConstructorParameterMatch::Unknown;
+	}
+	const bool constructor_viable = constructor == CanonicalConstructorParameterMatch::Match;
+	const bool operator_viable = conversion_operator == CanonicalConstructorParameterMatch::Match;
+	if (!constructor_viable && !operator_viable) {
+		return CanonicalConstructorParameterMatch::NoMatch;
+	}
+	if (constructor_viable && operator_viable) {
+		return CanonicalConstructorParameterMatch::Unknown;
+	}
+	plan = constructor_viable ? constructor_plan : operator_plan;
 	return CanonicalConstructorParameterMatch::Match;
 }
 
@@ -425,6 +534,25 @@ inline CanonicalConstructorParameterMatch matchCanonicalConstructorParameter(
 		}
 		const std::optional<ConversionPlan> binding = tryBuildCanonicalReferenceArgumentConversionPlan(table, effective_source, parameter_type);
 		if (!binding.has_value()) {
+			if (source_is_class && target_is_class &&
+				hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::AllowUserDefinedArgumentConversion)) {
+				const CanonicalTypeNode reference_node = table.node(parameter_type);
+				const CanonicalTypeNode referent_node = table.node(reference_node.child);
+				const bool referent_const = referent_node.kind == CanonicalTypeKind::Qualified &&
+					(static_cast<uint8_t>(referent_node.qualifiers) & static_cast<uint8_t>(CVQualifier::Const)) != 0;
+				if (reference_node.kind != CanonicalTypeKind::RValueReference && !referent_const) {
+					return CanonicalConstructorParameterMatch::NoMatch;
+				}
+				ConversionPlan value_plan;
+				const CanonicalConstructorParameterMatch value = matchCanonicalClassValueConversion(table, effective_source, target_base, value_plan);
+				if (value == CanonicalConstructorParameterMatch::Match) {
+					plan = value_plan;
+					return CanonicalConstructorParameterMatch::Match;
+				}
+				if (value == CanonicalConstructorParameterMatch::NoMatch) {
+					return CanonicalConstructorParameterMatch::NoMatch;
+				}
+			}
 			return CanonicalConstructorParameterMatch::Unknown;
 		}
 		if (!binding->is_valid) {
@@ -463,6 +591,20 @@ inline CanonicalConstructorParameterMatch matchCanonicalConstructorParameter(
 		}
 		plan = *class_plan;
 		return CanonicalConstructorParameterMatch::Match;
+	}
+	if (source_is_class && !target_is_class &&
+		hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::AllowUserDefinedArgumentConversion)) {
+		ConversionPlan conversion_operator_plan;
+		const CanonicalConstructorParameterMatch conversion_operator = matchCanonicalDirectConversionOperator(
+			table, source_base, parameter_type, conversion_operator_plan);
+		if (conversion_operator == CanonicalConstructorParameterMatch::Match) {
+			plan = conversion_operator_plan;
+			return CanonicalConstructorParameterMatch::Match;
+		}
+		if (conversion_operator == CanonicalConstructorParameterMatch::NoMatch) {
+			return CanonicalConstructorParameterMatch::NoMatch;
+		}
+		return CanonicalConstructorParameterMatch::Unknown;
 	}
 	if (mayNeedCanonicalCompatibilityResolution(source_kind) || mayNeedCanonicalCompatibilityResolution(target_kind)) {
 		return CanonicalConstructorParameterMatch::Unknown;
