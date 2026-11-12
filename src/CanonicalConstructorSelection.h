@@ -494,6 +494,34 @@ inline int compareCanonicalConversionRanks(std::span<const ConversionRank> lhs, 
 	return 0;
 }
 
+// Selection-local facts that are not part of the published constructor
+// metadata. Access, explicit/defaulted state, and noexcept stay on the
+// CanonicalRecordConstructor carried by the candidate.
+enum class CanonicalConstructorCandidateFlags : uint8_t {
+	None = 0,
+	CopyOrMove = 1 << 0,
+	OmittedDefaultsNothrow = 1 << 1,
+	OmittedDefaultsKnownThrowing = 1 << 2,
+	UsesClassParameter = 1 << 3,
+};
+
+inline CanonicalConstructorCandidateFlags operator|(CanonicalConstructorCandidateFlags a, CanonicalConstructorCandidateFlags b) {
+	return static_cast<CanonicalConstructorCandidateFlags>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+}
+
+inline CanonicalConstructorCandidateFlags& operator|=(CanonicalConstructorCandidateFlags& a, CanonicalConstructorCandidateFlags b) {
+	a = a | b;
+	return a;
+}
+
+inline bool hasCanonicalConstructorCandidateFlag(CanonicalConstructorCandidateFlags flags, CanonicalConstructorCandidateFlags bit) {
+	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
+}
+
+inline void clearCanonicalConstructorCandidateFlag(CanonicalConstructorCandidateFlags& flags, CanonicalConstructorCandidateFlags bit) {
+	flags = static_cast<CanonicalConstructorCandidateFlags>(static_cast<uint8_t>(flags) & static_cast<uint8_t>(~static_cast<uint8_t>(bit)));
+}
+
 inline CanonicalConstructorSelection selectCanonicalConstructor(
 	CanonicalTypeTable& table, TypeId target_class, std::span<const CanonicalConstructorArgument> arguments,
 	CanonicalConstructorSelectionPolicy policy) {
@@ -522,15 +550,13 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 	struct Candidate {
 		size_t index;
 		CanonicalRecordConstructor constructor;
-		bool is_copy_or_move;
-		bool is_implicit_or_defaulted;
-		bool is_noexcept;
-		bool is_public;
+		CanonicalConstructorCandidateFlags flags;
 		uint16_t omitted_default_count;
-		bool omitted_defaults_nothrow;
-		bool omitted_defaults_known_throwing;
-		bool uses_class_parameter;
 		std::vector<ConversionRank> argument_ranks;
+
+		bool has(CanonicalConstructorCandidateFlags bit) const { return hasCanonicalConstructorCandidateFlag(flags, bit); }
+		void set(CanonicalConstructorCandidateFlags bit) { flags |= bit; }
+		void clear(CanonicalConstructorCandidateFlags bit) { clearCanonicalConstructorCandidateFlag(flags, bit); }
 	};
 	const bool include_copy_move = hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::IncludeCopyMoveConstructors);
 	const bool allow_explicit = hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::AllowExplicit);
@@ -566,12 +592,15 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 		if (arguments.size() > constructor.parameter_count && (!is_variadic || !allow_ellipsis)) {
 			continue;
 		}
-		Candidate candidate{index, constructor, is_copy_or_move,
-			hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Implicit) ||
-				hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::ExplicitlyDefaulted),
-			constructor.is_noexcept != 0,
-			!hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::NonPublic),
-			0, false, false, false, {}};
+		const CanonicalConstructorCandidateFlags candidate_flags = is_copy_or_move ? CanonicalConstructorCandidateFlags::CopyOrMove :
+			CanonicalConstructorCandidateFlags::None;
+		Candidate candidate{
+			.index = index,
+			.constructor = constructor,
+			.flags = candidate_flags,
+			.omitted_default_count = 0,
+			.argument_ranks = {},
+		};
 		candidate.argument_ranks.reserve(arguments.size());
 		bool matches = true;
 		const size_t matched_parameter_count = std::min(arguments.size(), static_cast<size_t>(constructor.parameter_count));
@@ -603,8 +632,9 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 					table.node(parameter_object).kind == CanonicalTypeKind::RValueReference) {
 					parameter_object = table.node(parameter_object).child;
 				}
-				candidate.uses_class_parameter = candidate.uses_class_parameter ||
-					isCanonicalClassTypeKind(table.node(table.withoutTopLevelQualifiers(parameter_object)).kind);
+				if (isCanonicalClassTypeKind(table.node(table.withoutTopLevelQualifiers(parameter_object)).kind)) {
+					candidate.set(CanonicalConstructorCandidateFlags::UsesClassParameter);
+				}
 			}
 			candidate.argument_ranks.push_back(plan.rank);
 		}
@@ -645,18 +675,17 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 		}
 		if (arguments.size() < constructor.parameter_count) {
 			candidate.omitted_default_count = static_cast<uint16_t>(static_cast<size_t>(constructor.parameter_count) - arguments.size());
-			candidate.omitted_defaults_nothrow = true;
-			candidate.omitted_defaults_known_throwing = false;
+			candidate.set(CanonicalConstructorCandidateFlags::OmittedDefaultsNothrow);
 			for (size_t parameter = arguments.size(); parameter < constructor.parameter_count; ++parameter) {
 				const size_t default_index = parameter - constructor.minimum_parameter_count;
 				const CanonicalDefaultException exception = canonicalConstructorDefaultException(constructor, default_index);
 				if (exception == CanonicalDefaultException::KnownThrowing) {
-					candidate.omitted_defaults_nothrow = false;
-					candidate.omitted_defaults_known_throwing = true;
+					candidate.clear(CanonicalConstructorCandidateFlags::OmittedDefaultsNothrow);
+					candidate.set(CanonicalConstructorCandidateFlags::OmittedDefaultsKnownThrowing);
 					break;
 				}
 				if (exception == CanonicalDefaultException::Unknown) {
-					candidate.omitted_defaults_nothrow = false;
+					candidate.clear(CanonicalConstructorCandidateFlags::OmittedDefaultsNothrow);
 				}
 			}
 		}
@@ -678,7 +707,9 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 										: CanonicalConstructorSelectionReason::NoViableCandidate;
 			return result;
 		}
-		if (std::ranges::none_of(best_candidates, [](const Candidate& candidate) { return candidate.is_public; })) {
+		if (std::ranges::none_of(best_candidates, [](const Candidate& candidate) {
+				return !hasCanonicalRecordFunctionFlag(candidate.constructor.flags, CanonicalRecordFunctionFlags::NonPublic);
+			})) {
 			result.status = CanonicalConstructorSelectionStatus::NoMatch;
 			result.reason = CanonicalConstructorSelectionReason::InaccessibleCandidate;
 			return result;
@@ -701,20 +732,21 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 		}
 	}
 	const Candidate& selected = best_candidates.front();
-	if (!existence_only && !selected.is_public) {
+	if (!existence_only && hasCanonicalRecordFunctionFlag(selected.constructor.flags, CanonicalRecordFunctionFlags::NonPublic)) {
 		result.status = CanonicalConstructorSelectionStatus::NoMatch;
 		result.reason = CanonicalConstructorSelectionReason::InaccessibleCandidate;
 		return result;
 	}
 	result.status = CanonicalConstructorSelectionStatus::Selected;
 	result.constructor_index = selected.index;
-	result.is_copy_or_move = selected.is_copy_or_move;
-	result.is_implicit_or_defaulted = selected.is_implicit_or_defaulted;
-	result.is_noexcept = selected.is_noexcept;
+	result.is_copy_or_move = selected.has(CanonicalConstructorCandidateFlags::CopyOrMove);
+	result.is_implicit_or_defaulted = hasCanonicalRecordFunctionFlag(selected.constructor.flags, CanonicalRecordFunctionFlags::Implicit) ||
+		hasCanonicalRecordFunctionFlag(selected.constructor.flags, CanonicalRecordFunctionFlags::ExplicitlyDefaulted);
+	result.is_noexcept = selected.constructor.is_noexcept != 0;
 	result.omitted_default_count = selected.omitted_default_count;
-	result.omitted_defaults_nothrow = selected.omitted_defaults_nothrow;
-	result.omitted_defaults_known_throwing = selected.omitted_defaults_known_throwing;
-	result.selected_uses_class_parameter = selected.uses_class_parameter;
+	result.omitted_defaults_nothrow = selected.has(CanonicalConstructorCandidateFlags::OmittedDefaultsNothrow);
+	result.omitted_defaults_known_throwing = selected.has(CanonicalConstructorCandidateFlags::OmittedDefaultsKnownThrowing);
+	result.selected_uses_class_parameter = selected.has(CanonicalConstructorCandidateFlags::UsesClassParameter);
 	result.argument_ranks = selected.argument_ranks;
 	return result;
 }
