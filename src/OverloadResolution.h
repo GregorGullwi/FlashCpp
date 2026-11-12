@@ -1015,10 +1015,6 @@ struct UserDefinedConversionOperatorSelection {
 inline std::optional<UserDefinedConversionOperatorSelection>
 trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const TypeSpecifierNode& target_type, bool allow_explicit);
 
-inline std::optional<UserDefinedConversionOperatorSelection>
-trySelectCompatibilityUserDefinedConversionOperator(TypeIndex source_type_index,
-	CVQualifier source_cv_qualifier, const TypeSpecifierNode& target_type, bool allow_explicit);
-
 // Shared implementation: walks base_classes recursively and tests for derivation.
 // When public_only is true, only Public inheritance paths are considered.
 inline bool isTransitivelyDerivedFromImpl(TypeIndex source_idx, TypeIndex base_idx, bool public_only) {
@@ -3202,187 +3198,6 @@ trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const Typ
 }
 
 inline std::optional<UserDefinedConversionOperatorSelection>
-trySelectCompatibilityUserDefinedConversionOperator(TypeIndex source_type_index,
-	CVQualifier source_cv_qualifier, const TypeSpecifierNode& target_type, bool allow_explicit) {
-	if (!source_type_index.is_valid()) {
-		return std::nullopt;
-	}
-	FrontendContext& context = requireFrontendContext();
-	CanonicalTypeTable& table = context.canonicalTypes();
-	CanonicalTypeTransaction conversion_candidate_transaction(table);
-	struct PendingType {
-		TypeIndex type_index;
-		size_t depth;
-	};
-	struct Candidate {
-		UserDefinedConversionOperatorSelection selection;
-		TypeId conversion_target;
-		size_t depth;
-	};
-	struct NearestDeclaration {
-		TypeId conversion_target;
-		size_t depth;
-	};
-	std::vector<PendingType> pending_types{{source_type_index, 0}};
-	std::vector<TypeIndex> visited_types;
-	std::vector<const FunctionDeclarationNode*> visited_functions;
-	std::vector<NearestDeclaration> nearest_declarations;
-	std::vector<Candidate> candidates;
-	const uint8_t source_cv_bits = static_cast<uint8_t>(source_cv_qualifier);
-	for (size_t pending_index = 0; pending_index < pending_types.size(); ++pending_index) {
-		const PendingType pending_type = pending_types[pending_index];
-		const TypeIndex current_type = pending_type.type_index;
-		if (std::find(visited_types.begin(), visited_types.end(), current_type) != visited_types.end()) {
-			continue;
-		}
-		visited_types.push_back(current_type);
-		const TypeInfo* const type_info = tryGetTypeInfo(current_type);
-		if (type_info == nullptr) {
-			continue;
-		}
-		const StructTypeInfo* const struct_info = type_info->getStructInfo();
-		if (struct_info == nullptr) {
-			continue;
-		}
-		for (const StructMemberFunction& member_function : struct_info->member_functions) {
-			if (!member_function.is_conversion_operator() ||
-				!member_function.function_decl.is<FunctionDeclarationNode>()) {
-				continue;
-			}
-			const FunctionDeclarationNode& function = member_function.function_decl.as<FunctionDeclarationNode>();
-			// An explicit conversion function is not viable for an implicit
-			// conversion ([class.conv.fct]/2). Explicit conversions (static_cast,
-			// direct-initialization) pass allow_explicit to include them.
-			if (!allow_explicit && (member_function.is_explicit || function.is_explicit())) {
-				continue;
-			}
-			if (!member_function.conversion_target_type.is_valid()) {
-				continue;
-			}
-			const TypeSpecifierNode& return_type = function.decl_node().type_specifier_node();
-			TypeSpecifierNode canonical_return_type = return_type;
-			tryBindPublishedTypeEntity(canonical_return_type);
-			const CanonicalTypeImport return_type_import = importCanonicalTypeWithClassFallback(table, canonical_return_type);
-			if (return_type_import.status != CanonicalTypeImportStatus::Supported) {
-				continue;
-			}
-			const TypeId conversion_target = return_type_import.type;
-			auto nearest_declaration = std::find_if(
-				nearest_declarations.begin(),
-				nearest_declarations.end(),
-				[conversion_target](const NearestDeclaration& declaration) {
-					return declaration.conversion_target == conversion_target;
-				});
-			if (nearest_declaration == nearest_declarations.end()) {
-				nearest_declarations.push_back(
-					{conversion_target, pending_type.depth});
-			} else {
-				nearest_declaration->depth = std::min(
-					nearest_declaration->depth,
-					pending_type.depth);
-			}
-			if (std::find(visited_functions.begin(), visited_functions.end(), &function) != visited_functions.end()) {
-				continue;
-			}
-			visited_functions.push_back(&function);
-			const uint8_t member_cv_bits =
-				static_cast<uint8_t>(member_function.cv_qualifier);
-			if ((source_cv_bits & ~member_cv_bits) != 0) {
-				continue;
-			}
-			const std::optional<ConversionPlan> trailing_plan = tryBuildCanonicalConversionFunctionTailPlan(return_type, target_type);
-			if (!trailing_plan.has_value() || !trailing_plan->is_valid ||
-				trailing_plan->rank == ConversionRank::UserDefined) {
-				continue;
-			}
-
-			UserDefinedConversionOperatorSelection candidate;
-			candidate.function = &function;
-			const CanonicalTypeImport declaring_type_import = importCanonicalClassTypeInfo(table, *type_info);
-			if (declaring_type_import.status == CanonicalTypeImportStatus::Supported) {
-				candidate.declaring_type = declaring_type_import.type;
-			} else {
-				candidate.compatibility_declaring_type_index = current_type;
-			}
-			candidate.trailing_standard_kind = trailing_plan->kind;
-			candidate.trailing_standard_rank = trailing_plan->rank;
-			candidate.member_cv_qualifier = member_function.cv_qualifier;
-			candidate.access = member_function.access;
-			candidates.push_back({candidate, conversion_target, pending_type.depth});
-		}
-		for (const BaseClassSpecifier& base_specifier : struct_info->base_classes) {
-			if (!base_specifier.is_deferred && base_specifier.type_index.is_valid()) {
-				pending_types.push_back({base_specifier.type_index, pending_type.depth + 1});
-			}
-		}
-	}
-
-	std::optional<ConversionRank> best_trailing_rank;
-	std::vector<UserDefinedConversionOperatorSelection> visible_candidates;
-	for (const Candidate& candidate : candidates) {
-		const auto nearest_declaration = std::find_if(
-			nearest_declarations.begin(),
-			nearest_declarations.end(),
-			[&candidate](const NearestDeclaration& declaration) {
-				return declaration.conversion_target == candidate.conversion_target;
-			});
-		if (nearest_declaration == nearest_declarations.end() ||
-			candidate.depth != nearest_declaration->depth) {
-			continue;
-		}
-		if (!best_trailing_rank.has_value() ||
-			candidate.selection.trailing_standard_rank < *best_trailing_rank) {
-			best_trailing_rank = candidate.selection.trailing_standard_rank;
-			visible_candidates.clear();
-		}
-		if (candidate.selection.trailing_standard_rank == *best_trailing_rank &&
-			std::none_of(
-				visible_candidates.begin(),
-				visible_candidates.end(),
-				[&candidate](const UserDefinedConversionOperatorSelection& visible) {
-					return visible.function == candidate.selection.function;
-				})) {
-			visible_candidates.push_back(candidate.selection);
-		}
-	}
-	if (visible_candidates.empty()) {
-		return std::nullopt;
-	}
-	const UserDefinedConversionOperatorSelection* best_candidate = nullptr;
-	size_t best_candidate_count = 0;
-	for (const UserDefinedConversionOperatorSelection& candidate : visible_candidates) {
-		const uint8_t candidate_cv_bits =
-			static_cast<uint8_t>(candidate.member_cv_qualifier);
-		const bool is_dominated = std::any_of(
-			visible_candidates.begin(),
-			visible_candidates.end(),
-			[&candidate, candidate_cv_bits](
-				const UserDefinedConversionOperatorSelection& other) {
-				if (other.function == candidate.function) {
-					return false;
-				}
-				const uint8_t other_cv_bits =
-					static_cast<uint8_t>(other.member_cv_qualifier);
-				return (other_cv_bits & ~candidate_cv_bits) == 0 &&
-					other_cv_bits != candidate_cv_bits;
-			});
-		if (!is_dominated) {
-			best_candidate = &candidate;
-			++best_candidate_count;
-		}
-	}
-	if (best_candidate == nullptr) {
-		return std::nullopt;
-	}
-	UserDefinedConversionOperatorSelection result = *best_candidate;
-	result.ambiguous = best_candidate_count != 1;
-	if (result.declaring_type) {
-		conversion_candidate_transaction.commit();
-	}
-	return result;
-}
-
-inline std::optional<UserDefinedConversionOperatorSelection>
 trySelectUserDefinedConversionOperator(const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, bool allow_explicit) {
 	FrontendContext& context = requireFrontendContext();
 	CanonicalTypeTable& table = context.canonicalTypes();
@@ -3399,12 +3214,12 @@ trySelectUserDefinedConversionOperator(const TypeSpecifierNode& source_type, con
 			if (selected_conversion.has_value()) {
 				transaction.commit();
 			}
-			// Canonical import covers this source; do not fall back to the
-			// compatibility walk even when no canonical conversion is found.
+			// Canonical import covers this source; compatibility selection is no
+			// longer used for user-defined conversion operators.
 			return selected_conversion;
 		}
 	}
-	return trySelectCompatibilityUserDefinedConversionOperator(source_type.type_index(), source_type.cv_qualifier(), target_type, allow_explicit);
+	return std::nullopt;
 }
 
 // Use canonical TypeIds for reference binding. Value category remains expression
