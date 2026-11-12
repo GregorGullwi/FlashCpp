@@ -538,7 +538,12 @@ fallbacks are the constructibility probes, which need the canonical
 constructor-query path. Record emptiness now ignores
 `[[no_unique_address]]` empty members, and destructibility walks deleted
 subobject destructors, including non-trivial variant members of union-like
-classes. Explicit member-object-pointer template arguments now
+classes. Deleted, protected, and first-declaration-defaulted special members
+now share one triviality definition between the canonical facts and the
+compatibility classifier: a deleted destructor remains trivial for
+copy/trivial/POD classification while destructibility still rejects it, and a
+defaulted copy or move constructor no longer clears trivial-copyability.
+Explicit member-object-pointer template arguments now
 publish their declaring-class identity through an ordered declarator before
 canonical trait import, including pointer- and array-wrapped pointees. The inline dollar-recovery inventory and canonical-adapter
 source corpus remain within their supported/deferred baselines. The fixed adapter
