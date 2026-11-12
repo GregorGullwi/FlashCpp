@@ -2,6 +2,7 @@
 
 #include "AstNodeTypes.h"
 #include "CanonicalTypes.h"
+#include "InlineVector.h"
 #include "OverloadResolution.h"
 
 #include <algorithm>
@@ -239,8 +240,8 @@ enum class CanonicalConstructorParameterMatch : uint8_t {
 	KnownThrowing,
 };
 
-inline CanonicalConstructorParameterMatch matchCanonicalDirectConversionOperator(
-	CanonicalTypeTable& table, TypeId source_class, TypeId target_type, ConversionPlan& plan);
+inline CanonicalConstructorParameterMatch matchCanonicalDirectConversionOperator(CanonicalTypeTable& table, TypeId source_class,
+	TypeId target_type, ConversionPlan& plan);
 
 // [over.ics.user]/[class.conv.ctor]: one non-explicit public constructor of the
 // target class can provide the user-defined conversion for an argument. Deleted,
@@ -320,42 +321,61 @@ inline CanonicalConstructorParameterMatch matchCanonicalUserDefinedClassConversi
 	return CanonicalConstructorParameterMatch::Match;
 }
 
-// A class argument can reach a non-class parameter through a direct conversion
-// operator. Inherited operators stay undecidable so the compatibility resolver
-// keeps the final answer. Among direct operators, only the best standard
-// conversion from the operator's result to the parameter participates; a
-// selected inaccessible or deleted operator makes the conversion ill-formed.
-inline CanonicalConstructorParameterMatch matchCanonicalDirectConversionOperator(
-	CanonicalTypeTable& table, TypeId source_class, TypeId target_type, ConversionPlan& plan) {
+// A class argument can reach a non-class parameter through a conversion
+// operator declared on the class or a non-virtual base. Virtual or deferred
+// bases stay undecidable so the compatibility resolver keeps the final answer.
+// Only the best standard conversion from the operator's result to the
+// parameter participates; a selected inaccessible or deleted operator makes the
+// conversion ill-formed.
+inline CanonicalConstructorParameterMatch matchCanonicalDirectConversionOperator(CanonicalTypeTable& table, TypeId source_class,
+	TypeId target_type, ConversionPlan& plan) {
 	const StructTypeInfo* source_record = tryResolveCanonicalMemberPointerOwnerRecord(table, source_class);
-	if (source_record == nullptr || !tryPublishCanonicalMemberFunctionSignatures(table, source_class, *source_record)) {
+	if (source_record == nullptr) {
 		return CanonicalConstructorParameterMatch::Unknown;
 	}
-	if (table.hasClassBaseSchema(source_class) && table.classBaseCount(source_class) != 0) {
-		return CanonicalConstructorParameterMatch::Unknown;
-	}
+	InlineVector<CanonicalLookupClass, FlashCpp::InlineVectorSpillFamily::ClassLayout, 4> pending;
+	pending.push_back({source_class, source_record});
+	InlineVector<uint32_t, FlashCpp::InlineVectorSpillFamily::ClassLayout, 8> visited;
 	std::optional<ConversionRank> best_rank;
 	size_t best_count = 0;
 	bool best_public = false;
 	bool best_deleted = false;
-	for (size_t index = 0; index < table.memberFunctionSchemaCount(source_class); ++index) {
-		const CanonicalMemberFunction function = table.memberFunctionAt(source_class, index);
-		if (!hasCanonicalMemberFunctionFlag(function.flags, CanonicalMemberFunctionFlags::ConversionOperator) ||
-			!hasCanonicalMemberFunctionFlag(function.flags, CanonicalMemberFunctionFlags::ConversionTarget) ||
-			hasCanonicalMemberFunctionFlag(function.flags, CanonicalMemberFunctionFlags::Explicit)) {
+	while (!pending.empty()) {
+		const CanonicalLookupClass current = pending.back();
+		pending.pop_back();
+		if (std::find(visited.begin(), visited.end(), current.type.value) != visited.end()) {
 			continue;
 		}
-		const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, function.signature, target_type);
-		if (!conversion.is_valid) {
-			continue;
+		visited.push_back(current.type.value);
+		if (!tryPublishCanonicalMemberFunctionSignatures(table, current.type, *current.record)) {
+			return CanonicalConstructorParameterMatch::Unknown;
 		}
-		if (!best_rank.has_value() || conversion.rank < *best_rank) {
-			best_rank = conversion.rank;
-			best_count = 1;
-			best_public = !hasCanonicalMemberFunctionFlag(function.flags, CanonicalMemberFunctionFlags::NonPublic);
-			best_deleted = hasCanonicalMemberFunctionFlag(function.flags, CanonicalMemberFunctionFlags::Deleted);
-		} else if (conversion.rank == *best_rank) {
-			++best_count;
+		for (size_t index = 0; index < table.memberFunctionSchemaCount(current.type); ++index) {
+			const CanonicalMemberFunction function = table.memberFunctionAt(current.type, index);
+			if (!hasCanonicalMemberFunctionFlag(function.flags, CanonicalMemberFunctionFlags::ConversionOperator)) {
+				continue;
+			}
+			if (!hasCanonicalMemberFunctionFlag(function.flags, CanonicalMemberFunctionFlags::ConversionTarget)) {
+				return CanonicalConstructorParameterMatch::Unknown;
+			}
+			if (hasCanonicalMemberFunctionFlag(function.flags, CanonicalMemberFunctionFlags::Explicit)) {
+				continue;
+			}
+			const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, function.signature, target_type);
+			if (!conversion.is_valid) {
+				continue;
+			}
+			if (!best_rank.has_value() || conversion.rank < *best_rank) {
+				best_rank = conversion.rank;
+				best_count = 1;
+				best_public = !hasCanonicalMemberFunctionFlag(function.flags, CanonicalMemberFunctionFlags::NonPublic);
+				best_deleted = hasCanonicalMemberFunctionFlag(function.flags, CanonicalMemberFunctionFlags::Deleted);
+			} else if (conversion.rank == *best_rank) {
+				++best_count;
+			}
+		}
+		if (!appendCanonicalBaseLookupClasses(table, current, pending)) {
+			return CanonicalConstructorParameterMatch::Unknown;
 		}
 	}
 	if (best_count > 1) {
@@ -372,8 +392,8 @@ inline CanonicalConstructorParameterMatch matchCanonicalDirectConversionOperator
 // constructor of the target or a conversion operator of the source. The two
 // paths are aggregated here so a copy/move reference candidate can be ruled out
 // instead of deferring on every unrelated class argument.
-inline CanonicalConstructorParameterMatch matchCanonicalClassValueConversion(
-	CanonicalTypeTable& table, TypeId source_argument, TypeId target_class, ConversionPlan& plan) {
+inline CanonicalConstructorParameterMatch matchCanonicalClassValueConversion(CanonicalTypeTable& table, TypeId source_argument,
+	TypeId target_class, ConversionPlan& plan) {
 	ConversionPlan constructor_plan;
 	const CanonicalConstructorParameterMatch constructor = matchCanonicalUserDefinedClassConversion(
 		table, source_argument, target_class, constructor_plan);

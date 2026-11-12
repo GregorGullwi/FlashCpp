@@ -132,7 +132,7 @@ bool isCanonicalNothrowLiteralExpression(const ASTNode& initializer) {
 // with a scalar parameter is viable. A null result leaves the exception fact
 // unknown.
 std::optional<bool> tryCanonicalConstructorCallDefaultNoexcept(CanonicalTypeTable& table, const ConstructorCallNode& call) {
-	const std::optional<TypeId> imported = tryImportSupportedCanonicalWithClassFallback(table, call.type_node());
+	const std::optional<TypeId> imported = tryImportSupportedCanonicalWithClassFallback(table, call.type_node(), CanonicalTypeImportContext::Exact);
 	if (!imported.has_value() || !table.hasRecordConstructors(*imported)) {
 		return std::nullopt;
 	}
@@ -313,7 +313,8 @@ bool isCanonicalKnownThrowingDefault(CanonicalTypeTable& table, const ASTNode& i
 				return true;
 			}
 		} else {
-			const std::optional<TypeId> constructed = tryImportSupportedCanonicalWithClassFallback(table, constructor_call->type_node());
+			const std::optional<TypeId> constructed = tryImportSupportedCanonicalWithClassFallback(
+				table, constructor_call->type_node(), CanonicalTypeImportContext::Exact);
 			if (constructed.has_value() && table.hasRecordProperties(*constructed) &&
 				!hasCanonicalRecordFact(table.recordProperties(*constructed).facts, CanonicalRecordFacts::NothrowDestructible)) {
 				return true;

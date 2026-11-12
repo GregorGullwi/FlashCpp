@@ -235,7 +235,8 @@ constructor, and omitted default arguments from published constructor schemas.
 Direct conversion operators now rank by the standard conversion from their
 result to the parameter; the best inaccessible or deleted operator makes the
 conversion ill-formed, and explicit operators stay out of implicit argument
-conversions. Inherited conversion operators, multiple or undecidable converting
+conversions. Operators declared on non-virtual bases participate in the same
+ranking, while virtual or deferred bases, multiple or undecidable converting
 candidates, derived bases whose copy/move facts are unpublished or inaccessible,
 incomplete schemas, and unresolved canonical types still defer. Non-public
 constructor candidates now participate in canonical overload ranking, so an
