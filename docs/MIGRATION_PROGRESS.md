@@ -535,7 +535,10 @@ Run the host-native migration-counter and identity-inventory scripts under
 entry within baseline. `canonical_structural_trait_fallback` is 0 on the
 structural-trait and lazy-constraint regressions; residual lazy-constraint
 fallbacks are the constructibility probes, which need the canonical
-constructor-query path. Explicit member-object-pointer template arguments now
+constructor-query path. Record emptiness now ignores
+`[[no_unique_address]]` empty members, and destructibility walks deleted
+subobject destructors, including non-trivial variant members of union-like
+classes. Explicit member-object-pointer template arguments now
 publish their declaring-class identity through an ordered declarator before
 canonical trait import, including pointer- and array-wrapped pointees. The inline dollar-recovery inventory and canonical-adapter
 source corpus remain within their supported/deferred baselines. The fixed adapter
