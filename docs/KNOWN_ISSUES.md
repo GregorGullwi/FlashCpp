@@ -241,9 +241,11 @@ candidates, derived bases whose copy/move facts are unpublished or inaccessible,
 incomplete schemas, and unresolved canonical types still defer. Non-public
 constructor candidates now participate in canonical overload ranking, so an
 inaccessible better match makes the queried construction ill-formed instead of
-letting a worse public candidate decide. Deleted converting constructors still
-lack published parameter schemas, so a deleted better match can still be hidden
-by a worse public candidate before the compatibility resolver runs.
+letting a worse public candidate decide. Deleted converting constructors are
+published with parameter schemas for non-template classes, so a deleted better
+match rejects construction. Class-template instantiations still copy only the
+deleted special-member flags, so a deleted general constructor in an instantiated
+template remains a followup.
 Constructor schemas now retain ellipsis and rank
 extra arguments through the ellipsis conversion sequence, including class types.
 Passing a class through `...` is conditionally supported, so constructibility

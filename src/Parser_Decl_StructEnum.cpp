@@ -2786,6 +2786,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 								size_t num_params = params.parameters.size();
 								bool is_copy_ctor = false;
 								bool is_move_ctor = false;
+								const bool is_default_ctor = num_params == 0;
 
 								size_t min_required = computeMinRequiredArgs(params.parameters);
 
@@ -2812,7 +2813,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 									}
 								}
 
-								struct_info->markConstructorDeleted(is_copy_ctor, is_move_ctor);
+								struct_info->markConstructorDeleted(is_copy_ctor, is_move_ctor, is_default_ctor);
+								if (!is_copy_ctor && !is_move_ctor && !is_default_ctor) {
+									struct_info->deleted_constructors.push_back({&ctor_ref, current_access});
+								}
 							}
 
 							// ctor_scope automatically exits scope on continue
@@ -4895,8 +4899,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		(void)tryPublishCanonicalRecordFieldSchema(
 			canonical_types, record_type, *struct_info);
 		(void)tryPublishCanonicalRecordConstructors(canonical_types, record_type, struct_ref,
-			struct_info->has_deleted_default_constructor, struct_info->has_deleted_copy_constructor,
-			struct_info->has_deleted_move_constructor);
+			struct_info->deleted_constructors, struct_info->has_deleted_default_constructor,
+			struct_info->has_deleted_copy_constructor, struct_info->has_deleted_move_constructor);
 		tryPublishNestedClassEntities(
 			front_end.declarationBuilder(),
 			canonical_types,

@@ -125,12 +125,18 @@ enum class StructFinalizationErrorKind : uint8_t {
 };
 
 struct StructTypeInfo {
+	struct DeletedConstructor {
+		const ConstructorDeclarationNode* declaration = nullptr;
+		AccessSpecifier access = AccessSpecifier::Public;
+	};
+
 	StringHandle name;
 	NamespaceHandle namespace_handle;  // Namespace this struct was declared in
 	const StructDeclarationNode* declaration_node = nullptr; // Exact parsed declaration for this type
 	std::vector<StructMember> members;
 	std::vector<StructStaticMember> static_members;	// Static members
 	std::vector<StructMemberFunction> member_functions;
+	std::vector<DeletedConstructor> deleted_constructors;
 	std::vector<BaseClassSpecifier> base_classes;  // Base classes for inheritance
 	SizeInBytes total_size{};  // Total size of struct in bytes
 	SizeInBytes layout_data_size{}; // Dsize-like placement cursor used for subsequent member layout
@@ -421,13 +427,13 @@ struct StructTypeInfo {
 	}
 
 	// Mark a constructor as deleted
-	void markConstructorDeleted(bool is_copy, bool is_move) {
+	void markConstructorDeleted(bool is_copy, bool is_move, bool is_default) {
 		has_deleted_constructor = true;
 		if (is_copy) {
 			has_deleted_copy_constructor = true;
 		} else if (is_move) {
 			has_deleted_move_constructor = true;
-		} else {
+		} else if (is_default) {
 			has_deleted_default_constructor = true;
 		}
 	}
