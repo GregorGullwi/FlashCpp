@@ -36,6 +36,20 @@ struct DoublePointerTemplateConversion {
 	}
 };
 
+struct ConstPointerTemplateConversion {
+	template<class U>
+	operator const U*() const {
+		return nullptr;
+	}
+};
+
+struct InnerConstPointerTemplateConversion {
+	template<class U>
+	operator U* const*() const {
+		return nullptr;
+	}
+};
+
 int main() {
 	int a = static_cast<int>(TemplateConversion{});
 	int b = static_cast<int>(ExplicitTemplateConversion{});
@@ -54,6 +68,18 @@ int main() {
 	int* bare_implicit = TemplateConversion{};
 	if (p != nullptr || pp != nullptr || q != nullptr || bare_static != nullptr || bare_implicit != nullptr) {
 		return 2;
+	}
+	const int* const_static = static_cast<const int*>(ConstPointerTemplateConversion{});
+	const int* const_implicit = ConstPointerTemplateConversion{};
+	const int* pointee_const_static = static_cast<const int*>(PointerTemplateConversion{});
+	const int* pointee_const_implicit = PointerTemplateConversion{};
+	if (const_static != nullptr || const_implicit != nullptr || pointee_const_static != nullptr || pointee_const_implicit != nullptr) {
+		return 3;
+	}
+	int* const* inner_const_static = static_cast<int* const*>(InnerConstPointerTemplateConversion{});
+	int* const* inner_const_implicit = InnerConstPointerTemplateConversion{};
+	if (inner_const_static != nullptr || inner_const_implicit != nullptr) {
+		return 4;
 	}
 	return 0;
 }
