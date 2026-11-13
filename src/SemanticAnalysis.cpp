@@ -11720,17 +11720,21 @@ std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::trySelec
 		const TypeSpecifierNode& return_type = function.decl_node().type_specifier_node();
 		const TypeCategory return_category = return_type.category();
 		const size_t return_pointer_depth = return_type.pointer_depth();
-		bool supported_shape = !return_type.is_reference() && !return_type.is_array() &&
-			!return_type.has_pointee_array_declarator() && return_type.cv_qualifier() == CVQualifier::None;
-		if (supported_shape && return_pointer_depth != 0) {
-			supported_shape = !target_type.is_reference() && !target_type.is_array() && target_type.cv_qualifier() == CVQualifier::None &&
-				target_type.pointer_depth() == return_pointer_depth;
-			for (const PointerLevel& level : return_type.pointer_levels()) {
-				supported_shape &= level.cv_qualifier == CVQualifier::None;
+		const CVQualifier return_cv = return_type.cv_qualifier();
+		const CVQualifier target_cv = target_type.cv_qualifier();
+		bool supported_shape = !return_type.is_reference() && !return_type.is_array() && !return_type.has_pointee_array_declarator();
+		if (return_pointer_depth == 0) {
+			supported_shape &= return_cv == CVQualifier::None;
+		} else {
+			supported_shape = supported_shape && !target_type.is_reference() && !target_type.is_array() &&
+				target_type.pointer_depth() == return_pointer_depth &&
+				(static_cast<uint8_t>(return_cv) & ~static_cast<uint8_t>(target_cv)) == 0;
+			const std::span<const PointerLevel> return_pointer_levels = return_type.pointer_levels();
+			const std::span<const PointerLevel> target_pointer_levels = target_type.pointer_levels();
+			for (size_t level_index = 0; level_index + 1 < return_pointer_levels.size(); ++level_index) {
+				supported_shape &= return_pointer_levels[level_index].cv_qualifier == target_pointer_levels[level_index].cv_qualifier;
 			}
-			for (const PointerLevel& level : target_type.pointer_levels()) {
-				supported_shape &= level.cv_qualifier == CVQualifier::None;
-			}
+			supported_shape &= !return_pointer_levels.empty() && return_pointer_levels.back().cv_qualifier == CVQualifier::None;
 		}
 		const bool return_is_template_parameter = supported_shape && return_type.token().value() == params[0].name() &&
 			(return_category == TypeCategory::Template || return_category == TypeCategory::UserDefined ||
@@ -11747,6 +11751,7 @@ std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::trySelec
 			for (size_t pointer_index = 0; pointer_index < return_pointer_depth; ++pointer_index) {
 				deduced_target = deduced_target.without_innermost_legacy_pointer_wrapper();
 			}
+			deduced_target.set_cv_qualifier(static_cast<CVQualifier>(static_cast<uint8_t>(target_cv) & ~static_cast<uint8_t>(return_cv)));
 		}
 		TemplateTypeArg template_arg(deduced_target);
 		std::optional<ASTNode> instantiated = parser().try_instantiate_member_function_template_explicit(
