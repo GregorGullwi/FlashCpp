@@ -11739,11 +11739,13 @@ std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::trySelec
 			const size_t return_pointer_depth = return_type.pointer_depth();
 			const CVQualifier return_cv = return_type.cv_qualifier();
 			const CVQualifier target_cv = target_type.cv_qualifier();
-			bool supported_shape = !return_type.is_reference() && !return_type.is_array() && !return_type.has_pointee_array_declarator();
+			bool supported_shape = !return_type.is_rvalue_reference() && !return_type.is_array() &&
+				!return_type.has_pointee_array_declarator();
 			if (return_pointer_depth == 0) {
-				supported_shape &= return_cv == CVQualifier::None;
+				supported_shape &= return_cv == CVQualifier::None && !(return_type.is_reference() && target_type.is_rvalue_reference());
 			} else {
-				supported_shape = supported_shape && !target_type.is_reference() && !target_type.is_array() &&
+				supported_shape = supported_shape && !return_type.is_reference() && !target_type.is_reference() &&
+					!target_type.is_array() &&
 					target_type.pointer_depth() == return_pointer_depth &&
 					(static_cast<uint8_t>(return_cv) & ~static_cast<uint8_t>(target_cv)) == 0;
 				const std::span<const PointerLevel> return_pointer_levels = return_type.pointer_levels();
@@ -11766,6 +11768,7 @@ std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::trySelec
 			if (return_pointer_depth == 0) {
 				if (deduced_target.pointer_depth() == 0) {
 					deduced_target.set_cv_qualifier(CVQualifier::None);
+					deduced_target.set_reference_qualifier(ReferenceQualifier::None);
 				}
 			} else {
 				for (size_t pointer_index = 0; pointer_index < return_pointer_depth; ++pointer_index) {

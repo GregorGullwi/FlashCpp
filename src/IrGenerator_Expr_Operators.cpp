@@ -2016,11 +2016,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					"Sema-selected conversion operator source type is unavailable during assignment lowering");
 			}
 			if (auto result = emitSemaSelectedConversionOperatorCall(
-					expr,
-					*source_type_info,
-					ci,
-					to_t,
-					binaryOperatorNode.get_token())) {
+					expr, *source_type_info, ci, to_t, binaryOperatorNode.get_token(), ExpressionContext::Load)) {
 				expr = *result;
 				return true;
 			}

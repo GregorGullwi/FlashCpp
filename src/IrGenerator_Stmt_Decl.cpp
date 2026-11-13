@@ -1745,9 +1745,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							const TypeInfo* source_type_info = source_type_index.is_valid() ? tryGetTypeInfo(source_type_index) : nullptr;
 							if (source_type_info != nullptr) {
 								std::optional<ExprResult> converted = emitSemaSelectedConversionOperatorCall(
-									init_operands, *source_type_info, cast_info,
-									sema_.typeContext().get(cast_info.target_type_id).category(),
-									decl.identifier_token());
+									init_operands, *source_type_info, cast_info, sema_.typeContext().get(cast_info.target_type_id).category(), decl.identifier_token(),
+									(type_node.is_reference() || type_node.is_rvalue_reference()) ? ExpressionContext::LValueAddress : ExpressionContext::Load);
 								if (converted.has_value()) {
 									init_operands = *converted;
 									conversion_applied = true;
@@ -2598,7 +2597,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									if (source_type_info == nullptr)
 										throw InternalError("Selected variable-init conversion has no source class declaration");
 									if (auto result = emitSemaSelectedConversionOperatorCall(
-											init_operands, *source_type_info, cast_info, type_node.category(), decl.identifier_token())) {
+											init_operands, *source_type_info, cast_info, type_node.category(), decl.identifier_token(),
+											(type_node.is_reference() || type_node.is_rvalue_reference()) ? ExpressionContext::LValueAddress : ExpressionContext::Load)) {
 										init_operands = *result;
 									} else {
 										throw InternalError("Sema-selected conversion operator failed to lower a variable initializer");

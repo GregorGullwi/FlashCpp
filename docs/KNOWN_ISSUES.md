@@ -221,13 +221,24 @@ expression type and the parser should only consume it.
 
 Canonical user-defined conversion lookup now instantiates the common case of a
 single-type-parameter conversion function template whose bare return type is that
-parameter, for example `template<class U> operator U()` or `operator U*()`,
-including cv-qualified pointee types, non-top-level pointer cv, and public
-bases. Template bases resolved during instantiation are supported; still-unresolved
-deferred patterns fail closed. Reference and array returns, multiple template
-parameters, and constrained templates also still fail closed with "sema must
-annotate a class-to-non-class static_cast conversion". Extend deduction before
-removing that fail-closed path.
+parameter, for example `template<class U> operator U()`, `operator U*()`, or
+`operator U&()`, including cv-qualified pointee types, non-top-level pointer cv,
+and public bases. Template bases resolved during instantiation are supported;
+still-unresolved deferred patterns fail closed. Bare lvalue-reference returns now
+preserve the referenced object's address for explicit reference casts and
+reference initialization, and the same binding fix applies to non-template
+conversion operators. Array returns, rvalue-reference returns, multiple template
+parameters, and constrained templates still fail closed with "sema must annotate
+a class-to-non-class static_cast conversion". Extend deduction before removing
+that fail-closed path.
+
+Reference-returning conversion operators are still not selected when binding a
+reference function parameter, for example `void f(int&); f(Conversion{})` reports
+`NoViableFunctionCall`. Returning such a conversion from a reference-returning
+function, for example `int& f() { return Conversion{}; }`, is also still lowered
+as a value and currently crashes. Reference variable initialization and explicit
+reference casts are handled; argument binding and reference return statements
+need the same selection and context support.
 
 ## Remaining flat trait consumers
 

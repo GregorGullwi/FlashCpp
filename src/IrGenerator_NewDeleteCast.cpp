@@ -920,9 +920,9 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 				const TypeInfo* source_type_info = source_type_index.is_valid() ? tryGetTypeInfo(source_type_index) : nullptr;
 				if (source_type_info != nullptr) {
 					std::optional<ExprResult> converted = emitSemaSelectedConversionOperatorCall(
-						operand, *source_type_info, cast_info,
-						sema_.typeContext().get(cast_info.target_type_id).category(),
-						staticCastNode.cast_token());
+						operand, *source_type_info, cast_info, sema_.typeContext().get(cast_info.target_type_id).category(), staticCastNode.cast_token(),
+						(staticCastNode.target_type().is_reference() || staticCastNode.target_type().is_rvalue_reference())
+							? ExpressionContext::LValueAddress : ExpressionContext::Load);
 					if (converted.has_value()) {
 						return *converted;
 					}

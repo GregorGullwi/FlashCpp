@@ -401,7 +401,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 						if (source_type_info == nullptr)
 							throw InternalError("Selected return conversion has no source class declaration");
 						if (auto result = emitSemaSelectedConversionOperatorCall(
-								operands, *source_type_info, cast_info, return_category, node.return_token())) {
+								operands, *source_type_info, cast_info, return_category, node.return_token(), ExpressionContext::Load)) {
 							operands = *result;
 							sema_applied_conversion = true;
 						} else {

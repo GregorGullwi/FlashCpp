@@ -3049,7 +3049,8 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 				if (source_type_info == nullptr || cast_info.selected_conversion_function == nullptr) {
 					throw InternalError("Sema must annotate a contextual bool conversion with its selected operator");
 				}
-				if (auto result = emitSemaSelectedConversionOperatorCall(condition, *source_type_info, cast_info, TypeCategory::Bool, source_token)) {
+				if (auto result = emitSemaSelectedConversionOperatorCall(
+						condition, *source_type_info, cast_info, TypeCategory::Bool, source_token, ExpressionContext::Load)) {
 					return *result;
 				}
 				throw InternalError("Sema-selected conversion operator failed to lower a contextual bool conversion");
@@ -3145,7 +3146,8 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 					throw InternalError(
 						"Sema missed the selected conversion operator for a constructor argument");
 				}
-				if (auto result = emitSemaSelectedConversionOperatorCall(arg_result, *src_type_info, ci, param_type.category(), source_token)) {
+				if (auto result = emitSemaSelectedConversionOperatorCall(
+						arg_result, *src_type_info, ci, param_type.category(), source_token, ExpressionContext::Load)) {
 					arg_result = *result;
 					sema_applied = true;
 				} else {
@@ -3497,10 +3499,19 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 			if (source_type_info == nullptr) {
 				throw InternalError("User-defined reference binding has no source struct metadata");
 			}
+			const TypeSpecifierNode& conversion_return_type =
+				cast_info.selected_conversion_function->decl_node().type_specifier_node();
+			const bool conversion_returns_reference = conversion_return_type.is_reference() || conversion_return_type.is_rvalue_reference();
+			const bool target_is_reference = to_desc.ref_qualifier != ReferenceQualifier::None;
+			const bool bind_converted_reference = conversion_returns_reference && target_is_reference;
 			std::optional<ExprResult> converted = emitSemaSelectedConversionOperatorCall(
-				arg_result, *source_type_info, cast_info, to_t, source_token);
+				arg_result, *source_type_info, cast_info, to_t, source_token,
+				bind_converted_reference ? ExpressionContext::LValueAddress : ExpressionContext::Load);
 			if (!converted.has_value()) {
 				throw InternalError("Failed to lower the user-defined reference binding conversion");
+			}
+			if (bind_converted_reference) {
+				return *converted;
 			}
 			return materializeTemporaryAndTakeAddress(std::move(*converted));
 		}
