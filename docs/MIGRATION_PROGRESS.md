@@ -578,9 +578,22 @@ standard-layout, POD, empty, destructor, virtual, deleted, and inaccessible
 constructor families: `test_canonical_member_property_trait_families_ret0.cpp`,
 `test_canonical_inaccessible_converting_constructor_ret0.cpp`, and the native
 `Canonical record property facts publish trait families` /
-`Canonical constructibility rejects inaccessible converting constructors` tests. The inline dollar-recovery inventory and canonical-adapter
-source corpus remain within their supported/deferred baselines. The fixed adapter
-corpus remains 26 supported and zero deferred. Gate 0's Windows and ELF
+`Canonical constructibility rejects inaccessible converting constructors` tests.
+Member-property publication now keys per-member lifetime facts by owning TypeId
+and declaration ordinal. Record publication derives nothrow destruction, trivial
+destruction, and union implicit-destructor deletion from those facts, so the
+publisher no longer rewalks the legacy subobject graph for represented members.
+Trait evaluation consults the same facts before falling back, with
+access-sensitive lifetime answers and access-insensitive trivial-destructor
+answers. Coverage is in
+`test_canonical_member_property_member_lifetime_ret0.cpp`,
+`test_canonical_member_property_union_access_ret0.cpp`, the native
+`Canonical record member properties publish lifetime facts` /
+`Canonical union member properties delete inaccessible variant destructors`
+tests, and the canonical architecture regression. The inline dollar-recovery
+inventory and canonical-adapter source corpus remain within their
+supported/deferred baselines. The fixed adapter corpus remains 26 supported and
+zero deferred. Gate 0's Windows and ELF
 multi-translation-unit checks remain required compatibility evidence. See the
 plan for complete boundary-specific validation.
 
