@@ -50,6 +50,15 @@ struct InnerConstPointerTemplateConversion {
 	}
 };
 
+struct BaseTemplateConversion {
+	template<class U>
+	operator U() const {
+		return U{};
+	}
+};
+
+struct DerivedTemplateConversion : BaseTemplateConversion {};
+
 int main() {
 	int a = static_cast<int>(TemplateConversion{});
 	int b = static_cast<int>(ExplicitTemplateConversion{});
@@ -80,6 +89,11 @@ int main() {
 	int* const* inner_const_implicit = InnerConstPointerTemplateConversion{};
 	if (inner_const_static != nullptr || inner_const_implicit != nullptr) {
 		return 4;
+	}
+	int inherited_static = static_cast<int>(DerivedTemplateConversion{});
+	int inherited_implicit = DerivedTemplateConversion{};
+	if (inherited_static != 0 || inherited_implicit != 0) {
+		return 5;
 	}
 	return 0;
 }
