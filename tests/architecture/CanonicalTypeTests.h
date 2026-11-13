@@ -3181,9 +3181,53 @@ inline void checkNestedFieldSchemas() {
 	require(!table.hasRecordFieldSchema(republished));
 }
 
+inline void checkRecordMemberProperties() {
+	CanonicalTypeTable table;
+	const EntityId entity{40501};
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	table.publishRecordLayout({entity, 8, 8, 8, 4, 2, 0, CanonicalRecordLayoutFlags::None});
+	const CanonicalRecordMember members[] = {
+		{integer, 0, 4, 0, 0, CanonicalAccess::Public, CanonicalRecordMemberFlags::None},
+		{integer, 4, 4, 0, 0, CanonicalAccess::Public, CanonicalRecordMemberFlags::None},
+	};
+	table.publishRecordFieldSchema(table.record(entity), members, {});
+	const CanonicalRecordMemberFacts facts[] = {
+		CanonicalRecordMemberFacts::TriviallyCopyable | CanonicalRecordMemberFacts::Trivial |
+			CanonicalRecordMemberFacts::Destructible | CanonicalRecordMemberFacts::TriviallyDestructible |
+			CanonicalRecordMemberFacts::NothrowDestructible | CanonicalRecordMemberFacts::HasTrivialDestructor,
+		CanonicalRecordMemberFacts::DestructorDeleted,
+	};
+	table.publishRecordMemberProperties(table.record(entity), facts);
+	require(table.hasRecordMemberProperties(table.record(entity)));
+	require(table.recordMemberPropertyCount(table.record(entity)) == 2);
+	require(table.recordMemberPropertiesAt(table.record(entity), 0) == facts[0]);
+	require(table.recordMemberPropertiesAt(table.record(entity), 1) == facts[1]);
+	table.publishRecordMemberProperties(table.record(entity), facts);
+	CanonicalRecordMemberFacts conflicting[] = {facts[0], facts[0]};
+	bool rejected = false;
+	try { table.publishRecordMemberProperties(table.record(entity), conflicting); } catch (const InternalError&) { rejected = true; }
+	require(rejected);
+	const EntityId temporary_entity{40502};
+	{
+		CanonicalTypeTransaction transaction(table);
+		const TypeId temporary = table.record(temporary_entity);
+		table.publishRecordLayout({temporary_entity, 8, 8, 8, 4, 2, 0, CanonicalRecordLayoutFlags::None});
+		table.publishRecordFieldSchema(temporary, members, {});
+		table.publishRecordMemberProperties(temporary, facts);
+		require(table.hasRecordMemberProperties(temporary));
+		require(table.recordMemberPropertiesAt(temporary, 1) == facts[1]);
+	}
+	require(!table.hasRecordMemberProperties(table.record(temporary_entity)));
+	const CanonicalRecordMemberFacts short_facts[] = {facts[0]};
+	rejected = false;
+	try { table.publishRecordMemberProperties(table.record(entity), short_facts); } catch (const InternalError&) { rejected = true; }
+	require(rejected);
+}
+
 inline int run() {
 	checkSpecializationFieldSchemas();
 	checkNestedFieldSchemas();
+	checkRecordMemberProperties();
 	checkMemberFunctionSignatureTransactions();
 	checkFunctionPointerValues();
 	checkUnionValues();

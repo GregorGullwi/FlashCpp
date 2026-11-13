@@ -1436,6 +1436,97 @@ CanonicalRecordProperties CanonicalTypeTable::recordProperties(TypeId type) cons
 	return record_properties_[found->second];
 }
 
+void CanonicalTypeTable::publishRecordMemberProperties(TypeId owner, std::span<const CanonicalRecordMemberFacts> facts) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const CanonicalTypeNode type = nodeUnlocked(owner);
+	if (!owner || !isCanonicalClassTypeKind(type.kind)) {
+		throw InternalError("canonical type: member property owner is not a class type");
+	}
+	if (facts.size() > UINT16_MAX) {
+		throw InternalError("canonical type: member property schema exceeds count limit");
+	}
+	size_t expected_count = 0;
+	if (type.kind == CanonicalTypeKind::Record) {
+		const auto layout_found = record_layout_ids_.find(static_cast<uint32_t>(type.array_extent));
+		if (layout_found == record_layout_ids_.end()) {
+			throw InternalError("canonical type: member property schema requires complete layout");
+		}
+		expected_count = record_layouts_[layout_found->second].member_count;
+	} else {
+		expected_count = recordSubobjectTypeSchemaHeaderUnlocked(owner).member_count;
+	}
+	if (facts.size() != expected_count) {
+		throw InternalError("canonical type: member property schema count mismatch");
+	}
+	const auto existing = record_member_property_schema_ids_.find(owner.value);
+	if (existing != record_member_property_schema_ids_.end()) {
+		const CanonicalRecordMemberPropertySchemaHeader header = record_member_property_schema_headers_[existing->second];
+		if (header.member_count != facts.size()) {
+			throw InternalError("canonical type: conflicting member property schema publication");
+		}
+		for (size_t index = 0; index < facts.size(); ++index) {
+			if (record_member_properties_[header.member_begin + index] != facts[index]) {
+				throw InternalError("canonical type: conflicting member property schema publication");
+			}
+		}
+		return;
+	}
+	const uint32_t member_begin = static_cast<uint32_t>(live_record_member_property_count_);
+	if (static_cast<uint64_t>(member_begin) + facts.size() > std::numeric_limits<uint32_t>::max()) {
+		throw InternalError("canonical type: member property arena exhausted");
+	}
+	for (const CanonicalRecordMemberFacts entry : facts) {
+		appendSchemaEntryUnlocked(record_member_properties_, live_record_member_property_count_, entry);
+	}
+	const CanonicalRecordMemberPropertySchemaHeader header{
+		.type = owner,
+		.member_begin = member_begin,
+		.member_count = static_cast<uint16_t>(facts.size()),
+	};
+	const size_t header_index = live_record_member_property_schema_count_;
+	appendSchemaEntryUnlocked(record_member_property_schema_headers_, live_record_member_property_schema_count_, header);
+	try {
+		record_member_property_schema_ids_.emplace(owner.value, header_index);
+	} catch (...) {
+		live_record_member_property_schema_count_ = header_index;
+		live_record_member_property_count_ = member_begin;
+		noteArenaBytes();
+		throw;
+	}
+	noteArenaBytes();
+}
+
+bool CanonicalTypeTable::hasRecordMemberProperties(TypeId owner) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	return owner && record_member_property_schema_ids_.contains(owner.value);
+}
+
+size_t CanonicalTypeTable::recordMemberPropertyCount(TypeId owner) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const auto found = record_member_property_schema_ids_.find(owner.value);
+	if (!owner || found == record_member_property_schema_ids_.end()) {
+		throw InternalError("canonical type: record has no published member properties");
+	}
+	return record_member_property_schema_headers_[found->second].member_count;
+}
+
+CanonicalRecordMemberFacts CanonicalTypeTable::recordMemberPropertiesAt(TypeId owner, size_t index) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const auto found = record_member_property_schema_ids_.find(owner.value);
+	if (!owner || found == record_member_property_schema_ids_.end()) {
+		throw InternalError("canonical type: record has no published member properties");
+	}
+	const CanonicalRecordMemberPropertySchemaHeader header = record_member_property_schema_headers_[found->second];
+	if (index >= header.member_count) {
+		throw InternalError("canonical type: record member property index out of range");
+	}
+	return record_member_properties_[header.member_begin + index];
+}
+
 CanonicalEnumLayout CanonicalTypeTable::enumLayout(EntityId entity) const {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
@@ -3956,7 +4047,9 @@ uint64_t CanonicalTypeTable::usedBytesUnlocked() const {
 		static_cast<uint64_t>(live_record_constructor_parameter_count_) * sizeof(TypeId) +
 		static_cast<uint64_t>(live_expression_exception_fact_count_) * sizeof(CanonicalExpressionExceptionFact) +
 		static_cast<uint64_t>(live_member_function_schema_count_) * sizeof(CanonicalMemberFunctionSchemaHeader) +
-		static_cast<uint64_t>(live_member_function_count_) * sizeof(CanonicalMemberFunction);
+		static_cast<uint64_t>(live_member_function_count_) * sizeof(CanonicalMemberFunction) +
+		static_cast<uint64_t>(live_record_member_property_schema_count_) * sizeof(CanonicalRecordMemberPropertySchemaHeader) +
+		static_cast<uint64_t>(live_record_member_property_count_) * sizeof(CanonicalRecordMemberFacts);
 }
 
 uint64_t CanonicalTypeTable::reservedBytesUnlocked() const {
@@ -3972,6 +4065,7 @@ uint64_t CanonicalTypeTable::reservedBytesUnlocked() const {
 		record_constructor_schema_headers_.reservedBytes() + record_constructors_.reservedBytes() + record_constructor_parameters_.reservedBytes() +
 		expression_exception_facts_.reservedBytes() +
 		member_function_schema_headers_.reservedBytes() + member_functions_.reservedBytes() +
+		record_member_property_schema_headers_.reservedBytes() + record_member_properties_.reservedBytes() +
 		static_cast<uint64_t>(enum_layout_update_history_.capacity()) *
 			sizeof(CanonicalEnumLayoutUpdate);
 }
@@ -4011,6 +4105,7 @@ size_t CanonicalTypeTable::beginTransaction() {
 		live_record_constructor_schema_count_, live_record_constructor_count_, live_record_constructor_parameter_count_,
 		live_expression_exception_fact_count_,
 		live_member_function_schema_count_, live_member_function_count_,
+		live_record_member_property_schema_count_, live_record_member_property_count_,
 	});
 	transaction_owner_ = std::this_thread::get_id();
 	return transaction_marks_.size();
@@ -4094,6 +4189,11 @@ void CanonicalTypeTable::finishTransaction(size_t depth, bool commit) {
 			--live_member_function_schema_count_;
 		}
 		live_member_function_count_ = mark.member_function_count;
+		while (live_record_member_property_schema_count_ > mark.record_member_property_schema_count) {
+			record_member_property_schema_ids_.erase(record_member_property_schema_headers_[live_record_member_property_schema_count_ - 1].type.value);
+			--live_record_member_property_schema_count_;
+		}
+		live_record_member_property_count_ = mark.record_member_property_count;
 		noteArenaBytes();
 	}
 	transaction_marks_.pop_back();
