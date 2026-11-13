@@ -11809,7 +11809,8 @@ std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::trySelec
 			continue;
 		}
 		for (const BaseClassSpecifier& base : current.info->base_classes) {
-			if (base.is_deferred || base.is_virtual || base.access != AccessSpecifier::Public) {
+			// Virtual bases inherit conversion operators too; deferred bases stay fail-closed.
+			if (base.is_deferred || base.access != AccessSpecifier::Public) {
 				continue;
 			}
 			const StructTypeInfo* const base_info = structInfoFromTypeIndex(base.type_index);
