@@ -924,6 +924,8 @@ public:
 	// graph using the published alias targets. Dependent or unsupported aliases
 	// keep their declaration identity; traversal is iterative and stack-bounded.
 	TypeId resolveAliasTemplateSpecializations(TypeId type);
+	// [temp.deduct.type]: expand alias-template type patterns before matching them.
+	TypeId expandAliasTemplateDeductionPattern(TypeId type);
 
 	// Template parameters, dependent member types, and non-folded noexcept
 	// expressions remain unresolved even when their surrounding shape imports.
@@ -1358,7 +1360,8 @@ private:
 	// declaration-ID cycles leave the alias boundary instead of looping.
 	// Dependent arguments, kind or arity mismatches, unresolved non-type targets,
 	// unpublished declarations, and cycles keep the alias boundary.
-	TypeId resolveNestedAliasGraphUnlocked(TypeId type);
+	enum class AliasExpansion : uint8_t { Concrete, DeductionPattern };
+	TypeId resolveNestedAliasGraphUnlocked(TypeId type, AliasExpansion expansion);
 
 	TypeId packIdentifierBytesUnlocked(std::string_view identifier);
 

@@ -217,35 +217,19 @@ gone now that canonical operator lookup handles specialized aliases, but the
 proper owner remains semantics (boundary 4): sema should publish the resolved
 expression type and the parser should only consume it.
 
-## Conversion function templates are only partially selected
+## Remaining conversion function template cases
 
-Canonical user-defined conversion lookup now instantiates the common case of a
-single-type-parameter conversion function template whose bare return type is that
-parameter, for example `template<class U> operator U()`, `operator U*()`, or
-`operator U&()`, including cv-qualified pointee types, non-top-level pointer cv,
-and public bases. Template bases resolved during instantiation are supported;
-still-unresolved deferred patterns fail closed. Explicit and implicit object
-initializations and casts are supported, and ordinary function calls now
-consider conversion templates for by-value arguments and for lvalue-reference
-returns bound to lvalue reference parameters. Value-returning templates still
-cannot bind reference parameters through temporary materialization. Bare
-lvalue-reference returns now preserve the referenced object's address for
-explicit reference casts and reference initialization, and the same binding fix
-applies to non-template conversion operators. Array returns, rvalue-reference returns, multiple template
-parameters, and constrained templates still fail closed with "sema must annotate
-a class-to-non-class static_cast conversion". Extend deduction before removing
-that fail-closed path.
+Conversion template lookup uses concrete bases published during instantiation,
+including base entries whose aliases already resolve to a record. A base that
+still depends on template arguments must be resolved by class instantiation
+before it contributes conversion candidates. Deferred base patterns without a
+concrete record after instantiation still need work in base materialization.
 
-Non-template conversion operators returning an lvalue reference now bind
-lvalue reference parameters, for both temporary and named class arguments, and
-lose to the less cv-qualified reference during overload ranking. A result that
-needs a value conversion before binding, such as short& to int&, stays rejected.
-Reference variable initialization, explicit reference casts, and reference
-return statements are also handled. Conversion function templates now
-participate in call-argument viability for by-value parameters and for
-lvalue-reference returns bound to lvalue reference parameters; value-returning
-templates still need temporary materialization for const or rvalue reference
-parameters.
+Conversion function templates are currently considered when ordinary overload
+ranking finds no conversion. Ranking template and non-template conversion
+functions in one candidate set remains open. Conditional `explicit` specifiers
+that depend on template arguments and return patterns containing unsupported
+dependent array bounds or packs also need further coverage.
 
 ## Remaining flat trait consumers
 

@@ -279,10 +279,11 @@ mismatched, unpublished, or unresolved owner facts.
    Non-template conversion operators returning an lvalue reference are viable
    for lvalue reference parameters, with the less cv-qualified reference
    winning overload ranking and const-removing results staying rejected.
-   Conversion function templates now participate in call-argument viability for
-   by-value parameters and for lvalue-reference returns bound to lvalue
-   reference parameters; reference deduction preserves the target's cv so
-   `operator U&` instantiates distinct `U` types for `int&` and `const int&`.
+   Conversion function templates participate in overload ranking for calls and
+   constructor arguments. Deduction uses the canonical conversion type and
+   checks associated constraints before instantiating the selected body.
+   Reference-returning templates preserve the converted object's address, and
+   a value result can materialize a temporary for `const T&` or `T&&`.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are

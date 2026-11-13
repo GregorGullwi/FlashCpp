@@ -103,7 +103,8 @@ struct ArgumentConversionInfo {
 	const TypeSpecifierNode* parameter_type = nullptr;
 	bool is_valid = false;
 	ConversionRank trailing_standard_rank = ConversionRank::NoMatch;
-	bool user_defined_template_conversion = false;
+	TypeId conversion_return_type{};
+	const TemplateFunctionDeclarationNode* conversion_template = nullptr;
 
 	TypeConversionResult toResult() const { return {rank, is_valid}; }
 
@@ -431,6 +432,17 @@ inline int compareArgumentConversionInfo(
 	if (lhs.rank > rhs.rank) {
 		return 1;
 	}
+	if (lhs.rank == ConversionRank::UserDefined && (lhs.conversion_template != nullptr || rhs.conversion_template != nullptr)) {
+		// [over.ics.rank]: compare the standard tails only for the same specialization.
+		if (lhs.conversion_template != rhs.conversion_template || lhs.conversion_return_type != rhs.conversion_return_type) {
+			return 0;
+		}
+		if (lhs.parameter_type->is_reference() && rhs.parameter_type->is_reference() &&
+			lhs.parameter_type->is_rvalue_reference() != rhs.parameter_type->is_rvalue_reference()) {
+			const bool prefer_rvalue_ref = lhs.parameter_type->category() != TypeCategory::Function;
+			return lhs.parameter_type->is_rvalue_reference() == prefer_rvalue_ref ? -1 : 1;
+		}
+	}
 	if (lhs.rank == ConversionRank::UserDefined &&
 		lhs.trailing_standard_rank != ConversionRank::NoMatch &&
 		rhs.trailing_standard_rank != ConversionRank::NoMatch) {
@@ -441,8 +453,7 @@ inline int compareArgumentConversionInfo(
 			return 1;
 		}
 	}
-	if (lhs.rank == ConversionRank::UserDefined && lhs.parameter_type != nullptr && rhs.parameter_type != nullptr &&
-		!lhs.user_defined_template_conversion && !rhs.user_defined_template_conversion) {
+	if (lhs.rank == ConversionRank::UserDefined && lhs.parameter_type != nullptr && rhs.parameter_type != nullptr) {
 		const int reference_cv_comparison = compareReferenceBindingCvDestinations(*lhs.parameter_type, *rhs.parameter_type);
 		if (reference_cv_comparison != 0) {
 			return reference_cv_comparison;
@@ -1019,6 +1030,7 @@ inline std::optional<ConversionPlan> tryBuildCanonicalConversionFunctionTailPlan
 
 struct UserDefinedConversionOperatorSelection {
 	const FunctionDeclarationNode* function = nullptr;
+	const TemplateFunctionDeclarationNode* conversion_template = nullptr;
 	TypeIndex compatibility_declaring_type_index{};
 	TypeId declaring_type{};
 	StandardConversionKind trailing_standard_kind = StandardConversionKind::None;
@@ -3279,11 +3291,6 @@ inline bool conversionOperatorResultBindsLvalueReference(const UserDefinedConver
 	return !target.is_rvalue_reference() && return_type.is_lvalue_reference() && trailing_preserves_reference && (return_cv & ~target_cv) == 0;
 }
 
-inline bool conversionOperatorSelectionBindsParameter(
-	const UserDefinedConversionOperatorSelection& selected, const TypeSpecifierNode& parameter_type) {
-	return !parameter_type.is_reference() || conversionOperatorResultBindsLvalueReference(selected, parameter_type);
-}
-
 // Use canonical TypeIds for reference binding. Value category remains expression
 // metadata; same-shape binding preserves qualification ranking, while supported
 // standard conversions may materialize a temporary for an eligible reference.
@@ -3723,6 +3730,9 @@ inline std::optional<ConversionPlan> tryBuildCanonicalConversionValueTailPlan(Ca
 	}
 	if (source_kind == CanonicalTypeKind::AliasTemplateSpecialization || target_kind == CanonicalTypeKind::AliasTemplateSpecialization) {
 		return std::nullopt;
+	}
+	if (source_kind == CanonicalTypeKind::Array && target_kind == CanonicalTypeKind::Pointer) {
+		return buildCanonicalStructuralConversionPlan(table, source, target);
 	}
 	const bool is_function_pointer_pair = canonicalFunctionPointerTarget(table, source) && canonicalFunctionPointerTarget(table, target);
 	const bool is_same_owner_member_pair = source_kind == CanonicalTypeKind::MemberFunctionPointer &&
@@ -4973,11 +4983,13 @@ inline int compareConstructorTemplatePreference(
 	return lhs_is_template ? 1 : -1;
 }
 
+template <typename ArgumentConversion>
 inline bool tryBuildConstructorConversionInfos(
 	const ConstructorDeclarationNode& ctor_decl,
 	std::span<const TypeSpecifierNode> argument_types,
 	std::span<const ASTNode* const> argument_nodes,
-	ArgumentConversionInfoVector& conversion_infos) {
+	ArgumentConversionInfoVector& conversion_infos,
+	const ArgumentConversion& build_conversion) {
 	if (!argument_nodes.empty() && argument_nodes.size() != argument_types.size()) {
 		throw InternalError("Constructor argument expression/type count mismatch");
 	}
@@ -4995,11 +5007,7 @@ inline bool tryBuildConstructorConversionInfos(
 		}
 
 		const auto& param_type = parameters[i].as<DeclarationNode>().type_specifier_node();
-		const ArgumentConversionInfo conversion =
-			buildArgumentConversionInfo(
-				argument_types[i],
-				param_type,
-				argument_nodes.empty() ? nullptr : argument_nodes[i]);
+		const ArgumentConversionInfo conversion = build_conversion(argument_types[i], param_type, argument_nodes.empty() ? nullptr : argument_nodes[i]);
 		if (!conversion.is_valid) {
 			return false;
 		}
@@ -5008,13 +5016,14 @@ inline bool tryBuildConstructorConversionInfos(
 	return true;
 }
 
-template <typename CompareSourceTemplates>
+template <typename CompareSourceTemplates, typename ArgumentConversion>
 inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 	std::span<const ConstructorDeclarationNode* const> candidates,
 	std::span<const TypeSpecifierNode> argument_types,
 	std::span<const ASTNode* const> argument_nodes,
 	std::span<const ConstructorDeclarationNode* const> source_templates,
 	CompareSourceTemplates&& compare_source_templates,
+	const ArgumentConversion& build_conversion,
 	bool& is_ambiguous) {
 	if (!source_templates.empty() && source_templates.size() != candidates.size()) {
 		throw InternalError("Constructor candidate/source-template metadata size mismatch");
@@ -5046,11 +5055,7 @@ inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 		}
 
 		ArgumentConversionInfoVector conversion_infos;
-		if (!tryBuildConstructorConversionInfos(
-				*candidate,
-				argument_types,
-				argument_nodes,
-				conversion_infos)) {
+		if (!tryBuildConstructorConversionInfos(*candidate, argument_types, argument_nodes, conversion_infos, build_conversion)) {
 			continue;
 		}
 
@@ -5100,7 +5105,7 @@ inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 						*previous,
 						argument_types,
 						argument_nodes,
-						previous_infos)) {
+						previous_infos, build_conversion)) {
 					continue;
 				}
 
@@ -5157,6 +5162,7 @@ inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 		std::span<const ASTNode* const>{},
 		source_templates,
 		std::forward<CompareSourceTemplates>(compare_source_templates),
+		buildArgumentConversionInfo,
 		is_ambiguous);
 }
 
@@ -5171,6 +5177,7 @@ inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 		argument_nodes,
 		std::span<const ConstructorDeclarationNode* const>{},
 		[](const ConstructorDeclarationNode&, const ConstructorDeclarationNode&) { return 0; },
+		buildArgumentConversionInfo,
 		is_ambiguous);
 }
 
@@ -5184,14 +5191,19 @@ inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 		std::span<const ASTNode* const>{},
 		std::span<const ConstructorDeclarationNode* const>{},
 		[](const ConstructorDeclarationNode&, const ConstructorDeclarationNode&) { return 0; },
+		buildArgumentConversionInfo,
 		is_ambiguous);
 }
 
-inline ConstructorOverloadResolutionResult resolve_constructor_overload(
+enum class ConstructorCandidates : uint8_t { IncludeImplicitCopyMove, ExcludeImplicitCopyMove };
+
+template <typename ArgumentConversion>
+inline ConstructorOverloadResolutionResult resolve_constructor_overload_using_conversion(
 	const StructTypeInfo& struct_info,
 	std::span<const TypeSpecifierNode> argument_types,
-	bool skip_implicit,
-	std::span<const ASTNode* const> argument_nodes) {
+	ConstructorCandidates candidates,
+	std::span<const ASTNode* const> argument_nodes,
+	const ArgumentConversion& build_conversion) {
 	if (!argument_nodes.empty() && argument_nodes.size() != argument_types.size()) {
 		throw InternalError("Constructor argument expression/type count mismatch");
 	}
@@ -5206,7 +5218,7 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 		const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
 		const bool is_implicit_copy_or_move =
 			isImplicitCopyOrMoveConstructorCandidate(struct_info, ctor_decl);
-		if (skip_implicit && is_implicit_copy_or_move) {
+		if (candidates == ConstructorCandidates::ExcludeImplicitCopyMove && is_implicit_copy_or_move) {
 			continue;
 		}
 
@@ -5234,6 +5246,9 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 			viable_candidates,
 			argument_types,
 			argument_nodes,
+			std::span<const ConstructorDeclarationNode* const>{},
+			[](const ConstructorDeclarationNode&, const ConstructorDeclarationNode&) { return 0; },
+			build_conversion,
 			is_ambiguous);
 	if (!best_match) {
 		if (is_ambiguous) {
@@ -5242,6 +5257,13 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 		return ConstructorOverloadResolutionResult::no_match();
 	}
 	return ConstructorOverloadResolutionResult(best_match);
+}
+
+inline ConstructorOverloadResolutionResult resolve_constructor_overload(
+	const StructTypeInfo& struct_info, std::span<const TypeSpecifierNode> argument_types, bool skip_implicit,
+	std::span<const ASTNode* const> argument_nodes) {
+	const auto candidates = skip_implicit ? ConstructorCandidates::ExcludeImplicitCopyMove : ConstructorCandidates::IncludeImplicitCopyMove;
+	return resolve_constructor_overload_using_conversion(struct_info, argument_types, candidates, argument_nodes, buildArgumentConversionInfo);
 }
 
 inline ConstructorOverloadResolutionResult resolve_constructor_overload(
@@ -5255,24 +5277,28 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 		std::span<const ASTNode* const>{});
 }
 
-template <typename ArgumentRange>
-inline ConstructorOverloadResolutionResult resolve_constructor_overload(
+template <typename ArgumentRange, typename ArgumentConversion>
+inline ConstructorOverloadResolutionResult resolve_constructor_overload_using_conversion(
 	const StructTypeInfo& struct_info,
 	std::span<const TypeSpecifierNode> argument_types,
-	bool skip_implicit,
-	const ArgumentRange& argument_nodes) {
+	ConstructorCandidates candidates,
+	const ArgumentRange& argument_nodes,
+	const ArgumentConversion& build_conversion) {
 	std::vector<const ASTNode*> argument_node_pointers;
 	argument_node_pointers.reserve(argument_nodes.size());
 	for (const auto& argument_node : argument_nodes) {
 		argument_node_pointers.push_back(&argument_node);
 	}
-	return resolve_constructor_overload(
-		struct_info,
-		argument_types,
-		skip_implicit,
-		std::span<const ASTNode* const>(
-			argument_node_pointers.data(),
-			argument_node_pointers.size()));
+	return resolve_constructor_overload_using_conversion(struct_info, argument_types, candidates,
+		std::span<const ASTNode* const>(argument_node_pointers), build_conversion);
+}
+
+template <typename ArgumentRange>
+inline ConstructorOverloadResolutionResult resolve_constructor_overload(
+	const StructTypeInfo& struct_info, std::span<const TypeSpecifierNode> argument_types,
+	bool skip_implicit, const ArgumentRange& argument_nodes) {
+	const auto candidates = skip_implicit ? ConstructorCandidates::ExcludeImplicitCopyMove : ConstructorCandidates::IncludeImplicitCopyMove;
+	return resolve_constructor_overload_using_conversion(struct_info, argument_types, candidates, argument_nodes, buildArgumentConversionInfo);
 }
 
 // Arity-only constructor overload resolution — used as fallback when argument type
@@ -5570,12 +5596,13 @@ inline bool memberObjectTypeIsVolatile(const TypeSpecifierNode& type) {
 // conversion alongside the explicit arguments. C++20 [over.match.funcs] makes
 // that conversion part of best-viable-function selection; filtering solely by
 // explicit parameters loses const/volatile receiver preferences.
-template <typename ArgumentNodeContainer>
-inline OverloadResolutionResult resolve_member_overload_with_argument_nodes(
+template <typename ArgumentNodeContainer, typename ArgumentConversion>
+inline OverloadResolutionResult resolve_member_overload_with_argument_nodes_using_conversion(
 	std::span<const ASTNode> overloads,
 	const TypeSpecifierNode& object_type,
 	std::span<const TypeSpecifierNode> argument_types,
-	const ArgumentNodeContainer& argument_nodes) {
+	const ArgumentNodeContainer& argument_nodes,
+	const ArgumentConversion& build_conversion) {
 	struct ViableMemberCandidate {
 		const ASTNode* overload = nullptr;
 		ArgumentConversionInfoVector conversion_infos;
@@ -5643,10 +5670,7 @@ inline OverloadResolutionResult resolve_member_overload_with_argument_nodes(
 				parameters[i].as<DeclarationNode>().type_specifier_node();
 			const ASTNode* argument_node =
 				getOverloadArgumentNodeOrNull(argument_nodes, i);
-			const ArgumentConversionInfo conversion = buildArgumentConversionInfo(
-				argument_types[i],
-				parameter_type,
-				argument_node);
+			const ArgumentConversionInfo conversion = build_conversion(argument_types[i], parameter_type, argument_node);
 			if (!conversion.is_valid) {
 				all_convertible = false;
 				break;
@@ -5711,6 +5735,13 @@ inline OverloadResolutionResult resolve_member_overload_with_argument_nodes(
 	return best_candidate != nullptr
 		? OverloadResolutionResult(best_candidate->overload)
 		: OverloadResolutionResult::no_match();
+}
+
+template <typename ArgumentNodeContainer>
+inline OverloadResolutionResult resolve_member_overload_with_argument_nodes(std::span<const ASTNode> overloads, const TypeSpecifierNode& object_type,
+	std::span<const TypeSpecifierNode> argument_types, const ArgumentNodeContainer& argument_nodes) {
+	return resolve_member_overload_with_argument_nodes_using_conversion(
+		overloads, object_type, argument_types, argument_nodes, buildArgumentConversionInfo);
 }
 
 // Result of operator overload resolution

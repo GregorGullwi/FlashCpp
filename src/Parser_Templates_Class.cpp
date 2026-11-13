@@ -2099,6 +2099,9 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				instantiated_name,
 				is_class,
 				is_union);
+			if (primary_class_declaration != nullptr && primary_class_declaration->has_template_decl_id()) {
+				struct_ref.set_canonical_specialization_owner_template_decl_id(primary_class_declaration->template_decl_id());
+			}
 
 			// Create struct type info first so we can reference it
 			TypeInfo& struct_type_info = add_struct_type(instantiated_name, gSymbolTable.get_current_namespace_handle());
@@ -3310,8 +3313,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			// Give the full specialization the same canonical identity as an implicit
 			// instantiation of the primary: templateSpecialization(primary, args). This is
 			// recorded through a dedicated owner field, not the injected-class pattern, so
-			// member lookup keeps seeing the specialization's own members. Bind after
-			// member parsing; the concrete arguments are only read for the canonical type.
+			// member lookup keeps seeing the specialization's own members.
 			if (primary_class_declaration != nullptr && primary_class_declaration->has_template_decl_id()) {
 				struct_ref.set_canonical_specialization_owner_template_decl_id(primary_class_declaration->template_decl_id());
 				struct_ref.set_outer_template_bindings(primary_class_declaration->outer_template_param_names(), template_args);

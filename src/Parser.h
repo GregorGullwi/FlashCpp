@@ -27,6 +27,7 @@
 #include "Token.h"
 #include "SymbolTable.h"
 #include "CompileContext.h"
+#include "SemanticTypes.h"
 #include "TemplateRegistry.h"  // Includes ConceptRegistry as well
 #include "ParserTypes.h"		 // Unified parsing types (Phase 1)
 #include "ParserScopeGuards.h" // RAII scope guards (Phase 3)
@@ -2398,6 +2399,8 @@ private:
 		const TypeSpecifierNode& target_return_type,
 		TypeId target_return_type_id,
 		bool& return_type_deduced);
+	static std::optional<TemplateTypeArg> tryMaterializeCanonicalTemplateTypeBinding(CanonicalTypeTable& canonical_types,
+		const TypeSpecifierNode& target_type, TypeId target_type_id, TypeId target_binding);
 	const FunctionDeclarationNode* resolveFreeFunctionAddressForTarget(ASTNode& argument, const TypeSpecifierNode& target_type);
 	struct TemplateDeductionCandidate {
 		TemplateArgumentVector template_args;
@@ -2506,7 +2509,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		const TypeSpecifierNode* parser_return_type_hint);
 	std::optional<ASTNode> resolveDefinitionBoundOrdinaryCall(
 		const FunctionCallDefinitionLookupRecord& record,
-		std::span<const TypeSpecifierNode> arg_types);
+		std::span<const TypeSpecifierNode> arg_types, const ChunkedVector<ASTNode>& arguments);
 	std::optional<ASTNode> resolveDefinitionBoundQualifiedTemplateCall(
 		const FunctionCallDefinitionLookupRecord& record,
 		std::string_view qualified_name,
@@ -3301,7 +3304,8 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 	std::optional<ASTNode> try_instantiate_member_function_template_explicit(std::string_view struct_name, std::string_view member_name,
 		std::span<const TemplateTypeArg> template_type_args, std::optional<ValueCategory> receiver_value_category);
 	std::optional<ASTNode> try_instantiate_member_function_template_explicit_candidate(std::string_view struct_name, std::string_view member_name,
-		std::span<const TemplateTypeArg> template_type_args, bool materialize_body, const TemplateFunctionDeclarationNode* selected_template,
+		std::span<const TemplateTypeArg> template_type_args, FunctionTemplateInstantiation instantiation,
+		const TemplateFunctionDeclarationNode* selected_template,
 		std::optional<ValueCategory> receiver_value_category);
 		// Core logic shared by both try_instantiate_member_function_template and _explicit.
 		// Given a resolved template node and template arguments, performs type substitution,
@@ -4517,6 +4521,7 @@ private:	 // Resume private methods
 	ConcreteCallOperatorResolution tryResolveConcreteCallOperator(
 		const std::optional<ASTNode>& object_expr,
 		std::span<const TypeSpecifierNode> arg_types,
+		const ChunkedVector<ASTNode>& argument_nodes,
 		size_t argument_count,
 		bool all_arg_types_known);
 	// SoftProbe/ShapeOnly must not hard-fail on concrete operator() miss/ambiguity;
@@ -4939,6 +4944,7 @@ private:	 // Resume private methods
 		const std::optional<TemplateArgumentVector>& template_args,
 		bool has_deferred_qualified_call_args,
 		const std::vector<TypeSpecifierNode>& arg_types,
+		const ChunkedVector<ASTNode>& arguments,
 		std::optional<ASTNode>& identifierType);
 
 	bool hasActiveTemplateParameters() const {
