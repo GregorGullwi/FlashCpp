@@ -267,23 +267,25 @@ mismatched, unpublished, or unresolved owner facts.
    conversion operators such as `operator T*()`, preserving the selected
    function and base-pointer adjustment through lowering. Ref-qualified
    conversion operators now use the source expression's value category in
-   annotation, reference binding, and constructibility ranking. A single-type
-   conversion function template whose return type is a bare parameter, a
-   pointer chain to it, or a bare lvalue reference to it, including cv-qualified
-   pointee and non-top-level pointer cv, is instantiated and annotated for
-   explicit and implicit conversions, including operators inherited through
-   public and public virtual bases and through template bases resolved during
-   instantiation. Reference-returning conversions now keep the converted
-   object's address when binding reference variables, explicit reference casts,
-   and reference return statements, for non-template operators as well.
+   annotation, reference binding, and constructibility ranking. Conversion
+   function templates are instantiated and annotated for explicit and implicit
+   conversions, including operators inherited through public and public virtual
+   bases and through template bases resolved during instantiation.
+   Reference-returning conversions now keep the converted object's address when
+   binding reference variables, explicit reference casts, and reference return
+   statements, for non-template operators as well.
    Non-template conversion operators returning an lvalue reference are viable
    for lvalue reference parameters, with the less cv-qualified reference
    winning overload ranking and const-removing results staying rejected.
-   Conversion function templates participate in overload ranking for calls and
-   constructor arguments. Deduction uses the canonical conversion type and
-   checks associated constraints before instantiating the selected body.
-   Reference-returning templates preserve the converted object's address, and
-   a value result can materialize a temporary for `const T&` or `T&&`.
+   Conversion function templates participate in overload ranking for calls,
+   constructor arguments, and explicit conversions. Deduction runs over the
+   canonical conversion type and expands alias patterns, supporting multiple
+   parameters, defaulted type and non-type parameters, and pointer, reference,
+   rvalue-reference, and array results; array results decay through the
+   `ArrayToPointer` tail. Associated constraints are checked before
+   instantiating the selected body. Reference-returning templates preserve the
+   converted object's address, and a value result can materialize a temporary
+   for `const T&` or `T&&`.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are

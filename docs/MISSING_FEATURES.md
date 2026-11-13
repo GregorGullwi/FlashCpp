@@ -303,11 +303,12 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
      works when the same class returns `int*`.
 
 10. **Conversion Operators Returning Array References**
-    - Support `operator T(&)[N]()` (conversion operator returning a reference to array)
-      in contexts that require array-to-pointer conversion (e.g. built-in subscript).
-    - Currently only pointer-returning conversion operators are handled.
-    - Verified 2026-11-09 still present: `operator int(&)[3]()` is rejected at parse time
-      with `Expected type specifier`; `operator int*()` in a subscript works.
+    - Array-reference-returning conversion function templates now participate in
+      call-argument conversions, binding array-reference parameters and decaying
+      through the `ArrayToPointer` tail for pointer parameters.
+    - Direct built-in subscript on an array-reference-returning conversion
+      operator (e.g. `obj[1]`) and non-template array-returning operators are not
+      yet covered by regression tests and should be re-verified.
 
 ---
 
