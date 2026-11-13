@@ -38,10 +38,12 @@ std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgument(cons
 	if (!table.hasRecordConstructors(target_class)) {
 		return std::nullopt;
 	}
-	const bool source_is_lvalue = table.node(source_import.type).kind == CanonicalTypeKind::LValueReference;
+	const ValueCategory source_value_category = table.node(source_import.type).kind == CanonicalTypeKind::LValueReference
+		? ValueCategory::LValue
+		: ValueCategory::PRValue;
 	const bool is_null_pointer_constant = argument_node != nullptr && isIntegerLiteralZeroNullPointerConstant(*argument_node) &&
 		(source_type.category() == TypeCategory::Nullptr || isIntegralType(source_type.category()));
-	const CanonicalConstructorArgument argument{source_import.type, source_is_lvalue, is_null_pointer_constant, CanonicalDefaultException::Unknown};
+	const CanonicalConstructorArgument argument{source_import.type, source_value_category, is_null_pointer_constant, CanonicalDefaultException::Unknown};
 	const CanonicalConstructorSelection selection = selectCanonicalConstructor(table, target_class,
 		std::span<const CanonicalConstructorArgument>(&argument, 1), CanonicalConstructorSelectionPolicy::AllowUserDefinedArgumentConversion |
 			CanonicalConstructorSelectionPolicy::ExistenceOnly);
@@ -144,7 +146,7 @@ std::optional<bool> tryCanonicalConstructorCallDefaultNoexcept(CanonicalTypeTabl
 		const CanonicalDefaultException exception = isCanonicalNothrowLiteralExpression(argument)
 			? CanonicalDefaultException::Nothrow
 			: CanonicalDefaultException::Unknown;
-		selection_arguments.push_back({argument_type.value_or(TypeId{}), false, false, exception});
+		selection_arguments.push_back({argument_type.value_or(TypeId{}), ValueCategory::PRValue, false, exception});
 	}
 	const CanonicalConstructorSelection selection = selectCanonicalConstructor(
 		table, *imported, selection_arguments,
@@ -3247,8 +3249,10 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 		if (!imported_argument.has_value()) {
 			return std::nullopt;
 		}
-		const bool is_lvalue = table.node(*imported_argument).kind == CanonicalTypeKind::LValueReference;
-		selection_arguments.push_back(CanonicalConstructorArgument{*imported_argument, is_lvalue, false, CanonicalDefaultException::Unknown});
+		const ValueCategory value_category = table.node(*imported_argument).kind == CanonicalTypeKind::LValueReference
+			? ValueCategory::LValue
+			: ValueCategory::PRValue;
+		selection_arguments.push_back(CanonicalConstructorArgument{*imported_argument, value_category, false, CanonicalDefaultException::Unknown});
 	}
 	const CanonicalConstructorSelection selection = selectCanonicalConstructor(
 		table,

@@ -1012,14 +1012,23 @@ struct UserDefinedConversionOperatorSelection {
 	bool ambiguous = false;
 };
 
-inline std::optional<UserDefinedConversionOperatorSelection>
-trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const TypeSpecifierNode& target_type, bool allow_explicit,
-	std::optional<ValueCategory> source_value_category);
+// Ref-qualified conversion operators are viable only for a matching source
+// value category: & requires an lvalue, && requires an xvalue or prvalue.
+inline bool canonicalConversionOperatorAllowsValueCategory(ReferenceQualifier ref_qualifier, ValueCategory value_category) {
+	switch (ref_qualifier) {
+	case ReferenceQualifier::LValueReference:
+		return value_category == ValueCategory::LValue;
+	case ReferenceQualifier::RValueReference:
+		return value_category != ValueCategory::LValue;
+	case ReferenceQualifier::None:
+		return true;
+	}
+	return true;
+}
 
 inline std::optional<UserDefinedConversionOperatorSelection>
-trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const TypeSpecifierNode& target_type, bool allow_explicit) {
-	return trySelectCanonicalUserDefinedConversionOperator(source_type_id, target_type, allow_explicit, std::nullopt);
-}
+trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const TypeSpecifierNode& target_type, bool allow_explicit,
+	ValueCategory source_value_category);
 
 // Shared implementation: walks base_classes recursively and tests for derivation.
 // When public_only is true, only Public inheritance paths are considered.
@@ -3000,7 +3009,7 @@ inline bool canonicalClassHasLocalOperatorName(CanonicalTypeTable& table, TypeId
 
 inline std::optional<UserDefinedConversionOperatorSelection>
 trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const TypeSpecifierNode& target_type, bool allow_explicit,
-	std::optional<ValueCategory> source_value_category) {
+	ValueCategory source_value_category) {
 	if (!source_type_id) {
 		return std::nullopt;
 	}
@@ -3115,14 +3124,8 @@ trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const Typ
 				if ((source_cv_bits & ~member_cv_bits) != 0) {
 					return;
 				}
-				if (source_value_category.has_value()) {
-					const bool source_is_lvalue = *source_value_category == ValueCategory::LValue;
-					if (member_function.ref_qualifier == ReferenceQualifier::LValueReference && !source_is_lvalue) {
-						return;
-					}
-					if (member_function.ref_qualifier == ReferenceQualifier::RValueReference && source_is_lvalue) {
-						return;
-					}
+				if (!canonicalConversionOperatorAllowsValueCategory(member_function.ref_qualifier, source_value_category)) {
+					return;
 				}
 				std::optional<ConversionPlan> trailing_plan;
 				bool use_compatibility = true;
@@ -3215,7 +3218,7 @@ trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const Typ
 
 inline std::optional<UserDefinedConversionOperatorSelection>
 trySelectUserDefinedConversionOperator(const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, bool allow_explicit,
-	std::optional<ValueCategory> source_value_category) {
+	ValueCategory source_value_category) {
 	FrontendContext& context = requireFrontendContext();
 	CanonicalTypeTable& table = context.canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
@@ -3242,7 +3245,8 @@ trySelectUserDefinedConversionOperator(const TypeSpecifierNode& source_type, con
 
 inline std::optional<UserDefinedConversionOperatorSelection>
 trySelectUserDefinedConversionOperator(const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, bool allow_explicit) {
-	return trySelectUserDefinedConversionOperator(source_type, target_type, allow_explicit, std::nullopt);
+	const ValueCategory source_value_category = source_type.is_lvalue_reference() ? ValueCategory::LValue : ValueCategory::PRValue;
+	return trySelectUserDefinedConversionOperator(source_type, target_type, allow_explicit, source_value_category);
 }
 
 // Use canonical TypeIds for reference binding. Value category remains expression
