@@ -58,6 +58,10 @@ struct ReferenceTemplateConversion {
 	}
 };
 
+int& get_reference_template() {
+	return ReferenceTemplateConversion{};
+}
+
 struct BaseTemplateConversion {
 	template<class U>
 	operator U() const {
@@ -146,6 +150,14 @@ int main() {
 	int reference_value_implicit = ReferenceTemplateConversion{};
 	if (reference_value_static != 11 || reference_value_implicit != 11) {
 		return 10;
+	}
+	int& returned_reference = get_reference_template();
+	if (returned_reference != 11) {
+		return 11;
+	}
+	returned_reference = 13;
+	if (get_reference_template() != 13) {
+		return 12;
 	}
 	return 0;
 }

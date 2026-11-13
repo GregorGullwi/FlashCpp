@@ -15,6 +15,10 @@ struct ConstRefConversion {
 	}
 };
 
+int& get_lvalue_reference() {
+	return LvalueRefConversion{};
+}
+
 int main() {
 	int& implicit_binding = LvalueRefConversion{};
 	int& explicit_binding = static_cast<int&>(LvalueRefConversion{});
@@ -33,6 +37,14 @@ int main() {
 	const int& const_explicit = static_cast<const int&>(ConstRefConversion{});
 	if (const_implicit != 84 || const_explicit != 84) {
 		return 4;
+	}
+	int& returned = get_lvalue_reference();
+	if (returned != 7) {
+		return 5;
+	}
+	returned = 13;
+	if (get_lvalue_reference() != 13) {
+		return 6;
 	}
 	return 0;
 }

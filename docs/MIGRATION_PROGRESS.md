@@ -274,8 +274,8 @@ mismatched, unpublished, or unresolved owner facts.
    explicit and implicit conversions, including operators inherited through
    public and public virtual bases and through template bases resolved during
    instantiation. Reference-returning conversions now keep the converted
-   object's address when binding reference variables and explicit reference
-   casts, for non-template operators as well.
+   object's address when binding reference variables, explicit reference casts,
+   and reference return statements, for non-template operators as well.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are

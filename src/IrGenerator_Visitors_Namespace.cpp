@@ -243,7 +243,38 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 		ExpressionContext return_context = currentFunctionReturnsReference()
 											   ? ExpressionContext::LValueAddress
 											   : ExpressionContext::Load;
-		ExprResult operands = visitExpressionNode(expr_opt->as<ExpressionNode>(), return_context);
+		// A reference-returning function can return a user-defined conversion that
+		// denotes a reference. Lower that conversion as an address-producing call
+		// instead of asking the generic temporary-construction path for a value.
+		ExprResult operands;
+		bool reference_conversion_applied = false;
+		if (currentFunctionReturnsReference() && expr_opt->is<ExpressionNode>()) {
+			const auto slot = sema_.getSlot(&expr_opt->as<ExpressionNode>());
+			if (slot.has_value() && slot->has_cast()) {
+				const ImplicitCastInfo& cast_info = sema_.castInfoTable()[slot->cast_info_index.value - 1];
+				if (cast_info.cast_kind == StandardConversionKind::UserDefined && cast_info.selected_conversion_function != nullptr) {
+					const TypeSpecifierNode& conversion_return_type = cast_info.selected_conversion_function->decl_node().type_specifier_node();
+					if (conversion_return_type.is_reference() || conversion_return_type.is_rvalue_reference()) {
+						const TypeIndex source_type_index = sema_.typeContext().get(cast_info.source_type_id).type_index;
+						const TypeInfo* const source_type_info = source_type_index.is_valid() ? tryGetTypeInfo(source_type_index) : nullptr;
+						if (source_type_info == nullptr) {
+							throw InternalError("Selected reference-return conversion has no source class declaration");
+						}
+						ExprResult source = visitExpressionNode(expr_opt->as<ExpressionNode>(), ExpressionContext::LValueAddress);
+						std::optional<ExprResult> converted = emitSemaSelectedConversionOperatorCall(
+							source, *source_type_info, cast_info, current_function_return_type_index_.category(), node.return_token(), ExpressionContext::LValueAddress);
+						if (!converted.has_value()) {
+							throw InternalError("Sema-selected conversion operator failed to lower a reference return");
+						}
+						operands = *converted;
+						reference_conversion_applied = true;
+					}
+				}
+			}
+		}
+		if (!reference_conversion_applied) {
+			operands = visitExpressionNode(expr_opt->as<ExpressionNode>(), return_context);
+		}
 
 		// Clear the RVO flag after evaluation
 		in_return_statement_with_rvo_ = false;

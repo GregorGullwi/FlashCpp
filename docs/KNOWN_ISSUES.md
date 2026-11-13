@@ -234,11 +234,9 @@ that fail-closed path.
 
 Reference-returning conversion operators are still not selected when binding a
 reference function parameter, for example `void f(int&); f(Conversion{})` reports
-`NoViableFunctionCall`. Returning such a conversion from a reference-returning
-function, for example `int& f() { return Conversion{}; }`, is also still lowered
-as a value and currently crashes. Reference variable initialization and explicit
-reference casts are handled; argument binding and reference return statements
-need the same selection and context support.
+`NoViableFunctionCall`. Reference variable initialization, explicit reference
+casts, and reference return statements are handled; argument binding needs the
+same selection support.
 
 ## Remaining flat trait consumers
 
