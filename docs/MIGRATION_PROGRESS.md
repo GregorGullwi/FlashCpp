@@ -267,7 +267,9 @@ mismatched, unpublished, or unresolved owner facts.
    conversion operators such as `operator T*()`, preserving the selected
    function and base-pointer adjustment through lowering. Ref-qualified
    conversion operators now use the source expression's value category in
-   annotation, reference binding, and constructibility ranking.
+   annotation, reference binding, and constructibility ranking. A single-type
+   conversion function template whose bare return type is its parameter is
+   instantiated and annotated for explicit and implicit conversions.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are

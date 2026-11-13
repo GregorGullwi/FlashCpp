@@ -633,6 +633,11 @@ private:
 											CanonicalTypeId expr_type_id,
 											CanonicalTypeId target_type_id,
 											const UserDefinedConversionOperatorSelection& selected_conversion);
+	// Fallback for conversion function templates whose target is a single deduced
+	// type parameter, e.g. template<class U> operator U().
+	std::optional<UserDefinedConversionOperatorSelection> trySelectConversionFunctionTemplate(
+		const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, bool allow_explicit,
+		ValueCategory source_value_category);
 	// Explicit conversions start selection from canonical source and target TypeIds.
 	bool tryAnnotateExplicitConversionByTypeId(const ASTNode& slot_expression, const ASTNode& source_expression, const TypeSpecifierNode& target_type);
 	// Semantic ODR-use publication for implicitly-declared/defaulted copy and
