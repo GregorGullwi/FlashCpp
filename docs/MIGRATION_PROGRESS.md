@@ -268,8 +268,9 @@ mismatched, unpublished, or unresolved owner facts.
    function and base-pointer adjustment through lowering. Ref-qualified
    conversion operators now use the source expression's value category in
    annotation, reference binding, and constructibility ranking. A single-type
-   conversion function template whose bare return type is its parameter is
-   instantiated and annotated for explicit and implicit conversions.
+   conversion function template whose return type is a bare parameter or an
+   unqualified pointer chain to it is instantiated and annotated for explicit
+   and implicit conversions.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are

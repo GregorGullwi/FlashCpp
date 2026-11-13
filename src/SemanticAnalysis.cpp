@@ -11719,18 +11719,34 @@ std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::trySelec
 		}
 		const TypeSpecifierNode& return_type = function.decl_node().type_specifier_node();
 		const TypeCategory return_category = return_type.category();
-		const bool bare_return = return_type.runtime_pointer_depth() == 0 && !return_type.is_reference() &&
-			return_type.cv_qualifier() == CVQualifier::None && !return_type.is_array() &&
-			!return_type.has_pointee_array_declarator();
-		const bool return_is_template_parameter = bare_return && return_type.token().value() == params[0].name() &&
+		const size_t return_pointer_depth = return_type.pointer_depth();
+		bool supported_shape = !return_type.is_reference() && !return_type.is_array() &&
+			!return_type.has_pointee_array_declarator() && return_type.cv_qualifier() == CVQualifier::None;
+		if (supported_shape && return_pointer_depth != 0) {
+			supported_shape = !target_type.is_reference() && !target_type.is_array() && target_type.cv_qualifier() == CVQualifier::None &&
+				target_type.pointer_depth() == return_pointer_depth;
+			for (const PointerLevel& level : return_type.pointer_levels()) {
+				supported_shape &= level.cv_qualifier == CVQualifier::None;
+			}
+			for (const PointerLevel& level : target_type.pointer_levels()) {
+				supported_shape &= level.cv_qualifier == CVQualifier::None;
+			}
+		}
+		const bool return_is_template_parameter = supported_shape && return_type.token().value() == params[0].name() &&
 			(return_category == TypeCategory::Template || return_category == TypeCategory::UserDefined ||
 			 return_category == TypeCategory::TypeAlias);
 		if (!return_is_template_parameter) {
 			continue;
 		}
 		TypeSpecifierNode deduced_target = target_type;
-		if (deduced_target.runtime_pointer_depth() == 0) {
-			deduced_target.set_cv_qualifier(CVQualifier::None);
+		if (return_pointer_depth == 0) {
+			if (deduced_target.pointer_depth() == 0) {
+				deduced_target.set_cv_qualifier(CVQualifier::None);
+			}
+		} else {
+			for (size_t pointer_index = 0; pointer_index < return_pointer_depth; ++pointer_index) {
+				deduced_target = deduced_target.without_innermost_legacy_pointer_wrapper();
+			}
 		}
 		TemplateTypeArg template_arg(deduced_target);
 		std::optional<ASTNode> instantiated = parser().try_instantiate_member_function_template_explicit(
@@ -12142,6 +12158,13 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 		// directly rather than re-running lookup.
 		const auto pointer_conversion = findStructPointerConversionOperator(from_desc, &to_desc, *this, 0);
 		if (!pointer_conversion) {
+			const TypeSpecifierNode pointer_source_type = materializeTypeSpecifier(from_desc);
+			const TypeSpecifierNode pointer_target_type = materializeTypeSpecifier(to_desc);
+			if (const auto template_selection = trySelectConversionFunctionTemplate(
+					pointer_source_type, pointer_target_type, false, inferExpressionValueCategory(expr_node));
+				template_selection.has_value()) {
+				return !template_selection->ambiguous && annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *template_selection);
+			}
 			FLASH_LOG(General, Debug,
 					  "SemanticAnalysis: skipping UserDefined pointer annotation — "
 					  "selection of struct-to-pointer conversion operator failed");
