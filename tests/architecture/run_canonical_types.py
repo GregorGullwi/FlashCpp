@@ -410,7 +410,7 @@ def main():
                 "memo.emplace(frame.id.value, args[index].type);",
                 "memo.emplace(frame.id.value, frame.id);"),
             "lost_explicit_alias_resolution": (
-                "return resolveNestedAliasGraphUnlocked(type);",
+                "return resolveNestedAliasGraphUnlocked(type, AliasExpansion::Concrete);",
                 "return type;"),
             "lost_alias_parameter_kind_check": (
                 "\t\t\t\t\tfor (size_t index = 0; index < arguments.size(); ++index) {\n"
