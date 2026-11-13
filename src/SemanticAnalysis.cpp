@@ -839,7 +839,8 @@ ValueCategory conditionalCallableOperandCategory(const SemanticAnalysis& sema, c
 
 std::optional<UserDefinedConversionOperatorSelection> trySelectCanonicalImplicitConversionOperator(
 	const CanonicalTypeDesc& source_desc,
-	const TypeSpecifierNode& target_type) {
+	const TypeSpecifierNode& target_type,
+	ValueCategory source_value_category) {
 	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
 	CanonicalTypeTransaction source_type_transaction(canonical_types);
 	const CanonicalTypeImport source_type_import = tryImportCanonicalTypeDesc(source_desc);
@@ -847,7 +848,7 @@ std::optional<UserDefinedConversionOperatorSelection> trySelectCanonicalImplicit
 		return std::nullopt;
 	}
 	const auto selected_conversion =
-		trySelectCanonicalUserDefinedConversionOperator(source_type_import.type, target_type, false);
+		trySelectCanonicalUserDefinedConversionOperator(source_type_import.type, target_type, false, source_value_category);
 	if (selected_conversion.has_value()) {
 		source_type_transaction.commit();
 	}
@@ -4004,7 +4005,7 @@ void SemanticAnalysis::validateAggregateInitializerAppertainment(
 		if (!source_type.has_value()) {
 			return;
 		}
-		const auto implicit_selection = trySelectUserDefinedConversionOperator(*source_type, target_type, false);
+		const auto implicit_selection = trySelectUserDefinedConversionOperator(*source_type, target_type, false, inferExpressionValueCategory(clause));
 		if (implicit_selection.has_value() && implicit_selection->function != nullptr &&
 			!implicit_selection->function->is_explicit()) {
 			return;
@@ -4012,7 +4013,7 @@ void SemanticAnalysis::validateAggregateInitializerAppertainment(
 		if (hasImplicitConvertingConstructorForArgument(target_type, *source_type, &clause)) {
 			return;
 		}
-		const auto explicit_selection = trySelectUserDefinedConversionOperator(*source_type, target_type, true);
+		const auto explicit_selection = trySelectUserDefinedConversionOperator(*source_type, target_type, true, inferExpressionValueCategory(clause));
 		if (!explicit_selection.has_value() || explicit_selection->function == nullptr ||
 			!explicit_selection->function->is_explicit()) {
 			return;
@@ -11813,7 +11814,8 @@ bool SemanticAnalysis::tryAnnotateExplicitConversionByTypeId(
 	const TypeSpecifierNode source_type = materializeTypeSpecifier(type_context_.get(source_type_id));
 	TypeSpecifierNode target_value_type = target_type;
 	target_value_type.set_reference_qualifier(ReferenceQualifier::None);
-	const auto selected_conversion = trySelectUserDefinedConversionOperator(source_type, target_value_type, true);
+	const auto selected_conversion = trySelectUserDefinedConversionOperator(
+		source_type, target_value_type, true, inferExpressionValueCategory(source_expression));
 	if (!selected_conversion.has_value() || selected_conversion->ambiguous || selected_conversion->function == nullptr) {
 		return false;
 	}
@@ -11855,10 +11857,11 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 	if (to_desc.category() == TypeCategory::FunctionPointer) {
 		(void)parser().resolveFreeFunctionAddressForTarget(const_cast<ASTNode&>(expr_node), materializeTypeSpecifier(to_desc));
 	}
-	auto select_conversion_operator = [this](CanonicalTypeId source_type_id, const TypeSpecifierNode& target_type)
+	const ValueCategory source_value_category = inferExpressionValueCategory(expr_node);
+	auto select_conversion_operator = [this, source_value_category](CanonicalTypeId source_type_id, const TypeSpecifierNode& target_type)
 		-> std::optional<UserDefinedConversionOperatorSelection> {
 		const TypeSpecifierNode source_type = materializeTypeSpecifier(type_context_.get(source_type_id));
-		return trySelectUserDefinedConversionOperator(source_type, target_type, false);
+		return trySelectUserDefinedConversionOperator(source_type, target_type, false, source_value_category);
 	};
 
 	// C++20 [conv.ptr]: nullptr_t converts to any object, function, or member
@@ -12037,7 +12040,7 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 		if (from_desc.pointer_levels.empty() && from_desc.array_dimensions.empty() && to_desc.category() == TypeCategory::Struct &&
 			to_desc.pointer_levels.size() == 1) {
 			const TypeSpecifierNode target_type = materializeTypeSpecifier(to_desc);
-			const auto selected_conversion = trySelectCanonicalImplicitConversionOperator(from_desc, target_type);
+			const auto selected_conversion = trySelectCanonicalImplicitConversionOperator(from_desc, target_type, inferExpressionValueCategory(expr_node));
 			if (selected_conversion.has_value()) {
 				return !selected_conversion->ambiguous &&
 					annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
@@ -12931,7 +12934,7 @@ void SemanticAnalysis::tryAnnotateVariableInitializationConversion(
 		source_desc.array_dimensions.empty() && target_desc.pointer_levels.empty() && target_desc.array_dimensions.empty()) {
 		const TypeSpecifierNode source_type = materializeTypeSpecifier(source_desc);
 		const TypeSpecifierNode target_type = materializeTypeSpecifier(target_desc);
-		const auto explicit_conversion = trySelectUserDefinedConversionOperator(source_type, target_type, true);
+		const auto explicit_conversion = trySelectUserDefinedConversionOperator(source_type, target_type, true, inferExpressionValueCategory(init_expr));
 		if (explicit_conversion.has_value() && !explicit_conversion->ambiguous &&
 			explicit_conversion->function != nullptr && explicit_conversion->function->is_explicit()) {
 			const Token source_token = FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(init_expr).value_or(Token{});
@@ -13765,7 +13768,7 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 		// result and binds the reference to it; record the selected operator so
 		// codegen lowers the conversion before materializing the temporary.
 		const auto selected_conversion = trySelectCanonicalImplicitConversionOperator(
-			type_context_.get(arg_value_type_id), param_value_type);
+			type_context_.get(arg_value_type_id), param_value_type, inferExpressionValueCategory(arg));
 		if (!selected_conversion.has_value() || selected_conversion->ambiguous ||
 			selected_conversion->function == nullptr) {
 			return std::nullopt;
@@ -13890,7 +13893,8 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 			// codegen can lower it. Reuse ranking's selector and type nodes so
 			// dependent return types and member-pointer signatures survive selection.
 			if (plan.is_valid && plan.rank == ConversionRank::UserDefined && arg_type_id && arg_value_type.type_index().is_valid()) {
-				const auto selected_conversion = trySelectUserDefinedConversionOperator(arg_value_type, param_value_type, false);
+				const auto selected_conversion = trySelectUserDefinedConversionOperator(
+					arg_value_type, param_value_type, false, inferExpressionValueCategory(arg));
 				if (selected_conversion.has_value() && !selected_conversion->ambiguous &&
 					annotateSelectedConversionOperator(arg, arg_type_id, param_type_id, *selected_conversion)) {
 					return;
