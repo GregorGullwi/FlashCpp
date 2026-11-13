@@ -258,11 +258,15 @@ struct MemberOverloadResolutionByArgTypesResult {
 	bool ambiguous = false;
 };
 
-inline MemberOverloadResolutionByArgTypesResult resolveConstAwareMemberOverloadByArgTypes(std::span<const ASTNode> preferred_overloads,
-	std::span<const ASTNode> compatible_overloads, const TypeSpecifierNode& receiver_type, std::span<const TypeSpecifierNode> arg_types) {
+inline MemberOverloadResolutionByArgTypesResult resolveConstAwareMemberOverloadByArgTypes(SemanticAnalysis& sema,
+	std::span<const ASTNode> preferred_overloads, std::span<const ASTNode> compatible_overloads, const TypeSpecifierNode& receiver_type,
+	std::span<const TypeSpecifierNode> arg_types, const ChunkedVector<ASTNode>& arguments) {
 	MemberOverloadResolutionByArgTypesResult result;
-	const OverloadResolutionResult preferred_result = resolve_member_overload_with_argument_nodes(preferred_overloads, receiver_type,
-		arg_types, std::span<const ASTNode>{});
+	const auto conversion = [&sema](const TypeSpecifierNode& arg, const TypeSpecifierNode& param, const ASTNode* node) {
+		return sema.buildCallArgumentConversion(arg, param, node);
+	};
+	const auto preferred_result = resolve_member_overload_with_argument_nodes_using_conversion(preferred_overloads, receiver_type,
+		arg_types, arguments, conversion);
 	if (preferred_result.has_match && preferred_result.selected_overload != nullptr) {
 		result.function = getCallTargetFunctionCandidate(*preferred_result.selected_overload);
 		return result;
@@ -272,8 +276,8 @@ inline MemberOverloadResolutionByArgTypesResult resolveConstAwareMemberOverloadB
 		return result;
 	}
 	if (!sameOverloadSet(preferred_overloads, compatible_overloads)) {
-		const OverloadResolutionResult compatible_result = resolve_member_overload_with_argument_nodes(compatible_overloads, receiver_type,
-			arg_types, std::span<const ASTNode>{});
+		const auto compatible_result = resolve_member_overload_with_argument_nodes_using_conversion(compatible_overloads, receiver_type,
+			arg_types, arguments, conversion);
 		if (compatible_result.has_match && compatible_result.selected_overload != nullptr) {
 			result.function = getCallTargetFunctionCandidate(*compatible_result.selected_overload);
 		}
@@ -8610,13 +8614,11 @@ CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
 		template_parameter_pack_index.has_value()) {
 		return std::nullopt;
 	}
-	const TemplateParameterVector& template_parameters =
-		function_template.template_parameters();
+	const TemplateParameterVector& template_parameters = function_template.template_parameters();
 	for (size_t parameter_index = 0;
 		 parameter_index < template_parameters.size();
 		 ++parameter_index) {
-		if (template_parameters[parameter_index].kind() !=
-			TemplateParameterKind::NonType) {
+		if (template_parameters[parameter_index].kind() != TemplateParameterKind::NonType || template_parameters[parameter_index].has_default()) {
 			continue;
 		}
 		const auto deduced_parameter = std::ranges::find_if(
@@ -8684,6 +8686,98 @@ CanonicalTemplatePartialOrdering SemanticAnalysis::compareFunctionTemplatePartia
 		first.template_decl_id(),
 		*second_pattern,
 		second.template_decl_id());
+}
+
+static bool functionTemplateHasAssociatedConstraints(const TemplateFunctionDeclarationNode& function_template) {
+	return function_template.has_requires_clause() ||
+		std::ranges::any_of(
+			function_template.template_parameters(),
+			[](const TemplateParameterNode& parameter) {
+				return parameter.has_concept_constraint();
+			});
+}
+
+bool SemanticAnalysis::functionTemplateConstraintsSatisfied(const TemplateFunctionDeclarationNode& function_template,
+	const TemplateArgumentVector& template_arguments) {
+	const TemplateParameterVector& template_parameters = function_template.template_parameters();
+	TemplateParamNameViewVector parameter_names;
+	parameter_names.reserve(template_parameters.size());
+	for (const TemplateParameterNode& parameter : template_parameters) {
+		parameter_names.push_back(parameter.name());
+	}
+	if (function_template.has_requires_clause()) {
+		const RequiresClauseNode& requires_clause = function_template.requires_clause()->as<RequiresClauseNode>();
+		const ConstraintEvaluationResult constraint_result = evaluateConstraint(requires_clause.constraint_expr(), template_arguments, parameter_names,
+			parser(), std::span<const TemplateParameterNode>(template_parameters));
+		if (!constraint_result.satisfied()) {
+			return false;
+		}
+	}
+	bool all_concept_constraints_satisfied = true;
+	const auto template_argument_for_name = [&](std::string_view name) -> std::optional<TemplateTypeArg> {
+		const TemplateTypeArg* argument = findTemplateArgumentByName(
+			std::span<const std::string_view>(parameter_names.data(), parameter_names.size()),
+			std::span<const TemplateTypeArg>(template_arguments.data(), template_arguments.size()), name);
+		if (argument == nullptr) {
+			return std::nullopt;
+		}
+		return *argument;
+	};
+	forEachNonPackTemplateParamArgBinding(template_parameters, template_arguments,
+		[&](const TemplateParameterNode& parameter, const TemplateTypeArg& argument, size_t) {
+			if (!parameter.has_concept_constraint() || !all_concept_constraints_satisfied) {
+				return;
+			}
+			const auto concept_node = gConceptRegistry.lookupConcept(parameter.concept_constraint());
+			if (!concept_node.has_value() || !concept_node->is<ConceptDeclarationNode>()) {
+				all_concept_constraints_satisfied = false;
+				return;
+			}
+			TemplateTypeArg concept_argument = argument;
+			concept_argument.ref_qualifier = ReferenceQualifier::None;
+			TemplateArgumentVector concept_arguments;
+			concept_arguments.reserve(parameter.concept_args().size() + 1);
+			concept_arguments.push_back(std::move(concept_argument));
+			for (const ASTNode& concept_arg_node : parameter.concept_args()) {
+				ASTNode unwrapped = concept_arg_node;
+				if (unwrapped.is<ExpressionNode>()) {
+					std::visit([&unwrapped](const auto& expression_node) {
+						unwrapped = ASTNode(&expression_node);
+					}, unwrapped.as<ExpressionNode>());
+				}
+				std::optional<TemplateTypeArg> mapped_argument;
+				if (unwrapped.is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& type = unwrapped.as<TypeSpecifierNode>();
+					if (type.has_template_parameter_identity()) {
+						mapped_argument = template_argument_for_name(type.template_parameter_name().view());
+					}
+					if (!mapped_argument.has_value() && type.has_template_parameter_decl() &&
+						type.template_decl_id() == function_template.template_decl_id() && type.template_parameter_index() < template_arguments.size()) {
+						mapped_argument = template_arguments[type.template_parameter_index()];
+					}
+					if (!mapped_argument.has_value() && !type.has_template_parameter_identity()) {
+						mapped_argument = TemplateTypeArg(type);
+					}
+				} else if (unwrapped.is<IdentifierNode>()) {
+					mapped_argument = template_argument_for_name(unwrapped.as<IdentifierNode>().name());
+				} else if (unwrapped.is<TemplateParameterReferenceNode>()) {
+					mapped_argument = template_argument_for_name(unwrapped.as<TemplateParameterReferenceNode>().param_name().view());
+				}
+				if (!mapped_argument.has_value()) {
+					all_concept_constraints_satisfied = false;
+					return;
+				}
+				concept_arguments.push_back(std::move(*mapped_argument));
+			}
+			const ConceptDeclarationNode& concept_declaration = concept_node->as<ConceptDeclarationNode>();
+			appendDefaultConceptTemplateArguments(concept_declaration.template_params(), concept_arguments);
+			if (concept_declaration.template_params().size() != concept_arguments.size()) {
+				all_concept_constraints_satisfied = false;
+				return;
+			}
+			all_concept_constraints_satisfied = evaluateConstraint(concept_declaration, concept_arguments, parser()).satisfied();
+		});
+	return all_concept_constraints_satisfied;
 }
 
 void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
@@ -8811,109 +8905,6 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 		TemplateDeclId template_decl;
 		bool has_associated_constraints;
 	};
-	const auto has_associated_constraints = [](
-		const TemplateFunctionDeclarationNode& function_template) {
-		return function_template.has_requires_clause() ||
-			std::ranges::any_of(
-				function_template.template_parameters(),
-				[](const TemplateParameterNode& parameter) {
-					return parameter.has_concept_constraint();
-				});
-	};
-	const auto associated_constraints_are_satisfied = [this](
-		const TemplateFunctionDeclarationNode& function_template,
-		const TemplateArgumentVector& template_arguments) {
-		const TemplateParameterVector& template_parameters =
-			function_template.template_parameters();
-		TemplateParamNameViewVector parameter_names;
-		parameter_names.reserve(template_parameters.size());
-		for (const TemplateParameterNode& parameter : template_parameters) {
-			parameter_names.push_back(parameter.name());
-		}
-		if (function_template.has_requires_clause()) {
-			const RequiresClauseNode& requires_clause =
-				function_template.requires_clause()->as<RequiresClauseNode>();
-			const ConstraintEvaluationResult constraint_result = evaluateConstraint(requires_clause.constraint_expr(), template_arguments, parameter_names,
-				parser(), std::span<const TemplateParameterNode>( template_parameters.data(), template_parameters.size()));
-			if (!constraint_result.satisfied()) {
-				return false;
-			}
-		}
-		bool all_concept_constraints_satisfied = true;
-		const auto template_argument_for_name = [&](std::string_view name) -> std::optional<TemplateTypeArg> {
-			const TemplateTypeArg* argument = findTemplateArgumentByName(
-				std::span<const std::string_view>(parameter_names.data(), parameter_names.size()),
-				std::span<const TemplateTypeArg>(template_arguments.data(), template_arguments.size()), name);
-			if (argument == nullptr) {
-				return std::nullopt;
-			}
-			return *argument;
-		};
-		forEachNonPackTemplateParamArgBinding(
-			template_parameters,
-			template_arguments,
-			[&](
-				const TemplateParameterNode& parameter,
-				const TemplateTypeArg& argument,
-				size_t) {
-				if (!parameter.has_concept_constraint() ||
-					!all_concept_constraints_satisfied) {
-					return;
-				}
-				const std::optional<ASTNode> concept_node =
-					gConceptRegistry.lookupConcept(parameter.concept_constraint());
-				if (!concept_node.has_value() ||
-					!concept_node->is<ConceptDeclarationNode>()) {
-					all_concept_constraints_satisfied = false;
-					return;
-				}
-				TemplateTypeArg concept_argument = argument;
-				concept_argument.ref_qualifier = ReferenceQualifier::None;
-				TemplateArgumentVector concept_arguments;
-				concept_arguments.reserve(parameter.concept_args().size() + 1);
-				concept_arguments.push_back(std::move(concept_argument));
-				for (const ASTNode& concept_arg_node : parameter.concept_args()) {
-					ASTNode unwrapped = concept_arg_node;
-					if (unwrapped.is<ExpressionNode>()) {
-						std::visit([&unwrapped](const auto& expression_node) {
-							unwrapped = ASTNode(&expression_node);
-						}, unwrapped.as<ExpressionNode>());
-					}
-					std::optional<TemplateTypeArg> mapped_argument;
-					if (unwrapped.is<TypeSpecifierNode>()) {
-						const TypeSpecifierNode& type = unwrapped.as<TypeSpecifierNode>();
-						if (type.has_template_parameter_identity()) {
-							mapped_argument = template_argument_for_name(type.template_parameter_name().view());
-						}
-						if (!mapped_argument.has_value() &&
-							type.has_template_parameter_decl() &&
-							type.template_decl_id() == function_template.template_decl_id() && type.template_parameter_index() < template_arguments.size()) {
-							mapped_argument = template_arguments[type.template_parameter_index()];
-						}
-						if (!mapped_argument.has_value() && !type.has_template_parameter_identity()) {
-							mapped_argument = TemplateTypeArg(type);
-						}
-					} else if (unwrapped.is<IdentifierNode>()) {
-						mapped_argument = template_argument_for_name(unwrapped.as<IdentifierNode>().name());
-					} else if (unwrapped.is<TemplateParameterReferenceNode>()) {
-						mapped_argument = template_argument_for_name(unwrapped.as<TemplateParameterReferenceNode>().param_name().view());
-					}
-					if (!mapped_argument.has_value()) {
-						all_concept_constraints_satisfied = false;
-						return;
-					}
-					concept_arguments.push_back(std::move(*mapped_argument));
-				}
-				const ConceptDeclarationNode& concept_declaration = concept_node->as<ConceptDeclarationNode>();
-				appendDefaultConceptTemplateArguments(concept_declaration.template_params(), concept_arguments);
-				if (concept_declaration.template_params().size() != concept_arguments.size()) {
-					all_concept_constraints_satisfied = false;
-					return;
-				}
-				all_concept_constraints_satisfied = evaluateConstraint(concept_declaration, concept_arguments, parser()).satisfied();
-			});
-		return all_concept_constraints_satisfied;
-	};
 	const auto import_function_template_type = [](
 		const FunctionDeclarationNode& function_decl,
 		const TemplateFunctionDeclarationNode& function_template,
@@ -9039,7 +9030,7 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 				continue;
 			}
 			const bool candidate_has_associated_constraints =
-				has_associated_constraints(function_template);
+				functionTemplateHasAssociatedConstraints(function_template);
 			if (candidate_has_associated_constraints) {
 				if (std::ranges::any_of(
 						function_template.template_parameters(),
@@ -9065,7 +9056,7 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 						target_return_type_id,
 						return_type_deduced);
 				if (!template_arguments.has_value() ||
-					!associated_constraints_are_satisfied(
+					!functionTemplateConstraintsSatisfied(
 						function_template,
 						*template_arguments)) {
 					continue;
@@ -11188,8 +11179,15 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 		}
 	}
 	if (const CanonicalTypeId inferred_id = inferExpressionType(arg)) {
+		CanonicalTypeId argument_type_id = inferred_id;
+		if (const auto slot = getSlot(getExpressionKey(arg)); slot.has_value() && slot->has_cast()) {
+			const ImplicitCastInfo& cast = cast_info_table_[slot->cast_info_index.value - 1];
+			if (cast.selected_conversion_function != nullptr && cast.source_type_id) {
+				argument_type_id = cast.source_type_id;
+			}
+		}
 		if (inferred_type_id)
-			*inferred_type_id = inferred_id;
+			*inferred_type_id = argument_type_id;
 		TypeSpecifierNode arg_type;
 		bool has_resolved_static_member_type = false;
 		if (arg.is<ExpressionNode>()) {
@@ -11205,7 +11203,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 			}
 		}
 		if (!has_resolved_static_member_type) {
-			const CanonicalTypeDesc& inferred_desc = type_context_.get(inferred_id);
+			const CanonicalTypeDesc& inferred_desc = type_context_.get(argument_type_id);
 			if (inferred_desc.structural_type_id) {
 				const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(
 					requireFrontendContext().canonicalTypes(),
@@ -11675,159 +11673,292 @@ static void materializeExactTargetLazyConversionOperators(TypeIndex source_type_
 
 // --- Core conversion annotation helper ---
 
-std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::trySelectConversionFunctionTemplate(
-	const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, bool allow_explicit,
-	ValueCategory source_value_category) {
-	if (!source_type.type_index().is_valid()) {
+std::optional<TemplateArgumentVector> SemanticAnalysis::deduceConversionTemplateArguments(
+	const TemplateFunctionDeclarationNode& function_template, const TypeSpecifierNode& target_type) {
+	const auto& function = function_template.function_decl_node();
+	const auto& parameters = function_template.template_parameters();
+	CanonicalTypeTable& types = requireFrontendContext().canonicalTypes();
+	CanonicalTypeTransaction transaction(types);
+	const auto pattern = importCanonicalFunctionTemplateTypePattern(function, function_template, function_template.template_decl_id(), std::nullopt);
+	TypeSpecifierNode target = target_type;
+	tryBindPublishedTypeEntity(target);
+	const auto target_import = tryImportSupportedCanonicalWithClassFallback(types, target, CanonicalTypeImportContext::Exact);
+	if (!pattern.has_value() || !target_import.has_value() || types.hasDependentTypeComponents(*target_import)) {
+		FLASH_LOG_FORMAT(Templates, Trace, "Conversion template import: {} pattern={} target={}", function.decl_node().identifier_token().value(),
+			pattern.has_value(), target_import.has_value());
 		return std::nullopt;
 	}
-	const StructTypeInfo* const struct_info = structInfoFromTypeIndex(source_type.type_index());
-	if (struct_info == nullptr) {
+
+	// [temp.deduct.conv]: compare the referents. In a value conversion an array
+	// or function result decays, and top-level cv is ignored.
+	const bool reference_target = target.is_reference();
+	const TypeId declared_result = types.expandAliasTemplateDeductionPattern(types.node(pattern->function_type).child);
+	const TypeId pattern_referent = canonicalTypeWithoutReference(types, declared_result);
+	TypeId pattern_result = pattern_referent;
+	TypeId target_result = canonicalTypeWithoutReference(types, types.resolveAliasTemplateSpecializations(*target_import));
+	if (!reference_target) {
+		const auto [pattern_type, cv] = stripCanonicalTopCv(types, pattern_result);
+		const CanonicalTypeNode node = types.node(pattern_type);
+		pattern_result = pattern_type;
+		if (node.kind == CanonicalTypeKind::Array) {
+			pattern_result = types.pointer(types.qualify(node.child, cv));
+		} else if (node.kind == CanonicalTypeKind::Function) {
+			pattern_result = types.pointer(pattern_type);
+		}
+	}
+	if (!reference_target || pattern_referent == declared_result) {
+		target_result = types.withoutTopLevelQualifiers(target_result);
+		pattern_result = types.withoutTopLevelQualifiers(pattern_result);
+	}
+	const auto wrap_result = [&types](TypeId result) {
+		// A pointer wrapper lets the deduction engine compare array or function
+		// referents without forming a function that returns an array or function.
+		return types.function(types.pointer(result), {}, false, CVQualifier::None, ReferenceQualifier::None, false,
+			CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	};
+	CanonicalFunctionTemplateTypePattern deduction_pattern{wrap_result(pattern_result), std::nullopt, std::nullopt, pattern->non_type_arguments};
+	CanonicalFunctionTemplateTypePattern deduction_target{wrap_result(target_result), std::nullopt, std::nullopt, {}};
+	CanonicalTemplateTypeDeduction deduction = deduceCanonicalFunctionTemplateType(types, deduction_pattern, deduction_target,
+		function_template.template_decl_id());
+	if (deduction.status == CanonicalTemplateDeductionStatus::Mismatch) {
+		// The qualification alternative permits removing cv supplied by the
+		// pattern, including a qualifier absent from the target (the eventual
+		// standard conversion still has to succeed).
+		const auto without_cv = [&types](TypeId result) {
+			std::vector<CanonicalTypeNode> wrappers;
+			for (;;) {
+				result = types.withoutTopLevelQualifiers(result);
+				const CanonicalTypeNode node = types.node(result);
+				if (node.kind != CanonicalTypeKind::Pointer && node.kind != CanonicalTypeKind::Array) {
+					break;
+				}
+				wrappers.push_back(node);
+				result = node.child;
+			}
+			for (const CanonicalTypeNode& wrapper : wrappers | std::views::reverse) {
+				if (wrapper.kind == CanonicalTypeKind::Pointer) {
+					result = types.pointer(result);
+				} else if (hasCanonicalTypeNodeFlag(wrapper.flags, CanonicalTypeNodeFlags::KnownArrayBound)) {
+					result = types.array(result, wrapper.array_extent);
+				} else {
+					result = types.arrayOfUnknownBound(result);
+				}
+			}
+			return result;
+		};
+		// This retry is only for cv carried by the pattern. An unqualified
+		// pattern must retain cv deduced from the target.
+		const TypeId unqualified_pattern = without_cv(pattern_result);
+		if (unqualified_pattern != pattern_result) {
+			deduction_pattern.function_type = wrap_result(unqualified_pattern);
+			deduction_target.function_type = wrap_result(without_cv(target_result));
+			deduction = deduceCanonicalFunctionTemplateType(types, deduction_pattern, deduction_target, function_template.template_decl_id());
+		}
+	}
+	if (deduction.status != CanonicalTemplateDeductionStatus::Match) {
+		FLASH_LOG_FORMAT(Templates, Trace, "Conversion template deduction failed: {} status={} pattern_kind={} target_kind={}",
+			function.decl_node().identifier_token().value(), static_cast<int>(deduction.status), static_cast<int>(types.node(pattern_result).kind),
+			static_cast<int>(types.node(target_result).kind));
+		return std::nullopt;
+	}
+
+	Parser::CallArgDeductionInfo bindings;
+	for (const CanonicalTemplateTypeBinding& binding : deduction.bindings) {
+		const auto argument = Parser::tryMaterializeCanonicalTemplateTypeBinding(types, target, *target_import, binding.argument);
+		if (!argument.has_value() || binding.parameter_index >= parameters.size()) {
+			FLASH_LOG_FORMAT(Templates, Trace, "Conversion template binding could not be materialized for parameter {}", binding.parameter_index);
+			return std::nullopt;
+		}
+		bindings.param_name_to_arg.emplace(parameters[binding.parameter_index].nameHandle(), *argument);
+	}
+	for (const CanonicalTemplateNonTypeBinding& binding : deduction.non_type_bindings) {
+		if (!binding.argument.is_typed_value || binding.parameter_index >= parameters.size()) {
+			return std::nullopt;
+		}
+		const CanonicalTypeNode value = types.node(binding.argument.typed_value);
+		if (value.kind != CanonicalTypeKind::IntegralValue) {
+			return std::nullopt;
+		}
+		const auto& parameter = parameters[binding.parameter_index];
+		bindings.param_name_to_arg.emplace(parameter.nameHandle(),
+			TemplateTypeArg::makeValue(std::bit_cast<int64_t>(value.array_extent), parameter.type_specifier_node().type_index()));
+	}
+	transaction.commit();
+	return parser().deduceTemplateArgsFromCall(parameters, {}, bindings, SIZE_MAX, 0, function.namespace_handle());
+}
+
+std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::trySelectConversionFunctionTemplate(
+	const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, ConversionFunctionContext conversion_context,
+	ValueCategory source_value_category, FunctionTemplateInstantiation instantiation) {
+	if (!isParserAttached() || source_type.runtime_pointer_depth() != 0 || source_type.is_array_object()) {
+		return std::nullopt;
+	}
+	const StructTypeInfo* source = structInfoFromTypeIndex(source_type.type_index());
+	if (source == nullptr) {
 		return std::nullopt;
 	}
 	const uint8_t source_cv = static_cast<uint8_t>(source_type.cv_qualifier());
+	struct Candidate {
+		UserDefinedConversionOperatorSelection selection;
+		TemplateArgumentVector arguments;
+		StringHandle owner_name;
+		StringHandle member_name;
+		size_t depth;
+		bool direct_lvalue_binding;
+	};
 	struct PendingClass {
 		const StructTypeInfo* info;
-		TypeIndex type_index;
+		TypeIndex type;
 		size_t depth;
 	};
-	InlineVector<PendingClass, FlashCpp::InlineVectorSpillFamily::ClassLayout, 4> pending;
-	pending.push_back({struct_info, source_type.type_index(), 0});
-	InlineVector<const StructTypeInfo*, FlashCpp::InlineVectorSpillFamily::ClassLayout, 4> visited;
-	std::optional<UserDefinedConversionOperatorSelection> selected;
-	std::optional<size_t> best_depth;
-	bool best_ambiguous = false;
-	while (!pending.empty()) {
-		const PendingClass current = pending.back();
-		pending.pop_back();
-		if (std::find(visited.begin(), visited.end(), current.info) != visited.end()) {
-			continue;
-		}
-		visited.push_back(current.info);
-		bool found_in_class = false;
-		for (const StructMemberFunction& member : current.info->member_functions) {
-			if (!member.function_decl.is<TemplateFunctionDeclarationNode>() || member.access != AccessSpecifier::Public) {
-				continue;
-			}
-			if (!allow_explicit && member.is_explicit) {
-				continue;
-			}
-			if (!canonicalConversionOperatorAllowsValueCategory(member.ref_qualifier, source_value_category)) {
-				continue;
-			}
-			if ((source_cv & ~static_cast<uint8_t>(member.cv_qualifier)) != 0) {
-				continue;
-			}
-			const std::string_view member_name = StringTable::getStringView(member.getName());
-			if (member.operator_kind != OverloadableOperator::None || !member_name.starts_with("operator ")) {
-				continue;
-			}
-			const TemplateFunctionDeclarationNode& tmpl = member.function_decl.as<TemplateFunctionDeclarationNode>();
-			if (tmpl.has_requires_clause()) {
-				continue;
-			}
-			const FunctionDeclarationNode& function = tmpl.function_decl_node();
-			if (function.is_variadic() || !function.parameter_nodes().empty()) {
-				continue;
-			}
-			const TemplateParameterVector& params = tmpl.template_parameters();
-			if (params.size() != 1 || params[0].kind() != TemplateParameterKind::Type || params[0].is_variadic()) {
-				continue;
-			}
-			const TypeSpecifierNode& return_type = function.decl_node().type_specifier_node();
-			const TypeCategory return_category = return_type.category();
-			const size_t return_pointer_depth = return_type.pointer_depth();
-			const CVQualifier return_cv = return_type.cv_qualifier();
-			const CVQualifier target_cv = target_type.cv_qualifier();
-			bool supported_shape = !return_type.is_rvalue_reference() && !return_type.is_array() &&
-				!return_type.has_pointee_array_declarator();
-			if (return_pointer_depth == 0) {
-				supported_shape &= return_cv == CVQualifier::None && !(return_type.is_reference() && target_type.is_rvalue_reference());
-			} else {
-				supported_shape = supported_shape && !return_type.is_reference() && !target_type.is_reference() &&
-					!target_type.is_array() &&
-					target_type.pointer_depth() == return_pointer_depth &&
-					(static_cast<uint8_t>(return_cv) & ~static_cast<uint8_t>(target_cv)) == 0;
-				const std::span<const PointerLevel> return_pointer_levels = return_type.pointer_levels();
-				const std::span<const PointerLevel> target_pointer_levels = target_type.pointer_levels();
-				for (size_t level_index = 0; level_index + 1 < return_pointer_levels.size(); ++level_index) {
-					supported_shape &= return_pointer_levels[level_index].cv_qualifier == target_pointer_levels[level_index].cv_qualifier;
-				}
-				supported_shape &= !return_pointer_levels.empty() && return_pointer_levels.back().cv_qualifier == CVQualifier::None;
-			}
-			const bool return_is_template_parameter = supported_shape && return_type.token().value() == params[0].name() &&
-				(return_category == TypeCategory::Template || return_category == TypeCategory::UserDefined ||
-				 return_category == TypeCategory::TypeAlias);
-			if (!return_is_template_parameter) {
-				continue;
-			}
-			// A deducible template in this class hides conversion templates in its
-			// bases even when this particular instantiation cannot be materialized.
-			found_in_class = true;
-			TypeSpecifierNode deduced_target = target_type;
-			if (return_pointer_depth == 0) {
-				if (deduced_target.pointer_depth() == 0) {
-					if (!return_type.is_reference()) {
-						deduced_target.set_cv_qualifier(CVQualifier::None);
-					}
-					deduced_target.set_reference_qualifier(ReferenceQualifier::None);
-				}
-			} else {
-				for (size_t pointer_index = 0; pointer_index < return_pointer_depth; ++pointer_index) {
-					deduced_target = deduced_target.without_innermost_legacy_pointer_wrapper();
-				}
-				deduced_target.set_cv_qualifier(static_cast<CVQualifier>(static_cast<uint8_t>(target_cv) & ~static_cast<uint8_t>(return_cv)));
-			}
-			TemplateTypeArg template_arg(deduced_target);
-			std::optional<ASTNode> instantiated = parser().try_instantiate_member_function_template_explicit(
-				StringTable::getStringView(current.info->name), member_name,
-				std::span<const TemplateTypeArg>(&template_arg, 1), source_value_category);
-			if (!instantiated.has_value()) {
-				continue;
-			}
-			const FunctionDeclarationNode* const instantiated_function = instantiated->get_if<FunctionDeclarationNode>();
-			if (instantiated_function == nullptr) {
-				continue;
-			}
-			UserDefinedConversionOperatorSelection candidate;
-			candidate.function = instantiated_function;
-			if (const TypeInfo* const declaring_type_info = tryGetTypeInfo(current.type_index)) {
-				const CanonicalTypeImport declaring_import = importCanonicalClassTypeInfo(requireFrontendContext().canonicalTypes(), *declaring_type_info);
-				if (declaring_import.status == CanonicalTypeImportStatus::Supported) {
-					candidate.declaring_type = declaring_import.type;
-				}
-			}
-			candidate.compatibility_declaring_type_index = current.type_index;
-			candidate.trailing_standard_kind = StandardConversionKind::None;
-			candidate.trailing_standard_rank = ConversionRank::ExactMatch;
-			candidate.member_cv_qualifier = member.cv_qualifier;
-			candidate.access = member.access;
-			if (!best_depth.has_value() || current.depth < *best_depth) {
-				best_depth = current.depth;
-				best_ambiguous = false;
-				selected = candidate;
-			} else if (current.depth == *best_depth) {
-				best_ambiguous = true;
-			}
-		}
-		if (found_in_class) {
+	std::vector<PendingClass> pending{{source, source_type.type_index(), 0}};
+	std::unordered_set<const StructTypeInfo*> visited;
+	std::vector<Candidate> candidates;
+	const bool target_lvalue_reference = target_type.is_lvalue_reference();
+	const bool target_accepts_temporary = target_type.is_rvalue_reference() || target_type.top_level_cv_qualifier() == CVQualifier::Const;
+	for (size_t index = 0; index < pending.size(); ++index) {
+		const PendingClass current = pending[index];
+		if (!visited.insert(current.info).second) {
 			continue;
 		}
 		for (const BaseClassSpecifier& base : current.info->base_classes) {
-			// Virtual bases inherit conversion operators too; deferred bases stay fail-closed.
-			if (base.is_deferred || base.access != AccessSpecifier::Public) {
+			if (base.access != AccessSpecifier::Public) {
 				continue;
 			}
-			const StructTypeInfo* const base_info = structInfoFromTypeIndex(base.type_index);
-			if (base_info != nullptr) {
-				pending.push_back({base_info, base.type_index, current.depth + 1});
+			if (const TypeInfo* base_type = tryGetTypeInfo(canonicalize_type_alias(base.type_index).resolvedTypeIndex());
+				base_type != nullptr && !base_type->isDependentPlaceholder() && base_type->getStructInfo() != nullptr) {
+				pending.push_back({base_type->getStructInfo(), base_type->registeredTypeIndex().withCategory(TypeCategory::Struct), current.depth + 1});
 			}
 		}
+		for (const StructMemberFunction& member : current.info->member_functions) {
+			const auto* function_template = member.function_decl.get_if<TemplateFunctionDeclarationNode>();
+			if (function_template == nullptr || (member.is_explicit && conversion_context == ConversionFunctionContext::Implicit)) {
+				continue;
+			}
+			const FunctionDeclarationNode& function = function_template->function_decl_node();
+			const bool allows_category = canonicalConversionOperatorAllowsValueCategory(member.ref_qualifier, source_value_category) ||
+				(member.ref_qualifier == ReferenceQualifier::LValueReference && member.cv_qualifier == CVQualifier::Const);
+			if (!allows_category || (source_cv & ~static_cast<uint8_t>(member.cv_qualifier)) != 0) {
+				continue;
+			}
+			const StringHandle member_name = member.getName();
+			if (member.operator_kind != OverloadableOperator::None || !member_name.view().starts_with("operator ") ||
+				function.is_variadic() || !function.parameter_nodes().empty()) {
+				continue;
+			}
+
+			const auto arguments = deduceConversionTemplateArguments(*function_template, target_type);
+			if (!arguments.has_value() || (functionTemplateHasAssociatedConstraints(*function_template) &&
+				!functionTemplateConstraintsSatisfied(*function_template, *arguments))) {
+				continue;
+			}
+			const auto signature = parser().try_instantiate_member_function_template_explicit_candidate(current.info->name.view(), member_name.view(),
+				*arguments, FunctionTemplateInstantiation::SignatureOnly, function_template, source_value_category);
+			const FunctionDeclarationNode* instantiated = signature.has_value() ? signature->get_if<FunctionDeclarationNode>() : nullptr;
+			if (instantiated == nullptr) {
+				continue;
+			}
+			const TypeSpecifierNode& result = instantiated->decl_node().type_specifier_node();
+			const bool direct_lvalue_binding = target_lvalue_reference && result.is_lvalue_reference();
+			if (target_type.is_reference() && !direct_lvalue_binding && !target_accepts_temporary) {
+				continue;
+			}
+			const auto tail = tryBuildCanonicalConversionFunctionTailPlan(result, target_type);
+			if (!tail.has_value() || !tail->is_valid || tail->rank > ConversionRank::QualificationAdjustment) {
+				FLASH_LOG_FORMAT(Templates, Trace, "Conversion template tail rejected: {} result={} target={}", member_name.view(),
+					result.getReadableString(), target_type.getReadableString());
+				continue;
+			}
+			UserDefinedConversionOperatorSelection selection;
+			selection.function = instantiated;
+			selection.conversion_template = function_template;
+			selection.compatibility_declaring_type_index = current.type;
+			selection.trailing_standard_kind = tail->kind;
+			selection.trailing_standard_rank = tail->rank;
+			selection.member_cv_qualifier = member.cv_qualifier;
+			selection.access = member.access;
+			candidates.push_back({selection, *arguments, current.info->name, member_name, current.depth, direct_lvalue_binding});
+		}
 	}
-	if (selected.has_value() && best_ambiguous) {
-		selected->ambiguous = true;
+
+	const auto is_better = [this, source_value_category](const Candidate& lhs, const Candidate& rhs) {
+		if (lhs.direct_lvalue_binding != rhs.direct_lvalue_binding) {
+			return lhs.direct_lvalue_binding;
+		}
+		if (lhs.depth != rhs.depth) {
+			return lhs.depth < rhs.depth;
+		}
+		const uint8_t lhs_cv = static_cast<uint8_t>(lhs.selection.member_cv_qualifier);
+		const uint8_t rhs_cv = static_cast<uint8_t>(rhs.selection.member_cv_qualifier);
+		if (lhs_cv != rhs_cv) {
+			return (lhs_cv & ~rhs_cv) == 0;
+		}
+		const auto& lhs_template = *lhs.selection.conversion_template;
+		const auto& rhs_template = *rhs.selection.conversion_template;
+		const ReferenceQualifier preferred_ref = source_value_category == ValueCategory::LValue ? ReferenceQualifier::LValueReference
+			: ReferenceQualifier::RValueReference;
+		const bool lhs_preferred_ref = lhs_template.function_decl_node().function_reference_qualifier() == preferred_ref;
+		const bool rhs_preferred_ref = rhs_template.function_decl_node().function_reference_qualifier() == preferred_ref;
+		if (lhs_preferred_ref != rhs_preferred_ref) {
+			return lhs_preferred_ref;
+		}
+		if (lhs.selection.trailing_standard_rank != rhs.selection.trailing_standard_rank) {
+			return lhs.selection.trailing_standard_rank < rhs.selection.trailing_standard_rank;
+		}
+		const CanonicalTemplatePartialOrdering ordering = compareFunctionTemplatePartialOrdering(lhs_template, rhs_template);
+		if (ordering != CanonicalTemplatePartialOrdering::Equivalent) {
+			return ordering == CanonicalTemplatePartialOrdering::FirstMoreSpecialized;
+		}
+		const bool lhs_constrained = functionTemplateHasAssociatedConstraints(lhs_template);
+		const bool rhs_constrained = functionTemplateHasAssociatedConstraints(rhs_template);
+		if (lhs_constrained != rhs_constrained) {
+			return lhs_constrained;
+		}
+		return lhs_constrained && FlashCpp::detail::compareMemberTemplateConstraints(requireFrontendContext().canonicalTypes(), lhs_template,
+			rhs_template) == FlashCpp::detail::ConstraintSubsumptionOrdering::FirstSubsumesSecond;
+	};
+
+	const Candidate* best = nullptr;
+	for (const Candidate& candidate : candidates) {
+		if (std::ranges::any_of(candidates, [&](const Candidate& other) { return &other != &candidate && is_better(other, candidate); })) {
+			continue;
+		}
+		if (best != nullptr) {
+			auto ambiguous = best->selection;
+			ambiguous.ambiguous = true;
+			return ambiguous;
+		}
+		best = &candidate;
 	}
-	return selected;
+	if (best == nullptr) {
+		return std::nullopt;
+	}
+	auto selection = best->selection;
+	if (instantiation == FunctionTemplateInstantiation::Definition) {
+		const auto function = parser().try_instantiate_member_function_template_explicit_candidate(best->owner_name.view(), best->member_name.view(),
+			best->arguments, instantiation, selection.conversion_template, source_value_category);
+		selection.function = function.has_value() ? function->get_if<FunctionDeclarationNode>() : nullptr;
+	}
+	return selection.function != nullptr ? std::optional(selection) : std::nullopt;
+}
+
+ArgumentConversionInfo SemanticAnalysis::buildCallArgumentConversion(const TypeSpecifierNode& argument_type, const TypeSpecifierNode& parameter_type,
+	const ASTNode* argument_node) {
+	const ArgumentConversionInfo conversion = buildArgumentConversionInfo(argument_type, parameter_type, argument_node);
+	if (conversion.is_valid || !is_struct_type(argument_type.category()) || argument_node == nullptr) {
+		return conversion;
+	}
+	const ValueCategory source_category = argument_type.is_lvalue_reference() ? ValueCategory::LValue : inferExpressionValueCategory(*argument_node);
+	const auto selected = trySelectConversionFunctionTemplate(argument_type, parameter_type, ConversionFunctionContext::Implicit, source_category,
+		FunctionTemplateInstantiation::SignatureOnly);
+	if (!selected.has_value() || selected->ambiguous) {
+		return conversion;
+	}
+	TypeSpecifierNode result = selected->function->decl_node().type_specifier_node();
+	tryBindPublishedTypeEntity(result);
+	const auto result_type = tryImportSupportedCanonical(requireFrontendContext().canonicalTypes(), result);
+	return {ConversionRank::UserDefined, &parameter_type, true, selected->trailing_standard_rank, result_type.value_or(TypeId{}),
+		selected->conversion_template};
 }
 
 bool SemanticAnalysis::checkSelectedConversionOperatorAccess(
@@ -11836,6 +11967,11 @@ bool SemanticAnalysis::checkSelectedConversionOperatorAccess(
 	const UserDefinedConversionOperatorSelection& selected_conversion) {
 	if (selected_conversion.function == nullptr) {
 		return false;
+	}
+	if (selected_conversion.function->is_deleted()) {
+		const Token token = FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(expr_node).value_or(Token{});
+		throw makeStructuredCompileError(context_.diagnostics(), DiagnosticId::DeletedFunctionCall, DiagnosticSeverity::Error,
+			SourceLocation::fromToken(token), "Call to a deleted conversion function", {});
 	}
 	const TypeInfo* const declaring_type_info = selected_conversion.declaring_type
 		? tryFindCanonicalOverloadClassTypeInfo(
@@ -11972,7 +12108,8 @@ bool SemanticAnalysis::tryAnnotateExplicitConversionByTypeId(
 	auto selected_conversion = trySelectUserDefinedConversionOperator(
 		source_type, target_value_type, true, inferExpressionValueCategory(source_expression));
 	if (!selected_conversion.has_value() || selected_conversion->ambiguous || selected_conversion->function == nullptr) {
-		selected_conversion = trySelectConversionFunctionTemplate(source_type, target_value_type, true, inferExpressionValueCategory(source_expression));
+		selected_conversion = trySelectConversionFunctionTemplate(source_type, target_type, ConversionFunctionContext::Explicit,
+			inferExpressionValueCategory(source_expression), FunctionTemplateInstantiation::Definition);
 		if (!selected_conversion.has_value() || selected_conversion->ambiguous || selected_conversion->function == nullptr) {
 			return false;
 		}
@@ -12022,7 +12159,8 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 		if (const auto selected = trySelectUserDefinedConversionOperator(source_type, target_type, false, source_value_category); selected.has_value()) {
 			return selected;
 		}
-		return trySelectConversionFunctionTemplate(source_type, target_type, false, source_value_category);
+		return trySelectConversionFunctionTemplate(source_type, target_type, ConversionFunctionContext::Implicit, source_value_category,
+			FunctionTemplateInstantiation::Definition);
 	};
 
 	// C++20 [conv.ptr]: nullptr_t converts to any object, function, or member
@@ -12215,7 +12353,8 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 			const TypeSpecifierNode pointer_source_type = materializeTypeSpecifier(from_desc);
 			const TypeSpecifierNode pointer_target_type = materializeTypeSpecifier(to_desc);
 			if (const auto template_selection = trySelectConversionFunctionTemplate(
-					pointer_source_type, pointer_target_type, false, inferExpressionValueCategory(expr_node));
+					pointer_source_type, pointer_target_type, ConversionFunctionContext::Implicit, inferExpressionValueCategory(expr_node),
+					FunctionTemplateInstantiation::Definition);
 				template_selection.has_value()) {
 				return !template_selection->ambiguous && annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *template_selection);
 			}
@@ -13920,70 +14059,46 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 		}
 	}
 
-	if (param_type.is_reference() && !param_type.is_rvalue_reference() &&
-		is_struct_type(arg_value_type.category()) && arg_value_type.type_index().is_valid()) {
-		std::optional<UserDefinedConversionOperatorSelection> selected_conversion = trySelectCanonicalImplicitConversionOperator(
-			type_context_.get(arg_value_type_id), param_value_type, inferExpressionValueCategory(arg));
-		if (!selected_conversion.has_value()) {
-			selected_conversion = trySelectConversionFunctionTemplate(
-				materializeTypeSpecifier(type_context_.get(arg_value_type_id)), param_value_type, false, inferExpressionValueCategory(arg));
+	if (is_struct_type(arg_value_type.category()) && arg_value_type.runtime_pointer_depth() == 0) {
+		const ValueCategory value_category = inferExpressionValueCategory(arg);
+		auto selected = trySelectCanonicalImplicitConversionOperator(type_context_.get(arg_value_type_id), param_type, value_category);
+		if (!selected.has_value()) {
+			selected = trySelectConversionFunctionTemplate(arg_value_type, param_type, ConversionFunctionContext::Implicit, value_category,
+				FunctionTemplateInstantiation::Definition);
 		}
-		if (selected_conversion.has_value() && !selected_conversion->ambiguous &&
-			conversionOperatorResultBindsLvalueReference(*selected_conversion, param_type)) {
-			if (!checkSelectedConversionOperatorAccess(arg, param_type_id, *selected_conversion)) {
+		if (selected.has_value()) {
+			if (selected->ambiguous || !checkSelectedConversionOperatorAccess(arg, param_type_id, *selected)) {
 				return std::nullopt;
 			}
+			const TypeSpecifierNode& result = selected->function->decl_node().type_specifier_node();
+			const bool preserves_reference = selected->trailing_standard_kind == StandardConversionKind::None ||
+				selected->trailing_standard_kind == StandardConversionKind::QualificationAdjustment ||
+				selected->trailing_standard_kind == StandardConversionKind::DerivedToBase;
+			const bool binds_conversion_result = result.is_reference() && preserves_reference &&
+				!(result.is_lvalue_reference() && param_type.is_rvalue_reference());
 			ImplicitCastInfo cast_info;
 			cast_info.source_type_id = arg_value_type_id;
-			cast_info.target_type_id = param_type_id;
+			cast_info.target_type_id = binds_conversion_result ? param_type_id : param_value_type_id;
 			cast_info.cast_kind = StandardConversionKind::UserDefined;
-			cast_info.value_category_after = ValueCategory::LValue;
-			cast_info.selected_conversion_function = selected_conversion->function;
-			cast_info.trailing_standard_conversion = selected_conversion->trailing_standard_kind;
-			cast_info.trailing_constructor = selectTrailingBaseConstructor(type_context_.get(param_value_type_id), *selected_conversion);
+			cast_info.value_category_after = binds_conversion_result
+				? (result.is_lvalue_reference() ? ValueCategory::LValue : ValueCategory::XValue) : ValueCategory::PRValue;
+			cast_info.selected_conversion_function = selected->function;
+			cast_info.trailing_standard_conversion = selected->trailing_standard_kind;
+			cast_info.trailing_constructor = selectTrailingBaseConstructor(type_context_.get(param_value_type_id), *selected);
 			info.pre_bind_cast_info_index = allocateCastInfo(cast_info);
 			info.flags = ConversionPlanFlags::IsValid | ConversionPlanFlags::IsUserDefined | ConversionPlanFlags::MaterializesTemporary;
 			return info;
 		}
 	}
 
-	if (!param_type.is_rvalue_reference() && param_type.is_reference()) {
-		if (!hasCVQualifier(
-				param_type.top_level_cv_qualifier(),
-				CVQualifier::Const))
-			return std::nullopt;
-	}
-
-	const ConversionPlan value_plan = buildConversionPlan(arg_value_type, param_value_type);
-	if (!value_plan.is_valid) {
+	if (param_type.is_lvalue_reference() && param_type.top_level_cv_qualifier() != CVQualifier::Const) {
 		return std::nullopt;
 	}
-	if (value_plan.rank == ConversionRank::UserDefined) {
-		// A user-defined conversion materializes a temporary from the conversion
-		// result and binds the reference to it; record the selected operator so
-		// codegen lowers the conversion before materializing the temporary.
-		const auto selected_conversion = trySelectCanonicalImplicitConversionOperator(
-			type_context_.get(arg_value_type_id), param_value_type, inferExpressionValueCategory(arg));
-		if (!selected_conversion.has_value() || selected_conversion->ambiguous ||
-			selected_conversion->function == nullptr) {
-			return std::nullopt;
-		}
-		if (!checkSelectedConversionOperatorAccess(arg, param_value_type_id, *selected_conversion)) {
-			return std::nullopt;
-		}
-		ImplicitCastInfo cast_info;
-		cast_info.source_type_id = arg_value_type_id;
-		cast_info.target_type_id = param_value_type_id;
-		cast_info.cast_kind = StandardConversionKind::UserDefined;
-		cast_info.value_category_after = ValueCategory::PRValue;
-		cast_info.selected_conversion_function = selected_conversion->function;
-		cast_info.trailing_standard_conversion = selected_conversion->trailing_standard_kind;
-		cast_info.trailing_constructor = selectTrailingBaseConstructor(type_context_.get(param_value_type_id), *selected_conversion);
-		info.pre_bind_cast_info_index = allocateCastInfo(cast_info);
-		info.flags = ConversionPlanFlags::IsValid | ConversionPlanFlags::IsUserDefined |
-			ConversionPlanFlags::MaterializesTemporary;
-		return info;
+	const ConversionPlan value_plan = buildConversionPlan(arg_value_type, param_value_type);
+	if (!value_plan.is_valid || value_plan.rank == ConversionRank::UserDefined) {
+		return std::nullopt;
 	}
+
 	const bool source_and_target_are_reference_related =
 		value_plan.kind == StandardConversionKind::None ||
 		value_plan.kind == StandardConversionKind::QualificationAdjustment ||
@@ -14083,6 +14198,13 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 			TypeSpecifierNode param_value_type = param_type;
 			param_value_type.set_reference_qualifier(ReferenceQualifier::None);
 			const ConversionPlan plan = buildConversionPlan(arg_value_type, param_value_type);
+			if (!plan.is_valid && arg_type_id && is_struct_type(arg_value_type.category())) {
+				const auto selected = trySelectConversionFunctionTemplate(arg_value_type, param_value_type, ConversionFunctionContext::Implicit,
+					inferExpressionValueCategory(arg), FunctionTemplateInstantiation::Definition);
+				if (selected.has_value() && !selected->ambiguous && annotateSelectedConversionOperator(arg, arg_type_id, param_type_id, *selected)) {
+					return;
+				}
+			}
 			// A user-defined conversion (conversion operator, possibly followed by a
 			// derived-to-base tail) must be recorded with the selected function so
 			// codegen can lower it. Reuse ranking's selector and type nodes so
@@ -14667,7 +14789,8 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 					tryCollectOverloadResolutionArgTypes(arguments, member_arg_types);
 				if (has_member_arg_types) {
 					const MemberOverloadResolutionByArgTypesResult overload_resolution =
-						resolveConstAwareMemberOverloadByArgTypes(preferred_member_overloads, compatible_member_overloads, *receiver_arg_type, member_arg_types);
+						resolveConstAwareMemberOverloadByArgTypes(*this, preferred_member_overloads, compatible_member_overloads, *receiver_arg_type,
+							member_arg_types, arguments);
 					if (overload_resolution.function != nullptr) {
 						return overload_resolution.function;
 					}
@@ -14741,7 +14864,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			if (std::optional<ASTNode> resolved_target =
 					parser().templateEngine().resolveDefinitionBoundOrdinaryCall(
 						deferred_record,
-						arg_types);
+						arg_types, arguments);
 				resolved_target.has_value()) {
 				if (const FunctionDeclarationNode* resolved_function =
 						get_function_decl_node(*resolved_target);
@@ -15015,20 +15138,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		const OverloadResolutionResult result = resolve_overload_with_argument_nodes_using_conversion(
 			overloads, arg_types, arguments,
 			[this](const TypeSpecifierNode& argument_type, const TypeSpecifierNode& parameter_type, const ASTNode* argument_node) {
-				const ArgumentConversionInfo conversion =
-					buildArgumentConversionInfo(argument_type, parameter_type, argument_node);
-				if (conversion.is_valid || !is_struct_type(argument_type.category()) || argument_node == nullptr) {
-					return conversion;
-				}
-				const std::optional<UserDefinedConversionOperatorSelection> selected_template =
-					trySelectConversionFunctionTemplate(
-						argument_type, parameter_type, false, inferExpressionValueCategory(*argument_node));
-				if (selected_template.has_value() && !selected_template->ambiguous && selected_template->function != nullptr &&
-					conversionOperatorSelectionBindsParameter(*selected_template, parameter_type)) {
-					return ArgumentConversionInfo{ConversionRank::UserDefined, &parameter_type, true,
-						selected_template->trailing_standard_rank, true};
-				}
-				return conversion;
+				return buildCallArgumentConversion(argument_type, parameter_type, argument_node);
 			});
 		if (result.has_match && !result.is_ambiguous && result.selected_overload != nullptr) {
 			if (const FunctionDeclarationNode* resolved_candidate =
@@ -15434,7 +15544,8 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 				compatible_member_overloads,
 				member_candidates.compatible);
 			const MemberOverloadResolutionByArgTypesResult overload_resolution =
-				resolveConstAwareMemberOverloadByArgTypes(preferred_member_overloads, compatible_member_overloads, *receiver_arg_type, member_arg_types);
+				resolveConstAwareMemberOverloadByArgTypes(*this, preferred_member_overloads, compatible_member_overloads, *receiver_arg_type,
+					member_arg_types, *call_info.arguments);
 			return overload_resolution.ambiguous;
 		};
 		if (hasDiagnosableLocalCallableMiss()) {
@@ -15840,11 +15951,14 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 
 	// skip_implicit=true: avoid false ambiguity between an explicit copy/move
 	// ctor and a compiler-generated implicit one with the same signature.
-	auto resolution = resolve_constructor_overload(*struct_info, arg_types, true, arguments);
+	auto resolution = resolve_constructor_overload_using_conversion(*struct_info, arg_types, ConstructorCandidates::ExcludeImplicitCopyMove, arguments,
+		[this](const TypeSpecifierNode& arg, const TypeSpecifierNode& param, const ASTNode* node) {
+			return buildCallArgumentConversion(arg, param, node);
+		});
 	bool template_ctor_ambiguous = false;
 	resolution.selected_overload = parser().templateEngine().materializeMatchingConstructorTemplate(
 		struct_info->getName(), *struct_info, arg_types, resolution.selected_overload,
-		template_ctor_ambiguous);
+		template_ctor_ambiguous, TemplateEngine::ConstructorArgumentValidation::AlreadyRanked);
 	if (template_ctor_ambiguous) {
 		resolution.is_ambiguous = true;
 	} else if (resolution.selected_overload != nullptr) {
@@ -16008,10 +16122,14 @@ const ConstructorDeclarationNode* SemanticAnalysis::tryAnnotateConstructorArgRef
 		arg_types.push_back(std::move(*arg_type));
 	}
 
-	auto resolution = resolve_constructor_overload(struct_info, arg_types, skip_implicit, arguments);
+	const auto candidates = skip_implicit ? ConstructorCandidates::ExcludeImplicitCopyMove : ConstructorCandidates::IncludeImplicitCopyMove;
+	auto resolution = resolve_constructor_overload_using_conversion(struct_info, arg_types, candidates, arguments,
+		[this](const TypeSpecifierNode& arg, const TypeSpecifierNode& param, const ASTNode* node) {
+			return buildCallArgumentConversion(arg, param, node);
+		});
 	bool template_ctor_ambiguous = false;
 	resolution.selected_overload = parser().templateEngine().materializeMatchingConstructorTemplate(struct_info.getName(),
-		struct_info, arg_types, resolution.selected_overload, template_ctor_ambiguous);
+		struct_info, arg_types, resolution.selected_overload, template_ctor_ambiguous, TemplateEngine::ConstructorArgumentValidation::AlreadyRanked);
 	if (template_ctor_ambiguous) {
 		resolution.is_ambiguous = true;
 	} else if (resolution.selected_overload) {
@@ -16371,14 +16489,17 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 		return;
 	}
 
-	auto resolution = resolve_constructor_overload(struct_info, arg_types, true, initializers);
+	auto resolution = resolve_constructor_overload_using_conversion(struct_info, arg_types, ConstructorCandidates::ExcludeImplicitCopyMove, initializers,
+		[this](const TypeSpecifierNode& arg, const TypeSpecifierNode& param, const ASTNode* node) {
+			return buildCallArgumentConversion(arg, param, node);
+		});
 	bool template_ctor_ambiguous = false;
 	resolution.selected_overload = parser().templateEngine().materializeMatchingConstructorTemplate(
 		struct_info.getName(),
 		struct_info,
 		arg_types,
 		resolution.selected_overload,
-		template_ctor_ambiguous);
+		template_ctor_ambiguous, TemplateEngine::ConstructorArgumentValidation::AlreadyRanked);
 	if (template_ctor_ambiguous) {
 		resolution.is_ambiguous = true;
 	}

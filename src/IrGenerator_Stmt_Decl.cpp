@@ -2057,7 +2057,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 												struct_info,
 												arg_types,
 												resolution.selected_overload,
-												template_ctor_ambiguous);
+												template_ctor_ambiguous, TemplateEngine::ConstructorArgumentValidation::Validate);
 											if (template_ctor_ambiguous) {
 												resolution.is_ambiguous = true;
 											} else if (resolution.selected_overload != nullptr) {
@@ -3210,7 +3210,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											*type_info->getStructInfo(),
 											arg_types,
 											resolution.selected_overload,
-											template_ctor_ambiguous);
+											template_ctor_ambiguous, TemplateEngine::ConstructorArgumentValidation::Validate);
 										if (template_ctor_ambiguous) {
 											throwAmbiguousConstructorCallDiagnostic(*context_);
 										}

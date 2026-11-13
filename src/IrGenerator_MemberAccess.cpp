@@ -3754,13 +3754,14 @@ std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCallInterna
 		? conversion_return_type_index.withCategory(TypeCategory::MemberObjectPointer) : conversion_return_type_index;
 	const int conversion_result_size_bits = conversion_returns_member_object_pointer ? POINTER_SIZE_BITS
 		: static_cast<int>(conversion_return_type.size_in_bits());
+	const bool decays_array = cast_info.trailing_standard_conversion == StandardConversionKind::ArrayToPointer;
 	std::optional<ExprResult> result;
 	if (result_destination.has_value()) {
 		result = emitConversionOperatorCallToDestination(source, source_type_info, conversion_function,
 			conversion_result_type_index, conversion_result_size_bits, token, *result_destination);
 	} else {
 		result = emitConversionOperatorCall(source, source_type_info, conversion_function, conversion_result_type_index,
-			conversion_result_size_bits, token, return_context);
+			conversion_result_size_bits, token, decays_array ? ExpressionContext::LValueAddress : return_context);
 	}
 	if (result.has_value()) {
 		result->pointer_depth = conversion_returns_member_object_pointer ? PointerDepth{}
@@ -3776,6 +3777,10 @@ std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCallInterna
 		return result;
 	}
 	const CanonicalTypeDesc& destination_desc = sema_.typeContext().get(cast_info.target_type_id);
+	if (decays_array) {
+		return makeExprResult(destination_desc.type_index.withCategory(destination_type_category), SizeInBits{POINTER_SIZE_BITS},
+			std::move(result->value), PointerDepth{static_cast<int>(destination_desc.pointer_levels.size())}, ValueStorage::ContainsData);
+	}
 	const bool target_is_reference = destination_desc.ref_qualifier != ReferenceQualifier::None;
 	if (cast_info.trailing_standard_conversion == StandardConversionKind::DerivedToBase &&
 		!target_is_reference && conversion_return_type.category() == TypeCategory::Struct &&

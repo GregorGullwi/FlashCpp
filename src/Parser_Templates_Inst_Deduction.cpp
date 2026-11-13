@@ -764,20 +764,19 @@ bool Parser::tryAppendDefaultTemplateArg(
 			}
 		}
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr, eval_ctx);
-		if (!eval_result.success()) {
-			if (eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression &&
-				failure_policy == TemplateSubstitutionFailurePolicy::ShapeOnly) {
-				if (!param.has_type()) {
-					throw InternalError("Non-type template parameter with a dependent default value must declare an explicit type");
-				}
-				TemplateTypeArg dependent_default = TemplateTypeArg::makeDependentValue(
-					param.nameHandle(),
-					param.type_specifier_node().type());
-				dependent_default.dependent_expr = expr;
-				template_args.push_back(std::move(dependent_default));
-				return true;
+		if (eval_result.success()) {
+			template_args.push_back(templateTypeArgFromEvalResult(eval_result));
+			return true;
+		}
+		if (eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression &&
+			failure_policy == TemplateSubstitutionFailurePolicy::ShapeOnly) {
+			if (!param.has_type()) {
+				throw InternalError("Non-type template parameter with a dependent default value must declare an explicit type");
 			}
-			return false;
+			TemplateTypeArg dependent_default = TemplateTypeArg::makeDependentValue(param.nameHandle(), param.type_specifier_node().type());
+			dependent_default.dependent_expr = expr;
+			template_args.push_back(std::move(dependent_default));
+			return true;
 		}
 		return false;
 	};
@@ -940,7 +939,10 @@ bool Parser::tryAppendDefaultTemplateArg(
 		return true;
 	}
 
-	if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
+	if (param.kind() == TemplateParameterKind::NonType) {
+		if (!default_node.is<ExpressionNode>()) {
+			return tryReparseNonTypeDefaultArg();
+		}
 		TemplateParameterVector params_vec(template_params);
 		ASTNode substituted_default = substituteNonTypeDefaultExpression(
 			default_node, params_vec,

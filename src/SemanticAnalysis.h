@@ -10,6 +10,7 @@
 #include "AstNodeTypes_Core.h"
 #include "MemberFunctionLookupShared.h"
 #include "SemanticTypes.h"
+#include "TemplateRegistry_Types.h"
 
 class Parser;
 class CompileContext;
@@ -19,6 +20,7 @@ TypeSpecifierNode materializeCanonicalTypeSpecifier(const CanonicalTypeDesc& des
 enum class CanonicalTemplatePartialOrdering : uint8_t;
 
 class StructDeclarationNode;
+struct ArgumentConversionInfo;
 struct UserDefinedConversionOperatorSelection;
 class FunctionDeclarationNode;
 class TemplateFunctionDeclarationNode;
@@ -216,10 +218,8 @@ public:
 	~SemanticAnalysis();
 	void attachParser(Parser& parser);
 	ParserSemanticServices parserSemanticServices() { return ParserSemanticServices(*this); }
-	std::optional<UserDefinedConversionOperatorSelection> trySelectConversionFunctionTemplateForOverload(
-		const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, ValueCategory source_value_category) {
-		return trySelectConversionFunctionTemplate(source_type, target_type, false, source_value_category);
-	}
+	ArgumentConversionInfo buildCallArgumentConversion(const TypeSpecifierNode& argument_type, const TypeSpecifierNode& parameter_type,
+		const ASTNode* argument_node);
 	bool isParserAttached() const { return parser_ != nullptr; }
 	bool hasPostParseNormalizationStarted() const;
 	bool hasPostParseNormalizationCompleted() const;
@@ -637,11 +637,12 @@ private:
 											CanonicalTypeId expr_type_id,
 											CanonicalTypeId target_type_id,
 											const UserDefinedConversionOperatorSelection& selected_conversion);
-	// Fallback for conversion function templates whose target is a single deduced
-	// type parameter, e.g. template<class U> operator U().
+	bool functionTemplateConstraintsSatisfied(const TemplateFunctionDeclarationNode& function_template, const TemplateArgumentVector& arguments);
+	std::optional<TemplateArgumentVector> deduceConversionTemplateArguments(const TemplateFunctionDeclarationNode& function_template,
+		const TypeSpecifierNode& target_type);
 	std::optional<UserDefinedConversionOperatorSelection> trySelectConversionFunctionTemplate(
-		const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, bool allow_explicit,
-		ValueCategory source_value_category);
+		const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, ConversionFunctionContext conversion_context,
+		ValueCategory source_value_category, FunctionTemplateInstantiation instantiation);
 	// Explicit conversions start selection from canonical source and target TypeIds.
 	bool tryAnnotateExplicitConversionByTypeId(const ASTNode& slot_expression, const ASTNode& source_expression, const TypeSpecifierNode& target_type);
 	// Semantic ODR-use publication for implicitly-declared/defaulted copy and

@@ -406,7 +406,13 @@ std::optional<TypeId> CanonicalTypeTable::aliasTemplateTarget(TemplateDeclId pri
 TypeId CanonicalTypeTable::resolveAliasTemplateSpecializations(TypeId type) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
-	return resolveNestedAliasGraphUnlocked(type);
+	return resolveNestedAliasGraphUnlocked(type, AliasExpansion::Concrete);
+}
+
+TypeId CanonicalTypeTable::expandAliasTemplateDeductionPattern(TypeId type) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	return resolveNestedAliasGraphUnlocked(type, AliasExpansion::DeductionPattern);
 }
 
 bool CanonicalTypeTable::hasDependentTypeComponents(TypeId type) const {
@@ -602,13 +608,13 @@ TypeId CanonicalTypeTable::substitute(TypeId type, TemplateDeclId env, std::span
 	}
 	return resolveNestedAliasGraphUnlocked(substituteArgumentsUnlocked(
 		type, env,
-		std::span<const CanonicalTemplateArgument>(arguments.data(), arguments.size())));
+		std::span<const CanonicalTemplateArgument>(arguments.data(), arguments.size())), AliasExpansion::Concrete);
 }
 
 TypeId CanonicalTypeTable::substitute(TypeId type, TemplateDeclId env, std::span<const CanonicalTemplateArgument> args) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
-	return resolveNestedAliasGraphUnlocked(substituteArgumentsUnlocked(type, env, args));
+	return resolveNestedAliasGraphUnlocked(substituteArgumentsUnlocked(type, env, args), AliasExpansion::Concrete);
 }
 
 TypeId CanonicalTypeTable::memberObjectPointer(TypeId owner, TypeId pointee) {
@@ -2671,7 +2677,7 @@ bool CanonicalTypeTable::containsNonTypeTemplateArgUnlocked(TypeId type) const {
 	return false;
 }
 
-TypeId CanonicalTypeTable::resolveNestedAliasGraphUnlocked(TypeId type) {
+TypeId CanonicalTypeTable::resolveNestedAliasGraphUnlocked(TypeId type, AliasExpansion expansion) {
 	if (!type) {
 		throw InternalError("canonical type: invalid alias graph TypeId");
 	}
@@ -2826,7 +2832,7 @@ TypeId CanonicalTypeTable::resolveNestedAliasGraphUnlocked(TypeId type) {
 				if (argument.kind == CanonicalTypeKind::TemplateArg) {
 					const TypeId original{static_cast<uint32_t>(argument.array_extent)};
 					const TypeId value = memo.at(memoKey(frame.scope, original));
-					if (isDependentAliasArgumentUnlocked(value)) {
+					if (expansion == AliasExpansion::Concrete && isDependentAliasArgumentUnlocked(value)) {
 						concrete = false;
 						break;
 					}
@@ -3949,7 +3955,7 @@ std::optional<TypeId> CanonicalTypeTable::resolveMemberAliasTargetUnlocked(Templ
 	const TypeId owner_target = substituteArgumentsUnlocked(published->second.target,
 		published->second.owner, owner_arguments);
 	return resolveNestedAliasGraphUnlocked(substituteArgumentsUnlocked(
-		owner_target, member, member_arguments));
+		owner_target, member, member_arguments), AliasExpansion::Concrete);
 }
 
 std::optional<TypeId> CanonicalTypeTable::resolveMemberAliasUseUnlocked(TypeId use) {

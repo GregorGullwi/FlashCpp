@@ -808,7 +808,13 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 			return nullptr;
 		}
 		const OverloadResolutionResult overload_result =
-			resolve_overload_with_argument_nodes(overloads, deduced_arg_types, std::span<const ASTNode>{});
+			resolve_overload_with_argument_nodes_using_conversion(
+				overloads,
+				deduced_arg_types,
+				args,
+				[this](const TypeSpecifierNode& argument_type, const TypeSpecifierNode& parameter_type, const ASTNode* argument_node) {
+					return semanticAnalysis().buildCallArgumentConversion(argument_type, parameter_type, argument_node);
+				});
 		if (overload_result.has_match &&
 			!overload_result.is_ambiguous &&
 			overload_result.selected_overload != nullptr) {
@@ -4031,7 +4037,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 									}
 									const std::optional<ASTNode> instantiated_function =
 										try_instantiate_member_function_template_explicit_candidate(struct_name,
-											qualified_identifier->name(), *explicit_template_args, false, nullptr, std::nullopt);
+											qualified_identifier->name(), *explicit_template_args, FunctionTemplateInstantiation::SignatureOnly, nullptr, std::nullopt);
 									const FunctionDeclarationNode* function =
 										get_function_decl_node(instantiated_function);
 									if (function == nullptr) {

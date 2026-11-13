@@ -3369,7 +3369,7 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 				arg_types.push_back(*arg_type);
 			}
 			if (collected_arg_types) {
-				if (std::optional<ASTNode> resolved_target = context.parser.templateEngine().resolveDefinitionBoundOrdinaryCall(record, arg_types);
+				if (auto resolved_target = context.parser.templateEngine().resolveDefinitionBoundOrdinaryCall(record, arg_types, call_expr->arguments());
 					resolved_target.has_value()) {
 					if (const FunctionDeclarationNode* function_decl = get_function_decl_node(*resolved_target);
 						function_decl != nullptr) {

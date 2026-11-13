@@ -201,6 +201,46 @@ ASTNode rebuildResolvedSubstitutedTypeSpec(
 	return substituted_type;
 }
 
+std::optional<ASTNode> trySubstituteArrayAliasReturn(const TypeSpecifierNode& pattern, TemplateDeclId declaration,
+	std::span<const TemplateTypeArg> arguments) {
+	if (!declaration) {
+		return std::nullopt;
+	}
+	CanonicalTypeTable& types = requireFrontendContext().canonicalTypes();
+	CanonicalTypeTransaction transaction(types);
+	const auto imported_pattern = tryImportSupportedCanonical(types, pattern);
+	if (!imported_pattern.has_value()) {
+		return std::nullopt;
+	}
+	std::vector<TypeId> argument_types;
+	argument_types.reserve(arguments.size());
+	for (const TemplateTypeArg& argument : arguments) {
+		const auto type = tryImportCanonicalTemplateTypeArgument(types, argument);
+		if (!type.has_value()) {
+			return std::nullopt;
+		}
+		argument_types.push_back(*type);
+	}
+	const TypeId substituted = types.substitute(*imported_pattern, declaration, argument_types);
+	const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(types, substituted);
+	if (exported.status != CanonicalTypeImportStatus::Supported ||
+		!std::ranges::any_of(exported.components, [](const DeclaratorComponent& component) {
+			return component.kind == DeclaratorComponentKind::Array || component.kind == DeclaratorComponentKind::UnknownBoundArray;
+		})) {
+		return std::nullopt;
+	}
+	const CanonicalTypeKind base_kind = types.node(types.withoutTopLevelQualifiers(exported.base)).kind;
+	if (base_kind != CanonicalTypeKind::Builtin && base_kind != CanonicalTypeKind::Record && base_kind != CanonicalTypeKind::Enum) {
+		return std::nullopt;
+	}
+	TypeSpecifierNode result;
+	applyCanonicalDeclaratorBase(result, types, exported.base);
+	result.set_ordered_declarator(exported.components);
+	result.set_size_in_bits(getTypeSpecSizeBits(result));
+	transaction.commit();
+	return ASTNode::emplace_node<TypeSpecifierNode>(std::move(result));
+}
+
 void appendMemberTemplateResolutionOuterBindings(
 	const OuterTemplateBinding* outer_binding,
 	TemplateParameterVector& resolution_params,
@@ -1582,14 +1622,14 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 // Example: obj.convert<int>(42)
 std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit(std::string_view struct_name, std::string_view member_name,
 	std::span<const TemplateTypeArg> template_type_args, std::optional<ValueCategory> receiver_value_category) {
-	return try_instantiate_member_function_template_explicit_candidate(struct_name, member_name, template_type_args, true, nullptr,
-		receiver_value_category);
+	return try_instantiate_member_function_template_explicit_candidate(struct_name, member_name, template_type_args,
+		FunctionTemplateInstantiation::Definition, nullptr, receiver_value_category);
 }
 
 std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit_candidate(std::string_view struct_name, std::string_view member_name,
-	std::span<const TemplateTypeArg> template_type_args, bool materialize_body, const TemplateFunctionDeclarationNode* selected_template,
-	std::optional<ValueCategory> receiver_value_category) {
-
+	std::span<const TemplateTypeArg> template_type_args, FunctionTemplateInstantiation instantiation,
+	const TemplateFunctionDeclarationNode* selected_template, std::optional<ValueCategory> receiver_value_category) {
+	const bool materialize_body = instantiation == FunctionTemplateInstantiation::Definition;
 	ScopedInjectedClassOwnerContext owner_context(*this, struct_name);
 
 	// Build the qualified template name using StringBuilder
@@ -2557,7 +2597,11 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	// argument type before deduction sees the body.
 	const TypeSpecifierNode& return_type_spec = orig_decl.type_specifier_node();
 	ASTNode substituted_return_type;
-	if (isPlaceholderAutoType(return_type_spec.type())) {
+	if (return_type_spec.is_alias_template_specialization()) {
+		const auto array_return = trySubstituteArrayAliasReturn(return_type_spec, template_func.template_decl_id(), template_args);
+		substituted_return_type = array_return.has_value() ? *array_return
+			: substituteTemplateParameters(orig_decl.type_node(), template_params, template_args);
+	} else if (isPlaceholderAutoType(return_type_spec.type())) {
 		substituted_return_type = emplace_node<TypeSpecifierNode>(return_type_spec);
 	} else {
 		auto [return_type_index, return_resolved_arg] = resolve_template_type(return_type_spec.type_index());

@@ -292,6 +292,9 @@ enum class UserDefinedConversionPolicy : uint8_t {
 	Allow,
 };
 
+enum class ConversionFunctionContext : uint8_t { Implicit, Explicit };
+enum class FunctionTemplateInstantiation : uint8_t { SignatureOnly, Definition };
+
 enum class SemanticContextFlags : uint8_t {
 	None = 0,
 	InConstantEvaluatedContext = 1 << 0,

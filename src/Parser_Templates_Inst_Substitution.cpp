@@ -1914,6 +1914,7 @@ TypeSpecifierNode Parser::buildDependentAliasTemplateTypeSpecifier(
 				if (!argument.dependent_name.isValid()) {
 					return;
 				}
+				type_arg.set_template_parameter_identity(argument.dependent_name);
 				if (const auto binding =
 						current_template_params_.publishedBindingOf(argument.dependent_name);
 					binding.has_value()) {

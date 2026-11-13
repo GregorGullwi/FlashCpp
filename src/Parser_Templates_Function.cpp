@@ -46,6 +46,8 @@ std::optional<TemplateDeclId> tryPublishMemberFunctionTemplate(
 		enclosing.has_template_decl_id() &&
 		enclosing.template_decl_id() == enclosing_template_decl) {
 		owner = ownerIdFromTemplateDecl(enclosing_template_decl);
+	} else if (enclosing.has_canonical_specialization_owner()) {
+		owner = ownerIdFromTemplateDecl(enclosing.canonical_specialization_owner_template_decl_id());
 	}
 	if (!owner) {
 		return std::nullopt;
@@ -756,12 +758,10 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 		// Skip declaration specifiers (constexpr, explicit, inline, etc.)
 		parse_declaration_specifiers();
-		// Also skip 'explicit' / 'explicit(condition)'
+		bool is_explicit = false;
+		ExprId explicit_condition{};
 		while (peek() == "explicit"_tok) {
-			advance();
-			if (peek() == "("_tok) {
-				skip_balanced_parens();
-			}
+			is_explicit = parseExplicitSpecifier(explicit_condition);
 		}
 
 		if (peek() == "operator"_tok) {
@@ -812,6 +812,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 							decl_node.as<DeclarationNode>(), owner_qualified_name);
 						func_ref.set_semantic_owner_name(owner_qualified_name);
+						func_ref.set_is_explicit(is_explicit);
 						if (!struct_parsing_context_stack_.empty()) {
 							if (StructTypeInfo* owner_struct_info =
 									struct_parsing_context_stack_.back().local_struct_info;
@@ -831,14 +832,30 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						func_ref.set_is_const_member_function(member_quals.is_const());
 						func_ref.set_is_volatile_member_function(member_quals.is_volatile());
 						func_ref.set_function_reference_qualifier(member_quals.ref_qualifier);
-						skip_trailing_requires_clause();
+						auto conversion_requires_clause = requires_clause;
+						if (const auto trailing = parse_trailing_requires_clause()) {
+							if (conversion_requires_clause.has_value()) {
+								const auto& head = conversion_requires_clause->as<RequiresClauseNode>();
+								const auto& tail = trailing->as<RequiresClauseNode>();
+								const Token conjunction(Token::Type::Operator, "&&"sv, identifier_token.line(), identifier_token.column(), identifier_token.file_index());
+								const ASTNode combined = emplace_node<ExpressionNode>(
+									BinaryOperatorNode(conjunction, head.constraint_expr(), tail.constraint_expr()));
+								conversion_requires_clause = emplace_node<RequiresClauseNode>(combined, identifier_token);
+							} else {
+								conversion_requires_clause = trailing;
+							}
+						}
 
 						// Create template function declaration node
 						func_ref.set_is_template_pattern(true);
 						auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
 							template_params,
 							func_node,
-							requires_clause);
+							conversion_requires_clause);
+						auto& conversion_template = template_func_node.as<TemplateFunctionDeclarationNode>();
+						(void)tryPublishMemberFunctionTemplate(struct_node, conversion_template, identifier_token.handle(), active_template_decl_id_,
+							struct_parsing_context_stack_.size() == 1u);
+						stampPublishedFunctionTemplateParameters(conversion_template);
 
 						// Handle body: = default, = delete, { body }, or ;
 						if (peek() == "{"_tok) {
@@ -849,8 +866,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 							advance(); // consume '='
 							if (peek() == "delete"_tok) {
 								advance(); // consume 'delete'
-								// Deleted template conversion operators are registered but
-								// will be rejected if instantiation is attempted
+								func_ref.set_is_deleted(true);
 							} else if (peek() == "default"_tok) {
 								advance(); // consume 'default'
 								// Defaulted template conversion operators get compiler-generated impl

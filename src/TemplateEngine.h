@@ -13,6 +13,7 @@
 class TemplateEngine {
 public:
 	TemplateEngine() = default;
+	enum class ConstructorArgumentValidation : uint8_t { Validate, AlreadyRanked };
 
 	void attach(Parser& parser);
 
@@ -81,7 +82,7 @@ public:
 
 	std::optional<ASTNode> resolveDefinitionBoundOrdinaryCall(
 		const FunctionCallDefinitionLookupRecord& record,
-		std::span<const TypeSpecifierNode> arg_types);
+		std::span<const TypeSpecifierNode> arg_types, const ChunkedVector<ASTNode>& arguments);
 
 	std::optional<ASTNode> resolveDefinitionBoundQualifiedTemplateCall(
 		const FunctionCallDefinitionLookupRecord& record,
@@ -136,7 +137,7 @@ public:
 		const StructTypeInfo& struct_info,
 		std::span<const TypeSpecifierNode> arg_types,
 		const ConstructorDeclarationNode* preferred_ctor,
-		bool& is_ambiguous);
+		bool& is_ambiguous, ConstructorArgumentValidation validation);
 
 	std::optional<ASTNode> parseTemplateBody(
 		Parser::SaveHandle body_pos,
@@ -297,9 +298,9 @@ inline std::optional<TemplateArgumentVector> TemplateEngine::materializeConcrete
 
 inline std::optional<ASTNode> TemplateEngine::resolveDefinitionBoundOrdinaryCall(
 	const FunctionCallDefinitionLookupRecord& record,
-	std::span<const TypeSpecifierNode> arg_types) {
+	std::span<const TypeSpecifierNode> arg_types, const ChunkedVector<ASTNode>& arguments) {
 	recordTemplateEngineOldEngineRoute();
-	return parser().resolveDefinitionBoundOrdinaryCall(record, arg_types);
+	return parser().resolveDefinitionBoundOrdinaryCall(record, arg_types, arguments);
 }
 
 inline std::optional<ASTNode> TemplateEngine::resolveDefinitionBoundQualifiedTemplateCall(
@@ -402,10 +403,10 @@ inline const ConstructorDeclarationNode* TemplateEngine::materializeMatchingCons
 	const StructTypeInfo& struct_info,
 	std::span<const TypeSpecifierNode> arg_types,
 	const ConstructorDeclarationNode* preferred_ctor,
-	bool& is_ambiguous) {
+	bool& is_ambiguous, ConstructorArgumentValidation validation) {
 	if (preferred_ctor != nullptr && !preferred_ctor->has_template_parameters() && preferred_ctor->template_specialization_source() == nullptr) {
 		// Ordinary constructors need argument validation, without template instantiation.
-		if (matchesConstructorArgumentTypes(*preferred_ctor, arg_types)) {
+		if (validation == ConstructorArgumentValidation::AlreadyRanked || matchesConstructorArgumentTypes(*preferred_ctor, arg_types)) {
 			is_ambiguous = false;
 			return preferred_ctor;
 		}

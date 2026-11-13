@@ -402,6 +402,7 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 Parser::ConcreteCallOperatorResolution Parser::tryResolveConcreteCallOperator(
 	const std::optional<ASTNode>& object_expr,
 	std::span<const TypeSpecifierNode> arg_types,
+	const ChunkedVector<ASTNode>& argument_nodes,
 	size_t argument_count,
 	bool all_arg_types_known) {
 	if (!object_expr.has_value())
@@ -483,11 +484,14 @@ Parser::ConcreteCallOperatorResolution Parser::tryResolveConcreteCallOperator(
 
 	if (all_arg_types_known) {
 		const OverloadResolutionResult op_result =
-			resolve_member_overload_with_argument_nodes(
+			resolve_member_overload_with_argument_nodes_using_conversion(
 				call_candidates,
 				*type_opt,
 				arg_types,
-				std::span<const ASTNode>{});
+				argument_nodes,
+				[this](const TypeSpecifierNode& argument_type, const TypeSpecifierNode& parameter_type, const ASTNode* argument_node) {
+					return semanticAnalysis().buildCallArgumentConversion(argument_type, parameter_type, argument_node);
+				});
 		if (op_result.has_match && !op_result.is_ambiguous && op_result.selected_overload != nullptr) {
 			return {
 				ConcreteCallOperatorResolution::State::Resolved,
@@ -761,6 +765,7 @@ ParseResult Parser::finalizePostfixCallExpression(
 	const ConcreteCallOperatorResolution call_operator_resolution = tryResolveConcreteCallOperator(
 		result,
 		deduced_arg_types,
+		args,
 		args.size(),
 		all_arg_types_known);
 	const FunctionDeclarationNode* func_ref = call_operator_resolution.function;
@@ -1645,6 +1650,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 							tryResolveConcreteCallOperator(
 								member_access_expr,
 								deduced_member_arg_types,
+								args,
 								args.size(),
 								all_member_arg_types_known);
 						if (member_call_operator_resolution.state ==
@@ -2005,6 +2011,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 												   std::span<const StringHandle> owner_segments,
 												   StringHandle member_name_handle,
 												   std::span<const TypeSpecifierNode> arg_types,
+												   const ChunkedVector<ASTNode>& argument_nodes,
 												   size_t argument_count) -> const FunctionDeclarationNode* {
 		const StructTypeInfo* owner_struct =
 			tryResolveQualifiedOwnerStruct(object_expr, owner_segments);
@@ -2034,16 +2041,22 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			OverloadResolutionResult overload_result;
 			if (auto object_type = get_expression_type(object_expr);
 				object_type.has_value()) {
-				overload_result = resolve_member_overload_with_argument_nodes(
+				overload_result = resolve_member_overload_with_argument_nodes_using_conversion(
 					candidates,
 					*object_type,
 					arg_types,
-					std::span<const ASTNode>{});
+					argument_nodes,
+					[this](const TypeSpecifierNode& argument_type, const TypeSpecifierNode& parameter_type, const ASTNode* argument_node) {
+						return semanticAnalysis().buildCallArgumentConversion(argument_type, parameter_type, argument_node);
+					});
 			} else {
-				overload_result = resolve_overload_with_argument_nodes(
+				overload_result = resolve_overload_with_argument_nodes_using_conversion(
 					candidates,
 					arg_types,
-					std::span<const ASTNode>{});
+					argument_nodes,
+					[this](const TypeSpecifierNode& argument_type, const TypeSpecifierNode& parameter_type, const ASTNode* argument_node) {
+						return semanticAnalysis().buildCallArgumentConversion(argument_type, parameter_type, argument_node);
+					});
 			}
 			if (overload_result.has_match &&
 				!overload_result.is_ambiguous &&
@@ -2520,6 +2533,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 											? qualified_member_token.handle()
 											: StringTable::getOrInternStringHandle(qualified_member_token.value()),
 										args_result.arg_types,
+										args,
 										args.size());
 							}
 							if (resolved_func != nullptr) {
@@ -2653,6 +2667,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 											? op_token.handle()
 											: StringTable::getOrInternStringHandle(op_token.value()),
 										args_result.arg_types,
+										args_result.args,
 										args_result.args.size());
 							}
 							if (resolved_func != nullptr) {
@@ -2932,7 +2947,13 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 									return nullptr;
 								}
 								const OverloadResolutionResult overload_result =
-									resolve_overload_with_argument_nodes(overloads, arg_types, std::span<const ASTNode>{});
+									resolve_overload_with_argument_nodes_using_conversion(
+										overloads,
+										arg_types,
+										args,
+										[this](const TypeSpecifierNode& argument_type, const TypeSpecifierNode& parameter_type, const ASTNode* argument_node) {
+											return semanticAnalysis().buildCallArgumentConversion(argument_type, parameter_type, argument_node);
+										});
 								if (overload_result.has_match &&
 									!overload_result.is_ambiguous &&
 									overload_result.selected_overload != nullptr) {

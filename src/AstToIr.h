@@ -938,7 +938,7 @@ private:
 					target_struct_info,
 					std::span<const TypeSpecifierNode>(arg_types.data(), arg_types.size()),
 					resolution.selected_overload,
-					template_ctor_ambiguous);
+					template_ctor_ambiguous, TemplateEngine::ConstructorArgumentValidation::Validate);
 			if (template_ctor_ambiguous) {
 				throw makeStructuredCompileError(
 					context_->diagnostics(),

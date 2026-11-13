@@ -2882,6 +2882,10 @@ ParseResult Parser::parse_type_specifier() {
 							}
 							base_argument = &(*template_args)[*target_parameter_index];
 						}
+						if (has_dependent_alias_args && alias_target_type_spec.is_array_object()) {
+							return ParseResult::success(emplace_node<TypeSpecifierNode>(buildDependentDirectAliasTypeSpecifier(
+								type_name, alias_node, *template_args, template_arg_syntax_nodes, type_name_token, cv_qualifier)));
+						}
 						instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
 							*base_argument,
 							Token());

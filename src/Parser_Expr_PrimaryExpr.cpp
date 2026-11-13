@@ -25,8 +25,7 @@ void applyDeclarationArrayBoundsToTypeSpec(
 	TypeSpecifierNode& type_spec,
 	Parser& parser);
 
-namespace {
-std::optional<TemplateTypeArg> tryMaterializeCanonicalTemplateTypeBinding(
+std::optional<TemplateTypeArg> Parser::tryMaterializeCanonicalTemplateTypeBinding(
 	CanonicalTypeTable& canonical_types,
 	const TypeSpecifierNode& target_type,
 	TypeId target_type_id,
@@ -64,9 +63,34 @@ std::optional<TemplateTypeArg> tryMaterializeCanonicalTemplateTypeBinding(
 			}
 		}
 	}
-	return std::nullopt;
+	const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(canonical_types, target_binding);
+	if (exported.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	const TypeId base = canonical_types.withoutTopLevelQualifiers(exported.base);
+	const CanonicalTypeKind base_kind = canonical_types.node(base).kind;
+	if (base_kind != CanonicalTypeKind::Builtin && base_kind != CanonicalTypeKind::Record && base_kind != CanonicalTypeKind::Enum &&
+		base_kind != CanonicalTypeKind::TemplateSpecialization) {
+		return std::nullopt;
+	}
+	TypeSpecifierNode materialized;
+	if (base_kind == CanonicalTypeKind::TemplateSpecialization) {
+		const TypeInfo* info = tryFindCanonicalOverloadClassTypeInfo(canonical_types, base);
+		if (info == nullptr) {
+			return std::nullopt;
+		}
+		materialized.set_type_index(info->registeredTypeIndex().withCategory(TypeCategory::Struct));
+	}
+	applyCanonicalDeclaratorBase(materialized, canonical_types, exported.base);
+	materialized.set_ordered_declarator(exported.components);
+	materialized.set_size_in_bits(getTypeSpecSizeBits(materialized));
+	if (tryImportSupportedCanonical(canonical_types, materialized) != target_binding) {
+		return std::nullopt;
+	}
+	return TemplateTypeArg::makeTypeSpecifier(materialized);
 }
 
+namespace {
 struct QualifiedMemberFunctionAddressOverloadSet {
 	const QualifiedIdentifierNode* qualified_identifier = nullptr;
 	const StructTypeInfo* owner = nullptr;
@@ -539,28 +563,6 @@ bool tryMaterializeSelectedFreeFunctionTemplateAddresses(
 	return true;
 }
 
-ArgumentConversionInfo buildParserArgumentConversion(
-	Parser& parser, const TypeSpecifierNode& argument_type, const TypeSpecifierNode& parameter_type,
-	const ASTNode* argument_node) {
-	const ArgumentConversionInfo conversion = buildArgumentConversionInfo(argument_type, parameter_type, argument_node);
-	if (conversion.is_valid || !is_struct_type(argument_type.category()) || argument_node == nullptr) {
-		return conversion;
-	}
-	const ValueCategory source_value_category =
-		is_lvalue_expression_for_overload_resolution(*argument_node) ? ValueCategory::LValue : ValueCategory::PRValue;
-	const std::optional<UserDefinedConversionOperatorSelection> selected_template =
-		parser.semanticAnalysis().trySelectConversionFunctionTemplateForOverload(
-			argument_type, parameter_type, source_value_category);
-	const bool reference_binding_is_viable = selected_template.has_value() &&
-		conversionOperatorSelectionBindsParameter(*selected_template, parameter_type);
-	if (selected_template.has_value() && !selected_template->ambiguous && selected_template->function != nullptr &&
-		reference_binding_is_viable) {
-		return ArgumentConversionInfo{ConversionRank::UserDefined, &parameter_type, true,
-			selected_template->trailing_standard_rank, true};
-	}
-	return conversion;
-}
-
 template <typename ArgumentNodeContainer>
 OverloadResolutionResult resolveParserOverloadWithArgumentNodes(
 	Parser& parser,
@@ -586,7 +588,7 @@ OverloadResolutionResult resolveParserOverloadWithArgumentNodes(
 					return *function_address;
 				}
 			}
-			return buildParserArgumentConversion(parser, argument_type, parameter_type, argument_node);
+			return parser.semanticAnalysis().buildCallArgumentConversion(argument_type, parameter_type, argument_node);
 		});
 }
 
@@ -1159,7 +1161,7 @@ Parser::tryInstantiateMemberFunctionTemplateCandidateForAddress(
 		current_explicit_call_arg_types_);
 	current_explicit_call_arg_types_ = &target_parameter_types;
 	std::optional<ASTNode> instantiated = try_instantiate_member_function_template_explicit_candidate(owner_name, member_name,
-		std::span<const TemplateTypeArg>(template_args->data(), template_args->size()), true, &function_template, std::nullopt);
+		*template_args, FunctionTemplateInstantiation::Definition, &function_template, std::nullopt);
 	if (instantiated.has_value()) {
 		return_type_deduced = deduced_from_return_type;
 	}
@@ -2204,7 +2206,7 @@ std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantia
 				parameter_type,
 				argument_node);
 		}
-		return buildParserArgumentConversion(*this, argument_type, parameter_type, argument_node);
+		return semanticAnalysis().buildCallArgumentConversion(argument_type, parameter_type, argument_node);
 	};
 
 	std::vector<TypeSpecifierNode> adl_argument_types;
@@ -2287,7 +2289,7 @@ std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantia
 
 std::optional<ASTNode> Parser::resolveDefinitionBoundOrdinaryCall(
 	const FunctionCallDefinitionLookupRecord& record,
-	std::span<const TypeSpecifierNode> arg_types) {
+	std::span<const TypeSpecifierNode> arg_types, const ChunkedVector<ASTNode>& arguments) {
 	if (!record.callee_name.isValid()) {
 		return std::nullopt;
 	}
@@ -2311,8 +2313,7 @@ std::optional<ASTNode> Parser::resolveDefinitionBoundOrdinaryCall(
 		return std::nullopt;
 	}
 
-	OverloadResolutionResult resolution =
-		resolve_overload_with_argument_nodes(all_overloads, arg_types, std::span<const ASTNode>{});
+	const auto resolution = resolveParserOverloadWithArgumentNodes(*this, all_overloads, arg_types, arguments);
 	if (resolution.is_ambiguous ||
 		!resolution.has_match ||
 		resolution.selected_overload == nullptr) {
@@ -2494,6 +2495,7 @@ std::optional<ParseResult> Parser::tryQualifiedPhase1Lookup(
 	const std::optional<TemplateArgumentVector>& template_args,
 	bool has_deferred_qualified_call_args,
 	const std::vector<TypeSpecifierNode>& arg_types,
+	const ChunkedVector<ASTNode>& arguments,
 	std::optional<ASTNode>& identifierType) {
 	if ((!template_args.has_value() || template_args->empty()) &&
 		!has_deferred_qualified_call_args) {
@@ -2502,8 +2504,7 @@ std::optional<ParseResult> Parser::tryQualifiedPhase1Lookup(
 		const bool had_qualified_overloads = !qualified_overloads.empty();
 		filterPhase1OrdinaryFunctionOverloads(qualified_overloads);
 		if (!qualified_overloads.empty()) {
-			OverloadResolutionResult resolution =
-				resolve_overload_with_argument_nodes(qualified_overloads, arg_types, std::span<const ASTNode>{});
+			const auto resolution = resolveParserOverloadWithArgumentNodes(*this, qualified_overloads, arg_types, arguments);
 			if (resolution.is_ambiguous) {
 				return ParseResult::error(
 					"Ambiguous call to qualified function '" +
@@ -2528,8 +2529,7 @@ std::optional<ParseResult> Parser::tryQualifiedPhase1Lookup(
 			if (!phase1_violation_token_.has_value()) {
 				const std::vector<ASTNode> all_qualified_overloads =
 					gSymbolTable.lookup_qualified_all(qual_id.namespace_handle(), qual_id.nameHandle());
-				OverloadResolutionResult resolution =
-					resolve_overload_with_argument_nodes(all_qualified_overloads, arg_types, std::span<const ASTNode>{});
+				const auto resolution = resolveParserOverloadWithArgumentNodes(*this, all_qualified_overloads, arg_types, arguments);
 				if (!resolution.is_ambiguous && resolution.has_match &&
 					resolution.selected_overload != nullptr) {
 					identifierType = *resolution.selected_overload;
@@ -4223,6 +4223,7 @@ ParseResult Parser::parse_qualified_operator_call(const Token& context_token, st
 						std::nullopt,
 						has_deferred_qualified_call_args,
 						arg_types,
+						args_result.args,
 						identifierType);
 				qualified_lookup_result.has_value()) {
 				return *qualified_lookup_result;
@@ -6166,7 +6167,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 			if (auto err = tryQualifiedPhase1Lookup(qual_id,
 					buildQualifiedNameFromStrings(namespaces, qual_id.name()),
-					template_args, has_deferred_qualified_call_args, arg_types, identifierType)) {
+					template_args, has_deferred_qualified_call_args, arg_types, args, identifierType)) {
 				return *err;
 			}
 
@@ -7421,7 +7422,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				if (auto err = tryQualifiedPhase1Lookup(qual_id,
 						resolved_qualified_name,
-						template_args, has_deferred_qualified_call_args, arg_types, identifierType)) {
+						template_args, has_deferred_qualified_call_args, arg_types, args, identifierType)) {
 					return *err;
 				}
 
@@ -12113,6 +12114,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						tryResolveConcreteCallOperator(
 							object_expr,
 							op_arg_types,
+							args,
 							args.size(),
 							all_op_types_known);
 					const FunctionDeclarationNode* operator_call_func =
@@ -12987,7 +12989,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 													return *function_address;
 												}
 											}
-											return buildParserArgumentConversion(*this, argument_type, parameter_type, argument_node);
+											return semanticAnalysis().buildCallArgumentConversion(argument_type, parameter_type, argument_node);
 										};
 										auto resolution_result =
 											resolve_overload_with_argument_nodes_using_conversion(
