@@ -59,6 +59,26 @@ struct BaseTemplateConversion {
 
 struct DerivedTemplateConversion : BaseTemplateConversion {};
 
+struct VirtualBaseTemplateConversion {
+	template<class U>
+	operator U() const {
+		return U{};
+	}
+};
+
+struct VirtualDerivedTemplateConversion : virtual VirtualBaseTemplateConversion {};
+
+template<class T>
+struct DeferredBaseTemplateConversion {
+	template<class U>
+	operator U() const {
+		return U{};
+	}
+};
+
+template<class T>
+struct DeferredDerivedTemplateConversion : DeferredBaseTemplateConversion<T> {};
+
 int main() {
 	int a = static_cast<int>(TemplateConversion{});
 	int b = static_cast<int>(ExplicitTemplateConversion{});
@@ -94,6 +114,16 @@ int main() {
 	int inherited_implicit = DerivedTemplateConversion{};
 	if (inherited_static != 0 || inherited_implicit != 0) {
 		return 5;
+	}
+	int virtual_static = static_cast<int>(VirtualDerivedTemplateConversion{});
+	int virtual_implicit = VirtualDerivedTemplateConversion{};
+	if (virtual_static != 0 || virtual_implicit != 0) {
+		return 6;
+	}
+	int deferred_static = static_cast<int>(DeferredDerivedTemplateConversion<int>{});
+	int deferred_implicit = DeferredDerivedTemplateConversion<int>{};
+	if (deferred_static != 0 || deferred_implicit != 0) {
+		return 7;
 	}
 	return 0;
 }

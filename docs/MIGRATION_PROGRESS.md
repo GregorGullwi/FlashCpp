@@ -271,7 +271,8 @@ mismatched, unpublished, or unresolved owner facts.
    conversion function template whose return type is a bare parameter or a
    pointer chain to it, including cv-qualified pointee and non-top-level pointer
    cv, is instantiated and annotated for explicit and implicit conversions,
-   including operators inherited through public non-virtual bases.
+   including operators inherited through public and public virtual bases and
+   through template bases resolved during instantiation.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are
