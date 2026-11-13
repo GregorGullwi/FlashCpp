@@ -270,7 +270,8 @@ mismatched, unpublished, or unresolved owner facts.
    annotation, reference binding, and constructibility ranking. A single-type
    conversion function template whose return type is a bare parameter or a
    pointer chain to it, including cv-qualified pointee and non-top-level pointer
-   cv, is instantiated and annotated for explicit and implicit conversions.
+   cv, is instantiated and annotated for explicit and implicit conversions,
+   including operators inherited through public non-virtual bases.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are

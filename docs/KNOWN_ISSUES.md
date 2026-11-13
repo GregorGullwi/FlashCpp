@@ -222,11 +222,11 @@ expression type and the parser should only consume it.
 Canonical user-defined conversion lookup now instantiates the common case of a
 single-type-parameter conversion function template whose bare return type is that
 parameter, for example `template<class U> operator U()` or `operator U*()`,
-including cv-qualified pointee types and non-top-level pointer cv. Reference and
-array returns, multiple template parameters, base-class declarations, and
-constrained templates still fail closed with "sema must annotate a
-class-to-non-class static_cast conversion". Extend deduction before removing
-that fail-closed path.
+including cv-qualified pointee types, non-top-level pointer cv, and public
+non-virtual bases. Reference and array returns, multiple template parameters,
+virtual or deferred bases, and constrained templates still fail closed with
+"sema must annotate a class-to-non-class static_cast conversion". Extend
+deduction before removing that fail-closed path.
 
 ## Remaining flat trait consumers
 

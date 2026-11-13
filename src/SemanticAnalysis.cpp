@@ -11686,97 +11686,140 @@ std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::trySelec
 		return std::nullopt;
 	}
 	const uint8_t source_cv = static_cast<uint8_t>(source_type.cv_qualifier());
+	struct PendingClass {
+		const StructTypeInfo* info;
+		TypeIndex type_index;
+		size_t depth;
+	};
+	InlineVector<PendingClass, FlashCpp::InlineVectorSpillFamily::ClassLayout, 4> pending;
+	pending.push_back({struct_info, source_type.type_index(), 0});
+	InlineVector<const StructTypeInfo*, FlashCpp::InlineVectorSpillFamily::ClassLayout, 4> visited;
 	std::optional<UserDefinedConversionOperatorSelection> selected;
-	size_t match_count = 0;
-	for (const StructMemberFunction& member : struct_info->member_functions) {
-		if (!member.function_decl.is<TemplateFunctionDeclarationNode>() || member.access != AccessSpecifier::Public) {
+	std::optional<size_t> best_depth;
+	bool best_ambiguous = false;
+	while (!pending.empty()) {
+		const PendingClass current = pending.back();
+		pending.pop_back();
+		if (std::find(visited.begin(), visited.end(), current.info) != visited.end()) {
 			continue;
 		}
-		if (!allow_explicit && member.is_explicit) {
-			continue;
-		}
-		if (!canonicalConversionOperatorAllowsValueCategory(member.ref_qualifier, source_value_category)) {
-			continue;
-		}
-		if ((source_cv & ~static_cast<uint8_t>(member.cv_qualifier)) != 0) {
-			continue;
-		}
-		const std::string_view member_name = StringTable::getStringView(member.getName());
-		if (member.operator_kind != OverloadableOperator::None || !member_name.starts_with("operator ")) {
-			continue;
-		}
-		const TemplateFunctionDeclarationNode& tmpl = member.function_decl.as<TemplateFunctionDeclarationNode>();
-		if (tmpl.has_requires_clause()) {
-			continue;
-		}
-		const FunctionDeclarationNode& function = tmpl.function_decl_node();
-		if (function.is_variadic() || !function.parameter_nodes().empty()) {
-			continue;
-		}
-		const TemplateParameterVector& params = tmpl.template_parameters();
-		if (params.size() != 1 || params[0].kind() != TemplateParameterKind::Type || params[0].is_variadic()) {
-			continue;
-		}
-		const TypeSpecifierNode& return_type = function.decl_node().type_specifier_node();
-		const TypeCategory return_category = return_type.category();
-		const size_t return_pointer_depth = return_type.pointer_depth();
-		const CVQualifier return_cv = return_type.cv_qualifier();
-		const CVQualifier target_cv = target_type.cv_qualifier();
-		bool supported_shape = !return_type.is_reference() && !return_type.is_array() && !return_type.has_pointee_array_declarator();
-		if (return_pointer_depth == 0) {
-			supported_shape &= return_cv == CVQualifier::None;
-		} else {
-			supported_shape = supported_shape && !target_type.is_reference() && !target_type.is_array() &&
-				target_type.pointer_depth() == return_pointer_depth &&
-				(static_cast<uint8_t>(return_cv) & ~static_cast<uint8_t>(target_cv)) == 0;
-			const std::span<const PointerLevel> return_pointer_levels = return_type.pointer_levels();
-			const std::span<const PointerLevel> target_pointer_levels = target_type.pointer_levels();
-			for (size_t level_index = 0; level_index + 1 < return_pointer_levels.size(); ++level_index) {
-				supported_shape &= return_pointer_levels[level_index].cv_qualifier == target_pointer_levels[level_index].cv_qualifier;
+		visited.push_back(current.info);
+		bool found_in_class = false;
+		for (const StructMemberFunction& member : current.info->member_functions) {
+			if (!member.function_decl.is<TemplateFunctionDeclarationNode>() || member.access != AccessSpecifier::Public) {
+				continue;
 			}
-			supported_shape &= !return_pointer_levels.empty() && return_pointer_levels.back().cv_qualifier == CVQualifier::None;
-		}
-		const bool return_is_template_parameter = supported_shape && return_type.token().value() == params[0].name() &&
-			(return_category == TypeCategory::Template || return_category == TypeCategory::UserDefined ||
-			 return_category == TypeCategory::TypeAlias);
-		if (!return_is_template_parameter) {
-			continue;
-		}
-		TypeSpecifierNode deduced_target = target_type;
-		if (return_pointer_depth == 0) {
-			if (deduced_target.pointer_depth() == 0) {
-				deduced_target.set_cv_qualifier(CVQualifier::None);
+			if (!allow_explicit && member.is_explicit) {
+				continue;
 			}
-		} else {
-			for (size_t pointer_index = 0; pointer_index < return_pointer_depth; ++pointer_index) {
-				deduced_target = deduced_target.without_innermost_legacy_pointer_wrapper();
+			if (!canonicalConversionOperatorAllowsValueCategory(member.ref_qualifier, source_value_category)) {
+				continue;
 			}
-			deduced_target.set_cv_qualifier(static_cast<CVQualifier>(static_cast<uint8_t>(target_cv) & ~static_cast<uint8_t>(return_cv)));
+			if ((source_cv & ~static_cast<uint8_t>(member.cv_qualifier)) != 0) {
+				continue;
+			}
+			const std::string_view member_name = StringTable::getStringView(member.getName());
+			if (member.operator_kind != OverloadableOperator::None || !member_name.starts_with("operator ")) {
+				continue;
+			}
+			const TemplateFunctionDeclarationNode& tmpl = member.function_decl.as<TemplateFunctionDeclarationNode>();
+			if (tmpl.has_requires_clause()) {
+				continue;
+			}
+			const FunctionDeclarationNode& function = tmpl.function_decl_node();
+			if (function.is_variadic() || !function.parameter_nodes().empty()) {
+				continue;
+			}
+			const TemplateParameterVector& params = tmpl.template_parameters();
+			if (params.size() != 1 || params[0].kind() != TemplateParameterKind::Type || params[0].is_variadic()) {
+				continue;
+			}
+			const TypeSpecifierNode& return_type = function.decl_node().type_specifier_node();
+			const TypeCategory return_category = return_type.category();
+			const size_t return_pointer_depth = return_type.pointer_depth();
+			const CVQualifier return_cv = return_type.cv_qualifier();
+			const CVQualifier target_cv = target_type.cv_qualifier();
+			bool supported_shape = !return_type.is_reference() && !return_type.is_array() && !return_type.has_pointee_array_declarator();
+			if (return_pointer_depth == 0) {
+				supported_shape &= return_cv == CVQualifier::None;
+			} else {
+				supported_shape = supported_shape && !target_type.is_reference() && !target_type.is_array() &&
+					target_type.pointer_depth() == return_pointer_depth &&
+					(static_cast<uint8_t>(return_cv) & ~static_cast<uint8_t>(target_cv)) == 0;
+				const std::span<const PointerLevel> return_pointer_levels = return_type.pointer_levels();
+				const std::span<const PointerLevel> target_pointer_levels = target_type.pointer_levels();
+				for (size_t level_index = 0; level_index + 1 < return_pointer_levels.size(); ++level_index) {
+					supported_shape &= return_pointer_levels[level_index].cv_qualifier == target_pointer_levels[level_index].cv_qualifier;
+				}
+				supported_shape &= !return_pointer_levels.empty() && return_pointer_levels.back().cv_qualifier == CVQualifier::None;
+			}
+			const bool return_is_template_parameter = supported_shape && return_type.token().value() == params[0].name() &&
+				(return_category == TypeCategory::Template || return_category == TypeCategory::UserDefined ||
+				 return_category == TypeCategory::TypeAlias);
+			if (!return_is_template_parameter) {
+				continue;
+			}
+			// A deducible template in this class hides conversion templates in its
+			// bases even when this particular instantiation cannot be materialized.
+			found_in_class = true;
+			TypeSpecifierNode deduced_target = target_type;
+			if (return_pointer_depth == 0) {
+				if (deduced_target.pointer_depth() == 0) {
+					deduced_target.set_cv_qualifier(CVQualifier::None);
+				}
+			} else {
+				for (size_t pointer_index = 0; pointer_index < return_pointer_depth; ++pointer_index) {
+					deduced_target = deduced_target.without_innermost_legacy_pointer_wrapper();
+				}
+				deduced_target.set_cv_qualifier(static_cast<CVQualifier>(static_cast<uint8_t>(target_cv) & ~static_cast<uint8_t>(return_cv)));
+			}
+			TemplateTypeArg template_arg(deduced_target);
+			std::optional<ASTNode> instantiated = parser().try_instantiate_member_function_template_explicit(
+				StringTable::getStringView(current.info->name), member_name,
+				std::span<const TemplateTypeArg>(&template_arg, 1), source_value_category);
+			if (!instantiated.has_value()) {
+				continue;
+			}
+			const FunctionDeclarationNode* const instantiated_function = instantiated->get_if<FunctionDeclarationNode>();
+			if (instantiated_function == nullptr) {
+				continue;
+			}
+			UserDefinedConversionOperatorSelection candidate;
+			candidate.function = instantiated_function;
+			if (const TypeInfo* const declaring_type_info = tryGetTypeInfo(current.type_index)) {
+				const CanonicalTypeImport declaring_import = importCanonicalClassTypeInfo(requireFrontendContext().canonicalTypes(), *declaring_type_info);
+				if (declaring_import.status == CanonicalTypeImportStatus::Supported) {
+					candidate.declaring_type = declaring_import.type;
+				}
+			}
+			candidate.compatibility_declaring_type_index = current.type_index;
+			candidate.trailing_standard_kind = StandardConversionKind::None;
+			candidate.trailing_standard_rank = ConversionRank::ExactMatch;
+			candidate.member_cv_qualifier = member.cv_qualifier;
+			candidate.access = member.access;
+			if (!best_depth.has_value() || current.depth < *best_depth) {
+				best_depth = current.depth;
+				best_ambiguous = false;
+				selected = candidate;
+			} else if (current.depth == *best_depth) {
+				best_ambiguous = true;
+			}
 		}
-		TemplateTypeArg template_arg(deduced_target);
-		std::optional<ASTNode> instantiated = parser().try_instantiate_member_function_template_explicit(
-			StringTable::getStringView(struct_info->name), member_name,
-			std::span<const TemplateTypeArg>(&template_arg, 1), source_value_category);
-		if (!instantiated.has_value()) {
+		if (found_in_class) {
 			continue;
 		}
-		const FunctionDeclarationNode* const instantiated_function = instantiated->get_if<FunctionDeclarationNode>();
-		if (instantiated_function == nullptr) {
-			continue;
+		for (const BaseClassSpecifier& base : current.info->base_classes) {
+			if (base.is_deferred || base.is_virtual || base.access != AccessSpecifier::Public) {
+				continue;
+			}
+			const StructTypeInfo* const base_info = structInfoFromTypeIndex(base.type_index);
+			if (base_info != nullptr) {
+				pending.push_back({base_info, base.type_index, current.depth + 1});
+			}
 		}
-		++match_count;
-		if (match_count > 1) {
-			selected->ambiguous = true;
-			return selected;
-		}
-		UserDefinedConversionOperatorSelection candidate;
-		candidate.function = instantiated_function;
-		candidate.compatibility_declaring_type_index = source_type.type_index();
-		candidate.trailing_standard_kind = StandardConversionKind::None;
-		candidate.trailing_standard_rank = ConversionRank::ExactMatch;
-		candidate.member_cv_qualifier = member.cv_qualifier;
-		candidate.access = member.access;
-		selected = candidate;
+	}
+	if (selected.has_value() && best_ambiguous) {
+		selected->ambiguous = true;
 	}
 	return selected;
 }
