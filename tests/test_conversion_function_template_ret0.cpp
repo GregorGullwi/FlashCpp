@@ -22,6 +22,20 @@ struct RvalueTemplateConversion {
 	}
 };
 
+struct PointerTemplateConversion {
+	template<class U>
+	operator U*() const {
+		return nullptr;
+	}
+};
+
+struct DoublePointerTemplateConversion {
+	template<class U>
+	operator U**() const {
+		return nullptr;
+	}
+};
+
 int main() {
 	int a = static_cast<int>(TemplateConversion{});
 	int b = static_cast<int>(ExplicitTemplateConversion{});
@@ -32,6 +46,14 @@ int main() {
 	int f = const_template;
 	if (a != 0 || b != 0 || c != 0 || d != 0 || e != 0 || f != 0) {
 		return 1;
+	}
+	int* p = static_cast<int*>(PointerTemplateConversion{});
+	int** pp = static_cast<int**>(DoublePointerTemplateConversion{});
+	int* q = PointerTemplateConversion{};
+	int* bare_static = static_cast<int*>(TemplateConversion{});
+	int* bare_implicit = TemplateConversion{};
+	if (p != nullptr || pp != nullptr || q != nullptr || bare_static != nullptr || bare_implicit != nullptr) {
+		return 2;
 	}
 	return 0;
 }
