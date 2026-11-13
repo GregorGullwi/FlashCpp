@@ -3204,7 +3204,7 @@ trySelectUserDefinedConversionOperator(const TypeSpecifierNode& source_type, con
 	CanonicalTypeTransaction transaction(table);
 	TypeSpecifierNode canonical_source = source_type;
 	tryBindPublishedTypeEntity(canonical_source);
-	const CanonicalTypeImport imported_source = importCanonicalOverloadNominalType(table, canonical_source);
+	const CanonicalTypeImport imported_source = importCanonicalNominalComponent(table, canonical_source, CanonicalTypeImportContext::Exact);
 	if (imported_source.status == CanonicalTypeImportStatus::Supported) {
 		const TypeId source_type_without_reference = canonicalTypeWithoutReference(table, imported_source.type);
 		const TypeId source_class_type = stripCanonicalTopCv(table, source_type_without_reference).first;
