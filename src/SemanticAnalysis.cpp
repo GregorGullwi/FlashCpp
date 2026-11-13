@@ -11767,7 +11767,9 @@ std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::trySelec
 			TypeSpecifierNode deduced_target = target_type;
 			if (return_pointer_depth == 0) {
 				if (deduced_target.pointer_depth() == 0) {
-					deduced_target.set_cv_qualifier(CVQualifier::None);
+					if (!return_type.is_reference()) {
+						deduced_target.set_cv_qualifier(CVQualifier::None);
+					}
 					deduced_target.set_reference_qualifier(ReferenceQualifier::None);
 				}
 			} else {
@@ -13918,10 +13920,14 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 		}
 	}
 
-	if (direct_plan.is_valid && direct_plan.kind == StandardConversionKind::UserDefined &&
-		param_type.is_reference() && !param_type.is_rvalue_reference()) {
-		const auto selected_conversion = trySelectCanonicalImplicitConversionOperator(
+	if (param_type.is_reference() && !param_type.is_rvalue_reference() &&
+		is_struct_type(arg_value_type.category()) && arg_value_type.type_index().is_valid()) {
+		std::optional<UserDefinedConversionOperatorSelection> selected_conversion = trySelectCanonicalImplicitConversionOperator(
 			type_context_.get(arg_value_type_id), param_value_type, inferExpressionValueCategory(arg));
+		if (!selected_conversion.has_value()) {
+			selected_conversion = trySelectConversionFunctionTemplate(
+				materializeTypeSpecifier(type_context_.get(arg_value_type_id)), param_value_type, false, inferExpressionValueCategory(arg));
+		}
 		if (selected_conversion.has_value() && !selected_conversion->ambiguous &&
 			conversionOperatorResultBindsLvalueReference(*selected_conversion, param_type)) {
 			if (!checkSelectedConversionOperatorAccess(arg, param_type_id, *selected_conversion)) {
@@ -15006,8 +15012,24 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	}
 
 	if (arg_types_collected) {
-		const OverloadResolutionResult result =
-			resolve_overload_with_argument_nodes(overloads, arg_types, arguments);
+		const OverloadResolutionResult result = resolve_overload_with_argument_nodes_using_conversion(
+			overloads, arg_types, arguments,
+			[this](const TypeSpecifierNode& argument_type, const TypeSpecifierNode& parameter_type, const ASTNode* argument_node) {
+				const ArgumentConversionInfo conversion =
+					buildArgumentConversionInfo(argument_type, parameter_type, argument_node);
+				if (conversion.is_valid || !is_struct_type(argument_type.category()) || argument_node == nullptr) {
+					return conversion;
+				}
+				const std::optional<UserDefinedConversionOperatorSelection> selected_template =
+					trySelectConversionFunctionTemplate(
+						argument_type, parameter_type, false, inferExpressionValueCategory(*argument_node));
+				if (selected_template.has_value() && !selected_template->ambiguous && selected_template->function != nullptr &&
+					conversionOperatorSelectionBindsParameter(*selected_template, parameter_type)) {
+					return ArgumentConversionInfo{ConversionRank::UserDefined, &parameter_type, true,
+						selected_template->trailing_standard_rank, true};
+				}
+				return conversion;
+			});
 		if (result.has_match && !result.is_ambiguous && result.selected_overload != nullptr) {
 			if (const FunctionDeclarationNode* resolved_candidate =
 					getCallTargetFunctionCandidate(*result.selected_overload)) {

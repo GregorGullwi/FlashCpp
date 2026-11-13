@@ -103,6 +103,7 @@ struct ArgumentConversionInfo {
 	const TypeSpecifierNode* parameter_type = nullptr;
 	bool is_valid = false;
 	ConversionRank trailing_standard_rank = ConversionRank::NoMatch;
+	bool user_defined_template_conversion = false;
 
 	TypeConversionResult toResult() const { return {rank, is_valid}; }
 
@@ -440,7 +441,8 @@ inline int compareArgumentConversionInfo(
 			return 1;
 		}
 	}
-	if (lhs.rank == ConversionRank::UserDefined && lhs.parameter_type != nullptr && rhs.parameter_type != nullptr) {
+	if (lhs.rank == ConversionRank::UserDefined && lhs.parameter_type != nullptr && rhs.parameter_type != nullptr &&
+		!lhs.user_defined_template_conversion && !rhs.user_defined_template_conversion) {
 		const int reference_cv_comparison = compareReferenceBindingCvDestinations(*lhs.parameter_type, *rhs.parameter_type);
 		if (reference_cv_comparison != 0) {
 			return reference_cv_comparison;
@@ -3274,7 +3276,12 @@ inline bool conversionOperatorResultBindsLvalueReference(const UserDefinedConver
 		selected.trailing_standard_kind == StandardConversionKind::None ||
 		selected.trailing_standard_kind == StandardConversionKind::QualificationAdjustment ||
 		selected.trailing_standard_kind == StandardConversionKind::DerivedToBase;
-	return return_type.is_lvalue_reference() && trailing_preserves_reference && (return_cv & ~target_cv) == 0;
+	return !target.is_rvalue_reference() && return_type.is_lvalue_reference() && trailing_preserves_reference && (return_cv & ~target_cv) == 0;
+}
+
+inline bool conversionOperatorSelectionBindsParameter(
+	const UserDefinedConversionOperatorSelection& selected, const TypeSpecifierNode& parameter_type) {
+	return !parameter_type.is_reference() || conversionOperatorResultBindsLvalueReference(selected, parameter_type);
 }
 
 // Use canonical TypeIds for reference binding. Value category remains expression

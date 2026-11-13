@@ -225,11 +225,13 @@ parameter, for example `template<class U> operator U()`, `operator U*()`, or
 `operator U&()`, including cv-qualified pointee types, non-top-level pointer cv,
 and public bases. Template bases resolved during instantiation are supported;
 still-unresolved deferred patterns fail closed. Explicit and implicit object
-initializations and casts are supported; conversion function templates do not
-participate in function call-argument viability. Bare lvalue-reference returns now
-preserve the referenced object's address for explicit reference casts and
-reference initialization, and the same binding fix applies to non-template
-conversion operators. Array returns, rvalue-reference returns, multiple template
+initializations and casts are supported, and ordinary function calls now
+consider conversion templates for by-value arguments and for lvalue-reference
+returns bound to lvalue reference parameters. Value-returning templates still
+cannot bind reference parameters through temporary materialization. Bare
+lvalue-reference returns now preserve the referenced object's address for
+explicit reference casts and reference initialization, and the same binding fix
+applies to non-template conversion operators. Array returns, rvalue-reference returns, multiple template
 parameters, and constrained templates still fail closed with "sema must annotate
 a class-to-non-class static_cast conversion". Extend deduction before removing
 that fail-closed path.
@@ -239,9 +241,11 @@ lvalue reference parameters, for both temporary and named class arguments, and
 lose to the less cv-qualified reference during overload ranking. A result that
 needs a value conversion before binding, such as short& to int&, stays rejected.
 Reference variable initialization, explicit reference casts, and reference
-return statements are also handled. Conversion function templates still do not
-participate in call-argument viability at all, for by-value or reference
-parameters, because parser overload resolution cannot instantiate them.
+return statements are also handled. Conversion function templates now
+participate in call-argument viability for by-value parameters and for
+lvalue-reference returns bound to lvalue reference parameters; value-returning
+templates still need temporary materialization for const or rvalue reference
+parameters.
 
 ## Remaining flat trait consumers
 

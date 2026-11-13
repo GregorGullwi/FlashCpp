@@ -216,6 +216,10 @@ public:
 	~SemanticAnalysis();
 	void attachParser(Parser& parser);
 	ParserSemanticServices parserSemanticServices() { return ParserSemanticServices(*this); }
+	std::optional<UserDefinedConversionOperatorSelection> trySelectConversionFunctionTemplateForOverload(
+		const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, ValueCategory source_value_category) {
+		return trySelectConversionFunctionTemplate(source_type, target_type, false, source_value_category);
+	}
 	bool isParserAttached() const { return parser_ != nullptr; }
 	bool hasPostParseNormalizationStarted() const;
 	bool hasPostParseNormalizationCompleted() const;
