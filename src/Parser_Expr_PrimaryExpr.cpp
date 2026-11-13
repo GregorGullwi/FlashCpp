@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "SemanticAnalysis.h"
 #include "AstTraversal.h"
 #include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
@@ -538,8 +539,31 @@ bool tryMaterializeSelectedFreeFunctionTemplateAddresses(
 	return true;
 }
 
+ArgumentConversionInfo buildParserArgumentConversion(
+	Parser& parser, const TypeSpecifierNode& argument_type, const TypeSpecifierNode& parameter_type,
+	const ASTNode* argument_node) {
+	const ArgumentConversionInfo conversion = buildArgumentConversionInfo(argument_type, parameter_type, argument_node);
+	if (conversion.is_valid || !is_struct_type(argument_type.category()) || argument_node == nullptr) {
+		return conversion;
+	}
+	const ValueCategory source_value_category =
+		is_lvalue_expression_for_overload_resolution(*argument_node) ? ValueCategory::LValue : ValueCategory::PRValue;
+	const std::optional<UserDefinedConversionOperatorSelection> selected_template =
+		parser.semanticAnalysis().trySelectConversionFunctionTemplateForOverload(
+			argument_type, parameter_type, source_value_category);
+	const bool reference_binding_is_viable = selected_template.has_value() &&
+		conversionOperatorSelectionBindsParameter(*selected_template, parameter_type);
+	if (selected_template.has_value() && !selected_template->ambiguous && selected_template->function != nullptr &&
+		reference_binding_is_viable) {
+		return ArgumentConversionInfo{ConversionRank::UserDefined, &parameter_type, true,
+			selected_template->trailing_standard_rank, true};
+	}
+	return conversion;
+}
+
 template <typename ArgumentNodeContainer>
 OverloadResolutionResult resolveParserOverloadWithArgumentNodes(
+	Parser& parser,
 	std::span<const ASTNode> overloads,
 	std::span<const TypeSpecifierNode> argument_types,
 	const ArgumentNodeContainer& argument_nodes) {
@@ -547,7 +571,7 @@ OverloadResolutionResult resolveParserOverloadWithArgumentNodes(
 		overloads,
 		argument_types,
 		argument_nodes,
-		[](
+		[&parser](
 			const TypeSpecifierNode& argument_type,
 			const TypeSpecifierNode& parameter_type,
 			const ASTNode* argument_node) {
@@ -562,10 +586,7 @@ OverloadResolutionResult resolveParserOverloadWithArgumentNodes(
 					return *function_address;
 				}
 			}
-			return buildArgumentConversionInfo(
-				argument_type,
-				parameter_type,
-				argument_node);
+			return buildParserArgumentConversion(parser, argument_type, parameter_type, argument_node);
 		});
 }
 
@@ -2183,10 +2204,7 @@ std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantia
 				parameter_type,
 				argument_node);
 		}
-		return buildArgumentConversionInfo(
-			argument_type,
-			parameter_type,
-			argument_node);
+		return buildParserArgumentConversion(*this, argument_type, parameter_type, argument_node);
 	};
 
 	std::vector<TypeSpecifierNode> adl_argument_types;
@@ -9043,6 +9061,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						}),
 					all_overloads.end());
 				auto resolution = resolveParserOverloadWithArgumentNodes(
+					*this,
 					all_overloads,
 					arg_types,
 					args);
@@ -9797,8 +9816,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					}
 					return make_call_result(*identifierType);
 				}
-
 				auto resolution = resolveParserOverloadWithArgumentNodes(
+					*this,
 					all_overloads,
 					arg_types,
 					args_ref);
@@ -12968,10 +12987,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 													return *function_address;
 												}
 											}
-											return buildArgumentConversionInfo(
-												argument_type,
-												parameter_type,
-												argument_node);
+											return buildParserArgumentConversion(*this, argument_type, parameter_type, argument_node);
 										};
 										auto resolution_result =
 											resolve_overload_with_argument_nodes_using_conversion(
