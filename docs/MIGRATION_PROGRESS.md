@@ -276,6 +276,9 @@ mismatched, unpublished, or unresolved owner facts.
    instantiation. Reference-returning conversions now keep the converted
    object's address when binding reference variables, explicit reference casts,
    and reference return statements, for non-template operators as well.
+   Non-template conversion operators returning an lvalue reference are viable
+   for lvalue reference parameters, with the less cv-qualified reference
+   winning overload ranking and const-removing results staying rejected.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are

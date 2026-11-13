@@ -13918,6 +13918,29 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 		}
 	}
 
+	if (direct_plan.is_valid && direct_plan.kind == StandardConversionKind::UserDefined &&
+		param_type.is_reference() && !param_type.is_rvalue_reference()) {
+		const auto selected_conversion = trySelectCanonicalImplicitConversionOperator(
+			type_context_.get(arg_value_type_id), param_value_type, inferExpressionValueCategory(arg));
+		if (selected_conversion.has_value() && !selected_conversion->ambiguous &&
+			conversionOperatorResultBindsLvalueReference(*selected_conversion, param_type)) {
+			if (!checkSelectedConversionOperatorAccess(arg, param_type_id, *selected_conversion)) {
+				return std::nullopt;
+			}
+			ImplicitCastInfo cast_info;
+			cast_info.source_type_id = arg_value_type_id;
+			cast_info.target_type_id = param_type_id;
+			cast_info.cast_kind = StandardConversionKind::UserDefined;
+			cast_info.value_category_after = ValueCategory::LValue;
+			cast_info.selected_conversion_function = selected_conversion->function;
+			cast_info.trailing_standard_conversion = selected_conversion->trailing_standard_kind;
+			cast_info.trailing_constructor = selectTrailingBaseConstructor(type_context_.get(param_value_type_id), *selected_conversion);
+			info.pre_bind_cast_info_index = allocateCastInfo(cast_info);
+			info.flags = ConversionPlanFlags::IsValid | ConversionPlanFlags::IsUserDefined | ConversionPlanFlags::MaterializesTemporary;
+			return info;
+		}
+	}
+
 	if (!param_type.is_rvalue_reference() && param_type.is_reference()) {
 		if (!hasCVQualifier(
 				param_type.top_level_cv_qualifier(),
