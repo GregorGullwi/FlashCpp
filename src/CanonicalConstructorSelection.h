@@ -366,7 +366,8 @@ inline CanonicalConstructorParameterMatch matchCanonicalDirectConversionOperator
 			if (hasCanonicalMemberFunctionFlag(function.flags, CanonicalMemberFunctionFlags::Explicit)) {
 				continue;
 			}
-			const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, function.signature, target_type);
+			const TypeId conversion_target = function.conversion_target ? function.conversion_target : function.signature;
+			const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(table, conversion_target, target_type);
 			if (!conversion.is_valid) {
 				continue;
 			}
