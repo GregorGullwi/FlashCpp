@@ -4021,7 +4021,7 @@ struct Hidden : Base { operator int(); };
 	const TypeSpecifierNode integer(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 	const std::array<CanonicalClassBase, 1> bases{{{base, CanonicalAccess::Public, CanonicalRecordBaseFlags::None}}};
 	SUBCASE("Canonical lookup cannot publish an absent graph") {
-		CHECK_FALSE(trySelectCanonicalUserDefinedConversionOperator(derived, integer, false).has_value());
+		CHECK_FALSE(trySelectCanonicalUserDefinedConversionOperator(derived, integer, false, ValueCategory::PRValue).has_value());
 		CHECK_FALSE(table.hasClassBaseSchema(base));
 		CHECK_FALSE(table.hasClassBaseSchema(derived));
 	}
@@ -4033,13 +4033,13 @@ struct Hidden : Base { operator int(); };
 	SUBCASE("A published graph without the legacy base has no candidate") {
 		table.publishClassBaseSchema(base, {});
 		table.publishClassBaseSchema(derived, {});
-		CHECK_FALSE(trySelectCanonicalUserDefinedConversionOperator(derived, integer, false).has_value());
+		CHECK_FALSE(trySelectCanonicalUserDefinedConversionOperator(derived, integer, false, ValueCategory::PRValue).has_value());
 		CHECK_FALSE(trySelectUserDefinedConversionOperator(derived_spec, integer, false).has_value());
 		CHECK(table.classBaseCount(derived) == 0);
 	}
 	SUBCASE("A missing reachable base schema remains unavailable") {
 		table.publishClassBaseSchema(hidden, bases);
-		CHECK_FALSE(trySelectCanonicalUserDefinedConversionOperator(hidden, integer, false).has_value());
+		CHECK_FALSE(trySelectCanonicalUserDefinedConversionOperator(hidden, integer, false, ValueCategory::PRValue).has_value());
 		CHECK_FALSE(trySelectUserDefinedConversionOperator(hidden_spec, integer, false).has_value());
 		CHECK_FALSE(table.hasClassBaseSchema(base));
 	}
@@ -10970,7 +10970,7 @@ TEST_CASE("Canonical constructor selection existence policy keeps a definite mat
 			CanonicalRecordFunctionFlags::None, false},
 	};
 	table.publishRecordConstructors(target, constructors);
-	const CanonicalConstructorArgument argument{int_type, false, false, CanonicalDefaultException::Unknown};
+	const CanonicalConstructorArgument argument{int_type, ValueCategory::PRValue, false, CanonicalDefaultException::Unknown};
 	const std::span<const CanonicalConstructorArgument> arguments(&argument, 1);
 	const CanonicalConstructorSelection existence = selectCanonicalConstructor(table, target, arguments,
 		CanonicalConstructorSelectionPolicy::AllowUserDefinedArgumentConversion |
@@ -10993,7 +10993,7 @@ TEST_CASE("Canonical constructor selection treats integer zero as a null pointer
 	};
 	const TypeId target = table.record(EntityId{903003});
 	table.publishRecordConstructors(target, constructors);
-	const CanonicalConstructorArgument argument{int_type, false, true, CanonicalDefaultException::Unknown};
+	const CanonicalConstructorArgument argument{int_type, ValueCategory::PRValue, true, CanonicalDefaultException::Unknown};
 	const CanonicalConstructorSelection selection = selectCanonicalConstructor(table, target,
 		std::span<const CanonicalConstructorArgument>(&argument, 1), CanonicalConstructorSelectionPolicy::None);
 	CHECK(selection.status == CanonicalConstructorSelectionStatus::Selected);
@@ -11003,7 +11003,7 @@ TEST_CASE("Canonical constructor selection reports reason codes across the polic
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();
 	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
-	const CanonicalConstructorArgument argument{int_type, false, false, CanonicalDefaultException::Unknown};
+	const CanonicalConstructorArgument argument{int_type, ValueCategory::PRValue, false, CanonicalDefaultException::Unknown};
 	const std::span<const CanonicalConstructorArgument> arguments(&argument, 1);
 	const auto select = [&](TypeId target, CanonicalConstructorSelectionPolicy policy) {
 		return selectCanonicalConstructor(table, target, arguments, policy);
@@ -11081,7 +11081,7 @@ TEST_CASE("Canonical constructor selection scopes non-complete statuses by arity
 	CanonicalTypeTable& table = frontend.canonicalTypes();
 	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
 	const std::array<TypeId, 1> int_parameters{int_type};
-	const CanonicalConstructorArgument argument{int_type, false, false, CanonicalDefaultException::Unknown};
+	const CanonicalConstructorArgument argument{int_type, ValueCategory::PRValue, false, CanonicalDefaultException::Unknown};
 	const std::span<const CanonicalConstructorArgument> arguments(&argument, 1);
 	const CanonicalRecordConstructorSpec complete_int{int_parameters, CanonicalRecordFunctionFlags::None, false};
 	const CanonicalRecordConstructorSpec conditional_one{
