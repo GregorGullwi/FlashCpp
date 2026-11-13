@@ -121,8 +121,13 @@ struct CanonicalTypeImport {
 
 static_assert(sizeof(CanonicalTypeImport) == 8);
 
+CanonicalRecordFacts computeCanonicalRecordFacts(CanonicalTypeTable& table, const StructTypeInfo& struct_info,
+	std::span<const CanonicalRecordMemberFacts> member_facts);
+
 CanonicalRecordFacts computeCanonicalRecordFacts(
 	CanonicalTypeTable& table, const StructTypeInfo& struct_info);
+
+std::vector<CanonicalRecordMemberFacts> computeCanonicalRecordMemberFacts(CanonicalTypeTable& table, const StructTypeInfo& struct_info);
 
 struct CanonicalDeclaratorExport {
 	TypeId base;
@@ -3026,7 +3031,13 @@ inline bool tryPublishCanonicalRecordProperties(
 	if (!isCanonicalClassTypeKind(kind)) {
 		return false;
 	}
-	const CanonicalRecordFacts facts = computeCanonicalRecordFacts(table, struct_info);
+	const std::vector<CanonicalRecordMemberFacts> member_facts = computeCanonicalRecordMemberFacts(table, struct_info);
+	const bool can_publish_member_facts = kind == CanonicalTypeKind::Record
+		? (table.recordEntity(type) && table.hasRecordLayout(table.recordEntity(type))) : table.hasRecordSubobjectTypes(type);
+	if (can_publish_member_facts) {
+		table.publishRecordMemberProperties(type, member_facts);
+	}
+	const CanonicalRecordFacts facts = computeCanonicalRecordFacts(table, struct_info, member_facts);
 	table.publishRecordProperties(type, facts);
 	return true;
 }

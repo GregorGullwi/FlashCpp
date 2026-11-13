@@ -3764,6 +3764,129 @@ TEST_CASE("Canonical record property facts publish trait families") {
 	const CanonicalRecordFacts private_dtor = record_facts("PrivateDtor");
 	CHECK(has(private_dtor, CanonicalRecordFacts::DestructorNonPublic));
 }
+TEST_CASE("Canonical record member properties publish lifetime facts") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream fixture("tests/test_canonical_member_property_member_lifetime_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	CompileContext compile_context;
+	compile_context.setInputFile("canonical_member_property_member_lifetime.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto member_facts = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		REQUIRE(table.hasRecordMemberProperties(imported.type));
+		REQUIRE(table.recordMemberPropertyCount(imported.type) == 1);
+		CHECK(table.recordMemberPropertyCount(imported.type) == table.recordSubobjectMemberCount(imported.type));
+		return table.recordMemberPropertiesAt(imported.type, 0);
+	};
+	const auto has = [](CanonicalRecordMemberFacts facts, CanonicalRecordMemberFacts bit) {
+		return hasCanonicalRecordMemberFact(facts, bit);
+	};
+	const CanonicalRecordMemberFacts trivial = member_facts("TrivialHolder");
+	CHECK(has(trivial, CanonicalRecordMemberFacts::TriviallyCopyable));
+	CHECK(has(trivial, CanonicalRecordMemberFacts::Trivial));
+	CHECK(has(trivial, CanonicalRecordMemberFacts::Destructible));
+	CHECK(has(trivial, CanonicalRecordMemberFacts::TriviallyDestructible));
+	CHECK(has(trivial, CanonicalRecordMemberFacts::NothrowDestructible));
+	CHECK(has(trivial, CanonicalRecordMemberFacts::HasTrivialDestructor));
+	const CanonicalRecordMemberFacts nontrivial = member_facts("NontrivialHolder");
+	CHECK_FALSE(has(nontrivial, CanonicalRecordMemberFacts::TriviallyCopyable));
+	CHECK_FALSE(has(nontrivial, CanonicalRecordMemberFacts::Trivial));
+	CHECK(has(nontrivial, CanonicalRecordMemberFacts::Destructible));
+	CHECK_FALSE(has(nontrivial, CanonicalRecordMemberFacts::TriviallyDestructible));
+	CHECK(has(nontrivial, CanonicalRecordMemberFacts::NothrowDestructible));
+	CHECK_FALSE(has(nontrivial, CanonicalRecordMemberFacts::HasTrivialDestructor));
+	const CanonicalRecordMemberFacts deleted = member_facts("DeletedHolder");
+	CHECK(has(deleted, CanonicalRecordMemberFacts::DestructorDeleted));
+	CHECK_FALSE(has(deleted, CanonicalRecordMemberFacts::Destructible));
+	CHECK_FALSE(has(deleted, CanonicalRecordMemberFacts::TriviallyDestructible));
+	CHECK_FALSE(has(deleted, CanonicalRecordMemberFacts::NothrowDestructible));
+	CHECK(has(deleted, CanonicalRecordMemberFacts::HasTrivialDestructor));
+	const CanonicalRecordMemberFacts private_member = member_facts("PrivateHolder");
+	CHECK(has(private_member, CanonicalRecordMemberFacts::DestructorNonPublic));
+	CHECK_FALSE(has(private_member, CanonicalRecordMemberFacts::Destructible));
+	CHECK_FALSE(has(private_member, CanonicalRecordMemberFacts::TriviallyDestructible));
+	CHECK_FALSE(has(private_member, CanonicalRecordMemberFacts::NothrowDestructible));
+	CHECK(has(private_member, CanonicalRecordMemberFacts::HasTrivialDestructor));
+	const CanonicalRecordMemberFacts throwing = member_facts("ThrowingHolder");
+	CHECK(has(throwing, CanonicalRecordMemberFacts::Destructible));
+	CHECK_FALSE(has(throwing, CanonicalRecordMemberFacts::TriviallyDestructible));
+	CHECK_FALSE(has(throwing, CanonicalRecordMemberFacts::NothrowDestructible));
+	CHECK_FALSE(has(throwing, CanonicalRecordMemberFacts::HasTrivialDestructor));
+	const CanonicalRecordMemberFacts trivial_array = member_facts("TrivialArrayHolder");
+	CHECK(has(trivial_array, CanonicalRecordMemberFacts::TriviallyCopyable));
+	CHECK(has(trivial_array, CanonicalRecordMemberFacts::Trivial));
+	CHECK(has(trivial_array, CanonicalRecordMemberFacts::TriviallyDestructible));
+	CHECK(has(trivial_array, CanonicalRecordMemberFacts::HasTrivialDestructor));
+	const CanonicalRecordMemberFacts nontrivial_array = member_facts("NontrivialArrayHolder");
+	CHECK_FALSE(has(nontrivial_array, CanonicalRecordMemberFacts::TriviallyCopyable));
+	CHECK_FALSE(has(nontrivial_array, CanonicalRecordMemberFacts::Trivial));
+	CHECK(has(nontrivial_array, CanonicalRecordMemberFacts::Destructible));
+	CHECK_FALSE(has(nontrivial_array, CanonicalRecordMemberFacts::TriviallyDestructible));
+}
+TEST_CASE("Canonical union member properties delete inaccessible variant destructors") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream fixture("tests/test_canonical_member_property_union_access_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	CompileContext compile_context;
+	compile_context.setInputFile("canonical_member_property_union_access.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const auto record_facts = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		REQUIRE(table.hasRecordProperties(imported.type));
+		return table.recordProperties(imported.type).facts;
+	};
+	const auto member_facts = [&](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		REQUIRE(table.hasRecordMemberProperties(imported.type));
+		REQUIRE(table.recordMemberPropertyCount(imported.type) == 2);
+		return table.recordMemberPropertiesAt(imported.type, 0);
+	};
+	const auto has = [](CanonicalRecordMemberFacts facts, CanonicalRecordMemberFacts bit) {
+		return hasCanonicalRecordMemberFact(facts, bit);
+	};
+	const auto has_record = [](CanonicalRecordFacts facts, CanonicalRecordFacts bit) {
+		return hasCanonicalRecordFact(facts, bit);
+	};
+	CHECK(has(member_facts("TrivialUnion"), CanonicalRecordMemberFacts::TriviallyDestructible));
+	CHECK_FALSE(has(member_facts("DeletedUnion"), CanonicalRecordMemberFacts::TriviallyDestructible));
+	CHECK(has(member_facts("DeletedUnion"), CanonicalRecordMemberFacts::DestructorDeleted));
+	CHECK_FALSE(has(member_facts("PrivateUnion"), CanonicalRecordMemberFacts::TriviallyDestructible));
+	CHECK(has(member_facts("PrivateUnion"), CanonicalRecordMemberFacts::DestructorNonPublic));
+	CHECK_FALSE(has(member_facts("NontrivialUnion"), CanonicalRecordMemberFacts::TriviallyDestructible));
+	CHECK_FALSE(has(member_facts("NontrivialUnion"), CanonicalRecordMemberFacts::HasTrivialDestructor));
+	CHECK(has_record(record_facts("TrivialUnion"), CanonicalRecordFacts::HasTrivialDestructor));
+	CHECK_FALSE(has_record(record_facts("TrivialUnion"), CanonicalRecordFacts::DestructorDeleted));
+	CHECK(has_record(record_facts("DeletedUnion"), CanonicalRecordFacts::DestructorDeleted));
+	CHECK(has_record(record_facts("PrivateUnion"), CanonicalRecordFacts::DestructorDeleted));
+	CHECK(has_record(record_facts("NontrivialUnion"), CanonicalRecordFacts::DestructorDeleted));
+}
 TEST_CASE("Canonical constructibility rejects inaccessible converting constructors") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();

@@ -489,6 +489,38 @@ struct CanonicalRecordProperties {
 	friend bool operator==(CanonicalRecordProperties, CanonicalRecordProperties) = default;
 };
 
+// Triviality and lifetime facts for one data member subobject. The owning
+// record publishes one entry per declaration ordinal, so a consumer reads the
+// subobject answer without walking the legacy StructTypeInfo graph. Destructor
+// access and deletion are recorded separately because triviality ignores both
+// while destructibility applies them.
+enum class CanonicalRecordMemberFacts : uint16_t {
+	None = 0,
+	TriviallyCopyable = 1u << 0,
+	Trivial = 1u << 1,
+	Destructible = 1u << 2,
+	TriviallyDestructible = 1u << 3,
+	NothrowDestructible = 1u << 4,
+	HasTrivialDestructor = 1u << 5,
+	HasVirtualDestructor = 1u << 6,
+	DestructorDeleted = 1u << 7,
+	DestructorNonPublic = 1u << 8,
+	DestructorNonTrivial = 1u << 9,
+	// The canonical schema cannot represent this member's subobject answer;
+	// consumers fall back to the compatibility classifier for this entry.
+	Unknown = 1u << 10,
+};
+
+constexpr CanonicalRecordMemberFacts operator|(CanonicalRecordMemberFacts a, CanonicalRecordMemberFacts b) {
+	return static_cast<CanonicalRecordMemberFacts>(static_cast<uint16_t>(a) | static_cast<uint16_t>(b));
+}
+constexpr CanonicalRecordMemberFacts& operator|=(CanonicalRecordMemberFacts& a, CanonicalRecordMemberFacts b) {
+	return a = a | b;
+}
+constexpr bool hasCanonicalRecordMemberFact(CanonicalRecordMemberFacts flags, CanonicalRecordMemberFacts bit) {
+	return (static_cast<uint16_t>(flags) & static_cast<uint16_t>(bit)) != 0;
+}
+
 // Data-member schema entry. Spelling is deliberately absent: identity is the
 // owning EntityId, declaration order, TypeId, and layout facts.
 struct CanonicalRecordMember {
@@ -745,6 +777,7 @@ static_assert(sizeof(CanonicalEnumLayout) == 20);
 static_assert(sizeof(CanonicalRecordMember) == 16);
 static_assert(sizeof(CanonicalRecordBase) == 12);
 static_assert(sizeof(CanonicalRecordProperties) == 8);
+static_assert(sizeof(CanonicalRecordMemberFacts) == 2);
 static_assert(sizeof(CanonicalClassBase) == 12);
 static_assert(sizeof(CanonicalVirtualBase) == 8);
 static_assert(std::is_trivially_copyable_v<CanonicalVirtualBase>);
@@ -1042,6 +1075,17 @@ public:
 
 	CanonicalRecordProperties recordProperties(TypeId type) const;
 
+	// Per-member triviality and lifetime facts, keyed by the owning class TypeId
+	// and dense declaration ordinal. Publishing the same facts again is
+	// idempotent; conflicting facts or a count mismatch throw.
+	void publishRecordMemberProperties(TypeId owner, std::span<const CanonicalRecordMemberFacts> facts);
+
+	bool hasRecordMemberProperties(TypeId owner) const;
+
+	size_t recordMemberPropertyCount(TypeId owner) const;
+
+	CanonicalRecordMemberFacts recordMemberPropertiesAt(TypeId owner, size_t index) const;
+
 	CanonicalEnumLayout enumLayout(EntityId entity) const;
 
 	void publishRecordFieldSchema(TypeId owner, std::span<const CanonicalRecordMember> members, std::span<const CanonicalRecordBase> bases);
@@ -1218,6 +1262,14 @@ private:
 	};
 	static_assert(sizeof(CanonicalRecordConstructorSchemaHeader) == 16);
 
+	struct CanonicalRecordMemberPropertySchemaHeader {
+		TypeId type;
+		uint32_t member_begin;
+		uint16_t member_count;
+		friend bool operator==(CanonicalRecordMemberPropertySchemaHeader, CanonicalRecordMemberPropertySchemaHeader) = default;
+	};
+	static_assert(sizeof(CanonicalRecordMemberPropertySchemaHeader) == 12);
+
 	struct TransactionMark {
 		size_t node_count;
 		size_t record_layout_count;
@@ -1241,6 +1293,8 @@ private:
 		size_t expression_exception_fact_count;
 		size_t member_function_schema_count;
 		size_t member_function_count;
+		size_t record_member_property_schema_count;
+		size_t record_member_property_count;
 	};
 
 	struct CanonicalEnumLayoutUpdate {
@@ -1480,6 +1534,8 @@ private:
 	size_t live_expression_exception_fact_count_ = 0;
 	size_t live_member_function_schema_count_ = 0;
 	size_t live_member_function_count_ = 0;
+	size_t live_record_member_property_schema_count_ = 0;
+	size_t live_record_member_property_count_ = 0;
 	SemanticArenaAccounting* accounting_ = nullptr;
 	std::vector<TransactionMark> transaction_marks_;
 	std::vector<CanonicalEnumLayoutUpdate> enum_layout_update_history_;
@@ -1536,6 +1592,11 @@ private:
 	ChunkedVector<CanonicalMemberFunctionSchemaHeader, 16> member_function_schema_headers_;
 	ChunkedVector<CanonicalMemberFunction, 32> member_functions_;
 	std::unordered_map<uint32_t, size_t> member_function_schema_ids_;
+	// Per-member lifetime facts: 16 headers / 32 entries per chunk until a
+	// production record-property corpus measures a larger peak.
+	ChunkedVector<CanonicalRecordMemberPropertySchemaHeader, 16> record_member_property_schema_headers_;
+	ChunkedVector<CanonicalRecordMemberFacts, 32> record_member_properties_;
+	std::unordered_map<uint32_t, size_t> record_member_property_schema_ids_;
 };
 
 // Checkpoints publish only when the surrounding transaction commits. Nested
