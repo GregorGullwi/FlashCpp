@@ -217,6 +217,15 @@ gone now that canonical operator lookup handles specialized aliases, but the
 proper owner remains semantics (boundary 4): sema should publish the resolved
 expression type and the parser should only consume it.
 
+## Conversion function templates are not selected canonically
+
+Canonical user-defined conversion lookup publishes and ranks non-template
+conversion operators only. A `static_cast` or implicit conversion whose only
+viable conversion is a conversion function template still fails closed with
+"sema must annotate a class-to-non-class static_cast conversion". Deduce and
+publish selected conversion-function-template candidates before removing that
+fail-closed path.
+
 ## Remaining flat trait consumers
 
 The triviality and lifetime facts are published, including a trivial-destructor

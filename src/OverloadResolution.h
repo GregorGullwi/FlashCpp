@@ -1013,7 +1013,13 @@ struct UserDefinedConversionOperatorSelection {
 };
 
 inline std::optional<UserDefinedConversionOperatorSelection>
-trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const TypeSpecifierNode& target_type, bool allow_explicit);
+trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const TypeSpecifierNode& target_type, bool allow_explicit,
+	std::optional<ValueCategory> source_value_category);
+
+inline std::optional<UserDefinedConversionOperatorSelection>
+trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const TypeSpecifierNode& target_type, bool allow_explicit) {
+	return trySelectCanonicalUserDefinedConversionOperator(source_type_id, target_type, allow_explicit, std::nullopt);
+}
 
 // Shared implementation: walks base_classes recursively and tests for derivation.
 // When public_only is true, only Public inheritance paths are considered.
@@ -2993,7 +2999,8 @@ inline bool canonicalClassHasLocalOperatorName(CanonicalTypeTable& table, TypeId
 }
 
 inline std::optional<UserDefinedConversionOperatorSelection>
-trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const TypeSpecifierNode& target_type, bool allow_explicit) {
+trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const TypeSpecifierNode& target_type, bool allow_explicit,
+	std::optional<ValueCategory> source_value_category) {
 	if (!source_type_id) {
 		return std::nullopt;
 	}
@@ -3108,6 +3115,15 @@ trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const Typ
 				if ((source_cv_bits & ~member_cv_bits) != 0) {
 					return;
 				}
+				if (source_value_category.has_value()) {
+					const bool source_is_lvalue = *source_value_category == ValueCategory::LValue;
+					if (member_function.ref_qualifier == ReferenceQualifier::LValueReference && !source_is_lvalue) {
+						return;
+					}
+					if (member_function.ref_qualifier == ReferenceQualifier::RValueReference && source_is_lvalue) {
+						return;
+					}
+				}
 				std::optional<ConversionPlan> trailing_plan;
 				bool use_compatibility = true;
 				if (target_import.status == CanonicalTypeImportStatus::Supported) {
@@ -3198,7 +3214,8 @@ trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const Typ
 }
 
 inline std::optional<UserDefinedConversionOperatorSelection>
-trySelectUserDefinedConversionOperator(const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, bool allow_explicit) {
+trySelectUserDefinedConversionOperator(const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, bool allow_explicit,
+	std::optional<ValueCategory> source_value_category) {
 	FrontendContext& context = requireFrontendContext();
 	CanonicalTypeTable& table = context.canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
@@ -3210,7 +3227,8 @@ trySelectUserDefinedConversionOperator(const TypeSpecifierNode& source_type, con
 		const TypeId source_class_type = stripCanonicalTopCv(table, source_type_without_reference).first;
 		const CanonicalTypeKind source_kind = table.node(source_class_type).kind;
 		if (source_kind == CanonicalTypeKind::Record || source_kind == CanonicalTypeKind::TemplateSpecialization) {
-			const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(imported_source.type, target_type, allow_explicit);
+			const auto selected_conversion = trySelectCanonicalUserDefinedConversionOperator(imported_source.type, target_type, allow_explicit,
+				source_value_category);
 			if (selected_conversion.has_value()) {
 				transaction.commit();
 			}
@@ -3220,6 +3238,11 @@ trySelectUserDefinedConversionOperator(const TypeSpecifierNode& source_type, con
 		}
 	}
 	return std::nullopt;
+}
+
+inline std::optional<UserDefinedConversionOperatorSelection>
+trySelectUserDefinedConversionOperator(const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, bool allow_explicit) {
+	return trySelectUserDefinedConversionOperator(source_type, target_type, allow_explicit, std::nullopt);
 }
 
 // Use canonical TypeIds for reference binding. Value category remains expression
