@@ -3235,7 +3235,8 @@ void AstToIr::generateNestedMemberStores(
 			*source_type_info,
 			selected_conversion,
 			TypeCategory::Struct,
-			token);
+			token,
+			ExpressionContext::Load);
 		if (!converted.has_value()) {
 			throw InternalError("Sema-selected aggregate conversion could not be emitted");
 		}

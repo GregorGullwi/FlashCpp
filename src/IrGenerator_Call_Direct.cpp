@@ -1530,7 +1530,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						if (source_type_info == nullptr)
 							throw InternalError("Selected call-argument conversion has no source class declaration");
 						if (auto result = emitSemaSelectedConversionOperatorCall(
-								argumentIrOperands, *source_type_info, cast_info, param_type->category(), callExprNode.called_from())) {
+								argumentIrOperands, *source_type_info, cast_info, param_type->category(), callExprNode.called_from(), ExpressionContext::Load)) {
 							argumentIrOperands = *result;
 							arg_type = argumentIrOperands.typeEnum();
 							arg_type_index = argumentIrOperands.type_index;

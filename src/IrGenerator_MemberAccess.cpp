@@ -1350,12 +1350,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 					throw InternalError("Sema must select the struct-to-pointer subscript conversion");
 				}
 				if (auto converted = emitConversionOperatorCall(
-						array_result,
-						*source_type_info,
-						*cast_info.selected_conversion_function,
-						target_desc.type_index.withCategory(target_desc.category()),
-						POINTER_SIZE_BITS,
-						arraySubscriptNode.bracket_token())) {
+						array_result, *source_type_info, *cast_info.selected_conversion_function, target_desc.type_index.withCategory(target_desc.category()),
+						POINTER_SIZE_BITS, arraySubscriptNode.bracket_token(), ExpressionContext::Load)) {
 					array_result = *converted;
 					const CanonicalTypeId element_type_id = sema_.structPointerConversionElementType(cast_info.target_type_id);
 					if (!element_type_id) {
@@ -3560,20 +3556,22 @@ bool AstToIr::resolveMemberAccessType(const MemberAccessNode& member_access,
 // Sema-selected conversion paths share this implementation.
 std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	const ExprResult& source, const TypeInfo& source_type_info, const FunctionDeclarationNode& func_decl,
-	TypeIndex target_type_index, int target_size_bits, const Token& token) {
-	return emitConversionOperatorCallInternal(source, source_type_info, func_decl, target_type_index, target_size_bits, token, std::nullopt);
+	TypeIndex target_type_index, int target_size_bits, const Token& token, ExpressionContext return_context) {
+	return emitConversionOperatorCallInternal(source, source_type_info, func_decl, target_type_index, target_size_bits, token,
+		return_context, std::nullopt);
 }
 
 std::optional<ExprResult> AstToIr::emitConversionOperatorCallToDestination(
 	const ExprResult& source, const TypeInfo& source_type_info, const FunctionDeclarationNode& func_decl,
 	TypeIndex target_type_index, int target_size_bits, const Token& token, LocalVarId result_destination) {
-	return emitConversionOperatorCallInternal(source, source_type_info, func_decl, target_type_index, target_size_bits, token, result_destination);
+	return emitConversionOperatorCallInternal(source, source_type_info, func_decl, target_type_index, target_size_bits, token,
+		ExpressionContext::Load, result_destination);
 }
 
 std::optional<ExprResult> AstToIr::emitConversionOperatorCallInternal(
 	const ExprResult& source, const TypeInfo& source_type_info, const FunctionDeclarationNode& func_decl,
 	TypeIndex target_type_index, int target_size_bits, const Token& token,
-	std::optional<LocalVarId> result_destination) {
+	ExpressionContext return_context, std::optional<LocalVarId> result_destination) {
 	const TypeSpecifierNode& conversion_return_type = func_decl.decl_node().type_specifier_node();
 
 	// Phase 5 Slice K: historical lazy-conversion-operator materialize-and-queue
@@ -3716,7 +3714,7 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCallInternal(
 		// A reference-returning conversion call produced a 64-bit object address in
 		// RAX. Keep it as an lvalue address instead of treating the pointer bits as
 		// the referred-to object value.
-		return buildCallReturnResult(conversion_return_type, result_var, ExpressionContext::Load, token);
+		return buildCallReturnResult(conversion_return_type, result_var, return_context, token);
 	}
 	const IrOperand result_value = result_destination.has_value() ? IrOperand{*result_destination} : IrOperand{result_var};
 	return makeExprResult(target_type_index, SizeInBits{target_size_bits}, result_value, PointerDepth{}, ValueStorage::ContainsData);
@@ -3724,20 +3722,22 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCallInternal(
 
 std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCall(
 	const ExprResult& source, const TypeInfo& source_type_info, const ImplicitCastInfo& cast_info,
-	TypeCategory destination_type_category, const Token& token) {
-	return emitSemaSelectedConversionOperatorCallInternal(source, source_type_info, cast_info, destination_type_category, token, std::nullopt);
+	TypeCategory destination_type_category, const Token& token, ExpressionContext return_context) {
+	return emitSemaSelectedConversionOperatorCallInternal(source, source_type_info, cast_info, destination_type_category, token,
+		return_context, std::nullopt);
 }
 
 std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCall(
 	const ExprResult& source, const TypeInfo& source_type_info, const ImplicitCastInfo& cast_info,
 	TypeCategory destination_type_category, const Token& token, LocalVarId result_destination) {
-	return emitSemaSelectedConversionOperatorCallInternal(source, source_type_info, cast_info, destination_type_category, token, result_destination);
+	return emitSemaSelectedConversionOperatorCallInternal(source, source_type_info, cast_info, destination_type_category, token,
+		ExpressionContext::Load, result_destination);
 }
 
 std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCallInternal(
 	const ExprResult& source, const TypeInfo& source_type_info, const ImplicitCastInfo& cast_info,
 	TypeCategory destination_type_category, const Token& token,
-	std::optional<LocalVarId> result_destination) {
+	ExpressionContext return_context, std::optional<LocalVarId> result_destination) {
 	if (cast_info.selected_conversion_function == nullptr) {
 		return std::nullopt;
 	}
@@ -3760,7 +3760,7 @@ std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCallInterna
 			conversion_result_type_index, conversion_result_size_bits, token, *result_destination);
 	} else {
 		result = emitConversionOperatorCall(source, source_type_info, conversion_function, conversion_result_type_index,
-			conversion_result_size_bits, token);
+			conversion_result_size_bits, token, return_context);
 	}
 	if (result.has_value()) {
 		result->pointer_depth = conversion_returns_member_object_pointer ? PointerDepth{}

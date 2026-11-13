@@ -50,6 +50,14 @@ struct InnerConstPointerTemplateConversion {
 	}
 };
 
+struct ReferenceTemplateConversion {
+	template<class U>
+	operator U&() const {
+		static U value{42};
+		return value;
+	}
+};
+
 struct BaseTemplateConversion {
 	template<class U>
 	operator U() const {
@@ -124,6 +132,20 @@ int main() {
 	int deferred_implicit = DeferredDerivedTemplateConversion<int>{};
 	if (deferred_static != 0 || deferred_implicit != 0) {
 		return 7;
+	}
+	int& reference_static = static_cast<int&>(ReferenceTemplateConversion{});
+	int& reference_implicit = ReferenceTemplateConversion{};
+	if (reference_static != 42 || reference_implicit != 42) {
+		return 8;
+	}
+	reference_implicit = 11;
+	if (reference_static != 11) {
+		return 9;
+	}
+	int reference_value_static = static_cast<int>(ReferenceTemplateConversion{});
+	int reference_value_implicit = ReferenceTemplateConversion{};
+	if (reference_value_static != 11 || reference_value_implicit != 11) {
+		return 10;
 	}
 	return 0;
 }

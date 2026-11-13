@@ -1093,21 +1093,22 @@ private:
 	// target_size_bits - size in bits of the target type
 	// token            - source token for IR instruction location
 	std::optional<ExprResult> emitConversionOperatorCall(const ExprResult& source, const TypeInfo& source_type_info,
-		const FunctionDeclarationNode& conversion_function, TypeIndex target_type_index, int target_size_bits, const Token& token);
+		const FunctionDeclarationNode& conversion_function, TypeIndex target_type_index, int target_size_bits, const Token& token,
+		ExpressionContext return_context);
 	std::optional<ExprResult> emitConversionOperatorCallToDestination(const ExprResult& source, const TypeInfo& source_type_info,
 		const FunctionDeclarationNode& conversion_function, TypeIndex target_type_index, int target_size_bits,
 		const Token& token, LocalVarId result_destination);
 	std::optional<ExprResult> emitConversionOperatorCallInternal(const ExprResult& source, const TypeInfo& source_type_info,
 		const FunctionDeclarationNode& conversion_function, TypeIndex target_type_index, int target_size_bits, const Token& token,
-		std::optional<LocalVarId> result_destination);
+		ExpressionContext return_context, std::optional<LocalVarId> result_destination);
 	std::optional<ExprResult> emitSemaSelectedConversionOperatorCall(const ExprResult& source, const TypeInfo& source_type_info,
-		const ImplicitCastInfo& cast_info, TypeCategory destination_type_category, const Token& token);
+		const ImplicitCastInfo& cast_info, TypeCategory destination_type_category, const Token& token, ExpressionContext return_context);
 	std::optional<ExprResult> emitSemaSelectedConversionOperatorCall(const ExprResult& source, const TypeInfo& source_type_info,
 		const ImplicitCastInfo& cast_info, TypeCategory destination_type_category, const Token& token,
 		LocalVarId result_destination);
 	std::optional<ExprResult> emitSemaSelectedConversionOperatorCallInternal(const ExprResult& source, const TypeInfo& source_type_info,
 		const ImplicitCastInfo& cast_info, TypeCategory destination_type_category, const Token& token,
-		std::optional<LocalVarId> result_destination);
+		ExpressionContext return_context, std::optional<LocalVarId> result_destination);
 
 	// Helper to get the size of a type in bytes
 	// Reuses the same logic as sizeof() operator

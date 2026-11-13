@@ -268,11 +268,14 @@ mismatched, unpublished, or unresolved owner facts.
    function and base-pointer adjustment through lowering. Ref-qualified
    conversion operators now use the source expression's value category in
    annotation, reference binding, and constructibility ranking. A single-type
-   conversion function template whose return type is a bare parameter or a
-   pointer chain to it, including cv-qualified pointee and non-top-level pointer
-   cv, is instantiated and annotated for explicit and implicit conversions,
-   including operators inherited through public and public virtual bases and
-   through template bases resolved during instantiation.
+   conversion function template whose return type is a bare parameter, a
+   pointer chain to it, or a bare lvalue reference to it, including cv-qualified
+   pointee and non-top-level pointer cv, is instantiated and annotated for
+   explicit and implicit conversions, including operators inherited through
+   public and public virtual bases and through template bases resolved during
+   instantiation. Reference-returning conversions now keep the converted
+   object's address when binding reference variables and explicit reference
+   casts, for non-template operators as well.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are
