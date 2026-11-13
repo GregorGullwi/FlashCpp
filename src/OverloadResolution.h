@@ -402,6 +402,24 @@ inline std::optional<int> tryCompareFixedEnumPromotionTargets(
 	const TypeSpecifierNode& lhs_parameter,
 	const TypeSpecifierNode& rhs_parameter);
 
+inline int compareReferenceBindingCvDestinations(const TypeSpecifierNode& lhs_param, const TypeSpecifierNode& rhs_param) {
+	if (!lhs_param.is_reference() || !rhs_param.is_reference() ||
+		!isSameTypeIgnoringTopLevelCvAndRef(lhs_param, rhs_param)) {
+		return 0;
+	}
+	const uint8_t lhs_cv = static_cast<uint8_t>(lhs_param.top_level_cv_qualifier());
+	const uint8_t rhs_cv = static_cast<uint8_t>(rhs_param.top_level_cv_qualifier());
+	const bool lhs_is_subset = (lhs_cv & ~rhs_cv) == 0;
+	const bool rhs_is_subset = (rhs_cv & ~lhs_cv) == 0;
+	if (lhs_is_subset && !rhs_is_subset) {
+		return -1;
+	}
+	if (rhs_is_subset && !lhs_is_subset) {
+		return 1;
+	}
+	return 0;
+}
+
 inline int compareArgumentConversionInfo(
 	const TypeSpecifierNode& argument_type,
 	const ArgumentConversionInfo& lhs,
@@ -420,6 +438,12 @@ inline int compareArgumentConversionInfo(
 		}
 		if (lhs.trailing_standard_rank > rhs.trailing_standard_rank) {
 			return 1;
+		}
+	}
+	if (lhs.rank == ConversionRank::UserDefined && lhs.parameter_type != nullptr && rhs.parameter_type != nullptr) {
+		const int reference_cv_comparison = compareReferenceBindingCvDestinations(*lhs.parameter_type, *rhs.parameter_type);
+		if (reference_cv_comparison != 0) {
+			return reference_cv_comparison;
 		}
 	}
 	if (lhs.rank == ConversionRank::Promotion &&
@@ -462,19 +486,9 @@ inline int compareArgumentConversionInfo(
 	// cv-qualified referenced type is better.  This is what lets T& beat
 	// const T& for an lvalue argument now that adding a top-level cv-qualifier
 	// through reference binding is ranked as an identity conversion.
-	if (lhs_param.is_reference() && rhs_param.is_reference()) {
-		const uint8_t lhs_cv =
-			static_cast<uint8_t>(lhs_param.top_level_cv_qualifier());
-		const uint8_t rhs_cv =
-			static_cast<uint8_t>(rhs_param.top_level_cv_qualifier());
-		const bool lhs_is_subset = (lhs_cv & ~rhs_cv) == 0;
-		const bool rhs_is_subset = (rhs_cv & ~lhs_cv) == 0;
-		if (lhs_is_subset && !rhs_is_subset) {
-			return -1;
-		}
-		if (rhs_is_subset && !lhs_is_subset) {
-			return 1;
-		}
+	const int reference_cv_comparison = compareReferenceBindingCvDestinations(lhs_param, rhs_param);
+	if (reference_cv_comparison != 0) {
+		return reference_cv_comparison;
 	}
 
 	if (!isRvalueLikeArgumentForReferenceBinding(argument_type)) {
@@ -3249,6 +3263,20 @@ trySelectUserDefinedConversionOperator(const TypeSpecifierNode& source_type, con
 	return trySelectUserDefinedConversionOperator(source_type, target_type, allow_explicit, source_value_category);
 }
 
+inline bool conversionOperatorResultBindsLvalueReference(const UserDefinedConversionOperatorSelection& selected, const TypeSpecifierNode& target) {
+	if (selected.function == nullptr) {
+		return false;
+	}
+	const TypeSpecifierNode& return_type = selected.function->decl_node().type_specifier_node();
+	const uint8_t return_cv = static_cast<uint8_t>(return_type.cv_qualifier());
+	const uint8_t target_cv = static_cast<uint8_t>(target.cv_qualifier());
+	const bool trailing_preserves_reference =
+		selected.trailing_standard_kind == StandardConversionKind::None ||
+		selected.trailing_standard_kind == StandardConversionKind::QualificationAdjustment ||
+		selected.trailing_standard_kind == StandardConversionKind::DerivedToBase;
+	return return_type.is_lvalue_reference() && trailing_preserves_reference && (return_cv & ~target_cv) == 0;
+}
+
 // Use canonical TypeIds for reference binding. Value category remains expression
 // metadata; same-shape binding preserves qualification ranking, while supported
 // standard conversions may materialize a temporary for an eligible reference.
@@ -3300,6 +3328,15 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(const
 	const TypeId target_referent = target_node.child;
 	const auto [source_type, source_referent_cv] = stripCanonicalTopCv(table, source_referent);
 	const auto [target_type, target_referent_cv] = stripCanonicalTopCv(table, target_referent);
+	const CanonicalTypeKind source_referent_kind = table.node(source_type).kind;
+	const CanonicalTypeKind target_referent_kind = table.node(target_type).kind;
+	// A class source can reach a non-class reference target only through a
+	// user-defined conversion. Defer that decision to the compatibility path,
+	// which selects conversion operators and their trailing conversions.
+	if ((source_referent_kind == CanonicalTypeKind::Record || source_referent_kind == CanonicalTypeKind::TemplateSpecialization) &&
+		target_referent_kind != CanonicalTypeKind::Record && target_referent_kind != CanonicalTypeKind::TemplateSpecialization) {
+		return std::nullopt;
+	}
 	if (table.node(source_type).kind == CanonicalTypeKind::Function && table.node(target_type).kind == CanonicalTypeKind::Function) {
 		return tryBuildCanonicalDirectReferenceBindingPlan(table, source_import.type, target_import.type);
 	}
@@ -4279,6 +4316,19 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 						return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true, selected_conversion->trailing_standard_rank};
 					}
 				}
+				// A conversion operator returning an lvalue reference can bind an
+				// lvalue reference directly to the referenced object.
+				if (!to_is_rvalue && from_base_index.isStruct() && from_base_index.is_valid()) {
+					if (const auto selected_conversion = trySelectUserDefinedConversionOperator(from, stripReferenceQualifier(to), false);
+						selected_conversion.has_value()) {
+						if (selected_conversion->ambiguous) {
+							return ConversionPlan::no_match();
+						}
+						if (conversionOperatorResultBindsLvalueReference(*selected_conversion, to)) {
+							return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true, selected_conversion->trailing_standard_rank};
+						}
+					}
+				}
 				return ConversionPlan::no_match();
 			} else {
 				// 'from' is not a reference, 'to' is a reference
@@ -4302,6 +4352,20 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 					types_match = false;
 				}
 				if (!types_match) {
+					// A conversion operator returning an lvalue reference can bind
+					// an lvalue reference directly to the referenced object.
+					if (!to_is_rvalue && from_base_index.isStruct() && from_base_index.is_valid()) {
+						if (const auto selected_conversion = trySelectUserDefinedConversionOperator(from, stripReferenceQualifier(to), false);
+							selected_conversion.has_value()) {
+							if (selected_conversion->ambiguous) {
+								return ConversionPlan::no_match();
+							}
+							if (conversionOperatorResultBindsLvalueReference(*selected_conversion, to)) {
+								return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true,
+									selected_conversion->trailing_standard_rank};
+							}
+						}
+					}
 					// Allow conversions for const lvalue refs and rvalue refs by
 					// materializing a temporary of the referred-to type.
 					auto plan = buildConversionPlan(
