@@ -246,11 +246,16 @@ parameters, because parser overload resolution cannot instantiate them.
 ## Remaining flat trait consumers
 
 The triviality and lifetime facts are published, including a trivial-destructor
-fact that ignores access and deletion while destructibility applies them. The
-publisher still derives these facts from `StructTypeInfo`, so the member-property
-schema remains the boundary that must replace those reads before the
-compatibility classifiers can be removed. Explicit member-object-pointer template
-arguments publish ordered owner identity for pointer- and array-wrapped pointees.
+fact that ignores access and deletion while destructibility applies them. A
+canonical per-member fact schema now records trivial copying, triviality,
+destructibility, nothrow and trivial destructor answers, and deleted, inaccessible,
+or non-trivial destructor state for each data member. The publisher derives the
+member-sensitive record facts from that schema instead of walking `StructTypeInfo`;
+the compatibility projection remains only for members whose canonical type cannot
+be represented (`CanonicalRecordMemberFacts::Unknown`). Trait evaluators consume
+the same member facts and keep the legacy classifier only as the fallback for
+those unrepresented shapes. Explicit member-object-pointer template arguments
+publish ordered owner identity for pointer- and array-wrapped pointees.
 The sema-owned construction traits
 (`__is_constructible`, `__is_trivially_constructible`, and
 `__is_nothrow_constructible`) answer exact matches, supported scalar and
