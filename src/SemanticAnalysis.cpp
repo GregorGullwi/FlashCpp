@@ -11675,6 +11675,91 @@ static void materializeExactTargetLazyConversionOperators(TypeIndex source_type_
 
 // --- Core conversion annotation helper ---
 
+std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::trySelectConversionFunctionTemplate(
+	const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, bool allow_explicit,
+	ValueCategory source_value_category) {
+	if (!source_type.type_index().is_valid()) {
+		return std::nullopt;
+	}
+	const StructTypeInfo* const struct_info = structInfoFromTypeIndex(source_type.type_index());
+	if (struct_info == nullptr) {
+		return std::nullopt;
+	}
+	const uint8_t source_cv = static_cast<uint8_t>(source_type.cv_qualifier());
+	std::optional<UserDefinedConversionOperatorSelection> selected;
+	size_t match_count = 0;
+	for (const StructMemberFunction& member : struct_info->member_functions) {
+		if (!member.function_decl.is<TemplateFunctionDeclarationNode>() || member.access != AccessSpecifier::Public) {
+			continue;
+		}
+		if (!allow_explicit && member.is_explicit) {
+			continue;
+		}
+		if (!canonicalConversionOperatorAllowsValueCategory(member.ref_qualifier, source_value_category)) {
+			continue;
+		}
+		if ((source_cv & ~static_cast<uint8_t>(member.cv_qualifier)) != 0) {
+			continue;
+		}
+		const std::string_view member_name = StringTable::getStringView(member.getName());
+		if (member.operator_kind != OverloadableOperator::None || !member_name.starts_with("operator ")) {
+			continue;
+		}
+		const TemplateFunctionDeclarationNode& tmpl = member.function_decl.as<TemplateFunctionDeclarationNode>();
+		if (tmpl.has_requires_clause()) {
+			continue;
+		}
+		const FunctionDeclarationNode& function = tmpl.function_decl_node();
+		if (function.is_variadic() || !function.parameter_nodes().empty()) {
+			continue;
+		}
+		const TemplateParameterVector& params = tmpl.template_parameters();
+		if (params.size() != 1 || params[0].kind() != TemplateParameterKind::Type || params[0].is_variadic()) {
+			continue;
+		}
+		const TypeSpecifierNode& return_type = function.decl_node().type_specifier_node();
+		const TypeCategory return_category = return_type.category();
+		const bool bare_return = return_type.runtime_pointer_depth() == 0 && !return_type.is_reference() &&
+			return_type.cv_qualifier() == CVQualifier::None && !return_type.is_array() &&
+			!return_type.has_pointee_array_declarator();
+		const bool return_is_template_parameter = bare_return && return_type.token().value() == params[0].name() &&
+			(return_category == TypeCategory::Template || return_category == TypeCategory::UserDefined ||
+			 return_category == TypeCategory::TypeAlias);
+		if (!return_is_template_parameter) {
+			continue;
+		}
+		TypeSpecifierNode deduced_target = target_type;
+		if (deduced_target.runtime_pointer_depth() == 0) {
+			deduced_target.set_cv_qualifier(CVQualifier::None);
+		}
+		TemplateTypeArg template_arg(deduced_target);
+		std::optional<ASTNode> instantiated = parser().try_instantiate_member_function_template_explicit(
+			StringTable::getStringView(struct_info->name), member_name,
+			std::span<const TemplateTypeArg>(&template_arg, 1), source_value_category);
+		if (!instantiated.has_value()) {
+			continue;
+		}
+		const FunctionDeclarationNode* const instantiated_function = instantiated->get_if<FunctionDeclarationNode>();
+		if (instantiated_function == nullptr) {
+			continue;
+		}
+		++match_count;
+		if (match_count > 1) {
+			selected->ambiguous = true;
+			return selected;
+		}
+		UserDefinedConversionOperatorSelection candidate;
+		candidate.function = instantiated_function;
+		candidate.compatibility_declaring_type_index = source_type.type_index();
+		candidate.trailing_standard_kind = StandardConversionKind::None;
+		candidate.trailing_standard_rank = ConversionRank::ExactMatch;
+		candidate.member_cv_qualifier = member.cv_qualifier;
+		candidate.access = member.access;
+		selected = candidate;
+	}
+	return selected;
+}
+
 bool SemanticAnalysis::checkSelectedConversionOperatorAccess(
 	const ASTNode& expr_node,
 	CanonicalTypeId target_type_id,
@@ -11814,10 +11899,13 @@ bool SemanticAnalysis::tryAnnotateExplicitConversionByTypeId(
 	const TypeSpecifierNode source_type = materializeTypeSpecifier(type_context_.get(source_type_id));
 	TypeSpecifierNode target_value_type = target_type;
 	target_value_type.set_reference_qualifier(ReferenceQualifier::None);
-	const auto selected_conversion = trySelectUserDefinedConversionOperator(
+	auto selected_conversion = trySelectUserDefinedConversionOperator(
 		source_type, target_value_type, true, inferExpressionValueCategory(source_expression));
 	if (!selected_conversion.has_value() || selected_conversion->ambiguous || selected_conversion->function == nullptr) {
-		return false;
+		selected_conversion = trySelectConversionFunctionTemplate(source_type, target_value_type, true, inferExpressionValueCategory(source_expression));
+		if (!selected_conversion.has_value() || selected_conversion->ambiguous || selected_conversion->function == nullptr) {
+			return false;
+		}
 	}
 	if (!annotateSelectedConversionOperator(slot_expression, source_type_id, target_type_id, *selected_conversion)) {
 		return false;
@@ -11861,7 +11949,10 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 	auto select_conversion_operator = [this, source_value_category](CanonicalTypeId source_type_id, const TypeSpecifierNode& target_type)
 		-> std::optional<UserDefinedConversionOperatorSelection> {
 		const TypeSpecifierNode source_type = materializeTypeSpecifier(type_context_.get(source_type_id));
-		return trySelectUserDefinedConversionOperator(source_type, target_type, false, source_value_category);
+		if (const auto selected = trySelectUserDefinedConversionOperator(source_type, target_type, false, source_value_category); selected.has_value()) {
+			return selected;
+		}
+		return trySelectConversionFunctionTemplate(source_type, target_type, false, source_value_category);
 	};
 
 	// C++20 [conv.ptr]: nullptr_t converts to any object, function, or member
