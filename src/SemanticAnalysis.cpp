@@ -5987,6 +5987,12 @@ void SemanticAnalysis::normalizeBlock(const BlockNode& block, const SemanticCont
 
 // --- Expression handler (Phase 2: counting + type inference for annotatable nodes) ---
 
+void SemanticAnalysis::normalizeUnevaluatedOperand(ASTNode node, const SemanticContext& ctx) {
+	SemanticContext operand_ctx = ctx;
+	operand_ctx.flags = operand_ctx.flags | SemanticContextFlags::UnevaluatedOperand;
+	normalizeExpression(node, operand_ctx);
+}
+
 SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const SemanticContext& ctx) {
 	if (!node.has_value())
 		return {};
@@ -6351,7 +6357,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				if (!op_subscript_query.hasValue()) {
 					normalizeExpression(e.array_expr(), ctx);
 					normalizeExpression(e.index_expr(), ctx);
-					normalizeBuiltinSubscriptOperands(e);
+					normalizeBuiltinSubscriptOperands(e, ctx.flags);
 				} else {
 					const FunctionDeclarationNode* op = op_subscript_query.function;
 					const auto& params = op->parameter_nodes();
@@ -6364,13 +6370,9 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 					normalizeExpression(e.array_expr(), ctx);
 					normalizeExpression(e.index_expr(), ctx);
 				}
-			} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
+			} else if constexpr (std::is_same_v<T, SizeofExprNode> || std::is_same_v<T, AlignofExprNode>) {
 				if (!e.is_type()) {
-					normalizeExpression(e.type_or_expr(), ctx);
-				}
-			} else if constexpr (std::is_same_v<T, AlignofExprNode>) {
-				if (!e.is_type()) {
-					normalizeExpression(e.type_or_expr(), ctx);
+					normalizeUnevaluatedOperand(e.type_or_expr(), ctx);
 				}
 			} else if constexpr (std::is_same_v<T, NewExpressionNode>) {
 				if (e.size_expr().has_value()) {
@@ -6523,7 +6525,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 					resolved_qualified_identifier_table_.erase(&e);
 				}
 			} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
-				normalizeExpression(e.expr(), ctx);
+				normalizeUnevaluatedOperand(e.expr(), ctx);
 			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
 				for (const auto& element : e.elements()) {
 					normalizeExpression(element, ctx);
@@ -9681,7 +9683,7 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpSubscript(const Ar
 	return it != op_subscript_table_.end() ? it->second : nullptr;
 }
 
-void SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& subscript_node) {
+void SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& subscript_node, SemanticContextFlags context_flags) {
 	const CanonicalTypeId first_operand_type_id = inferExpressionType(subscript_node.array_expr());
 	const CanonicalTypeId second_operand_type_id = inferExpressionType(subscript_node.index_expr());
 	if (!first_operand_type_id || !second_operand_type_id) {
@@ -9702,8 +9704,9 @@ void SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& sub
 		if (array_desc.category() != TypeCategory::Struct) {
 			return;
 		}
-		const auto conversion = selectBuiltinSubscriptConversion(array_desc, inferExpressionValueCategory(array_operand),
-			FunctionTemplateInstantiation::Definition);
+		const FunctionTemplateInstantiation instantiation = hasFlag(context_flags, SemanticContextFlags::UnevaluatedOperand)
+			? FunctionTemplateInstantiation::SignatureOnly : FunctionTemplateInstantiation::Definition;
+		const auto conversion = selectBuiltinSubscriptConversion(array_desc, inferExpressionValueCategory(array_operand), instantiation);
 		if (!conversion) {
 			return;
 		}
@@ -9714,7 +9717,7 @@ void SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& sub
 		const bool returns_array_xvalue = conversion->selection.trailing_standard_kind == StandardConversionKind::ArrayToPointer &&
 			conversion->selection.function->decl_node().type_specifier_node().is_rvalue_reference();
 		const CanonicalTypeId target_type_id = type_context_.intern(adoptPublishedStructuralType(array_desc, conversion->pointer_type));
-		if (annotateSelectedConversionOperator(array_operand, array_type_id, target_type_id, conversion->selection)) {
+		if (annotateSelectedConversionOperator(array_operand, array_type_id, target_type_id, conversion->selection, context_flags)) {
 			// Keep the operand's own type and category in the expression slot.
 			annotateExpressionTypeSlot(array_operand, array_type_id, inferExpressionValueCategory(array_operand));
 			const CanonicalTypeId element_type_id = structPointerConversionElementType(target_type_id);
@@ -12016,10 +12019,8 @@ ArgumentConversionInfo SemanticAnalysis::buildCallArgumentConversion(const TypeS
 		selected->conversion_template};
 }
 
-bool SemanticAnalysis::checkSelectedConversionOperatorAccess(
-	const ASTNode& expr_node,
-	CanonicalTypeId target_type_id,
-	const UserDefinedConversionOperatorSelection& selected_conversion) {
+bool SemanticAnalysis::checkSelectedConversionOperatorAccess(const ASTNode& expr_node, CanonicalTypeId target_type_id,
+	const UserDefinedConversionOperatorSelection& selected_conversion, SemanticContextFlags context_flags) {
 	if (selected_conversion.function == nullptr) {
 		return false;
 	}
@@ -12082,6 +12083,9 @@ bool SemanticAnalysis::checkSelectedConversionOperatorAccess(
 			}
 		}
 	}
+	if (hasFlag(context_flags, SemanticContextFlags::UnevaluatedOperand)) {
+		return true;
+	}
 	if (conversion_name.isValid()) {
 		const bool conversion_is_const = hasCVQualifier(selected_conversion.member_cv_qualifier, CVQualifier::Const);
 		LazyMemberInstantiationRegistry::getInstance().markOdrUsed(declaring_struct_info->name, conversion_name, conversion_is_const);
@@ -12116,12 +12120,9 @@ const ConstructorDeclarationNode* selectTrailingBaseConstructor(
 	return &same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
 }
 
-bool SemanticAnalysis::annotateSelectedConversionOperator(
-	const ASTNode& expr_node,
-	CanonicalTypeId expr_type_id,
-	CanonicalTypeId target_type_id,
-	const UserDefinedConversionOperatorSelection& selected_conversion) {
-	if (!checkSelectedConversionOperatorAccess(expr_node, target_type_id, selected_conversion)) {
+bool SemanticAnalysis::annotateSelectedConversionOperator(const ASTNode& expr_node, CanonicalTypeId expr_type_id, CanonicalTypeId target_type_id,
+	const UserDefinedConversionOperatorSelection& selected_conversion, SemanticContextFlags context_flags) {
+	if (!checkSelectedConversionOperatorAccess(expr_node, target_type_id, selected_conversion, context_flags)) {
 		return false;
 	}
 	ImplicitCastInfo cast_info;
@@ -12169,7 +12170,7 @@ bool SemanticAnalysis::tryAnnotateExplicitConversionByTypeId(
 			return false;
 		}
 	}
-	if (!annotateSelectedConversionOperator(slot_expression, source_type_id, target_type_id, *selected_conversion)) {
+	if (!annotateSelectedConversionOperator(slot_expression, source_type_id, target_type_id, *selected_conversion, SemanticContextFlags::None)) {
 		return false;
 	}
 	// A cast does not change the operand's own type. Keep the operand's slot type
@@ -12397,7 +12398,7 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 		const TypeSpecifierNode target_type = materializeTypeSpecifier(to_desc);
 		const auto selected = trySelectCanonicalImplicitConversionOperator(from_desc, target_type, source_value_category);
 		if (selected.has_value()) {
-			return !selected->ambiguous && annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected);
+			return !selected->ambiguous && annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected, SemanticContextFlags::None);
 		}
 	}
 
@@ -12416,7 +12417,8 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 					pointer_source_type, pointer_target_type, ConversionFunctionContext::Implicit, inferExpressionValueCategory(expr_node),
 					FunctionTemplateInstantiation::Definition);
 				template_selection.has_value()) {
-				return !template_selection->ambiguous && annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *template_selection);
+				return !template_selection->ambiguous &&
+					annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *template_selection, SemanticContextFlags::None);
 			}
 			FLASH_LOG(General, Debug,
 					  "SemanticAnalysis: skipping UserDefined pointer annotation — "
@@ -12496,7 +12498,7 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 			const TypeSpecifierNode nominal_target = materializeTypeSpecifier(type_context_.get(target_type_id));
 			const auto selected_conversion = select_conversion_operator(expr_type_id, nominal_target);
 			if (selected_conversion.has_value() && !selected_conversion->ambiguous) {
-				return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
+				return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion, SemanticContextFlags::None);
 			}
 			return false;
 		}
@@ -12542,7 +12544,7 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 		const TypeSpecifierNode target_type = materializeTypeSpecifier(type_context_.get(target_type_id));
 		const auto selected_conversion = select_conversion_operator(expr_type_id, target_type);
 		if (selected_conversion.has_value() && !selected_conversion->ambiguous) {
-			return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
+			return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion, SemanticContextFlags::None);
 		}
 		return false;
 	}
@@ -12731,7 +12733,7 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 			const TypeSpecifierNode target_type = materializeTypeSpecifier(type_context_.get(target_type_id));
 			const auto selected_conversion = select_conversion_operator(stripped_from_id, target_type);
 			if (!selected_conversion.has_value() || selected_conversion->ambiguous || selected_conversion->function == nullptr) return false;
-			return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
+			return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion, SemanticContextFlags::None);
 		}
 		CanonicalTypeDesc stripped_resolved_desc;
 		stripped_resolved_desc.type_index = stripped_resolved_tidx;
@@ -12785,7 +12787,7 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 			FLASH_LOG(General, Debug, "SemanticAnalysis: skipping UserDefined annotation — " "conversion operator selection failed or was ambiguous");
 			return false;
 		}
-		return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion);
+		return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion, SemanticContextFlags::None);
 	}
 
 	ImplicitCastInfo cast_info;
@@ -14127,7 +14129,7 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 				FunctionTemplateInstantiation::Definition);
 		}
 		if (selected.has_value()) {
-			if (selected->ambiguous || !checkSelectedConversionOperatorAccess(arg, param_type_id, *selected)) {
+			if (selected->ambiguous || !checkSelectedConversionOperatorAccess(arg, param_type_id, *selected, SemanticContextFlags::None)) {
 				return std::nullopt;
 			}
 			const TypeSpecifierNode& result = selected->function->decl_node().type_specifier_node();
@@ -14261,7 +14263,8 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 			if (!plan.is_valid && arg_type_id && is_struct_type(arg_value_type.category())) {
 				const auto selected = trySelectConversionFunctionTemplate(arg_value_type, param_value_type, ConversionFunctionContext::Implicit,
 					inferExpressionValueCategory(arg), FunctionTemplateInstantiation::Definition);
-				if (selected.has_value() && !selected->ambiguous && annotateSelectedConversionOperator(arg, arg_type_id, param_type_id, *selected)) {
+			if (selected.has_value() && !selected->ambiguous &&
+				annotateSelectedConversionOperator(arg, arg_type_id, param_type_id, *selected, SemanticContextFlags::None)) {
 					return;
 				}
 			}
@@ -14273,7 +14276,7 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 				const auto selected_conversion = trySelectUserDefinedConversionOperator(
 					arg_value_type, param_value_type, false, inferExpressionValueCategory(arg));
 				if (selected_conversion.has_value() && !selected_conversion->ambiguous &&
-					annotateSelectedConversionOperator(arg, arg_type_id, param_type_id, *selected_conversion)) {
+					annotateSelectedConversionOperator(arg, arg_type_id, param_type_id, *selected_conversion, SemanticContextFlags::None)) {
 					return;
 				}
 			}

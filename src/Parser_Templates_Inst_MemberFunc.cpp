@@ -172,10 +172,10 @@ void applyResolvedSubstitutedTypeMetadata(
 	}
 }
 
-ASTNode rebuildResolvedSubstitutedTypeSpec(
-	const TypeSpecifierNode& original_type_spec,
-	TypeIndex resolved_type_index,
-	const TemplateTypeArg* resolved_arg) {
+enum class MemberTemplateTypeUse : uint8_t { Return, Parameter };
+
+ASTNode rebuildResolvedSubstitutedTypeSpec(const TypeSpecifierNode& original_type_spec, TypeIndex resolved_type_index,
+	const TemplateTypeArg* resolved_arg, MemberTemplateTypeUse use) {
 	ASTNode substituted_type = ASTNode::emplace_node<TypeSpecifierNode>(
 		resolved_type_index.category(),
 		original_type_spec.qualifier(),
@@ -185,8 +185,9 @@ ASTNode rebuildResolvedSubstitutedTypeSpec(
 
 	auto& substituted_type_spec = substituted_type.as<TypeSpecifierNode>();
 	substituted_type_spec.set_type_index(resolved_type_index);
-	if (original_type_spec.is_array() || original_type_spec.has_pointee_array_declarator() ||
-		original_type_spec.has_unsized_outer_array_dimension() || original_type_spec.has_ordered_declarator()) {
+	// Parameter array bounds are published from the declaration after substitution.
+	if (use == MemberTemplateTypeUse::Return && (original_type_spec.is_array() || original_type_spec.has_pointee_array_declarator() ||
+		original_type_spec.has_unsized_outer_array_dimension() || original_type_spec.has_ordered_declarator())) {
 		applyOuterDeclaratorShapeForSubstitution(substituted_type_spec, original_type_spec);
 	} else {
 		for (const auto& ptr_level : original_type_spec.pointer_levels()) {
@@ -2614,10 +2615,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			return_type_spec,
 			return_type_index);
 
-		substituted_return_type = rebuildResolvedSubstitutedTypeSpec(
-			return_type_spec,
-			return_type_index,
-			return_resolved_arg);
+		substituted_return_type = rebuildResolvedSubstitutedTypeSpec(return_type_spec, return_type_index, return_resolved_arg,
+			MemberTemplateTypeUse::Return);
 	}
 
 	Token mangled_token(Token::Type::Identifier, mangled_name,
@@ -2985,10 +2984,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			}
 
 			// Create the substituted parameter type specifier
-			auto substituted_param_type = rebuildResolvedSubstitutedTypeSpec(
-				param_type_spec,
-				param_type_index,
-				resolved_arg);
+			auto substituted_param_type = rebuildResolvedSubstitutedTypeSpec(param_type_spec, param_type_index, resolved_arg,
+				MemberTemplateTypeUse::Parameter);
 			if (resolved_original_dependent_alias) {
 				substituted_param_type = resolved_original_dependent_param_type;
 			}
