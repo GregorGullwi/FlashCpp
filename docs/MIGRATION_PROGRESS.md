@@ -604,7 +604,12 @@ trait evaluation reads them directly; recursive and compatibility paths remain
 fallbacks without the tag. Codegen triviality and nothrow-destructor consumers
 and pseudo-destructor lowering now query the published aggregate facts first.
 `test_canonical_aggregate_trait_facts_ret0.cpp` covers combined base,
-template-member, and anonymous-union propagation. The inline dollar-recovery
+template-member, and anonymous-union propagation. Default-construction
+publication now consumes member and base facts for classes without default member
+initializers and tags the result with `AggregateDefaultConstructionFacts`;
+initializer-bearing shapes retain the recursive fallback.
+`test_canonical_default_construction_facts_ret0.cpp` covers template members,
+bases, references, and deleted or throwing constructors. The inline dollar-recovery
 inventory and canonical-adapter source corpus remain
 within their supported/deferred baselines. The fixed adapter corpus remains 26
 supported and zero deferred. Gate 0's Windows and ELF

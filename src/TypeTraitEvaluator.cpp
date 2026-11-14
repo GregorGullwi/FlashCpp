@@ -2270,7 +2270,9 @@ bool isStructNothrowDestructibleImpl(const StructTypeInfo* struct_info, bool is_
 constexpr CanonicalRecordMemberFacts kTrivialScalarSubobjectFacts =
 	CanonicalRecordMemberFacts::TriviallyCopyable | CanonicalRecordMemberFacts::Trivial |
 	CanonicalRecordMemberFacts::Destructible | CanonicalRecordMemberFacts::TriviallyDestructible |
-	CanonicalRecordMemberFacts::NothrowDestructible | CanonicalRecordMemberFacts::HasTrivialDestructor;
+	CanonicalRecordMemberFacts::NothrowDestructible | CanonicalRecordMemberFacts::HasTrivialDestructor |
+	CanonicalRecordMemberFacts::DefaultConstructible | CanonicalRecordMemberFacts::TriviallyDefaultConstructible |
+	CanonicalRecordMemberFacts::NothrowDefaultConstructible;
 
 // Compatibility projection used only when the canonical member type cannot be
 // represented. Every fact here is still keyed by the same member ordinal.
@@ -2312,6 +2314,15 @@ CanonicalRecordMemberFacts legacySubobjectFacts(const StructTypeInfo* struct_inf
 			facts |= CanonicalRecordMemberFacts::DestructorNonTrivial;
 		}
 	}
+	if (recordDefaultConstructible(*struct_info)) {
+		facts |= CanonicalRecordMemberFacts::DefaultConstructible;
+	}
+	if (recordTriviallyConstructible(*struct_info)) {
+		facts |= CanonicalRecordMemberFacts::TriviallyDefaultConstructible;
+	}
+	if (recordNothrowConstructible(*struct_info)) {
+		facts |= CanonicalRecordMemberFacts::NothrowDefaultConstructible;
+	}
 	return facts;
 }
 
@@ -2346,6 +2357,15 @@ CanonicalRecordMemberFacts memberFactsFromRecordFacts(CanonicalRecordFacts recor
 	}
 	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::DestructorNonTrivial)) {
 		facts |= CanonicalRecordMemberFacts::DestructorNonTrivial;
+	}
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::DefaultConstructible)) {
+		facts |= CanonicalRecordMemberFacts::DefaultConstructible;
+	}
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::TriviallyDefaultConstructible)) {
+		facts |= CanonicalRecordMemberFacts::TriviallyDefaultConstructible;
+	}
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::NothrowDefaultConstructible)) {
+		facts |= CanonicalRecordMemberFacts::NothrowDefaultConstructible;
 	}
 	return facts;
 }
@@ -2407,6 +2427,15 @@ CanonicalRecordMemberFacts canonicalSubobjectFacts(CanonicalTypeTable& table, Ty
 	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::DestructorNonTrivial)) {
 		facts |= CanonicalRecordMemberFacts::DestructorNonTrivial;
 	}
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::DefaultConstructible)) {
+		facts |= CanonicalRecordMemberFacts::DefaultConstructible;
+	}
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::TriviallyDefaultConstructible)) {
+		facts |= CanonicalRecordMemberFacts::TriviallyDefaultConstructible;
+	}
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::NothrowDefaultConstructible)) {
+		facts |= CanonicalRecordMemberFacts::NothrowDefaultConstructible;
+	}
 	return facts;
 }
 
@@ -2453,6 +2482,38 @@ std::optional<bool> subobjectFactsSatisfy(std::span<const CanonicalRecordMemberF
 			return std::nullopt;
 		}
 		if (!hasCanonicalRecordMemberFact(facts, required)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+std::optional<bool> recordPotentiallyConstructedSubobjectsSatisfy(const StructTypeInfo& struct_info,
+	std::span<const CanonicalRecordMemberFacts> member_facts,
+	std::span<const CanonicalRecordMemberFacts> base_facts, CanonicalRecordMemberFacts required) {
+	for (const CanonicalRecordMemberFacts facts : base_facts) {
+		if (hasCanonicalRecordMemberFact(facts, CanonicalRecordMemberFacts::Unknown)) {
+			return std::nullopt;
+		}
+		if (!hasCanonicalRecordMemberFact(facts, required)) {
+			return false;
+		}
+	}
+	for (size_t index = 0; index < struct_info.members.size(); ++index) {
+		const StructMember& member = struct_info.members[index];
+		if (!struct_info.isPotentiallyConstructedByDefaultConstructor(member)) {
+			continue;
+		}
+		if (member.is_reference()) {
+			return false;
+		}
+		if (member.pointer_depth > 0 || !is_struct_type(member.type_index.category())) {
+			continue;
+		}
+		if (index >= member_facts.size() || hasCanonicalRecordMemberFact(member_facts[index], CanonicalRecordMemberFacts::Unknown)) {
+			return std::nullopt;
+		}
+		if (!hasCanonicalRecordMemberFact(member_facts[index], required)) {
 			return false;
 		}
 	}
@@ -2843,29 +2904,74 @@ CanonicalRecordFacts computeCanonicalRecordFactsWithLookup(const StructTypeInfo&
 	if (isStructEmptyImpl(facts_lookup, &struct_info)) {
 		facts |= CanonicalRecordFacts::Empty;
 	}
-	if (recordSubobjectsSatisfyDefaultConstruction(
-			struct_info,
-			DefaultConstructionPredicate{},
-			false,
-			facts_lookup,
-			CanonicalRecordFacts::DefaultConstructible)) {
-		facts |= CanonicalRecordFacts::DefaultConstructible;
+	bool default_facts_known = std::ranges::none_of(struct_info.members, [](const StructMember& member) {
+		return member.default_initializer.has_value();
+	});
+	bool default_constructible = false;
+	bool trivially_default_constructible = false;
+	bool nothrow_default_constructible = false;
+	const auto apply_subobject_default_construction = [&] {
+		default_constructible = true;
+		trivially_default_constructible = hasTrivialDefaultConstructor(&struct_info);
+		nothrow_default_constructible = true;
+		const std::optional<bool> members_default = recordPotentiallyConstructedSubobjectsSatisfy(
+			struct_info, member_facts, base_facts, CanonicalRecordMemberFacts::DefaultConstructible);
+		const std::optional<bool> members_trivial = recordPotentiallyConstructedSubobjectsSatisfy(
+			struct_info, member_facts, base_facts, CanonicalRecordMemberFacts::TriviallyDefaultConstructible);
+		const std::optional<bool> members_nothrow = recordPotentiallyConstructedSubobjectsSatisfy(
+			struct_info, member_facts, base_facts, CanonicalRecordMemberFacts::NothrowDefaultConstructible);
+		if (!members_default.has_value() || !members_trivial.has_value() || !members_nothrow.has_value()) {
+			default_facts_known = false;
+			return;
+		}
+		default_constructible = *members_default;
+		trivially_default_constructible = trivially_default_constructible && *members_trivial;
+		nothrow_default_constructible = *members_nothrow;
+	};
+	if (default_facts_known) {
+		if (struct_info.is_abstract || struct_info.isDefaultConstructorDeleted()) {
+			default_facts_known = true;
+		} else {
+			const StructMemberFunction* default_constructor = struct_info.findDefaultConstructor();
+			if (default_constructor != nullptr) {
+				if (default_constructor->access != AccessSpecifier::Public ||
+					!default_constructor->function_decl.is<ConstructorDeclarationNode>()) {
+					default_facts_known = false;
+				} else {
+					const ConstructorDeclarationNode& constructor =
+						default_constructor->function_decl.as<ConstructorDeclarationNode>();
+					if (!constructor.is_implicit() && !constructor.is_explicitly_defaulted()) {
+						default_constructible = true;
+						nothrow_default_constructible = constructor.is_noexcept();
+					} else {
+						apply_subobject_default_construction();
+					}
+				}
+			} else if (struct_info.hasUserDeclaredConstructor()) {
+				default_facts_known = true;
+			} else {
+				apply_subobject_default_construction();
+			}
+		}
 	}
-	if (recordSubobjectsSatisfyDefaultConstruction(
-			struct_info,
-			TrivialDefaultConstructionPredicate{},
-			false,
-			facts_lookup,
-			CanonicalRecordFacts::TriviallyDefaultConstructible)) {
-		facts |= CanonicalRecordFacts::TriviallyDefaultConstructible;
-	}
-	if (recordSubobjectsSatisfyDefaultConstruction(
-			struct_info,
-			NothrowDefaultConstructionPredicate{},
-			true,
-			facts_lookup,
-			CanonicalRecordFacts::NothrowDefaultConstructible)) {
-		facts |= CanonicalRecordFacts::NothrowDefaultConstructible;
+	if (default_facts_known) {
+		if (default_constructible) facts |= CanonicalRecordFacts::DefaultConstructible;
+		if (trivially_default_constructible) facts |= CanonicalRecordFacts::TriviallyDefaultConstructible;
+		if (nothrow_default_constructible) facts |= CanonicalRecordFacts::NothrowDefaultConstructible;
+		facts |= CanonicalRecordFacts::AggregateDefaultConstructionFacts;
+	} else {
+		if (recordSubobjectsSatisfyDefaultConstruction(struct_info, DefaultConstructionPredicate{}, false, facts_lookup,
+				CanonicalRecordFacts::DefaultConstructible)) {
+			facts |= CanonicalRecordFacts::DefaultConstructible;
+		}
+		if (recordSubobjectsSatisfyDefaultConstruction(struct_info, TrivialDefaultConstructionPredicate{}, false, facts_lookup,
+				CanonicalRecordFacts::TriviallyDefaultConstructible)) {
+			facts |= CanonicalRecordFacts::TriviallyDefaultConstructible;
+		}
+		if (recordSubobjectsSatisfyDefaultConstruction(struct_info, NothrowDefaultConstructionPredicate{}, true, facts_lookup,
+				CanonicalRecordFacts::NothrowDefaultConstructible)) {
+			facts |= CanonicalRecordFacts::NothrowDefaultConstructible;
+		}
 	}
 	return facts;
 }

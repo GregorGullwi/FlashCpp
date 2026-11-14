@@ -1395,7 +1395,7 @@ void CanonicalTypeTable::publishRecordProperties(
 		CanonicalRecordFacts::DestructorVirtual | CanonicalRecordFacts::DestructorNonTrivial |
 		CanonicalRecordFacts::DestructorHasNoexceptSpecifier | CanonicalRecordFacts::DestructorNoexcept |
 		CanonicalRecordFacts::TrivialCopyingSpecialMembers | CanonicalRecordFacts::TrivialDefaultConstructor |
-		CanonicalRecordFacts::AggregateTraitFacts);
+		CanonicalRecordFacts::AggregateTraitFacts | CanonicalRecordFacts::AggregateDefaultConstructionFacts);
 	const CanonicalTypeKind kind = type ? nodeUnlocked(type).kind : CanonicalTypeKind::Builtin;
 	if (!type || !isCanonicalClassTypeKind(kind) || (static_cast<uint32_t>(facts) & ~valid_facts) != 0) {
 		throw InternalError("canonical type: invalid record property publication");
