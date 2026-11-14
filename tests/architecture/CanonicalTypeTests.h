@@ -3222,6 +3222,20 @@ inline void checkRecordMemberProperties() {
 	rejected = false;
 	try { table.publishRecordMemberProperties(table.record(entity), short_facts); } catch (const InternalError&) { rejected = true; }
 	require(rejected);
+	const TypeId aggregate = table.record(EntityId{40503});
+	const CanonicalRecordFacts aggregate_facts = CanonicalRecordFacts::TriviallyCopyable | CanonicalRecordFacts::Trivial | CanonicalRecordFacts::Pod |
+		CanonicalRecordFacts::Destructible | CanonicalRecordFacts::TriviallyDestructible |
+		CanonicalRecordFacts::NothrowDestructible | CanonicalRecordFacts::AggregateTraitFacts;
+	table.publishRecordProperties(aggregate, aggregate_facts);
+	require(table.recordProperties(aggregate).facts == aggregate_facts);
+	table.publishRecordProperties(aggregate, aggregate_facts);
+	rejected = false;
+	try {
+		table.publishRecordProperties(aggregate, aggregate_facts | CanonicalRecordFacts::HasVirtualDestructor);
+	} catch (const InternalError&) {
+		rejected = true;
+	}
+	require(rejected);
 }
 
 inline int run() {

@@ -1258,8 +1258,12 @@ std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property, cons
 			}
 			return std::nullopt;
 		}
+		const CanonicalRecordFacts facts = table.recordProperties(peeled).facts;
 		if (property == CanonicalTraitProperty::HasTrivialDestructor) {
-			return hasCanonicalRecordFact(table.recordProperties(peeled).facts, CanonicalRecordFacts::HasTrivialDestructor);
+			return hasCanonicalRecordFact(facts, CanonicalRecordFacts::HasTrivialDestructor);
+		}
+		if (hasCanonicalRecordFact(facts, CanonicalRecordFacts::AggregateTraitFacts)) {
+			return hasCanonicalRecordFact(facts, canonicalRecordPropertyFlag(property));
 		}
 		if (property == CanonicalTraitProperty::IsDestructible || property == CanonicalTraitProperty::IsTriviallyDestructible ||
 			property == CanonicalTraitProperty::IsNothrowDestructible || property == CanonicalTraitProperty::HasVirtualDestructor) {
@@ -1269,7 +1273,6 @@ std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property, cons
 			property == CanonicalTraitProperty::IsTrivial || property == CanonicalTraitProperty::IsPod) {
 			return canonicalRecordTrivialityProperty(property, table, peeled);
 		}
-		const CanonicalRecordFacts facts = table.recordProperties(peeled).facts;
 		return hasCanonicalRecordFact(facts, canonicalRecordPropertyFlag(property));
 	}
 	case CanonicalTraitProperty::IsConst:
@@ -2312,6 +2315,41 @@ CanonicalRecordMemberFacts legacySubobjectFacts(const StructTypeInfo* struct_inf
 	return facts;
 }
 
+CanonicalRecordMemberFacts memberFactsFromRecordFacts(CanonicalRecordFacts record_facts) {
+	CanonicalRecordMemberFacts facts = CanonicalRecordMemberFacts::None;
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::TriviallyCopyable)) {
+		facts |= CanonicalRecordMemberFacts::TriviallyCopyable;
+	}
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::Trivial)) {
+		facts |= CanonicalRecordMemberFacts::Trivial;
+	}
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::Destructible)) {
+		facts |= CanonicalRecordMemberFacts::Destructible;
+	}
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::TriviallyDestructible)) {
+		facts |= CanonicalRecordMemberFacts::TriviallyDestructible;
+	}
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::NothrowDestructible)) {
+		facts |= CanonicalRecordMemberFacts::NothrowDestructible;
+	}
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::HasTrivialDestructor)) {
+		facts |= CanonicalRecordMemberFacts::HasTrivialDestructor;
+	}
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::HasVirtualDestructor)) {
+		facts |= CanonicalRecordMemberFacts::HasVirtualDestructor;
+	}
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::DestructorDeleted)) {
+		facts |= CanonicalRecordMemberFacts::DestructorDeleted;
+	}
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::DestructorNonPublic)) {
+		facts |= CanonicalRecordMemberFacts::DestructorNonPublic;
+	}
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::DestructorNonTrivial)) {
+		facts |= CanonicalRecordMemberFacts::DestructorNonTrivial;
+	}
+	return facts;
+}
+
 CanonicalRecordMemberFacts canonicalSubobjectFacts(CanonicalTypeTable& table, TypeId type, const StructTypeInfo* legacy_info) {
 	TypeId peeled = table.withoutTopLevelQualifiers(type);
 	CanonicalTypeNode node = table.node(peeled);
@@ -2331,6 +2369,10 @@ CanonicalRecordMemberFacts canonicalSubobjectFacts(CanonicalTypeTable& table, Ty
 	}
 	if (!table.hasRecordProperties(peeled)) {
 		return legacySubobjectFacts(legacy_info);
+	}
+	const CanonicalRecordFacts aggregate_record_facts = table.recordProperties(peeled).facts;
+	if (hasCanonicalRecordFact(aggregate_record_facts, CanonicalRecordFacts::AggregateTraitFacts)) {
+		return memberFactsFromRecordFacts(aggregate_record_facts);
 	}
 	const std::optional<bool> trivially_copyable = canonicalRecordTrivialityProperty(CanonicalTraitProperty::IsTriviallyCopyable, table, peeled);
 	const std::optional<bool> trivial = canonicalRecordTrivialityProperty(CanonicalTraitProperty::IsTrivial, table, peeled);
@@ -2378,6 +2420,43 @@ CanonicalRecordMemberFacts computeCanonicalMemberFacts(CanonicalTypeTable& table
 		return is_struct_type(member.type_index.category()) ? CanonicalRecordMemberFacts::Unknown : kTrivialScalarSubobjectFacts;
 	}
 	return canonicalSubobjectFacts(table, member.canonical_type_id, legacy_info);
+}
+
+CanonicalRecordMemberFacts computeCanonicalBaseFacts(CanonicalTypeTable& table, const BaseClassSpecifier& base) {
+	if (base.is_deferred || !base.type_index.is_valid()) {
+		return CanonicalRecordMemberFacts::Unknown;
+	}
+	const TypeInfo* type_info = tryGetTypeInfo(base.type_index);
+	const StructTypeInfo* legacy_info = type_info == nullptr ? nullptr : type_info->getStructInfo();
+	if (legacy_info == nullptr) {
+		return CanonicalRecordMemberFacts::Unknown;
+	}
+	const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *type_info);
+	if (imported.status == CanonicalTypeImportStatus::Supported) {
+		return canonicalSubobjectFacts(table, imported.type, legacy_info);
+	}
+	return legacySubobjectFacts(legacy_info);
+}
+
+std::optional<bool> subobjectFactsSatisfy(std::span<const CanonicalRecordMemberFacts> member_facts,
+	std::span<const CanonicalRecordMemberFacts> base_facts, CanonicalRecordMemberFacts required) {
+	for (const CanonicalRecordMemberFacts facts : member_facts) {
+		if (hasCanonicalRecordMemberFact(facts, CanonicalRecordMemberFacts::Unknown)) {
+			return std::nullopt;
+		}
+		if (!hasCanonicalRecordMemberFact(facts, required)) {
+			return false;
+		}
+	}
+	for (const CanonicalRecordMemberFacts facts : base_facts) {
+		if (hasCanonicalRecordMemberFact(facts, CanonicalRecordMemberFacts::Unknown)) {
+			return std::nullopt;
+		}
+		if (!hasCanonicalRecordMemberFact(facts, required)) {
+			return false;
+		}
+	}
+	return true;
 }
 
 bool hasBaseTypeAmongZeroOffsetMembers(
@@ -2556,43 +2635,6 @@ std::optional<bool> recordMembersSatisfyMemberFacts(std::span<const CanonicalRec
 	return true;
 }
 
-bool recordBasesSatisfyDestructionProperty(const StructTypeInfo& struct_info, CanonicalTypeTable& table,
-	CanonicalTraitProperty property, bool fail_on_deferred) {
-	for (const BaseClassSpecifier& base : struct_info.base_classes) {
-		if (base.is_deferred) {
-			if (fail_on_deferred) {
-				return false;
-			}
-			continue;
-		}
-		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
-		const StructTypeInfo* base_struct_info = base_type_info == nullptr ? nullptr : base_type_info->getStructInfo();
-		if (base_struct_info == nullptr) {
-			return false;
-		}
-		if (base_type_info != nullptr) {
-			const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *base_type_info);
-			if (imported.status == CanonicalTypeImportStatus::Supported) {
-				const std::optional<bool> canonical_result = canonicalRecordDestructionProperty(property, table, imported.type, true);
-				if (canonical_result.has_value()) {
-					if (!*canonical_result) {
-						return false;
-					}
-					continue;
-				}
-			}
-		}
-		if (property == CanonicalTraitProperty::IsNothrowDestructible) {
-			if (!isStructNothrowDestructibleImpl(base_struct_info, true)) {
-				return false;
-			}
-		} else if (!isStructTriviallyDestructibleImpl(base_struct_info, true)) {
-			return false;
-		}
-	}
-	return true;
-}
-
 bool recordBasesSatisfyHasTrivialDestructor(const StructTypeInfo& struct_info, const PublishedRecordFactsLookup& facts_lookup) {
 	for (const BaseClassSpecifier& base : struct_info.base_classes) {
 		if (base.is_deferred) {
@@ -2641,40 +2683,24 @@ CanonicalRecordFacts computeCanonicalRecordFactsWithLookup(const StructTypeInfo&
 	CanonicalTypeTable& table, std::span<const CanonicalRecordMemberFacts> member_facts) {
 	CanonicalRecordFacts facts = CanonicalRecordFacts::None;
 	const bool is_standard_layout = isStructStandardLayoutWithPublishedFacts(facts_lookup, &struct_info);
-	const bool union_deleted = struct_info.is_union && unionHasDeletedImplicitDestructorFromFacts(struct_info, member_facts);
+	std::vector<CanonicalRecordMemberFacts> base_facts;
+	base_facts.reserve(struct_info.base_classes.size());
+	for (const BaseClassSpecifier& base : struct_info.base_classes) {
+		base_facts.push_back(computeCanonicalBaseFacts(table, base));
+	}
+	const bool has_union_variants = struct_info.is_union || std::ranges::any_of(struct_info.members, [](const StructMember& member) {
+		return member.anonymous_union_group_index.has_value();
+	});
+	const bool union_deleted = has_union_variants && unionHasDeletedImplicitDestructorFromFacts(struct_info, member_facts);
 	if (struct_info.has_deleted_destructor || union_deleted) {
 		facts |= CanonicalRecordFacts::DestructorDeleted;
 	}
-	bool nothrow_destructible = !struct_info.has_deleted_destructor;
-	if (nothrow_destructible) {
-		if (const StructMemberFunction* destructor = struct_info.findDestructor()) {
-			if (destructor->access != AccessSpecifier::Public) {
-				nothrow_destructible = false;
-			} else if (!destructor->function_decl.is<DestructorDeclarationNode>()) {
-				throw InternalError("record property: destructor has invalid AST node");
-			} else {
-				const DestructorDeclarationNode& declaration = destructor->function_decl.as<DestructorDeclarationNode>();
-				if (declaration.has_noexcept_specifier() && !declaration.is_noexcept()) {
-					nothrow_destructible = false;
-				}
-			}
-		}
-	}
-	if (nothrow_destructible) {
-		const std::optional<bool> members = recordMembersSatisfyMemberFacts(member_facts, CanonicalRecordMemberFacts::NothrowDestructible);
-		if (!members.has_value()) {
-			nothrow_destructible = isStructNothrowDestructibleImpl(&struct_info, true);
-		} else {
-			nothrow_destructible = *members && recordBasesSatisfyDestructionProperty(struct_info, table, CanonicalTraitProperty::IsNothrowDestructible, true);
-		}
-	}
-	if (nothrow_destructible) {
-		facts |= CanonicalRecordFacts::NothrowDestructible;
-	}
-	if (hasTrivialSpecialMemberSetForCopying(&struct_info)) {
+	const bool has_trivial_special_members = hasTrivialSpecialMemberSetForCopying(&struct_info);
+	if (has_trivial_special_members) {
 		facts |= CanonicalRecordFacts::TrivialCopyingSpecialMembers;
 	}
-	if (hasTrivialDefaultConstructor(&struct_info)) {
+	const bool has_trivial_default_constructor = hasTrivialDefaultConstructor(&struct_info);
+	if (has_trivial_default_constructor) {
 		facts |= CanonicalRecordFacts::TrivialDefaultConstructor;
 	}
 	bool has_trivial_destructor = hasTrivialDestructorDeclaration(&struct_info);
@@ -2709,6 +2735,54 @@ CanonicalRecordFacts computeCanonicalRecordFactsWithLookup(const StructTypeInfo&
 				facts |= CanonicalRecordFacts::DestructorNoexcept;
 			}
 		}
+	}
+	const bool destructor_deleted = hasCanonicalRecordFact(facts, CanonicalRecordFacts::DestructorDeleted);
+	const bool destructor_non_public = hasCanonicalRecordFact(facts, CanonicalRecordFacts::DestructorNonPublic);
+	const bool destructor_virtual = hasCanonicalRecordFact(facts, CanonicalRecordFacts::DestructorVirtual);
+	const bool destructor_non_trivial = hasCanonicalRecordFact(facts, CanonicalRecordFacts::DestructorNonTrivial);
+	const bool destructor_has_noexcept_specifier = hasCanonicalRecordFact(facts, CanonicalRecordFacts::DestructorHasNoexceptSpecifier);
+	const bool destructor_noexcept = hasCanonicalRecordFact(facts, CanonicalRecordFacts::DestructorNoexcept);
+	bool aggregate_known = true;
+	const auto aggregate_fact = [&](bool own_value, CanonicalRecordMemberFacts required) {
+		if (!own_value) {
+			return false;
+		}
+		const std::optional<bool> subobjects = subobjectFactsSatisfy(member_facts, base_facts, required);
+		if (!subobjects.has_value()) {
+			aggregate_known = false;
+			return false;
+		}
+		return *subobjects;
+	};
+	const bool trivially_copyable = aggregate_fact(has_trivial_special_members, CanonicalRecordMemberFacts::TriviallyCopyable);
+	const bool trivial = aggregate_fact(has_trivial_special_members && has_trivial_default_constructor, CanonicalRecordMemberFacts::Trivial);
+	const bool destructible = aggregate_fact(!destructor_deleted && !destructor_non_public, CanonicalRecordMemberFacts::Destructible);
+	const bool trivially_destructible = aggregate_fact(
+		!destructor_deleted && !destructor_non_public && !destructor_virtual && !destructor_non_trivial, CanonicalRecordMemberFacts::TriviallyDestructible);
+	const bool nothrow_destructible = aggregate_fact(
+		!destructor_deleted && !destructor_non_public && (!destructor_has_noexcept_specifier || destructor_noexcept),
+		CanonicalRecordMemberFacts::NothrowDestructible);
+	bool has_virtual_destructor = destructor_virtual;
+	if (!has_virtual_destructor) {
+		for (const CanonicalRecordMemberFacts base_fact : base_facts) {
+			if (hasCanonicalRecordMemberFact(base_fact, CanonicalRecordMemberFacts::Unknown)) {
+				aggregate_known = false;
+				continue;
+			}
+			if (hasCanonicalRecordMemberFact(base_fact, CanonicalRecordMemberFacts::HasVirtualDestructor)) {
+				has_virtual_destructor = true;
+			}
+		}
+	}
+	if (aggregate_known) {
+		if (trivially_copyable) facts |= CanonicalRecordFacts::TriviallyCopyable;
+		if (trivial) facts |= CanonicalRecordFacts::Trivial;
+		if (trivial && is_standard_layout) facts |= CanonicalRecordFacts::Pod;
+		if (destructible) facts |= CanonicalRecordFacts::Destructible;
+		if (trivially_destructible) facts |= CanonicalRecordFacts::TriviallyDestructible;
+		if (nothrow_destructible) facts |= CanonicalRecordFacts::NothrowDestructible;
+		if (has_virtual_destructor) facts |= CanonicalRecordFacts::HasVirtualDestructor;
+		facts |= CanonicalRecordFacts::AggregateTraitFacts;
 	}
 	if (struct_info.has_vtable) {
 		facts |= CanonicalRecordFacts::Polymorphic;
