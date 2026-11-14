@@ -183,7 +183,8 @@ struct LambdaInfo {
 // Determines how an expression should be evaluated
 enum class ExpressionContext {
 	Load,		   // Evaluate and load the value (default, rvalue context)
-	LValueAddress	  // Evaluate to get the address without loading (lvalue context for assignment)
+	LValueAddress,	  // Evaluate to get the address without loading (lvalue context for assignment)
+	ReferenceBinding  // Evaluate a reference initializer to the bound object's address
 };
 
 // Named constants for ABI-specific values used throughout code generation

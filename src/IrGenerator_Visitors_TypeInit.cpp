@@ -17,6 +17,27 @@
 		{});
 }
 
+[[noreturn]] void AstToIr::throwReferenceMemberBindsTemporary() {
+	throw makeStructuredCompileError(context_->diagnostics(), DiagnosticId::ReferenceMemberBindsTemporary,
+		DiagnosticSeverity::Error, SourceLocation(), "Reference member binds to a temporary object", {});
+}
+
+bool AstToIr::initializerBindsTemporary(const ASTNode& init_node) {
+	if (!init_node.has_value()) {
+		return false;
+	}
+	if (init_node.is<ExpressionNode>()) {
+		return sema_.expressionValueCategory(init_node) == ValueCategory::PRValue;
+	}
+	if (!init_node.is<InitializerListNode>()) {
+		return false;
+	}
+	const InitializerListNode& init_list = init_node.as<InitializerListNode>();
+	return init_list.initializers().empty() ||
+		(init_list.initializers().size() == 1 && init_list.initializers()[0].is<ExpressionNode>() &&
+			sema_.expressionValueCategory(init_list.initializers()[0]) == ValueCategory::PRValue);
+}
+
 static bool isFullyNestedArrayInitializer(const StructMember& member, const InitializerListNode& init_list) {
 	struct ShapeFrame {
 		const InitializerListNode* list;
@@ -2424,7 +2445,14 @@ void AstToIr::generateTrivialDefaultConstructors() {
 				const StructMember& member = struct_info->members[initialization.member_index];
 				if (member.bitfield_width.has_value())
 					continue; // handled above
+				if (member.is_reference() && member.default_initializer.has_value() &&
+					initializerBindsTemporary(*member.default_initializer)) {
+					throwReferenceMemberBindsTemporary();
+				}
 				if (initialization.kind == ImplicitDefaultMemberInitializationKind::DefaultConstructor) {
+					if (member.is_reference()) {
+						throwReferenceMemberBindsTemporary();
+					}
 					const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index);
 					if (!member_struct_info) {
 						throw InternalError("Implicit default-constructor member plan has no struct metadata");
@@ -2462,7 +2490,8 @@ void AstToIr::generateTrivialDefaultConstructors() {
 					}
 					if (init_node.has_value() && init_node.is<ExpressionNode>()) {
 						// Use the default member initializer
-						ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+						ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>(),
+							member.is_reference() ? ExpressionContext::ReferenceBinding : ExpressionContext::Load);
 						init_operands = convertAggregateMemberInitializer(member, init_operands, Token());
 						// Extract just the value (third element of init_operands)
 						// Verify we have at least 3 elements before accessing

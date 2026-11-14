@@ -220,6 +220,7 @@ public:
 	ParserSemanticServices parserSemanticServices() { return ParserSemanticServices(*this); }
 	ArgumentConversionInfo buildCallArgumentConversion(const TypeSpecifierNode& argument_type, const TypeSpecifierNode& parameter_type,
 		const ASTNode* argument_node);
+	ValueCategory expressionValueCategory(const ASTNode& node) { return inferExpressionValueCategory(node); }
 	bool isParserAttached() const { return parser_ != nullptr; }
 	bool hasPostParseNormalizationStarted() const;
 	bool hasPostParseNormalizationCompleted() const;

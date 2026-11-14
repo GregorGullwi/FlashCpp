@@ -614,7 +614,12 @@ initializer, resolved-constructor, and array-element facts; only unresolved sche
 entries keep the recursive fallback.
 `test_canonical_default_construction_facts_ret0.cpp` covers template members,
 bases, references, deleted or throwing constructors, and nothrow/throwing default
-member initializers. Empty and standard-layout
+member initializers. Reference members bound to temporaries in default or
+constructor mem-initializers are rejected with `ReferenceMemberBindsTemporary`
+when the constructor is lowered; source regressions cover both initializer forms.
+Named-object bindings evaluate in an address context, so global and local lvalues
+store the bound object's address rather than its value.
+Empty and standard-layout
 publication now aggregate member and base facts for represented records, covering
 no-unique-address empty members and cross-base ownership rules; the existing
 record-property matrix and canonical empty/standard-layout regressions exercise

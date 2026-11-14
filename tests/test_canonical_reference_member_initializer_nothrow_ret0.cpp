@@ -1,31 +1,22 @@
-// A reference member's initializer can construct a temporary even though
-// binding the reference itself does not throw. The temporary's constructor must
-// decide the enclosing class's nothrow default construction.
+// A reference member initialized from a named object binds an lvalue, so the
+// containing default construction inherits the reference member's non-trivial
+// but nothrow initialization.
 
-struct ThrowingTemporary {
-	ThrowingTemporary() noexcept(false) {}
+struct Referenced {
+	int value = 0;
 };
 
-struct NothrowTemporary {
-	NothrowTemporary() noexcept {}
+Referenced referenced_object{};
+
+struct BoundReference {
+	const Referenced& reference = referenced_object;
 };
 
-struct ThrowingReference {
-	const ThrowingTemporary& reference = ThrowingTemporary{};
-};
-
-struct NothrowReference {
-	const NothrowTemporary& reference = NothrowTemporary{};
-};
-
-static_assert(__is_constructible(ThrowingReference));
-static_assert(!__is_trivially_constructible(ThrowingReference));
-static_assert(!__is_nothrow_constructible(ThrowingReference));
-
-static_assert(__is_constructible(NothrowReference));
-static_assert(!__is_trivially_constructible(NothrowReference));
-static_assert(__is_nothrow_constructible(NothrowReference));
+static_assert(__is_constructible(BoundReference));
+static_assert(!__is_trivially_constructible(BoundReference));
+static_assert(__is_nothrow_constructible(BoundReference));
 
 int main() {
-	return 0;
+	BoundReference bound;
+	return bound.reference.value == 0 ? 0 : 1;
 }
