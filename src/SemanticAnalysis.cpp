@@ -11735,9 +11735,8 @@ std::vector<SemanticAnalysis::ConversionFunctionTemplateCandidate> SemanticAnaly
 			continue;
 		}
 		for (const BaseClassSpecifier& base : current.info->base_classes) {
-			if (base.access != AccessSpecifier::Public) {
-				continue;
-			}
+			// Access applies to the selected receiver after ranking, so a
+			// non-public base can still contribute candidates here.
 			if (const TypeInfo* base_type = tryGetTypeInfo(canonicalize_type_alias(base.type_index).resolvedTypeIndex());
 				base_type != nullptr && !base_type->isDependentPlaceholder() && base_type->getStructInfo() != nullptr) {
 				pending.push_back({base_type->getStructInfo(), base_type->registeredTypeIndex().withCategory(TypeCategory::Struct), current.depth + 1});
@@ -12019,8 +12018,57 @@ ArgumentConversionInfo SemanticAnalysis::buildCallArgumentConversion(const TypeS
 		selected->conversion_template};
 }
 
+static bool conversionIsExposedByUsingDeclaration(const StructTypeInfo& source, const StructTypeInfo& declaring, StringHandle member_name) {
+	if (!member_name.isValid()) {
+		return false;
+	}
+	const TypeIndex declaring_type = declaring.own_type_index_.value_or(TypeIndex{});
+	if (!declaring_type.is_valid()) {
+		return false;
+	}
+	std::vector<const StructTypeInfo*> pending{&source};
+	std::unordered_set<const StructTypeInfo*> visited;
+	while (!pending.empty()) {
+		const StructTypeInfo* current = pending.back();
+		pending.pop_back();
+		if (current == nullptr || !visited.insert(current).second) {
+			continue;
+		}
+		if (current->declaration_node != nullptr) {
+			for (const ClassUsingDeclaration& using_declaration : current->declaration_node->class_using_declarations()) {
+				if (using_declaration.member_name != member_name) {
+					continue;
+				}
+				if (using_declaration.target_type_index.is_valid()) {
+					if (using_declaration.target_type_index == declaring_type) {
+						return true;
+					}
+					continue;
+				}
+				const TypeInfo* declaring_info = tryGetTypeInfo(declaring_type);
+				if (using_declaration.target_name == declaring.name ||
+					(declaring_info != nullptr && using_declaration.target_name == declaring_info->baseTemplateName())) {
+					return true;
+				}
+				for (size_t base_index = 0; base_index < current->base_classes.size(); ++base_index) {
+					const BaseClassSpecifier& base = current->base_classes[base_index];
+					if (classUsingDeclarationTargetsBase(using_declaration, base, base_index) && base.type_index == declaring_type) {
+						return true;
+					}
+				}
+			}
+		}
+		for (const BaseClassSpecifier& base : current->base_classes) {
+			if (const StructTypeInfo* base_info = tryGetStructTypeInfo(base.type_index); base_info != nullptr) {
+				pending.push_back(base_info);
+			}
+		}
+	}
+	return false;
+}
+
 bool SemanticAnalysis::checkSelectedConversionOperatorAccess(const ASTNode& expr_node, CanonicalTypeId target_type_id,
-	const UserDefinedConversionOperatorSelection& selected_conversion, SemanticContextFlags context_flags) {
+	const UserDefinedConversionOperatorSelection& selected_conversion, SemanticContextFlags context_flags, TypeIndex source_type_index) {
 	if (selected_conversion.function == nullptr) {
 		return false;
 	}
@@ -12051,6 +12099,39 @@ bool SemanticAnalysis::checkSelectedConversionOperatorAccess(const ASTNode& expr
 		false,
 		declaring_struct_info->own_type_index_.value_or(TypeIndex{}),
 		TypeIndex{});
+	if (source_type_index.is_valid() && declaring_struct_info->own_type_index_.has_value()) {
+		// [class.access.base]: the receiver conversion from the source object to
+		// the declaring subobject is checked after ranking. An inaccessible base
+		// still contributes candidates from a member context where it is usable,
+		// and a using-declaration that exposes the member also exposes its base.
+		const TypeIndex declaring_type_index = *declaring_struct_info->own_type_index_;
+		if (source_type_index != declaring_type_index) {
+			const DerivedBaseConversionInfo receiver_conversion = classifyDerivedBaseConversion(
+				source_type_index, declaring_type_index, getCurrentAccessingTypeIndex());
+			if (receiver_conversion.kind == DerivedBaseConversionKind::Inaccessible) {
+				StringHandle conversion_member_name = conversion_name;
+				for (const StructMemberFunction& member : declaring_struct_info->member_functions) {
+					if (member.function_decl.is<FunctionDeclarationNode>() &&
+						&member.function_decl.as<FunctionDeclarationNode>() == selected_conversion.function) {
+						conversion_member_name = member.getName();
+						break;
+					}
+				}
+				const StructTypeInfo* source_struct_info = tryGetStructTypeInfo(source_type_index);
+				const bool exposed_by_using_declaration = source_struct_info != nullptr &&
+					conversionIsExposedByUsingDeclaration(*source_struct_info, *declaring_struct_info, conversion_member_name);
+				if (!exposed_by_using_declaration) {
+					throw makeStructuredCompileError(
+						context_.diagnostics(),
+						DiagnosticId::InaccessibleDerivedToBaseConversion,
+						DiagnosticSeverity::Error,
+						SourceLocation::fromToken(access_token),
+						"Cannot convert to an inaccessible base class",
+						{});
+				}
+			}
+		}
+	}
 	if (selected_conversion.trailing_standard_kind == StandardConversionKind::DerivedToBase) {
 		// [class.access.base]: the derived-to-base step of the selected conversion
 		// must itself be accessible. Ranking keeps inaccessible paths viable so
@@ -12122,7 +12203,8 @@ const ConstructorDeclarationNode* selectTrailingBaseConstructor(
 
 bool SemanticAnalysis::annotateSelectedConversionOperator(const ASTNode& expr_node, CanonicalTypeId expr_type_id, CanonicalTypeId target_type_id,
 	const UserDefinedConversionOperatorSelection& selected_conversion, SemanticContextFlags context_flags) {
-	if (!checkSelectedConversionOperatorAccess(expr_node, target_type_id, selected_conversion, context_flags)) {
+	if (!checkSelectedConversionOperatorAccess(expr_node, target_type_id, selected_conversion, context_flags,
+			type_context_.get(expr_type_id).type_index)) {
 		return false;
 	}
 	ImplicitCastInfo cast_info;
@@ -14129,7 +14211,8 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 				FunctionTemplateInstantiation::Definition);
 		}
 		if (selected.has_value()) {
-			if (selected->ambiguous || !checkSelectedConversionOperatorAccess(arg, param_type_id, *selected, SemanticContextFlags::None)) {
+			if (selected->ambiguous || !checkSelectedConversionOperatorAccess(arg, param_type_id, *selected, SemanticContextFlags::None,
+					arg_value_type.type_index())) {
 				return std::nullopt;
 			}
 			const TypeSpecifierNode& result = selected->function->decl_node().type_specifier_node();
