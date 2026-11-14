@@ -235,11 +235,6 @@ Built-in subscript candidate discovery depends on a concrete declared
 pointer or array-reference type. A conversion template whose return shape
 still depends on its own template parameters cannot seed a candidate.
 
-Conversion template lookup skips non-public base classes even when the
-conversion is accessible inside a derived member. Ordinary conversions can
-accept inaccessible bases at an external call site. Both paths need to check
-the selected receiver's inheritance access after overload ranking.
-
 ## Remaining array-reference conversion and subscript cases
 
 Reversed subscripting such as `index()[object()]` needs to preserve evaluation
