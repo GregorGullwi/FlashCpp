@@ -2468,7 +2468,14 @@ CanonicalRecordMemberFacts computeCanonicalMemberFacts(CanonicalTypeTable& table
 		}
 		return is_struct_type(member.type_index.category()) ? CanonicalRecordMemberFacts::Unknown : kTrivialScalarSubobjectFacts;
 	}
-	return canonicalSubobjectFacts(table, member.canonical_type_id, legacy_info);
+	TypeId canonical_type = member.canonical_type_id;
+	if (type_info != nullptr && table.node(canonical_type).kind == CanonicalTypeKind::TemplateSpecialization) {
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *type_info);
+		if (imported.status == CanonicalTypeImportStatus::Supported) {
+			canonical_type = imported.type;
+		}
+	}
+	return canonicalSubobjectFacts(table, canonical_type, legacy_info);
 }
 
 CanonicalRecordMemberFacts computeCanonicalBaseFacts(CanonicalTypeTable& table, const BaseClassSpecifier& base) {
@@ -2524,6 +2531,12 @@ std::optional<bool> recordPotentiallyConstructedSubobjectsSatisfy(const StructTy
 		if (!struct_info.isPotentiallyConstructedByDefaultConstructor(member)) {
 			continue;
 		}
+		if (member.default_initializer.has_value()) {
+			if (required == CanonicalRecordMemberFacts::DefaultConstructible) {
+				continue;
+			}
+			return false;
+		}
 		if (member.is_reference()) {
 			return false;
 		}
@@ -2534,6 +2547,107 @@ std::optional<bool> recordPotentiallyConstructedSubobjectsSatisfy(const StructTy
 			return std::nullopt;
 		}
 		if (!hasCanonicalRecordMemberFact(member_facts[index], required)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+std::optional<bool> memberTypeNothrowDefaultConstruction(const StructTypeInfo& member_struct, TypeIndex type_index,
+	const PublishedRecordFactsLookup& facts_lookup) {
+	if (const std::optional<CanonicalRecordFacts> facts = facts_lookup.forType(type_index);
+		facts.has_value() && hasCanonicalRecordFact(*facts, CanonicalRecordFacts::AggregateDefaultConstructionFacts)) {
+		return hasCanonicalRecordFact(*facts, CanonicalRecordFacts::NothrowDefaultConstructible);
+	}
+	return recordNothrowConstructible(member_struct);
+}
+
+std::optional<bool> recordDefaultInitializerNothrow(const StructTypeInfo& struct_info, size_t index,
+	std::span<const CanonicalRecordMemberFacts> member_facts, const PublishedRecordFactsLookup& facts_lookup) {
+	const StructMember& member = struct_info.members[index];
+	if (!member.default_initializer.has_value() || member.pointer_depth > 0 || !is_struct_type(member.type_index.category())) {
+		return true;
+	}
+	const StructTypeInfo* member_struct = structInfoFromTypeIndex(member.type_index);
+	if (member_struct == nullptr) {
+		return true;
+	}
+	const ASTNode& initializer = *member.default_initializer;
+	if (member.is_array) {
+		TemplateVector<ASTNode, 4> pending;
+		pending.push_back(initializer);
+		while (!pending.empty()) {
+			const ASTNode element = pending.back();
+			pending.pop_back();
+			if (defaultInitializerIsDefaultConstruction(element)) {
+				if (index >= member_facts.size() || hasCanonicalRecordMemberFact(member_facts[index], CanonicalRecordMemberFacts::Unknown)) {
+					return std::nullopt;
+				}
+				if (!hasCanonicalRecordMemberFact(member_facts[index], CanonicalRecordMemberFacts::NothrowDefaultConstructible)) {
+					return false;
+				}
+				continue;
+			}
+			if (const auto* nested = element.get_if<InitializerListNode>()) {
+				std::ranges::copy(nested->initializers(), std::back_inserter(pending));
+				continue;
+			}
+			const std::optional<bool> throws = defaultInitializerConstructorThrows(element, *member_struct);
+			if (throws.has_value() && *throws) {
+				return false;
+			}
+		}
+		return true;
+	}
+	if (defaultInitializerIsDefaultConstruction(initializer)) {
+		if (member.is_reference()) {
+			return memberTypeNothrowDefaultConstruction(*member_struct, member.type_index, facts_lookup);
+		}
+		if (index >= member_facts.size() || hasCanonicalRecordMemberFact(member_facts[index], CanonicalRecordMemberFacts::Unknown)) {
+			return std::nullopt;
+		}
+		return hasCanonicalRecordMemberFact(member_facts[index], CanonicalRecordMemberFacts::NothrowDefaultConstructible);
+	}
+	const std::optional<bool> throws = defaultInitializerConstructorThrows(initializer, *member_struct);
+	return !(throws.has_value() && *throws);
+}
+
+std::optional<bool> recordPotentiallyConstructedSubobjectsNothrow(const StructTypeInfo& struct_info,
+	std::span<const CanonicalRecordMemberFacts> member_facts, std::span<const CanonicalRecordMemberFacts> base_facts,
+	const PublishedRecordFactsLookup& facts_lookup) {
+	for (const CanonicalRecordMemberFacts facts : base_facts) {
+		if (hasCanonicalRecordMemberFact(facts, CanonicalRecordMemberFacts::Unknown)) {
+			return std::nullopt;
+		}
+		if (!hasCanonicalRecordMemberFact(facts, CanonicalRecordMemberFacts::NothrowDefaultConstructible)) {
+			return false;
+		}
+	}
+	for (size_t index = 0; index < struct_info.members.size(); ++index) {
+		const StructMember& member = struct_info.members[index];
+		if (!struct_info.isPotentiallyConstructedByDefaultConstructor(member)) {
+			continue;
+		}
+		if (member.default_initializer.has_value()) {
+			const std::optional<bool> nothrow = recordDefaultInitializerNothrow(struct_info, index, member_facts, facts_lookup);
+			if (!nothrow.has_value()) {
+				return std::nullopt;
+			}
+			if (!*nothrow) {
+				return false;
+			}
+			continue;
+		}
+		if (member.is_reference()) {
+			return false;
+		}
+		if (member.pointer_depth > 0 || !is_struct_type(member.type_index.category())) {
+			continue;
+		}
+		if (index >= member_facts.size() || hasCanonicalRecordMemberFact(member_facts[index], CanonicalRecordMemberFacts::Unknown)) {
+			return std::nullopt;
+		}
+		if (!hasCanonicalRecordMemberFact(member_facts[index], CanonicalRecordMemberFacts::NothrowDefaultConstructible)) {
 			return false;
 		}
 	}
@@ -3044,9 +3158,7 @@ CanonicalRecordFacts computeCanonicalRecordFactsWithLookup(const StructTypeInfo&
 	if (is_empty) {
 		facts |= CanonicalRecordFacts::Empty;
 	}
-	bool default_facts_known = std::ranges::none_of(struct_info.members, [](const StructMember& member) {
-		return member.default_initializer.has_value();
-	});
+	bool default_facts_known = true;
 	bool default_constructible = false;
 	bool trivially_default_constructible = false;
 	bool nothrow_default_constructible = false;
@@ -3058,8 +3170,7 @@ CanonicalRecordFacts computeCanonicalRecordFactsWithLookup(const StructTypeInfo&
 			struct_info, member_facts, base_facts, CanonicalRecordMemberFacts::DefaultConstructible);
 		const std::optional<bool> members_trivial = recordPotentiallyConstructedSubobjectsSatisfy(
 			struct_info, member_facts, base_facts, CanonicalRecordMemberFacts::TriviallyDefaultConstructible);
-		const std::optional<bool> members_nothrow = recordPotentiallyConstructedSubobjectsSatisfy(
-			struct_info, member_facts, base_facts, CanonicalRecordMemberFacts::NothrowDefaultConstructible);
+		const std::optional<bool> members_nothrow = recordPotentiallyConstructedSubobjectsNothrow(struct_info, member_facts, base_facts, facts_lookup);
 		if (!members_default.has_value() || !members_trivial.has_value() || !members_nothrow.has_value()) {
 			default_facts_known = false;
 			return;

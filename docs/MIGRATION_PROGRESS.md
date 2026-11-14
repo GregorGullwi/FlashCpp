@@ -608,11 +608,13 @@ fallbacks without the tag. Codegen triviality and nothrow-destructor consumers
 and pseudo-destructor lowering now query the published aggregate facts first.
 `test_canonical_aggregate_trait_facts_ret0.cpp` covers combined base,
 template-member, and anonymous-union propagation. Default-construction
-publication now consumes member and base facts for classes without default member
-initializers and tags the result with `AggregateDefaultConstructionFacts`;
-initializer-bearing shapes retain the recursive fallback.
+publication now consumes member and base facts and tags the result with
+`AggregateDefaultConstructionFacts`. Default member initializers use canonical
+initializer, resolved-constructor, and array-element facts; only unresolved schema
+entries keep the recursive fallback.
 `test_canonical_default_construction_facts_ret0.cpp` covers template members,
-bases, references, and deleted or throwing constructors. Empty and standard-layout
+bases, references, deleted or throwing constructors, and nothrow/throwing default
+member initializers. Empty and standard-layout
 publication now aggregate member and base facts for represented records, covering
 no-unique-address empty members and cross-base ownership rules; the existing
 record-property matrix and canonical empty/standard-layout regressions exercise
