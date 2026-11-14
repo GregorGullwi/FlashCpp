@@ -544,6 +544,7 @@ private:
 
 	// Expression handler (counts and infers types for annotatable expressions)
 	SemanticExprInfo normalizeExpression(ASTNode node, const SemanticContext& ctx);
+	void normalizeUnevaluatedOperand(ASTNode node, const SemanticContext& ctx);
 
 	// Helpers
 	void registerParametersInScope(std::span<const ASTNode> parameter_nodes);
@@ -627,16 +628,13 @@ private:
 	// Apply post-selection access, base-path, and ODR-use policy to one selected
 	// conversion operator. Reference-binding consumers that record their own
 	// binding instead of an expression slot still need this check.
-	bool checkSelectedConversionOperatorAccess(const ASTNode& expr_node,
-											   CanonicalTypeId target_type_id,
-											   const UserDefinedConversionOperatorSelection& selected_conversion);
+	bool checkSelectedConversionOperatorAccess(const ASTNode& expr_node, CanonicalTypeId target_type_id,
+		const UserDefinedConversionOperatorSelection& selected_conversion, SemanticContextFlags context_flags);
 	// Record a sema-selected conversion operator (with its trailing standard
 	// conversion) on the argument's slot so codegen can lower it without
 	// re-running lookup. Shared by the builtin/enum and nominal-target paths.
-	bool annotateSelectedConversionOperator(const ASTNode& expr_node,
-											CanonicalTypeId expr_type_id,
-											CanonicalTypeId target_type_id,
-											const UserDefinedConversionOperatorSelection& selected_conversion);
+	bool annotateSelectedConversionOperator(const ASTNode& expr_node, CanonicalTypeId expr_type_id, CanonicalTypeId target_type_id,
+		const UserDefinedConversionOperatorSelection& selected_conversion, SemanticContextFlags context_flags);
 	bool functionTemplateConstraintsSatisfied(const TemplateFunctionDeclarationNode& function_template, const TemplateArgumentVector& arguments);
 	std::optional<TemplateArgumentVector> deduceConversionTemplateArguments(const TemplateFunctionDeclarationNode& function_template,
 		const TypeSpecifierNode& target_type);
@@ -856,7 +854,7 @@ private:
 	// Stores the resolved FunctionDeclarationNode* in op_subscript_table_ so that codegen
 	// can dispatch to the member function call path instead of pointer arithmetic.
 	void tryResolveSubscriptOperator(const ArraySubscriptNode& subscript_node);
-	void normalizeBuiltinSubscriptOperands(ArraySubscriptNode& subscript_node);
+	void normalizeBuiltinSubscriptOperands(ArraySubscriptNode& subscript_node, SemanticContextFlags context_flags);
 	struct BuiltinSubscriptConversion;
 	std::optional<BuiltinSubscriptConversion> selectBuiltinSubscriptConversion(const CanonicalTypeDesc& source, ValueCategory source_category,
 		FunctionTemplateInstantiation instantiation);

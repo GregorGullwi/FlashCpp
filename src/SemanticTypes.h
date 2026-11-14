@@ -300,6 +300,7 @@ enum class SemanticContextFlags : uint8_t {
 	InConstantEvaluatedContext = 1 << 0,
 	InsideTemplateDefinition = 1 << 1,
 	InsideInstantiatedTemplate = 1 << 2,
+	UnevaluatedOperand = 1 << 3,
 };
 
 inline SemanticContextFlags operator|(SemanticContextFlags a, SemanticContextFlags b) {
