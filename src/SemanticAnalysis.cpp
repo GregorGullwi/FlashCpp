@@ -1265,70 +1265,30 @@ const FunctionDeclarationNode* findStructPointerConversionOperator(const Canonic
 	return findStructPointerConversionOperator(from_desc, target_desc, sema, PointerConversionReceiver::Const, 0);
 }
 
-struct BuiltinSubscriptConversion {
+struct BuiltinSubscriptConversionTarget {
 	TypeId pointer_type;
-	UserDefinedConversionOperatorSelection selection;
+	StandardConversionKind trailing_conversion;
 };
 
-std::optional<BuiltinSubscriptConversion> selectBuiltinSubscriptConversion(const CanonicalTypeDesc& source, ValueCategory source_category) {
-	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-	CanonicalTypeTransaction transaction(table);
-	const TypeInfo* source_info = tryGetTypeInfo(source.type_index);
-	if (source_info == nullptr) {
-		return std::nullopt;
+std::optional<BuiltinSubscriptConversionTarget> getBuiltinSubscriptConversionTarget(CanonicalTypeTable& table, TypeId return_type) {
+	return_type = table.resolveAliasTemplateSpecializations(return_type);
+	const TypeId referent = canonicalReferentType(table, return_type);
+	const TypeId value_type = stripCanonicalTopCv(table, referent).first;
+	const CanonicalTypeNode value_node = table.node(value_type);
+	if (value_node.kind == CanonicalTypeKind::Pointer && value_node.child) {
+		const CanonicalTypeNode pointee = table.node(stripCanonicalTopCv(table, value_node.child).first);
+		if (pointee.kind == CanonicalTypeKind::Function || (pointee.kind == CanonicalTypeKind::Builtin && pointee.builtin == CanonicalBuiltinKind::Void)) {
+			return std::nullopt;
+		}
+		return BuiltinSubscriptConversionTarget{value_type, StandardConversionKind::None};
 	}
-	const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *source_info);
-	if (imported.status != CanonicalTypeImportStatus::Supported) {
-		return std::nullopt;
-	}
-	const TypeId source_type = table.qualify(imported.type, source.base_cv);
-	const auto conversions = collectCanonicalConversionOperators(table, source_type, ConversionFunctionContext::Implicit, source_category);
-	std::vector<BuiltinSubscriptConversion> candidates;
-	for (const auto& conversion : conversions) {
-		const TypeId return_type = table.resolveAliasTemplateSpecializations(conversion.return_type);
-		const TypeId referent = canonicalReferentType(table, return_type);
-		const TypeId value_type = stripCanonicalTopCv(table, referent).first;
-		const CanonicalTypeNode value_node = table.node(value_type);
-		if (value_node.kind == CanonicalTypeKind::Pointer && value_node.child) {
-			const CanonicalTypeNode pointee = table.node(stripCanonicalTopCv(table, value_node.child).first);
-			if (pointee.kind == CanonicalTypeKind::Function || (pointee.kind == CanonicalTypeKind::Builtin && pointee.builtin == CanonicalBuiltinKind::Void)) {
-				continue;
-			}
-			candidates.push_back({value_type, conversion.selection});
-		} else if (value_node.kind == CanonicalTypeKind::Array && referent != return_type) {
-			// [over.built], [conv.array]: replace only the outer bound with a pointer.
-			if (const auto element = canonicalUnaryDereference(table, referent)) {
-				candidates.push_back({table.pointer(*element), conversion.selection});
-				candidates.back().selection.trailing_standard_kind = StandardConversionKind::ArrayToPointer;
-			}
+	if (value_node.kind == CanonicalTypeKind::Array && referent != return_type) {
+		// [over.built], [conv.array]: replace only the outer bound with a pointer.
+		if (const auto element = canonicalUnaryDereference(table, referent)) {
+			return BuiltinSubscriptConversionTarget{table.pointer(*element), StandardConversionKind::ArrayToPointer};
 		}
 	}
-
-	std::optional<BuiltinSubscriptConversion> best;
-	for (const BuiltinSubscriptConversion& candidate : candidates) {
-		const auto candidate_cv = static_cast<uint8_t>(candidate.selection.member_cv_qualifier);
-		// A better implicit object conversion can also win for another pointer
-		// target when the winning pointer only needs added qualification.
-		const bool dominated = std::ranges::any_of(candidates, [&](const BuiltinSubscriptConversion& other) {
-			const auto other_cv = static_cast<uint8_t>(other.selection.member_cv_qualifier);
-			if (other_cv == candidate_cv || (other_cv & ~candidate_cv) != 0) {
-				return false;
-			}
-			const ConversionPlan plan = buildCanonicalStructuralConversionPlan(table, other.pointer_type, candidate.pointer_type);
-			return plan.is_valid && (plan.kind == StandardConversionKind::None || plan.kind == StandardConversionKind::QualificationAdjustment);
-		});
-		if (!dominated) {
-			if (best) {
-				best->selection.ambiguous = true;
-				return best;
-			}
-			best = candidate;
-		}
-	}
-	if (best) {
-		transaction.commit();
-	}
-	return best;
+	return std::nullopt;
 }
 
 const FunctionDeclarationNode* getCallTargetFunctionCandidate(const ASTNode& overload) {
@@ -1671,6 +1631,11 @@ std::optional<CanonicalTypeDesc> canonicalNewExpressionType(CanonicalTypeDesc al
 	return adoptPublishedStructuralType(allocated, table.pointer(pointed_to));
 }
 } // namespace
+
+struct SemanticAnalysis::BuiltinSubscriptConversion {
+	TypeId pointer_type;
+	UserDefinedConversionOperatorSelection selection;
+};
 
 TypeSpecifierNode materializeCanonicalTypeSpecifier(const CanonicalTypeDesc& desc) {
 	return materializeTypeSpecifier(desc);
@@ -9737,7 +9702,8 @@ void SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& sub
 		if (array_desc.category() != TypeCategory::Struct) {
 			return;
 		}
-		const auto conversion = selectBuiltinSubscriptConversion(array_desc, inferExpressionValueCategory(array_operand));
+		const auto conversion = selectBuiltinSubscriptConversion(array_desc, inferExpressionValueCategory(array_operand),
+			FunctionTemplateInstantiation::Definition);
 		if (!conversion) {
 			return;
 		}
@@ -10307,7 +10273,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				const ASTNode& array_operand = first_is_index ? e.index_expr() : e.array_expr();
 				if (array_desc.category() == TypeCategory::Struct && array_desc.pointer_levels.empty() && array_desc.array_dimensions.empty() &&
 					!isCanonicalArrayOrPointer(canonical_types, array_desc.structural_type_id)) {
-					const auto conversion = selectBuiltinSubscriptConversion(array_desc, inferExpressionValueCategory(array_operand));
+					const auto conversion = selectBuiltinSubscriptConversion(array_desc, inferExpressionValueCategory(array_operand),
+						FunctionTemplateInstantiation::SignatureOnly);
 					if (conversion && !conversion->selection.ambiguous) {
 						const CanonicalTypeId pointer = type_context_.intern(adoptPublishedStructuralType(array_desc, conversion->pointer_type));
 						return structPointerConversionElementType(pointer);
@@ -11733,25 +11700,24 @@ std::optional<TemplateArgumentVector> SemanticAnalysis::deduceConversionTemplate
 	return parser().deduceTemplateArgsFromCall(parameters, {}, bindings, SIZE_MAX, 0, function.namespace_handle());
 }
 
-std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::trySelectConversionFunctionTemplate(
-	const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, ConversionFunctionContext conversion_context,
-	ValueCategory source_value_category, FunctionTemplateInstantiation instantiation) {
-	if (!isParserAttached() || source_type.runtime_pointer_depth() != 0 || source_type.is_array_object()) {
-		return std::nullopt;
-	}
+struct SemanticAnalysis::ConversionFunctionTemplateCandidate {
+	const TemplateFunctionDeclarationNode* declaration;
+	TypeIndex owner_type;
+	StringHandle owner_name;
+	StringHandle name;
+	CVQualifier cv;
+	AccessSpecifier access;
+	size_t depth;
+	TypeId builtin_subscript_target{};
+};
+
+std::vector<SemanticAnalysis::ConversionFunctionTemplateCandidate> SemanticAnalysis::collectConversionFunctionTemplates(
+	const TypeSpecifierNode& source_type, ConversionFunctionContext conversion_context, ValueCategory source_value_category) {
+	std::vector<ConversionFunctionTemplateCandidate> candidates;
 	const StructTypeInfo* source = structInfoFromTypeIndex(source_type.type_index());
-	if (source == nullptr) {
-		return std::nullopt;
+	if (!source || source_type.runtime_pointer_depth() != 0 || source_type.is_array_object()) {
+		return candidates;
 	}
-	const uint8_t source_cv = static_cast<uint8_t>(source_type.cv_qualifier());
-	struct Candidate {
-		UserDefinedConversionOperatorSelection selection;
-		TemplateArgumentVector arguments;
-		StringHandle owner_name;
-		StringHandle member_name;
-		size_t depth;
-		bool direct_lvalue_binding;
-	};
 	struct PendingClass {
 		const StructTypeInfo* info;
 		TypeIndex type;
@@ -11759,9 +11725,7 @@ std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::trySelec
 	};
 	std::vector<PendingClass> pending{{source, source_type.type_index(), 0}};
 	std::unordered_set<const StructTypeInfo*> visited;
-	std::vector<Candidate> candidates;
-	const bool target_lvalue_reference = target_type.is_lvalue_reference();
-	const bool target_accepts_temporary = target_type.is_rvalue_reference() || target_type.top_level_cv_qualifier() == CVQualifier::Const;
+	const auto source_cv = static_cast<uint8_t>(source_type.cv_qualifier());
 	for (size_t index = 0; index < pending.size(); ++index) {
 		const PendingClass current = pending[index];
 		if (!visited.insert(current.info).second) {
@@ -11781,50 +11745,80 @@ std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::trySelec
 			if (function_template == nullptr || (member.is_explicit && conversion_context == ConversionFunctionContext::Implicit)) {
 				continue;
 			}
-			const FunctionDeclarationNode& function = function_template->function_decl_node();
 			const bool allows_category = canonicalConversionOperatorAllowsValueCategory(member.ref_qualifier, source_value_category) ||
 				(member.ref_qualifier == ReferenceQualifier::LValueReference && member.cv_qualifier == CVQualifier::Const);
 			if (!allows_category || (source_cv & ~static_cast<uint8_t>(member.cv_qualifier)) != 0) {
 				continue;
 			}
+			const FunctionDeclarationNode& function = function_template->function_decl_node();
 			const StringHandle member_name = member.getName();
 			if (member.operator_kind != OverloadableOperator::None || !member_name.view().starts_with("operator ") ||
 				function.is_variadic() || !function.parameter_nodes().empty()) {
 				continue;
 			}
-
-			const auto arguments = deduceConversionTemplateArguments(*function_template, target_type);
-			if (!arguments.has_value() || (functionTemplateHasAssociatedConstraints(*function_template) &&
-				!functionTemplateConstraintsSatisfied(*function_template, *arguments))) {
-				continue;
-			}
-			const auto signature = parser().try_instantiate_member_function_template_explicit_candidate(current.info->name.view(), member_name.view(),
-				*arguments, FunctionTemplateInstantiation::SignatureOnly, function_template, source_value_category);
-			const FunctionDeclarationNode* instantiated = signature.has_value() ? signature->get_if<FunctionDeclarationNode>() : nullptr;
-			if (instantiated == nullptr) {
-				continue;
-			}
-			const TypeSpecifierNode& result = instantiated->decl_node().type_specifier_node();
-			const bool direct_lvalue_binding = target_lvalue_reference && result.is_lvalue_reference();
-			if (target_type.is_reference() && !direct_lvalue_binding && !target_accepts_temporary) {
-				continue;
-			}
-			const auto tail = tryBuildCanonicalConversionFunctionTailPlan(result, target_type);
-			if (!tail.has_value() || !tail->is_valid || tail->rank > ConversionRank::QualificationAdjustment) {
-				FLASH_LOG_FORMAT(Templates, Trace, "Conversion template tail rejected: {} result={} target={}", member_name.view(),
-					result.getReadableString(), target_type.getReadableString());
-				continue;
-			}
-			UserDefinedConversionOperatorSelection selection;
-			selection.function = instantiated;
-			selection.conversion_template = function_template;
-			selection.compatibility_declaring_type_index = current.type;
-			selection.trailing_standard_kind = tail->kind;
-			selection.trailing_standard_rank = tail->rank;
-			selection.member_cv_qualifier = member.cv_qualifier;
-			selection.access = member.access;
-			candidates.push_back({selection, *arguments, current.info->name, member_name, current.depth, direct_lvalue_binding});
+			candidates.push_back({function_template, current.type, current.info->name, member_name, member.cv_qualifier, member.access, current.depth});
 		}
+	}
+	return candidates;
+}
+
+std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::trySelectConversionFunctionTemplate(
+	const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, ConversionFunctionContext conversion_context,
+	ValueCategory source_value_category, FunctionTemplateInstantiation instantiation) {
+	if (!isParserAttached()) {
+		return std::nullopt;
+	}
+	const auto templates = collectConversionFunctionTemplates(source_type, conversion_context, source_value_category);
+	return selectConversionFunctionTemplate(templates, target_type, source_value_category, instantiation);
+}
+
+std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::selectConversionFunctionTemplate(
+	std::span<const ConversionFunctionTemplateCandidate> templates, const TypeSpecifierNode& target_type,
+	ValueCategory source_value_category, FunctionTemplateInstantiation instantiation) {
+	struct Candidate {
+		UserDefinedConversionOperatorSelection selection;
+		TemplateArgumentVector arguments;
+		StringHandle owner_name;
+		StringHandle member_name;
+		size_t depth;
+		bool direct_lvalue_binding;
+	};
+	std::vector<Candidate> candidates;
+	const bool target_lvalue_reference = target_type.is_lvalue_reference();
+	const bool target_accepts_temporary = target_type.is_rvalue_reference() || target_type.top_level_cv_qualifier() == CVQualifier::Const;
+	for (const auto& member : templates) {
+		const auto& function_template = *member.declaration;
+		const auto arguments = deduceConversionTemplateArguments(function_template, target_type);
+		if (!arguments.has_value() || (functionTemplateHasAssociatedConstraints(function_template) &&
+			!functionTemplateConstraintsSatisfied(function_template, *arguments))) {
+			continue;
+		}
+		const auto signature = parser().try_instantiate_member_function_template_explicit_candidate(member.owner_name.view(), member.name.view(),
+			*arguments, FunctionTemplateInstantiation::SignatureOnly, &function_template, source_value_category);
+		const FunctionDeclarationNode* instantiated = signature.has_value() ? signature->get_if<FunctionDeclarationNode>() : nullptr;
+		if (instantiated == nullptr) {
+			continue;
+		}
+		const TypeSpecifierNode& result = instantiated->decl_node().type_specifier_node();
+		const bool direct_lvalue_binding = target_lvalue_reference && result.is_lvalue_reference();
+		if (target_type.is_reference() && !direct_lvalue_binding && !target_accepts_temporary) {
+			continue;
+		}
+		const auto tail = tryBuildCanonicalConversionFunctionTailPlan(result, target_type);
+		if (!tail.has_value() || !tail->is_valid || tail->rank > ConversionRank::QualificationAdjustment) {
+			FLASH_LOG_FORMAT(Templates, Trace, "Conversion template tail rejected: {} result={} target={}", member.name.view(),
+				result.getReadableString(), target_type.getReadableString());
+			continue;
+		}
+		UserDefinedConversionOperatorSelection selection;
+		selection.function = instantiated;
+		selection.conversion_template = &function_template;
+		selection.compatibility_declaring_type_index = member.owner_type;
+		selection.trailing_standard_kind = tail->kind;
+		selection.trailing_standard_rank = tail->rank;
+		selection.member_cv_qualifier = member.cv;
+		selection.access = member.access;
+		candidates.push_back({selection, *arguments, member.owner_name, member.name, member.depth, direct_lvalue_binding});
 	}
 
 	const auto is_better = [this, source_value_category](const Candidate& lhs, const Candidate& rhs) {
@@ -11886,6 +11880,121 @@ std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::trySelec
 		selection.function = function.has_value() ? function->get_if<FunctionDeclarationNode>() : nullptr;
 	}
 	return selection.function != nullptr ? std::optional(selection) : std::nullopt;
+}
+
+std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::selectBuiltinSubscriptConversionTemplate(
+	const CanonicalTypeDesc& source, TypeId target, ValueCategory source_category, std::span<const ConversionFunctionTemplateCandidate> templates,
+	FunctionTemplateInstantiation instantiation) {
+	const TypeSpecifierNode target_syntax = materializeTypeSpecifier(adoptPublishedStructuralType(source, target));
+	return selectConversionFunctionTemplate(templates, target_syntax, source_category, instantiation);
+}
+
+std::optional<SemanticAnalysis::BuiltinSubscriptConversion> SemanticAnalysis::selectBuiltinSubscriptConversion(const CanonicalTypeDesc& source,
+	ValueCategory source_category, FunctionTemplateInstantiation instantiation) {
+	const TypeInfo* source_info = tryGetTypeInfo(source.type_index);
+	if (source_info == nullptr) {
+		return std::nullopt;
+	}
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *source_info);
+	if (imported.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+
+	std::vector<BuiltinSubscriptConversion> candidates;
+	{
+		CanonicalTypeTransaction transaction(table);
+		const TypeId source_type = table.qualify(imported.type, source.base_cv);
+		const auto conversions = collectCanonicalConversionOperators(table, source_type, ConversionFunctionContext::Implicit, source_category);
+		for (const auto& conversion : conversions) {
+			if (const auto target = getBuiltinSubscriptConversionTarget(table, conversion.return_type)) {
+				candidates.push_back({target->pointer_type, conversion.selection});
+				candidates.back().selection.trailing_standard_kind = target->trailing_conversion;
+			}
+		}
+		if (!candidates.empty()) {
+			transaction.commit();
+		}
+	}
+
+	std::vector<TypeId> template_targets;
+	std::vector<ConversionFunctionTemplateCandidate> templates;
+	if (isParserAttached()) {
+		const TypeSpecifierNode source_syntax = materializeTypeSpecifier(source);
+		templates = collectConversionFunctionTemplates(source_syntax, ConversionFunctionContext::Implicit, source_category);
+		for (auto& member : templates) {
+			// [temp.deduct.conv] needs a target type. A conversion whose return
+			// type already denotes a pointer or array reference can supply one.
+			CanonicalTypeTransaction transaction(table);
+			const auto& function = member.declaration->function_decl_node();
+			TypeSpecifierNode return_type = function.decl_node().type_specifier_node();
+			tryBindPublishedTypeEntity(return_type);
+			const auto return_id = tryImportSupportedCanonicalWithClassFallback(table, return_type, CanonicalTypeImportContext::Exact);
+			if (!return_id || table.hasDependentTypeComponents(*return_id)) {
+				continue;
+			}
+			const auto target = getBuiltinSubscriptConversionTarget(table, *return_id);
+			if (!target) {
+				continue;
+			}
+			member.builtin_subscript_target = target->pointer_type;
+			if (std::ranges::find(template_targets, target->pointer_type) == template_targets.end()) {
+				template_targets.push_back(target->pointer_type);
+				transaction.commit();
+			}
+		}
+	}
+
+	std::vector<ConversionFunctionTemplateCandidate> templates_for_target;
+	for (const TypeId target : template_targets) {
+		// Keep the ordinary conversion when both provide the same pointer
+		// operand type. Distinct operand types still compete for built-in [].
+		if (std::ranges::any_of(candidates, [target](const BuiltinSubscriptConversion& candidate) { return candidate.pointer_type == target; })) {
+			continue;
+		}
+		templates_for_target.clear();
+		std::ranges::copy_if(templates, std::back_inserter(templates_for_target),
+			[target](const auto& member) { return member.builtin_subscript_target == target; });
+		if (auto selected = selectBuiltinSubscriptConversionTemplate(source, target, source_category, templates_for_target,
+			FunctionTemplateInstantiation::SignatureOnly)) {
+			candidates.push_back({target, *selected});
+		}
+	}
+
+	std::optional<BuiltinSubscriptConversion> best;
+	for (const BuiltinSubscriptConversion& candidate : candidates) {
+		const auto candidate_cv = static_cast<uint8_t>(candidate.selection.member_cv_qualifier);
+		// Prefer the better implicit object binding when that conversion
+		// can also supply the other candidate's pointer through qualification.
+		const bool dominated = std::ranges::any_of(candidates, [&](const BuiltinSubscriptConversion& other) {
+			const auto other_cv = static_cast<uint8_t>(other.selection.member_cv_qualifier);
+			if (other_cv == candidate_cv || (other_cv & ~candidate_cv) != 0 || other.selection.ambiguous) {
+				return false;
+			}
+			CanonicalTypeTransaction transaction(table);
+			const ConversionPlan plan = buildCanonicalStructuralConversionPlan(table, other.pointer_type, candidate.pointer_type);
+			return plan.is_valid && (plan.kind == StandardConversionKind::None || plan.kind == StandardConversionKind::QualificationAdjustment);
+		});
+		if (!dominated) {
+			if (best) {
+				best->selection.ambiguous = true;
+				return best;
+			}
+			best = candidate;
+		}
+	}
+	if (best && !best->selection.ambiguous && best->selection.conversion_template && instantiation == FunctionTemplateInstantiation::Definition) {
+		templates_for_target.clear();
+		std::ranges::copy_if(templates, std::back_inserter(templates_for_target),
+			[&best](const auto& member) { return member.declaration == best->selection.conversion_template; });
+		const auto selected = selectBuiltinSubscriptConversionTemplate(source, best->pointer_type, source_category, templates_for_target,
+			FunctionTemplateInstantiation::Definition);
+		if (!selected || selected->ambiguous || selected->conversion_template != best->selection.conversion_template) {
+			throw InternalError("Selected built-in subscript conversion template could not be materialized");
+		}
+		best->selection = *selected;
+	}
+	return best;
 }
 
 ArgumentConversionInfo SemanticAnalysis::buildCallArgumentConversion(const TypeSpecifierNode& argument_type, const TypeSpecifierNode& parameter_type,

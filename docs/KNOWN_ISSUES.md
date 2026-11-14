@@ -231,6 +231,10 @@ functions in one candidate set remains open. Conditional `explicit` specifiers
 that depend on template arguments and return patterns containing unsupported
 dependent array bounds or packs also need further coverage.
 
+Built-in subscript candidate discovery depends on a concrete declared
+pointer or array-reference type. A conversion template whose return shape
+still depends on its own template parameters cannot seed a candidate.
+
 ## Remaining array-reference conversion and subscript cases
 
 Reversed subscripting such as `index()[object()]` needs to preserve evaluation
