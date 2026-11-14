@@ -306,9 +306,12 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
     - Array-reference-returning conversion function templates now participate in
       call-argument conversions, binding array-reference parameters and decaying
       through the `ArrayToPointer` tail for pointer parameters.
-    - Direct built-in subscript on an array-reference-returning conversion
-      operator (e.g. `obj[1]`) and non-template array-returning operators are not
-      yet covered by regression tests and should be re-verified.
+    - Non-template conversions returning array references now bind array
+      references and initialize pointers using the returned array address.
+      Built-in subscripting accepts these conversions in either operand position
+      and preserves the inner bounds of multidimensional arrays.
+    - Built-in subscript candidate discovery still needs conversion function
+      template deduction.
 
 ---
 

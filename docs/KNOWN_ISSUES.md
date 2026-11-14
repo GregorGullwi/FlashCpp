@@ -231,6 +231,17 @@ functions in one candidate set remains open. Conditional `explicit` specifiers
 that depend on template arguments and return patterns containing unsupported
 dependent array bounds or packs also need further coverage.
 
+## Remaining array-reference conversion and subscript cases
+
+Reversed subscripting such as `index()[object()]` needs to preserve evaluation
+of the left operand before the right operand when normalizing the operands.
+Calling an inherited conversion operator needs receiver adjustment when its
+base subobject has a nonzero offset.
+
+Array aliases composed from another array alias can reverse the extents of a
+conversion return type. For example, `using Row = short[3]; using Grid = Row[2];`
+must retain the same dimension order as `using Grid = short[2][3];`.
+
 ## Remaining flat trait consumers
 
 The triviality and lifetime facts are published, including a trivial-destructor

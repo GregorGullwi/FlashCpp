@@ -1094,13 +1094,7 @@ private:
 	// token            - source token for IR instruction location
 	std::optional<ExprResult> emitConversionOperatorCall(const ExprResult& source, const TypeInfo& source_type_info,
 		const FunctionDeclarationNode& conversion_function, TypeIndex target_type_index, int target_size_bits, const Token& token,
-		ExpressionContext return_context);
-	std::optional<ExprResult> emitConversionOperatorCallToDestination(const ExprResult& source, const TypeInfo& source_type_info,
-		const FunctionDeclarationNode& conversion_function, TypeIndex target_type_index, int target_size_bits,
-		const Token& token, LocalVarId result_destination);
-	std::optional<ExprResult> emitConversionOperatorCallInternal(const ExprResult& source, const TypeInfo& source_type_info,
-		const FunctionDeclarationNode& conversion_function, TypeIndex target_type_index, int target_size_bits, const Token& token,
-		ExpressionContext return_context, std::optional<LocalVarId> result_destination);
+		ExpressionContext return_context, std::optional<LocalVarId> result_destination, StandardConversionKind trailing_conversion);
 	std::optional<ExprResult> emitSemaSelectedConversionOperatorCall(const ExprResult& source, const TypeInfo& source_type_info,
 		const ImplicitCastInfo& cast_info, TypeCategory destination_type_category, const Token& token, ExpressionContext return_context);
 	std::optional<ExprResult> emitSemaSelectedConversionOperatorCall(const ExprResult& source, const TypeInfo& source_type_info,
