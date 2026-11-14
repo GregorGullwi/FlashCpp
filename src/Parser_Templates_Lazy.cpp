@@ -1836,7 +1836,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 	nested_struct_info->declaration_node = &instantiated_nested_struct_ref;
 	for (const ClassUsingDeclaration& using_declaration : nested_struct.class_using_declarations()) {
 		instantiated_nested_struct_ref.add_class_using_declaration(using_declaration.target_name, using_declaration.member_name,
-			using_declaration.target_type_index, using_declaration.target_base_ordinal);
+			using_declaration.target_type_index, using_declaration.target_base_ordinal, using_declaration.access);
 	}
 	instantiated_nested_struct_ref.set_injected_class_pattern_declaration(&nested_struct);
 	setOuterTemplateBindingsFromParams(

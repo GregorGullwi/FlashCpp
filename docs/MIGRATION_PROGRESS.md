@@ -267,8 +267,10 @@ mismatched, unpublished, or unresolved owner facts.
    non-virtual base offset and a runtime virtual-base offset; accessibility is
    checked after ranking, so the layout adjustment itself ignores access.
    Conversion candidates from non-public bases now participate in ranking, and
-   the selected receiver's inheritance access is checked afterwards; a
-   using-declaration that exposes the conversion member also exposes its base.
+   the selected receiver's inheritance access is checked afterwards using the
+   same member, friend, and enclosing-class context as member access; a public
+   using-declaration that exposes the conversion member also exposes its base,
+   including intermediate bases.
    By-value call annotation reuses the ranking selector for dependent
    conversion operators such as `operator T*()`, preserving the selected
    function and base-pointer adjustment through lowering. Ref-qualified

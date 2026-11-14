@@ -12018,7 +12018,111 @@ ArgumentConversionInfo SemanticAnalysis::buildCallArgumentConversion(const TypeS
 		selected->conversion_template};
 }
 
-static bool conversionIsExposedByUsingDeclaration(const StructTypeInfo& source, const StructTypeInfo& declaring, StringHandle member_name) {
+bool SemanticAnalysis::currentContextCanAccessMember(const StructTypeInfo& owner, AccessSpecifier access) const {
+	if (access == AccessSpecifier::Public || context_.isAccessControlDisabled()) {
+		return true;
+	}
+	const TypeIndex accessing_type_index = getCurrentAccessingTypeIndex();
+	const TypeIndex owner_type_index = owner.own_type_index_.value_or(TypeIndex{});
+	if (hasCurrentFunctionFriendAccess(owner)) {
+		return true;
+	}
+	const StructTypeInfo* accessing_struct = accessing_type_index.is_valid() ? tryGetStructTypeInfo(accessing_type_index) : nullptr;
+	for (const StructTypeInfo* current_class = accessing_struct; current_class != nullptr; current_class = current_class->getEnclosingClass()) {
+		const TypeIndex current_type_index = current_class->own_type_index_.value_or(TypeIndex{});
+		if (!current_type_index.is_valid()) {
+			continue;
+		}
+		if (hasFriendClassAccess(owner, current_type_index)) {
+			return true;
+		}
+		if (access == AccessSpecifier::Private && current_type_index == owner_type_index) {
+			return true;
+		}
+		if (access == AccessSpecifier::Protected && owner_type_index.is_valid() && isDerivedFrom(current_type_index, owner_type_index, true)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool SemanticAnalysis::receiverBaseIsAccessible(TypeIndex source_type_index, TypeIndex declaring_type_index) const {
+	if (!source_type_index.is_valid() || !declaring_type_index.is_valid()) {
+		return false;
+	}
+	if (source_type_index == declaring_type_index) {
+		return true;
+	}
+	OverloadVector<TypeIndex, 4> pending;
+	pending.push_back(source_type_index);
+	OverloadVector<TypeIndex, 4> visited;
+	while (!pending.empty()) {
+		const TypeIndex current_type_index = pending.back();
+		pending.pop_back();
+		if (std::find(visited.begin(), visited.end(), current_type_index) != visited.end()) {
+			continue;
+		}
+		visited.push_back(current_type_index);
+		const StructTypeInfo* current = tryGetStructTypeInfo(current_type_index);
+		if (current == nullptr) {
+			continue;
+		}
+		for (const BaseClassSpecifier& base : current->base_classes) {
+			if (!currentContextCanAccessMember(*current, base.access)) {
+				continue;
+			}
+			if (base.type_index == declaring_type_index) {
+				return true;
+			}
+			pending.push_back(base.type_index);
+		}
+	}
+	return false;
+}
+
+static const StructTypeInfo* resolveUsingDeclarationTarget(const StructTypeInfo& owner, const ClassUsingDeclaration& declaration) {
+	if (declaration.target_type_index.is_valid()) {
+		return tryGetStructTypeInfo(declaration.target_type_index);
+	}
+	for (size_t base_index = 0; base_index < owner.base_classes.size(); ++base_index) {
+		const BaseClassSpecifier& base = owner.base_classes[base_index];
+		if (!classUsingDeclarationTargetsBase(declaration, base, base_index)) {
+			continue;
+		}
+		if (const StructTypeInfo* target = tryGetStructTypeInfo(base.type_index)) {
+			return target;
+		}
+	}
+	OverloadVector<const StructTypeInfo*, 4> pending;
+	for (const BaseClassSpecifier& base : owner.base_classes) {
+		if (const StructTypeInfo* info = tryGetStructTypeInfo(base.type_index); info != nullptr) {
+			pending.push_back(info);
+		}
+	}
+	OverloadVector<const StructTypeInfo*, 4> visited;
+	while (!pending.empty()) {
+		const StructTypeInfo* current = pending.back();
+		pending.pop_back();
+		if (current == nullptr || std::find(visited.begin(), visited.end(), current) != visited.end()) {
+			continue;
+		}
+		visited.push_back(current);
+		const TypeInfo* current_info = current->own_type_index_.has_value() ? tryGetTypeInfo(*current->own_type_index_) : nullptr;
+		if (current->name == declaration.target_name ||
+			(current_info != nullptr && current_info->baseTemplateName() == declaration.target_name)) {
+			return current;
+		}
+		for (const BaseClassSpecifier& base : current->base_classes) {
+			if (const StructTypeInfo* info = tryGetStructTypeInfo(base.type_index); info != nullptr) {
+				pending.push_back(info);
+			}
+		}
+	}
+	return nullptr;
+}
+
+bool SemanticAnalysis::conversionIsExposedByUsingDeclaration(
+	const StructTypeInfo& source, const StructTypeInfo& declaring, StringHandle member_name) const {
 	if (!member_name.isValid()) {
 		return false;
 	}
@@ -12026,39 +12130,36 @@ static bool conversionIsExposedByUsingDeclaration(const StructTypeInfo& source, 
 	if (!declaring_type.is_valid()) {
 		return false;
 	}
-	std::vector<const StructTypeInfo*> pending{&source};
-	std::unordered_set<const StructTypeInfo*> visited;
+	OverloadVector<const StructTypeInfo*, 4> pending;
+	pending.push_back(&source);
+	OverloadVector<const StructTypeInfo*, 4> visited;
 	while (!pending.empty()) {
 		const StructTypeInfo* current = pending.back();
 		pending.pop_back();
-		if (current == nullptr || !visited.insert(current).second) {
+		if (current == nullptr || std::find(visited.begin(), visited.end(), current) != visited.end()) {
 			continue;
 		}
+		visited.push_back(current);
 		if (current->declaration_node != nullptr) {
 			for (const ClassUsingDeclaration& using_declaration : current->declaration_node->class_using_declarations()) {
-				if (using_declaration.member_name != member_name) {
+				if (using_declaration.member_name != member_name ||
+					!currentContextCanAccessMember(*current, using_declaration.access)) {
 					continue;
 				}
-				if (using_declaration.target_type_index.is_valid()) {
-					if (using_declaration.target_type_index == declaring_type) {
-						return true;
-					}
+				const StructTypeInfo* target = resolveUsingDeclarationTarget(*current, using_declaration);
+				if (target == nullptr) {
 					continue;
 				}
-				const TypeInfo* declaring_info = tryGetTypeInfo(declaring_type);
-				if (using_declaration.target_name == declaring.name ||
-					(declaring_info != nullptr && using_declaration.target_name == declaring_info->baseTemplateName())) {
+				const TypeIndex target_type = target->own_type_index_.value_or(TypeIndex{});
+				if (target_type == declaring_type || (target_type.is_valid() && isDerivedFrom(target_type, declaring_type, false))) {
 					return true;
-				}
-				for (size_t base_index = 0; base_index < current->base_classes.size(); ++base_index) {
-					const BaseClassSpecifier& base = current->base_classes[base_index];
-					if (classUsingDeclarationTargetsBase(using_declaration, base, base_index) && base.type_index == declaring_type) {
-						return true;
-					}
 				}
 			}
 		}
 		for (const BaseClassSpecifier& base : current->base_classes) {
+			if (!currentContextCanAccessMember(*current, base.access)) {
+				continue;
+			}
 			if (const StructTypeInfo* base_info = tryGetStructTypeInfo(base.type_index); base_info != nullptr) {
 				pending.push_back(base_info);
 			}
@@ -12118,9 +12219,11 @@ bool SemanticAnalysis::checkSelectedConversionOperatorAccess(const ASTNode& expr
 					}
 				}
 				const StructTypeInfo* source_struct_info = tryGetStructTypeInfo(source_type_index);
-				const bool exposed_by_using_declaration = source_struct_info != nullptr &&
-					conversionIsExposedByUsingDeclaration(*source_struct_info, *declaring_struct_info, conversion_member_name);
-				if (!exposed_by_using_declaration) {
+				const bool accessible =
+					receiverBaseIsAccessible(source_type_index, declaring_type_index) ||
+					(source_struct_info != nullptr &&
+						conversionIsExposedByUsingDeclaration(*source_struct_info, *declaring_struct_info, conversion_member_name));
+				if (!accessible) {
 					throw makeStructuredCompileError(
 						context_.diagnostics(),
 						DiagnosticId::InaccessibleDerivedToBaseConversion,

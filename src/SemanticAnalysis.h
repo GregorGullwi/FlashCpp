@@ -630,6 +630,9 @@ private:
 	// binding instead of an expression slot still need this check.
 	bool checkSelectedConversionOperatorAccess(const ASTNode& expr_node, CanonicalTypeId target_type_id,
 		const UserDefinedConversionOperatorSelection& selected_conversion, SemanticContextFlags context_flags, TypeIndex source_type_index);
+	bool currentContextCanAccessMember(const StructTypeInfo& owner, AccessSpecifier access) const;
+	bool receiverBaseIsAccessible(TypeIndex source_type_index, TypeIndex declaring_type_index) const;
+	bool conversionIsExposedByUsingDeclaration(const StructTypeInfo& source, const StructTypeInfo& declaring, StringHandle member_name) const;
 	// Record a sema-selected conversion operator (with its trailing standard
 	// conversion) on the argument's slot so codegen can lower it without
 	// re-running lookup. Shared by the builtin/enum and nominal-target paths.
