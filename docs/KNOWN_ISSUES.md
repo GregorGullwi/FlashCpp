@@ -260,7 +260,9 @@ recursive and compatibility paths remain fallbacks when the tag is absent.
 Compatibility wrappers used by code generation and pseudo-destructor lowering also
 read the published aggregate fact first. Default-construction answers use the same
 member and base facts with an `AggregateDefaultConstructionFacts` tag; shapes with
-default member initializers keep the recursive fallback.
+default member initializers keep the recursive fallback. Empty and standard-layout
+facts also aggregate member and base answers, including no-unique-address empty
+members and cross-base ownership; unknown schema entries keep the legacy fallback.
 Explicit member-object-pointer template arguments publish ordered owner identity
 for pointer- and array-wrapped pointees.
 The sema-owned construction traits

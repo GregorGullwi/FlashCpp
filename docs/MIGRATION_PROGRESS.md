@@ -609,8 +609,11 @@ publication now consumes member and base facts for classes without default membe
 initializers and tags the result with `AggregateDefaultConstructionFacts`;
 initializer-bearing shapes retain the recursive fallback.
 `test_canonical_default_construction_facts_ret0.cpp` covers template members,
-bases, references, and deleted or throwing constructors. The inline dollar-recovery
-inventory and canonical-adapter source corpus remain
+bases, references, and deleted or throwing constructors. Empty and standard-layout
+publication now aggregate member and base facts for represented records, covering
+no-unique-address empty members and cross-base ownership rules; the existing
+record-property matrix and canonical empty/standard-layout regressions exercise
+the path. The inline dollar-recovery inventory and canonical-adapter source corpus remain
 within their supported/deferred baselines. The fixed adapter corpus remains 26
 supported and zero deferred. Gate 0's Windows and ELF
 multi-translation-unit checks remain required compatibility evidence. See the

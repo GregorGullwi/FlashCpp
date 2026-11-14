@@ -2267,12 +2267,14 @@ bool isStructNothrowDestructibleImpl(const StructTypeInfo* struct_info, bool is_
 	return true;
 }
 
+bool isStructStandardLayoutImpl(const StructTypeInfo* struct_info);
+
 constexpr CanonicalRecordMemberFacts kTrivialScalarSubobjectFacts =
 	CanonicalRecordMemberFacts::TriviallyCopyable | CanonicalRecordMemberFacts::Trivial |
 	CanonicalRecordMemberFacts::Destructible | CanonicalRecordMemberFacts::TriviallyDestructible |
 	CanonicalRecordMemberFacts::NothrowDestructible | CanonicalRecordMemberFacts::HasTrivialDestructor |
 	CanonicalRecordMemberFacts::DefaultConstructible | CanonicalRecordMemberFacts::TriviallyDefaultConstructible |
-	CanonicalRecordMemberFacts::NothrowDefaultConstructible;
+	CanonicalRecordMemberFacts::NothrowDefaultConstructible | CanonicalRecordMemberFacts::StandardLayout;
 
 // Compatibility projection used only when the canonical member type cannot be
 // represented. Every fact here is still keyed by the same member ordinal.
@@ -2323,6 +2325,12 @@ CanonicalRecordMemberFacts legacySubobjectFacts(const StructTypeInfo* struct_inf
 	if (recordNothrowConstructible(*struct_info)) {
 		facts |= CanonicalRecordMemberFacts::NothrowDefaultConstructible;
 	}
+	if (isStructEmptyImpl(struct_info)) {
+		facts |= CanonicalRecordMemberFacts::Empty;
+	}
+	if (isStructStandardLayoutImpl(struct_info)) {
+		facts |= CanonicalRecordMemberFacts::StandardLayout;
+	}
 	return facts;
 }
 
@@ -2366,6 +2374,12 @@ CanonicalRecordMemberFacts memberFactsFromRecordFacts(CanonicalRecordFacts recor
 	}
 	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::NothrowDefaultConstructible)) {
 		facts |= CanonicalRecordMemberFacts::NothrowDefaultConstructible;
+	}
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::Empty)) {
+		facts |= CanonicalRecordMemberFacts::Empty;
+	}
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::StandardLayout)) {
+		facts |= CanonicalRecordMemberFacts::StandardLayout;
 	}
 	return facts;
 }
@@ -2435,6 +2449,12 @@ CanonicalRecordMemberFacts canonicalSubobjectFacts(CanonicalTypeTable& table, Ty
 	}
 	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::NothrowDefaultConstructible)) {
 		facts |= CanonicalRecordMemberFacts::NothrowDefaultConstructible;
+	}
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::Empty)) {
+		facts |= CanonicalRecordMemberFacts::Empty;
+	}
+	if (hasCanonicalRecordFact(record_facts, CanonicalRecordFacts::StandardLayout)) {
+		facts |= CanonicalRecordMemberFacts::StandardLayout;
 	}
 	return facts;
 }
@@ -2516,6 +2536,115 @@ std::optional<bool> recordPotentiallyConstructedSubobjectsSatisfy(const StructTy
 		if (!hasCanonicalRecordMemberFact(member_facts[index], required)) {
 			return false;
 		}
+	}
+	return true;
+}
+
+bool hasBaseTypeAmongZeroOffsetMembers(const StructTypeInfo* struct_info, const TypeIndexSet& base_subobject_types);
+
+std::optional<bool> recordEmptyFromFacts(const StructTypeInfo& struct_info, std::span<const CanonicalRecordMemberFacts> member_facts,
+	std::span<const CanonicalRecordMemberFacts> base_facts) {
+	if (struct_info.is_union || struct_info.has_vtable) {
+		return false;
+	}
+	for (size_t index = 0; index < struct_info.members.size(); ++index) {
+		const StructMember& member = struct_info.members[index];
+		if (StructTypeInfo::isZeroWidthBitfield(member.bitfield_width)) {
+			continue;
+		}
+		if (member.is_no_unique_address && !member.is_array && member.pointer_depth == 0 && !member.is_reference()) {
+			if (index >= member_facts.size() || hasCanonicalRecordMemberFact(member_facts[index], CanonicalRecordMemberFacts::Unknown)) {
+				return std::nullopt;
+			}
+			if (!hasCanonicalRecordMemberFact(member_facts[index], CanonicalRecordMemberFacts::Empty)) {
+				return false;
+			}
+			continue;
+		}
+		return false;
+	}
+	for (size_t index = 0; index < struct_info.base_classes.size(); ++index) {
+		if (struct_info.base_classes[index].is_virtual) {
+			return false;
+		}
+		if (index >= base_facts.size() || hasCanonicalRecordMemberFact(base_facts[index], CanonicalRecordMemberFacts::Unknown)) {
+			return std::nullopt;
+		}
+		if (!hasCanonicalRecordMemberFact(base_facts[index], CanonicalRecordMemberFacts::Empty)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+std::optional<bool> recordStandardLayoutFromFacts(const StructTypeInfo& struct_info, std::span<const CanonicalRecordMemberFacts> member_facts,
+	std::span<const CanonicalRecordMemberFacts> base_facts) {
+	if (struct_info.has_vtable) {
+		return false;
+	}
+	std::vector<const StructTypeInfo*> pending{&struct_info};
+	TypeIndexSet base_subobject_types;
+	const StructTypeInfo* data_member_owner = nullptr;
+	std::optional<AccessSpecifier> data_member_access;
+	while (!pending.empty()) {
+		const StructTypeInfo* current = pending.back();
+		pending.pop_back();
+		if (current == nullptr) {
+			return std::nullopt;
+		}
+		if (current->has_vtable) {
+			return false;
+		}
+		if (!current->members.empty()) {
+			if (data_member_owner != nullptr && data_member_owner != current) {
+				return false;
+			}
+			data_member_owner = current;
+		}
+		for (size_t index = 0; index < current->members.size(); ++index) {
+			const StructMember& member = current->members[index];
+			if (member.is_reference()) {
+				return false;
+			}
+			if (data_member_access.has_value() && *data_member_access != member.access) {
+				return false;
+			}
+			data_member_access = member.access;
+			if (member.pointer_depth > 0 || !is_struct_type(member.type_index.category())) {
+				continue;
+			}
+			if (current != &struct_info) {
+				continue;
+			}
+			if (index >= member_facts.size() || hasCanonicalRecordMemberFact(member_facts[index], CanonicalRecordMemberFacts::Unknown)) {
+				return std::nullopt;
+			}
+			if (!hasCanonicalRecordMemberFact(member_facts[index], CanonicalRecordMemberFacts::StandardLayout)) {
+				return false;
+			}
+		}
+		for (const BaseClassSpecifier& base : current->base_classes) {
+			if (base.is_deferred || base.is_virtual || !base_subobject_types.insert(base.type_index)) {
+				return false;
+			}
+			const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
+			const StructTypeInfo* base_struct = base_type == nullptr ? nullptr : base_type->getStructInfo();
+			if (base_struct == nullptr) {
+				return std::nullopt;
+			}
+			pending.push_back(base_struct);
+		}
+	}
+	for (const CanonicalRecordMemberFacts facts : base_facts) {
+		if (hasCanonicalRecordMemberFact(facts, CanonicalRecordMemberFacts::Unknown)) {
+			return std::nullopt;
+		}
+		if (!hasCanonicalRecordMemberFact(facts, CanonicalRecordMemberFacts::StandardLayout)) {
+			return false;
+		}
+	}
+	if (hasBaseTypeAmongZeroOffsetMembers(&struct_info, base_subobject_types)) {
+		return false;
 	}
 	return true;
 }
@@ -2784,12 +2913,17 @@ template <typename FactsLookup>
 CanonicalRecordFacts computeCanonicalRecordFactsWithLookup(const StructTypeInfo& struct_info, const FactsLookup& facts_lookup,
 	CanonicalTypeTable& table, std::span<const CanonicalRecordMemberFacts> member_facts) {
 	CanonicalRecordFacts facts = CanonicalRecordFacts::None;
-	const bool is_standard_layout = isStructStandardLayoutWithPublishedFacts(facts_lookup, &struct_info);
 	std::vector<CanonicalRecordMemberFacts> base_facts;
 	base_facts.reserve(struct_info.base_classes.size());
 	for (const BaseClassSpecifier& base : struct_info.base_classes) {
 		base_facts.push_back(computeCanonicalBaseFacts(table, base));
 	}
+	const bool is_standard_layout = [&] {
+		if (const std::optional<bool> schema_layout = recordStandardLayoutFromFacts(struct_info, member_facts, base_facts); schema_layout.has_value()) {
+			return *schema_layout;
+		}
+		return isStructStandardLayoutWithPublishedFacts(facts_lookup, &struct_info);
+	}();
 	const bool has_union_variants = struct_info.is_union || std::ranges::any_of(struct_info.members, [](const StructMember& member) {
 		return member.anonymous_union_group_index.has_value();
 	});
@@ -2901,7 +3035,13 @@ CanonicalRecordFacts computeCanonicalRecordFactsWithLookup(const StructTypeInfo&
 	if (struct_info.isAggregate()) {
 		facts |= CanonicalRecordFacts::Aggregate;
 	}
-	if (isStructEmptyImpl(facts_lookup, &struct_info)) {
+	const bool is_empty = [&] {
+		if (const std::optional<bool> schema_empty = recordEmptyFromFacts(struct_info, member_facts, base_facts); schema_empty.has_value()) {
+			return *schema_empty;
+		}
+		return isStructEmptyImpl(facts_lookup, &struct_info);
+	}();
+	if (is_empty) {
 		facts |= CanonicalRecordFacts::Empty;
 	}
 	bool default_facts_known = std::ranges::none_of(struct_info.members, [](const StructMember& member) {

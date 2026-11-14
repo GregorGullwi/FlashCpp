@@ -3196,7 +3196,8 @@ inline void checkRecordMemberProperties() {
 			CanonicalRecordMemberFacts::Destructible | CanonicalRecordMemberFacts::TriviallyDestructible |
 			CanonicalRecordMemberFacts::NothrowDestructible | CanonicalRecordMemberFacts::HasTrivialDestructor |
 			CanonicalRecordMemberFacts::DefaultConstructible | CanonicalRecordMemberFacts::TriviallyDefaultConstructible |
-			CanonicalRecordMemberFacts::NothrowDefaultConstructible,
+			CanonicalRecordMemberFacts::NothrowDefaultConstructible | CanonicalRecordMemberFacts::Empty |
+			CanonicalRecordMemberFacts::StandardLayout,
 		CanonicalRecordMemberFacts::DestructorDeleted,
 	};
 	table.publishRecordMemberProperties(table.record(entity), facts);
