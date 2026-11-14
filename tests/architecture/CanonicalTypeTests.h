@@ -3194,7 +3194,9 @@ inline void checkRecordMemberProperties() {
 	const CanonicalRecordMemberFacts facts[] = {
 		CanonicalRecordMemberFacts::TriviallyCopyable | CanonicalRecordMemberFacts::Trivial |
 			CanonicalRecordMemberFacts::Destructible | CanonicalRecordMemberFacts::TriviallyDestructible |
-			CanonicalRecordMemberFacts::NothrowDestructible | CanonicalRecordMemberFacts::HasTrivialDestructor,
+			CanonicalRecordMemberFacts::NothrowDestructible | CanonicalRecordMemberFacts::HasTrivialDestructor |
+			CanonicalRecordMemberFacts::DefaultConstructible | CanonicalRecordMemberFacts::TriviallyDefaultConstructible |
+			CanonicalRecordMemberFacts::NothrowDefaultConstructible,
 		CanonicalRecordMemberFacts::DestructorDeleted,
 	};
 	table.publishRecordMemberProperties(table.record(entity), facts);
@@ -3225,7 +3227,9 @@ inline void checkRecordMemberProperties() {
 	const TypeId aggregate = table.record(EntityId{40503});
 	const CanonicalRecordFacts aggregate_facts = CanonicalRecordFacts::TriviallyCopyable | CanonicalRecordFacts::Trivial | CanonicalRecordFacts::Pod |
 		CanonicalRecordFacts::Destructible | CanonicalRecordFacts::TriviallyDestructible |
-		CanonicalRecordFacts::NothrowDestructible | CanonicalRecordFacts::AggregateTraitFacts;
+		CanonicalRecordFacts::NothrowDestructible | CanonicalRecordFacts::DefaultConstructible |
+		CanonicalRecordFacts::TriviallyDefaultConstructible | CanonicalRecordFacts::NothrowDefaultConstructible |
+		CanonicalRecordFacts::AggregateTraitFacts | CanonicalRecordFacts::AggregateDefaultConstructionFacts;
 	table.publishRecordProperties(aggregate, aggregate_facts);
 	require(table.recordProperties(aggregate).facts == aggregate_facts);
 	table.publishRecordProperties(aggregate, aggregate_facts);

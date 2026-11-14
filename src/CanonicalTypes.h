@@ -482,6 +482,8 @@ enum class CanonicalRecordFacts : uint32_t {
 	// The aggregate triviality and lifetime answers below are complete for this
 	// record. Absence means a consumer must use the recursive compatibility path.
 	AggregateTraitFacts = 1u << 25,
+	// The aggregate default-construction answers are complete for this record.
+	AggregateDefaultConstructionFacts = 1u << 26,
 };
 
 // Semantic facts that cannot be derived from object layout alone. These are
@@ -509,9 +511,12 @@ enum class CanonicalRecordMemberFacts : uint16_t {
 	DestructorDeleted = 1u << 7,
 	DestructorNonPublic = 1u << 8,
 	DestructorNonTrivial = 1u << 9,
+	DefaultConstructible = 1u << 10,
+	TriviallyDefaultConstructible = 1u << 11,
+	NothrowDefaultConstructible = 1u << 12,
 	// The canonical schema cannot represent this member's subobject answer;
 	// consumers fall back to the compatibility classifier for this entry.
-	Unknown = 1u << 10,
+	Unknown = 1u << 13,
 };
 
 constexpr CanonicalRecordMemberFacts operator|(CanonicalRecordMemberFacts a, CanonicalRecordMemberFacts b) {

@@ -258,7 +258,9 @@ triviality, POD, destructibility, and virtual-destructor answers once and tags
 them with `AggregateTraitFacts`. Canonical trait checks read those bits directly;
 recursive and compatibility paths remain fallbacks when the tag is absent.
 Compatibility wrappers used by code generation and pseudo-destructor lowering also
-read the published aggregate fact first.
+read the published aggregate fact first. Default-construction answers use the same
+member and base facts with an `AggregateDefaultConstructionFacts` tag; shapes with
+default member initializers keep the recursive fallback.
 Explicit member-object-pointer template arguments publish ordered owner identity
 for pointer- and array-wrapped pointees.
 The sema-owned construction traits
