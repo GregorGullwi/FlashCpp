@@ -1782,6 +1782,8 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 						}
 					}
 				}
+			} catch (const CompileError&) {
+				throw;
 			} catch (const std::exception& ex) {
 				FLASH_LOG(Codegen, Error, "Exception while visiting member function in struct ",
 						  struct_name, ": ", ex.what());
@@ -2867,12 +2869,16 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 							// Check if member has a default initializer (C++11 feature)
 							if (member.default_initializer.has_value()) {
 								const ASTNode& init_node = member.default_initializer.value();
+								if (member.is_reference() && initializerBindsTemporary(init_node)) {
+									throwReferenceMemberBindsTemporary();
+								}
 								if (init_node.has_value() && init_node.is<ExpressionNode>()) {
 									// Use the default member initializer. This implicit constructor body is
 									// the one ODR-used for a default member initializer; convert to the
 									// member type before the store. The synthetic default-constructor
 									// plan is a separate emission path.
-									ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+									ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>(),
+										member.is_reference() ? ExpressionContext::ReferenceBinding : ExpressionContext::Load);
 									init_operands = convertAggregateMemberInitializer(member, init_operands, node.name_token());
 									// Extract just the value (third element of init_operands)
 									if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
@@ -3244,6 +3250,9 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						if (!handled_as_reference_init) {
 							// Use explicit initializer from constructor initializer list.
 							const ASTNode& init_expr_node = explicit_it->second->initializer_expr;
+							if (member.is_reference() && initializerBindsTemporary(init_expr_node)) {
+								throwReferenceMemberBindsTemporary();
+							}
 							if (init_expr_node.is<InitializerListNode>()) {
 								// Array member brace-init (e.g., data{a, b, c}):
 								// emit one MemberStore per element at the correct byte offset.
@@ -3348,7 +3357,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 							} else if (!init_expr_node.is<ExpressionNode>()) {
 								member_value = 0ULL;	 // unexpected node type: fall back to zero
 							} else {
-								ExprResult init_operands = visitExpressionNode(init_expr_node.as<ExpressionNode>());
+								ExprResult init_operands = visitExpressionNode(init_expr_node.as<ExpressionNode>(),
+									member.is_reference() ? ExpressionContext::ReferenceBinding : ExpressionContext::Load);
 								// An initializer that yields a reference (e.g. static_cast<T&&>,
 								// std::move/std::forward, or a call returning T&) arrives holding the
 								// *address* of the source object. Storing that pointer into a
@@ -3402,7 +3412,11 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						const ASTNode& init_node = member.default_initializer.value();
 						if (init_node.has_value() && init_node.is<ExpressionNode>()) {
 							// Use default member initializer (C++11 feature)
-							ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+							if (member.is_reference() && initializerBindsTemporary(init_node)) {
+								throwReferenceMemberBindsTemporary();
+							}
+							ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>(),
+								member.is_reference() ? ExpressionContext::ReferenceBinding : ExpressionContext::Load);
 							init_operands = convertAggregateMemberInitializer(member, init_operands, node.name_token());
 							// Extract just the value (third element of init_operands)
 							if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {

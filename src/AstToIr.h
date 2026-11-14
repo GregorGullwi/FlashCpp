@@ -1355,6 +1355,8 @@ private:
 		int return_size,
 		const Token& token,
 		ValueStorage return_storage);
+	[[noreturn]] void throwReferenceMemberBindsTemporary();
+	bool initializerBindsTemporary(const ASTNode& init_node);
 
 	void emitVoidReturn(const Token& token) {
 		ReturnOp ret_op;

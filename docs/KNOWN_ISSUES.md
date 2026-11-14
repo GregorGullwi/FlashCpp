@@ -340,12 +340,7 @@ deferring. Deeper class conversions, omitted nested defaults without published
 exception facts, non-literal call arguments, reference defaults requiring general
 conversion analysis, and unresolved operator selections still need initialization
 and exception facts; those shapes continue to defer until their canonical facts
-are published. Reference default member initializers are classified for
-default-construction traits, but code generation still rejects a reference bound
-to a class temporary produced by a non-default constructor
-(`const T& ref = T(1);`) with `Reference member initializer must be an lvalue`.
-Default-temporary forms such as `const T& ref = T{};` are covered by tests;
-runtime lowering of the non-default temporary form remains unimplemented.
+are published.
 Concepts using unsupported sema-owned traits must retain an explicit unknown outcome rather than treating
 it as satisfaction or failure. Static member semantic identity must remain
 canonical through any remaining flat-consumer migration.

@@ -87,6 +87,9 @@ void applyMemberValueLoad(MemberLoadOp& load, const StructMember& member, const 
 
 ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 										ExpressionContext context) {
+	if (context == ExpressionContext::ReferenceBinding && !std::holds_alternative<IdentifierNode>(exprNode)) {
+		context = ExpressionContext::LValueAddress;
+	}
 	return std::visit([this, context](const auto& expr) -> ExprResult {
 		using T = std::decay_t<decltype(expr)>;
 		if constexpr (std::is_same_v<T, IdentifierNode>) {
@@ -453,6 +456,10 @@ int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, boo
 
 ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 										 ExpressionContext context) {
+	const bool reference_binding = context == ExpressionContext::ReferenceBinding;
+	if (reference_binding) {
+		context = ExpressionContext::LValueAddress;
+	}
 	auto makeIdentifierResult = [](
 									TypeCategory type,
 									int size_bits,
@@ -710,6 +717,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					const size_t runtime_pointer_depth = type_n.runtime_pointer_depth();
 					const bool is_array_type = sema_.declarationDenotesArrayObject(decl_n);
 					bool is_ptr_or_ref = runtime_pointer_depth > 0 || type_n.is_reference() || type_n.is_function_pointer();
+					const bool wants_address = reference_binding && !is_array_type;
 					int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_n.size_in_bits());
 					TempVar result_temp = var_counter.next();
 					GlobalLoadOp op;
@@ -718,10 +726,10 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 					op.result.value = result_temp;
 					op.global_name = effective_name;
-					op.is_array = is_array_type;
+					op.is_array = is_array_type || wants_address;
 					StringHandle saved_name = op.global_name;
 					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
-					if (is_array_type) {
+					if (is_array_type || wants_address) {
 							// handleGlobalLoad emits LEA for an array, so this temp already
 							// holds the array's address. Mark it as an address so a reference
 							// binding copies the value instead of materialising the temp's
@@ -734,7 +742,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 															type_n.category(), size_bits));
 					}
 					ExprResult global_result = makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp, true);
-					if (is_array_type) {
+					if (is_array_type || wants_address) {
 						global_result.storage = ValueStorage::ContainsAddress;
 					}
 					return global_result;
@@ -747,6 +755,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 						return *enumerator_constant;
 					}
 					const bool is_array_type = sema_.declarationDenotesArrayObject(decl_n);
+					const bool wants_address = reference_binding && !is_array_type;
 					int size_bits = (type_n.runtime_pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_n.size_in_bits());
 					TempVar result_temp = var_counter.next();
 					GlobalLoadOp op;
@@ -755,10 +764,10 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 					op.result.value = result_temp;
 					op.global_name = effective_name;
-					op.is_array = is_array_type;
+					op.is_array = is_array_type || wants_address;
 					StringHandle saved_global_name = op.global_name;
 					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
-					if (is_array_type) {
+					if (is_array_type || wants_address) {
 							// handleGlobalLoad emits LEA for an array, so this temp already
 							// holds the array's address. Mark it as an address so a reference
 							// binding copies the value instead of materialising the temp's
@@ -771,7 +780,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 															type_n.category(), size_bits));
 					}
 					ExprResult global_result = makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp, true);
-					if (is_array_type) {
+					if (is_array_type || wants_address) {
 						global_result.storage = ValueStorage::ContainsAddress;
 					}
 					return global_result;
