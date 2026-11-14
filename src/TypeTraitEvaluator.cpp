@@ -2590,15 +2590,56 @@ bool typeTraitHasDependentOperands(const TypeTraitExprNode& trait_expr) {
 	return dependent;
 }
 
+namespace {
+
+std::optional<bool> tryPublishedRecordTraitFact(const StructTypeInfo* struct_info, CanonicalRecordFacts fact) {
+	if (struct_info == nullptr || !struct_info->own_type_index_.has_value()) {
+		return std::nullopt;
+	}
+	FrontendContext* context = FrontendContext::active();
+	if (context == nullptr) {
+		return std::nullopt;
+	}
+	const TypeInfo* type_info = tryGetTypeInfo(*struct_info->own_type_index_);
+	if (type_info == nullptr) {
+		return std::nullopt;
+	}
+	CanonicalTypeTable& table = context->canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *type_info);
+	if (imported.status != CanonicalTypeImportStatus::Supported || !table.hasRecordProperties(imported.type)) {
+		return std::nullopt;
+	}
+	const CanonicalRecordFacts facts = table.recordProperties(imported.type).facts;
+	if (!hasCanonicalRecordFact(facts, CanonicalRecordFacts::AggregateTraitFacts)) {
+		return std::nullopt;
+	}
+	return hasCanonicalRecordFact(facts, fact);
+}
+
+} // namespace
+
 bool isStructTriviallyCopyable(const StructTypeInfo* struct_info) {
+	if (const std::optional<bool> fact = tryPublishedRecordTraitFact(struct_info, CanonicalRecordFacts::TriviallyCopyable);
+		fact.has_value()) {
+		return *fact;
+	}
 	return isStructTriviallyCopyableImpl(struct_info);
 }
 
 bool isStructTrivial(const StructTypeInfo* struct_info) {
+	if (const std::optional<bool> fact = tryPublishedRecordTraitFact(struct_info, CanonicalRecordFacts::Trivial);
+		fact.has_value()) {
+		return *fact;
+	}
 	return isStructTrivialImpl(struct_info);
 }
 
 bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
+	if (const std::optional<bool> fact = tryPublishedRecordTraitFact(struct_info, CanonicalRecordFacts::NothrowDestructible);
+		fact.has_value()) {
+		return *fact;
+	}
 	return isStructNothrowDestructibleImpl(struct_info, true);
 }
 

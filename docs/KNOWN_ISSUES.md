@@ -257,6 +257,8 @@ those unrepresented shapes. Record publication also computes the aggregate
 triviality, POD, destructibility, and virtual-destructor answers once and tags
 them with `AggregateTraitFacts`. Canonical trait checks read those bits directly;
 recursive and compatibility paths remain fallbacks when the tag is absent.
+Compatibility wrappers used by code generation and pseudo-destructor lowering also
+read the published aggregate fact first.
 Explicit member-object-pointer template arguments publish ordered owner identity
 for pointer- and array-wrapped pointees.
 The sema-owned construction traits
