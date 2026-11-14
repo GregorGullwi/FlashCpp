@@ -4865,7 +4865,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			struct_info->declaration_node = &instantiated_struct_ref;
 			for (const ClassUsingDeclaration& using_declaration : pattern_struct.class_using_declarations()) {
 				instantiated_struct_ref.add_class_using_declaration(using_declaration.target_name, using_declaration.member_name,
-					using_declaration.target_type_index, using_declaration.target_base_ordinal);
+					using_declaration.target_type_index, using_declaration.target_base_ordinal, using_declaration.access);
 			}
 			instantiated_struct_ref.set_injected_class_pattern_declaration(
 				&pattern_struct);
@@ -9640,7 +9640,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			nested_struct_info->declaration_node = &instantiated_nested_struct_ref;
 			for (const ClassUsingDeclaration& using_declaration : nested_struct.class_using_declarations()) {
 				instantiated_nested_struct_ref.add_class_using_declaration(using_declaration.target_name, using_declaration.member_name,
-					using_declaration.target_type_index, using_declaration.target_base_ordinal);
+					using_declaration.target_type_index, using_declaration.target_base_ordinal, using_declaration.access);
 			}
 			instantiated_nested_struct_ref.set_injected_class_pattern_declaration(
 				&nested_struct);
@@ -11565,7 +11565,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 	struct_info_ptr->declaration_node = &instantiated_struct_ref;
 	for (const ClassUsingDeclaration& using_declaration : class_decl.class_using_declarations()) {
 		instantiated_struct_ref.add_class_using_declaration(using_declaration.target_name, using_declaration.member_name,
-			using_declaration.target_type_index, using_declaration.target_base_ordinal);
+			using_declaration.target_type_index, using_declaration.target_base_ordinal, using_declaration.access);
 	}
 	instantiated_struct_ref.set_injected_class_pattern_declaration(&class_decl);
 	struct_info_ptr->is_final = class_decl.is_final();

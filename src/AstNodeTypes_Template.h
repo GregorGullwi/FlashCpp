@@ -1524,6 +1524,7 @@ struct ClassUsingDeclaration {
 	StringHandle member_name;
 	TypeIndex target_type_index{};
 	uint16_t target_base_ordinal = NoTargetBaseOrdinal;
+	AccessSpecifier access = AccessSpecifier::Public;
 };
 
 inline bool classUsingDeclarationTargetsBase(const ClassUsingDeclaration& declaration, const BaseClassSpecifier& base, size_t base_index) {
@@ -1651,15 +1652,17 @@ public:
 	}
 	std::span<const BaseClassSpecifier> base_classes() const { return base_classes_; }
 	std::span<const ClassUsingDeclaration> class_using_declarations() const { return class_using_declarations_; }
-	void add_class_using_declaration(StringHandle target_name, StringHandle member_name, TypeIndex target_type_index, uint16_t target_base_ordinal) {
+	void add_class_using_declaration(StringHandle target_name, StringHandle member_name, TypeIndex target_type_index, uint16_t target_base_ordinal,
+		AccessSpecifier access) {
 		for (const ClassUsingDeclaration& existing : class_using_declarations_) {
 			if (existing.target_name == target_name && existing.member_name == member_name &&
-				existing.target_type_index == target_type_index && existing.target_base_ordinal == target_base_ordinal) {
+				existing.target_type_index == target_type_index && existing.target_base_ordinal == target_base_ordinal &&
+				existing.access == access) {
 				return;
 			}
 		}
 		journalStructDeclarationRewrite(*this);
-		class_using_declarations_.push_back({target_name, member_name, target_type_index, target_base_ordinal});
+		class_using_declarations_.push_back({target_name, member_name, target_type_index, target_base_ordinal, access});
 	}
 	std::span<const DeferredBaseClassSpecifier> deferred_base_classes() const { return deferred_base_classes_; }
 	std::span<const DeferredTemplateBaseClassSpecifier> deferred_template_base_classes() const { return deferred_template_base_classes_; }

@@ -424,7 +424,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 							}
 						}
 					}
-					struct_ref->add_class_using_declaration(base_class_handle, member_handle, target_type_index, target_base_ordinal);
+					struct_ref->add_class_using_declaration(base_class_handle, member_handle, target_type_index, target_base_ordinal, current_access);
 				}
 			}
 
