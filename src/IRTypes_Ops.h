@@ -750,6 +750,8 @@ struct VirtualBaseAdjustOp {
 	TypeIndex source_type_index{};
 	TypeIndex target_type_index{};
 	size_t virtual_base_index = 0;
+	// The producer resolved the base subobject when choosing a member call.
+	enum class BaseResolution : uint8_t { Checked, MemberReceiver } base_resolution = BaseResolution::Checked;
 };
 
 // Dereference operator (*ptr)

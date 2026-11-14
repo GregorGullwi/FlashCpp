@@ -7094,7 +7094,7 @@ void IrToObjConverter<TWriterClass>::emitDerivedToBasePointerAdjust(X64Register 
 		if (!published_virtual_base_index.has_value()) {
 			throw InternalError("Finalized virtual-base pointer conversion is missing its published ABI index");
 		}
-		emitVirtualBasePointerAdjust(ptr_reg, base_type, derived_type, *published_virtual_base_index);
+		emitVirtualBasePointerAdjust(ptr_reg, base_type, derived_type, *published_virtual_base_index, VirtualBaseAdjustOp::BaseResolution::Checked);
 		return;
 	}
 	if (auto offset = findBaseOffsetWithinDerived(base_type, derived_type)) {
@@ -7110,21 +7110,19 @@ void IrToObjConverter<TWriterClass>::emitDerivedToBasePointerAdjust(X64Register 
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitVirtualBasePointerAdjust(
-	X64Register ptr_reg,
-	TypeIndex base_type,
-	TypeIndex derived_type,
-	size_t virtual_base_index) {
+	X64Register ptr_reg, TypeIndex base_type, TypeIndex derived_type, size_t virtual_base_index, VirtualBaseAdjustOp::BaseResolution base_resolution) {
 	if (!base_type.isStruct() || !derived_type.isStruct() || base_type == derived_type) {
 		throw InternalError("Virtual-base pointer adjustment requires distinct struct types");
 	}
-	const DerivedBaseConversionInfo conversion =
-		classifyDerivedBaseConversion(derived_type, base_type);
-	if (conversion.kind == DerivedBaseConversionKind::Ambiguous)
-		throw InternalError("Ambiguous derived-to-base pointer conversion");
-	if (conversion.kind == DerivedBaseConversionKind::Inaccessible)
-		throw InternalError("Cannot convert to an inaccessible base class");
-	if (conversion.kind != DerivedBaseConversionKind::PublicVirtual)
-		throw InternalError("Virtual-base pointer adjustment reached a non-virtual conversion");
+	if (base_resolution == VirtualBaseAdjustOp::BaseResolution::Checked) {
+		const DerivedBaseConversionInfo conversion = classifyDerivedBaseConversion(derived_type, base_type);
+		if (conversion.kind == DerivedBaseConversionKind::Ambiguous)
+			throw InternalError("Ambiguous derived-to-base pointer conversion");
+		if (conversion.kind == DerivedBaseConversionKind::Inaccessible)
+			throw InternalError("Cannot convert to an inaccessible base class");
+		if (conversion.kind != DerivedBaseConversionKind::PublicVirtual)
+			throw InternalError("Virtual-base pointer adjustment reached a non-virtual conversion");
+	}
 
 	const TypeInfo* derived_type_info = tryGetTypeInfo(derived_type);
 	const StructTypeInfo* derived_struct_info =
@@ -14880,20 +14878,22 @@ void IrToObjConverter<TWriterClass>::handleAddressOfMember(const IrInstruction& 
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& instruction) {
-		// ComputeAddress: One-pass address calculation for complex expressions
-		// Handles: &arr[i].member1.member2, &arr[i][j], &arr[i].inner_arr[j].member
-		// Algorithm: address = base + (index1 * elem_size1) + (index2 * elem_size2) + ... + member_offset
+	// ComputeAddress: One-pass address calculation for complex expressions
+	// Handles: &arr[i].member1.member2, &arr[i][j], &arr[i].inner_arr[j].member
+	// Algorithm: address = base + (index1 * elem_size1) + (index2 * elem_size2) + ... + member_offset
 
 	const ComputeAddressOp& op = std::any_cast<const ComputeAddressOp&>(instruction.getTypedPayload());
 
-		// Step 1: Load base address into RAX
+	// Step 1: Load base address into an allocated register. ComputeAddress sits
+	// in ordinary expression order, so a live temp may still occupy RAX/RCX.
+	X64Register base_reg = allocateRegisterWithSpilling();
 	int64_t base_offset = 0;
 	bool base_is_global = false;
 	StringHandle base_global_name;
 	bool base_is_indirect =
 		op.base_storage == ValueStorage::ContainsAddress; // True if base contains a pointer/reference
 	if (std::holds_alternative<StringHandle>(op.base) || std::holds_alternative<LocalVarId>(op.base)) {
-			// Variable name or local id - look up its stack offset
+		// Variable name or local id - look up its stack offset
 		const VariableKey base_key = variableKeyOf(op.base).value();
 		const VariableInfo* info = findVariableInfo(base_key);
 		if (info == nullptr) {
@@ -14907,66 +14907,68 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 		} else {
 			base_offset = info->offset;
 
-				// Check if base is a pointer (reference or 'this')
-				// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
+			// Check if base is a pointer (reference or 'this')
+			// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
 			base_is_indirect =
 				base_is_indirect ||
 				isPointerBaseStorage(static_cast<int32_t>(base_offset));
 		}
 	} else {
-			// TempVar - get its stack offset
+		// TempVar - get its stack offset
 		TempVar base_temp = std::get<TempVar>(op.base);
 		base_offset = getStackOffsetFromTempVar(base_temp);
 
-			// Check if TempVar is a reference or address-only
+		// Check if TempVar is a reference or address-only
 		base_is_indirect =
 			base_is_indirect ||
 			isPointerBaseStorage(static_cast<int32_t>(base_offset), base_temp);
 	}
 
 	if (base_is_global) {
-		uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
+		uint32_t reloc_offset = emitLeaRipRelative(base_reg);
 		pending_global_relocations_.push_back({reloc_offset, base_global_name, IMAGE_REL_AMD64_REL32});
 	} else if (base_is_indirect) {
-			// Base is a reference or pointer - load the address it contains (MOV, not LEA)
-		emitMovFromFrame(X64Register::RAX, base_offset);
+		// Base is a reference or pointer - load the address it contains (MOV, not LEA)
+		emitMovFromFrame(base_reg, base_offset);
 	} else {
-			// Base is a regular variable - compute its address (LEA)
-		emitLeaFromFrame(X64Register::RAX, base_offset);
+		// Base is a regular variable - compute its address (LEA)
+		emitLeaFromFrame(base_reg, base_offset);
 	}
 
-		// Step 2: Process each array index
+	// Step 2: Process each array index
 	for (const auto& arr_idx : op.array_indices) {
 		int element_size_bytes = arr_idx.element_size_bits.value / 8;
 
-			// Load index into RCX
+		// Load the index into an allocated register
 		if (std::holds_alternative<unsigned long long>(arr_idx.index)) {
-				// Constant index
+			// Constant index
 			uint64_t index_value = std::get<unsigned long long>(arr_idx.index);
 			int64_t offset = index_value * element_size_bytes;
 
-				// Add constant offset to RAX
+			// Add constant offset to the base register
 			if (offset != 0) {
-				emitAddImmToReg(textSectionData, X64Register::RAX, offset);
+				emitAddImmToReg(textSectionData, base_reg, offset);
 			}
 		} else if (std::holds_alternative<TempVar>(arr_idx.index)) {
-				// Variable index from temp
+			// Variable index from temp
 			TempVar index_var = std::get<TempVar>(arr_idx.index);
 			int64_t index_offset = getStackOffsetFromTempVar(index_var);
+			X64Register index_reg = allocateRegisterWithSpilling();
 
-				// Load index into RCX with proper size and sign extension
+			// Load index into the allocated register with proper size and sign extension
 			bool is_signed = isSignedType(arr_idx.indexType());
 			emitMovFromFrameSized(
-				SizedRegister{X64Register::RCX, 64, false},
+				SizedRegister{index_reg, 64, false},
 				SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits.value, is_signed});
 
-				// Multiply RCX by element size
-			emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
+			// Multiply the index by element size
+			emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 
-				// Add RCX to RAX
-			emitAddRAXRCX(textSectionData);
+			// Add the scaled index to the base
+			emitAddRegs(textSectionData, base_reg, index_reg);
+			regAlloc.release(index_reg);
 		} else if (std::holds_alternative<StringHandle>(arr_idx.index) || std::holds_alternative<LocalVarId>(arr_idx.index)) {
-				// Variable index from variable name or local id
+			// Variable index from variable name or local id
 			const VariableKey index_key = std::holds_alternative<LocalVarId>(arr_idx.index)
 				? VariableKey{std::get<LocalVarId>(arr_idx.index)}
 				: VariableKey{std::get<StringHandle>(arr_idx.index)};
@@ -14977,30 +14979,32 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 			}
 			int64_t index_offset = it->offset;
 			SizeInBits index_size_in_bits = getStackVariableLoadSizeBits(index_key);
+			X64Register index_reg = allocateRegisterWithSpilling();
 
-				// Load index into RCX with proper size and sign extension
+			// Load index into the allocated register with proper size and sign extension
 			bool is_signed = isSignedType(arr_idx.indexType());
 			emitMovFromFrameSized(
-				SizedRegister{X64Register::RCX, 64, false},
+				SizedRegister{index_reg, 64, false},
 				SizedStackSlot{static_cast<int32_t>(index_offset), index_size_in_bits, is_signed});
 
-				// Multiply RCX by element size
-			emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
+			// Multiply the index by element size
+			emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 
-				// Add RCX to RAX
-			emitAddRAXRCX(textSectionData);
+			// Add the scaled index to the base
+			emitAddRegs(textSectionData, base_reg, index_reg);
+			regAlloc.release(index_reg);
 		}
 	}
 
-		// Step 3: Add accumulated member offset (if any)
+	// Step 3: Add accumulated member offset (if any)
 	if (op.total_member_offset > 0) {
-		emitAddImmToReg(textSectionData, X64Register::RAX, op.total_member_offset);
+		emitAddImmToReg(textSectionData, base_reg, op.total_member_offset);
 	}
 
-		// Step 4: Store result
+	// Step 4: Store result
 	int32_t result_offset = getStackOffsetFromTempVar(op.result);
 	emitMovToFrameSized(
-		SizedRegister{X64Register::RAX, 64, false},	// source: 64-bit register
+		SizedRegister{base_reg, 64, false},	// source: 64-bit register
 		SizedStackSlot{result_offset, 64, false}	 // dest: 64-bit for pointer
 	);
 	// ComputeAddress produces a pointer value. Preserve that fact at the backend
@@ -15010,6 +15014,7 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 		op.result_type_index,
 		op.result_size_bits.value,
 		op.result);
+	regAlloc.release(base_reg);
 }
 
 template <class TWriterClass>
@@ -15043,11 +15048,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualBaseAdjust(const IrInstruction
 		}
 	}
 
-	emitVirtualBasePointerAdjust(
-		source_reg,
-		op.target_type_index,
-		op.source_type_index,
-		op.virtual_base_index);
+	emitVirtualBasePointerAdjust(source_reg, op.target_type_index, op.source_type_index, op.virtual_base_index, op.base_resolution);
 
 	const int32_t result_offset = getStackOffsetFromTempVar(op.result);
 	emitMovToFrameSized(

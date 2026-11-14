@@ -3609,51 +3609,39 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 		call_op.return_slot = result_var;
 	}
 
-	// Determine the source object address and pass as 'this'
-	IrValue source_value = std::visit([](auto&& arg) -> IrValue {
-		using T = std::decay_t<decltype(arg)>;
-		if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-					  std::is_same_v<T, LocalVarId> ||
-					  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>)
-			return arg;
-		else
-			return 0ULL;
-	},
-									  source.value);
+	const TypeIndex source_type_index = source_type_info.registeredTypeIndex();
+	const TypeIndex owner_type_index = func_decl.access_owner_type_index();
+	if (!owner_type_index.is_valid()) {
+		throw InternalError("Conversion operator is missing its declaring class");
+	}
+
+	// Recover the object address from a pre-evaluated receiver.
+	IrValue source_value = toIrValue(source.value);
+	std::optional<TempVar> object_address;
 
 	if (const auto* source_temp = std::get_if<TempVar>(&source.value)) {
 		TempVar current = *source_temp;
 		while (true) {
 			auto lvalue_info = getTempVarLValueInfo(current);
-			const bool has_direct_lvalue = lvalue_info.has_value();
-			const bool is_direct_base = has_direct_lvalue && lvalue_info->kind == LValueInfo::Kind::Direct;
-			const bool has_zero_offset = has_direct_lvalue && lvalue_info->offset == 0;
-			if (!is_direct_base || !has_zero_offset) {
-				// A Kind::ReferenceDeref lvalue with a StringHandle base arises when the array
-				// expression is a reference-to-struct variable (e.g. `const T& cd = d`).
-				// The identifier visitor emits a Dereference and records the reference
-				// variable name as the ReferenceDeref base.  For calling the conversion operator
-				// we need `this = value stored in cd` (= &d), NOT the dereferenced struct
-				// value.  Route through the StringHandle path so that emitAddressOf is
-				// called on the reference variable name: since the IRConverter marks
-				// reference variable slots in indirect_stack_info_, handleAddressOf will
-				// use emitMovFromFrame (loading the stored pointer) rather than
-				// emitLeaFromFrame (taking the address of the reference slot itself).
-				if (lvalue_info.has_value() &&
-					lvalue_info->kind == LValueInfo::Kind::ReferenceDeref &&
-					lvalue_info->offset == 0) {
-					if (const auto* base_name = std::get_if<StringHandle>(&lvalue_info->base)) {
-						source_value = *base_name;
-					} else if (const auto* base_local = std::get_if<LocalVarId>(&lvalue_info->base)) {
-						source_value = *base_local;
-					} else if (std::get_if<TempVar>(&lvalue_info->base)) {
-						// ReferenceDeref with a TempVar base is not yet supported for
-						// conversion-operator 'this' passing. Currently all ReferenceDeref
-						// lvalues are created with a StringHandle base (the reference variable
-						// name), so this path should never be reached.
-						throw InternalError("emitConversionOperatorCall: ReferenceDeref with TempVar base is not supported");
-					}
+			if (!lvalue_info || lvalue_info->offset != 0) {
+				break;
+			}
+			if (lvalue_info->kind == LValueInfo::Kind::Indirect || lvalue_info->kind == LValueInfo::Kind::ReferenceDeref) {
+				if (source.storage == ValueStorage::ContainsData) {
+					// A load through a pointer or reference made a copy of the object.
+					// The lvalue base still holds the original object's address.
+					ComputeAddressOp op;
+					op.result = var_counter.next();
+					op.base = lvalue_info->base;
+					op.base_storage = ValueStorage::ContainsAddress;
+					op.result_type_index = source_type_index;
+					op.result_size_bits = source.size_in_bits;
+					object_address = op.result;
+					ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(op), token));
 				}
+				break;
+			}
+			if (lvalue_info->kind != LValueInfo::Kind::Direct) {
 				break;
 			}
 			if (const auto* base_name = std::get_if<StringHandle>(&lvalue_info->base)) {
@@ -3673,31 +3661,21 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 		}
 	}
 
-	if (std::holds_alternative<StringHandle>(source_value)) {
-		// Named variable — take its address using the shared emitAddressOf helper
-		TempVar this_ptr = emitAddressOf(source.category(), source.size_in_bits.value, IrValue(std::get<StringHandle>(source_value)), token);
-
-		call_op.args.push_back(makeMemberThisCallArgument(source.type_index, IrValue(this_ptr)));
-	} else if (std::holds_alternative<LocalVarId>(source_value)) {
-		TempVar this_ptr = emitAddressOf(source.category(), source.size_in_bits.value, IrValue(std::get<LocalVarId>(source_value)), token);
-		call_op.args.push_back(makeMemberThisCallArgument(source.type_index, IrValue(this_ptr)));
-	} else if (std::holds_alternative<TempVar>(source_value)) {
-		TempVar object_temp = std::get<TempVar>(source_value);
-		// Only treat the temp as an already-materialized 'this' pointer when the
-		// ExprResult storage says so. Dereference / Load results are ContainsData
-		// object storage and must be AddressOf'd (LEA), not MOV'd as a fake pointer.
-		const bool temp_already_holds_address =
-			std::holds_alternative<TempVar>(source.value) &&
-			std::get<TempVar>(source.value).var_number == object_temp.var_number && source.storage == ValueStorage::ContainsAddress;
-		if (temp_already_holds_address) {
-			call_op.args.push_back(makeMemberThisCallArgument(source.type_index, IrValue(object_temp)));
-		} else {
-			TempVar this_ptr = emitAddressOf(source.category(), source.size_in_bits.value, IrValue(object_temp), token);
-			call_op.args.push_back(makeMemberThisCallArgument(source.type_index, IrValue(this_ptr)));
+	if (!object_address) {
+		const auto* source_temp = std::get_if<TempVar>(&source_value);
+		if (source_temp == nullptr && !std::holds_alternative<LocalVarId>(source_value) && !std::holds_alternative<StringHandle>(source_value)) {
+			throw InternalError("Conversion operator requires an addressable source object");
 		}
-	} else {
-		throw InternalError("emitConversionOperatorCall: source value is neither StringHandle nor TempVar");
+		const auto* original_temp = std::get_if<TempVar>(&source.value);
+		const bool holds_address = source_temp != nullptr && original_temp != nullptr && source_temp->var_number == original_temp->var_number &&
+			source.storage == ValueStorage::ContainsAddress;
+		object_address = holds_address ? *source_temp : emitAddressOf(source.category(), source.size_in_bits.value, source_value, token);
 	}
+	TempVar this_address = *object_address;
+	if (source_type_index != owner_type_index) {
+		this_address = adjustConversionOperatorReceiver(this_address, source_type_info, owner_type_index, token);
+	}
+	call_op.args.push_back(makeMemberThisCallArgument(owner_type_index, IrValue(this_address)));
 
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), token));
 
@@ -3709,6 +3687,57 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	}
 	const IrOperand result_value = result_destination.has_value() ? IrOperand{*result_destination} : IrOperand{result_var};
 	return makeExprResult(target_type_index, SizeInBits{target_size_bits}, result_value, PointerDepth{}, ValueStorage::ContainsData);
+}
+
+TempVar AstToIr::adjustConversionOperatorReceiver(TempVar address, const TypeInfo& source_type, TypeIndex owner_type_index, const Token& token) {
+	const TypeInfo* owner_type = tryGetTypeInfo(owner_type_index);
+	const StructTypeInfo* owner = owner_type ? owner_type->getStructInfo() : nullptr;
+	if (owner == nullptr || !owner->sizeInBits().is_set()) {
+		throw InternalError("Conversion operator receiver is missing its declaring class layout");
+	}
+	CanonicalTypeTable& types = requireFrontendContext().canonicalTypes();
+	const CanonicalTypeImport source = importCanonicalClassTypeInfo(types, source_type);
+	const CanonicalTypeImport target = importCanonicalClassTypeInfo(types, *owner_type);
+	if (source.status != CanonicalTypeImportStatus::Supported || target.status != CanonicalTypeImportStatus::Supported) {
+		throw InternalError("Conversion operator receiver is missing its canonical class identity");
+	}
+	// [expr.call] adjusts the receiver to the selected member's declaring
+	// subobject. The layout adjustment itself does not apply access rules.
+	const auto kind = classifyCanonicalDerivedBaseConversion(types, source.type, target.type, BaseSubobjectAccess::IgnoreAccess);
+	if (kind == DerivedBaseConversionKind::PublicVirtual) {
+		const auto index = types.findVirtualBaseIndex(source.type, target.type);
+		if (!index) {
+			throw InternalError("Conversion operator receiver is missing its virtual base ABI index");
+		}
+		VirtualBaseAdjustOp op;
+		op.result = var_counter.next();
+		op.source = address;
+		op.source_is_address = true;
+		op.source_type_index = source_type.registeredTypeIndex();
+		op.target_type_index = owner_type_index;
+		op.virtual_base_index = *index;
+		op.base_resolution = VirtualBaseAdjustOp::BaseResolution::MemberReceiver;
+		const TempVar result = op.result;
+		ir_.addInstruction(IrInstruction(IrOpcode::VirtualBaseAdjust, std::move(op), token));
+		return result;
+	}
+	const auto offset = findCanonicalNonVirtualBaseOffset(types, source.type, target.type, BaseSubobjectAccess::IgnoreAccess);
+	if (!offset || *offset > std::numeric_limits<int>::max()) {
+		throw InternalError("Conversion operator receiver has no unique base offset");
+	}
+	if (*offset == 0) {
+		return address;
+	}
+	ComputeAddressOp op;
+	op.result = var_counter.next();
+	op.base = address;
+	op.base_storage = ValueStorage::ContainsAddress;
+	op.total_member_offset = static_cast<int>(*offset);
+	op.result_type_index = owner_type_index;
+	op.result_size_bits = owner->sizeInBits();
+	const TempVar result = op.result;
+	ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(op), token));
+	return result;
 }
 
 std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCall(
@@ -3852,9 +3881,7 @@ ExprResult AstToIr::adjustMemberObjectPointerForCanonicalBaseConversion(
 		canonical_types.memberPointerOwner(source_member_pointer_type);
 	const TypeId derived_owner =
 		canonical_types.memberPointerOwner(target_member_pointer_type);
-	const std::optional<int64_t> base_offset =
-		findCanonicalPublicNonVirtualBaseOffset(
-			canonical_types, derived_owner, base_owner);
+	const auto base_offset = findCanonicalNonVirtualBaseOffset(canonical_types, derived_owner, base_owner, BaseSubobjectAccess::PublicOnly);
 	if (!base_offset.has_value() || *base_offset < 0 ||
 		*base_offset > std::numeric_limits<int32_t>::max()) {
 		throw InternalError(

@@ -262,7 +262,10 @@ mismatched, unpublished, or unresolved owner facts.
    conversion returning `short` wins by promotion over one returning `long long`.
    Class-pointer tails rank through the published canonical base graph, check
    access after selection, and preserve null for fixed-offset and virtual-base
-   adjustments in lowering.
+   adjustments in lowering. Calling an inherited conversion operator adjusts the
+   receiver to the selected member's declaring subobject, including a nonzero
+   non-virtual base offset and a runtime virtual-base offset; access was already
+   checked during selection, so the layout adjustment itself ignores access.
    By-value call annotation reuses the ranking selector for dependent
    conversion operators such as `operator T*()`, preserving the selected
    function and base-pointer adjustment through lowering. Ref-qualified
