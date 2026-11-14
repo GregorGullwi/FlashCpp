@@ -517,10 +517,8 @@ private:
 	// Does nothing when the types are unrelated or the offset is 0.
 	void emitDerivedToBasePointerAdjust(X64Register ptr_reg, TypeIndex base_type, TypeIndex derived_type);
 
-	void emitVirtualBasePointerAdjust(X64Register ptr_reg,
-		TypeIndex base_type,
-		TypeIndex derived_type,
-		size_t virtual_base_index);
+	void emitVirtualBasePointerAdjust(X64Register ptr_reg, TypeIndex base_type, TypeIndex derived_type, size_t virtual_base_index,
+		VirtualBaseAdjustOp::BaseResolution base_resolution);
 
 	uint16_t getX64RegisterCodeViewCode(X64Register reg);
 

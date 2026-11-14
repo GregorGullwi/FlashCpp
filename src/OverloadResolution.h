@@ -1105,6 +1105,8 @@ enum class DerivedBaseConversionKind : uint8_t {
 	Ambiguous,
 };
 
+enum class BaseSubobjectAccess : uint8_t { PublicOnly, IgnoreAccess };
+
 struct DerivedBaseConversionInfo {
 	DerivedBaseConversionKind kind = DerivedBaseConversionKind::NotRelated;
 };
@@ -1412,7 +1414,7 @@ inline std::optional<DerivedBaseConversionKind> classifyCanonicalBaseSubobjectGr
 // Class TypeIds use only published class-base schemas, retaining specialization
 // identity throughout the graph. Identity needs no schema; distinct types do.
 inline std::optional<DerivedBaseConversionKind> classifyCanonicalDerivedBaseConversion(const CanonicalTypeTable& table,
-	TypeId derived_type, TypeId base_type) {
+	TypeId derived_type, TypeId base_type, BaseSubobjectAccess access) {
 	if (!derived_type || !base_type) {
 		return std::nullopt;
 	}
@@ -1431,23 +1433,25 @@ inline std::optional<DerivedBaseConversionKind> classifyCanonicalDerivedBaseConv
 	const auto direct_base_count = [&table](uint32_t type_value) {
 		return table.classBaseCount(TypeId{type_value});
 	};
-	const auto direct_base_at = [&table](uint32_t type_value, size_t index) {
+	const auto direct_base_at = [&table, access](uint32_t type_value, size_t index) {
 		const CanonicalClassBase base = table.classBaseAt(TypeId{type_value}, index);
-		return CanonicalBaseGraphEdgeView{base.type.value, base.access, base.flags};
+		const CanonicalAccess edge_access = access == BaseSubobjectAccess::IgnoreAccess ? CanonicalAccess::Public : base.access;
+		return CanonicalBaseGraphEdgeView{base.type.value, edge_access, base.flags};
 	};
 	return classifyCanonicalBaseSubobjectGraph(derived_type.value, base_type.value, has_schema, direct_base_count, direct_base_at);
 }
 
-// Resolve the ABI byte offset for a unique public non-virtual TypeId base path.
+inline std::optional<DerivedBaseConversionKind> classifyCanonicalDerivedBaseConversion(const CanonicalTypeTable& table,
+	TypeId derived_type, TypeId base_type) {
+	return classifyCanonicalDerivedBaseConversion(table, derived_type, base_type, BaseSubobjectAccess::PublicOnly);
+}
+
+// Resolve the ABI byte offset for a unique non-virtual TypeId base path.
 // The relation check and the offset walk use the same canonical class graph;
 // the explicit worklist keeps inheritance depth off the native call stack.
-inline std::optional<int64_t> findCanonicalPublicNonVirtualBaseOffset(
-	const CanonicalTypeTable& table,
-	TypeId derived_type,
-	TypeId base_type) {
-	if (classifyCanonicalDerivedBaseConversion(
-			table, derived_type, base_type) !=
-		DerivedBaseConversionKind::UniquePublicNonVirtual) {
+inline std::optional<int64_t> findCanonicalNonVirtualBaseOffset(const CanonicalTypeTable& table, TypeId derived_type, TypeId base_type,
+	BaseSubobjectAccess access) {
+	if (classifyCanonicalDerivedBaseConversion(table, derived_type, base_type, access) != DerivedBaseConversionKind::UniquePublicNonVirtual) {
 		return std::nullopt;
 	}
 
@@ -1455,11 +1459,10 @@ inline std::optional<int64_t> findCanonicalPublicNonVirtualBaseOffset(
 		TypeId type;
 		int64_t offset;
 	};
-	std::vector<PendingBase> pending{{derived_type, 0}};
-	std::vector<TypeId> visited_types;
-	for (size_t pending_index = 0;
-		 pending_index < pending.size();
-		 ++pending_index) {
+	OverloadVector<PendingBase, 4> pending;
+	pending.push_back({derived_type, 0});
+	OverloadVector<TypeId, 4> visited_types;
+	for (size_t pending_index = 0; pending_index < pending.size(); ++pending_index) {
 		const PendingBase current = pending[pending_index];
 		if (current.type == base_type) {
 			return current.offset;
@@ -1476,9 +1479,8 @@ inline std::optional<int64_t> findCanonicalPublicNonVirtualBaseOffset(
 		for (size_t base_index = 0; base_index < base_count; ++base_index) {
 			const CanonicalClassBase base =
 				table.classBaseAt(current.type, base_index);
-			if (base.access != CanonicalAccess::Public ||
-				hasCanonicalRecordBaseFlag(
-					base.flags, CanonicalRecordBaseFlags::Virtual)) {
+			if (hasCanonicalRecordBaseFlag(base.flags, CanonicalRecordBaseFlags::Virtual) ||
+				(access == BaseSubobjectAccess::PublicOnly && base.access != CanonicalAccess::Public)) {
 				continue;
 			}
 			if (base.offset_bytes >
@@ -1509,7 +1511,7 @@ inline std::optional<int64_t> tryFindPublishedDerivedBaseOffset(const CanonicalT
 		return static_cast<int64_t>(table.virtualBaseAt(derived_type, *index).offset_bytes);
 	}
 	if (*kind == DerivedBaseConversionKind::UniquePublicNonVirtual) {
-		return findCanonicalPublicNonVirtualBaseOffset(table, derived_type, base_type);
+		return findCanonicalNonVirtualBaseOffset(table, derived_type, base_type, BaseSubobjectAccess::PublicOnly);
 	}
 	return std::nullopt;
 }
