@@ -14953,7 +14953,7 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 			// Variable index from temp
 			TempVar index_var = std::get<TempVar>(arr_idx.index);
 			int64_t index_offset = getStackOffsetFromTempVar(index_var);
-			X64Register index_reg = allocateRegisterWithSpilling();
+			X64Register index_reg = allocateRegisterWithSpilling(base_reg);
 
 			// Load index into the allocated register with proper size and sign extension
 			bool is_signed = isSignedType(arr_idx.indexType());
@@ -14979,7 +14979,7 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 			}
 			int64_t index_offset = it->offset;
 			SizeInBits index_size_in_bits = getStackVariableLoadSizeBits(index_key);
-			X64Register index_reg = allocateRegisterWithSpilling();
+			X64Register index_reg = allocateRegisterWithSpilling(base_reg);
 
 			// Load index into the allocated register with proper size and sign extension
 			bool is_signed = isSignedType(arr_idx.indexType());
