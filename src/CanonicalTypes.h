@@ -514,9 +514,11 @@ enum class CanonicalRecordMemberFacts : uint16_t {
 	DefaultConstructible = 1u << 10,
 	TriviallyDefaultConstructible = 1u << 11,
 	NothrowDefaultConstructible = 1u << 12,
+	Empty = 1u << 13,
+	StandardLayout = 1u << 14,
 	// The canonical schema cannot represent this member's subobject answer;
 	// consumers fall back to the compatibility classifier for this entry.
-	Unknown = 1u << 13,
+	Unknown = 1u << 15,
 };
 
 constexpr CanonicalRecordMemberFacts operator|(CanonicalRecordMemberFacts a, CanonicalRecordMemberFacts b) {
