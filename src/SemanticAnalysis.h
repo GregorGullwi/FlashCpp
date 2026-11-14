@@ -643,6 +643,15 @@ private:
 	std::optional<UserDefinedConversionOperatorSelection> trySelectConversionFunctionTemplate(
 		const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, ConversionFunctionContext conversion_context,
 		ValueCategory source_value_category, FunctionTemplateInstantiation instantiation);
+	struct ConversionFunctionTemplateCandidate;
+	std::optional<UserDefinedConversionOperatorSelection> selectConversionFunctionTemplate(
+		std::span<const ConversionFunctionTemplateCandidate> templates, const TypeSpecifierNode& target_type,
+		ValueCategory source_value_category, FunctionTemplateInstantiation instantiation);
+	std::vector<ConversionFunctionTemplateCandidate> collectConversionFunctionTemplates(const TypeSpecifierNode& source_type,
+		ConversionFunctionContext conversion_context, ValueCategory source_value_category);
+	std::optional<UserDefinedConversionOperatorSelection> selectBuiltinSubscriptConversionTemplate(
+		const CanonicalTypeDesc& source, TypeId target, ValueCategory source_category, std::span<const ConversionFunctionTemplateCandidate> templates,
+		FunctionTemplateInstantiation instantiation);
 	// Explicit conversions start selection from canonical source and target TypeIds.
 	bool tryAnnotateExplicitConversionByTypeId(const ASTNode& slot_expression, const ASTNode& source_expression, const TypeSpecifierNode& target_type);
 	// Semantic ODR-use publication for implicitly-declared/defaulted copy and
@@ -848,6 +857,9 @@ private:
 	// can dispatch to the member function call path instead of pointer arithmetic.
 	void tryResolveSubscriptOperator(const ArraySubscriptNode& subscript_node);
 	void normalizeBuiltinSubscriptOperands(ArraySubscriptNode& subscript_node);
+	struct BuiltinSubscriptConversion;
+	std::optional<BuiltinSubscriptConversion> selectBuiltinSubscriptConversion(const CanonicalTypeDesc& source, ValueCategory source_category,
+		FunctionTemplateInstantiation instantiation);
 
 	// Scope stack for local variable type tracking (used by inferExpressionType).
 	// Keys are StringHandles from the string pool (stable for the compilation lifetime).

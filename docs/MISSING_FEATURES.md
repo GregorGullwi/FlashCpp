@@ -310,8 +310,10 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
       references and initialize pointers using the returned array address.
       Built-in subscripting accepts these conversions in either operand position
       and preserves the inner bounds of multidimensional arrays.
-    - Built-in subscript candidate discovery still needs conversion function
-      template deduction.
+    - Built-in subscripting also considers conversion function templates whose
+      declared return type supplies a concrete pointer or array-reference
+      target. Template deduction fills defaults and checks constraints before
+      ranking those candidates.
 
 ---
 

@@ -185,11 +185,15 @@ ASTNode rebuildResolvedSubstitutedTypeSpec(
 
 	auto& substituted_type_spec = substituted_type.as<TypeSpecifierNode>();
 	substituted_type_spec.set_type_index(resolved_type_index);
-	for (const auto& ptr_level : original_type_spec.pointer_levels()) {
-		substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
+	if (original_type_spec.is_array() || original_type_spec.has_pointee_array_declarator() ||
+		original_type_spec.has_unsized_outer_array_dimension() || original_type_spec.has_ordered_declarator()) {
+		applyOuterDeclaratorShapeForSubstitution(substituted_type_spec, original_type_spec);
+	} else {
+		for (const auto& ptr_level : original_type_spec.pointer_levels()) {
+			substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
+		}
+		substituted_type_spec.set_reference_qualifier(original_type_spec.reference_qualifier());
 	}
-	substituted_type_spec.set_reference_qualifier(
-		original_type_spec.reference_qualifier());
 	propagateSubstitutedFunctionSignature(
 		substituted_type_spec,
 		original_type_spec,
