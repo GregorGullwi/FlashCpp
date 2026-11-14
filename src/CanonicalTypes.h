@@ -479,6 +479,9 @@ enum class CanonicalRecordFacts : uint32_t {
 	DestructorNoexcept = 1u << 22,
 	TrivialCopyingSpecialMembers = 1u << 23,
 	TrivialDefaultConstructor = 1u << 24,
+	// The aggregate triviality and lifetime answers below are complete for this
+	// record. Absence means a consumer must use the recursive compatibility path.
+	AggregateTraitFacts = 1u << 25,
 };
 
 // Semantic facts that cannot be derived from object layout alone. These are

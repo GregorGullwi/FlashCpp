@@ -597,10 +597,15 @@ answers. Coverage is in
 `test_canonical_member_property_union_access_ret0.cpp`, the native
 `Canonical record member properties publish lifetime facts` /
 `Canonical union member properties delete inaccessible variant destructors`
-tests, and the canonical architecture regression. The inline dollar-recovery
-inventory and canonical-adapter source corpus remain within their
-supported/deferred baselines. The fixed adapter corpus remains 26 supported and
-zero deferred. Gate 0's Windows and ELF
+tests, and the canonical architecture regression. Aggregate `TriviallyCopyable`,
+`Trivial`, `Pod`, destructibility, nothrow destruction, and virtual-destructor
+facts are now published with an `AggregateTraitFacts` completeness tag. Canonical
+trait evaluation reads them directly; recursive and compatibility paths remain
+fallbacks without the tag. `test_canonical_aggregate_trait_facts_ret0.cpp`
+covers combined base, template-member, and anonymous-union propagation. The
+inline dollar-recovery inventory and canonical-adapter source corpus remain
+within their supported/deferred baselines. The fixed adapter corpus remains 26
+supported and zero deferred. Gate 0's Windows and ELF
 multi-translation-unit checks remain required compatibility evidence. See the
 plan for complete boundary-specific validation.
 
