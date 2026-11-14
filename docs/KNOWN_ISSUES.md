@@ -266,8 +266,9 @@ them with `AggregateTraitFacts`. Canonical trait checks read those bits directly
 recursive and compatibility paths remain fallbacks when the tag is absent.
 Compatibility wrappers used by code generation and pseudo-destructor lowering also
 read the published aggregate fact first. Default-construction answers use the same
-member and base facts with an `AggregateDefaultConstructionFacts` tag; shapes with
-default member initializers keep the recursive fallback. Empty and standard-layout
+member and base facts with an `AggregateDefaultConstructionFacts` tag; default
+member initializers consume canonical initializer and constructor facts, leaving
+the recursive fallback only for unresolved schema entries. Empty and standard-layout
 facts also aggregate member and base answers, including no-unique-address empty
 members and cross-base ownership; unknown schema entries keep the legacy fallback.
 Explicit member-object-pointer template arguments publish ordered owner identity
@@ -339,7 +340,12 @@ deferring. Deeper class conversions, omitted nested defaults without published
 exception facts, non-literal call arguments, reference defaults requiring general
 conversion analysis, and unresolved operator selections still need initialization
 and exception facts; those shapes continue to defer until their canonical facts
-are published.
+are published. Reference default member initializers are classified for
+default-construction traits, but code generation still rejects a reference bound
+to a class temporary produced by a non-default constructor
+(`const T& ref = T(1);`) with `Reference member initializer must be an lvalue`.
+Default-temporary forms such as `const T& ref = T{};` are covered by tests;
+runtime lowering of the non-default temporary form remains unimplemented.
 Concepts using unsupported sema-owned traits must retain an explicit unknown outcome rather than treating
 it as satisfaction or failure. Static member semantic identity must remain
 canonical through any remaining flat-consumer migration.
