@@ -324,8 +324,12 @@ mismatched, unpublished, or unresolved owner facts.
      array shape, so a user-provided reference parameter keeps its reference
      identity in the published schema. Deleted general constructors now retain
      their access and parameter identity and publish as rankable deleted
-     candidates. Primary class-template instantiations clone and substitute their
-     deleted constructor parameters; partial specializations still expose only
+     candidates. Primary and top-level partial class-template instantiations
+     clone and substitute their deleted constructor parameters, and selected
+     partial specializations publish them with the rest of the constructor
+     schema. `test_canonical_partial_deleted_ctor_ret0.cpp` covers a deleted exact
+     match, a deleted dependent parameter, and preservation of a separate default
+     constructor. Member class-template partial specializations still expose only
      the deleted special-member flags.
    - Constructor-candidate matching is consolidated into one canonical service
      with a tri-state result and policy-driven rules, including literal-only

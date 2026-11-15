@@ -6186,6 +6186,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 				const CanonicalTypeImport imported_specialization = importCanonicalClassTypeInfo(canonical_types, struct_type_info);
 				if (imported_specialization.status == CanonicalTypeImportStatus::Supported) {
 					(void)tryPublishCanonicalClassBaseSchema(canonical_types, imported_specialization.type, *struct_info);
+					(void)tryPublishCanonicalRecordConstructors(canonical_types, imported_specialization.type,
+						instantiated_struct.as<StructDeclarationNode>(), struct_info->deleted_constructors, struct_info->deleted_special_members);
 				}
 			}
 

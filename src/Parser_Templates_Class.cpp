@@ -4188,10 +4188,10 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 									// Determine what kind of constructor this is based on parameters
 									size_t num_params = ctor_ref.parameter_nodes().size();
-									bool is_copy_ctor = false;
-									bool is_move_ctor = false;
-
-									if (num_params == 1) {
+									DeletedConstructorFlags deleted_kind =
+										num_params == 0 ? DeletedConstructorFlags::Default : DeletedConstructorFlags::None;
+									const size_t min_required = computeMinRequiredArgs(ctor_ref.parameter_nodes());
+									if (min_required <= 1 && num_params >= 1) {
 										// Check if the parameter is a reference to this type
 										const auto& param = ctor_ref.parameter_nodes()[0];
 										if (param.is<DeclarationNode>()) {
@@ -4204,27 +4204,28 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 												if (param_type_name == template_name ||
 													param_type_name == instantiated_name) {
 													if (type_spec.is_rvalue_reference()) {
-														is_move_ctor = true;
-													} else if (type_spec.is_reference()) {
-														is_copy_ctor = true;
+														deleted_kind = DeletedConstructorFlags::Move;
+													} else if (type_spec.is_lvalue_reference()) {
+														deleted_kind = DeletedConstructorFlags::Copy;
 													}
 												}
 											}
 										}
 									}
 
-									// Mark the deleted constructor in the struct AST node
-									if (is_copy_ctor) {
+									if (deleted_kind == DeletedConstructorFlags::Copy) {
 										struct_ref.mark_deleted_copy_constructor();
-										FLASH_LOG(Templates, Trace, "Marked copy constructor as deleted in struct: ", instantiated_name);
-									} else if (is_move_ctor) {
+									} else if (deleted_kind == DeletedConstructorFlags::Move) {
 										struct_ref.mark_deleted_move_constructor();
-										FLASH_LOG(Templates, Trace, "Marked move constructor as deleted in struct: ", instantiated_name);
-									} else {
-										// Default constructor (no params or only optional params)
+									} else if (deleted_kind == DeletedConstructorFlags::Default) {
 										struct_ref.mark_deleted_default_constructor();
-										FLASH_LOG(Templates, Trace, "Marked default constructor as deleted in struct: ", instantiated_name);
 									}
+									struct_info->markConstructorDeleted(deleted_kind);
+									if (deleted_kind == DeletedConstructorFlags::None) {
+										struct_info->deleted_constructors.push_back({&ctor_ref, current_access});
+									}
+									FLASH_LOG(Templates, Trace, "Marked deleted constructor in partial specialization: ", instantiated_name,
+											  " kind=", static_cast<int>(deleted_kind));
 
 									continue;
 								} else {
