@@ -1,6 +1,6 @@
-// Top-level partials with non-type pattern arguments do not publish a canonical
-// environment yet. The synthesized-name fallback must still select the right
-// pattern record and preserve its deleted constructor schema.
+// Top-level partials with non-type pattern arguments publish a canonical
+// environment. The selected pattern must supply its own deleted constructor
+// schema.
 
 template <class T, int N> struct Item;
 
