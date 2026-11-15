@@ -251,8 +251,9 @@ Canonical pattern environments are the intended partial-pattern identity for the
 shapes 3A supports. The environment includes pack expansion markers, a stable
 requires-clause identity, and a declaration identity for parameter concept
 constraints, so pack, scalar, and constrained declarations with identical
-normalized argument patterns get distinct environments. Top-level non-type and
-pack pattern arguments now publish environments as well. Pattern
+normalized argument patterns get distinct environments. Top-level non-type,
+pack, and concept-constrained pattern arguments now publish environments as
+well. Pattern
 `StructTypeInfo` records are registered by that environment, and
 partial-specialization instantiation prefers that record; the
 synthesized name is only a fallback for patterns whose environment is not
@@ -437,14 +438,14 @@ remaining pattern schemas by identity, and remove the name fallback.
    identity, and a declaration identity for parameter concept constraints.
    Preview constraint arguments normalize parameter references by index and use
    resolved `TypeInfo` names for record arguments, and instantiation prefers that
-   record. Top-level non-type and pack pattern arguments now publish
-   environments; top-level concept-constrained parameters and other unsupported
-   shapes remain on the synthesized-name fallback. Move constraint argument
-   identity onto canonical `TypeId`s and normalized constraints, extend canonical
-   pattern import coverage for those shapes, key the remaining member and
-   constructor schemas by identity, and remove the fallback. The per-declaration ordinal makes colliding pattern
-   spellings unique as a bridge, but it is not semantic identity and does not
-   satisfy the parse-order or string-table-order exit criteria. Moving the
+   record. Top-level non-type, pack, and concept-constrained pattern arguments
+   now publish environments; other unsupported shapes remain on the
+   synthesized-name fallback. Move constraint argument identity onto canonical
+   `TypeId`s and normalized constraints, extend canonical pattern import coverage
+   for those shapes, key the remaining member and constructor schemas by
+   identity, and remove the fallback. The per-declaration ordinal makes colliding
+   pattern spellings unique as a bridge, but it is not semantic identity and does
+   not satisfy the parse-order or string-table-order exit criteria. Moving the
    remaining registries, specialization caches, and facade lookups to
    `TemplateDeclId` belongs to boundary 6; deleting name-based
    partial-specialization replay and selection belongs to boundary 8A.

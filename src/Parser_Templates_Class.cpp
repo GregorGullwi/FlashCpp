@@ -3656,7 +3656,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				FrontendContext& front_end = requireFrontendContext();
 				const std::optional<TypeId> pattern = tryImportCanonicalPartialClassPattern(front_end, primary.template_decl_id(),
 					pattern_template_params, pattern_arguments, pattern_arg_syntax_nodes,
-					kCanonicalPartialPatternClass);
+					kCanonicalPartialPatternComplete);
 				if (pattern.has_value()) {
 					const TemplateDeclId environment = front_end.templateDecls().publishClassPartialEnvironment(
 						primary.template_decl_id(), *pattern, *declaration_identity);
@@ -6324,7 +6324,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			FrontendContext& front_end = requireFrontendContext();
 			const std::optional<TypeId> pattern = tryImportCanonicalPartialClassPattern(front_end, partial_primary.template_decl_id(),
 				pattern_template_params, pattern_arguments, pattern_arg_syntax_nodes,
-				kCanonicalPartialPatternMember);
+				kCanonicalPartialPatternComplete);
 			if (pattern.has_value()) {
 				const TemplateDeclId environment = front_end.templateDecls().publishClassPartialEnvironment(
 					partial_primary.template_decl_id(), *pattern, *declaration_identity);
