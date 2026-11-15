@@ -1191,21 +1191,28 @@ ParseResult Parser::parseArrayDeclaratorBound(ParsedArrayBound& bound) {
 	return ParseResult::success();
 }
 
-ParseResult Parser::parseArrayDeclaratorSuffix(TypeSpecifierNode& type_spec, std::vector<ASTNode>* array_bound_expressions) {
+ParseResult Parser::parseArrayDeclaratorSuffix(TypeSpecifierNode& type_spec, std::vector<ASTNode>* array_bound_expressions,
+	ArrayDeclaratorContext declarator_context) {
+	const bool is_alias_template = declarator_context == ArrayDeclaratorContext::AliasTemplate;
 	std::vector<size_t> dimensions;
 	while (peek() == "["_tok) {
+		const Token opening_bracket_token = peek_info();
 		ParsedArrayBound bound;
 		if (ParseResult result = parseArrayDeclaratorBound(bound); result.is_error()) {
 			return result;
 		}
+		if (is_alias_template && bound.kind == ArrayBoundKind::NonPositive) {
+			return error(DiagnosticId::AliasTemplateArrayBoundUnresolved, opening_bracket_token,
+				"Alias template array bound must be a positive constant expression");
+		}
+		if (array_bound_expressions != nullptr && (is_alias_template || bound.kind != ArrayBoundKind::Omitted)) {
+			array_bound_expressions->push_back(bound.expression);
+		}
 		if (bound.kind == ArrayBoundKind::Omitted) {
 			dimensions.clear();
 			type_spec.set_array(true);
-			type_spec.set_unsized_outer_array_dimension(true);
+			type_spec.set_unsized_outer_array_dimension(!is_alias_template);
 			continue;
-		}
-		if (array_bound_expressions != nullptr) {
-			array_bound_expressions->push_back(bound.expression);
 		}
 		dimensions.push_back(bound.extent);
 	}
@@ -1213,7 +1220,7 @@ ParseResult Parser::parseArrayDeclaratorSuffix(TypeSpecifierNode& type_spec, std
 		return ParseResult::success();
 	}
 	// [dcl.array]: The suffix wraps the type already denoted by the specifier.
-	if (type_spec.has_ordered_declarator() || type_spec.has_pointee_array_declarator()) {
+	if (type_spec.has_ordered_declarator() || type_spec.has_pointee_array_declarator() || (is_alias_template && !type_spec.array_dimensions().empty())) {
 		std::vector<DeclaratorComponent> components;
 		for (const size_t extent : dimensions) {
 			components.push_back(DeclaratorComponent::array(extent));

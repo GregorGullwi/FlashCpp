@@ -3120,14 +3120,16 @@ inline bool resolveOrderedDeclaratorArrayBounds(
 			component.kind != DeclaratorComponentKind::UnknownBoundArray) {
 			continue;
 		}
-		if (array_component_index >= array_bound_expressions.size()) {
-			throw InternalError(
-				"ordered alias array component has no bound record");
+		const bool needs_bound = component.kind == DeclaratorComponentKind::Array && component.payload == 0;
+		if (array_component_index == array_bound_expressions.size()) {
+			// A composed alias can have concrete inner bounds from its element type.
+			if (needs_bound) {
+				throw InternalError("dependent ordered alias array component has no bound record");
+			}
+			continue;
 		}
-		const ASTNode& bound_expression =
-			array_bound_expressions[array_component_index++];
-		if (component.kind != DeclaratorComponentKind::Array ||
-			component.payload != 0) {
+		const ASTNode& bound_expression = array_bound_expressions[array_component_index++];
+		if (!needs_bound) {
 			continue;
 		}
 		if (!bound_expression.has_value()) {

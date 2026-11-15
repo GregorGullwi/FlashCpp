@@ -1756,7 +1756,8 @@ void Parser::consume_type_id_abstract_declarators(
 	}
 	consume_pointer_ref_modifiers(type_spec);
 	if (typeSpecCanHaveArrayAbstractDeclarator(type_spec)) {
-		if (ParseResult array_result = parseArrayDeclaratorSuffix(type_spec, array_bound_expressions); array_result.is_error()) {
+		if (ParseResult array_result = parseArrayDeclaratorSuffix(type_spec, array_bound_expressions, ArrayDeclaratorContext::Ordinary);
+			array_result.is_error()) {
 			throw CompileError(array_result.error_message());
 		}
 	}

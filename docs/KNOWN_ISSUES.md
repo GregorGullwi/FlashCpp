@@ -240,10 +240,14 @@ still depends on its own template parameters cannot seed a candidate.
 Reversed subscripting such as `index()[object()]` needs to preserve evaluation
 of the left operand before the right operand when normalizing the operands.
 
-Dependent array bounds in composed aliases still need work in template
-instantiation. For example, `using Row = short[3];` followed by
-`template<int N> using Grid = Row[N];` must preserve the inner extent of 3
-after substituting the outer extent.
+Dependent array bounds in composed aliases now survive template instantiation.
+For example, `using Row = short[3];` followed by
+`template<int N> using Grid = Row[N];` composes the substituted outer extent
+with the inner extent of 3. The same substitution path covers direct aliases,
+forwarded alias templates, class member aliases, and conversion to an array
+reference, while preserving the order of array, pointer, and reference
+declarators. A bound that substitutes to zero is rejected as an unresolved
+alias-template array bound rather than materializing a zero-extent array.
 
 ## Remaining flat trait consumers
 

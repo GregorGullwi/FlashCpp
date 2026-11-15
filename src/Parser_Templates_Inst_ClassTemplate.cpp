@@ -2790,10 +2790,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 				  ", array_dimensions.size()=", type_alias.array_dimensions.size(),
 				  ", resolved_alias_target.isArray()=", resolved_alias_target.isArray());
 
-		// Only process array dimensions that are directly part of this alias definition
-		// (e.g., "using type = char[N]" has array dimensions from N).
-		// Do NOT include array dimensions from the resolved alias target, as those
-		// will be picked up by resolveAliasTypeInfo when it traverses the alias chain.
 		if (type_alias.array_dimensions.empty()) {
 			return substituted_type_spec;
 		}
@@ -2812,6 +2808,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			}
 			resolved_dims.push_back(static_cast<size_t>(eval_result.as_int()));
 		}
+		// Replace the bounds written on the alias while preserving the element
+		// type's dimensions. Flat template-argument rebinding supplies only
+		// the element dimensions, so it has no declared prefix to replace.
+		const auto dimensions = substituted_type_spec.array_dimensions();
+		const size_t declared_count = rebound_arg.has_value() && !substituted_type_spec.has_ordered_declarator()
+			? 0 : std::min(resolved_dims.size(), dimensions.size());
+		const auto inner_dimensions = dimensions.subspan(declared_count);
+		resolved_dims.insert(resolved_dims.end(), inner_dimensions.begin(), inner_dimensions.end());
 		substituted_type_spec.set_array_dimensions(resolved_dims);
 		return substituted_type_spec;
 	};
@@ -4708,14 +4712,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 							  substituted_size,
 							  alias_registration_type_spec);
 				if (alias_registration_type_spec.is_array()) {
-					std::span<const size_t> alias_array_dimensions = alias_registration_type_spec.array_dimensions();
 					size_t element_size = calculateResolvedMemberSizeAndAlignment(alias_registration_type_spec, substituted_type_index).size;
-					substituted_size = static_cast<int>(element_size * std::accumulate(
-						alias_array_dimensions.begin(),
-						alias_array_dimensions.end(),
-						size_t{1},
-						std::multiplies<size_t>()) * 8);
-					alias_type_info.fallback_size_bits_ = substituted_size;
+					alias_type_info.fallback_size_bits_ = static_cast<int>(element_size * 8);
 				}
 				(void)alias_type_info;
 
@@ -8574,7 +8572,42 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			member_substitutor->setCurrentOwnerDeclaration(&class_decl);
 			full_substituted_type_node = emplace_node<TypeSpecifierNode>(member_substitutor->substituteTypeSpecifier(type_spec));
 		} else {
-			full_substituted_type_node = substituteTemplateParameters(decl.type_node(), effective_template_params, effective_template_args);
+			const StringHandle member_type_token = type_spec.token().handle();
+			const bool type_names_owner_alias = member_type_token.isValid() &&
+				std::ranges::any_of(class_decl.type_aliases(),
+					[&](const TypeAliasDecl& type_alias) {
+						return type_alias.alias_name == member_type_token;
+					});
+			if (type_names_owner_alias) {
+				full_substituted_type_node = emplace_node<TypeSpecifierNode>(buildSubstitutedTypeSpecifier(
+					*this, type_spec, decl.type_node(), decl.identifier_token(), effective_template_params, effective_template_args,
+					[this](const ASTNode& node, const auto& params, const auto& args) {
+						return substituteTemplateParameters(node, params, args);
+					},
+					[this](const TypeSpecifierNode& member_type, const auto& params, const auto& args) {
+						return substitute_template_parameter(member_type, params, args);
+					},
+					&class_decl, struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct), TypeIndex{}, true, true));
+				const TypeIndex substituted_alias_target_index = substitute_template_parameter(type_spec, effective_template_params, effective_template_args);
+				for (const auto& type_alias : class_decl.type_aliases()) {
+					if (type_alias.alias_name != member_type_token || !type_alias.type_node.is<TypeSpecifierNode>()) {
+						continue;
+					}
+					if (std::optional<TypeSpecifierNode> concrete_alias = buildSubstitutedTypeAliasSpecifier(
+							type_alias, substituted_alias_target_index, substituted_alias_target_index.category(),
+							effective_template_params, effective_template_args, instantiated_name);
+						concrete_alias.has_value()) {
+						if (std::optional<TypeSpecifierNode> composed_alias = composeInstantiatedOwnerAliasShape(
+								type_spec, type_alias.type_node.as<TypeSpecifierNode>(), *concrete_alias);
+							composed_alias.has_value()) {
+							full_substituted_type_node = emplace_node<TypeSpecifierNode>(std::move(*composed_alias));
+						}
+					}
+					break;
+				}
+			} else {
+				full_substituted_type_node = substituteTemplateParameters(decl.type_node(), effective_template_params, effective_template_args);
+			}
 		}
 
 		// Substitute template parameter if the member type is a template parameter
@@ -8592,7 +8625,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 				full_substituted_type_index.is_valid() &&
 				(full_substituted_type_index != type_spec.type_index() ||
 				 !member_type_index.is_valid() ||
-				 typeIndexContainsDependentPlaceholder(member_type_index))) {
+				 typeIndexContainsDependentPlaceholder(member_type_index) ||
+				 full_substituted_type_spec.is_array())) {
 				member_type_index = full_substituted_type_index.withCategory(
 					full_substituted_type_spec.category());
 			}
@@ -8772,6 +8806,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			decl, effective_template_params, effective_template_args);
 		if (resolved_array_dimensions.empty()) {
 			resolved_array_dimensions = resolved_member_alias.array_dimensions;
+		}
+		if (resolved_array_dimensions.empty()) {
+			const auto substituted_dimensions = substituted_type_spec.array_dimensions();
+			resolved_array_dimensions.assign(substituted_dimensions.begin(), substituted_dimensions.end());
 		}
 		if (substituted_type_spec.has_pointee_array_declarator() &&
 			!resolved_array_dimensions.empty()) {
@@ -11263,14 +11301,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 					  substituted_size,
 					  alias_registration_type_spec);
 		if (alias_registration_type_spec.is_array()) {
-			std::span<const size_t> alias_array_dimensions = alias_registration_type_spec.array_dimensions();
 			size_t element_size = calculateResolvedMemberSizeAndAlignment(alias_registration_type_spec, substituted_type_index).size;
-			substituted_size = static_cast<int>(element_size * std::accumulate(
-				alias_array_dimensions.begin(),
-				alias_array_dimensions.end(),
-				size_t{1},
-				std::multiplies<size_t>()) * 8);
-			alias_type_info.fallback_size_bits_ = substituted_size;
+			alias_type_info.fallback_size_bits_ = static_cast<int>(element_size * 8);
 		}
 		if (substituted_type == TypeCategory::Enum && substituted_type_index.is_valid()) {
 			if (const TypeInfo* enum_alias_ti = tryGetTypeInfo(substituted_type_index)) {

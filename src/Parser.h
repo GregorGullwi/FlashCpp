@@ -4686,7 +4686,9 @@ private:	 // Resume private methods
 		ArrayBoundKind kind = ArrayBoundKind::Omitted;
 	};
 	ParseResult parseArrayDeclaratorBound(ParsedArrayBound& bound);
-	ParseResult parseArrayDeclaratorSuffix(TypeSpecifierNode& type_spec, std::vector<ASTNode>* array_bound_expressions);
+	enum class ArrayDeclaratorContext : uint8_t { Ordinary, AliasTemplate };
+	ParseResult parseArrayDeclaratorSuffix(TypeSpecifierNode& type_spec, std::vector<ASTNode>* array_bound_expressions,
+		ArrayDeclaratorContext declarator_context);
 	void addConstantArrayDimensionsToTypeSpec(TypeSpecifierNode& type_spec, std::span<const ASTNode> dimension_exprs); // Constant-fold parsed "[expr]" bounds and apply all of them to the type-spec when every bound resolves
 	void consume_type_id_abstract_declarators(TypeSpecifierNode& type_spec); // Consume abstract-declarators on a type-id
 	void consume_type_id_abstract_declarators(
