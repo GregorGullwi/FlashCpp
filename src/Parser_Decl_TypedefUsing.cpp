@@ -2496,39 +2496,10 @@ ParseResult Parser::parse_typedef_declaration() {
 		// (or potentially attribute specifiers, which we'll skip in the semicolon check)
 	}
 
-	// Check for array typedef: typedef type name[size];
-	// This creates a type alias for an array type
 	if (peek() == "["_tok) {
-		// Parse array dimensions
-		while (peek() == "["_tok) {
-			advance(); // consume '['
-
-			// Parse the array size expression
-			ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-			if (size_result.is_error()) {
-				return size_result;
-			}
-
-			// Try to evaluate the array size using constexpr evaluator
-			size_t array_size = 0;
-			if (size_result.node().has_value()) {
-				ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
-				auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), ctx);
-				if (eval_result.success() && eval_result.as_int() > 0) {
-					array_size = static_cast<size_t>(eval_result.as_int());
-				}
-			}
-
-			// Add array dimension to the type specifier
-			type_spec.add_array_dimension(array_size);
-
-			// Expect closing ']'
-			if (!consume("]"_tok)) {
-				return ParseResult::error("Expected ']' after array size in typedef", current_token_);
-			}
+		if (ParseResult array_result = parseArrayDeclaratorSuffix(type_spec, nullptr); array_result.is_error()) {
+			return array_result;
 		}
-
-		// Update type_node with the array type
 		type_node = emplace_node<TypeSpecifierNode>(type_spec);
 	}
 
