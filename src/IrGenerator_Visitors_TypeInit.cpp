@@ -5,6 +5,7 @@
 #include "CallNodeHelpers.h"
 #include "ReachableStructWalker.h"
 #include "RebindStaticMemberAst.h"
+#include "StructInfoSet.h"
 #include "SemanticAnalysis.h"
 
 [[noreturn]] static void throwTooManyInitializers(CompileContext& context, std::string_view message) {
@@ -2151,16 +2152,15 @@ void AstToIr::generateStaticMemberDeclarations() {
 
 					// Use a queue to traverse the inheritance hierarchy
 					std::queue<const StructTypeInfo*> to_visit;
-					std::unordered_set<const StructTypeInfo*> visited;
+					StructInfoSet visited;
 					to_visit.push(base_info);
 
 					while (!to_visit.empty()) {
 						const StructTypeInfo* current = to_visit.front();
 						to_visit.pop();
 
-						if (visited.count(current))
+						if (!visited.insert(current))
 							continue;
-						visited.insert(current);
 
 						// Add all static members from current struct
 						for (const auto& static_member : current->static_members) {

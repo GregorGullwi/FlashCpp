@@ -20,6 +20,7 @@
 #include "StringBuilder.h"
 #include "NameMangling.h"
 #include "NamespaceRegistry.h"
+#include "StructInfoSet.h"
 #include "TemplateExpressionEquivalence.h"
 #include "TemplateEnvironment.h"
 #include "Log.h"
@@ -3035,11 +3036,11 @@ const StructTypeInfo* getBaseStructInfo(const BaseClassSpecifier& base) {
 	return nullptr;
 }
 
-bool isEmptyLayoutLikeRecursive(const StructTypeInfo* struct_info, std::set<const StructTypeInfo*>& visited) {
+bool isEmptyLayoutLikeRecursive(const StructTypeInfo* struct_info, StructInfoSet& visited) {
 	if (!struct_info) {
 		return false;
 	}
-	if (!visited.insert(struct_info).second) {
+	if (!visited.insert(struct_info)) {
 		return true;
 	}
 	if (struct_info->is_union || struct_info->has_vtable || !struct_info->members.empty()) {
@@ -3055,8 +3056,8 @@ bool isEmptyLayoutLikeRecursive(const StructTypeInfo* struct_info, std::set<cons
 
 void collectLeadingEmptySubobjectTypesRecursive(const StructTypeInfo* struct_info,
 												std::unordered_set<TypeIndex>& types,
-												std::set<const StructTypeInfo*>& visited) {
-	if (!struct_info || !visited.insert(struct_info).second || !struct_info->isEmptyLayoutLike()) {
+												StructInfoSet& visited) {
+	if (!struct_info || !visited.insert(struct_info) || !struct_info->isEmptyLayoutLike()) {
 		return;
 	}
 	if (struct_info->own_type_index_.has_value()) {
@@ -3081,7 +3082,7 @@ void collectLeadingEmptySubobjectTypesRecursive(const StructTypeInfo* struct_inf
 
 std::unordered_set<TypeIndex> collectLeadingEmptySubobjectTypes(const StructTypeInfo* struct_info) {
 	std::unordered_set<TypeIndex> result;
-	std::set<const StructTypeInfo*> visited;
+	StructInfoSet visited;
 	collectLeadingEmptySubobjectTypesRecursive(struct_info, result, visited);
 	return result;
 }
@@ -3144,8 +3145,8 @@ struct LayoutBaseCollections {
 	bool primary_non_virtual_base_has_runtime_pointer = false;
 };
 
-bool hasReachableVirtualBase(const StructTypeInfo* struct_info, std::set<const StructTypeInfo*>& visited) {
-	if (!struct_info || !visited.insert(struct_info).second) {
+bool hasReachableVirtualBase(const StructTypeInfo* struct_info, StructInfoSet& visited) {
+	if (!struct_info || !visited.insert(struct_info)) {
 		return false;
 	}
 
@@ -3163,7 +3164,7 @@ bool hasReachableVirtualBase(const StructTypeInfo* struct_info, std::set<const S
 }
 
 bool hasReachableVirtualBase(const StructTypeInfo& struct_info) {
-	std::set<const StructTypeInfo*> visited;
+	StructInfoSet visited;
 	return hasReachableVirtualBase(&struct_info, visited);
 }
 
@@ -3492,7 +3493,7 @@ bool StructTypeInfo::finalizeWithBases() {
 }
 
 bool StructTypeInfo::isEmptyLayoutLike() const {
-	std::set<const StructTypeInfo*> visited;
+	StructInfoSet visited;
 	return isEmptyLayoutLikeRecursive(this, visited);
 }
 
