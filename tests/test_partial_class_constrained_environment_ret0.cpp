@@ -1,7 +1,5 @@
-// Top-level concept-constrained partials still use the synthesized-name fallback
-// because class-pattern canonical import does not publish constrained parameter
-// environments yet. The fallback must keep their deleted constructor schemas
-// separate and select the constrained partial.
+// Top-level concept-constrained partials publish canonical environments. The
+// selected partial must supply its own deleted constructor schema.
 
 template <class T>
 concept Always = true;
