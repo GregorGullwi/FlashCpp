@@ -876,10 +876,11 @@ synthesized `$pattern` spelling may remain for diagnostics and debugging, but it
 is not identity; a per-declaration ordinal that only makes the spelling unique
 is a temporary bridge and cannot satisfy the parse-order and string-table-order
 exit criteria below. The environment must also include the declaration's pack
-expansion structure and normalized constraint identity: pack markers and
-constraints participate in partial-specialization identity but are absent from
-the normalized argument pattern, so argument-only environments cannot separate
-pack-expanded, scalar, or concept-constrained declarations.
+expansion structure, requires-clause identity, and normalized parameter
+constraints: those participate in partial-specialization identity but are absent
+from the normalized argument pattern, so argument-only environments cannot
+separate pack-expanded, scalar, requires-constrained, or concept-constrained
+declarations.
 
 The consumer side stays outside 3A. Keying registries, specialization and
 instantiation caches, and facade lookups by `TemplateDeclId` belongs to

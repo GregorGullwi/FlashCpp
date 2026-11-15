@@ -13,10 +13,11 @@
 namespace {
 
 // Canonical pattern TypeIds describe argument types but omit pack expansion
-// markers and parameter concept constraints. Give each declaration a stable
-// structural identity so valid partials that normalize to the same argument
-// pattern do not share one parameter environment.
-void appendConstraintArgumentIdentity(
+// markers, requires-clauses, and parameter concept constraints. Give each
+// declaration a stable structural identity so valid partials that normalize to
+// the same argument pattern do not share one parameter environment. A shape
+// that cannot be identified fails closed instead of publishing a partial key.
+bool appendConstraintArgumentIdentity(
 	StringBuilder& identity,
 	const ASTNode& argument,
 	std::span<const TemplateParameterNode> parameters) {
@@ -44,32 +45,34 @@ void appendConstraintArgumentIdentity(
 			}
 		}
 		identity.append("|").append(type.getReadableString());
-		return;
+		return true;
 	}
 	if (const IdentifierNode* identifier = tryGetIdentifier(argument)) {
 		for (size_t index = 0; index < parameters.size(); ++index) {
 			if (parameters[index].name() == identifier->name()) {
 				identity.append("param").append(static_cast<int64_t>(index));
-				return;
+				return true;
 			}
 		}
 		identity.append(identifier->name());
-		return;
+		return true;
 	}
 	if (const QualifiedIdentifierNode* qualified = tryGetNode<QualifiedIdentifierNode>(argument)) {
 		identity.append(qualified->name());
-		return;
+		return true;
 	}
 	try {
 		identity.append(static_cast<int64_t>(FlashCpp::hashDependentExpressionIdentity(argument)));
+		return true;
 	} catch (const InternalError&) {
-		identity.append("?");
+		return false;
 	}
 }
 
-StringHandle partialPatternDeclarationIdentity(
+std::optional<StringHandle> partialPatternDeclarationIdentity(
 	std::span<const TemplateParameterNode> parameters,
-	std::span<const TemplateTypeArg> arguments) {
+	std::span<const TemplateTypeArg> arguments,
+	const ASTNode* requires_clause) {
 	bool has_constraint = false;
 	for (const TemplateParameterNode& parameter : parameters) {
 		if (parameter.has_concept_constraint()) {
@@ -84,7 +87,7 @@ StringHandle partialPatternDeclarationIdentity(
 			break;
 		}
 	}
-	if (!has_constraint && !has_pack_argument) {
+	if (!has_constraint && !has_pack_argument && requires_clause == nullptr) {
 		return StringHandle{};
 	}
 	StringBuilder identity;
@@ -101,7 +104,10 @@ StringHandle partialPatternDeclarationIdentity(
 		}
 		identity.append("C:").append(parameter.concept_constraint()).append("(");
 		for (const ASTNode& argument : parameter.concept_args()) {
-			appendConstraintArgumentIdentity(identity, argument, parameters);
+			if (!appendConstraintArgumentIdentity(identity, argument, parameters)) {
+				identity.reset();
+				return std::nullopt;
+			}
 			identity.append(",");
 		}
 		identity.append(");");
@@ -109,6 +115,19 @@ StringHandle partialPatternDeclarationIdentity(
 	identity.append("A").append(static_cast<int64_t>(arguments.size())).append(";");
 	for (const TemplateTypeArg& argument : arguments) {
 		identity.append(argument.is_pack ? "P;" : "S;");
+	}
+	if (requires_clause != nullptr) {
+		if (!requires_clause->is<RequiresClauseNode>()) {
+			identity.reset();
+			return std::nullopt;
+		}
+		const ASTNode& constraint_expr = requires_clause->as<RequiresClauseNode>().constraint_expr();
+		try {
+			identity.append("R").append(static_cast<int64_t>(FlashCpp::hashDependentExpressionIdentity(constraint_expr))).append(";");
+		} catch (const InternalError&) {
+			identity.reset();
+			return std::nullopt;
+		}
 	}
 	return StringTable::getOrInternStringHandle(identity);
 }
@@ -3631,15 +3650,16 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			const TemplateClassDeclarationNode& primary = class_template_opt->as<TemplateClassDeclarationNode>();
 			const std::span<const TemplateParameterNode> pattern_template_params(template_param_nodes.data(), template_param_nodes.size());
 			const std::span<const TemplateTypeArg> pattern_arguments(pattern_args.data(), pattern_args.size());
-			const StringHandle declaration_identity = partialPatternDeclarationIdentity(pattern_template_params, pattern_arguments);
-			if (!requires_clause.has_value() && (partial_scope == ScopeType::Global || partial_scope == ScopeType::Namespace)) {
+			const std::optional<StringHandle> declaration_identity = partialPatternDeclarationIdentity(
+				pattern_template_params, pattern_arguments, requires_clause.has_value() ? &*requires_clause : nullptr);
+			if (declaration_identity.has_value() && (partial_scope == ScopeType::Global || partial_scope == ScopeType::Namespace)) {
 				FrontendContext& front_end = requireFrontendContext();
 				const std::optional<TypeId> pattern = tryImportCanonicalPartialClassPattern(front_end, primary.template_decl_id(),
 					pattern_template_params, pattern_arguments, pattern_arg_syntax_nodes,
 					kCanonicalPartialPatternNone);
 				if (pattern.has_value()) {
 					const TemplateDeclId environment = front_end.templateDecls().publishClassPartialEnvironment(
-						primary.template_decl_id(), *pattern, declaration_identity);
+						primary.template_decl_id(), *pattern, *declaration_identity);
 					struct_ref.set_partial_specialization_environment(environment);
 					active_template_decl_id_ = environment;
 					pattern_environment = environment;
@@ -6298,15 +6318,16 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		const TemplateClassDeclarationNode& partial_primary = class_template_opt->as<TemplateClassDeclarationNode>();
 		const std::span<const TemplateParameterNode> pattern_template_params(template_param_nodes.data(), template_param_nodes.size());
 		const std::span<const TemplateTypeArg> pattern_arguments(pattern_args.data(), pattern_args.size());
-		const StringHandle declaration_identity = partialPatternDeclarationIdentity(pattern_template_params, pattern_arguments);
-		if (!requires_clause.has_value() && partial_primary.has_template_decl_id()) {
+		const std::optional<StringHandle> declaration_identity = partialPatternDeclarationIdentity(
+			pattern_template_params, pattern_arguments, requires_clause.has_value() ? &*requires_clause : nullptr);
+		if (declaration_identity.has_value() && partial_primary.has_template_decl_id()) {
 			FrontendContext& front_end = requireFrontendContext();
 			const std::optional<TypeId> pattern = tryImportCanonicalPartialClassPattern(front_end, partial_primary.template_decl_id(),
 				pattern_template_params, pattern_arguments, pattern_arg_syntax_nodes,
 				kCanonicalPartialPatternMember);
 			if (pattern.has_value()) {
 				const TemplateDeclId environment = front_end.templateDecls().publishClassPartialEnvironment(
-					partial_primary.template_decl_id(), *pattern, declaration_identity);
+					partial_primary.template_decl_id(), *pattern, *declaration_identity);
 				member_struct_ref.set_partial_specialization_environment(environment);
 				active_template_decl_id_ = environment;
 				partial_environment = environment;
