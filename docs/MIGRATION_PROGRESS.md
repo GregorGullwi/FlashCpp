@@ -248,14 +248,15 @@ are parsed and registered. The importer remains fail-closed for missing,
 mismatched, unpublished, or unresolved owner facts.
 
 Canonical pattern environments are the intended partial-pattern identity for the
-shapes 3A supports. Pattern `StructTypeInfo` records are registered by that
-environment plus the pattern declaration, because concept-constrained
-declarations can share one environment. Partial-specialization instantiation
-prefers that record; the synthesized name is only a fallback for patterns whose
-environment is not published. Synthesized `$pattern` names currently carry a
-per-declaration ordinal so colliding patterns do not share a type-table key; that
-is a temporary bridge, not semantic identity. Remaining work is to include
-constraint identity in the environment, extend environment coverage, key the
+shapes 3A supports. The environment includes pack expansion markers, a stable
+requires-clause identity, and a declaration identity for parameter concept
+constraints, so pack, scalar, and constrained declarations with identical
+normalized argument patterns get distinct environments. Pattern `StructTypeInfo` records are registered by that
+environment, and partial-specialization instantiation prefers that record; the
+synthesized name is only a fallback for patterns whose environment is not
+published. Synthesized `$pattern` names currently carry a per-declaration ordinal
+so colliding patterns do not share a type-table key; that is a temporary bridge,
+not semantic identity. Remaining work is to extend environment coverage, key the
 remaining pattern schemas by identity, and remove the name fallback.
 `TemplateDeclId`-keyed registries and facade lookups remain boundary 6.
 
@@ -430,18 +431,20 @@ remaining pattern schemas by identity, and remove the name fallback.
 
 4. **Finish keying partial-pattern artifacts by canonical identity.** Supported
    partial patterns now register their `StructTypeInfo` under the canonical
-   pattern environment plus the pattern declaration, and instantiation prefers
-   that record. The declaration component keeps concept-constrained partials
-   separate until constraint identity joins the environment. The synthesized
-   name remains a fallback for shapes 3A cannot publish. Add constraints to the
-   canonical environment, extend canonical pattern import coverage, key the
-   remaining member and constructor schemas by identity, and remove the fallback.
-   The per-declaration ordinal makes colliding pattern spellings unique as a
-   bridge, but it is not semantic identity and does not satisfy the parse-order
-   or string-table-order exit criteria. Moving the remaining registries,
-   specialization caches, and facade lookups to `TemplateDeclId` belongs to
-   boundary 6; deleting name-based partial-specialization replay and selection
-   belongs to boundary 8A.
+   pattern environment, which includes pack expansion markers, requires-clause
+   identity, and a declaration identity for parameter concept constraints.
+   Preview constraint arguments normalize parameter references by index and use
+   resolved `TypeInfo` names for record arguments, and instantiation prefers that
+   record. The synthesized name remains
+   a fallback for shapes 3A cannot publish. Move constraint argument identity onto
+   canonical `TypeId`s and normalized constraints, extend canonical pattern import
+   coverage, key the remaining member and constructor schemas by identity, and
+   remove the fallback. The per-declaration ordinal makes colliding pattern
+   spellings unique as a bridge, but it is not semantic identity and does not
+   satisfy the parse-order or string-table-order exit criteria. Moving the
+   remaining registries, specialization caches, and facade lookups to
+   `TemplateDeclId` belongs to boundary 6; deleting name-based
+   partial-specialization replay and selection belongs to boundary 8A.
 
 5. **Close and mutation-validate the 3A exit criteria.** Prove independence from
    parser/context stacks, parse order, and string-table insertion order; cover
