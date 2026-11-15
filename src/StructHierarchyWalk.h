@@ -166,3 +166,21 @@ StructWalkOutcome walkStructSubobjects(const StructTypeInfo* root, StructWalkOpt
 	}
 	return StructWalkOutcome::Completed;
 }
+
+// True when the record graph reachable through bases and struct members still
+// contains an unresolved (deferred) base edge, either directly or through a base
+// that itself has deferred bases. The walk stops at the first such node.
+inline bool structHasReachableDeferredSubobject(const StructTypeInfo& root) {
+	bool deferred = false;
+	const StructWalkOptions options{
+		StructWalkFlags::FollowMembers | StructWalkFlags::SkipInvalidChildren,
+		StructWalkOrder::MembersFirst};
+	walkStructSubobjects(&root, options, [&](const StructTypeInfo& current, StructWalkQueue&) {
+		if (current.has_deferred_base_classes || structHasDeferredBase(current)) {
+			deferred = true;
+			return StructWalkAction::Stop;
+		}
+		return StructWalkAction::Continue;
+	});
+	return deferred;
+}

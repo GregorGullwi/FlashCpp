@@ -659,7 +659,7 @@ public:
 
 	static EvalResult evaluate_member_function_call(const CallExprNode& call_expr, EvaluationContext& context);
 	static EvalResult evaluate_array_subscript(const ArraySubscriptNode& subscript, EvaluationContext& context);
-	static EvalResult evaluate_type_trait(const TypeTraitExprNode& trait_expr);
+	static EvalResult evaluate_type_trait(const TypeTraitExprNode& trait_expr, EvaluationContext& context);
 	static bool is_function_decl_noexcept(const FunctionDeclarationNode& func_decl, EvaluationContext& context);
 	// Whether evaluating `expr` can throw ([expr.unary.noexcept]). Public so the
 	// codegen `noexcept` lowering can delegate to this single authority.

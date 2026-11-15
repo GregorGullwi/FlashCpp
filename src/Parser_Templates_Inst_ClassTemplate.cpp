@@ -6100,6 +6100,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 				// Evaluate the substituted expression
 				ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
 				eval_ctx.struct_node = &instantiated_struct_ref;
+				eval_ctx.struct_info = struct_type_info.getStructInfo();
+				eval_ctx.struct_type_index = struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct);
 				populateDeferredStaticAssertEvalTemplateBindings(
 					eval_ctx,
 					buildTemplateEnvironment(effective_pattern_template_params, effective_pattern_template_args, nullptr),
@@ -14870,6 +14872,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 		// Evaluate the substituted expression
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
 		eval_ctx.struct_node = &instantiated_struct.as<StructDeclarationNode>();
+		eval_ctx.struct_info = struct_info_ptr;
+		eval_ctx.struct_type_index = self_type_index.withCategory(TypeCategory::Struct);
 		populateDeferredStaticAssertEvalTemplateBindings(
 			eval_ctx,
 			buildTemplateEnvironment(template_params, template_args_to_use, nullptr),

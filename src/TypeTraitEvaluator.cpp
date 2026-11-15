@@ -3440,12 +3440,18 @@ TypeTraitResult evaluateTypeTrait(
 	return TypeTraitResult{true, result};
 }
 
+static bool isDeferredSensitiveRecordTrait(TypeTraitKind kind);
+
 // Convenience overload that takes a TypeSpecifierNode directly
 // This extracts all the necessary fields and calls the main evaluateTypeTrait function
 TypeTraitResult evaluateTypeTrait(
 	TypeTraitKind kind,
 	const TypeSpecifierNode& type_spec,
 	const StructTypeInfo* struct_info) {
+	if (struct_info != nullptr && isDeferredSensitiveRecordTrait(kind) &&
+		structHasReachableDeferredSubobject(*struct_info)) {
+		return TypeTraitResult::failure();
+	}
 	if (const std::optional<TypeTraitResult> canonical_result =
 			tryEvaluateCanonicalStructuralTrait(kind, type_spec);
 		canonical_result.has_value()) {
@@ -3996,6 +4002,25 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalConstructibility(
 	return tryEvaluateCanonicalConstructibleFromArgs(kind, target, arguments);
 }
 
+static bool isDeferredSensitiveRecordTrait(TypeTraitKind kind) {
+	switch (kind) {
+	case TypeTraitKind::IsEmpty:
+	case TypeTraitKind::IsTriviallyCopyable:
+	case TypeTraitKind::IsTrivial:
+	case TypeTraitKind::IsPod:
+	case TypeTraitKind::IsConstructible:
+	case TypeTraitKind::IsTriviallyConstructible:
+	case TypeTraitKind::IsNothrowConstructible:
+	case TypeTraitKind::IsDestructible:
+	case TypeTraitKind::IsTriviallyDestructible:
+	case TypeTraitKind::IsNothrowDestructible:
+	case TypeTraitKind::HasTrivialDestructor:
+		return true;
+	default:
+		return false;
+	}
+}
+
 // Single constructibility authority shared by the folded/constexpr path, the
 // lazy constraint path, and code generation. `fallback` decides whether an
 // operand the canonical table cannot decide keeps an empty result (the lazy
@@ -4023,6 +4048,10 @@ std::optional<TypeTraitResult> evaluateConstructibility(
 			tryEvaluateCanonicalConstructibility(kind, target, arguments);
 		canonical.has_value()) {
 		return canonical;
+	}
+	if (fallback == ConstructibilityFallback::Sema && struct_info != nullptr &&
+		structHasReachableDeferredSubobject(*struct_info)) {
+		return std::nullopt;
 	}
 	if (fallback == ConstructibilityFallback::None) {
 		return std::nullopt;
@@ -4085,12 +4114,17 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 	if (isDependentTypeTraitOperand(raw_type_spec)) {
 		return TypeTraitResult::failure();
 	}
+	const TypeSpecifierNode type_spec = normalizeTypeTraitOperand(raw_type_spec);
+	const StructTypeInfo* struct_info = structInfoFromTypeIndex(type_spec.type_index());
+	if (struct_info != nullptr && isDeferredSensitiveRecordTrait(trait_expr.kind()) &&
+		structHasReachableDeferredSubobject(*struct_info)) {
+		return TypeTraitResult::failure();
+	}
 	if (const std::optional<TypeTraitResult> canonical_result =
 			tryEvaluateCanonicalStructuralTrait(trait_expr.kind(), raw_type_spec);
 		canonical_result.has_value()) {
 		return *canonical_result;
 	}
-	const TypeSpecifierNode type_spec = normalizeTypeTraitOperand(raw_type_spec);
 	if (trait_expr.is_variadic_trait()) {
 		std::vector<TypeSpecifierNode> additional_types;
 		additional_types.reserve(trait_expr.additional_type_nodes().size());
@@ -4109,7 +4143,7 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 		// compatibility answer for an operand the canonical table cannot decide.
 		const std::optional<TypeTraitResult> constructibility = evaluateConstructibility(
 			trait_expr.kind(), type_spec, additional_types, ConstructibilityFallback::Sema);
-		return constructibility.value_or(TypeTraitResult::success_false());
+		return constructibility.value_or(TypeTraitResult::failure());
 	}
 
 	if (trait_expr.has_second_type()) {
@@ -4145,6 +4179,5 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 		}
 	}
 
-	const StructTypeInfo* struct_info = structInfoFromTypeIndex(type_spec.type_index());
 	return evaluateTypeTrait(trait_expr.kind(), type_spec, struct_info);
 }
