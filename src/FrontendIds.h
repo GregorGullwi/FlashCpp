@@ -78,7 +78,9 @@ struct TypeId {
 namespace std {
 template <>
 struct hash<TypeId> {
-	size_t operator()(TypeId id) const noexcept { return std::hash<uint32_t>{}(id.value); }
+	size_t operator()(TypeId id) const noexcept {
+		return std::hash<uint32_t>{}(id.value);
+	}
 };
 }  // namespace std
 

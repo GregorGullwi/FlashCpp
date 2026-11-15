@@ -66,12 +66,17 @@ template <typename VisitFn>
 void visitStructHierarchyDepthFirst(
 	const StructTypeInfo* root_struct_info,
 	VisitFn&& visit) {
-	StructWalkOptions options{
-		StructWalkFlags::SkipInvalidChildren | StructWalkFlags::FollowDeferredBases,
-		StructWalkOrder::DeclarationPreOrder,
-	};
-	walkStructSubobjects(root_struct_info, options, [&](const StructTypeInfo& current_struct_info, StructWalkQueue&) {
-		return visit(current_struct_info) ? StructWalkAction::Continue : StructWalkAction::SkipSubtree;
+	const StructWalkOptions options{StructWalkFlags::ManualChildEdges, StructWalkOrder::MembersFirst};
+	walkStructSubobjects(root_struct_info, options, [&](const StructTypeInfo& current_struct_info, StructWalkQueue& queue) {
+		if (!visit(current_struct_info)) {
+			return StructWalkAction::SkipSubtree;
+		}
+		for (auto base_it = current_struct_info.base_classes.rbegin(); base_it != current_struct_info.base_classes.rend(); ++base_it) {
+			if (const StructTypeInfo* base_struct_info = tryGetStructTypeInfo(base_it->type_index)) {
+				queue.enqueue(base_struct_info);
+			}
+		}
+		return StructWalkAction::Continue;
 	});
 }
 
