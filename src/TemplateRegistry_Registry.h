@@ -1112,8 +1112,8 @@ public:
 	}
 
 	// Associates a partial-pattern type record with its canonical environment.
-	// The environment includes the pattern declaration's constraint identity, so
-	// it is unique even when argument patterns are identical.
+	// The environment includes the declaration's pack and constraint identity, so
+	// it is unique even when normalized argument patterns are identical.
 	void registerPartialPatternTypeInfo(TemplateDeclId environment, TypeInfo& type_info) {
 		if (!environment) {
 			return;
