@@ -1689,64 +1689,6 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 	}
 }
 
-void Parser::consume_array_type_id_modifiers(TypeSpecifierNode& type_spec) {
-	consume_array_type_id_modifiers(type_spec, nullptr);
-}
-
-void Parser::consume_array_type_id_modifiers(
-	TypeSpecifierNode& type_spec,
-	std::vector<ASTNode>* array_bound_expressions) {
-	if (!typeSpecCanHaveArrayAbstractDeclarator(type_spec)) {
-		return;
-	}
-	while (peek() == "["_tok) {
-		Token opening_bracket_token = peek_info();
-		advance();
-		if (peek() == "]"_tok) {
-			type_spec.set_array(true);
-			type_spec.set_unsized_outer_array_dimension(true);
-			advance();
-			continue;
-		}
-
-		ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-		if (size_result.is_error()) {
-			throw CompileError(size_result.error_message());
-		}
-
-		size_t dim_size = 0;
-		if (size_result.node().has_value()) {
-			if (array_bound_expressions != nullptr) {
-				array_bound_expressions->push_back(*size_result.node());
-			}
-			if (auto dim_val = try_evaluate_constant_expression(*size_result.node());
-				dim_val.has_value() && dim_val->value > 0) {
-				dim_size = static_cast<size_t>(dim_val->value);
-			}
-		}
-		type_spec.add_array_dimension(dim_size);
-		if (!consume("]"_tok)) {
-			SourceLocation opening_bracket_location = lexer_.getSourceLocation(opening_bracket_token);
-			SourceLocation unexpected_token_location = lexer_.getSourceLocation(peek_info());
-			DiagnosticEngine& diagnostics_engine = context_.diagnostics();
-			uint32_t bracket_diagnostic_index = diagnostics_engine.reportWithRange(
-				DiagnosticId::ExpectedCloseBracketAfterArraySize,
-				DiagnosticSeverity::Error,
-				unexpected_token_location,
-				SourceRange::fromLocations(opening_bracket_location, unexpected_token_location),
-				"Expected ']' after array size",
-				{});
-			diagnostics_engine.attachNote(
-				bracket_diagnostic_index,
-				DiagnosticId::NoteToMatchOpeningBracket,
-				opening_bracket_location,
-				"to match this '['",
-				{});
-			throw CompileError::fromStructuredDiagnostic(diagnostics_engine, bracket_diagnostic_index);
-		}
-	}
-}
-
 void Parser::consume_cast_type_id_postfix_modifiers(TypeSpecifierNode& type_spec) {
 	type_spec.add_cv_qualifier(parse_cv_qualifiers());
 	skip_noop_gnu_qualifiers();
@@ -1813,7 +1755,11 @@ void Parser::consume_type_id_abstract_declarators(
 		restore_token_position(group_start);
 	}
 	consume_pointer_ref_modifiers(type_spec);
-	consume_array_type_id_modifiers(type_spec, array_bound_expressions);
+	if (typeSpecCanHaveArrayAbstractDeclarator(type_spec)) {
+		if (ParseResult array_result = parseArrayDeclaratorSuffix(type_spec, array_bound_expressions); array_result.is_error()) {
+			throw CompileError(array_result.error_message());
+		}
+	}
 }
 
 void Parser::consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type) {

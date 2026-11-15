@@ -1611,55 +1611,21 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 		// The bound may be a concrete constant or a dependent expression (which
 		// stores extent 0 until substitution).
 		while (!has_structural_alias_declarator && peek() == "["_tok) {
-			Token opening_bracket_token = peek_info();
-			advance(); // consume '['
-			if (peek() == "]"_tok) {
-				type_spec.set_array(true);
-				alias_array_bound_expressions.emplace_back();
-				advance(); // consume ']'
-			} else {
-				auto dim_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-				if (dim_result.is_error()) {
-					return dim_result;
-				}
-				const auto dim_value = dim_result.node().has_value()
-					? try_evaluate_constant_expression(*dim_result.node())
-					: std::nullopt;
-				if (dim_value.has_value() && dim_value->value <= 0) {
-					return error(
-						DiagnosticId::AliasTemplateArrayBoundUnresolved,
-						opening_bracket_token,
-						"Alias template array bound must be a positive constant expression");
-				}
-				const size_t dim_size = dim_value.has_value()
-					? static_cast<size_t>(dim_value->value)
-					: 0;
-				alias_array_bound_expressions.push_back(*dim_result.node());
-				type_spec.add_array_dimension(dim_size);
-				if (!consume("]"_tok)) {
-					const SourceLocation opening_bracket_location =
-						lexer_.getSourceLocation(opening_bracket_token);
-					const SourceLocation unexpected_token_location =
-						lexer_.getSourceLocation(peek_info());
-					DiagnosticEngine& diagnostics_engine = context_.diagnostics();
-					const uint32_t bracket_diagnostic_index = diagnostics_engine.reportWithRange(
-						DiagnosticId::ExpectedCloseBracketAfterArraySize,
-						DiagnosticSeverity::Error,
-						unexpected_token_location,
-						SourceRange::fromLocations(opening_bracket_location, unexpected_token_location),
-						"Expected ']' after array size",
-						{});
-					diagnostics_engine.attachNote(
-						bracket_diagnostic_index,
-						DiagnosticId::NoteToMatchOpeningBracket,
-						opening_bracket_location,
-						"to match this '['",
-						{});
-					return ParseResult::error(
-						"Expected ']' after array dimension in alias template",
-						current_token_);
-				}
+			const Token opening_bracket_token = peek_info();
+			ParsedArrayBound bound;
+			if (ParseResult result = parseArrayDeclaratorBound(bound); result.is_error()) {
+				return result;
 			}
+			if (bound.kind == ArrayBoundKind::NonPositive) {
+				return error(DiagnosticId::AliasTemplateArrayBoundUnresolved, opening_bracket_token,
+					"Alias template array bound must be a positive constant expression");
+			}
+			if (bound.kind == ArrayBoundKind::Omitted) {
+				type_spec.set_array(true);
+			} else {
+				type_spec.add_array_dimension(bound.extent);
+			}
+			alias_array_bound_expressions.push_back(bound.expression);
 		}
 
 		// Function type target: template <class T> using Fn = int (T);

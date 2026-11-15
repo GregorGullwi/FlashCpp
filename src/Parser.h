@@ -4679,10 +4679,14 @@ private:	 // Resume private methods
 	ParseResult parse_constructor_exception_specifier(ConstructorDeclarationNode& constructor, std::span<const ASTNode> params);
 	void consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type);  // Consume *, &, && after conversion operator target type
 	void consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec);  // Consume trailing *, &, && and apply to type specifier
-	void consume_array_type_id_modifiers(TypeSpecifierNode& type_spec); // Consume trailing [N] / [] abstract-declarators on a type-id
-	void consume_array_type_id_modifiers(
-		TypeSpecifierNode& type_spec,
-		std::vector<ASTNode>* array_bound_expressions);
+	enum class ArrayBoundKind : uint8_t { Omitted, Unresolved, NonPositive, Constant };
+	struct ParsedArrayBound {
+		ASTNode expression;
+		size_t extent = 0;
+		ArrayBoundKind kind = ArrayBoundKind::Omitted;
+	};
+	ParseResult parseArrayDeclaratorBound(ParsedArrayBound& bound);
+	ParseResult parseArrayDeclaratorSuffix(TypeSpecifierNode& type_spec, std::vector<ASTNode>* array_bound_expressions);
 	void addConstantArrayDimensionsToTypeSpec(TypeSpecifierNode& type_spec, std::span<const ASTNode> dimension_exprs); // Constant-fold parsed "[expr]" bounds and apply all of them to the type-spec when every bound resolves
 	void consume_type_id_abstract_declarators(TypeSpecifierNode& type_spec); // Consume abstract-declarators on a type-id
 	void consume_type_id_abstract_declarators(

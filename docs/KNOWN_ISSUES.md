@@ -240,9 +240,10 @@ still depends on its own template parameters cannot seed a candidate.
 Reversed subscripting such as `index()[object()]` needs to preserve evaluation
 of the left operand before the right operand when normalizing the operands.
 
-Array aliases composed from another array alias can reverse the extents of a
-conversion return type. For example, `using Row = short[3]; using Grid = Row[2];`
-must retain the same dimension order as `using Grid = short[2][3];`.
+Dependent array bounds in composed aliases still need work in template
+instantiation. For example, `using Row = short[3];` followed by
+`template<int N> using Grid = Row[N];` must preserve the inner extent of 3
+after substituting the outer extent.
 
 ## Remaining flat trait consumers
 

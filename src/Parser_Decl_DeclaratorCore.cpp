@@ -1149,6 +1149,81 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, Referenc
 	return ParseResult::success(binding_node);
 }
 
+ParseResult Parser::parseArrayDeclaratorBound(ParsedArrayBound& bound) {
+	const Token opening_bracket_token = peek_info();
+	advance(); // consume '['
+	if (consume("]"_tok)) {
+		bound = {};
+		return ParseResult::success();
+	}
+
+	ParseResult expression = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+	if (expression.is_error()) {
+		return expression;
+	}
+	const auto node = expression.node();
+	if (!node || !node->has_value()) {
+		return ParseResult::error("Expected an array bound expression", peek_info());
+	}
+	if (!consume("]"_tok)) {
+		const SourceLocation opening = lexer_.getSourceLocation(opening_bracket_token);
+		const SourceLocation unexpected = lexer_.getSourceLocation(peek_info());
+		DiagnosticEngine& diagnostics = context_.diagnostics();
+		const uint32_t diagnostic = diagnostics.reportWithRange(DiagnosticId::ExpectedCloseBracketAfterArraySize, DiagnosticSeverity::Error,
+			unexpected, SourceRange::fromLocations(opening, unexpected), "Expected ']' after array size", {});
+		diagnostics.attachNote(diagnostic, DiagnosticId::NoteToMatchOpeningBracket, opening, "to match this '['", {});
+		throw CompileError::fromStructuredDiagnostic(diagnostics, diagnostic);
+	}
+
+	bound = {*node, 0, ArrayBoundKind::Unresolved};
+	if (const auto value = try_evaluate_constant_expression(*node)) {
+		if (value->value > 0) {
+			bound.kind = ArrayBoundKind::Constant;
+			bound.extent = static_cast<size_t>(value->value);
+		} else {
+			bound.kind = ArrayBoundKind::NonPositive;
+		}
+	}
+	return ParseResult::success();
+}
+
+ParseResult Parser::parseArrayDeclaratorSuffix(TypeSpecifierNode& type_spec, std::vector<ASTNode>* array_bound_expressions) {
+	std::vector<size_t> dimensions;
+	while (peek() == "["_tok) {
+		ParsedArrayBound bound;
+		if (ParseResult result = parseArrayDeclaratorBound(bound); result.is_error()) {
+			return result;
+		}
+		if (bound.kind == ArrayBoundKind::Omitted) {
+			dimensions.clear();
+			type_spec.set_array(true);
+			type_spec.set_unsized_outer_array_dimension(true);
+			continue;
+		}
+		if (array_bound_expressions != nullptr) {
+			array_bound_expressions->push_back(bound.expression);
+		}
+		dimensions.push_back(bound.extent);
+	}
+	if (dimensions.empty()) {
+		return ParseResult::success();
+	}
+	// [dcl.array]: The suffix wraps the type already denoted by the specifier.
+	if (type_spec.has_ordered_declarator() || type_spec.has_pointee_array_declarator()) {
+		std::vector<DeclaratorComponent> components;
+		for (const size_t extent : dimensions) {
+			components.push_back(DeclaratorComponent::array(extent));
+		}
+		appendDeclaratorShapeForSubstitution(type_spec, components);
+		type_spec.set_ordered_declarator(std::move(components));
+	} else {
+		const auto inner_dimensions = type_spec.array_dimensions();
+		dimensions.insert(dimensions.end(), inner_dimensions.begin(), inner_dimensions.end());
+		type_spec.set_array_dimensions(dimensions);
+	}
+	return ParseResult::success();
+}
+
 // Constant-folds parsed "[expr]" array bounds and applies them to a
 // type-specifier ([dcl.array]/1).  The bounds are applied only when every
 // expression folds to a positive constant, so a dependent bound never leaves a
@@ -1490,57 +1565,26 @@ ParseResult Parser::parse_declarator(
 					}
 
 					while (peek() == "["_tok) {
-						const Token opening_bracket_token = peek_info();
-						advance();
-						if (peek() == "]"_tok) {
-							frame.suffixes.push_back(
-								DeclaratorComponent::unknownBoundArray());
-							frame.suffix_array_bound_expressions.emplace_back();
-							advance();
-							continue;
-						}
-						ParseResult bound =
-								parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-						if (bound.is_error() || !bound.node().has_value()) {
+						ParsedArrayBound bound;
+						if (parseArrayDeclaratorBound(bound).is_error()) {
 							failed = true;
 							break;
 						}
-						const auto value = try_evaluate_constant_expression(*bound.node());
-						const bool has_concrete_bound =
-							value.has_value() && value->value > 0;
+						if (bound.kind == ArrayBoundKind::Omitted) {
+							frame.suffixes.push_back(DeclaratorComponent::unknownBoundArray());
+							frame.suffix_array_bound_expressions.emplace_back();
+							continue;
+						}
 						// A dependent bound is retained as an unevaluated dimension
 						// (payload 0) whenever a template context can substitute it
 						// later, including a named declarator whose owner provides the
 						// bound expressions rather than the alias/type-id out-param.
-						if (!has_concrete_bound && !isDependentTemplateContext()) {
+						if (bound.kind != ArrayBoundKind::Constant && !isDependentTemplateContext()) {
 							failed = true;
 							break;
 						}
-						frame.suffixes.push_back(has_concrete_bound
-							? DeclaratorComponent::array(static_cast<size_t>(value->value))
-							: DeclaratorComponent::array(0));
-						frame.suffix_array_bound_expressions.push_back(*bound.node());
-						if (!consume("]"_tok)) {
-							// [dcl.array]/1: a bound must be closed by ']'. Report the
-							// same diagnostic and opening-bracket note the flat path did.
-							const SourceLocation opening_bracket_location = lexer_.getSourceLocation(opening_bracket_token);
-							const SourceLocation unexpected_token_location = lexer_.getSourceLocation(peek_info());
-							DiagnosticEngine& diagnostics_engine = context_.diagnostics();
-							const uint32_t bracket_diagnostic_index = diagnostics_engine.reportWithRange(
-								DiagnosticId::ExpectedCloseBracketAfterArraySize,
-								DiagnosticSeverity::Error,
-								unexpected_token_location,
-								SourceRange::fromLocations(opening_bracket_location, unexpected_token_location),
-								"Expected ']' after array size",
-								{});
-							diagnostics_engine.attachNote(
-								bracket_diagnostic_index,
-								DiagnosticId::NoteToMatchOpeningBracket,
-								opening_bracket_location,
-								"to match this '['",
-								{});
-							throw CompileError::fromStructuredDiagnostic(diagnostics_engine, bracket_diagnostic_index);
-						}
+						frame.suffixes.push_back(DeclaratorComponent::array(bound.extent));
+						frame.suffix_array_bound_expressions.push_back(bound.expression);
 					}
 					if (failed) {
 						break;
