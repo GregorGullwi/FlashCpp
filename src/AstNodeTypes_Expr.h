@@ -242,17 +242,28 @@ private:
 
 class ArraySubscriptNode {
 public:
-	explicit ArraySubscriptNode(ASTNode array_expr, ASTNode index_expr, Token bracket_token)
-		: array_expr_(array_expr), index_expr_(index_expr), bracket_token_(bracket_token) {}
+	enum class OperandOrder : uint8_t { ArrayFirst, IndexFirst };
 
-	const ASTNode& array_expr() const { return array_expr_; }
-	const ASTNode& index_expr() const { return index_expr_; }
+	explicit ArraySubscriptNode(ASTNode left_expr, ASTNode right_expr, Token bracket_token)
+		: left_expr_(left_expr), right_expr_(right_expr), bracket_token_(bracket_token) {}
+
+	const ASTNode& left_expr() const { return left_expr_; }
+	const ASTNode& right_expr() const { return right_expr_; }
+	const ASTNode& array_expr() const { return operand_order_ == OperandOrder::ArrayFirst ? left_expr_ : right_expr_; }
+	const ASTNode& index_expr() const { return operand_order_ == OperandOrder::ArrayFirst ? right_expr_ : left_expr_; }
 	const Token& bracket_token() const { return bracket_token_; }
+	OperandOrder operandOrder() const { return operand_order_; }
+
+	void setOperandOrder(OperandOrder order) {
+		operand_order_ = order;
+	}
 
 private:
-	ASTNode array_expr_;
-	ASTNode index_expr_;
+	// [expr.sub] sequences the postfix expression before the bracket operand.
+	ASTNode left_expr_;
+	ASTNode right_expr_;
 	Token bracket_token_;
+	OperandOrder operand_order_ = OperandOrder::ArrayFirst;
 };
 
 // sizeof operator node - can take either a type or an expression

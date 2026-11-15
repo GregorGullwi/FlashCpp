@@ -296,6 +296,7 @@ public:
 	TypeSpecifierQueryResult analyzeExpressionTypeQuery(const ASTNode& node);
 	std::optional<TypeSpecifierNode> getExpressionType(const ASTNode& node) const;
 	std::optional<size_t> getExpressionSizeBytes(const ASTNode& node) const;
+	std::optional<size_t> getTypeSizeBytes(CanonicalTypeId type_id) const;
 	std::optional<TypeSpecifierNode> getTernaryResultType(const TernaryOperatorNode& ternary_node) const;
 	// Public bridge for codegen/helper paths that need the same canonical type
 	// identity as sema while keeping the primary canonicalizeType helper private.

@@ -6356,20 +6356,23 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 					throw InternalError("Array subscript query remained NotYetAnalyzed after tryResolveSubscriptOperator");
 				}
 				if (!op_subscript_query.hasValue()) {
-					normalizeExpression(e.array_expr(), ctx);
-					normalizeExpression(e.index_expr(), ctx);
+					normalizeExpression(e.left_expr(), ctx);
+					normalizeExpression(e.right_expr(), ctx);
 					normalizeBuiltinSubscriptOperands(e, ctx.flags);
+					if (const CanonicalTypeId element_type = inferExpressionType(node)) {
+						annotateExpressionTypeSlot(node, element_type, inferExpressionValueCategory(node));
+					}
 				} else {
 					const FunctionDeclarationNode* op = op_subscript_query.function;
 					const auto& params = op->parameter_nodes();
 					if (!params.empty() && params[0].is<DeclarationNode>()) {
 						const ASTNode param_type_node = params[0].as<DeclarationNode>().type_node();
 						if (param_type_node.has_value() && param_type_node.is<TypeSpecifierNode>()) {
-							tryAnnotateSingleArgConversion(e.index_expr(), param_type_node.as<TypeSpecifierNode>(), " in subscript operator argument");
+							tryAnnotateSingleArgConversion(e.right_expr(), param_type_node.as<TypeSpecifierNode>(), " in subscript operator argument");
 						}
 					}
-					normalizeExpression(e.array_expr(), ctx);
-					normalizeExpression(e.index_expr(), ctx);
+					normalizeExpression(e.left_expr(), ctx);
+					normalizeExpression(e.right_expr(), ctx);
 				}
 			} else if constexpr (std::is_same_v<T, SizeofExprNode> || std::is_same_v<T, AlignofExprNode>) {
 				if (!e.is_type()) {
@@ -7131,18 +7134,19 @@ std::optional<size_t> SemanticAnalysis::getExpressionSizeBytes(const ASTNode& no
 	if (!node.is<ExpressionNode>()) {
 		return std::nullopt;
 	}
-	const void* key = getExpressionKey(node);
-	const auto slot = getSlot(key);
-	if (!slot.has_value() || !slot->has_type()) {
+	const auto slot = getSlot(getExpressionKey(node));
+	return slot ? getTypeSizeBytes(slot->type_id) : std::nullopt;
+}
+
+std::optional<size_t> SemanticAnalysis::getTypeSizeBytes(CanonicalTypeId type_id) const {
+	if (!type_id) {
 		return std::nullopt;
 	}
-	const CanonicalTypeDesc& desc = type_context_.get(slot->type_id);
+	const CanonicalTypeDesc& desc = type_context_.get(type_id);
 	if (!desc.structural_type_id) {
 		return std::nullopt;
 	}
-	return tryGetCanonicalObjectSizeBytes(
-		requireFrontendContext().canonicalTypes(),
-		desc.structural_type_id);
+	return tryGetCanonicalObjectSizeBytes(requireFrontendContext().canonicalTypes(), desc.structural_type_id);
 }
 
 TypeSpecifierQueryResult SemanticAnalysis::getExpressionTypeQuery(const ASTNode& node) const {
@@ -7355,13 +7359,13 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 			if (const auto slot = getSlot(&inner); slot.has_value() && slot->has_type()) {
 				return slot->value_category;
 			}
-			const CanonicalTypeId first_type_id = inferExpressionType(inner.array_expr());
-			const CanonicalTypeId second_type_id = inferExpressionType(inner.index_expr());
+			const CanonicalTypeId first_type_id = inferExpressionType(inner.left_expr());
+			const CanonicalTypeId second_type_id = inferExpressionType(inner.right_expr());
 			if (first_type_id && second_type_id) {
 				CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
 				const bool reversed = isCanonicalSubscriptIndex(table, type_context_.get(first_type_id));
 				const auto& array_desc = type_context_.get(reversed ? second_type_id : first_type_id);
-				const ASTNode& array_operand = reversed ? inner.index_expr() : inner.array_expr();
+				const ASTNode& array_operand = reversed ? inner.right_expr() : inner.left_expr();
 				if (array_desc.structural_type_id && nodeUnderQualifiersAndReferences(table, array_desc.structural_type_id).kind == CanonicalTypeKind::Array &&
 					inferExpressionValueCategory(array_operand) != ValueCategory::LValue) {
 					return ValueCategory::XValue;
@@ -9683,8 +9687,8 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpSubscript(const Ar
 }
 
 void SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& subscript_node, SemanticContextFlags context_flags) {
-	const CanonicalTypeId first_operand_type_id = inferExpressionType(subscript_node.array_expr());
-	const CanonicalTypeId second_operand_type_id = inferExpressionType(subscript_node.index_expr());
+	const CanonicalTypeId first_operand_type_id = inferExpressionType(subscript_node.left_expr());
+	const CanonicalTypeId second_operand_type_id = inferExpressionType(subscript_node.right_expr());
 	if (!first_operand_type_id || !second_operand_type_id) {
 		return;
 	}
@@ -9696,7 +9700,7 @@ void SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& sub
 	}
 	const CanonicalTypeId array_type_id = reversed ? second_operand_type_id : first_operand_type_id;
 	const CanonicalTypeDesc& array_desc = type_context_.get(array_type_id);
-	const ASTNode& array_operand = reversed ? subscript_node.index_expr() : subscript_node.array_expr();
+	const ASTNode& array_operand = reversed ? subscript_node.right_expr() : subscript_node.left_expr();
 	const bool is_array_or_pointer = isCanonicalArrayOrPointer(canonical_types, array_desc.structural_type_id) ||
 		!array_desc.array_dimensions.empty() || !array_desc.pointer_levels.empty();
 	if (!is_array_or_pointer) {
@@ -9723,9 +9727,8 @@ void SemanticAnalysis::normalizeBuiltinSubscriptOperands(ArraySubscriptNode& sub
 			setSlot(&subscript_node, {element_type_id, {}, returns_array_xvalue ? ValueCategory::XValue : ValueCategory::LValue});
 		}
 	}
-	if (reversed) {
-		subscript_node = ArraySubscriptNode(subscript_node.index_expr(), subscript_node.array_expr(), subscript_node.bracket_token());
-	}
+	using OperandOrder = ArraySubscriptNode::OperandOrder;
+	subscript_node.setOperandOrder(reversed ? OperandOrder::IndexFirst : OperandOrder::ArrayFirst);
 }
 
 const ConstructorDeclarationNode* SemanticAnalysis::getSelectedInitializerConstructor(const void* key) const {
@@ -10256,12 +10259,9 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
 					return {};
 				}
-				// Built-in subscript: after normalization, array_expr() always holds the
-				// pointer/array operand. If called before normalization (e.g. from a parent
-				// expression's annotation handler), detect the reversed case inline without
-				// mutating the AST — simply pick the array/pointer operand from either slot.
-				const CanonicalTypeId first_type_id = inferExpressionType(e.array_expr());
-				const CanonicalTypeId second_type_id = inferExpressionType(e.index_expr());
+				// Only the operand roles determine the built-in result type.
+				const CanonicalTypeId first_type_id = inferExpressionType(e.left_expr());
+				const CanonicalTypeId second_type_id = inferExpressionType(e.right_expr());
 				if (!first_type_id || !second_type_id)
 					return {};
 				const auto& first_desc = type_context_.get(first_type_id);
@@ -10272,7 +10272,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (const auto subscript_slot = getSlot(&e); subscript_slot.has_value() && subscript_slot->has_type()) {
 					return subscript_slot->type_id;
 				}
-				const ASTNode& array_operand = first_is_index ? e.index_expr() : e.array_expr();
+				const ASTNode& array_operand = first_is_index ? e.right_expr() : e.left_expr();
 				if (array_desc.category() == TypeCategory::Struct && array_desc.pointer_levels.empty() && array_desc.array_dimensions.empty() &&
 					!isCanonicalArrayOrPointer(canonical_types, array_desc.structural_type_id)) {
 					const auto conversion = selectBuiltinSubscriptConversion(array_desc, inferExpressionValueCategory(array_operand),
@@ -10320,16 +10320,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						return {};
 					}
 					if (found_element_type) {
-						CanonicalTypeDesc element_desc = array_desc;
-						// The element carries the canonical node identity, not a flat
-						// projection, so drop the projection marker before interning.
-						element_desc.flags = clearFlag(element_desc.flags, CanonicalTypeFlags::PublishedPointerArray);
-						element_desc.structural_type_id = element_type_id;
-						element_desc.pointer_levels.clear();
-						element_desc.array_dimensions.clear();
-						element_desc.pointee_array_declarator = false;
-						element_desc.ref_qualifier = ReferenceQualifier::None;
-						return type_context_.intern(element_desc);
+						return type_context_.intern(adoptPublishedStructuralType(array_desc, element_type_id));
 					}
 					return {};
 				}
@@ -14087,7 +14078,7 @@ void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& sub
 	op_subscript_table_.erase(&subscript_node);
 
 	// Determine whether the array expression has struct type (no pointer, no array dims).
-	const CanonicalTypeId object_type_id = inferExpressionType(subscript_node.array_expr());
+	const CanonicalTypeId object_type_id = inferExpressionType(subscript_node.left_expr());
 	if (!object_type_id)
 		return;
 
@@ -14113,7 +14104,7 @@ void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& sub
 		return;
 
 	const std::optional<TypeSpecifierNode> receiver_arg_type =
-		getOverloadResolutionArgType(subscript_node.array_expr());
+		getOverloadResolutionArgType(subscript_node.left_expr());
 	const bool receiver_is_const =
 		receiver_arg_type.has_value() && receiver_arg_type->is_const();
 	OverloadResolutionCandidateVector preferred_candidates;
@@ -14128,7 +14119,7 @@ void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& sub
 	// subscript overloads see the same lvalue/rvalue-sensitive argument view as
 	// ordinary member-call resolution.
 	const std::optional<TypeSpecifierNode> index_arg_type =
-		getOverloadResolutionArgType(subscript_node.index_expr());
+		getOverloadResolutionArgType(subscript_node.right_expr());
 	const FunctionDeclarationNode* best_match = nullptr;
 	bool explicitly_ambiguous = false;
 
@@ -14183,7 +14174,7 @@ void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& sub
 
 	best_match = tryMaterializeLazyReceiverMemberTarget(
 		best_match,
-		subscript_node.array_expr());
+		subscript_node.left_expr());
 	op_subscript_table_[&subscript_node] = best_match;
 
 	FLASH_LOG_FORMAT(General, Debug,
