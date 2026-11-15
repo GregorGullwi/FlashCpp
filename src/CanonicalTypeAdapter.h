@@ -4,6 +4,7 @@
 #include "CanonicalDefaultFacts.h"
 #include "CanonicalTypes.h"
 #include "FrontendContext.h"
+#include "StructHierarchyWalk.h"
 #include "TemplateRegistry_Types.h"
 #include "TypeVisitSets.h"
 
@@ -3025,7 +3026,7 @@ inline bool tryPublishCanonicalRecordProperties(
 	TypeId type,
 	const StructTypeInfo& struct_info) {
 	if (!type || !struct_info.hasCompleteObjectLayout() ||
-		struct_info.has_deferred_base_classes) {
+		structHasReachableDeferredSubobject(struct_info)) {
 		return false;
 	}
 	const CanonicalTypeKind kind = table.node(type).kind;

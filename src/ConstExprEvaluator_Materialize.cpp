@@ -1977,7 +1977,7 @@ bool Evaluator::isFundamentalType(TypeCategory type) {
 }
 
 // Evaluate type trait expressions (e.g., __is_void(int), __is_constant_evaluated())
-EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
+EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr, EvaluationContext& context) {
 	// Handle __is_constant_evaluated() specially - it returns true during constexpr evaluation
 	if (trait_expr.kind() == TypeTraitKind::IsConstantEvaluated) {
 		// When evaluated in constexpr context, this always returns true
@@ -2018,8 +2018,14 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 	}
 
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	TypeSpecifierNode resolved_type_spec = type_spec;
+	if (type_spec.has_injected_class_declaration() && context.struct_type_index.is_valid()) {
+		resolved_type_spec.set_type_index(context.struct_type_index);
+		resolved_type_spec.set_category(TypeCategory::Struct);
+	}
+	const TypeIndex trait_type_index = resolved_type_spec.type_index();
 	if (const std::optional<TypeTraitResult> canonical_result =
-			tryEvaluateCanonicalStructuralTrait(trait_expr.kind(), type_spec);
+			tryEvaluateCanonicalStructuralTrait(trait_expr.kind(), resolved_type_spec);
 		canonical_result.has_value()) {
 		return canonical_result->success
 			? EvalResult::from_bool(canonical_result->value)
@@ -2033,7 +2039,7 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 	bool is_array = type_spec.is_array();
 	std::optional<size_t> array_size = type_spec.array_size();
 	const ResolvedAliasTypeInfo resolved_trait_type =
-		resolveAliasTypeInfo(type_spec.type_index());
+		resolveAliasTypeInfo(trait_type_index);
 	if (resolved_trait_type.terminal_type_info != nullptr &&
 		(type_cat == TypeCategory::UserDefined ||
 		 type_cat == TypeCategory::TypeAlias ||
@@ -2200,15 +2206,29 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			return EvalResult::error("Failed to evaluate __is_complete_or_unbounded");
 		}
 
+	case TypeTraitKind::IsEmpty:
+	case TypeTraitKind::IsTriviallyCopyable:
+	case TypeTraitKind::IsTrivial:
+	case TypeTraitKind::IsPod:
+		{
+			const StructTypeInfo* struct_info = nullptr;
+			if (resolved_trait_type.terminal_type_info != nullptr) {
+				struct_info = resolved_trait_type.terminal_type_info->getStructInfo();
+			} else if (trait_type_index.is_valid() && is_struct_type(type_cat)) {
+				struct_info = getTypeInfo(trait_type_index).getStructInfo();
+			}
+			TypeTraitResult trait_result = evaluateTypeTrait(trait_expr.kind(), resolved_type_spec, struct_info);
+			if (trait_result.success) {
+				return EvalResult::from_bool(trait_result.value);
+			}
+			return type_trait_eval_failure();
+		}
+
 	case TypeTraitKind::IsAggregate:
 	case TypeTraitKind::IsFinal:
 	case TypeTraitKind::IsPolymorphic:
 	case TypeTraitKind::IsAbstract:
-	case TypeTraitKind::IsEmpty:
 	case TypeTraitKind::IsStandardLayout:
-	case TypeTraitKind::IsTriviallyCopyable:
-	case TypeTraitKind::IsTrivial:
-	case TypeTraitKind::IsPod:
 	case TypeTraitKind::IsConstructible:
 	case TypeTraitKind::IsTriviallyConstructible:
 	case TypeTraitKind::IsNothrowConstructible:
@@ -2234,10 +2254,10 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			const StructTypeInfo* struct_info = nullptr;
 			if (resolved_trait_type.terminal_type_info != nullptr) {
 				struct_info = resolved_trait_type.terminal_type_info->getStructInfo();
-			} else if (type_spec.type_index().is_valid() && is_struct_type(type_cat)) {
-				struct_info = getTypeInfo(type_spec.type_index()).getStructInfo();
+			} else if (trait_type_index.is_valid() && is_struct_type(type_cat)) {
+				struct_info = getTypeInfo(trait_type_index).getStructInfo();
 			}
-			TypeTraitResult trait_result = evaluateTypeTrait(trait_expr.kind(), type_spec, struct_info);
+			TypeTraitResult trait_result = evaluateTypeTrait(trait_expr.kind(), resolved_type_spec, struct_info);
 			if (trait_result.success) {
 				return EvalResult::from_bool(trait_result.value);
 			}

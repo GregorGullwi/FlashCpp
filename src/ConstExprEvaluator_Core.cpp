@@ -1613,7 +1613,7 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 
 	// For TypeTraitExprNode (e.g., __is_void(int), __is_constant_evaluated())
 	if (const auto* type_trait_expr = std::get_if<TypeTraitExprNode>(&expr)) {
-		return evaluate_type_trait(*type_trait_expr);
+		return evaluate_type_trait(*type_trait_expr, context);
 	}
 
 	// For FoldExpressionNode (e.g., (args && ...))
