@@ -6,10 +6,56 @@
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "ParserTemplateClassShared.h"
+#include "TemplateExpressionEquivalence.h"
 #include "TemplateFunctionSignatureShape.h"
 #include "TypeTraitEvaluator.h"
 
 namespace {
+
+// Concept constraints affect partial-specialization selection but are absent
+// from the normalized pattern TypeId. Give constrained parameter lists a
+// stable identity so equal argument patterns with different constraints do not
+// share one parameter environment.
+StringHandle partialPatternConstraintIdentity(std::span<const TemplateParameterNode> parameters) {
+	bool has_constraint = false;
+	for (const TemplateParameterNode& parameter : parameters) {
+		if (parameter.has_concept_constraint()) {
+			has_constraint = true;
+			break;
+		}
+	}
+	if (!has_constraint) {
+		return StringHandle{};
+	}
+	StringBuilder identity;
+	for (size_t index = 0; index < parameters.size(); ++index) {
+		const TemplateParameterNode& parameter = parameters[index];
+		identity.append(static_cast<int64_t>(index)).append(":");
+		if (!parameter.has_concept_constraint()) {
+			identity.append("U;");
+			continue;
+		}
+		identity.append("C:").append(parameter.concept_constraint()).append("(");
+		for (const ASTNode& argument : parameter.concept_args()) {
+			if (argument.is<TypeSpecifierNode>()) {
+				identity.append(argument.as<TypeSpecifierNode>().getReadableString());
+			} else if (const IdentifierNode* identifier = tryGetIdentifier(argument)) {
+				identity.append(identifier->name());
+			} else if (const QualifiedIdentifierNode* qualified = tryGetNode<QualifiedIdentifierNode>(argument)) {
+				identity.append(qualified->name());
+			} else {
+				try {
+					identity.append(static_cast<int64_t>(FlashCpp::hashDependentExpressionIdentity(argument)));
+				} catch (const InternalError&) {
+					identity.append("?");
+				}
+			}
+			identity.append(",");
+		}
+		identity.append(");");
+	}
+	return StringTable::getOrInternStringHandle(identity);
+}
 
 // Publish TemplateDeclId for a primary member class template when its immediate
 // enclosing class has a published EntityId, or is itself a published class
@@ -3527,14 +3573,16 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			std::optional<TemplateDeclId> pattern_environment;
 			const ScopeType partial_scope = gSymbolTable.get_current_scope_type();
 			const TemplateClassDeclarationNode& primary = class_template_opt->as<TemplateClassDeclarationNode>();
+			const std::span<const TemplateParameterNode> pattern_template_params(template_param_nodes.data(), template_param_nodes.size());
+			const StringHandle constraint_identity = partialPatternConstraintIdentity(pattern_template_params);
 			if (!requires_clause.has_value() && (partial_scope == ScopeType::Global || partial_scope == ScopeType::Namespace)) {
 				FrontendContext& front_end = requireFrontendContext();
 				const std::optional<TypeId> pattern = tryImportCanonicalPartialClassPattern(front_end, primary.template_decl_id(),
-					std::span<const TemplateParameterNode>(template_param_nodes.data(), template_param_nodes.size()),
+					pattern_template_params,
 					std::span<const TemplateTypeArg>(pattern_args.data(), pattern_args.size()), pattern_arg_syntax_nodes,
 					kCanonicalPartialPatternNone);
 				if (pattern.has_value()) {
-					const TemplateDeclId environment = front_end.templateDecls().publishClassPartialEnvironment(primary.template_decl_id(), *pattern);
+					const TemplateDeclId environment = front_end.templateDecls().publishClassPartialEnvironment(primary.template_decl_id(), *pattern, constraint_identity);
 					struct_ref.set_partial_specialization_environment(environment);
 					active_template_decl_id_ = environment;
 					pattern_environment = environment;
@@ -3557,7 +3605,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			struct_info->declaration_node = &struct_ref;
 			struct_info->classifyParticipation(StructEntityParticipation::TemplatePattern);
 			if (pattern_environment.has_value()) {
-				gTemplateRegistry.registerPartialPatternTypeInfo(*pattern_environment, struct_ref, struct_type_info);
+				gTemplateRegistry.registerPartialPatternTypeInfo(*pattern_environment, struct_type_info);
 			}
 
 			// Parse base class list (if present): : public Base1, private Base2
@@ -6191,18 +6239,20 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		std::optional<TemplateDeclId> partial_environment;
 		FlashCpp::ScopedState partial_environment_guard(active_template_decl_id_);
 		const TemplateClassDeclarationNode& partial_primary = class_template_opt->as<TemplateClassDeclarationNode>();
+		const std::span<const TemplateParameterNode> pattern_template_params(template_param_nodes.data(), template_param_nodes.size());
+		const StringHandle constraint_identity = partialPatternConstraintIdentity(pattern_template_params);
 		if (!requires_clause.has_value() && partial_primary.has_template_decl_id()) {
 			FrontendContext& front_end = requireFrontendContext();
 			const std::optional<TypeId> pattern = tryImportCanonicalPartialClassPattern(front_end, partial_primary.template_decl_id(),
-				std::span<const TemplateParameterNode>(template_param_nodes.data(), template_param_nodes.size()),
+				pattern_template_params,
 				std::span<const TemplateTypeArg>(pattern_args.data(), pattern_args.size()), pattern_arg_syntax_nodes,
 				kCanonicalPartialPatternMember);
 			if (pattern.has_value()) {
-				const TemplateDeclId environment = front_end.templateDecls().publishClassPartialEnvironment(partial_primary.template_decl_id(), *pattern);
+				const TemplateDeclId environment = front_end.templateDecls().publishClassPartialEnvironment(partial_primary.template_decl_id(), *pattern, constraint_identity);
 				member_struct_ref.set_partial_specialization_environment(environment);
 				active_template_decl_id_ = environment;
 				partial_environment = environment;
-				gTemplateRegistry.registerPartialPatternTypeInfo(environment, member_struct_ref, member_pattern_type_info);
+				gTemplateRegistry.registerPartialPatternTypeInfo(environment, member_pattern_type_info);
 			}
 		}
 

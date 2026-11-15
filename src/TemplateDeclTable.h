@@ -63,14 +63,17 @@ public:
 	// A partial owns its parameter environment, while instantiated class identity
 	// still names the primary. The canonical pattern alpha-normalizes partial
 	// parameters to primary/index placeholders; spelling is absent from this key.
-	TemplateDeclId publishClassPartialEnvironment(TemplateDeclId primary, TypeId normalized_pattern) {
+	// Concept constraints are also absent from the normalized pattern, so the
+	// caller supplies a separate stable constraint identity. An empty identity is
+	// an unconstrained partial.
+	TemplateDeclId publishClassPartialEnvironment(TemplateDeclId primary, TypeId normalized_pattern, StringHandle constraint_identity) {
 		if (!primary || !normalized_pattern) throw InternalError("template decl: invalid partial environment key");
 		if (!primary_class_patterns_.contains(primary.value)) {
 			bool class_primary = false;
 			for (const auto& [key, id] : ids_by_key_) class_primary |= id == primary && key.kind == DeclarationKind::Class;
 			if (!class_primary) throw InternalError("template decl: partial environment requires a published class primary");
 		}
-		return publishDeclaration(ownerIdFromTemplateDecl(primary), StringHandle{}, DeclarationKind::ClassPartialEnvironment, normalized_pattern.value);
+		return publishDeclaration(ownerIdFromTemplateDecl(primary), constraint_identity, DeclarationKind::ClassPartialEnvironment, normalized_pattern.value);
 	}
 
 	// Member alias-template primaries publish under the same OwnerId
