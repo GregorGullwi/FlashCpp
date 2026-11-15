@@ -2778,39 +2778,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							}
 
 							// Track deleted constructors to prevent their use
-							// Determine what kind of constructor this is based on parameters:
-							// - No params = default constructor
-							// - 1 param of lvalue reference to same type = copy constructor
-							// - 1 param of rvalue reference to same type = move constructor
 							if (struct_info) {
-								size_t num_params = params.parameters.size();
-								DeletedConstructorFlags deleted_kind = num_params == 0 ? DeletedConstructorFlags::Default : DeletedConstructorFlags::None;
-
-								size_t min_required = computeMinRequiredArgs(params.parameters);
-
-								if (min_required <= 1 && num_params >= 1) {
-									// Check if the parameter is a reference to this type
-									const auto& param = params.parameters[0];
-									if (param.is<DeclarationNode>()) {
-										const auto& param_decl = param.as<DeclarationNode>();
-										// Check if the type specifier matches the struct name
-										const auto& type_node = param_decl.type_node();
-										if (type_node.has_value() && type_node.is<TypeSpecifierNode>()) {
-											const auto& type_spec = type_node.as<TypeSpecifierNode>();
-											std::string_view param_type_name = type_spec.token().value();
-											if (param_type_name == struct_name ||
-												param_type_name == qualified_struct_name.view()) {
-												// It's a reference to this type
-												if (type_spec.is_rvalue_reference()) {
-													deleted_kind = DeletedConstructorFlags::Move;
-												} else if (type_spec.is_lvalue_reference()) {
-													deleted_kind = DeletedConstructorFlags::Copy;
-												}
-											}
-										}
-									}
-								}
-
+								const DeletedConstructorFlags deleted_kind = classifyDeletedSpecialConstructor(
+									params.parameters, StringTable::getStringView(struct_name), StringTable::getStringView(qualified_struct_name));
 								struct_info->markConstructorDeleted(deleted_kind);
 								if (deleted_kind == DeletedConstructorFlags::None) {
 									struct_info->deleted_constructors.push_back({&ctor_ref, current_access});
