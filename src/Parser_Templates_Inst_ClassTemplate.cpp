@@ -3820,12 +3820,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 						  static_cast<int>(pattern_deleted_special_members));
 			}
 
-			// Also copy deleted constructor flags from the pattern's StructTypeInfo (if available)
-			// Get the pattern's StructTypeInfo
+			// Also copy deleted constructor flags from the pattern's StructTypeInfo (if available).
+			// Prefer the canonical pattern environment; the synthesized name remains a
+			// diagnostics-only spelling and a fallback for shapes 3A cannot publish.
+			const TemplateDeclId pattern_environment = pattern_struct.partial_specialization_environment();
+			const StructTypeInfo* pattern_struct_info = gTemplateRegistry.tryGetPartialPatternStructInfo(pattern_environment, pattern_struct);
+			if (pattern_struct_info == nullptr && pattern_environment) {
+				throw InternalError("partial-specialization pattern is missing its registered type record");
+			}
 			auto pattern_type_it = getTypesByNameMap().find(pattern_struct.name());
-			if (pattern_type_it != getTypesByNameMap().end()) {
-				const TypeInfo* pattern_type_info = pattern_type_it->second;
-				const StructTypeInfo* pattern_struct_info = pattern_type_info->getStructInfo();
+			if (pattern_struct_info != nullptr || pattern_type_it != getTypesByNameMap().end()) {
+				if (pattern_struct_info == nullptr) {
+					pattern_struct_info = pattern_type_it->second->getStructInfo();
+				}
 				if (pattern_struct_info) {
 					// Copy deleted constructor flags from pattern
 					struct_info->deleted_special_members |= pattern_struct_info->deleted_special_members;
