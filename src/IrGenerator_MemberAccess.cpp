@@ -439,6 +439,9 @@ TempVar AstToIr::emitRowMajorSubscriptIndex(const MultiDimSubscriptChain& chain,
 
 ExprResult AstToIr::emitSubscriptAccess(ArrayAccessOp access, TypeIndex result_type, SizeInBits result_size, PointerDepth result_pointer_depth,
 	ValueStorage result_storage, ExpressionContext context, const Token& token) {
+	const bool result_is_record_object = result_storage != ValueStorage::ContainsAddress &&
+		is_struct_type(result_type.category()) && result_pointer_depth.value == 0;
+	const bool result_publishes_address = result_storage == ValueStorage::ContainsAddress || result_is_record_object;
 	const TempVar result = var_counter.next();
 	if (context == ExpressionContext::LValueAddress || result_storage == ValueStorage::ContainsAddress) {
 		ComputeAddressOp address;
@@ -483,7 +486,8 @@ ExprResult AstToIr::emitSubscriptAccess(ArrayAccessOp access, TypeIndex result_t
 	setTempVarMetadata(result, TempVarMetadata::makeLValue(lvalue, TypeCategory::Invalid, 0));
 	access.result = result;
 	ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(access), token));
-	return makeExprResult(result_type, result_size, result, result_pointer_depth, ValueStorage::ContainsData);
+	return makeExprResult(result_type, result_size, result, result_pointer_depth,
+		result_publishes_address ? ValueStorage::ContainsAddress : ValueStorage::ContainsData);
 }
 
 ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
@@ -762,7 +766,6 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			// For arr[M][N][P] accessed as arr[i][j][k], compute flat_index = i*N*P + j*P + k
 
 			const auto& type_node = multi_dim->base_decl->type_specifier_node();
-			TypeCategory element_type = type_node.type();
 			int element_size_bits = static_cast<int>(type_node.size_in_bits());
 			TypeIndex element_type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : nativeTypeIndex(type_node.type());
 
@@ -1815,6 +1818,9 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			if (!extractBaseFromOperands(array_operands, base_object, base_type_index, "array subscript")) {
 				throw InternalError(std::string("Failed to extract base from array subscript for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 			}
+			if (array_operands.pointer_depth.value > 0 || (array_operands.storage == ValueStorage::ContainsAddress && !is_arrow)) {
+				is_pointer_dereference = true;
+			}
 		} else if (expr) {
 			// Materialize direct object expressions (constructor calls, braced construction,
 			// casts, conditional expressions, etc.) so member access can operate on the
@@ -2191,7 +2197,13 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	const int result_bits = loaded.loads_pointer_value ? loaded.size_bits : member_size_bits;
 	const PointerDepth result_depth = loaded.loads_pointer_value ? loaded.pointer_depth : PointerDepth{member->pointer_depth};
 	const TypeIndex result_type = loaded.loads_pointer_value ? loaded.semantic_type : member->type_index;
-	return makeMemberResult(SizeInBits{result_bits}, result_var, result_type, result_depth, ValueStorage::ContainsData);
+	ValueStorage result_storage = ValueStorage::ContainsData;
+	if (is_struct_type(result_type.category()) && result_depth.value == 0 && result_type.is_valid()) {
+		if (const StructTypeInfo* result_struct = tryGetStructTypeInfo(result_type); result_struct && !result_struct->is_union) {
+			result_storage = ValueStorage::ContainsAddress;
+		}
+	}
+	return makeMemberResult(SizeInBits{result_bits}, result_var, result_type, result_depth, result_storage);
 }
 
 std::optional<size_t> AstToIr::calculateArraySize(const DeclarationNode& decl) {

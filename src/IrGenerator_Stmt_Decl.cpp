@@ -4379,6 +4379,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 			ComputeAddressOp addr_op;
 			addr_op.result = member_addr;
 			addr_op.base = hidden_var_handle;
+			addr_op.base_storage = ValueStorage::ContainsAddress;
 			addr_op.total_member_offset = static_cast<int>(member.offset);
 			addr_op.result_type_index = member.type_index;
 			addr_op.result_size_bits = SizeInBits{64};  // Address is 64-bit pointer

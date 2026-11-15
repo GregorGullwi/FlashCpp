@@ -315,6 +315,7 @@ private:
 	void visitDoWhileStatementNode(const DoWhileStatementNode& node);
 	void visitSwitchStatementNode(const SwitchStatementNode& node);
 	void visitRangedForStatementNode(const RangedForStatementNode& node);
+	ASTNode makeRangedForArrayEndpoint(std::string_view array_name, const ASTNode& index, const TypeSpecifierNode& element_type);
 	void visitRangedForArray(const RangedForStatementNode& node, std::string_view array_name,
 							 const DeclarationNode& array_decl, StringHandle loop_start_label,
 							 StringHandle loop_body_label, StringHandle loop_increment_label,
