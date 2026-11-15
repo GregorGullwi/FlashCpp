@@ -20,6 +20,7 @@
 #include "StringBuilder.h"
 #include "NameMangling.h"
 #include "NamespaceRegistry.h"
+#include "StructHierarchyWalk.h"
 #include "StructInfoSet.h"
 #include "TemplateExpressionEquivalence.h"
 #include "TemplateEnvironment.h"
@@ -3036,54 +3037,54 @@ const StructTypeInfo* getBaseStructInfo(const BaseClassSpecifier& base) {
 	return nullptr;
 }
 
-bool isEmptyLayoutLikeRecursive(const StructTypeInfo* struct_info, StructInfoSet& visited) {
-	if (!struct_info) {
-		return false;
-	}
-	if (!visited.insert(struct_info)) {
-		return true;
-	}
-	if (struct_info->is_union || struct_info->has_vtable || !struct_info->members.empty()) {
-		return false;
-	}
-	for (const auto& base : struct_info->base_classes) {
-		if (base.is_virtual || !isEmptyLayoutLikeRecursive(getBaseStructInfo(base), visited)) {
-			return false;
+bool computeIsEmptyLayoutLike(const StructTypeInfo* struct_info) {
+	bool empty = true;
+	const StructWalkOptions options{StructWalkFlags::FollowDeferredBases, StructWalkOrder::DeclarationPreOrder};
+	const StructWalkOutcome outcome = walkStructSubobjects(struct_info, options, [&](const StructTypeInfo& current, StructWalkQueue&) {
+		if (current.is_union || current.has_vtable || !current.members.empty()) {
+			empty = false;
+			return StructWalkAction::Stop;
 		}
-	}
-	return true;
-}
-
-void collectLeadingEmptySubobjectTypesRecursive(const StructTypeInfo* struct_info,
-												std::unordered_set<TypeIndex>& types,
-												StructInfoSet& visited) {
-	if (!struct_info || !visited.insert(struct_info) || !struct_info->isEmptyLayoutLike()) {
-		return;
-	}
-	if (struct_info->own_type_index_.has_value()) {
-		types.insert(*struct_info->own_type_index_);
-	}
-	for (const auto& base : struct_info->base_classes) {
-		if (base.is_virtual || base.offset != 0) {
-			continue;
+		for (const BaseClassSpecifier& base : current.base_classes) {
+			if (base.is_virtual) {
+				empty = false;
+				return StructWalkAction::Stop;
+			}
 		}
-		collectLeadingEmptySubobjectTypesRecursive(getBaseStructInfo(base), types, visited);
-	}
-	for (const auto& member : struct_info->members) {
-		if (member.offset != 0 || member.memberType() != TypeCategory::Struct) {
-			continue;
-		}
-		if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index);
-			member_struct_info && member_struct_info->isEmptyLayoutLike()) {
-			collectLeadingEmptySubobjectTypesRecursive(member_struct_info, types, visited);
-		}
-	}
+		return StructWalkAction::Continue;
+	});
+	return empty && outcome == StructWalkOutcome::Completed;
 }
 
 std::unordered_set<TypeIndex> collectLeadingEmptySubobjectTypes(const StructTypeInfo* struct_info) {
 	std::unordered_set<TypeIndex> result;
-	StructInfoSet visited;
-	collectLeadingEmptySubobjectTypesRecursive(struct_info, result, visited);
+	const StructWalkOptions options{StructWalkFlags::ManualChildEdges, StructWalkOrder::DeclarationPreOrder};
+	walkStructSubobjects(struct_info, options, [&](const StructTypeInfo& current, StructWalkQueue& queue) {
+		if (!current.isEmptyLayoutLike()) {
+			return StructWalkAction::SkipSubtree;
+		}
+		if (current.own_type_index_.has_value()) {
+			result.insert(*current.own_type_index_);
+		}
+		for (const BaseClassSpecifier& base : current.base_classes) {
+			if (base.is_virtual || base.offset != 0) {
+				continue;
+			}
+			if (const StructTypeInfo* base_info = getBaseStructInfo(base)) {
+				queue.enqueue(base_info);
+			}
+		}
+		for (const StructMember& member : current.members) {
+			if (member.offset != 0 || member.memberType() != TypeCategory::Struct) {
+				continue;
+			}
+			if (const StructTypeInfo* member_info = tryGetStructTypeInfo(member.type_index);
+				member_info && member_info->isEmptyLayoutLike()) {
+				queue.enqueue(member_info);
+			}
+		}
+		return StructWalkAction::Continue;
+	});
 	return result;
 }
 
@@ -3145,27 +3146,20 @@ struct LayoutBaseCollections {
 	bool primary_non_virtual_base_has_runtime_pointer = false;
 };
 
-bool hasReachableVirtualBase(const StructTypeInfo* struct_info, StructInfoSet& visited) {
-	if (!struct_info || !visited.insert(struct_info)) {
-		return false;
-	}
-
-	for (const auto& base : struct_info->base_classes) {
-		if (base.is_virtual) {
-			return true;
-		}
-		if (const StructTypeInfo* base_info = getBaseStructInfo(base);
-			hasReachableVirtualBase(base_info, visited)) {
-			return true;
-		}
-	}
-
-	return false;
-}
-
 bool hasReachableVirtualBase(const StructTypeInfo& struct_info) {
-	StructInfoSet visited;
-	return hasReachableVirtualBase(&struct_info, visited);
+	bool reachable = false;
+	const StructWalkOptions options{StructWalkFlags::SkipInvalidChildren | StructWalkFlags::FollowDeferredBases,
+		StructWalkOrder::DeclarationPreOrder};
+	walkStructSubobjects(&struct_info, options, [&](const StructTypeInfo& current, StructWalkQueue&) {
+		for (const BaseClassSpecifier& base : current.base_classes) {
+			if (base.is_virtual) {
+				reachable = true;
+				return StructWalkAction::Stop;
+			}
+		}
+		return StructWalkAction::Continue;
+	});
+	return reachable;
 }
 
 bool structIntroducesVirtualMembers(const StructTypeInfo& struct_info) {
@@ -3493,8 +3487,7 @@ bool StructTypeInfo::finalizeWithBases() {
 }
 
 bool StructTypeInfo::isEmptyLayoutLike() const {
-	StructInfoSet visited;
-	return isEmptyLayoutLikeRecursive(this, visited);
+	return computeIsEmptyLayoutLike(this);
 }
 
 bool StructTypeInfo::hasCommonLeadingEmptyTypeAtOffset(const StructTypeInfo& candidate_info, size_t offset) const {
@@ -3583,38 +3576,21 @@ bool StructTypeInfo::buildVTable() {
 		success = false;
 	};
 	auto findIndirectBaseVirtualFunction = [this](StringHandle function_name) -> const StructMemberFunction* {
-		TemplateVector<const StructTypeInfo*, 8> pending;
-		TemplateVector<const StructTypeInfo*, 8> visited;
-		for (const BaseClassSpecifier& base : base_classes) {
-			if (base.is_deferred || base.type_index.index() >= gTypeInfo.size()) {
-				continue;
+		const StructMemberFunction* found = nullptr;
+		const StructWalkOptions options{StructWalkFlags::SkipInvalidChildren};
+		walkStructSubobjects(this, options, [&](const StructTypeInfo& current, StructWalkQueue&) {
+			if (&current == this) {
+				return StructWalkAction::Continue;
 			}
-			if (const StructTypeInfo* base_info = gTypeInfo[base.type_index.index()].getStructInfo()) {
-				pending.push_back(base_info);
-			}
-		}
-		while (!pending.empty()) {
-			const StructTypeInfo* current = pending.back();
-			pending.pop_back();
-			if (current == nullptr || std::ranges::find(visited, current) != visited.end()) {
-				continue;
-			}
-			visited.push_back(current);
-			for (const StructMemberFunction* base_func : current->vtable) {
+			for (const StructMemberFunction* base_func : current.vtable) {
 				if (base_func != nullptr && base_func->getName() == function_name) {
-					return base_func;
+					found = base_func;
+					return StructWalkAction::Stop;
 				}
 			}
-			for (const BaseClassSpecifier& base : current->base_classes) {
-				if (base.is_deferred || base.type_index.index() >= gTypeInfo.size()) {
-					continue;
-				}
-				if (const StructTypeInfo* base_info = gTypeInfo[base.type_index.index()].getStructInfo()) {
-					pending.push_back(base_info);
-				}
-			}
-		}
-		return nullptr;
+			return StructWalkAction::Continue;
+		});
+		return found;
 	};
 	for (auto& func : member_functions) {
 		// Skip constructors (they can't be virtual in the vtable sense)

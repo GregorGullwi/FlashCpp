@@ -23,6 +23,12 @@ enum class StructWalkFlags : uint16_t {
 	FollowMembers = 1u << 0,
 	SkipInvalidChildren = 1u << 1,
 	ManualChildEdges = 1u << 2,
+	FollowDeferredBases = 1u << 3,
+};
+
+enum class StructWalkOrder : uint8_t {
+	MembersFirst = 0,
+	DeclarationPreOrder = 1,
 };
 
 constexpr StructWalkFlags operator|(StructWalkFlags lhs, StructWalkFlags rhs) {
@@ -35,6 +41,7 @@ constexpr bool hasStructWalkFlag(StructWalkFlags flags, StructWalkFlags flag) {
 
 struct StructWalkOptions {
 	StructWalkFlags flags;
+	StructWalkOrder order;
 };
 
 inline const StructTypeInfo* structInfoFromWalkTypeIndex(TypeIndex type_index) {
@@ -115,22 +122,43 @@ StructWalkOutcome walkStructSubobjects(const StructTypeInfo* root, StructWalkOpt
 			hasStructWalkFlag(options.flags, StructWalkFlags::ManualChildEdges)) {
 			continue;
 		}
-		for (const BaseClassSpecifier& base : current->base_classes) {
-			if (base.is_deferred) {
-				continue;
+		auto enqueueBase = [&](const BaseClassSpecifier& base) -> bool {
+			if (base.is_deferred && !hasStructWalkFlag(options.flags, StructWalkFlags::FollowDeferredBases)) {
+				return true;
 			}
-			queue.enqueue(base.type_index);
-			if (queue.invalid()) {
+			return queue.enqueue(base.type_index);
+		};
+		auto enqueueMember = [&](const StructMember& member) -> bool {
+			if (member.pointer_depth > 0 || member.is_reference() || !is_struct_type(member.type_index.category())) {
+				return true;
+			}
+			return queue.enqueue(member.type_index);
+		};
+		const bool follow_members = hasStructWalkFlag(options.flags, StructWalkFlags::FollowMembers);
+		if (options.order == StructWalkOrder::DeclarationPreOrder) {
+			// Push members first in reverse so bases end up on top and are expanded depth-first in declaration order.
+			if (follow_members) {
+				for (auto member_it = current->members.rbegin(); member_it != current->members.rend(); ++member_it) {
+					if (!enqueueMember(*member_it)) {
+						return StructWalkOutcome::InvalidChild;
+					}
+				}
+			}
+			for (auto base_it = current->base_classes.rbegin(); base_it != current->base_classes.rend(); ++base_it) {
+				if (!enqueueBase(*base_it)) {
+					return StructWalkOutcome::InvalidChild;
+				}
+			}
+			continue;
+		}
+		for (const BaseClassSpecifier& base : current->base_classes) {
+			if (!enqueueBase(base)) {
 				return StructWalkOutcome::InvalidChild;
 			}
 		}
-		if (hasStructWalkFlag(options.flags, StructWalkFlags::FollowMembers)) {
+		if (follow_members) {
 			for (const StructMember& member : current->members) {
-				if (member.pointer_depth > 0 || member.is_reference() || !is_struct_type(member.type_index.category())) {
-					continue;
-				}
-				queue.enqueue(member.type_index);
-				if (queue.invalid()) {
+				if (!enqueueMember(member)) {
 					return StructWalkOutcome::InvalidChild;
 				}
 			}
