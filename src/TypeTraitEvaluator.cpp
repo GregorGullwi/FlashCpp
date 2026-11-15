@@ -12,6 +12,7 @@
 #include "FrontendContext.h"
 #include "MigrationStats.h"
 #include "OverloadResolution.h"
+#include "StructInfoSet.h"
 
 // Canonical probe shared with overload resolution. Defined here because this
 // unit can include both OverloadResolution.h and the constructor-selection
@@ -1439,7 +1440,6 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTra
 
 namespace {
 
-using StructInfoSet = FlashCpp::FlatHashSet<const StructTypeInfo*, std::hash<const StructTypeInfo*>, std::equal_to<const StructTypeInfo*>, 8>;
 using TypeIndexSet = FlashCpp::FlatHashSet<TypeIndex, std::hash<TypeIndex>, std::equal_to<TypeIndex>, 8>;
 
 struct CachedRecordFactsEntry {
