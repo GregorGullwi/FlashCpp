@@ -77,7 +77,7 @@ public:
 private:
 	struct MultiDimSubscriptChain {
 		const ExpressionNode* root_expression = nullptr;
-		std::vector<ASTNode> indices;  // Indices from outermost to innermost
+		std::vector<const ArraySubscriptNode*> subscripts;  // From the base dimension outward
 	};
 
 	struct MultiDimArrayAccess {
@@ -454,10 +454,11 @@ private:
 		const MultiDimSubscriptChain& chain);
 	std::vector<size_t> getEffectiveArrayDimensionsForCodegen(const DeclarationNode& decl) const;
 	size_t getEffectiveArrayDimensionCountForCodegen(const DeclarationNode& decl) const;
-	ExprResult emitRowMajorArrayElementAccess(std::span<const ASTNode> indices, std::span<const size_t> dimensions,
-		TypeCategory element_type, int element_size_bits, TypeIndex element_type_index,
-		std::variant<StringHandle, TempVar, LocalVarId> array_base, bool base_holds_address, const Token& token,
-		ExpressionContext context);
+	TypedValue lowerSubscriptIndex(const ArraySubscriptNode& subscript);
+	TempVar emitRowMajorSubscriptIndex(const MultiDimSubscriptChain& chain, std::span<const size_t> dimensions,
+		std::span<const std::optional<TypedValue>> leading_indices, const Token& token);
+	ExprResult emitSubscriptAccess(ArrayAccessOp access, TypeIndex result_type, SizeInBits result_size, PointerDepth result_pointer_depth,
+		ValueStorage result_storage, ExpressionContext context, const Token& token);
 	ExprResult generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 										ExpressionContext context = ExpressionContext::Load);
 	bool validateAndSetupIdentifierMemberAccess(

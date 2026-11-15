@@ -235,10 +235,18 @@ Built-in subscript candidate discovery depends on a concrete declared
 pointer or array-reference type. A conversion template whose return shape
 still depends on its own template parameters cannot seed a candidate.
 
-## Remaining array-reference conversion and subscript cases
+## Array-reference conversion and subscript coverage
 
-Reversed subscripting such as `index()[object()]` needs to preserve evaluation
-of the left operand before the right operand when normalizing the operands.
+Built-in subscript lowering evaluates the postfix expression before the
+bracket operand, including the reversed form `index()[object()]`. Reads,
+writes, and address-taking share this lowering, including when a conversion
+supplies the array or when subscripts are combined across dimensions.
+
+Call return-type materialization can duplicate a pointer layer when the
+declared return type is a pointer-to-array alias. For example, with
+`using RowPointer = int (*)[4]; RowPointer f();`, subscripting `f()` can use
+the stride of an array of pointers. The grouped declaration `int (*f())[4];`
+carries the correct return shape through the same subscript lowering.
 
 Dependent array bounds in composed aliases now survive template instantiation.
 For example, `using Row = short[3];` followed by

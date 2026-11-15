@@ -90,8 +90,8 @@ void visitExpressionChildrenForType(const T& expression, Visitor& visitor) {
 		emitChild(visitor, ExpressionChildRole::Receiver, expression.object());
 		emitChild(visitor, ExpressionChildRole::Operand, expression.member_pointer());
 	} else if constexpr (std::is_same_v<ExpressionType, ArraySubscriptNode>) {
-		emitChild(visitor, ExpressionChildRole::Operand, expression.array_expr());
-		emitChild(visitor, ExpressionChildRole::Operand, expression.index_expr());
+		emitChild(visitor, ExpressionChildRole::Operand, expression.left_expr());
+		emitChild(visitor, ExpressionChildRole::Operand, expression.right_expr());
 	} else if constexpr (std::is_same_v<ExpressionType, SizeofExprNode>) {
 		emitChild(visitor,
 				  expression.is_type() ? ExpressionChildRole::TypeOperand : ExpressionChildRole::Operand,

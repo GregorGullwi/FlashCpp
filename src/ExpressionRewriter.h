@@ -210,10 +210,11 @@ private:
 				node.operator_token(),
 				node.is_arrow())));
 		} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-			return wrap<OneToOne, ZeroToMany>(ExpressionNode(ArraySubscriptNode(
-				rewriteOne(node.array_expr(), Role::Operand, one_to_one),
-				rewriteOne(node.index_expr(), Role::Operand, one_to_one),
-				node.bracket_token())));
+			const ASTNode left = rewriteOne(node.left_expr(), Role::Operand, one_to_one);
+			const ASTNode right = rewriteOne(node.right_expr(), Role::Operand, one_to_one);
+			ArraySubscriptNode rewritten(left, right, node.bracket_token());
+			rewritten.setOperandOrder(node.operandOrder());
+			return wrap<OneToOne, ZeroToMany>(ExpressionNode(std::move(rewritten)));
 		} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
 			ASTNode operand = rewriteOne(
 				node.type_or_expr(),

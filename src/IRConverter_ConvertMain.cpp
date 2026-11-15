@@ -14882,6 +14882,7 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 	// Handles: &arr[i].member1.member2, &arr[i][j], &arr[i].inner_arr[j].member
 	// Algorithm: address = base + (index1 * elem_size1) + (index2 * elem_size2) + ... + member_offset
 
+	flushAllDirtyRegisters();
 	const ComputeAddressOp& op = std::any_cast<const ComputeAddressOp&>(instruction.getTypedPayload());
 
 	// Step 1: Load base address into an allocated register. ComputeAddress sits
@@ -14997,7 +14998,7 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 	}
 
 	// Step 3: Add accumulated member offset (if any)
-	if (op.total_member_offset > 0) {
+	if (op.total_member_offset != 0) {
 		emitAddImmToReg(textSectionData, base_reg, op.total_member_offset);
 	}
 
