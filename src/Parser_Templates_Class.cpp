@@ -12,11 +12,64 @@
 
 namespace {
 
-// Concept constraints affect partial-specialization selection but are absent
-// from the normalized pattern TypeId. Give constrained parameter lists a
-// stable identity so equal argument patterns with different constraints do not
-// share one parameter environment.
-StringHandle partialPatternConstraintIdentity(std::span<const TemplateParameterNode> parameters) {
+// Canonical pattern TypeIds describe argument types but omit pack expansion
+// markers and parameter concept constraints. Give each declaration a stable
+// structural identity so valid partials that normalize to the same argument
+// pattern do not share one parameter environment.
+void appendConstraintArgumentIdentity(
+	StringBuilder& identity,
+	const ASTNode& argument,
+	std::span<const TemplateParameterNode> parameters) {
+	if (argument.is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& type = argument.as<TypeSpecifierNode>();
+		const std::string_view spelling = type.token().value();
+		bool parameter_matched = false;
+		for (size_t index = 0; index < parameters.size(); ++index) {
+			const TemplateParameterNode& parameter = parameters[index];
+			if (parameter.kind() == TemplateParameterKind::Type && parameter.name() == spelling) {
+				identity.append("param").append(static_cast<int64_t>(index));
+				parameter_matched = true;
+				break;
+			}
+		}
+		if (!parameter_matched) {
+			if (type.type_index().is_valid()) {
+				if (const TypeInfo* type_info = tryGetTypeInfo(type.type_index())) {
+					identity.append(StringTable::getStringView(type_info->name()));
+				} else {
+					identity.append(spelling);
+				}
+			} else {
+				identity.append(spelling);
+			}
+		}
+		identity.append("|").append(type.getReadableString());
+		return;
+	}
+	if (const IdentifierNode* identifier = tryGetIdentifier(argument)) {
+		for (size_t index = 0; index < parameters.size(); ++index) {
+			if (parameters[index].name() == identifier->name()) {
+				identity.append("param").append(static_cast<int64_t>(index));
+				return;
+			}
+		}
+		identity.append(identifier->name());
+		return;
+	}
+	if (const QualifiedIdentifierNode* qualified = tryGetNode<QualifiedIdentifierNode>(argument)) {
+		identity.append(qualified->name());
+		return;
+	}
+	try {
+		identity.append(static_cast<int64_t>(FlashCpp::hashDependentExpressionIdentity(argument)));
+	} catch (const InternalError&) {
+		identity.append("?");
+	}
+}
+
+StringHandle partialPatternDeclarationIdentity(
+	std::span<const TemplateParameterNode> parameters,
+	std::span<const TemplateTypeArg> arguments) {
 	bool has_constraint = false;
 	for (const TemplateParameterNode& parameter : parameters) {
 		if (parameter.has_concept_constraint()) {
@@ -24,35 +77,38 @@ StringHandle partialPatternConstraintIdentity(std::span<const TemplateParameterN
 			break;
 		}
 	}
-	if (!has_constraint) {
+	bool has_pack_argument = false;
+	for (const TemplateTypeArg& argument : arguments) {
+		if (argument.is_pack) {
+			has_pack_argument = true;
+			break;
+		}
+	}
+	if (!has_constraint && !has_pack_argument) {
 		return StringHandle{};
 	}
 	StringBuilder identity;
+	identity.append("P").append(static_cast<int64_t>(parameters.size())).append(";");
 	for (size_t index = 0; index < parameters.size(); ++index) {
 		const TemplateParameterNode& parameter = parameters[index];
-		identity.append(static_cast<int64_t>(index)).append(":");
+		identity.append(static_cast<int64_t>(index))
+			.append(":")
+			.append(static_cast<int64_t>(parameter.kind()))
+			.append(parameter.is_variadic() ? "V:" : "N:");
 		if (!parameter.has_concept_constraint()) {
 			identity.append("U;");
 			continue;
 		}
 		identity.append("C:").append(parameter.concept_constraint()).append("(");
 		for (const ASTNode& argument : parameter.concept_args()) {
-			if (argument.is<TypeSpecifierNode>()) {
-				identity.append(argument.as<TypeSpecifierNode>().getReadableString());
-			} else if (const IdentifierNode* identifier = tryGetIdentifier(argument)) {
-				identity.append(identifier->name());
-			} else if (const QualifiedIdentifierNode* qualified = tryGetNode<QualifiedIdentifierNode>(argument)) {
-				identity.append(qualified->name());
-			} else {
-				try {
-					identity.append(static_cast<int64_t>(FlashCpp::hashDependentExpressionIdentity(argument)));
-				} catch (const InternalError&) {
-					identity.append("?");
-				}
-			}
+			appendConstraintArgumentIdentity(identity, argument, parameters);
 			identity.append(",");
 		}
 		identity.append(");");
+	}
+	identity.append("A").append(static_cast<int64_t>(arguments.size())).append(";");
+	for (const TemplateTypeArg& argument : arguments) {
+		identity.append(argument.is_pack ? "P;" : "S;");
 	}
 	return StringTable::getOrInternStringHandle(identity);
 }
@@ -3574,15 +3630,16 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			const ScopeType partial_scope = gSymbolTable.get_current_scope_type();
 			const TemplateClassDeclarationNode& primary = class_template_opt->as<TemplateClassDeclarationNode>();
 			const std::span<const TemplateParameterNode> pattern_template_params(template_param_nodes.data(), template_param_nodes.size());
-			const StringHandle constraint_identity = partialPatternConstraintIdentity(pattern_template_params);
+			const std::span<const TemplateTypeArg> pattern_arguments(pattern_args.data(), pattern_args.size());
+			const StringHandle declaration_identity = partialPatternDeclarationIdentity(pattern_template_params, pattern_arguments);
 			if (!requires_clause.has_value() && (partial_scope == ScopeType::Global || partial_scope == ScopeType::Namespace)) {
 				FrontendContext& front_end = requireFrontendContext();
 				const std::optional<TypeId> pattern = tryImportCanonicalPartialClassPattern(front_end, primary.template_decl_id(),
-					pattern_template_params,
-					std::span<const TemplateTypeArg>(pattern_args.data(), pattern_args.size()), pattern_arg_syntax_nodes,
+					pattern_template_params, pattern_arguments, pattern_arg_syntax_nodes,
 					kCanonicalPartialPatternNone);
 				if (pattern.has_value()) {
-					const TemplateDeclId environment = front_end.templateDecls().publishClassPartialEnvironment(primary.template_decl_id(), *pattern, constraint_identity);
+					const TemplateDeclId environment = front_end.templateDecls().publishClassPartialEnvironment(
+						primary.template_decl_id(), *pattern, declaration_identity);
 					struct_ref.set_partial_specialization_environment(environment);
 					active_template_decl_id_ = environment;
 					pattern_environment = environment;
@@ -6240,15 +6297,16 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		FlashCpp::ScopedState partial_environment_guard(active_template_decl_id_);
 		const TemplateClassDeclarationNode& partial_primary = class_template_opt->as<TemplateClassDeclarationNode>();
 		const std::span<const TemplateParameterNode> pattern_template_params(template_param_nodes.data(), template_param_nodes.size());
-		const StringHandle constraint_identity = partialPatternConstraintIdentity(pattern_template_params);
+		const std::span<const TemplateTypeArg> pattern_arguments(pattern_args.data(), pattern_args.size());
+		const StringHandle declaration_identity = partialPatternDeclarationIdentity(pattern_template_params, pattern_arguments);
 		if (!requires_clause.has_value() && partial_primary.has_template_decl_id()) {
 			FrontendContext& front_end = requireFrontendContext();
 			const std::optional<TypeId> pattern = tryImportCanonicalPartialClassPattern(front_end, partial_primary.template_decl_id(),
-				pattern_template_params,
-				std::span<const TemplateTypeArg>(pattern_args.data(), pattern_args.size()), pattern_arg_syntax_nodes,
+				pattern_template_params, pattern_arguments, pattern_arg_syntax_nodes,
 				kCanonicalPartialPatternMember);
 			if (pattern.has_value()) {
-				const TemplateDeclId environment = front_end.templateDecls().publishClassPartialEnvironment(partial_primary.template_decl_id(), *pattern, constraint_identity);
+				const TemplateDeclId environment = front_end.templateDecls().publishClassPartialEnvironment(
+					partial_primary.template_decl_id(), *pattern, declaration_identity);
 				member_struct_ref.set_partial_specialization_environment(environment);
 				active_template_decl_id_ = environment;
 				partial_environment = environment;
