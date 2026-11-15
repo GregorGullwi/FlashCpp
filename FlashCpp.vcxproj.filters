@@ -419,6 +419,9 @@
     <ClInclude Include="src\StringTable.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\StructHierarchyWalk.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\StructInfoSet.h">
       <Filter>Header Files</Filter>
     </ClInclude>

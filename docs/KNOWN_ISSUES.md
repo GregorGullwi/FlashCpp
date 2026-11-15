@@ -660,3 +660,20 @@ the class record is being published, and the compatibility resolver reads only
 parameter types for deleted entries is still owed; a regression should assert
 the deleted call is rejected rather than only asserting that the implicit copy
 constructor exists.
+
+## Record-property traits answer definitively across deferred bases
+
+`src/TypeTraitEvaluator.cpp` evaluates copy/move construction, destructibility,
+and emptiness by walking base and member subobjects with a boolean worklist.
+When a base class is `is_deferred`, the nothrow-construction and subobject
+predicate walks skip it, while the empty and destructible walks treat it as a
+failure. Because the evaluator returns a plain `bool`, it cannot report "not yet
+known", so an uninstantiated base can produce a definitive `true` or `false` for
+`is_nothrow_copy_constructible`, `is_trivially_destructible`,
+`is_nothrow_destructible`, or `is_empty`. A proper fix needs a tri-state
+(deferred) result and a re-evaluation point, not another walker flag; until then
+keep new record-trait answers conservative and prefer tests with fully
+materialized bases. The shared walker in `src/StructHierarchyWalk.h` keys its
+visited set on `StructTypeInfo*`, so context-sensitive walks (base offsets,
+duplicate-base detection) must keep their own traversal or extend the key
+explicitly.

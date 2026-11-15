@@ -12,6 +12,7 @@
 #include "FrontendContext.h"
 #include "MigrationStats.h"
 #include "OverloadResolution.h"
+#include "StructHierarchyWalk.h"
 #include "StructInfoSet.h"
 
 // Canonical probe shared with overload resolution. Defined here because this
@@ -1666,45 +1667,24 @@ const ConstructorDeclarationNode* defaultInitializerResolvedConstructor(const AS
 // recursively. Uses an explicit worklist so subobject depth stays off the native
 // stack.
 bool recordNothrowCopyOrMoveConstruction(const StructTypeInfo& root, bool prefer_move) {
-	TemplateVector<const StructTypeInfo*, 8> pending{&root};
-	TemplateVector<const StructTypeInfo*, 8> visited;
-	while (!pending.empty()) {
-		const StructTypeInfo* info = pending.back();
-		pending.pop_back();
-		if (info == nullptr) {
-			return false;
-		}
-		if (std::find(visited.begin(), visited.end(), info) != visited.end()) {
-			continue;
-		}
-		visited.push_back(info);
-		const StructMemberFunction* constructor = info->findPreferredSameTypeConstructor(prefer_move, true);
-		if (constructor != nullptr && constructor->access != AccessSpecifier::Public) {
-			return false;
-		}
-		if (constructor != nullptr && constructor->function_decl.is<ConstructorDeclarationNode>()) {
-			const ConstructorDeclarationNode& declaration = constructor->function_decl.as<ConstructorDeclarationNode>();
-			if (!declaration.is_implicit() && !declaration.is_explicitly_defaulted()) {
-				if (!declaration.is_noexcept()) {
-					return false;
+	const StructWalkOutcome outcome = walkStructSubobjects(&root, StructWalkOptions{StructWalkFlags::FollowMembers},
+		[&](const StructTypeInfo& info, StructWalkQueue&) {
+			const StructMemberFunction* constructor = info.findPreferredSameTypeConstructor(prefer_move, true);
+			if (constructor != nullptr && constructor->access != AccessSpecifier::Public) {
+				return StructWalkAction::Stop;
+			}
+			if (constructor != nullptr && constructor->function_decl.is<ConstructorDeclarationNode>()) {
+				const ConstructorDeclarationNode& declaration = constructor->function_decl.as<ConstructorDeclarationNode>();
+				if (!declaration.is_implicit() && !declaration.is_explicitly_defaulted()) {
+					if (!declaration.is_noexcept()) {
+						return StructWalkAction::Stop;
+					}
+					return StructWalkAction::SkipSubtree;
 				}
-				continue;
 			}
-		}
-		for (const BaseClassSpecifier& base : info->base_classes) {
-			if (base.is_deferred) {
-				continue;
-			}
-			pending.push_back(structInfoFromTypeIndex(base.type_index));
-		}
-		for (const StructMember& member : info->members) {
-			if (member.pointer_depth > 0 || member.is_reference() || !is_struct_type(member.type_index.category())) {
-				continue;
-			}
-			pending.push_back(structInfoFromTypeIndex(member.type_index));
-		}
-	}
-	return true;
+			return StructWalkAction::Continue;
+		});
+	return outcome == StructWalkOutcome::Completed;
 }
 
 // Whether a resolved default member initializer selects a potentially-throwing
@@ -1844,122 +1824,107 @@ bool recordSubobjectsSatisfyDefaultConstruction(
 	bool recurse_default_initialized_members,
 	const FactsLookup& facts_lookup,
 	CanonicalRecordFacts cached_fact) {
-	std::vector<const StructTypeInfo*> pending{&root};
-	StructInfoSet visited;
-	while (!pending.empty()) {
-		const StructTypeInfo* info = pending.back();
-		pending.pop_back();
-		if (info == nullptr) {
-			return false;
-		}
-		if (!visited.insert(info)) {
-			continue;
-		}
-		if (info->is_abstract || info->isDefaultConstructorDeleted()) {
-			return false;
-		}
-		const StructMemberFunction* default_ctor = info->findDefaultConstructor();
-		if (default_ctor != nullptr) {
-			if (default_ctor->access != AccessSpecifier::Public) {
-				return false;
+	const StructWalkOutcome outcome = walkStructSubobjects(&root, StructWalkOptions{StructWalkFlags::ManualChildEdges},
+		[&](const StructTypeInfo& info, StructWalkQueue& queue) {
+			if (info.is_abstract || info.isDefaultConstructorDeleted()) {
+				return StructWalkAction::Stop;
 			}
-		} else if (info->hasUserDeclaredConstructor()) {
-			return false;
-		}
-		if (!class_property(*info, default_ctor)) {
-			return false;
-		}
-		bool recurse = true;
-		if (default_ctor != nullptr &&
-			default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-			const ConstructorDeclarationNode& constructor =
-				default_ctor->function_decl.as<ConstructorDeclarationNode>();
-			if (!constructor.is_implicit() &&
-				!constructor.is_explicitly_defaulted()) {
-				recurse = false;  // user-provided initializes its own subobjects
+			const StructMemberFunction* default_ctor = info.findDefaultConstructor();
+			if (default_ctor != nullptr) {
+				if (default_ctor->access != AccessSpecifier::Public) {
+					return StructWalkAction::Stop;
+				}
+			} else if (info.hasUserDeclaredConstructor()) {
+				return StructWalkAction::Stop;
 			}
-		}
-		if (!recurse) {
-			continue;
-		}
-		auto schedule_type = [&](TypeIndex type_index) {
-			if (const std::optional<CanonicalRecordFacts> facts = facts_lookup.forType(type_index); facts.has_value()) {
-				return hasCanonicalRecordFact(*facts, cached_fact);
+			if (!class_property(info, default_ctor)) {
+				return StructWalkAction::Stop;
 			}
-			pending.push_back(structInfoFromTypeIndex(type_index));
-			return true;
-		};
-		for (const BaseClassSpecifier& base : info->base_classes) {
-			if (base.is_deferred) {
-				continue;
+			bool recurse = true;
+			if (default_ctor != nullptr && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+				const ConstructorDeclarationNode& constructor = default_ctor->function_decl.as<ConstructorDeclarationNode>();
+				if (!constructor.is_implicit() && !constructor.is_explicitly_defaulted()) {
+					recurse = false;  // user-provided initializes its own subobjects
+				}
 			}
-			if (!schedule_type(base.type_index)) {
-				return false;
+			if (!recurse) {
+				return StructWalkAction::SkipSubtree;
 			}
-		}
-		for (const StructMember& member : info->members) {
-			if (!info->isPotentiallyConstructedByDefaultConstructor(member)) {
-				continue;
+			auto schedule_type = [&](TypeIndex type_index) {
+				if (const std::optional<CanonicalRecordFacts> facts = facts_lookup.forType(type_index); facts.has_value()) {
+					return hasCanonicalRecordFact(*facts, cached_fact);
+				}
+				return queue.enqueue(type_index);
+			};
+			for (const BaseClassSpecifier& base : info.base_classes) {
+				if (base.is_deferred) {
+					continue;
+				}
+				if (!schedule_type(base.type_index)) {
+					return StructWalkAction::Stop;
+				}
 			}
-			if (member.default_initializer.has_value()) {
-				// A default member initializer of a class type that default
-				// constructs the member still runs that class's default
-				// constructor, so the nothrow answer must include it. A
-				// non-default initializer selects another constructor, whose
-				// exception specification the parser records on the initializer
-				// or, for an implicit or defaulted one, derives from the member
-				// type's copy or move construction; an unresolved selection
-				// stays deferred.
-				if (recurse_default_initialized_members &&
-					member.pointer_depth == 0 &&
-					is_struct_type(member.type_index.category())) {
-					const ASTNode& initializer = *member.default_initializer;
-					if (defaultInitializerIsDefaultConstruction(initializer)) {
-						if (!schedule_type(member.type_index)) {
-							return false;
-						}
-					} else if (const StructTypeInfo* member_struct_info = structInfoFromTypeIndex(member.type_index)) {
-						if (member.is_array) {
-							// Each element leaf either default-constructs the
-							// element type or selects a constructor. A
-							// default-constructing leaf recurses through the
-							// element type's own default construction; a
-							// selecting leaf contributes its exception spec.
-							const bool element_throws = defaultInitializerArrayElementThrows(
-								initializer, *member_struct_info,
-								[&](const StructTypeInfo& element_type) {
-									if (element_type.own_type_index_.has_value()) {
-										return schedule_type(*element_type.own_type_index_);
-									}
-									pending.push_back(&element_type);
-									return true;
-								});
-							if (element_throws) {
-								return false;
+			for (const StructMember& member : info.members) {
+				if (!info.isPotentiallyConstructedByDefaultConstructor(member)) {
+					continue;
+				}
+				if (member.default_initializer.has_value()) {
+					// A default member initializer of a class type that default
+					// constructs the member still runs that class's default
+					// constructor, so the nothrow answer must include it. A
+					// non-default initializer selects another constructor, whose
+					// exception specification the parser records on the initializer
+					// or, for an implicit or defaulted one, derives from the member
+					// type's copy or move construction; an unresolved selection
+					// stays deferred.
+					if (recurse_default_initialized_members && member.pointer_depth == 0 && is_struct_type(member.type_index.category())) {
+						const ASTNode& initializer = *member.default_initializer;
+						if (defaultInitializerIsDefaultConstruction(initializer)) {
+							if (!schedule_type(member.type_index)) {
+								return StructWalkAction::Stop;
 							}
-						} else {
-							const std::optional<bool> throws = defaultInitializerConstructorThrows(initializer, *member_struct_info);
-							if (throws.has_value() && *throws) {
-								return false;
+						} else if (const StructTypeInfo* member_struct_info = structInfoFromTypeIndex(member.type_index)) {
+							if (member.is_array) {
+								// Each element leaf either default-constructs the
+								// element type or selects a constructor. A
+								// default-constructing leaf recurses through the
+								// element type's own default construction; a
+								// selecting leaf contributes its exception spec.
+								const bool element_throws = defaultInitializerArrayElementThrows(
+									initializer, *member_struct_info,
+									[&](const StructTypeInfo& element_type) {
+										if (element_type.own_type_index_.has_value()) {
+											return schedule_type(*element_type.own_type_index_);
+										}
+										queue.enqueue(&element_type);
+										return true;
+									});
+								if (element_throws) {
+									return StructWalkAction::Stop;
+								}
+							} else {
+								const std::optional<bool> throws = defaultInitializerConstructorThrows(initializer, *member_struct_info);
+								if (throws.has_value() && *throws) {
+									return StructWalkAction::Stop;
+								}
 							}
 						}
 					}
+					continue;
 				}
-				continue;
+				if (member.is_reference()) {
+					return StructWalkAction::Stop;
+				}
+				if (member.pointer_depth > 0 || !is_struct_type(member.type_index.category())) {
+					continue;
+				}
+				if (!schedule_type(member.type_index)) {
+					return StructWalkAction::Stop;
+				}
 			}
-			if (member.is_reference()) {
-				return false;  // reference member without an initializer
-			}
-			if (member.pointer_depth > 0 ||
-				!is_struct_type(member.type_index.category())) {
-				continue;
-			}
-			if (!schedule_type(member.type_index)) {
-				return false;
-			}
-		}
-	}
-	return true;
+			return StructWalkAction::Continue;
+		});
+	return outcome == StructWalkOutcome::Completed;
 }
 
 bool recordDefaultConstructible(const StructTypeInfo& root) {
@@ -1991,42 +1956,14 @@ bool recordNothrowConstructible(const StructTypeInfo& root) {
 
 template<typename Pred>
 bool allRecordSubobjectsSatisfy(const StructTypeInfo* struct_info, Pred pred) {
-	if (!struct_info)
+	if (!struct_info) {
 		return false;
-	std::vector<const StructTypeInfo*> pending{struct_info};
-	StructInfoSet visited;
-	while (!pending.empty()) {
-		const StructTypeInfo* current = pending.back();
-		pending.pop_back();
-		if (!current)
-			return false;
-		if (!visited.insert(current))
-			continue;
-		if (!pred(current))
-			return false;
-
-		for (const StructMember& member : current->members) {
-			if (member.pointer_depth > 0 || member.is_reference() ||
-				!is_struct_type(member.type_index.category())) {
-				continue;
-			}
-			const TypeInfo* member_type = tryGetTypeInfo(member.type_index);
-			const StructTypeInfo* member_struct = member_type ? member_type->getStructInfo() : nullptr;
-			if (!member_struct)
-				return false;
-			pending.push_back(member_struct);
-		}
-		for (const BaseClassSpecifier& base : current->base_classes) {
-			if (base.is_deferred)
-				continue;
-			const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
-			const StructTypeInfo* base_struct = base_type ? base_type->getStructInfo() : nullptr;
-			if (!base_struct)
-				return false;
-			pending.push_back(base_struct);
-		}
 	}
-	return true;
+	const StructWalkOutcome outcome = walkStructSubobjects(struct_info, StructWalkOptions{StructWalkFlags::FollowMembers},
+		[&](const StructTypeInfo& current, StructWalkQueue&) {
+			return pred(&current) ? StructWalkAction::Continue : StructWalkAction::Stop;
+		});
+	return outcome == StructWalkOutcome::Completed;
 }
 
 bool isStructHasTrivialDestructorImpl(const StructTypeInfo* struct_info) {
@@ -2060,59 +1997,54 @@ bool isStructEmptyImpl(const FactsLookup& facts_lookup, const StructTypeInfo* st
 	if (struct_info == nullptr) {
 		return false;
 	}
-	std::vector<const StructTypeInfo*> pending{struct_info};
-	StructInfoSet visited;
-	while (!pending.empty()) {
-		const StructTypeInfo* current = pending.back();
-		pending.pop_back();
-		if (current == nullptr || !visited.insert(current)) {
-			continue;
-		}
-		bool has_nonzero_size_data_member = false;
-		for (const StructMember& member : current->members) {
-			if (StructTypeInfo::isZeroWidthBitfield(member.bitfield_width)) {
-				continue;
+	const StructWalkOutcome outcome = walkStructSubobjects(struct_info, StructWalkOptions{StructWalkFlags::ManualChildEdges},
+		[&](const StructTypeInfo& current, StructWalkQueue& queue) {
+			bool has_nonzero_size_data_member = false;
+			for (const StructMember& member : current.members) {
+				if (StructTypeInfo::isZeroWidthBitfield(member.bitfield_width)) {
+					continue;
+				}
+				if (member.is_no_unique_address && !member.is_array && member.pointer_depth == 0 && !member.is_reference()) {
+					if (const std::optional<CanonicalRecordFacts> facts = facts_lookup.forType(member.type_index); facts.has_value()) {
+						if (!hasCanonicalRecordFact(*facts, CanonicalRecordFacts::Empty)) {
+							has_nonzero_size_data_member = true;
+							break;
+						}
+						continue;
+					}
+					const TypeInfo* member_type = tryGetTypeInfo(member.type_index);
+					const StructTypeInfo* member_struct = member_type == nullptr ? nullptr : member_type->getStructInfo();
+					if (member_struct != nullptr) {
+						queue.enqueue(member_struct);
+						continue;
+					}
+				}
+				has_nonzero_size_data_member = true;
+				break;
 			}
-			if (member.is_no_unique_address && !member.is_array && member.pointer_depth == 0 && !member.is_reference()) {
-				if (const std::optional<CanonicalRecordFacts> facts = facts_lookup.forType(member.type_index); facts.has_value()) {
+			if (current.is_union || has_nonzero_size_data_member || current.has_vtable) {
+				return StructWalkAction::Stop;
+			}
+			for (const BaseClassSpecifier& base : current.base_classes) {
+				if (base.is_deferred || base.is_virtual) {
+					return StructWalkAction::Stop;
+				}
+				if (const std::optional<CanonicalRecordFacts> facts = facts_lookup.forType(base.type_index); facts.has_value()) {
 					if (!hasCanonicalRecordFact(*facts, CanonicalRecordFacts::Empty)) {
-						has_nonzero_size_data_member = true;
-						break;
+						return StructWalkAction::Stop;
 					}
 					continue;
 				}
-				const TypeInfo* member_type = tryGetTypeInfo(member.type_index);
-				const StructTypeInfo* member_struct = member_type == nullptr ? nullptr : member_type->getStructInfo();
-				if (member_struct != nullptr) {
-					pending.push_back(member_struct);
-					continue;
+				const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
+				const StructTypeInfo* base_struct = base_type == nullptr ? nullptr : base_type->getStructInfo();
+				if (base_struct == nullptr) {
+					return StructWalkAction::Stop;
 				}
+				queue.enqueue(base_struct);
 			}
-			has_nonzero_size_data_member = true;
-			break;
-		}
-		if (current->is_union || has_nonzero_size_data_member || current->has_vtable) {
-			return false;
-		}
-		for (const BaseClassSpecifier& base : current->base_classes) {
-			if (base.is_deferred || base.is_virtual) {
-				return false;
-			}
-			if (const std::optional<CanonicalRecordFacts> facts = facts_lookup.forType(base.type_index); facts.has_value()) {
-				if (!hasCanonicalRecordFact(*facts, CanonicalRecordFacts::Empty)) {
-					return false;
-				}
-				continue;
-			}
-			const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
-			const StructTypeInfo* base_struct = base_type == nullptr ? nullptr : base_type->getStructInfo();
-			if (base_struct == nullptr) {
-				return false;
-			}
-			pending.push_back(base_struct);
-		}
-	}
-	return true;
+			return StructWalkAction::Continue;
+		});
+	return outcome == StructWalkOutcome::Completed;
 }
 
 bool isStructEmptyImpl(const StructTypeInfo* struct_info) {
@@ -2128,143 +2060,80 @@ bool isStructDestructibleImpl(const StructTypeInfo* struct_info, bool is_root) {
 }
 
 bool isStructTriviallyDestructibleImpl(const StructTypeInfo* struct_info, bool is_root) {
-	if (!struct_info)
+	if (!struct_info) {
 		return false;
-
-	std::vector<const StructTypeInfo*> pending{struct_info};
-	StructInfoSet visited;
-	while (!pending.empty()) {
-		const StructTypeInfo* current = pending.back();
-		pending.pop_back();
-		if (!current || !visited.insert(current)) {
-			continue;
-		}
-		if (current->has_deleted_destructor)
-			return false;
-		if (const StructMemberFunction* destructor = current->findDestructor()) {
-			if (is_root && current == struct_info &&
-				destructor->access != AccessSpecifier::Public) {
-				return false;
-			}
-			if (destructor->is_virtual ||
-				!destructor->function_decl.is<DestructorDeclarationNode>() ||
-				!destructor->function_decl.as<DestructorDeclarationNode>().was_defaulted_on_first_declaration()) {
-				return false;
-			}
-		}
-
-		for (const BaseClassSpecifier& base : current->base_classes) {
-			if (base.is_deferred)
-				return false;
-			const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
-			const StructTypeInfo* base_struct = base_type ? base_type->getStructInfo() : nullptr;
-			if (!base_struct)
-				return false;
-			pending.push_back(base_struct);
-		}
-		for (const StructMember& member : current->members) {
-			if (member.pointer_depth > 0 || member.is_reference() ||
-				!is_struct_type(member.type_index.category())) {
-				continue;
-			}
-			const TypeInfo* member_type = tryGetTypeInfo(member.type_index);
-			const StructTypeInfo* member_struct = member_type ? member_type->getStructInfo() : nullptr;
-			if (!member_struct)
-				return false;
-			pending.push_back(member_struct);
-		}
 	}
-	return true;
+	const StructWalkOutcome outcome = walkStructSubobjects(struct_info,
+		StructWalkOptions{StructWalkFlags::FollowMembers},
+		[&](const StructTypeInfo& current, StructWalkQueue&) {
+			if (current.has_deleted_destructor) {
+				return StructWalkAction::Stop;
+			}
+			if (const StructMemberFunction* destructor = current.findDestructor()) {
+				if (is_root && &current == struct_info && destructor->access != AccessSpecifier::Public) {
+					return StructWalkAction::Stop;
+				}
+				if (destructor->is_virtual || !destructor->function_decl.is<DestructorDeclarationNode>() ||
+					!destructor->function_decl.as<DestructorDeclarationNode>().was_defaulted_on_first_declaration()) {
+					return StructWalkAction::Stop;
+				}
+			}
+			if (structHasDeferredBase(current)) {
+				return StructWalkAction::Stop;
+			}
+			return StructWalkAction::Continue;
+		});
+	return outcome == StructWalkOutcome::Completed;
 }
 
 bool hasVirtualDestructorImpl(const StructTypeInfo* struct_info) {
-	if (!struct_info)
+	if (!struct_info) {
 		return false;
-
-	std::vector<const StructTypeInfo*> pending{struct_info};
-	StructInfoSet visited;
-	while (!pending.empty()) {
-		const StructTypeInfo* current = pending.back();
-		pending.pop_back();
-		if (!current || !visited.insert(current))
-			continue;
-		if (const StructMemberFunction* destructor = current->findDestructor();
-			destructor && destructor->is_virtual) {
-			return true;
-		}
-		for (const BaseClassSpecifier& base : current->base_classes) {
-			if (base.is_deferred)
-				continue;
-			const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
-			if (const StructTypeInfo* base_struct = base_type ? base_type->getStructInfo() : nullptr) {
-				pending.push_back(base_struct);
-			}
-		}
 	}
-	return false;
+	bool found = false;
+	walkStructSubobjects(struct_info, StructWalkOptions{StructWalkFlags::SkipInvalidChildren},
+		[&](const StructTypeInfo& current, StructWalkQueue&) {
+			if (const StructMemberFunction* destructor = current.findDestructor(); destructor && destructor->is_virtual) {
+				found = true;
+				return StructWalkAction::Stop;
+			}
+			return StructWalkAction::Continue;
+		});
+	return found;
 }
 
 bool isStructNothrowDestructibleImpl(const StructTypeInfo* struct_info, bool is_root) {
 	if (struct_info == nullptr) {
 		return true;
 	}
-	std::vector<const StructTypeInfo*> pending{struct_info};
-	StructInfoSet visited;
-	while (!pending.empty()) {
-		const StructTypeInfo* current = pending.back();
-		pending.pop_back();
-		if (current == nullptr || !visited.insert(current)) {
-			continue;
-		}
-		if (current->has_deleted_destructor) {
-			return false;
-		}
-		const StructMemberFunction* destructor = current->findDestructor();
-		if (destructor != nullptr) {
-			if (is_root && current == struct_info &&
-				destructor->access != AccessSpecifier::Public) {
-				return false;
+	const StructWalkOutcome outcome = walkStructSubobjects(struct_info,
+		StructWalkOptions{StructWalkFlags::FollowMembers},
+		[&](const StructTypeInfo& current, StructWalkQueue&) {
+			if (current.has_deleted_destructor) {
+				return StructWalkAction::Stop;
 			}
-			if (!destructor->function_decl.is<DestructorDeclarationNode>()) {
-				throw InternalError("record property: destructor has invalid AST node");
-			}
-			const DestructorDeclarationNode& declaration =
-				destructor->function_decl.as<DestructorDeclarationNode>();
-			if (declaration.has_noexcept_specifier()) {
-				if (!declaration.is_noexcept()) {
-					return false;
+			const StructMemberFunction* destructor = current.findDestructor();
+			if (destructor != nullptr) {
+				if (is_root && &current == struct_info && destructor->access != AccessSpecifier::Public) {
+					return StructWalkAction::Stop;
 				}
-				continue;
+				if (!destructor->function_decl.is<DestructorDeclarationNode>()) {
+					throw InternalError("record property: destructor has invalid AST node");
+				}
+				const DestructorDeclarationNode& declaration = destructor->function_decl.as<DestructorDeclarationNode>();
+				if (declaration.has_noexcept_specifier()) {
+					if (!declaration.is_noexcept()) {
+						return StructWalkAction::Stop;
+					}
+					return StructWalkAction::SkipSubtree;
+				}
 			}
-		}
-
-		for (const BaseClassSpecifier& base : current->base_classes) {
-			if (base.is_deferred) {
-				return false;
+			if (structHasDeferredBase(current)) {
+				return StructWalkAction::Stop;
 			}
-			const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
-			const StructTypeInfo* base_struct =
-				base_type == nullptr ? nullptr : base_type->getStructInfo();
-			if (base_struct == nullptr) {
-				return false;
-			}
-			pending.push_back(base_struct);
-		}
-		for (const StructMember& member : current->members) {
-			if (member.pointer_depth > 0 || member.is_reference() ||
-				!is_struct_type(member.type_index.category())) {
-				continue;
-			}
-			const TypeInfo* member_type = tryGetTypeInfo(member.type_index);
-			const StructTypeInfo* member_struct =
-				member_type == nullptr ? nullptr : member_type->getStructInfo();
-			if (member_struct == nullptr) {
-				return false;
-			}
-			pending.push_back(member_struct);
-		}
-	}
-	return true;
+			return StructWalkAction::Continue;
+		});
+	return outcome == StructWalkOutcome::Completed;
 }
 
 bool isStructStandardLayoutImpl(const StructTypeInfo* struct_info);
@@ -2766,35 +2635,37 @@ std::optional<bool> recordStandardLayoutFromFacts(const StructTypeInfo& struct_i
 bool hasBaseTypeAmongZeroOffsetMembers(
 	const StructTypeInfo* struct_info,
 	const TypeIndexSet& base_subobject_types) {
-	std::vector<const StructTypeInfo*> pending{struct_info};
-	StructInfoSet visited;
 	std::vector<TypeIndex> zero_offset_member_types;
-	while (!pending.empty()) {
-		const StructTypeInfo* current = pending.back();
-		pending.pop_back();
-		if (!current || !visited.insert(current))
-			continue;
+	bool found_missing_member_type = false;
+	walkStructSubobjects(struct_info, StructWalkOptions{StructWalkFlags::ManualChildEdges},
+		[&](const StructTypeInfo& current, StructWalkQueue& queue) {
+			for (size_t index = 0; index < current.members.size(); ++index) {
+				const StructMember& member = current.members[index];
+				if (!current.is_union && index != 0 && !member.is_no_unique_address) {
+					continue;
+				}
+				if (member.pointer_depth > 0 || member.is_reference() || !is_struct_type(member.type_index.category())) {
+					continue;
+				}
 
-		for (size_t index = 0; index < current->members.size(); ++index) {
-			const StructMember& member = current->members[index];
-			if (!current->is_union && index != 0 && !member.is_no_unique_address)
-				continue;
-			if (member.pointer_depth > 0 || member.is_reference() ||
-				!is_struct_type(member.type_index.category())) {
-				continue;
+				zero_offset_member_types.push_back(member.type_index);
+				const TypeInfo* member_type = tryGetTypeInfo(member.type_index);
+				const StructTypeInfo* member_struct = member_type ? member_type->getStructInfo() : nullptr;
+				if (!member_struct) {
+					found_missing_member_type = true;
+					return StructWalkAction::Stop;
+				}
+				queue.enqueue(member_struct);
 			}
-
-			zero_offset_member_types.push_back(member.type_index);
-			const TypeInfo* member_type = tryGetTypeInfo(member.type_index);
-			const StructTypeInfo* member_struct = member_type ? member_type->getStructInfo() : nullptr;
-			if (!member_struct)
-				return true;
-			pending.push_back(member_struct);
-		}
+			return StructWalkAction::Continue;
+		});
+	if (found_missing_member_type) {
+		return true;
 	}
 	for (TypeIndex member_type : zero_offset_member_types) {
-		if (base_subobject_types.contains(member_type))
+		if (base_subobject_types.contains(member_type)) {
 			return true;
+		}
 	}
 	return false;
 }
