@@ -20,31 +20,18 @@ namespace {
 bool appendConstraintArgumentIdentity(
 	StringBuilder& identity,
 	const ASTNode& argument,
-	std::span<const TemplateParameterNode> parameters) {
+	std::span<const TemplateParameterNode> parameters,
+	TemplateDeclId primary) {
 	if (argument.is<TypeSpecifierNode>()) {
 		const TypeSpecifierNode& type = argument.as<TypeSpecifierNode>();
-		const std::string_view spelling = type.token().value();
-		bool parameter_matched = false;
-		for (size_t index = 0; index < parameters.size(); ++index) {
-			const TemplateParameterNode& parameter = parameters[index];
-			if (parameter.kind() == TemplateParameterKind::Type && parameter.name() == spelling) {
-				identity.append("param").append(static_cast<int64_t>(index));
-				parameter_matched = true;
-				break;
-			}
+		const bool dependent = typeSpecStillUsesDependentPlaceholder(type) || type.has_template_parameter_identity() || type.has_template_parameter_decl();
+		FrontendContext& front_end = requireFrontendContext();
+		const std::optional<TypeId> imported = tryImportCanonicalPartialTypePattern(
+			front_end.canonicalTypes(), front_end.scratchArena(), primary, parameters, type, dependent);
+		if (!imported.has_value()) {
+			return false;
 		}
-		if (!parameter_matched) {
-			if (type.type_index().is_valid()) {
-				if (const TypeInfo* type_info = tryGetTypeInfo(type.type_index())) {
-					identity.append(StringTable::getStringView(type_info->name()));
-				} else {
-					identity.append(spelling);
-				}
-			} else {
-				identity.append(spelling);
-			}
-		}
-		identity.append("|").append(type.getReadableString());
+		identity.append("T").append(static_cast<int64_t>(imported->value));
 		return true;
 	}
 	if (const IdentifierNode* identifier = tryGetIdentifier(argument)) {
@@ -72,7 +59,8 @@ bool appendConstraintArgumentIdentity(
 std::optional<StringHandle> partialPatternDeclarationIdentity(
 	std::span<const TemplateParameterNode> parameters,
 	std::span<const TemplateTypeArg> arguments,
-	const ASTNode* requires_clause) {
+	const ASTNode* requires_clause,
+	TemplateDeclId primary) {
 	bool has_constraint = false;
 	for (const TemplateParameterNode& parameter : parameters) {
 		if (parameter.has_concept_constraint()) {
@@ -104,7 +92,7 @@ std::optional<StringHandle> partialPatternDeclarationIdentity(
 		}
 		identity.append("C:").append(parameter.concept_constraint()).append("(");
 		for (const ASTNode& argument : parameter.concept_args()) {
-			if (!appendConstraintArgumentIdentity(identity, argument, parameters)) {
+			if (!appendConstraintArgumentIdentity(identity, argument, parameters, primary)) {
 				identity.reset();
 				return std::nullopt;
 			}
@@ -3651,7 +3639,8 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			const std::span<const TemplateParameterNode> pattern_template_params(template_param_nodes.data(), template_param_nodes.size());
 			const std::span<const TemplateTypeArg> pattern_arguments(pattern_args.data(), pattern_args.size());
 			const std::optional<StringHandle> declaration_identity = partialPatternDeclarationIdentity(
-				pattern_template_params, pattern_arguments, requires_clause.has_value() ? &*requires_clause : nullptr);
+				pattern_template_params, pattern_arguments, requires_clause.has_value() ? &*requires_clause : nullptr,
+				primary.template_decl_id());
 			if (declaration_identity.has_value() && (partial_scope == ScopeType::Global || partial_scope == ScopeType::Namespace)) {
 				FrontendContext& front_end = requireFrontendContext();
 				const std::optional<TypeId> pattern = tryImportCanonicalPartialClassPattern(front_end, primary.template_decl_id(),
@@ -6319,7 +6308,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		const std::span<const TemplateParameterNode> pattern_template_params(template_param_nodes.data(), template_param_nodes.size());
 		const std::span<const TemplateTypeArg> pattern_arguments(pattern_args.data(), pattern_args.size());
 		const std::optional<StringHandle> declaration_identity = partialPatternDeclarationIdentity(
-			pattern_template_params, pattern_arguments, requires_clause.has_value() ? &*requires_clause : nullptr);
+			pattern_template_params, pattern_arguments, requires_clause.has_value() ? &*requires_clause : nullptr,
+			partial_primary.template_decl_id());
 		if (declaration_identity.has_value() && partial_primary.has_template_decl_id()) {
 			FrontendContext& front_end = requireFrontendContext();
 			const std::optional<TypeId> pattern = tryImportCanonicalPartialClassPattern(front_end, partial_primary.template_decl_id(),
