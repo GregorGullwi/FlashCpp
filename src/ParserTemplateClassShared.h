@@ -376,10 +376,10 @@ struct CanonicalPartialPatternOptions {
 	bool allow_pack_parameters;
 };
 
-inline constexpr CanonicalPartialPatternOptions kCanonicalPartialPatternNone{
+inline constexpr CanonicalPartialPatternOptions kCanonicalPartialPatternClass{
 	.allow_concept_constrained_parameters = false,
-	.allow_non_type_literal_arguments = false,
-	.allow_pack_parameters = false,
+	.allow_non_type_literal_arguments = true,
+	.allow_pack_parameters = true,
 };
 
 inline constexpr CanonicalPartialPatternOptions kCanonicalPartialPatternMember{
