@@ -1666,7 +1666,7 @@ const ConstructorDeclarationNode* defaultInitializerResolvedConstructor(const AS
 // recursively. Uses an explicit worklist so subobject depth stays off the native
 // stack.
 bool recordNothrowCopyOrMoveConstruction(const StructTypeInfo& root, bool prefer_move) {
-	const StructWalkOutcome outcome = walkStructSubobjects(&root, StructWalkOptions{StructWalkFlags::FollowMembers},
+	const StructWalkOutcome outcome = walkStructSubobjects(&root, StructWalkOptions{StructWalkFlags::FollowMembers, StructWalkOrder::MembersFirst},
 		[&](const StructTypeInfo& info, StructWalkQueue&) {
 			const StructMemberFunction* constructor = info.findPreferredSameTypeConstructor(prefer_move, true);
 			if (constructor != nullptr && constructor->access != AccessSpecifier::Public) {
@@ -1823,7 +1823,7 @@ bool recordSubobjectsSatisfyDefaultConstruction(
 	bool recurse_default_initialized_members,
 	const FactsLookup& facts_lookup,
 	CanonicalRecordFacts cached_fact) {
-	const StructWalkOutcome outcome = walkStructSubobjects(&root, StructWalkOptions{StructWalkFlags::ManualChildEdges},
+	const StructWalkOutcome outcome = walkStructSubobjects(&root, StructWalkOptions{StructWalkFlags::ManualChildEdges, StructWalkOrder::MembersFirst},
 		[&](const StructTypeInfo& info, StructWalkQueue& queue) {
 			if (info.is_abstract || info.isDefaultConstructorDeleted()) {
 				return StructWalkAction::Stop;
@@ -1958,7 +1958,7 @@ bool allRecordSubobjectsSatisfy(const StructTypeInfo* struct_info, Pred pred) {
 	if (!struct_info) {
 		return false;
 	}
-	const StructWalkOutcome outcome = walkStructSubobjects(struct_info, StructWalkOptions{StructWalkFlags::FollowMembers},
+	const StructWalkOutcome outcome = walkStructSubobjects(struct_info, StructWalkOptions{StructWalkFlags::FollowMembers, StructWalkOrder::MembersFirst},
 		[&](const StructTypeInfo& current, StructWalkQueue&) {
 			return pred(&current) ? StructWalkAction::Continue : StructWalkAction::Stop;
 		});
@@ -1996,7 +1996,8 @@ bool isStructEmptyImpl(const FactsLookup& facts_lookup, const StructTypeInfo* st
 	if (struct_info == nullptr) {
 		return false;
 	}
-	const StructWalkOutcome outcome = walkStructSubobjects(struct_info, StructWalkOptions{StructWalkFlags::ManualChildEdges},
+	const StructWalkOptions options{StructWalkFlags::ManualChildEdges, StructWalkOrder::MembersFirst};
+	const StructWalkOutcome outcome = walkStructSubobjects(struct_info, options,
 		[&](const StructTypeInfo& current, StructWalkQueue& queue) {
 			bool has_nonzero_size_data_member = false;
 			for (const StructMember& member : current.members) {
@@ -2063,7 +2064,7 @@ bool isStructTriviallyDestructibleImpl(const StructTypeInfo* struct_info, bool i
 		return false;
 	}
 	const StructWalkOutcome outcome = walkStructSubobjects(struct_info,
-		StructWalkOptions{StructWalkFlags::FollowMembers},
+		StructWalkOptions{StructWalkFlags::FollowMembers, StructWalkOrder::MembersFirst},
 		[&](const StructTypeInfo& current, StructWalkQueue&) {
 			if (current.has_deleted_destructor) {
 				return StructWalkAction::Stop;
@@ -2090,7 +2091,7 @@ bool hasVirtualDestructorImpl(const StructTypeInfo* struct_info) {
 		return false;
 	}
 	bool found = false;
-	walkStructSubobjects(struct_info, StructWalkOptions{StructWalkFlags::SkipInvalidChildren},
+	walkStructSubobjects(struct_info, StructWalkOptions{StructWalkFlags::SkipInvalidChildren, StructWalkOrder::MembersFirst},
 		[&](const StructTypeInfo& current, StructWalkQueue&) {
 			if (const StructMemberFunction* destructor = current.findDestructor(); destructor && destructor->is_virtual) {
 				found = true;
@@ -2106,7 +2107,7 @@ bool isStructNothrowDestructibleImpl(const StructTypeInfo* struct_info, bool is_
 		return true;
 	}
 	const StructWalkOutcome outcome = walkStructSubobjects(struct_info,
-		StructWalkOptions{StructWalkFlags::FollowMembers},
+		StructWalkOptions{StructWalkFlags::FollowMembers, StructWalkOrder::MembersFirst},
 		[&](const StructTypeInfo& current, StructWalkQueue&) {
 			if (current.has_deleted_destructor) {
 				return StructWalkAction::Stop;
@@ -2636,7 +2637,7 @@ bool hasBaseTypeAmongZeroOffsetMembers(
 	const TypeIndexSet& base_subobject_types) {
 	std::vector<TypeIndex> zero_offset_member_types;
 	bool found_missing_member_type = false;
-	walkStructSubobjects(struct_info, StructWalkOptions{StructWalkFlags::ManualChildEdges},
+	walkStructSubobjects(struct_info, StructWalkOptions{StructWalkFlags::ManualChildEdges, StructWalkOrder::MembersFirst},
 		[&](const StructTypeInfo& current, StructWalkQueue& queue) {
 			for (size_t index = 0; index < current.members.size(); ++index) {
 				const StructMember& member = current.members[index];

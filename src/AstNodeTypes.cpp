@@ -3577,7 +3577,7 @@ bool StructTypeInfo::buildVTable() {
 	};
 	auto findIndirectBaseVirtualFunction = [this](StringHandle function_name) -> const StructMemberFunction* {
 		const StructMemberFunction* found = nullptr;
-		const StructWalkOptions options{StructWalkFlags::SkipInvalidChildren};
+		const StructWalkOptions options{StructWalkFlags::SkipInvalidChildren, StructWalkOrder::MembersFirst};
 		walkStructSubobjects(this, options, [&](const StructTypeInfo& current, StructWalkQueue&) {
 			if (&current == this) {
 				return StructWalkAction::Continue;
