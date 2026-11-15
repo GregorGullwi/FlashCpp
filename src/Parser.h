@@ -2261,7 +2261,8 @@ private:
 		// Phase 2: Unified Qualified Identifier Parser (Sprint 3-4)
 	std::optional<QualifiedIdParseResult> parse_qualified_identifier_with_templates();  // NEW: Unified parser for all qualified identifier contexts
 
-	std::optional<ConstantValue> try_evaluate_constant_expression(const ASTNode& expr_node);	 // NEW: Evaluate constant expressions for template arguments (e.g., is_int<T>::value)
+	enum class ConstantEvaluationMode : uint8_t { Ordinary, Speculative };
+	std::optional<ConstantValue> tryEvaluateConstantExpression(const ASTNode& expr_node, ConstantEvaluationMode mode);
 	std::optional<ASTNode> try_instantiate_template(std::string_view template_name, std::span<const TypeSpecifierNode> arg_types);  // NEW: Try to instantiate a template
 	std::optional<ASTNode> try_instantiate_single_template(const ASTNode& template_node, std::string_view template_name, std::span<const TypeSpecifierNode> arg_types, int& recursion_depth);	 // Helper: Try to instantiate a specific template node (for SFINAE)
 	const FunctionDeclarationNode* tryInstantiateOperatorTemplateForBinary(
@@ -2986,7 +2987,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 				gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(member_ns, member_token);
 			ExpressionNode& member_expr =
 				gChunkedAnyStorage.emplace_back<ExpressionNode>(member_qual_id);
-			if (auto value = try_evaluate_constant_expression(ASTNode(&member_expr))) {
+			if (auto value = tryEvaluateConstantExpression(ASTNode(&member_expr), ConstantEvaluationMode::Speculative)) {
 				concrete_arg.is_value = true;
 				concrete_arg.is_dependent = false;
 				concrete_arg.dependent_name = {};
@@ -3024,8 +3025,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 								!static_member_decl.initializer.has_value()) {
 								continue;
 							}
-							if (auto value =
-									try_evaluate_constant_expression(*static_member_decl.initializer)) {
+							if (auto value = tryEvaluateConstantExpression(*static_member_decl.initializer, ConstantEvaluationMode::Speculative)) {
 								concrete_arg.is_value = true;
 								concrete_arg.is_dependent = false;
 								concrete_arg.dependent_name = {};
@@ -3056,7 +3056,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 			if (!static_member || !static_member->initializer.has_value()) {
 				continue;
 			}
-			if (auto value = try_evaluate_constant_expression(*static_member->initializer)) {
+			if (auto value = tryEvaluateConstantExpression(*static_member->initializer, ConstantEvaluationMode::Speculative)) {
 				concrete_arg.is_value = true;
 				concrete_arg.is_dependent = false;
 				concrete_arg.dependent_name = {};

@@ -1548,9 +1548,7 @@ std::optional<TemplateArgumentVector> Parser::materializeDeferredAliasTemplateAr
 						ASTNode::emplace_node<ExpressionNode>(
 							IdentifierNode(
 								Token(Token::Type::Identifier, pack_element_name, 0, 0, 0)));
-					if (auto const_value =
-							try_evaluate_constant_expression(pack_element_expr);
-						const_value.has_value()) {
+					if (auto const_value = tryEvaluateConstantExpression(pack_element_expr, ConstantEvaluationMode::Speculative); const_value.has_value()) {
 						TemplateTypeArg recovered_arg =
 							TemplateTypeArg::makeValueIdentity(const_value->identity);
 						substituted_args.push_back(std::move(recovered_arg));
@@ -4015,9 +4013,7 @@ std::optional<TemplateTypeArg> Parser::tryFoldDependentQualifiedStaticMemberNTTP
 										ASTNode::emplace_node<TypeSpecifierNode>(
 											std::move(concrete_operand)),
 										trait.trait_token()));
-							if (auto value = try_evaluate_constant_expression(
-									directly_substituted);
-								value.has_value()) {
+							if (auto value = tryEvaluateConstantExpression(directly_substituted, ConstantEvaluationMode::Speculative); value.has_value()) {
 								return TemplateTypeArg(value->value, value->type);
 							}
 						}
@@ -4294,8 +4290,7 @@ const TypeInfo* Parser::tryMaterializeMemberAliasTemplateSpecialization(
 						*referenced_static_member->initializer,
 						eval_ctx);
 					if (eval_result.success()) {
-						if (auto value = try_evaluate_constant_expression(
-								*referenced_static_member->initializer)) {
+						if (auto value = tryEvaluateConstantExpression(*referenced_static_member->initializer, ConstantEvaluationMode::Speculative)) {
 							FlashCpp::NonTypeValueIdentity identity = value->identity;
 							if (concrete_arg.type_index.is_valid()) {
 								identity.value_type_index = concrete_arg.type_index;

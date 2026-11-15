@@ -2362,7 +2362,7 @@ std::optional<TemplateArgumentVector> Parser::materializeConcreteCallTemplateArg
 		}
 
 		std::optional<ConstantValue> constant_value =
-			try_evaluate_constant_expression(template_arg_node);
+			tryEvaluateConstantExpression(template_arg_node, ConstantEvaluationMode::Speculative);
 		if (!constant_value.has_value()) {
 			return std::nullopt;
 		}

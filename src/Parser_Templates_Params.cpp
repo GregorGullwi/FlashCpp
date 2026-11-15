@@ -1134,7 +1134,7 @@ std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(
 					ASTNode identifier_expression =
 						ASTNode::emplace_node<ExpressionNode>(
 							IdentifierNode(identifier_token));
-					if (auto const_value = try_evaluate_constant_expression(identifier_expression)) {
+					if (auto const_value = tryEvaluateConstantExpression(identifier_expression, ConstantEvaluationMode::Speculative)) {
 						TemplateTypeArg value_arg =
 							TemplateTypeArg::makeValueIdentity(const_value->identity);
 						return { SimpleTemplateArgKind::ValueLike, value_arg };
@@ -1902,7 +1902,7 @@ std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(
 					", parsing_template_body=",
 					parsing_template_depth_ > 0,
 					")");
-				auto const_value = try_evaluate_constant_expression(*expr_result.node());
+				auto const_value = tryEvaluateConstantExpression(*expr_result.node(), ConstantEvaluationMode::Speculative);
 				if (const_value.has_value()) {
 					// Successfully evaluated as a constant expression.
 					// Preserve full typed NTTP identity (pointer/reference/member/nullptr/etc)
@@ -2131,7 +2131,7 @@ std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(
 						for (const auto& static_member : ctx.local_struct_info->static_members) {
 							if (static_member.getName() == id_handle && static_member.initializer.has_value()) {
 								// Try to evaluate the static member's initializer
-								static_member_value = try_evaluate_constant_expression(*static_member.initializer);
+								static_member_value = tryEvaluateConstantExpression(*static_member.initializer, ConstantEvaluationMode::Speculative);
 								if (static_member_value.has_value()) {
 									FLASH_LOG(Templates, Trace, "Evaluated static constexpr member '", id.name(),
 											  "' to value ", static_member_value->value);
@@ -2146,7 +2146,7 @@ std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(
 					if (!evaluated_static_member && ctx.struct_node != nullptr) {
 						for (const auto& static_member : ctx.struct_node->static_members()) {
 							if (static_member.name == id_handle && static_member.initializer.has_value()) {
-								static_member_value = try_evaluate_constant_expression(*static_member.initializer);
+								static_member_value = tryEvaluateConstantExpression(*static_member.initializer, ConstantEvaluationMode::Speculative);
 								if (static_member_value.has_value()) {
 									FLASH_LOG(Templates, Trace, "Evaluated static constexpr member '", id.name(),
 											  "' (from struct_node) to value ", static_member_value->value);
@@ -2921,7 +2921,7 @@ try_type_template_argument_parse:
 						if (peek() != "]"_tok) {
 							auto size_result = parse_expression(0, ExpressionContext::TemplateTypeArg);
 							if (!size_result.is_error() && size_result.node().has_value()) {
-								if (auto const_size = try_evaluate_constant_expression(*size_result.node())) {
+								if (auto const_size = tryEvaluateConstantExpression(*size_result.node(), ConstantEvaluationMode::Speculative)) {
 									if (const_size->value >= 0) {
 										ptr_array_size = static_cast<size_t>(const_size->value);
 									}
@@ -3169,7 +3169,7 @@ try_type_template_argument_parse:
 					return std::nullopt;
 				}
 
-				if (auto const_size = try_evaluate_constant_expression(*size_result.node())) {
+				if (auto const_size = tryEvaluateConstantExpression(*size_result.node(), ConstantEvaluationMode::Speculative)) {
 					if (const_size->value >= 0) {
 						parsed_array_size = static_cast<size_t>(const_size->value);
 					}
@@ -3979,7 +3979,7 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 			if (!expressionHasUnsubstitutedDependency(
 					expressionHasUnsubstitutedDependency,
 					expr_node)) {
-			if (auto const_value = try_evaluate_constant_expression(expr_node)) {
+			if (auto const_value = tryEvaluateConstantExpression(expr_node, ConstantEvaluationMode::Speculative)) {
 				FlashCpp::NonTypeValueIdentity identity = const_value->identity;
 				if (!identity.member_class_name.isValid() &&
 					existing_arg.member_class_name.isValid()) {
@@ -4080,7 +4080,7 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 				symbol_lookup.has_value() && symbol_lookup->is<VariableDeclarationNode>()) {
 				const VariableDeclarationNode& variable_decl = symbol_lookup->as<VariableDeclarationNode>();
 				if (variable_decl.initializer().has_value()) {
-					if (auto const_value = try_evaluate_constant_expression(*variable_decl.initializer())) {
+					if (auto const_value = tryEvaluateConstantExpression(*variable_decl.initializer(), ConstantEvaluationMode::Speculative)) {
 						return TemplateTypeArg::makeValueIdentity(const_value->identity);
 					}
 				}

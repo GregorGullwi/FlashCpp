@@ -1547,7 +1547,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				!reference_array_has_identifier) {
 				for (const ASTNode& bound_expression : reference_array_bounds) {
 					const auto bound_value =
-						try_evaluate_constant_expression(bound_expression);
+						tryEvaluateConstantExpression(bound_expression, ConstantEvaluationMode::Speculative);
 					if (bound_value.has_value() && bound_value->value <= 0) {
 						discard_saved_token(reference_array_probe);
 						return error(

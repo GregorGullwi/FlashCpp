@@ -943,7 +943,7 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 				outer_extents.reserve(array_dimensions.size());
 				bool folded = true;
 				for (const ASTNode& dimension : array_dimensions) {
-					const auto extent = try_evaluate_constant_expression(dimension);
+					const auto extent = tryEvaluateConstantExpression(dimension, ConstantEvaluationMode::Speculative);
 					if (!extent.has_value() || extent->value <= 0) {
 						folded = false;
 						break;
@@ -1176,7 +1176,11 @@ ParseResult Parser::parseArrayDeclaratorBound(ParsedArrayBound& bound) {
 	}
 
 	bound = {*node, 0, ArrayBoundKind::Unresolved};
-	if (const auto value = try_evaluate_constant_expression(*node)) {
+	// A skipped logical operand can still make the bound dependent.
+	const bool is_dependent = isDependentTemplateContext() &&
+		ParserExpressionDependency::nodeHasDeferredTemplateDependency(*node, currentTemplateParamNames());
+	const ConstantEvaluationMode mode = is_dependent ? ConstantEvaluationMode::Speculative : ConstantEvaluationMode::Ordinary;
+	if (const auto value = tryEvaluateConstantExpression(*node, mode)) {
 		if (value->value > 0) {
 			bound.kind = ArrayBoundKind::Constant;
 			bound.extent = static_cast<size_t>(value->value);
@@ -1235,7 +1239,7 @@ void Parser::addConstantArrayDimensionsToTypeSpec(
 	std::vector<size_t> dimensions;
 	dimensions.reserve(dimension_exprs.size());
 	for (const ASTNode& dimension_expr : dimension_exprs) {
-		const auto dim_val = try_evaluate_constant_expression(dimension_expr);
+		const auto dim_val = tryEvaluateConstantExpression(dimension_expr, ConstantEvaluationMode::Speculative);
 		if (!dim_val.has_value() || dim_val->value <= 0) {
 			return;
 		}

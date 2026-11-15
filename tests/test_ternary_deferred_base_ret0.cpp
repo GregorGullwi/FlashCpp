@@ -1,7 +1,7 @@
 // Test: Ternary operator in deferred base class expression
 // Tests the __static_sign pattern from <ratio>: integral_constant<int, (_Pn < 0) ? -1 : 1>
 // Validates: ExpressionSubstitutor TernaryOperatorNode support,
-//            try_evaluate_constant_expression ternary handler with ctx.parser,
+//            tryEvaluateConstantExpression ternary handler with ctx.parser,
 //            correct template arg extraction from TypeInfo stored args
 
 template <typename T, T v>

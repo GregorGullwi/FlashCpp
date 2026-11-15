@@ -2458,7 +2458,7 @@ std::optional<size_t> Parser::parse_alignas_specifier() {
 		if (!expr_result.is_error() && expr_result.node().has_value()) {
 			if (consume(")"_tok)) {
 				// Try to evaluate the expression as a constant
-				auto eval_result = try_evaluate_constant_expression(*expr_result.node());
+				auto eval_result = tryEvaluateConstantExpression(*expr_result.node(), ConstantEvaluationMode::Speculative);
 				if (eval_result.has_value()) {
 					alignment = static_cast<size_t>(eval_result->value);
 					if (alignment > 0 && (alignment & (alignment - 1)) == 0) {

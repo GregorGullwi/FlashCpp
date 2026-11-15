@@ -144,7 +144,7 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 					} else {
 						const auto& dimensions = decl.array_dimensions();
 						for (size_t i = 1; i < dimensions.size(); ++i) {
-							const auto dimension = try_evaluate_constant_expression(dimensions[i]);
+							const auto dimension = tryEvaluateConstantExpression(dimensions[i], ConstantEvaluationMode::Speculative);
 							if (dimension.has_value() && dimension->value <= 0) {
 								return error(
 									DiagnosticId::FunctionTemplateArrayBoundUnresolved,
@@ -630,7 +630,7 @@ bool Parser::parseExplicitSpecifier(ExprId& retained_condition) {
 		retained_condition = requireFrontendContext().dependentExpressions().intern(operand);
 		return true;
 	}
-	const auto evaluated = try_evaluate_constant_expression(operand);
+	const auto evaluated = tryEvaluateConstantExpression(operand, ConstantEvaluationMode::Speculative);
 	if (evaluated.has_value()) {
 		return evaluated->value != 0;
 	}
@@ -804,8 +804,7 @@ void Parser::apply_parsed_function_type_qualifiers(
 		return;
 	}
 
-	const auto evaluated = try_evaluate_constant_expression(
-		signature.noexcept_expression->node());
+	const auto evaluated = tryEvaluateConstantExpression(signature.noexcept_expression->node(), ConstantEvaluationMode::Speculative);
 	if (evaluated.has_value()) {
 		signature.is_noexcept = evaluated->value != 0;
 		signature.noexcept_expression.reset();
@@ -844,7 +843,7 @@ Parser::ParsedNoexceptResolution Parser::resolveParsedNoexcept(const FlashCpp::F
 		resolved.expression = expression;
 		return resolved;
 	}
-	const auto evaluated = try_evaluate_constant_expression(expression.node());
+	const auto evaluated = tryEvaluateConstantExpression(expression.node(), ConstantEvaluationMode::Speculative);
 	if (evaluated.has_value()) {
 		resolved.is_noexcept = evaluated->value != 0;
 		return resolved;

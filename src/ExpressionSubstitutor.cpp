@@ -1239,7 +1239,7 @@ bool ExpressionSubstitutor::expandDependentValuePack(const TemplateTypeArg& pack
 		ASTNode substituted_expr = element_substitutor.substitute(*pack_arg.dependent_expr);
 		if (context != nullptr) staged_expressions[expansion_index].expression = substituted_expr;
 
-		if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
+		if (auto eval_result = parser_.tryEvaluateConstantExpression(substituted_expr, Parser::ConstantEvaluationMode::Speculative)) {
 			TemplateTypeArg expanded_arg = makeConcreteNttpArg(eval_result->identity, pack_arg);
 			expanded_arg.is_pack = false;
 			expanded_args.push_back(std::move(expanded_arg));
@@ -1343,7 +1343,7 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 		if (materialized_arg.is_value && materialized_arg.dependent_expr.has_value()) {
 			const ASTNode& stored_expr = *materialized_arg.dependent_expr;
 			ASTNode substituted_expr = substitute(stored_expr);
-			if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
+			if (auto eval_result = parser_.tryEvaluateConstantExpression(substituted_expr, Parser::ConstantEvaluationMode::Speculative)) {
 				applyEvaluatedValue(*eval_result, internExpression(substituted_expr));
 				FLASH_LOG(Templates, Trace, "materializeStoredTemplateArgs: evaluated dependent value expr -> ", eval_result->value);
 			} else {
@@ -1393,7 +1393,7 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 								ExpressionNode& member_expr =
 									gChunkedAnyStorage.emplace_back<ExpressionNode>(member_qual_id);
 								ASTNode member_expr_node(&member_expr);
-								if (auto value = parser_.try_evaluate_constant_expression(member_expr_node)) {
+								if (auto value = parser_.tryEvaluateConstantExpression(member_expr_node, Parser::ConstantEvaluationMode::Speculative)) {
 									applyEvaluatedValue(*value, internExpression(member_expr_node));
 								}
 							}
@@ -1608,7 +1608,7 @@ TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplate
 		}
 		if (arg.is_value && arg.dependent_expr.has_value()) {
 			ASTNode substituted_expr = substitute(*arg.dependent_expr);
-			if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
+			if (auto eval_result = parser_.tryEvaluateConstantExpression(substituted_expr, Parser::ConstantEvaluationMode::Speculative)) {
 				TemplateTypeArg concrete_arg = makeConcreteNttpArg(eval_result->identity, arg);
 				arg = concrete_arg;
 			} else {
@@ -4983,7 +4983,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 
 			if (arg.is_value && arg.dependent_expr.has_value()) {
 				ASTNode substituted_expr = substitute(*arg.dependent_expr);
-				if (auto value = parser_.try_evaluate_constant_expression(substituted_expr)) {
+				if (auto value = parser_.tryEvaluateConstantExpression(substituted_expr, Parser::ConstantEvaluationMode::Speculative)) {
 					arg = makeConcreteNttpArg(value->identity, arg);
 					break;
 				}

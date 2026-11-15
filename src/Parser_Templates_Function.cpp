@@ -1160,7 +1160,7 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 // Evaluate constant expressions for template arguments
 // Handles cases like is_int<T>::value where T is substituted
 // Returns pair of (value, type) if successful, nullopt otherwise
-std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(const ASTNode& expr_node) {
+std::optional<Parser::ConstantValue> Parser::tryEvaluateConstantExpression(const ASTNode& expr_node, ConstantEvaluationMode mode) {
 	if (!expr_node.is<ExpressionNode>()) {
 		FLASH_LOG(Templates, Trace, "Not an ExpressionNode");
 		return std::nullopt;
@@ -1369,7 +1369,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 				!static_member_decl.initializer.has_value()) {
 				continue;
 			}
-			auto value = try_evaluate_constant_expression(*static_member_decl.initializer);
+			auto value = tryEvaluateConstantExpression(*static_member_decl.initializer, mode);
 			if (!value.has_value()) {
 				return std::nullopt;
 			}
@@ -1378,9 +1378,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 
 		return std::nullopt;
 	};
-	// Helper: create a constexpr evaluation context with struct context and parser.
-	// is_speculative = true disables short-circuit && / || so that a truthy LHS of `||`
-	// does not give a false-positive result during template-argument disambiguation.
+	// Speculative evaluation visits both logical operands for template-argument disambiguation.
 	auto makeConstExprContext = [&]() {
 		ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
 		if (!struct_parsing_context_stack_.empty()) {
@@ -1388,7 +1386,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			ctx.struct_node = struct_ctx.struct_node;
 			ctx.struct_info = struct_ctx.local_struct_info;
 		}
-		ctx.is_speculative = true;
+		ctx.is_speculative = mode == ConstantEvaluationMode::Speculative;
 		return ctx;
 	};
 
@@ -1511,7 +1509,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		// For type traits, this is typically a bool literal (true/false)
 		const ASTNode& init_node = *static_member->initializer;
 		// Recursively evaluate the initializer
-		auto value = try_evaluate_constant_expression(init_node);
+		auto value = tryEvaluateConstantExpression(init_node, mode);
 		if (!value.has_value()) {
 			return std::nullopt;
 		}
@@ -1585,7 +1583,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		// For type traits, this is typically a bool literal (true/false)
 		const ASTNode& init_node = *static_member->initializer;
 		// Recursively evaluate the initializer
-		return try_evaluate_constant_expression(init_node);
+		return tryEvaluateConstantExpression(init_node, mode);
 	}
 
 	// Handle type trait expressions (e.g., __has_trivial_destructor(T), __is_class(T))
@@ -1635,7 +1633,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 				: &ternary->false_expr();
 		}
 		if (selected_branch_resolved) {
-			if (auto selected_value = try_evaluate_constant_expression(*selected_branch)) {
+			if (auto selected_value = tryEvaluateConstantExpression(*selected_branch, mode)) {
 				return selected_value;
 			}
 		}
