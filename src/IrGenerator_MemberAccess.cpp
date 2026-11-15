@@ -1716,7 +1716,13 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			// Two cases:
 			//   - Load context: struct ref member returns ValueStorage::ContainsAddress
 			//   - LValueAddress context: struct ref member returns Kind::Indirect (pointer loaded)
-			if (nested_result.storage == ValueStorage::ContainsAddress ||
+			bool nested_record_object = false;
+			if (!is_arrow && is_struct_type(nested_result.typeEnum()) && nested_result.pointer_depth.value == 0) {
+				if (const StructTypeInfo* nested_struct = tryGetStructTypeInfo(nested_result.type_index)) {
+					nested_record_object = !nested_struct->is_union;
+				}
+			}
+			if (nested_result.storage == ValueStorage::ContainsAddress || nested_record_object ||
 				(is_arrow && nested_result.pointer_depth.value > 0)) {
 				is_pointer_dereference = true;
 			}
@@ -2197,13 +2203,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	const int result_bits = loaded.loads_pointer_value ? loaded.size_bits : member_size_bits;
 	const PointerDepth result_depth = loaded.loads_pointer_value ? loaded.pointer_depth : PointerDepth{member->pointer_depth};
 	const TypeIndex result_type = loaded.loads_pointer_value ? loaded.semantic_type : member->type_index;
-	ValueStorage result_storage = ValueStorage::ContainsData;
-	if (is_struct_type(result_type.category()) && result_depth.value == 0 && result_type.is_valid()) {
-		if (const StructTypeInfo* result_struct = tryGetStructTypeInfo(result_type); result_struct && !result_struct->is_union) {
-			result_storage = ValueStorage::ContainsAddress;
-		}
-	}
-	return makeMemberResult(SizeInBits{result_bits}, result_var, result_type, result_depth, result_storage);
+	return makeMemberResult(SizeInBits{result_bits}, result_var, result_type, result_depth, ValueStorage::ContainsData);
 }
 
 std::optional<size_t> AstToIr::calculateArraySize(const DeclarationNode& decl) {
