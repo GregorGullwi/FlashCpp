@@ -1,9 +1,45 @@
 #pragma once
 
 #include <new>
+#include <string_view>
 
 #include "CanonicalTypeAdapter.h"
 #include "TemplateRegistry_Types.h"
+
+// [class.copy.ctor] classifies a non-template constructor as a copy or move
+// constructor only when its first parameter is a reference to the class itself;
+// pointer and array declarators are ordinary constructors. Other deleted
+// reference constructors stay in deleted_constructors so their parameter types
+// participate in ranking instead of changing implicit special-member rules.
+template <typename ParamContainer>
+inline DeletedConstructorFlags classifyDeletedSpecialConstructor(
+	const ParamContainer& parameters, std::string_view self_name, std::string_view alternate_self_name) {
+	if (parameters.size() == 0) {
+		return DeletedConstructorFlags::Default;
+	}
+	if (computeMinRequiredArgs(parameters) > 1) {
+		return DeletedConstructorFlags::None;
+	}
+	const ASTNode& parameter = parameters[0];
+	if (!parameter.is<DeclarationNode>()) {
+		return DeletedConstructorFlags::None;
+	}
+	const TypeSpecifierNode& type_spec = parameter.as<DeclarationNode>().type_specifier_node();
+	const std::string_view parameter_type_name = type_spec.token().value();
+	if (parameter_type_name != self_name && parameter_type_name != alternate_self_name) {
+		return DeletedConstructorFlags::None;
+	}
+	if (type_spec.pointer_depth() != 0 || type_spec.is_array()) {
+		return DeletedConstructorFlags::None;
+	}
+	if (type_spec.is_rvalue_reference()) {
+		return DeletedConstructorFlags::Move;
+	}
+	if (type_spec.is_lvalue_reference()) {
+		return DeletedConstructorFlags::Copy;
+	}
+	return DeletedConstructorFlags::None;
+}
 
 struct SourceMemberStructInfoIndexMaps;
 

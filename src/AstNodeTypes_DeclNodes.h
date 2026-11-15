@@ -1787,6 +1787,11 @@ TypeCreationResult add_user_type(StringHandle name, int size_in_bits, NamespaceH
 
 TypeCreationResult add_struct_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{});
 
+// Each partial-specialization pattern is a distinct declaration even when its
+// synthesized lookup name collides with another pattern's. This always creates
+// a fresh TypeInfo and makes it the current name lookup result.
+TypeCreationResult add_pattern_struct_type(StringHandle name, NamespaceHandle ns);
+
 TypeCreationResult add_enum_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{});
 
 void initialize_native_types();

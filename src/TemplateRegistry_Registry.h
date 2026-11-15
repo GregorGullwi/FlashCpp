@@ -1082,6 +1082,7 @@ public:
 		class_template_names_.clear();
 		pattern_struct_names_.clear();
 		pattern_to_base_name_.clear();
+		pattern_struct_type_infos_.clear();
 		constrained_pattern_counter.store(0, std::memory_order_relaxed);
 		outer_template_bindings_.clear();
 	}
@@ -1100,6 +1101,21 @@ public:
 	// Returns true if 'name' was registered as a pattern struct name
 	bool isPatternStructName(StringHandle name) const {
 		return pattern_struct_names_.count(name) > 0;
+	}
+
+	// Associates a partial-specialization pattern declaration with its own type
+	// record. Pattern names are synthesized from argument modifiers and can
+	// collide, so name lookup cannot distinguish two patterns' members.
+	void registerPatternStructTypeInfo(const StructDeclarationNode* declaration, TypeInfo& type_info) {
+		pattern_struct_type_infos_[declaration] = &type_info;
+	}
+
+	const StructTypeInfo* tryGetPatternStructTypeInfo(const StructDeclarationNode* declaration) const {
+		auto it = pattern_struct_type_infos_.find(declaration);
+		if (it == pattern_struct_type_infos_.end() || it->second == nullptr) {
+			return nullptr;
+		}
+		return it->second->getStructInfo();
 	}
 
 	// Look up the base template name for a pattern struct (non-string-based).
@@ -1392,6 +1408,9 @@ private:
 	// E.g., StringHandle("Container$pattern_TP") → StringHandle("Container")
 	// Used by getPatternBaseTemplateName() to recover the base template name without parsing strings.
 	std::unordered_map<StringHandle, StringHandle, StringHandleHash, std::equal_to<>> pattern_to_base_name_;
+
+	// Per-declaration type records for partial-specialization patterns.
+	std::unordered_map<const StructDeclarationNode*, TypeInfo*> pattern_struct_type_infos_;
 
 public:
 	// Counter for disambiguating constrained partial specialization pattern names.
