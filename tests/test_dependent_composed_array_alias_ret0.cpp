@@ -22,6 +22,22 @@ template<class Element, int Rows>
 struct Matrix {
 	using Storage = Element[Rows];
 	Storage data;
+	Element tail;
+};
+
+template<class Element>
+struct IdentityPointer {
+	using Alias = Element;
+	Alias* value;
+};
+
+template<class Element>
+struct IdentityReference {
+	using Alias = Element;
+
+	int last(Alias& value) {
+		return value[2];
+	}
 };
 
 int main() {
@@ -47,5 +63,25 @@ int main() {
 
 	Matrix<WideRow, 2> matrix{};
 	matrix.data[1][3] = 77;
-	return sizeof(matrix.data[1]) == sizeof(WideRow) && matrix.data[1][3] == 77 ? 0 : 5;
+	matrix.tail[2] = 88;
+	if (sizeof(matrix.data[1]) != sizeof(WideRow) || matrix.data[1][3] != 77 || matrix.tail[2] != 88) {
+		return 5;
+	}
+	if (sizeof(matrix) != 3 * sizeof(WideRow)) {
+		return 6;
+	}
+
+	Row target{1, 2, 3};
+	IdentityPointer<Row> pointer{&target};
+	if ((*pointer.value)[2] != 3) {
+		return 7;
+	}
+
+	Row referenced{4, 5, 6};
+	IdentityReference<Row> reference{};
+	if (reference.last(referenced) != 6) {
+		return 8;
+	}
+
+	return 0;
 }

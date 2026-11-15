@@ -1079,9 +1079,11 @@ inline void applyBoundTemplateArgMetadata(
 	if (!substituted_type.has_function_signature() && arg->hasFunctionSignature()) {
 		substituted_type.set_function_signature(arg->functionSignature());
 	}
-	const int resolved_size_bits = getTypeSpecSizeBits(substituted_type);
-	if (resolved_size_bits > 0) {
-		substituted_type.set_size_in_bits(resolved_size_bits);
+	if (!substituted_type.is_array()) {
+		const int resolved_size_bits = getTypeSpecSizeBits(substituted_type);
+		if (resolved_size_bits > 0) {
+			substituted_type.set_size_in_bits(resolved_size_bits);
+		}
 	}
 }
 
@@ -2027,6 +2029,33 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtif
 	return resolved_type_index;
 }
 
+// Keep an array type specifier's stored size at one element. Ordered array
+// extents are multiplied by size queries, so carrying the aggregate size here
+// would double-count in layout and use the whole array as a subscript stride.
+inline void normalizeArrayTypeSpecifierElementSize(TypeSpecifierNode& type) {
+	if (!type.is_array()) {
+		return;
+	}
+	TypeSpecifierNode element_probe = type;
+	if (element_probe.has_ordered_declarator()) {
+		std::vector<DeclaratorComponent> element_components;
+		for (const DeclaratorComponent& component : element_probe.declarator_components()) {
+			if (component.kind != DeclaratorComponentKind::Array && component.kind != DeclaratorComponentKind::UnknownBoundArray) {
+				element_components.push_back(component);
+			}
+		}
+		element_probe.clear_declarator_shape();
+		if (!element_components.empty()) {
+			element_probe.set_ordered_declarator(std::move(element_components));
+		}
+	} else {
+		element_probe.set_array_dimensions({});
+	}
+	if (const int element_size_bits = getTypeSpecSizeBits(element_probe); element_size_bits > 0) {
+		type.set_size_in_bits(element_size_bits);
+	}
+}
+
 // Replace the pattern alias shape at the innermost end of a use-site
 // declarator with the instantiated owner alias shape. Outer pointer, reference,
 // and array wrappers keep their original order around the concrete alias.
@@ -2037,6 +2066,8 @@ inline std::optional<TypeSpecifierNode> composeInstantiatedOwnerAliasShape(
 	if (!instantiated_alias.has_ordered_declarator() && !instantiated_alias.is_array() && !instantiated_alias.has_pointee_array_declarator()) {
 		return std::nullopt;
 	}
+	TypeSpecifierNode concrete_alias = instantiated_alias;
+	normalizeArrayTypeSpecifierElementSize(concrete_alias);
 	std::vector<DeclaratorComponent> alias_components;
 	appendDeclaratorShapeForSubstitution(pattern_alias, alias_components);
 	std::vector<DeclaratorComponent> use_site_components;
@@ -2052,7 +2083,7 @@ inline std::optional<TypeSpecifierNode> composeInstantiatedOwnerAliasShape(
 			}
 		}
 	} else if (!use_site_components.empty() && alias_components.empty()) {
-		alias_shape_offset = 0;
+		alias_shape_offset = use_site_components.size();
 	} else if (!use_site_components.empty()) {
 		alias_shape_matches = false;
 	}
@@ -2068,12 +2099,12 @@ inline std::optional<TypeSpecifierNode> composeInstantiatedOwnerAliasShape(
 		alias_shape_offset = 0;
 	}
 	use_site_components.resize(alias_shape_offset);
+	if (use_site_components.empty()) {
+		return concrete_alias;
+	}
 	TypeSpecifierNode outer_shape = use_site;
 	outer_shape.clear_declarator_shape();
-	if (!use_site_components.empty()) {
-		outer_shape.set_ordered_declarator(std::move(use_site_components));
-	}
-	TypeSpecifierNode concrete_alias = instantiated_alias;
+	outer_shape.set_ordered_declarator(std::move(use_site_components));
 	applyOuterDeclaratorShapeForSubstitution(concrete_alias, outer_shape);
 	return concrete_alias;
 }
@@ -2205,6 +2236,7 @@ TypeSpecifierNode buildSubstitutedTypeSpecifier(
 		original_type_spec,
 		template_params,
 		template_args);
+	normalizeArrayTypeSpecifierElementSize(substituted_type);
 	return substituted_type;
 }
 

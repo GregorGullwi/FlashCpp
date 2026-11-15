@@ -8825,10 +8825,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 		TypeIndex stored_member_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : member_type_index;
 		size_t member_size;
 		if (is_array_member) {
-			// Compute per-element size, looking up struct sizes from gTypeInfo
 			member_size = calculateResolvedMemberSizeAndAlignment(substituted_type_spec, member_size_type_index).size;
-			for (size_t dim_size : resolved_array_dimensions) {
-				member_size *= dim_size;
+			if (!substituted_type_spec.has_ordered_declarator()) {
+				for (size_t dim_size : resolved_array_dimensions) {
+					member_size *= dim_size;
+				}
 			}
 		} else if (substituted_array_size.has_value()) {
 			// resolve_array_dimensions may miss bounds that were rewritten in-place as
