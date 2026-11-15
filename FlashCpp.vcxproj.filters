@@ -476,6 +476,9 @@
     <ClInclude Include="src\TypeTraitEvaluator.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\TypeVisitSets.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\coffi\coffi.hpp">
       <Filter>Header Files\coffi</Filter>
     </ClInclude>

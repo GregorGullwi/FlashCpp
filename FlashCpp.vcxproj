@@ -572,6 +572,7 @@
     <ClInclude Include="src\TokenKind.h" />
     <ClInclude Include="src\TokenTable.h" />
     <ClInclude Include="src\TypeTraitEvaluator.h" />
+    <ClInclude Include="src\TypeVisitSets.h" />
     <ClInclude Include="src\coffi\coffi.hpp" />
     <ClInclude Include="src\coffi\coffi_directory.hpp" />
     <ClInclude Include="src\coffi\coffi_headers.hpp" />

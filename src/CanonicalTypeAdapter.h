@@ -5,6 +5,7 @@
 #include "CanonicalTypes.h"
 #include "FrontendContext.h"
 #include "TemplateRegistry_Types.h"
+#include "TypeVisitSets.h"
 
 #include <limits>
 #include <optional>
@@ -1947,13 +1948,13 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberObjectPointer(Can
 	}
 	InlineVector<CanonicalLookupClass, FlashCpp::InlineVectorSpillFamily::ClassLayout, 4> pending;
 	pending.push_back({owner, owner_record});
-	std::unordered_set<uint32_t> visited;
+	TypeIdSet visited;
 	std::optional<TypeId> declaring_class;
 	uint16_t declaring_ordinal = 0;
 	while (!pending.empty()) {
 		const CanonicalLookupClass current = pending.back();
 		pending.pop_back();
-		if (!visited.insert(current.type.value).second) {
+		if (!visited.insert(current.type)) {
 			continue;
 		}
 		const StructMember* member = current.record->findMember(member_name);
@@ -2139,13 +2140,13 @@ inline std::optional<TypeId> tryImportCanonicalStructuralMemberFunctionPointer(C
 	const TypeId expected_signature = type.child;
 	InlineVector<CanonicalLookupClass, FlashCpp::InlineVectorSpillFamily::ClassLayout, 4> pending;
 	pending.push_back({owner, owner_record});
-	std::unordered_set<uint32_t> visited;
+	TypeIdSet visited;
 	std::optional<TypeId> declaring_class;
 	uint16_t declaring_ordinal = 0;
 	while (!pending.empty()) {
 		const CanonicalLookupClass current = pending.back();
 		pending.pop_back();
-		if (!visited.insert(current.type.value).second) {
+		if (!visited.insert(current.type)) {
 			continue;
 		}
 		if (!tryPublishCanonicalMemberFunctionSignatures(table, current.type, *current.record)) return std::nullopt;
@@ -3003,7 +3004,7 @@ inline std::optional<uint32_t> tryFindPublishedVirtualBaseIndex(CanonicalTypeTab
 inline const StructTypeInfo* canonicalClassStructInfoFromTypeInfo(
 	const TypeInfo& type_info) {
 	const TypeInfo* current = &type_info;
-	std::unordered_set<uint32_t> visited_type_indices;
+	TypeIndexSet visited_type_indices;
 	while (current != nullptr) {
 		if (const StructTypeInfo* struct_info = current->getStructInfo();
 			struct_info != nullptr) {
@@ -3011,7 +3012,7 @@ inline const StructTypeInfo* canonicalClassStructInfoFromTypeInfo(
 		}
 		const TypeSpecifierNode* alias_type = current->aliasTypeSpecifier();
 		if (alias_type == nullptr || !alias_type->type_index().is_valid() ||
-			!visited_type_indices.insert(alias_type->type_index().index()).second) {
+			!visited_type_indices.insert(alias_type->type_index())) {
 			return nullptr;
 		}
 		current = tryGetTypeInfo(alias_type->type_index());
@@ -3369,12 +3370,12 @@ inline bool tryPublishCanonicalClassBaseSchema(CanonicalTypeTable& table, TypeId
 	};
 	CanonicalTypeTransaction transaction(table);
 	std::vector<PendingClass> worklist;
-	std::unordered_set<uint32_t> visited;
+	TypeIdSet visited;
 	worklist.push_back({root_type, &root_struct_info});
 	while (!worklist.empty()) {
 		const PendingClass current = worklist.back();
 		worklist.pop_back();
-		if (!visited.insert(current.type.value).second) {
+		if (!visited.insert(current.type)) {
 			continue;
 		}
 		if (current.struct_info == nullptr || !current.struct_info->layout_is_complete || current.struct_info->has_deferred_base_classes) {

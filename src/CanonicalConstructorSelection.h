@@ -4,6 +4,7 @@
 #include "CanonicalTypes.h"
 #include "InlineVector.h"
 #include "OverloadResolution.h"
+#include "TypeVisitSets.h"
 
 #include <algorithm>
 #include <limits>
@@ -340,7 +341,7 @@ inline CanonicalConstructorParameterMatch matchCanonicalDirectConversionOperator
 	}
 	InlineVector<CanonicalLookupClass, FlashCpp::InlineVectorSpillFamily::ClassLayout, 4> pending;
 	pending.push_back({source_class, source_record});
-	InlineVector<uint32_t, FlashCpp::InlineVectorSpillFamily::ClassLayout, 8> visited;
+	TypeIdSet visited;
 	std::optional<ConversionRank> best_rank;
 	size_t best_count = 0;
 	bool best_public = false;
@@ -348,10 +349,9 @@ inline CanonicalConstructorParameterMatch matchCanonicalDirectConversionOperator
 	while (!pending.empty()) {
 		const CanonicalLookupClass current = pending.back();
 		pending.pop_back();
-		if (std::find(visited.begin(), visited.end(), current.type.value) != visited.end()) {
+		if (!visited.insert(current.type)) {
 			continue;
 		}
-		visited.push_back(current.type.value);
 		if (!tryPublishCanonicalMemberFunctionSignatures(table, current.type, *current.record)) {
 			return CanonicalConstructorParameterMatch::Unknown;
 		}

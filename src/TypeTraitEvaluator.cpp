@@ -14,6 +14,7 @@
 #include "OverloadResolution.h"
 #include "StructHierarchyWalk.h"
 #include "StructInfoSet.h"
+#include "TypeVisitSets.h"
 
 // Canonical probe shared with overload resolution. Defined here because this
 // unit can include both OverloadResolution.h and the constructor-selection
@@ -832,7 +833,7 @@ std::optional<bool> canonicalRecordDestructionProperty(CanonicalTraitProperty pr
 	TypeId root_type, bool is_root_type) {
 	const TypeId unqualified_root = table.withoutTopLevelQualifiers(root_type);
 	std::vector<TypeId> pending{unqualified_root};
-	std::unordered_set<uint32_t> visited;
+	TypeIdSet visited;
 	while (!pending.empty()) {
 		TypeId current = pending.back();
 		pending.pop_back();
@@ -853,7 +854,7 @@ std::optional<bool> canonicalRecordDestructionProperty(CanonicalTraitProperty pr
 		if (node.kind != CanonicalTypeKind::Record && node.kind != CanonicalTypeKind::TemplateSpecialization) {
 			return std::nullopt;
 		}
-		if (!visited.insert(current.value).second) {
+		if (!visited.insert(current)) {
 			continue;
 		}
 		if (!table.hasRecordProperties(current)) {
@@ -991,7 +992,7 @@ std::optional<bool> canonicalRecordTrivialityProperty(CanonicalTraitProperty pro
 		}
 	}
 	std::vector<TypeId> pending{unqualified_root};
-	std::unordered_set<uint32_t> visited;
+	TypeIdSet visited;
 	while (!pending.empty()) {
 		TypeId current = pending.back();
 		pending.pop_back();
@@ -1012,7 +1013,7 @@ std::optional<bool> canonicalRecordTrivialityProperty(CanonicalTraitProperty pro
 		if (node.kind != CanonicalTypeKind::Record && node.kind != CanonicalTypeKind::TemplateSpecialization) {
 			return std::nullopt;
 		}
-		if (!visited.insert(current.value).second) {
+		if (!visited.insert(current)) {
 			continue;
 		}
 		if (!table.hasRecordProperties(current)) {
@@ -1440,8 +1441,6 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTra
 }
 
 namespace {
-
-using TypeIndexSet = FlashCpp::FlatHashSet<TypeIndex, std::hash<TypeIndex>, std::equal_to<TypeIndex>, 8>;
 
 struct CachedRecordFactsEntry {
 	CanonicalRecordFacts facts = CanonicalRecordFacts::None;
