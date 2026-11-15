@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 
 // Interned descriptor identity, scoped to the translation unit's semantic pass.
 struct CanonicalTypeId {
@@ -73,6 +74,13 @@ struct TypeId {
 	explicit constexpr operator bool() const { return value != 0; }
 	friend constexpr bool operator==(TypeId, TypeId) = default;
 };
+
+namespace std {
+template <>
+struct hash<TypeId> {
+	size_t operator()(TypeId id) const noexcept { return std::hash<uint32_t>{}(id.value); }
+};
+}  // namespace std
 
 // Opaque compatibility identity used by the declaration publication bridge.
 // This remains distinct from canonical TypeId until boundary 3A replaces it.

@@ -11,6 +11,7 @@
 #include "TemplateTypes.h" // For FunctionSignatureKey
 #include "MigrationStats.h"
 #include "InlineVector.h"
+#include "TypeVisitSets.h"
 #include <algorithm>
 #include <array>
 #include <span>
@@ -1461,17 +1462,15 @@ inline std::optional<int64_t> findCanonicalNonVirtualBaseOffset(const CanonicalT
 	};
 	OverloadVector<PendingBase, 4> pending;
 	pending.push_back({derived_type, 0});
-	OverloadVector<TypeId, 4> visited_types;
+	TypeIdSet visited_types;
 	for (size_t pending_index = 0; pending_index < pending.size(); ++pending_index) {
 		const PendingBase current = pending[pending_index];
 		if (current.type == base_type) {
 			return current.offset;
 		}
-		if (std::find(visited_types.begin(), visited_types.end(), current.type) !=
-			visited_types.end()) {
+		if (!visited_types.insert(current.type)) {
 			continue;
 		}
-		visited_types.push_back(current.type);
 		if (!table.hasClassBaseSchema(current.type)) {
 			return std::nullopt;
 		}
@@ -3081,16 +3080,15 @@ collectCanonicalConversionOperators(CanonicalTypeTable& table, TypeId source_typ
 		size_t depth;
 	};
 	std::vector<PendingType> pending_types{{source_class_type, 0}};
-	std::vector<TypeId> visited_types;
+	TypeIdSet visited_types;
 	std::vector<const FunctionDeclarationNode*> visited_functions;
 	std::vector<NearestDeclaration> nearest_declarations;
 	const uint8_t source_cv_bits = static_cast<uint8_t>(source_cv_qualifier);
 	for (size_t pending_index = 0; pending_index < pending_types.size(); ++pending_index) {
 		const PendingType pending_type = pending_types[pending_index];
-		if (std::find(visited_types.begin(), visited_types.end(), pending_type.type) != visited_types.end()) {
+		if (!visited_types.insert(pending_type.type)) {
 			continue;
 		}
-		visited_types.push_back(pending_type.type);
 		if (!table.hasClassBaseSchema(pending_type.type)) {
 			candidates.clear();
 			return candidates;

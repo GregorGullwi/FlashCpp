@@ -34,6 +34,7 @@
 #include "AstTraversal.h"
 #include "StructHierarchyWalk.h"
 #include "StructInfoSet.h"
+#include "TypeVisitSets.h"
 
 
 namespace {
@@ -8018,12 +8019,12 @@ bool SemanticAnalysis::isDerivedFrom(
 	}
 
 	std::vector<std::pair<TypeIndex, bool>> pending;
-	std::unordered_set<TypeIndex> visited;
+	TypeIndexSet visited;
 	pending.emplace_back(derived_type_index, true);
 	while (!pending.empty()) {
 		const auto [current_type_index, is_first_base] = pending.back();
 		pending.pop_back();
-		if (!visited.insert(current_type_index).second) {
+		if (!visited.insert(current_type_index)) {
 			continue;
 		}
 		const StructTypeInfo* current_struct = tryGetStructTypeInfo(current_type_index);
@@ -11537,14 +11538,13 @@ static void materializeExactTargetLazyConversionOperators(TypeIndex source_type_
 		return;
 	}
 	InlineVector<TypeIndex, FlashCpp::InlineVectorSpillFamily::OverloadResolution, 4> pending_types{source_type_index};
-	InlineVector<TypeIndex, FlashCpp::InlineVectorSpillFamily::OverloadResolution, 4> visited_types;
+	TypeIndexSet visited_types;
 	const uint8_t source_cv_bits = static_cast<uint8_t>(source_cv_qualifier);
 	for (size_t pending_index = 0; pending_index < pending_types.size(); ++pending_index) {
 		const TypeIndex current_type = pending_types[pending_index];
-		if (std::find(visited_types.begin(), visited_types.end(), current_type) != visited_types.end()) {
+		if (!visited_types.insert(current_type)) {
 			continue;
 		}
-		visited_types.push_back(current_type);
 		const TypeInfo* const type_info = tryGetTypeInfo(current_type);
 		if (type_info == nullptr) {
 			continue;
@@ -12053,14 +12053,13 @@ bool SemanticAnalysis::receiverBaseIsAccessible(TypeIndex source_type_index, Typ
 	}
 	OverloadVector<TypeIndex, 4> pending;
 	pending.push_back(source_type_index);
-	OverloadVector<TypeIndex, 4> visited;
+	TypeIndexSet visited;
 	while (!pending.empty()) {
 		const TypeIndex current_type_index = pending.back();
 		pending.pop_back();
-		if (std::find(visited.begin(), visited.end(), current_type_index) != visited.end()) {
+		if (!visited.insert(current_type_index)) {
 			continue;
 		}
-		visited.push_back(current_type_index);
 		const StructTypeInfo* current = tryGetStructTypeInfo(current_type_index);
 		if (current == nullptr) {
 			continue;
