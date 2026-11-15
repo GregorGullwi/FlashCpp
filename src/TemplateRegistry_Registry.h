@@ -1082,6 +1082,7 @@ public:
 		class_template_names_.clear();
 		pattern_struct_names_.clear();
 		pattern_to_base_name_.clear();
+		partial_pattern_type_infos_.clear();
 		pattern_identity_ordinal.store(0, std::memory_order_relaxed);
 		constrained_pattern_counter.store(0, std::memory_order_relaxed);
 		outer_template_bindings_.clear();
@@ -1108,6 +1109,27 @@ public:
 	// so spelling alone is not an identity.
 	size_t nextPatternIdentityOrdinal() {
 		return pattern_identity_ordinal.fetch_add(1, std::memory_order_relaxed);
+	}
+
+	// Associates a partial-pattern type record with its canonical environment
+	// and declaration. Concept-constrained declarations can share one parameter
+	// environment, so the environment alone is not a unique artifact key.
+	void registerPartialPatternTypeInfo(TemplateDeclId environment, const StructDeclarationNode& declaration, TypeInfo& type_info) {
+		if (!environment) {
+			return;
+		}
+		partial_pattern_type_infos_[PartialPatternTypeKey{environment.value, &declaration}] = &type_info;
+	}
+
+	const StructTypeInfo* tryGetPartialPatternStructInfo(TemplateDeclId environment, const StructDeclarationNode& declaration) const {
+		if (!environment) {
+			return nullptr;
+		}
+		auto it = partial_pattern_type_infos_.find(PartialPatternTypeKey{environment.value, &declaration});
+		if (it == partial_pattern_type_infos_.end() || it->second == nullptr) {
+			return nullptr;
+		}
+		return it->second->getStructInfo();
 	}
 
 	// Look up the base template name for a pattern struct (non-string-based).
@@ -1400,6 +1422,23 @@ private:
 	// E.g., StringHandle("Container$pattern_TP") → StringHandle("Container")
 	// Used by getPatternBaseTemplateName() to recover the base template name without parsing strings.
 	std::unordered_map<StringHandle, StringHandle, StringHandleHash, std::equal_to<>> pattern_to_base_name_;
+
+	// Pattern type records keyed by the canonical partial-pattern environment and
+	// the pattern declaration. Different constrained declarations can share an
+	// environment because constraints are not part of the normalized pattern.
+	struct PartialPatternTypeKey {
+		uint32_t environment = 0;
+		const StructDeclarationNode* declaration = nullptr;
+		friend bool operator==(const PartialPatternTypeKey&, const PartialPatternTypeKey&) = default;
+	};
+	struct PartialPatternTypeKeyHash {
+		size_t operator()(const PartialPatternTypeKey& key) const {
+			size_t hash = std::hash<uint32_t>{}(key.environment);
+			hash ^= std::hash<const void*>{}(key.declaration) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			return hash;
+		}
+	};
+	std::unordered_map<PartialPatternTypeKey, TypeInfo*, PartialPatternTypeKeyHash> partial_pattern_type_infos_;
 
 	// Counter that makes synthesized partial-specialization pattern names unique.
 	std::atomic<size_t> pattern_identity_ordinal{0};

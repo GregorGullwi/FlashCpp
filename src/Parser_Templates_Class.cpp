@@ -3538,6 +3538,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 			FlashCpp::ScopedState partial_environment_guard(active_template_decl_id_);
 			active_template_decl_id_ = {};
+			std::optional<TemplateDeclId> pattern_environment;
 			const ScopeType partial_scope = gSymbolTable.get_current_scope_type();
 			const TemplateClassDeclarationNode& primary = class_template_opt->as<TemplateClassDeclarationNode>();
 			if (!requires_clause.has_value() && (partial_scope == ScopeType::Global || partial_scope == ScopeType::Namespace)) {
@@ -3550,6 +3551,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					const TemplateDeclId environment = front_end.templateDecls().publishClassPartialEnvironment(primary.template_decl_id(), *pattern);
 					struct_ref.set_partial_specialization_environment(environment);
 					active_template_decl_id_ = environment;
+					pattern_environment = environment;
 					bindCurrentUnpublishedTemplateParameters(environment);
 				}
 			}
@@ -3568,6 +3570,9 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			StructTypeInfo* struct_info = &struct_type_info.emplaceStructInfo(instantiated_name, struct_ref.default_access(), is_union, gSymbolTable.get_current_namespace_handle());
 			struct_info->declaration_node = &struct_ref;
 			struct_info->classifyParticipation(StructEntityParticipation::TemplatePattern);
+			if (pattern_environment.has_value()) {
+				gTemplateRegistry.registerPartialPatternTypeInfo(*pattern_environment, struct_ref, struct_type_info);
+			}
 
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek() == ":"_tok) {
@@ -6211,6 +6216,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				member_struct_ref.set_partial_specialization_environment(environment);
 				active_template_decl_id_ = environment;
 				partial_environment = environment;
+				gTemplateRegistry.registerPartialPatternTypeInfo(environment, member_struct_ref, member_pattern_type_info);
 			}
 		}
 
