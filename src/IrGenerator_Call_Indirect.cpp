@@ -1663,10 +1663,10 @@ ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExp
 			// by the instantiator to the correct declaring owner (e.g. "Base" for inherited
 			// templates, "Box$hash" for instantiated templates).  Prefer it over the receiver
 			// type extracted from callExprNode.qualified_name(), but only when it is not a
-			// template pattern placeholder (which ends in "$pattern__") — those are not real
+			// template pattern placeholder (which contains "$pattern") - those are not real
 			// symbols and must not be used for mangling.
 			auto is_pattern_name = [](std::string_view name) {
-				return name.ends_with("$pattern__"sv);
+				return name.find("$pattern"sv) != std::string_view::npos;
 			};
 			if (!member_func_decl.parent_struct_name().empty() &&
 				!is_pattern_name(member_func_decl.parent_struct_name())) {

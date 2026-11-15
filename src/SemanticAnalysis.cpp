@@ -394,7 +394,7 @@ void applyDeclarationArrayBoundsToTypeSpec(
 }
 
 namespace {
-constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
+constexpr std::string_view kTemplatePatternStructMarker = "$pattern";
 constexpr std::string_view kAnonymousNamespaceContext = "<anonymous namespace>";
 
 CanonicalTypeNode nodeUnderQualifiersAndReferences(CanonicalTypeTable& table, TypeId type_id);
@@ -4419,7 +4419,7 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 	const auto& def = ctor.get_definition();
 	if (!def.has_value())
 		return;
-	if (ctor.struct_name().view().find(kTemplatePatternStructSuffix) != std::string_view::npos)
+	if (ctor.struct_name().view().find(kTemplatePatternStructMarker) != std::string_view::npos)
 		return;
 
 	if (!normalized_bodies_.insert(static_cast<const void*>(&(*def))).second) {
