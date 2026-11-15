@@ -1607,25 +1607,11 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			}
 		}
 
-		// Array dimensions in the alias target: using A = T[3]; or using A = T[N];
-		// The bound may be a concrete constant or a dependent expression (which
-		// stores extent 0 until substitution).
-		while (!has_structural_alias_declarator && peek() == "["_tok) {
-			const Token opening_bracket_token = peek_info();
-			ParsedArrayBound bound;
-			if (ParseResult result = parseArrayDeclaratorBound(bound); result.is_error()) {
+		if (!has_structural_alias_declarator) {
+			ParseResult result = parseArrayDeclaratorSuffix(type_spec, &alias_array_bound_expressions, ArrayDeclaratorContext::AliasTemplate);
+			if (result.is_error()) {
 				return result;
 			}
-			if (bound.kind == ArrayBoundKind::NonPositive) {
-				return error(DiagnosticId::AliasTemplateArrayBoundUnresolved, opening_bracket_token,
-					"Alias template array bound must be a positive constant expression");
-			}
-			if (bound.kind == ArrayBoundKind::Omitted) {
-				type_spec.set_array(true);
-			} else {
-				type_spec.add_array_dimension(bound.extent);
-			}
-			alias_array_bound_expressions.push_back(bound.expression);
 		}
 
 		// Function type target: template <class T> using Fn = int (T);

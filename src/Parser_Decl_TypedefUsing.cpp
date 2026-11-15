@@ -2497,7 +2497,7 @@ ParseResult Parser::parse_typedef_declaration() {
 	}
 
 	if (peek() == "["_tok) {
-		if (ParseResult array_result = parseArrayDeclaratorSuffix(type_spec, nullptr); array_result.is_error()) {
+		if (ParseResult array_result = parseArrayDeclaratorSuffix(type_spec, nullptr, ArrayDeclaratorContext::Ordinary); array_result.is_error()) {
 			return array_result;
 		}
 		type_node = emplace_node<TypeSpecifierNode>(type_spec);

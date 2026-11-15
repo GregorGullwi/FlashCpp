@@ -2063,6 +2063,57 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtif
 	return resolved_type_index;
 }
 
+// Replace the pattern alias shape at the innermost end of a use-site
+// declarator with the instantiated owner alias shape. Outer pointer, reference,
+// and array wrappers keep their original order around the concrete alias.
+inline std::optional<TypeSpecifierNode> composeInstantiatedOwnerAliasShape(
+	const TypeSpecifierNode& use_site,
+	const TypeSpecifierNode& pattern_alias,
+	const TypeSpecifierNode& instantiated_alias) {
+	if (!instantiated_alias.has_ordered_declarator() && !instantiated_alias.is_array() && !instantiated_alias.has_pointee_array_declarator()) {
+		return std::nullopt;
+	}
+	std::vector<DeclaratorComponent> alias_components;
+	appendDeclaratorShapeForSubstitution(pattern_alias, alias_components);
+	std::vector<DeclaratorComponent> use_site_components;
+	appendDeclaratorShapeForSubstitution(use_site, use_site_components);
+	size_t alias_shape_offset = 0;
+	bool alias_shape_matches = true;
+	if (!use_site_components.empty() && !alias_components.empty() && use_site_components.size() >= alias_components.size()) {
+		alias_shape_offset = use_site_components.size() - alias_components.size();
+		for (size_t index = 0; index < alias_components.size(); ++index) {
+			if (use_site_components[alias_shape_offset + index].kind != alias_components[index].kind) {
+				alias_shape_matches = false;
+				break;
+			}
+		}
+	} else if (!use_site_components.empty() && alias_components.empty()) {
+		alias_shape_offset = 0;
+	} else if (!use_site_components.empty()) {
+		alias_shape_matches = false;
+	}
+	if (!alias_shape_matches) {
+		const bool use_site_has_array = std::ranges::any_of(
+			use_site_components,
+			[](const DeclaratorComponent& component) {
+				return component.kind == DeclaratorComponentKind::Array || component.kind == DeclaratorComponentKind::UnknownBoundArray;
+			});
+		if (use_site_has_array) {
+			return std::nullopt;
+		}
+		alias_shape_offset = 0;
+	}
+	use_site_components.resize(alias_shape_offset);
+	TypeSpecifierNode outer_shape = use_site;
+	outer_shape.clear_declarator_shape();
+	if (!use_site_components.empty()) {
+		outer_shape.set_ordered_declarator(std::move(use_site_components));
+	}
+	TypeSpecifierNode concrete_alias = instantiated_alias;
+	applyOuterDeclaratorShapeForSubstitution(concrete_alias, outer_shape);
+	return concrete_alias;
+}
+
 template <
 	typename ParamContainer,
 	typename ArgContainer,
@@ -2087,6 +2138,8 @@ TypeSpecifierNode buildSubstitutedTypeSpecifier(
 		? override_type_index
 		: substitute_type_index(original_type_spec, template_params, template_args);
 	bool resolved_from_instantiated_owner_alias = false;
+	const TypeSpecifierNode* pattern_owner_alias_spec = nullptr;
+	const TypeSpecifierNode* instantiated_owner_alias_spec = nullptr;
 	if (owner_decl != nullptr) {
 		substituted_type_index = resolveOwnerAliasTypeIndex(
 			substitute_type_index,
@@ -2103,6 +2156,9 @@ TypeSpecifierNode buildSubstitutedTypeSpecifier(
 					if (type_alias.alias_name != type_name_handle) {
 						continue;
 					}
+					if (type_alias.type_node.is<TypeSpecifierNode>()) {
+						pattern_owner_alias_spec = &type_alias.type_node.as<TypeSpecifierNode>();
+					}
 					if (const TypeInfo* owner_type_info = tryGetTypeInfo(instantiated_owner_type_index)) {
 						StringHandle qualified_alias_name = StringTable::getOrInternStringHandle(
 							StringBuilder()
@@ -2118,6 +2174,7 @@ TypeSpecifierNode buildSubstitutedTypeSpecifier(
 							resolved_from_instantiated_owner_alias =
 								resolved_alias.type_index.is_valid() &&
 								!typeIndexContainsDependentPlaceholder(resolved_alias.type_index);
+							instantiated_owner_alias_spec = instantiated_alias->aliasTypeSpecifier();
 						}
 					}
 					break;
@@ -2146,6 +2203,13 @@ TypeSpecifierNode buildSubstitutedTypeSpecifier(
 			  getSubstitutedTypeSizeBits(substituted_type_index),
 			  fallback_token,
 			  original_type_spec.cv_qualifier());
+	if (instantiated_owner_alias_spec != nullptr && pattern_owner_alias_spec != nullptr) {
+		if (std::optional<TypeSpecifierNode> concrete_alias = composeInstantiatedOwnerAliasShape(
+				original_type_spec, *pattern_owner_alias_spec, *instantiated_owner_alias_spec);
+			concrete_alias.has_value()) {
+			substituted_type = std::move(*concrete_alias);
+		}
+	}
 	const bool full_substitution_is_type =
 		full_substituted_node.is<TypeSpecifierNode>();
 	const bool substituted_index_is_concrete =

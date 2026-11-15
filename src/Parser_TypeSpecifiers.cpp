@@ -34,6 +34,21 @@ AliasTemplateArity aliasTemplateArity(const TemplateParameterVector& parameters)
 	return arity;
 }
 
+// An array alias records the element size in its own specifier; the aggregate
+// size is recovered by multiplying the resolved dimensions. Use that element
+// size when materializing a use-site specifier so subscripting takes one
+// element stride instead of the whole array's size.
+int resolvedAliasElementSizeBits(const TypeInfo& type_info, const ResolvedAliasTypeInfo& resolved_alias) {
+	if (!resolved_alias.has_ordered_declarator && !resolved_alias.pointee_array_declarator && !resolved_alias.isArray()) {
+		return 0;
+	}
+	const TypeSpecifierNode* alias_spec = type_info.aliasTypeSpecifier();
+	if (alias_spec == nullptr || alias_spec->size_in_bits() <= 0) {
+		return 0;
+	}
+	return alias_spec->size_in_bits();
+}
+
 // Whether a canonical type is a builtin/record/enum value wrapped only by cv,
 // pointer, or reference nodes. Arrays, specializations, callable types, and
 // dependent defaults keep their own substitution path.
@@ -2465,9 +2480,15 @@ ParseResult Parser::parse_type_specifier() {
 							resolved_function_signature = resolved_alias->function_signature;
 							resolved_cv = resolved_alias->cv_qualifier;
 						}
+						int resolved_size_bits = type_info.hasStoredSize() ? static_cast<int>(type_info.sizeInBits().value) : 0;
+						if (resolved_alias.has_value()) {
+							if (const int element_size_bits = resolvedAliasElementSizeBits(type_info, *resolved_alias); element_size_bits > 0) {
+								resolved_size_bits = element_size_bits;
+							}
+						}
 						auto type_node = emplace_node<TypeSpecifierNode>(
 							resolved_type_index.withCategory(resolved_category),
-							type_info.hasStoredSize() ? static_cast<unsigned char>(type_info.sizeInBits().value) : 0,
+							resolved_size_bits,
 							token,
 							cv_qualifier | resolved_cv,
 							ReferenceQualifier::None);
@@ -2794,7 +2815,7 @@ ParseResult Parser::parse_type_specifier() {
 						if (alias_target_preserves_surface_modifiers &&
 							materialized_alias.resolved_type_info != nullptr) {
 							ASTNode substituted_alias_target = substituteTemplateParameters(
-								ASTNode::emplace_node<TypeSpecifierNode>(alias_node.target_type_node()),
+								ASTNode::emplace_node<TypeSpecifierNode>(resolved_alias_target_type_spec),
 								alias_node.template_parameters(),
 								*template_args);
 							if (substituted_alias_target.is<TypeSpecifierNode>()) {
@@ -2832,10 +2853,10 @@ ParseResult Parser::parse_type_specifier() {
 							resolved_alias_type.add_cv_qualifier(cv_qualifier);
 							if (!typeSpecStillUsesDependentPlaceholder(resolved_alias_type) &&
 								resolved_alias_type.type() != TypeCategory::Template) {
-								if (const int resolved_size_bits =
-										getTypeSpecSizeBits(resolved_alias_type);
-								resolved_size_bits > 0) {
-									resolved_alias_type.set_size_in_bits(resolved_size_bits);
+								if (!resolved_alias_type.is_array_object()) {
+									if (const int resolved_size_bits = getTypeSpecSizeBits(resolved_alias_type); resolved_size_bits > 0) {
+										resolved_alias_type.set_size_in_bits(resolved_size_bits);
+									}
 								}
 								return ParseResult::success(
 									emplace_node<TypeSpecifierNode>(resolved_alias_type));
@@ -2960,13 +2981,13 @@ ParseResult Parser::parse_type_specifier() {
 										concrete_target_args);
 								}
 								if (materialized_target.resolved_type_info != nullptr) {
-									instantiated_type = resolveTypeInfoToTypeSpec(
-										*materialized_target.resolved_type_info, instantiated_type);
+									instantiated_type = materialized_target.resolved_type_specifier.has_value()
+										? *materialized_target.resolved_type_specifier : resolveTypeInfoToTypeSpec(*materialized_target.resolved_type_info, instantiated_type);
 								}
 							}
 						} else {
 							ASTNode substituted_alias_target = substituteTemplateParameters(
-								ASTNode::emplace_node<TypeSpecifierNode>(alias_node.target_type_node()),
+								ASTNode::emplace_node<TypeSpecifierNode>(resolved_alias_target_type_spec),
 								alias_node.template_parameters(),
 								*template_args);
 							if (substituted_alias_target.is<TypeSpecifierNode>()) {
@@ -5211,6 +5232,9 @@ ParseResult Parser::parse_type_specifier() {
 			if (is_typedef) {
 				resolved_type = resolved_alias.typeEnum();
 				type_size = static_cast<unsigned char>(type_info_ctx->sizeInBits().value);
+				if (const int element_size_bits = resolvedAliasElementSizeBits(*type_info_ctx, resolved_alias); element_size_bits > 0) {
+					type_size = element_size_bits;
+				}
 				// Merge cv-qualifier from the alias chain (e.g. template binding First=const int)
 				// with any explicit cv-qualifier from the token stream.
 				CVQualifier effective_cv = static_cast<CVQualifier>(

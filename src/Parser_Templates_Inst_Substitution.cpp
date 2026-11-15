@@ -2602,9 +2602,11 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			return std::nullopt;
 		}
 		// Member-pointer targets rematerialize owner TypeId without needing a
-		// prior pointee TypeInfo resolution.
+		// prior pointee TypeInfo resolution. Ordered array targets can resolve
+		// their element type from the substituted specifier instead.
 		if (result.resolved_type_info == nullptr &&
-			!alias_node->target_type_node().has_member_class()) {
+			!alias_node->target_type_node().has_member_class() &&
+			!alias_node->target_type_node().has_ordered_declarator()) {
 			return std::nullopt;
 		}
 		ASTNode substituted_alias_target = substituteTemplateParameters(
@@ -2755,11 +2757,27 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			}
 		}
 		if (result.resolved_type_info == nullptr) {
-			return std::nullopt;
+			TypeIndex target_type_index = target_type_spec.type_index();
+			if (!target_type_index.is_valid() && target_type_spec.category() != TypeCategory::Invalid) {
+				target_type_index = nativeTypeIndex(target_type_spec.type());
+			}
+			if (!target_type_index.is_valid()) {
+				return std::nullopt;
+			}
+			const ResolvedAliasTypeInfo resolved_target = resolveAliasTypeInfo(target_type_index);
+			const TypeInfo* target_type_info = resolved_target.terminal_type_info;
+			if (target_type_info == nullptr && resolved_target.type_index.is_valid()) {
+				target_type_info = tryGetTypeInfo(resolved_target.type_index);
+			}
+			if (target_type_info == nullptr || target_type_info->isTypeAlias()) {
+				return std::nullopt;
+			}
+			result.resolved_type_info = target_type_info;
+			if (result.instantiated_name.empty()) {
+				result.instantiated_name = StringTable::getStringView(target_type_info->name());
+			}
 		}
-		return resolveTypeInfoToTypeSpec(
-			*result.resolved_type_info,
-			target_type_spec);
+		return resolveTypeInfoToTypeSpec(*result.resolved_type_info, target_type_spec);
 	};
 	auto tryMaterializeTemplateAliasTarget = [&]() -> bool {
 		if (alias_node == nullptr) {
