@@ -247,6 +247,13 @@ Class-owned member specializations already encode their owner in the member
 are parsed and registered. The importer remains fail-closed for missing,
 mismatched, unpublished, or unresolved owner facts.
 
+Canonical pattern environments are the intended partial-pattern identity for the
+shapes 3A supports. Synthesized `$pattern` names currently carry a
+per-declaration ordinal so colliding patterns do not share a type-table key;
+that is a temporary bridge, not semantic identity. Pattern type records and
+schemas still need to be keyed by the canonical identity, while
+`TemplateDeclId`-keyed registries and facade lookups remain boundary 6.
+
 ## Remaining 3A work
 
 1. **Make `TypeId` the conversion currency.** Finish replacing syntax-facing
@@ -416,7 +423,18 @@ mismatched, unpublished, or unresolved owner facts.
    substitution checks the owning specialization as well as the member's
    arguments before publishing a concrete type.
 
-4. **Close and mutation-validate the 3A exit criteria.** Prove independence from
+4. **Key partial-pattern artifacts by canonical identity.** Publish a canonical
+   pattern `TypeId`/environment for every partial class-template pattern that
+   3A supports, and key the pattern `StructTypeInfo`, member schemas, and
+   constructor schemas by that identity. Keep synthesized `$pattern` names for
+   diagnostics only. The current per-declaration ordinal makes colliding pattern
+   spellings unique as a bridge, but it is not semantic identity and does not
+   satisfy the parse-order or string-table-order exit criteria. Moving the
+   remaining registries, specialization caches, and facade lookups to
+   `TemplateDeclId` belongs to boundary 6; deleting name-based
+   partial-specialization replay and selection belongs to boundary 8A.
+
+5. **Close and mutation-validate the 3A exit criteria.** Prove independence from
    parser/context stacks, parse order, and string-table insertion order; cover
    the remaining pointer-to-member, function, dependent, and template families;
    and remove the flat pointer-level and array-dimension fields from migrated
@@ -548,6 +566,11 @@ These seed adjacent slices; the authoritative inventory is
   address NTTP cases still return `Unresolved`, and the identity stamp should
   move into the remaining signature writers so the centralized step can be
   dropped.
+- **Partial-specialization identity handoff:** canonical pattern identity and
+  pattern-schema keying are 3A work; `TemplateDeclId`-keyed registries,
+  specialization and instantiation caches, and facade lookups are boundary 6;
+  removing name-based partial-specialization replay and selection is boundary
+  8A. Synthesized `$pattern` names are diagnostics only in all three.
 - **Negative tests:** encode the exact expected diagnostic ID multiset in the
   filename (`_e1001.cpp`, `_e1003_e1051.cpp`); `_fail.cpp` is reserved for the
   immutable legacy inventory.

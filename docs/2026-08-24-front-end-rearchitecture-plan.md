@@ -868,6 +868,22 @@ after substitute (Set DependentName-family / Clear on collapse with
 Builtin/Record/Enum TypeId→TypeIndex projection) and skips NonType Spec links
 when discovering substitute environments.
 
+Partial-specialization pattern identity belongs to this boundary. Every partial
+class-template pattern must publish a canonical pattern `TypeId`/environment for
+the supported shapes, and pattern artifact homes such as `StructTypeInfo`,
+member schemas, and constructor schemas must be keyed by that identity. The
+synthesized `$pattern` spelling may remain for diagnostics and debugging, but it
+is not identity; a per-declaration ordinal that only makes the spelling unique
+is a temporary bridge and cannot satisfy the parse-order and string-table-order
+exit criteria below.
+
+The consumer side stays outside 3A. Keying registries, specialization and
+instantiation caches, and facade lookups by `TemplateDeclId` belongs to
+architecture boundary 6. Running partial-specialization matching and
+instantiation from the semantic pattern identity, and deleting the remaining
+name-based partial-specialization replay and selection paths, belongs to
+architecture boundary 8A.
+
 Exit criteria:
 
 - canonicalization does not inspect parser or member-context stacks;
@@ -1016,6 +1032,11 @@ architecture boundary 6.
 
 Move the facade to semantic identity.
 
+Boundary 3A publishes canonical partial-pattern identity. This boundary consumes
+it for registries, specialization and instantiation caches, and facade lookups.
+Synthesized pattern spellings are diagnostics only and must not remain identity
+keys.
+
 Deliver:
 
 - registries keyed by `TemplateDeclId`;
@@ -1116,11 +1137,17 @@ Deliver:
 - structural substitution over the new semantic AST;
 - shared P-against-A deduction;
 - proper non-deduced contexts;
-- partial-specialization matching and ordering;
+- partial-specialization matching and ordering over the canonical pattern
+  identity published by boundary 3A;
 - an iterative point-of-instantiation work queue;
 - small arena-owned `InstantiationFrame` records linked by ID for logical depth
   and diagnostics;
 - conforming implementation limits without a sticky translation-unit cap.
+
+Partial-specialization matching and replay must not use synthesized `$pattern`
+spellings as identity; those spellings are diagnostics only. Removing the
+name-based replay and selection paths is part of this boundary's old-path
+deletion.
 
 Implements: [temp.spec], [temp.inst], [temp.explicit],
 [temp.spec.partial], [temp.spec.partial.match],
