@@ -242,11 +242,41 @@ bracket operand, including the reversed form `index()[object()]`. Reads,
 writes, and address-taking share this lowering, including when a conversion
 supplies the array or when subscripts are combined across dimensions.
 
+The parser-time constant-expression evaluator used by `static_assert` still
+rejects the reversed built-in subscript form: with
+`constexpr int values[5] = {11, 22, 33, 44, 55};`,
+`static_assert(2[values] == 33);` reports "Array subscript on unsupported
+expression type", while the array-first spelling works.
+
 Call return-type materialization can duplicate a pointer layer when the
 declared return type is a pointer-to-array alias. For example, with
-`using RowPointer = int (*)[4]; RowPointer f();`, subscripting `f()` can use
-the stride of an array of pointers. The grouped declaration `int (*f())[4];`
-carries the correct return shape through the same subscript lowering.
+`using RowPointer = int (*)[4]; RowPointer f();`, `f()[i][j]` uses the stride
+of an array of pointers. The grouped declaration `int (*f())[4];` keeps
+`f()[i][j]` correct, but `(*f())[i][j]` still crashes.
+
+On Win64, whole-record by-value parameters larger than 8 bytes lose
+member-array indirection: a function taking `struct S` by value and indexing
+`s.member_array[i]` reads the parameter's pointer slot as inline storage.
+Reference and pointer parameters, and local objects, are unaffected.
+
+The array-access backend still classifies pointer-valued elements as records
+from `TypeCategory` alone. Direct `ptrs[i]->member`, address-taking followed
+by a double dereference (`T** pp = &ptrs[i]; (*pp)->member`), and returning
+an array member reached through a record subscript all mislower. The same
+flaw makes a row of `T* rows[M][N]` decay with the pointer stride instead of
+the row stride. Copying `ptrs[i]` into a named pointer first is unaffected.
+
+## Subscript storage follow-up architecture
+
+Runtime storage now describes what each temporary holds, but two consumers
+still infer semantics from it. `ReturnOp` should carry explicit by-value versus
+reference intent instead of consulting per-function `TempVar` lvalue metadata;
+that is also where direct SysV 9-16-byte aggregate returns from an address need
+ABI-aware copying. Subscript lowering should pass an explicit selected-object
+kind (array versus scalar) instead of treating `ContainsAddress` as "array
+result", and `ArrayAccess`/`ArrayStore`/`ArrayElementAddress` should carry
+element pointer depth or effective `IrType` so codegen stops classifying
+pointer-valued elements as records from `TypeCategory` alone.
 
 Dependent array bounds in composed aliases now survive template instantiation.
 For example, `using Row = short[3];` followed by

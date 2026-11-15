@@ -9423,10 +9423,15 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 
 				bool handled_reference_return = false;
 				{
+					const bool by_value_record_return =
+						!current_function_returns_reference_ &&
+						!current_function_returns_pointer_ &&
+						isIrStructType(toIrType(ret_op.return_type_index.category())) &&
+						ret_op.return_size > 0;
 					auto lv_info_opt = getTempVarLValueInfo(return_var);
 					if (lv_info_opt.has_value() &&
 						(current_function_returns_reference_ ||
-						 ret_op.return_storage == ValueStorage::ContainsAddress)) {
+						 (ret_op.return_storage == ValueStorage::ContainsAddress && !by_value_record_return))) {
 						const LValueInfo& lv_info = lv_info_opt.value();
 						auto loadBaseAddress = [&](const std::variant<StringHandle, TempVar, LocalVarId>& base, bool base_is_pointer) -> bool {
 							int base_offset = 0;
@@ -14891,8 +14896,8 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 	int64_t base_offset = 0;
 	bool base_is_global = false;
 	StringHandle base_global_name;
-	bool base_is_indirect =
-		op.base_storage == ValueStorage::ContainsAddress; // True if base contains a pointer/reference
+	// This describes which object is being addressed, independently of the slot's value type.
+	const bool base_is_indirect = op.base_storage == ValueStorage::ContainsAddress;
 	if (std::holds_alternative<StringHandle>(op.base) || std::holds_alternative<LocalVarId>(op.base)) {
 		// Variable name or local id - look up its stack offset
 		const VariableKey base_key = variableKeyOf(op.base).value();
@@ -14907,27 +14912,19 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 			}
 		} else {
 			base_offset = info->offset;
-
-			// Check if base is a pointer (reference or 'this')
-			// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
-			base_is_indirect =
-				base_is_indirect ||
-				isPointerBaseStorage(static_cast<int32_t>(base_offset));
 		}
 	} else {
 		// TempVar - get its stack offset
 		TempVar base_temp = std::get<TempVar>(op.base);
 		base_offset = getStackOffsetFromTempVar(base_temp);
-
-		// Check if TempVar is a reference or address-only
-		base_is_indirect =
-			base_is_indirect ||
-			isPointerBaseStorage(static_cast<int32_t>(base_offset), base_temp);
 	}
 
 	if (base_is_global) {
 		uint32_t reloc_offset = emitLeaRipRelative(base_reg);
 		pending_global_relocations_.push_back({reloc_offset, base_global_name, IMAGE_REL_AMD64_REL32});
+		if (base_is_indirect) {
+			emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, sizeof(void*));
+		}
 	} else if (base_is_indirect) {
 		// Base is a reference or pointer - load the address it contains (MOV, not LEA)
 		emitMovFromFrame(base_reg, base_offset);

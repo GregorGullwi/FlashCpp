@@ -416,7 +416,8 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 		const ExpressionNode& obj_expr = object_node.as<ExpressionNode>();
 
 		// Get object type to lookup member
-		ExprResult object_operands = visitExpressionNode(obj_expr, ExpressionContext::LValueAddress);
+		const ExpressionContext object_context = memberAccess.is_arrow() ? ExpressionContext::Load : ExpressionContext::LValueAddress;
+		const ExprResult object_operands = visitExpressionNode(obj_expr, object_context);
 
 		const TypeCategory object_category = object_operands.category();
 		TypeIndex type_index{};
@@ -440,7 +441,21 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 		// Recurse with accumulated offset
 		int new_offset = accumulated_offset + static_cast<int>(result.adjusted_offset);
 		std::optional<AddressComponents> base_components;
-		if (std::holds_alternative<TernaryOperatorNode>(obj_expr) || std::holds_alternative<MemberAccessNode>(obj_expr) ||
+		if (memberAccess.is_arrow()) {
+			AddressComponents pointer_base;
+			if (const auto* temp = std::get_if<TempVar>(&object_operands.value)) {
+				pointer_base.base = *temp;
+			} else if (const auto* name = std::get_if<StringHandle>(&object_operands.value)) {
+				pointer_base.base = *name;
+			} else if (const auto* local = std::get_if<LocalVarId>(&object_operands.value)) {
+				pointer_base.base = *local;
+			} else {
+				return std::nullopt;
+			}
+			pointer_base.base_storage = ValueStorage::ContainsAddress;
+			pointer_base.total_member_offset = new_offset;
+			base_components = std::move(pointer_base);
+		} else if (std::holds_alternative<TernaryOperatorNode>(obj_expr) || std::holds_alternative<MemberAccessNode>(obj_expr) ||
 			std::holds_alternative<ArraySubscriptNode>(obj_expr)) {
 			base_components = makeAddressComponentsFromEvaluatedResult(object_operands, new_offset);
 		}

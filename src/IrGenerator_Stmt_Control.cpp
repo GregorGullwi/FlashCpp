@@ -754,6 +754,14 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 	}
 }
 
+ASTNode AstToIr::makeRangedForArrayEndpoint(std::string_view array_name, const ASTNode& index, const TypeSpecifierNode& element_type) {
+	const ASTNode array = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(Token(Token::Type::Identifier, array_name, 0, 0, 0)));
+	const Token bracket_token(Token::Type::Punctuator, "["sv, 0, 0, 0);
+	const ASTNode subscript = ASTNode::emplace_node<ExpressionNode>(ArraySubscriptNode(array, index, bracket_token));
+	sema_.markCodegenSynthesizedSubscript(std::get<ArraySubscriptNode>(subscript.as<ExpressionNode>()), element_type);
+	return ASTNode::emplace_node<ExpressionNode>(UnaryOperatorNode(Token(Token::Type::Operator, "&"sv, 0, 0, 0), subscript, true));
+}
+
 void AstToIr::visitRangedForOrderedArray(const RangedForStatementNode& node, std::string_view array_name, const DeclarationNode& array_decl,
 							StringHandle loop_start_label, StringHandle loop_body_label, StringHandle loop_increment_label, StringHandle loop_end_label, size_t counter) {
 	auto loop_var_decl = node.get_loop_variable_decl();
@@ -813,18 +821,12 @@ void AstToIr::visitRangedForOrderedArray(const RangedForStatementNode& node, std
 		TypeCategory::Int, TypeQualifier::None, 32));
 	auto zero_literal = ASTNode::emplace_node<ExpressionNode>(NumericLiteralNode(Token(Token::Type::Literal, "0"sv, 0, 0, 0),
 		static_cast<unsigned long long>(0), TypeCategory::Int, TypeQualifier::None, 32));
-	Token subscript_token(Token::Type::Punctuator, "["sv, 0, 0, 0);
-	auto array_expr_begin = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(Token(Token::Type::Identifier, array_name, 0, 0, 0)));
-	auto first_element = ASTNode::emplace_node<ExpressionNode>(ArraySubscriptNode(array_expr_begin, zero_literal, subscript_token));
-	sema_.markCodegenSynthesizedSubscript(std::get<ArraySubscriptNode>(first_element.as<ExpressionNode>()), element_type);
-	auto begin_init = ASTNode::emplace_node<ExpressionNode>(UnaryOperatorNode(Token(Token::Type::Operator, "&"sv, 0, 0, 0), first_element, true));
+
+	ASTNode begin_init = makeRangedForArrayEndpoint(array_name, zero_literal, element_type);
 	sema_.registerCodegenSynthesizedOverloadArgType(begin_init, iterator_type);
 	visit(ASTNode::emplace_node<VariableDeclarationNode>(begin_decl_node, begin_init));
 
-	auto array_expr_end = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(Token(Token::Type::Identifier, array_name, 0, 0, 0)));
-	auto past_end_element = ASTNode::emplace_node<ExpressionNode>(ArraySubscriptNode(array_expr_end, count_literal, subscript_token));
-	sema_.markCodegenSynthesizedSubscript(std::get<ArraySubscriptNode>(past_end_element.as<ExpressionNode>()), element_type);
-	auto end_init = ASTNode::emplace_node<ExpressionNode>(UnaryOperatorNode(Token(Token::Type::Operator, "&"sv, 0, 0, 0), past_end_element, true));
+	ASTNode end_init = makeRangedForArrayEndpoint(array_name, count_literal, element_type);
 	sema_.registerCodegenSynthesizedOverloadArgType(end_init, iterator_type);
 	visit(ASTNode::emplace_node<VariableDeclarationNode>(end_decl_node, end_init));
 
@@ -967,30 +969,24 @@ void AstToIr::visitRangedForArray(const RangedForStatementNode& node, std::strin
 	sema_.registerCodegenSynthesizedLocalType(begin_token.handle(), begin_type_spec);
 	sema_.registerCodegenSynthesizedLocalType(end_token.handle(), end_type_spec);
 
-		// Create begin = &array[0]
-	auto array_expr_begin = ASTNode::emplace_node<ExpressionNode>(
-		IdentifierNode(Token(Token::Type::Identifier, array_name, 0, 0, 0)));
-	auto zero_literal = ASTNode::emplace_node<ExpressionNode>(
-		NumericLiteralNode(Token(Token::Type::Literal, "0"sv, 0, 0, 0),
-						   static_cast<unsigned long long>(0), TypeCategory::Int, TypeQualifier::None, 32));
-	auto first_element = ASTNode::emplace_node<ExpressionNode>(
-		ArraySubscriptNode(array_expr_begin, zero_literal, Token(Token::Type::Punctuator, "["sv, 0, 0, 0)));
-	auto begin_init = ASTNode::emplace_node<ExpressionNode>(
-		UnaryOperatorNode(Token(Token::Type::Operator, "&"sv, 0, 0, 0), first_element, true));
-	sema_.registerCodegenSynthesizedOverloadArgType(begin_init, begin_type_spec);
-	auto begin_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(begin_decl_node, begin_init);
-	visit(begin_var_decl_node);
+	TypeSpecifierNode element_type = array_type;
+	if (element_type.array_dimensions().empty()) {
+		element_type.set_array_dimensions({});
+	} else {
+		element_type.remove_outermost_array_dimension();
+	}
+	element_type.set_reference_qualifier(ReferenceQualifier::None);
+	element_type.set_size_in_bits(element_size_bits);
 
-		// Create end = &array[size] (one past the last element)
-	auto array_expr_end = ASTNode::emplace_node<ExpressionNode>(
-		IdentifierNode(Token(Token::Type::Identifier, array_name, 0, 0, 0)));
-	auto past_end_element = ASTNode::emplace_node<ExpressionNode>(
-		ArraySubscriptNode(array_expr_end, array_size_node.value(), Token(Token::Type::Punctuator, "["sv, 0, 0, 0)));
-	auto end_init = ASTNode::emplace_node<ExpressionNode>(
-		UnaryOperatorNode(Token(Token::Type::Operator, "&"sv, 0, 0, 0), past_end_element, true));
+	const Token zero_token(Token::Type::Literal, "0"sv, 0, 0, 0);
+	const ASTNode zero_literal = ASTNode::emplace_node<ExpressionNode>(NumericLiteralNode(zero_token, 0ULL, TypeCategory::Int, TypeQualifier::None, 32));
+	const ASTNode begin_init = makeRangedForArrayEndpoint(array_name, zero_literal, element_type);
+	sema_.registerCodegenSynthesizedOverloadArgType(begin_init, begin_type_spec);
+	visit(ASTNode::emplace_node<VariableDeclarationNode>(begin_decl_node, begin_init));
+
+	const ASTNode end_init = makeRangedForArrayEndpoint(array_name, *array_size_node, element_type);
 	sema_.registerCodegenSynthesizedOverloadArgType(end_init, end_type_spec);
-	auto end_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(end_decl_node, end_init);
-	visit(end_var_decl_node);
+	visit(ASTNode::emplace_node<VariableDeclarationNode>(end_decl_node, end_init));
 
 		// Mark loop begin for break/continue support
 	pushLoopSehDepth();

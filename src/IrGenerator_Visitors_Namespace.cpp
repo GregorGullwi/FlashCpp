@@ -484,6 +484,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 									ComputeAddressOp address_op;
 									address_op.result = address_temp;
 									address_op.base = std::get<LocalVarId>(lv_info.base);
+									address_op.base_storage = lv_info.is_pointer_to_member ? ValueStorage::ContainsAddress : ValueStorage::ContainsData;
 									address_op.total_member_offset = lv_info.offset;
 									address_op.result_type_index = return_type_index;
 									address_op.result_size_bits = SizeInBits{return_size};
@@ -730,6 +731,7 @@ return_conversion_done:
 							ComputeAddressOp addr_op;
 							addr_op.result = base_addr_temp;
 							addr_op.base = *local_id;
+							addr_op.base_storage = base_holds_address ? ValueStorage::ContainsAddress : ValueStorage::ContainsData;
 							addr_op.total_member_offset = lv_info.offset;
 							addr_op.result_type_index = current_function_return_type_index_;
 							addr_op.result_size_bits = SizeInBits{elem_addr.element_size_in_bits};
