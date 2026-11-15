@@ -6227,6 +6227,14 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			qualified_pattern_name,
 			is_class,
 			is_union);
+		TypeInfo& member_pattern_type_info = add_struct_type(qualified_pattern_name, gSymbolTable.get_current_namespace_handle());
+		StructTypeInfo* member_pattern_struct_info = member_pattern_type_info.getStructInfo();
+		if (member_pattern_struct_info == nullptr) {
+			member_pattern_struct_info = &member_pattern_type_info.createStructInfo(qualified_pattern_name, member_struct_ref.default_access(),
+				is_union, gSymbolTable.get_current_namespace_handle());
+		}
+		member_pattern_struct_info->declaration_node = &member_struct_ref;
+		member_pattern_struct_info->classifyParticipation(StructEntityParticipation::TemplatePattern);
 		FlashCpp::ScopedStateCopy member_struct_context_guard(
 			struct_parsing_context_stack_);
 		StructParsingContext partial_member_struct_context{
@@ -6606,6 +6614,36 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						if (!consume(";"_tok)) {
 							return ParseResult::error("Expected ';' after '= delete'", peek_info());
 						}
+						const size_t num_params = constructor_ref.parameter_nodes().size();
+						DeletedConstructorFlags deleted_kind = num_params == 0 ? DeletedConstructorFlags::Default : DeletedConstructorFlags::None;
+						const size_t min_required = computeMinRequiredArgs(constructor_ref.parameter_nodes());
+						if (min_required <= 1 && num_params >= 1) {
+							const ASTNode& param = constructor_ref.parameter_nodes()[0];
+							if (param.is<DeclarationNode>()) {
+								const TypeSpecifierNode& type_spec = param.as<DeclarationNode>().type_specifier_node();
+								const std::string_view param_type_name = type_spec.token().value();
+								if (param_type_name == struct_name || param_type_name == StringTable::getStringView(qualified_pattern_name)) {
+									if (type_spec.is_rvalue_reference()) {
+										deleted_kind = DeletedConstructorFlags::Move;
+									} else if (type_spec.is_lvalue_reference()) {
+										deleted_kind = DeletedConstructorFlags::Copy;
+									}
+								}
+							}
+						}
+						if (deleted_kind == DeletedConstructorFlags::Copy) {
+							member_struct_ref.mark_deleted_copy_constructor();
+						} else if (deleted_kind == DeletedConstructorFlags::Move) {
+							member_struct_ref.mark_deleted_move_constructor();
+						} else if (deleted_kind == DeletedConstructorFlags::Default) {
+							member_struct_ref.mark_deleted_default_constructor();
+						}
+						member_pattern_struct_info->markConstructorDeleted(deleted_kind);
+						if (deleted_kind == DeletedConstructorFlags::None) {
+							member_pattern_struct_info->deleted_constructors.push_back({&constructor_ref, current_access});
+						}
+						FLASH_LOG(Templates, Trace, "Marked deleted constructor in member partial specialization: ",
+								  qualified_pattern_name, " kind=", static_cast<int>(deleted_kind));
 						continue;
 					}
 					if (constructor_specs.is_defaulted()) {
