@@ -1,5 +1,6 @@
 #include "ObjFileWriter.h"
 #include "ElfFileWriter.h"
+#include "StructInfoSet.h"
 
 // ElfFileWriter_GlobalRTTI.cpp - Out-of-line method definitions for ElfFileWriter
 // Part of ElfFileWriter class (unity build)
@@ -10,8 +11,8 @@ namespace {
 void collectReachableVBases(const StructTypeInfo* si,
 							std::vector<TypeIndex>& out,
 							std::set<TypeIndex>& seen_vb,
-							std::set<const StructTypeInfo*>& visited) {
-	if (!si || !visited.insert(si).second)
+							StructInfoSet& visited) {
+	if (!si || !visited.insert(si))
 		return;
 	for (const auto& vb : si->virtual_bases) {
 		if (seen_vb.insert(vb.type_index).second) {
@@ -33,8 +34,8 @@ void collectReachableVBases(const StructTypeInfo* si,
 	/// Returns true and sets \p result if found.
 bool findVBaseOffset(const StructTypeInfo* si, TypeIndex target_tidx,
 					 size_t base_off, size_t& result,
-					 std::set<const StructTypeInfo*>& visited) {
-	if (!si || !visited.insert(si).second)
+					 StructInfoSet& visited) {
+	if (!si || !visited.insert(si))
 		return false;
 	for (const auto& vb : si->virtual_bases) {
 		if (vb.type_index == target_tidx) {
@@ -399,7 +400,7 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 	std::vector<TypeIndex> reachable_virtual_bases;
 	{
 		std::set<TypeIndex> seen_vb;
-		std::set<const StructTypeInfo*> visited;
+		StructInfoSet visited;
 		collectReachableVBases(struct_info, reachable_virtual_bases, seen_vb, visited);
 	}
 	bool single_non_virtual = (base_classes.size() == 1 &&
@@ -498,7 +499,7 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 				const auto* bsi = bti->getStructInfo();
 				std::vector<TypeIndex> branch_vbases;
 				std::set<TypeIndex> branch_seen;
-				std::set<const StructTypeInfo*> branch_visited;
+				StructInfoSet branch_visited;
 				collectReachableVBases(bsi, branch_vbases, branch_seen, branch_visited);
 				for (auto vb : branch_vbases) {
 					if (!global_vbases.insert(vb).second) {
@@ -519,7 +520,7 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 		std::vector<TypeIndex> vbase_order;
 		{
 			std::set<TypeIndex> seen_vb;
-			std::set<const StructTypeInfo*> visited;
+			StructInfoSet visited;
 			collectReachableVBases(struct_info, vbase_order, seen_vb, visited);
 		}
 
@@ -670,7 +671,7 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 			std::vector<TypeIndex> vbase_type_indices;
 			{
 				std::set<TypeIndex> seen;
-				std::set<const StructTypeInfo*> visited;
+				StructInfoSet visited;
 				collectReachableVBases(vbase_owner_struct, vbase_type_indices, seen, visited);
 			}
 
@@ -680,7 +681,7 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 			// non-virtual parents.
 			for (TypeIndex vb_tidx : vbase_type_indices) {
 				size_t offset = 0;
-				std::set<const StructTypeInfo*> visited;
+				StructInfoSet visited;
 				findVBaseOffset(this_struct, vb_tidx, 0, offset, visited);
 				vbase_entries.push_back({static_cast<int64_t>(offset) - static_cast<int64_t>(subobject_offset)});
 			}
