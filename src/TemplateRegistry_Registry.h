@@ -1111,21 +1111,21 @@ public:
 		return pattern_identity_ordinal.fetch_add(1, std::memory_order_relaxed);
 	}
 
-	// Associates a partial-pattern type record with its canonical environment
-	// and declaration. Concept-constrained declarations can share one parameter
-	// environment, so the environment alone is not a unique artifact key.
-	void registerPartialPatternTypeInfo(TemplateDeclId environment, const StructDeclarationNode& declaration, TypeInfo& type_info) {
+	// Associates a partial-pattern type record with its canonical environment.
+	// The environment includes the pattern declaration's constraint identity, so
+	// it is unique even when argument patterns are identical.
+	void registerPartialPatternTypeInfo(TemplateDeclId environment, TypeInfo& type_info) {
 		if (!environment) {
 			return;
 		}
-		partial_pattern_type_infos_[PartialPatternTypeKey{environment.value, &declaration}] = &type_info;
+		partial_pattern_type_infos_[environment.value] = &type_info;
 	}
 
-	const StructTypeInfo* tryGetPartialPatternStructInfo(TemplateDeclId environment, const StructDeclarationNode& declaration) const {
+	const StructTypeInfo* tryGetPartialPatternStructInfo(TemplateDeclId environment) const {
 		if (!environment) {
 			return nullptr;
 		}
-		auto it = partial_pattern_type_infos_.find(PartialPatternTypeKey{environment.value, &declaration});
+		auto it = partial_pattern_type_infos_.find(environment.value);
 		if (it == partial_pattern_type_infos_.end() || it->second == nullptr) {
 			return nullptr;
 		}
@@ -1423,22 +1423,8 @@ private:
 	// Used by getPatternBaseTemplateName() to recover the base template name without parsing strings.
 	std::unordered_map<StringHandle, StringHandle, StringHandleHash, std::equal_to<>> pattern_to_base_name_;
 
-	// Pattern type records keyed by the canonical partial-pattern environment and
-	// the pattern declaration. Different constrained declarations can share an
-	// environment because constraints are not part of the normalized pattern.
-	struct PartialPatternTypeKey {
-		uint32_t environment = 0;
-		const StructDeclarationNode* declaration = nullptr;
-		friend bool operator==(const PartialPatternTypeKey&, const PartialPatternTypeKey&) = default;
-	};
-	struct PartialPatternTypeKeyHash {
-		size_t operator()(const PartialPatternTypeKey& key) const {
-			size_t hash = std::hash<uint32_t>{}(key.environment);
-			hash ^= std::hash<const void*>{}(key.declaration) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-			return hash;
-		}
-	};
-	std::unordered_map<PartialPatternTypeKey, TypeInfo*, PartialPatternTypeKeyHash> partial_pattern_type_infos_;
+	// Pattern type records keyed by the canonical partial-pattern environment.
+	std::unordered_map<uint32_t, TypeInfo*> partial_pattern_type_infos_;
 
 	// Counter that makes synthesized partial-specialization pattern names unique.
 	std::atomic<size_t> pattern_identity_ordinal{0};
