@@ -532,6 +532,7 @@
     <ClInclude Include="src\StringBuilder.h" />
     <ClInclude Include="src\StringLiteralTokenUtils.h" />
     <ClInclude Include="src\StringTable.h" />
+    <ClInclude Include="src\StructHierarchyWalk.h" />
     <ClInclude Include="src\StructInfoSet.h" />
     <ClInclude Include="src\SemanticAnalysis.h" />
     <ClInclude Include="src\SymbolTable.h" />
