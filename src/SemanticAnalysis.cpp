@@ -32,6 +32,8 @@
 #include "TemplateTypes.h"
 #include "TemplateConstraintSubsumption.h"
 #include "AstTraversal.h"
+#include "StructHierarchyWalk.h"
+#include "StructInfoSet.h"
 
 
 namespace {
@@ -569,15 +571,14 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunctionForSema(const 
 		return nullptr;
 	}
 
-	std::unordered_set<const StructTypeInfo*> visited;
-	auto findOperator = [&](const StructTypeInfo* current_struct, const auto& self) -> const FunctionDeclarationNode* {
-		if (!current_struct || !visited.insert(current_struct).second) {
-			return nullptr;
-		}
-
+	const FunctionDeclarationNode* result = nullptr;
+	// Bases resolve through tryGetStructTypeInfo (alias-resolving), so the walker
+	// takes manual edges; pushing them in reverse preserves declaration pre-order.
+	const StructWalkOptions options{StructWalkFlags::ManualChildEdges, StructWalkOrder::DeclarationPreOrder};
+	walkStructSubobjects(struct_info, options, [&](const StructTypeInfo& current_struct, StructWalkQueue& queue) {
 		const FunctionDeclarationNode* fallback = nullptr;
 		bool has_local_dereference = false;
-		for (const auto& member_func : current_struct->member_functions) {
+		for (const auto& member_func : current_struct.member_functions) {
 			if (member_func.operator_kind != OverloadableOperator::Multiply ||
 				!member_func.function_decl.is<FunctionDeclarationNode>()) {
 				continue;
@@ -590,10 +591,12 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunctionForSema(const 
 
 			has_local_dereference = true;
 			if (prefer_const && member_func.is_const()) {
-				return &func;
+				result = &func;
+				return StructWalkAction::Stop;
 			}
 			if (!prefer_const && !member_func.is_const()) {
-				return &func;
+				result = &func;
+				return StructWalkAction::Stop;
 			}
 			if (!fallback) {
 				fallback = &func;
@@ -601,23 +604,20 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunctionForSema(const 
 		}
 
 		if (has_local_dereference) {
-			return fallback;
+			result = fallback;
+			return StructWalkAction::Stop;
 		}
 
-		for (const auto& base_spec : current_struct->base_classes) {
-			const StructTypeInfo* base_struct_info = tryGetStructTypeInfo(base_spec.type_index);
-			if (!base_struct_info) {
-				continue;
-			}
-			if (const FunctionDeclarationNode* base_match = self(base_struct_info, self)) {
-				return base_match;
+		for (auto base_it = current_struct.base_classes.rbegin(); base_it != current_struct.base_classes.rend(); ++base_it) {
+			if (const StructTypeInfo* base_struct_info = tryGetStructTypeInfo(base_it->type_index)) {
+				queue.enqueue(base_struct_info);
 			}
 		}
 
-		return nullptr;
-	};
+		return StructWalkAction::Continue;
+	});
 
-	return findOperator(struct_info, findOperator);
+	return result;
 }
 
 const ConstructorDeclarationNode* resolveUniqueArityConstructor(const StructTypeInfo& struct_info, size_t argument_count) {
@@ -8219,7 +8219,7 @@ void SemanticAnalysis::checkMemberFunctionAccess(
 		}
 		throw InternalError("Resolved member function access has no semantic owner class");
 	}
-	std::vector<const StructTypeInfo*> visited;
+	StructInfoSet visited;
 	const StringHandle requested_name =
 		requested_function->decl_node().identifier_token().handle();
 	const std::string_view requested_base_name =
@@ -8227,11 +8227,9 @@ void SemanticAnalysis::checkMemberFunctionAccess(
 	while (!pending.empty()) {
 		const StructTypeInfo* current_struct = pending.back();
 		pending.pop_back();
-		if (current_struct == nullptr ||
-			std::find(visited.begin(), visited.end(), current_struct) != visited.end()) {
+		if (current_struct == nullptr || !visited.insert(current_struct)) {
 			continue;
 		}
-		visited.push_back(current_struct);
 		for (const StructMemberFunction& member_function :
 			current_struct->member_functions) {
 			const FunctionDeclarationNode* candidate_function =
@@ -11727,11 +11725,11 @@ std::vector<SemanticAnalysis::ConversionFunctionTemplateCandidate> SemanticAnaly
 		size_t depth;
 	};
 	std::vector<PendingClass> pending{{source, source_type.type_index(), 0}};
-	std::unordered_set<const StructTypeInfo*> visited;
+	StructInfoSet visited;
 	const auto source_cv = static_cast<uint8_t>(source_type.cv_qualifier());
 	for (size_t index = 0; index < pending.size(); ++index) {
 		const PendingClass current = pending[index];
-		if (!visited.insert(current.info).second) {
+		if (!visited.insert(current.info)) {
 			continue;
 		}
 		for (const BaseClassSpecifier& base : current.info->base_classes) {
@@ -12099,14 +12097,13 @@ static const StructTypeInfo* resolveUsingDeclarationTarget(const StructTypeInfo&
 			pending.push_back(info);
 		}
 	}
-	OverloadVector<const StructTypeInfo*, 4> visited;
+	StructInfoSet visited;
 	while (!pending.empty()) {
 		const StructTypeInfo* current = pending.back();
 		pending.pop_back();
-		if (current == nullptr || std::find(visited.begin(), visited.end(), current) != visited.end()) {
+		if (current == nullptr || !visited.insert(current)) {
 			continue;
 		}
-		visited.push_back(current);
 		const TypeInfo* current_info = current->own_type_index_.has_value() ? tryGetTypeInfo(*current->own_type_index_) : nullptr;
 		if (current->name == declaration.target_name ||
 			(current_info != nullptr && current_info->baseTemplateName() == declaration.target_name)) {
@@ -12132,14 +12129,13 @@ bool SemanticAnalysis::conversionIsExposedByUsingDeclaration(
 	}
 	OverloadVector<const StructTypeInfo*, 4> pending;
 	pending.push_back(&source);
-	OverloadVector<const StructTypeInfo*, 4> visited;
+	StructInfoSet visited;
 	while (!pending.empty()) {
 		const StructTypeInfo* current = pending.back();
 		pending.pop_back();
-		if (current == nullptr || std::find(visited.begin(), visited.end(), current) != visited.end()) {
+		if (current == nullptr || !visited.insert(current)) {
 			continue;
 		}
-		visited.push_back(current);
 		if (current->declaration_node != nullptr) {
 			for (const ClassUsingDeclaration& using_declaration : current->declaration_node->class_using_declarations()) {
 				if (using_declaration.member_name != member_name ||
@@ -13838,33 +13834,26 @@ void SemanticAnalysis::tryAnnotateContextualBool(const ASTNode& expr_node) {
 }
 
 // Helper: collect operator candidates of op_kind from current_struct and all reachable
-// base classes, using visited to avoid revisiting in diamond inheritance hierarchies.
+// base classes. The shared walk visits each struct once in declaration pre-order, so
+// diamond bases contribute candidates only once and base order is preserved.
 template <typename CandidateContainer>
 static void collectOperatorCandidatesRecursive(
 	const StructTypeInfo* current_struct,
 	OverloadableOperator op_kind,
-	CandidateContainer& candidates,
-	std::unordered_set<const StructTypeInfo*>& visited) {
-	if (!visited.insert(current_struct).second)
-		return;
-	for (const auto& member_func : current_struct->member_functions) {
-		if (member_func.operator_kind != op_kind)
-			continue;
-		if (!member_func.function_decl.is<FunctionDeclarationNode>())
-			continue;
-		candidates.push_back(member_func.function_decl);
-	}
-	for (const auto& base_spec : current_struct->base_classes) {
-		if (!base_spec.type_index.is_valid())
-			continue;
-		const TypeInfo* base_info = tryGetTypeInfo(base_spec.type_index);
-		if (!base_info)
-			continue;
-		const StructTypeInfo* base_struct = base_info->getStructInfo();
-		if (!base_struct)
-			continue;
-		collectOperatorCandidatesRecursive(base_struct, op_kind, candidates, visited);
-	}
+	CandidateContainer& candidates) {
+	const StructWalkOptions options{
+		StructWalkFlags::SkipInvalidChildren | StructWalkFlags::FollowDeferredBases,
+		StructWalkOrder::DeclarationPreOrder};
+	walkStructSubobjects(current_struct, options, [&](const StructTypeInfo& current, StructWalkQueue&) {
+		for (const auto& member_func : current.member_functions) {
+			if (member_func.operator_kind != op_kind)
+				continue;
+			if (!member_func.function_decl.is<FunctionDeclarationNode>())
+				continue;
+			candidates.push_back(member_func.function_decl);
+		}
+		return StructWalkAction::Continue;
+	});
 }
 
 // --- Callable operator() resolution ---
@@ -13898,8 +13887,7 @@ void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info,
 	const ChunkedVector<ASTNode>& arguments = *call_info.arguments;
 	const size_t arg_count = arguments.size();
 	OverloadResolutionCandidateVector candidates;
-	std::unordered_set<const StructTypeInfo*> visited;
-	collectOperatorCandidatesRecursive(struct_info, OverloadableOperator::Call, candidates, visited);
+	collectOperatorCandidatesRecursive(struct_info, OverloadableOperator::Call, candidates);
 	if (candidates.empty())
 		return;
 
@@ -14119,10 +14107,8 @@ void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& sub
 		return;
 
 	// Collect all operator[] candidates from this struct and its base classes.
-	// Use a visited set to avoid collecting duplicate candidates in diamond inheritance.
 	OverloadResolutionCandidateVector candidates;
-	std::unordered_set<const StructTypeInfo*> visited;
-	collectOperatorCandidatesRecursive(struct_info, OverloadableOperator::Subscript, candidates, visited);
+	collectOperatorCandidatesRecursive(struct_info, OverloadableOperator::Subscript, candidates);
 
 	if (candidates.empty())
 		return;
@@ -14755,24 +14741,23 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			if (!root_struct_info) {
 				return;
 			}
-			std::unordered_set<const StructTypeInfo*> visited;
-			auto recurse = [&](const StructTypeInfo* struct_info, const auto& recurse_ref) -> void {
-				if (!struct_info || !visited.insert(struct_info).second) {
-					return;
-				}
-				for (const auto& member_func : struct_info->member_functions) {
+			// Bases resolve through tryGetStructTypeInfo (alias-resolving), so the walker
+			// takes manual edges; pushing them in reverse preserves declaration pre-order.
+			const StructWalkOptions options{StructWalkFlags::ManualChildEdges, StructWalkOrder::DeclarationPreOrder};
+			walkStructSubobjects(root_struct_info, options, [&](const StructTypeInfo& struct_info, StructWalkQueue& queue) {
+				for (const auto& member_func : struct_info.member_functions) {
 					if (member_func.name != member_name_handle) {
 						continue;
 					}
 					appendUniqueOverload(target, member_func.function_decl);
 				}
-				for (const auto& base_spec : struct_info->base_classes) {
-					if (const StructTypeInfo* base_struct = tryGetStructTypeInfo(base_spec.type_index)) {
-						recurse_ref(base_struct, recurse_ref);
+				for (auto base_it = struct_info.base_classes.rbegin(); base_it != struct_info.base_classes.rend(); ++base_it) {
+					if (const StructTypeInfo* base_struct = tryGetStructTypeInfo(base_it->type_index)) {
+						queue.enqueue(base_struct);
 					}
 				}
-			};
-			recurse(root_struct_info, recurse);
+				return StructWalkAction::Continue;
+			});
 		};
 
 		if (!owner_type) {
