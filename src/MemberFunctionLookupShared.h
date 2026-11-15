@@ -3,6 +3,7 @@
 #include "AstNodeTypes_DeclNodes.h"
 #include "AstNodeTypes_Template.h"
 #include "InlineVector.h"
+#include "StructHierarchyWalk.h"
 #include "SymbolTable.h"
 #include <algorithm>
 #include <ranges>
@@ -65,21 +66,13 @@ template <typename VisitFn>
 void visitStructHierarchyDepthFirst(
 	const StructTypeInfo* root_struct_info,
 	VisitFn&& visit) {
-	TemplateVector<const StructTypeInfo*, 8> visited;
-	auto recurse = [&](const StructTypeInfo* current_struct_info,
-		const auto& self) -> void {
-		if (current_struct_info == nullptr || std::ranges::find(visited, current_struct_info) != visited.end()) {
-			return;
-		}
-		visited.push_back(current_struct_info);
-		if (!visit(*current_struct_info)) {
-			return;
-		}
-		for (const BaseClassSpecifier& base_spec : current_struct_info->base_classes) {
-			self(tryGetStructTypeInfo(base_spec.type_index), self);
-		}
+	StructWalkOptions options{
+		StructWalkFlags::SkipInvalidChildren | StructWalkFlags::FollowDeferredBases,
+		StructWalkOrder::DeclarationPreOrder,
 	};
-	recurse(root_struct_info, recurse);
+	walkStructSubobjects(root_struct_info, options, [&](const StructTypeInfo& current_struct_info, StructWalkQueue&) {
+		return visit(current_struct_info) ? StructWalkAction::Continue : StructWalkAction::SkipSubtree;
+	});
 }
 
 // Member-name lookup applies class using-declarations as nominated base
