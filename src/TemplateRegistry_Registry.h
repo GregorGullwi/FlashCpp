@@ -1082,7 +1082,7 @@ public:
 		class_template_names_.clear();
 		pattern_struct_names_.clear();
 		pattern_to_base_name_.clear();
-		pattern_struct_type_infos_.clear();
+		pattern_identity_ordinal.store(0, std::memory_order_relaxed);
 		constrained_pattern_counter.store(0, std::memory_order_relaxed);
 		outer_template_bindings_.clear();
 	}
@@ -1103,19 +1103,11 @@ public:
 		return pattern_struct_names_.count(name) > 0;
 	}
 
-	// Associates a partial-specialization pattern declaration with its own type
-	// record. Pattern names are synthesized from argument modifiers and can
-	// collide, so name lookup cannot distinguish two patterns' members.
-	void registerPatternStructTypeInfo(const StructDeclarationNode* declaration, TypeInfo& type_info) {
-		pattern_struct_type_infos_[declaration] = &type_info;
-	}
-
-	const StructTypeInfo* tryGetPatternStructTypeInfo(const StructDeclarationNode* declaration) const {
-		auto it = pattern_struct_type_infos_.find(declaration);
-		if (it == pattern_struct_type_infos_.end() || it->second == nullptr) {
-			return nullptr;
-		}
-		return it->second->getStructInfo();
+	// Allocates a translation-unit-unique suffix for a synthesized partial-
+	// specialization pattern name. Two partials can share all argument modifiers,
+	// so spelling alone is not an identity.
+	size_t nextPatternIdentityOrdinal() {
+		return pattern_identity_ordinal.fetch_add(1, std::memory_order_relaxed);
 	}
 
 	// Look up the base template name for a pattern struct (non-string-based).
@@ -1391,7 +1383,7 @@ private:
 	std::unordered_map<SpecializationKey, ASTNode, SpecializationKeyHash> specializations_;
 
 	// Map from instantiated struct name to the pattern struct name used (for partial specializations)
-	// Example: "Wrapper_int_0" -> "Wrapper$pattern__"
+	// Example: "Wrapper_int_0" -> "Wrapper$pattern_TP_I0"
 	// This allows looking up member aliases from the correct specialization
 	std::unordered_map<StringHandle, StringHandle, StringHandleHash, std::equal_to<>> instantiation_to_pattern_;
 
@@ -1409,8 +1401,8 @@ private:
 	// Used by getPatternBaseTemplateName() to recover the base template name without parsing strings.
 	std::unordered_map<StringHandle, StringHandle, StringHandleHash, std::equal_to<>> pattern_to_base_name_;
 
-	// Per-declaration type records for partial-specialization patterns.
-	std::unordered_map<const StructDeclarationNode*, TypeInfo*> pattern_struct_type_infos_;
+	// Counter that makes synthesized partial-specialization pattern names unique.
+	std::atomic<size_t> pattern_identity_ordinal{0};
 
 public:
 	// Counter for disambiguating constrained partial specialization pattern names.

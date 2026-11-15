@@ -3486,13 +3486,12 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			// discard it so it doesn't leak in all other partial specialization paths.
 			discard_saved_token(struct_keyword_pos);
 
-			// Generate a unique name for the pattern template
-			// We use the template parameter names + modifiers to create unique pattern names
-			// E.g., Container<T*> -> Container$pattern_TP
-			//       Container<T**> -> Container$pattern_TPP
-			//       Container<T&> -> Container$pattern_TR
-			// The '$' separator cannot appear in standard C++ identifiers, avoiding
-			// collisions with user-defined names that might contain "_pattern".
+			// Generate a unique name for the pattern template.
+			// Argument modifiers alone cannot distinguish Container<T*, int> from
+			// Container<T*, char>, so a per-declaration ordinal makes the internal
+			// pattern identity unique. The '$' separator cannot appear in standard
+			// C++ identifiers, avoiding collisions with user-defined names that
+			// might contain "_pattern".
 			StringBuilder pattern_name_builder;
 			pattern_name_builder.append(template_name).append("$pattern");
 			for (const auto& arg : pattern_args) {
@@ -3528,6 +3527,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					pattern_name_builder.append("V");
 				}
 			}
+			pattern_name_builder.append("_I").append(static_cast<int64_t>(gTemplateRegistry.nextPatternIdentityOrdinal()));
 			auto instantiated_name = StringTable::getOrInternStringHandle(pattern_name_builder);
 
 			// Register this as a pattern struct name with its base template name for non-string-based lookup
@@ -3555,7 +3555,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			}
 
 			// Create struct type info early so we can add base classes
-			TypeInfo& struct_type_info = add_pattern_struct_type(instantiated_name, gSymbolTable.get_current_namespace_handle());
+			TypeInfo& struct_type_info = add_struct_type(instantiated_name, gSymbolTable.get_current_namespace_handle());
 
 			// Mark as template instantiation with the base template name
 			// This allows constructor detection (e.g., template<typename U> allocator(const allocator<U>&))
@@ -3568,7 +3568,6 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			StructTypeInfo* struct_info = &struct_type_info.emplaceStructInfo(instantiated_name, struct_ref.default_access(), is_union, gSymbolTable.get_current_namespace_handle());
 			struct_info->declaration_node = &struct_ref;
 			struct_info->classifyParticipation(StructEntityParticipation::TemplatePattern);
-			gTemplateRegistry.registerPatternStructTypeInfo(&struct_ref, struct_type_info);
 
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek() == ":"_tok) {
@@ -6101,11 +6100,12 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			return ParseResult::error("Partial specialization argument list cannot match the primary template parameter list", current_token_);
 		}
 
-		// Generate a unique name for the pattern template
-		// We use the template parameter names + modifiers to create unique pattern names
-		// E.g., List<T*> -> ParentClass::List$pattern_TP
-		// The '$' separator cannot appear in standard C++ identifiers, avoiding
-		// collisions with user-defined names that might contain "_pattern".
+		// Generate a unique name for the pattern template.
+		// Argument modifiers alone cannot distinguish List<T*, int> from
+		// List<T*, char>, so a per-declaration ordinal makes the internal pattern
+		// identity unique. The '$' separator cannot appear in standard C++
+		// identifiers, avoiding collisions with user-defined names that might
+		// contain "_pattern".
 		StringBuilder pattern_name;
 		pattern_name.append(struct_name).append("$pattern"sv);
 		for (const auto& arg : pattern_args) {
@@ -6155,6 +6155,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		if (requires_clause.has_value()) {
 			pattern_name.append("_C"sv).append(static_cast<int64_t>(gTemplateRegistry.constrained_pattern_counter.fetch_add(1)));
 		}
+		pattern_name.append("_I"sv).append(static_cast<int64_t>(gTemplateRegistry.nextPatternIdentityOrdinal()));
 
 		// Qualify with parent struct name
 		std::string_view pattern_name_str = pattern_name.commit();
@@ -6171,7 +6172,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			qualified_pattern_name,
 			is_class,
 			is_union);
-		TypeInfo& member_pattern_type_info = add_pattern_struct_type(qualified_pattern_name, gSymbolTable.get_current_namespace_handle());
+		TypeInfo& member_pattern_type_info = add_struct_type(qualified_pattern_name, gSymbolTable.get_current_namespace_handle());
 		StructTypeInfo* member_pattern_struct_info = member_pattern_type_info.getStructInfo();
 		if (member_pattern_struct_info == nullptr) {
 			member_pattern_struct_info = &member_pattern_type_info.createStructInfo(qualified_pattern_name, member_struct_ref.default_access(),
@@ -6179,7 +6180,6 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		}
 		member_pattern_struct_info->declaration_node = &member_struct_ref;
 		member_pattern_struct_info->classifyParticipation(StructEntityParticipation::TemplatePattern);
-		gTemplateRegistry.registerPatternStructTypeInfo(&member_struct_ref, member_pattern_type_info);
 		FlashCpp::ScopedStateCopy member_struct_context_guard(
 			struct_parsing_context_stack_);
 		StructParsingContext partial_member_struct_context{

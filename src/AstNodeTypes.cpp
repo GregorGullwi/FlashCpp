@@ -783,19 +783,6 @@ TypeCreationResult add_struct_type(StringHandle name, NamespaceHandle ns) {
 	return TypeCreationResult{type_info, idx};
 }
 
-TypeCreationResult add_pattern_struct_type(StringHandle name, NamespaceHandle ns) {
-	TypeIndex idx{gTypeInfo.size(), TypeCategory::Struct};
-	auto& type_info = emplaceTypeInfoTracked("add_pattern_struct_type", name, idx, 0);
-	type_info.setNamespaceHandle(ns);
-	auto existing_it = gTypesByName.find(name);
-	if (existing_it != gTypesByName.end()) {
-		existing_it->second = &type_info;
-	} else {
-		emplaceTypeNameTracked("add_pattern_struct_type", type_info.name(), &type_info);
-	}
-	return TypeCreationResult{type_info, idx};
-}
-
 TypeCreationResult add_enum_type(StringHandle name, NamespaceHandle ns) {
 	TypeIndex idx{gTypeInfo.size(), TypeCategory::Enum};
 	auto& type_info = emplaceTypeInfoTracked("add_enum_type", std::move(name), idx, 0);

@@ -3816,14 +3816,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 						  static_cast<int>(pattern_deleted_special_members));
 			}
 
-			// Also copy deleted constructor flags from the pattern's StructTypeInfo (if available).
-			// A pattern declaration owns its type record because synthesized pattern names can collide.
+			// Also copy deleted constructor flags from the pattern's StructTypeInfo (if available)
+			// Get the pattern's StructTypeInfo
 			auto pattern_type_it = getTypesByNameMap().find(pattern_struct.name());
-			const StructTypeInfo* registered_pattern_struct_info = gTemplateRegistry.tryGetPatternStructTypeInfo(&pattern_struct);
-			if (registered_pattern_struct_info != nullptr || pattern_type_it != getTypesByNameMap().end()) {
-				const StructTypeInfo* pattern_struct_info = registered_pattern_struct_info != nullptr
-					? registered_pattern_struct_info
-					: pattern_type_it->second->getStructInfo();
+			if (pattern_type_it != getTypesByNameMap().end()) {
+				const TypeInfo* pattern_type_info = pattern_type_it->second;
+				const StructTypeInfo* pattern_struct_info = pattern_type_info->getStructInfo();
 				if (pattern_struct_info) {
 					// Copy deleted constructor flags from pattern
 					struct_info->deleted_special_members |= pattern_struct_info->deleted_special_members;
