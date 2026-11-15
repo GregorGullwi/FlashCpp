@@ -3449,6 +3449,7 @@ TypeTraitResult evaluateTypeTrait(
 	const TypeSpecifierNode& type_spec,
 	const StructTypeInfo* struct_info) {
 	if (struct_info != nullptr && isDeferredSensitiveRecordTrait(kind) &&
+		type_spec.runtime_pointer_depth() == 0 && !type_spec.is_reference() && !type_spec.is_array() &&
 		structHasReachableDeferredSubobject(*struct_info)) {
 		return TypeTraitResult::failure();
 	}
@@ -4050,6 +4051,7 @@ std::optional<TypeTraitResult> evaluateConstructibility(
 		return canonical;
 	}
 	if (fallback == ConstructibilityFallback::Sema && struct_info != nullptr &&
+		!is_reference_target && !is_scalar_target && target.runtime_pointer_depth() == 0 && !target.is_array() &&
 		structHasReachableDeferredSubobject(*struct_info)) {
 		return std::nullopt;
 	}
@@ -4116,7 +4118,9 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 	}
 	const TypeSpecifierNode type_spec = normalizeTypeTraitOperand(raw_type_spec);
 	const StructTypeInfo* struct_info = structInfoFromTypeIndex(type_spec.type_index());
-	if (struct_info != nullptr && isDeferredSensitiveRecordTrait(trait_expr.kind()) &&
+	const bool record_shaped_operand =
+		type_spec.runtime_pointer_depth() == 0 && !type_spec.is_reference() && !type_spec.is_array();
+	if (struct_info != nullptr && record_shaped_operand && isDeferredSensitiveRecordTrait(trait_expr.kind()) &&
 		structHasReachableDeferredSubobject(*struct_info)) {
 		return TypeTraitResult::failure();
 	}
