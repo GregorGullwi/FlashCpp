@@ -284,8 +284,7 @@ void Parser::foldInstantiatedNoexceptSpecification(
 		signature.dependent_noexcept = ExprId{};
 		return;
 	}
-	if (const auto parser_value =
-		try_evaluate_constant_expression(signature.noexcept_expression->node());
+	if (const auto parser_value = tryEvaluateConstantExpression(signature.noexcept_expression->node(), ConstantEvaluationMode::Speculative);
 		parser_value.has_value()) {
 		signature.is_noexcept = parser_value->value != 0;
 		signature.noexcept_expression.reset();
@@ -939,7 +938,7 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 				}
 				if (argument_info.node.is<ExpressionNode>()) {
 					ASTNode substituted_argument = substituteTemplateParameters(argument_info.node, effective_template_params, effective_pattern_arguments);
-					if (auto value = try_evaluate_constant_expression(substituted_argument)) {
+					if (auto value = tryEvaluateConstantExpression(substituted_argument, ConstantEvaluationMode::Speculative)) {
 						return TemplateTypeArg::makeValue(value->value, makeDeferredBaseValueTypeIndex(value->type, value->type_index));
 					}
 				}
@@ -1548,7 +1547,7 @@ void Parser::replayDeferredTemplateBasesForPattern(
 							return substituteTemplateParameters(node, template_params, template_args);
 						},
 						[&](const ASTNode& node) {
-							return try_evaluate_constant_expression(node);
+							return tryEvaluateConstantExpression(node, ConstantEvaluationMode::Speculative);
 						});
 					if (!resolved_member_chain.has_value()) {
 						FLASH_LOG(Templates, Warning, "Could not resolve member template args for deferred base '", base_tpl_name, "' - skipping");
@@ -8015,7 +8014,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 						};
 						auto tryEvaluateDeferredBaseConstant =
 							[&](const ASTNode& node) -> std::optional<DeferredBaseConstantValue> {
-							if (auto value = try_evaluate_constant_expression(node)) {
+							if (auto value = tryEvaluateConstantExpression(node, ConstantEvaluationMode::Speculative)) {
 								return DeferredBaseConstantValue{
 									value->value,
 									value->type,
@@ -8108,7 +8107,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 								// Try to evaluate the type trait first. Many traits (is_enum, is_function,
 								// is_pointer, etc.) only check TypeCategory and can succeed even when
 								// the type's template arguments are "dependent" at a deeper level.
-								if (auto value = try_evaluate_constant_expression(subst_trait_node)) {
+								if (auto value = tryEvaluateConstantExpression(subst_trait_node, ConstantEvaluationMode::Speculative)) {
 									resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 									continue;
 								}
@@ -8236,7 +8235,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 														const ReturnStatementNode& ret_stmt = stmt.as<ReturnStatementNode>();
 														if (ret_stmt.expression().has_value()) {
 															// Try to evaluate the return expression as a constant
-															if (auto ret_value = try_evaluate_constant_expression(*ret_stmt.expression())) {
+															if (auto ret_value = tryEvaluateConstantExpression(*ret_stmt.expression(), ConstantEvaluationMode::Speculative)) {
 																FLASH_LOG_FORMAT(Templates, Trace, "Evaluated constexpr function call to value {}", ret_value->value);
 																resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*ret_value));
 																continue;
@@ -8253,7 +8252,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 							// Fallback: try as variable template before giving up on constexpr evaluation.
 							// For references like `is_integral_v<T>` where is_integral_v is a variable template,
 							// try_instantiate_template_explicit (function-template path) returns nullopt, and the
-							// generic try_evaluate_constant_expression fallback below would re-evaluate the
+							// generic constant evaluation fallback below would re-evaluate the
 							// ORIGINAL node whose template args still reference the unsubstituted template
 							// parameter (e.g., Ty), leading to inconsistent concrete_args during partial-spec
 							// lookup. Instantiate the variable template directly with the already-substituted
@@ -8294,7 +8293,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 							ASTNode substituted_node = substitutor.substitute(arg_info.node);
 
 							// Now try to evaluate the substituted expression
-							if (auto value = try_evaluate_constant_expression(substituted_node)) {
+							if (auto value = tryEvaluateConstantExpression(substituted_node, ConstantEvaluationMode::Speculative)) {
 								FLASH_LOG_FORMAT(Templates, Trace, "Evaluated substituted binary/ternary operator to value {}", value->value);
 								resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 								continue;
@@ -8311,7 +8310,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 							ASTNode substituted_node = substitutor.substitute(arg_info.node);
 
 							// Now try to evaluate the substituted expression
-							if (auto value = try_evaluate_constant_expression(substituted_node)) {
+							if (auto value = tryEvaluateConstantExpression(substituted_node, ConstantEvaluationMode::Speculative)) {
 								FLASH_LOG_FORMAT(Templates, Trace, "Evaluated substituted unary operator to value {}", value->value);
 								resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 								continue;
@@ -8322,7 +8321,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 							FLASH_LOG(Templates, Trace, "Processing QualifiedIdentifierNode in deferred base argument");
 							ExpressionSubstitutor substitutor(subst_map, *this, template_param_order);
 							ASTNode substituted_node = substitutor.substitute(arg_info.node);
-							if (auto value = try_evaluate_constant_expression(substituted_node)) {
+							if (auto value = tryEvaluateConstantExpression(substituted_node, ConstantEvaluationMode::Speculative)) {
 								FLASH_LOG_FORMAT(Templates, Trace, "Evaluated substituted qualified identifier to value {}", value->value);
 								resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 								continue;
@@ -8331,7 +8330,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 							}
 						} else {
 							// Try to evaluate non-type template argument after substitution
-							if (auto value = try_evaluate_constant_expression(arg_info.node)) {
+							if (auto value = tryEvaluateConstantExpression(arg_info.node, ConstantEvaluationMode::Speculative)) {
 								resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 								continue;
 							}
@@ -8387,7 +8386,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 							return member_template_arg_substitutor.substitute(node);
 						},
 						[&](const ASTNode& node) {
-							return try_evaluate_constant_expression(node);
+							return tryEvaluateConstantExpression(node, ConstantEvaluationMode::Speculative);
 						});
 					if (!resolved_member_chain.has_value()) {
 						FLASH_LOG(Templates, Trace, "Deferred template base member args not fully resolved for '",

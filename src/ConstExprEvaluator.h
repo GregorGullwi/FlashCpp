@@ -562,7 +562,7 @@ struct EvaluationContext {
 	const TypeInfo* return_type_info = nullptr;
 
 	// When true, short-circuit evaluation for && and || is disabled.
-	// Set by try_evaluate_constant_expression to prevent false positive results
+	// Set by speculative constant evaluation to prevent false positive results
 	// during template-argument disambiguation (where a truthy LHS of `||` would
 	// cause the speculative parse to succeed, incorrectly treating `<` as a
 	// template-argument-list opener).
