@@ -9156,8 +9156,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			nullptr,
 			currentTemplateSubstitutionFailurePolicy());
 		substitution_context.current_instantiation_type = owning_type_index;
-		TemplateDefinitionLookupContext definition_lookup_context =
-			static_member.initializerDefinitionLookupContext();
+		TemplateDefinitionLookupContext definition_lookup_context = static_member.initializerDefinitionLookupContext();
 		if (static_member.declaration.has_value()) {
 			if (const DeclarationNode* declaration = get_decl_from_symbol(*static_member.declaration); declaration != nullptr) {
 				definition_lookup_context = ensureReplayDefinitionLookupContext(
@@ -9172,14 +9171,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 		}
 		FlashCpp::TemplateDepthGuard guard_template_depth(parsing_template_depth_);
 		parsing_template_depth_ = 1;
-		ScopedDefinitionLookupContext ctx_scope(
-			current_template_definition_lookup_context_,
-			substitution_context.definition_lookup_context);
-		ReplayTemplateBindings replay_bindings(
-			*this,
-			replay_template_params,
-			replay_template_args,
-			substitution_context.environment);
+		ScopedDefinitionLookupContext ctx_scope(current_template_definition_lookup_context_, substitution_context.definition_lookup_context);
+		ReplayTemplateBindings replay_bindings(*this, replay_template_params, replay_template_args, substitution_context.environment);
 		auto member_ctx_scope = push_replay_member_context(owning_instantiated_name, owning_type_index, struct_info);
 		return substituteTemplateParameters(*static_member.initializer, substitution_context);
 	};
