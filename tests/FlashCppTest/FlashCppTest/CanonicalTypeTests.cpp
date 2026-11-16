@@ -5059,6 +5059,94 @@ TEST_CASE("Canonical constructor schemas use converting constructors for unrelat
 	CHECK_FALSE(evaluate(TypeTraitKind::IsConstructible, class_specifier(EntityId{972}), source_argument).has_value());
 }
 
+TEST_CASE("Canonical converting-constructor candidates rank by TypeId conversion plan") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId int_type = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId long_type = table.builtin(CanonicalBuiltinKind::Long);
+	const TypeId scalar_target_type = table.record(EntityId{973});
+	const TypeId scalar_outer_type = table.record(EntityId{974});
+	const TypeId base_type = table.record(EntityId{975});
+	const TypeId derived_type = table.record(EntityId{976});
+	const TypeId reference_target_type = table.record(EntityId{977});
+	const TypeId reference_outer_type = table.record(EntityId{978});
+	const TypeId deleted_target_type = table.record(EntityId{979});
+	const TypeId deleted_outer_type = table.record(EntityId{980});
+	table.publishClassBaseSchema(scalar_target_type, {});
+	table.publishClassBaseSchema(scalar_outer_type, {});
+	table.publishClassBaseSchema(base_type, {});
+	table.publishRecordProperties(base_type, CanonicalRecordFacts::TriviallyCopyable);
+	const std::array<CanonicalClassBase, 1> derived_bases{{
+		{base_type, CanonicalAccess::Public, CanonicalRecordBaseFlags::None, 0}}};
+	table.publishClassBaseSchema(derived_type, derived_bases);
+	table.publishClassBaseSchema(reference_target_type, {});
+	table.publishClassBaseSchema(reference_outer_type, {});
+	table.publishClassBaseSchema(deleted_target_type, {});
+	table.publishClassBaseSchema(deleted_outer_type, {});
+	auto publish_outer = [&table](TypeId target, TypeId outer) {
+		const std::array<TypeId, 1> parameters{target};
+		const std::array<CanonicalRecordConstructorSpec, 1> constructors{{
+			{parameters, CanonicalRecordFunctionFlags::None, true}}};
+		table.publishRecordConstructors(outer, constructors);
+	};
+	const std::array<TypeId, 1> int_parameters{int_type};
+	const std::array<TypeId, 1> long_parameters{long_type};
+	const std::array<CanonicalRecordConstructorSpec, 2> scalar_constructors{{
+		{int_parameters, CanonicalRecordFunctionFlags::None, true},
+		{long_parameters, CanonicalRecordFunctionFlags::None, true}}};
+	table.publishRecordConstructors(scalar_target_type, scalar_constructors);
+	publish_outer(scalar_target_type, scalar_outer_type);
+	const std::array<TypeId, 1> derived_parameters{derived_type};
+	const std::array<TypeId, 1> base_parameters{base_type};
+	const std::array<CanonicalRecordConstructorSpec, 2> reference_constructors{{
+		{derived_parameters, CanonicalRecordFunctionFlags::None, true},
+		{base_parameters, CanonicalRecordFunctionFlags::None, true}}};
+	table.publishRecordConstructors(reference_target_type, reference_constructors);
+	publish_outer(reference_target_type, reference_outer_type);
+	const std::array<CanonicalRecordConstructorSpec, 2> deleted_constructors{{
+		{int_parameters, CanonicalRecordFunctionFlags::Deleted, true},
+		{long_parameters, CanonicalRecordFunctionFlags::None, true}}};
+	table.publishRecordConstructors(deleted_target_type, deleted_constructors);
+	publish_outer(deleted_target_type, deleted_outer_type);
+	auto class_specifier = [](EntityId entity) {
+		TypeSpecifierNode specifier(TypeCategory::Struct, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		specifier.set_type_entity(entity);
+		return specifier;
+	};
+	auto builtin_specifier = [](TypeCategory category, int size_bits) {
+		return TypeSpecifierNode(category, TypeQualifier::None, size_bits, Token{}, CVQualifier::None);
+	};
+	auto evaluate = [&table](TypeTraitKind kind, TypeSpecifierNode consumer, TypeSpecifierNode argument) {
+		std::array<TypeSpecifierNode, 1> arguments{argument};
+		return evaluateConstructibility(kind, consumer, arguments, ConstructibilityFallback::None);
+	};
+	const auto scalar_int = evaluate(TypeTraitKind::IsConstructible, class_specifier(EntityId{974}),
+		builtin_specifier(TypeCategory::Int, 32));
+	REQUIRE(scalar_int.has_value());
+	CHECK(scalar_int->success);
+	CHECK(scalar_int->value);
+	const auto scalar_long = evaluate(TypeTraitKind::IsConstructible, class_specifier(EntityId{974}),
+		builtin_specifier(TypeCategory::Long, 32));
+	REQUIRE(scalar_long.has_value());
+	CHECK(scalar_long->success);
+	CHECK(scalar_long->value);
+	const auto reference_derived = evaluate(TypeTraitKind::IsConstructible, class_specifier(EntityId{978}),
+		class_specifier(EntityId{976}));
+	REQUIRE(reference_derived.has_value());
+	CHECK(reference_derived->success);
+	CHECK(reference_derived->value);
+	const auto deleted_int = evaluate(TypeTraitKind::IsConstructible, class_specifier(EntityId{980}),
+		builtin_specifier(TypeCategory::Int, 32));
+	REQUIRE(deleted_int.has_value());
+	CHECK(deleted_int->success);
+	CHECK_FALSE(deleted_int->value);
+	const auto deleted_long = evaluate(TypeTraitKind::IsConstructible, class_specifier(EntityId{980}),
+		builtin_specifier(TypeCategory::Long, 32));
+	REQUIRE(deleted_long.has_value());
+	CHECK(deleted_long->success);
+	CHECK(deleted_long->value);
+}
+
 TEST_CASE("Canonical direct reference binding preserves access cv and value category") {
 	CanonicalTypeTable table;
 	const TypeId base_type = table.record(EntityId{913});

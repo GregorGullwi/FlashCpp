@@ -263,14 +263,27 @@ inline CanonicalConstructorParameterMatch matchCanonicalUserDefinedClassConversi
 	const CanonicalTypeKind source_kind = table.node(source_class).kind;
 	const bool source_is_class = source_kind == CanonicalTypeKind::Record || source_kind == CanonicalTypeKind::TemplateSpecialization;
 	const size_t constructor_count = table.recordConstructorCount(target_class);
-	size_t viable_count = 0;
+	std::optional<ConversionRank> best_rank;
+	size_t best_count = 0;
+	bool best_deleted = false;
 	bool has_undecidable = false;
+	const auto consider_candidate = [&](const ConversionPlan& candidate_plan, bool deleted) {
+		if (!candidate_plan.is_valid) {
+			return;
+		}
+		if (!best_rank.has_value() || candidate_plan.rank < *best_rank) {
+			best_rank = candidate_plan.rank;
+			best_count = 1;
+			best_deleted = deleted;
+			return;
+		}
+		if (candidate_plan.rank == *best_rank) {
+			++best_count;
+		}
+	};
 	for (size_t index = 0; index < constructor_count; ++index) {
 		const CanonicalRecordConstructor constructor = table.recordConstructorAt(target_class, index);
 		if (constructor.status == CanonicalRecordConstructorStatus::Deleted) {
-			continue;
-		}
-		if (hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Deleted)) {
 			continue;
 		}
 		if (constructor.status != CanonicalRecordConstructorStatus::Complete) {
@@ -284,6 +297,7 @@ inline CanonicalConstructorParameterMatch matchCanonicalUserDefinedClassConversi
 			constructor.minimum_parameter_count > 1 || constructor.parameter_count == 0) {
 			continue;
 		}
+		const bool deleted = hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Deleted);
 		const TypeId parameter = table.recordConstructorParameterAt(target_class, index, 0);
 		// A copy/move constructor cannot convert an unrelated class argument.
 		if (isCanonicalReferenceToClass(table, parameter, target_class)) {
@@ -303,7 +317,7 @@ inline CanonicalConstructorParameterMatch matchCanonicalUserDefinedClassConversi
 					continue;
 				}
 				if (conversion_operator == CanonicalConstructorParameterMatch::Match) {
-					++viable_count;
+					consider_candidate(operator_plan, deleted);
 				}
 				continue;
 			}
@@ -313,14 +327,18 @@ inline CanonicalConstructorParameterMatch matchCanonicalUserDefinedClassConversi
 			has_undecidable = true;
 			continue;
 		}
-		if (candidate_plan->is_valid) {
-			++viable_count;
-		}
+		consider_candidate(*candidate_plan, deleted);
 	}
 	if (has_undecidable) {
 		return CanonicalConstructorParameterMatch::Unknown;
 	}
-	if (viable_count != 1) {
+	if (!best_rank.has_value()) {
+		return CanonicalConstructorParameterMatch::NoMatch;
+	}
+	if (best_count > 1) {
+		return CanonicalConstructorParameterMatch::Unknown;
+	}
+	if (best_deleted) {
 		return CanonicalConstructorParameterMatch::NoMatch;
 	}
 	plan = ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
