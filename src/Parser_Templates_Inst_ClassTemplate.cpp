@@ -9094,6 +9094,95 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			substitution_context);
 	};
 
+	auto static_initializer_has_residual_template_dependency = [](const ASTNode& initializer, const auto& template_params) {
+		std::unordered_set<StringHandle> parameter_names;
+		parameter_names.reserve(template_params.size());
+		for (const TemplateParameterNode& parameter : template_params) {
+			parameter_names.insert(parameter.nameHandle());
+		}
+		const auto names_parameter = [&parameter_names](StringHandle name) {
+			return parameter_names.contains(name);
+		};
+		const auto expression_has_dependency = [&](const ExpressionNode& expression) {
+			if (std::holds_alternative<FoldExpressionNode>(expression) ||
+				std::holds_alternative<SizeofPackNode>(expression) ||
+				std::holds_alternative<TemplateParameterReferenceNode>(expression)) {
+				return true;
+			}
+			if (const auto* identifier = std::get_if<IdentifierNode>(&expression); identifier != nullptr && names_parameter(identifier->nameHandle())) {
+				return true;
+			}
+			if (std::holds_alternative<QualifiedIdentifierNode>(expression)) {
+				return true;
+			}
+			if (const auto* call = std::get_if<CallExprNode>(&expression)) {
+				return call->has_dependent_qualified_lookup_record() || call->dependent_unqualified_lookup_record().has_value();
+			}
+			return false;
+		};
+		return RebindStaticMemberAst::visitASTUntil(initializer, [&](const ASTNode& node) {
+			if (node.is<TemplateParameterReferenceNode>()) {
+				return true;
+			}
+			if (node.is<IdentifierNode>() && names_parameter(node.as<IdentifierNode>().nameHandle())) {
+				return true;
+			}
+			if (node.is<QualifiedIdentifierNode>()) {
+				return true;
+			}
+			if (node.is<CallExprNode>()) {
+				const CallExprNode& call = node.as<CallExprNode>();
+				return call.has_dependent_qualified_lookup_record() || call.dependent_unqualified_lookup_record().has_value();
+			}
+			return node.is<ExpressionNode>() && expression_has_dependency(node.as<ExpressionNode>());
+		});
+	};
+
+	auto substitute_in_class_static_initializer_structurally =
+		[&](
+			const auto& static_member,
+			const auto& replay_template_params,
+			std::span<const TemplateTypeArg> replay_template_args,
+			StringHandle owning_instantiated_name,
+			TypeIndex owning_type_index,
+			NamespaceHandle fallback_definition_namespace,
+			const auto&) -> std::optional<ASTNode> {
+		if (!static_member.initializer.has_value()) {
+			return std::nullopt;
+		}
+		TemplateInstantiationContext substitution_context = buildTemplateInstantiationContext(
+			replay_template_params,
+			replay_template_args,
+			nullptr,
+			currentTemplateSubstitutionFailurePolicy());
+		substitution_context.current_instantiation_type = owning_type_index;
+		TemplateDefinitionLookupContext definition_lookup_context =
+			static_member.initializerDefinitionLookupContext();
+		if (static_member.declaration.has_value()) {
+			if (const DeclarationNode* declaration = get_decl_from_symbol(*static_member.declaration); declaration != nullptr) {
+				definition_lookup_context = ensureReplayDefinitionLookupContext(
+					definition_lookup_context,
+					declaration->identifier_token(),
+					fallback_definition_namespace,
+					owning_instantiated_name);
+			}
+		}
+		if (definition_lookup_context.is_valid()) {
+			substitution_context.definition_lookup_context = &definition_lookup_context;
+		}
+		FlashCpp::TemplateDepthGuard guard_template_depth(parsing_template_depth_);
+		parsing_template_depth_ = 1;
+		ScopedDefinitionLookupContext ctx_scope(
+			current_template_definition_lookup_context_,
+			substitution_context.definition_lookup_context);
+		ReplayTemplateBindings replay_bindings(
+			*this,
+			replay_template_params,
+			replay_template_args,
+			substitution_context.environment);
+		auto member_ctx_scope = push_replay_member_context(owning_instantiated_name, owning_type_index, struct_info);
+		return substituteTemplateParameters(*static_member.initializer, substitution_context);
+	};
 	auto substitute_in_class_static_initializer_replay_first =
 		[&](
 			const auto& static_member,
@@ -9115,6 +9204,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 					replay_template_params.size()));
 		std::optional<ASTNode> substituted_initializer;
 		if (requires_replay_metadata) {
+			try {
+				std::optional<ASTNode> structural_initializer =
+					substitute_in_class_static_initializer_structurally(
+						static_member,
+						replay_template_params,
+						replay_template_args,
+						owning_instantiated_name,
+						owning_type_index,
+						fallback_definition_namespace,
+						fallback_template_args);
+				if (structural_initializer.has_value() && !static_initializer_has_residual_template_dependency(*structural_initializer, replay_template_params)) {
+					return structural_initializer;
+				}
+			} catch (const std::exception& ex) {
+				FLASH_LOG(Templates, Trace, "Structural static initializer substitution failed: ", ex.what());
+			}
 			try {
 				substituted_initializer =
 					try_reparse_in_class_static_initializer(
