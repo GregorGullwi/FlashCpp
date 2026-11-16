@@ -417,9 +417,10 @@ remaining pattern schemas by identity, and remove the name fallback.
      type, and a published class-to-pointer subscript conversion adopts the
      pointer's pointee. A pointer with no structural pointee still peels one
      flat level. The parser-time constant-expression evaluator now normalizes
-     the reversed built-in subscript spelling `i[array]` to `array[i]`. Other
-     flat readers still need migration before the projection fields can be
-     removed.
+     the reversed built-in subscript spelling `i[array]` to `array[i]`, and
+     identifier arrays retain their origin through array-to-pointer decay so
+     pointer arithmetic and pointer subscripts evaluate. Other flat readers
+     still need migration before the projection fields can be removed.
    - Class-scope using-declarations now retain their target base and member
      spelling on `StructDeclarationNode` and copy that metadata into
      instantiated class declarations. The source base-declaration ordinal

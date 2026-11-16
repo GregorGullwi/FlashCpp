@@ -255,6 +255,14 @@ an array member reached through a record subscript all mislower. The same
 flaw makes a row of `T* rows[M][N]` decay with the pointer stride instead of
 the row stride. Copying `ptrs[i]` into a named pointer first is unaffected.
 
+## Constexpr pointer variable dereference remains unsupported
+
+A constexpr pointer variable initialized from an array supports pointer
+arithmetic and subscripting, but direct dereference of the variable itself
+(`*pointer`) still reports a null-pointer dereference. Decay the pointer
+initializer to the same pointer result used by subscripting before binding the
+variable.
+
 ## Subscript storage follow-up architecture
 
 Runtime storage now describes what each temporary holds, but two consumers
