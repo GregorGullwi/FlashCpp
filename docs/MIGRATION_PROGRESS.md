@@ -312,7 +312,8 @@ remaining pattern schemas by identity, and remove the name fallback.
    for `const T&` or `T&&`. Template and non-template conversion operators are
    ranked together: direct lvalue-reference binding wins first, then the
    trailing standard conversion rank, with the non-template preferred when the
-   sequences are otherwise indistinguishable.
+   sequences are otherwise indistinguishable. Object-pointer targets use the
+   same ranking, including templates that deduce a cv-qualified pointee.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are

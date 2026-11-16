@@ -842,24 +842,6 @@ ValueCategory conditionalCallableOperandCategory(const SemanticAnalysis& sema, c
 	return inferred;
 }
 
-std::optional<UserDefinedConversionOperatorSelection> trySelectCanonicalImplicitConversionOperator(
-	const CanonicalTypeDesc& source_desc,
-	const TypeSpecifierNode& target_type,
-	ValueCategory source_value_category) {
-	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
-	CanonicalTypeTransaction source_type_transaction(canonical_types);
-	const CanonicalTypeImport source_type_import = tryImportCanonicalTypeDesc(source_desc);
-	if (source_type_import.status != CanonicalTypeImportStatus::Supported) {
-		return std::nullopt;
-	}
-	const auto selected_conversion =
-		trySelectCanonicalUserDefinedConversionOperator(source_type_import.type, target_type, false, source_value_category);
-	if (selected_conversion.has_value()) {
-		source_type_transaction.commit();
-	}
-	return selected_conversion;
-}
-
 // Re-export a structural result so TypeContext::intern's flat refresh can
 // republish pointer/array identities. Scalar results keep their adopted id.
 // The compatibility fields must describe the result, not the operand.
@@ -12604,8 +12586,10 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 	if (from_desc.category() == TypeCategory::Struct && from_desc.pointer_levels.empty() && from_desc.array_dimensions.empty() &&
 		!isCanonicalArrayOrPointer(requireFrontendContext().canonicalTypes(), from_desc.structural_type_id) &&
 		!target_is_member_object_pointer && (target_is_object_pointer || target_is_array_reference)) {
+		const TypeSpecifierNode source_type = materializeTypeSpecifier(from_desc);
 		const TypeSpecifierNode target_type = materializeTypeSpecifier(to_desc);
-		const auto selected = trySelectCanonicalImplicitConversionOperator(from_desc, target_type, source_value_category);
+		const auto selected = selectBestUserDefinedConversion(source_type, target_type, ConversionFunctionContext::Implicit, false,
+			source_value_category, FunctionTemplateInstantiation::Definition);
 		if (selected.has_value()) {
 			return !selected->ambiguous && annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected, SemanticContextFlags::None);
 		}
