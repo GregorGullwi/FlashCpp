@@ -237,12 +237,6 @@ bracket operand, including the reversed form `index()[object()]`. Reads,
 writes, and address-taking share this lowering, including when a conversion
 supplies the array or when subscripts are combined across dimensions.
 
-The parser-time constant-expression evaluator used by `static_assert` still
-rejects the reversed built-in subscript form: with
-`constexpr int values[5] = {11, 22, 33, 44, 55};`,
-`static_assert(2[values] == 33);` reports "Array subscript on unsupported
-expression type", while the array-first spelling works.
-
 Call return-type materialization can duplicate a pointer layer when the
 declared return type is a pointer-to-array alias. For example, with
 `using RowPointer = int (*)[4]; RowPointer f();`, `f()[i][j]` uses the stride
