@@ -692,18 +692,6 @@ incorrect constructor diagnostic. These parser/lookup gaps prevent a source-leve
 friend-effect regression here; native tests retain a successfully instantiated
 `Check<Good>` after a later class-body error without rolling back its cache entry.
 
-## Deleted pointer-parameter constructors do not reject constructibility
-
-A deleted general constructor whose parameter is a pointer to its own class,
-such as `C::C(C* const&) = delete`, is classified correctly and stored in
-`deleted_constructors`, but `__is_constructible(C, C*)` still reports true. The
-canonical constructor schema cannot import the pointer-to-self parameter while
-the class record is being published, and the compatibility resolver reads only
-`member_functions`, not `deleted_constructors`. Importing pointer-to-self
-parameter types for deleted entries is still owed; a regression should assert
-the deleted call is rejected rather than only asserting that the implicit copy
-constructor exists.
-
 ## Record-property traits still cache the pattern answer in folded initializers
 
 `src/TypeTraitEvaluator.cpp` evaluates copy/move construction, destructibility,

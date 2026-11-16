@@ -6195,7 +6195,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 				if (imported_specialization.status == CanonicalTypeImportStatus::Supported) {
 					(void)tryPublishCanonicalClassBaseSchema(canonical_types, imported_specialization.type, *struct_info);
 					(void)tryPublishCanonicalRecordConstructors(canonical_types, imported_specialization.type,
-						instantiated_struct.as<StructDeclarationNode>(), struct_info->deleted_constructors, struct_info->deleted_special_members);
+						instantiated_struct.as<StructDeclarationNode>(), *struct_info);
 				}
 			}
 
@@ -14968,8 +14968,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			(void)tryPublishCanonicalRecordProperties(
 				canonical_types, imported_specialization.type, *struct_info_ptr);
 			(void)tryPublishCanonicalClassBaseSchema(canonical_types, imported_specialization.type, *struct_info_ptr);
-			(void)tryPublishCanonicalRecordConstructors(canonical_types, imported_specialization.type, instantiated_struct.as<StructDeclarationNode>(),
-				struct_info_ptr->deleted_constructors, struct_info_ptr->deleted_special_members);
+			(void)tryPublishCanonicalRecordConstructors(canonical_types, imported_specialization.type,
+				instantiated_struct.as<StructDeclarationNode>(), *struct_info_ptr);
 		}
 	}
 

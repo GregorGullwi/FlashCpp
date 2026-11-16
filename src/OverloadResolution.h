@@ -5237,8 +5237,9 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload_using_co
 		if (is_implicit_copy_or_move && argument_types.size() == 1) {
 			const TypeSpecifierNode& arg_type = argument_types[0];
 			TypeCategory resolved_arg_type = resolve_type_alias(arg_type.type_index());
-			bool is_same_struct_type = is_struct_type(resolved_arg_type) &&
-									   arg_type.type_index() == *struct_info.own_type_index_;
+			const bool is_same_struct_type = is_struct_type(resolved_arg_type) &&
+				struct_info.isOwnTypeIndex(arg_type.type_index()) &&
+				arg_type.runtime_pointer_depth() == 0 && !arg_type.is_array();
 			if (!is_same_struct_type) {
 				continue;
 			}
