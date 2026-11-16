@@ -419,8 +419,9 @@ remaining pattern schemas by identity, and remove the name fallback.
      flat level. The parser-time constant-expression evaluator now normalizes
      the reversed built-in subscript spelling `i[array]` to `array[i]`, and
      identifier arrays retain their origin through array-to-pointer decay so
-     pointer arithmetic and pointer subscripts evaluate. Other flat readers
-     still need migration before the projection fields can be removed.
+     pointer arithmetic, pointer subscripts, and direct dereference of pointer
+     variables initialized from arrays evaluate. Other flat readers still need
+     migration before the projection fields can be removed.
    - Class-scope using-declarations now retain their target base and member
      spelling on `StructDeclarationNode` and copy that metadata into
      instantiated class declarations. The source base-declaration ordinal
