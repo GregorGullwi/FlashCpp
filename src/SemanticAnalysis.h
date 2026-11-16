@@ -646,6 +646,9 @@ private:
 	std::optional<UserDefinedConversionOperatorSelection> trySelectConversionFunctionTemplate(
 		const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, ConversionFunctionContext conversion_context,
 		ValueCategory source_value_category, FunctionTemplateInstantiation instantiation);
+	std::optional<UserDefinedConversionOperatorSelection> selectBestUserDefinedConversion(
+		const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, ConversionFunctionContext conversion_context,
+		bool allow_explicit, ValueCategory source_value_category, FunctionTemplateInstantiation instantiation);
 	struct ConversionFunctionTemplateCandidate;
 	std::optional<UserDefinedConversionOperatorSelection> selectConversionFunctionTemplate(
 		std::span<const ConversionFunctionTemplateCandidate> templates, const TypeSpecifierNode& target_type,

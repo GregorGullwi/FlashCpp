@@ -11763,6 +11763,40 @@ std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::trySelec
 	return selectConversionFunctionTemplate(templates, target_type, source_value_category, instantiation);
 }
 
+std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::selectBestUserDefinedConversion(
+	const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, ConversionFunctionContext conversion_context,
+	bool allow_explicit, ValueCategory source_value_category, FunctionTemplateInstantiation instantiation) {
+	const auto non_template = trySelectUserDefinedConversionOperator(source_type, target_type, allow_explicit, source_value_category);
+	if (non_template.has_value() && !non_template->ambiguous && non_template->function != nullptr &&
+		non_template->trailing_standard_rank == ConversionRank::ExactMatch &&
+		(!target_type.is_reference() || conversionOperatorResultBindsLvalueReference(*non_template, target_type))) {
+		return non_template;
+	}
+	const auto template_selection =
+		trySelectConversionFunctionTemplate(source_type, target_type, conversion_context, source_value_category, instantiation);
+	if (!non_template.has_value()) {
+		return template_selection;
+	}
+	if (!template_selection.has_value()) {
+		return non_template;
+	}
+	if (non_template->ambiguous || non_template->function == nullptr) {
+		return non_template;
+	}
+	if (template_selection->ambiguous || template_selection->function == nullptr) {
+		return non_template;
+	}
+	const bool non_template_direct = conversionOperatorResultBindsLvalueReference(*non_template, target_type);
+	const bool template_direct = conversionOperatorResultBindsLvalueReference(*template_selection, target_type);
+	if (non_template_direct != template_direct) {
+		return template_direct ? template_selection : non_template;
+	}
+	if (template_selection->trailing_standard_rank < non_template->trailing_standard_rank) {
+		return template_selection;
+	}
+	return non_template;
+}
+
 std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::selectConversionFunctionTemplate(
 	std::span<const ConversionFunctionTemplateCandidate> templates, const TypeSpecifierNode& target_type,
 	ValueCategory source_value_category, FunctionTemplateInstantiation instantiation) {
@@ -11991,20 +12025,33 @@ std::optional<SemanticAnalysis::BuiltinSubscriptConversion> SemanticAnalysis::se
 ArgumentConversionInfo SemanticAnalysis::buildCallArgumentConversion(const TypeSpecifierNode& argument_type, const TypeSpecifierNode& parameter_type,
 	const ASTNode* argument_node) {
 	const ArgumentConversionInfo conversion = buildArgumentConversionInfo(argument_type, parameter_type, argument_node);
-	if (conversion.is_valid || !is_struct_type(argument_type.category()) || argument_node == nullptr) {
+	if (!is_struct_type(argument_type.category()) || argument_node == nullptr ||
+		(conversion.is_valid && conversion.rank != ConversionRank::UserDefined) ||
+		(conversion.is_valid && conversion.trailing_standard_rank == ConversionRank::ExactMatch && !parameter_type.is_reference())) {
 		return conversion;
 	}
 	const ValueCategory source_category = argument_type.is_lvalue_reference() ? ValueCategory::LValue : inferExpressionValueCategory(*argument_node);
-	const auto selected = trySelectConversionFunctionTemplate(argument_type, parameter_type, ConversionFunctionContext::Implicit, source_category,
+	const auto selected = selectBestUserDefinedConversion(argument_type, parameter_type, ConversionFunctionContext::Implicit, false, source_category,
 		FunctionTemplateInstantiation::SignatureOnly);
-	if (!selected.has_value() || selected->ambiguous) {
+	if (!selected.has_value() || selected->ambiguous || selected->function == nullptr) {
 		return conversion;
 	}
 	TypeSpecifierNode result = selected->function->decl_node().type_specifier_node();
 	tryBindPublishedTypeEntity(result);
 	const auto result_type = tryImportSupportedCanonical(requireFrontendContext().canonicalTypes(), result);
-	return {ConversionRank::UserDefined, &parameter_type, true, selected->trailing_standard_rank, result_type.value_or(TypeId{}),
-		selected->conversion_template};
+	ArgumentConversionInfo selected_info{ConversionRank::UserDefined, &parameter_type, true, selected->trailing_standard_rank,
+		result_type.value_or(TypeId{}), selected->conversion_template};
+	if (!conversion.is_valid) {
+		return selected_info;
+	}
+	if (selected->conversion_template == nullptr) {
+		return conversion;
+	}
+	const bool selected_direct = conversionOperatorResultBindsLvalueReference(*selected, parameter_type);
+	if (selected_direct || selected->trailing_standard_rank < conversion.trailing_standard_rank) {
+		return selected_info;
+	}
+	return conversion;
 }
 
 bool SemanticAnalysis::currentContextCanAccessMember(const StructTypeInfo& owner, AccessSpecifier access) const {
@@ -12330,16 +12377,10 @@ bool SemanticAnalysis::tryAnnotateExplicitConversionByTypeId(
 		return false;
 	}
 	const TypeSpecifierNode source_type = materializeTypeSpecifier(type_context_.get(source_type_id));
-	TypeSpecifierNode target_value_type = target_type;
-	target_value_type.set_reference_qualifier(ReferenceQualifier::None);
-	auto selected_conversion = trySelectUserDefinedConversionOperator(
-		source_type, target_value_type, true, inferExpressionValueCategory(source_expression));
+	const auto selected_conversion = selectBestUserDefinedConversion(source_type, target_type, ConversionFunctionContext::Explicit, true,
+		inferExpressionValueCategory(source_expression), FunctionTemplateInstantiation::Definition);
 	if (!selected_conversion.has_value() || selected_conversion->ambiguous || selected_conversion->function == nullptr) {
-		selected_conversion = trySelectConversionFunctionTemplate(source_type, target_type, ConversionFunctionContext::Explicit,
-			inferExpressionValueCategory(source_expression), FunctionTemplateInstantiation::Definition);
-		if (!selected_conversion.has_value() || selected_conversion->ambiguous || selected_conversion->function == nullptr) {
-			return false;
-		}
+		return false;
 	}
 	if (!annotateSelectedConversionOperator(slot_expression, source_type_id, target_type_id, *selected_conversion, SemanticContextFlags::None)) {
 		return false;
@@ -12383,10 +12424,7 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 	auto select_conversion_operator = [this, source_value_category](CanonicalTypeId source_type_id, const TypeSpecifierNode& target_type)
 		-> std::optional<UserDefinedConversionOperatorSelection> {
 		const TypeSpecifierNode source_type = materializeTypeSpecifier(type_context_.get(source_type_id));
-		if (const auto selected = trySelectUserDefinedConversionOperator(source_type, target_type, false, source_value_category); selected.has_value()) {
-			return selected;
-		}
-		return trySelectConversionFunctionTemplate(source_type, target_type, ConversionFunctionContext::Implicit, source_value_category,
+		return selectBestUserDefinedConversion(source_type, target_type, ConversionFunctionContext::Implicit, false, source_value_category,
 			FunctionTemplateInstantiation::Definition);
 	};
 
@@ -14284,11 +14322,8 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 
 	if (is_struct_type(arg_value_type.category()) && arg_value_type.runtime_pointer_depth() == 0) {
 		const ValueCategory value_category = inferExpressionValueCategory(arg);
-		auto selected = trySelectCanonicalImplicitConversionOperator(type_context_.get(arg_value_type_id), param_type, value_category);
-		if (!selected.has_value()) {
-			selected = trySelectConversionFunctionTemplate(arg_value_type, param_type, ConversionFunctionContext::Implicit, value_category,
-				FunctionTemplateInstantiation::Definition);
-		}
+		const auto selected = selectBestUserDefinedConversion(arg_value_type, param_type, ConversionFunctionContext::Implicit, false, value_category,
+			FunctionTemplateInstantiation::Definition);
 		if (selected.has_value()) {
 			if (selected->ambiguous || !checkSelectedConversionOperatorAccess(arg, param_type_id, *selected, SemanticContextFlags::None,
 					arg_value_type.type_index())) {

@@ -309,7 +309,10 @@ remaining pattern schemas by identity, and remove the name fallback.
    `ArrayToPointer` tail. Associated constraints are checked before
    instantiating the selected body. Reference-returning templates preserve the
    converted object's address, and a value result can materialize a temporary
-   for `const T&` or `T&&`.
+   for `const T&` or `T&&`. Template and non-template conversion operators are
+   ranked together: direct lvalue-reference binding wins first, then the
+   trailing standard conversion rank, with the non-template preferred when the
+   sequences are otherwise indistinguishable.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are
