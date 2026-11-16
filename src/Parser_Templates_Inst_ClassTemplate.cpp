@@ -4157,7 +4157,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
  // still need template parameter substitution (e.g., T → int).
 						if (substituted_initializer.has_value()) {
 							substituted_initializer = substituteTemplateParameters(
-							substituted_initializer.value(), template_params, template_args_for_member_copy);
+								substituted_initializer.value(), template_params, template_args_for_member_copy,
+								struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct), false);
 							FLASH_LOG(Templates, Trace, "Substituted template parameters in static member '",
 									  static_member.getName(), "' initializer");
 						}
