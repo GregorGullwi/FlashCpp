@@ -4257,15 +4257,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 					return std::nullopt;
 				}
 
-				const bool requires_replay_metadata =
-					static_initializer_requires_replay_metadata(
-						static_member.initializer,
-						template_params_for_substitution);
+				const bool requires_replay_metadata = static_initializer_requires_replay_metadata(static_member.initializer, template_params_for_substitution);
 				std::optional<ASTNode> substituted_initializer;
 				try {
-					if (requires_replay_metadata &&
-						static_member.initializer_position.has_value() &&
-						static_member.declaration.has_value()) {
+					if (requires_replay_metadata && static_member.initializer_position.has_value() && static_member.declaration.has_value()) {
 						const DeclarationNode* declaration =
 							get_decl_from_symbol(*static_member.declaration);
 						if (declaration != nullptr) {
@@ -9131,9 +9126,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 						fallback_definition_namespace,
 						requires_replay_metadata);
 			} catch (const std::exception& ex) {
-				FLASH_LOG(Templates, Error,
-						  "Replay substitution failed for in-class static member: ",
-						  ex.what());
+				FLASH_LOG(Templates, Error, "Replay substitution failed for in-class static member: ", ex.what());
 				throw;
 			}
 		}
@@ -14121,10 +14114,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 				if (!requires_replay_metadata) {
 					return false;
 				}
-				if (!out_of_line_var.initializer_position.has_value() ||
-					!out_of_line_var.declaration.has_value()) {
-					throw InternalError(
-						"Out-of-line template static member initializer replay metadata missing for dependent initializer");
+				if (!out_of_line_var.initializer_position.has_value() || !out_of_line_var.declaration.has_value()) {
+					throw InternalError("Out-of-line template static member initializer replay metadata missing for dependent initializer");
 				}
 
 				SaveHandle current_pos = save_token_position();
