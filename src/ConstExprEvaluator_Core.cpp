@@ -4618,7 +4618,11 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			const TypeSpecifierNode& type_spec = var_decl.declaration().type_specifier_node();
 			// Use the spec-aware overload so multi-dimensional arrays (e.g., int[2][3])
 			// are materialized with the correct inner dimensions.
-			return materialize_array_value_with_spec(type_spec, init_list, context);
+			EvalResult array_result = materialize_array_value_with_spec(type_spec, init_list, context);
+			if (array_result.success()) {
+				array_result.array_origin_var = name_handle;
+			}
+			return array_result;
 		}
 	}
 
