@@ -698,6 +698,39 @@ void apply_uint_init_narrowing(EvalResult& result) {
 	result.set_exact_type(type_spec);
 }
 
+std::optional<EvalResult> try_decay_array_initializer_to_pointer(const EvalResult& init_result, const ASTNode& init_expr,
+	const TypeSpecifierNode& decl_type_spec, std::string_view var_name) {
+	if (!(decl_type_spec.is_pointer() || decl_type_spec.runtime_pointer_depth() > 0) || !init_result.is_array) {
+		return std::nullopt;
+	}
+
+	StringHandle origin = init_result.array_origin_var;
+	if (!origin.isValid()) {
+		const std::string_view origin_name = getIdentifierNameFromAstNode(init_expr);
+		if (!origin_name.empty()) {
+			origin = StringTable::getOrInternStringHandle(origin_name);
+		}
+	}
+	if (!origin.isValid() && !var_name.empty() && init_expr.is<ExpressionNode>() &&
+		std::holds_alternative<StringLiteralNode>(init_expr.as<ExpressionNode>())) {
+		origin = StringTable::getOrInternStringHandle(var_name);
+	}
+	if (!origin.isValid()) {
+		return EvalResult::error("Constexpr array-to-pointer decay failed: could not resolve array origin for pointer initializer");
+	}
+
+	EvalResult decayed_ptr = EvalResult::from_pointer(origin, 0);
+	if (!init_result.array_elements.empty()) {
+		decayed_ptr.pointer_value_snapshot = init_result.array_elements;
+	} else if (!init_result.array_values.empty()) {
+		decayed_ptr.pointer_value_snapshot.reserve(init_result.array_values.size());
+		for (int64_t value : init_result.array_values) {
+			decayed_ptr.pointer_value_snapshot.push_back(EvalResult::from_int(value));
+		}
+	}
+	return decayed_ptr;
+}
+
 const TemplateTypeArg* findTemplateValueParameterBindingCompatibility(
 	StringHandle param_name_handle,
 	const EvaluationContext& context) {
@@ -4655,6 +4688,16 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	}
 
 	maybe_set_binding_result_exact_type(result, var_decl.declaration(), &initializer.value(), context);
+	if (result.is_array && result.array_origin_var.isValid()) {
+		if (auto decayed_ptr = try_decay_array_initializer_to_pointer(
+				result, initializer.value(), var_decl.declaration().type_specifier_node(), var_name)) {
+			result = std::move(*decayed_ptr);
+			if (!result.success()) {
+				return result;
+			}
+			maybe_set_binding_result_exact_type(result, var_decl.declaration(), &initializer.value(), context);
+		}
+	}
 	apply_uint_init_narrowing(result);
 	return result;
 }
@@ -7200,33 +7243,12 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			//   T* p = arr;
 			// When the initializer evaluates to an array value, materialize a pointer
 			// to the array origin so later pointer operations/member access work.
-			if ((decl_type_spec.is_pointer() || decl_type_spec.runtime_pointer_depth() > 0) && init_result.is_array) {
-				StringHandle origin = init_result.array_origin_var;
-				if (!origin.isValid()) {
-					const std::string_view origin_name = getIdentifierNameFromAstNode(init_expr);
-					if (!origin_name.empty()) {
-						origin = StringTable::getOrInternStringHandle(origin_name);
-					}
+			if (auto decayed_ptr = try_decay_array_initializer_to_pointer(init_result, init_expr, decl_type_spec, var_name)) {
+				init_result = std::move(*decayed_ptr);
+				if (!init_result.success()) {
+					return init_result;
 				}
-				if (!origin.isValid() && !var_name.empty() && init_expr.is<ExpressionNode>() &&
-					std::holds_alternative<StringLiteralNode>(init_expr.as<ExpressionNode>())) {
-					origin = StringTable::getOrInternStringHandle(var_name);
-				}
-				if (!origin.isValid()) {
-					return EvalResult::error(
-						"Constexpr array-to-pointer decay failed: could not resolve array origin for pointer initializer");
-				}
-				EvalResult decayed_ptr = EvalResult::from_pointer(origin, 0);
-				if (!init_result.array_elements.empty()) {
-					decayed_ptr.pointer_value_snapshot = init_result.array_elements;
-				} else if (!init_result.array_values.empty()) {
-					decayed_ptr.pointer_value_snapshot.reserve(init_result.array_values.size());
-					for (int64_t value : init_result.array_values) {
-						decayed_ptr.pointer_value_snapshot.push_back(EvalResult::from_int(value));
-					}
-				}
-				maybe_set_binding_result_exact_type(decayed_ptr, decl, &init_expr, context);
-				init_result = std::move(decayed_ptr);
+				maybe_set_binding_result_exact_type(init_result, decl, &init_expr, context);
 			}
 			apply_uint_init_narrowing(init_result);
 
