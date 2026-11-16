@@ -1,8 +1,9 @@
 # Known Issues
 
-This file is the authoritative inventory of unresolved gaps. Migration status
-and validation belong in `MIGRATION_PROGRESS.md`; that file should link here
-instead of restating issue details.
+This file is the authoritative inventory of unresolved gaps. Describe only the
+remaining behavior and the next required change; completed work belongs in
+`MIGRATION_PROGRESS.md`, which should link here instead of restating issue
+details.
 
 ## Operator candidate lookup still lacks complete member-name provenance
 
@@ -219,21 +220,15 @@ expression type and the parser should only consume it.
 
 ## Remaining conversion function template cases
 
-Conversion template lookup uses concrete bases published during instantiation,
-including base entries whose aliases already resolve to a record. A base that
-still depends on template arguments must be resolved by class instantiation
-before it contributes conversion candidates. Deferred base patterns without a
-concrete record after instantiation still need work in base materialization.
-
-Conversion function templates are currently considered when ordinary overload
-ranking finds no conversion. Ranking template and non-template conversion
-functions in one candidate set remains open. Conditional `explicit` specifiers
-that depend on template arguments and return patterns containing unsupported
-dependent array bounds or packs also need further coverage.
-
-Built-in subscript candidate discovery depends on a concrete declared
-pointer or array-reference type. A conversion template whose return shape
-still depends on its own template parameters cannot seed a candidate.
+- Resolve bases that still depend on template arguments during class
+  instantiation before they contribute conversion candidates. Deferred bases
+  without a concrete record must stay excluded.
+- Support conditional `explicit` specifiers whose condition depends on template
+  arguments.
+- Support conversion-template results whose dependent array bounds or packs are
+  not concrete.
+- Seed built-in subscript candidates from conversion templates whose return
+  pointer or array-reference shape still depends on the template parameters.
 
 ## Array-reference conversion and subscript coverage
 
