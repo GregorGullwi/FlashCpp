@@ -5769,9 +5769,8 @@ void Parser::stampPublishedFunctionTemplateParameters(TemplateFunctionDeclaratio
 					}
 				}
 				if (function_type.callable_signature) {
-					auto nested_signature = std::make_shared<FunctionSignature>(*function_type.callable_signature);
-					function_type.callable_signature = std::move(nested_signature);
-					pending_signatures.push_back(function_type.callable_signature.get());
+					function_type.callable_signature = allocatePersistentFunctionSignature(*function_type.callable_signature);
+					pending_signatures.push_back(function_type.callable_signature);
 				}
 			};
 			if (signature.hasStructuredTypes()) {

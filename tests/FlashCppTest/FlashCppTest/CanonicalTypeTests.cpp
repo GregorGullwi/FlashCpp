@@ -1480,8 +1480,10 @@ TEST_CASE("Nested specialization partial patterns publish parameter environments
 	const TypeId box[] = {table.templateSpecialization(template_id("Box"), parameters)};
 	const TypeId other[] = {table.templateSpecialization(template_id("OtherBox"), parameters)};
 	const size_t declarations_before = context.templateDecls().size();
-	const TemplateDeclId box_environment = context.templateDecls().publishClassPartialEnvironment(key, table.templateSpecialization(key, box));
-	const TemplateDeclId other_environment = context.templateDecls().publishClassPartialEnvironment(key, table.templateSpecialization(key, other));
+	const TemplateDeclId box_environment = context.templateDecls().publishClassPartialEnvironment(
+		key, table.templateSpecialization(key, box), StringHandle{});
+	const TemplateDeclId other_environment = context.templateDecls().publishClassPartialEnvironment(
+		key, table.templateSpecialization(key, other), StringHandle{});
 	CHECK(context.templateDecls().size() == declarations_before);
 	CHECK(box_environment != other_environment);
 	bool found_forward = false;
@@ -1746,7 +1748,7 @@ TEST_CASE("Partial specialization member pointer patterns retain published param
 		wrong_category.is_dependent = true;
 		const TemplateTypeArg arguments[] = {wrong_category};
 		CHECK_FALSE(tryImportCanonicalPartialClassPattern(context, primary, declaration.template_parameters(), arguments, {},
-			kCanonicalPartialPatternNone));
+			CanonicalPartialPatternOptions{}));
 	}
 	REQUIRE(forward_environment);
 	std::vector<TemplateDeclId> environments;
@@ -1793,21 +1795,22 @@ TEST_CASE("Partial parameter environments merge canonical patterns and roll back
 	const TypeId reference_arguments[] = {types.reference(parameter, ReferenceQualifier::LValueReference)};
 	const TypeId pointer = types.templateSpecialization(primary, pointer_arguments);
 	const TypeId reference = types.templateSpecialization(primary, reference_arguments);
-	const TemplateDeclId environment = declarations.publishClassPartialEnvironment(primary, pointer);
+	const StringHandle pattern_identity{};
+	const TemplateDeclId environment = declarations.publishClassPartialEnvironment(primary, pointer, pattern_identity);
 	CHECK(environment != primary);
-	CHECK(declarations.publishClassPartialEnvironment(primary, pointer) == environment);
+	CHECK(declarations.publishClassPartialEnvironment(primary, pointer, pattern_identity) == environment);
 	const size_t committed_count = declarations.size();
 	{
 		TemplateDeclTableTransaction transaction(declarations);
-		const TemplateDeclId temporary = declarations.publishClassPartialEnvironment(primary, reference);
+		const TemplateDeclId temporary = declarations.publishClassPartialEnvironment(primary, reference, pattern_identity);
 		CHECK(temporary != environment);
 		CHECK(declarations.size() == committed_count + 1);
 	}
 	CHECK(declarations.size() == committed_count);
-	CHECK(declarations.publishClassPartialEnvironment(primary, pointer) == environment);
-	CHECK_THROWS_AS(declarations.publishClassPartialEnvironment(TemplateDeclId{}, pointer), InternalError);
-	CHECK_THROWS_AS(declarations.publishClassPartialEnvironment(primary, TypeId{}), InternalError);
-	CHECK_THROWS_AS(declarations.publishClassPartialEnvironment(TemplateDeclId{99}, pointer), InternalError);
+	CHECK(declarations.publishClassPartialEnvironment(primary, pointer, pattern_identity) == environment);
+	CHECK_THROWS_AS(declarations.publishClassPartialEnvironment(TemplateDeclId{}, pointer, pattern_identity), InternalError);
+	CHECK_THROWS_AS(declarations.publishClassPartialEnvironment(primary, TypeId{}, pattern_identity), InternalError);
+	CHECK_THROWS_AS(declarations.publishClassPartialEnvironment(TemplateDeclId{99}, pointer, pattern_identity), InternalError);
 }
 
 TEST_CASE("Partial parameter environment publication defers unsupported declaration families") {
@@ -1829,14 +1832,18 @@ template<Any T> struct Constrained<T*> { T member; };
 	Parser parser(lexer, compile_context, sema);
 	REQUIRE(!parser.parse().is_error());
 	size_t patterns = 0;
+	size_t published_environments = 0;
 	for (const ASTNode& node : parser.get_nodes()) {
 		if (!node.is<StructDeclarationNode>()) continue;
 		const StructDeclarationNode& pattern = node.as<StructDeclarationNode>();
 		if (!gTemplateRegistry.isClassTemplateSpecializationPattern(&pattern)) continue;
-		CHECK_FALSE(pattern.partial_specialization_environment());
+		if (pattern.partial_specialization_environment()) {
+			++published_environments;
+		}
 		++patterns;
 	}
 	CHECK(patterns == 3);
+	CHECK(published_environments == 2);
 }
 
 TEST_CASE("Partial pattern normalization keeps deep declarators off the native stack") {
@@ -1856,7 +1863,7 @@ TEST_CASE("Partial pattern normalization keeps deep declarators off the native s
 	const TemplateDeclId primary = context.templateDecls().publishPrimaryClassTemplate(OwnerId{1}, StringTable::getOrInternStringHandle("Deep"));
 	const std::optional<TypeId> pattern =
 		tryImportCanonicalPartialClassPattern(context, primary, parameters, arguments, {},
-			kCanonicalPartialPatternNone);
+			CanonicalPartialPatternOptions{});
 	REQUIRE(pattern.has_value());
 	TypeId current = table.templateArgumentType(table.templateSpecializationArguments(*pattern));
 	for (size_t depth = 0; depth < 4096; ++depth) {
@@ -1892,14 +1899,14 @@ TEST_CASE("Nested partial normalization reclaims scratch and rejects unsupported
 	const size_t before = context.canonicalTypes().size();
 	const uint64_t scratch_before = context.scratchArena().currentBytes();
 	CHECK_FALSE(tryImportCanonicalPartialClassPattern(context, primary, parameters, arguments, mixed_syntax,
-		kCanonicalPartialPatternNone));
+		CanonicalPartialPatternOptions{}));
 	CHECK(context.canonicalTypes().size() == before);
 	CHECK(context.scratchArena().currentBytes() == scratch_before);
 	TypeSpecifierNode alias;
 	alias.set_alias_template_specialization(box, {leaf});
 	const ASTNode alias_syntax[] = {ASTNode::emplace_node<TypeSpecifierNode>(std::move(alias))};
 	CHECK_FALSE(tryImportCanonicalPartialClassPattern(context, primary, parameters, arguments, alias_syntax,
-		kCanonicalPartialPatternNone));
+		CanonicalPartialPatternOptions{}));
 	CHECK(context.canonicalTypes().size() == before);
 	CHECK(context.scratchArena().currentBytes() == scratch_before);
 	TypeSpecifierNode empty;
@@ -1909,7 +1916,7 @@ TEST_CASE("Nested partial normalization reclaims scratch and rejects unsupported
 	supported.set_template_specialization(box, {second_leaf, empty, leaf});
 	const ASTNode supported_syntax[] = {ASTNode::emplace_node<TypeSpecifierNode>(std::move(supported))};
 	const std::optional<TypeId> result = tryImportCanonicalPartialClassPattern(context, primary, parameters, arguments,
-		supported_syntax, kCanonicalPartialPatternNone);
+		supported_syntax, CanonicalPartialPatternOptions{});
 	REQUIRE(result.has_value());
 	CHECK(context.scratchArena().currentBytes() == scratch_before);
 	CHECK(context.canonicalTypes().hasDependentTypeComponents(*result));
@@ -1952,7 +1959,7 @@ TEST_CASE("Nested partial normalization keeps deep syntax traversal off the nati
 	});
 	const uint64_t before = context.scratchArena().currentBytes();
 	const std::optional<TypeId> pattern = tryImportCanonicalPartialClassPattern(context, primary, parameters, arguments,
-		syntax_nodes, kCanonicalPartialPatternNone);
+		syntax_nodes, CanonicalPartialPatternOptions{});
 	REQUIRE(pattern.has_value());
 	CHECK(context.scratchArena().currentBytes() == before);
 	CanonicalTypeTable& table = context.canonicalTypes();
@@ -3297,7 +3304,7 @@ TEST_CASE("Canonical TypeIds rank by-value derived-to-base conversions") {
 }
 
 TEST_CASE("TypeId inheritance classification requires published class-base schemas") {
-	using Classifier = decltype(&classifyCanonicalDerivedBaseConversion);
+	using Classifier = std::optional<DerivedBaseConversionKind> (*)(const CanonicalTypeTable&, TypeId, TypeId);
 	static_assert(std::is_invocable_v<Classifier, const CanonicalTypeTable&, TypeId, TypeId>);
 	static_assert(!std::is_invocable_v<Classifier, const CanonicalTypeTable&, EntityId, EntityId>);
 	FrontendContext frontend;
@@ -7404,8 +7411,9 @@ TEST_CASE("Deep callable signature identity and hashing use bounded native stack
 	constexpr size_t signature_depth = 8192;
 	const auto make_nested_signature = [](
 		TypeCategory leaf_type, size_t depth_limit) {
-		auto signature = std::make_shared<FunctionSignature>();
-		signature->return_type_index = nativeTypeIndex(leaf_type);
+		FunctionSignature leaf_signature;
+		leaf_signature.return_type_index = nativeTypeIndex(leaf_type);
+		FunctionSignature* signature = allocatePersistentFunctionSignature(std::move(leaf_signature));
 		for (size_t depth = 0; depth < depth_limit; ++depth) {
 			FunctionType nested_type;
 			nested_type.type_index = nativeTypeIndex(TypeCategory::Int);
@@ -7422,17 +7430,16 @@ TEST_CASE("Deep callable signature identity and hashing use bounded native stack
 				parameter_types.push_back(std::move(nested_type));
 				enclosing_signature.setParameterTypes(std::move(parameter_types));
 			}
-			signature = std::make_shared<FunctionSignature>(
-				std::move(enclosing_signature));
+			signature = allocatePersistentFunctionSignature(std::move(enclosing_signature));
 		}
 		return signature;
 	};
 
-	const std::shared_ptr<FunctionSignature> lhs =
+	FunctionSignature* lhs =
 		make_nested_signature(TypeCategory::Int, signature_depth);
-	const std::shared_ptr<FunctionSignature> equivalent =
+	FunctionSignature* equivalent =
 		make_nested_signature(TypeCategory::Int, signature_depth);
-	const std::shared_ptr<FunctionSignature> different_leaf =
+	FunctionSignature* different_leaf =
 		make_nested_signature(TypeCategory::Float, signature_depth);
 
 	CHECK(FlashCpp::equalFunctionSignatureIdentity(*lhs, *equivalent));
@@ -7529,7 +7536,7 @@ TEST_CASE("Template substitution composes ordered callable return declarators") 
 	for (size_t depth = 0; depth < nested_callable_depth; ++depth) {
 		FunctionType nested_callable;
 		nested_callable.type_index = nativeTypeIndex(TypeCategory::FunctionPointer);
-		nested_callable.callable_signature = std::make_shared<FunctionSignature>(std::move(deep_signature));
+		nested_callable.callable_signature = allocatePersistentFunctionSignature(std::move(deep_signature));
 		FunctionSignature outer_signature;
 		outer_signature.setReturnType(std::move(nested_callable));
 		deep_signature = std::move(outer_signature);
@@ -7891,6 +7898,65 @@ TEST_CASE("Callable components publish independently of a deferred canonical env
 	const TypeId expected = table.qualify(table.pointer(table.builtin(CanonicalBuiltinKind::Short)), CVQualifier::Const);
 	CHECK(substituted.return_type().canonical_type_id == expected);
 	CHECK_FALSE(signature.return_type().canonical_type_id);
+}
+
+TEST_CASE("Callable signature substitution rolls back published components on later failure") {
+	FrontendContext context;
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const TemplateDeclId environment{738};
+	const StringHandle first = StringTable::getOrInternStringHandle("First");
+	const StringHandle second = StringTable::getOrInternStringHandle("Second");
+	const std::array<TemplateParameterNode, 2> parameters{TemplateParameterNode(first, Token{}), TemplateParameterNode(second, Token{})};
+	const TypeId owner = table.record(EntityId{739});
+	FunctionType return_pattern;
+	return_pattern.type_index = nativeTypeIndex(TypeCategory::Template);
+	return_pattern.template_parameter_name = first;
+	return_pattern.template_parameter_decl = environment;
+	FunctionType parameter_pattern;
+	parameter_pattern.type_index = nativeTypeIndex(TypeCategory::Template);
+	parameter_pattern.template_parameter_name = second;
+	parameter_pattern.template_parameter_decl = environment;
+	parameter_pattern.template_parameter_index = 1;
+	parameter_pattern.ordered_declarator_components = {DeclaratorComponent::memberPointer(owner, false, CVQualifier::None)};
+	FunctionSignature signature;
+	signature.setReturnType(return_pattern);
+	signature.setParameterTypes(OverloadVector<FunctionType, 4>{parameter_pattern});
+	TypeSpecifierNode short_pointer(TypeCategory::Short, TypeQualifier::None, 16, Token{}, CVQualifier::None);
+	short_pointer.add_pointer_level(CVQualifier::None);
+	const TypeSpecifierNode void_spec(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	const std::array<TemplateTypeArg, 2> arguments{TemplateTypeArg(short_pointer), TemplateTypeArg(void_spec)};
+	const size_t before = table.size();
+	CHECK_THROWS_AS(substituteTemplateFunctionSignatureTypes(signature, parameters, arguments, table, environment), InternalError);
+	CHECK(table.size() == before);
+}
+
+TEST_CASE("Nested callable signature substitution owns its candidate tree") {
+	FrontendContext context;
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const TemplateDeclId environment{740};
+	const StringHandle parameter_name = StringTable::getOrInternStringHandle("T");
+	const std::array<TemplateParameterNode, 1> parameters{TemplateParameterNode(parameter_name, Token{})};
+	FunctionType inner_return;
+	inner_return.type_index = nativeTypeIndex(TypeCategory::Template);
+	inner_return.template_parameter_name = parameter_name;
+	inner_return.template_parameter_decl = environment;
+	FunctionSignature inner_signature;
+	inner_signature.setReturnType(inner_return);
+	FunctionSignature* caller_nested = allocatePersistentFunctionSignature(inner_signature);
+	FunctionType outer_return;
+	outer_return.type_index = nativeTypeIndex(TypeCategory::FunctionPointer);
+	outer_return.callable_signature = caller_nested;
+	FunctionSignature signature;
+	signature.setReturnType(outer_return);
+	TypeSpecifierNode short_pointer(TypeCategory::Short, TypeQualifier::None, 16, Token{}, CVQualifier::None);
+	short_pointer.add_pointer_level(CVQualifier::None);
+	const std::array<TemplateTypeArg, 1> arguments{TemplateTypeArg(short_pointer)};
+	const TypeId expected = table.pointer(table.builtin(CanonicalBuiltinKind::Short));
+	const FunctionSignature substituted = substituteTemplateFunctionSignatureTypes(signature, parameters, arguments, table, environment);
+	REQUIRE(substituted.return_type().callable_signature != nullptr);
+	CHECK(substituted.return_type().callable_signature->return_type().canonical_type_id == expected);
+	CHECK(signature.return_type().callable_signature == caller_nested);
+	CHECK_FALSE(caller_nested->return_type().canonical_type_id);
 }
 
 TEST_CASE("Callable component scratch arguments survive reuse and reclaim failed substitutions") {
@@ -8491,7 +8557,8 @@ int main() { return 0; }
 	const TypeId expected_pattern = table.templateSpecialization(box_primary,
 		std::array<TypeId, 1>{table.pointer(table.templateParameter(box_primary, 0))});
 	const size_t declarations_before = context.templateDecls().size();
-	CHECK(context.templateDecls().publishClassPartialEnvironment(box_primary, expected_pattern) == environment);
+	CHECK(context.templateDecls().publishClassPartialEnvironment(
+		box_primary, expected_pattern, StringHandle{}) == environment);
 	CHECK(context.templateDecls().size() == declarations_before);
 }
 

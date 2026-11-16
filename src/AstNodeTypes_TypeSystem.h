@@ -1206,7 +1206,7 @@ struct FunctionType {
 	uint32_t template_parameter_index = 0;
 	const StructDeclarationNode* injected_class_declaration = nullptr;
 	StringHandle member_class_name;
-	std::shared_ptr<FunctionSignature> callable_signature;
+	FunctionSignature* callable_signature = nullptr;
 };
 
 // Arena-backed structured callable components. Kept off FunctionSignature's
@@ -1305,6 +1305,13 @@ struct FunctionSignature {
 		setParameterTypes(std::move(types));
 	}
 };
+
+// Persistent stable storage for nested callable signatures.
+inline FunctionSignature* allocatePersistentFunctionSignature(FunctionSignature signature) {
+	static ChunkedVector<FunctionSignature, 64> signatures;
+	signatures.push_back(std::move(signature));
+	return &signatures[signatures.size() - 1];
+}
 
 // Deferred static_assert information - stored during template definition, evaluated during instantiation
 struct DeferredStaticAssert {

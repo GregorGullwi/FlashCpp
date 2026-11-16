@@ -3230,7 +3230,7 @@ inline FunctionType makeFunctionTypeFromSpecifier(const TypeSpecifierNode& type_
 		type.member_class_name = type_spec.member_class_name();
 	}
 	if (type_spec.has_function_signature()) {
-		type.callable_signature = std::make_shared<FunctionSignature>(type_spec.function_signature());
+		type.callable_signature = allocatePersistentFunctionSignature(type_spec.function_signature());
 	}
 	return type;
 }

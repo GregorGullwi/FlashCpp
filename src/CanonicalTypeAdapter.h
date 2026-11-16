@@ -303,7 +303,7 @@ inline const FunctionSignature* orderedDeclaratorCallableSignature(const TypeSpe
 		if (components[index].kind != DeclaratorComponentKind::Function) {
 			continue;
 		}
-		current = current != nullptr && current->hasStructuredTypes() ? current->return_type().callable_signature.get() : nullptr;
+		current = current != nullptr && current->hasStructuredTypes() ? current->return_type().callable_signature : nullptr;
 	}
 	return current;
 }

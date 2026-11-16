@@ -7,7 +7,16 @@ the current boundary state and validation contract; completed implementation
 history belongs in git and the regression suite. Unresolved gaps are documented
 only in [KNOWN_ISSUES](KNOWN_ISSUES.md); link there instead of restating them.
 
-## Next 3A slice
+## Next 3A action
+
+**Make `TypeId` the conversion currency** (Remaining 3A work item 1). The
+provisional-publication slice is complete: nested callable signatures are
+candidate-owned and whole-signature canonical publication rolls back as one
+transaction. The flat-consumer migration in item 2 remains the independent
+parallel track. Type-pack materialization stays deferred to boundary 8A until 3A
+closes.
+
+## Provisional-publication slice
 
 **Separate provisional type publication from required instantiations.**
 Value-pack substitution now stages its expressions until every element finishes,
@@ -29,14 +38,19 @@ prefix; required dependency instantiations stay outside that transaction.
 Native guards cover late unsupported bindings, a class-body hard error, and a
 1,024-segment qualifier path with stable repeated substitution identities.
 
-Pure callable-component imports and structural substitution now publish through
-a local canonical transaction. Callable environment imports also publish only
+Pure callable-component imports and structural substitution publish through a
+local canonical transaction. Callable environment imports also publish only
 after every argument imports successfully; an unsupported later argument leaves
-no bulk-import prefix. After that transaction ends, the legacy signature walk
-may independently publish successfully substituted components. It still shares
-nested callable objects and needs candidate-owned storage before whole-signature
-rollback is safe. Native checks cover unsupported imports, an existing structural
-rejection, and successful retry with committed identities.
+no bulk-import prefix. Signature substitution now copies every reachable nested
+callable signature into the persistent function-signature arena before walking
+it, and the whole signature walk runs inside one canonical transaction. Nested
+callable links are stable arena pointers instead of per-node `shared_ptr`
+ownership. A later component failure rolls back earlier component publications
+without rewriting caller-owned nested signatures, while a successful candidate
+still publishes when the walk completes. Native checks cover unsupported
+imports, an existing structural rejection, whole-signature rollback after a
+later failure, nested-candidate ownership, and successful retry with committed
+identities.
 Callable-component argument lists use one scoped scratch buffer of canonical
 arguments, passed directly as a span. This avoids a temporary type-ID vector and
 the type-ID overload's conversion buffer; success and failure restore the outer
