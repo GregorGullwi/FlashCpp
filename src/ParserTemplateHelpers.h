@@ -991,6 +991,12 @@ inline bool Parser::static_initializer_requires_replay_metadata(
 	return RebindStaticMemberAst::visitASTUntil(
 		*initializer,
 		[&matches_template_param_name](const ASTNode& node) -> bool {
+			if (node.is<QualifiedIdentifierNode>()) {
+				return true;
+			}
+			if (node.is<IdentifierNode>() && matches_template_param_name(node.as<IdentifierNode>().nameHandle())) {
+				return true;
+			}
 			if (!node.is<ExpressionNode>()) {
 				return false;
 			}
@@ -1005,8 +1011,7 @@ inline bool Parser::static_initializer_requires_replay_metadata(
 				id != nullptr && matches_template_param_name(id->nameHandle())) {
 				return true;
 			}
-			if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&expr);
-				qualified != nullptr && matches_template_param_name(qualified->nameHandle())) {
+			if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 				return true;
 			}
 			if (const auto* call = std::get_if<CallExprNode>(&expr)) {

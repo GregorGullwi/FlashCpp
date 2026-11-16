@@ -489,15 +489,15 @@ The following remain unsupported and are rejected or left unresolved:
 
 ## Static-member template initializer replay still re-parses source text
 
-Variable-template initializers now substitute structurally from the
-declaration-time AST, but four sibling lexer-replay sites still substitute
-static-member initializers by re-parsing source text (in-class primary and
-partial-spec, and out-of-line clones in
+Variable-template initializers and non-dependent static-member initializers now
+substitute structurally from the declaration-time AST. The four sibling
+lexer-replay sites (in-class primary and partial-spec, and out-of-line clones in
 `Parser_Templates_Inst_ClassTemplate.cpp`, plus the lazy clone in
-`Parser_Templates_Lazy.cpp`). Migrating them onto structural substitution
-requires the same capture guarantee for class-scope alias bodies plus the
-member-context replay metadata those paths rely on. `Parser::ReplayTemplateBindings`
-(pack-aware) keeps pack arity correct inside those replays meanwhile.
+`Parser_Templates_Lazy.cpp`) still replay dependent or qualified initializers
+because structural substitution does not yet capture class-scope alias bodies or
+restore member-context lookup metadata for those forms.
+`Parser::ReplayTemplateBindings` (pack-aware) keeps pack arity correct inside
+those replays meanwhile.
 
 A structural-first flip of the in-class primary clone was attempted and
 reverted (2026-08-22); it regressed two tests and exposed the exact ambient-

@@ -4257,9 +4257,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 					return std::nullopt;
 				}
 
+				const bool requires_replay_metadata =
+					static_initializer_requires_replay_metadata(
+						static_member.initializer,
+						template_params_for_substitution);
 				std::optional<ASTNode> substituted_initializer;
 				try {
-					if (static_member.initializer_position.has_value() &&
+					if (requires_replay_metadata &&
+						static_member.initializer_position.has_value() &&
 						static_member.declaration.has_value()) {
 						const DeclarationNode* declaration =
 							get_decl_from_symbol(*static_member.declaration);
@@ -9113,25 +9118,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 				std::span<const TemplateParameterNode>(
 					replay_template_params.data(),
 					replay_template_params.size()));
-		const bool has_replay_metadata =
-			static_member.initializer_position.has_value() &&
-			static_member.declaration.has_value();
 		std::optional<ASTNode> substituted_initializer;
-		try {
-			substituted_initializer =
-				try_reparse_in_class_static_initializer(
-					static_member,
-					replay_template_params,
-					replay_template_args,
-					owning_instantiated_name,
-					owning_type_index,
-					fallback_definition_namespace,
-					requires_replay_metadata);
-		} catch (const std::exception& ex) {
-			FLASH_LOG(Templates, Error,
-					  "Replay substitution failed for in-class static member: ",
-					  ex.what());
-			if (has_replay_metadata || requires_replay_metadata) {
+		if (requires_replay_metadata) {
+			try {
+				substituted_initializer =
+					try_reparse_in_class_static_initializer(
+						static_member,
+						replay_template_params,
+						replay_template_args,
+						owning_instantiated_name,
+						owning_type_index,
+						fallback_definition_namespace,
+						requires_replay_metadata);
+			} catch (const std::exception& ex) {
+				FLASH_LOG(Templates, Error,
+						  "Replay substitution failed for in-class static member: ",
+						  ex.what());
 				throw;
 			}
 		}
@@ -14116,13 +14118,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 					static_initializer_requires_replay_metadata(
 						out_of_line_var.initializer,
 						replay_template_params);
+				if (!requires_replay_metadata) {
+					return false;
+				}
 				if (!out_of_line_var.initializer_position.has_value() ||
 					!out_of_line_var.declaration.has_value()) {
-					if (requires_replay_metadata) {
-						throw InternalError(
-							"Out-of-line template static member initializer replay metadata missing for dependent initializer");
-					}
-					return false;
+					throw InternalError(
+						"Out-of-line template static member initializer replay metadata missing for dependent initializer");
 				}
 
 				SaveHandle current_pos = save_token_position();
