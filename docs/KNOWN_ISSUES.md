@@ -255,6 +255,18 @@ an array member reached through a record subscript all mislower. The same
 flaw makes a row of `T* rows[M][N]` decay with the pointer stride instead of
 the row stride. Copying `ptrs[i]` into a named pointer first is unaffected.
 
+## Constexpr pointer targets are keyed by variable spelling
+
+`EvalResult::pointer_to_var` and `array_origin_var` store variable spellings,
+and constexpr dereference resolves them against binding maps keyed by
+`std::string_view`. A shadowing local with the same name can therefore redirect
+a constexpr pointer: a global `constexpr const int* pointer = values;`
+dereferenced inside a function with a local `values` resolves the local binding
+instead of the global array. Key pointer and array origins by a stable
+declaration or binding identity instead; spelling should remain only a
+lookup/fallback/diagnostic key. `TypeId` is not sufficient because it identifies
+the type, not the variable or object.
+
 ## Subscript storage follow-up architecture
 
 Runtime storage now describes what each temporary holds, but two consumers
