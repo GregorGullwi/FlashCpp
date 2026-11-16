@@ -13496,7 +13496,8 @@ void SemanticAnalysis::tryAnnotateVariableInitializationConversion(
 		source_desc.array_dimensions.empty() && target_desc.pointer_levels.empty() && target_desc.array_dimensions.empty()) {
 		const TypeSpecifierNode source_type = materializeTypeSpecifier(source_desc);
 		const TypeSpecifierNode target_type = materializeTypeSpecifier(target_desc);
-		const auto explicit_conversion = trySelectUserDefinedConversionOperator(source_type, target_type, true, inferExpressionValueCategory(init_expr));
+		const auto explicit_conversion = selectBestUserDefinedConversion(source_type, target_type, ConversionFunctionContext::Explicit, true,
+			inferExpressionValueCategory(init_expr), FunctionTemplateInstantiation::Definition);
 		if (explicit_conversion.has_value() && !explicit_conversion->ambiguous &&
 			explicit_conversion->function != nullptr && explicit_conversion->function->is_explicit()) {
 			const Token source_token = FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(init_expr).value_or(Token{});
