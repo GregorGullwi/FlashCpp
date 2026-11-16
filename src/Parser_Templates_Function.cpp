@@ -813,6 +813,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 							decl_node.as<DeclarationNode>(), owner_qualified_name);
 						func_ref.set_semantic_owner_name(owner_qualified_name);
 						func_ref.set_is_explicit(is_explicit);
+						func_ref.set_explicit_condition(explicit_condition);
 						if (!struct_parsing_context_stack_.empty()) {
 							if (StructTypeInfo* owner_struct_info =
 									struct_parsing_context_stack_.back().local_struct_info;

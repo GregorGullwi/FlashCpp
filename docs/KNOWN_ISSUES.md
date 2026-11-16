@@ -223,10 +223,10 @@ expression type and the parser should only consume it.
 - Resolve bases that still depend on template arguments during class
   instantiation before they contribute conversion candidates. Deferred bases
   without a concrete record must stay excluded.
-- Support conditional `explicit` specifiers whose condition depends on template
-  arguments.
 - Support conversion-template results whose dependent array bounds or packs are
   not concrete.
+- Evaluate dependent `explicit(condition)` operands on non-template member
+  functions of class templates; conversion-function templates are covered.
 - Seed built-in subscript candidates from conversion templates whose return
   pointer or array-reference shape still depends on the template parameters.
 - Cover pointer-to-member and other non-object-pointer conversion targets with

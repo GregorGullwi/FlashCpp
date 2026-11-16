@@ -3156,6 +3156,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	}
 
 	copy_function_properties(new_func_ref, func_decl);
+	materializeInstantiatedFunctionExplicit(new_func_ref, func_decl, template_params, inline_template_args);
 	if (func_decl.has_noexcept_expression()) {
 		ASTNode substituted_noexcept = substituteTemplateParameters(
 			func_decl.noexcept_expression()->node(),

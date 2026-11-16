@@ -618,6 +618,9 @@ void Parser::copy_function_properties(FunctionDeclarationNode& dest, const Funct
 	dest.set_is_variadic(src.is_variadic());
 	dest.set_is_deleted(src.is_deleted());
 	dest.set_is_explicit(src.is_explicit());
+	if (src.explicit_condition()) {
+		dest.set_explicit_condition(src.explicit_condition());
+	}
 	dest.set_is_static(src.is_static());
 	dest.set_is_inline(src.is_inline());
 	dest.set_is_hidden_friend(src.is_hidden_friend());
@@ -644,6 +647,34 @@ void Parser::copy_function_properties(FunctionDeclarationNode& dest, const Funct
 	std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args) {
 	copy_function_properties(dest, src);
 	materializeInstantiatedFunctionNoexcept(dest, src, template_params, template_args);
+	materializeInstantiatedFunctionExplicit(dest, src, template_params, template_args);
+}
+
+void Parser::materializeInstantiatedFunctionExplicit(FunctionDeclarationNode& target, const FunctionDeclarationNode& pattern,
+	std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args) {
+	if (!pattern.explicit_condition()) {
+		return;
+	}
+	DependentExpressionTable& expressions = requireFrontendContext().dependentExpressions();
+	const ASTNode substituted = substituteTemplateParameters(expressions.node(pattern.explicit_condition()), template_params, template_args);
+	ConstExpr::EvaluationContext context(gSymbolTable, *this);
+	context.template_args = template_args;
+	for (const TemplateParameterNode& parameter : template_params) {
+		context.template_param_names.push_back(parameter.name());
+	}
+	const ConstExpr::EvalResult evaluated = ConstExpr::Evaluator::evaluate(substituted, context);
+	if (evaluated.success()) {
+		target.set_is_explicit(evaluated.as_bool());
+		target.set_explicit_condition({});
+		return;
+	}
+	if (ParserExpressionDependency::nodeHasDeferredTemplateDependency(substituted, currentTemplateParamNames())) {
+		target.set_explicit_condition(expressions.intern(substituted));
+		return;
+	}
+	const Token token = FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(substituted).value_or(pattern.decl_node().identifier_token());
+	throw makeStructuredCompileError(diagnostics(), DiagnosticId::ExplicitSpecifierNotConstant, DiagnosticSeverity::Error,
+		SourceLocation::fromToken(token), "explicit specifier is not a constant expression", {});
 }
 
 ASTNode Parser::create_defaulted_member_function_body(const FunctionDeclarationNode& func_node) {

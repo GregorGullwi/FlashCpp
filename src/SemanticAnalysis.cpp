@@ -11686,7 +11686,7 @@ struct SemanticAnalysis::ConversionFunctionTemplateCandidate {
 };
 
 std::vector<SemanticAnalysis::ConversionFunctionTemplateCandidate> SemanticAnalysis::collectConversionFunctionTemplates(
-	const TypeSpecifierNode& source_type, ConversionFunctionContext conversion_context, ValueCategory source_value_category) {
+	const TypeSpecifierNode& source_type, ValueCategory source_value_category) {
 	std::vector<ConversionFunctionTemplateCandidate> candidates;
 	const StructTypeInfo* source = structInfoFromTypeIndex(source_type.type_index());
 	if (!source || source_type.runtime_pointer_depth() != 0 || source_type.is_array_object()) {
@@ -11715,7 +11715,7 @@ std::vector<SemanticAnalysis::ConversionFunctionTemplateCandidate> SemanticAnaly
 		}
 		for (const StructMemberFunction& member : current.info->member_functions) {
 			const auto* function_template = member.function_decl.get_if<TemplateFunctionDeclarationNode>();
-			if (function_template == nullptr || (member.is_explicit && conversion_context == ConversionFunctionContext::Implicit)) {
+			if (function_template == nullptr) {
 				continue;
 			}
 			const bool allows_category = canonicalConversionOperatorAllowsValueCategory(member.ref_qualifier, source_value_category) ||
@@ -11741,8 +11741,8 @@ std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::trySelec
 	if (!isParserAttached()) {
 		return std::nullopt;
 	}
-	const auto templates = collectConversionFunctionTemplates(source_type, conversion_context, source_value_category);
-	return selectConversionFunctionTemplate(templates, target_type, source_value_category, instantiation);
+	const auto templates = collectConversionFunctionTemplates(source_type, source_value_category);
+	return selectConversionFunctionTemplate(templates, target_type, conversion_context, source_value_category, instantiation);
 }
 
 std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::selectBestUserDefinedConversion(
@@ -11781,7 +11781,7 @@ std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::selectBe
 
 std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::selectConversionFunctionTemplate(
 	std::span<const ConversionFunctionTemplateCandidate> templates, const TypeSpecifierNode& target_type,
-	ValueCategory source_value_category, FunctionTemplateInstantiation instantiation) {
+	ConversionFunctionContext conversion_context, ValueCategory source_value_category, FunctionTemplateInstantiation instantiation) {
 	struct Candidate {
 		UserDefinedConversionOperatorSelection selection;
 		TemplateArgumentVector arguments;
@@ -11803,7 +11803,7 @@ std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::selectCo
 		const auto signature = parser().try_instantiate_member_function_template_explicit_candidate(member.owner_name.view(), member.name.view(),
 			*arguments, FunctionTemplateInstantiation::SignatureOnly, &function_template, source_value_category);
 		const FunctionDeclarationNode* instantiated = signature.has_value() ? signature->get_if<FunctionDeclarationNode>() : nullptr;
-		if (instantiated == nullptr) {
+		if (instantiated == nullptr || (conversion_context == ConversionFunctionContext::Implicit && instantiated->is_explicit())) {
 			continue;
 		}
 		const TypeSpecifierNode& result = instantiated->decl_node().type_specifier_node();
@@ -11893,7 +11893,7 @@ std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::selectBu
 	const CanonicalTypeDesc& source, TypeId target, ValueCategory source_category, std::span<const ConversionFunctionTemplateCandidate> templates,
 	FunctionTemplateInstantiation instantiation) {
 	const TypeSpecifierNode target_syntax = materializeTypeSpecifier(adoptPublishedStructuralType(source, target));
-	return selectConversionFunctionTemplate(templates, target_syntax, source_category, instantiation);
+	return selectConversionFunctionTemplate(templates, target_syntax, ConversionFunctionContext::Implicit, source_category, instantiation);
 }
 
 std::optional<SemanticAnalysis::BuiltinSubscriptConversion> SemanticAnalysis::selectBuiltinSubscriptConversion(const CanonicalTypeDesc& source,
@@ -11928,7 +11928,7 @@ std::optional<SemanticAnalysis::BuiltinSubscriptConversion> SemanticAnalysis::se
 	std::vector<ConversionFunctionTemplateCandidate> templates;
 	if (isParserAttached()) {
 		const TypeSpecifierNode source_syntax = materializeTypeSpecifier(source);
-		templates = collectConversionFunctionTemplates(source_syntax, ConversionFunctionContext::Implicit, source_category);
+		templates = collectConversionFunctionTemplates(source_syntax, source_category);
 		for (auto& member : templates) {
 			// [temp.deduct.conv] needs a target type. A conversion whose return
 			// type already denotes a pointer or array reference can supply one.

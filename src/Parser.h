@@ -4147,6 +4147,10 @@ public:	// Public methods for template instantiation
 	// operand under a specialization's arguments and set the effective value.
 	void materializeInstantiatedFunctionNoexcept(FunctionDeclarationNode& target, const FunctionDeclarationNode& pattern,
 		std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args);
+	// Re-evaluate a retained dependent explicit(condition) operand under a
+	// function-template specialization's arguments and set the effective value.
+	void materializeInstantiatedFunctionExplicit(FunctionDeclarationNode& target, const FunctionDeclarationNode& pattern,
+		std::span<const TemplateParameterNode> template_params, std::span<const TemplateTypeArg> template_args);
 	// Re-evaluate a class-template destructor's retained dependent noexcept
 	// operand under a specialization's arguments and set the effective value.
 	void materializeInstantiatedDestructorNoexcept(DestructorDeclarationNode& target, const DestructorDeclarationNode& pattern,
