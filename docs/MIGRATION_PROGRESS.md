@@ -314,6 +314,11 @@ remaining pattern schemas by identity, and remove the name fallback.
    trailing standard conversion rank, with the non-template preferred when the
    sequences are otherwise indistinguishable. Object-pointer targets use the
    same ranking, including templates that deduce a cv-qualified pointee.
+   Explicit conversion-function templates retain their explicit flag through
+   member-template instantiation, so copy-initialization rejects them with the
+   existing explicit-conversion diagnostic while `explicit(false)` remains
+   implicitly usable. Dependent `explicit(condition)` operands still need
+   per-instantiation evaluation.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are
