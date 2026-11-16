@@ -336,6 +336,10 @@ remaining pattern schemas by identity, and remove the name fallback.
    member-template instantiation, so the effective explicit flag follows the
    deduced conversion target. Non-template conversion functions in class
    templates evaluate the same condition with the enclosing class arguments.
+   Converting-constructor arguments now rank their published `TypeId` standard
+   conversion plan instead of counting viable constructors. A strictly better
+   nested constructor is selected, rank ties defer to the compatibility
+   resolver, and a better deleted constructor rejects the conversion.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are
