@@ -320,8 +320,8 @@ remaining pattern schemas by identity, and remove the name fallback.
    implicitly usable. Dependent `explicit(condition)` operands on
    conversion-function templates are substituted and evaluated during
    member-template instantiation, so the effective explicit flag follows the
-   deduced conversion target. Non-template members of class templates still
-   need outer-binding substitution for the same condition.
+   deduced conversion target. Non-template conversion functions in class
+   templates evaluate the same condition with the enclosing class arguments.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are

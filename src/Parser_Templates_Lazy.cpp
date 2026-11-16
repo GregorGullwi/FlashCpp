@@ -820,6 +820,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 		true,  // Force resolved TypeIndex onto full AST substitutions
 		false); // Plain member lazy replay does not need dependent member-template signature preservation
 	copy_function_properties(new_func_ref, func_decl);
+	materializeInstantiatedFunctionExplicit(new_func_ref, func_decl, lazy_info.template_params, lazy_info.template_args);
 	if (!materialize_body && func_decl.has_noexcept_expression()) {
 		ASTNode substituted_noexcept = substituteTemplateParameters(
 			func_decl.noexcept_expression()->node(),
