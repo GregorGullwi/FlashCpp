@@ -3063,7 +3063,7 @@ inline bool tryPublishCanonicalRecordSubobjectTypes(CanonicalTypeTable& table, T
 // Constructors whose parameter types do not import structurally are skipped; the
 // schema stays unpublished when none import.
 inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, TypeId type, const StructDeclarationNode& struct_decl,
-	std::span<const StructTypeInfo::DeletedConstructor> deleted_constructors, DeletedConstructorFlags deleted_special_members) {
+	const StructTypeInfo& self_info) {
 	struct PendingConstructor {
 		std::vector<TypeId> parameter_types;
 		CanonicalRecordFunctionFlags flags = CanonicalRecordFunctionFlags::None;
@@ -3074,7 +3074,7 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 		uint16_t parameter_count = 0;
 	};
 	std::vector<PendingConstructor> pending;
-	pending.reserve(struct_decl.member_functions().size() + deleted_constructors.size());
+	pending.reserve(struct_decl.member_functions().size() + self_info.deleted_constructors.size());
 	auto append_constructor = [&](const ConstructorDeclarationNode& constructor, AccessSpecifier access, bool deleted) {
 		PendingConstructor entry;
 		entry.is_noexcept = constructor.is_noexcept();
@@ -3141,6 +3141,25 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 			if (!imported.has_value() && allow_class_fallback) {
 				imported = tryImportSupportedCanonicalWithClassFallback(table, *parameter_type, CanonicalTypeImportContext::FunctionParameter);
 			}
+			bool parameter_is_self = false;
+			if (isCanonicalClassTypeKind(table.node(type).kind)) {
+				TypeSpecifierNode bound_parameter_type = *parameter_type;
+				tryBindPublishedTypeEntity(bound_parameter_type);
+				const EntityId parameter_entity = resolveNamedTypeEntity(bound_parameter_type);
+				parameter_is_self = parameter_entity && table.record(parameter_entity) == type;
+			}
+			if (!parameter_is_self) {
+				parameter_is_self = self_info.isOwnTypeIndex(parameter_type->type_index());
+			}
+			if (!imported.has_value() && parameter_is_self) {
+				// The class record is still being published, so a pointer or reference
+				// to the record itself cannot import through the normal nominal path.
+				const CanonicalTypeImport shaped = importCanonicalShapedBase(
+					table, *parameter_type, CanonicalTypeImportContext::FunctionParameter, type);
+				if (shaped.status == CanonicalTypeImportStatus::Supported) {
+					imported = shaped.type;
+				}
+			}
 			if (!imported.has_value() && constructor.is_implicit() && parameter_type->category() == TypeCategory::Struct &&
 				!parameter_type->is_pointer() && (parameter_type->is_lvalue_reference() || parameter_type->is_rvalue_reference())) {
 				TypeId parameter_object = type;
@@ -3182,12 +3201,12 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 		}
 		append_constructor(member.function_declaration.as<ConstructorDeclarationNode>(), member.access, false);
 	}
-	for (const StructTypeInfo::DeletedConstructor& deleted : deleted_constructors) {
+	for (const StructTypeInfo::DeletedConstructor& deleted : self_info.deleted_constructors) {
 		if (deleted.declaration != nullptr) {
 			append_constructor(*deleted.declaration, deleted.access, true);
 		}
 	}
-	if (hasDeletedConstructorFlag(deleted_special_members, DeletedConstructorFlags::Default)) {
+	if (hasDeletedConstructorFlag(self_info.deleted_special_members, DeletedConstructorFlags::Default)) {
 		PendingConstructor entry;
 		entry.status = CanonicalRecordConstructorStatus::Deleted;
 		entry.is_noexcept = true;
@@ -3195,7 +3214,7 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 		entry.minimum_parameter_count = 0;
 		pending.push_back(std::move(entry));
 	}
-	if (hasDeletedConstructorFlag(deleted_special_members, DeletedConstructorFlags::Copy)) {
+	if (hasDeletedConstructorFlag(self_info.deleted_special_members, DeletedConstructorFlags::Copy)) {
 		PendingConstructor entry;
 		entry.status = CanonicalRecordConstructorStatus::Deleted;
 		entry.is_noexcept = true;
@@ -3203,7 +3222,7 @@ inline bool tryPublishCanonicalRecordConstructors(CanonicalTypeTable& table, Typ
 		entry.minimum_parameter_count = 1;
 		pending.push_back(std::move(entry));
 	}
-	if (hasDeletedConstructorFlag(deleted_special_members, DeletedConstructorFlags::Move)) {
+	if (hasDeletedConstructorFlag(self_info.deleted_special_members, DeletedConstructorFlags::Move)) {
 		PendingConstructor entry;
 		entry.status = CanonicalRecordConstructorStatus::Deleted;
 		entry.is_noexcept = true;
