@@ -652,9 +652,9 @@ private:
 	struct ConversionFunctionTemplateCandidate;
 	std::optional<UserDefinedConversionOperatorSelection> selectConversionFunctionTemplate(
 		std::span<const ConversionFunctionTemplateCandidate> templates, const TypeSpecifierNode& target_type,
-		ValueCategory source_value_category, FunctionTemplateInstantiation instantiation);
+		ConversionFunctionContext conversion_context, ValueCategory source_value_category, FunctionTemplateInstantiation instantiation);
 	std::vector<ConversionFunctionTemplateCandidate> collectConversionFunctionTemplates(const TypeSpecifierNode& source_type,
-		ConversionFunctionContext conversion_context, ValueCategory source_value_category);
+		ValueCategory source_value_category);
 	std::optional<UserDefinedConversionOperatorSelection> selectBuiltinSubscriptConversionTemplate(
 		const CanonicalTypeDesc& source, TypeId target, ValueCategory source_category, std::span<const ConversionFunctionTemplateCandidate> templates,
 		FunctionTemplateInstantiation instantiation);

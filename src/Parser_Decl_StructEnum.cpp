@@ -3125,6 +3125,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				member_func_ref.set_is_noreturn(true);
 			}
 			member_func_ref.set_is_explicit(static_cast<bool>(member_specs & FlashCpp::MLS_Explicit));
+			member_func_ref.set_explicit_condition(member_explicit_condition);
 
 			// Use unified trailing specifiers parsing (Phase 2)
 			// This handles: const, volatile, &, &&, noexcept, override, final, = 0, = default, = delete

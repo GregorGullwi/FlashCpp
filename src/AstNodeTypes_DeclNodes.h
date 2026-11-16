@@ -4949,6 +4949,11 @@ public:
 		is_explicit_ = is_explicit;
 	}
 	bool is_explicit() const { return is_explicit_; }
+	void set_explicit_condition(ExprId condition) {
+		journalFunctionDeclarationRewrite(*this);
+		explicit_condition_ = condition;
+	}
+	ExprId explicit_condition() const { return explicit_condition_; }
 
 	// noexcept support
 	void set_is_noreturn(bool is_noreturn) {
@@ -5148,6 +5153,7 @@ private:
 	bool is_noexcept_ = false;  // True if function is declared noexcept
 	uint8_t control_flow_flags_ = decl_node_.is_noreturn_attribute() ? ControlFlowNoReturn : ControlFlowNone;
 	bool is_explicit_ = false;  // True for an explicit conversion function
+	ExprId explicit_condition_{};  // Dependent explicit(condition) operand, owned by FrontendContext::dependentExpressions
 	bool is_deleted_ = false;  // True if function is declared = delete
 	bool is_template_pattern_ = false;  // True for uninstantiated template pattern function nodes
 	bool is_static_ = false;	 // True if function is a static member function (no 'this' pointer)
@@ -5210,6 +5216,7 @@ struct FunctionDeclarationJournalSnapshot {
 	bool is_consteval = false;
 	bool is_noexcept = false;
 	bool is_explicit = false;
+	ExprId explicit_condition = {};
 	bool is_deleted = false;
 	bool is_template_pattern = false;
 	bool is_static = false;
@@ -5259,6 +5266,7 @@ inline FunctionDeclarationJournalSnapshot FunctionDeclarationNode::makeJournalSn
 	snapshot.is_consteval = is_consteval_;
 	snapshot.is_noexcept = is_noexcept_;
 	snapshot.is_explicit = is_explicit_;
+	snapshot.explicit_condition = explicit_condition_;
 	snapshot.is_deleted = is_deleted_;
 	snapshot.is_template_pattern = is_template_pattern_;
 	snapshot.is_static = is_static_;
@@ -5308,6 +5316,7 @@ inline void FunctionDeclarationNode::restoreJournalSnapshot(const FunctionDeclar
 	is_consteval_ = snapshot.is_consteval;
 	is_noexcept_ = snapshot.is_noexcept;
 	is_explicit_ = snapshot.is_explicit;
+	explicit_condition_ = snapshot.explicit_condition;
 	is_deleted_ = snapshot.is_deleted;
 	is_template_pattern_ = snapshot.is_template_pattern;
 	is_static_ = snapshot.is_static;

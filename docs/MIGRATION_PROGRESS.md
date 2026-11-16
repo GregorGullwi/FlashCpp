@@ -317,8 +317,11 @@ remaining pattern schemas by identity, and remove the name fallback.
    Explicit conversion-function templates retain their explicit flag through
    member-template instantiation, so copy-initialization rejects them with the
    existing explicit-conversion diagnostic while `explicit(false)` remains
-   implicitly usable. Dependent `explicit(condition)` operands still need
-   per-instantiation evaluation.
+   implicitly usable. Dependent `explicit(condition)` operands on
+   conversion-function templates are substituted and evaluated during
+   member-template instantiation, so the effective explicit flag follows the
+   deduced conversion target. Non-template members of class templates still
+   need outer-binding substitution for the same condition.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are
