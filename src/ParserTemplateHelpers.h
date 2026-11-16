@@ -4232,6 +4232,18 @@ inline std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 	if (!initializer.has_value()) {
 		return std::nullopt;
 	}
+	// The owning instantiation may not have published its StructTypeInfo yet
+	// while deferred bodies are being processed. Folding a record-property
+	// trait here would capture an answer computed from an unpublished record.
+	if (owner_type_index.is_valid() && tryGetStructTypeInfo(owner_type_index) == nullptr) {
+		const bool folds_unpublished_record_trait =
+			RebindStaticMemberAst::visitASTUntil(*initializer, [](const ASTNode& node) {
+				return node.is<TypeTraitExprNode>() || (node.is<ExpressionNode>() && std::holds_alternative<TypeTraitExprNode>(node.as<ExpressionNode>()));
+			});
+		if (folds_unpublished_record_trait) {
+			return std::nullopt;
+		}
+	}
 
 	initializer = rebindStaticMemberInitializerFunctionCalls(
 		initializer.value(),

@@ -691,23 +691,3 @@ while parsing the template argument list. A reduced friend/ADL form reaches an
 incorrect constructor diagnostic. These parser/lookup gaps prevent a source-level
 friend-effect regression here; native tests retain a successfully instantiated
 `Check<Good>` after a later class-body error without rolling back its cache entry.
-
-## Record-property traits still cache the pattern answer in folded initializers
-
-`src/TypeTraitEvaluator.cpp` evaluates copy/move construction, destructibility,
-and emptiness by walking base and member subobjects with a boolean worklist.
-A record whose base is `is_deferred` now reports `TypeTraitResult::failure()`
-from the expression-level and convenience trait entry points, and the deferred
-`static_assert` path re-evaluates against the instantiated record, so a
-pattern-time answer no longer suppresses the instantiation diagnostic.
-`tests/test_deferred_base_empty_e1810.cpp` and
-`tests/test_deferred_base_trivially_destructible_e1810.cpp` pin that behavior.
-
-The remaining gap is folded initializers: a `static constexpr bool value =
-__is_empty(Derived)` inside a class template can still capture the pattern-time
-answer instead of re-evaluating with the instantiated base. The evaluator also
-still returns a plain `bool` below the expression entry points, so a future
-consumer that bypasses them cannot distinguish "not yet known" from false. The
-shared walker in `src/StructHierarchyWalk.h` keys its visited set on
-`StructTypeInfo*`, so context-sensitive walks (base offsets, duplicate-base
-detection) must keep their own traversal or extend the key explicitly.
