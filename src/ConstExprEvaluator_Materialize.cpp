@@ -1490,8 +1490,21 @@ EvalResult Evaluator::extract_object_members(
 
 // Evaluate array subscript (e.g., arr[0] or obj.data[1] or ptr[i])
 EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscript, EvaluationContext& context) {
-	// First, evaluate the index expression to get the constant index
-	auto index_result = evaluate(subscript.index_expr(), context);
+	const ASTNode& left_expr = subscript.array_expr();
+	const ASTNode& right_expr = subscript.index_expr();
+	// Built-in subscript is commutative for array/pointer operands, so i[arr]
+	// evaluates as arr[i]. Overloaded operator[] keeps the declared operand
+	// order and is handled by the object path below.
+	EvalResult left_result = evaluate(left_expr, context);
+	EvalResult right_result = evaluate(right_expr, context);
+	const bool left_is_array_like = left_result.success() &&
+		(left_result.is_array || left_result.pointer_to_var.isValid());
+	const bool right_is_array_like = right_result.success() &&
+		(right_result.is_array || right_result.pointer_to_var.isValid());
+	const bool left_is_class_object = left_result.success() && left_result.object_type_index.is_valid();
+	const bool reversed = !left_is_array_like && !left_is_class_object && right_is_array_like;
+	const ASTNode& array_expr = reversed ? right_expr : left_expr;
+	EvalResult index_result = reversed ? std::move(left_result) : std::move(right_result);
 	if (!index_result.success()) {
 		return index_result;
 	}
@@ -1503,11 +1516,6 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 								 DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
 	}
 
-	// Get the array expression - this could be:
-	// 1. A member access (e.g., obj.data)
-	// 2. An identifier (e.g., arr or ptr)
-	// 3. A pointer expression (e.g., (ptr + 1)[i] → *(ptr + 1 + i))
-	const ASTNode& array_expr = subscript.array_expr();
 	// Walk nested identifier-rooted subscripts as one multidimensional access.
 	// Evaluating the inner subscript first can lose the row shape or replace an
 	// inner bounds failure with the outer unsupported-expression fallback.
