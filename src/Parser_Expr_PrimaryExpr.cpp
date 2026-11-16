@@ -3439,7 +3439,7 @@ bool typeRefersToCurrentTemplateParam(
 			}
 			if (function_type.callable_signature) {
 				enqueue_work({
-					function_type.callable_signature.get(),
+					function_type.callable_signature,
 					DeferredTypeWorkKind::FunctionSignature});
 			}
 			break;

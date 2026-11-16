@@ -587,13 +587,67 @@ inline TypeId substituteCanonicalFunctionTypeComponent(CanonicalTypeTable& table
 	return substituted;
 }
 
+// Signature substitution mutates nested callable signatures in place. Copy every
+// reachable nested signature first so a failed candidate never rewrites storage
+// still owned by the caller. The worklist keeps deeply nested callables off the
+// native stack.
+inline void cloneCallableSignatureTree(FunctionSignature& signature) {
+	const auto has_direct_nested = [](const FunctionSignature& current) {
+		if (current.return_type().callable_signature) {
+			return true;
+		}
+		return std::ranges::any_of(current.parameter_types(), [](const FunctionType& parameter) {
+			return static_cast<bool>(parameter.callable_signature);
+		});
+	};
+	if (!has_direct_nested(signature)) {
+		return;
+	}
+	TemplateVector<FunctionSignature*, 4> pending;
+	const auto own_types = [&pending](FunctionSignature& current) {
+		if (current.return_type().callable_signature) {
+			current.updateReturnType([&pending](FunctionType& type) {
+				type.callable_signature = allocatePersistentFunctionSignature(*type.callable_signature);
+				pending.push_back(type.callable_signature);
+			});
+		}
+		const bool has_nested_parameter = std::ranges::any_of(current.parameter_types(), [](const FunctionType& parameter) {
+			return static_cast<bool>(parameter.callable_signature);
+		});
+		if (!has_nested_parameter) {
+			return;
+		}
+		current.updateParameterTypes([&pending](OverloadVector<FunctionType, 4>& parameters) {
+			for (FunctionType& parameter : parameters) {
+				if (!parameter.callable_signature) {
+					continue;
+				}
+				parameter.callable_signature = allocatePersistentFunctionSignature(*parameter.callable_signature);
+				pending.push_back(parameter.callable_signature);
+			}
+		});
+	};
+	own_types(signature);
+	while (!pending.empty()) {
+		FunctionSignature* current = pending.back();
+		pending.pop_back();
+		own_types(*current);
+	}
+}
+
 template <typename ParamContainer, typename ArgContainer>
 inline FunctionSignature substituteTemplateFunctionSignatureTypesImpl(FunctionSignature signature, const ParamContainer& template_params,
 	const ArgContainer& template_args, CanonicalTypeTable* canonical_types, TemplateDeclId canonical_environment) {
+	cloneCallableSignatureTree(signature);
+	std::optional<CanonicalTypeTransaction> signature_transaction;
+	if (canonical_types != nullptr) {
+		signature_transaction.emplace(*canonical_types);
+	}
 	std::vector<CanonicalTemplateArgument> canonical_arguments;
 	if (canonical_types != nullptr && canonical_environment) {
 		// Import the entire environment before publishing its canonical identities.
-		// The later legacy signature walk is outside this pure import transaction.
+		// A failed environment keeps the outer signature transaction open for the
+		// legacy walk, but discards this local import prefix.
 		CanonicalTypeTransaction transaction(*canonical_types);
 		canonical_arguments.reserve(template_args.size());
 		// Keep every argument position, including opaque non-type expression IDs.
@@ -655,8 +709,8 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypesImpl(FunctionSi
 	std::unordered_set<FunctionSignature*> visited_signatures;
 	visited_signatures.insert(&signature);
 	auto enqueue_callable_signature = [&](const FunctionType& type) {
-		if (type.callable_signature && visited_signatures.insert(type.callable_signature.get()).second) {
-			pending_signatures.push_back(type.callable_signature.get());
+		if (type.callable_signature && visited_signatures.insert(type.callable_signature).second) {
+			pending_signatures.push_back(type.callable_signature);
 		}
 	};
 	auto substitute_function_type = [&](FunctionType& type) {
@@ -772,6 +826,9 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypesImpl(FunctionSi
 		FunctionSignature* pending = pending_signatures.back();
 		pending_signatures.pop_back();
 		process_signature(*pending);
+	}
+	if (signature_transaction) {
+		signature_transaction->commit();
 	}
 	return signature;
 }

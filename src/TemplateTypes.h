@@ -189,8 +189,8 @@ inline bool processFunctionSignatureIdentityFrames(
 		}
 		if (lhs_child->callable_signature) {
 			frames.push_back({
-				lhs_child->callable_signature.get(),
-				rhs_child->callable_signature.get(),
+				lhs_child->callable_signature,
+				rhs_child->callable_signature,
 				uninitializedFunctionSignatureIdentityChild});
 		}
 	}
@@ -206,8 +206,8 @@ inline bool equalFunctionTypeIdentity(const FunctionType& lhs, const FunctionTyp
 	}
 	std::vector<FunctionSignatureIdentityFrame> frames;
 	frames.push_back({
-		lhs.callable_signature.get(),
-		rhs.callable_signature.get(),
+		lhs.callable_signature,
+		rhs.callable_signature,
 		uninitializedFunctionSignatureIdentityChild});
 	return processFunctionSignatureIdentityFrames(frames);
 }
@@ -391,7 +391,7 @@ inline void processFunctionSignatureIdentityHashFrames(
 		appendFunctionTypeIdentityHash(hash, *child_type);
 		if (child_type->callable_signature) {
 			frames.push_back({
-				child_type->callable_signature.get(),
+				child_type->callable_signature,
 				uninitializedFunctionSignatureIdentityChild});
 		}
 	}
@@ -403,7 +403,7 @@ inline size_t hashFunctionTypeIdentity(const FunctionType& type) {
 	if (type.callable_signature) {
 		std::vector<FunctionSignatureIdentityHashFrame> frames;
 		frames.push_back({
-			type.callable_signature.get(),
+			type.callable_signature,
 			uninitializedFunctionSignatureIdentityChild});
 		processFunctionSignatureIdentityHashFrames(hash, frames);
 	}
