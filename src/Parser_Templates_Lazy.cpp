@@ -1368,7 +1368,13 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 	};
 
 	if (lazy_info.needs_substitution) {
-		if (!try_reparse_lazy_static_initializer()) {
+		const bool requires_replay_metadata =
+			static_initializer_requires_replay_metadata(
+				lazy_info.initializer,
+				std::span<const TemplateParameterNode>(
+					lazy_info.template_params.data(),
+					lazy_info.template_params.size()));
+		if (!requires_replay_metadata || !try_reparse_lazy_static_initializer()) {
 			substituted_initializer = lazy_info.initializer;
 		}
 	}
