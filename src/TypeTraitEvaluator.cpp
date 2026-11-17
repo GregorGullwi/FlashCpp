@@ -3918,15 +3918,16 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 			: ValueCategory::PRValue;
 		selection_arguments.push_back(CanonicalConstructorArgument{*imported_argument, value_category, false, CanonicalDefaultException::Unknown});
 	}
-	const CanonicalConstructorSelection selection = selectCanonicalConstructor(
-		table,
-		imported.type,
-		selection_arguments,
+	CanonicalConstructorSelectionPolicy policy =
 		CanonicalConstructorSelectionPolicy::AllowExplicit |
-			CanonicalConstructorSelectionPolicy::AllowUserDefinedArgumentConversion |
-			CanonicalConstructorSelectionPolicy::AllowEllipsis |
-			CanonicalConstructorSelectionPolicy::IncludeCopyMoveConstructors |
-			CanonicalConstructorSelectionPolicy::RequireCompleteSchema);
+		CanonicalConstructorSelectionPolicy::AllowUserDefinedArgumentConversion |
+		CanonicalConstructorSelectionPolicy::AllowEllipsis |
+		CanonicalConstructorSelectionPolicy::IncludeCopyMoveConstructors |
+		CanonicalConstructorSelectionPolicy::RequireCompleteSchema;
+	if (kind == TypeTraitKind::IsNothrowConstructible) {
+		policy = policy | CanonicalConstructorSelectionPolicy::TrackNestedArgumentNoexcept;
+	}
+	const CanonicalConstructorSelection selection = selectCanonicalConstructor(table, imported.type, selection_arguments, policy);
 	if (selection.status == CanonicalConstructorSelectionStatus::Unknown) {
 		return std::nullopt;
 	}
@@ -3937,6 +3938,12 @@ static std::optional<TypeTraitResult> tryEvaluateCanonicalRecordConstructibleFro
 		return TypeTraitResult::success_true();
 	}
 	if (kind == TypeTraitKind::IsNothrowConstructible) {
+		if (selection.argument_conversion_known_throwing) {
+			return TypeTraitResult::success_false();
+		}
+		if (selection.argument_conversion_unknown) {
+			return std::nullopt;
+		}
 		if (selection.omitted_default_count > 0) {
 			if (selection.omitted_defaults_known_throwing) {
 				return TypeTraitResult::success_false();

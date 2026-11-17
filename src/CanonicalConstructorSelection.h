@@ -25,6 +25,7 @@ enum class CanonicalConstructorSelectionPolicy : uint8_t {
 	RequireCompleteSchema = 1 << 4,
 	LiteralArgumentsOnly = 1 << 5,
 	ExistenceOnly = 1 << 6,
+	TrackNestedArgumentNoexcept = 1 << 7,
 };
 
 inline CanonicalConstructorSelectionPolicy operator|(CanonicalConstructorSelectionPolicy a, CanonicalConstructorSelectionPolicy b) {
@@ -87,6 +88,8 @@ struct CanonicalConstructorSelection {
 	bool omitted_defaults_known_throwing = false;
 	bool saw_known_throwing_candidate = false;
 	bool selected_uses_class_parameter = false;
+	bool argument_conversion_known_throwing = false;
+	bool argument_conversion_unknown = false;
 	std::vector<ConversionRank> argument_ranks;
 };
 
@@ -507,6 +510,42 @@ inline std::optional<bool> tryCanonicalScalarToClassArgumentConversionNoexcept(
 	return true;
 }
 
+enum class CanonicalNestedArgumentException : uint8_t {
+	NotApplicable,
+	Nothrow,
+	KnownThrowing,
+	Unknown,
+};
+
+inline CanonicalNestedArgumentException canonicalNestedArgumentException(CanonicalTypeTable& table,
+	const CanonicalConstructorArgument& argument, TypeId parameter_type) {
+	if (!argument.type) {
+		return CanonicalNestedArgumentException::NotApplicable;
+	}
+	TypeId source = argument.type;
+	while (table.node(source).kind == CanonicalTypeKind::LValueReference || table.node(source).kind == CanonicalTypeKind::RValueReference) {
+		source = table.node(source).child;
+	}
+	const CanonicalTypeKind source_kind = table.node(table.withoutTopLevelQualifiers(source)).kind;
+	if (source_kind != CanonicalTypeKind::Builtin && source_kind != CanonicalTypeKind::Enum) {
+		return CanonicalNestedArgumentException::NotApplicable;
+	}
+	TypeId target = parameter_type;
+	while (table.node(target).kind == CanonicalTypeKind::LValueReference || table.node(target).kind == CanonicalTypeKind::RValueReference) {
+		target = table.node(target).child;
+	}
+	const TypeId target_class = table.withoutTopLevelQualifiers(target);
+	const CanonicalTypeKind target_kind = table.node(target_class).kind;
+	if (target_kind != CanonicalTypeKind::Record && target_kind != CanonicalTypeKind::TemplateSpecialization) {
+		return CanonicalNestedArgumentException::NotApplicable;
+	}
+	const std::optional<bool> nested = tryCanonicalScalarToClassArgumentConversionNoexcept(table, argument.type, target_class);
+	if (!nested.has_value()) {
+		return CanonicalNestedArgumentException::Unknown;
+	}
+	return *nested ? CanonicalNestedArgumentException::Nothrow : CanonicalNestedArgumentException::KnownThrowing;
+}
+
 inline CanonicalConstructorParameterMatch matchCanonicalConstructorParameter(
 	CanonicalTypeTable& table, const CanonicalConstructorArgument& argument, TypeId parameter_type,
 	CanonicalConstructorSelectionPolicy policy, ConversionPlan& plan) {
@@ -695,6 +734,8 @@ enum class CanonicalConstructorCandidateFlags : uint8_t {
 	OmittedDefaultsNothrow = 1 << 1,
 	OmittedDefaultsKnownThrowing = 1 << 2,
 	UsesClassParameter = 1 << 3,
+	KnownThrowingArgumentConversion = 1 << 4,
+	UnknownArgumentConversion = 1 << 5,
 };
 
 inline CanonicalConstructorCandidateFlags operator|(CanonicalConstructorCandidateFlags a, CanonicalConstructorCandidateFlags b) {
@@ -755,6 +796,8 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 	const bool allow_ellipsis = hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::AllowEllipsis);
 	const bool literal_only = hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::LiteralArgumentsOnly);
 	const bool existence_only = hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::ExistenceOnly);
+	const bool track_nested_argument_noexcept =
+		hasCanonicalConstructorSelectionPolicy(policy, CanonicalConstructorSelectionPolicy::TrackNestedArgumentNoexcept);
 	std::vector<Candidate> best_candidates;
 	best_candidates.reserve(constructor_count);
 	bool saw_unknown = false;
@@ -774,8 +817,21 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 			continue;
 		}
 		const bool is_copy_or_move = isCanonicalCopyOrMoveConstructor(table, target_class, index);
-		if (!include_copy_move && is_copy_or_move) {
-			continue;
+		if (is_copy_or_move) {
+			if (!include_copy_move) {
+				continue;
+			}
+			if (arguments.size() == 1) {
+				TypeId source = arguments.front().type;
+				while (table.node(source).kind == CanonicalTypeKind::LValueReference ||
+					table.node(source).kind == CanonicalTypeKind::RValueReference) {
+					source = table.node(source).child;
+				}
+				const CanonicalTypeKind source_kind = table.node(table.withoutTopLevelQualifiers(source)).kind;
+				if (!isCanonicalClassTypeKind(source_kind) && !isDependentCanonicalNode(source_kind)) {
+					continue;
+				}
+			}
 		}
 		const bool is_variadic = hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Variadic);
 		if (arguments.size() < constructor.minimum_parameter_count) {
@@ -826,6 +882,18 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 				}
 				if (isCanonicalClassTypeKind(table.node(table.withoutTopLevelQualifiers(parameter_object)).kind)) {
 					candidate.set(CanonicalConstructorCandidateFlags::UsesClassParameter);
+				}
+			} else if (track_nested_argument_noexcept) {
+				switch (canonicalNestedArgumentException(table, arguments[parameter], parameter_type)) {
+				case CanonicalNestedArgumentException::KnownThrowing:
+					candidate.set(CanonicalConstructorCandidateFlags::KnownThrowingArgumentConversion);
+					break;
+				case CanonicalNestedArgumentException::Unknown:
+					candidate.set(CanonicalConstructorCandidateFlags::UnknownArgumentConversion);
+					break;
+				case CanonicalNestedArgumentException::NotApplicable:
+				case CanonicalNestedArgumentException::Nothrow:
+					break;
 				}
 			}
 			candidate.argument_ranks.push_back(plan.rank);
@@ -945,6 +1013,8 @@ inline CanonicalConstructorSelection selectCanonicalConstructor(
 	result.omitted_defaults_nothrow = selected.has(CanonicalConstructorCandidateFlags::OmittedDefaultsNothrow);
 	result.omitted_defaults_known_throwing = selected.has(CanonicalConstructorCandidateFlags::OmittedDefaultsKnownThrowing);
 	result.selected_uses_class_parameter = selected.has(CanonicalConstructorCandidateFlags::UsesClassParameter);
+	result.argument_conversion_known_throwing = selected.has(CanonicalConstructorCandidateFlags::KnownThrowingArgumentConversion);
+	result.argument_conversion_unknown = selected.has(CanonicalConstructorCandidateFlags::UnknownArgumentConversion);
 	result.argument_ranks = selected.argument_ranks;
 	return result;
 }

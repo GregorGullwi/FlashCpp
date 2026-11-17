@@ -346,8 +346,9 @@ remaining pattern schemas by identity, and remove the name fallback.
    conversion plan instead of counting viable constructors. A strictly better
    nested constructor is selected, rank ties defer to the compatibility
    resolver, and a better deleted or inaccessible constructor rejects the
-   conversion. Nothrow propagation from the selected nested constructor remains
-   a follow-up.
+   conversion. A selected scalar-to-class parameter conversion propagates the
+   nested constructor's nothrow result into the outer nothrow query, while an
+   undecidable nested conversion keeps the query deferred.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are
