@@ -237,12 +237,6 @@ bracket operand, including the reversed form `index()[object()]`. Reads,
 writes, and address-taking share this lowering, including when a conversion
 supplies the array or when subscripts are combined across dimensions.
 
-Call return-type materialization can duplicate a pointer layer when the
-declared return type is a pointer-to-array alias. For example, with
-`using RowPointer = int (*)[4]; RowPointer f();`, `f()[i][j]` uses the stride
-of an array of pointers. The grouped declaration `int (*f())[4];` keeps
-`f()[i][j]` correct, but `(*f())[i][j]` still crashes.
-
 On Win64, whole-record by-value parameters larger than 8 bytes lose
 member-array indirection: a function taking `struct S` by value and indexing
 `s.member_array[i]` reads the parameter's pointer slot as inline storage.

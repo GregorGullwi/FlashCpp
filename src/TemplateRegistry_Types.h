@@ -1701,11 +1701,16 @@ inline TypeSpecifierNode resolveTypeInfoToTypeSpec(
 		outer_spec.has_ordered_declarator()) {
 		TypeSpecifierNode ordered_type = resolved_type;
 		ordered_type.clear_declarator_shape();
+		const bool outer_repeats_alias = resolved_alias.has_ordered_declarator && outer_spec.has_ordered_declarator() &&
+			outer_spec.declarator_components().size() == resolved_alias.ordered_declarator.size() &&
+			std::equal(outer_spec.declarator_components().begin(), outer_spec.declarator_components().end(), resolved_alias.ordered_declarator.begin());
 		if (resolved_alias.has_ordered_declarator) {
 			ordered_type.set_ordered_declarator(
 				std::move(resolved_alias.ordered_declarator));
 		}
-		applyOuterDeclaratorShapeForSubstitution(ordered_type, outer_spec);
+		if (!outer_repeats_alias) {
+			applyOuterDeclaratorShapeForSubstitution(ordered_type, outer_spec);
+		}
 		if (resolved_alias.has_member_class_owner()) {
 			applyResolvedAliasMemberOwner(ordered_type, resolved_alias);
 		}

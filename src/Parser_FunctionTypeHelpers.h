@@ -14,6 +14,26 @@ void applyDeclarationArrayBoundsToTypeSpec(
 
 namespace FlashCpp::ParserFunctionTypeHelpers {
 
+// Call-expression typing still consumes the legacy projectable shape. A
+// pointer-to-array alias carries an ordered spine with the same flat pointee
+// fields; project it before publishing the call result type so subscript
+// lowering sees the row stride instead of an array of pointers.
+inline TypeSpecifierNode projectProjectablePointeeArrayReturnType(TypeSpecifierNode type) {
+	if (!type.has_ordered_declarator() || !type.ordered_declarator_has_legacy_projection()) {
+		return type;
+	}
+	TypeSpecifierNode projected = type;
+	const std::vector<DeclaratorComponent> components(
+		projected.declarator_components().begin(),
+		projected.declarator_components().end());
+	projected.set_ordered_declarator(components);
+	if (!projected.has_pointee_array_declarator()) {
+		return type;
+	}
+	projected.clear_ordered_declarator();
+	return projected;
+}
+
 inline const FunctionDeclarationNode* findFunctionDeclarationForIdentifier(std::string_view identifier, const Token& token) {
 	const auto overloads = gSymbolTable.lookup_all(identifier);
 	for (const auto& overload : overloads) {

@@ -593,7 +593,7 @@ void Parser::appendFunctionCallArgType(const ASTNode& arg_node, std::vector<Type
 					const TypeSpecifierNode& return_type = ret_node.template as<TypeSpecifierNode>();
 					if (return_type.type() != TypeCategory::Auto &&
 						return_type.type() != TypeCategory::DeclTypeAuto) {
-						direct_return_type = return_type;
+						direct_return_type = FlashCpp::ParserFunctionTypeHelpers::projectProjectablePointeeArrayReturnType(return_type);
 					}
 				}
 			}
@@ -602,7 +602,7 @@ void Parser::appendFunctionCallArgType(const ASTNode& arg_node, std::vector<Type
 					should_prefer_parser_return_type_hint(
 						*direct_return_type,
 						*inner.parser_return_type_hint())) {
-					arg_type = *inner.parser_return_type_hint();
+					arg_type = FlashCpp::ParserFunctionTypeHelpers::projectProjectablePointeeArrayReturnType(*inner.parser_return_type_hint());
 					return;
 				}
 			}
