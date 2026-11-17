@@ -241,6 +241,20 @@ supplies the array or when subscripts are combined across dimensions.
 Rows of `T* rows[M][N]` still decay with the pointer stride instead of the
 row stride. Copying a row pointer into a named pointer first is unaffected.
 
+## Pointer-returning lambdas and overloaded unary dereference in member access
+
+A lambda whose trailing return type is a pointer, such as
+`[]() -> T* { ... }`, is rejected while parsing with "Expected '{' for lambda
+body". A lambda that deduces a pointer return type without a trailing return
+clause emits an unresolved `operator()` symbol at link time.
+
+Member access through an overloaded unary `operator*` is lowered as a built-in
+dereference. For `(*wrapper)->member`, where `wrapper` defines `operator*`
+returning `T*`, codegen looks for `member` on the wrapper class and reports that
+the member does not exist. Member access must route unary `*` through the same
+overload resolution as an ordinary unary expression before applying built-in
+dereference semantics.
+
 ## Constexpr namespace-scope pointer dereference is not yet supported
 
 Global constexpr pointer targets now carry the source declaration and evaluate
