@@ -339,6 +339,9 @@ remaining pattern schemas by identity, and remove the name fallback.
    member-template instantiation, so the effective explicit flag follows the
    deduced conversion target. Non-template conversion functions in class
    templates evaluate the same condition with the enclosing class arguments.
+   A non-deferred alias base that names a concrete record is resolved during
+   class instantiation, so inherited conversion templates and operators
+   contribute candidates inside dependent conversion contexts.
    Converting-constructor arguments now rank their published `TypeId` standard
    conversion plan instead of counting viable constructors. A strictly better
    nested constructor is selected, rank ties defer to the compatibility

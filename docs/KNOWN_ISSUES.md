@@ -220,8 +220,9 @@ expression type and the parser should only consume it.
 
 ## Remaining conversion function template cases
 
-- Resolve bases that still depend on template arguments during class
-  instantiation before they contribute conversion candidates. Deferred bases
+- Resolve any remaining deferred base shapes that have not produced a concrete
+  record during class instantiation before they contribute conversion candidates.
+  Non-deferred aliases that name a concrete record now resolve; deferred bases
   without a concrete record must stay excluded.
 - Support conversion-template results whose dependent array bounds or packs are
   not concrete.
