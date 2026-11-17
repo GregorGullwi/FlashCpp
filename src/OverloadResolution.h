@@ -3702,6 +3702,11 @@ inline std::optional<ConversionPlan> tryBuildCanonicalConversionValueTailPlan(Ca
 	const TypeId source = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, source_type)).first;
 	const CanonicalTypeKind target_outer_kind = table.node(resolved_target).kind;
 	if (target_outer_kind == CanonicalTypeKind::LValueReference || target_outer_kind == CanonicalTypeKind::RValueReference) {
+		if (const std::optional<ConversionPlan> reference_plan =
+			tryBuildCanonicalReferenceArgumentConversionPlan(table, source_type, resolved_target);
+			reference_plan.has_value()) {
+			return reference_plan;
+		}
 		use_compatibility = true;
 		return std::nullopt;
 	}

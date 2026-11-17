@@ -288,8 +288,11 @@ remaining pattern schemas by identity, and remove the name fallback.
    bridge cannot represent, and audit those boundaries before deleting them.
    Conversion-operator value tails now reuse the imported return and target
    `TypeId`s for exact matches, builtin conversions, and supported callable and
-   class-value conversions. A runtime regression checks that an instantiated
-   conversion returning `short` wins by promotion over one returning `long long`.
+   class-value conversions. Reference tails use the canonical reference-argument
+   planner for exact, qualification, derived-to-base, pointer, builtin, and enum
+   shapes before compatibility is considered. A runtime regression checks that an
+   instantiated conversion returning `short` wins by promotion over one returning
+   `long long`.
    Class-pointer tails rank through the published canonical base graph, check
    access after selection, and preserve null for fixed-offset and virtual-base
    adjustments in lowering. Calling an inherited conversion operator adjusts the
