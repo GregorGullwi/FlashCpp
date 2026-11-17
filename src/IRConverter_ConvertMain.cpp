@@ -12983,7 +12983,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 	TypeCategory element_type = op.elementType();
 	bool is_floating_point = (element_type == TypeCategory::Float || element_type == TypeCategory::Double);
 	bool is_float = (element_type == TypeCategory::Float);
-	bool is_struct = is_struct_type(element_type);
+	bool is_struct = is_struct_type(element_type) && !op.element_pointer_depth.is_pointer();
 
 		// Phase 5 Optimization: Use value category metadata for LEA vs MOV decision
 		// For struct types, always use LEA (original behavior)
