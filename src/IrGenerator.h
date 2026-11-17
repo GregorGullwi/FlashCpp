@@ -209,6 +209,12 @@ inline int getStructReturnThreshold(bool is_llp64) {
 	return is_llp64 ? WIN64_STRUCT_RETURN_THRESHOLD : SYSV_STRUCT_RETURN_THRESHOLD;
 }
 
+/// Windows x64 passes by-value records larger than one eightbyte through a pointer-sized home slot.
+/// SysV passes memory-class arguments inline, so only reference parameters have an indirect home slot.
+inline bool recordParameterIsPassedIndirectly(bool is_reference, bool is_record, int size_in_bits, bool is_llp64) {
+	return is_reference || (is_llp64 && is_record && size_in_bits > WIN64_STRUCT_RETURN_THRESHOLD);
+}
+
 /// Aggregate return ABI disposition for a function or call result.
 /// Dependent means the return type is not yet concrete enough to classify; concrete
 /// function/call IR must never treat Dependent as Direct.

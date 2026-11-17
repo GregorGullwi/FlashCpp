@@ -237,11 +237,6 @@ bracket operand, including the reversed form `index()[object()]`. Reads,
 writes, and address-taking share this lowering, including when a conversion
 supplies the array or when subscripts are combined across dimensions.
 
-On Win64, whole-record by-value parameters larger than 8 bytes lose
-member-array indirection: a function taking `struct S` by value and indexing
-`s.member_array[i]` reads the parameter's pointer slot as inline storage.
-Reference and pointer parameters, and local objects, are unaffected.
-
 The array-access backend still classifies pointer-valued elements as records
 from `TypeCategory` alone. Direct `ptrs[i]->member`, address-taking followed
 by a double dereference (`T** pp = &ptrs[i]; (*pp)->member`), and returning
