@@ -238,13 +238,11 @@ bracket operand, including the reversed form `index()[object()]`. Reads,
 writes, and address-taking share this lowering, including when a conversion
 supplies the array or when subscripts are combined across dimensions.
 
-Array access now carries the selected element's pointer depth instead of
-classifying pointer-valued elements as records from `TypeCategory` alone, so
-direct `ptrs[i]->member` lowers correctly. Address-taking followed by a double
-dereference (`T** pp = &ptrs[i]; (*pp)->member`) still mislowers because the
-unary dereference path treats the pointer slot as the pointed-to object. Rows
-of `T* rows[M][N]` still decay with the pointer stride instead of the row
-stride. Copying `ptrs[i]` into a named pointer first is unaffected.
+Address-taking followed by a double dereference (`T** pp = &ptrs[i];
+(*pp)->member`) still mislowers because the unary dereference path treats the
+pointer slot as the pointed-to object. Rows of `T* rows[M][N]` still decay with
+the pointer stride instead of the row stride. Copying `ptrs[i]` into a named
+pointer first is unaffected.
 
 ## Constexpr namespace-scope pointer dereference is not yet supported
 
@@ -262,9 +260,8 @@ reference intent instead of consulting per-function `TempVar` lvalue metadata;
 that is also where direct SysV 9-16-byte aggregate returns from an address need
 ABI-aware copying. Subscript lowering should pass an explicit selected-object
 kind (array versus scalar) instead of treating `ContainsAddress` as "array
-result". `ArrayAccess` now carries the selected element's pointer depth, but
-`ArrayStore` and `ArrayElementAddress` still need the same explicit shape so
-codegen stops classifying pointer-valued elements as records from
+result". `ArrayStore` and `ArrayElementAddress` still need an explicit element
+shape so codegen stops classifying pointer-valued elements as records from
 `TypeCategory` alone.
 
 Dependent array bounds in composed aliases now survive template instantiation.
