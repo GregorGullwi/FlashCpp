@@ -1689,6 +1689,7 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 				if (object_result.pointer_to_var.isValid()) {
 					EvalResult deref_result = dereference_constexpr_pointer(
 						StringTable::getStringView(object_result.pointer_to_var),
+						object_result.source_declaration,
 						context,
 						object_result.pointer_offset);
 					if (!deref_result.success()) {

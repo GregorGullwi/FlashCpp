@@ -389,6 +389,7 @@ EvalResult Evaluator::apply_binary_op(
 					*new_offset,
 					context,
 					bindings);
+				result.source_declaration = lhs.source_declaration;
 				if (result.success() && !lhs.pointer_value_snapshot.empty()) {
 					result.pointer_value_snapshot = lhs.pointer_value_snapshot;
 				}
@@ -405,6 +406,7 @@ EvalResult Evaluator::apply_binary_op(
 					*new_offset,
 					context,
 					bindings);
+				result.source_declaration = rhs.source_declaration;
 				if (result.success() && !rhs.pointer_value_snapshot.empty()) {
 					result.pointer_value_snapshot = rhs.pointer_value_snapshot;
 				}
@@ -426,6 +428,7 @@ EvalResult Evaluator::apply_binary_op(
 					*new_offset,
 					context,
 					bindings);
+				result.source_declaration = lhs.source_declaration;
 				if (result.success() && !lhs.pointer_value_snapshot.empty()) {
 					result.pointer_value_snapshot = lhs.pointer_value_snapshot;
 				}
@@ -465,19 +468,23 @@ EvalResult Evaluator::apply_binary_op(
 	// origin variable name via array_origin_var.
 	if (lhs.is_array && lhs.array_origin_var.isValid() && !rhs.is_array && !rhs.pointer_to_var.isValid() && op == "+") {
 		int64_t offset = rhs.as_int();
-		return make_checked_constexpr_pointer_result(
+		EvalResult result = make_checked_constexpr_pointer_result(
 			StringTable::getStringView(lhs.array_origin_var),
 			offset,
 			context,
 			bindings);
+		result.source_declaration = lhs.source_declaration;
+		return result;
 	}
 	if (rhs.is_array && rhs.array_origin_var.isValid() && !lhs.is_array && !lhs.pointer_to_var.isValid() && op == "+") {
 		int64_t offset = lhs.as_int();
-		return make_checked_constexpr_pointer_result(
+		EvalResult result = make_checked_constexpr_pointer_result(
 			StringTable::getStringView(rhs.array_origin_var),
 			offset,
 			context,
 			bindings);
+		result.source_declaration = rhs.source_declaration;
+		return result;
 	}
 
 	// Determine the operand kinds so we can dispatch to the correct domain.

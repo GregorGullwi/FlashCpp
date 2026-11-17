@@ -173,6 +173,10 @@ struct EvalResult {
 	// member lookup but never contribute structural identity. Never inferred
 	// from the stored scalar bits.
 	bool is_active_union_member = false;
+	// Stable declaration identity for pointer and array origins. Spelling is
+	// retained for diagnostics and fallback lookup, but dereference prefers this
+	// declaration so a shadowing local with the same name cannot redirect it.
+	const VariableDeclarationNode* source_declaration = nullptr;
 
 	// Check if evaluation was successful
 	bool success() const {
@@ -529,6 +533,9 @@ struct EvaluationContext {
 	TypeIndex struct_type_index{};
 	bool current_member_function_is_const = false;
 	std::unordered_map<std::string_view, EvalResult>* local_bindings = nullptr;
+	// When evaluating a global or namespace-scope initializer, local scopes and
+	// shadowing bindings must not participate in name lookup.
+	bool force_global_lookup = false;
 
 	// Pointer to the innermost active block scope tracker (null at top level).
 	// Each BlockScopeGuard saves/restores this so that nested blocks each get
@@ -865,7 +872,8 @@ private:
 											  EvaluationContext& context);
 	// Dereference a constexpr pointer: look up the named variable in the symbol table and evaluate it.
 	// When offset != 0, the variable must be an array and element [offset] is returned.
-	static EvalResult dereference_constexpr_pointer(std::string_view var_name, EvaluationContext& context, int64_t offset = 0);
+	static EvalResult dereference_constexpr_pointer(std::string_view var_name, const VariableDeclarationNode* source_declaration,
+		EvaluationContext& context, int64_t offset);
 	// Dereference a pointer result against local bindings first, then the symbol table.
 	// Handles scalars (offset == 0) and arrays (any offset).
 	static EvalResult deref_pointer_with_bindings(
