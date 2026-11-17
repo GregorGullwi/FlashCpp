@@ -127,7 +127,24 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 				const bool alias_array_parameter =
 					!decl.is_array() && orig_type.is_array() && !orig_type.is_reference() &&
 					!orig_type.has_pointee_array_declarator();
-				if ((decl.array_size().has_value() || alias_array_parameter) &&
+				const bool ordered_outer_array = orig_type.has_ordered_declarator() &&
+					!orig_type.declarator_components().empty() &&
+					(orig_type.declarator_components().front().kind == DeclaratorComponentKind::Array ||
+					 orig_type.declarator_components().front().kind == DeclaratorComponentKind::UnknownBoundArray);
+				if (ordered_outer_array && !orig_type.is_reference()) {
+					TypeSpecifierNode param_type = orig_type.adjusted_function_parameter_type();
+					ASTNode new_decl = emplace_node<DeclarationNode>(
+						emplace_node<TypeSpecifierNode>(param_type),
+						decl.identifier_token());
+					new_decl.as<DeclarationNode>().copyMetadataFrom(decl);
+					if (decl.has_default_value()) {
+						new_decl.as<DeclarationNode>().set_default_value(decl.default_value());
+					}
+					if (decl.is_parameter_pack()) {
+						new_decl.as<DeclarationNode>().set_parameter_pack(true);
+					}
+					out_params.parameters.push_back(new_decl);
+				} else if ((decl.array_size().has_value() || alias_array_parameter) &&
 					!orig_type.is_reference() &&
 					!orig_type.has_pointee_array_declarator()) {
 					// This is an array parameter - convert to pointer

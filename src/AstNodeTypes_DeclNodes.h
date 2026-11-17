@@ -3594,6 +3594,14 @@ inline TypeSpecifierNode TypeSpecifierNode::adjusted_function_parameter_type() c
 		}
 		if (outer.kind == DeclaratorComponentKind::Pointer) {
 			outer.cv_qualifier = CVQualifier::None;
+		} else if (outer.kind == DeclaratorComponentKind::Array ||
+			outer.kind == DeclaratorComponentKind::UnknownBoundArray) {
+			// [dcl.fct]/5: an array parameter adjusts to a pointer to its
+			// element type. Decay the outer ordered component instead of
+			// dropping the non-projectable spine and passing the array through.
+			adjusted.declarator_components_.erase(adjusted.declarator_components_.begin());
+			adjusted.prepend_ordered_declarator_component(DeclaratorComponent::pointer(CVQualifier::None));
+			return adjusted;
 		}
 		adjusted.rebuild_legacy_declarator_projection();
 		return adjusted;

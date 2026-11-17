@@ -413,8 +413,10 @@ remaining pattern schemas by identity, and remove the name fallback.
       to `runtime_pointer_depth()`. Signature matching now skips the flat
       pointer-level comparison when both types carry ordered declarators, and
       range-for iterator pointer reconstruction prepends a pointer to the ordered
-      spine instead of rebuilding flat depth. Non-projectable ordered spines
-      remain deferred.
+      spine instead of rebuilding flat depth. Function parameter adjustment now
+      decays an outer ordered array component before lowering, preserving inner
+      pointer-to-array layers such as `int (*cells[2])[4]`. Non-projectable
+      ordered spines remain deferred elsewhere.
    - Interleaved pointer/array member storage now sizes and aligns from the
      ordered declarator spine, and constexpr member typing prefers the published
      member `TypeId`. Local array objects also allocate from the ordered element
