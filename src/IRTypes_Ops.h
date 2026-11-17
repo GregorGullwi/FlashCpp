@@ -667,6 +667,7 @@ struct ArrayAccessOp {
 	TempVar result;			// Result temp var
 	TypeIndex element_type_index{};	// Element type (TypeCategory embedded)
 	TypeCategory elementType() const { return element_type_index.category(); }
+	PointerDepth element_pointer_depth = PointerDepth{};  // Pointer levels of the selected element object
 	int element_size_in_bits = 0;	  // Element size
 	std::variant<StringHandle, TempVar, LocalVarId> array;  // Array (StringHandle for variables, TempVar for temporaries)
 	TypedValue index;		  // Index value (type + value)

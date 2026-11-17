@@ -238,12 +238,13 @@ bracket operand, including the reversed form `index()[object()]`. Reads,
 writes, and address-taking share this lowering, including when a conversion
 supplies the array or when subscripts are combined across dimensions.
 
-The array-access backend still classifies pointer-valued elements as records
-from `TypeCategory` alone. Direct `ptrs[i]->member`, address-taking followed
-by a double dereference (`T** pp = &ptrs[i]; (*pp)->member`), and returning
-an array member reached through a record subscript all mislower. The same
-flaw makes a row of `T* rows[M][N]` decay with the pointer stride instead of
-the row stride. Copying `ptrs[i]` into a named pointer first is unaffected.
+Array access now carries the selected element's pointer depth instead of
+classifying pointer-valued elements as records from `TypeCategory` alone, so
+direct `ptrs[i]->member` lowers correctly. Address-taking followed by a double
+dereference (`T** pp = &ptrs[i]; (*pp)->member`) still mislowers because the
+unary dereference path treats the pointer slot as the pointed-to object. Rows
+of `T* rows[M][N]` still decay with the pointer stride instead of the row
+stride. Copying `ptrs[i]` into a named pointer first is unaffected.
 
 ## Constexpr namespace-scope pointer dereference is not yet supported
 
@@ -261,9 +262,10 @@ reference intent instead of consulting per-function `TempVar` lvalue metadata;
 that is also where direct SysV 9-16-byte aggregate returns from an address need
 ABI-aware copying. Subscript lowering should pass an explicit selected-object
 kind (array versus scalar) instead of treating `ContainsAddress` as "array
-result", and `ArrayAccess`/`ArrayStore`/`ArrayElementAddress` should carry
-element pointer depth or effective `IrType` so codegen stops classifying
-pointer-valued elements as records from `TypeCategory` alone.
+result". `ArrayAccess` now carries the selected element's pointer depth, but
+`ArrayStore` and `ArrayElementAddress` still need the same explicit shape so
+codegen stops classifying pointer-valued elements as records from
+`TypeCategory` alone.
 
 Dependent array bounds in composed aliases now survive template instantiation.
 For example, `using Row = short[3];` followed by

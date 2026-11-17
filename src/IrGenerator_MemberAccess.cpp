@@ -439,6 +439,7 @@ TempVar AstToIr::emitRowMajorSubscriptIndex(const MultiDimSubscriptChain& chain,
 
 ExprResult AstToIr::emitSubscriptAccess(ArrayAccessOp access, TypeIndex result_type, SizeInBits result_size, PointerDepth result_pointer_depth,
 	ValueStorage result_storage, ExpressionContext context, const Token& token) {
+	access.element_pointer_depth = result_pointer_depth;
 	const auto base_is_indirect_parameter = [&](std::variant<StringHandle, TempVar, LocalVarId> base) {
 		const auto* spelling = std::get_if<StringHandle>(&base);
 		if (spelling == nullptr || current_function_node_ == nullptr) {
