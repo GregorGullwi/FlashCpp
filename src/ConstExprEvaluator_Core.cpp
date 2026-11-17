@@ -720,6 +720,7 @@ std::optional<EvalResult> try_decay_array_initializer_to_pointer(const EvalResul
 	}
 
 	EvalResult decayed_ptr = EvalResult::from_pointer(origin, 0);
+	decayed_ptr.source_declaration = init_result.source_declaration;
 	if (!init_result.array_elements.empty()) {
 		decayed_ptr.pointer_value_snapshot = init_result.array_elements;
 	} else if (!init_result.array_values.empty()) {
@@ -1971,7 +1972,7 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 		if (operand_result.pointer_to_var.isValid()) {
 			return dereference_constexpr_pointer(
 				StringTable::getStringView(operand_result.pointer_to_var),
-				context, operand_result.pointer_offset);
+				operand_result.source_declaration, context, operand_result.pointer_offset);
 		}
 			if (!operand_result.pointer_to_var.isValid() &&
 				operand_result.exact_type.has_value() &&
@@ -1992,7 +1993,8 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 // Look up the named constexpr variable and evaluate it (used to dereference constexpr pointers).
 // When offset != 0, the variable must be an array and we dereference element [offset].
 // When offset == 0 and the variable is an array, element [0] is returned.
-EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, EvaluationContext& context, int64_t offset) {
+EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, const VariableDeclarationNode* source_declaration,
+	EvaluationContext& context, int64_t offset) {
 	// Check the constexpr heap first (for new-expressions inside constexpr functions).
 	// Guard with empty() so the common (no-heap) path avoids any lookup overhead.
 	if (!context.constexpr_heap.empty()) {
@@ -2024,10 +2026,6 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 			}
 			return heap_val;
 		}
-	}
-
-	if (!context.symbols) {
-		return EvalResult::error("Cannot dereference constexpr pointer: no symbol table available");
 	}
 
 	auto evaluate_array_element = [&](const ASTNode& element, TypeIndex element_type_index) -> EvalResult {
@@ -2063,48 +2061,55 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 		return evaluate_array_element(elements[static_cast<size_t>(offset)], element_type_index);
 	};
 
-	auto symbol = context.symbols->lookup(var_name);
-	if (!symbol.has_value() && context.global_symbols) {
-		symbol = context.global_symbols->lookup(var_name);
-	}
-	if (!symbol.has_value() && context.struct_info) {
-		StringHandle member_name_handle = StringTable::getOrInternStringHandle(var_name);
-		auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(member_name_handle);
-		if (static_member != nullptr && owner_struct != nullptr) {
-			StringHandle qualified_handle = StringTable::getOrInternStringHandle(
-				StringBuilder().append(owner_struct->getName()).append("::"sv).append(member_name_handle).commit());
-			symbol = context.symbols->lookup(qualified_handle);
-			if (!symbol.has_value() && context.global_symbols) {
-				symbol = context.global_symbols->lookup(qualified_handle);
-			}
-			if (!symbol.has_value() &&
-				static_member->initializer.has_value() &&
-				static_member->initializer->is<InitializerListNode>()) {
-				const auto& init_list = static_member->initializer->as<InitializerListNode>();
-				if (static_member->is_array) {
-					return dereference_array_initializer(init_list, static_member->type_index);
+	const VariableDeclarationNode* target_declaration = source_declaration;
+	if (target_declaration == nullptr) {
+		if (!context.symbols) {
+			return EvalResult::error("Cannot dereference constexpr pointer: no symbol table available");
+		}
+		auto symbol = context.symbols->lookup(var_name);
+		if (!symbol.has_value() && context.global_symbols) {
+			symbol = context.global_symbols->lookup(var_name);
+		}
+		if (!symbol.has_value() && context.struct_info) {
+			StringHandle member_name_handle = StringTable::getOrInternStringHandle(var_name);
+			auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(member_name_handle);
+			if (static_member != nullptr && owner_struct != nullptr) {
+				StringHandle qualified_handle = StringTable::getOrInternStringHandle(
+					StringBuilder().append(owner_struct->getName()).append("::"sv).append(member_name_handle).commit());
+				symbol = context.symbols->lookup(qualified_handle);
+				if (!symbol.has_value() && context.global_symbols) {
+					symbol = context.global_symbols->lookup(qualified_handle);
 				}
-				if (offset == 0 && is_struct_type(static_member->type_index.category())) {
-					if (const TypeInfo* type_info = tryGetTypeInfo(static_member->type_index);
-						const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
-						return materialize_aggregate_object_value(
-							struct_info,
-							static_member->type_index,
-							init_list,
-							context);
+				if (!symbol.has_value() &&
+					static_member->initializer.has_value() &&
+					static_member->initializer->is<InitializerListNode>()) {
+					const auto& init_list = static_member->initializer->as<InitializerListNode>();
+					if (static_member->is_array) {
+						return dereference_array_initializer(init_list, static_member->type_index);
+					}
+					if (offset == 0 && is_struct_type(static_member->type_index.category())) {
+						if (const TypeInfo* type_info = tryGetTypeInfo(static_member->type_index);
+							const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
+							return materialize_aggregate_object_value(
+								struct_info,
+								static_member->type_index,
+								init_list,
+								context);
+						}
 					}
 				}
 			}
 		}
+		if (!symbol.has_value()) {
+			return EvalResult::error("Cannot dereference constexpr pointer: variable '" + std::string(var_name) + "' not found");
+		}
+		// The symbol should be a VariableDeclarationNode; evaluate its initializer.
+		if (!symbol->is<VariableDeclarationNode>()) {
+			return EvalResult::error("Cannot dereference constexpr pointer: '" + std::string(var_name) + "' is not a variable");
+		}
+		target_declaration = &symbol->as<VariableDeclarationNode>();
 	}
-	if (!symbol.has_value()) {
-		return EvalResult::error("Cannot dereference constexpr pointer: variable '" + std::string(var_name) + "' not found");
-	}
-	// The symbol should be a VariableDeclarationNode; evaluate its initializer.
-	if (!symbol->is<VariableDeclarationNode>()) {
-		return EvalResult::error("Cannot dereference constexpr pointer: '" + std::string(var_name) + "' is not a variable");
-	}
-	const VariableDeclarationNode& var_decl = symbol->as<VariableDeclarationNode>();
+	const VariableDeclarationNode& var_decl = *target_declaration;
 	if (!var_decl.is_constexpr()) {
 		return EvalResult::error("Cannot dereference pointer to non-constexpr variable: " + std::string(var_name));
 	}
@@ -2274,7 +2279,7 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 		}
 		return ptr.pointer_value_snapshot[idx];
 	}
-	return dereference_constexpr_pointer(var_name, context, offset);
+	return dereference_constexpr_pointer(var_name, ptr.source_declaration, context, offset);
 }
 
 EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, EvaluationContext& context) {
@@ -4339,8 +4344,10 @@ EvalResult Evaluator::evaluate_expr_node(const TypeSpecifierNode& target_type, c
 
 EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, EvaluationContext& context) {
 	std::string_view var_name = identifier.name();
-	if (const EvalResult* local = findLocalBinding(var_name, context)) {
-		return *local;
+	if (!context.force_global_lookup) {
+		if (const EvalResult* local = findLocalBinding(var_name, context)) {
+			return *local;
+		}
 	}
 
 	// Look up the identifier in the symbol table
@@ -4547,6 +4554,11 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			}
 			return EvalResult::error("Bound static member not found in constant expression: " + std::string(var_name));
 		}
+	} else if (context.force_global_lookup) {
+		symbol_opt = context.symbols->lookup(var_name, ScopeHandle{.scope_level = 1});
+		if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
+			symbol_opt = context.global_symbols->lookup(var_name, ScopeHandle{.scope_level = 1});
+		}
 	} else {
 		symbol_opt = lookup_identifier_symbol(&identifier, var_name, *context.symbols);
 		// If not in local scope, also check global symbols for global constexpr variables
@@ -4654,6 +4666,7 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			EvalResult array_result = materialize_array_value_with_spec(type_spec, init_list, context);
 			if (array_result.success()) {
 				array_result.array_origin_var = name_handle;
+				array_result.source_declaration = &var_decl;
 			}
 			return array_result;
 		}
@@ -4681,6 +4694,17 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 
 		return evaluate(initializer.value(), context);
 	};
+
+	const std::optional<ScopeType> declaration_scope = context.symbols->get_scope_type_of_symbol(var_name);
+	const bool evaluate_initializer_at_global_scope = declaration_scope.has_value() &&
+		*declaration_scope == ScopeType::Global;
+	const bool saved_force_global_lookup = context.force_global_lookup;
+	ScopeGuard restore_global_lookup([&]() {
+		context.force_global_lookup = saved_force_global_lookup;
+	});
+	if (evaluate_initializer_at_global_scope) {
+		context.force_global_lookup = true;
+	}
 
 	EvalResult result = evaluateIdentifierInitializer();
 	if (!result.success()) {

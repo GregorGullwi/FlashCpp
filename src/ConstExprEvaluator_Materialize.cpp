@@ -1591,7 +1591,7 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 		int64_t effective_offset = arr_result.pointer_offset + index;
 		return dereference_constexpr_pointer(
 			StringTable::getStringView(arr_result.pointer_to_var),
-			context, effective_offset);
+			arr_result.source_declaration, context, effective_offset);
 	}
 	// Handle inline array results (e.g., string literal evaluated directly, or
 	// constexpr const char* whose initializer evaluates to a string-char array).
