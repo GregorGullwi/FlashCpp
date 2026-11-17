@@ -246,10 +246,12 @@ enum class CanonicalConstructorParameterMatch : uint8_t {
 inline CanonicalConstructorParameterMatch matchCanonicalDirectConversionOperator(CanonicalTypeTable& table, TypeId source_class,
 	TypeId target_type, ValueCategory source_value_category, ConversionPlan& plan);
 
-// [over.ics.user]/[class.conv.ctor]: one non-explicit public constructor of the
-// target class can provide the user-defined conversion for an argument. Deleted,
-// incomplete, ambiguous, or undecidable candidate conversions defer so sema
-// keeps the compatibility answer.
+// [over.ics.user]/[class.conv.ctor]: one non-explicit constructor of the target
+// class can provide the user-defined conversion for an argument. Non-public and
+// deleted candidates participate in ranking so they can reject a worse accessible
+// candidate; a unique best deleted or inaccessible candidate rejects the
+// conversion. Incomplete, ambiguous, or undecidable candidate conversions defer so
+// sema keeps the compatibility answer.
 inline CanonicalConstructorParameterMatch matchCanonicalUserDefinedClassConversion(
 	CanonicalTypeTable& table, TypeId source_argument, TypeId target_class, ValueCategory source_value_category, ConversionPlan& plan) {
 	if (!table.hasRecordConstructors(target_class)) {
@@ -266,8 +268,9 @@ inline CanonicalConstructorParameterMatch matchCanonicalUserDefinedClassConversi
 	std::optional<ConversionRank> best_rank;
 	size_t best_count = 0;
 	bool best_deleted = false;
+	bool best_non_public = false;
 	bool has_undecidable = false;
-	const auto consider_candidate = [&](const ConversionPlan& candidate_plan, bool deleted) {
+	const auto consider_candidate = [&](const ConversionPlan& candidate_plan, bool non_public, bool deleted) {
 		if (!candidate_plan.is_valid) {
 			return;
 		}
@@ -275,6 +278,7 @@ inline CanonicalConstructorParameterMatch matchCanonicalUserDefinedClassConversi
 			best_rank = candidate_plan.rank;
 			best_count = 1;
 			best_deleted = deleted;
+			best_non_public = non_public;
 			return;
 		}
 		if (candidate_plan.rank == *best_rank) {
@@ -293,10 +297,10 @@ inline CanonicalConstructorParameterMatch matchCanonicalUserDefinedClassConversi
 			continue;
 		}
 		if (hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Explicit) ||
-			hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::NonPublic) ||
 			constructor.minimum_parameter_count > 1 || constructor.parameter_count == 0) {
 			continue;
 		}
+		const bool non_public = hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::NonPublic);
 		const bool deleted = hasCanonicalRecordFunctionFlag(constructor.flags, CanonicalRecordFunctionFlags::Deleted);
 		const TypeId parameter = table.recordConstructorParameterAt(target_class, index, 0);
 		// A copy/move constructor cannot convert an unrelated class argument.
@@ -317,7 +321,7 @@ inline CanonicalConstructorParameterMatch matchCanonicalUserDefinedClassConversi
 					continue;
 				}
 				if (conversion_operator == CanonicalConstructorParameterMatch::Match) {
-					consider_candidate(operator_plan, deleted);
+					consider_candidate(operator_plan, non_public, deleted);
 				}
 				continue;
 			}
@@ -327,7 +331,7 @@ inline CanonicalConstructorParameterMatch matchCanonicalUserDefinedClassConversi
 			has_undecidable = true;
 			continue;
 		}
-		consider_candidate(*candidate_plan, deleted);
+		consider_candidate(*candidate_plan, non_public, deleted);
 	}
 	if (has_undecidable) {
 		return CanonicalConstructorParameterMatch::Unknown;
@@ -338,7 +342,7 @@ inline CanonicalConstructorParameterMatch matchCanonicalUserDefinedClassConversi
 	if (best_count > 1) {
 		return CanonicalConstructorParameterMatch::Unknown;
 	}
-	if (best_deleted) {
+	if (best_deleted || best_non_public) {
 		return CanonicalConstructorParameterMatch::NoMatch;
 	}
 	plan = ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
