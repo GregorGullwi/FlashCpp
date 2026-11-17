@@ -1844,6 +1844,21 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 
 			if (!is_lambda_this) {
 				auto pointer_operands = visitExpressionNode(operand_expr);
+				int operand_pointer_depth = pointer_operands.pointer_depth.value;
+				if (operand_pointer_depth == 0) {
+					if (const auto operand_slot = sema_.getSlot(&operand_expr); operand_slot.has_value() && operand_slot->has_type()) {
+						operand_pointer_depth = static_cast<int>(sema_.typeContext().get(operand_slot->type_id).pointer_levels.size());
+					} else if (std::holds_alternative<IdentifierNode>(operand_expr)) {
+						if (const DeclarationNode* operand_declaration = lookupDeclaration(std::get<IdentifierNode>(operand_expr).name())) {
+							operand_pointer_depth = static_cast<int>(operand_declaration->type_specifier_node().runtime_pointer_depth());
+						}
+					}
+				}
+				if (operand_pointer_depth > 1) {
+					// *ptr whose result is itself a pointer needs the intermediate pointer
+					// value materialized before the following -> performs its own dereference.
+					pointer_operands = visitExpressionNode(*expr, ExpressionContext::Load);
+				}
 				if (!extractBaseFromOperands(pointer_operands, base_object, base_type_index, "pointer expression")) {
 					throw InternalError(std::string("Failed to extract base from pointer dereference for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}

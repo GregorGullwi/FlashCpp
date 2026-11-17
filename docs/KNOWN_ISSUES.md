@@ -238,11 +238,8 @@ bracket operand, including the reversed form `index()[object()]`. Reads,
 writes, and address-taking share this lowering, including when a conversion
 supplies the array or when subscripts are combined across dimensions.
 
-Address-taking followed by a double dereference (`T** pp = &ptrs[i];
-(*pp)->member`) still mislowers because the unary dereference path treats the
-pointer slot as the pointed-to object. Rows of `T* rows[M][N]` still decay with
-the pointer stride instead of the row stride. Copying `ptrs[i]` into a named
-pointer first is unaffected.
+Rows of `T* rows[M][N]` still decay with the pointer stride instead of the
+row stride. Copying a row pointer into a named pointer first is unaffected.
 
 ## Constexpr namespace-scope pointer dereference is not yet supported
 
