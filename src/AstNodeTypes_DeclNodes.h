@@ -3682,14 +3682,17 @@ inline bool TypeSpecifierNode::matches_signature(const TypeSpecifierNode& other)
 	if (self_effective.reference_qualifier != other_effective.reference_qualifier)
 		return false;
 
-	// Check pointer depth and qualifiers at each level
+	// Check pointer depth and qualifiers at each level. Ordered declarators
+	// already compared their complete spine, so only legacy or mixed pairs need
+	// the flat projection here.
 	if (self_effective.pointer_depth != other_effective.pointer_depth)
 		return false;
-	const size_t shared_explicit_pointer_depth =
-		std::min(self.pointer_levels_.size(), other_adjusted.pointer_levels_.size());
-	for (size_t i = 0; i < shared_explicit_pointer_depth; ++i) {
-		if (self.pointer_levels_[i].cv_qualifier != other_adjusted.pointer_levels_[i].cv_qualifier)
-			return false;
+	if (!self.has_ordered_declarator() || !other_adjusted.has_ordered_declarator()) {
+		const size_t shared_explicit_pointer_depth = std::min(self.pointer_levels_.size(), other_adjusted.pointer_levels_.size());
+		for (size_t i = 0; i < shared_explicit_pointer_depth; ++i) {
+			if (self.pointer_levels_[i].cv_qualifier != other_adjusted.pointer_levels_[i].cv_qualifier)
+				return false;
+		}
 	}
 
 	return true;

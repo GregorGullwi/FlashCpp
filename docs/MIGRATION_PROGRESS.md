@@ -410,9 +410,11 @@ remaining pattern schemas by identity, and remove the name fallback.
       consumers and remove the flat pointer/array fields they retain.
     - A first split migrates array-of-pointer element sizing in array subscript
       lowering and `setMaterializedTypeSpecifierSize` from flat `pointer_depth()`
-      to `runtime_pointer_depth()`. Remaining flat readers in this family
-      (matches_signature pointer levels, range-for iterator object type, and
-      non-projectable ordered spines) are deferred.
+      to `runtime_pointer_depth()`. Signature matching now skips the flat
+      pointer-level comparison when both types carry ordered declarators, and
+      range-for iterator pointer reconstruction prepends a pointer to the ordered
+      spine instead of rebuilding flat depth. Non-projectable ordered spines
+      remain deferred.
    - Interleaved pointer/array member storage now sizes and aligns from the
      ordered declarator spine, and constexpr member typing prefers the published
      member `TypeId`. Local array objects also allocate from the ordered element
