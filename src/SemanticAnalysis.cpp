@@ -996,7 +996,7 @@ std::optional<CanonicalTypeDesc> decayArrayForConditional(const CanonicalTypeDes
 
 std::optional<TypeSpecifierNode> tryGetIndirectCallReturnType(const CallExprNode& call) {
 	if (call.has_parser_return_type_hint()) {
-		return call.parser_return_type_hint();
+		return FlashCpp::ParserFunctionTypeHelpers::projectProjectablePointeeArrayReturnType(*call.parser_return_type_hint());
 	}
 	return FlashCpp::ParserFunctionTypeHelpers::tryGetReturnTypeFromFunctionType(
 		call.callee().declaration().type_specifier_node(),
@@ -3591,6 +3591,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::resolveCallReturnType(
 		}
 	}
 
+	*return_type = FlashCpp::ParserFunctionTypeHelpers::projectProjectablePointeeArrayReturnType(std::move(*return_type));
 	return return_type;
 }
 
