@@ -5256,10 +5256,12 @@ std::string_view Parser::instantiate_and_register_base_template(
 			}
 
 			const TypeSpecifierNode& alias_target_type = alias_node.target_type_node();
-			if (const TypeInfo* alias_target_info =
-					tryGetTypeInfo(alias_target_type.type_index());
-				alias_target_info != nullptr &&
-				alias_target_info->deferredDecltypeExpression() != nullptr) {
+			const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_type.type_index());
+			if (alias_target_info != nullptr && alias_target_info->isStruct()) {
+				base_class_name = StringTable::getStringView(alias_target_info->name());
+				return base_class_name;
+			}
+			if (alias_target_info != nullptr && alias_target_info->deferredDecltypeExpression() != nullptr) {
 				const OuterTemplateBinding* outer =
 					gTemplateRegistry.getOuterTemplateBinding(base_class_name);
 				std::optional<TemplateEnvironment> outer_environment;
@@ -5292,8 +5294,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 					}
 				}
 			}
-			if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_type.type_index());
-				alias_target_info != nullptr && alias_target_info->isTemplateInstantiation()) {
+			if (alias_target_info != nullptr && alias_target_info->isTemplateInstantiation()) {
 				std::vector<TemplateTypeArg> concrete_target_args =
 					materializeTemplateArgs(
 						*alias_target_info,
