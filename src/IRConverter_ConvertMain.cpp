@@ -8772,8 +8772,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				// on the stack, not references. Accessing a pointer param should yield the pointer value;
 				// explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
 				// Registering pointers here caused auto-dereferencing in comparisons (e.g., ptr == 0 crashes).
-			bool is_passed_by_reference = is_reference ||
-										  (!is_two_reg_struct && param_type == TypeCategory::Struct && param_size > 64);
+			const bool is_passed_by_reference = recordParameterIsPassedIndirectly(is_reference, param_type == TypeCategory::Struct, param_size,
+				is_coff_format);
 			if (is_passed_by_reference) {
 				setReferenceInfo(offset, TypeIndex{0, param_type}, param_size,
 								 instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE), TempVar{0});
@@ -8933,11 +8933,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				// SysV two-register structs, which are materialized directly and need no dereferencing.
 				// NOTE: Pointer parameters (T*) are NOT tracked - they hold pointer VALUES directly.
 				// Explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
-			bool is_passed_by_reference = param.is_reference();
-			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
-				is_passed_by_reference = is_passed_by_reference ||
-					(isIrStructType(toIrType(param.paramType())) && param.size_in_bits.value > 64);
-			}
+			const bool is_passed_by_reference = recordParameterIsPassedIndirectly(param.is_reference(), isIrStructType(toIrType(param.paramType())),
+				param.size_in_bits.value, !std::is_same_v<TWriterClass, ElfFileWriter>);
 			if (is_passed_by_reference) {
 				setReferenceInfo(offset, TypeIndex{0, param.paramType()}, param.size_in_bits.value, param.is_rvalue_reference(), TempVar{0});
 			}

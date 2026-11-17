@@ -439,6 +439,35 @@ TempVar AstToIr::emitRowMajorSubscriptIndex(const MultiDimSubscriptChain& chain,
 
 ExprResult AstToIr::emitSubscriptAccess(ArrayAccessOp access, TypeIndex result_type, SizeInBits result_size, PointerDepth result_pointer_depth,
 	ValueStorage result_storage, ExpressionContext context, const Token& token) {
+	const auto base_is_indirect_parameter = [&](std::variant<StringHandle, TempVar, LocalVarId> base) {
+		const auto* spelling = std::get_if<StringHandle>(&base);
+		if (spelling == nullptr || current_function_node_ == nullptr) {
+			return false;
+		}
+		std::string_view object_name = spelling->view();
+		const size_t dot = object_name.find('.');
+		if (dot == std::string_view::npos) {
+			return false;
+		}
+		object_name = object_name.substr(0, dot);
+		for (const ASTNode& parameter : current_function_node_->parameter_nodes()) {
+			if (!parameter.is<DeclarationNode>()) {
+				continue;
+			}
+			const DeclarationNode& parameter_declaration = parameter.as<DeclarationNode>();
+			if (parameter_declaration.identifier_token().value() != object_name) {
+				continue;
+			}
+			const TypeSpecifierNode& parameter_type = parameter_declaration.type_specifier_node();
+			return recordParameterIsPassedIndirectly(parameter_type.is_reference() || parameter_type.is_rvalue_reference(),
+				is_struct_type(parameter_type.category()) && parameter_type.runtime_pointer_depth() == 0, getTypeSpecSizeBits(parameter_type),
+				context_->isLLP64());
+		}
+		return false;
+	};
+	if (base_is_indirect_parameter(access.array)) {
+		access.base_holds_address = true;
+	}
 	const bool result_is_record_object = result_storage != ValueStorage::ContainsAddress &&
 		is_struct_type(result_type.category()) && result_pointer_depth.value == 0;
 	const bool result_publishes_address = result_storage == ValueStorage::ContainsAddress || result_is_record_object;
