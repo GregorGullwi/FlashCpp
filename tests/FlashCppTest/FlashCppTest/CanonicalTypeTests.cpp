@@ -5072,6 +5072,8 @@ TEST_CASE("Canonical converting-constructor candidates rank by TypeId conversion
 	const TypeId reference_outer_type = table.record(EntityId{978});
 	const TypeId deleted_target_type = table.record(EntityId{979});
 	const TypeId deleted_outer_type = table.record(EntityId{980});
+	const TypeId private_target_type = table.record(EntityId{981});
+	const TypeId private_outer_type = table.record(EntityId{982});
 	table.publishClassBaseSchema(scalar_target_type, {});
 	table.publishClassBaseSchema(scalar_outer_type, {});
 	table.publishClassBaseSchema(base_type, {});
@@ -5083,6 +5085,8 @@ TEST_CASE("Canonical converting-constructor candidates rank by TypeId conversion
 	table.publishClassBaseSchema(reference_outer_type, {});
 	table.publishClassBaseSchema(deleted_target_type, {});
 	table.publishClassBaseSchema(deleted_outer_type, {});
+	table.publishClassBaseSchema(private_target_type, {});
+	table.publishClassBaseSchema(private_outer_type, {});
 	auto publish_outer = [&table](TypeId target, TypeId outer) {
 		const std::array<TypeId, 1> parameters{target};
 		const std::array<CanonicalRecordConstructorSpec, 1> constructors{{
@@ -5108,6 +5112,11 @@ TEST_CASE("Canonical converting-constructor candidates rank by TypeId conversion
 		{long_parameters, CanonicalRecordFunctionFlags::None, true}}};
 	table.publishRecordConstructors(deleted_target_type, deleted_constructors);
 	publish_outer(deleted_target_type, deleted_outer_type);
+	const std::array<CanonicalRecordConstructorSpec, 2> private_constructors{{
+		{derived_parameters, CanonicalRecordFunctionFlags::NonPublic, true},
+		{base_parameters, CanonicalRecordFunctionFlags::None, true}}};
+	table.publishRecordConstructors(private_target_type, private_constructors);
+	publish_outer(private_target_type, private_outer_type);
 	auto class_specifier = [](EntityId entity) {
 		TypeSpecifierNode specifier(TypeCategory::Struct, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 		specifier.set_type_entity(entity);
@@ -5145,6 +5154,9 @@ TEST_CASE("Canonical converting-constructor candidates rank by TypeId conversion
 	REQUIRE(deleted_long.has_value());
 	CHECK(deleted_long->success);
 	CHECK(deleted_long->value);
+	ConversionPlan private_derived_plan;
+	CHECK(matchCanonicalUserDefinedClassConversion(table, derived_type, private_target_type, ValueCategory::PRValue,
+			  private_derived_plan) == CanonicalConstructorParameterMatch::NoMatch);
 }
 
 TEST_CASE("Canonical direct reference binding preserves access cv and value category") {

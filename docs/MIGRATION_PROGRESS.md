@@ -342,7 +342,9 @@ remaining pattern schemas by identity, and remove the name fallback.
    Converting-constructor arguments now rank their published `TypeId` standard
    conversion plan instead of counting viable constructors. A strictly better
    nested constructor is selected, rank ties defer to the compatibility
-   resolver, and a better deleted constructor rejects the conversion.
+   resolver, and a better deleted or inaccessible constructor rejects the
+   conversion. Nothrow propagation from the selected nested constructor remains
+   a follow-up.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are
