@@ -1281,10 +1281,18 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 	if (begin_return_type.runtime_pointer_depth() > 0) {
 		auto deref_begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 		sema_.registerCodegenSynthesizedOverloadArgType(deref_begin_ident_expr, begin_type_spec);
-		auto loop_ptr_type = ASTNode::emplace_node<TypeSpecifierNode>(
-			loop_type.type_index().withCategory(loop_type.type()), static_cast<int>(loop_type.size_in_bits()), Token(), CVQualifier::None, ReferenceQualifier::None);
+		TypeSpecifierNode loop_ptr_spec = loop_type;
+		loop_ptr_spec.set_reference_qualifier(ReferenceQualifier::None);
+		loop_ptr_spec.set_cv_qualifier(CVQualifier::None);
+		if (loop_ptr_spec.has_ordered_declarator()) {
+			loop_ptr_spec.prepend_ordered_declarator_component(DeclaratorComponent::pointer(CVQualifier::None));
+		} else {
 			// Copy existing pointer depth (e.g., for `int*& p : arr`, loop_type is int* with depth=1)
-		loop_ptr_type.as<TypeSpecifierNode>().add_pointer_levels(static_cast<int>(loop_type.runtime_pointer_depth() + 1));
+			loop_ptr_spec = TypeSpecifierNode(
+				loop_type.type_index(), static_cast<int>(loop_type.size_in_bits()), Token(), CVQualifier::None, ReferenceQualifier::None);
+			loop_ptr_spec.add_pointer_levels(static_cast<int>(loop_type.runtime_pointer_depth() + 1));
+		}
+		auto loop_ptr_type = ASTNode::emplace_node<TypeSpecifierNode>(loop_ptr_spec);
 		auto cast_expr = ASTNode::emplace_node<ExpressionNode>(
 			ReinterpretCastNode(loop_ptr_type, deref_begin_ident_expr, Token(Token::Type::Keyword, "reinterpret_cast"sv, 0, 0, 0)));
 		sema_.registerCodegenSynthesizedOverloadArgType(cast_expr, loop_ptr_type.as<TypeSpecifierNode>());
