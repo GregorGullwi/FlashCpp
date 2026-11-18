@@ -334,7 +334,9 @@ remaining pattern schemas by identity, and remove the name fallback.
    Array-to-pointer decay for multi-dimensional pointer-element arrays now
    promotes the decayed type to its ordered spine, placing the outer pointer
    before the row array and the element pointer inside it, so
-   `auto p = T* rows[M][N]` uses the row stride.
+   `auto p = T* rows[M][N]` uses the row stride. Parameter adjustment now keeps
+   every stored extent as an inner pointee bound when the outer bound is
+   unsized, so a decayed argument also matches `T* rows[][N]`.
    Member-template return substitution now carries the pointer-to-member owner
    identity and recovered ordered declarator into the instantiated result, so
    member-object, member-function, and free-function pointer targets rank
