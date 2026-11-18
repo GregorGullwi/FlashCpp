@@ -1765,6 +1765,15 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 					is_pointer_dereference = true;
 				}
 			}
+		} else if (expr && std::holds_alternative<UnaryOperatorNode>(*expr) &&
+			sema_.getResolvedUnaryDereferenceOperator(&std::get<UnaryOperatorNode>(*expr)) != nullptr) {
+			const UnaryOperatorNode& unary_op = std::get<UnaryOperatorNode>(*expr);
+			ExprResult deref_result = generateUnaryOperatorIr(unary_op, ExpressionContext::Load);
+			if (!extractBaseFromOperands(deref_result, base_object, base_type_index, "overloaded dereference")) {
+				throw InternalError(std::string("Failed to extract base from overloaded operator* result for member '") +
+					std::string(memberAccessNode.member_token().value()) + "'");
+			}
+			is_pointer_dereference = true;
 		} else if (expr && std::holds_alternative<UnaryOperatorNode>(*expr)) {
 			const UnaryOperatorNode& unary_op = std::get<UnaryOperatorNode>(*expr);
 
