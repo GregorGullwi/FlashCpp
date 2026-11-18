@@ -377,6 +377,40 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 			}
 		}
 
+		// A by-reference lambda capture is a pointer stored in the closure, not
+		// a local of the enclosing function. Resolve it through the captured
+		// lvalue path instead of looking up the original local.
+		if (current_lambda_context_.isActive() &&
+			current_lambda_context_.captures.count(identifier_handle) > 0) {
+			bool is_reference = identifier.binding() == IdentifierBinding::CapturedByRef;
+			if (!is_reference) {
+				auto kind_it = current_lambda_context_.capture_kinds.find(identifier_handle);
+				is_reference = kind_it != current_lambda_context_.capture_kinds.end() &&
+					kind_it->second == LambdaCaptureNode::CaptureKind::ByReference;
+			}
+			if (is_reference) {
+				ExprResult captured_address = visitExpressionNode(expr, ExpressionContext::LValueAddress);
+				if (captured_address.storage == ValueStorage::ContainsAddress) {
+					AddressComponents result;
+					if (const auto* temp = std::get_if<TempVar>(&captured_address.value)) {
+						result.base = *temp;
+					} else if (const auto* name = std::get_if<StringHandle>(&captured_address.value)) {
+						result.base = *name;
+					} else if (const auto* local = std::get_if<LocalVarId>(&captured_address.value)) {
+						result.base = *local;
+					} else {
+						return std::nullopt;
+					}
+					result.base_storage = ValueStorage::ContainsAddress;
+					result.total_member_offset = accumulated_offset;
+					result.final_type_index = captured_address.type_index;
+					result.final_size_bits = captured_address.size_in_bits;
+					result.pointer_depth = captured_address.pointer_depth;
+					return result;
+				}
+			}
+		}
+
 			// Look up the identifier
 		const DeclarationNode* decl = lookupDeclaration(identifier_handle);
 		if (!decl) {

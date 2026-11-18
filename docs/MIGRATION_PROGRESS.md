@@ -465,7 +465,9 @@ remaining pattern schemas by identity, and remove the name fallback.
      built-in pointer. Lambda return deduction now keeps lambda parameters and
      captures in scope while inspecting return expressions and recovers static
      local and local declaration types from the body, so `return &value;`
-     publishes a pointer return instead of defaulting to `int`.
+     publishes a pointer return instead of defaulting to `int`. Address-of on
+     an explicit or capture-all by-reference capture now reuses the pointer
+     stored in the closure instead of looking up the original local.
    - Class-scope using-declarations now retain their target base and member
      spelling on `StructDeclarationNode` and copy that metadata into
      instantiated class declarations. The source base-declaration ordinal
