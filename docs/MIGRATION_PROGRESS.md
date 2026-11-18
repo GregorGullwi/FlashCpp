@@ -459,7 +459,13 @@ remaining pattern schemas by identity, and remove the name fallback.
    - Lambda and function trailing return types now consume pointer, reference,
      and grouped pointer-to-array abstract declarators with the shared type-id
      helper, so `[]() -> int*` and `-> int (*)[4]` reach the body instead of
-     failing at the brace.
+     failing at the brace. Member access through unary `*` now resolves
+     `operator*` first, so `(*wrapper)->member` and `(**wrapper).member` lower
+     through member or free overloads instead of treating the wrapper as a
+     built-in pointer. Lambda return deduction now keeps lambda parameters and
+     captures in scope while inspecting return expressions and recovers static
+     local and local declaration types from the body, so `return &value;`
+     publishes a pointer return instead of defaulting to `int`.
    - Class-scope using-declarations now retain their target base and member
      spelling on `StructDeclarationNode` and copy that metadata into
      instantiated class declarations. The source base-declaration ordinal

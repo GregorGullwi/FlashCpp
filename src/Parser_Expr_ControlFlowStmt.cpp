@@ -890,9 +890,6 @@ ParseResult Parser::parse_lambda_expression() {
 		body_result = parse_block();
 	}
 
-	// Remove parameters from symbol table after parsing body
-	gSymbolTable.exit_scope();
-
 	if (body_result.is_error()) {
 		return body_result;
 	}
@@ -915,125 +912,186 @@ ParseResult Parser::parse_lambda_expression() {
 				return param_node.is<DeclarationNode>() &&
 					   isPlaceholderAutoType(param_node.as<DeclarationNode>().type_specifier_node().type());
 			});
-		// Search lambda body for return statements to deduce return type
-		[[maybe_unused]] const BlockNode& body = body_result.node()->as<BlockNode>();
-		std::optional<TypeSpecifierNode> deduced_type;
-		std::vector<std::pair<TypeSpecifierNode, Token>> all_return_types;  // Track all return types for validation
+		if (lambda_has_template_or_auto_params) {
+			// Generic and template lambdas cannot resolve their return type until
+			// the call site provides concrete parameter types. Keep the placeholder
+			// for sema instead of guessing from dependent parameter types.
+			return_type = emplace_node<TypeSpecifierNode>(placeholder_type, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+		} else {
+			// Search lambda body for return statements to deduce return type
+			[[maybe_unused]] const BlockNode& body = body_result.node()->as<BlockNode>();
+			std::optional<TypeSpecifierNode> deduced_type;
+			std::vector<std::pair<TypeSpecifierNode, Token>> all_return_types;  // Track all return types for validation
+			std::unordered_map<StringHandle, TypeSpecifierNode> lambda_local_types;
 
-		// Recursive lambda to search for return statements in lambda body
-		std::function<void(const ASTNode&)> find_return_in_lambda = [&](const ASTNode& node) {
-			if (node.is<ReturnStatementNode>()) {
-				const ReturnStatementNode& ret = node.as<ReturnStatementNode>();
-				if (ret.expression().has_value()) {
-					// Try to get the type using get_expression_type
-					// The guard in get_expression_type will prevent infinite recursion
-					auto expr_type_opt = get_expression_type(*ret.expression());
-					if (expr_type_opt.has_value()) {
-						// Apply placeholder type deduction rules:
-						// - For auto: strip top-level references and cv-qualifiers per [dcl.spec.auto]/6.
-						// - For decltype(auto): preserve the exact type including references.
-						TypeSpecifierNode finalized_type = finalizePlaceholderTypeDeduction(placeholder_type, *expr_type_opt);
+			// Recursive lambda to search for return statements in lambda body
+			std::function<void(const ASTNode&)> find_return_in_lambda = [&](const ASTNode& node) {
+				if (node.is<ReturnStatementNode>()) {
+					const ReturnStatementNode& ret = node.as<ReturnStatementNode>();
+					if (ret.expression().has_value()) {
+						// Try to get the type using get_expression_type
+						// The guard in get_expression_type will prevent infinite recursion
+						auto expr_type_opt = get_expression_type(*ret.expression());
+						if (expr_type_opt.has_value() && !isPlaceholderAutoType(expr_type_opt->type())) {
+							// Apply placeholder type deduction rules:
+							// - For auto: strip top-level references and cv-qualifiers per [dcl.spec.auto]/6.
+							// - For decltype(auto): preserve the exact type including references.
+							TypeSpecifierNode finalized_type = finalizePlaceholderTypeDeduction(placeholder_type, *expr_type_opt);
 
-						// Store this return type for validation
-						all_return_types.emplace_back(finalized_type, lambda_token);
+							// Store this return type for validation
+							all_return_types.emplace_back(finalized_type, lambda_token);
 
-						FLASH_LOG(Parser, Debug, "Lambda found return statement #", all_return_types.size(),
-								  " with type=", (int)finalized_type.type(), " size=", (int)finalized_type.size_in_bits());
+							FLASH_LOG(Parser, Debug, "Lambda found return statement #", all_return_types.size(),
+									  " with type=", (int)finalized_type.type(), " size=", (int)finalized_type.size_in_bits());
 
-						// Set the deduced type from the first return statement
-						if (!deduced_type.has_value()) {
-							deduced_type = finalized_type;
-							FLASH_LOG(Parser, Debug, "Lambda return type deduced from expression: type=",
-									  (int)deduced_type->type(), " size=", (int)deduced_type->size_in_bits());
-						}
-					} else {
-						// If we could not deduce the return during parsing (for example
-						// because a generic/template lambda parameter is not instantiated
-						// until the call site), keep an auto placeholder for sema to
-						// re-deduce after call-site substitution.
-						if (!deduced_type.has_value()) {
-							deduced_type = lambda_has_template_or_auto_params
-								? TypeSpecifierNode(placeholder_type, TypeQualifier::None, 0, Token{}, CVQualifier::None)
-								: TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
-							all_return_types.emplace_back(*deduced_type, lambda_token);
-							FLASH_LOG(Parser, Debug,
-									  lambda_has_template_or_auto_params
-										  ? "Lambda return type kept as placeholder (type resolution failed)"
-										  : "Lambda return type defaulted to int (type resolution failed)");
+							// Set the deduced type from the first return statement
+							if (!deduced_type.has_value()) {
+								deduced_type = finalized_type;
+								FLASH_LOG(Parser, Debug, "Lambda return type deduced from expression: type=",
+										  (int)deduced_type->type(), " size=", (int)deduced_type->size_in_bits());
+							}
+						} else {
+							// The parsed body's block scope is gone by now, so a static
+							// local or non-captured local name may not resolve through the
+							// symbol table. Recover its declared type from the body before
+							// falling back to a placeholder.
+							std::optional<TypeSpecifierNode> recovered_type;
+							auto recover_identifier = [&](const ASTNode& expression) -> std::optional<TypeSpecifierNode> {
+								if (!expression.is<ExpressionNode>()) {
+									return std::nullopt;
+								}
+								const auto& variant = expression.as<ExpressionNode>();
+								if (const auto* identifier = std::get_if<IdentifierNode>(&variant)) {
+									auto it = lambda_local_types.find(identifier->nameHandle());
+									if (it != lambda_local_types.end()) {
+										return it->second;
+									}
+								}
+								if (const auto* unary = std::get_if<UnaryOperatorNode>(&variant);
+									unary != nullptr && unary->op() == "&") {
+									const ASTNode& operand = unary->get_operand();
+									if (operand.is<ExpressionNode>()) {
+										const auto& operand_variant = operand.as<ExpressionNode>();
+										if (const auto* identifier = std::get_if<IdentifierNode>(&operand_variant)) {
+											auto it = lambda_local_types.find(identifier->nameHandle());
+											if (it != lambda_local_types.end()) {
+												TypeSpecifierNode pointer_type = it->second;
+												pointer_type.set_reference_qualifier(ReferenceQualifier::None);
+												pointer_type.add_pointer_level();
+												return pointer_type;
+											}
+										}
+									}
+								}
+								return std::nullopt;
+							};
+							if (ret.expression().has_value()) {
+								recovered_type = recover_identifier(*ret.expression());
+							}
+							if (recovered_type.has_value()) {
+								TypeSpecifierNode finalized_type =
+									finalizePlaceholderTypeDeduction(placeholder_type, *recovered_type);
+								all_return_types.emplace_back(finalized_type, lambda_token);
+								if (!deduced_type.has_value()) {
+									deduced_type = finalized_type;
+								}
+							} else if (!deduced_type.has_value()) {
+								// Non-generic lambdas cannot wait for call-site type
+								// substitution. Keep the historical int fallback for
+								// expressions this parser cannot type; pointer returns
+								// from address-of expressions were recovered above.
+								deduced_type = TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+								all_return_types.emplace_back(*deduced_type, lambda_token);
+								FLASH_LOG(Parser, Debug, "Lambda return type defaulted to int (type resolution failed)");
+							}
 						}
 					}
+				} else if (node.is<BlockNode>()) {
+					// Recursively search nested blocks
+					const BlockNode& block = node.as<BlockNode>();
+					const auto& stmts = block.get_statements();
+					for (size_t i = 0; i < stmts.size(); ++i) {
+						if (stmts[i].is<VariableDeclarationNode>()) {
+							const auto& declaration = stmts[i].as<VariableDeclarationNode>().declaration();
+							TypeSpecifierNode local_type = declaration.type_specifier_node();
+							applyDeclarationArrayBoundsToTypeSpec(declaration, local_type, *this);
+							const StringHandle name = declaration.identifier_token().handle();
+							if (name.isValid()) {
+								lambda_local_types[name] = local_type;
+							}
+						}
+						find_return_in_lambda(stmts[i]);
+					}
+				} else if (node.is<IfStatementNode>()) {
+					const IfStatementNode& if_stmt = node.as<IfStatementNode>();
+					find_return_in_lambda(if_stmt.get_then_statement());
+					if (if_stmt.has_else()) {
+						find_return_in_lambda(*if_stmt.get_else_statement());
+					}
+				} else if (node.is<WhileStatementNode>()) {
+					const WhileStatementNode& while_stmt = node.as<WhileStatementNode>();
+					find_return_in_lambda(while_stmt.get_body_statement());
+				} else if (node.is<ForStatementNode>()) {
+					const ForStatementNode& for_stmt = node.as<ForStatementNode>();
+					find_return_in_lambda(for_stmt.get_body_statement());
+				} else if (node.is<DoWhileStatementNode>()) {
+					const DoWhileStatementNode& do_while = node.as<DoWhileStatementNode>();
+					if (do_while.get_body_statement().has_value()) {
+						find_return_in_lambda(do_while.get_body_statement());
+					}
+				} else if (node.is<SwitchStatementNode>()) {
+					const SwitchStatementNode& switch_stmt = node.as<SwitchStatementNode>();
+					if (switch_stmt.get_body().has_value()) {
+						find_return_in_lambda(switch_stmt.get_body());
+					}
 				}
-			} else if (node.is<BlockNode>()) {
-				// Recursively search nested blocks
-				const BlockNode& block = node.as<BlockNode>();
-				const auto& stmts = block.get_statements();
-				for (size_t i = 0; i < stmts.size(); ++i) {
-					find_return_in_lambda(stmts[i]);
-				}
-			} else if (node.is<IfStatementNode>()) {
-				const IfStatementNode& if_stmt = node.as<IfStatementNode>();
-				find_return_in_lambda(if_stmt.get_then_statement());
-				if (if_stmt.has_else()) {
-					find_return_in_lambda(*if_stmt.get_else_statement());
-				}
-			} else if (node.is<WhileStatementNode>()) {
-				const WhileStatementNode& while_stmt = node.as<WhileStatementNode>();
-				find_return_in_lambda(while_stmt.get_body_statement());
-			} else if (node.is<ForStatementNode>()) {
-				const ForStatementNode& for_stmt = node.as<ForStatementNode>();
-				find_return_in_lambda(for_stmt.get_body_statement());
-			} else if (node.is<DoWhileStatementNode>()) {
-				const DoWhileStatementNode& do_while = node.as<DoWhileStatementNode>();
-				if (do_while.get_body_statement().has_value()) {
-					find_return_in_lambda(do_while.get_body_statement());
-				}
-			} else if (node.is<SwitchStatementNode>()) {
-				const SwitchStatementNode& switch_stmt = node.as<SwitchStatementNode>();
-				if (switch_stmt.get_body().has_value()) {
-					find_return_in_lambda(switch_stmt.get_body());
+			};
+
+			// Search the lambda body
+			find_return_in_lambda(*body_result.node());
+
+			// Validate that all return statements have compatible types
+			if (all_return_types.size() > 1) {
+				const TypeSpecifierNode& first_type = all_return_types[0].first;
+				for (size_t i = 1; i < all_return_types.size(); ++i) {
+					const TypeSpecifierNode& current_type = all_return_types[i].first;
+					if (!are_types_compatible(first_type, current_type)) {
+						// Build error message showing the conflicting types
+						std::string error_msg = "Lambda has inconsistent return types: ";
+						error_msg += "first return has type '";
+						error_msg += type_to_string(first_type);
+						error_msg += "', but another return has type '";
+						error_msg += type_to_string(current_type);
+						error_msg += "'";
+
+						FLASH_LOG(Parser, Error, error_msg);
+						context_.diagnostics().report(
+							DiagnosticId::LambdaReturnTypeMismatch,
+							DiagnosticSeverity::Error,
+							lexer_.getSourceLocation(all_return_types[i].second),
+							error_msg,
+							{});
+						return ParseResult::error(error_msg, all_return_types[i].second);
+					}
 				}
 			}
-		};
 
-		// Search the lambda body
-		find_return_in_lambda(*body_result.node());
-
-		// Validate that all return statements have compatible types
-		if (all_return_types.size() > 1) {
-			const TypeSpecifierNode& first_type = all_return_types[0].first;
-			for (size_t i = 1; i < all_return_types.size(); ++i) {
-				const TypeSpecifierNode& current_type = all_return_types[i].first;
-				if (!are_types_compatible(first_type, current_type)) {
-					// Build error message showing the conflicting types
-					std::string error_msg = "Lambda has inconsistent return types: ";
-					error_msg += "first return has type '";
-					error_msg += type_to_string(first_type);
-					error_msg += "', but another return has type '";
-					error_msg += type_to_string(current_type);
-					error_msg += "'";
-
-					FLASH_LOG(Parser, Error, error_msg);
-					context_.diagnostics().report(
-						DiagnosticId::LambdaReturnTypeMismatch,
-						DiagnosticSeverity::Error,
-						lexer_.getSourceLocation(all_return_types[i].second),
-						error_msg,
-						{});
-					return ParseResult::error(error_msg, all_return_types[i].second);
-				}
+			// If we found a deduced type, use it; otherwise default to void
+			if (deduced_type.has_value()) {
+				return_type = emplace_node<TypeSpecifierNode>(*deduced_type);
+				FLASH_LOG(Parser, Debug, "Lambda auto return type deduced: type=", (int)deduced_type->type());
+			} else {
+				// No return statement found or return with no value - lambda returns void
+				return_type = emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeQualifier::None, 0, Token(), CVQualifier::None);
+				FLASH_LOG(Parser, Debug, "Lambda has no return or returns void");
 			}
-		}
-
-		// If we found a deduced type, use it; otherwise default to void
-		if (deduced_type.has_value()) {
-			return_type = emplace_node<TypeSpecifierNode>(*deduced_type);
-			FLASH_LOG(Parser, Debug, "Lambda auto return type deduced: type=", (int)deduced_type->type());
-		} else {
-			// No return statement found or return with no value - lambda returns void
-			return_type = emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeQualifier::None, 0, Token(), CVQualifier::None);
-			FLASH_LOG(Parser, Debug, "Lambda has no return or returns void");
 		}
 	}
+
+	// Parameters and captures must stay visible while deducing the lambda return
+	// type from return expressions, since `return &parameter;` is an id-expression
+	// lookup in the lambda's own scope.
+	gSymbolTable.exit_scope();
 
 	// Expand capture-all before creating the lambda node
 	std::vector<LambdaCaptureNode> expanded_captures;
