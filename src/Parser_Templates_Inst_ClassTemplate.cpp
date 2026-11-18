@@ -9127,31 +9127,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 		if (!static_member.initializer.has_value()) {
 			return std::nullopt;
 		}
-		TemplateInstantiationContext substitution_context = buildTemplateInstantiationContext(
-			replay_template_params,
-			replay_template_args,
-			nullptr,
-			currentTemplateSubstitutionFailurePolicy());
-		substitution_context.current_instantiation_type = owning_type_index;
-		TemplateDefinitionLookupContext definition_lookup_context = static_member.initializerDefinitionLookupContext();
+		const DeclarationNode* member_declaration = nullptr;
 		if (static_member.declaration.has_value()) {
-			if (const DeclarationNode* declaration = get_decl_from_symbol(*static_member.declaration); declaration != nullptr) {
-				definition_lookup_context = ensureReplayDefinitionLookupContext(
-					definition_lookup_context,
-					declaration->identifier_token(),
-					fallback_definition_namespace,
-					owning_instantiated_name);
-			}
+			member_declaration = get_decl_from_symbol(*static_member.declaration);
 		}
-		if (definition_lookup_context.is_valid()) {
-			substitution_context.definition_lookup_context = &definition_lookup_context;
-		}
-		FlashCpp::TemplateDepthGuard guard_template_depth(parsing_template_depth_);
-		parsing_template_depth_ = 1;
-		ScopedDefinitionLookupContext ctx_scope(current_template_definition_lookup_context_, substitution_context.definition_lookup_context);
-		ReplayTemplateBindings replay_bindings(*this, replay_template_params, replay_template_args, substitution_context.environment);
-		auto member_ctx_scope = push_replay_member_context(owning_instantiated_name, owning_type_index, struct_info);
-		return substituteTemplateParameters(*static_member.initializer, substitution_context);
+		return substitute_static_member_initializer_structurally(
+			static_member.initializer, replay_template_params, replay_template_args, owning_instantiated_name,
+			owning_type_index, struct_info->declaration_node, struct_info, member_declaration,
+			fallback_definition_namespace, static_member.initializerDefinitionLookupContext());
 	};
 	auto substitute_in_class_static_initializer_replay_first =
 		[&](
@@ -9184,8 +9167,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 						owning_type_index,
 						fallback_definition_namespace,
 						fallback_template_args);
-				if (structural_initializer.has_value() &&
-					!static_initializer_has_residual_template_dependency(
+				if (structural_initializer.has_value() && !static_initializer_has_residual_template_dependency(
 						*structural_initializer, replay_param_span)) {
 					return structural_initializer;
 				}
