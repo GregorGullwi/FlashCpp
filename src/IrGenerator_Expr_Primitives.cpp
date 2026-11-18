@@ -574,6 +574,19 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 						throw InternalError("Lambda by-reference capture missing captured object type");
 					}
 					const TypeSpecifierNode& orig_type = capture_type_it->second;
+					TypeIndex captured_type_index = (orig_type.category() == TypeCategory::Struct)
+						? orig_type.type_index()
+						: nativeTypeIndex(orig_type.type());
+					if (context == ExpressionContext::LValueAddress) {
+						LValueInfo lvalue_info(LValueInfo::Kind::Indirect, ptr_temp, 0);
+						setTempVarMetadata(ptr_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
+						return makeExprResult(
+							captured_type_index.withCategory(orig_type.type()),
+							SizeInBits{orig_type.size_in_bits()},
+							IrOperand{ptr_temp},
+							PointerDepth{},
+							ValueStorage::ContainsAddress);
+					}
 
 					// Generate Dereference to load the referenced object, using the
 					// captured variable's object size rather than the pointer slot size.
@@ -588,8 +601,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					);
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
-					TypeIndex type_index = (orig_type.category() == TypeCategory::Struct) ? orig_type.type_index() : nativeTypeIndex(orig_type.type());
-					return makeIdentifierResult(orig_type.type(), static_cast<int>(orig_type.size_in_bits()), result_temp, type_index);
+					return makeIdentifierResult(orig_type.type(), static_cast<int>(orig_type.size_in_bits()), result_temp, captured_type_index);
 				} else {
 						// By-value capture: direct member access
 					TempVar result_temp = var_counter.next();
