@@ -870,5 +870,7 @@ void AstToIr::emitReturn(
 	ret_op.return_type_index = return_type_index;
 	ret_op.return_size = return_size;
 	ret_op.return_storage = return_storage;
+	ret_op.reuses_return_slot = emit_return_slot_return_;
+	emit_return_slot_return_ = false;
 	ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), token));
 }

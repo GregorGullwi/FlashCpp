@@ -5,6 +5,7 @@
 #include "SemanticAnalysis.h"
 #include "StringLiteralTokenUtils.h"
 #include "TypeSizeQuery.h"
+#include "AstTraversal.h"
 
 namespace {
 static bool tryGetOrderedArrayObjectStorage(
@@ -382,6 +383,73 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		   isExprResultXValue(init_operands);
 }
 
+void AstToIr::prepareNRVOCandidates(const ASTNode& body, const TypeSpecifierNode& return_type) {
+	nrvo_candidate_declarations_.clear();
+	if (!current_function_has_hidden_return_param_ || return_type.category() != TypeCategory::Struct ||
+		return_type.is_reference() || return_type.is_rvalue_reference() || !body.is<BlockNode>()) {
+		return;
+	}
+	const TypeInfo* return_type_info = tryGetTypeInfo(return_type.type_index());
+	const StructTypeInfo* return_struct_info = return_type_info != nullptr ? return_type_info->getStructInfo() : nullptr;
+	if (return_struct_info == nullptr || !return_struct_info->hasUserDefinedConstructor() ||
+		return_struct_info->sizeInBits().value < 64) {
+		return;
+	}
+
+	const auto statements = body.as<BlockNode>().get_statements();
+	const VariableDeclarationNode* candidate = nullptr;
+	const void* candidate_raw_pointer = nullptr;
+	size_t return_count = 0;
+	ReturnStatementNode const* only_return = nullptr;
+	for (const ASTNode& statement : statements) {
+		if (statement.is<ReturnStatementNode>()) {
+			++return_count;
+			only_return = &statement.as<ReturnStatementNode>();
+			continue;
+		}
+		if (!statement.is<VariableDeclarationNode>()) {
+			continue;
+		}
+		const VariableDeclarationNode& variable = statement.as<VariableDeclarationNode>();
+		const StorageClass storage = variable.storage_class();
+		if (storage == StorageClass::Static || storage == StorageClass::Extern || variable.is_thread_local() ||
+			variable.is_constexpr() || variable.is_constinit()) {
+			continue;
+		}
+		const DeclarationNode& declaration = variable.declaration();
+		const TypeSpecifierNode& local_type = declaration.type_specifier_node();
+		if (local_type.is_reference() || local_type.is_rvalue_reference() ||
+			local_type.category() != TypeCategory::Struct ||
+			!isSameStructTypeForInitialization(local_type.type_index(), return_type.type_index())) {
+			continue;
+		}
+		if (const std::optional<ASTNode>& initializer = variable.initializer(); initializer.has_value()) {
+			if (!initializer->is<InitializerListNode>()) {
+				if (!initializer->is<ExpressionNode>() ||
+					!std::holds_alternative<ConstructorCallNode>(initializer->as<ExpressionNode>())) {
+					continue;
+				}
+			}
+		}
+		if (candidate != nullptr) {
+			return;
+		}
+		candidate = &variable;
+		candidate_raw_pointer = statement.raw_pointer();
+	}
+	if (return_count != 1 || candidate == nullptr || !only_return->expression().has_value()) {
+		return;
+	}
+	const ASTNode& expression = *only_return->expression();
+	if (!expression.is<ExpressionNode>()) {
+		return;
+	}
+	const auto* identifier = std::get_if<IdentifierNode>(&expression.as<ExpressionNode>());
+	if (identifier == nullptr || identifier->nameHandle() != candidate->declaration().identifier_token().handle()) {
+		return;
+	}
+	nrvo_candidate_declarations_.insert(candidate_raw_pointer);
+}
 void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	const VariableDeclarationNode& node = ast_node.as<VariableDeclarationNode>();
 	const auto& decl = node.declaration();
@@ -429,13 +497,14 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	// Numeric identity of this declaration. Locals claim it below, after the
 	// global/static path returns.
 	LocalVarId local_var_id{};
+	bool is_nrvo_candidate = false;
 	const StringHandle declared_spelling = decl.identifier_token().handle();
 	// Records the declaration's identity rather than the spelling, because
 	// unwinding resolves the variable through the function's frame table. The
 	// id is assigned below (for locals) after this lambda is constructed, so it
 	// must be captured by reference.
-	auto register_destructor_if_needed = [this, &local_var_id](const TypeInfo* type_info) {
-		if (!type_info || !type_info->getStructInfo() || !type_info->getStructInfo()->hasDestructor()) {
+	auto register_destructor_if_needed = [this, &local_var_id, &is_nrvo_candidate](const TypeInfo* type_info) {
+		if (is_nrvo_candidate || !type_info || !type_info->getStructInfo() || !type_info->getStructInfo()->hasDestructor()) {
 			return;
 		}
 		registerVariableWithDestructor(
@@ -1487,6 +1556,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	// so a self-reference in the initializer resolves to this declaration rather
 	// than an outer one, per C++ [basic.scope.pdecl].
 	local_var_id = declareLocalVarId(ast_node, declared_spelling);
+	is_nrvo_candidate = current_function_has_hidden_return_param_ && nrvo_candidate_declarations_.contains(ast_node.raw_pointer());
 
 		// C++20 [basic.scope.pdecl]: register the variable in the local symbol table
 		// before evaluating its initializer, so that sizeof(x) in "int x = sizeof(x)"
@@ -1805,6 +1875,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				decl_op.size_in_bits = SizeInBits{runtime_pointer_depth > 0 ? 64 : static_cast<int>(type_node.size_in_bits())};
 				decl_op.var_name = declared_spelling;
 				decl_op.local_id = local_var_id;
+				decl_op.is_nrvo_candidate = is_nrvo_candidate;
 				decl_op.declared_name = decl.identifier_token().handle();
 				decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 				decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
@@ -2207,6 +2278,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								// Generate constructor call with parameters from initializer list
 								ConstructorCallOp ctor_op;
 								ctor_op.object = local_var_id;
+								ctor_op.use_nrvo_slot = is_nrvo_candidate;
 								ctor_op.resolved_constructor = matching_ctor;
 
 								// Get constructor parameter types for reference handling
@@ -2763,6 +2835,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		: ((runtime_pointer_depth > 0 || type_node.is_reference()) ? 64 : static_cast<int>(type_node.size_in_bits()))};
 	decl_op.var_name = declared_spelling;
 	decl_op.local_id = local_var_id;
+	decl_op.is_nrvo_candidate = is_nrvo_candidate;
 	decl_op.declared_name = decl.identifier_token().handle();
 	decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 	decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
@@ -3257,6 +3330,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								if (has_usable_default_constructor) {
 									ConstructorCallOp default_ctor_op;
 									default_ctor_op.object = local_var_id;
+									default_ctor_op.use_nrvo_slot = is_nrvo_candidate;
 									fillInDefaultConstructorArguments(default_ctor_op, *type_info->getStructInfo());
 									finalizeConstructorCallOp(default_ctor_op, *type_info->getStructInfo(), decl.identifier_token());
 									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(default_ctor_op), decl.identifier_token()));
@@ -3306,6 +3380,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							// Create constructor call with the declared variable as the object
 							ConstructorCallOp ctor_op;
 							ctor_op.object = local_var_id;
+							ctor_op.use_nrvo_slot = is_nrvo_candidate;
 							ctor_op.resolved_constructor = matching_ctor;
 
 							// Get constructor parameter types for reference handling
@@ -3619,6 +3694,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						const ConstructorDeclarationNode* selected_ctor = sema_selected_converting_ctor;
 						ConstructorCallOp ctor_op;
 						ctor_op.object = local_var_id;
+						ctor_op.use_nrvo_slot = is_nrvo_candidate;
 
 						// Add initializer as constructor parameter
 						{
@@ -3857,6 +3933,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									ConstructorCallOp ctor_op;
 									// For arrays, we need to specify the element to construct
 									ctor_op.object = local_var_id;
+									ctor_op.use_nrvo_slot = is_nrvo_candidate;
 									ctor_op.array_index = i;	 // Mark this as an array element constructor call
 
 									if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
@@ -3871,6 +3948,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								// Single object (non-array) - generate single constructor call
 								ConstructorCallOp ctor_op;
 								ctor_op.object = local_var_id;
+								ctor_op.use_nrvo_slot = is_nrvo_candidate;
 
 								if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 									const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();

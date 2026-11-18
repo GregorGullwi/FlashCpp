@@ -1826,6 +1826,7 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::clearFunctionTempVarMetadata() {
 	indirect_stack_info_.clear();
 	tempvar_indirect_stack_info_.clear();
+	nrvo_local_offsets_.clear();
 	current_function_tempvar_indirect_info_.clear();
 	for (size_t var_num : reference_temp_var_numbers_) {
 		GlobalTempVarMetadataStorage::instance().clearEntry(var_num);
@@ -5385,6 +5386,15 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		}
 	}
 
+	if (ctor_op.use_nrvo_slot) {
+		auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
+		if (return_slot_it == variable_scopes.back().variables.end()) {
+			throw InternalError("Constructor marked for NRVO has no hidden return slot");
+		}
+		object_offset = return_slot_it->second.offset;
+		object_is_pointer = true;
+	}
+
 	X64Register this_reg = getIntParamReg<TWriterClass>(0);
 
 	FLASH_LOG_FORMAT(Codegen, Debug,
@@ -7194,6 +7204,24 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 	bool is_initialized = op.initializer.has_value();
 
 	FLASH_LOG(Codegen, Debug, "handleVariableDecl: var='", declared_name_handle, "', is_reference=", is_reference, ", pointer_depth=", op.pointer_depth.value, ", offset=", var_info->offset, ", is_initialized=", is_initialized, ", type=", static_cast<int>(var_type));
+
+	if (!op.is_nrvo_candidate) {
+		nrvo_local_offsets_.erase(var_info->offset);
+	}
+	if (op.is_nrvo_candidate) {
+		auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
+		if (return_slot_it == variable_scopes.back().variables.end()) {
+			throw InternalError("NRVO variable has no hidden return slot");
+		}
+		setReferenceInfo(var_info->offset, op.type_index, op.size_in_bits.value, false, TempVar{0});
+		nrvo_local_offsets_.insert(var_info->offset);
+		X64Register pointer_reg = allocateRegisterWithSpilling();
+		emitMovFromFrame(pointer_reg, return_slot_it->second.offset);
+		auto store_ptr = generatePtrMovToFrame(pointer_reg, var_info->offset);
+		textSectionData.insert(textSectionData.end(), store_ptr.op_codes.begin(), store_ptr.op_codes.begin() + store_ptr.size_in_bytes);
+		regAlloc.release(pointer_reg);
+		return;
+	}
 
 	// Stack slots can be reused across disjoint scopes/catches. If a previous occupant
 	// of this slot was a reference, stale metadata would cause later by-value variables
@@ -9362,7 +9390,14 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 		const auto& ret_op = instruction.getTypedPayload<ReturnOp>();
 
 			// Void return - no value to return
-		if (!ret_op.return_value.has_value()) {
+		if (ret_op.reuses_return_slot && current_function_has_hidden_return_param_) {
+			auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
+			if (return_slot_it == variable_scopes.back().variables.end()) {
+				throw InternalError("NRVO return has no hidden return slot");
+			}
+			spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+			emitMovFromFrame(X64Register::RAX, return_slot_it->second.offset);
+		} else if (!ret_op.return_value.has_value()) {
 				// Fall through to epilogue generation below
 		} else {
 				// Return with value
@@ -14809,8 +14844,12 @@ void IrToObjConverter<TWriterClass>::handleAddressOf(const IrInstruction& instru
 		uint32_t reloc_offset = emitLeaRipRelative(target_reg);
 		pending_global_relocations_.push_back({reloc_offset, global_name_handle, IMAGE_REL_AMD64_REL32});
 	} else {
-			// Regular local variable - LEA RAX, [RBP + offset]
-		emitLeaFromFrame(target_reg, var_offset);
+		if (nrvo_local_offsets_.contains(var_offset)) {
+			emitMovFromFrame(target_reg, var_offset);
+		} else {
+				// Regular local variable - LEA RAX, [RBP + offset]
+			emitLeaFromFrame(target_reg, var_offset);
+		}
 	}
 
 		// Store the address to result_var (pointer is always 64-bit)
@@ -14894,7 +14933,7 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 	bool base_is_global = false;
 	StringHandle base_global_name;
 	// This describes which object is being addressed, independently of the slot's value type.
-	const bool base_is_indirect = op.base_storage == ValueStorage::ContainsAddress;
+	bool base_is_indirect = op.base_storage == ValueStorage::ContainsAddress;
 	if (std::holds_alternative<StringHandle>(op.base) || std::holds_alternative<LocalVarId>(op.base)) {
 		// Variable name or local id - look up its stack offset
 		const VariableKey base_key = variableKeyOf(op.base).value();
@@ -14909,11 +14948,17 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 			}
 		} else {
 			base_offset = info->offset;
+			if (nrvo_local_offsets_.contains(base_offset)) {
+				base_is_indirect = true;
+			}
 		}
 	} else {
 		// TempVar - get its stack offset
 		TempVar base_temp = std::get<TempVar>(op.base);
 		base_offset = getStackOffsetFromTempVar(base_temp);
+		if (nrvo_local_offsets_.contains(base_offset)) {
+			base_is_indirect = true;
+		}
 	}
 
 	if (base_is_global) {
