@@ -145,6 +145,8 @@ LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNod
 		info.return_type_index = ret_type_node.type_index().withCategory(ret_type_node.type());
 		info.return_size = ret_type_node.size_in_bits();
 		info.return_pointer_depth = static_cast<int>(ret_type_node.runtime_pointer_depth());
+		info.return_type_specifier = ret_type_node;
+		info.has_return_type_specifier = true;
 		if (ret_type_node.runtime_pointer_depth() > 0) {
 			info.return_value_mode |= ReturnValueMode::Pointer;
 		}
@@ -673,11 +675,7 @@ void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
 		if (struct_info) {
 			// Create a FunctionDeclarationNode for operator()
 			// We need this so member function calls can generate the correct mangled name
-			TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()),
-										   lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, lambda_info.return_ref_qualifier);
-			if (!lambda_info.returnsReference()) {
-				return_type_node.add_pointer_levels(lambda_info.return_pointer_depth);
-			}
+			TypeSpecifierNode return_type_node = lambda_info.makeReturnTypeNode();
 			ASTNode return_type_ast = ASTNode::emplace_node<TypeSpecifierNode>(return_type_node);
 
 			Token operator_token = lambda_info.lambda_token;	 // Use lambda token as placeholder
@@ -737,10 +735,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 	func_decl_op.returns_rvalue_reference = lambda_info.return_ref_qualifier == ReferenceQualifier::RValueReference;
 
 	// Build TypeSpecifierNode for return type (with proper type_index if struct)
-	TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()), lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, lambda_info.return_ref_qualifier);
-	if (!lambda_info.returnsReference()) {
-		return_type_node.add_pointer_levels(lambda_info.return_pointer_depth);
-	}
+	TypeSpecifierNode return_type_node = lambda_info.makeReturnTypeNode();
 
 	// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
 	// Only non-pointer, non-reference struct returns need this
@@ -900,10 +895,7 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 	func_decl_op.returns_rvalue_reference = lambda_info.return_ref_qualifier == ReferenceQualifier::RValueReference;
 
 	// Build TypeSpecifierNode for return type (with proper type_index if struct)
-	TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()), lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, lambda_info.return_ref_qualifier);
-	if (!lambda_info.returnsReference()) {
-		return_type_node.add_pointer_levels(lambda_info.return_pointer_depth);
-	}
+	TypeSpecifierNode return_type_node = lambda_info.makeReturnTypeNode();
 
 	bool needs_hidden_return_param = needsHiddenReturnParam(return_type_node, context_->isLLP64());
 	func_decl_op.has_hidden_return_param = needs_hidden_return_param;
