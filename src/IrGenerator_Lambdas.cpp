@@ -653,6 +653,15 @@ void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
 	// 2. __invoke - static function that can be used as function pointer (only for non-capturing lambdas)
 	// 3. conversion operator - returns pointer to __invoke (only for non-capturing lambdas)
 
+	const StringHandle saved_function_name = current_function_name_;
+	const StringHandle saved_function_mangled_name = current_function_mangled_name_;
+	ScopeGuard restore_function_names([this, saved_function_name, saved_function_mangled_name]() {
+		current_function_name_ = saved_function_name;
+		current_function_mangled_name_ = saved_function_mangled_name;
+	});
+	current_function_name_ = StringTable::getOrInternStringHandle(lambda_info.operator_call_name);
+	current_function_mangled_name_ = current_function_name_;
+
 	// Generate operator() member function
 	generateLambdaOperatorCallFunction(lambda_info);
 
@@ -727,7 +736,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 	func_decl_op.function_name = StringTable::getOrInternStringHandle("operator()"sv);  // Phase 4: Variant needs explicit type
 	func_decl_op.struct_name = StringTable::getOrInternStringHandle(lambda_info.closure_type_name);	// Phase 4: Variant needs explicit type
 	func_decl_op.return_type_index = lambda_info.return_type_index;
-	func_decl_op.return_size_in_bits = SizeInBits{lambda_info.return_size};
+	func_decl_op.return_size_in_bits = SizeInBits{lambda_info.abiReturnSize()};
 	func_decl_op.return_pointer_depth = PointerDepth{lambda_info.return_pointer_depth};
 	func_decl_op.linkage = Linkage::None;  // C++ linkage
 	func_decl_op.is_variadic = false;
@@ -836,7 +845,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 	// Set current function return type and size for type checking in return statements
 	// This is critical for lambdas returning other lambdas or structs
 	current_function_return_type_index_ = lambda_info.return_type_index;
-	current_function_return_size_ = lambda_info.return_size;
+	current_function_return_size_ = lambda_info.abiReturnSize();
 	current_function_return_value_mode_ = lambda_info.return_value_mode;
 
 	// Set lambda context for captured variable access
@@ -887,7 +896,7 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 	func_decl_op.function_name = StringTable::getOrInternStringHandle(lambda_info.invoke_name);	// Variant needs explicit type
 	func_decl_op.struct_name = StringHandle();  // no struct name (static function)
 	func_decl_op.return_type_index = lambda_info.return_type_index;
-	func_decl_op.return_size_in_bits = SizeInBits{lambda_info.return_size};
+	func_decl_op.return_size_in_bits = SizeInBits{lambda_info.abiReturnSize()};
 	func_decl_op.return_pointer_depth = PointerDepth{lambda_info.return_pointer_depth};
 	func_decl_op.linkage = Linkage::None;  // C++ linkage
 	func_decl_op.is_variadic = false;
@@ -977,7 +986,7 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 	// Set current function return type and size for type checking in return statements
 	// This is critical for lambdas returning other lambdas or structs
 	current_function_return_type_index_ = lambda_info.return_type_index;
-	current_function_return_size_ = lambda_info.return_size;
+	current_function_return_size_ = lambda_info.abiReturnSize();
 	current_function_return_value_mode_ = lambda_info.return_value_mode;
 
 		// Add lambda parameters to symbol table as function parameters (__invoke context).

@@ -518,6 +518,20 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			}
 			emitted_static_members_.insert(var_name);
 		}
+		auto record_static_local = [&]() {
+			StaticLocalInfo info;
+			info.mangled_name = var_name;
+			info.size_in_bits = SizeInBits{type_node.size_in_bits()};
+			TypeCategory semantic_type = resolve_type_alias(type_node.type_index());
+			info.type_index = carriesSemanticTypeIndex(semantic_type)
+				? type_node.type_index()
+				: nativeTypeIndex(semantic_type);
+			static_local_names_[decl.identifier_token().handle()] = info;
+		};
+		if (is_static_local && !emitted_static_locals_.insert(var_name).second) {
+			record_static_local();
+			return;
+		}
 
 			// Store mapping from simple name to mangled name for later lookups
 			// This is needed for anonymous namespace variables
@@ -1462,16 +1476,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		}
 			// (The parser already added it to the symbol table)
 		if (is_static_local) {
-			StaticLocalInfo info;
-			info.mangled_name = var_name;  // Phase 4: Using StringHandle directly
-			info.size_in_bits = SizeInBits{type_node.size_in_bits()};
-			TypeCategory semantic_type = resolve_type_alias(type_node.type_index());
-			info.type_index = carriesSemanticTypeIndex(semantic_type)
-				? type_node.type_index()
-				: nativeTypeIndex(semantic_type);
-				// Phase 4: Using StringHandle for key
-			StringHandle key = decl.identifier_token().handle();
-			static_local_names_[key] = info;
+			record_static_local();
 		}
 
 		return;
