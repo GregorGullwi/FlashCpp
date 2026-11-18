@@ -1367,19 +1367,34 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		return substituted_initializer.has_value();
 	};
 
+	bool structural_initializer_accepted = false;
 	if (lazy_info.needs_substitution) {
-		const bool requires_replay_metadata =
-			static_initializer_requires_replay_metadata(
-				lazy_info.initializer,
-				std::span<const TemplateParameterNode>(
-					lazy_info.template_params.data(),
-					lazy_info.template_params.size()));
-		if (!requires_replay_metadata || !try_reparse_lazy_static_initializer()) {
+		const std::span<const TemplateParameterNode> lazy_param_span(lazy_info.template_params.data(), lazy_info.template_params.size());
+		const bool requires_replay_metadata = static_initializer_requires_replay_metadata(lazy_info.initializer, lazy_param_span);
+		if (requires_replay_metadata) {
+			const DeclarationNode* structural_member_declaration = nullptr;
+			if (lazy_info.declaration.has_value()) {
+				structural_member_declaration = get_decl_from_symbol(*lazy_info.declaration);
+			}
+			try {
+				std::optional<ASTNode> structural_initializer = substitute_static_member_initializer_structurally(
+					lazy_info.initializer, lazy_param_span, std::span<const TemplateTypeArg>(lazy_info.template_args.data(), lazy_info.template_args.size()),
+					instantiated_class_name, type_it->second->type_index_.withCategory(TypeCategory::Struct), struct_info->declaration_node, struct_info,
+					structural_member_declaration, struct_info->getNamespaceHandle(), lazy_info.definition_lookup_context);
+				if (structural_initializer.has_value() && !static_initializer_has_residual_template_dependency(*structural_initializer, lazy_param_span)) {
+					substituted_initializer = structural_initializer;
+					structural_initializer_accepted = true;
+				}
+			} catch (const std::exception& ex) {
+				FLASH_LOG(Templates, Trace, "Structural static initializer substitution failed: ", ex.what());
+			}
+		}
+		if (!structural_initializer_accepted && (!requires_replay_metadata || !try_reparse_lazy_static_initializer())) {
 			substituted_initializer = lazy_info.initializer;
 		}
 	}
 
-	if (lazy_info.needs_substitution && lazy_info.initializer.has_value() &&
+	if (!structural_initializer_accepted && lazy_info.needs_substitution && lazy_info.initializer.has_value() &&
 		lazy_info.initializer->is<ExpressionNode>()) {
 		const ExpressionNode& expr = lazy_info.initializer->as<ExpressionNode>();
 		const auto& template_params = lazy_template_params_inline;

@@ -4350,6 +4350,13 @@ private:	 // Resume private methods
 	static bool static_initializer_requires_replay_metadata(
 		const std::optional<ASTNode>& initializer,
 		std::span<const TemplateParameterNode> template_params_for_substitution);
+	bool static_initializer_has_residual_template_dependency(const ASTNode& initializer,
+		std::span<const TemplateParameterNode> template_params_for_substitution) const;
+	std::optional<ASTNode> substitute_static_member_initializer_structurally(const std::optional<ASTNode>& initializer,
+		std::span<const TemplateParameterNode> template_params_for_substitution, std::span<const TemplateTypeArg> template_args_for_substitution,
+		StringHandle owning_instantiated_name, TypeIndex owning_type_index, const StructDeclarationNode* owning_declaration,
+		StructTypeInfo* owning_struct_info, const DeclarationNode* member_declaration, NamespaceHandle fallback_definition_namespace,
+		const TemplateDefinitionLookupContext& member_definition_lookup_context);
 
 	// Get pack size from pack_param_info_ (more reliable than count_pack_elements during nested instantiation)
 	// Returns std::nullopt if pack name is not found (unknown pack)
