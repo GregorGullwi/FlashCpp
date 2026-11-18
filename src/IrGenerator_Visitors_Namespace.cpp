@@ -802,8 +802,12 @@ return_conversion_done:
 			// Mark the temp as a return value for potential NRVO analysis
 			markTempVarAsReturnValue(*return_temp);
 		}
+		bool returns_rvo_candidate = false;
+		if (const auto* return_temp = std::get_if<TempVar>(&return_value); return_temp != nullptr) {
+			returns_rvo_candidate = isTempVarConstructedInReturnSlot(*return_temp);
+		}
 		// Use the function's return type, not the expression type
-		emit_return_slot_return_ = returns_nrvo_candidate;
+		emit_return_slot_return_ = returns_nrvo_candidate || returns_rvo_candidate;
 		emitReturn(return_value, currentFunctionReturnTypeIndex(), current_function_return_size_,
 				   node.return_token(), operands.storage);
 	} else {

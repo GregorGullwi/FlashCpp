@@ -4352,13 +4352,14 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 											.append(formatTokenLocationSuffix(constructorCallNode.called_from()))
 											.commit()));
 	}
+	const bool constructed_in_return_slot = ctor_op.use_return_slot;
 	finalizeConstructorCallOp(ctor_op, *struct_info, constructorCallNode.called_from());
 	ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), constructorCallNode.called_from()));
 
 	// Mark the result as a prvalue eligible for RVO (C++17 mandatory copy elision)
 	// Constructor calls always produce prvalues, which are eligible for copy elision
 	// when returned from a function
-	setTempVarMetadata(ret_var, TempVarMetadata::makeRVOEligiblePRValue());
+	setTempVarMetadata(ret_var, constructed_in_return_slot ? TempVarMetadata::makeReturnSlotPRValue() : TempVarMetadata::makeRVOEligiblePRValue());
 
 	FLASH_LOG_FORMAT(Codegen, Debug,
 					 "Marked constructor call result {} as RVO-eligible prvalue", ret_var.var_number);

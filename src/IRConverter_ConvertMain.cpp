@@ -5284,40 +5284,6 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 	int object_offset = 0;
 	bool object_is_pointer = false;	// Declare early so RVO branch can set it
 
-		// If using return slot (RVO), get offset from return_slot_offset or look up __return_slot
-	if (ctor_op.use_return_slot) {
-		if (ctor_op.return_slot_offset.has_value()) {
-			object_offset = ctor_op.return_slot_offset.value();
-		} else {
-				// Look up __return_slot in the variables map
-			auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
-			if (return_slot_it != variable_scopes.back().variables.end()) {
-					// __return_slot holds the address where we should construct
-					// Load this address into RDI for the constructor call
-				int return_slot_param_offset = return_slot_it->second.offset;
-				X64Register dest_reg = X64Register::RDI;
-				emitMovFromFrame(dest_reg, return_slot_param_offset);
-
-					// Store the address in a temp location so we can use it as object_offset
-					// Actually, we'll pass it differently - set object_is_pointer flag
-				object_offset = return_slot_param_offset;
-				object_is_pointer = true;  // The offset holds a pointer to where object should be
-
-				FLASH_LOG_FORMAT(Codegen, Debug,
-								 "Constructor using RVO: loading return slot address from __return_slot at offset {}",
-								 return_slot_param_offset);
-			} else {
-				FLASH_LOG(Codegen, Error,
-						  "Constructor marked for RVO but __return_slot not found in variables");
-					// Fall through to regular handling
-			}
-		}
-
-		FLASH_LOG_FORMAT(Codegen, Debug,
-						 "Constructor using return slot (RVO) at offset {}",
-						 object_offset);
-	}
-
 	const ConstructorDeclarationNode* actual_ctor = ctor_op.resolved_constructor;
 	auto resolveConstructorTargetTypeInfo = [&]() -> const TypeInfo* {
 		if (ctor_op.target_type_index.is_valid()) {
@@ -5386,13 +5352,18 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		}
 	}
 
-	if (ctor_op.use_nrvo_slot) {
-		auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
-		if (return_slot_it == variable_scopes.back().variables.end()) {
-			throw InternalError("Constructor marked for NRVO has no hidden return slot");
+	if (ctor_op.use_return_slot) {
+		if (ctor_op.return_slot_offset.has_value()) {
+			object_offset = ctor_op.return_slot_offset.value();
+			object_is_pointer = false;
+		} else {
+			auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
+			if (return_slot_it == variable_scopes.back().variables.end()) {
+				throw InternalError("Constructor marked for return-slot construction has no hidden return slot");
+			}
+			object_offset = return_slot_it->second.offset;
+			object_is_pointer = true;
 		}
-		object_offset = return_slot_it->second.offset;
-		object_is_pointer = true;
 	}
 
 	X64Register this_reg = getIntParamReg<TWriterClass>(0);

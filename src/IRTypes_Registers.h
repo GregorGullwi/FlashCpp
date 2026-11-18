@@ -217,6 +217,7 @@ struct TempVarMetadata {
 	// which includes function returns, direct initialization, and other contexts
 	bool is_return_value = false;		  // True if this is a return value (for RVO detection)
 	bool eligible_for_rvo = false;	   // True if this prvalue can be constructed directly in destination
+	bool constructed_in_return_slot = false; // True if a constructor wrote this prvalue into the hidden return slot
 	bool eligible_for_nrvo = false;		// True if this named variable can use NRVO
 
 	// Fields previously tracked in IndirectStorageInfo (for reference/pointer dereferencing)
@@ -268,6 +269,12 @@ struct TempVarMetadata {
 		TempVarMetadata meta;
 		meta.category = ValueCategory::PRValue;
 		meta.eligible_for_rvo = true;
+		return meta;
+	}
+
+	static TempVarMetadata makeReturnSlotPRValue() {
+		TempVarMetadata meta = makeRVOEligiblePRValue();
+		meta.constructed_in_return_slot = true;
 		return meta;
 	}
 
