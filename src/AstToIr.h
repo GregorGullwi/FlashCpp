@@ -115,11 +115,13 @@ private:
 		PointerDepth pointer_depth;							// Pointer depth of final result
 	};
 
+	enum class DestructorSkip : uint8_t { None, OnSuccessfulReturn };
+
 	struct ScopeVariableInfo {
 		VariableKey variable_key;
 		StringHandle struct_name;
+		DestructorSkip skip = DestructorSkip::None;
 	};
-
 
 	struct FullExpressionTempDestructorInfo {
 		StringHandle struct_name;
@@ -264,6 +266,7 @@ private:
 	void emitPendingFunctionCleanupLP(const Token& token);
 
 	void registerVariableWithDestructor(VariableKey variable_key, StringHandle struct_name);
+	void registerVariableWithDestructor(VariableKey variable_key, StringHandle struct_name, DestructorSkip skip);
 	void registerFullExpressionTempDestructor(StringHandle struct_name,
 											  std::variant<StringHandle, TempVar, LocalVarId> object,
 											  bool object_is_pointer = false);
@@ -1681,7 +1684,7 @@ private:
 	// Emit destructor calls for all local variables in scopes from the current innermost scope
 	// down to (but not including) target_depth, WITHOUT modifying scope_stack_.
 	// Used by break, continue, return, and goto to ensure destructors run before non-local jumps.
-	void emitDestructorsForNonLocalExit(size_t target_depth);
+	void emitDestructorsForNonLocalExit(size_t target_depth, DestructorSkip skip);
 
 	// Per-function map from label name → scope_stack_.size() when the label is defined.
 	// Populated by prescanLabels() before visiting a function body; cleared at each new function.

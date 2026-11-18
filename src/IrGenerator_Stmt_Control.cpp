@@ -1367,7 +1367,7 @@ void AstToIr::visitBreakStatementNode(const BreakStatementNode& node) {
 		// Emit destructor calls for all local variables in scopes between the current
 		// position and the enclosing loop scope before jumping to the loop exit.
 	if (!loop_depth_stack_.empty()) {
-		emitDestructorsForNonLocalExit(loop_depth_stack_.back().scope_depth);
+		emitDestructorsForNonLocalExit(loop_depth_stack_.back().scope_depth, DestructorSkip::None);
 	}
 		// Generate Break IR instruction (no operands - uses loop context stack in IRConverter)
 	ir_.addInstruction(IrOpcode::Break, {}, node.break_token());
@@ -1379,7 +1379,7 @@ void AstToIr::visitContinueStatementNode(const ContinueStatementNode& node) {
 		// Emit destructor calls for all local variables in scopes between the current
 		// position and the enclosing loop scope before jumping to the loop increment.
 	if (!loop_depth_stack_.empty()) {
-		emitDestructorsForNonLocalExit(loop_depth_stack_.back().scope_depth);
+		emitDestructorsForNonLocalExit(loop_depth_stack_.back().scope_depth, DestructorSkip::None);
 	}
 		// Generate Continue IR instruction (no operands - uses loop context stack in IRConverter)
 	ir_.addInstruction(IrOpcode::Continue, {}, node.continue_token());
@@ -1392,7 +1392,7 @@ void AstToIr::visitGotoStatementNode(const GotoStatementNode& node) {
 		// so both forward and backward gotos are handled.
 	auto it = label_scope_depth_map_.find(target_label);
 	if (it != label_scope_depth_map_.end()) {
-		emitDestructorsForNonLocalExit(it->second);
+		emitDestructorsForNonLocalExit(it->second, DestructorSkip::None);
 	}
 		// Generate Branch IR instruction (unconditional jump)
 	ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = target_label}, node.goto_token()));
