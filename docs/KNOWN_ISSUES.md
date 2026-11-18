@@ -241,6 +241,14 @@ supplies the array or when subscripts are combined across dimensions.
 Rows of `T* rows[M][N]` still decay with the pointer stride instead of the
 row stride. Copying a row pointer into a named pointer first is unaffected.
 
+## Address-of a by-reference lambda capture
+
+Taking the address of a by-reference capture, as in
+`[&value]() { return &value; }`, fails during IR generation with
+"Base variable not found in scope for ComputeAddress". The capture is stored as
+a pointer inside the closure, so address-of should reuse that pointer rather
+than looking up the original local in the enclosing function.
+
 ## Constexpr namespace-scope pointer dereference is not yet supported
 
 Global constexpr pointer targets now carry the source declaration and evaluate
