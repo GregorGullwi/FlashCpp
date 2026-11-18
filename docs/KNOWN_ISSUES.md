@@ -244,10 +244,7 @@ row stride. Copying a row pointer into a named pointer first is unaffected.
 ## Pointer-returning lambdas and overloaded unary dereference in member access
 
 A lambda that deduces a pointer return type without a trailing return
-clause emits an unresolved `operator()` symbol at link time. Grouped
-pointer-to-array trailing returns such as `[]() -> int (*)[4]` still fail before
-the body because the trailing-return parser only consumes bare pointer/reference
-modifiers.
+clause emits an unresolved `operator()` symbol at link time.
 
 Member access through an overloaded unary `operator*` is lowered as a built-in
 dereference. For `(*wrapper)->member`, where `wrapper` defines `operator*`

@@ -456,9 +456,10 @@ remaining pattern schemas by identity, and remove the name fallback.
      pointer arithmetic, pointer subscripts, and direct dereference of pointer
      variables initialized from arrays evaluate. Other flat readers still need
      migration before the projection fields can be removed.
-   - Lambda trailing return types now consume pointer and reference
-     declarator modifiers with the same helper as function trailing returns,
-     so `[]() -> int*` reaches the body instead of failing at the brace.
+   - Lambda and function trailing return types now consume pointer, reference,
+     and grouped pointer-to-array abstract declarators with the shared type-id
+     helper, so `[]() -> int*` and `-> int (*)[4]` reach the body instead of
+     failing at the brace.
    - Class-scope using-declarations now retain their target base and member
      spelling on `StructDeclarationNode` and copy that metadata into
      instantiated class declarations. The source base-declaration ordinal
