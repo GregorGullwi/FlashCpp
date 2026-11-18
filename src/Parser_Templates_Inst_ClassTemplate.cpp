@@ -8955,7 +8955,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			TypeIndex struct_type_index,
 			StructTypeInfo* instantiated_struct_info) {
 		member_function_context_stack_.push_back(
-			{instantiated_class_name, struct_type_index, nullptr, instantiated_struct_info, false});
+			{instantiated_class_name, struct_type_index,
+			 instantiated_struct_info != nullptr ? instantiated_struct_info->declaration_node : nullptr,
+			 instantiated_struct_info, false});
 		return ScopeGuard([this]() {
 			if (!member_function_context_stack_.empty()) {
 				member_function_context_stack_.pop_back();
@@ -9103,6 +9105,27 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 		const auto names_parameter = [&parameter_names](StringHandle name) {
 			return parameter_names.contains(name);
 		};
+		const auto qualified_id_has_dependency = [](const QualifiedIdentifierNode& qualified) {
+			if (qualified.hasDependentQualifiedName()) {
+				return true;
+			}
+			const std::string_view owner_name =
+				gNamespaceRegistry.getQualifiedName(qualified.namespace_handle());
+			if (owner_name.empty()) {
+				return false;
+			}
+			const auto owner_it = getTypesByNameMap().find(
+				StringTable::getOrInternStringHandle(owner_name));
+			if (owner_it == getTypesByNameMap().end()) {
+				return owner_name.find('$') != std::string_view::npos;
+			}
+			const StructTypeInfo* owner_struct = owner_it->second->getStructInfo();
+			return owner_struct != nullptr && !owner_struct->hasCompleteObjectLayout();
+		};
+		const auto call_has_dependency = [](const CallExprNode& call) {
+			return call.has_dependent_qualified_lookup_record() ||
+				getParserStoredDirectCallTarget(call) == nullptr;
+		};
 		const auto expression_has_dependency = [&](const ExpressionNode& expression) {
 			if (std::holds_alternative<FoldExpressionNode>(expression) ||
 				std::holds_alternative<SizeofPackNode>(expression) ||
@@ -9112,11 +9135,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			if (const auto* identifier = std::get_if<IdentifierNode>(&expression); identifier != nullptr && names_parameter(identifier->nameHandle())) {
 				return true;
 			}
-			if (std::holds_alternative<QualifiedIdentifierNode>(expression)) {
-				return true;
+			if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&expression)) {
+				return qualified_id_has_dependency(*qualified);
 			}
 			if (const auto* call = std::get_if<CallExprNode>(&expression)) {
-				return call->has_dependent_qualified_lookup_record() || call->dependent_unqualified_lookup_record().has_value();
+				return call_has_dependency(*call);
 			}
 			return false;
 		};
@@ -9128,11 +9151,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 				return true;
 			}
 			if (node.is<QualifiedIdentifierNode>()) {
-				return true;
+				return qualified_id_has_dependency(node.as<QualifiedIdentifierNode>());
 			}
 			if (node.is<CallExprNode>()) {
-				const CallExprNode& call = node.as<CallExprNode>();
-				return call.has_dependent_qualified_lookup_record() || call.dependent_unqualified_lookup_record().has_value();
+				return call_has_dependency(node.as<CallExprNode>());
 			}
 			return node.is<ExpressionNode>() && expression_has_dependency(node.as<ExpressionNode>());
 		});
