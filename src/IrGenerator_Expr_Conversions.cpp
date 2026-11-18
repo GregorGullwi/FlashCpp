@@ -1025,15 +1025,25 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 	}
 
 	if (unaryOperatorNode.op() == "*" && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
-		if (const FunctionDeclarationNode* resolved_deref =
-				sema_.getResolvedUnaryDereferenceOperator(&unaryOperatorNode)) {
-			ChunkedVector<ASTNode> member_args;
-			CallExprNode member_call = makeResolvedMemberCallExpr(
-				unaryOperatorNode.get_operand(),
-				*resolved_deref,
-				std::move(member_args),
+		if (const SemanticAnalysis::ResolvedUnaryOperatorCall* resolved_deref =
+				sema_.getResolvedUnaryDereferenceOperator(&unaryOperatorNode);
+			resolved_deref != nullptr && resolved_deref->function != nullptr) {
+			if (resolved_deref->is_member) {
+				ChunkedVector<ASTNode> member_args;
+				CallExprNode member_call = makeResolvedMemberCallExpr(
+					unaryOperatorNode.get_operand(),
+					*resolved_deref->function,
+					std::move(member_args),
+					unaryOperatorNode.get_token());
+				return generateMemberFunctionCallIr(member_call, context);
+			}
+			ChunkedVector<ASTNode> free_args;
+			free_args.push_back(unaryOperatorNode.get_operand());
+			CallExprNode free_call = makeResolvedCallExpr(
+				*resolved_deref->function,
+				std::move(free_args),
 				unaryOperatorNode.get_token());
-			return generateMemberFunctionCallIr(member_call, context);
+			return generateFunctionCallIr(free_call, context, &unaryOperatorNode);
 		}
 	}
 

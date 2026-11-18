@@ -2982,6 +2982,7 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 		return;
 	}
 
+	bool body_already_normalized = false;
 	if (lambda_info.is_generic) {
 		if (lambda_info.normalized_deduced_auto_types_generation == lambda_info.deduced_auto_types_generation) {
 			return;
@@ -2993,9 +2994,16 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 	} else {
 		const void* non_generic_body_key = lambda_info.lambda_body.raw_pointer();
 		if (normalized_ast_nodes_.count(non_generic_body_key) > 0) {
-			return;
+			// A deduced return type can still be a placeholder even after the body
+			// was normalized (for example `return &value;`). Keep going so sema
+			// can deduce the actual return type, but do not normalize the body twice.
+			body_already_normalized = true;
+			if (!isPlaceholderAutoType(lambda_info.return_type_index.category())) {
+				return;
+			}
+		} else {
+			normalized_ast_nodes_.insert(non_generic_body_key);
 		}
-		normalized_ast_nodes_.insert(non_generic_body_key);
 	}
 
 	const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
@@ -3047,11 +3055,11 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 			}
 		}
 	}
-
 	if (isPlaceholderAutoType(lambda_info.return_type_index.category())) {
 		if (auto deduced_type = deducePlaceholderReturnType(lambda_info.lambda_body, lambda_info.returnType());
 			deduced_type.has_value()) {
 			lambda_info.return_type_index = deduced_type->type_index().withCategory(deduced_type->type());
+			lambda_info.return_pointer_depth = static_cast<int>(deduced_type->runtime_pointer_depth());
 			lambda_info.return_value_mode = ReturnValueMode::None;
 			if (deduced_type->pointer_depth() > 0) {
 				lambda_info.return_value_mode |= ReturnValueMode::Pointer;
@@ -3082,7 +3090,9 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 		}
 		lambda_ctx.current_function_return_type_id = canonicalizeType(lambda_return_type);
 	}
-	normalizeStatement(lambda_info.lambda_body, lambda_ctx);
+	if (!body_already_normalized) {
+		normalizeStatement(lambda_info.lambda_body, lambda_ctx);
+	}
 	if (lambda_info.is_generic) {
 		normalized_ast_nodes_.insert(lambda_info.lambda_body.raw_pointer());
 	}
@@ -7564,9 +7574,10 @@ void SemanticAnalysis::ensureCallableOperatorResolved(const CallExprNode& call_n
 	}
 }
 
-const FunctionDeclarationNode* SemanticAnalysis::getResolvedUnaryDereferenceOperator(const UnaryOperatorNode* key) const {
+const SemanticAnalysis::ResolvedUnaryOperatorCall* SemanticAnalysis::getResolvedUnaryDereferenceOperator(
+	const UnaryOperatorNode* key) const {
 	auto it = op_unary_deref_table_.find(key);
-	return it != op_unary_deref_table_.end() ? it->second : nullptr;
+	return it != op_unary_deref_table_.end() ? &it->second : nullptr;
 }
 
 const SemanticAnalysis::ResolvedUnaryOperatorCall*
@@ -10456,8 +10467,9 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return type_context_.intern(result_desc);
 				}
 				if (op == "*") {
-					if (const FunctionDeclarationNode* resolved_deref = getResolvedUnaryDereferenceOperator(&e)) {
-						const ASTNode resolved_return_type = resolved_deref->decl_node().type_node();
+					if (const ResolvedUnaryOperatorCall* resolved_deref = getResolvedUnaryDereferenceOperator(&e);
+						resolved_deref != nullptr && resolved_deref->function != nullptr) {
+						const ASTNode resolved_return_type = resolved_deref->function->decl_node().type_node();
 						if (resolved_return_type.has_value() && resolved_return_type.is<TypeSpecifierNode>()) {
 							return canonicalizeType(resolved_return_type.as<TypeSpecifierNode>());
 						}
@@ -14008,22 +14020,50 @@ void SemanticAnalysis::tryResolveUnaryDereferenceOperator(const UnaryOperatorNod
 	}
 
 	TypeSpecifierNode object_type = materializeTypeSpecifier(object_desc);
-	const FunctionDeclarationNode* best_match =
+	const FunctionDeclarationNode* range_iterator_deref =
 		getRangeIteratorDereferenceFunctionForSema(object_type, object_desc.base_cv == CVQualifier::Const);
-	if (!best_match) {
+	if (range_iterator_deref != nullptr) {
+		if (const TypeInfo* receiver_type_info = tryGetTypeInfo(object_desc.type_index); receiver_type_info && receiver_type_info->isStruct()) {
+			markLazyReceiverMemberOdrUsed(receiver_type_info, range_iterator_deref->parent_struct_name(), *range_iterator_deref);
+		}
+		ResolvedUnaryOperatorCall resolved{range_iterator_deref, true};
+		op_unary_deref_table_[&unary_node] = resolved;
+		stats_.op_calls_resolved++;
+		return;
+	}
+
+	const std::optional<TypeSpecifierNode> operand_type = getOverloadResolutionArgType(unary_node.get_operand());
+	if (!operand_type.has_value()) {
+		op_unary_deref_table_.erase(&unary_node);
+		return;
+	}
+	const OperatorOverloadResult resolution =
+		findUnaryOperatorOverloadWithFreeFunction(*operand_type, OverloadableOperator::Multiply, symbols_);
+	if (resolution.is_ambiguous) {
+		throw makeStructuredCompileError(context_.diagnostics(), DiagnosticId::AmbiguousOperatorOverload, DiagnosticSeverity::Error,
+			SourceLocation::fromToken(unary_node.get_token()), "Ambiguous overload for unary operator*", {});
+	}
+	if (!resolution.has_match) {
 		op_unary_deref_table_.erase(&unary_node);
 		return;
 	}
 
-	if (const TypeInfo* receiver_type_info = tryGetTypeInfo(object_desc.type_index);
-		receiver_type_info && receiver_type_info->isStruct()) {
-		markLazyReceiverMemberOdrUsed(
-			receiver_type_info,
-			best_match->parent_struct_name(),
-			*best_match);
+	ResolvedUnaryOperatorCall resolved;
+	resolved.is_member = !resolution.is_free_function;
+	if (resolved.is_member) {
+		if (resolution.member_overload == nullptr || !resolution.member_overload->function_decl.is<FunctionDeclarationNode>()) {
+			throw InternalError("Selected unary operator* member lacks its function declaration");
+		}
+		markResolvedOperatorOverloadOdrUsed(*resolution.member_overload);
+		resolved.function = &resolution.member_overload->function_decl.as<FunctionDeclarationNode>();
+	} else {
+		resolved.function = resolution.free_function_overload;
 	}
-
-	op_unary_deref_table_[&unary_node] = best_match;
+	if (resolved.function == nullptr) {
+		op_unary_deref_table_.erase(&unary_node);
+		return;
+	}
+	op_unary_deref_table_[&unary_node] = resolved;
 	stats_.op_calls_resolved++;
 }
 

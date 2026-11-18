@@ -373,11 +373,11 @@ public:
 	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
 	void ensureCallableOperatorResolved(const CallExprNode& call_node);
 	ResolvedFunctionQueryResult getResolvedOpSubscriptQuery(const ArraySubscriptNode* key) const;
-	const FunctionDeclarationNode* getResolvedUnaryDereferenceOperator(const UnaryOperatorNode* key) const;
 	struct ResolvedUnaryOperatorCall {
 		const FunctionDeclarationNode* function = nullptr;
 		bool is_member = false;
 	};
+	const ResolvedUnaryOperatorCall* getResolvedUnaryDereferenceOperator(const UnaryOperatorNode* key) const;
 	const ResolvedUnaryOperatorCall* getResolvedUnaryAddressOfOperator(const UnaryOperatorNode* key) const;
 	void ensureUnaryAddressOfOperatorResolved(const UnaryOperatorNode& unary_node);
 	void ensureUnaryArithmeticOperatorResolved(const UnaryOperatorNode& unary_node);
@@ -913,7 +913,7 @@ private:
 	// Side table: call-expression pointer -> resolved operator() declaration.
 	// Populated by tryResolveCallableOperator for struct-typed callable objects.
 	std::unordered_map<const void*, const FunctionDeclarationNode*> op_call_table_;
-	std::unordered_map<const UnaryOperatorNode*, const FunctionDeclarationNode*> op_unary_deref_table_;
+	std::unordered_map<const UnaryOperatorNode*, ResolvedUnaryOperatorCall> op_unary_deref_table_;
 	std::unordered_map<const UnaryOperatorNode*, ResolvedUnaryOperatorCall> op_unary_address_table_;
 	struct PendingMemberFunctionAddress {
 		const StructTypeInfo* owner = nullptr;
