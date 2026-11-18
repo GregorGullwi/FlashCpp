@@ -228,8 +228,6 @@ expression type and the parser should only consume it.
   not concrete.
 - Seed built-in subscript candidates from conversion templates whose return
   pointer or array-reference shape still depends on the template parameters.
-- Cover pointer-to-member and other non-object-pointer conversion targets with
-  the same template/non-template ranking.
 
 ## Array-reference conversion and subscript coverage
 

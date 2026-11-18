@@ -149,6 +149,13 @@ void applyResolvedSubstitutedTypeMetadata(
 			resolved_arg->ref_qualifier != ReferenceQualifier::None) {
 			target.set_reference_qualifier(resolved_arg->ref_qualifier);
 		}
+		if (resolved_arg->member_class_name.isValid()) {
+			target.set_member_class_name(resolved_arg->member_class_name);
+			tryBindPublishedMemberClassEntity(target);
+		}
+		if (!target.has_ordered_declarator() && !resolved_arg->ordered_declarator.empty()) {
+			target.set_ordered_declarator(resolved_arg->ordered_declarator);
+		}
 	}
 
 	if (source_type_index.is_valid()) {

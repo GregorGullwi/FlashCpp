@@ -331,6 +331,10 @@ remaining pattern schemas by identity, and remove the name fallback.
    trailing standard conversion rank, with the non-template preferred when the
    sequences are otherwise indistinguishable. Object-pointer targets use the
    same ranking, including templates that deduce a cv-qualified pointee.
+   Member-template return substitution now carries the pointer-to-member owner
+   identity and recovered ordered declarator into the instantiated result, so
+   member-object, member-function, and free-function pointer targets rank
+   through the canonical tail plan and prefer an exact non-template operator.
    Explicit conversion-function templates retain their explicit flag through
    member-template instantiation, so copy-initialization rejects them with the
    existing explicit-conversion diagnostic while `explicit(false)` remains
