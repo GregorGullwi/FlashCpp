@@ -156,6 +156,24 @@ void applyResolvedSubstitutedTypeMetadata(
 		if (!target.has_ordered_declarator() && !resolved_arg->ordered_declarator.empty()) {
 			target.set_ordered_declarator(resolved_arg->ordered_declarator);
 		}
+		if (!target.has_member_class()) {
+			for (const DeclaratorComponent& component : target.declarator_components()) {
+				if (component.kind != DeclaratorComponentKind::MemberObjectPointer &&
+					component.kind != DeclaratorComponentKind::MemberFunctionPointer) {
+					continue;
+				}
+				if (const EntityId owner_entity = component.memberOwnerEntity(); owner_entity) {
+					target.set_member_class_entity(owner_entity);
+					if (const TypeInfo* owner_info = tryFindTypeInfoByEntityId(owner_entity); owner_info != nullptr) {
+						target.set_member_class_name(owner_info->name());
+					}
+				}
+				if (const TypeId owner_type = component.memberOwnerType(); owner_type) {
+					target.set_member_class_type_id(owner_type);
+				}
+				break;
+			}
+		}
 	}
 
 	if (source_type_index.is_valid()) {

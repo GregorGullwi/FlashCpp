@@ -1598,6 +1598,10 @@ private:
 	// Track emitted static members to avoid duplicates
 	std::unordered_set<StringHandle> emitted_static_members_;
 
+	// Track emitted static local storage. A non-capturing lambda body is
+	// lowered for both operator() and __invoke, but its statics share one object.
+	std::unordered_set<StringHandle> emitted_static_locals_;
+
 	// Track processed TypeInfo pointers to avoid processing the same struct twice
 	// (same struct can be registered under multiple keys in getTypesByNameMap())
 	std::unordered_set<const TypeInfo*> processed_type_infos_;

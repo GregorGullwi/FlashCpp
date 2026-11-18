@@ -124,6 +124,9 @@ struct LambdaInfo {
 
 	TypeCategory returnType() const { return return_type_index.category(); }
 	bool returnsPointer() const { return hasReturnValueMode(return_value_mode, ReturnValueMode::Pointer); }
+	int abiReturnSize() const {
+		return (returnsPointer() || return_pointer_depth > 0 || returnsFunctionPointer()) ? 64 : return_size;
+	}
 	bool returnsReference() const { return hasReturnValueMode(return_value_mode, ReturnValueMode::Reference); }		// True if lambda returns a reference type (T& or T&&)
 	bool returnsFunctionPointer() const { return hasReturnValueMode(return_value_mode, ReturnValueMode::FunctionPointer); }
 	TypeSpecifierNode makeReturnTypeNode() const {
