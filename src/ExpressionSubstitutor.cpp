@@ -2104,6 +2104,7 @@ ExpressionSubstitutor::materializeDependentQualifiedMemberPrefixOwner(
 			}
 			materialized_prefix_chain.push_back(templated_member_access);
 
+			StringHandle instantiated_member_name;
 			if (std::optional<ASTNode> instantiated_member_template =
 					parser_.templateEngine().tryInstantiateClassTemplate(
 						qualified_owner_name,
@@ -2111,6 +2112,7 @@ ExpressionSubstitutor::materializeDependentQualifiedMemberPrefixOwner(
 						false);
 				instantiated_member_template.has_value() &&
 				instantiated_member_template->is<StructDeclarationNode>()) {
+				instantiated_member_name = instantiated_member_template->as<StructDeclarationNode>().name();
 				parser_.registerAndNormalizeLateMaterializedTopLevelNode(
 					*instantiated_member_template);
 			}
@@ -2121,8 +2123,10 @@ ExpressionSubstitutor::materializeDependentQualifiedMemberPrefixOwner(
 					std::span<const TemplateTypeArg>(
 						member_args.data(),
 						member_args.size()));
-			StringHandle next_owner_handle =
-				materialized_member_owner.canonicalNameHandle();
+			StringHandle next_owner_handle = instantiated_member_name;
+			if (!next_owner_handle.isValid()) {
+				next_owner_handle = materialized_member_owner.canonicalNameHandle();
+			}
 			if (!next_owner_handle.isValid()) {
 				std::string_view instantiated_owner_name =
 					parser_.get_instantiated_class_name(
