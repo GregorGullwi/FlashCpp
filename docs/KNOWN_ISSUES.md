@@ -236,8 +236,10 @@ bracket operand, including the reversed form `index()[object()]`. Reads,
 writes, and address-taking share this lowering, including when a conversion
 supplies the array or when subscripts are combined across dimensions.
 
-Rows of `T* rows[M][N]` still decay with the pointer stride instead of the
-row stride. Copying a row pointer into a named pointer first is unaffected.
+Automatic variables initialized from `T* rows[M][N]` now decay to a
+pointer-to-row with the element pointer kept inside the array suffix. Function
+parameters written as `T* rows[][N]` still fail to accept a decayed
+`T* rows[M][N]` argument.
 
 ## Constexpr namespace-scope pointer dereference is not yet supported
 

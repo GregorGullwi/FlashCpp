@@ -331,6 +331,10 @@ remaining pattern schemas by identity, and remove the name fallback.
    trailing standard conversion rank, with the non-template preferred when the
    sequences are otherwise indistinguishable. Object-pointer targets use the
    same ranking, including templates that deduce a cv-qualified pointee.
+   Array-to-pointer decay for multi-dimensional pointer-element arrays now
+   promotes the decayed type to its ordered spine, placing the outer pointer
+   before the row array and the element pointer inside it, so
+   `auto p = T* rows[M][N]` uses the row stride.
    Member-template return substitution now carries the pointer-to-member owner
    identity and recovered ordered declarator into the instantiated result, so
    member-object, member-function, and free-function pointer targets rank
