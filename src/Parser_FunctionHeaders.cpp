@@ -1210,7 +1210,7 @@ ParseResult Parser::parse_trailing_return_type_with_params(std::span<const ASTNo
 
 	if (trailing_result.node().has_value() && trailing_result.node()->is<TypeSpecifierNode>()) {
 		TypeSpecifierNode& type_spec = trailing_result.node()->as<TypeSpecifierNode>();
-		consume_pointer_ref_modifiers(type_spec);
+		consume_type_id_abstract_declarators(type_spec);
 	}
 
 	return trailing_result;
