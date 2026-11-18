@@ -117,6 +117,8 @@ struct LambdaInfo {
 	TypeIndex return_type_index{};	   // TypeCategory embedded; replaces Type return_type
 	int return_size;
 	int return_pointer_depth = 0;
+	TypeSpecifierNode return_type_specifier;
+	bool has_return_type_specifier = false;
 	ReturnValueMode return_value_mode = ReturnValueMode::None;
 	ReferenceQualifier return_ref_qualifier = ReferenceQualifier::None;  // LValueReference/RValueReference when returnsReference()
 
@@ -124,6 +126,21 @@ struct LambdaInfo {
 	bool returnsPointer() const { return hasReturnValueMode(return_value_mode, ReturnValueMode::Pointer); }
 	bool returnsReference() const { return hasReturnValueMode(return_value_mode, ReturnValueMode::Reference); }		// True if lambda returns a reference type (T& or T&&)
 	bool returnsFunctionPointer() const { return hasReturnValueMode(return_value_mode, ReturnValueMode::FunctionPointer); }
+	TypeSpecifierNode makeReturnTypeNode() const {
+		if (has_return_type_specifier) {
+			return return_type_specifier;
+		}
+		TypeSpecifierNode node(
+			return_type_index.withCategory(returnType()),
+			return_size,
+			lambda_token,
+			CVQualifier::None,
+			return_ref_qualifier);
+		if (!returnsReference()) {
+			node.add_pointer_levels(return_pointer_depth);
+		}
+		return node;
+	}
 	std::vector<std::tuple<TypeCategory, int, int, std::string>> parameters;	 // type, size, pointer_depth, name
 	std::vector<ASTNode> parameter_nodes;  // Actual parameter AST nodes for symbol table
 	ASTNode lambda_body;				 // Copy of the lambda body

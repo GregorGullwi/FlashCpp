@@ -3060,6 +3060,8 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 			deduced_type.has_value()) {
 			lambda_info.return_type_index = deduced_type->type_index().withCategory(deduced_type->type());
 			lambda_info.return_pointer_depth = static_cast<int>(deduced_type->runtime_pointer_depth());
+			lambda_info.return_type_specifier = *deduced_type;
+			lambda_info.has_return_type_specifier = true;
 			lambda_info.return_value_mode = ReturnValueMode::None;
 			if (deduced_type->pointer_depth() > 0) {
 				lambda_info.return_value_mode |= ReturnValueMode::Pointer;
