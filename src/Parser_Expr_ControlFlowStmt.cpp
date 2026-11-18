@@ -801,6 +801,9 @@ ParseResult Parser::parse_lambda_expression() {
 			return type_result;
 		}
 		return_type = type_result.node();
+		if (return_type.has_value() && return_type->is<TypeSpecifierNode>()) {
+			consume_pointer_ref_modifiers(return_type->as<TypeSpecifierNode>());
+		}
 	}
 
 	// Parse body (must be a compound statement)
