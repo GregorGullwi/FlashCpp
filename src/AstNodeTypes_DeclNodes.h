@@ -2989,8 +2989,24 @@ inline void appendDeclaratorShapeForSubstitution(
 		}
 	};
 	if (type.has_pointee_array_declarator()) {
-		append_pointers();
-		append_arrays();
+		if (type.has_member_class()) {
+			append_pointers();
+			append_arrays();
+		} else {
+			// The flat view stores pointer levels innermost first. A pointer to an
+			// array keeps only the outermost level outside the array; remaining
+			// levels belong to the array element, after the array suffix.
+			const auto pointer_levels = type.pointer_levels();
+			if (!pointer_levels.empty()) {
+				components.push_back(DeclaratorComponent::pointer(pointer_levels.back().cv_qualifier));
+			}
+			append_arrays();
+			if (pointer_levels.size() >= 2) {
+				for (size_t index = pointer_levels.size() - 1; index-- > 0;) {
+					components.push_back(DeclaratorComponent::pointer(pointer_levels[index].cv_qualifier));
+				}
+			}
+		}
 	} else {
 		if (type.is_array() || type.has_unsized_outer_array_dimension()) {
 			append_arrays();
@@ -3913,6 +3929,9 @@ inline void applyArrayToPointerDecay(TypeSpecifierNode& deduced_type) {
 	if (has_inner_extents) {
 		deduced_type.remove_outermost_array_dimension();
 		deduced_type.set_pointee_array_declarator(true);
+		// Preserve the row's element pointer inside the array suffix. The flat
+		// representation cannot distinguish that pointer from the new outer one.
+		promoteDeclaratorShapeToOrdered(deduced_type);
 	} else {
 		deduced_type.set_array_dimensions({});
 	}
