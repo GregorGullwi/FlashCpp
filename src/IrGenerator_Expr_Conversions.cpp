@@ -3367,7 +3367,7 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 	finalizeConstructorCallOp(ctor_op, *target_struct_info, source_token);
 
 	ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), source_token));
-	setTempVarMetadata(result_var, TempVarMetadata::makeRVOEligiblePRValue());
+	setTempVarMetadata(result_var, use_return_slot ? TempVarMetadata::makeReturnSlotPRValue() : TempVarMetadata::makeRVOEligiblePRValue());
 
 	return makeExprResult(
 		target_type.type_index().withCategory(target_type.category()),

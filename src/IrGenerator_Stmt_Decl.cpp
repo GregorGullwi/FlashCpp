@@ -2278,7 +2278,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								// Generate constructor call with parameters from initializer list
 								ConstructorCallOp ctor_op;
 								ctor_op.object = local_var_id;
-								ctor_op.use_nrvo_slot = is_nrvo_candidate;
+								ctor_op.use_return_slot = is_nrvo_candidate;
 								ctor_op.resolved_constructor = matching_ctor;
 
 								// Get constructor parameter types for reference handling
@@ -3330,7 +3330,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								if (has_usable_default_constructor) {
 									ConstructorCallOp default_ctor_op;
 									default_ctor_op.object = local_var_id;
-									default_ctor_op.use_nrvo_slot = is_nrvo_candidate;
+									default_ctor_op.use_return_slot = is_nrvo_candidate;
 									fillInDefaultConstructorArguments(default_ctor_op, *type_info->getStructInfo());
 									finalizeConstructorCallOp(default_ctor_op, *type_info->getStructInfo(), decl.identifier_token());
 									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(default_ctor_op), decl.identifier_token()));
@@ -3380,7 +3380,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							// Create constructor call with the declared variable as the object
 							ConstructorCallOp ctor_op;
 							ctor_op.object = local_var_id;
-							ctor_op.use_nrvo_slot = is_nrvo_candidate;
+							ctor_op.use_return_slot = is_nrvo_candidate;
 							ctor_op.resolved_constructor = matching_ctor;
 
 							// Get constructor parameter types for reference handling
@@ -3694,7 +3694,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						const ConstructorDeclarationNode* selected_ctor = sema_selected_converting_ctor;
 						ConstructorCallOp ctor_op;
 						ctor_op.object = local_var_id;
-						ctor_op.use_nrvo_slot = is_nrvo_candidate;
+						ctor_op.use_return_slot = is_nrvo_candidate;
 
 						// Add initializer as constructor parameter
 						{
@@ -3933,7 +3933,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									ConstructorCallOp ctor_op;
 									// For arrays, we need to specify the element to construct
 									ctor_op.object = local_var_id;
-									ctor_op.use_nrvo_slot = is_nrvo_candidate;
+									ctor_op.use_return_slot = is_nrvo_candidate;
 									ctor_op.array_index = i;	 // Mark this as an array element constructor call
 
 									if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
@@ -3948,7 +3948,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								// Single object (non-array) - generate single constructor call
 								ConstructorCallOp ctor_op;
 								ctor_op.object = local_var_id;
-								ctor_op.use_nrvo_slot = is_nrvo_candidate;
+								ctor_op.use_return_slot = is_nrvo_candidate;
 
 								if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 									const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();

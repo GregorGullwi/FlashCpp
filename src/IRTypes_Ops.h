@@ -304,6 +304,11 @@ inline bool isTempVarRVOEligible(const TempVar& temp) {
 	return meta.eligible_for_rvo && meta.category == ValueCategory::PRValue;
 }
 
+inline bool isTempVarConstructedInReturnSlot(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	return meta.constructed_in_return_slot;
+}
+
 // Check if a TempVar is eligible for NRVO (named return value optimization)
 inline bool isTempVarNRVOEligible(const TempVar& temp) {
 	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
@@ -774,8 +779,7 @@ struct ConstructorCallOp {
 	std::variant<StringHandle, TempVar, LocalVarId> object;	// Object instance ('this' or temp)
 	std::vector<TypedValue> arguments;			   // Constructor arguments
 	const ConstructorDeclarationNode* resolved_constructor = nullptr;
-	bool use_return_slot = false;					  // True if constructing into caller's return slot (RVO)
-	bool use_nrvo_slot = false;						  // True if constructing an NRVO local in the caller's return slot
+	bool use_return_slot = false;					  // True if constructing into caller's return slot (RVO or NRVO)
 	std::optional<int> return_slot_offset;		   // Stack offset of return slot (for RVO)
 	bool is_heap_allocated = false;					// True if object is at pointer location (new/placement new), false for stack objects (RVO/member init)
 	std::optional<size_t> array_index;			   // For array element construction: index of element to construct
