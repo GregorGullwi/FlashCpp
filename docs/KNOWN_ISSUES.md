@@ -236,11 +236,6 @@ bracket operand, including the reversed form `index()[object()]`. Reads,
 writes, and address-taking share this lowering, including when a conversion
 supplies the array or when subscripts are combined across dimensions.
 
-Automatic variables initialized from `T* rows[M][N]` now decay to a
-pointer-to-row with the element pointer kept inside the array suffix. Function
-parameters written as `T* rows[][N]` still fail to accept a decayed
-`T* rows[M][N]` argument.
-
 ## Constexpr namespace-scope pointer dereference is not yet supported
 
 Global constexpr pointer targets now carry the source declaration and evaluate

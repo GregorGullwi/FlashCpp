@@ -160,7 +160,8 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 						param_type.set_array(false);
 					} else {
 						const auto& dimensions = decl.array_dimensions();
-						for (size_t i = 1; i < dimensions.size(); ++i) {
+						const size_t first_inner_dimension = decl.is_unsized_array() ? 0 : 1;
+						for (size_t i = first_inner_dimension; i < dimensions.size(); ++i) {
 							const auto dimension = tryEvaluateConstantExpression(dimensions[i], ConstantEvaluationMode::Speculative);
 							if (dimension.has_value() && dimension->value <= 0) {
 								return error(
@@ -186,6 +187,7 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 					if (!pointee_dimensions.empty()) {
 						param_type.set_pointee_array_dimensions(pointee_dimensions);
 						param_type.set_pointee_array_declarator(true);
+						promoteDeclaratorShapeToOrdered(param_type);
 					} else if (inner_unresolved) {
 						param_type.set_pointee_array_declarator(true);
 					}
