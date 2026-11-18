@@ -5,10 +5,13 @@
 #include "ExpressionSubstitutor.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "RebindStaticMemberAst.h"
 #include "TemplateArgumentMaterialization.h"
+#include "TemplateEnvironment.h"
 #include "ParserTemplateClassShared.h"
 #include "TypeTraitEvaluator.h"
 #include <unordered_map>
+#include <unordered_set>
 
 namespace {
 
@@ -299,6 +302,114 @@ Parser::TemplateBodySubstitutionState Parser::makeTemplateBodySubstitutionState(
 			"Implicit-object template substitution requires a concrete owner TypeIndex");
 	}
 	return state;
+}
+
+bool Parser::static_initializer_has_residual_template_dependency(
+	const ASTNode& initializer,
+	std::span<const TemplateParameterNode> template_params) const {
+	std::unordered_set<StringHandle> parameter_names;
+	parameter_names.reserve(template_params.size());
+	for (const TemplateParameterNode& parameter : template_params) {
+		parameter_names.insert(parameter.nameHandle());
+	}
+	const auto names_parameter = [&parameter_names](StringHandle name) {
+		return parameter_names.contains(name);
+	};
+	const auto qualified_id_has_dependency = [](const QualifiedIdentifierNode& qualified) {
+		if (qualified.hasDependentQualifiedName()) {
+			return true;
+		}
+		const std::string_view owner_name = gNamespaceRegistry.getQualifiedName(qualified.namespace_handle());
+		if (owner_name.empty()) {
+			return false;
+		}
+		const auto owner_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(owner_name));
+		if (owner_it == getTypesByNameMap().end()) {
+			return owner_name.find('$') != std::string_view::npos;
+		}
+		const StructTypeInfo* owner_struct = owner_it->second->getStructInfo();
+		return owner_struct != nullptr && !owner_struct->hasCompleteObjectLayout();
+	};
+	const auto call_has_dependency = [](const CallExprNode& call) {
+		return call.has_dependent_qualified_lookup_record() ||
+			getParserStoredDirectCallTarget(call) == nullptr;
+	};
+	const auto expression_has_dependency = [&](const ExpressionNode& expression) {
+		if (std::holds_alternative<FoldExpressionNode>(expression) ||
+			std::holds_alternative<SizeofPackNode>(expression) ||
+			std::holds_alternative<TemplateParameterReferenceNode>(expression)) {
+			return true;
+		}
+		if (const auto* identifier = std::get_if<IdentifierNode>(&expression);
+			identifier != nullptr && names_parameter(identifier->nameHandle())) {
+			return true;
+		}
+		if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&expression)) {
+			return qualified_id_has_dependency(*qualified);
+		}
+		if (const auto* call = std::get_if<CallExprNode>(&expression)) {
+			return call_has_dependency(*call);
+		}
+		return false;
+	};
+	return RebindStaticMemberAst::visitASTUntil(initializer, [&](const ASTNode& node) {
+		if (node.is<TemplateParameterReferenceNode>()) {
+			return true;
+		}
+		if (node.is<IdentifierNode>() && names_parameter(node.as<IdentifierNode>().nameHandle())) {
+			return true;
+		}
+		if (node.is<QualifiedIdentifierNode>()) {
+			return qualified_id_has_dependency(node.as<QualifiedIdentifierNode>());
+		}
+		if (node.is<CallExprNode>()) {
+			return call_has_dependency(node.as<CallExprNode>());
+		}
+		return node.is<ExpressionNode>() && expression_has_dependency(node.as<ExpressionNode>());
+	});
+}
+
+std::optional<ASTNode> Parser::substitute_static_member_initializer_structurally(
+	const std::optional<ASTNode>& initializer,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	StringHandle owning_instantiated_name,
+	TypeIndex owning_type_index,
+	const StructDeclarationNode* owning_declaration,
+	StructTypeInfo* owning_struct_info,
+	const DeclarationNode* member_declaration,
+	NamespaceHandle fallback_definition_namespace,
+	const TemplateDefinitionLookupContext& member_definition_lookup_context) {
+	if (!initializer.has_value()) {
+		return std::nullopt;
+	}
+	TemplateInstantiationContext substitution_context = buildTemplateInstantiationContext(template_params, template_args,
+		nullptr, currentTemplateSubstitutionFailurePolicy());
+	substitution_context.current_instantiation_type = owning_type_index;
+	TemplateDefinitionLookupContext definition_lookup_context = member_definition_lookup_context;
+	if (member_declaration != nullptr) {
+		definition_lookup_context = ensureReplayDefinitionLookupContext(definition_lookup_context, member_declaration->identifier_token(),
+			fallback_definition_namespace, owning_instantiated_name);
+	}
+	if (definition_lookup_context.is_valid()) {
+		substitution_context.definition_lookup_context = &definition_lookup_context;
+	}
+	FlashCpp::TemplateDepthGuard guard_template_depth(parsing_template_depth_);
+	parsing_template_depth_ = 1;
+	ScopedDefinitionLookupContext ctx_scope(current_template_definition_lookup_context_, substitution_context.definition_lookup_context);
+	ReplayTemplateBindings replay_bindings(*this, template_params, template_args, substitution_context.environment);
+	member_function_context_stack_.push_back({
+		owning_instantiated_name,
+		owning_type_index,
+		owning_declaration,
+		owning_struct_info,
+		false});
+	auto member_context_scope = ScopeGuard([this]() {
+		if (!member_function_context_stack_.empty()) {
+			member_function_context_stack_.pop_back();
+		}
+	});
+	return substituteTemplateParameters(*initializer, substitution_context);
 }
 
 ASTNode Parser::substituteTemplateParametersWithState(

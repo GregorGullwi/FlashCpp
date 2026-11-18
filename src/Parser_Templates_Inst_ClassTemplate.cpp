@@ -4259,6 +4259,25 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 
 				const bool requires_replay_metadata = static_initializer_requires_replay_metadata(static_member.initializer, template_params_for_substitution);
 				std::optional<ASTNode> substituted_initializer;
+				if (requires_replay_metadata) {
+					const DeclarationNode* structural_member_declaration = nullptr;
+					if (static_member.declaration.has_value()) {
+						structural_member_declaration = get_decl_from_symbol(*static_member.declaration);
+					}
+					try {
+						std::optional<ASTNode> structural_initializer = substitute_static_member_initializer_structurally(
+							static_member.initializer, template_params_for_substitution, template_args_for_substitution,
+							instantiated_name, struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
+							struct_info->declaration_node, struct_info, structural_member_declaration, spec_decl_ns,
+							static_member.initializerDefinitionLookupContext());
+						if (structural_initializer.has_value() && !static_initializer_has_residual_template_dependency(
+								*structural_initializer, template_params_for_substitution)) {
+							return structural_initializer;
+						}
+					} catch (const std::exception& ex) {
+						FLASH_LOG(Templates, Trace, "Structural static initializer substitution failed: ", ex.what());
+					}
+				}
 				try {
 					if (requires_replay_metadata && static_member.initializer_position.has_value() && static_member.declaration.has_value()) {
 						const DeclarationNode* declaration =
@@ -9096,70 +9115,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			substitution_context);
 	};
 
-	auto static_initializer_has_residual_template_dependency = [](const ASTNode& initializer, const auto& template_params) {
-		std::unordered_set<StringHandle> parameter_names;
-		parameter_names.reserve(template_params.size());
-		for (const TemplateParameterNode& parameter : template_params) {
-			parameter_names.insert(parameter.nameHandle());
-		}
-		const auto names_parameter = [&parameter_names](StringHandle name) {
-			return parameter_names.contains(name);
-		};
-		const auto qualified_id_has_dependency = [](const QualifiedIdentifierNode& qualified) {
-			if (qualified.hasDependentQualifiedName()) {
-				return true;
-			}
-			const std::string_view owner_name =
-				gNamespaceRegistry.getQualifiedName(qualified.namespace_handle());
-			if (owner_name.empty()) {
-				return false;
-			}
-			const auto owner_it = getTypesByNameMap().find(
-				StringTable::getOrInternStringHandle(owner_name));
-			if (owner_it == getTypesByNameMap().end()) {
-				return owner_name.find('$') != std::string_view::npos;
-			}
-			const StructTypeInfo* owner_struct = owner_it->second->getStructInfo();
-			return owner_struct != nullptr && !owner_struct->hasCompleteObjectLayout();
-		};
-		const auto call_has_dependency = [](const CallExprNode& call) {
-			return call.has_dependent_qualified_lookup_record() ||
-				getParserStoredDirectCallTarget(call) == nullptr;
-		};
-		const auto expression_has_dependency = [&](const ExpressionNode& expression) {
-			if (std::holds_alternative<FoldExpressionNode>(expression) ||
-				std::holds_alternative<SizeofPackNode>(expression) ||
-				std::holds_alternative<TemplateParameterReferenceNode>(expression)) {
-				return true;
-			}
-			if (const auto* identifier = std::get_if<IdentifierNode>(&expression); identifier != nullptr && names_parameter(identifier->nameHandle())) {
-				return true;
-			}
-			if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&expression)) {
-				return qualified_id_has_dependency(*qualified);
-			}
-			if (const auto* call = std::get_if<CallExprNode>(&expression)) {
-				return call_has_dependency(*call);
-			}
-			return false;
-		};
-		return RebindStaticMemberAst::visitASTUntil(initializer, [&](const ASTNode& node) {
-			if (node.is<TemplateParameterReferenceNode>()) {
-				return true;
-			}
-			if (node.is<IdentifierNode>() && names_parameter(node.as<IdentifierNode>().nameHandle())) {
-				return true;
-			}
-			if (node.is<QualifiedIdentifierNode>()) {
-				return qualified_id_has_dependency(node.as<QualifiedIdentifierNode>());
-			}
-			if (node.is<CallExprNode>()) {
-				return call_has_dependency(node.as<CallExprNode>());
-			}
-			return node.is<ExpressionNode>() && expression_has_dependency(node.as<ExpressionNode>());
-		});
-	};
-
 	auto substitute_in_class_static_initializer_structurally =
 		[&](
 			const auto& static_member,
@@ -9211,12 +9166,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			return std::nullopt;
 		}
 
+		const std::span<const TemplateParameterNode> replay_param_span(
+			replay_template_params.data(), replay_template_params.size());
 		const bool requires_replay_metadata =
 			static_initializer_requires_replay_metadata(
 				static_member.initializer,
-				std::span<const TemplateParameterNode>(
-					replay_template_params.data(),
-					replay_template_params.size()));
+				replay_param_span);
 		std::optional<ASTNode> substituted_initializer;
 		if (requires_replay_metadata) {
 			try {
@@ -9229,7 +9184,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 						owning_type_index,
 						fallback_definition_namespace,
 						fallback_template_args);
-				if (structural_initializer.has_value() && !static_initializer_has_residual_template_dependency(*structural_initializer, replay_template_params)) {
+				if (structural_initializer.has_value() &&
+					!static_initializer_has_residual_template_dependency(
+						*structural_initializer, replay_param_span)) {
 					return structural_initializer;
 				}
 			} catch (const std::exception& ex) {
@@ -14216,6 +14173,35 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			out_of_line_is_constexpr = out_of_line_var.declaration->as<VariableDeclarationNode>().is_constexpr();
 		}
 		if (out_of_line_var.initializer.has_value()) {
+			bool structural_initializer_accepted = false;
+			{
+				std::span<const TemplateParameterNode> structural_param_span;
+				if (!out_of_line_var.replay_template_params.empty()) {
+					structural_param_span = std::span<const TemplateParameterNode>(out_of_line_var.replay_template_params.data(),
+						out_of_line_var.replay_template_params.size());
+				} else {
+					structural_param_span = std::span<const TemplateParameterNode>(out_of_line_var.template_params.data(), out_of_line_var.template_params.size());
+				}
+				if (static_initializer_requires_replay_metadata(out_of_line_var.initializer, structural_param_span)) {
+					const DeclarationNode* structural_member_declaration = nullptr;
+					if (out_of_line_var.declaration.has_value()) {
+						structural_member_declaration = get_decl_from_symbol(*out_of_line_var.declaration);
+					}
+					try {
+						std::optional<ASTNode> structural_initializer = substitute_static_member_initializer_structurally(
+							out_of_line_var.initializer, structural_param_span, template_args_to_use, instantiated_name,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct), struct_info_ptr->declaration_node,
+							struct_info_ptr, structural_member_declaration, struct_info_ptr->getNamespaceHandle(), out_of_line_var.definition_lookup_context);
+						if (structural_initializer.has_value() && !static_initializer_has_residual_template_dependency(
+								*structural_initializer, structural_param_span)) {
+							substituted_initializer = structural_initializer;
+							structural_initializer_accepted = true;
+						}
+					} catch (const std::exception& ex) {
+						FLASH_LOG(Templates, Trace, "Structural static initializer substitution failed: ", ex.what());
+					}
+				}
+			}
 			auto try_reparse_out_of_line_static_initializer = [&]() -> bool {
 				std::span<const TemplateParameterNode> replay_template_params;
 				if (!out_of_line_var.replay_template_params.empty()) {
@@ -14354,17 +14340,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 				return true;
 			};
 
-			try {
-				if (!try_reparse_out_of_line_static_initializer()) {
-					substituted_initializer = substituteTemplateParameters(
-						*out_of_line_var.initializer,
-						out_of_line_var.template_params,
-						template_args_to_use);
+			if (!structural_initializer_accepted) {
+				try {
+					if (!try_reparse_out_of_line_static_initializer()) {
+						substituted_initializer = substituteTemplateParameters(
+							*out_of_line_var.initializer,
+							out_of_line_var.template_params,
+							template_args_to_use);
+					}
+				} catch (const std::exception& e) {
+					FLASH_LOG(Templates, Error, "Exception during template parameter substitution for static member ",
+							  out_of_line_var.member_name, ": ", e.what());
+					throw;
 				}
-			} catch (const std::exception& e) {
-				FLASH_LOG(Templates, Error, "Exception during template parameter substitution for static member ",
-						  out_of_line_var.member_name, ": ", e.what());
-				throw;
 			}
 		}
 
