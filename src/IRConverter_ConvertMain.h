@@ -1115,6 +1115,7 @@ private:
 	// This lets indirect_stack_info_ remain the named-variable / TempVar{0} channel only,
 	// while still supporting the remaining lowering paths that query TempVar slots by offset.
 	std::unordered_map<int32_t, IndirectStorageInfo> tempvar_indirect_stack_info_;
+	std::unordered_set<int32_t> nrvo_local_offsets_;
 	// Current-function TempVar reference/address-only info keyed by TempVar number.
 	// This is checked before global TempVar metadata so converter-set current-function facts
 	// win over any stale generator metadata when TempVar numbers are reused across functions.

@@ -308,6 +308,7 @@ private:
 	void visitUsingEnumNode(const UsingEnumNode& node);
 	void visitNamespaceAliasNode(const NamespaceAliasNode& node);
 	void visitReturnStatementNode(const ReturnStatementNode& node);
+	void prepareNRVOCandidates(const ASTNode& body, const TypeSpecifierNode& return_type);
 	void visitBlockNode(const BlockNode& node);
 	void visitIfStatementNode(const IfStatementNode& node);
 	void visitForStatementNode(const ForStatementNode& node);
@@ -1601,6 +1602,11 @@ private:
 	// Track emitted static local storage. A non-capturing lambda body is
 	// lowered for both operator() and __invoke, but its statics share one object.
 	std::unordered_set<StringHandle> emitted_static_locals_;
+
+	// Local declarations whose storage is constructed directly in the hidden
+	// return slot. The set is rebuilt for each lambda body.
+	std::unordered_set<const void*> nrvo_candidate_declarations_;
+	bool emit_return_slot_return_ = false;
 
 	// Track processed TypeInfo pointers to avoid processing the same struct twice
 	// (same struct can be registered under multiple keys in getTypesByNameMap())

@@ -754,6 +754,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 
 	// Track hidden return parameter flag for current function context
 	current_function_has_hidden_return_param_ = needs_hidden_return_param;
+	prepareNRVOCandidates(lambda_info.lambda_body, return_type_node);
 
 	if (returns_struct_by_value) {
 		if (needs_hidden_return_param) {
@@ -988,6 +989,7 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 	current_function_return_type_index_ = lambda_info.return_type_index;
 	current_function_return_size_ = lambda_info.abiReturnSize();
 	current_function_return_value_mode_ = lambda_info.return_value_mode;
+	prepareNRVOCandidates(lambda_info.lambda_body, lambda_info.makeReturnTypeNode());
 
 		// Add lambda parameters to symbol table as function parameters (__invoke context).
 		// Instantiation-time semantic normalization has already rewritten generic

@@ -209,6 +209,14 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 
 		// Original handling for ExpressionNode
 		assert(expr_opt->is<ExpressionNode>());
+		bool returns_nrvo_candidate = false;
+		if (current_function_has_hidden_return_param_) {
+			const auto* identifier = std::get_if<IdentifierNode>(&expr_opt->as<ExpressionNode>());
+			if (identifier != nullptr) {
+				const std::optional<ASTNode> symbol = lookupSymbol(identifier->nameHandle());
+				returns_nrvo_candidate = symbol.has_value() && nrvo_candidate_declarations_.contains(symbol->raw_pointer());
+			}
+		}
 
 		// Set flag if we should use RVO (returning struct by value with hidden return param)
 		if (current_function_has_hidden_return_param_) {
@@ -795,6 +803,7 @@ return_conversion_done:
 			markTempVarAsReturnValue(*return_temp);
 		}
 		// Use the function's return type, not the expression type
+		emit_return_slot_return_ = returns_nrvo_candidate;
 		emitReturn(return_value, currentFunctionReturnTypeIndex(), current_function_return_size_,
 				   node.return_token(), operands.storage);
 	} else {

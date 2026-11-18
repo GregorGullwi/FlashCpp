@@ -658,6 +658,7 @@ struct ReturnOp {
 	TypeIndex return_type_index{};		   // TypeCategory embedded; replaces optional<Type> return_type; category() != Invalid means non-void
 	int return_size = 0;					 // 4 bytes
 	ValueStorage return_storage = ValueStorage::ContainsData;
+	bool reuses_return_slot = false;
 
 	TypeCategory returnType() const { return return_type_index.category(); }
 };
@@ -774,6 +775,7 @@ struct ConstructorCallOp {
 	std::vector<TypedValue> arguments;			   // Constructor arguments
 	const ConstructorDeclarationNode* resolved_constructor = nullptr;
 	bool use_return_slot = false;					  // True if constructing into caller's return slot (RVO)
+	bool use_nrvo_slot = false;						  // True if constructing an NRVO local in the caller's return slot
 	std::optional<int> return_slot_offset;		   // Stack offset of return slot (for RVO)
 	bool is_heap_allocated = false;					// True if object is at pointer location (new/placement new), false for stack objects (RVO/member init)
 	std::optional<size_t> array_index;			   // For array element construction: index of element to construct
@@ -1021,6 +1023,7 @@ struct VariableDeclOp {
 	PointerDepth pointer_depth = PointerDepth{};
 	bool is_array = false;
 	bool use_copy_constructor = false;
+	bool is_nrvo_candidate = false;
 	// Array info (if is_array)
 	std::optional<TypeIndex> array_element_type_index;
 	std::optional<int> array_element_size;
