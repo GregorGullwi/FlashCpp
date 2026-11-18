@@ -4481,7 +4481,8 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
 				namespace_handle,
 				token);
-		if (const auto* dependent_record = qual_id.dependentQualifiedName()) {
+		if (const auto* dependent_record = qual_id.dependentQualifiedName();
+			dependent_record != nullptr && namespace_handle == qual_id.namespace_handle()) {
 			rebound_qual_id.setDependentQualifiedName(*dependent_record);
 		}
 		if (qual_id.has_template_arguments()) {
