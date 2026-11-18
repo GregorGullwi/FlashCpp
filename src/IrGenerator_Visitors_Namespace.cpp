@@ -115,7 +115,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 					generateNestedMemberStores(*return_struct, init_list, temp_var, 0, false, node.return_token());
 					emitSehFinallyCallsBeforeReturn(node.return_token());
 					emitAndClearFullExpressionTempDestructors();
-					emitDestructorsForNonLocalExit(0);
+					emitDestructorsForNonLocalExit(0, DestructorSkip::OnSuccessfulReturn);
 					emitReturn(temp_var, currentFunctionReturnTypeIndex(), current_function_return_size_, node.return_token(), ValueStorage::ContainsData);
 					return;
 				}
@@ -195,7 +195,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			emitAndClearFullExpressionTempDestructors();
 
 			// Emit destructor calls for all local variables before returning
-			emitDestructorsForNonLocalExit(0);
+			emitDestructorsForNonLocalExit(0, DestructorSkip::OnSuccessfulReturn);
 
 			// Now return the temporary variable
 			emitReturn(
@@ -235,7 +235,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 						if (ident.name() == "this") {
 							emitSehFinallyCallsBeforeReturn(node.return_token());
 							emitAndClearFullExpressionTempDestructors();
-							emitDestructorsForNonLocalExit(0);
+							emitDestructorsForNonLocalExit(0, DestructorSkip::OnSuccessfulReturn);
 							emitReturn(StringTable::getOrInternStringHandle("this"),
 									   currentFunctionReturnTypeIndex(), current_function_return_size_,
 									   node.return_token(), ValueStorage::ContainsAddress);
@@ -302,7 +302,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			if (is_void_expression && function_returns_void) {
 				emitSehFinallyCallsBeforeReturn(node.return_token());
 				emitAndClearFullExpressionTempDestructors();
-				emitDestructorsForNonLocalExit(0);
+				emitDestructorsForNonLocalExit(0, DestructorSkip::OnSuccessfulReturn);
 				emitVoidReturn(node.return_token());
 				return;
 			}
@@ -786,7 +786,7 @@ return_conversion_done:
 		// Emit destructor calls for all local variables before returning.
 		// The return value expression has already been evaluated above, so destroying
 		// locals here is correct: the return value is computed first, then locals are destroyed.
-		emitDestructorsForNonLocalExit(0);
+		emitDestructorsForNonLocalExit(0, DestructorSkip::OnSuccessfulReturn);
 
 		// Extract IrValue from operands.value
 		IrValue return_value = toIrValue(operands.value);
@@ -815,7 +815,7 @@ return_conversion_done:
 		emitSehFinallyCallsBeforeReturn(node.return_token());
 		emitAndClearFullExpressionTempDestructors();
 		// Emit destructor calls for all local variables before returning
-		emitDestructorsForNonLocalExit(0);
+		emitDestructorsForNonLocalExit(0, DestructorSkip::OnSuccessfulReturn);
 		emitVoidReturn(node.return_token());
 	}
 }

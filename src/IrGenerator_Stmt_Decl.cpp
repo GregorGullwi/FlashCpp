@@ -498,18 +498,17 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	// global/static path returns.
 	LocalVarId local_var_id{};
 	bool is_nrvo_candidate = false;
+	DestructorSkip destructor_skip = DestructorSkip::None;
 	const StringHandle declared_spelling = decl.identifier_token().handle();
 	// Records the declaration's identity rather than the spelling, because
 	// unwinding resolves the variable through the function's frame table. The
 	// id is assigned below (for locals) after this lambda is constructed, so it
 	// must be captured by reference.
-	auto register_destructor_if_needed = [this, &local_var_id, &is_nrvo_candidate](const TypeInfo* type_info) {
-		if (is_nrvo_candidate || !type_info || !type_info->getStructInfo() || !type_info->getStructInfo()->hasDestructor()) {
+	auto register_destructor_if_needed = [this, &local_var_id, &destructor_skip](const TypeInfo* type_info) {
+		if (!type_info || !type_info->getStructInfo() || !type_info->getStructInfo()->hasDestructor()) {
 			return;
 		}
-		registerVariableWithDestructor(
-			VariableKey{local_var_id},
-			type_info->name());
+		registerVariableWithDestructor(VariableKey{local_var_id}, type_info->name(), destructor_skip);
 	};
 
 		// Check if this is a global variable (declared at global scope)
@@ -1557,6 +1556,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	// than an outer one, per C++ [basic.scope.pdecl].
 	local_var_id = declareLocalVarId(ast_node, declared_spelling);
 	is_nrvo_candidate = current_function_has_hidden_return_param_ && nrvo_candidate_declarations_.contains(ast_node.raw_pointer());
+	destructor_skip = is_nrvo_candidate ? DestructorSkip::OnSuccessfulReturn : DestructorSkip::None;
 
 		// C++20 [basic.scope.pdecl]: register the variable in the local symbol table
 		// before evaluating its initializer, so that sizeof(x) in "int x = sizeof(x)"
@@ -2491,9 +2491,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 							// Register for destructor if needed
 							if (struct_info.hasDestructor()) {
-								registerVariableWithDestructor(
-									VariableKey{local_var_id},
-									type_info->name());
+								registerVariableWithDestructor(VariableKey{local_var_id}, type_info->name(), destructor_skip);
 							}
 						}
 					}
@@ -3359,9 +3357,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 								// Register for destructor if needed
 								if (type_info->getStructInfo()->hasDestructor()) {
-									registerVariableWithDestructor(
-										VariableKey{local_var_id},
-										type_info->name());
+									registerVariableWithDestructor(VariableKey{local_var_id}, type_info->name(), destructor_skip);
 								}
 							}
 						}
@@ -3965,9 +3961,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 				// If this struct has a destructor, register it for automatic cleanup
 			if (type_info->getStructInfo() && type_info->getStructInfo()->hasDestructor()) {
-				registerVariableWithDestructor(
-					VariableKey{local_var_id},
-					type_info->name());
+				registerVariableWithDestructor(VariableKey{local_var_id}, type_info->name(), destructor_skip);
 			}
 		}
 	}

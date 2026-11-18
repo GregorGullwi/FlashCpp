@@ -451,13 +451,18 @@ void AstToIr::emitPendingFunctionCleanupLP(const Token& token) {
 }
 
 void AstToIr::registerVariableWithDestructor(VariableKey variable_key, StringHandle struct_name) {
+	registerVariableWithDestructor(variable_key, struct_name, DestructorSkip::None);
+}
+
+void AstToIr::registerVariableWithDestructor(VariableKey variable_key, StringHandle struct_name, DestructorSkip skip) {
 	if (!scope_stack_.empty()) {
-		for (const auto& variable : scope_stack_.back()) {
+		for (auto& variable : scope_stack_.back()) {
 			if (variable.variable_key == variable_key) {
+				if (skip == DestructorSkip::OnSuccessfulReturn) { variable.skip = DestructorSkip::OnSuccessfulReturn; }
 				return;
 			}
 		}
-		scope_stack_.back().push_back({variable_key, struct_name});
+		scope_stack_.back().push_back({variable_key, struct_name, skip});
 	}
 }
 
@@ -483,7 +488,7 @@ void AstToIr::emitAndClearFullExpressionTempDestructors() {
 	pending_full_expression_temp_dtors_.clear();
 }
 
-void AstToIr::emitDestructorsForNonLocalExit(size_t target_depth) {
+void AstToIr::emitDestructorsForNonLocalExit(size_t target_depth, DestructorSkip skip) {
 	// Emit destructor calls for all variables in scopes from the current innermost scope
 	// down to (but not including) target_depth, in LIFO order (innermost scope first).
 	// Does NOT modify scope_stack_ — the normal exitScope() calls will still run later
@@ -491,6 +496,9 @@ void AstToIr::emitDestructorsForNonLocalExit(size_t target_depth) {
 	for (size_t scope_index = scope_stack_.size(); scope_index > target_depth; --scope_index) {
 		const auto& scope_vars = scope_stack_[scope_index - 1];
 		for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
+			if (skip == DestructorSkip::OnSuccessfulReturn && it->skip == DestructorSkip::OnSuccessfulReturn) {
+				continue;
+			}
 			DestructorCallOp dtor_op;
 			dtor_op.struct_name = it->struct_name;
 			dtor_op.object = toVariableBase(it->variable_key);
