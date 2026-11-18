@@ -116,6 +116,7 @@ struct LambdaInfo {
 	std::string_view conversion_op_name;	 // e.g., "__lambda_0_conversion" (persistent via StringBuilder)
 	TypeIndex return_type_index{};	   // TypeCategory embedded; replaces Type return_type
 	int return_size;
+	int return_pointer_depth = 0;
 	ReturnValueMode return_value_mode = ReturnValueMode::None;
 	ReferenceQualifier return_ref_qualifier = ReferenceQualifier::None;  // LValueReference/RValueReference when returnsReference()
 
