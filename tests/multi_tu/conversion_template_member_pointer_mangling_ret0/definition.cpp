@@ -15,3 +15,19 @@ int identity_owner_object(int ObjectOwner::* pointer) {
 int identity_owner_function(int (FunctionOwner::* pointer)()) {
 	return pointer == nullptr ? 0 : 1;
 }
+
+int consume_specialized_int(SpecializedIntPtr pointer) {
+	return pointer == nullptr ? 0 : 1;
+}
+
+int consume_specialized_long(SpecializedLongPtr pointer) {
+	return pointer == nullptr ? 0 : 1;
+}
+
+int consume_specialized_fn_int(SpecializedIntFunctionPtr pointer) {
+	return pointer == nullptr ? 0 : 1;
+}
+
+int consume_specialized_fn_long(SpecializedLongFunctionPtr pointer) {
+	return pointer == nullptr ? 0 : 1;
+}
