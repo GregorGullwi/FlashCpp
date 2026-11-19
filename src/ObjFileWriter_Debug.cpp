@@ -25,7 +25,7 @@ void ObjectFileWriter::appendLE_xdata(std::vector<char>& buf, uint32_t value) {
 
 // --- Exception info sub-functions ---
 
-ObjectFileWriter::UnwindCodeResult ObjectFileWriter::build_unwind_codes(bool is_cpp, uint32_t stack_frame_size, uint8_t prologue_prefix_size) {
+ObjectFileWriter::UnwindCodeResult ObjectFileWriter::build_unwind_codes(bool is_cpp, bool realigns_rbp, uint32_t stack_frame_size, uint8_t prologue_prefix_size) {
 	// Build unwind codes array dynamically based on actual prologue.
 	// For C++ EH functions (split-frame prologue):
 	//   Offset 0:   push rbp                 (1 byte)
@@ -34,6 +34,13 @@ ObjectFileWriter::UnwindCodeResult ObjectFileWriter::build_unwind_codes(bool is_
 	//   Offset 16:  sub rsp, extra           (7 bytes, omitted from unwind info when extra==0)
 	//   Prologue size in unwind info: 16 or 23 bytes depending on whether extra!=0
 	//   FrameOffset = primary / 16, where primary <= 240
+	//
+	// For over-aligned non-EH frames (MSVC lea/and RBP shape):
+	//   Offset 0:   push rbp                 (1 byte)
+	//   Offset 1:   sub rsp, N               (7 bytes)
+	//   Offset 8:   lea rbp, [rsp+N]         (8 bytes)
+	//   Offset 16:  and rbp, -align          (4 bytes for imm8 form)
+	//   FrameRegister = 0 (RSP-based unwind; and rbp is not an unwind op)
 	//
 	// For non-EH functions (traditional prologue):
 	//   Offset 0:  push rbp           (1 byte)
@@ -48,7 +55,9 @@ ObjectFileWriter::UnwindCodeResult ObjectFileWriter::build_unwind_codes(bool is_
 	// A probe prefix after PUSH RBP preserves RSP and all nonvolatile registers.
 	// It shifts later operation offsets without adding an unwind operation.
 	const uint32_t cpp_frame_size = std::min(stack_frame_size / 16, uint32_t(15)) * 16;
-	const uint32_t base_prolog_size = is_cpp ? (stack_frame_size > cpp_frame_size ? 23 : 16) : 11;
+	// Over-aligned: push(1)+sub(7)+lea(8)+[EH state mov(8)]+and(4). EH state is only present for C++ EH.
+	const uint32_t base_prolog_size = realigns_rbp ? (20u + (is_cpp ? 8u : 0u))
+												   : (is_cpp ? (stack_frame_size > cpp_frame_size ? 23 : 16) : 11);
 	if (base_prolog_size + prologue_prefix_size > 255) {
 		throw InternalError("Windows unwind prologue exceeds its byte offset range");
 	}
@@ -78,7 +87,16 @@ ObjectFileWriter::UnwindCodeResult ObjectFileWriter::build_unwind_codes(bool is_
 		}
 	};
 
-	if (is_cpp) {
+	if (realigns_rbp) {
+		// MSVC-style over-aligned frame: RSP-based unwind (no SET_FPREG). EstablisherFrame is
+		// RSP after SUB; EH state is written at [RSP+N-8] before `and rbp`.
+		result.prolog_size = static_cast<uint8_t>(base_prolog_size + prologue_prefix_size);
+		result.frame_reg_and_offset = 0x00;
+		result.effective_frame_size = stack_frame_size;
+		appendAllocCode(static_cast<uint8_t>(0x08 + prologue_prefix_size), stack_frame_size);
+		result.codes.push_back(0x01);
+		result.codes.push_back(static_cast<uint8_t>(0x05 << 4 | 0x00)); // PUSH_NONVOL RBP
+	} else if (is_cpp) {
 		uint8_t frame_offset = static_cast<uint8_t>(std::min(stack_frame_size / 16, uint32_t(15)));
 		result.effective_frame_size = static_cast<uint32_t>(frame_offset) * 16;
 		uint32_t extra_stack_size = stack_frame_size - result.effective_frame_size;
