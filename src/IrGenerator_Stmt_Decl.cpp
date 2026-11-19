@@ -1623,7 +1623,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		return ResultDestination{
 			ResultDestination::Kind::LocalObject,
 			local_var_id,
-			sema_.canonicalizeTypeForImplicitConversion(type_node)};
+			canonicalResultTypeId(type_node)};
 	};
 	auto noteDirectDestinationResult = [&](const ExprResult& result) {
 		const auto* direct_local = std::get_if<LocalVarId>(&result.value);

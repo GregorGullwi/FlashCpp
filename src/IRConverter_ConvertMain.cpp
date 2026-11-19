@@ -2049,7 +2049,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 			if (instruction.hasTypedPayload()) {
 				if (const FunctionCleanupLPOp* cleanup =
 					std::any_cast<FunctionCleanupLPOp>(&instruction.getTypedPayload())) {
-					if (g_enable_exceptions && !cleanup->cleanup_vars.empty()) {
+					if (g_enable_exceptions && !cleanup->cleanup_actions.empty()) {
 						addTemporaryStorageBytes(additional_temporary_storage_bytes, 8);
 					}
 				}
@@ -16862,19 +16862,20 @@ void IrToObjConverter<TWriterClass>::emitFuncletLeaRbpFromRdx(std::vector<uint32
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitInlineDestructorCall(const std::pair<StringHandle, VariableKey>& cleanup_var) {
-	const auto& [struct_name_h, var_key] = cleanup_var;
-	const VariableInfo* var_info = findVariableInfo(var_key);
-	if (!var_info) {
-		FLASH_LOG(Codegen, Warning, "emitInlineDestructorCall: variable not found: ",
-				  (std::holds_alternative<StringHandle>(var_key)
-					   ? std::string_view(StringTable::getStringView(std::get<StringHandle>(var_key)))
-					   : std::string_view("<local id>")));
-		return;
-	}
+	emitInlineDestructorCall(CleanupAction{cleanup_var.first, cleanup_var.second, false, LocalVarId{}});
+}
 
-	const auto* local_id = std::get_if<LocalVarId>(&var_key);
-	const auto flag_it = local_id != nullptr
-		? construction_flag_offsets_.find(local_id->value)
+template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::emitInlineDestructorCall(const CleanupAction& cleanup_action) {
+	const StringHandle struct_name_h = cleanup_action.struct_name;
+	LocalVarId flag_id = cleanup_action.construction_flag_id;
+	if (!cleanup_action.is_hidden_return_slot) {
+		if (const auto* local_id = std::get_if<LocalVarId>(&cleanup_action.variable_key)) {
+			flag_id = *local_id;
+		}
+	}
+	const auto flag_it = flag_id.value != 0
+		? construction_flag_offsets_.find(flag_id.value)
 		: construction_flag_offsets_.end();
 	std::optional<uint32_t> skip_destructor_patch;
 	if (flag_it != construction_flag_offsets_.end()) {
@@ -16883,12 +16884,28 @@ void IrToObjConverter<TWriterClass>::emitInlineDestructorCall(const std::pair<St
 	}
 
 	X64Register this_reg = getIntParamReg<TWriterClass>(0);
-	if (nrvo_local_offsets_.contains(var_info->offset)) {
-		// An NRVO local lives in the caller's hidden return slot; the frame
-		// slot only holds its address.
-		emitMovFromFrame(this_reg, var_info->offset);
+	if (cleanup_action.is_hidden_return_slot) {
+		auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
+		if (return_slot_it == variable_scopes.back().variables.end()) {
+			throw InternalError("Hidden return-slot cleanup has no hidden return slot");
+		}
+		emitMovFromFrame(this_reg, return_slot_it->second.offset);
 	} else {
-		emitLeaFromFrame(this_reg, var_info->offset);
+		const VariableInfo* var_info = findVariableInfo(cleanup_action.variable_key);
+		if (!var_info) {
+			FLASH_LOG(Codegen, Warning, "emitInlineDestructorCall: variable not found: ",
+					  (std::holds_alternative<StringHandle>(cleanup_action.variable_key)
+						   ? std::string_view(StringTable::getStringView(std::get<StringHandle>(cleanup_action.variable_key)))
+						   : std::string_view("<local id>")));
+			return;
+		}
+		if (nrvo_local_offsets_.contains(var_info->offset)) {
+			// An NRVO local lives in the caller's hidden return slot; the frame
+			// slot only holds its address.
+			emitMovFromFrame(this_reg, var_info->offset);
+		} else {
+			emitLeaFromFrame(this_reg, var_info->offset);
+		}
 	}
 
 		// Build mangled destructor name using the shared helper
@@ -16911,7 +16928,7 @@ void IrToObjConverter<TWriterClass>::emitWindowsCleanupFuncletsAndPopulateUnwind
 		current_function_unwind_map_.clear();
 		size_t cleanup_funclet_index = 0;
 
-		auto emitCleanupFunclet = [&](std::span<const std::pair<StringHandle, VariableKey>> cleanup_vars) -> StringHandle {
+		auto emitCleanupFunclet = [&](std::span<const CleanupAction> cleanup_vars) -> StringHandle {
 			if (cleanup_vars.empty() || !current_function_mangled_name_.isValid()) {
 				return StringHandle();
 			}
@@ -16944,7 +16961,7 @@ void IrToObjConverter<TWriterClass>::emitWindowsCleanupFuncletsAndPopulateUnwind
 			return symbol_handle;
 		};
 
-		auto populateCleanupChain = [&](std::span<const std::pair<StringHandle, VariableKey>> cleanup_vars,
+		auto populateCleanupChain = [&](std::span<const CleanupAction> cleanup_vars,
 										int32_t head_state,
 										int32_t tail_to_state) {
 			if (cleanup_vars.empty() || head_state < 0) {
@@ -16957,7 +16974,7 @@ void IrToObjConverter<TWriterClass>::emitWindowsCleanupFuncletsAndPopulateUnwind
 			std::vector<StringHandle> actions;
 			actions.reserve(cleanup_vars.size());
 			for (const auto& cleanup_var : cleanup_vars) {
-				std::vector<std::pair<StringHandle, VariableKey>> single_cleanup_var;
+				std::vector<CleanupAction> single_cleanup_var;
 				single_cleanup_var.push_back(cleanup_var);
 				actions.push_back(emitCleanupFunclet(single_cleanup_var));
 			}
@@ -17048,7 +17065,12 @@ void IrToObjConverter<TWriterClass>::emitWindowsCleanupFuncletsAndPopulateUnwind
 				current_function_unwind_map_[static_cast<size_t>(catch_state)].to_state = to_state;
 			}
 
-			populateCleanupChain(try_block.cleanup_vars, try_low_by_sorted_index[i], to_state);
+			std::vector<CleanupAction> try_cleanup_actions;
+			try_cleanup_actions.reserve(try_block.cleanup_vars.size());
+			for (const auto& [cleanup_struct, cleanup_key] : try_block.cleanup_vars) {
+				try_cleanup_actions.push_back(CleanupAction{cleanup_struct, cleanup_key, false, LocalVarId{}});
+			}
+			populateCleanupChain(try_cleanup_actions, try_low_by_sorted_index[i], to_state);
 		}
 
 		pending_windows_function_cleanup_vars_.clear();
@@ -17184,8 +17206,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionCleanupLP(const IrInstruction
 	const auto& op = instruction.getTypedPayload<FunctionCleanupLPOp>();
 
 	if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
-		if (!op.cleanup_vars.empty()) {
-			pending_windows_function_cleanup_vars_ = op.cleanup_vars;
+		if (!op.cleanup_actions.empty()) {
+			pending_windows_function_cleanup_vars_ = op.cleanup_actions;
 		}
 		return;
 	}
@@ -17197,7 +17219,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCleanupLP(const IrInstruction
 		elf_no_match_lp_label_ = StringHandle();
 	}
 
-	if (op.cleanup_vars.empty()) {
+	if (op.cleanup_actions.empty()) {
 		if (current_function_is_noexcept_) {
 			current_function_cleanup_lp_offset_ = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 		}
@@ -17221,8 +17243,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionCleanupLP(const IrInstruction
 			// Save _Unwind_Exception* (RAX) to frame slot
 	emitMovToFrame(X64Register::RAX, exc_save_offset, 64);
 
-			// Call each destructor in LIFO order (already in LIFO order in cleanup_vars)
-	for (const auto& cv : op.cleanup_vars) {
+			// Call each destructor in LIFO order (already in LIFO order in cleanup_actions)
+	for (const auto& cv : op.cleanup_actions) {
 		emitInlineDestructorCall(cv);
 	}
 

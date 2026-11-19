@@ -426,7 +426,7 @@ void AstToIr::exitFunctionScope() {
 	// Capture vars in LIFO order for the cleanup LP, but only those with destructors
 	pending_function_cleanup_vars_.clear();
 	for (auto it = scope_stack_.back().rbegin(); it != scope_stack_.back().rend(); ++it) {
-		pending_function_cleanup_vars_.push_back({it->struct_name, it->variable_key});
+		pending_function_cleanup_vars_.push_back(CleanupAction{it->struct_name, it->variable_key, false, LocalVarId{}});
 	}
 
 	// Call normal exitScope to emit destructor IR instructions
@@ -435,19 +435,49 @@ void AstToIr::exitFunctionScope() {
 
 void AstToIr::emitPendingFunctionCleanupLP(const Token& token) {
 	// Always emit FunctionCleanupLP when either:
-	// (a) There are function-scope local vars with destructors (the common case), OR
-	// (b) The function has typed catch handlers (function_has_typed_catch_ flag).
+	// (a) There are function-scope locals awaiting cleanup (the common case), OR
+	// (b) A return expression constructed a hidden-slot result that must be
+	//     destroyed if later cleanup throws, OR
+	// (c) The function has typed catch handlers (function_has_typed_catch_ flag).
 	//     On ELF, ElfCatchNoMatch emits a forward reference to __elf_no_match_lp_<n>
 	//     that must be resolved by handleFunctionCleanupLP().  On Windows, the
 	//     ElfCatchNoMatch handler is a no-op, but emitting an extra FunctionCleanupLP
-	//     with empty cleanup_vars is also a no-op there (early return in the handler).
-	if (pending_function_cleanup_vars_.empty() && !function_has_typed_catch_)
+	//     with empty cleanup actions is also a no-op there (early return in the handler).
+	if (pending_function_cleanup_vars_.empty() && pending_return_slot_cleanup_actions_.empty() && !function_has_typed_catch_)
 		return;
 
 	FunctionCleanupLPOp cleanup_op;
-	cleanup_op.cleanup_vars = std::move(pending_function_cleanup_vars_);
+	cleanup_op.cleanup_actions = std::move(pending_function_cleanup_vars_);
+	// A return-slot result is constructed before local destruction starts, so it
+	// unwinds after the locals it outlives.
+	for (CleanupAction& action : pending_return_slot_cleanup_actions_) {
+		cleanup_op.cleanup_actions.push_back(std::move(action));
+	}
+	pending_return_slot_cleanup_actions_.clear();
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCleanupLP, std::move(cleanup_op), token));
 	function_has_typed_catch_ = false;
+}
+
+void AstToIr::registerHiddenReturnSlotCleanup(const Token& token) {
+	const TypeInfo* type_info = tryGetTypeInfo(current_function_return_type_index_);
+	const StructTypeInfo* struct_info = type_info != nullptr ? type_info->getStructInfo() : nullptr;
+	if (struct_info == nullptr || !struct_info->hasDestructor()) {
+		return;
+	}
+	// The flag starts zeroed and is set only after the result construction
+	// completes, so unwinding from an earlier partial construction skips it.
+	const LocalVarId flag_id{next_synthetic_construction_flag_id_++};
+	LocalConstructionOp init_op;
+	init_op.local_id = flag_id;
+	ir_.addInstruction(IrInstruction(IrOpcode::InitLocalConstruction, std::move(init_op), token));
+	LocalConstructionOp mark_op;
+	mark_op.local_id = flag_id;
+	ir_.addInstruction(IrInstruction(IrOpcode::MarkConstructed, std::move(mark_op), token));
+	pending_return_slot_cleanup_actions_.push_back(CleanupAction{
+		struct_info->name,
+		StringTable::getOrInternStringHandle("__return_slot"),
+		true,
+		flag_id});
 }
 
 void AstToIr::registerVariableWithDestructor(VariableKey variable_key, StringHandle struct_name) {

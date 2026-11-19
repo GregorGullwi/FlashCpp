@@ -751,18 +751,35 @@ ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExp
 
 			std::optional<ExprResult> merged_result_shape;
 			std::optional<TempVar> merged_result_var;
+			bool destination_branch_used = false;
+			bool destination_branch_mismatch = false;
 
 			auto emitBranchCall = [&](StringHandle label, const ASTNode& receiver_node) {
 				ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = label}, ternary.get_token()));
 
 				CallExprNode branch_call = makeBranchCall(receiver_node);
-				ExprResult branch_result = generateMemberFunctionCallIr(branch_call, context, sema_call_key);
+				ExprResult branch_result = generateMemberFunctionCallIr(branch_call, context, sema_call_key, destination);
 
 				if (!merged_result_shape.has_value()) {
 					merged_result_shape = branch_result;
 				}
 
-				if (branch_result.category() != TypeCategory::Void) {
+				bool branch_used_destination = false;
+				if (destination.has_value()) {
+					if (destination->isLocalObject()) {
+						const auto* direct_local = std::get_if<LocalVarId>(&branch_result.value);
+						branch_used_destination = direct_local != nullptr && *direct_local == destination->local_id;
+					} else if (const auto* result_temp = std::get_if<TempVar>(&branch_result.value)) {
+						branch_used_destination = isTempVarConstructedInReturnSlot(*result_temp);
+					}
+					if (branch_used_destination) {
+						destination_branch_used = true;
+					} else {
+						destination_branch_mismatch = true;
+					}
+				}
+
+				if (branch_result.category() != TypeCategory::Void && !branch_used_destination) {
 					if (!merged_result_var.has_value()) {
 						merged_result_var = var_counter.next();
 					}
@@ -788,6 +805,27 @@ ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExp
 
 			if (!merged_result_shape.has_value() || merged_result_shape->category() == TypeCategory::Void) {
 				return makeExprResult(nativeTypeIndex(TypeCategory::Void), SizeInBits{0}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
+			}
+
+			if (destination.has_value() && destination_branch_used && !destination_branch_mismatch) {
+				if (destination->isLocalObject()) {
+					return makeExprResult(
+						merged_result_shape->type_index,
+						merged_result_shape->size_in_bits,
+						IrOperand{destination->local_id},
+						merged_result_shape->pointer_depth,
+						merged_result_shape->storage);
+				}
+				if (!merged_result_var.has_value()) {
+					merged_result_var = var_counter.next();
+				}
+				setTempVarMetadata(*merged_result_var, TempVarMetadata::makeReturnSlotPRValue());
+				return makeExprResult(
+					merged_result_shape->type_index,
+					merged_result_shape->size_in_bits,
+					IrOperand{*merged_result_var},
+					merged_result_shape->pointer_depth,
+					merged_result_shape->storage);
 			}
 
 			return makeExprResult(

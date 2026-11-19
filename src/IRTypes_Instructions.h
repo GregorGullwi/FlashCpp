@@ -1198,7 +1198,7 @@ public:
 		case IrOpcode::FunctionCleanupLP: {
 			if (hasTypedPayload()) {
 				const auto& op = getTypedPayload<FunctionCleanupLPOp>();
-				oss << "function_cleanup_lp [" << op.cleanup_vars.size() << " vars]";
+				oss << "function_cleanup_lp [" << op.cleanup_actions.size() << " actions]";
 			} else {
 				oss << "function_cleanup_lp";
 			}
