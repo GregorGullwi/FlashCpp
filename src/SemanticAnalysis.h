@@ -576,7 +576,10 @@ private:
 	void resolvePendingCopyInitAnnotations();
 	void queuePendingReceiverCallAnnotation(const CallExprNode& call);
 	size_t resolvePendingReceiverCallAnnotations();
-	std::optional<TypeSpecifierNode> deducePlaceholderReturnType(const ASTNode& body, TypeCategory placeholder_type);
+	// When if_constexpr_decisions is provided, branch decisions are recorded in
+	// that specialization-local map instead of the shared AST node.
+	std::optional<TypeSpecifierNode> deducePlaceholderReturnType(const ASTNode& body, TypeCategory placeholder_type,
+		std::unordered_map<const IfStatementNode*, bool>* if_constexpr_decisions);
 	TypeSpecifierNode applyDecltypeAutoReturnValueCategory(
 		const ASTNode& expression,
 		TypeSpecifierNode type);

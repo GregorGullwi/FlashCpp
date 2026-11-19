@@ -657,10 +657,14 @@ void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
 
 	const StringHandle saved_function_name = current_function_name_;
 	const StringHandle saved_function_mangled_name = current_function_mangled_name_;
-	ScopeGuard restore_function_names([this, saved_function_name, saved_function_mangled_name]() {
-		current_function_name_ = saved_function_name;
-		current_function_mangled_name_ = saved_function_mangled_name;
-	});
+	const std::unordered_map<const IfStatementNode*, bool>* saved_if_constexpr_decisions = current_if_constexpr_decisions_;
+	ScopeGuard restore_function_names(
+		[this, saved_function_name, saved_function_mangled_name, saved_if_constexpr_decisions]() {
+			current_function_name_ = saved_function_name;
+			current_function_mangled_name_ = saved_function_mangled_name;
+			current_if_constexpr_decisions_ = saved_if_constexpr_decisions;
+		});
+	current_if_constexpr_decisions_ = &lambda_info.if_constexpr_decisions;
 	current_function_name_ = StringTable::getOrInternStringHandle(lambda_info.operator_call_name);
 	// The call operator and its __invoke thunk are two lowerings of the same
 	// function object specialization. Static locals they share must use one
@@ -1103,6 +1107,7 @@ LambdaInfo& AstToIr::materializeLambdaCallInstantiation(
 	instantiation.deduced_auto_types_generation = 0;
 	instantiation.normalized_deduced_auto_types_generation = 0;
 	instantiation.resolved_param_nodes.clear();
+	instantiation.if_constexpr_decisions.clear();
 	for (const auto& [deduced_index, deduced_type] : deduced_types) {
 		instantiation.setDeducedType(deduced_index, deduced_type);
 	}
@@ -1171,6 +1176,7 @@ LambdaInfo& AstToIr::materializeLambdaInstantiation(
 	instantiation.deduced_auto_types_generation = 0;
 	instantiation.normalized_deduced_auto_types_generation = 0;
 	instantiation.resolved_param_nodes.clear();
+	instantiation.if_constexpr_decisions.clear();
 	for (const auto& [deduced_index, deduced_type] : deduced_types) {
 		instantiation.setDeducedType(deduced_index, deduced_type);
 	}
