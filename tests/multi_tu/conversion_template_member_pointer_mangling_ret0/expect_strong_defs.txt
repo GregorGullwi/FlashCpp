@@ -1,0 +1,6 @@
+# Decorated names must match MSVC for member-object and member-function pointers
+# with two distinct owners (ObjectOwner / FunctionOwner).
+?consume_object@@YAHPEQObjectOwner@@H@Z
+?consume_function@@YAHP8FunctionOwner@@EAAHXZ@Z
+?identity_owner_object@@YAHPEQObjectOwner@@H@Z
+?identity_owner_function@@YAHP8FunctionOwner@@EAAHXZ@Z
