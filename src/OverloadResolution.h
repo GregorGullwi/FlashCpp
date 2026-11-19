@@ -3258,7 +3258,12 @@ inline bool lambdaClosureHasGenericCallOperator(const StructTypeInfo& struct_inf
 		}
 		const FunctionDeclarationNode& function = member.function_decl.as<FunctionDeclarationNode>();
 		for (const ASTNode& parameter : function.parameter_nodes()) {
-			if (parameter.is<DeclarationNode>() && isPlaceholderAutoType(parameter.as<DeclarationNode>().type_specifier_node().type())) {
+			if (!parameter.is<DeclarationNode>()) {
+				continue;
+			}
+			const TypeSpecifierNode& parameter_type = parameter.as<DeclarationNode>().type_specifier_node();
+			const bool unresolved_template_parameter = parameter_type.type() == TypeCategory::UserDefined && !parameter_type.type_index().is_valid();
+			if (isPlaceholderAutoType(parameter_type.type()) || unresolved_template_parameter || typeSpecStillUsesDependentPlaceholder(parameter_type)) {
 				return true;
 			}
 		}
