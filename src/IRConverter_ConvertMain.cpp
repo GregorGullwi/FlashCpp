@@ -2259,16 +2259,29 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 			std::string_view var_name = op.getVarName();
 			size_t alignment = std::max<size_t>(op.custom_alignment, 1);
 			if (!op.is_reference() && !op.pointer_depth.is_pointer()) {
-				const TypeIndex type_index = canonicalize_type_alias(op.type_index).resolvedTypeIndex();
+				TypeIndex type_index = canonicalize_type_alias(op.type_index).resolvedTypeIndex();
+				if (op.is_array && op.array_element_type_index.has_value()) {
+					type_index = canonicalize_type_alias(*op.array_element_type_index).resolvedTypeIndex();
+				}
 				const TypeInfo* type_info = tryGetTypeInfo(type_index);
 				const StructTypeInfo* struct_info = type_info != nullptr ? type_info->getStructInfo() : nullptr;
 				if (struct_info != nullptr) {
 					alignment = std::max(alignment, struct_info->alignment);
+				} else {
+					// get_type_alignment(Struct, size) returns the raw size. Accept it only when it is
+					// already a power of two (common for alignas(N) records); skip sizes like 24.
+					size_t element_size_bits = op.array_element_size.has_value() ? *op.array_element_size : size_in_bits.value;
+					const size_t type_size_bytes = element_size_bits > 0 ? static_cast<size_t>((element_size_bits + 7) / 8) : 1;
+					const size_t natural = get_type_alignment(type_index.category(), type_size_bytes);
+					if (natural != 0 && (natural & (natural - 1)) == 0) {
+						alignment = std::max(alignment, natural);
+					}
 				}
 			}
 			if (alignment == 0 || (alignment & (alignment - 1)) != 0) {
 				throw InternalError("Local storage requires a nonzero power-of-two alignment");
 			}
+			func_stack_space.max_local_alignment = std::max(func_stack_space.max_local_alignment, static_cast<uint32_t>(alignment));
 
 			bool is_reference = op.is_reference();
 			bool is_array = op.is_array;
@@ -2577,10 +2590,13 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 	// For C++ EH functions, reserve [rbp-8] for the FH3 unwind help state variable.
 	// Shift parameter home space down by 8 bytes so it starts at [rbp-16].
 	int eh_state_reserve = (current_function_has_cpp_eh_ && !std::is_same_v<TWriterClass, ElfFileWriter>) ? 8 : 0;
+	func_stack_space.home_region_bytes = static_cast<uint32_t>(param_home_space + eh_state_reserve);
 	int_fast32_t stack_offset = -(param_home_space + eh_state_reserve);
 
 	for (const VarDecl& local_var : local_vars) {
-		// The slot boundary supplies native scalar alignment. Aggregate and explicit alignment also constrain the object's beginning.
+		// Layout offsets are multiples of the object's required alignment relative to RBP.
+		// Absolute address alignment is enforced at access time via (RBP & -align) + offset when
+		// max_local_alignment exceeds the ABI's 16-byte incoming frame guarantee.
 		const int_fast32_t slot_alignment = static_cast<int_fast32_t>(std::max<size_t>(local_var.alignment, 8));
 		stack_offset = (stack_offset - slot_alignment + 1) & ~(slot_alignment - 1);
 		stack_offset -= local_var.size_in_bits.value / 8;
@@ -2638,11 +2654,11 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 	func_stack_space.temp_vars_size = static_cast<uint32_t>(temp_var_space);  // TempVar space (added to total separately)
 	func_stack_space.named_vars_size = -stack_offset;  // Just named variables space
 	func_stack_space.outgoing_args_space = static_cast<uint32_t>(max_outgoing_arg_bytes);  // Outgoing call argument space
-
-	// if we are a leaf function (don't call other functions), we can get by with just register if we don't have more than 8 * 64 bytes of values to store
-	//if (shadow_stack_space == 0 && max_temp_var_index <= 8) {
-		//return 0;
-	//}
+	// Slack is added only to SUB RSP (not to named_vars_size): inflating named_vars_size shifts
+	// temp offsets deeper by the same amount and leaves no margin for dynamic RBP realignment.
+	if (func_stack_space.max_local_alignment > 16) {
+		func_stack_space.alignment_slack_bytes = func_stack_space.max_local_alignment - 1;
+	}
 
 	return func_stack_space;
 }
@@ -2788,65 +2804,70 @@ void IrToObjConverter<TWriterClass>::flushAllDirtyRegisters() {
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovToFrameBySize(X64Register sourceRegister, int32_t offset, int size_in_bits) {
-	auto opcodes = generateMovToFrameBySize(sourceRegister, offset, size_in_bits);
+	if (!frameOffsetNeedsAbsoluteAlign(offset)) {
+		auto opcodes = generateMovToFrameBySize(sourceRegister, offset, size_in_bits);
+		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+		return;
+	}
+	X64Register scratch = emitScratchAlignedFrameBase(sourceRegister);
+	auto opcodes = generateMovToMemory(sourceRegister, scratch, offset, size_in_bits);
 	textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovToFrameSized(SizedRegister source, SizedStackSlot dest) {
-	OpCodeWithSize opcodes;
-
-		// Check if source is an XMM register (enum values >= 16)
 	bool is_xmm_source = static_cast<uint8_t>(source.reg) >= 16;
-
-		// Use the destination size to determine the store instruction
-	if (dest.size_in_bits == SizeInBits{64}) {
-		if (is_xmm_source) {
-				// For XMM registers, use MOVSD (double) instruction
-			opcodes = generateFloatMovToFrame(source.reg, dest.offset, false);
-		} else {
-			opcodes = generatePtrMovToFrame(source.reg, dest.offset);
-		}
-	} else if (dest.size_in_bits == SizeInBits{32}) {
-		if (is_xmm_source) {
-				// For XMM registers, use MOVSS (float) instruction
-			opcodes = generateFloatMovToFrame(source.reg, dest.offset, true);
-		} else {
-			opcodes = generateMovToFrame32(source.reg, dest.offset);
-		}
-	} else if (dest.size_in_bits == SizeInBits{16}) {
-		opcodes = generateMovToFrame16(source.reg, dest.offset);
-	} else if (dest.size_in_bits == SizeInBits{8}) {
-		opcodes = generateMovToFrame8(source.reg, dest.offset);
-	} else {
-			// Non-standard size (e.g. 24-bit 3-byte struct returned in a register).
-			// All temp-vars are 8-byte aligned on the stack, so rounding the write up
-			// to the next power-of-2 size is safe and ensures all bytes are present
-			// before the struct-copy code reads them back in chunks.
-		if (dest.size_in_bits.value <= 8) {
+	if (!frameOffsetNeedsAbsoluteAlign(dest.offset)) {
+		OpCodeWithSize opcodes;
+		if (dest.size_in_bits == SizeInBits{64}) {
+			opcodes = is_xmm_source ? generateFloatMovToFrame(source.reg, dest.offset, false)
+									: generatePtrMovToFrame(source.reg, dest.offset);
+		} else if (dest.size_in_bits == SizeInBits{32}) {
+			opcodes = is_xmm_source ? generateFloatMovToFrame(source.reg, dest.offset, true)
+									: generateMovToFrame32(source.reg, dest.offset);
+		} else if (dest.size_in_bits == SizeInBits{16}) {
+			opcodes = generateMovToFrame16(source.reg, dest.offset);
+		} else if (dest.size_in_bits == SizeInBits{8}) {
+			opcodes = generateMovToFrame8(source.reg, dest.offset);
+		} else if (dest.size_in_bits.value <= 8) {
 			opcodes = generateMovToFrame8(source.reg, dest.offset);
 		} else if (dest.size_in_bits.value <= 16) {
 			opcodes = generateMovToFrame16(source.reg, dest.offset);
 		} else if (dest.size_in_bits.value <= 32) {
 			opcodes = generateMovToFrame32(source.reg, dest.offset);
 		} else if (is_xmm_source) {
-			// XMM sources must use SSE stores even when the semantic type is wider than 64 bits.
 			opcodes = generateFloatMovToFrame(source.reg, dest.offset, false);
 		} else {
 			opcodes = generatePtrMovToFrame(source.reg, dest.offset);
 		}
+		if (opcodes.size_in_bytes > 0 && opcodes.size_in_bytes <= MAX_MOV_INSTRUCTION_SIZE) {
+			textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+		}
+		return;
 	}
-
-		// Insert opcodes into text section
-	if (opcodes.size_in_bytes > 0 && opcodes.size_in_bytes <= MAX_MOV_INSTRUCTION_SIZE) {
+	if (is_xmm_source) {
+		X64Register scratch = emitScratchAlignedFrameBase(X64Register::RAX);
+		auto opcodes = generateFloatMovToMemory(source.reg, scratch, dest.offset, dest.size_in_bits == SizeInBits{32});
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+		return;
 	}
+	int size_bits = dest.size_in_bits.value;
+	if (size_bits != 8 && size_bits != 16 && size_bits != 32 && size_bits != 64) {
+		size_bits = size_bits <= 8 ? 8 : size_bits <= 16 ? 16 : size_bits <= 32 ? 32 : 64;
+	}
+	emitMovToFrameBySize(source.reg, dest.offset, size_bits);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovFromFrameBySize(X64Register destinationRegister, int32_t offset, int size_in_bits) {
-	auto opcodes = generateMovFromFrameBySize(destinationRegister, offset, size_in_bits);
-	textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+	if (!frameOffsetNeedsAbsoluteAlign(offset)) {
+		auto opcodes = generateMovFromFrameBySize(destinationRegister, offset, size_in_bits);
+		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+		return;
+	}
+	emitMaterializeAlignedFrameBase(destinationRegister);
+	const int size_bytes = size_in_bits <= 8 ? 1 : size_in_bits <= 16 ? 2 : size_in_bits <= 32 ? 4 : 8;
+	emitMovFromMemory(destinationRegister, destinationRegister, offset, static_cast<size_t>(size_bytes));
 }
 
 template <class TWriterClass>
@@ -2904,22 +2925,66 @@ void IrToObjConverter<TWriterClass>::emitFrameMemoryCopy(FrameMemoryLocation sou
 }
 
 template <class TWriterClass>
+bool IrToObjConverter<TWriterClass>::frameOffsetNeedsAbsoluteAlign(int32_t offset) const {
+	// When the prologue realigns RBP (MSVC lea/and), every RBP-relative local access is already
+	// absolutely aligned. Otherwise locals below the home region use (RBP & -align) + offset.
+	if (current_function_realigns_rbp_ || current_function_frame_align_ <= 16) {
+		return false;
+	}
+	return offset < -static_cast<int32_t>(current_function_home_region_bytes_);
+}
+
+template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::emitMaterializeAlignedFrameBase(X64Register dest) {
+	emitMovRegReg(dest, X64Register::RBP);
+	emitAndImm64(dest, static_cast<uint64_t>(0) - static_cast<uint64_t>(current_function_frame_align_));
+}
+
+template <class TWriterClass>
+X64Register IrToObjConverter<TWriterClass>::emitScratchAlignedFrameBase(X64Register avoid_reg) {
+	// R11 is volatile on both Win64 and SysV and is reserved as a short-lived
+	// address scratch so stores do not push/pop and disturb the outgoing arg area.
+	X64Register scratch = (avoid_reg == X64Register::R11) ? X64Register::R10 : X64Register::R11;
+	emitMaterializeAlignedFrameBase(scratch);
+	return scratch;
+}
+
+template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovFromFrame(X64Register destinationRegister, int32_t offset) {
-	auto opcodes = generateMovFromFrameBySize(destinationRegister, offset, 64);
-	textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+	if (!frameOffsetNeedsAbsoluteAlign(offset)) {
+		auto opcodes = generateMovFromFrameBySize(destinationRegister, offset, 64);
+		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+		return;
+	}
+	emitMaterializeAlignedFrameBase(destinationRegister);
+	emitMovFromMemory(destinationRegister, destinationRegister, offset, 8);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitPtrMovFromFrame(X64Register destinationRegister, int32_t offset) {
-	auto opcodes = generatePtrMovFromFrame(destinationRegister, offset);
-	textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+	emitMovFromFrame(destinationRegister, offset);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitCmpFrameImm32(int32_t frame_offset, int32_t imm_value) {
-		// CMP dword [rbp+disp32], imm32: 81 BD <disp32> <imm32>
+	if (!frameOffsetNeedsAbsoluteAlign(frame_offset)) {
+			// CMP dword [rbp+disp32], imm32: 81 BD <disp32> <imm32>
+		textSectionData.push_back(0x81);
+		textSectionData.push_back(0xBD);	 // ModR/M: mod=10, reg=7(/7=CMP), rm=5(rbp)
+		auto disp = std::bit_cast<std::array<uint8_t, 4>>(frame_offset);
+		textSectionData.insert(textSectionData.end(), disp.begin(), disp.end());
+		auto imm = std::bit_cast<std::array<uint8_t, 4>>(imm_value);
+		textSectionData.insert(textSectionData.end(), imm.begin(), imm.end());
+		return;
+	}
+	X64Register scratch = emitScratchAlignedFrameBase(X64Register::RAX);
+		// CMP dword [scratch+disp32], imm32
+	uint8_t scratch_enc = static_cast<uint8_t>(scratch);
+	if (scratch_enc >= 8) {
+		textSectionData.push_back(0x41); // REX.B
+	}
 	textSectionData.push_back(0x81);
-	textSectionData.push_back(0xBD);	 // ModR/M: mod=10, reg=7(/7=CMP), rm=5(rbp)
+	textSectionData.push_back(static_cast<uint8_t>(0x80 | (7 << 3) | (scratch_enc & 0x07)));
 	auto disp = std::bit_cast<std::array<uint8_t, 4>>(frame_offset);
 	textSectionData.insert(textSectionData.end(), disp.begin(), disp.end());
 	auto imm = std::bit_cast<std::array<uint8_t, 4>>(imm_value);
@@ -2940,40 +3005,37 @@ int32_t IrToObjConverter<TWriterClass>::allocateElfTempStackSlot(int size_bytes)
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovFromFrameSized(SizedRegister dest, SizedStackSlot source) {
-	OpCodeWithSize opcodes;
-
-		// Currently, x64 registers always load to 64-bit (using sign/zero extension)
-		// The dest.size_in_bits indicates what portion of the register is meaningful
-		// but the actual load always goes to the full 64-bit register
-
-	if (source.size_in_bits == SizeInBits{64}) {
-		opcodes = generatePtrMovFromFrame(dest.reg, source.offset);
-	} else if (source.size_in_bits == SizeInBits{32}) {
-		if (source.is_signed) {
-			opcodes = generateMovsxdFromFrame_32to64(dest.reg, source.offset);
+	if (!frameOffsetNeedsAbsoluteAlign(source.offset)) {
+		OpCodeWithSize opcodes;
+		if (source.size_in_bits == SizeInBits{64}) {
+			opcodes = generatePtrMovFromFrame(dest.reg, source.offset);
+		} else if (source.size_in_bits == SizeInBits{32}) {
+			opcodes = source.is_signed ? generateMovsxdFromFrame_32to64(dest.reg, source.offset)
+									  : generateMovFromFrame32(dest.reg, source.offset);
+		} else if (source.size_in_bits == SizeInBits{16}) {
+			opcodes = source.is_signed ? generateMovsxFromFrame_16to64(dest.reg, source.offset)
+									  : generateMovzxFromFrame16(dest.reg, source.offset);
 		} else {
-			opcodes = generateMovFromFrame32(dest.reg, source.offset);
+			opcodes = source.is_signed ? generateMovsxFromFrame_8to64(dest.reg, source.offset)
+									  : generateMovzxFromFrame8(dest.reg, source.offset);
 		}
-	} else if (source.size_in_bits == SizeInBits{16}) {
-		if (source.is_signed) {
-			opcodes = generateMovsxFromFrame_16to64(dest.reg, source.offset);
-		} else {
-			opcodes = generateMovzxFromFrame16(dest.reg, source.offset);
-		}
-	} else { // 8-bit
-		if (source.is_signed) {
-			opcodes = generateMovsxFromFrame_8to64(dest.reg, source.offset);
-		} else {
-			opcodes = generateMovzxFromFrame8(dest.reg, source.offset);
-		}
+		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+		return;
 	}
-
-	textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+	emitMaterializeAlignedFrameBase(dest.reg);
+	const int size_bytes = (source.size_in_bits.value + 7) / 8;
+	emitMovFromMemory(dest.reg, dest.reg, source.offset, static_cast<size_t>(size_bytes <= 0 ? 8 : size_bytes));
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitLeaFromFrame(X64Register destinationRegister, int32_t offset) {
-	auto opcodes = generateLeaFromFrame(destinationRegister, offset);
+	if (!frameOffsetNeedsAbsoluteAlign(offset)) {
+		auto opcodes = generateLeaFromFrame(destinationRegister, offset);
+		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+		return;
+	}
+	emitMaterializeAlignedFrameBase(destinationRegister);
+	auto opcodes = generateLeaFromBase(destinationRegister, destinationRegister, offset);
 	textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 }
 
@@ -3000,18 +3062,7 @@ uint32_t IrToObjConverter<TWriterClass>::emitLeaRipRelative(X64Register destinat
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovToFrame(X64Register sourceRegister, int32_t offset, int size_in_bits) {
-	auto opcodes = generateMovToFrameBySize(sourceRegister, offset, size_in_bits);
-
-		// Only build debug string and log if Codegen is set to Debug or higher
-	if (IS_FLASH_LOG_ENABLED(Codegen, Debug)) {
-		std::string bytes_str;
-		for (size_t i = 0; i < opcodes.size_in_bytes; i++) {
-			bytes_str += std::format("{:02x} ", static_cast<uint8_t>(opcodes.op_codes[i]));
-		}
-		FLASH_LOG_FORMAT(Codegen, Debug, "emitMovToFrame: reg={} offset={} size_bits={} bytes={}", static_cast<int>(sourceRegister), offset, size_in_bits, bytes_str);
-	}
-
-	textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+	emitMovToFrameBySize(sourceRegister, offset, size_in_bits);
 }
 
 template <class TWriterClass>
@@ -3063,13 +3114,25 @@ void IrToObjConverter<TWriterClass>::emitCvtss2sd(X64Register xmm_dest, X64Regis
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitFloatMovFromFrame(X64Register destinationRegister, int32_t offset, bool is_float) {
-	auto opcodes = generateFloatMovFromFrame(destinationRegister, offset, is_float);
+	if (!frameOffsetNeedsAbsoluteAlign(offset)) {
+		auto opcodes = generateFloatMovFromFrame(destinationRegister, offset, is_float);
+		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+		return;
+	}
+	X64Register scratch = emitScratchAlignedFrameBase(X64Register::RAX);
+	auto opcodes = generateFloatMovFromMemory(destinationRegister, scratch, offset, is_float);
 	textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitFloatMovToFrame(X64Register sourceRegister, int32_t offset, bool is_float) {
-	auto opcodes = generateFloatMovToFrame(sourceRegister, offset, is_float);
+	if (!frameOffsetNeedsAbsoluteAlign(offset)) {
+		auto opcodes = generateFloatMovToFrame(sourceRegister, offset, is_float);
+		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+		return;
+	}
+	X64Register scratch = emitScratchAlignedFrameBase(X64Register::RAX);
+	auto opcodes = generateFloatMovToMemory(sourceRegister, scratch, offset, is_float);
 	textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 }
 
@@ -7839,6 +7902,10 @@ uint16_t IrToObjConverter<TWriterClass>::getX64RegisterCodeViewCode(X64Register 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::resetFunctionState() {
 	next_temp_var_offset_ = 8;
+	current_function_frame_align_ = 16;
+	current_function_home_region_bytes_ = 0;
+	current_function_realigns_rbp_ = false;
+	realign_epilogue_add_rsp_patches_.clear();
 	current_function_reserved_catch_ref_temp_size_ = 0;
 	current_function_reserved_catch_ref_temps_.clear();
 	current_function_reserved_catch_obj_padding_size_ = 0;
@@ -7916,11 +7983,11 @@ void IrToObjConverter<TWriterClass>::emitCurrentFunctionUnwind(uint32_t function
 		flushPendingGlobalRelocationsForCurrentFunction(current_function_offset_, function_length);
 		std::span<const uint8_t> text_bytes(textSectionData.data() + current_function_offset_, function_length);
 		writer.emitNativeVagueLinkageFunction(StringTable::getStringView(current_function_mangled_name_), text_bytes);
-		writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), 0, function_length, try_blocks, unwind_map, seh_try_blocks, total_stack, kWindowsStackProbePrefixSize);
+		writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), 0, function_length, try_blocks, unwind_map, seh_try_blocks, total_stack, kWindowsStackProbePrefixSize, current_function_realigns_rbp_);
 		writer.finishNativeComdatFunction();
 		textSectionData.resize(current_function_offset_);
 	} else {
-		writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, seh_try_blocks, total_stack, kWindowsStackProbePrefixSize);
+		writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, seh_try_blocks, total_stack, kWindowsStackProbePrefixSize, current_function_realigns_rbp_);
 	}
 }
 
@@ -8060,18 +8127,19 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			eh_effective_frame_size = static_cast<uint32_t>(total_stack);
 			eh_extra_stack_size = 0;
 		} else {
-			eh_effective_frame_size = current_function_has_cpp_eh_
+			const bool split_eh_frame = current_function_has_cpp_eh_ && !current_function_realigns_rbp_;
+			eh_effective_frame_size = split_eh_frame
 										  ? static_cast<uint32_t>(std::min<uint32_t>(static_cast<uint32_t>(total_stack / 16), 15u) * 16)
 										  : static_cast<uint32_t>(total_stack);
-			eh_extra_stack_size = current_function_has_cpp_eh_
-									  ? static_cast<uint32_t>(total_stack) - eh_effective_frame_size
-									  : 0;
+			eh_extra_stack_size = split_eh_frame ? static_cast<uint32_t>(total_stack) - eh_effective_frame_size : 0;
 		}
 
 				// Patch the main prologue SUB RSP immediate.
 		if (current_function_prologue_offset_ > 0) {
 			uint32_t patch_offset = current_function_prologue_offset_ + 3;
-			uint32_t prologue_stack = current_function_has_cpp_eh_ ? eh_effective_frame_size : static_cast<uint32_t>(total_stack);
+			uint32_t prologue_stack = (current_function_has_cpp_eh_ && !current_function_realigns_rbp_)
+										 ? eh_effective_frame_size
+										 : static_cast<uint32_t>(total_stack);
 			const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(prologue_stack);
 			for (int i = 0; i < 4; i++) {
 				textSectionData[patch_offset + i] = bytes[i];
@@ -8132,6 +8200,14 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			}
 		}
 		cleanup_funclet_lea_rbp_patches_.clear();
+
+		for (uint32_t add_rsp_offset : realign_epilogue_add_rsp_patches_) {
+			const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(static_cast<uint32_t>(total_stack));
+			for (int i = 0; i < 4; i++) {
+				textSectionData[add_rsp_offset + 3 + i] = bytes[i];
+			}
+		}
+		realign_epilogue_add_rsp_patches_.clear();
 
 			// noexcept enforcement: inject terminate LP if needed (ELF only)
 		injectNoexceptTerminateLPIfNeeded();
@@ -8203,7 +8279,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		// Also include outgoing_args_space for function calls made from this function
 		// Note: named_vars_size already includes parameter home space, so don't add shadow_stack_space
 	uint64_t total_stack_bytes = static_cast<uint64_t>(func_stack_space.named_vars_size) +
-		func_stack_space.temp_vars_size + func_stack_space.outgoing_args_space;
+		func_stack_space.temp_vars_size + func_stack_space.outgoing_args_space +
+		func_stack_space.alignment_slack_bytes;
 
 		// Even if parameters stay in registers, we need space to spill them if needed
 		// Member functions have implicit 'this' pointer as first parameter
@@ -8223,6 +8300,12 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		total_stack_bytes = (total_stack_bytes + 15) & ~uint64_t{15};
 	}
 	const uint32_t total_stack_space = checkedStackFrameSize(total_stack_bytes);
+	current_function_frame_align_ = std::max<uint32_t>(16, func_stack_space.max_local_alignment);
+	current_function_home_region_bytes_ = func_stack_space.home_region_bytes;
+	// MSVC-style lea/and RBP so every RBP-relative local slot is absolutely aligned.
+	// EH uses FrameOffset=0 (establisher = aligned RBP) so FH3 dispUnwindHelp stays -8.
+	current_function_realigns_rbp_ = current_function_frame_align_ > 16;
+	realign_epilogue_add_rsp_patches_.clear();
 
 		// Save function prologue information before setup
 	current_function_offset_ = static_cast<uint32_t>(textSectionData.size());
@@ -8539,15 +8622,18 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 
 	bool use_eh_prologue_style = false;
 	if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
-		use_eh_prologue_style = current_function_has_cpp_eh_;
+			// Over-aligned locals use the same lea/and RBP shape MSVC emits so every
+			// existing RBP-relative access sees an absolutely aligned frame base.
+		use_eh_prologue_style = current_function_has_cpp_eh_ || current_function_realigns_rbp_;
 	}
 
 	if (use_eh_prologue_style) {
-			// C++ EH prologue:
+			// C++ EH / over-aligned prologue:
 			//   push rbp
 			//   sub rsp, primary
 			//   lea rbp, [rsp+primary]
-			//   sub rsp, extra
+			//   [and rbp, -align] when locals need absolute alignment > 16
+			//   sub rsp, extra (EH only when primary is capped)
 			// where primary is capped to the max encodable SET_FPREG offset (240 bytes)
 			// and extra is any remaining allocation. The final SUB is patched to a 7-byte
 			// NOP block when no extra allocation is needed.
@@ -8576,14 +8662,18 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 
 			// Optional extra SUB RSP, imm32 (7 bytes) after SET_FPREG.
 			// Patched to either SUB RSP, extra or a 7-byte NOP sequence at function end.
-		eh_prologue_extra_sub_rsp_offset_ = static_cast<uint32_t>(textSectionData.size());
-		textSectionData.push_back(0x48); // REX.W
-		textSectionData.push_back(0x81); // SUB with 32-bit immediate
-		textSectionData.push_back(0xEC); // RSP
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
-		textSectionData.push_back(0x00);
+			// Over-aligned frames allocate everything in the primary SUB (RSP-based unwind).
+		eh_prologue_extra_sub_rsp_offset_ = 0;
+		if (current_function_has_cpp_eh_ && !current_function_realigns_rbp_) {
+			eh_prologue_extra_sub_rsp_offset_ = static_cast<uint32_t>(textSectionData.size());
+			textSectionData.push_back(0x48); // REX.W
+			textSectionData.push_back(0x81); // SUB with 32-bit immediate
+			textSectionData.push_back(0xEC); // RSP
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+			textSectionData.push_back(0x00);
+		}
 	} else {
 			// Traditional prologue: push rbp(1); mov rbp, rsp(3); sub rsp, N(7)
 		textSectionData.push_back(0x48);
@@ -8612,6 +8702,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 
 		// For C++ EH functions on Windows, initialize the FH3 unwind help state variable at [rbp-8] to -2.
 		// FH3 reads this via dispUnwindHelp; value -2 means "use IP-to-state map" for lookup.
+		// For over-aligned frames this must happen BEFORE `and rbp` so the state stays at
+		// EstablisherFrame(=RSP)+N-8 while locals use the aligned RBP.
 	if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
 		if (current_function_has_cpp_eh_) {
 				// mov qword [rbp-8], -2  (8 bytes: 48 C7 45 F8 FE FF FF FF)
@@ -8624,6 +8716,11 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			textSectionData.push_back(0xFF);
 			textSectionData.push_back(0xFF);
 		}
+	}
+
+	if (current_function_realigns_rbp_) {
+			// and rbp, -align after EH state / before param spills and locals
+		emitAndImm64(X64Register::RBP, static_cast<uint64_t>(0) - static_cast<uint64_t>(current_function_frame_align_));
 	}
 
 		// For RBP-relative addressing, we start with negative offset after total allocated space
@@ -10103,11 +10200,24 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 		// MSVC-style epilogue
 		//int32_t total_stack_space = variable_scopes.back().scope_stack_space;
 
-		// Always generate epilogue since we always generate prologue
-		// mov rsp, rbp (restore stack pointer)
-	textSectionData.push_back(0x48);
-	textSectionData.push_back(0x89);
-	textSectionData.push_back(0xEC);
+		// Always generate epilogue since we always generate prologue.
+		// When RBP was dynamically realigned, restore through the fixed allocation size
+		// (MSVC: add rsp, N; pop rbp) instead of mov rsp, rbp.
+	if (current_function_realigns_rbp_) {
+		realign_epilogue_add_rsp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()));
+		textSectionData.push_back(0x48); // REX.W
+		textSectionData.push_back(0x81); // ADD r/m64, imm32
+		textSectionData.push_back(0xC4); // /0 ADD, RSP
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+	} else {
+			// mov rsp, rbp (restore stack pointer)
+		textSectionData.push_back(0x48);
+		textSectionData.push_back(0x89);
+		textSectionData.push_back(0xEC);
+	}
 
 		// pop rbp (restore caller's base pointer)
 	textSectionData.push_back(0x5D);
@@ -16850,6 +16960,7 @@ void IrToObjConverter<TWriterClass>::handleRethrow([[maybe_unused]] const IrInst
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitFuncletLeaRbpFromRdx(std::vector<uint32_t>& patch_list) {
 		// Encoding: 48 8D AA XX XX XX XX (REX.W LEA RBP, [RDX+disp32])
+		// For RSP-based over-aligned frames, EstablisherFrame is RSP; recreate lea+and.
 	patch_list.push_back(static_cast<uint32_t>(textSectionData.size()));
 	textSectionData.push_back(0x48); // REX.W
 	textSectionData.push_back(0x8D); // LEA
@@ -16858,6 +16969,9 @@ void IrToObjConverter<TWriterClass>::emitFuncletLeaRbpFromRdx(std::vector<uint32
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
+	if (current_function_realigns_rbp_) {
+		emitAndImm64(X64Register::RBP, static_cast<uint64_t>(0) - static_cast<uint64_t>(current_function_frame_align_));
+	}
 }
 
 template <class TWriterClass>
@@ -17723,18 +17837,19 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 			eh_effective_frame_size = static_cast<uint32_t>(total_stack);
 			eh_extra_stack_size = 0;
 		} else {
-			eh_effective_frame_size = current_function_has_cpp_eh_
+			const bool split_eh_frame = current_function_has_cpp_eh_ && !current_function_realigns_rbp_;
+			eh_effective_frame_size = split_eh_frame
 										  ? static_cast<uint32_t>(std::min<uint32_t>(static_cast<uint32_t>(total_stack / 16), 15u) * 16)
 										  : static_cast<uint32_t>(total_stack);
-			eh_extra_stack_size = current_function_has_cpp_eh_
-									  ? static_cast<uint32_t>(total_stack) - eh_effective_frame_size
-									  : 0;
+			eh_extra_stack_size = split_eh_frame ? static_cast<uint32_t>(total_stack) - eh_effective_frame_size : 0;
 		}
 
 				// Patch the main prologue SUB RSP immediate.
 		if (current_function_prologue_offset_ > 0) {
 			uint32_t patch_offset = current_function_prologue_offset_ + 3;
-			uint32_t prologue_stack = current_function_has_cpp_eh_ ? eh_effective_frame_size : static_cast<uint32_t>(total_stack);
+			uint32_t prologue_stack = (current_function_has_cpp_eh_ && !current_function_realigns_rbp_)
+										 ? eh_effective_frame_size
+										 : static_cast<uint32_t>(total_stack);
 			const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(prologue_stack);
 			for (int i = 0; i < 4; i++) {
 				textSectionData[patch_offset + i] = bytes[i];
@@ -17793,6 +17908,14 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 			}
 		}
 		cleanup_funclet_lea_rbp_patches_.clear();
+
+		for (uint32_t add_rsp_offset : realign_epilogue_add_rsp_patches_) {
+			const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(static_cast<uint32_t>(total_stack));
+			for (int i = 0; i < 4; i++) {
+				textSectionData[add_rsp_offset + 3 + i] = bytes[i];
+			}
+		}
+		realign_epilogue_add_rsp_patches_.clear();
 
 			// noexcept enforcement: inject terminate LP if needed (ELF only)
 		injectNoexceptTerminateLPIfNeeded();

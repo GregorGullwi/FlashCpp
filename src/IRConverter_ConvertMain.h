@@ -103,6 +103,9 @@ private:
 		uint32_t named_vars_size = 0;
 		uint32_t shadow_stack_space = 0;
 		uint32_t outgoing_args_space = 0;  // Space for largest outgoing function call
+		uint32_t max_local_alignment = 8;  // Required absolute alignment of local object addresses
+		uint32_t home_region_bytes = 0;	 // RBP-relative param/EH home bytes excluded from realignment
+		uint32_t alignment_slack_bytes = 0;  // Extra SUB RSP bytes so (RBP&-align)+offset stays in-frame
 	};
 	struct VariableInfo {
 		int offset = INT_MIN;  // Stack offset from RBP (INT_MIN = unallocated)
@@ -257,6 +260,12 @@ private:
 	// Copy an object representation between direct frame storage and frame slots
 	// that contain an address, preserving every byte of aggregate values.
 	void emitFrameMemoryCopy(FrameMemoryLocation source, FrameMemoryLocation destination, SizeInBytes size);
+
+	// True when [RBP+offset] must be accessed through (RBP & -align) + offset so the
+	// object address is absolutely aligned regardless of the incoming frame address.
+	bool frameOffsetNeedsAbsoluteAlign(int32_t offset) const;
+	void emitMaterializeAlignedFrameBase(X64Register dest);
+	X64Register emitScratchAlignedFrameBase(X64Register avoid_reg);
 
 	// Helper to generate and emit LEA from frame
 	void emitLeaFromFrame(X64Register destinationRegister, int32_t offset);
@@ -1149,6 +1158,10 @@ private:
 	uint32_t windows_stack_probe_count_ = 0;
 	int next_temp_var_offset_ = 8;  // Next available offset for TempVar allocation (starts at 8, increments by 8)
 	uint32_t current_function_named_vars_size_ = 0;	// Size of named vars + shadow space for current function
+	uint32_t current_function_frame_align_ = 16;	 // Absolute alignment guaranteed for local/temp addresses
+	uint32_t current_function_home_region_bytes_ = 0;  // Param/EH homes stay pure RBP; locals use aligned base
+	bool current_function_realigns_rbp_ = false;  // MSVC-style lea/and rbp for over-aligned locals
+	std::vector<uint32_t> realign_epilogue_add_rsp_patches_;  // ADD RSP,imm32 sites when RBP was realigned
 	uint32_t current_function_reserved_catch_ref_temp_size_ = 0;	 // Windows FH3 reference-catch slots kept near named vars
 	std::vector<size_t> current_function_reserved_catch_ref_temps_;
 	uint32_t current_function_reserved_catch_obj_padding_size_ = 0;	// Padding to avoid FH3 dispCatchObj == 0 for by-value catch temps
