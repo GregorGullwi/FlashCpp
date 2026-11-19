@@ -816,6 +816,7 @@ struct VirtualCallOp {
 	bool returns_rvalue_reference = false;		   // True if function returns T&&
 	SizeInBits referenced_value_size_in_bits{};		// Referenced object size for T&/T&& returns
 	std::optional<TempVar> return_slot;				// Optional temp var representing the return slot location
+	std::optional<LocalVarId> result_destination;	// Caller object receiving the return slot directly
 
 	// Returns true if the aggregate return uses a hidden slot pointer in argument
 	// position zero ('this' shifts to position one), matching CallOp/IndirectCallOp
@@ -1165,6 +1166,7 @@ struct IndirectCallOp {
 	bool returns_reference = false;
 	bool returns_rvalue_reference = false;
 	uint8_t control_flow_flags = static_cast<uint8_t>(IrCallFlowFlags::None);
+	std::optional<LocalVarId> result_destination;	// Caller object receiving the return slot directly
 
 	TypeCategory returnType() const { return return_type_index.category(); }
 	bool usesReturnSlot() const { return use_return_slot; }

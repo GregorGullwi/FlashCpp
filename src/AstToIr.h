@@ -15,6 +15,12 @@ inline std::string formatTokenLocationSuffix(const Token& token) {
 }
 
 class AstToIr {
+	struct PendingCallReturnDestination {
+		LocalVarId local_id;
+		TypeIndex type_index;
+		SizeInBits size_in_bits;
+	};
+
 public:
 	AstToIr() = delete;	// Require valid references
 	AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser, SemanticAnalysis& semantic_analysis);
@@ -455,7 +461,8 @@ private:
 	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key,
 		TypeIndex receiver_owner_type_index);
 	ExprResult generateMemberFunctionCallIrBody(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key,
-		TypeIndex receiver_owner_type_index, const ExprResult* precomputed_receiver);
+		TypeIndex receiver_owner_type_index, const ExprResult* precomputed_receiver,
+		std::optional<PendingCallReturnDestination> return_destination);
 	std::optional<ExprResult> tryGenerateMemberPointerCallIr(const CallExprNode& callExprNode, const PointerToMemberAccessNode& access);
 	MultiDimSubscriptChain collectMultiDimSubscriptChain(const ArraySubscriptNode& subscript);
 	std::optional<MultiDimMemberArrayAccess> resolveMultiDimMemberArrayBase(
@@ -1624,11 +1631,6 @@ private:
 	// return slot. The set is rebuilt for each lambda body.
 	std::unordered_set<const void*> nrvo_candidate_declarations_;
 	bool emit_return_slot_return_ = false;
-	struct PendingCallReturnDestination {
-		LocalVarId local_id;
-		TypeIndex type_index;
-		SizeInBits size_in_bits;
-	};
 	std::optional<PendingCallReturnDestination> pending_call_return_destination_;
 
 	// Track processed TypeInfo pointers to avoid processing the same struct twice

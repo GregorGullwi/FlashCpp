@@ -2407,7 +2407,9 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 				}
 				// Try IndirectCallOp (function pointer calls)
 				else if (const IndirectCallOp* indirect_call_op = std::any_cast<IndirectCallOp>(&instruction.getTypedPayload())) {
-					if (indirect_call_op->return_size_in_bits.value > 0) {
+					if (indirect_call_op->result_destination.has_value()) {
+						// The caller object owns the return storage.
+					} else if (indirect_call_op->return_size_in_bits.value > 0) {
 						recordTemporarySize(indirect_call_op->result, indirect_call_op->return_size_in_bits.value);
 					} else if (indirect_call_op->returnType() != TypeCategory::Void) {
 						throw InternalError("IndirectCallOp is missing its return storage size");
@@ -2420,7 +2422,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 						virtual_call_op->result.effectiveIrType() == IrType::Void &&
 						!virtual_call_op->returns_reference &&
 						!virtual_call_op->result.pointer_depth.is_pointer();
-					if (!returns_valueless_void) {
+					if (!returns_valueless_void && !virtual_call_op->result_destination.has_value()) {
 						recordTypedValueResult(virtual_call_op->result);
 					}
 					handled_by_typed_payload = true;
@@ -5903,7 +5905,9 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 		!op.result.pointer_depth.is_pointer();
 	int result_offset = 0;
 	if (!returns_valueless_void) {
-		result_offset = getStackOffsetFromTempVar(result_var);
+		result_offset = op.result_destination.has_value()
+			? getVariableOffsetOrThrow(*op.result_destination, "virtual call result destination")
+			: getStackOffsetFromTempVar(result_var);
 	}
 
 		// Get object offset
@@ -15586,7 +15590,9 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 		// Get result offset
 	int result_offset = 0;
 	if (!returns_valueless_void) {
-		result_offset = getStackOffsetFromTempVar(op.result);
+		result_offset = op.result_destination.has_value()
+			? getVariableOffsetOrThrow(*op.result_destination, "indirect call result destination")
+			: getStackOffsetFromTempVar(op.result);
 	}
 
 	constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
