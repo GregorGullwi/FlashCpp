@@ -1970,6 +1970,137 @@ static bool shouldCallBaseObjectVariant(const StructTypeInfo* target_struct_info
 		   !target_struct_info->virtual_bases.empty();
 }
 
+void AstToIr::emitRuntimeDispatchStores(const StructTypeInfo* struct_info, const TypeInfo* struct_type_info, StringHandle struct_name_for_ctor,
+	const Token& source_token, bool include_virtual_base_vptrs) {
+	if (!struct_info || (!struct_info->has_vtable && struct_info->virtual_bases.empty())) {
+		return;
+	}
+
+	const TypeIndex most_derived_type = struct_type_info ? struct_type_info->type_index_ : struct_info->own_type_index_.value_or(TypeIndex{});
+	if (!most_derived_type.is_valid()) {
+		throw InternalError("Runtime virtual-base initialization is missing the most-derived type index");
+	}
+	const std::string_view struct_name_for_ctor_view = StringTable::getStringView(struct_name_for_ctor);
+
+	auto makeVirtualBaseTableSymbol = [](TypeIndex most_derived, TypeIndex source_type, size_t source_offset) {
+		return StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append("__flashcpp_vbase_table_")
+				.append(static_cast<uint64_t>(most_derived.index()))
+				.append('_')
+				.append(static_cast<uint64_t>(source_type.index()))
+				.append('_')
+				.append(static_cast<uint64_t>(source_offset))
+				.commit());
+	};
+
+	auto findMostDerivedVirtualBaseOffset = [](const StructTypeInfo* most_derived, TypeIndex virtual_base_type) -> std::optional<size_t> {
+		if (!most_derived) {
+			return std::nullopt;
+		}
+		for (const auto& virtual_base : most_derived->virtual_bases) {
+			if (virtual_base.type_index == virtual_base_type) {
+				return virtual_base.offset;
+			}
+		}
+		return std::nullopt;
+	};
+
+	auto addDispatchStore = [&](int64_t offset,
+		StringHandle vtable_symbol,
+		StringHandle virtual_base_table_symbol,
+		TemplateVector<int32_t, 1> virtual_base_table_offsets) {
+		if (offset < 0 || offset > std::numeric_limits<int>::max()) {
+			throw InternalError("Runtime dispatch pointer offset exceeds IR range");
+		}
+		MemberStoreOp dispatch_store;
+		dispatch_store.object = StringTable::getOrInternStringHandle("this");
+		dispatch_store.member_name = StringTable::getOrInternStringHandle("__runtime_dispatch");
+		dispatch_store.offset = static_cast<int>(offset);
+		dispatch_store.struct_type_info = struct_type_info;
+		dispatch_store.ref_qualifier = CVReferenceQualifier::None;
+		dispatch_store.vtable_symbol = vtable_symbol;
+		dispatch_store.virtual_base_table_symbol = virtual_base_table_symbol;
+		dispatch_store.virtual_base_table_offsets = std::move(virtual_base_table_offsets);
+		dispatch_store.value.setType(TypeCategory::Void);
+		dispatch_store.value.ir_type = IrType::Void;
+		dispatch_store.value.size_in_bits = SizeInBits{64};
+		dispatch_store.value.value = static_cast<unsigned long long>(0);
+		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(dispatch_store), source_token));
+	};
+
+	auto emitVirtualBaseTable = [&](const StructTypeInfo* source_struct_info, TypeIndex source_type_index, size_t source_offset) {
+		if (!source_struct_info || source_struct_info->has_vtable || source_struct_info->virtual_bases.empty()) {
+			return;
+		}
+		if (!source_type_index.is_valid()) {
+			source_type_index = source_struct_info->own_type_index_.value_or(TypeIndex{});
+		}
+		if (!source_type_index.is_valid()) {
+			throw InternalError("Virtual-base table initialization is missing the source type index");
+		}
+
+		TemplateVector<int32_t, 1> offsets;
+		offsets.reserve(source_struct_info->virtual_bases.size());
+		for (const auto& virtual_base : source_struct_info->virtual_bases) {
+			const std::optional<size_t> absolute_offset = findMostDerivedVirtualBaseOffset(struct_info, virtual_base.type_index);
+			if (!absolute_offset.has_value() || *absolute_offset < source_offset) {
+				throw InternalError("Virtual-base table initialization cannot resolve a reachable virtual base offset");
+			}
+			const size_t relative_offset = *absolute_offset - source_offset;
+			if (relative_offset > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+				throw InternalError("Virtual-base table offset exceeds 32-bit IR range");
+			}
+			offsets.push_back(static_cast<int32_t>(relative_offset));
+		}
+
+		addDispatchStore(static_cast<int64_t>(source_offset), StringHandle{},
+			makeVirtualBaseTableSymbol(most_derived_type, source_type_index, source_offset), std::move(offsets));
+	};
+
+	if (struct_info->has_vtable) {
+		addDispatchStore(0, StringTable::getOrInternStringHandle(struct_info->vtable_symbol), StringHandle{}, {});
+	} else {
+		emitVirtualBaseTable(struct_info, most_derived_type, 0);
+	}
+
+	for (const auto& base : struct_info->base_classes) {
+		if (base.is_virtual) {
+			continue;
+		}
+		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+		const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
+		if (!base_struct_info || base.offset == 0) {
+			continue;
+		}
+		if (base_struct_info->has_vtable) {
+			addDispatchStore(static_cast<int64_t>(base.offset), NameMangling::generateSecondaryVTableSymbol(struct_name_for_ctor_view,
+				StringTable::getStringView(base_type_info->name()), base.offset), StringHandle{}, {});
+		} else {
+			emitVirtualBaseTable(base_struct_info, base.type_index, base.offset);
+		}
+	}
+
+	if (include_virtual_base_vptrs) {
+		for (const auto& virtual_base : struct_info->virtual_bases) {
+			if (virtual_base.offset == 0) {
+				continue;
+			}
+			const TypeInfo* base_type_info = tryGetTypeInfo(virtual_base.type_index);
+			const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
+			if (!base_struct_info) {
+				continue;
+			}
+			if (base_struct_info->has_vtable) {
+				addDispatchStore(static_cast<int64_t>(virtual_base.offset), NameMangling::generateSecondaryVTableSymbol(struct_name_for_ctor_view,
+					StringTable::getStringView(base_type_info->name()), virtual_base.offset), StringHandle{}, {});
+			} else {
+				emitVirtualBaseTable(base_struct_info, virtual_base.type_index, virtual_base.offset);
+			}
+		}
+	}
+}
+
 void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& node) {
 	// Deduplication: if this exact constructor node was already emitted (e.g., visited
 	// during beginStructDeclarationCodegen AND later re-queued via deferred emission),
@@ -2198,164 +2329,6 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		}
 	}
 
-	auto makeVirtualBaseTableSymbol = [](TypeIndex most_derived_type,
-		TypeIndex source_type,
-		size_t source_offset) {
-		return StringTable::getOrInternStringHandle(
-			StringBuilder()
-				.append("__flashcpp_vbase_table_")
-				.append(static_cast<uint64_t>(most_derived_type.index()))
-				.append('_')
-				.append(static_cast<uint64_t>(source_type.index()))
-				.append('_')
-				.append(static_cast<uint64_t>(source_offset))
-				.commit());
-	};
-
-	auto findMostDerivedVirtualBaseOffset = [](const StructTypeInfo* most_derived_type,
-		TypeIndex virtual_base_type) -> std::optional<size_t> {
-		if (!most_derived_type) {
-			return std::nullopt;
-		}
-		for (const auto& virtual_base : most_derived_type->virtual_bases) {
-			if (virtual_base.type_index == virtual_base_type) {
-				return virtual_base.offset;
-			}
-		}
-		return std::nullopt;
-	};
-
-	auto emitVptrStores = [&](const StructTypeInfo* struct_info, const TypeInfo* struct_type_info, bool include_virtual_base_vptrs) {
-		if (!struct_info || (!struct_info->has_vtable && struct_info->virtual_bases.empty())) {
-			return;
-		}
-
-		const TypeIndex most_derived_type = struct_type_info
-			? struct_type_info->type_index_
-			: struct_info->own_type_index_.value_or(TypeIndex{});
-		if (!most_derived_type.is_valid()) {
-			throw InternalError("Runtime virtual-base initialization is missing the most-derived type index");
-		}
-
-		auto addDispatchStore = [&](int64_t offset,
-			StringHandle vtable_symbol,
-			StringHandle virtual_base_table_symbol,
-			TemplateVector<int32_t, 1> virtual_base_table_offsets) {
-			if (offset < 0 || offset > std::numeric_limits<int>::max()) {
-				throw InternalError("Runtime dispatch pointer offset exceeds IR range");
-			}
-			MemberStoreOp dispatch_store;
-			dispatch_store.object = StringTable::getOrInternStringHandle("this");
-			dispatch_store.member_name = StringTable::getOrInternStringHandle("__runtime_dispatch");
-			dispatch_store.offset = static_cast<int>(offset);
-			dispatch_store.struct_type_info = struct_type_info;
-			dispatch_store.ref_qualifier = CVReferenceQualifier::None;
-			dispatch_store.vtable_symbol = vtable_symbol;
-			dispatch_store.virtual_base_table_symbol = virtual_base_table_symbol;
-			dispatch_store.virtual_base_table_offsets = std::move(virtual_base_table_offsets);
-			dispatch_store.value.setType(TypeCategory::Void);
-			dispatch_store.value.ir_type = IrType::Void;
-			dispatch_store.value.size_in_bits = SizeInBits{64};
-			dispatch_store.value.value = static_cast<unsigned long long>(0);
-			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(dispatch_store), node.name_token()));
-		};
-
-		auto emitVirtualBaseTable = [&](const StructTypeInfo* source_struct_info,
-			TypeIndex source_type_index,
-			size_t source_offset) {
-			if (!source_struct_info || source_struct_info->has_vtable || source_struct_info->virtual_bases.empty()) {
-				return;
-			}
-			if (!source_type_index.is_valid()) {
-				source_type_index = source_struct_info->own_type_index_.value_or(TypeIndex{});
-			}
-			if (!source_type_index.is_valid()) {
-				throw InternalError("Virtual-base table initialization is missing the source type index");
-			}
-
-			TemplateVector<int32_t, 1> offsets;
-			offsets.reserve(source_struct_info->virtual_bases.size());
-			for (const auto& virtual_base : source_struct_info->virtual_bases) {
-				const std::optional<size_t> absolute_offset =
-					findMostDerivedVirtualBaseOffset(struct_info, virtual_base.type_index);
-				if (!absolute_offset.has_value() || *absolute_offset < source_offset) {
-					throw InternalError("Virtual-base table initialization cannot resolve a reachable virtual base offset");
-				}
-				const size_t relative_offset = *absolute_offset - source_offset;
-				if (relative_offset > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
-					throw InternalError("Virtual-base table offset exceeds 32-bit IR range");
-				}
-				offsets.push_back(static_cast<int32_t>(relative_offset));
-			}
-
-			addDispatchStore(
-				static_cast<int64_t>(source_offset),
-				StringHandle{},
-				makeVirtualBaseTableSymbol(most_derived_type, source_type_index, source_offset),
-				std::move(offsets));
-		};
-
-		if (struct_info->has_vtable) {
-			addDispatchStore(
-				0,
-				StringTable::getOrInternStringHandle(struct_info->vtable_symbol),
-				StringHandle{},
-				{});
-		} else {
-			emitVirtualBaseTable(
-				struct_info,
-				most_derived_type,
-				0);
-		}
-
-		for (const auto& base : struct_info->base_classes) {
-			if (base.is_virtual) {
-				continue;
-			}
-			const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
-			const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
-			if (!base_struct_info || base.offset == 0) {
-				continue;
-			}
-			if (base_struct_info->has_vtable) {
-				addDispatchStore(
-					static_cast<int64_t>(base.offset),
-					NameMangling::generateSecondaryVTableSymbol(
-						struct_name_for_ctor,
-						StringTable::getStringView(base_type_info->name()),
-						base.offset),
-					StringHandle{},
-					{});
-			} else {
-				emitVirtualBaseTable(base_struct_info, base.type_index, base.offset);
-			}
-		}
-
-		if (include_virtual_base_vptrs) {
-			for (const auto& virtual_base : struct_info->virtual_bases) {
-				if (virtual_base.offset == 0) {
-					continue;
-				}
-				const TypeInfo* base_type_info = tryGetTypeInfo(virtual_base.type_index);
-				const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
-				if (!base_struct_info) {
-					continue;
-				}
-				if (base_struct_info->has_vtable) {
-					addDispatchStore(
-						static_cast<int64_t>(virtual_base.offset),
-						NameMangling::generateSecondaryVTableSymbol(
-						struct_name_for_ctor,
-						StringTable::getStringView(base_type_info->name()),
-						virtual_base.offset),
-						StringHandle{},
-						{});
-				} else {
-					emitVirtualBaseTable(base_struct_info, virtual_base.type_index, virtual_base.offset);
-				}
-			}
-		}
-	};
 
 	const auto selectInitializerConstructor = [&](const StructTypeInfo& target, TypeIndex target_index,
 		std::span<const ASTNode> arguments, const void* key) {
@@ -2446,7 +2419,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				appendForwardedCtorArguments(base_object_ctor_op);
 				finalizeConstructorCallOp(base_object_ctor_op, *enclosing_struct_info, node.name_token());
 				ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(base_object_ctor_op), node.name_token()));
-				emitVptrStores(enclosing_struct_info, enclosing_type_info, true);
+				emitRuntimeDispatchStores(enclosing_struct_info, enclosing_type_info, StringTable::getOrInternStringHandle(struct_name_for_ctor),
+					node.name_token(), true);
 				emitVoidReturn(node.name_token());
 				symbol_table.exit_scope();
 			}
@@ -2627,7 +2601,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 			// This must happen after base constructor calls (which set up base vptr)
 			// but before member initialization
 			if (!(node.is_implicit() && (is_implicit_copy_constructor || is_implicit_move_constructor))) {
-				emitVptrStores(struct_info, struct_type_info, !emit_split_ctor_variants);
+				emitRuntimeDispatchStores(struct_info, struct_type_info, StringTable::getOrInternStringHandle(struct_name_for_ctor),
+					node.name_token(), !emit_split_ctor_variants);
 			}
 		}
 	}
@@ -2791,7 +2766,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), node.name_token()));
 						}
 					}
-					emitVptrStores(struct_info, struct_type_info, !emit_split_ctor_variants);
+					emitRuntimeDispatchStores(struct_info, struct_type_info, StringTable::getOrInternStringHandle(struct_name_for_ctor),
+						node.name_token(), !emit_split_ctor_variants);
 				} else {
 					// Implicit default constructor: use default member initializers or zero-initialize
 

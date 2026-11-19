@@ -204,6 +204,11 @@ private:
 	void emitImplicitDefaultBaseConstructorCall(
 		const ImplicitDefaultBaseInitialization& initialization,
 		const Token& source_token);
+	// Emit the runtime dispatch-pointer stores (vtable or hidden virtual-base
+	// table) for a constructor body. Shared by explicit/spelled constructors and
+	// the synthetic trivial default constructor emitted after semantic analysis.
+	void emitRuntimeDispatchStores(const StructTypeInfo* struct_info, const TypeInfo* struct_type_info, StringHandle struct_name_for_ctor,
+		const Token& source_token, bool include_virtual_base_vptrs);
 	void finalizeConstructorCallOp(
 		ConstructorCallOp& ctor_op,
 		const StructTypeInfo& target_struct_info,

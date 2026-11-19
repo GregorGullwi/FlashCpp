@@ -2378,6 +2378,7 @@ void AstToIr::generateTrivialDefaultConstructors() {
 				base_object_call.call_base_object_variant = true;
 				finalizeConstructorCallOp(base_object_call, *struct_info, Token());
 				ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(base_object_call), Token()));
+				emitRuntimeDispatchStores(struct_info, type_info, type_name, Token(), true);
 				emitVoidReturn(Token());
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(base_object_ctor_decl_op), Token()));
 			}
@@ -2386,6 +2387,7 @@ void AstToIr::generateTrivialDefaultConstructors() {
 				 default_constructor.base_object_direct_base_initializers) {
 				emitImplicitDefaultBaseConstructorCall(direct_base, Token());
 			}
+			emitRuntimeDispatchStores(struct_info, type_info, type_name, Token(), !emit_base_object_variant);
 
 			// Combine bitfield default initializers into single per-unit stores
 			// (all default values are compile-time constants, so we can pre-combine them)

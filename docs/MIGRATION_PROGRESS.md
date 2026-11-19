@@ -318,6 +318,10 @@ remaining pattern schemas by identity, and remove the name fallback.
    whose return type names a class-template-dependent pointer alias now preserve
    array-to-pointer decay for member-array return operands when the body is
    instantiated, so built-in subscript lowering sees the pointer result.
+   Instantiated class templates now emit their vtable or hidden virtual-base
+   table initialization from the synthetic default constructor, so virtual
+   dispatch and conversions reached through a template base use the
+   most-derived offsets instead of reading uninitialized dispatch storage.
    Non-template conversion operators returning an lvalue reference are viable
    for lvalue reference parameters, with the less cv-qualified reference
    winning overload ranking and const-removing results staying rejected.
