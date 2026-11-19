@@ -1961,7 +1961,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					// This is a function pointer assignment
 					// Generate IR for the RHS (which should be a function address)
 					ExprResult rhs_result = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
-					if (auto decayed = tryDecayLambdaClosureToFunctionPointer(rhs_result, lhs_type.category(), binaryOperatorNode.get_token())) {
+					if (auto decayed = tryDecayLambdaClosureToFunctionPointer(rhs_result, lhs_type, binaryOperatorNode.get_token())) {
 						rhs_result = *decayed;
 					}
 
