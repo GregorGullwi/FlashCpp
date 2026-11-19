@@ -16783,7 +16783,13 @@ void IrToObjConverter<TWriterClass>::emitInlineDestructorCall(const std::pair<St
 	}
 
 	X64Register this_reg = getIntParamReg<TWriterClass>(0);
-	emitLeaFromFrame(this_reg, var_info->offset);
+	if (nrvo_local_offsets_.contains(var_info->offset)) {
+			// An NRVO local lives in the caller's hidden return slot; the frame
+			// slot only holds its address.
+		emitMovFromFrame(this_reg, var_info->offset);
+	} else {
+		emitLeaFromFrame(this_reg, var_info->offset);
+	}
 
 		// Build mangled destructor name using the shared helper
 	auto mangled_name = buildDestructorMangledNameFromString(StringTable::getStringView(struct_name_h));

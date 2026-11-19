@@ -290,6 +290,12 @@ inline ReturnAbiDisposition planAggregateReturnDisposition(
 		return ReturnAbiDisposition::Dependent;
 	}
 
+	// Itanium C++ ABI: non-trivial copy/move construction or destruction makes
+	// the class indirect for calls even when its scalar layout fits registers.
+	if (!isStructTrivialForCalls(struct_info)) {
+		return ReturnAbiDisposition::Indirect;
+	}
+
 	const SysVAbiValueLayout layout = TargetABI::classifySysVValue(
 		type_index, SizeInBits{size_in_bits}, pointer_depth, is_reference);
 	// x87 aggregate returns stay on the legacy direct path until X87/X87UP

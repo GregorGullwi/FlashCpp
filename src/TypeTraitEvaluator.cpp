@@ -1980,6 +1980,37 @@ bool isStructTriviallyCopyableImpl(const StructTypeInfo* struct_info) {
 		});
 }
 
+// [class.copy.ctor]/11 and [class.dtor]/3: construction or destruction is
+// trivial only when it is not user-provided and no virtual function or virtual
+// base participates. Copy assignment is irrelevant to the call ABI.
+bool hasTrivialCallSpecialMemberSet(const StructTypeInfo* struct_info) {
+	if (!struct_info || struct_info->has_vtable || hasVirtualBaseClass(*struct_info)) {
+		return false;
+	}
+	const StructMemberFunction* copy_constructor = struct_info->findCopyConstructor();
+	const StructMemberFunction* move_constructor = struct_info->findMoveConstructor();
+	// Deleting both copy and move construction makes the class non-trivial for
+	// calls. Declaring either special member suppresses the other implicit one,
+	// so a deleted copy/move without a surviving user-declared replacement
+	// leaves the class without callable same-type construction at all.
+	const bool deletes_copy_or_move = struct_info->isCopyConstructorDeleted() || struct_info->isMoveConstructorDeleted();
+	if (deletes_copy_or_move && copy_constructor == nullptr && move_constructor == nullptr) {
+		return false;
+	}
+	if (isNontrivialDeclaredSpecialMember(copy_constructor) || isNontrivialDeclaredSpecialMember(move_constructor)) {
+		return false;
+	}
+	return hasTrivialDestructorDeclaration(struct_info);
+}
+
+bool isStructTrivialForCallsImpl(const StructTypeInfo* struct_info) {
+	return allRecordSubobjectsSatisfy(
+		struct_info,
+		[](const StructTypeInfo* current) {
+			return hasTrivialCallSpecialMemberSet(current);
+		});
+}
+
 // A trivial class is trivially copyable and has no user-declared constructor.
 // Apply both checks to the complete record graph in the same iterative walk.
 bool isStructTrivialImpl(const StructTypeInfo* struct_info) {
@@ -2808,6 +2839,10 @@ bool isStructTrivial(const StructTypeInfo* struct_info) {
 		return *fact;
 	}
 	return isStructTrivialImpl(struct_info);
+}
+
+bool isStructTrivialForCalls(const StructTypeInfo* struct_info) {
+	return isStructTrivialForCallsImpl(struct_info);
 }
 
 bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {

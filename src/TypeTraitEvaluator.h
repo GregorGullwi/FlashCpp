@@ -37,6 +37,11 @@ bool isStructNothrowDestructible(const StructTypeInfo* struct_info);
 // and codegen trait/deferred-implicit-member consumers.
 bool isStructTriviallyCopyable(const StructTypeInfo* struct_info);
 bool isStructTrivial(const StructTypeInfo* struct_info);
+// Itanium C++ ABI call classification: a record is trivial for calls when its
+// copy/move construction and destruction are trivial and it has no virtual
+// functions or virtual bases. Non-trivial records are passed and returned
+// indirectly, independent of their scalar size.
+bool isStructTrivialForCalls(const StructTypeInfo* struct_info);
 
 // Shared helper: determine whether a pseudo-destructor call expression is noexcept.
 // Resolves the object's type via symbol lookup (handles template specializations)
