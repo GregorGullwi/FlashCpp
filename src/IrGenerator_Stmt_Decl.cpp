@@ -1778,6 +1778,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		: ((runtime_pointer_depth > 0 || has_pointer_element) ? 64 : static_cast<int>(type_node.size_in_bits()));
 	const bool owns_inline_array_storage =
 		decl.owns_inline_array_storage() || has_ordered_array_storage;
+	if (!has_ordered_array_storage && !has_pointer_element && !type_node.is_reference() && runtime_pointer_depth == 0) {
+		size_in_bits = requireConcreteAliasResolvedCodegenSizeBits(type_node, "local variable storage");
+	}
 	operands.emplace_back(size_in_bits);
 	operands.emplace_back(local_var_id);
 	operands.emplace_back(static_cast<unsigned long long>(decl.custom_alignment()));
@@ -2895,10 +2898,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 	VariableDeclOp decl_op;
 	decl_op.type_index = type_node.type_index();
-	// References and pointers are both 64-bit (pointer size on x64). An ordered array object sizes its frame
-	// from the element on the spine, not from the flat base type.
-	decl_op.size_in_bits = SizeInBits{has_ordered_array_storage ? ordered_array_element_bits
-		: ((runtime_pointer_depth > 0 || type_node.is_reference()) ? 64 : static_cast<int>(type_node.size_in_bits()))};
+	int object_size_bits = size_in_bits;
+	if (has_ordered_array_storage) {
+		object_size_bits = ordered_array_element_bits;
+	} else if (runtime_pointer_depth > 0 || type_node.is_reference()) {
+		object_size_bits = POINTER_SIZE_BITS;
+	}
+	decl_op.size_in_bits = SizeInBits{object_size_bits};
 	decl_op.var_name = declared_spelling;
 	decl_op.local_id = local_var_id;
 	decl_op.is_nrvo_candidate = is_nrvo_candidate;
