@@ -11649,9 +11649,10 @@ void IrToObjConverter<TWriterClass>::handleSignExtend(const IrInstruction& instr
 		// Allocate result register
 	X64Register result_reg = allocateRegisterWithSpilling();
 
-		// Generate movsx instruction based on size combination
-	if (fromSize == 8 && (toSize == 32 || toSize == 64)) {
-			// movsx r32/r64, r8: REX 0F BE /r (sign-extend byte to dword/qword)
+	// Generate movsx instruction based on size combination
+	if (fromSize == 8 && (toSize == 16 || toSize == 32 || toSize == 64)) {
+		// movsx r32/r64, r8: REX 0F BE /r (sign-extend byte to dword/qword)
+		// A 16-bit result uses the low word of the sign-extended dword.
 		uint8_t rex = (toSize == 64) ? 0x48 : 0x40;
 		if (static_cast<uint8_t>(result_reg) >= 8)
 			rex |= 0x04; // REX.R
