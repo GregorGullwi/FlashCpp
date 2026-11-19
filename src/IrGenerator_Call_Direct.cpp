@@ -1439,6 +1439,12 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				materialized_selected_ctor = true;
 			}
 		}
+		if (param_type && !materialized_selected_ctor && param_ref_qualifier == CVReferenceQualifier::None) {
+			if (auto decayed = tryDecayLambdaClosureToFunctionPointer(argumentIrOperands, param_type->category(), callExprNode.called_from())) {
+				argumentIrOperands = *decayed;
+				materialized_selected_ctor = true;
+			}
+		}
 
 		// Check if we need to call a conversion operator for this argument
 		// This handles cases like: func(myStruct) where func expects int and myStruct has operator int()

@@ -260,14 +260,14 @@ successful return in both regular functions and lambda call operators. Exception
 cleanup still needs construction-completion tracking so it never visits a
 destination whose initialization never finished.
 
-## Lambda function-pointer conversion drops the __invoke target
+## Generic lambda function-pointer conversion needs a templated conversion function
 
-Converting a non-capturing lambda to a function pointer currently copies the
-closure object into the pointer slot (`assign %invoke = %make`) instead of
-materializing the `__invoke` entry address. A call through the converted pointer
-then treats closure bytes as a code target and crashes. The conversion operator
-needs to produce the `__invoke` address for every return type, including
-aggregates that use a hidden return slot.
+Non-generic captureless lambdas now publish an implicit conversion operator and
+every conversion context lowers it to the generated `__invoke` address,
+including aggregate returns that use a hidden return slot. A captureless generic
+lambda still has no templated conversion function, so converting it to a
+concrete function pointer reaches mangling with an unresolved `auto` parameter.
+Materialize the per-instantiation conversion target before enabling that path.
 
 ## Constexpr namespace-scope pointer dereference is not yet supported
 

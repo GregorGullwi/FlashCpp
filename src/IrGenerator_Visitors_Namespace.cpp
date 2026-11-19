@@ -555,6 +555,15 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 				expr_category = return_category;
 				expr_size = return_size;
 			}
+			if (!sema_applied_conversion) {
+				if (auto decayed = tryDecayLambdaClosureToFunctionPointer(operands, return_type, node.return_token())) {
+					operands = *decayed;
+					expr_type = operands.typeEnum();
+					expr_category = operands.category();
+					expr_size = operands.size_in_bits.value;
+					sema_applied_conversion = true;
+				}
+			}
 			if (!sema_applied_conversion && (expr_type != return_type || expr_size != return_size)) {
 				auto tryApplyResolvedAliasReturnConversion = [&](TypeIndex source_type_index) {
 					if (!source_type_index.is_valid()) {

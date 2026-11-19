@@ -11,6 +11,7 @@
 #include "TemplateTypes.h" // For FunctionSignatureKey
 #include "MigrationStats.h"
 #include "InlineVector.h"
+#include "LambdaHelpers.h"
 #include "TypeVisitSets.h"
 #include <algorithm>
 #include <array>
@@ -3250,9 +3251,59 @@ trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const Typ
 	return result;
 }
 
+// A synthesized lambda closure has no parsed declaration owner, so its
+// canonical conversion operator cannot always be published. The closure still
+// carries the generated conversion declaration; match that declaration
+// structurally against a function-pointer target.
+inline std::optional<UserDefinedConversionOperatorSelection>
+trySelectLambdaClosureConversionOperator(const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type,
+	bool allow_explicit, ValueCategory source_value_category) {
+	if (!target_type.is_function_pointer() || !target_type.has_function_signature() ||
+		!source_type.type_index().is_valid()) {
+		return std::nullopt;
+	}
+	const TypeInfo* source_type_info = tryGetTypeInfo(source_type.type_index());
+	const StructTypeInfo* source_struct_info = source_type_info != nullptr ? source_type_info->getStructInfo() : nullptr;
+	if (source_struct_info == nullptr || !isLambdaClosureStruct(*source_struct_info)) {
+		return std::nullopt;
+	}
+	for (const StructMemberFunction& member : source_struct_info->member_functions) {
+		if (!member.is_conversion_operator() || !member.function_decl.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+		if (!allow_explicit && member.is_explicit) {
+			continue;
+		}
+		const uint8_t source_cv_bits = static_cast<uint8_t>(source_type.cv_qualifier());
+		const uint8_t member_cv_bits = static_cast<uint8_t>(member.cv_qualifier);
+		if ((source_cv_bits & ~member_cv_bits) != 0) {
+			continue;
+		}
+		if (!canonicalConversionOperatorAllowsValueCategory(member.ref_qualifier, source_value_category)) {
+			continue;
+		}
+		const FunctionDeclarationNode& function = member.function_decl.as<FunctionDeclarationNode>();
+		const TypeSpecifierNode& return_type = function.decl_node().type_specifier_node();
+		if (!return_type.is_function_pointer() || !return_type.has_function_signature() ||
+			!FlashCpp::equalFunctionSignatureIdentity(return_type.function_signature(), target_type.function_signature())) {
+			continue;
+		}
+		UserDefinedConversionOperatorSelection selection;
+		selection.function = &function;
+		selection.compatibility_declaring_type_index = source_type.type_index();
+		selection.member_cv_qualifier = member.cv_qualifier;
+		selection.access = member.access;
+		return selection;
+	}
+	return std::nullopt;
+}
+
 inline std::optional<UserDefinedConversionOperatorSelection>
 trySelectUserDefinedConversionOperator(const TypeSpecifierNode& source_type, const TypeSpecifierNode& target_type, bool allow_explicit,
 	ValueCategory source_value_category) {
+	if (auto lambda_conversion = trySelectLambdaClosureConversionOperator(source_type, target_type, allow_explicit, source_value_category)) {
+		return lambda_conversion;
+	}
 	FrontendContext& context = requireFrontendContext();
 	CanonicalTypeTable& table = context.canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
