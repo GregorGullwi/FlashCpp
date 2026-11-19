@@ -264,8 +264,14 @@ private:
 	// True when [RBP+offset] must be accessed through (RBP & -align) + offset so the
 	// object address is absolutely aligned regardless of the incoming frame address.
 	bool frameOffsetNeedsAbsoluteAlign(int32_t offset) const;
+	// True when the slot lives at the pre-and frame top (incoming stack args, Win64
+	// variadic homes, FH3 catch objects) and must use RSP+total_stack after RBP realign.
+	bool frameOffsetUsesCanonicalTop(int32_t offset) const;
 	void emitMaterializeAlignedFrameBase(X64Register dest);
+	void emitMaterializeCanonicalFrameTop(X64Register dest);
 	X64Register emitScratchAlignedFrameBase(X64Register avoid_reg);
+	X64Register emitScratchCanonicalFrameTop(X64Register avoid_reg);
+	void registerCanonicalTopFrameOffset(int32_t offset);
 
 	// Helper to generate and emit LEA from frame
 	void emitLeaFromFrame(X64Register destinationRegister, int32_t offset);
@@ -1161,7 +1167,11 @@ private:
 	uint32_t current_function_frame_align_ = 16;	 // Absolute alignment guaranteed for local/temp addresses
 	uint32_t current_function_home_region_bytes_ = 0;  // Param/EH homes stay pure RBP; locals use aligned base
 	bool current_function_realigns_rbp_ = false;  // MSVC-style lea/and rbp for over-aligned locals
+	bool funclet_keeps_unaligned_rbp_ = false;  // Catch/SEH funclets keep pre-and RBP; locals use access-time align
 	std::vector<uint32_t> realign_epilogue_add_rsp_patches_;  // ADD RSP,imm32 sites when RBP was realigned
+	std::vector<uint32_t> canonical_frame_top_lea_patches_;  // LEA reg,[RSP+total_stack] for pre-and slots
+	std::vector<uint32_t> seh_funclet_lea_rbp_patches_;  // SEH filter/finally lea rbp,[rdx+N]
+	std::unordered_set<int32_t> canonical_top_frame_offsets_;  // Catch-obj / other pre-and slots
 	uint32_t current_function_reserved_catch_ref_temp_size_ = 0;	 // Windows FH3 reference-catch slots kept near named vars
 	std::vector<size_t> current_function_reserved_catch_ref_temps_;
 	uint32_t current_function_reserved_catch_obj_padding_size_ = 0;	// Padding to avoid FH3 dispCatchObj == 0 for by-value catch temps
