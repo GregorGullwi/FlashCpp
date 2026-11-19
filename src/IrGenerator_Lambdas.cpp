@@ -676,7 +676,7 @@ void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
 		StringBuilder()
 			.append(lambda_info.closure_type_name)
 			.append("_spec_")
-			.append(static_cast<unsigned long long>(lambda_info.generation_id))
+			.append(static_cast<uint64_t>(lambda_info.generation_id))
 			.commit());
 
 	// Generate operator() member function
