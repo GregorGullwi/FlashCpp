@@ -511,14 +511,27 @@ The following remain unsupported and are rejected or left unresolved:
 All four static-member initializer sites (in-class primary and partial
 specialization, out-of-line clones in
 `Parser_Templates_Inst_ClassTemplate.cpp`, and the lazy clone in
-`Parser_Templates_Lazy.cpp`) now attempt structural AST substitution before
-lexer replay.
+`Parser_Templates_Lazy.cpp`) attempt structural AST substitution before lexer
+replay and then classify the structural result as bound, deferred, or an error.
+A bound result is accepted without replay, including a bound indirect call whose
+callee has no direct `FunctionDeclarationNode`. A genuinely deferred result
+keeps replay available for the definition-context lookup state, the pack-aware
+`Parser::ReplayTemplateBindings` bindings, and point-of-instantiation
+completion. A conclusive lookup failure on a complete class owner now reports
+`UndeclaredQualifiedIdentifier` through the normal diagnostic path instead of
+being replayed into a generic non-constant initializer diagnostic.
 
 Replay remains for initializers whose dependent unqualified call still needs the
 definition-context lookup state established by source replay, and for qualified
 owners that are still incomplete while their specialization is being evaluated.
-`Parser::ReplayTemplateBindings` (pack-aware) keeps pack arity correct inside
-those replays meanwhile.
+Qualified result classification performs ordinary member lookup (including base
+classes) rather than inferring the outcome from class layout completeness alone.
+
+A dependent unqualified call that is still not analyzed after post-parse
+normalization trips `Normalized dependent unqualified direct-call query remained
+NotYetAnalyzed` in `ConstExprEvaluator_Core.cpp`. The reduction is an ADL-only
+lookup such as `probe(T{})` with `probe` declared after the template; the
+ordinary-lookup resolution path does not currently complete that query.
 
 ## Template instantiation recursion has very high per-level stack cost
 

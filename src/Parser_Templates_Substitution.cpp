@@ -304,9 +304,9 @@ Parser::TemplateBodySubstitutionState Parser::makeTemplateBodySubstitutionState(
 	return state;
 }
 
-bool Parser::static_initializer_has_residual_template_dependency(
+Parser::StaticInitializerLookupClassification Parser::classify_static_initializer_lookup(
 	const ASTNode& initializer,
-	std::span<const TemplateParameterNode> template_params) const {
+	std::span<const TemplateParameterNode> template_params) {
 	std::unordered_set<StringHandle> parameter_names;
 	parameter_names.reserve(template_params.size());
 	for (const TemplateParameterNode& parameter : template_params) {
@@ -315,58 +315,149 @@ bool Parser::static_initializer_has_residual_template_dependency(
 	const auto names_parameter = [&parameter_names](StringHandle name) {
 		return parameter_names.contains(name);
 	};
-	const auto qualified_id_has_dependency = [](const QualifiedIdentifierNode& qualified) {
-		if (qualified.hasDependentQualifiedName()) {
+	StaticInitializerLookupClassification classification;
+	bool saw_deferred_lookup = false;
+	const auto record_outcome = [&](StaticInitializerLookupOutcome outcome,
+		const QualifiedIdentifierNode* failed_qualified_id = nullptr) {
+		if (outcome == StaticInitializerLookupOutcome::Error) {
+			classification.outcome = StaticInitializerLookupOutcome::Error;
+			classification.failed_qualified_id = failed_qualified_id;
 			return true;
 		}
-		const std::string_view owner_name = gNamespaceRegistry.getQualifiedName(qualified.namespace_handle());
-		if (owner_name.empty()) {
-			return false;
-		}
-		const auto owner_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(owner_name));
-		if (owner_it == getTypesByNameMap().end()) {
-			return owner_name.find('$') != std::string_view::npos;
-		}
-		const StructTypeInfo* owner_struct = owner_it->second->getStructInfo();
-		return owner_struct != nullptr && !owner_struct->hasCompleteObjectLayout();
-	};
-	const auto call_has_dependency = [](const CallExprNode& call) {
-		return call.has_dependent_qualified_lookup_record() ||
-			getParserStoredDirectCallTarget(call) == nullptr;
-	};
-	const auto expression_has_dependency = [&](const ExpressionNode& expression) {
-		if (std::holds_alternative<FoldExpressionNode>(expression) ||
-			std::holds_alternative<SizeofPackNode>(expression) ||
-			std::holds_alternative<TemplateParameterReferenceNode>(expression)) {
-			return true;
-		}
-		if (const auto* identifier = std::get_if<IdentifierNode>(&expression);
-			identifier != nullptr && names_parameter(identifier->nameHandle())) {
-			return true;
-		}
-		if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&expression)) {
-			return qualified_id_has_dependency(*qualified);
-		}
-		if (const auto* call = std::get_if<CallExprNode>(&expression)) {
-			return call_has_dependency(*call);
+		if (outcome == StaticInitializerLookupOutcome::Deferred) {
+			saw_deferred_lookup = true;
 		}
 		return false;
 	};
-	return RebindStaticMemberAst::visitASTUntil(initializer, [&](const ASTNode& node) {
+	// A qualified owner is only a bound result once ordinary member lookup in
+	// that owner has a conclusive answer. Layout completeness is a fallback
+	// signal for an incomplete instantiation, never the primary one: a complete
+	// class can still reject the member, and an incomplete one can still publish
+	// the member being requested.
+	const auto classify_qualified_id = [&](const QualifiedIdentifierNode& qualified_id) {
+		if (qualified_id.hasDependentQualifiedName()) {
+			return StaticInitializerLookupOutcome::Deferred;
+		}
+		const std::string_view owner_name = gNamespaceRegistry.getQualifiedName(qualified_id.namespace_handle());
+		if (owner_name.empty()) {
+			return StaticInitializerLookupOutcome::Bound;
+		}
+		const auto owner_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(owner_name));
+		if (owner_it == getTypesByNameMap().end() || owner_it->second == nullptr) {
+			// A declared namespace qualifies a namespace-scope entity that
+			// structural substitution does not need to rebind. Anything else
+			// still needs the replay state that can materialize the owner.
+			if (gNamespaceRegistry.isDeclared(qualified_id.namespace_handle())) {
+				return StaticInitializerLookupOutcome::Bound;
+			}
+			return StaticInitializerLookupOutcome::Deferred;
+		}
+		const TypeInfo& owner = *owner_it->second;
+		switch (classifyQualifiedMemberForLookup(&owner, qualified_id.nameHandle())) {
+		case QualifiedMemberLookupState::Type:
+		case QualifiedMemberLookupState::Value:
+		case QualifiedMemberLookupState::Ambiguous:
+			return StaticInitializerLookupOutcome::Bound;
+		case QualifiedMemberLookupState::Unknown:
+			break;
+		}
+		if (findKnownQualifiedMemberTemplate(owner_name, qualified_id.name()).has_value()) {
+			return StaticInitializerLookupOutcome::Bound;
+		}
+		if (const StructTypeInfo* owner_struct = owner.getStructInfo()) {
+			// Member lookup found nothing. Only a complete owner turns that into
+			// a conclusive error; an incomplete instantiation still defers.
+			return owner_struct->hasCompleteObjectLayout()
+				? StaticInitializerLookupOutcome::Error
+				: StaticInitializerLookupOutcome::Deferred;
+		}
+		if (owner.getEnumInfo() != nullptr) {
+			return StaticInitializerLookupOutcome::Error;
+		}
+		// Alias targets and mid-instantiation placeholders have no published
+		// member table yet; keep replay available for them.
+		return StaticInitializerLookupOutcome::Deferred;
+	};
+	const auto classify_call = [](const CallExprNode& call) {
+		if (call.has_dependent_qualified_lookup_record()) {
+			return StaticInitializerLookupOutcome::Deferred;
+		}
+		if (call.has_dependent_unqualified_lookup_record()) {
+			// The completed point-of-instantiation target is authoritative.
+			// Without it the definition-context replay state is still needed.
+			const DependentUnqualifiedCallLookupRecord& record =
+				*call.dependent_unqualified_lookup_record();
+			return record.point_of_instantiation_function != nullptr
+				? StaticInitializerLookupOutcome::Bound
+				: StaticInitializerLookupOutcome::Deferred;
+		}
+		if (const FunctionDeclarationNode* target = getParserStoredDirectCallTarget(call);
+			target != nullptr) {
+			return target->is_template_pattern()
+				? StaticInitializerLookupOutcome::Deferred
+				: StaticInitializerLookupOutcome::Bound;
+		}
+		// An indirect call is bound through its callee object, not through a
+		// direct FunctionDeclarationNode. Only a still-dependent callee type
+		// keeps it deferred.
+		if (call.callee().is_indirect()) {
+			return typeSpecStillUsesDependentPlaceholder(
+					   call.callee().declaration().type_specifier_node())
+				? StaticInitializerLookupOutcome::Deferred
+				: StaticInitializerLookupOutcome::Bound;
+		}
+		return StaticInitializerLookupOutcome::Deferred;
+	};
+	RebindStaticMemberAst::visitASTUntil(initializer, [&](const ASTNode& node) {
 		if (node.is<TemplateParameterReferenceNode>()) {
-			return true;
+			return record_outcome(StaticInitializerLookupOutcome::Deferred);
 		}
 		if (node.is<IdentifierNode>() && names_parameter(node.as<IdentifierNode>().nameHandle())) {
-			return true;
+			return record_outcome(StaticInitializerLookupOutcome::Deferred);
 		}
 		if (node.is<QualifiedIdentifierNode>()) {
-			return qualified_id_has_dependency(node.as<QualifiedIdentifierNode>());
+			const QualifiedIdentifierNode& qualified_id = node.as<QualifiedIdentifierNode>();
+			return record_outcome(classify_qualified_id(qualified_id), &qualified_id);
 		}
 		if (node.is<CallExprNode>()) {
-			return call_has_dependency(node.as<CallExprNode>());
+			return record_outcome(classify_call(node.as<CallExprNode>()));
 		}
-		return node.is<ExpressionNode>() && expression_has_dependency(node.as<ExpressionNode>());
+		if (!node.is<ExpressionNode>()) {
+			return false;
+		}
+		const ExpressionNode& expression = node.as<ExpressionNode>();
+		if (std::holds_alternative<FoldExpressionNode>(expression) ||
+			std::holds_alternative<SizeofPackNode>(expression) ||
+			std::holds_alternative<TemplateParameterReferenceNode>(expression)) {
+			return record_outcome(StaticInitializerLookupOutcome::Deferred);
+		}
+		if (const auto* identifier = std::get_if<IdentifierNode>(&expression);
+			identifier != nullptr && names_parameter(identifier->nameHandle())) {
+			return record_outcome(StaticInitializerLookupOutcome::Deferred);
+		}
+		if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&expression)) {
+			return record_outcome(classify_qualified_id(*qualified), qualified);
+		}
+		if (const auto* call = std::get_if<CallExprNode>(&expression)) {
+			return record_outcome(classify_call(*call));
+		}
+		return false;
 	});
+	if (classification.outcome != StaticInitializerLookupOutcome::Error && saw_deferred_lookup) {
+		classification.outcome = StaticInitializerLookupOutcome::Deferred;
+	}
+	return classification;
+}
+
+[[noreturn]] void Parser::throwUndeclaredQualifiedMember(const QualifiedIdentifierNode& qualified_id) {
+	const std::string message = std::string("Use of undeclared identifier '") + qualified_id.full_name() + "'";
+	throw makeStructuredCompileError(
+		context_.diagnostics(),
+		DiagnosticId::UndeclaredQualifiedIdentifier,
+		DiagnosticSeverity::Error,
+		lexer_.getSourceLocation(qualified_id.identifier_token()),
+		message,
+		{});
 }
 
 std::optional<ASTNode> Parser::substitute_static_member_initializer_structurally(
@@ -410,6 +501,58 @@ std::optional<ASTNode> Parser::substitute_static_member_initializer_structurally
 		}
 	});
 	return substituteTemplateParameters(*initializer, substitution_context);
+}
+
+std::optional<ASTNode> Parser::substitute_static_member_initializer_if_bound(
+	const std::optional<ASTNode>& initializer,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	StringHandle owning_instantiated_name,
+	TypeIndex owning_type_index,
+	const StructDeclarationNode* owning_declaration,
+	StructTypeInfo* owning_struct_info,
+	const DeclarationNode* member_declaration,
+	NamespaceHandle fallback_definition_namespace,
+	const TemplateDefinitionLookupContext& member_definition_lookup_context) {
+	if (!initializer.has_value()) {
+		return std::nullopt;
+	}
+	std::optional<ASTNode> structural_initializer;
+	try {
+		structural_initializer = substitute_static_member_initializer_structurally(
+			initializer, template_params, template_args, owning_instantiated_name, owning_type_index,
+			owning_declaration, owning_struct_info, member_declaration, fallback_definition_namespace,
+			member_definition_lookup_context);
+	} catch (const CompileError& ex) {
+		// Probe instantiations must stay recoverable; in a real use the
+		// structured diagnostic must reach the caller unchanged.
+		if (!isTemplateInstantiationFailureProbeMode()) {
+			throw;
+		}
+		FLASH_LOG(Templates, Trace, "Structural static initializer probe deferred: ", ex.what());
+		return std::nullopt;
+	} catch (const InternalError& ex) {
+		FLASH_LOG(Templates, Trace, "Structural static initializer substitution deferred: ", ex.what());
+		return std::nullopt;
+	}
+	if (!structural_initializer.has_value()) {
+		return std::nullopt;
+	}
+	const StaticInitializerLookupClassification classification =
+		classify_static_initializer_lookup(*structural_initializer, template_params);
+	switch (classification.outcome) {
+	case StaticInitializerLookupOutcome::Bound:
+		return structural_initializer;
+	case StaticInitializerLookupOutcome::Deferred:
+		FLASH_LOG(Templates, Trace, "Static initializer structural result still requires replay");
+		return std::nullopt;
+	case StaticInitializerLookupOutcome::Error:
+		if (classification.failed_qualified_id == nullptr) {
+			throw InternalError("Static initializer lookup error is missing its qualified identifier");
+		}
+		throwUndeclaredQualifiedMember(*classification.failed_qualified_id);
+	}
+	throw InternalError("Unhandled static initializer lookup outcome");
 }
 
 ASTNode Parser::substituteTemplateParametersWithState(
