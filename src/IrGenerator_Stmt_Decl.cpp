@@ -399,11 +399,15 @@ void AstToIr::prepareNRVOCandidates(const ASTNode& body, const TypeSpecifierNode
 	const auto statements = body.as<BlockNode>().get_statements();
 	const VariableDeclarationNode* candidate = nullptr;
 	const void* candidate_raw_pointer = nullptr;
+	size_t candidate_statement_index = statements.size();
 	size_t return_count = 0;
-	ReturnStatementNode const* only_return = nullptr;
-	for (const ASTNode& statement : statements) {
+	const ASTNode* only_return_statement = nullptr;
+	const ReturnStatementNode* only_return = nullptr;
+	for (size_t statement_index = 0; statement_index < statements.size(); ++statement_index) {
+		const ASTNode& statement = statements[statement_index];
 		if (statement.is<ReturnStatementNode>()) {
 			++return_count;
+			only_return_statement = &statement;
 			only_return = &statement.as<ReturnStatementNode>();
 			continue;
 		}
@@ -436,9 +440,36 @@ void AstToIr::prepareNRVOCandidates(const ASTNode& body, const TypeSpecifierNode
 		}
 		candidate = &variable;
 		candidate_raw_pointer = statement.raw_pointer();
+		candidate_statement_index = statement_index;
 	}
 	if (return_count != 1 || candidate == nullptr || !only_return->expression().has_value()) {
 		return;
+	}
+	// A return that can execute while the candidate is alive would have to share the
+	// destination with the candidate. That is only safe on the edge that transfers
+	// the candidate itself, so keep elision only when every other return precedes the
+	// candidate's declaration. Nested lambdas and local class bodies are separate
+	// functions and do not participate in this function's exits.
+	for (size_t i = candidate_statement_index + 1; i < statements.size(); ++i) {
+		if (&statements[i] == only_return_statement) {
+			continue;
+		}
+		bool nested_return = false;
+		AstTraversal::visitASTWithDecisions(statements[i], [&](const ASTNode& current) {
+			if (current.is<LambdaExpressionNode>() || current.is<StructDeclarationNode>() ||
+				current.is<FunctionDeclarationNode>() || current.is<ConstructorDeclarationNode>() ||
+				current.is<DestructorDeclarationNode>()) {
+				return AstTraversal::VisitDecision::SkipChildren;
+			}
+			if (current.is<ReturnStatementNode>()) {
+				nested_return = true;
+				return AstTraversal::VisitDecision::Stop;
+			}
+			return AstTraversal::VisitDecision::Continue;
+		});
+		if (nested_return) {
+			return;
+		}
 	}
 	const ASTNode& expression = *only_return->expression();
 	if (!expression.is<ExpressionNode>()) {
@@ -1577,23 +1608,22 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		constructed_op.local_id = local_var_id;
 		ir_.addInstruction(IrInstruction(IrOpcode::MarkConstructed, std::move(constructed_op), token));
 	};
-	auto beginCallInitialization = [&](const ASTNode& init_node) {
+	auto beginCallInitialization = [&](const ASTNode& init_node) -> std::optional<ResultDestination> {
 		if (!init_node.is<ExpressionNode>() ||
 			!std::holds_alternative<CallExprNode>(init_node.as<ExpressionNode>()) ||
 			type_node.category() != TypeCategory::Struct || runtime_pointer_depth > 0 ||
 			type_node.is_reference() || type_node.is_rvalue_reference()) {
-			return;
+			return std::nullopt;
 		}
 		const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
 		const StructTypeInfo* struct_info = type_info != nullptr ? type_info->getStructInfo() : nullptr;
 		if (struct_info != nullptr && struct_info->hasDestructor()) {
 			startConstructionTracking();
 		}
-		pending_call_return_destination_ = PendingCallReturnDestination{
-			local_var_id, type_node.type_index(), SizeInBits{static_cast<int>(type_node.size_in_bits())}};
-	};
-	auto endCallInitialization = [&]() {
-		pending_call_return_destination_.reset();
+		return ResultDestination{
+			ResultDestination::Kind::LocalObject,
+			local_var_id,
+			sema_.canonicalizeTypeForImplicitConversion(type_node)};
 	};
 	auto noteDirectDestinationResult = [&](const ExprResult& result) {
 		const auto* direct_local = std::get_if<LocalVarId>(&result.value);
@@ -2631,9 +2661,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			if (!is_copy_init_for_struct) {
 					// Already registered via ensure_symbol_registered() above.
 
-				beginCallInitialization(init_node);
-				ExprResult init_operands = visitVariableInitializer(init_node.as<ExpressionNode>());
-				endCallInitialization();
+				const std::optional<ResultDestination> call_destination = beginCallInitialization(init_node);
+				ExprResult init_operands = call_destination.has_value()
+					? visitExpressionNodeWithDestination(init_node.as<ExpressionNode>(), ExpressionContext::Load, call_destination)
+					: visitVariableInitializer(init_node.as<ExpressionNode>());
 				noteDirectDestinationResult(init_operands);
 
 					// C++20 [conv.array]: initializing a pointer from an array lvalue,
@@ -2848,9 +2879,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 				if (!is_copy_elision_candidate) {
 						// Evaluate the initializer to check if it's an rvalue
-					beginCallInitialization(init_node);
-					ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
-					endCallInitialization();
+					const std::optional<ResultDestination> call_destination = beginCallInitialization(init_node);
+					ExprResult init_operands = call_destination.has_value()
+						? visitExpressionNodeWithDestination(init_node.as<ExpressionNode>(), ExpressionContext::Load, call_destination)
+						: visitExpressionNode(init_node.as<ExpressionNode>());
 					noteDirectDestinationResult(init_operands);
 					cached_copy_init_expr_result = init_operands;
 						// Check if this is an rvalue (TempVar) of the same struct type.

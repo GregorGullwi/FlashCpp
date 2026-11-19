@@ -252,21 +252,27 @@ inline or use a non-static member instead.
 
 The safe NRVO slice covers top-level named locals in lambda call operators and
 regular functions with constructor-style initialization and one top-level
-identifier return. The following candidate shapes remain unsupported:
-nested-block locals, multiple return statements, conversion-operator
-initialization, and copy-initialization from a function call.
+identifier return. A candidate is rejected when any other return can execute
+after its declaration, because that exit would have to construct a different
+object over the live local. Returns that precede the declaration, throws, and
+returns inside nested lambdas or local classes do not prevent elision. The
+following candidate shapes remain unsupported: nested-block locals, multiple
+top-level return statements, conversion-operator initialization, and
+copy-initialization from a function call.
 
 Hidden-return calls through free functions, static members, ordinary member
-functions, virtual dispatch, and function pointers now construct directly in the
-caller destination; no temporary return slot or caller-side copy is emitted.
-Member-function-pointer call initializers still use a temporary result followed
-by assignment. Constructor-initialized and call-initialized struct locals with destructors
-reserve a construction flag in the prologue, set it only after initialization
-completes, and clear it after destruction. Exception cleanup checks that flag, so
-an incomplete callee local or caller destination is not destroyed and a later
-declaration in the same frame cannot observe a stale flag. Remaining lifetime
-gaps are initialization paths that bypass the tracked struct-initialization
-tail, such as some array and member-aggregate forms.
+functions, virtual dispatch, function pointers, function-pointer data members,
+and member-function pointers now construct directly in the caller destination
+in both return expressions and local initializers; no temporary return slot or
+caller-side copy is emitted. Only the expression that constructs the result
+receives the destination, so receivers and arguments still construct into their
+own storage. Constructor-initialized and call-initialized struct locals with
+destructors reserve a construction flag in the prologue, set it only after
+initialization completes, and clear it after destruction. Exception cleanup
+checks that flag, so an incomplete callee local or caller destination is not
+destroyed and a later declaration in the same frame cannot observe a stale
+flag. Remaining lifetime gaps are initialization paths that bypass the tracked
+struct-initialization tail, such as some array and member-aggregate forms.
 
 ## Constexpr namespace-scope pointer dereference is not yet supported
 

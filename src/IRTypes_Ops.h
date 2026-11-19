@@ -571,6 +571,7 @@ struct CallOp {
 	bool returns_pointer = false; // Pointer prvalue, including pointers to nominal types
 	std::optional<TempVar> return_slot;	// Optional temp var representing the return slot location
 	std::optional<LocalVarId> result_destination;	// Direct object result for guaranteed copy elision
+	bool result_to_hidden_return_slot = false;	// Aggregate result is constructed in our own hidden return slot
 
 	// Helper to get function_name as StringHandle
 	StringHandle getFunctionName() const {
@@ -817,6 +818,7 @@ struct VirtualCallOp {
 	SizeInBits referenced_value_size_in_bits{};		// Referenced object size for T&/T&& returns
 	std::optional<TempVar> return_slot;				// Optional temp var representing the return slot location
 	std::optional<LocalVarId> result_destination;	// Caller object receiving the return slot directly
+	bool result_to_hidden_return_slot = false;		// Aggregate result is constructed in our own hidden return slot
 
 	// Returns true if the aggregate return uses a hidden slot pointer in argument
 	// position zero ('this' shifts to position one), matching CallOp/IndirectCallOp
@@ -1167,6 +1169,7 @@ struct IndirectCallOp {
 	bool returns_rvalue_reference = false;
 	uint8_t control_flow_flags = static_cast<uint8_t>(IrCallFlowFlags::None);
 	std::optional<LocalVarId> result_destination;	// Caller object receiving the return slot directly
+	bool result_to_hidden_return_slot = false;		// Aggregate result is constructed in our own hidden return slot
 
 	TypeCategory returnType() const { return return_type_index.category(); }
 	bool usesReturnSlot() const { return use_return_slot; }

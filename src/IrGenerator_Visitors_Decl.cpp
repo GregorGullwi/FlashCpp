@@ -3880,7 +3880,8 @@ ExprResult AstToIr::generateArrayAggregatePrvalueIr(const ConstructorCallNode& c
 	return makeExprResult(element_type_index, SizeInBits{element_size_bits}, IrOperand{array_address}, PointerDepth{1}, ValueStorage::ContainsAddress);
 }
 
-ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constructorCallNode) {
+ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constructorCallNode,
+	const std::optional<ResultDestination>& destination) {
 	// Get the type being constructed
 	const TypeSpecifierNode& type_spec = constructorCallNode.type_node();
 	TypeSpecifierNode normalized_type_spec = type_spec;
@@ -4067,9 +4068,19 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			result_type_index = type_it->second->registeredTypeIndex();
 		}
 	}
+	TypeSpecifierNode destination_type_spec = normalized_type_spec;
+	destination_type_spec.set_type_index(result_type_index);
+	destination_type_spec.set_category(TypeCategory::Struct);
+	const bool destination_matches =
+		destination.has_value() && resultDestinationMatchesType(*destination, destination_type_spec);
 	if (const InitializerListNode* aggregate_init = constructorCallNode.aggregateInitializer()) {
 		if (!struct_info || !result_type_index.is_valid()) {
 			throw InternalError("Aggregate class-prvalue initialization has no resolved struct type");
+		}
+		if (destination_matches && destination->isLocalObject()) {
+			generateNestedMemberStores(*struct_info, *aggregate_init, destination->local_id, 0, false, constructorCallNode.called_from());
+			return makeExprResult(result_type_index.withCategory(TypeCategory::Struct), SizeInBits{actual_size_bits},
+				IrOperand{destination->local_id}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 		StackAllocOp allocation;
 		allocation.result = ret_var;
@@ -4087,6 +4098,13 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	// Build ConstructorCallOp
 	ConstructorCallOp ctor_op;
 	ctor_op.object = ret_var;  // The temporary variable that will hold the result
+	const bool construct_in_local_destination = destination_matches && destination->isLocalObject();
+	const bool construct_in_hidden_return_slot = destination_matches && destination->isHiddenReturnSlot();
+	if (construct_in_local_destination) {
+		ctor_op.object = destination->local_id;
+	} else if (construct_in_hidden_return_slot) {
+		ctor_op.use_return_slot = true;
+	}
 
 	// Find the matching constructor to get parameter types for reference handling
 	const ConstructorDeclarationNode* matching_ctor = constructorCallNode.resolved_constructor();
@@ -4308,17 +4326,6 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		fillInConstructorDefaultArguments(ctor_op, *matching_ctor, ctor_op.arguments.size());
 	}
 
-	// Check if we should use RVO (Return Value Optimization)
-	// If we're in a return statement and the function has a hidden return parameter,
-	// construct directly into the return slot instead of into a temporary
-	if (in_return_statement_with_rvo_) {
-		ctor_op.use_return_slot = true;
-		// The return slot offset will be set by IRConverter when it processes the return
-		// For now, we just mark that RVO should be used
-		FLASH_LOG(Codegen, Debug,
-				  "Constructor call will use RVO (construct directly in return slot)");
-	}
-
 	// Add the constructor call instruction (use ConstructorCall opcode)
 	if (!struct_info) {
 		throw InternalError(std::string(StringBuilder()
@@ -4339,6 +4346,12 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 
 	FLASH_LOG_FORMAT(Codegen, Debug,
 					 "Marked constructor call result {} as RVO-eligible prvalue", ret_var.var_number);
+
+	// A local destination owns the constructed object; the temporary is unused.
+	if (construct_in_local_destination) {
+		return makeExprResult(result_type_index.withCategory(result_type_category), SizeInBits{actual_size_bits},
+			IrOperand{destination->local_id}, PointerDepth{}, ValueStorage::ContainsData);
+	}
 
 	// Return the result variable with the constructed type, including type_index for struct types
 	return makeExprResult(result_type_index.withCategory(result_type_category), SizeInBits{actual_size_bits}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);

@@ -246,7 +246,7 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 		} else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
 			return generateLambdaExpressionIr(expr, std::string_view{}, LocalVarId{});
 		} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
-			return generateConstructorCallIr(expr);
+			return generateConstructorCallIr(expr, std::nullopt);
 		} else if constexpr (std::is_same_v<T, TemplateParameterReferenceNode>) {
 			return generateTemplateParameterReferenceIr(expr);
 		} else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
@@ -279,6 +279,26 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 		}
 	},
 					  exprNode);
+}
+
+bool AstToIr::resultDestinationMatchesType(const ResultDestination& destination, const TypeSpecifierNode& type) {
+	if (!destination.canonical_type_id) {
+		return false;
+	}
+	return destination.canonical_type_id == sema_.canonicalizeTypeForImplicitConversion(type);
+}
+
+ExprResult AstToIr::visitExpressionNodeWithDestination(const ExpressionNode& exprNode, ExpressionContext context,
+	const std::optional<ResultDestination>& destination) {
+	if (destination.has_value()) {
+		if (const auto* constructor_call = std::get_if<ConstructorCallNode>(&exprNode)) {
+			return generateConstructorCallIr(*constructor_call, destination);
+		}
+		if (const auto* call = std::get_if<CallExprNode>(&exprNode)) {
+			return generateCallExprIr(*call, context, destination);
+		}
+	}
+	return visitExpressionNode(exprNode, context);
 }
 
 ExprResult AstToIr::generateNoexceptExprIr(const NoexceptExprNode& noexcept_node) {

@@ -115,7 +115,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 					generateNestedMemberStores(*return_struct, init_list, temp_var, 0, false, node.return_token());
 					emitSehFinallyCallsBeforeReturn(node.return_token());
 					emitAndClearFullExpressionTempDestructors();
-					emitDestructorsForNonLocalExit(0, DestructorSkip::OnSuccessfulReturn);
+					emitDestructorsForNonLocalExit(0, DestructorSkip::None);
 					emitReturn(temp_var, currentFunctionReturnTypeIndex(), current_function_return_size_, node.return_token(), ValueStorage::ContainsData);
 					return;
 				}
@@ -195,7 +195,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			emitAndClearFullExpressionTempDestructors();
 
 			// Emit destructor calls for all local variables before returning
-			emitDestructorsForNonLocalExit(0, DestructorSkip::OnSuccessfulReturn);
+			emitDestructorsForNonLocalExit(0, DestructorSkip::None);
 
 			// Now return the temporary variable
 			emitReturn(
@@ -218,9 +218,21 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			}
 		}
 
-		// Set flag if we should use RVO (returning struct by value with hidden return param)
-		if (current_function_has_hidden_return_param_) {
-			in_return_statement_with_rvo_ = true;
+		// The expression that constructs the result gets the hidden return slot as
+		// its destination. Nested receivers and arguments are lowered separately and
+		// keep their own storage.
+		std::optional<ResultDestination> result_destination;
+		if (current_function_has_hidden_return_param_ && !currentFunctionReturnsReference()) {
+			TypeSpecifierNode return_type_spec(
+				current_function_return_type_index_,
+				current_function_return_size_,
+				node.return_token(),
+				CVQualifier::None,
+				ReferenceQualifier::None);
+			result_destination = ResultDestination{
+				ResultDestination::Kind::HiddenReturnSlot,
+				LocalVarId{},
+				sema_.canonicalizeTypeForImplicitConversion(return_type_spec)};
 		}
 
 		// Fast path: reference return of '*this' can directly return the this pointer
@@ -235,7 +247,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 						if (ident.name() == "this") {
 							emitSehFinallyCallsBeforeReturn(node.return_token());
 							emitAndClearFullExpressionTempDestructors();
-							emitDestructorsForNonLocalExit(0, DestructorSkip::OnSuccessfulReturn);
+							emitDestructorsForNonLocalExit(0, DestructorSkip::None);
 							emitReturn(StringTable::getOrInternStringHandle("this"),
 									   currentFunctionReturnTypeIndex(), current_function_return_size_,
 									   node.return_token(), ValueStorage::ContainsAddress);
@@ -281,11 +293,8 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			}
 		}
 		if (!reference_conversion_applied) {
-			operands = visitExpressionNode(expr_opt->as<ExpressionNode>(), return_context);
+			operands = visitExpressionNodeWithDestination(expr_opt->as<ExpressionNode>(), return_context, result_destination);
 		}
-
-		// Clear the RVO flag after evaluation
-		in_return_statement_with_rvo_ = false;
 
 		// Check if this is a void return with a void expression (e.g., return void_func();)
 		{
@@ -302,7 +311,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			if (is_void_expression && function_returns_void) {
 				emitSehFinallyCallsBeforeReturn(node.return_token());
 				emitAndClearFullExpressionTempDestructors();
-				emitDestructorsForNonLocalExit(0, DestructorSkip::OnSuccessfulReturn);
+				emitDestructorsForNonLocalExit(0, DestructorSkip::None);
 				emitVoidReturn(node.return_token());
 				return;
 			}
@@ -807,7 +816,8 @@ return_conversion_done:
 		// Emit destructor calls for all local variables before returning.
 		// The return value expression has already been evaluated above, so destroying
 		// locals here is correct: the return value is computed first, then locals are destroyed.
-		emitDestructorsForNonLocalExit(0, DestructorSkip::OnSuccessfulReturn);
+		// Only the edge that transfers the NRVO object itself may suppress its destructor.
+		emitDestructorsForNonLocalExit(0, returns_nrvo_candidate ? DestructorSkip::OnSuccessfulReturn : DestructorSkip::None);
 
 		// Extract IrValue from operands.value
 		IrValue return_value = toIrValue(operands.value);
@@ -836,7 +846,7 @@ return_conversion_done:
 		emitSehFinallyCallsBeforeReturn(node.return_token());
 		emitAndClearFullExpressionTempDestructors();
 		// Emit destructor calls for all local variables before returning
-		emitDestructorsForNonLocalExit(0, DestructorSkip::OnSuccessfulReturn);
+		emitDestructorsForNonLocalExit(0, DestructorSkip::None);
 		emitVoidReturn(node.return_token());
 	}
 }

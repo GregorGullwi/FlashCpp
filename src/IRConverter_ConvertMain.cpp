@@ -2381,7 +2381,8 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 				}
 				// Try CallOp (function calls)
 				else if (const CallOp* call_op = std::any_cast<CallOp>(&instruction.getTypedPayload())) {
-					if (!call_op->returnsValuelessVoid() && !call_op->result_destination.has_value()) {
+					if (!call_op->returnsValuelessVoid() && !call_op->result_destination.has_value() &&
+						!call_op->result_to_hidden_return_slot) {
 						recordTemporarySize(call_op->result, call_op->return_size_in_bits.value);
 					}
 					handled_by_typed_payload = true;
@@ -2407,7 +2408,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 				}
 				// Try IndirectCallOp (function pointer calls)
 				else if (const IndirectCallOp* indirect_call_op = std::any_cast<IndirectCallOp>(&instruction.getTypedPayload())) {
-					if (indirect_call_op->result_destination.has_value()) {
+					if (indirect_call_op->result_destination.has_value() || indirect_call_op->result_to_hidden_return_slot) {
 						// The caller object owns the return storage.
 					} else if (indirect_call_op->return_size_in_bits.value > 0) {
 						recordTemporarySize(indirect_call_op->result, indirect_call_op->return_size_in_bits.value);
@@ -2422,7 +2423,8 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 						virtual_call_op->result.effectiveIrType() == IrType::Void &&
 						!virtual_call_op->returns_reference &&
 						!virtual_call_op->result.pointer_depth.is_pointer();
-					if (!returns_valueless_void && !virtual_call_op->result_destination.has_value()) {
+					if (!returns_valueless_void && !virtual_call_op->result_destination.has_value() &&
+						!virtual_call_op->result_to_hidden_return_slot) {
 						recordTypedValueResult(virtual_call_op->result);
 					}
 					handled_by_typed_payload = true;
@@ -4648,8 +4650,13 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 
 		int result_offset = 0;
 		if (!returns_valueless_void) {
-			result_offset = call_op.result_destination.has_value() ? getVariableOffsetOrThrow(*call_op.result_destination, "call result destination")
-				: getStackOffsetFromTempVar(call_op.result);
+			if (call_op.result_to_hidden_return_slot) {
+				// The callee constructs directly in our own hidden return slot; no
+				// local result object is required.
+			} else {
+				result_offset = call_op.result_destination.has_value() ? getVariableOffsetOrThrow(*call_op.result_destination, "call result destination")
+					: getStackOffsetFromTempVar(call_op.result);
+			}
 		}
 
 			// Platform-specific format check for ABI differences
@@ -5085,8 +5092,18 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				// Load address of return slot (result_offset) into first integer parameter register
 			X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);
 
+			if (call_op.result_to_hidden_return_slot) {
+				// The destination is our own hidden return slot, whose address is held
+				// in the frame parameter rather than in a local object.
+				auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
+				if (return_slot_it == variable_scopes.back().variables.end()) {
+					throw InternalError("Call forwarding into a hidden return slot has no hidden return slot");
+				}
+				emitMovFromFrame(return_slot_reg, return_slot_it->second.offset);
+			} else {
 				// LEA return_slot_reg, [RBP + result_offset]
-			emitLeaFromFrame(return_slot_reg, result_offset);
+				emitLeaFromFrame(return_slot_reg, result_offset);
+			}
 
 			FLASH_LOG_FORMAT(Codegen, Debug,
 							 "Passing return slot address (offset {}) in register {} for struct return",
@@ -5905,9 +5922,13 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 		!op.result.pointer_depth.is_pointer();
 	int result_offset = 0;
 	if (!returns_valueless_void) {
-		result_offset = op.result_destination.has_value()
-			? getVariableOffsetOrThrow(*op.result_destination, "virtual call result destination")
-			: getStackOffsetFromTempVar(result_var);
+		if (op.result_to_hidden_return_slot) {
+			// The callee constructs directly in our own hidden return slot.
+		} else {
+			result_offset = op.result_destination.has_value()
+				? getVariableOffsetOrThrow(*op.result_destination, "virtual call result destination")
+				: getStackOffsetFromTempVar(result_var);
+		}
 	}
 
 		// Get object offset
@@ -6133,7 +6154,15 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 		// the spill/register passes cannot overwrite the ABI-mandated first parameter.
 	if (uses_return_slot) {
 		X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);
-		emitLeaFromFrame(return_slot_reg, result_offset);
+		if (op.result_to_hidden_return_slot) {
+			auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
+			if (return_slot_it == variable_scopes.back().variables.end()) {
+				throw InternalError("Virtual call forwarding into a hidden return slot has no hidden return slot");
+			}
+			emitMovFromFrame(return_slot_reg, return_slot_it->second.offset);
+		} else {
+			emitLeaFromFrame(return_slot_reg, result_offset);
+		}
 
 		FLASH_LOG_FORMAT(Codegen, Debug,
 						 "Virtual call passes return slot address (offset {}) in register {}",
@@ -15590,9 +15619,13 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 		// Get result offset
 	int result_offset = 0;
 	if (!returns_valueless_void) {
-		result_offset = op.result_destination.has_value()
-			? getVariableOffsetOrThrow(*op.result_destination, "indirect call result destination")
-			: getStackOffsetFromTempVar(op.result);
+		if (op.result_to_hidden_return_slot) {
+			// The callee constructs directly in our own hidden return slot.
+		} else {
+			result_offset = op.result_destination.has_value()
+				? getVariableOffsetOrThrow(*op.result_destination, "indirect call result destination")
+				: getStackOffsetFromTempVar(op.result);
+		}
 	}
 
 	constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
@@ -15863,7 +15896,15 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 		// the spill/register passes cannot overwrite the ABI-mandated first parameter.
 	if (op.usesReturnSlot()) {
 		X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);
-		emitLeaFromFrame(return_slot_reg, result_offset);
+		if (op.result_to_hidden_return_slot) {
+			auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
+			if (return_slot_it == variable_scopes.back().variables.end()) {
+				throw InternalError("Indirect call forwarding into a hidden return slot has no hidden return slot");
+			}
+			emitMovFromFrame(return_slot_reg, return_slot_it->second.offset);
+		} else {
+			emitLeaFromFrame(return_slot_reg, result_offset);
+		}
 	}
 
 		// Load the call target after argument setup so temporary register traffic in the

@@ -16,7 +16,8 @@ const ExpressionNode* callExpressionReceiver(const CallExprNode& callExprNode) {
 
 } // namespace
 
-std::optional<ExprResult> AstToIr::tryGenerateMemberPointerCallIr(const CallExprNode& callExprNode, const PointerToMemberAccessNode& access) {
+std::optional<ExprResult> AstToIr::tryGenerateMemberPointerCallIr(const CallExprNode& callExprNode, const PointerToMemberAccessNode& access,
+	const std::optional<ResultDestination>& destination) {
 	auto sema_services = sema_.parserSemanticServices();
 	const TypeSpecifierQueryResult member_pointer_query = sema_services.getExpressionTypeQueryFromLowering(access.member_pointer());
 	if (member_pointer_query.state != TypeSpecifierQueryResult::State::Available || !member_pointer_query.type.has_value()) {
@@ -120,7 +121,26 @@ std::optional<ExprResult> AstToIr::tryGenerateMemberPointerCallIr(const CallExpr
 		.function_pointer = std::move(function_pointer),
 		.arguments = std::move(arguments), .result_destination = std::nullopt};
 	populateIndirectCallReturnInfo(op, signature);
+	const TypeSpecifierNode return_type = buildFunctionSignatureReturnType(signature);
+	bool uses_local_destination = false;
+	bool uses_hidden_return_slot = false;
+	if (op.use_return_slot && destination.has_value() && resultDestinationMatchesType(*destination, return_type)) {
+		if (destination->isLocalObject()) {
+			op.result_destination = destination->local_id;
+			uses_local_destination = true;
+		} else {
+			op.result_to_hidden_return_slot = true;
+			uses_hidden_return_slot = true;
+		}
+	}
 	ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from()));
+	if (uses_hidden_return_slot) {
+		setTempVarMetadata(ret_var, TempVarMetadata::makeReturnSlotPRValue());
+	}
+	if (uses_local_destination) {
+		return makeExprResult(return_type.type_index(), SizeInBits{return_type.size_in_bits()},
+			IrOperand{destination->local_id}, PointerDepth{}, ValueStorage::ContainsData);
+	}
 	return buildIndirectCallReturnResult(signature, ret_var);
 }
 
@@ -132,10 +152,23 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 	return generateMemberFunctionCallIr(callExprNode, context, sema_call_key, TypeIndex{});
 }
 
+ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context,
+	const std::optional<ResultDestination>& destination) {
+	return generateMemberFunctionCallIr(callExprNode, context, nullptr, TypeIndex{}, destination);
+}
+
+ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key,
+	const std::optional<ResultDestination>& destination) {
+	return generateMemberFunctionCallIr(callExprNode, context, sema_call_key, TypeIndex{}, destination);
+}
+
 ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key,
 	TypeIndex receiver_owner_type_index) {
-	std::optional<PendingCallReturnDestination> return_destination = pending_call_return_destination_;
-	pending_call_return_destination_.reset();
+	return generateMemberFunctionCallIr(callExprNode, context, sema_call_key, receiver_owner_type_index, std::nullopt);
+}
+
+ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key,
+	TypeIndex receiver_owner_type_index, const std::optional<ResultDestination>& destination) {
 	// Explicit-owner calls carry metadata for one call only, so they bypass the chain worklist.
 	if (!receiver_owner_type_index.is_valid()) {
 		const ExpressionNode* innermost_receiver = callExpressionReceiver(callExprNode);
@@ -149,26 +182,28 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			}
 			// Lower the innermost receiver normally, then replay the chain without native recursion.
 			ExprResult result = visitExpressionNode(*innermost_receiver);
+			const std::optional<ResultDestination> empty_destination;
 			bool outermost_call = true;
 			for (auto it = receiver_chain.rbegin(); it != receiver_chain.rend(); ++it) {
 				const void* call_key = outermost_call ? sema_call_key : static_cast<const void*>(*it);
 				ExpressionContext call_context = outermost_call ? context : ExpressionContext::Load;
-				std::optional<PendingCallReturnDestination> destination =
-					outermost_call ? return_destination : std::nullopt;
-				result = generateMemberFunctionCallIrBody(**it, call_context, call_key, TypeIndex{}, &result, destination);
+				const std::optional<ResultDestination>& call_destination =
+					outermost_call ? destination : empty_destination;
+				result = generateMemberFunctionCallIrBody(**it, call_context, call_key, TypeIndex{}, &result, call_destination);
 				outermost_call = false;
 			}
 			return result;
 		}
 	}
 	return generateMemberFunctionCallIrBody(
-		callExprNode, context, sema_call_key, receiver_owner_type_index, nullptr, return_destination);
+		callExprNode, context, sema_call_key, receiver_owner_type_index, nullptr, destination);
 }
 
 ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key,
 	TypeIndex receiver_owner_type_index, const ExprResult* precomputed_receiver,
-	std::optional<PendingCallReturnDestination> return_destination) {
+	const std::optional<ResultDestination>& destination) {
 	std::optional<LocalVarId> direct_destination;
+	bool hidden_return_destination = false;
 	std::vector<IrOperand> irOperands;
 	irOperands.reserve(5 + callExprNode.arguments().size() * 4); // ret + name + this + ~4 per arg
 
@@ -177,7 +212,7 @@ ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExp
 		if (const ExpressionNode* receiver = callExprNode.receiver().get_if<ExpressionNode>()) {
 			if (const PointerToMemberAccessNode* access = std::get_if<PointerToMemberAccessNode>(receiver)) {
 				if (std::optional<ExprResult> member_pointer_call =
-						tryGenerateMemberPointerCallIr(callExprNode, *access);
+						tryGenerateMemberPointerCallIr(callExprNode, *access, destination);
 					member_pointer_call.has_value()) {
 					return std::move(*member_pointer_call);
 				}
@@ -1510,8 +1545,28 @@ ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExp
 						throw InternalError("Function pointer member missing function_signature for indirect call return type");
 					}
 					populateIndirectCallReturnInfo(op, *member.function_signature);
+					const TypeSpecifierNode return_type = buildFunctionSignatureReturnType(*member.function_signature);
+					bool uses_local_destination = false;
+					if (op.use_return_slot && destination.has_value() && resultDestinationMatchesType(*destination, return_type)) {
+						if (destination->isLocalObject()) {
+							op.result_destination = destination->local_id;
+							direct_destination = destination->local_id;
+							uses_local_destination = true;
+						} else {
+							op.result_to_hidden_return_slot = true;
+							hidden_return_destination = true;
+						}
+					}
 					ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from()));
-					return buildIndirectCallReturnResult(*member.function_signature, ret_var);
+					if (uses_local_destination) {
+						return makeExprResult(return_type.type_index(), SizeInBits{return_type.size_in_bits()},
+							IrOperand{destination->local_id}, PointerDepth{}, ValueStorage::ContainsData);
+					}
+					ExprResult result = buildIndirectCallReturnResult(*member.function_signature, ret_var);
+					if (hidden_return_destination) {
+						setTempVarMetadata(ret_var, TempVarMetadata::makeReturnSlotPRValue());
+					}
+					return result;
 				}
 			}
 		}
@@ -1550,10 +1605,14 @@ ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExp
 				// The aggregate is returned through a hidden slot pointer in argument
 				// position zero on both ABIs; 'this' shifts to position one.
 			vcall_op.return_slot = ret_var;
-			if (return_destination.has_value() && return_destination->type_index.is_valid() &&
-				return_destination->type_index == return_type.type_index()) {
-				vcall_op.result_destination = return_destination->local_id;
-				direct_destination = return_destination->local_id;
+			if (destination.has_value() && resultDestinationMatchesType(*destination, return_type)) {
+				if (destination->isLocalObject()) {
+					vcall_op.result_destination = destination->local_id;
+					direct_destination = destination->local_id;
+				} else {
+					vcall_op.result_to_hidden_return_slot = true;
+					hidden_return_destination = true;
+				}
 			}
 		}
 		vcall_op.result.setType(return_type.category());
@@ -2016,10 +2075,14 @@ ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExp
 
 		if (needs_hidden_return_param) {
 			call_op.return_slot = ret_var; // The result temp var serves as the return slot
-			if (return_destination.has_value() && return_destination->type_index.is_valid() &&
-				return_destination->type_index == return_type.type_index()) {
-				call_op.result_destination = return_destination->local_id;
-				direct_destination = return_destination->local_id;
+			if (destination.has_value() && resultDestinationMatchesType(*destination, return_type)) {
+				if (destination->isLocalObject()) {
+					call_op.result_destination = destination->local_id;
+					direct_destination = destination->local_id;
+				} else {
+					call_op.result_to_hidden_return_slot = true;
+					hidden_return_destination = true;
+				}
 			}
 
 			FLASH_LOG_FORMAT(Codegen, Debug,
@@ -2440,8 +2503,11 @@ ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExp
 	const TypeSpecifierNode return_type =
 		resolve_member_call_return_type(selected_return_type);
 	if (direct_destination.has_value()) {
-		return makeExprResult(return_type.type_index(), return_destination->size_in_bits,
+		return makeExprResult(return_type.type_index(), SizeInBits{return_type.size_in_bits()},
 			IrOperand{*direct_destination}, PointerDepth{}, ValueStorage::ContainsData);
+	}
+	if (hidden_return_destination) {
+		setTempVarMetadata(ret_var, TempVarMetadata::makeReturnSlotPRValue());
 	}
 	return buildCallReturnResult(return_type, ret_var, context, callExprNode.called_from());
 }

@@ -15,10 +15,24 @@ inline std::string formatTokenLocationSuffix(const Token& token) {
 }
 
 class AstToIr {
-	struct PendingCallReturnDestination {
+	// Explicit storage for the object an expression constructs. A local
+	// initializer names its variable; a return expression names the function's
+	// hidden return slot. Only the expression that constructs the result may
+	// consume it, so receivers and arguments keep their own storage. The type is
+	// the interned semantic descriptor (CanonicalTypeId): class identity must not
+	// depend on the parser-local TypeIndex or on spelling.
+	struct ResultDestination {
+		enum class Kind : uint8_t { LocalObject, HiddenReturnSlot };
+		Kind kind = Kind::LocalObject;
 		LocalVarId local_id;
-		TypeIndex type_index;
-		SizeInBits size_in_bits;
+		CanonicalTypeId canonical_type_id;
+
+		bool isLocalObject() const {
+			return kind == Kind::LocalObject;
+		}
+		bool isHiddenReturnSlot() const {
+			return kind == Kind::HiddenReturnSlot;
+		}
 	};
 
 public:
@@ -356,10 +370,17 @@ private:
 	void visitStructuredBindingNode(const ASTNode& ast_node);
 	ExprResult visitExpressionNode(const ExpressionNode& exprNode,
 								   ExpressionContext context = ExpressionContext::Load);
+	// Lower the expression that constructs a result object directly into the
+	// destination. Nested receivers and arguments still use visitExpressionNode.
+	ExprResult visitExpressionNodeWithDestination(const ExpressionNode& exprNode, ExpressionContext context,
+		const std::optional<ResultDestination>& destination);
+	bool resultDestinationMatchesType(const ResultDestination& destination, const TypeSpecifierNode& type);
 	ExprResult generateNoexceptExprIr(const NoexceptExprNode& noexcept_node);
 	ExprResult generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor);
 	ExprResult generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode, ExpressionContext context);
 	ExprResult generateCallExprIr(const CallExprNode& callExprNode, ExpressionContext context);
+	ExprResult generateCallExprIr(const CallExprNode& callExprNode, ExpressionContext context,
+		const std::optional<ResultDestination>& destination);
 	int calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name);
 	ExprResult generateIdentifierIr(const IdentifierNode& identifierNode,
 									ExpressionContext context = ExpressionContext::Load);
@@ -462,13 +483,22 @@ private:
 
 	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context);
 	ExprResult generateFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key);
+	ExprResult generateFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key,
+		const std::optional<ResultDestination>& destination);
 	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key);
 	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key,
 		TypeIndex receiver_owner_type_index);
+	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key,
+		TypeIndex receiver_owner_type_index, const std::optional<ResultDestination>& destination);
+	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context,
+		const std::optional<ResultDestination>& destination);
+	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key,
+		const std::optional<ResultDestination>& destination);
 	ExprResult generateMemberFunctionCallIrBody(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key,
 		TypeIndex receiver_owner_type_index, const ExprResult* precomputed_receiver,
-		std::optional<PendingCallReturnDestination> return_destination);
-	std::optional<ExprResult> tryGenerateMemberPointerCallIr(const CallExprNode& callExprNode, const PointerToMemberAccessNode& access);
+		const std::optional<ResultDestination>& destination);
+	std::optional<ExprResult> tryGenerateMemberPointerCallIr(const CallExprNode& callExprNode, const PointerToMemberAccessNode& access,
+		const std::optional<ResultDestination>& destination);
 	MultiDimSubscriptChain collectMultiDimSubscriptChain(const ArraySubscriptNode& subscript);
 	std::optional<MultiDimMemberArrayAccess> resolveMultiDimMemberArrayBase(
 		const MultiDimSubscriptChain& chain);
@@ -1484,7 +1514,6 @@ private:
 	bool currentFunctionReturnsPointer() const { return hasReturnValueMode(current_function_return_value_mode_, ReturnValueMode::Pointer); }
 	bool currentFunctionReturnsReference() const { return hasReturnValueMode(current_function_return_value_mode_, ReturnValueMode::Reference); }  // True if function returns a reference type (T& or T&&)
 	bool currentFunctionReturnsFunctionPointer() const { return hasReturnValueMode(current_function_return_value_mode_, ReturnValueMode::FunctionPointer); }
-	bool in_return_statement_with_rvo_ = false;	// True when evaluating return expr that should use RVO
 
 	// Current namespace path stack (for proper name mangling of namespace-scoped functions)
 	std::vector<std::string> current_namespace_stack_;
@@ -1636,7 +1665,6 @@ private:
 	// return slot. The set is rebuilt for each lambda body.
 	std::unordered_set<const void*> nrvo_candidate_declarations_;
 	bool emit_return_slot_return_ = false;
-	std::optional<PendingCallReturnDestination> pending_call_return_destination_;
 
 	// Track processed TypeInfo pointers to avoid processing the same struct twice
 	// (same struct can be registered under multiple keys in getTypesByNameMap())
@@ -1740,5 +1768,6 @@ private:
 	ExprResult generateInitializerListConstructionIr(const InitializerListConstructionNode& init_list);
 
 	ExprResult generateArrayAggregatePrvalueIr(const ConstructorCallNode& constructorCallNode);
-	ExprResult generateConstructorCallIr(const ConstructorCallNode& constructorCallNode);
+	ExprResult generateConstructorCallIr(const ConstructorCallNode& constructorCallNode,
+		const std::optional<ResultDestination>& destination);
 };
