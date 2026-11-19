@@ -279,7 +279,9 @@ slot is also registered as a function-scope cleanup action with its own
 completion flag, so a later destructor or finally action that throws destroys
 the completed result exactly once. Remaining lifetime gaps are initialization
 paths that bypass the tracked struct-initialization tail, such as some array and
-member-aggregate forms.
+member-aggregate forms. Small aggregates returned in registers still initialize
+through the ABI result temporary, so copy-initialization from such a call is not
+elided yet and still requires an accessible copy or move constructor.
 
 ## Constexpr namespace-scope pointer dereference is not yet supported
 
