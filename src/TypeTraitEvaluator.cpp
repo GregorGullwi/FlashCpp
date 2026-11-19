@@ -1593,12 +1593,46 @@ bool isNontrivialDeclaredSpecialMember(const StructMemberFunction* function) {
 	return !declaration.was_defaulted_on_first_declaration();
 }
 
+bool isSameTypeReferenceConstructor(const StructTypeInfo& struct_info, const StructMemberFunction& function, bool want_move) {
+	if (!function.is_constructor || !function.function_decl.is<ConstructorDeclarationNode>()) {
+		return false;
+	}
+	const ConstructorDeclarationNode& declaration = function.function_decl.as<ConstructorDeclarationNode>();
+	// Compiler-synthesized implicit constructors are not user-provided; the
+	// subobject walk handles their triviality.
+	if (declaration.is_implicit() && !declaration.is_explicitly_defaulted()) {
+		return false;
+	}
+	const auto& params = declaration.parameter_nodes();
+	if (params.empty() || !params[0].is<DeclarationNode>() || computeMinRequiredArgs(params) > 1) {
+		return false;
+	}
+	const TypeSpecifierNode& param_type = params[0].as<DeclarationNode>().type_specifier_node();
+	if (param_type.category() != TypeCategory::Struct || !struct_info.isOwnTypeIndex(param_type.type_index())) {
+		return false;
+	}
+	return want_move ? param_type.is_rvalue_reference() : param_type.is_lvalue_reference();
+}
+
+// A class can declare both `A(const A&) = default` and `A(A&) {}`. Looking only
+// at the first match misses the user-provided overload, while Itanium treats
+// any non-trivial copy or move constructor as non-trivial for calls.
+bool hasNontrivialSameTypeConstructor(const StructTypeInfo& struct_info) {
+	for (const StructMemberFunction& function : struct_info.member_functions) {
+		const bool matches_copy = isSameTypeReferenceConstructor(struct_info, function, false);
+		const bool matches_move = isSameTypeReferenceConstructor(struct_info, function, true);
+		if ((matches_copy || matches_move) && isNontrivialDeclaredSpecialMember(&function)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 bool hasTrivialSpecialMemberSetForCopying(const StructTypeInfo* struct_info) {
 	if (!struct_info || struct_info->has_vtable || hasVirtualBaseClass(*struct_info)) {
 		return false;
 	}
-	if (isNontrivialDeclaredSpecialMember(struct_info->findCopyConstructor()) ||
-		isNontrivialDeclaredSpecialMember(struct_info->findMoveConstructor()) ||
+	if (hasNontrivialSameTypeConstructor(*struct_info) ||
 		isNontrivialDeclaredSpecialMember(struct_info->findCopyAssignmentOperator()) ||
 		isNontrivialDeclaredSpecialMember(struct_info->findMoveAssignmentOperator())) {
 		return false;
@@ -2010,7 +2044,7 @@ bool hasTrivialCallSpecialMemberSet(const StructTypeInfo* struct_info) {
 	if (deletes_copy_or_move && copy_constructor == nullptr && move_constructor == nullptr) {
 		return false;
 	}
-	if (isNontrivialDeclaredSpecialMember(copy_constructor) || isNontrivialDeclaredSpecialMember(move_constructor)) {
+	if (hasNontrivialSameTypeConstructor(*struct_info)) {
 		return false;
 	}
 	return hasTrivialDestructorDeclaration(struct_info);
@@ -2024,49 +2058,52 @@ bool isStructTrivialForCallsImpl(const StructTypeInfo* struct_info) {
 		});
 }
 
-// Microsoft x64 returns a record in RAX only when the record and every member
-// subobject stay POD-like for the return ABI. The documented restrictions are
-// a complete-object size of 1, 2, 4, or 8 bytes, no user-provided constructor,
-// destructor, or copy assignment, no non-public data member, no reference
-// member, no base class, and no virtual function. Move members only matter when
-// they leave copy construction or copy assignment deleted, because the return
-// path copies values exactly as the defaulted copy operations would.
-//
-// [dcl.fct.def.default]/5 decides "user-provided": defaulting a special member
-// on its first declaration keeps it non-user-provided, while defaulting it out
-// of line does not. The synthesized implicit copy constructor is registered on
-// the record but is not user-provided either.
-bool hasWin64ReturnSpecialMemberSet(const StructTypeInfo& struct_info) {
-	if (struct_info.has_vtable || !struct_info.base_classes.empty() || struct_info.has_deleted_destructor) {
+// The parser registers synthesized implicit assignments on ordinary records,
+// so inspect the declarations and ignore those synthesized entries. A
+// user-declared move member defines copy assignment as deleted unless the copy
+// assignment was also declared explicitly ([class.copy.assign]/8).
+bool hasUserDeclaredAssignment(const StructTypeInfo& struct_info, bool is_move) {
+	const StructMemberFunction* assignment = is_move
+		? struct_info.findMoveAssignmentOperator(true)
+		: struct_info.findCopyAssignmentOperator(true);
+	if (assignment == nullptr) {
 		return false;
 	}
+	if (!assignment->function_decl.is<FunctionDeclarationNode>()) {
+		return true;
+	}
+	const FunctionDeclarationNode& declaration = assignment->function_decl.as<FunctionDeclarationNode>();
+	return !declaration.is_implicit() || declaration.is_explicitly_defaulted();
+}
 
-	const bool has_move_constructor = struct_info.findMoveConstructor() != nullptr || struct_info.isMoveConstructorDeleted();
-	const StructMemberFunction* copy_constructor = struct_info.findCopyConstructor();
-	if (struct_info.isCopyConstructorDeleted() || (has_move_constructor && copy_constructor == nullptr)) {
+// Microsoft x64's recursive subobject requirement: the copied value must have
+// a trivial destructor and a trivial, non-deleted copy assignment. A member's
+// own default constructor, copy constructor, access, or base classes do not
+// disqualify an enclosing record; cl.exe still returns such records in RAX.
+bool hasWin64ReturnSubobjectFacts(const StructTypeInfo& struct_info) {
+	if (struct_info.has_vtable || struct_info.has_deleted_destructor) {
 		return false;
 	}
-
-	// The parser registers synthesized implicit assignments on ordinary records,
-	// so inspect the declarations and ignore those synthesized entries. A
-	// user-declared move member defines copy assignment as deleted unless the
-	// copy assignment was also declared explicitly ([class.copy.assign]/8).
-	auto has_user_declared_assignment = [&](bool is_move) {
-		const StructMemberFunction* assignment = is_move
-			? struct_info.findMoveAssignmentOperator(true)
-			: struct_info.findCopyAssignmentOperator(true);
-		if (assignment == nullptr) {
+	if (const StructMemberFunction* destructor = struct_info.findDestructor()) {
+		if (!destructor->function_decl.is<DestructorDeclarationNode>() ||
+			!destructor->function_decl.as<DestructorDeclarationNode>().was_defaulted_on_first_declaration()) {
 			return false;
 		}
-		if (!assignment->function_decl.is<FunctionDeclarationNode>()) {
-			return true;
+	}
+	for (const StructMember& member : struct_info.members) {
+		if (member.isUnnamedOrZeroWidthBitfield()) {
+			continue;
 		}
-		const FunctionDeclarationNode& declaration = assignment->function_decl.as<FunctionDeclarationNode>();
-		return !declaration.is_implicit() || declaration.is_explicitly_defaulted();
-	};
-	const bool has_user_move_assignment = has_user_declared_assignment(true) || struct_info.isMoveAssignmentDeleted();
-	const bool has_user_copy_assignment = has_user_declared_assignment(false);
-	if (struct_info.isCopyAssignmentDeleted() || ((has_move_constructor || has_user_move_assignment) && !has_user_copy_assignment)) {
+		// A const or reference data member deletes the implicit copy assignment.
+		if (member.is_reference() || hasCVQualifier(member.member_cv_qualifier, CVQualifier::Const)) {
+			return false;
+		}
+	}
+	const bool has_move_constructor = struct_info.findMoveConstructor() != nullptr || struct_info.isMoveConstructorDeleted();
+	const bool has_user_move_assignment = hasUserDeclaredAssignment(struct_info, true) || struct_info.isMoveAssignmentDeleted();
+	const bool has_user_copy_assignment = hasUserDeclaredAssignment(struct_info, false);
+	if (struct_info.isCopyAssignmentDeleted() ||
+		((has_move_constructor || has_user_move_assignment) && !has_user_copy_assignment)) {
 		return false;
 	}
 	if (has_user_copy_assignment) {
@@ -2080,7 +2117,16 @@ bool hasWin64ReturnSpecialMemberSet(const StructTypeInfo& struct_info) {
 			return false;
 		}
 	}
+	return true;
+}
 
+// Microsoft x64's root-record requirements on top of the recursive subobject
+// facts. Any user-provided constructor disqualifies the record itself, but not
+// an enclosing record that merely contains it as a member.
+bool hasWin64ReturnRootFacts(const StructTypeInfo& struct_info) {
+	if (struct_info.has_vtable || !struct_info.base_classes.empty()) {
+		return false;
+	}
 	for (const StructMemberFunction& function : struct_info.member_functions) {
 		if (!function.is_constructor) {
 			continue;
@@ -2096,19 +2142,11 @@ bool hasWin64ReturnSpecialMemberSet(const StructTypeInfo& struct_info) {
 			return false;
 		}
 	}
-
-	if (const StructMemberFunction* destructor = struct_info.findDestructor()) {
-		if (!destructor->function_decl.is<DestructorDeclarationNode>() ||
-			!destructor->function_decl.as<DestructorDeclarationNode>().was_defaulted_on_first_declaration()) {
-			return false;
-		}
-	}
-
 	for (const StructMember& member : struct_info.members) {
 		if (member.isUnnamedOrZeroWidthBitfield()) {
 			continue;
 		}
-		if (member.access != AccessSpecifier::Public || member.is_reference()) {
+		if (member.access != AccessSpecifier::Public) {
 			return false;
 		}
 	}
@@ -2116,10 +2154,13 @@ bool hasWin64ReturnSpecialMemberSet(const StructTypeInfo& struct_info) {
 }
 
 bool isStructReturnedInWin64RegistersImpl(const StructTypeInfo* struct_info) {
+	if (struct_info == nullptr || !hasWin64ReturnRootFacts(*struct_info)) {
+		return false;
+	}
 	return allRecordSubobjectsSatisfy(
 		struct_info,
 		[](const StructTypeInfo* current) {
-			return hasWin64ReturnSpecialMemberSet(*current);
+			return hasWin64ReturnSubobjectFacts(*current);
 		});
 }
 

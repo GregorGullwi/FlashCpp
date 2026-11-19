@@ -29,16 +29,75 @@ struct AbiDefaultedCopy {
 	AbiDefaultedCopy(const AbiDefaultedCopy&);
 };
 
+struct AbiInnerDefaultCtor {
+	int value;
+	AbiInnerDefaultCtor() : value(0) {}
+};
+
+// Win64 checks the root record's constructors but only the member subobjects'
+// copy assignment and destruction. A member with a user-provided default
+// constructor therefore does not force this record into the hidden slot.
+struct AbiOuterDefaultCtor {
+	AbiInnerDefaultCtor inner;
+};
+
+// A const data member deletes the implicit copy assignment, which makes the
+// record indirect for the Win64 return ABI even though it is four bytes.
+struct AbiConstMember {
+	const int value;
+};
+
+// Win64 ignores the member's non-trivial copy constructor here and still
+// returns the enclosing record in EAX. SysV does not: the out-of-line
+// defaulted copy constructor is user-provided, so the enclosing record becomes
+// non-trivial for calls.
+struct AbiInnerDefaultedCopy {
+	int value;
+	AbiInnerDefaultedCopy() = default;
+	AbiInnerDefaultedCopy(const AbiInnerDefaultedCopy&);
+};
+
+struct AbiOuterDefaultedCopyMember {
+	AbiInnerDefaultedCopy inner;
+};
+
+#if !defined(_WIN32)
+// MSVC rejects two copy-constructor overloads when one is defaulted, so this
+// SysV-only case exercises the all-overload scan. Clang uses a hidden slot
+// because the non-const overload is user-provided.
+struct AbiOverloadedCopy {
+	int value;
+	AbiOverloadedCopy() = default;
+	AbiOverloadedCopy(const AbiOverloadedCopy&) = default;
+	AbiOverloadedCopy(AbiOverloadedCopy&) {
+		value = 0;
+	}
+};
+#endif
+
 static_assert(sizeof(AbiSmallPair) == 8);
 static_assert(sizeof(AbiSmallDtor) == 4);
 static_assert(sizeof(AbiDefaultedCopy) == 4);
+static_assert(sizeof(AbiOuterDefaultCtor) == 4);
+static_assert(sizeof(AbiConstMember) == 4);
+static_assert(sizeof(AbiOuterDefaultedCopyMember) == 4);
 
 extern "C" AbiSmallPair ref_make_small_pair(int first, int second);
 extern "C" AbiSmallDtor ref_make_small_dtor(int value);
 extern "C" AbiDefaultedCopy ref_make_defaulted_copy(int value);
+extern "C" AbiOuterDefaultCtor ref_make_outer_default_ctor(int value);
+extern "C" AbiConstMember ref_make_const_member(int value);
+extern "C" AbiOuterDefaultedCopyMember ref_make_outer_defaulted_copy_member(int value);
 extern "C" int ref_call_flashcpp_make_small_pair(int first, int second);
 extern "C" int ref_call_flashcpp_make_small_dtor(int value);
 extern "C" int ref_call_flashcpp_make_defaulted_copy(int value);
+extern "C" int ref_call_flashcpp_make_outer_default_ctor(int value);
+extern "C" int ref_call_flashcpp_make_const_member(int value);
+extern "C" int ref_call_flashcpp_make_outer_defaulted_copy_member(int value);
+#if !defined(_WIN32)
+extern "C" AbiOverloadedCopy ref_make_overloaded_copy(int value);
+extern "C" int ref_call_flashcpp_make_overloaded_copy(int value);
+#endif
 
 extern "C" AbiSmallPair flashcpp_make_small_pair(int first, int second) {
 	AbiSmallPair result;
@@ -59,6 +118,31 @@ extern "C" AbiDefaultedCopy flashcpp_make_defaulted_copy(int value) {
 	return result;
 }
 
+extern "C" AbiOuterDefaultCtor flashcpp_make_outer_default_ctor(int value) {
+	AbiOuterDefaultCtor result;
+	result.inner.value = value;
+	return result;
+}
+
+extern "C" AbiConstMember flashcpp_make_const_member(int value) {
+	AbiConstMember result = {value};
+	return result;
+}
+
+extern "C" AbiOuterDefaultedCopyMember flashcpp_make_outer_defaulted_copy_member(int value) {
+	AbiOuterDefaultedCopyMember result;
+	result.inner.value = value;
+	return result;
+}
+
+#if !defined(_WIN32)
+extern "C" AbiOverloadedCopy flashcpp_make_overloaded_copy(int value) {
+	AbiOverloadedCopy result;
+	result.value = value;
+	return result;
+}
+#endif
+
 extern "C" int main() {
 	AbiSmallPair pair = ref_make_small_pair(20, 22);
 	if (pair.first != 20 || pair.second != 22) {
@@ -75,14 +159,48 @@ extern "C" int main() {
 		return 3;
 	}
 
-	if (ref_call_flashcpp_make_small_pair(4, 5) != 9) {
+	AbiOuterDefaultCtor outer = ref_make_outer_default_ctor(44);
+	if (outer.inner.value != 44) {
 		return 4;
 	}
-	if (ref_call_flashcpp_make_small_dtor(44) != 44) {
+
+	AbiConstMember const_member = ref_make_const_member(45);
+	if (const_member.value != 45) {
 		return 5;
 	}
-	if (ref_call_flashcpp_make_defaulted_copy(45) != 45) {
+
+	AbiOuterDefaultedCopyMember outer_defaulted_copy = ref_make_outer_defaulted_copy_member(46);
+	if (outer_defaulted_copy.inner.value != 46) {
 		return 6;
 	}
+
+	if (ref_call_flashcpp_make_small_pair(4, 5) != 9) {
+		return 7;
+	}
+	if (ref_call_flashcpp_make_small_dtor(47) != 47) {
+		return 8;
+	}
+	if (ref_call_flashcpp_make_defaulted_copy(48) != 48) {
+		return 9;
+	}
+	if (ref_call_flashcpp_make_outer_default_ctor(49) != 49) {
+		return 10;
+	}
+	if (ref_call_flashcpp_make_const_member(50) != 50) {
+		return 11;
+	}
+	if (ref_call_flashcpp_make_outer_defaulted_copy_member(51) != 51) {
+		return 12;
+	}
+
+#if !defined(_WIN32)
+	AbiOverloadedCopy overloaded = ref_make_overloaded_copy(52);
+	if (overloaded.value != 52) {
+		return 13;
+	}
+	if (ref_call_flashcpp_make_overloaded_copy(53) != 53) {
+		return 14;
+	}
+#endif
 	return 0;
 }
