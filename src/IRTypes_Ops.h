@@ -1008,7 +1008,6 @@ struct FunctionAddressOp {
 	}
 };
 
-// Variable declaration (local)
 // Starts construction tracking for a local whose initialization may throw.
 // The backend reserves a frame flag before evaluating the initializer and
 // clears it; MarkConstructed sets it after initialization succeeds.
@@ -1016,6 +1015,7 @@ struct LocalConstructionOp {
 	LocalVarId local_id;
 };
 
+// Variable declaration (local)
 struct VariableDeclOp {
 	TypeIndex type_index{};	// TypeCategory embedded; replaces Type type
 	SizeInBits size_in_bits = SizeInBits{0};

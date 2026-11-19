@@ -1997,6 +1997,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 	current_function_reserved_catch_ref_temps_.clear();
 	current_function_reserved_catch_obj_padding_size_ = 0;
 	current_function_reserved_catch_return_slot_size_ = 0;
+	pending_construction_locals_.clear();
 
 	auto it = function_spans.find(func_name);
 	if (it == function_spans.end()) {
@@ -2248,6 +2249,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 
 		if (instruction.getOpcode() == IrOpcode::InitLocalConstruction) {
 			addTemporaryStorageBytes(additional_temporary_storage_bytes, 8);
+			pending_construction_locals_.push_back(instruction.getTypedPayload<LocalConstructionOp>().local_id);
 		}
 
 		if (instruction.getOpcode() == IrOpcode::VariableDecl) {
@@ -2367,7 +2369,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 				}
 				// Try CallOp (function calls)
 				else if (const CallOp* call_op = std::any_cast<CallOp>(&instruction.getTypedPayload())) {
-					if (!call_op->returnsValuelessVoid()) {
+					if (!call_op->returnsValuelessVoid() && !call_op->result_destination.has_value()) {
 						recordTemporarySize(call_op->result, call_op->return_size_in_bits.value);
 					}
 					handled_by_typed_payload = true;
@@ -5868,6 +5870,13 @@ void IrToObjConverter<TWriterClass>::handleDestructorCall(const IrInstruction& i
 	regAlloc.invalidateCallerSavedRegisters();
 
 	regAlloc.reset();
+
+	if (const auto* local_id = std::get_if<LocalVarId>(&dtor_op.object)) {
+		const auto flag_it = construction_flag_offsets_.find(local_id->value);
+		if (flag_it != construction_flag_offsets_.end()) {
+			emitMovDwordPtrImmToRegOffset(X64Register::RBP, flag_it->second, 0);
+		}
+	}
 }
 
 template <class TWriterClass>
@@ -7164,26 +7173,17 @@ void IrToObjConverter<TWriterClass>::emitVirtualBasePointerAdjust(
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleInitLocalConstruction(const IrInstruction& instruction) {
 	const LocalConstructionOp& op = instruction.getTypedPayload<LocalConstructionOp>();
-	const VariableInfo* var_info = findVariableInfo(op.local_id);
-	if (var_info == nullptr) {
-		throw InternalError("Construction tracking local has no frame slot");
+	if (construction_flag_offsets_.find(op.local_id.value) == construction_flag_offsets_.end()) {
+		throw InternalError("Construction tracking local has no reserved frame flag");
 	}
-	next_temp_var_offset_ += 8;
-	const int32_t flag_offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
-	construction_flag_offsets_[var_info->offset] = flag_offset;
-	emitMovDwordPtrImmToRegOffset(X64Register::RBP, flag_offset, 0);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleMarkConstructed(const IrInstruction& instruction) {
 	const LocalConstructionOp& op = instruction.getTypedPayload<LocalConstructionOp>();
-	const VariableInfo* var_info = findVariableInfo(op.local_id);
-	if (var_info == nullptr) {
-		throw InternalError("Constructed local has no frame slot");
-	}
-	const auto flag_it = construction_flag_offsets_.find(var_info->offset);
+	const auto flag_it = construction_flag_offsets_.find(op.local_id.value);
 	if (flag_it == construction_flag_offsets_.end()) {
-		return;
+		throw InternalError("Constructed local has no reserved frame flag");
 	}
 	emitMovDwordPtrImmToRegOffset(X64Register::RBP, flag_it->second, 1);
 }
@@ -8604,6 +8604,15 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		// IMPORTANT: Don't include outgoing_args_space here - TempVars go AFTER named vars but BEFORE outgoing args
 	current_function_named_vars_size_ = func_stack_space.named_vars_size;
 	next_temp_var_offset_ = 8 + static_cast<int>(current_function_reserved_catch_obj_padding_size_ + current_function_reserved_catch_return_slot_size_);
+
+	construction_flag_offsets_.clear();
+	for (LocalVarId local_id : pending_construction_locals_) {
+		next_temp_var_offset_ += 8;
+		const int32_t flag_offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
+		construction_flag_offsets_[local_id.value] = flag_offset;
+		emitMovDwordPtrImmToRegOffset(X64Register::RBP, flag_offset, 0);
+	}
+	pending_construction_locals_.clear();
 
 	if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
 		if (!current_function_reserved_catch_ref_temps_.empty()) {
@@ -16812,7 +16821,10 @@ void IrToObjConverter<TWriterClass>::emitInlineDestructorCall(const std::pair<St
 		return;
 	}
 
-	const auto flag_it = construction_flag_offsets_.find(var_info->offset);
+	const auto* local_id = std::get_if<LocalVarId>(&var_key);
+	const auto flag_it = local_id != nullptr
+		? construction_flag_offsets_.find(local_id->value)
+		: construction_flag_offsets_.end();
 	std::optional<uint32_t> skip_destructor_patch;
 	if (flag_it != construction_flag_offsets_.end()) {
 		emitCmpFrameImm32(flag_it->second, 0);
@@ -16832,6 +16844,9 @@ void IrToObjConverter<TWriterClass>::emitInlineDestructorCall(const std::pair<St
 	auto mangled_name = buildDestructorMangledNameFromString(StringTable::getStringView(struct_name_h));
 	emitCall(mangled_name);
 	regAlloc.invalidateCallerSavedRegisters();
+	if (flag_it != construction_flag_offsets_.end()) {
+		emitMovDwordPtrImmToRegOffset(X64Register::RBP, flag_it->second, 0);
+	}
 	if (skip_destructor_patch.has_value()) {
 		patchRel32(*skip_destructor_patch, static_cast<uint32_t>(textSectionData.size()));
 	}

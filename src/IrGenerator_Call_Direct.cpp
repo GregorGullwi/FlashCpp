@@ -352,6 +352,8 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 }
 
 ExprResult AstToIr::generateCallExprIr(const CallExprNode& callExprNode, ExpressionContext context) {
+	std::optional<PendingCallReturnDestination> return_destination = pending_call_return_destination_;
+	pending_call_return_destination_.reset();
 	if (callExprNode.has_receiver()) {
 		if (!callExprNode.callee().has_function_declaration()) {
 			throw InternalError("CallExprNode with receiver is missing FunctionDeclarationNode");
@@ -375,11 +377,17 @@ ExprResult AstToIr::generateCallExprIr(const CallExprNode& callExprNode, Express
 			copy_options.copy_mangled_name = false;
 			copy_options.copy_qualified_name = false;
 			copyCallMetadata(direct_static_call, callExprNode, copy_options);
-			return generateFunctionCallIr(direct_static_call, context, &callExprNode);
+			pending_call_return_destination_ = return_destination;
+			ExprResult result = generateFunctionCallIr(direct_static_call, context, &callExprNode);
+			pending_call_return_destination_.reset();
+			return result;
 		}
 		return generateMemberFunctionCallIr(callExprNode, context, &callExprNode);
 	}
-	return generateFunctionCallIr(callExprNode, context);
+	pending_call_return_destination_ = return_destination;
+	ExprResult result = generateFunctionCallIr(callExprNode, context);
+	pending_call_return_destination_.reset();
+	return result;
 }
 
 
@@ -1807,7 +1815,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), callExprNode.called_from()));
 
 	if (uses_return_destination) {
-		return makeExprResult(effective_return_type.type_index(), SizeInBits{return_destination->size_in_bits},
+		return makeExprResult(effective_return_type.type_index(), return_destination->size_in_bits,
 			IrOperand{return_destination->local_id}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 	return buildCallReturnResult(effective_return_type, ret_var, context, callExprNode.called_from());
