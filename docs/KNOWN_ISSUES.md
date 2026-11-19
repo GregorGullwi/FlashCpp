@@ -244,10 +244,11 @@ identifier return. The following candidate shapes remain unsupported:
 nested-block locals, multiple return statements, conversion-operator
 initialization, and copy-initialization from a function call.
 
-Free and static hidden-return calls now construct directly in the caller
-destination; no temporary return slot or caller-side copy is emitted. Member and
-functor call initializers still use a temporary result followed by assignment.
-Constructor-initialized and call-initialized struct locals with destructors
+Hidden-return calls through free functions, static members, ordinary member
+functions, virtual dispatch, and function pointers now construct directly in the
+caller destination; no temporary return slot or caller-side copy is emitted.
+Member-function-pointer call initializers still use a temporary result followed
+by assignment. Constructor-initialized and call-initialized struct locals with destructors
 reserve a construction flag in the prologue, set it only after initialization
 completes, and clear it after destruction. Exception cleanup checks that flag, so
 an incomplete callee local or caller destination is not destroyed and a later

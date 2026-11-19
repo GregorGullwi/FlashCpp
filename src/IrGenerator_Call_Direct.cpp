@@ -382,7 +382,10 @@ ExprResult AstToIr::generateCallExprIr(const CallExprNode& callExprNode, Express
 			pending_call_return_destination_.reset();
 			return result;
 		}
-		return generateMemberFunctionCallIr(callExprNode, context, &callExprNode);
+		pending_call_return_destination_ = return_destination;
+		ExprResult result = generateMemberFunctionCallIr(callExprNode, context, &callExprNode);
+		pending_call_return_destination_.reset();
+		return result;
 	}
 	pending_call_return_destination_ = return_destination;
 	ExprResult result = generateFunctionCallIr(callExprNode, context);
@@ -720,13 +723,25 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			IndirectCallOp op{
 				.result = ret_var,
 				.function_pointer = std::move(function_pointer),
-				.arguments = std::move(arguments)};
+				.arguments = std::move(arguments), .result_destination = std::nullopt};
+			bool indirect_uses_destination = false;
 			if (func_type.has_function_signature()) {
-				populateIndirectCallReturnInfo(op, func_type.function_signature());
+				const FunctionSignature& signature = func_type.function_signature();
+				populateIndirectCallReturnInfo(op, signature);
+				const TypeSpecifierNode return_type = buildFunctionSignatureReturnType(signature);
+				if (op.use_return_slot && return_destination.has_value() && return_destination->type_index.is_valid() &&
+					return_destination->type_index == return_type.type_index()) {
+					op.result_destination = return_destination->local_id;
+					indirect_uses_destination = true;
+				}
 			}
 			ir_.addInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from());
 
 			// Return the result variable with the return type from the function signature
+			if (indirect_uses_destination) {
+				return makeExprResult(return_destination->type_index, return_destination->size_in_bits,
+					IrOperand{return_destination->local_id}, PointerDepth{}, ValueStorage::ContainsData);
+			}
 			if (func_type.has_function_signature()) {
 				return buildIndirectCallReturnResult(func_type.function_signature(), ret_var);
 			} else {
