@@ -2657,8 +2657,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 					}
 					if (need_conversion && init_cat == TypeCategory::Struct) {
-						// First check for a sema-annotated user-defined conversion.
-						if (init_node.is<ExpressionNode>()) {
+						if (auto decayed = tryDecayLambdaClosureToFunctionPointer(init_operands, type_node.category(), decl.identifier_token())) {
+							init_operands = *decayed;
+						} else if (init_node.is<ExpressionNode>()) {
+							// First check for a sema-annotated user-defined conversion.
 							const void* key = &init_node.as<ExpressionNode>();
 							const auto slot = sema_.getSlot(key);
 							if (slot.has_value() && slot->has_cast()) {

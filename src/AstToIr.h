@@ -353,6 +353,10 @@ private:
 	ExprResult generateIdentifierIr(const IdentifierNode& identifierNode,
 									ExpressionContext context = ExpressionContext::Load);
 	std::optional<ExprResult> decayLambdaStructToFunctionPointer(const StructTypeInfo& struct_info, const Token& source_token);
+	// Applies the implicit captureless-closure to pointer-to-function conversion
+	// when the source expression denotes a lambda closure and the target is a
+	// function pointer. Returns nullopt for every other conversion.
+	std::optional<ExprResult> tryDecayLambdaClosureToFunctionPointer(const ExprResult& source, TypeCategory target_category, const Token& token);
 	ExprResult generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode,
 											ExpressionContext context);
 	ExprResult generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode);

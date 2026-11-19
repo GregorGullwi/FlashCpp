@@ -64,6 +64,11 @@ ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, TypeCateg
 }
 
 ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, TypeCategory fromType, TypeCategory toType, StandardConversionKind cast_kind, const Token& source_token) {
+	if (toType == TypeCategory::FunctionPointer) {
+		if (auto decayed = tryDecayLambdaClosureToFunctionPointer(operands, toType, source_token)) {
+			return *decayed;
+		}
+	}
 	if (toType == TypeCategory::MemberObjectPointer &&
 		(fromType == TypeCategory::Nullptr || operands.category() == TypeCategory::Nullptr)) {
 		return makeExprResult(nativeTypeIndex(TypeCategory::MemberObjectPointer),
@@ -981,6 +986,19 @@ std::optional<ExprResult> AstToIr::decayLambdaStructToFunctionPointer(const Stru
 	op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), source_token));
 	return makeExprResult(nativeTypeIndex(TypeCategory::FunctionPointer), SizeInBits{64}, IrOperand{func_addr_var}, PointerDepth{}, ValueStorage::ContainsData);
+}
+
+std::optional<ExprResult> AstToIr::tryDecayLambdaClosureToFunctionPointer(
+	const ExprResult& source, TypeCategory target_category, const Token& token) {
+	if (target_category != TypeCategory::FunctionPointer || source.category() != TypeCategory::Struct || !source.type_index.is_valid()) {
+		return std::nullopt;
+	}
+	const TypeInfo* source_type_info = tryGetTypeInfo(source.type_index);
+	const StructTypeInfo* source_struct_info = source_type_info != nullptr ? source_type_info->getStructInfo() : nullptr;
+	if (source_struct_info == nullptr || !isLambdaClosureStruct(*source_struct_info)) {
+		return std::nullopt;
+	}
+	return decayLambdaStructToFunctionPointer(*source_struct_info, token);
 }
 
 ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode,

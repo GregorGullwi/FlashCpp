@@ -1540,6 +1540,42 @@ ParseResult Parser::parse_lambda_expression() {
 
 	closure_struct_info->member_functions.push_back(operator_call_member);
 
+	// C++20 [expr.prim.lambda.closure]/8: a captureless lambda has an implicit
+	// conversion function to pointer-to-function. Publish it as a conversion
+	// operator declaration so ordinary conversion selection and initialization
+	// see the same user-defined conversion as written source.
+	if (lambda.captures().empty() && lambda.template_params().empty()) {
+		bool has_placeholder_parameter = false;
+		for (const auto& parameter : lambda.parameters()) {
+			if (parameter.is<DeclarationNode>() &&
+				isPlaceholderAutoType(parameter.as<DeclarationNode>().type_specifier_node().type())) {
+				has_placeholder_parameter = true;
+				break;
+			}
+		}
+		if (!has_placeholder_parameter) {
+			if (auto function_pointer_type = build_function_pointer_type_from_lambda(lambda)) {
+				StringBuilder conversion_name_builder;
+				conversion_name_builder.append("operator ");
+				conversion_name_builder.append(function_pointer_type->getReadableString());
+				Token conversion_token(Token::Type::Identifier, conversion_name_builder.commit(),
+									   lambda_token.line(), lambda_token.column(), lambda_token.file_index());
+				DeclarationNode& conversion_decl = emplace_node<DeclarationNode>(
+					emplace_node<TypeSpecifierNode>(*function_pointer_type), conversion_token).as<DeclarationNode>();
+				ASTNode conversion_func_node = emplace_node<FunctionDeclarationNode>(conversion_decl, closure_name);
+				FunctionDeclarationNode& conversion_func = conversion_func_node.as<FunctionDeclarationNode>();
+				conversion_func.set_is_const_member_function(!is_mutable);
+				conversion_func.set_is_volatile_member_function(false);
+				conversion_func.set_is_constexpr(true);
+
+				StructMemberFunction conversion_member(conversion_token.handle(), conversion_func_node, AccessSpecifier::Public);
+				conversion_member.cv_qualifier = is_mutable ? CVQualifier::None : CVQualifier::Const;
+				conversion_member.conversion_target_type = getCanonicalConversionTargetType(*function_pointer_type);
+				closure_struct_info->member_functions.push_back(std::move(conversion_member));
+			}
+		}
+	}
+
 	closure_type.bindStructInfoOwnership();
 
 	// Wrap the lambda in an ExpressionNode before returning
