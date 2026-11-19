@@ -1624,6 +1624,12 @@ private:
 	// return slot. The set is rebuilt for each lambda body.
 	std::unordered_set<const void*> nrvo_candidate_declarations_;
 	bool emit_return_slot_return_ = false;
+	struct PendingCallReturnDestination {
+		LocalVarId local_id;
+		TypeIndex type_index;
+		int size_in_bits = 0;
+	};
+	std::optional<PendingCallReturnDestination> pending_call_return_destination_;
 
 	// Track processed TypeInfo pointers to avoid processing the same struct twice
 	// (same struct can be registered under multiple keys in getTypesByNameMap())

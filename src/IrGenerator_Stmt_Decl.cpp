@@ -498,6 +498,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	// global/static path returns.
 	LocalVarId local_var_id{};
 	bool is_nrvo_candidate = false;
+	bool track_construction = false;
+	bool initialized_directly_in_destination = false;
 	DestructorSkip destructor_skip = DestructorSkip::None;
 	const StringHandle declared_spelling = decl.identifier_token().handle();
 	// Records the declaration's identity rather than the spelling, because
@@ -1558,6 +1560,53 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	is_nrvo_candidate = current_function_has_hidden_return_param_ && nrvo_candidate_declarations_.contains(ast_node.raw_pointer());
 	destructor_skip = is_nrvo_candidate ? DestructorSkip::OnSuccessfulReturn : DestructorSkip::None;
 
+	auto startConstructionTracking = [&]() {
+		if (track_construction) {
+			return;
+		}
+		track_construction = true;
+		LocalConstructionOp construction_op;
+		construction_op.local_id = local_var_id;
+		ir_.addInstruction(IrInstruction(IrOpcode::InitLocalConstruction, std::move(construction_op), decl.identifier_token()));
+	};
+	auto emitMarkConstructed = [&](const Token& token) {
+		if (!track_construction) {
+			return;
+		}
+		LocalConstructionOp constructed_op;
+		constructed_op.local_id = local_var_id;
+		ir_.addInstruction(IrInstruction(IrOpcode::MarkConstructed, std::move(constructed_op), token));
+	};
+	auto beginCallInitialization = [&](const ASTNode& init_node) {
+		if (!init_node.is<ExpressionNode>() ||
+			!std::holds_alternative<CallExprNode>(init_node.as<ExpressionNode>()) ||
+			type_node.category() != TypeCategory::Struct || runtime_pointer_depth > 0 ||
+			type_node.is_reference() || type_node.is_rvalue_reference()) {
+			return;
+		}
+		const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
+		const StructTypeInfo* struct_info = type_info != nullptr ? type_info->getStructInfo() : nullptr;
+		if (struct_info != nullptr && struct_info->hasDestructor()) {
+			startConstructionTracking();
+		}
+		pending_call_return_destination_ = PendingCallReturnDestination{
+			local_var_id, type_node.type_index(), static_cast<int>(type_node.size_in_bits())};
+	};
+	auto endCallInitialization = [&]() {
+		pending_call_return_destination_.reset();
+	};
+
+	if (node.initializer().has_value() &&
+		node.initializer()->is<ExpressionNode>() &&
+		std::holds_alternative<ConstructorCallNode>(node.initializer()->as<ExpressionNode>()) &&
+		type_node.category() == TypeCategory::Struct && runtime_pointer_depth == 0 &&
+		!type_node.is_reference() && !type_node.is_rvalue_reference()) {
+		const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
+		if (type_info != nullptr && type_info->getStructInfo() != nullptr && type_info->getStructInfo()->hasDestructor()) {
+			startConstructionTracking();
+		}
+	}
+
 		// C++20 [basic.scope.pdecl]: register the variable in the local symbol table
 		// before evaluating its initializer, so that sizeof(x) in "int x = sizeof(x)"
 		// can look up x's type even when x is the variable being declared.
@@ -1912,6 +1961,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									{});
 							}
 
+							if (struct_info.hasDestructor()) {
+								startConstructionTracking();
+							}
+
 							const auto& initializers = init_list.initializers();
 							bool uses_shared_aggregate_path = !struct_info.base_classes.empty();
 							if (!uses_shared_aggregate_path) {
@@ -1931,6 +1984,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									generateNestedMemberStores(struct_info, init_list, std::variant<StringHandle, TempVar, LocalVarId>{local_var_id}, 0,
 										decl.identifier_token());
 									register_destructor_if_needed(type_info);
+									emitMarkConstructed(decl.identifier_token());
 									return;
 								}
 							}
@@ -1947,6 +2001,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										throw InternalError("Sema-selected class conversion could not be emitted");
 									}
 									register_destructor_if_needed(type_info);
+									emitMarkConstructed(decl.identifier_token());
 									return;
 								}
 							}
@@ -2493,6 +2548,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							if (struct_info.hasDestructor()) {
 								registerVariableWithDestructor(VariableKey{local_var_id}, type_info->name(), destructor_skip);
 							}
+							emitMarkConstructed(decl.identifier_token());
 						}
 					}
 				}  // end if (type_node.category() == TypeCategory::Struct)
@@ -2568,7 +2624,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			if (!is_copy_init_for_struct) {
 					// Already registered via ensure_symbol_registered() above.
 
+				beginCallInitialization(init_node);
 				ExprResult init_operands = visitVariableInitializer(init_node.as<ExpressionNode>());
+				endCallInitialization();
+				if (const auto* direct_local = std::get_if<LocalVarId>(&init_operands.value);
+					direct_local != nullptr && *direct_local == local_var_id) {
+					initialized_directly_in_destination = true;
+				}
 
 					// C++20 [conv.array]: initializing a pointer from an array lvalue,
 					// including a struct array member such as `int* p = s.values;`,
@@ -2782,7 +2844,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 				if (!is_copy_elision_candidate) {
 						// Evaluate the initializer to check if it's an rvalue
+					beginCallInitialization(init_node);
 					ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+					endCallInitialization();
+					if (const auto* direct_local = std::get_if<LocalVarId>(&init_operands.value);
+						direct_local != nullptr && *direct_local == local_var_id) {
+						initialized_directly_in_destination = true;
+					}
 					cached_copy_init_expr_result = init_operands;
 						// Check if this is an rvalue (TempVar) of the same struct type.
 						// Only treat it as "direct initialization from rvalue" when it IS the same
@@ -2919,11 +2987,22 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		}
 	}
 
+	if (initialized_directly_in_destination) {
+		decl_op.initializer.reset();
+	}
+
 		// Track whether the variable was already initialized with an rvalue (function return value)
 		// Check if the VariableDecl has an initializer set BEFORE we move decl_op
 	bool has_rvalue_initializer = decl_op.initializer.has_value();
 
 	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
+
+	if (initialized_directly_in_destination) {
+		const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
+		register_destructor_if_needed(type_info);
+		emitMarkConstructed(node.declaration().identifier_token());
+		return;
+	}
 
 	// Handle array initialization with initializer list
 	if (owns_inline_array_storage && node.initializer().has_value()) {
@@ -3109,6 +3188,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						SourceLocation::fromToken(type_node.token()),
 						std::string("Cannot instantiate abstract class '") + std::string(StringTable::getStringView(type_info->name())) + "'",
 						{});
+				}
+
+				if (type_info->getStructInfo()->hasDestructor()) {
+					startConstructionTracking();
 				}
 
 				const auto& implicit_default_constructor =
@@ -3965,6 +4048,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			if (type_info->getStructInfo() && type_info->getStructInfo()->hasDestructor()) {
 				registerVariableWithDestructor(VariableKey{local_var_id}, type_info->name(), destructor_skip);
 			}
+			emitMarkConstructed(node.declaration().identifier_token());
 		}
 	}
 }

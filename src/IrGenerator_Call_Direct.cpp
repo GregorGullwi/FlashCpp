@@ -388,6 +388,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 }
 
 ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key) {
+	std::optional<PendingCallReturnDestination> return_destination = pending_call_return_destination_;
+	pending_call_return_destination_.reset();
 	std::vector<TypedValue> call_arguments;
 	call_arguments.reserve(callExprNode.arguments().size());
 	auto appendArgumentIrResult = [&](const ExprResult& result) {
@@ -1754,8 +1756,15 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// Exclude references - they return a pointer, not a struct by value
 	bool returns_struct = returnsStructByValue(effective_return_type);
 	bool needs_hidden_ret = needsHiddenReturnParam(effective_return_type, context_->isLLP64());
+	bool uses_return_destination = false;
 	if (needs_hidden_ret) {
 		call_op.return_slot = ret_var;  // The result temp var serves as the return slot
+		if (return_destination.has_value() &&
+			return_destination->type_index.is_valid() &&
+			return_destination->type_index == effective_return_type.type_index()) {
+			call_op.result_destination = return_destination->local_id;
+			uses_return_destination = true;
+		}
 
 		FLASH_LOG_FORMAT(Codegen, Debug,
 						 "Function call {} returns struct by value (size={} bits) - using return slot (temp_{})",
@@ -1797,5 +1806,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// Add the function call instruction with typed payload
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), callExprNode.called_from()));
 
+	if (uses_return_destination) {
+		return makeExprResult(effective_return_type.type_index(), SizeInBits{return_destination->size_in_bits},
+			IrOperand{return_destination->local_id}, PointerDepth{}, ValueStorage::ContainsData);
+	}
 	return buildCallReturnResult(effective_return_type, ret_var, context, callExprNode.called_from());
 }
