@@ -1105,8 +1105,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 						// For float/double, allocate an XMM register
 					ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
 					bool is_float = (operand_type == TypeCategory::Float);
-					auto mov_opcodes = generateFloatMovFromFrame(ctx.result_physical_reg, lhs_var_info->offset, is_float);
-					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					emitFloatMovFromFrame(ctx.result_physical_reg, lhs_var_info->offset, is_float);
 				} else {
 						// Check if this is a reference - if so, we need to dereference it
 					auto ref_info = getIndirectStackInfo(lhs_var_info->offset);
@@ -1160,8 +1159,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 					// For float/double, allocate an XMM register
 				ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
 				bool is_float = (operand_type == TypeCategory::Float);
-				auto mov_opcodes = generateFloatMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr, is_float);
-				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				emitFloatMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr, is_float);
 			} else {
 					// Check if this is a reference - if so, we need to dereference it
 				auto ref_info = getIndirectStackInfo(lhs_stack_var_addr);
@@ -1170,8 +1168,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 						// This is a reference - load the pointer first, then dereference
 					ctx.result_physical_reg = allocateRegisterWithSpilling();
 						// Load the pointer into the register
-					auto load_ptr = generatePtrMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
-					textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
+					emitMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
 						// Now dereference: load from [register + 0]
 					int value_size_bits = ref_info->value_size_bits.value;
 					OpCodeWithSize deref_opcodes;
@@ -1192,8 +1189,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 				} else if (ref_info.has_value() && !shouldImplicitlyDeref(ref_info.value())) {
 						// This holds an address value directly (from addressof) - load without dereferencing
 					ctx.result_physical_reg = allocateRegisterWithSpilling();
-					auto load_ptr = generatePtrMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
-					textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
+					emitMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
 				} else {
 						// Not a reference, load normally with correct size
 					ctx.result_physical_reg = allocateRegisterWithSpilling();
@@ -1305,8 +1301,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 						// For float/double, allocate an XMM register
 					ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling(ctx.result_physical_reg);
 					bool is_float = (operand_type == TypeCategory::Float);
-					auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_var_info->offset, is_float);
-					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+					emitFloatMovFromFrame(ctx.rhs_physical_reg, rhs_var_info->offset, is_float);
 				} else {
 						// Check if this is a reference - if so, we need to dereference it
 					auto ref_info = getIndirectStackInfo(rhs_var_info->offset);
@@ -1379,8 +1374,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 					// For float/double, allocate an XMM register
 				ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling(ctx.result_physical_reg);
 				bool is_float = (operand_type == TypeCategory::Float);
-				auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr, is_float);
-				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				emitFloatMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr, is_float);
 			} else {
 					// Check if this is a reference - if so, we need to dereference it
 				auto ref_info = getIndirectStackInfo(rhs_stack_var_addr);
@@ -1645,8 +1639,7 @@ void IrToObjConverter<TWriterClass>::storeArithmeticResult(const typename IrToOb
 				// This is a reference - load the pointer, then store the value through it
 			X64Register ptr_reg = allocateRegisterWithSpilling();
 				// Load the pointer into the register
-			auto load_ptr = generatePtrMovFromFrame(ptr_reg, final_result_offset);
-			textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
+			emitMovFromFrame(ptr_reg, final_result_offset);
 				// Now store the value through the pointer: [ptr_reg + 0] = actual_source_reg
 			int value_size_bits = ref_info->value_size_bits.value;
 			int value_size_bytes = value_size_bits / 8;
@@ -2804,6 +2797,12 @@ void IrToObjConverter<TWriterClass>::flushAllDirtyRegisters() {
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovToFrameBySize(X64Register sourceRegister, int32_t offset, int size_in_bits) {
+	if (frameOffsetUsesCanonicalTop(offset)) {
+		X64Register scratch = emitScratchCanonicalFrameTop(sourceRegister);
+		auto opcodes = generateMovToMemory(sourceRegister, scratch, offset, size_in_bits);
+		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+		return;
+	}
 	if (!frameOffsetNeedsAbsoluteAlign(offset)) {
 		auto opcodes = generateMovToFrameBySize(sourceRegister, offset, size_in_bits);
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
@@ -2817,6 +2816,20 @@ void IrToObjConverter<TWriterClass>::emitMovToFrameBySize(X64Register sourceRegi
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovToFrameSized(SizedRegister source, SizedStackSlot dest) {
 	bool is_xmm_source = static_cast<uint8_t>(source.reg) >= 16;
+	if (frameOffsetUsesCanonicalTop(dest.offset)) {
+		if (is_xmm_source) {
+			X64Register scratch = emitScratchCanonicalFrameTop(X64Register::RAX);
+			auto opcodes = generateFloatMovToMemory(source.reg, scratch, dest.offset, dest.size_in_bits == SizeInBits{32});
+			textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+			return;
+		}
+		int size_bits = dest.size_in_bits.value;
+		if (size_bits != 8 && size_bits != 16 && size_bits != 32 && size_bits != 64) {
+			size_bits = size_bits <= 8 ? 8 : size_bits <= 16 ? 16 : size_bits <= 32 ? 32 : 64;
+		}
+		emitMovToFrameBySize(source.reg, dest.offset, size_bits);
+		return;
+	}
 	if (!frameOffsetNeedsAbsoluteAlign(dest.offset)) {
 		OpCodeWithSize opcodes;
 		if (dest.size_in_bits == SizeInBits{64}) {
@@ -2860,6 +2873,12 @@ void IrToObjConverter<TWriterClass>::emitMovToFrameSized(SizedRegister source, S
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovFromFrameBySize(X64Register destinationRegister, int32_t offset, int size_in_bits) {
+	if (frameOffsetUsesCanonicalTop(offset)) {
+		emitMaterializeCanonicalFrameTop(destinationRegister);
+		const int size_bytes = size_in_bits <= 8 ? 1 : size_in_bits <= 16 ? 2 : size_in_bits <= 32 ? 4 : 8;
+		emitMovFromMemory(destinationRegister, destinationRegister, offset, static_cast<size_t>(size_bytes));
+		return;
+	}
 	if (!frameOffsetNeedsAbsoluteAlign(offset)) {
 		auto opcodes = generateMovFromFrameBySize(destinationRegister, offset, size_in_bits);
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
@@ -2926,18 +2945,50 @@ void IrToObjConverter<TWriterClass>::emitFrameMemoryCopy(FrameMemoryLocation sou
 
 template <class TWriterClass>
 bool IrToObjConverter<TWriterClass>::frameOffsetNeedsAbsoluteAlign(int32_t offset) const {
-	// When the prologue realigns RBP (MSVC lea/and), every RBP-relative local access is already
-	// absolutely aligned. Otherwise locals below the home region use (RBP & -align) + offset.
-	if (current_function_realigns_rbp_ || current_function_frame_align_ <= 16) {
+	// Parent bodies that and RBP already have absolutely aligned local addresses.
+	// Funclets that keep the pre-and top, and non-realigning frames, use (RBP & -align).
+	// Catch-obj / catch-return slots stay on the pre-and top (CRT FrameReg=0 math) and
+	// must never be redirected through (RBP & -align).
+	if (canonical_top_frame_offsets_.contains(offset) || frameOffsetUsesCanonicalTop(offset) ||
+		current_function_frame_align_ <= 16) {
+		return false;
+	}
+	if (current_function_realigns_rbp_ && !funclet_keeps_unaligned_rbp_) {
 		return false;
 	}
 	return offset < -static_cast<int32_t>(current_function_home_region_bytes_);
 }
 
 template <class TWriterClass>
+bool IrToObjConverter<TWriterClass>::frameOffsetUsesCanonicalTop(int32_t offset) const {
+	// Only the and'd parent body needs RSP+total_stack for pre-and slots. Funclets that
+	// rebuild the unaligned top into RBP can use plain [rbp+disp] for those slots.
+	// Stack args (offset>=0), Win64 param/EH homes, and registered catch objs stay at the
+	// pre-and top so and rbp cannot relocate them into saved frame data.
+	if (!current_function_realigns_rbp_ || funclet_keeps_unaligned_rbp_) {
+		return false;
+	}
+	if (offset >= -static_cast<int32_t>(current_function_home_region_bytes_)) {
+		return true;
+	}
+	return canonical_top_frame_offsets_.contains(offset);
+}
+
+template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::registerCanonicalTopFrameOffset(int32_t offset) {
+	canonical_top_frame_offsets_.insert(offset);
+}
+
+template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMaterializeAlignedFrameBase(X64Register dest) {
 	emitMovRegReg(dest, X64Register::RBP);
 	emitAndImm64(dest, static_cast<uint64_t>(0) - static_cast<uint64_t>(current_function_frame_align_));
+}
+
+template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::emitMaterializeCanonicalFrameTop(X64Register dest) {
+	// Pre-and frame top = RSP + total_stack (patched at function end).
+	canonical_frame_top_lea_patches_.push_back(emitLeaFromRSPDisp32Placeholder(dest));
 }
 
 template <class TWriterClass>
@@ -2950,7 +3001,19 @@ X64Register IrToObjConverter<TWriterClass>::emitScratchAlignedFrameBase(X64Regis
 }
 
 template <class TWriterClass>
+X64Register IrToObjConverter<TWriterClass>::emitScratchCanonicalFrameTop(X64Register avoid_reg) {
+	X64Register scratch = (avoid_reg == X64Register::R11) ? X64Register::R10 : X64Register::R11;
+	emitMaterializeCanonicalFrameTop(scratch);
+	return scratch;
+}
+
+template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovFromFrame(X64Register destinationRegister, int32_t offset) {
+	if (frameOffsetUsesCanonicalTop(offset)) {
+		emitMaterializeCanonicalFrameTop(destinationRegister);
+		emitMovFromMemory(destinationRegister, destinationRegister, offset, 8);
+		return;
+	}
 	if (!frameOffsetNeedsAbsoluteAlign(offset)) {
 		auto opcodes = generateMovFromFrameBySize(destinationRegister, offset, 64);
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
@@ -2967,6 +3030,22 @@ void IrToObjConverter<TWriterClass>::emitPtrMovFromFrame(X64Register destination
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitCmpFrameImm32(int32_t frame_offset, int32_t imm_value) {
+	auto emitCmpViaBase = [&](X64Register base) {
+		uint8_t base_enc = static_cast<uint8_t>(base);
+		if (base_enc >= 8) {
+			textSectionData.push_back(0x41); // REX.B
+		}
+		textSectionData.push_back(0x81);
+		textSectionData.push_back(static_cast<uint8_t>(0x80 | (7 << 3) | (base_enc & 0x07)));
+		auto disp = std::bit_cast<std::array<uint8_t, 4>>(frame_offset);
+		textSectionData.insert(textSectionData.end(), disp.begin(), disp.end());
+		auto imm = std::bit_cast<std::array<uint8_t, 4>>(imm_value);
+		textSectionData.insert(textSectionData.end(), imm.begin(), imm.end());
+	};
+	if (frameOffsetUsesCanonicalTop(frame_offset)) {
+		emitCmpViaBase(emitScratchCanonicalFrameTop(X64Register::RAX));
+		return;
+	}
 	if (!frameOffsetNeedsAbsoluteAlign(frame_offset)) {
 			// CMP dword [rbp+disp32], imm32: 81 BD <disp32> <imm32>
 		textSectionData.push_back(0x81);
@@ -2977,18 +3056,7 @@ void IrToObjConverter<TWriterClass>::emitCmpFrameImm32(int32_t frame_offset, int
 		textSectionData.insert(textSectionData.end(), imm.begin(), imm.end());
 		return;
 	}
-	X64Register scratch = emitScratchAlignedFrameBase(X64Register::RAX);
-		// CMP dword [scratch+disp32], imm32
-	uint8_t scratch_enc = static_cast<uint8_t>(scratch);
-	if (scratch_enc >= 8) {
-		textSectionData.push_back(0x41); // REX.B
-	}
-	textSectionData.push_back(0x81);
-	textSectionData.push_back(static_cast<uint8_t>(0x80 | (7 << 3) | (scratch_enc & 0x07)));
-	auto disp = std::bit_cast<std::array<uint8_t, 4>>(frame_offset);
-	textSectionData.insert(textSectionData.end(), disp.begin(), disp.end());
-	auto imm = std::bit_cast<std::array<uint8_t, 4>>(imm_value);
-	textSectionData.insert(textSectionData.end(), imm.begin(), imm.end());
+	emitCmpViaBase(emitScratchAlignedFrameBase(X64Register::RAX));
 }
 
 template <class TWriterClass>
@@ -3005,6 +3073,10 @@ int32_t IrToObjConverter<TWriterClass>::allocateElfTempStackSlot(int size_bytes)
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovFromFrameSized(SizedRegister dest, SizedStackSlot source) {
+	if (frameOffsetUsesCanonicalTop(source.offset)) {
+		emitMovFromFrameBySize(dest.reg, source.offset, source.size_in_bits.value);
+		return;
+	}
 	if (!frameOffsetNeedsAbsoluteAlign(source.offset)) {
 		OpCodeWithSize opcodes;
 		if (source.size_in_bits == SizeInBits{64}) {
@@ -3029,6 +3101,12 @@ void IrToObjConverter<TWriterClass>::emitMovFromFrameSized(SizedRegister dest, S
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitLeaFromFrame(X64Register destinationRegister, int32_t offset) {
+	if (frameOffsetUsesCanonicalTop(offset)) {
+		emitMaterializeCanonicalFrameTop(destinationRegister);
+		auto opcodes = generateLeaFromBase(destinationRegister, destinationRegister, offset);
+		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+		return;
+	}
 	if (!frameOffsetNeedsAbsoluteAlign(offset)) {
 		auto opcodes = generateLeaFromFrame(destinationRegister, offset);
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
@@ -3114,6 +3192,12 @@ void IrToObjConverter<TWriterClass>::emitCvtss2sd(X64Register xmm_dest, X64Regis
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitFloatMovFromFrame(X64Register destinationRegister, int32_t offset, bool is_float) {
+	if (frameOffsetUsesCanonicalTop(offset)) {
+		X64Register scratch = emitScratchCanonicalFrameTop(X64Register::RAX);
+		auto opcodes = generateFloatMovFromMemory(destinationRegister, scratch, offset, is_float);
+		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+		return;
+	}
 	if (!frameOffsetNeedsAbsoluteAlign(offset)) {
 		auto opcodes = generateFloatMovFromFrame(destinationRegister, offset, is_float);
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
@@ -3126,6 +3210,12 @@ void IrToObjConverter<TWriterClass>::emitFloatMovFromFrame(X64Register destinati
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitFloatMovToFrame(X64Register sourceRegister, int32_t offset, bool is_float) {
+	if (frameOffsetUsesCanonicalTop(offset)) {
+		X64Register scratch = emitScratchCanonicalFrameTop(X64Register::RAX);
+		auto opcodes = generateFloatMovToMemory(sourceRegister, scratch, offset, is_float);
+		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+		return;
+	}
 	if (!frameOffsetNeedsAbsoluteAlign(offset)) {
 		auto opcodes = generateFloatMovToFrame(sourceRegister, offset, is_float);
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
@@ -7905,7 +7995,11 @@ void IrToObjConverter<TWriterClass>::resetFunctionState() {
 	current_function_frame_align_ = 16;
 	current_function_home_region_bytes_ = 0;
 	current_function_realigns_rbp_ = false;
+	funclet_keeps_unaligned_rbp_ = false;
 	realign_epilogue_add_rsp_patches_.clear();
+	canonical_frame_top_lea_patches_.clear();
+	seh_funclet_lea_rbp_patches_.clear();
+	canonical_top_frame_offsets_.clear();
 	current_function_reserved_catch_ref_temp_size_ = 0;
 	current_function_reserved_catch_ref_temps_.clear();
 	current_function_reserved_catch_obj_padding_size_ = 0;
@@ -8201,6 +8295,23 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		}
 		cleanup_funclet_lea_rbp_patches_.clear();
 
+		for (auto funclet_lea_offset : seh_funclet_lea_rbp_patches_) {
+			uint32_t lea_patch_offset = funclet_lea_offset + 3;
+			const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+			for (int i = 0; i < 4; i++) {
+				textSectionData[lea_patch_offset + i] = bytes[i];
+			}
+		}
+		seh_funclet_lea_rbp_patches_.clear();
+
+		for (uint32_t lea_disp_offset : canonical_frame_top_lea_patches_) {
+			const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+			for (int i = 0; i < 4; i++) {
+				textSectionData[lea_disp_offset + i] = bytes[i];
+			}
+		}
+		canonical_frame_top_lea_patches_.clear();
+
 		for (uint32_t add_rsp_offset : realign_epilogue_add_rsp_patches_) {
 			const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(static_cast<uint32_t>(total_stack));
 			for (int i = 0; i < 4; i++) {
@@ -8302,10 +8413,18 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 	const uint32_t total_stack_space = checkedStackFrameSize(total_stack_bytes);
 	current_function_frame_align_ = std::max<uint32_t>(16, func_stack_space.max_local_alignment);
 	current_function_home_region_bytes_ = func_stack_space.home_region_bytes;
-	// MSVC-style lea/and RBP so every RBP-relative local slot is absolutely aligned.
-	// EH uses FrameOffset=0 (establisher = aligned RBP) so FH3 dispUnwindHelp stays -8.
-	current_function_realigns_rbp_ = current_function_frame_align_ > 16;
+	// MSVC-style lea/and RBP on Windows so local slots are absolutely aligned.
+	// ELF keeps a fixed RBP (CFA = RBP+16) and uses access-time alignment instead.
+	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+		current_function_realigns_rbp_ = false;
+	} else {
+		current_function_realigns_rbp_ = current_function_frame_align_ > 16;
+	}
+	funclet_keeps_unaligned_rbp_ = false;
 	realign_epilogue_add_rsp_patches_.clear();
+	canonical_frame_top_lea_patches_.clear();
+	seh_funclet_lea_rbp_patches_.clear();
+	canonical_top_frame_offsets_.clear();
 
 		// Save function prologue information before setup
 	current_function_offset_ = static_cast<uint32_t>(textSectionData.size());
@@ -9386,18 +9505,16 @@ int32_t IrToObjConverter<TWriterClass>::ensureCatchFuncletReturnSlot() {
 		uint32_t base_named_vars_size = current_function_named_vars_size_ - current_function_reserved_catch_ref_temp_size_ - current_function_reserved_catch_obj_padding_size_ - current_function_reserved_catch_return_slot_size_;
 		int32_t reserved_base = -static_cast<int32_t>(base_named_vars_size + current_function_reserved_catch_ref_temp_size_ + current_function_reserved_catch_obj_padding_size_);
 		catch_funclet_return_slot_offset_ = reserved_base - 8;
-		return catch_funclet_return_slot_offset_;
-	}
-
-	if (variable_scopes.empty()) {
+	} else if (variable_scopes.empty()) {
 		catch_funclet_return_slot_offset_ = -8;
-		return catch_funclet_return_slot_offset_;
+	} else {
+		StackVariableScope& current_scope = variable_scopes.back();
+		int32_t reserved_slot = static_cast<int32_t>(current_scope.scope_stack_space - 8);
+		current_scope.scope_stack_space = reserved_slot;
+		catch_funclet_return_slot_offset_ = reserved_slot;
 	}
-
-	StackVariableScope& current_scope = variable_scopes.back();
-	int32_t reserved_slot = static_cast<int32_t>(current_scope.scope_stack_space - 8);
-	current_scope.scope_stack_space = reserved_slot;
-	catch_funclet_return_slot_offset_ = reserved_slot;
+	// Shared with unaligned catch funclets and the post-and parent continuation.
+	registerCanonicalTopFrameOffset(catch_funclet_return_slot_offset_);
 	return catch_funclet_return_slot_offset_;
 }
 
@@ -9411,18 +9528,15 @@ int32_t IrToObjConverter<TWriterClass>::ensureCatchFuncletReturnFlagSlot() {
 		uint32_t base_named_vars_size = current_function_named_vars_size_ - current_function_reserved_catch_ref_temp_size_ - current_function_reserved_catch_obj_padding_size_ - current_function_reserved_catch_return_slot_size_;
 		int32_t reserved_base = -static_cast<int32_t>(base_named_vars_size + current_function_reserved_catch_ref_temp_size_ + current_function_reserved_catch_obj_padding_size_);
 		catch_funclet_return_flag_slot_offset_ = reserved_base - 16;
-		return catch_funclet_return_flag_slot_offset_;
-	}
-
-	if (variable_scopes.empty()) {
+	} else if (variable_scopes.empty()) {
 		catch_funclet_return_flag_slot_offset_ = -16;
-		return catch_funclet_return_flag_slot_offset_;
+	} else {
+		StackVariableScope& current_scope = variable_scopes.back();
+		int32_t reserved_slot = static_cast<int32_t>(current_scope.scope_stack_space - 8);
+		current_scope.scope_stack_space = reserved_slot;
+		catch_funclet_return_flag_slot_offset_ = reserved_slot;
 	}
-
-	StackVariableScope& current_scope = variable_scopes.back();
-	int32_t reserved_slot = static_cast<int32_t>(current_scope.scope_stack_space - 8);
-	current_scope.scope_stack_space = reserved_slot;
-	catch_funclet_return_flag_slot_offset_ = reserved_slot;
+	registerCanonicalTopFrameOffset(catch_funclet_return_flag_slot_offset_);
 	return catch_funclet_return_flag_slot_offset_;
 }
 
@@ -11015,9 +11129,7 @@ X64Register IrToObjConverter<TWriterClass>::loadOperandIntoRegister(const IrInst
 			reg = reg_opt.value();
 		} else {
 			reg = allocateRegisterWithSpilling();
-			auto mov_opcodes = generatePtrMovFromFrame(reg, stack_addr);
-			textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(),
-								   mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+			emitMovFromFrame(reg, stack_addr);
 			regAlloc.flushSingleDirtyRegister(reg);
 		}
 	} else if (const std::optional<VariableKey> var_key = variableKeyOf(instruction.getOperand(operand_index)); var_key.has_value()) {
@@ -11030,9 +11142,7 @@ X64Register IrToObjConverter<TWriterClass>::loadOperandIntoRegister(const IrInst
 				reg = reg_opt.value();
 			} else {
 				reg = allocateRegisterWithSpilling();
-				auto mov_opcodes = generatePtrMovFromFrame(reg, var_info->offset);
-				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(),
-									   mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
+				emitMovFromFrame(reg, var_info->offset);
 				regAlloc.flushSingleDirtyRegister(reg);
 			}
 		}
@@ -11429,9 +11539,7 @@ void IrToObjConverter<TWriterClass>::loadValuePointedByRegister(X64Register reg,
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::loadValueFromReferenceSlot(int32_t offset, const typename IrToObjConverter<TWriterClass>::IndirectStorageInfo& ref_info, X64Register target_reg) {
-	auto load_ptr = generatePtrMovFromFrame(target_reg, offset);
-	textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(),
-						   load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
+	emitMovFromFrame(target_reg, offset);
 	loadValuePointedByRegister(target_reg, ref_info.value_size_bits.value);
 }
 
@@ -11461,9 +11569,7 @@ bool IrToObjConverter<TWriterClass>::loadAddressForOperand(const IrInstruction& 
 		auto temp = instruction.getOperandAs<TempVar>(operand_index);
 		int32_t src_offset = getStackOffsetFromTempVar(temp);
 		if (hasIndirectStackStorage(src_offset)) {
-			auto load_ptr = generatePtrMovFromFrame(target_reg, src_offset);
-			textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(),
-								   load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
+			emitMovFromFrame(target_reg, src_offset);
 			return true;
 		}
 		auto lea = generateLeaFromFrame(target_reg, src_offset);
@@ -12950,8 +13056,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			// LHS is a reference - need to dereference it before storing
 			// First, load the pointer (reference address) into a temporary register
 		X64Register ptr_reg = allocateRegisterWithSpilling();
-		auto load_ptr = generatePtrMovFromFrame(ptr_reg, lhs_offset);
-		textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
+		emitMovFromFrame(ptr_reg, lhs_offset);
 
 			// Now store the value to the address pointed to by ptr_reg
 		int value_size_bits = ref_info->value_size_bits.value;
@@ -13053,7 +13158,18 @@ void IrToObjConverter<TWriterClass>::handleLabel(const IrInstruction& instructio
 				if (currentFunctionHasCatchParentReturnValue()) {
 					emitRestorePendingCatchParentReturnValue(bridge.return_slot_offset);
 				}
-				emitMovRegReg(X64Register::RSP, X64Register::RBP);
+				if (current_function_realigns_rbp_) {
+					realign_epilogue_add_rsp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()));
+					textSectionData.push_back(0x48);
+					textSectionData.push_back(0x81);
+					textSectionData.push_back(0xC4);
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+					textSectionData.push_back(0x00);
+				} else {
+					emitMovRegReg(X64Register::RSP, X64Register::RBP);
+				}
 				emitPopReg(X64Register::RBP);
 				emitRet();
 			}
@@ -13293,9 +13409,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 		} else if (base_holds_address) {
 				// Base holds an address: load it, then add the member and index
 				// offsets. member_offset is 0 for a plain pointer array.
-			auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, array_base_offset);
-			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
-								   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+			emitMovFromFrame(base_reg, array_base_offset);
 
 			int64_t offset_bytes = member_offset + (index_value * element_size_bytes);
 			if (offset_bytes != 0) {
@@ -13355,9 +13469,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 			}
 		} else if (base_holds_address) {
 				// Array is a pointer/temp var, or member array of a pointer object (like this.values[i])
-			auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, array_base_offset);
-			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
-								   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+			emitMovFromFrame(base_reg, array_base_offset);
 
 				// Add member offset for pointer objects (e.g., this->member)
 			if (member_offset != 0) {
@@ -13423,9 +13535,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 			}
 		} else if (base_holds_address) {
 				// Array is a pointer/temp var, or member array of a pointer object
-			auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, array_base_offset);
-			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
-								   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+			emitMovFromFrame(base_reg, array_base_offset);
 
 				// Add member offset for pointer objects (e.g., this->member)
 			if (member_offset != 0) {
@@ -13520,9 +13630,7 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 
 			if (base_holds_address) {
 					// Array is a pointer/reference - load it first, then add offset
-				auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
-				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
-									   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+				emitMovFromFrame(X64Register::RAX, array_base_offset);
 
 					// Add element offset to pointer
 				int64_t offset_bytes = index_value * element_size_bytes;
@@ -13564,9 +13672,7 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 
 			if (base_holds_address) {
 					// Array is a pointer/reference - load the pointer value first
-				auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
-				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
-									   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+				emitMovFromFrame(X64Register::RAX, array_base_offset);
 			} else {
 				// Load address of array base into RAX
 				emitLeaFromFrame(X64Register::RAX, array_base_offset);
@@ -13596,9 +13702,7 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 
 			if (base_holds_address) {
 					// Array is a pointer/reference - load the pointer value first
-				auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
-				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
-									   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+				emitMovFromFrame(X64Register::RAX, array_base_offset);
 			} else {
 				// Load address of array base into RAX
 				emitLeaFromFrame(X64Register::RAX, array_base_offset);
@@ -14152,9 +14256,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			}
 		} else if (is_pointer_access) {
 			// Load pointer into addr_reg, then add offset if needed
-			auto load_ptr = generatePtrMovFromFrame(addr_reg, object_base_offset);
-			textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(),
-								   load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
+			emitMovFromFrame(addr_reg, object_base_offset);
 			if (op.offset != 0) {
 				emitAddRegImm32(textSectionData, addr_reg, op.offset);
 			}
@@ -14708,9 +14810,7 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 		}
 
 		X64Register base_reg = allocateRegisterWithSpilling();
-		auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, object_base_offset);
-		textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
-							   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+		emitMovFromFrame(base_reg, object_base_offset);
 		emitFloatStoreToAddressWithOffset(textSectionData, value_xmm, base_reg, op.offset, is_float);
 		regAlloc.release(base_reg);
 
@@ -14819,9 +14919,7 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 
 		if (is_pointer_access) {
 			X64Register base_reg = allocateRegisterWithSpilling();
-			auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, object_base_offset);
-			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
-								   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+			emitMovFromFrame(base_reg, object_base_offset);
 
 				// Load existing storage unit from [base_reg + op.offset] into temp_reg
 			emitMovFromMemory(temp_reg, base_reg, op.offset, member_size_bytes);
@@ -14871,9 +14969,7 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 			// For 'this' pointer or reference: load pointer into base_reg, then store to [base_reg + offset]
 			// IMPORTANT: Allocate a register for the base pointer to avoid clobbering value_reg
 		X64Register base_reg = allocateRegisterWithSpilling();
-		auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, object_base_offset);
-		textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
-							   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+		emitMovFromFrame(base_reg, object_base_offset);
 
 			// Store value_reg to [base_reg + op.offset] using helper function
 		emitStoreToMemory(textSectionData, value_reg, base_reg, op.offset, member_size_bytes);
@@ -16301,6 +16397,7 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 			// or an unnamed catch parameter like catch(int) without a variable name.
 		if (!handler.is_catch_all && catch_op.exception_temp.var_number != 0) {
 			handler.catch_obj_stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
+			registerCanonicalTopFrameOffset(handler.catch_obj_stack_offset);
 		} else {
 			handler.catch_obj_stack_offset = 0;
 		}
@@ -16545,8 +16642,12 @@ void IrToObjConverter<TWriterClass>::handleCatchEnd(const IrInstruction& instruc
 			catch_continuation_sub_rsp_patches_.push_back(emitSubRSPImm32Placeholder());
 
 					// LEA RBP, [RSP + total_stack] — rebuild the parent frame pointer from the
-					// already fully allocated RSP.
+					// already fully allocated RSP. Re-apply and when the parent realigned RBP.
 			catch_continuation_lea_rbp_patches_.push_back(emitLeaFromRSPDisp32Placeholder(X64Register::RBP));
+			if (current_function_realigns_rbp_) {
+				emitAndImm64(X64Register::RBP, static_cast<uint64_t>(0) - static_cast<uint64_t>(current_function_frame_align_));
+			}
+			funclet_keeps_unaligned_rbp_ = false;
 
 			emitMovFromFrameBySize(X64Register::RCX, catch_funclet_return_flag_slot_offset_, 64);
 			emitTestRegReg(X64Register::RCX);
@@ -16558,7 +16659,18 @@ void IrToObjConverter<TWriterClass>::handleCatchEnd(const IrInstruction& instruc
 			if (currentFunctionHasCatchParentReturnValue()) {
 				emitRestorePendingCatchParentReturnValue();
 			}
-			emitMovRegReg(X64Register::RSP, X64Register::RBP);
+			if (current_function_realigns_rbp_) {
+				realign_epilogue_add_rsp_patches_.push_back(static_cast<uint32_t>(textSectionData.size()));
+				textSectionData.push_back(0x48);
+				textSectionData.push_back(0x81);
+				textSectionData.push_back(0xC4);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+				textSectionData.push_back(0x00);
+			} else {
+				emitMovRegReg(X64Register::RSP, X64Register::RBP);
+			}
 			emitPopReg(X64Register::RBP);
 			emitRet();
 
@@ -16568,6 +16680,7 @@ void IrToObjConverter<TWriterClass>::handleCatchEnd(const IrInstruction& instruc
 		}
 
 		in_catch_funclet_ = false;
+		funclet_keeps_unaligned_rbp_ = false;
 		catch_has_pending_parent_return_ = false;
 		current_catch_continuation_label_ = StringHandle();
 	}
@@ -16960,7 +17073,9 @@ void IrToObjConverter<TWriterClass>::handleRethrow([[maybe_unused]] const IrInst
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitFuncletLeaRbpFromRdx(std::vector<uint32_t>& patch_list) {
 		// Encoding: 48 8D AA XX XX XX XX (REX.W LEA RBP, [RDX+disp32])
-		// For RSP-based over-aligned frames, EstablisherFrame is RSP; recreate lea+and.
+		// EstablisherFrame is RSP for realigned frames (FrameReg=0). Recreate the pre-and
+		// frame top so positive/home/catch-object slots match CRT dispCatchObj math.
+		// Do not and here: over-aligned locals use access-time (RBP & -align) in funclets.
 	patch_list.push_back(static_cast<uint32_t>(textSectionData.size()));
 	textSectionData.push_back(0x48); // REX.W
 	textSectionData.push_back(0x8D); // LEA
@@ -16970,7 +17085,7 @@ void IrToObjConverter<TWriterClass>::emitFuncletLeaRbpFromRdx(std::vector<uint32
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
 	if (current_function_realigns_rbp_) {
-		emitAndImm64(X64Register::RBP, static_cast<uint64_t>(0) - static_cast<uint64_t>(current_function_frame_align_));
+		funclet_keeps_unaligned_rbp_ = true;
 	}
 }
 
@@ -17072,6 +17187,7 @@ void IrToObjConverter<TWriterClass>::emitWindowsCleanupFuncletsAndPopulateUnwind
 			emitAddRSP(32);
 			emitPopReg(X64Register::RBP);
 			emitRet();
+			funclet_keeps_unaligned_rbp_ = false;
 			return symbol_handle;
 		};
 
@@ -17459,8 +17575,12 @@ void IrToObjConverter<TWriterClass>::handleSehFinallyCall(const IrInstruction& i
 	textSectionData.push_back(0x31); // XOR r/m32, r32
 	textSectionData.push_back(0xC9); // ModR/M: ECX, ECX
 
-		// mov rdx, rbp (establisher frame)
-	emitMovRegReg(X64Register::RDX, X64Register::RBP);
+		// Establisher frame: RSP for realigned (FrameReg=0) frames, else RBP.
+	if (current_function_realigns_rbp_) {
+		emitMovRegReg(X64Register::RDX, X64Register::RSP);
+	} else {
+		emitMovRegReg(X64Register::RDX, X64Register::RBP);
+	}
 
 		// call funclet_label (CALL rel32 - patched later)
 	textSectionData.push_back(0xE8);
@@ -17502,11 +17622,15 @@ void IrToObjConverter<TWriterClass>::handleSehFinallyBegin([[maybe_unused]] cons
 		// Emit funclet prologue:
 		//   push rbp
 		//   sub rsp, 32     (shadow space for any calls within __finally)
-		//   mov rbp, rdx    (set RBP to establisher frame so local vars are accessible)
+		//   Rebuild parent frame from EstablisherFrame (RDX): lea+optional realign policy.
 		//   mov [rsp+8], ecx  (save AbnormalTermination flag for _abnormal_termination() intrinsic)
 	emitPushReg(X64Register::RBP);
 	emitSubRSP(32);
-	emitMovRegReg(X64Register::RBP, X64Register::RDX);
+	if (current_function_realigns_rbp_) {
+		emitFuncletLeaRbpFromRdx(seh_funclet_lea_rbp_patches_);
+	} else {
+		emitMovRegReg(X64Register::RBP, X64Register::RDX);
+	}
 
 		// Save AbnormalTermination (ECX) to shadow space slot 2 ([rsp+0x08])
 		// _abnormal_termination() will load it from there.
@@ -17535,6 +17659,7 @@ void IrToObjConverter<TWriterClass>::handleSehFinallyEnd([[maybe_unused]] const 
 	emitAddRSP(32);
 	emitPopReg(X64Register::RBP);
 	textSectionData.push_back(0xC3); // RET
+	funclet_keeps_unaligned_rbp_ = false;
 
 		// Pop this try block from the stack
 	if (!seh_try_block_stack_.empty()) {
@@ -17556,10 +17681,14 @@ void IrToObjConverter<TWriterClass>::handleSehFilterBegin([[maybe_unused]] const
 		// Emit funclet prologue:
 		//   push rbp
 		//   sub rsp, 32     (shadow space)
-		//   mov rbp, rdx    (set RBP to establisher frame so local vars are accessible)
+		//   Rebuild parent frame from EstablisherFrame (RDX).
 	emitPushReg(X64Register::RBP);
 	emitSubRSP(32);
-	emitMovRegReg(X64Register::RBP, X64Register::RDX);
+	if (current_function_realigns_rbp_) {
+		emitFuncletLeaRbpFromRdx(seh_funclet_lea_rbp_patches_);
+	} else {
+		emitMovRegReg(X64Register::RBP, X64Register::RDX);
+	}
 
 		// Save EXCEPTION_POINTERS* (RCX) to shadow space slot 2 ([rsp+0x08])
 		// so GetExceptionCode() / GetExceptionInformation() can load it after RCX may be clobbered.
@@ -17651,6 +17780,7 @@ void IrToObjConverter<TWriterClass>::handleSehFilterEnd(const IrInstruction& ins
 	emitAddRSP(32);
 	emitPopReg(X64Register::RBP);
 	textSectionData.push_back(0xC3); // RET
+	funclet_keeps_unaligned_rbp_ = false;
 }
 
 template <class TWriterClass>
@@ -17908,6 +18038,23 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 			}
 		}
 		cleanup_funclet_lea_rbp_patches_.clear();
+
+		for (auto funclet_lea_offset : seh_funclet_lea_rbp_patches_) {
+			uint32_t lea_patch_offset = funclet_lea_offset + 3;
+			const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+			for (int i = 0; i < 4; i++) {
+				textSectionData[lea_patch_offset + i] = bytes[i];
+			}
+		}
+		seh_funclet_lea_rbp_patches_.clear();
+
+		for (uint32_t lea_disp_offset : canonical_frame_top_lea_patches_) {
+			const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
+			for (int i = 0; i < 4; i++) {
+				textSectionData[lea_disp_offset + i] = bytes[i];
+			}
+		}
+		canonical_frame_top_lea_patches_.clear();
 
 		for (uint32_t add_rsp_offset : realign_epilogue_add_rsp_patches_) {
 			const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(static_cast<uint32_t>(total_stack));
