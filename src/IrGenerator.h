@@ -108,6 +108,9 @@ struct RTTIInfo {
 // are now auto-generated as native x64 functions by the compiler when dynamic_cast is used.
 // See IRConverter.h: emit_dynamic_cast_check_function() and emit_dynamic_cast_throw_function()
 
+using LambdaDeducedParameter = std::pair<size_t, TypeSpecifierNode>;
+using LambdaDeducedParameterVector = OverloadVector<LambdaDeducedParameter, 4>;
+
 // Structure to hold lambda information for deferred generation
 struct LambdaInfo {
 	std::string_view closure_type_name;		// e.g., "__lambda_0" (persistent via StringBuilder)
@@ -150,6 +153,7 @@ struct LambdaInfo {
 	std::vector<LambdaCaptureNode> captures;	 // Copy of captures
 	std::vector<ASTNode> captured_var_decls;	 // Declarations of captured variables (for symbol table)
 	size_t lambda_id;
+	size_t generation_id = 0;	 // Unique emission identity; one generic lambda can have several instantiations
 	Token lambda_token;
 	std::string_view enclosing_struct_name;	// Name of enclosing struct if lambda is in a member function
 	TypeIndex enclosing_struct_type_index{};	 // Type index of enclosing struct for [this] capture
@@ -163,7 +167,7 @@ struct LambdaInfo {
 	TemplateParamNameVector outer_template_param_names;
 	TemplateArgInfoVector outer_template_args;
 	// Deduced types from call site - store full TypeSpecifierNode to preserve struct type_index and reference flags
-	mutable std::vector<std::pair<size_t, TypeSpecifierNode>> deduced_auto_types;
+	mutable LambdaDeducedParameterVector deduced_auto_types;
 	std::vector<ASTNode> resolved_param_nodes;
 	mutable uint32_t deduced_auto_types_generation = 0;
 	mutable uint32_t normalized_deduced_auto_types_generation = 0;

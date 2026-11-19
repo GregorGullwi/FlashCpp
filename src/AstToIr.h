@@ -544,6 +544,7 @@ private:
 	void generateLambdaOperatorCallFunction(LambdaInfo& lambda_info);
 	void generateLambdaInvokeFunction(LambdaInfo& lambda_info);
 	StringHandle computeLambdaInvokeMangledName(const LambdaInfo& lambda_info);
+	LambdaInfo& materializeLambdaInstantiation(LambdaInfo& base, std::span<const FunctionType> target_parameters);
 	void addCapturedVariablesToSymbolTable(std::span<const LambdaCaptureNode> captures,
 										   std::span<const ASTNode> captured_var_decls);
 
@@ -1552,7 +1553,12 @@ private:
 
 	// Collected lambdas for deferred generation
 	std::vector<LambdaInfo> collected_lambdas_;
-	std::unordered_set<int> generated_lambda_ids_;  // Track which lambdas have been generated to prevent duplicates
+	std::unordered_set<size_t> generated_lambda_ids_;  // Track emitted lambda generations to prevent duplicate definitions
+	// Variant instantiations use a disjoint key range so duplicate collections
+	// of the same lambda AST (for example while emitting operator() and
+	// __invoke) still share one generated definition.
+	static constexpr size_t kLambdaVariantGenerationBase = size_t{1} << 62;
+	size_t next_lambda_generation_id_ = kLambdaVariantGenerationBase;
 
 	// Track generated functions to prevent duplicate codegen
 	// Key: mangled function name - prevents generating the same function body multiple times

@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "CanonicalTypeAdapter.h"
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 
@@ -23,6 +24,7 @@ struct SemaNormalizedScopeGuard {
 LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNode& lambda) {
 	LambdaInfo info;
 	info.lambda_id = lambda.lambda_id();
+	info.generation_id = lambda.lambda_id();
 
 	info.closure_type_name = StringBuilder()
 								 .append("__lambda_")
@@ -1057,6 +1059,49 @@ void AstToIr::addCapturedVariablesToSymbolTable(std::span<const LambdaCaptureNod
 
 		capture_index++;
 	}
+}
+
+LambdaInfo& AstToIr::materializeLambdaInstantiation(
+	LambdaInfo& base, std::span<const FunctionType> target_parameters) {
+	auto materialize_parameter_type = [](const FunctionType& target_parameter) {
+		TypeSpecifierNode parameter_type = typeSpecifierFromFunctionType(target_parameter);
+		parameter_type.set_size_in_bits(getTypeSpecSizeBits(parameter_type));
+		return parameter_type;
+	};
+	auto same_deduced_type = [](const TypeSpecifierNode& stored, const TypeSpecifierNode& requested) {
+		return stored.matches_signature(requested) &&
+			stored.cv_qualifier() == requested.cv_qualifier() &&
+			stored.reference_qualifier() == requested.reference_qualifier() &&
+			std::ranges::equal(stored.array_dimensions(), requested.array_dimensions()) &&
+			stored.runtime_pointer_depth() == requested.runtime_pointer_depth();
+	};
+	for (LambdaInfo& candidate : collected_lambdas_) {
+		if (candidate.closure_type_name != base.closure_type_name || candidate.deduced_auto_types.size() != target_parameters.size()) {
+			continue;
+		}
+		bool matches = true;
+		for (size_t index = 0; index < target_parameters.size(); ++index) {
+			if (candidate.deduced_auto_types[index].first != index ||
+				!same_deduced_type(candidate.deduced_auto_types[index].second, materialize_parameter_type(target_parameters[index]))) {
+				matches = false;
+				break;
+			}
+		}
+		if (matches) {
+			return candidate;
+		}
+	}
+	LambdaInfo instantiation = base;
+	instantiation.generation_id = ++next_lambda_generation_id_;
+	instantiation.deduced_auto_types.clear();
+	instantiation.deduced_auto_types_generation = 0;
+	instantiation.normalized_deduced_auto_types_generation = 0;
+	instantiation.resolved_param_nodes.clear();
+	for (size_t index = 0; index < target_parameters.size(); ++index) {
+		instantiation.setDeducedType(index, materialize_parameter_type(target_parameters[index]));
+	}
+	collected_lambdas_.push_back(std::move(instantiation));
+	return collected_lambdas_.back();
 }
 
 StringHandle AstToIr::computeLambdaInvokeMangledName(const LambdaInfo& lambda_info) {

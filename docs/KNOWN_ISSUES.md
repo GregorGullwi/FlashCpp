@@ -260,16 +260,6 @@ successful return in both regular functions and lambda call operators. Exception
 cleanup still needs construction-completion tracking so it never visits a
 destination whose initialization never finished.
 
-## Multiple function-pointer targets for one generic lambda
-
-Captureless generic lambdas, including explicit template parameter lists, now
-instantiate their call operator and `__invoke` from a concrete
-function-pointer target signature. Converting the same generic lambda to two
-different function-pointer signatures in one translation unit still reuses a
-single captured lambda generation identity, so the second conversion cannot
-publish its own `__invoke`. Generate and label `__invoke` per deduced parameter
-set before enabling multiple targets.
-
 ## Constexpr namespace-scope pointer dereference is not yet supported
 
 Global constexpr pointer targets now carry the source declaration and evaluate

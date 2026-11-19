@@ -1009,46 +1009,32 @@ std::optional<ExprResult> AstToIr::decayLambdaStructToFunctionPointer(
 	if (target_parameters.size() != lambda_info->parameter_nodes.size()) {
 		return std::nullopt;
 	}
-	bool deduced_parameter = false;
-	for (size_t index = 0; index < lambda_info->parameter_nodes.size(); ++index) {
-		const ASTNode& parameter_node = lambda_info->parameter_nodes[index];
-		if (!parameter_node.is<DeclarationNode>()) {
-			continue;
-		}
-		const TypeSpecifierNode& original_type = parameter_node.as<DeclarationNode>().type_specifier_node();
-		bool needs_deduction = isPlaceholderAutoType(original_type.type());
-		if (!needs_deduction) {
-			const std::string_view parameter_name = original_type.token().value();
-			needs_deduction = !parameter_name.empty() && std::any_of(
-				lambda_info->own_template_param_names.begin(), lambda_info->own_template_param_names.end(),
-				[parameter_name](StringHandle template_parameter) {
-					return StringTable::getStringView(template_parameter) == parameter_name;
-				});
-		}
-		if (!needs_deduction) {
-			continue;
-		}
-		TypeSpecifierNode deduced_type = typeSpecifierFromFunctionType(target_parameters[index]);
-		deduced_type.set_size_in_bits(getTypeSpecSizeBits(deduced_type));
-		lambda_info->setDeducedType(index, deduced_type);
-		deduced_parameter = true;
-	}
+	LambdaInfo* emitted_lambda_info = lambda_info;
 	if (lambda_info->is_generic) {
-		if (!deduced_parameter && lambda_info->deduced_auto_types.empty()) {
-			return std::nullopt;
+		emitted_lambda_info = &materializeLambdaInstantiation(*lambda_info, target_parameters);
+		TypeSpecifierNode target_return = typeSpecifierFromFunctionType(target_signature.return_type());
+		target_return.set_size_in_bits(getTypeSpecSizeBits(target_return));
+		emitted_lambda_info->return_type_index = target_return.type_index().withCategory(target_return.type());
+		emitted_lambda_info->return_size = (target_return.is_reference() || target_return.is_rvalue_reference())
+			? 64 : static_cast<int>(target_return.size_in_bits());
+		emitted_lambda_info->return_pointer_depth = static_cast<int>(target_return.runtime_pointer_depth());
+		emitted_lambda_info->return_type_specifier = target_return;
+		emitted_lambda_info->has_return_type_specifier = true;
+		emitted_lambda_info->return_value_mode = ReturnValueMode::None;
+		if (target_return.runtime_pointer_depth() > 0) {
+			emitted_lambda_info->return_value_mode |= ReturnValueMode::Pointer;
 		}
-		sema_.normalizeInstantiatedLambdaBody(*lambda_info);
-		const TypeSpecifierNode lambda_return = lambda_info->makeReturnTypeNode();
-		const TypeSpecifierNode target_return = typeSpecifierFromFunctionType(target_signature.return_type());
-		if (isPlaceholderAutoType(lambda_return.type()) || lambda_return.type() != target_return.type() ||
-			lambda_return.runtime_pointer_depth() != target_return.runtime_pointer_depth() ||
-			lambda_return.reference_qualifier() != target_return.reference_qualifier() ||
-			(is_struct_type(lambda_return.type()) && lambda_return.type_index() != target_return.type_index())) {
-			return std::nullopt;
+		if (target_return.is_reference() || target_return.is_rvalue_reference()) {
+			emitted_lambda_info->return_value_mode |= ReturnValueMode::Reference;
+			emitted_lambda_info->return_ref_qualifier = target_return.reference_qualifier();
 		}
+		if (target_return.is_function_pointer() || target_return.has_function_signature()) {
+			emitted_lambda_info->return_value_mode |= ReturnValueMode::FunctionPointer;
+		}
+		sema_.normalizeInstantiatedLambdaBody(*emitted_lambda_info);
 	}
-	StringHandle mangled_name = computeLambdaInvokeMangledName(*lambda_info);
-	const StringHandle invoke_name = StringTable::getOrInternStringHandle(lambda_info->invoke_name);
+	StringHandle mangled_name = computeLambdaInvokeMangledName(*emitted_lambda_info);
+	const StringHandle invoke_name = StringTable::getOrInternStringHandle(emitted_lambda_info->invoke_name);
 	TempVar func_addr_var = var_counter.next();
 	FunctionAddressOp op;
 	op.result.setType(TypeCategory::FunctionPointer);
