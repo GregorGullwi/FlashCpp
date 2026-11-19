@@ -43,6 +43,12 @@ bool isStructTrivial(const StructTypeInfo* struct_info);
 // indirectly, independent of their scalar size.
 bool isStructTrivialForCalls(const StructTypeInfo* struct_info);
 
+// Microsoft x64 (Win64) aggregate-return classification: a record is returned
+// in RAX only when it has one of the scalar sizes 1, 2, 4, or 8 bytes and the
+// record, bases, and members stay POD-like for the return ABI. The size check
+// lives with the target ABI; this predicate owns the record facts.
+bool isStructReturnedInWin64Registers(const StructTypeInfo* struct_info);
+
 // Shared helper: determine whether a pseudo-destructor call expression is noexcept.
 // Resolves the object's type via symbol lookup (handles template specializations)
 // and falls back to getTypesByNameMap() lookup by type name token for non-template types.

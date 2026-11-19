@@ -4904,6 +4904,15 @@ public:
 		is_explicitly_defaulted_ = explicitly_defaulted;
 	}
 	bool is_explicitly_defaulted() const { return is_explicitly_defaulted_; }
+	// [dcl.fct.def.default]/5: only a first-declaration `= default` avoids
+	// making the function user-provided. The parser records that distinction so
+	// type traits and ABI classifiers do not have to guess from is_implicit,
+	// which is also set for synthesized and out-of-line-defaulted functions.
+	void set_was_defaulted_on_first_declaration(bool was_defaulted) {
+		journalFunctionDeclarationRewrite(*this);
+		was_defaulted_on_first_declaration_ = was_defaulted;
+	}
+	bool was_defaulted_on_first_declaration() const { return was_defaulted_on_first_declaration_; }
 
 	// Linkage support (C vs C++)
 	void set_linkage(Linkage linkage) {
@@ -5174,6 +5183,7 @@ private:
 	bool is_member_function_;
 	bool is_implicit_;  // True if this is an implicitly generated function (e.g., operator=)
 	bool is_explicitly_defaulted_ = false;  // True for user-declared functions spelled '= default'
+	bool was_defaulted_on_first_declaration_ = false;  // True only for first-declaration '= default'
 	bool has_template_body_ = false;
 	bool has_template_declaration_ = false;	// True if template declaration position is saved (for SFINAE re-parsing)
 
@@ -5243,6 +5253,7 @@ struct FunctionDeclarationJournalSnapshot {
 	bool is_member_function = false;
 	bool is_implicit = false;
 	bool is_explicitly_defaulted = false;
+	bool was_defaulted_on_first_declaration = false;
 	bool has_template_body = false;
 	bool has_template_declaration = false;
 	bool is_variadic = false;
@@ -5293,6 +5304,7 @@ inline FunctionDeclarationJournalSnapshot FunctionDeclarationNode::makeJournalSn
 	snapshot.is_member_function = is_member_function_;
 	snapshot.is_implicit = is_implicit_;
 	snapshot.is_explicitly_defaulted = is_explicitly_defaulted_;
+	snapshot.was_defaulted_on_first_declaration = was_defaulted_on_first_declaration_;
 	snapshot.has_template_body = has_template_body_;
 	snapshot.has_template_declaration = has_template_declaration_;
 	snapshot.is_variadic = is_variadic_;
@@ -5343,6 +5355,7 @@ inline void FunctionDeclarationNode::restoreJournalSnapshot(const FunctionDeclar
 	is_member_function_ = snapshot.is_member_function;
 	is_implicit_ = snapshot.is_implicit;
 	is_explicitly_defaulted_ = snapshot.is_explicitly_defaulted;
+	was_defaulted_on_first_declaration_ = snapshot.was_defaulted_on_first_declaration;
 	has_template_body_ = snapshot.has_template_body;
 	has_template_declaration_ = snapshot.has_template_declaration;
 	is_variadic_ = snapshot.is_variadic;

@@ -1571,13 +1571,26 @@ bool isNontrivialDeclaredSpecialMember(const StructMemberFunction* function) {
 			return true;
 		}
 		const ConstructorDeclarationNode& declaration = function->function_decl.as<ConstructorDeclarationNode>();
-		return !declaration.is_explicitly_defaulted();
+		// [dcl.fct.def.default]/5: a function is user-provided when it is
+		// user-declared and not defaulted on its first declaration. An
+		// out-of-line `= default` is therefore user-provided, while an in-class
+		// one is not; the parser marks the latter on the declaration node.
+		if (declaration.is_implicit() && !declaration.is_explicitly_defaulted()) {
+			return false;
+		}
+		return !declaration.was_defaulted_on_first_declaration();
 	}
 	if (!function->function_decl.is<FunctionDeclarationNode>()) {
 		return true;
 	}
 	const FunctionDeclarationNode& declaration = function->function_decl.as<FunctionDeclarationNode>();
-	return !declaration.is_explicitly_defaulted() && !declaration.is_deleted();
+	if (declaration.is_deleted()) {
+		return false;  // Deletion is diagnosed by the callers that require an operator.
+	}
+	if (declaration.is_implicit() && !declaration.is_explicitly_defaulted()) {
+		return false;
+	}
+	return !declaration.was_defaulted_on_first_declaration();
 }
 
 bool hasTrivialSpecialMemberSetForCopying(const StructTypeInfo* struct_info) {
@@ -2008,6 +2021,105 @@ bool isStructTrivialForCallsImpl(const StructTypeInfo* struct_info) {
 		struct_info,
 		[](const StructTypeInfo* current) {
 			return hasTrivialCallSpecialMemberSet(current);
+		});
+}
+
+// Microsoft x64 returns a record in RAX only when the record and every member
+// subobject stay POD-like for the return ABI. The documented restrictions are
+// a complete-object size of 1, 2, 4, or 8 bytes, no user-provided constructor,
+// destructor, or copy assignment, no non-public data member, no reference
+// member, no base class, and no virtual function. Move members only matter when
+// they leave copy construction or copy assignment deleted, because the return
+// path copies values exactly as the defaulted copy operations would.
+//
+// [dcl.fct.def.default]/5 decides "user-provided": defaulting a special member
+// on its first declaration keeps it non-user-provided, while defaulting it out
+// of line does not. The synthesized implicit copy constructor is registered on
+// the record but is not user-provided either.
+bool hasWin64ReturnSpecialMemberSet(const StructTypeInfo& struct_info) {
+	if (struct_info.has_vtable || !struct_info.base_classes.empty() || struct_info.has_deleted_destructor) {
+		return false;
+	}
+
+	const bool has_move_constructor = struct_info.findMoveConstructor() != nullptr || struct_info.isMoveConstructorDeleted();
+	const StructMemberFunction* copy_constructor = struct_info.findCopyConstructor();
+	if (struct_info.isCopyConstructorDeleted() || (has_move_constructor && copy_constructor == nullptr)) {
+		return false;
+	}
+
+	// The parser registers synthesized implicit assignments on ordinary records,
+	// so inspect the declarations and ignore those synthesized entries. A
+	// user-declared move member defines copy assignment as deleted unless the
+	// copy assignment was also declared explicitly ([class.copy.assign]/8).
+	auto has_user_declared_assignment = [&](bool is_move) {
+		const StructMemberFunction* assignment = is_move
+			? struct_info.findMoveAssignmentOperator(true)
+			: struct_info.findCopyAssignmentOperator(true);
+		if (assignment == nullptr) {
+			return false;
+		}
+		if (!assignment->function_decl.is<FunctionDeclarationNode>()) {
+			return true;
+		}
+		const FunctionDeclarationNode& declaration = assignment->function_decl.as<FunctionDeclarationNode>();
+		return !declaration.is_implicit() || declaration.is_explicitly_defaulted();
+	};
+	const bool has_user_move_assignment = has_user_declared_assignment(true) || struct_info.isMoveAssignmentDeleted();
+	const bool has_user_copy_assignment = has_user_declared_assignment(false);
+	if (struct_info.isCopyAssignmentDeleted() || ((has_move_constructor || has_user_move_assignment) && !has_user_copy_assignment)) {
+		return false;
+	}
+	if (has_user_copy_assignment) {
+		const StructMemberFunction* copy_assignment = struct_info.findCopyAssignmentOperator(true);
+		if (copy_assignment == nullptr || !copy_assignment->function_decl.is<FunctionDeclarationNode>()) {
+			return false;
+		}
+		// An out-of-line `= default` is user-provided, while defaulting on the
+		// first declaration keeps the copy assignment trivial.
+		if (!copy_assignment->function_decl.as<FunctionDeclarationNode>().was_defaulted_on_first_declaration()) {
+			return false;
+		}
+	}
+
+	for (const StructMemberFunction& function : struct_info.member_functions) {
+		if (!function.is_constructor) {
+			continue;
+		}
+		if (!function.function_decl.is<ConstructorDeclarationNode>()) {
+			return false;
+		}
+		const ConstructorDeclarationNode& declaration = function.function_decl.as<ConstructorDeclarationNode>();
+		if (declaration.is_implicit() && !declaration.is_explicitly_defaulted()) {
+			continue;
+		}
+		if (!declaration.was_defaulted_on_first_declaration()) {
+			return false;
+		}
+	}
+
+	if (const StructMemberFunction* destructor = struct_info.findDestructor()) {
+		if (!destructor->function_decl.is<DestructorDeclarationNode>() ||
+			!destructor->function_decl.as<DestructorDeclarationNode>().was_defaulted_on_first_declaration()) {
+			return false;
+		}
+	}
+
+	for (const StructMember& member : struct_info.members) {
+		if (member.isUnnamedOrZeroWidthBitfield()) {
+			continue;
+		}
+		if (member.access != AccessSpecifier::Public || member.is_reference()) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool isStructReturnedInWin64RegistersImpl(const StructTypeInfo* struct_info) {
+	return allRecordSubobjectsSatisfy(
+		struct_info,
+		[](const StructTypeInfo* current) {
+			return hasWin64ReturnSpecialMemberSet(*current);
 		});
 }
 
@@ -2843,6 +2955,10 @@ bool isStructTrivial(const StructTypeInfo* struct_info) {
 
 bool isStructTrivialForCalls(const StructTypeInfo* struct_info) {
 	return isStructTrivialForCallsImpl(struct_info);
+}
+
+bool isStructReturnedInWin64Registers(const StructTypeInfo* struct_info) {
+	return isStructReturnedInWin64RegistersImpl(struct_info);
 }
 
 bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
