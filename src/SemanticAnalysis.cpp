@@ -3061,6 +3061,50 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deduceLambdaConversionReturnT
 	return deducePlaceholderReturnType(lambda.body(), placeholder_type, &probe_if_constexpr_decisions);
 }
 
+std::optional<bool> tryEvaluateLambdaConversionConstraints(
+	const LambdaExpressionNode& lambda,
+	std::span<const std::optional<TypeSpecifierNode>> explicit_template_arguments) {
+	FrontendContext* active_context = FrontendContext::active();
+	SemanticAnalysis* semantic_analysis = active_context != nullptr ? active_context->semanticAnalysis() : nullptr;
+	if (semantic_analysis == nullptr) {
+		return std::nullopt;
+	}
+	return semantic_analysis->lambdaConversionConstraintsSatisfied(lambda, explicit_template_arguments);
+}
+
+bool SemanticAnalysis::lambdaConversionConstraintsSatisfied(
+	const LambdaExpressionNode& lambda,
+	std::span<const std::optional<TypeSpecifierNode>> explicit_template_arguments) {
+	if (!lambda.has_requires_clause()) {
+		return true;
+	}
+	if (!lambda.requires_clause()->is<RequiresClauseNode>()) {
+		return false;
+	}
+	const auto lambda_template_params = lambda.template_params();
+	if (explicit_template_arguments.size() != lambda_template_params.size()) {
+		return false;
+	}
+	TemplateParamNameViewVector parameter_names;
+	TemplateParameterVector template_params;
+	TemplateArgumentVector template_arguments;
+	parameter_names.reserve(lambda_template_params.size());
+	template_params.reserve(lambda_template_params.size());
+	template_arguments.reserve(lambda_template_params.size());
+	for (size_t index = 0; index < lambda_template_params.size(); ++index) {
+		if (!explicit_template_arguments[index].has_value()) {
+			return false;
+		}
+		const StringHandle parameter_name = StringTable::getOrInternStringHandle(lambda_template_params[index]);
+		parameter_names.push_back(lambda_template_params[index]);
+		template_params.push_back(TemplateParameterNode(parameter_name, lambda.lambda_token()));
+		template_arguments.push_back(TemplateTypeArg(*explicit_template_arguments[index]));
+	}
+	const RequiresClauseNode& requires_clause = lambda.requires_clause()->as<RequiresClauseNode>();
+	return evaluateConstraint(
+		requires_clause.constraint_expr(), template_arguments, parameter_names, parser(), template_params).satisfied();
+}
+
 void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) {
 	if (!lambda_info.lambda_body.has_value()) {
 		return;

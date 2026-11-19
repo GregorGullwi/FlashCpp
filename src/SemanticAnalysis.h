@@ -458,6 +458,11 @@ public:
 	std::optional<TypeSpecifierNode> deduceLambdaConversionReturnType(
 		const LambdaExpressionNode& lambda, std::span<const TypeSpecifierNode> parameter_types,
 		std::span<const std::optional<TypeSpecifierNode>> explicit_template_arguments);
+	// Evaluate a generic lambda's requires-clause with the template arguments
+	// deduced from the function-pointer target.
+	bool lambdaConversionConstraintsSatisfied(
+		const LambdaExpressionNode& lambda,
+		std::span<const std::optional<TypeSpecifierNode>> explicit_template_arguments);
 
 	ASTNode normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,
 									   const TypeSpecifierNode& deduced_type) const;
