@@ -855,13 +855,14 @@ public:
 		std::vector<LambdaCaptureNode> captures,
 		std::vector<ASTNode> parameters,
 		ASTNode body,
-		std::optional<ASTNode> return_type = std::nullopt,
-		Token lambda_token = Token(),
-		bool is_mutable = false,
-		std::vector<std::string_view> template_params = {},
-		bool is_noexcept = false,
-		bool is_constexpr = false,
-		bool is_consteval = false)
+		std::optional<ASTNode> return_type,
+		Token lambda_token,
+		bool is_mutable,
+		std::vector<std::string_view> template_params,
+		bool is_noexcept,
+		bool is_constexpr,
+		bool is_consteval,
+		bool has_capture_default)
 		: captures_(std::move(captures)),
 		  parameters_(std::move(parameters)),
 		  body_(body),
@@ -872,7 +873,8 @@ public:
 		  template_params_(std::move(template_params)),
 		  is_noexcept_(is_noexcept),
 		  is_constexpr_(is_constexpr),
-		  is_consteval_(is_consteval) {}
+		  is_consteval_(is_consteval),
+		  has_capture_default_(has_capture_default) {}
 
 	std::span<const LambdaCaptureNode> captures() const { return captures_; }
 	std::span<const ASTNode> parameters() const { return parameters_; }
@@ -886,6 +888,9 @@ public:
 	bool is_noexcept() const { return is_noexcept_; }
 	bool is_constexpr() const { return is_constexpr_; }
 	bool is_consteval() const { return is_consteval_; }
+	// Preserves the original capture-default syntax after the capture-all list
+	// has been expanded into concrete captures for the closure layout.
+	bool has_capture_default() const { return has_capture_default_; }
 
 	template <typename NameContainer, typename ArgContainer>
 	void set_outer_template_bindings(const NameContainer& template_param_names, const ArgContainer& template_args) {
@@ -937,6 +942,7 @@ private:
 	bool is_noexcept_;	   // Whether the lambda is noexcept
 	bool is_constexpr_;	// Whether the lambda is constexpr
 	bool is_consteval_;	// Whether the lambda is consteval
+	bool has_capture_default_;	// Original syntax used [=] or [&], even when nothing was captured
 	const TemplateEnvironmentSnapshotNode* outer_template_environment_snapshot_node_{};
 	TemplateParamNameVector outer_template_param_names_;
 	TemplateArgInfoVector outer_template_args_;

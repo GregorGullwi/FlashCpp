@@ -662,7 +662,18 @@ void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
 		current_function_mangled_name_ = saved_function_mangled_name;
 	});
 	current_function_name_ = StringTable::getOrInternStringHandle(lambda_info.operator_call_name);
-	current_function_mangled_name_ = current_function_name_;
+	// The call operator and its __invoke thunk are two lowerings of the same
+	// function object specialization. Static locals they share must use one
+	// symbol per (lambda declaration, specialization), not per generated
+	// function name. The generation id distinguishes int and double variants of
+	// one generic lambda while the closure spelling keeps the declaration
+	// identity.
+	current_function_mangled_name_ = StringTable::getOrInternStringHandle(
+		StringBuilder()
+			.append(lambda_info.closure_type_name)
+			.append("_spec_")
+			.append(static_cast<unsigned long long>(lambda_info.generation_id))
+			.commit());
 
 	// Generate operator() member function
 	generateLambdaOperatorCallFunction(lambda_info);
@@ -1061,13 +1072,8 @@ void AstToIr::addCapturedVariablesToSymbolTable(std::span<const LambdaCaptureNod
 	}
 }
 
-LambdaInfo& AstToIr::materializeLambdaInstantiation(
-	LambdaInfo& base, std::span<const FunctionType> target_parameters) {
-	auto materialize_parameter_type = [](const FunctionType& target_parameter) {
-		TypeSpecifierNode parameter_type = typeSpecifierFromFunctionType(target_parameter);
-		parameter_type.set_size_in_bits(getTypeSpecSizeBits(parameter_type));
-		return parameter_type;
-	};
+LambdaInfo& AstToIr::materializeLambdaCallInstantiation(
+	LambdaInfo& base, std::span<const std::pair<size_t, TypeSpecifierNode>> deduced_types) {
 	auto same_deduced_type = [](const TypeSpecifierNode& stored, const TypeSpecifierNode& requested) {
 		return stored.matches_signature(requested) &&
 			stored.cv_qualifier() == requested.cv_qualifier() &&
@@ -1076,13 +1082,13 @@ LambdaInfo& AstToIr::materializeLambdaInstantiation(
 			stored.runtime_pointer_depth() == requested.runtime_pointer_depth();
 	};
 	for (LambdaInfo& candidate : collected_lambdas_) {
-		if (candidate.closure_type_name != base.closure_type_name || candidate.deduced_auto_types.size() != target_parameters.size()) {
+		if (candidate.closure_type_name != base.closure_type_name || candidate.deduced_auto_types.size() != deduced_types.size()) {
 			continue;
 		}
 		bool matches = true;
-		for (size_t index = 0; index < target_parameters.size(); ++index) {
-			if (candidate.deduced_auto_types[index].first != index ||
-				!same_deduced_type(candidate.deduced_auto_types[index].second, materialize_parameter_type(target_parameters[index]))) {
+		for (size_t index = 0; index < deduced_types.size(); ++index) {
+			if (candidate.deduced_auto_types[index].first != deduced_types[index].first ||
+				!same_deduced_type(candidate.deduced_auto_types[index].second, deduced_types[index].second)) {
 				matches = false;
 				break;
 			}
@@ -1097,8 +1103,76 @@ LambdaInfo& AstToIr::materializeLambdaInstantiation(
 	instantiation.deduced_auto_types_generation = 0;
 	instantiation.normalized_deduced_auto_types_generation = 0;
 	instantiation.resolved_param_nodes.clear();
-	for (size_t index = 0; index < target_parameters.size(); ++index) {
-		instantiation.setDeducedType(index, materialize_parameter_type(target_parameters[index]));
+	for (const auto& [deduced_index, deduced_type] : deduced_types) {
+		instantiation.setDeducedType(deduced_index, deduced_type);
+	}
+	collected_lambdas_.push_back(std::move(instantiation));
+	return collected_lambdas_.back();
+}
+
+LambdaInfo& AstToIr::materializeLambdaInstantiation(
+	LambdaInfo& base, std::span<const FunctionType> target_parameters, const TypeSpecifierNode& target_return_type) {
+	auto materialize_parameter_type = [](const FunctionType& target_parameter) {
+		TypeSpecifierNode parameter_type = typeSpecifierFromFunctionType(target_parameter);
+		parameter_type.set_size_in_bits(getTypeSpecSizeBits(parameter_type));
+		return parameter_type;
+	};
+	// Only invented/explicit template parameters are deduced. Fixed parameters
+	// keep their declared type, and their exact match with the target was already
+	// verified by conversion selection.
+	std::vector<std::pair<size_t, TypeSpecifierNode>> deduced_types;
+	deduced_types.reserve(base.parameter_nodes.size());
+	for (size_t index = 0; index < base.parameter_nodes.size(); ++index) {
+		const ASTNode& param_node = base.parameter_nodes[index];
+		if (!param_node.is<DeclarationNode>()) {
+			continue;
+		}
+		const TypeSpecifierNode& param_type = param_node.as<DeclarationNode>().type_specifier_node();
+		const bool is_lambda_own_template_param =
+			std::any_of(base.own_template_param_names.begin(), base.own_template_param_names.end(),
+				[&](StringHandle template_param_name) {
+					return StringTable::getStringView(template_param_name) == param_type.token().value();
+				});
+		if (isPlaceholderAutoType(param_type.type()) || is_lambda_own_template_param) {
+			deduced_types.emplace_back(index, materialize_parameter_type(target_parameters[index]));
+		}
+	}
+	auto same_deduced_type = [](const TypeSpecifierNode& stored, const TypeSpecifierNode& requested) {
+		return stored.matches_signature(requested) &&
+			stored.cv_qualifier() == requested.cv_qualifier() &&
+			stored.reference_qualifier() == requested.reference_qualifier() &&
+			std::ranges::equal(stored.array_dimensions(), requested.array_dimensions()) &&
+			stored.runtime_pointer_depth() == requested.runtime_pointer_depth();
+	};
+	for (LambdaInfo& candidate : collected_lambdas_) {
+		if (candidate.closure_type_name != base.closure_type_name || candidate.deduced_auto_types.size() != deduced_types.size()) {
+			continue;
+		}
+		bool matches = true;
+		for (size_t index = 0; index < deduced_types.size(); ++index) {
+			if (candidate.deduced_auto_types[index].first != deduced_types[index].first ||
+				!same_deduced_type(candidate.deduced_auto_types[index].second, deduced_types[index].second)) {
+				matches = false;
+				break;
+			}
+		}
+		if (matches && candidate.has_return_type_specifier &&
+			!isPlaceholderAutoType(candidate.return_type_specifier.type()) &&
+			!candidate.return_type_specifier.matches_signature(target_return_type)) {
+			matches = false;
+		}
+		if (matches) {
+			return candidate;
+		}
+	}
+	LambdaInfo instantiation = base;
+	instantiation.generation_id = ++next_lambda_generation_id_;
+	instantiation.deduced_auto_types.clear();
+	instantiation.deduced_auto_types_generation = 0;
+	instantiation.normalized_deduced_auto_types_generation = 0;
+	instantiation.resolved_param_nodes.clear();
+	for (const auto& [deduced_index, deduced_type] : deduced_types) {
+		instantiation.setDeducedType(deduced_index, deduced_type);
 	}
 	collected_lambdas_.push_back(std::move(instantiation));
 	return collected_lambdas_.back();

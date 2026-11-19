@@ -1201,7 +1201,8 @@ ParseResult Parser::parse_lambda_expression() {
 		std::move(template_param_names),
 		lambda_is_noexcept,
 		lambda_is_constexpr,
-		lambda_is_consteval);
+		lambda_is_consteval,
+		has_capture_all);
 	auto& lambda_ref = lambda_node.as<LambdaExpressionNode>();
 	if (hasActiveTemplateParameters() && !template_param_substitutions_.empty()) {
 		TemplateParamNameVector outer_template_param_names;
@@ -1255,6 +1256,7 @@ ParseResult Parser::parse_lambda_expression() {
 
 	TypeInfo& closure_type = add_struct_type(closure_name, gSymbolTable.get_current_namespace_handle());
 	StructTypeInfo* closure_struct_info = &closure_type.createStructInfo(closure_name, AccessSpecifier::Public, false, gSymbolTable.get_current_namespace_handle());
+	closure_struct_info->lambda_expression = &lambda;
 
 	// For non-capturing lambdas, create a 1-byte struct (like Clang does)
 	if (lambda_captures.empty()) {
@@ -1544,7 +1546,7 @@ ParseResult Parser::parse_lambda_expression() {
 	// conversion function to pointer-to-function. Publish it as a conversion
 	// operator declaration so ordinary conversion selection and initialization
 	// see the same user-defined conversion as written source.
-	if (lambda.captures().empty() && lambda.template_params().empty()) {
+	if (lambda.captures().empty() && !lambda.has_capture_default() && lambda.template_params().empty()) {
 		bool has_placeholder_parameter = false;
 		for (const auto& parameter : lambda.parameters()) {
 			if (parameter.is<DeclarationNode>() &&

@@ -14,6 +14,7 @@
 #include "Parser.h"
 #include "CompileContext.h"
 #include "CompileError.h"
+#include "FrontendContext.h"
 #include "SymbolTable.h"
 #include "AstNodeTypes.h"
 #include "AstNodeTypes_Expr.h"
@@ -2691,9 +2692,17 @@ SemanticAnalysis::SemanticAnalysis(CompileContext& context, SymbolTable& symbols
 	CanonicalTypeDesc bool_desc;
 	bool_desc.type_index = nativeTypeIndex(TypeCategory::Bool);
 	bool_type_id_ = type_context_.intern(bool_desc);
+
+	if (FrontendContext* active_context = FrontendContext::active()) {
+		active_context->setSemanticAnalysis(this);
+	}
 }
 
 SemanticAnalysis::~SemanticAnalysis() {
+	if (FrontendContext* active_context = FrontendContext::active();
+		active_context != nullptr && active_context->semanticAnalysis() == this) {
+		active_context->setSemanticAnalysis(nullptr);
+	}
 }
 
 void SemanticAnalysis::attachParser(Parser& parser) {
@@ -2971,6 +2980,81 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const DestructorDecl
 
 		addLocalType(param_name, type_context_.intern(desc));
 	}
+}
+
+std::optional<TypeSpecifierNode> tryDeduceLambdaConversionReturnType(
+	const LambdaExpressionNode& lambda, std::span<const TypeSpecifierNode> parameter_types,
+	std::span<const std::optional<TypeSpecifierNode>> explicit_template_arguments) {
+	FrontendContext* active_context = FrontendContext::active();
+	SemanticAnalysis* semantic_analysis = active_context != nullptr ? active_context->semanticAnalysis() : nullptr;
+	if (semantic_analysis == nullptr) {
+		return std::nullopt;
+	}
+	return semantic_analysis->deduceLambdaConversionReturnType(lambda, parameter_types, explicit_template_arguments);
+}
+
+std::optional<TypeSpecifierNode> SemanticAnalysis::deduceLambdaConversionReturnType(
+	const LambdaExpressionNode& lambda, std::span<const TypeSpecifierNode> parameter_types,
+	std::span<const std::optional<TypeSpecifierNode>> explicit_template_arguments) {
+	TypeCategory placeholder_type = TypeCategory::Auto;
+	if (lambda.return_type().has_value() && lambda.return_type()->is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& declared_return = lambda.return_type()->as<TypeSpecifierNode>();
+		if (!isPlaceholderAutoType(declared_return.type())) {
+			return declared_return;
+		}
+		placeholder_type = declared_return.type();
+	}
+	if (parameter_types.size() != lambda.parameters().size()) {
+		return std::nullopt;
+	}
+	// A return expression may itself select a lambda conversion. Keep the
+	// deduction re-entrant-safe instead of recursing through the same lambda.
+	if (!lambda_conversion_return_deductions_.insert(lambda.lambda_id()).second) {
+		return std::nullopt;
+	}
+	auto deduction_guard = ScopeGuard([this, &lambda]() {
+		lambda_conversion_return_deductions_.erase(lambda.lambda_id());
+	});
+
+	std::vector<std::pair<size_t, TypeSpecifierNode>> deduced_types;
+	deduced_types.reserve(parameter_types.size());
+	for (size_t index = 0; index < parameter_types.size(); ++index) {
+		deduced_types.emplace_back(index, parameter_types[index]);
+	}
+	const std::vector<ASTNode> resolved_params = normalizeGenericLambdaParams(lambda.parameters(), deduced_types);
+
+	symbols_.enter_scope(ScopeType::Function);
+	pushScope();
+	auto scope_guard = ScopeGuard([this]() {
+		popScope();
+		symbols_.exit_scope();
+	});
+	registerOuterTemplateBindingsInScope(lambda);
+	const auto lambda_template_params = lambda.template_params();
+	const size_t explicit_binding_count = std::min(lambda_template_params.size(), explicit_template_arguments.size());
+	for (size_t index = 0; index < explicit_binding_count; ++index) {
+		if (!explicit_template_arguments[index].has_value()) {
+			continue;
+		}
+		const StringHandle template_param_name = StringTable::getOrInternStringHandle(lambda_template_params[index]);
+		if (template_param_name.isValid()) {
+			addLocalType(template_param_name, canonicalizeType(*explicit_template_arguments[index]));
+		}
+	}
+	for (const ASTNode& param_node : resolved_params) {
+		if (!param_node.is<DeclarationNode>()) {
+			continue;
+		}
+		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+		symbols_.insert(param_decl.identifier_token().value(), param_node);
+		TypeSpecifierNode param_type = param_decl.type_specifier_node();
+		applyDeclarationArrayBoundsToTypeSpec(param_decl, param_type, *this);
+		const StringHandle param_name = param_decl.identifier_token().handle();
+		if (param_name.isValid()) {
+			addLocalType(param_name, canonicalizeType(param_type));
+		}
+	}
+	return deducePlaceholderReturnType(lambda.body(), placeholder_type);
 }
 
 void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) {

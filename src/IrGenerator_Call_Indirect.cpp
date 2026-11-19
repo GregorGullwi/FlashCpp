@@ -359,30 +359,29 @@ ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExp
 					arg_idx++;
 				}
 
-				// Store deduced types directly on the collected LambdaInfo. Deferred lambda
-				// generation consumes lambda_info.deduced_auto_types via
-				// normalizeInstantiatedLambdaBody()/generateCollectedLambdas().
-				LambdaInfo* matched_lambda_info = nullptr;
+				// Each distinct deduced parameter list is its own call operator
+				// specialization. Never overwrite the shared lambda declaration with
+				// the most recently seen call; otherwise operator()/__invoke for an
+				// earlier specialization disappear and its static locals collide with
+				// a later instantiation.
+				LambdaInfo* base_lambda_info = nullptr;
 				for (auto& lambda_info : collected_lambdas_) {
 					if (lambda_info.lambda_id == lambda.lambda_id()) {
-						for (const auto& [deduced_param_index, deduced_type] : deduced_param_types) {
-							lambda_info.setDeducedType(
-								deduced_param_index,
-								deduced_type);
-						}
-						matched_lambda_info = &lambda_info;
+						base_lambda_info = &lambda_info;
 						break;
 					}
 				}
-				if (matched_lambda_info) {
-					sema_.normalizeInstantiatedLambdaBody(*matched_lambda_info);
-					if (!isPlaceholderAutoType(matched_lambda_info->returnType())) {
+				if (base_lambda_info != nullptr) {
+					LambdaInfo& matched_lambda_info =
+						materializeLambdaCallInstantiation(*base_lambda_info, deduced_param_types);
+					sema_.normalizeInstantiatedLambdaBody(matched_lambda_info);
+					if (!isPlaceholderAutoType(matched_lambda_info.returnType())) {
 						return_type_node = TypeSpecifierNode(
-							matched_lambda_info->return_type_index.withCategory(matched_lambda_info->returnType()),
-							matched_lambda_info->return_size,
-							matched_lambda_info->lambda_token,
+							matched_lambda_info.return_type_index.withCategory(matched_lambda_info.returnType()),
+							matched_lambda_info.return_size,
+							matched_lambda_info.lambda_token,
 							CVQualifier::None,
-							matched_lambda_info->return_ref_qualifier);
+							matched_lambda_info.return_ref_qualifier);
 						call_op.return_type_index = return_type_node.type_index().withCategory(return_type_node.type());
 						call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type_node.size_in_bits())};
 					}
@@ -1877,6 +1876,7 @@ ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExp
 
 					// Now build param_types with deduced types for auto parameters
 					size_t arg_idx = 0;
+					std::vector<std::pair<size_t, TypeSpecifierNode>> deduced_param_types;
 					for (const auto& param_node : func_for_mangling->parameter_nodes()) {
 						if (param_node.is<DeclarationNode>()) {
 							const auto& param_decl = param_node.as<DeclarationNode>();
@@ -1902,15 +1902,7 @@ ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExp
 									deduced_type.set_reference_qualifier(param_type.reference_qualifier());
 								}
 								param_types.push_back(deduced_type);
-
-								// Also store the deduced type in LambdaInfo for use by generateLambdaOperatorCallFunction
-								for (auto& lambda_info : collected_lambdas_) {
-									if (lambda_info.closure_type_name == struct_name) {
-										matched_lambda_info = &lambda_info;
-										lambda_info.setDeducedType(arg_idx, deduced_type);
-										break;
-									}
-								}
+								deduced_param_types.push_back({arg_idx, deduced_type});
 							} else {
 								param_types.push_back(param_type);
 							}
@@ -1919,14 +1911,26 @@ ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExp
 					}
 
 					if (matched_lambda_info) {
-						sema_.normalizeInstantiatedLambdaBody(*matched_lambda_info);
-						if (!isPlaceholderAutoType(matched_lambda_info->return_type_index.category())) {
+						// Materialize (or reuse) the call operator specialization for
+						// this argument list instead of rewriting the shared lambda
+						// declaration with the most recent call's deduced types.
+						LambdaInfo* specialization_base = matched_lambda_info;
+						for (auto& lambda_info : collected_lambdas_) {
+							if (lambda_info.closure_type_name == struct_name && lambda_info.deduced_auto_types.empty()) {
+								specialization_base = &lambda_info;
+								break;
+							}
+						}
+						LambdaInfo& specialized_lambda_info =
+							materializeLambdaCallInstantiation(*specialization_base, deduced_param_types);
+						sema_.normalizeInstantiatedLambdaBody(specialized_lambda_info);
+						if (!isPlaceholderAutoType(specialized_lambda_info.return_type_index.category())) {
 							resolved_generic_return_type.emplace(
-								matched_lambda_info->return_type_index.withCategory(matched_lambda_info->returnType()),
-								matched_lambda_info->return_size,
-								matched_lambda_info->lambda_token,
+								specialized_lambda_info.return_type_index.withCategory(specialized_lambda_info.returnType()),
+								specialized_lambda_info.return_size,
+								specialized_lambda_info.lambda_token,
 								CVQualifier::None,
-								matched_lambda_info->return_ref_qualifier);
+								specialized_lambda_info.return_ref_qualifier);
 							mangling_return_type = &*resolved_generic_return_type;
 						}
 					}

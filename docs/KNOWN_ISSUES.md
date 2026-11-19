@@ -682,3 +682,14 @@ while parsing the template argument list. A reduced friend/ADL form reaches an
 incorrect constructor diagnostic. These parser/lookup gaps prevent a source-level
 friend-effect regression here; native tests retain a successfully instantiated
 `Check<Good>` after a later class-body error without rolling back its cache entry.
+
+## Lambda requires-clauses are not stored by the parser
+
+The lambda parser still consumes and discards a requires-clause before parsing
+the body and trailing return type. Captureless generic lambda conversion
+therefore deduces invented and explicit template parameters, substitutes the
+call-operator parameter and return types, and checks that no dependent
+placeholder remains, but it cannot evaluate the lambda's own constraints.
+Storing the clause as a RequiresClauseNode and evaluating it with the deduced
+lambda template arguments is the next required step; until then constrained
+lambda conversions must not be treated as fully checked.

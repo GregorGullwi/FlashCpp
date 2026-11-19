@@ -3271,6 +3271,203 @@ inline bool lambdaClosureHasGenericCallOperator(const StructTypeInfo& struct_inf
 	return false;
 }
 
+inline bool lambdaDeclarationIsGeneric(const LambdaExpressionNode& lambda) {
+	if (lambda.has_template_params()) {
+		return true;
+	}
+	for (const ASTNode& parameter : lambda.parameters()) {
+		if (parameter.is<DeclarationNode>() &&
+			isPlaceholderAutoType(parameter.as<DeclarationNode>().type_specifier_node().type())) {
+			return true;
+		}
+	}
+	return false;
+}
+
+inline std::optional<size_t> lambdaTemplateParameterIndex(const LambdaExpressionNode& lambda, const TypeSpecifierNode& type) {
+	if (type.type() != TypeCategory::UserDefined || type.type_index().is_valid() || type.runtime_pointer_depth() != 0) {
+		return std::nullopt;
+	}
+	const std::string_view spelling = type.token().value();
+	const auto template_params = lambda.template_params();
+	for (size_t index = 0; index < template_params.size(); ++index) {
+		if (template_params[index] == spelling) {
+			return index;
+		}
+	}
+	return std::nullopt;
+}
+
+inline bool isBareLambdaPlaceholderParameter(const TypeSpecifierNode& type) {
+	if (type.runtime_pointer_depth() != 0 || type.is_array()) {
+		return false;
+	}
+	return isPlaceholderAutoType(type.type()) ||
+		(type.type() == TypeCategory::UserDefined && !type.type_index().is_valid());
+}
+
+// Deduce the template parameter itself (not the substituted parameter type)
+// from the target function-pointer parameter. The pattern's own cv-qualifiers
+// are removed from the deduction and re-applied when the call operator
+// parameter type is composed.
+inline bool deduceLambdaParameterBaseFromTarget(
+	const TypeSpecifierNode& declared, const TypeSpecifierNode& target, bool forwarding_placeholder,
+	TypeSpecifierNode& deduced_base) {
+	if (!isBareLambdaPlaceholderParameter(declared)) {
+		return false;
+	}
+	const ReferenceQualifier declared_reference = declared.reference_qualifier();
+	const ReferenceQualifier target_reference = target.reference_qualifier();
+	deduced_base = target;
+	deduced_base.set_reference_qualifier(ReferenceQualifier::None);
+	const uint8_t target_cv = static_cast<uint8_t>(deduced_base.cv_qualifier());
+	const uint8_t declared_cv = static_cast<uint8_t>(declared.cv_qualifier());
+	deduced_base.set_cv_qualifier(static_cast<CVQualifier>(target_cv & static_cast<uint8_t>(~declared_cv)));
+	if (declared_reference == ReferenceQualifier::None) {
+		if (target_reference != ReferenceQualifier::None) {
+			return false;
+		}
+		// [temp.deduct.call] ignores top-level cv on a by-value parameter.
+		deduced_base.set_cv_qualifier(CVQualifier::None);
+		return true;
+	}
+	if (declared_reference == ReferenceQualifier::LValueReference) {
+		return target_reference == ReferenceQualifier::LValueReference;
+	}
+	if (target_reference == ReferenceQualifier::RValueReference) {
+		return true;
+	}
+	if (forwarding_placeholder && target_reference == ReferenceQualifier::LValueReference) {
+		deduced_base = target;
+		return true;
+	}
+	return false;
+}
+
+inline TypeSpecifierNode composeLambdaParameterType(const TypeSpecifierNode& declared, const TypeSpecifierNode& deduced_base) {
+	TypeSpecifierNode composed = deduced_base;
+	const uint8_t cv_bits = static_cast<uint8_t>(declared.cv_qualifier()) | static_cast<uint8_t>(deduced_base.cv_qualifier());
+	composed.set_cv_qualifier(static_cast<CVQualifier>(cv_bits));
+	const ReferenceQualifier declared_reference = declared.reference_qualifier();
+	if (declared_reference == ReferenceQualifier::LValueReference) {
+		composed.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	} else if (declared_reference == ReferenceQualifier::RValueReference &&
+		deduced_base.reference_qualifier() != ReferenceQualifier::LValueReference) {
+		composed.set_reference_qualifier(ReferenceQualifier::RValueReference);
+	}
+	return composed;
+}
+
+inline TypeSpecifierNode materializeLambdaTargetParameter(const FunctionType& target_parameter) {
+	TypeSpecifierNode parameter_type = typeSpecifierFromFunctionType(target_parameter);
+	parameter_type.set_size_in_bits(getTypeSpecSizeBits(parameter_type));
+	return parameter_type;
+}
+
+inline UserDefinedConversionOperatorSelection makeLambdaClosureConversionSelection(
+	const StructTypeInfo& struct_info, const TypeSpecifierNode& target_type, const TypeInfo& source_type_info);
+
+// [expr.prim.lambda.closure]/8: a generic captureless lambda's conversion
+// function template is formed from its call operator's invented and explicit
+// template parameters. Deduce those parameters from the target signature,
+// substitute the call operator parameter types and its actual return type, and
+// only then let the conversion participate in overload ranking.
+inline std::optional<UserDefinedConversionOperatorSelection> trySelectGenericLambdaClosureConversionOperator(
+	const StructTypeInfo& struct_info, const LambdaExpressionNode& lambda, const TypeSpecifierNode& target_type,
+	const TypeInfo& source_type_info) {
+	if (!isCapturelessLambdaDeclaration(lambda) || !target_type.has_function_signature()) {
+		return std::nullopt;
+	}
+	const FunctionSignature& target_signature = target_type.function_signature();
+	if (!target_signature.hasStructuredTypes()) {
+		return std::nullopt;
+	}
+	const auto target_parameters = target_signature.parameter_types();
+	const auto lambda_parameters = lambda.parameters();
+	if (target_parameters.size() != lambda_parameters.size()) {
+		return std::nullopt;
+	}
+
+	std::vector<std::optional<TypeSpecifierNode>> explicit_arguments(lambda.template_params().size());
+	std::vector<TypeSpecifierNode> parameter_types;
+	parameter_types.reserve(lambda_parameters.size());
+	for (size_t index = 0; index < lambda_parameters.size(); ++index) {
+		if (!lambda_parameters[index].is<DeclarationNode>()) {
+			return std::nullopt;
+		}
+		const TypeSpecifierNode& declared = lambda_parameters[index].as<DeclarationNode>().type_specifier_node();
+		const TypeSpecifierNode target = materializeLambdaTargetParameter(target_parameters[index]);
+		if (!isPlaceholderAutoType(declared.type()) && !typeSpecStillUsesDependentPlaceholder(declared) &&
+			!(declared.type() == TypeCategory::UserDefined && !declared.type_index().is_valid())) {
+			if (!declared.matches_signature(target)) {
+				return std::nullopt;
+			}
+			parameter_types.push_back(declared);
+			continue;
+		}
+
+		const bool invented_parameter = isPlaceholderAutoType(declared.type());
+		const std::optional<size_t> explicit_index = invented_parameter ? std::nullopt : lambdaTemplateParameterIndex(lambda, declared);
+		if (!invented_parameter && !explicit_index) {
+			return std::nullopt;
+		}
+		if (!isBareLambdaPlaceholderParameter(declared)) {
+			return std::nullopt;
+		}
+		const bool forwarding_placeholder = declared.reference_qualifier() == ReferenceQualifier::RValueReference &&
+			declared.cv_qualifier() == CVQualifier::None;
+		TypeSpecifierNode deduced_base;
+		if (!deduceLambdaParameterBaseFromTarget(declared, target, forwarding_placeholder, deduced_base)) {
+			return std::nullopt;
+		}
+		if (explicit_index.has_value()) {
+			if (explicit_arguments[*explicit_index].has_value() &&
+				!explicit_arguments[*explicit_index]->matches_signature(deduced_base)) {
+				return std::nullopt;
+			}
+			explicit_arguments[*explicit_index] = deduced_base;
+		}
+		TypeSpecifierNode parameter_type = composeLambdaParameterType(declared, deduced_base);
+		if (!parameter_type.matches_signature(target)) {
+			return std::nullopt;
+		}
+		parameter_types.push_back(parameter_type);
+	}
+	for (const std::optional<TypeSpecifierNode>& argument : explicit_arguments) {
+		if (!argument.has_value()) {
+			return std::nullopt;
+		}
+	}
+
+	std::optional<TypeSpecifierNode> actual_return;
+	if (lambda.return_type().has_value() && lambda.return_type()->is<TypeSpecifierNode>()) {
+		TypeSpecifierNode declared_return = lambda.return_type()->as<TypeSpecifierNode>();
+		if (!isPlaceholderAutoType(declared_return.type())) {
+			if (typeSpecStillUsesDependentPlaceholder(declared_return) ||
+				(declared_return.type() == TypeCategory::UserDefined && !declared_return.type_index().is_valid())) {
+				const std::optional<size_t> explicit_index = lambdaTemplateParameterIndex(lambda, declared_return);
+				if (!explicit_index.has_value() || !explicit_arguments[*explicit_index].has_value()) {
+					return std::nullopt;
+				}
+				declared_return = composeLambdaParameterType(declared_return, *explicit_arguments[*explicit_index]);
+			}
+			actual_return = declared_return;
+		}
+	}
+	if (!actual_return.has_value()) {
+		actual_return = tryDeduceLambdaConversionReturnType(lambda, parameter_types, explicit_arguments);
+	}
+	if (!actual_return.has_value() || typeSpecStillUsesDependentPlaceholder(*actual_return) ||
+		(actual_return->type() == TypeCategory::UserDefined && !actual_return->type_index().is_valid())) {
+		return std::nullopt;
+	}
+	const TypeSpecifierNode target_return = materializeLambdaTargetParameter(target_signature.return_type());
+	if (!actual_return->matches_signature(target_return)) {
+		return std::nullopt;
+	}
+	return makeLambdaClosureConversionSelection(struct_info, target_type, source_type_info);
+}
+
 inline UserDefinedConversionOperatorSelection makeLambdaClosureConversionSelection(
 	const StructTypeInfo& struct_info, const TypeSpecifierNode& target_type, const TypeInfo& source_type_info) {
 	Token conversion_token(Token::Type::Identifier, StringBuilder()
@@ -3295,6 +3492,8 @@ inline UserDefinedConversionOperatorSelection makeLambdaClosureConversionSelecti
 	UserDefinedConversionOperatorSelection selection;
 	selection.function = &conversion_func;
 	selection.compatibility_declaring_type_index = source_type_info.type_index_;
+	selection.trailing_standard_kind = StandardConversionKind::None;
+	selection.trailing_standard_rank = ConversionRank::ExactMatch;
 	selection.member_cv_qualifier = call_operator_cv;
 	selection.access = AccessSpecifier::Public;
 	return selection;
@@ -3340,14 +3539,23 @@ trySelectLambdaClosureConversionOperator(const TypeSpecifierNode& source_type, c
 		UserDefinedConversionOperatorSelection selection;
 		selection.function = &function;
 		selection.compatibility_declaring_type_index = source_type.type_index();
+		selection.trailing_standard_kind = StandardConversionKind::None;
+		selection.trailing_standard_rank = ConversionRank::ExactMatch;
 		selection.member_cv_qualifier = member.cv_qualifier;
 		selection.access = member.access;
 		return selection;
 	}
-	if (!lambdaClosureHasGenericCallOperator(*source_struct_info)) {
+	const LambdaExpressionNode* lambda = source_struct_info->lambda_expression;
+	if (lambda == nullptr) {
+		if (!lambdaClosureHasGenericCallOperator(*source_struct_info)) {
+			return std::nullopt;
+		}
+		return makeLambdaClosureConversionSelection(*source_struct_info, target_type, *source_type_info);
+	}
+	if (!lambdaDeclarationIsGeneric(*lambda)) {
 		return std::nullopt;
 	}
-	return makeLambdaClosureConversionSelection(*source_struct_info, target_type, *source_type_info);
+	return trySelectGenericLambdaClosureConversionOperator(*source_struct_info, *lambda, target_type, *source_type_info);
 }
 
 inline std::optional<UserDefinedConversionOperatorSelection>

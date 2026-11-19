@@ -13,6 +13,20 @@ inline bool isLambdaClosureStruct(const StructTypeInfo& struct_info) {
 		   StringTable::getStringView(struct_info.getName()).starts_with("__lambda_");
 }
 
+// [expr.prim.lambda.closure]/8 requires a capture-default-free lambda, not just
+// an empty generated member list: an unused [=] or [&] still has a capture
+// default and therefore no conversion to pointer-to-function.
+inline bool isCapturelessLambdaDeclaration(const LambdaExpressionNode& lambda) {
+	return lambda.captures().empty() && !lambda.has_capture_default();
+}
+
+// Implemented by SemanticAnalysis; the header-only conversion selector uses it
+// to obtain the call operator's actual return type after substituting the
+// function-pointer target's parameter types into a generic lambda.
+std::optional<TypeSpecifierNode> tryDeduceLambdaConversionReturnType(
+	const LambdaExpressionNode& lambda, std::span<const TypeSpecifierNode> parameter_types,
+	std::span<const std::optional<TypeSpecifierNode>> explicit_template_arguments);
+
 inline std::optional<LambdaStructSignature> getFunctionSignatureFromLambdaStruct(const StructTypeInfo& struct_info) {
 	if (!isLambdaClosureStruct(struct_info)) {
 		return std::nullopt;

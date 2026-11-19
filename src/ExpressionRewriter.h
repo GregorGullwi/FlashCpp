@@ -336,7 +336,8 @@ private:
 				std::vector<std::string_view>(node.template_params().begin(), node.template_params().end()),
 				node.is_noexcept(),
 				node.is_constexpr(),
-				node.is_consteval());
+				node.is_consteval(),
+				node.has_capture_default());
 			if (node.outer_template_environment_snapshot() != nullptr) {
 				rewritten.set_outer_template_bindings(node.outer_template_environment_snapshot());
 			} else if (!node.outer_template_param_names().empty()) {
