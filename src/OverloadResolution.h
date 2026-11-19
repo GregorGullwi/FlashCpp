@@ -3382,6 +3382,12 @@ inline std::optional<UserDefinedConversionOperatorSelection> trySelectGenericLam
 	if (!target_signature.hasStructuredTypes()) {
 		return std::nullopt;
 	}
+	// A potentially throwing call operator cannot convert to a pointer to a
+	// noexcept function. The opposite direction (noexcept to plain) is the
+	// allowed function-pointer qualification adjustment.
+	if (target_signature.is_noexcept && !lambda.is_noexcept()) {
+		return std::nullopt;
+	}
 	const auto target_parameters = target_signature.parameter_types();
 	const auto lambda_parameters = lambda.parameters();
 	if (target_parameters.size() != lambda_parameters.size()) {

@@ -1665,6 +1665,9 @@ private:
 	};
 	LambdaContext current_lambda_context_;
 	std::vector<LambdaContext> lambda_context_stack_;
+	// Branch decisions for the lambda specialization currently being lowered.
+	// Null outside lambda bodies, where AST-recorded decisions remain valid.
+	const std::unordered_map<const IfStatementNode*, bool>* current_if_constexpr_decisions_ = nullptr;
 
 	// SEH (Structured Exception Handling) context tracking
 	// Tracks the current __try block context for __leave statement resolution

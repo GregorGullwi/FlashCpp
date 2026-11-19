@@ -171,6 +171,9 @@ struct LambdaInfo {
 	std::vector<ASTNode> resolved_param_nodes;
 	mutable uint32_t deduced_auto_types_generation = 0;
 	mutable uint32_t normalized_deduced_auto_types_generation = 0;
+	// Per-specialization if constexpr decisions. The lambda body is shared by
+	// all specializations, so branch choices cannot live on the AST nodes.
+	std::unordered_map<const IfStatementNode*, bool> if_constexpr_decisions;
 
 	// Get deduced type for a parameter at given index, returns nullopt if not deduced
 	std::optional<TypeSpecifierNode> getDeducedType(size_t param_index) const {

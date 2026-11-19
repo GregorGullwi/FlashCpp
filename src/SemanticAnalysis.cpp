@@ -3054,7 +3054,11 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deduceLambdaConversionReturnT
 			addLocalType(param_name, canonicalizeType(param_type));
 		}
 	}
-	return deducePlaceholderReturnType(lambda.body(), placeholder_type);
+	// This is a viability probe, not the lowering pass. Keep the probed branch
+	// decisions out of the shared lambda body; the selected specialization's
+	// normalization records its own decisions before IR consumes them.
+	std::unordered_map<const IfStatementNode*, bool> probe_if_constexpr_decisions;
+	return deducePlaceholderReturnType(lambda.body(), placeholder_type, &probe_if_constexpr_decisions);
 }
 
 void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) {
@@ -3139,27 +3143,29 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 			}
 		}
 	}
-	if (isPlaceholderAutoType(lambda_info.return_type_index.category())) {
-		if (auto deduced_type = deducePlaceholderReturnType(lambda_info.lambda_body, lambda_info.returnType());
-			deduced_type.has_value()) {
-			lambda_info.return_type_index = deduced_type->type_index().withCategory(deduced_type->type());
-			lambda_info.return_pointer_depth = static_cast<int>(deduced_type->runtime_pointer_depth());
-			lambda_info.return_type_specifier = *deduced_type;
-			lambda_info.has_return_type_specifier = true;
-			lambda_info.return_value_mode = ReturnValueMode::None;
-			if (deduced_type->pointer_depth() > 0) {
-				lambda_info.return_value_mode |= ReturnValueMode::Pointer;
-			}
-			if (deduced_type->is_reference() || deduced_type->is_rvalue_reference()) {
-				lambda_info.return_value_mode |= ReturnValueMode::Reference;
-				lambda_info.return_ref_qualifier = deduced_type->reference_qualifier();
-			}
-			if (deduced_type->is_function_pointer() || deduced_type->has_function_signature()) {
-				lambda_info.return_value_mode |= ReturnValueMode::FunctionPointer;
-			}
-			int deduced_size = getTypeSpecSizeBits(*deduced_type);
-			lambda_info.return_size = lambda_info.returnsReference() ? 64 : deduced_size;
+	// Evaluate the body even when the conversion already supplied a concrete
+	// return type: lowering needs this specialization's if constexpr decisions,
+	// not the decisions left by the last conversion viability probe.
+	std::optional<TypeSpecifierNode> deduced_type =
+		deducePlaceholderReturnType(lambda_info.lambda_body, lambda_info.returnType(), &lambda_info.if_constexpr_decisions);
+	if (isPlaceholderAutoType(lambda_info.return_type_index.category()) && deduced_type.has_value()) {
+		lambda_info.return_type_index = deduced_type->type_index().withCategory(deduced_type->type());
+		lambda_info.return_pointer_depth = static_cast<int>(deduced_type->runtime_pointer_depth());
+		lambda_info.return_type_specifier = *deduced_type;
+		lambda_info.has_return_type_specifier = true;
+		lambda_info.return_value_mode = ReturnValueMode::None;
+		if (deduced_type->pointer_depth() > 0) {
+			lambda_info.return_value_mode |= ReturnValueMode::Pointer;
 		}
+		if (deduced_type->is_reference() || deduced_type->is_rvalue_reference()) {
+			lambda_info.return_value_mode |= ReturnValueMode::Reference;
+			lambda_info.return_ref_qualifier = deduced_type->reference_qualifier();
+		}
+		if (deduced_type->is_function_pointer() || deduced_type->has_function_signature()) {
+			lambda_info.return_value_mode |= ReturnValueMode::FunctionPointer;
+		}
+		int deduced_size = getTypeSpecSizeBits(*deduced_type);
+		lambda_info.return_size = lambda_info.returnsReference() ? 64 : deduced_size;
 	}
 
 	SemanticContext lambda_ctx;
@@ -3575,7 +3581,7 @@ void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 				const TypeCategory placeholder_type =
 					is_placeholder ? return_type.type() :
 					(was_placeholder ? func.deduced_placeholder_return_type() : TypeCategory::Auto);
-				if (auto deduced_type = deducePlaceholderReturnType(body, placeholder_type);
+				if (auto deduced_type = deducePlaceholderReturnType(body, placeholder_type, nullptr);
 					deduced_type.has_value()) {
 					func.decl_node().set_type_node(*deduced_type);
 					parser().compute_and_set_mangled_name(func, true);
@@ -3691,7 +3697,8 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::resolveCallReturnType(
 	return return_type;
 }
 
-std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(const ASTNode& body, TypeCategory placeholder_type) {
+std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(const ASTNode& body, TypeCategory placeholder_type,
+	std::unordered_map<const IfStatementNode*, bool>* if_constexpr_decisions) {
 	if (!body.has_value()) {
 		return std::nullopt;
 	}
@@ -3741,7 +3748,9 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 					has_unresolved_return_expression = true;
 					return true;
 				}
-				current_type = finalizePlaceholderDeduction(placeholder_type, *expr_type);
+				current_type = isPlaceholderAutoType(placeholder_type)
+					? finalizePlaceholderDeduction(placeholder_type, *expr_type)
+					: *expr_type;
 			}
 
 			if (!deduced_type.has_value()) {
@@ -3800,7 +3809,11 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 			}
 			ConstExpr::EvaluationContext eval_ctx = make_eval_ctx();
 			if (const std::optional<bool> taken = tryEvaluateIfConstexprCondition(stmt, eval_ctx)) {
-				stmt.set_constexpr_condition_value(*taken);
+				if (if_constexpr_decisions != nullptr) {
+					(*if_constexpr_decisions)[&stmt] = *taken;
+				} else {
+					stmt.set_constexpr_condition_value(*taken);
+				}
 				if (*taken) {
 					return visit_returns(stmt.get_then_statement());
 				}

@@ -48,18 +48,28 @@ void AstToIr::visitIfStatementNode(const IfStatementNode& node) {
 		// Handle C++17 if constexpr - evaluate condition at compile time
 	if (node.is_constexpr()) {
 		bool taken = false;
-		if (node.has_constexpr_condition_value()) {
-			taken = node.constexpr_condition_value();
-		} else {
-			ConstExpr::EvaluationContext ctx = makeEvalContext(symbol_table);
-			auto result = ConstExpr::Evaluator::evaluate(node.get_condition(), ctx);
-
-			if (!result.success()) {
-				FLASH_LOG(Codegen, Error, "if constexpr condition is not a constant expression: ",
-						  result.error_message);
-				return;
+		bool has_decision = false;
+		if (current_if_constexpr_decisions_ != nullptr) {
+			const auto decision_it = current_if_constexpr_decisions_->find(&node);
+			if (decision_it != current_if_constexpr_decisions_->end()) {
+				taken = decision_it->second;
+				has_decision = true;
 			}
-			taken = result.as_bool();
+		}
+		if (!has_decision) {
+			if (node.has_constexpr_condition_value()) {
+				taken = node.constexpr_condition_value();
+			} else {
+				ConstExpr::EvaluationContext ctx = makeEvalContext(symbol_table);
+				auto result = ConstExpr::Evaluator::evaluate(node.get_condition(), ctx);
+
+				if (!result.success()) {
+					FLASH_LOG(Codegen, Error, "if constexpr condition is not a constant expression: ",
+							  result.error_message);
+					return;
+				}
+				taken = result.as_bool();
+			}
 		}
 
 			// Only compile the taken branch
