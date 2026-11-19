@@ -314,7 +314,10 @@ remaining pattern schemas by identity, and remove the name fallback.
    bases and through template bases resolved during instantiation.
    Reference-returning conversions now keep the converted object's address when
    binding reference variables, explicit reference casts, and reference return
-   statements, for non-template operators as well.
+   statements, for non-template operators as well. Conversion function templates
+   whose return type names a class-template-dependent pointer alias now preserve
+   array-to-pointer decay for member-array return operands when the body is
+   instantiated, so built-in subscript lowering sees the pointer result.
    Non-template conversion operators returning an lvalue reference are viable
    for lvalue reference parameters, with the less cv-qualified reference
    winning overload ranking and const-removing results staying rejected.
