@@ -4264,18 +4264,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 					if (static_member.declaration.has_value()) {
 						structural_member_declaration = get_decl_from_symbol(*static_member.declaration);
 					}
-					try {
-						std::optional<ASTNode> structural_initializer = substitute_static_member_initializer_structurally(
-							static_member.initializer, template_params_for_substitution, template_args_for_substitution,
-							instantiated_name, struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
-							struct_info->declaration_node, struct_info, structural_member_declaration, spec_decl_ns,
-							static_member.initializerDefinitionLookupContext());
-						if (structural_initializer.has_value() && !static_initializer_has_residual_template_dependency(
-								*structural_initializer, template_params_for_substitution)) {
-							return structural_initializer;
-						}
-					} catch (const std::exception& ex) {
-						FLASH_LOG(Templates, Trace, "Structural static initializer substitution failed: ", ex.what());
+					std::optional<ASTNode> structural_initializer = substitute_static_member_initializer_if_bound(
+						static_member.initializer, template_params_for_substitution, template_args_for_substitution,
+						instantiated_name, struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
+						struct_info->declaration_node, struct_info, structural_member_declaration, spec_decl_ns,
+						static_member.initializerDefinitionLookupContext());
+					if (structural_initializer.has_value()) {
+						return structural_initializer;
 					}
 				}
 				try {
@@ -9115,7 +9110,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			substitution_context);
 	};
 
-	auto substitute_in_class_static_initializer_structurally =
+	auto substitute_in_class_static_initializer_if_bound =
 		[&](
 			const auto& static_member,
 			const auto& replay_template_params,
@@ -9131,7 +9126,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 		if (static_member.declaration.has_value()) {
 			member_declaration = get_decl_from_symbol(*static_member.declaration);
 		}
-		return substitute_static_member_initializer_structurally(
+		return substitute_static_member_initializer_if_bound(
 			static_member.initializer, replay_template_params, replay_template_args, owning_instantiated_name,
 			owning_type_index, struct_info->declaration_node, struct_info, member_declaration,
 			fallback_definition_namespace, static_member.initializerDefinitionLookupContext());
@@ -9157,22 +9152,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 				replay_param_span);
 		std::optional<ASTNode> substituted_initializer;
 		if (requires_replay_metadata) {
-			try {
-				std::optional<ASTNode> structural_initializer =
-					substitute_in_class_static_initializer_structurally(
-						static_member,
-						replay_template_params,
-						replay_template_args,
-						owning_instantiated_name,
-						owning_type_index,
-						fallback_definition_namespace,
-						fallback_template_args);
-				if (structural_initializer.has_value() && !static_initializer_has_residual_template_dependency(
-						*structural_initializer, replay_param_span)) {
-					return structural_initializer;
-				}
-			} catch (const std::exception& ex) {
-				FLASH_LOG(Templates, Trace, "Structural static initializer substitution failed: ", ex.what());
+			std::optional<ASTNode> structural_initializer =
+				substitute_in_class_static_initializer_if_bound(
+					static_member,
+					replay_template_params,
+					replay_template_args,
+					owning_instantiated_name,
+					owning_type_index,
+					fallback_definition_namespace,
+					fallback_template_args);
+			if (structural_initializer.has_value()) {
+				return structural_initializer;
 			}
 			try {
 				substituted_initializer =
@@ -14169,18 +14159,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 					if (out_of_line_var.declaration.has_value()) {
 						structural_member_declaration = get_decl_from_symbol(*out_of_line_var.declaration);
 					}
-					try {
-						std::optional<ASTNode> structural_initializer = substitute_static_member_initializer_structurally(
-							out_of_line_var.initializer, structural_param_span, template_args_to_use, instantiated_name,
-							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct), struct_info_ptr->declaration_node,
-							struct_info_ptr, structural_member_declaration, struct_info_ptr->getNamespaceHandle(), out_of_line_var.definition_lookup_context);
-						if (structural_initializer.has_value() && !static_initializer_has_residual_template_dependency(
-								*structural_initializer, structural_param_span)) {
-							substituted_initializer = structural_initializer;
-							structural_initializer_accepted = true;
-						}
-					} catch (const std::exception& ex) {
-						FLASH_LOG(Templates, Trace, "Structural static initializer substitution failed: ", ex.what());
+					std::optional<ASTNode> structural_initializer = substitute_static_member_initializer_if_bound(
+						out_of_line_var.initializer, structural_param_span, template_args_to_use, instantiated_name,
+						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct), struct_info_ptr->declaration_node,
+						struct_info_ptr, structural_member_declaration, struct_info_ptr->getNamespaceHandle(), out_of_line_var.definition_lookup_context);
+					if (structural_initializer.has_value()) {
+						substituted_initializer = structural_initializer;
+						structural_initializer_accepted = true;
 					}
 				}
 			}

@@ -360,6 +360,23 @@ QualifiedMemberClassification classifyQualifiedMember(const TypeInfo* owner, Str
 
 }
 
+Parser::QualifiedMemberLookupState Parser::classifyQualifiedMemberForLookup(
+	const TypeInfo* owner, StringHandle member_name) {
+	const QualifiedMemberClassification classified =
+		classifyQualifiedMember(owner, member_name);
+	switch (classified.kind) {
+	case QualifiedMemberKind::Type:
+		return QualifiedMemberLookupState::Type;
+	case QualifiedMemberKind::Value:
+		return QualifiedMemberLookupState::Value;
+	case QualifiedMemberKind::Ambiguous:
+		return QualifiedMemberLookupState::Ambiguous;
+	case QualifiedMemberKind::Unknown:
+		return QualifiedMemberLookupState::Unknown;
+	}
+	return QualifiedMemberLookupState::Unknown;
+}
+
 Parser::MemberPointerOwnerParse Parser::parseMemberPointerOwnerAfterName(
 	Token class_name_token) {
 	MemberPointerOwnerParse parsed;
