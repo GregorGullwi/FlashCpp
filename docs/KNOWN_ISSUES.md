@@ -518,14 +518,20 @@ callee has no direct `FunctionDeclarationNode`. A genuinely deferred result
 keeps replay available for the definition-context lookup state, the pack-aware
 `Parser::ReplayTemplateBindings` bindings, and point-of-instantiation
 completion. A conclusive lookup failure on a complete class owner now reports
-`UndeclaredQualifiedIdentifier` through the normal diagnostic path instead of
-being replayed into a generic non-constant initializer diagnostic.
+`UndeclaredQualifiedIdentifier` (or `AmbiguousQualifiedLookup` for an ambiguous
+member) through the normal diagnostic path instead of being replayed into a
+generic non-constant initializer diagnostic. A member template is resolved by its
+full qualified name first; a template that merely shares the terminal simple name
+keeps the result deferred instead of marking it bound.
 
 Replay remains for initializers whose dependent unqualified call still needs the
 definition-context lookup state established by source replay, and for qualified
 owners that are still incomplete while their specialization is being evaluated.
 Qualified result classification performs ordinary member lookup (including base
 classes) rather than inferring the outcome from class layout completeness alone.
+A rebound dependent record is retired only after the terminal member lookup is
+conclusive and its namespace is directly resolvable; otherwise the record stays
+for a later substitution pass.
 
 A dependent unqualified call that is still not analyzed after post-parse
 normalization trips `Normalized dependent unqualified direct-call query remained

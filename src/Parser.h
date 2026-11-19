@@ -4364,8 +4364,10 @@ private:	 // Resume private methods
 	struct StaticInitializerLookupClassification {
 		StaticInitializerLookupOutcome outcome = StaticInitializerLookupOutcome::Bound;
 		const QualifiedIdentifierNode* failed_qualified_id = nullptr;
+		DiagnosticId failure_id = DiagnosticId::UndeclaredQualifiedIdentifier;
 	};
 	QualifiedMemberLookupState classifyQualifiedMemberForLookup(const TypeInfo* owner, StringHandle member_name);
+	StaticInitializerLookupClassification classify_qualified_identifier_lookup(const QualifiedIdentifierNode& qualified_id);
 	StaticInitializerLookupClassification classify_static_initializer_lookup(const ASTNode& initializer,
 		std::span<const TemplateParameterNode> template_params_for_substitution);
 	std::optional<ASTNode> substitute_static_member_initializer_structurally(const std::optional<ASTNode>& initializer,
@@ -4378,7 +4380,7 @@ private:	 // Resume private methods
 		StringHandle owning_instantiated_name, TypeIndex owning_type_index, const StructDeclarationNode* owning_declaration,
 		StructTypeInfo* owning_struct_info, const DeclarationNode* member_declaration, NamespaceHandle fallback_definition_namespace,
 		const TemplateDefinitionLookupContext& member_definition_lookup_context);
-	[[noreturn]] void throwUndeclaredQualifiedMember(const QualifiedIdentifierNode& qualified_id);
+	[[noreturn]] void throwStaticInitializerLookupError(const StaticInitializerLookupClassification& classification);
 
 	// Get pack size from pack_param_info_ (more reliable than count_pack_elements during nested instantiation)
 	// Returns std::nullopt if pack name is not found (unknown pack)

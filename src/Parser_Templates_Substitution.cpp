@@ -304,6 +304,72 @@ Parser::TemplateBodySubstitutionState Parser::makeTemplateBodySubstitutionState(
 	return state;
 }
 
+Parser::StaticInitializerLookupClassification Parser::classify_qualified_identifier_lookup(
+	const QualifiedIdentifierNode& qualified_id) {
+	StaticInitializerLookupClassification classification;
+	const auto set_error = [&](DiagnosticId failure_id) {
+		classification.outcome = StaticInitializerLookupOutcome::Error;
+		classification.failed_qualified_id = &qualified_id;
+		classification.failure_id = failure_id;
+		return classification;
+	};
+	if (qualified_id.hasDependentQualifiedName()) {
+		classification.outcome = StaticInitializerLookupOutcome::Deferred;
+		return classification;
+	}
+	const std::string_view owner_name = gNamespaceRegistry.getQualifiedName(qualified_id.namespace_handle());
+	if (owner_name.empty()) {
+		return classification;
+	}
+	const auto owner_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(owner_name));
+	if (owner_it == getTypesByNameMap().end() || owner_it->second == nullptr) {
+		// A declared namespace qualifies a namespace-scope entity that
+		// structural substitution does not need to rebind. Anything else still
+		// needs the replay state that can materialize the owner.
+		classification.outcome = gNamespaceRegistry.isDeclared(qualified_id.namespace_handle())
+			? StaticInitializerLookupOutcome::Bound
+			: StaticInitializerLookupOutcome::Deferred;
+		return classification;
+	}
+	const TypeInfo& owner = *owner_it->second;
+	switch (classifyQualifiedMemberForLookup(&owner, qualified_id.nameHandle())) {
+	case QualifiedMemberLookupState::Type:
+	case QualifiedMemberLookupState::Value:
+		return classification;
+	case QualifiedMemberLookupState::Ambiguous:
+		return set_error(DiagnosticId::AmbiguousQualifiedLookup);
+	case QualifiedMemberLookupState::Unknown:
+		break;
+	}
+	// Resolve the member template by its full qualified name first. A simple
+	// name that happens to exist elsewhere must not make this owner's missing
+	// member look bound; at most it keeps the lookup deferred.
+	const std::string qualified_member_name = qualified_id.full_name();
+	if (findKnownQualifiedMemberTemplate(qualified_member_name, std::string_view{}).has_value()) {
+		return classification;
+	}
+	if (findKnownQualifiedMemberTemplate(qualified_id.name(), std::string_view{}).has_value()) {
+		classification.outcome = StaticInitializerLookupOutcome::Deferred;
+		return classification;
+	}
+	if (const StructTypeInfo* owner_struct = owner.getStructInfo()) {
+		// Member lookup found nothing. Only a complete owner turns that into a
+		// conclusive error; an incomplete instantiation still defers.
+		if (owner_struct->hasCompleteObjectLayout()) {
+			return set_error(DiagnosticId::UndeclaredQualifiedIdentifier);
+		}
+		classification.outcome = StaticInitializerLookupOutcome::Deferred;
+		return classification;
+	}
+	if (owner.getEnumInfo() != nullptr) {
+		return set_error(DiagnosticId::UndeclaredQualifiedIdentifier);
+	}
+	// Alias targets and mid-instantiation placeholders have no published member
+	// table yet; keep replay available for them.
+	classification.outcome = StaticInitializerLookupOutcome::Deferred;
+	return classification;
+}
+
 Parser::StaticInitializerLookupClassification Parser::classify_static_initializer_lookup(
 	const ASTNode& initializer,
 	std::span<const TemplateParameterNode> template_params) {
@@ -317,66 +383,20 @@ Parser::StaticInitializerLookupClassification Parser::classify_static_initialize
 	};
 	StaticInitializerLookupClassification classification;
 	bool saw_deferred_lookup = false;
-	const auto record_outcome = [&](StaticInitializerLookupOutcome outcome,
-		const QualifiedIdentifierNode* failed_qualified_id = nullptr) {
-		if (outcome == StaticInitializerLookupOutcome::Error) {
-			classification.outcome = StaticInitializerLookupOutcome::Error;
-			classification.failed_qualified_id = failed_qualified_id;
+	const auto record_classification = [&](const StaticInitializerLookupClassification& found) {
+		if (found.outcome == StaticInitializerLookupOutcome::Error) {
+			classification = found;
 			return true;
 		}
-		if (outcome == StaticInitializerLookupOutcome::Deferred) {
+		if (found.outcome == StaticInitializerLookupOutcome::Deferred) {
 			saw_deferred_lookup = true;
 		}
 		return false;
 	};
-	// A qualified owner is only a bound result once ordinary member lookup in
-	// that owner has a conclusive answer. Layout completeness is a fallback
-	// signal for an incomplete instantiation, never the primary one: a complete
-	// class can still reject the member, and an incomplete one can still publish
-	// the member being requested.
-	const auto classify_qualified_id = [&](const QualifiedIdentifierNode& qualified_id) {
-		if (qualified_id.hasDependentQualifiedName()) {
-			return StaticInitializerLookupOutcome::Deferred;
-		}
-		const std::string_view owner_name = gNamespaceRegistry.getQualifiedName(qualified_id.namespace_handle());
-		if (owner_name.empty()) {
-			return StaticInitializerLookupOutcome::Bound;
-		}
-		const auto owner_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(owner_name));
-		if (owner_it == getTypesByNameMap().end() || owner_it->second == nullptr) {
-			// A declared namespace qualifies a namespace-scope entity that
-			// structural substitution does not need to rebind. Anything else
-			// still needs the replay state that can materialize the owner.
-			if (gNamespaceRegistry.isDeclared(qualified_id.namespace_handle())) {
-				return StaticInitializerLookupOutcome::Bound;
-			}
-			return StaticInitializerLookupOutcome::Deferred;
-		}
-		const TypeInfo& owner = *owner_it->second;
-		switch (classifyQualifiedMemberForLookup(&owner, qualified_id.nameHandle())) {
-		case QualifiedMemberLookupState::Type:
-		case QualifiedMemberLookupState::Value:
-		case QualifiedMemberLookupState::Ambiguous:
-			return StaticInitializerLookupOutcome::Bound;
-		case QualifiedMemberLookupState::Unknown:
-			break;
-		}
-		if (findKnownQualifiedMemberTemplate(owner_name, qualified_id.name()).has_value()) {
-			return StaticInitializerLookupOutcome::Bound;
-		}
-		if (const StructTypeInfo* owner_struct = owner.getStructInfo()) {
-			// Member lookup found nothing. Only a complete owner turns that into
-			// a conclusive error; an incomplete instantiation still defers.
-			return owner_struct->hasCompleteObjectLayout()
-				? StaticInitializerLookupOutcome::Error
-				: StaticInitializerLookupOutcome::Deferred;
-		}
-		if (owner.getEnumInfo() != nullptr) {
-			return StaticInitializerLookupOutcome::Error;
-		}
-		// Alias targets and mid-instantiation placeholders have no published
-		// member table yet; keep replay available for them.
-		return StaticInitializerLookupOutcome::Deferred;
+	const auto record_outcome = [&](StaticInitializerLookupOutcome outcome) {
+		StaticInitializerLookupClassification found;
+		found.outcome = outcome;
+		return record_classification(found);
 	};
 	const auto classify_call = [](const CallExprNode& call) {
 		if (call.has_dependent_qualified_lookup_record()) {
@@ -417,7 +437,7 @@ Parser::StaticInitializerLookupClassification Parser::classify_static_initialize
 		}
 		if (node.is<QualifiedIdentifierNode>()) {
 			const QualifiedIdentifierNode& qualified_id = node.as<QualifiedIdentifierNode>();
-			return record_outcome(classify_qualified_id(qualified_id), &qualified_id);
+			return record_classification(classify_qualified_identifier_lookup(qualified_id));
 		}
 		if (node.is<CallExprNode>()) {
 			return record_outcome(classify_call(node.as<CallExprNode>()));
@@ -436,7 +456,7 @@ Parser::StaticInitializerLookupClassification Parser::classify_static_initialize
 			return record_outcome(StaticInitializerLookupOutcome::Deferred);
 		}
 		if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&expression)) {
-			return record_outcome(classify_qualified_id(*qualified), qualified);
+			return record_classification(classify_qualified_identifier_lookup(*qualified));
 		}
 		if (const auto* call = std::get_if<CallExprNode>(&expression)) {
 			return record_outcome(classify_call(*call));
@@ -449,11 +469,18 @@ Parser::StaticInitializerLookupClassification Parser::classify_static_initialize
 	return classification;
 }
 
-[[noreturn]] void Parser::throwUndeclaredQualifiedMember(const QualifiedIdentifierNode& qualified_id) {
-	const std::string message = std::string("Use of undeclared identifier '") + qualified_id.full_name() + "'";
+[[noreturn]] void Parser::throwStaticInitializerLookupError(
+	const StaticInitializerLookupClassification& classification) {
+	if (classification.failed_qualified_id == nullptr) {
+		throw InternalError("Static initializer lookup error is missing its qualified identifier");
+	}
+	const QualifiedIdentifierNode& qualified_id = *classification.failed_qualified_id;
+	const std::string message = classification.failure_id == DiagnosticId::AmbiguousQualifiedLookup
+		? std::string("Qualified member lookup for '") + qualified_id.full_name() + "' is ambiguous"
+		: std::string("Use of undeclared identifier '") + qualified_id.full_name() + "'";
 	throw makeStructuredCompileError(
 		context_.diagnostics(),
-		DiagnosticId::UndeclaredQualifiedIdentifier,
+		classification.failure_id,
 		DiagnosticSeverity::Error,
 		lexer_.getSourceLocation(qualified_id.identifier_token()),
 		message,
@@ -531,9 +558,6 @@ std::optional<ASTNode> Parser::substitute_static_member_initializer_if_bound(
 		}
 		FLASH_LOG(Templates, Trace, "Structural static initializer probe deferred: ", ex.what());
 		return std::nullopt;
-	} catch (const InternalError& ex) {
-		FLASH_LOG(Templates, Trace, "Structural static initializer substitution deferred: ", ex.what());
-		return std::nullopt;
 	}
 	if (!structural_initializer.has_value()) {
 		return std::nullopt;
@@ -547,10 +571,13 @@ std::optional<ASTNode> Parser::substitute_static_member_initializer_if_bound(
 		FLASH_LOG(Templates, Trace, "Static initializer structural result still requires replay");
 		return std::nullopt;
 	case StaticInitializerLookupOutcome::Error:
-		if (classification.failed_qualified_id == nullptr) {
-			throw InternalError("Static initializer lookup error is missing its qualified identifier");
+		// Match the throwing substitution path: a probe must stay recoverable,
+		// while a real use reports the structured diagnostic unchanged.
+		if (isTemplateInstantiationFailureProbeMode()) {
+			FLASH_LOG(Templates, Trace, "Static initializer lookup failure deferred in probe mode");
+			return std::nullopt;
 		}
-		throwUndeclaredQualifiedMember(*classification.failed_qualified_id);
+		throwStaticInitializerLookupError(classification);
 	}
 	throw InternalError("Unhandled static initializer lookup outcome");
 }
