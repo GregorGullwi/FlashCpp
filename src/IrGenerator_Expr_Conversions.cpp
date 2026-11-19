@@ -955,6 +955,9 @@ ExprResult AstToIr::materializeAddressResult(
 }
 
 std::optional<ExprResult> AstToIr::decayLambdaStructToFunctionPointer(const StructTypeInfo& struct_info, const Token& source_token) {
+	if (struct_info.lambda_expression != nullptr && !isCapturelessLambdaDeclaration(*struct_info.lambda_expression)) {
+		return std::nullopt;
+	}
 	auto sig_opt = getFunctionSignatureFromLambdaStruct(struct_info);
 	if (!sig_opt.has_value()) {
 		return std::nullopt;
@@ -994,6 +997,9 @@ std::optional<ExprResult> AstToIr::decayLambdaStructToFunctionPointer(
 	if (!target_signature.hasStructuredTypes()) {
 		return std::nullopt;
 	}
+	if (struct_info.lambda_expression != nullptr && !isCapturelessLambdaDeclaration(*struct_info.lambda_expression)) {
+		return std::nullopt;
+	}
 	const std::string_view closure_name = StringTable::getStringView(struct_info.getName());
 	LambdaInfo* lambda_info = nullptr;
 	for (LambdaInfo& candidate : collected_lambdas_) {
@@ -1011,9 +1017,9 @@ std::optional<ExprResult> AstToIr::decayLambdaStructToFunctionPointer(
 	}
 	LambdaInfo* emitted_lambda_info = lambda_info;
 	if (lambda_info->is_generic) {
-		emitted_lambda_info = &materializeLambdaInstantiation(*lambda_info, target_parameters);
 		TypeSpecifierNode target_return = typeSpecifierFromFunctionType(target_signature.return_type());
 		target_return.set_size_in_bits(getTypeSpecSizeBits(target_return));
+		emitted_lambda_info = &materializeLambdaInstantiation(*lambda_info, target_parameters, target_return);
 		emitted_lambda_info->return_type_index = target_return.type_index().withCategory(target_return.type());
 		emitted_lambda_info->return_size = (target_return.is_reference() || target_return.is_rvalue_reference())
 			? 64 : static_cast<int>(target_return.size_in_bits());

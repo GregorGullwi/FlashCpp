@@ -538,7 +538,17 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			StringHandle fn_name = current_function_mangled_name_.isValid()
 									   ? current_function_mangled_name_
 									   : current_function_name_;
-			sb.append(fn_name).append(".").append(decl.identifier_token().value());
+			sb.append(fn_name).append(".");
+			// Lambda specializations share one storage identity across operator()
+			// and __invoke, so the source declaration distinguishes static locals
+			// that reuse the same spelling in different scopes.
+			if (StringTable::getStringView(fn_name).starts_with("__lambda_"sv)) {
+				sb.append(static_cast<uint64_t>(decl.identifier_token().line()))
+					.append("_")
+					.append(static_cast<uint64_t>(decl.identifier_token().column()))
+					.append(".");
+			}
+			sb.append(decl.identifier_token().value());
 		} else {
 				// For global variables, include namespace path for proper mangling
 			if (!current_namespace_stack_.empty()) {

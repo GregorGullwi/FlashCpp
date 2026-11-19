@@ -27,6 +27,7 @@ struct TemplateEnvironment;
 void journalLegacyTypeInfoInPlaceMutation(TypeIndex index);
 void journalLegacyTypeInfoInPlaceMutation(const TypeInfo& row);
 class TemplateParameterNode;
+class LambdaExpressionNode;
 const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index);
 struct ImplicitSameTypeConstructors { ASTNode copy_constructor; ASTNode move_constructor; };
 struct ImplicitSameTypeAssignments { ASTNode copy_assignment; ASTNode move_assignment; };
@@ -155,6 +156,10 @@ struct StructTypeInfo {
 	StringHandle name;
 	NamespaceHandle namespace_handle;  // Namespace this struct was declared in
 	const StructDeclarationNode* declaration_node = nullptr; // Exact parsed declaration for this type
+	// A synthesized lambda closure keeps its original expression so conversion
+	// selection can inspect the capture syntax, parameters, and template-head
+	// instead of inferring them from the generated members.
+	const LambdaExpressionNode* lambda_expression = nullptr;
 	std::vector<StructMember> members;
 	std::vector<StructStaticMember> static_members;	// Static members
 	std::vector<StructMemberFunction> member_functions;

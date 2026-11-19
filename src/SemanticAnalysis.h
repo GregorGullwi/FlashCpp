@@ -451,6 +451,13 @@ public:
 		std::span<const ASTNode> parameter_nodes,
 		std::span<const std::pair<size_t, TypeSpecifierNode>> deduced_types) const;
 	void normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info);
+	// Deduce the call operator's return type for a captureless generic lambda
+	// after its invented and explicit template parameters were deduced from a
+	// function-pointer target. Used while ranking the conversion, before IR has
+	// materialized a LambdaInfo specialization.
+	std::optional<TypeSpecifierNode> deduceLambdaConversionReturnType(
+		const LambdaExpressionNode& lambda, std::span<const TypeSpecifierNode> parameter_types,
+		std::span<const std::optional<TypeSpecifierNode>> explicit_template_arguments);
 
 	ASTNode normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,
 									   const TypeSpecifierNode& deduced_type) const;
@@ -981,6 +988,7 @@ private:
 	std::vector<const StructTypeInfo*> codegen_ready_types_;
 	std::unordered_set<const StructTypeInfo*> codegen_ready_type_keys_;
 	std::unordered_set<const FunctionDeclarationNode*> resolving_auto_return_functions_;
+	std::unordered_set<size_t> lambda_conversion_return_deductions_;
 
 	// Scope stack: each entry maps local variable StringHandle → canonical type id.
 	std::vector<std::unordered_map<StringHandle, CanonicalTypeId>> scope_stack_;

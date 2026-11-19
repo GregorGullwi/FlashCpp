@@ -23,6 +23,7 @@
 
 class SymbolTable;
 class Parser;
+class SemanticAnalysis;
 class FrontendContext;
 
 template <typename T>
@@ -314,6 +315,18 @@ public:
 	// A context has one active Parser; a second instance must wait until it is unbound.
 	void bindParserPublicationJournal(Parser& parser);
 	void unbindParserPublicationJournal(Parser& parser);
+
+	// Conversion selection runs from header-only overload-resolution code that
+	// cannot depend on the semantic analysis implementation. The active semantic
+	// analysis is published here so lambda conversions can request the actual
+	// instantiated call-operator return type.
+	SemanticAnalysis* semanticAnalysis() const {
+		return semantic_analysis_;
+	}
+
+	void setSemanticAnalysis(SemanticAnalysis* semantic_analysis) {
+		semantic_analysis_ = semantic_analysis;
+	}
 
 	DiagnosticEngine& diagnostics() {
 		return diagnostics_;
@@ -823,6 +836,7 @@ private:
 	std::vector<LegacyTypeSpecifierRewrite> legacy_type_specifier_rewrites_;
 	size_t legacy_type_specifier_rewrite_segment_start_ = 0;
 	Parser* parser_publication_journal_ = nullptr;
+	SemanticAnalysis* semantic_analysis_ = nullptr;
 	size_t publication_transaction_depth_ = 0;
 
 	friend FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& context);

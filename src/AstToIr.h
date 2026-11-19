@@ -556,7 +556,10 @@ private:
 	void generateLambdaOperatorCallFunction(LambdaInfo& lambda_info);
 	void generateLambdaInvokeFunction(LambdaInfo& lambda_info);
 	StringHandle computeLambdaInvokeMangledName(const LambdaInfo& lambda_info);
-	LambdaInfo& materializeLambdaInstantiation(LambdaInfo& base, std::span<const FunctionType> target_parameters);
+	LambdaInfo& materializeLambdaInstantiation(LambdaInfo& base, std::span<const FunctionType> target_parameters,
+		const TypeSpecifierNode& target_return_type);
+	LambdaInfo& materializeLambdaCallInstantiation(
+		LambdaInfo& base, std::span<const std::pair<size_t, TypeSpecifierNode>> deduced_types);
 	void addCapturedVariablesToSymbolTable(std::span<const LambdaCaptureNode> captures,
 										   std::span<const ASTNode> captured_var_decls);
 

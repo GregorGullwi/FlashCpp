@@ -3250,7 +3250,7 @@ std::optional<TypeSpecifierNode> Parser::deduce_lambda_return_type(const LambdaE
 }
 
 std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda(const LambdaExpressionNode& lambda) {
-	if (!lambda.captures().empty()) {
+	if (!lambda.captures().empty() || lambda.has_capture_default()) {
 		return std::nullopt;
 	}
 
@@ -3285,6 +3285,9 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda
 }
 
 std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_struct(const StructTypeInfo& struct_info, const Token& source_token) {
+	if (struct_info.lambda_expression != nullptr && !isCapturelessLambdaDeclaration(*struct_info.lambda_expression)) {
+		return std::nullopt;
+	}
 	auto sig_opt = getFunctionSignatureFromLambdaStruct(struct_info);
 	if (!sig_opt.has_value()) {
 		return std::nullopt;
