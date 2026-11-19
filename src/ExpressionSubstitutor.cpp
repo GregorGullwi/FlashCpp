@@ -2132,14 +2132,15 @@ ExpressionSubstitutor::materializeDependentQualifiedMemberPrefixOwner(
 					std::span<const TemplateTypeArg>(
 						member_args.data(),
 						member_args.size()));
-			// The materialized declaration is the semantic identity; its
-			// spelling is derived from the published TypeInfo when available so
-			// a canonical qualification such as Derived::Inner cannot override
-			// the concrete member-template instance.
+			// The declaration that was just instantiated is the semantic
+			// identity; its spelling is derived from the published TypeInfo when
+			// available so a separate canonical qualification such as
+			// Derived::Inner cannot override the concrete member-template
+			// instance.
 			const TypeInfo* next_owner_type =
-				materialized_member_owner.resolved_type_info != nullptr
-					? materialized_member_owner.resolved_type_info
-					: instantiated_member_type;
+				instantiated_member_type != nullptr
+					? instantiated_member_type
+					: materialized_member_owner.resolved_type_info;
 			StringHandle next_owner_handle;
 			if (next_owner_type != nullptr && next_owner_type->name().isValid()) {
 				next_owner_handle = next_owner_type->name();
@@ -4641,42 +4642,6 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 				StringTable::getStringView(
 					dependent_name->member_chain.front().name));
 		}
-		// Whether the dependent record is still meaningful is an identity
-		// question, not a spelling comparison. Derive the concrete spelling from
-		// the materialized owner's published TypeInfo whenever the prefix chain
-		// or the record owner produced one.
-		const auto dependent_record_owner_matches = [&](
-			const TypeInfo::DependentQualifiedNameRecord& record,
-			const TypeInfo* materialized_type,
-			std::string_view materialized_name) {
-			if (materialized_type == nullptr) {
-				return materialized_name == StringTable::getStringView(record.owner_name);
-			}
-			if (record.owner_type.is_valid()) {
-				return record.owner_type == materialized_type->registeredTypeIndex();
-			}
-			if (record.current_instantiation_declaration != nullptr) {
-				const StructTypeInfo* materialized_struct = materialized_type->getStructInfo();
-				return materialized_struct != nullptr &&
-					materialized_struct->declaration_node == record.current_instantiation_declaration;
-			}
-			if (record.owner_kind ==
-					TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation &&
-				current_owner_type_name_.isValid()) {
-				return current_owner_type_name_ == materialized_type->name();
-			}
-			// The record has no comparable identity (for example an alias
-			// chain). Fall back to the spelling the legacy path used instead of
-			// retiring metadata that later passes still need.
-			return materialized_name == StringTable::getStringView(record.owner_name);
-		};
-		const TypeInfo* materialized_record_owner_type =
-			materialized_owner.resolved_type_info;
-		if (materialized_record_owner_type == nullptr && !materialized_owner_name.empty()) {
-			materialized_record_owner_type = findTypeByName(
-				StringTable::getOrInternStringHandle(materialized_owner_name));
-		}
-
 		if (!materialized_owner_name.empty() && !dependent_name->member_chain.empty()) {
 			std::string_view materialized_namespace = materialized_owner_name;
 			if (dependent_name->member_chain.size() > 1) {
@@ -4757,14 +4722,26 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 						std::move(explicit_template_arg_nodes));
 				}
 			}
-			// Once the owner has been substituted to a different concrete type, the
-			// original dependent-qualified record must not survive on the rebound
-			// identifier.  Keeping it would make a later evaluator reinterpret the
-			// already-materialized `B::v` through the surrounding template context
-			// (for example as `A::v` while instantiating g<A>).
-			if (!preserved_dependent_member_template_record &&
-				dependent_record_owner_matches(
-					*dependent_name, materialized_record_owner_type, materialized_owner_name)) {
+			// Only retire the dependent record once the rebound terminal member
+			// has a conclusive lookup result and its namespace is one the
+			// evaluator can resolve without the record. A deferred terminal, or
+			// an alias spelling that only the record can lower further, keeps the
+			// record for the next pass.
+			const Parser::StaticInitializerLookupClassification terminal_lookup =
+				parser_.classify_qualified_identifier_lookup(new_qual_id);
+			const TypeInfo* rebound_namespace_type = findTypeByName(
+				StringTable::getOrInternStringHandle(materialized_namespace));
+			const bool rebound_namespace_settled =
+				gNamespaceRegistry.isDeclared(new_ns_handle) ||
+				(rebound_namespace_type != nullptr &&
+				 !rebound_namespace_type->isTypeAlias() &&
+				 (rebound_namespace_type->getStructInfo() != nullptr ||
+				  rebound_namespace_type->getEnumInfo() != nullptr));
+			const bool keep_dependent_record =
+				terminal_lookup.outcome == Parser::StaticInitializerLookupOutcome::Deferred ||
+				(terminal_lookup.outcome == Parser::StaticInitializerLookupOutcome::Bound &&
+				 !rebound_namespace_settled);
+			if (!preserved_dependent_member_template_record && keep_dependent_record) {
 				new_qual_id.setDependentQualifiedName(*dependent_name);
 			}
 			FLASH_LOG(Templates, Trace, "  Record-substituted qualified-id: ",
@@ -4772,7 +4749,9 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 					  final_member_name,
 					  preserved_dependent_member_template_record
 						  ? " (preserved deferred member-template record)"
-						  : "");
+						  : keep_dependent_record
+							  ? " (retained for deferred terminal lookup)"
+							  : " (retired dependent record)");
 			ExpressionNode& new_expr =
 				gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
 			return ASTNode(&new_expr);
