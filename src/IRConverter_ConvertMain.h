@@ -272,6 +272,7 @@ private:
 	X64Register emitScratchAlignedFrameBase(X64Register avoid_reg);
 	X64Register emitScratchCanonicalFrameTop(X64Register avoid_reg);
 	void registerCanonicalTopFrameOffset(int32_t offset);
+	void emitMovDwordImmToFrame(int32_t offset, uint32_t imm32);
 
 	// Helper to generate and emit LEA from frame
 	void emitLeaFromFrame(X64Register destinationRegister, int32_t offset);
