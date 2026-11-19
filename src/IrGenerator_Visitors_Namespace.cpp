@@ -340,6 +340,50 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			// When present for a non-struct conversion, apply it and skip the local policy.
 			// When present as UserDefined, the source is a struct with a conversion operator.
 			bool sema_applied_conversion = false;
+			const auto apply_member_array_to_pointer_decay = [&]() -> bool {
+				const auto* source_temp = std::get_if<TempVar>(&operands.value);
+				if (source_temp == nullptr || !current_struct_name_.isValid()) {
+					return false;
+				}
+				const auto lvalue_info = getTempVarLValueInfo(*source_temp);
+				if (!lvalue_info.has_value() || lvalue_info->kind != LValueInfo::Kind::Member || !lvalue_info->member_name.has_value()) {
+					return false;
+				}
+				const auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
+				if (current_struct_it == getTypesByNameMap().end() || !current_struct_it->second->getStructInfo()) {
+					return false;
+				}
+				const StructMember* member = current_struct_it->second->getStructInfo()->findMember(*lvalue_info->member_name);
+				if (member == nullptr || !member->is_array) {
+					return false;
+				}
+				TempVar address_temp = var_counter.next();
+				if (std::holds_alternative<StringHandle>(lvalue_info->base)) {
+					AddressOfMemberOp addr_member_op;
+					addr_member_op.result = address_temp;
+					addr_member_op.base_object = std::get<StringHandle>(lvalue_info->base);
+					addr_member_op.member_offset = lvalue_info->offset;
+					addr_member_op.member_type_index = return_type_index;
+					addr_member_op.member_size_in_bits = return_size;
+					ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.return_token()));
+				} else if (std::holds_alternative<LocalVarId>(lvalue_info->base)) {
+					ComputeAddressOp address_op;
+					address_op.result = address_temp;
+					address_op.base = std::get<LocalVarId>(lvalue_info->base);
+					address_op.base_storage = lvalue_info->is_pointer_to_member ? ValueStorage::ContainsAddress : ValueStorage::ContainsData;
+					address_op.total_member_offset = lvalue_info->offset;
+					address_op.result_type_index = return_type_index;
+					address_op.result_size_bits = SizeInBits{return_size};
+					ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(address_op), node.return_token()));
+				} else {
+					return false;
+				}
+				operands = makeExprResult(return_type_index, SizeInBits{return_size}, IrOperand{address_temp}, PointerDepth{1}, ValueStorage::ContainsData);
+				return true;
+			};
+			if (!sema_applied_conversion && currentFunctionReturnsPointer() && apply_member_array_to_pointer_decay()) {
+				sema_applied_conversion = true;
+			}
 			if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
 					operands, *expr_opt, return_type_spec, node.return_token(), use_return_slot_for_ctor)) {
 				operands = *materialized;
@@ -465,47 +509,8 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 							node.return_token());
 						sema_applied_conversion = true;
 					} else if (cast_info.cast_kind == StandardConversionKind::ArrayToPointer) {
-						if (std::holds_alternative<TempVar>(operands.value)) {
-							TempVar return_temp = std::get<TempVar>(operands.value);
-							if (auto lv_info_opt = getTempVarLValueInfo(return_temp)) {
-								const LValueInfo& lv_info = *lv_info_opt;
-								if (lv_info.kind == LValueInfo::Kind::Member &&
-									std::holds_alternative<StringHandle>(lv_info.base)) {
-									TempVar address_temp = var_counter.next();
-									AddressOfMemberOp addr_member_op;
-									addr_member_op.result = address_temp;
-									addr_member_op.base_object = std::get<StringHandle>(lv_info.base);
-									addr_member_op.member_offset = lv_info.offset;
-									addr_member_op.member_type_index = return_type_index;
-									addr_member_op.member_size_in_bits = return_size;
-									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.return_token()));
-									operands = makeExprResult(
-										return_type_index,
-										SizeInBits{return_size},
-										IrOperand{address_temp},
-										PointerDepth{1},
-										ValueStorage::ContainsData);
-									sema_applied_conversion = true;
-								} else if (lv_info.kind == LValueInfo::Kind::Member &&
-										std::holds_alternative<LocalVarId>(lv_info.base)) {
-									TempVar address_temp = var_counter.next();
-									ComputeAddressOp address_op;
-									address_op.result = address_temp;
-									address_op.base = std::get<LocalVarId>(lv_info.base);
-									address_op.base_storage = lv_info.is_pointer_to_member ? ValueStorage::ContainsAddress : ValueStorage::ContainsData;
-									address_op.total_member_offset = lv_info.offset;
-									address_op.result_type_index = return_type_index;
-									address_op.result_size_bits = SizeInBits{return_size};
-									ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(address_op), node.return_token()));
-									operands = makeExprResult(
-										return_type_index,
-										SizeInBits{return_size},
-										IrOperand{address_temp},
-										PointerDepth{1},
-										ValueStorage::ContainsData);
-									sema_applied_conversion = true;
-								}
-							}
+						if (apply_member_array_to_pointer_decay()) {
+							sema_applied_conversion = true;
 						}
 					} else if (!is_struct_type(annotated_source_type) &&
 							   !is_struct_type(to_type) &&
