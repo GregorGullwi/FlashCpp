@@ -833,6 +833,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
 	const size_t function_body_begin = ir_.instructionCount();
 	symbol_table.enter_scope(ScopeType::Function);
+	enterScope();
 
 	// Reset the temporary variable counter for each new function
 	// TempVar is 1-based (TempVar() starts at 1). For member functions (operator()),
@@ -874,9 +875,15 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 		});
 	}
 
+	// Exit the body scope and collect its locals for exception cleanup, matching
+	// the regular function-body lifetime model.
+	exitFunctionScope();
+
 	// Complete reachable lambda fallthrough using the shared function policy
 	finishFunctionControlFlow(function_body_begin, StringTable::getOrInternStringHandle(lambda_info.operator_call_name),
 		lambda_info.lambda_token, false);
+
+	emitPendingFunctionCleanupLP(lambda_info.lambda_token);
 
 	// Restore outer lambda context (if any)
 	popLambdaContext();
@@ -976,6 +983,7 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
 	const size_t function_body_begin = ir_.instructionCount();
 	symbol_table.enter_scope(ScopeType::Function);
+	enterScope();
 
 		// Reset the temporary variable counter for each new function
 		// TempVar is 1-based. For static functions (like __invoke), no 'this' pointer,
@@ -1017,9 +1025,15 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 		});
 	}
 
+		// Exit the body scope and collect its locals for exception cleanup, matching
+		// the regular function-body lifetime model.
+	exitFunctionScope();
+
 		// Complete reachable lambda fallthrough using the shared function policy
 	finishFunctionControlFlow(function_body_begin, StringTable::getOrInternStringHandle(lambda_info.invoke_name),
 		lambda_info.lambda_token, false);
+
+	emitPendingFunctionCleanupLP(lambda_info.lambda_token);
 
 		// Restore outer lambda context
 	popLambdaContext();

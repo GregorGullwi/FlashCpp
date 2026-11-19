@@ -246,11 +246,6 @@ copy-initialization from a function call. Calls still allocate a temporary retur
 slot and copy into the caller's local; direct initialization of the caller's
 destination through the return slot is not implemented.
 
-Lambda bodies are not entered into the IR destructor scope stack, so a
-non-trivial local returned through lambda NRVO is not destroyed on an exceptional
-exit. Full lambda scope tracking is required before lambda NRVO has a complete
-lifetime model.
-
 Exception cleanup can currently destroy a caller destination whose
 initialization never completed. For example,
 `struct Big { ~Big(); }; Big make_fail(int) { Big local(1); throw 7; }` followed
@@ -260,10 +255,19 @@ instead of one). This is a pre-existing cleanup bug, not specific to NRVO, and
 must be fixed by tracking construction completion or cleanup ranges before
 claiming exception-safe return-slot construction.
 
-NRVO locals are now registered for exception cleanup and skipped only on a
-successful return for regular functions. A coherent lifetime model still needs
-to apply the same successful-return/exception distinction to lambdas and ensure
-cleanup only visits fully constructed objects.
+NRVO locals are registered for exception cleanup and skipped only on a
+successful return in both regular functions and lambda call operators. Exception
+cleanup still needs construction-completion tracking so it never visits a
+destination whose initialization never finished.
+
+## Lambda function-pointer conversion drops the __invoke target
+
+Converting a non-capturing lambda to a function pointer currently copies the
+closure object into the pointer slot (`assign %invoke = %make`) instead of
+materializing the `__invoke` entry address. A call through the converted pointer
+then treats closure bytes as a code target and crashes. The conversion operator
+needs to produce the `__invoke` address for every return type, including
+aggregates that use a hidden return slot.
 
 ## Constexpr namespace-scope pointer dereference is not yet supported
 
