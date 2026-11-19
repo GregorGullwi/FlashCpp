@@ -2008,7 +2008,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 		StringHandle var_name{};	 // Phase 5: StringHandle for efficient storage
 		LocalVarId local_id{};	 // Per-function identity of a named local (0 if none)
 		SizeInBits size_in_bits;
-		size_t alignment{};	// Custom alignment from alignas(n), 0 = use natural alignment
+		size_t alignment{};	// Required alignment of the variable's storage
 		bool is_array{};	 // True if this variable is an array (for array-to-pointer decay)
 	};
 	std::vector<VarDecl> local_vars;
@@ -2257,7 +2257,18 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 			auto size_in_bits = op.size_in_bits;
 				// Get variable name (Phase 4: Use helper)
 			std::string_view var_name = op.getVarName();
-			size_t custom_alignment = op.custom_alignment;
+			size_t alignment = std::max<size_t>(op.custom_alignment, 1);
+			if (!op.is_reference() && !op.pointer_depth.is_pointer()) {
+				const TypeIndex type_index = canonicalize_type_alias(op.type_index).resolvedTypeIndex();
+				const TypeInfo* type_info = tryGetTypeInfo(type_index);
+				const StructTypeInfo* struct_info = type_info != nullptr ? type_info->getStructInfo() : nullptr;
+				if (struct_info != nullptr) {
+					alignment = std::max(alignment, struct_info->alignment);
+				}
+			}
+			if (alignment == 0 || (alignment & (alignment - 1)) != 0) {
+				throw InternalError("Local storage requires a nonzero power-of-two alignment");
+			}
 
 			bool is_reference = op.is_reference();
 			bool is_array = op.is_array;
@@ -2284,7 +2295,8 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 
 			func_stack_space.named_vars_size += (total_size_bits / 8);
 				// Phase 5: Store StringHandle directly for efficient variable tracking
-			local_vars.push_back(VarDecl{.var_name = StringTable::getOrInternStringHandle(var_name), .local_id = op.local_id, .size_in_bits = SizeInBits{total_size_bits}, .alignment = custom_alignment, .is_array = is_array});
+			local_vars.push_back(VarDecl{.var_name = StringTable::getOrInternStringHandle(var_name), .local_id = op.local_id,
+				.size_in_bits = SizeInBits{total_size_bits}, .alignment = alignment, .is_array = is_array});
 		} else {
 				// Track TempVars and their sizes from typed payloads or legacy operand format
 			bool handled_by_typed_payload = false;
@@ -2564,20 +2576,11 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 	int_fast32_t stack_offset = -(param_home_space + eh_state_reserve);
 
 	for (const VarDecl& local_var : local_vars) {
-		// Apply alignment if specified, otherwise use natural alignment (8 bytes for x64)
-		size_t var_alignment = local_var.alignment > 0 ? local_var.alignment : 8;
-
-		// Align the stack offset down to the required alignment
-		// Stack grows downward, so we need to align down (toward more negative values)
-		int_fast32_t aligned_offset = stack_offset;
-		if (var_alignment > 1) {
-			// Round down to nearest multiple of alignment
-			// For negative offsets: (-16 & ~15) = -16, (-15 & ~15) = -16, (-17 & ~15) = -32
-			aligned_offset = (stack_offset - static_cast<int_fast32_t>(var_alignment) + 1) & ~(static_cast<int_fast32_t>(var_alignment) - 1);
-		}
-
-		// Allocate space for the variable
-		stack_offset = aligned_offset - (local_var.size_in_bits.value / 8);
+		// The slot boundary supplies native scalar alignment. Aggregate and explicit alignment also constrain the object's beginning.
+		const int_fast32_t slot_alignment = static_cast<int_fast32_t>(std::max<size_t>(local_var.alignment, 8));
+		stack_offset = (stack_offset - slot_alignment + 1) & ~(slot_alignment - 1);
+		stack_offset -= local_var.size_in_bits.value / 8;
+		stack_offset &= ~(static_cast<int_fast32_t>(local_var.alignment) - 1);
 
 		if (local_var.local_id.value != 0) {
 			// Named local: resolve through the numeric frame table. The id is

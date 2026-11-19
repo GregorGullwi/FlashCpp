@@ -265,6 +265,16 @@ names a namespace-scope array currently reports a non-pointer value.
 
 ## Subscript storage follow-up architecture
 
+Some local `VariableDeclOp` records still publish stale parser sizes. The
+`AliasChain<Payload>::final_type payload{42};` declaration in
+`tests/test_chained_member_alias_overload_ret0.cpp` allocates zero bytes even
+though its member store writes four bytes. Inline function-pointer arrays in
+`tests/test_array_of_function_pointers_ret0.cpp` publish 32-bit elements while
+their initialization and subscripting use 64-bit pointers. Existing frame
+padding can mask these undersized allocations. Declaration IR must publish the
+resolved alias and ordered-declarator object sizes before local slot spacing
+can be compacted safely.
+
 Runtime storage now describes what each temporary holds, but two consumers
 still infer semantics from it. `ReturnOp` should carry explicit by-value versus
 reference intent instead of consulting per-function `TempVar` lvalue metadata;
