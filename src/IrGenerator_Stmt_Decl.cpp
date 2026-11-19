@@ -1590,10 +1590,14 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			startConstructionTracking();
 		}
 		pending_call_return_destination_ = PendingCallReturnDestination{
-			local_var_id, type_node.type_index(), static_cast<int>(type_node.size_in_bits())};
+			local_var_id, type_node.type_index(), SizeInBits{static_cast<int>(type_node.size_in_bits())}};
 	};
 	auto endCallInitialization = [&]() {
 		pending_call_return_destination_.reset();
+	};
+	auto noteDirectDestinationResult = [&](const ExprResult& result) {
+		const auto* direct_local = std::get_if<LocalVarId>(&result.value);
+		initialized_directly_in_destination = direct_local != nullptr && *direct_local == local_var_id;
 	};
 
 	if (node.initializer().has_value() &&
@@ -2627,10 +2631,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				beginCallInitialization(init_node);
 				ExprResult init_operands = visitVariableInitializer(init_node.as<ExpressionNode>());
 				endCallInitialization();
-				if (const auto* direct_local = std::get_if<LocalVarId>(&init_operands.value);
-					direct_local != nullptr && *direct_local == local_var_id) {
-					initialized_directly_in_destination = true;
-				}
+				noteDirectDestinationResult(init_operands);
 
 					// C++20 [conv.array]: initializing a pointer from an array lvalue,
 					// including a struct array member such as `int* p = s.values;`,
@@ -2847,10 +2848,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					beginCallInitialization(init_node);
 					ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 					endCallInitialization();
-					if (const auto* direct_local = std::get_if<LocalVarId>(&init_operands.value);
-						direct_local != nullptr && *direct_local == local_var_id) {
-						initialized_directly_in_destination = true;
-					}
+					noteDirectDestinationResult(init_operands);
 					cached_copy_init_expr_result = init_operands;
 						// Check if this is an rvalue (TempVar) of the same struct type.
 						// Only treat it as "direct initialization from rvalue" when it IS the same

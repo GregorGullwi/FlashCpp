@@ -240,18 +240,20 @@ supplies the array or when subscripts are combined across dimensions.
 
 The safe NRVO slice covers top-level named locals in lambda call operators and
 regular functions with constructor-style initialization and one top-level
-identifier return. The following shapes remain unsupported: nested-block locals,
-multiple return statements, conversion-operator initialization, and
-copy-initialization from a function call.
+identifier return. The following candidate shapes remain unsupported:
+nested-block locals, multiple return statements, conversion-operator
+initialization, and copy-initialization from a function call.
 
-Hidden-return calls now construct directly in the caller destination; no
-temporary return slot or caller-side copy is emitted. Constructor-initialized and
-call-initialized struct locals with destructors reserve a construction flag
-before evaluation and set it only after initialization completes. Exception
-cleanup checks that flag, so an incomplete callee local or caller destination is
-not destroyed. Remaining lifetime gaps are initialization paths that bypass the
-tracked struct-initialization tail, such as some array and member-aggregate
-forms.
+Free and static hidden-return calls now construct directly in the caller
+destination; no temporary return slot or caller-side copy is emitted. Member and
+functor call initializers still use a temporary result followed by assignment.
+Constructor-initialized and call-initialized struct locals with destructors
+reserve a construction flag in the prologue, set it only after initialization
+completes, and clear it after destruction. Exception cleanup checks that flag, so
+an incomplete callee local or caller destination is not destroyed and a later
+declaration in the same frame cannot observe a stale flag. Remaining lifetime
+gaps are initialization paths that bypass the tracked struct-initialization
+tail, such as some array and member-aggregate forms.
 
 ## Constexpr namespace-scope pointer dereference is not yet supported
 

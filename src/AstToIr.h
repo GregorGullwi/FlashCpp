@@ -1627,7 +1627,7 @@ private:
 	struct PendingCallReturnDestination {
 		LocalVarId local_id;
 		TypeIndex type_index;
-		int size_in_bits = 0;
+		SizeInBits size_in_bits;
 	};
 	std::optional<PendingCallReturnDestination> pending_call_return_destination_;
 
