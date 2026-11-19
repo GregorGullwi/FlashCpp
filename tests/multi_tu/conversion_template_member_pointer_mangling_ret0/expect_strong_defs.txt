@@ -1,6 +1,13 @@
-# Decorated names must match MSVC for member-object and member-function pointers
-# with two distinct owners (ObjectOwner / FunctionOwner).
+# Free-function decorated names must match MSVC for ordinary owners and for
+# specialized owners encoded as ?$Name@Args (not internal C$hash spellings).
+# Conversion-operator template symbols (??$?B...) are intentionally omitted:
+# FlashCpp still uses a distinct operator-name encoding; owner type codes are
+# covered by these free-function fixtures instead.
 ?consume_object@@YAHPEQObjectOwner@@H@Z
 ?consume_function@@YAHP8FunctionOwner@@EAAHXZ@Z
 ?identity_owner_object@@YAHPEQObjectOwner@@H@Z
 ?identity_owner_function@@YAHP8FunctionOwner@@EAAHXZ@Z
+?consume_specialized_int@@YAHPEQ?$SpecializedOwner@H@@H@Z
+?consume_specialized_long@@YAHPEQ?$SpecializedOwner@J@@H@Z
+?consume_specialized_fn_int@@YAHP8?$SpecializedOwner@H@@EAAHXZ@Z
+?consume_specialized_fn_long@@YAHP8?$SpecializedOwner@J@@EAAHXZ@Z

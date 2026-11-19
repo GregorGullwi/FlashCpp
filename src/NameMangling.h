@@ -246,51 +246,171 @@ inline std::string_view getMsvcMemberPointerClassName(
 	return {};
 }
 
-// Ordered member-pointer components publish their declaring class as EntityId or
-// TypeId. Resolve that identity the same way the canonical adapter prefers TypeId
-// then EntityId; flat spelling remains a legacy/fallback projection.
-inline const TypeInfo* tryResolvePublishedMemberPointerOwnerTypeInfo(
-	EntityId owner_entity,
-	TypeId owner_type) {
-	if (owner_type) {
-		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-		const CanonicalTypeNode owner_node = table.node(owner_type);
-		if (owner_node.kind == CanonicalTypeKind::Record) {
-			if (const TypeInfo* owner_info =
-					tryFindTypeInfoByEntityId(table.recordEntity(owner_type))) {
-				return owner_info;
-			}
-		} else if (isCanonicalClassTypeKind(owner_node.kind)) {
-			if (const StructTypeInfo* owner_record =
-					tryResolveCanonicalMemberPointerOwnerRecord(table, owner_type);
-				owner_record != nullptr &&
-				owner_record->declaration_node != nullptr &&
-				owner_record->declaration_node->has_entity_id()) {
-				if (const TypeInfo* owner_info = tryFindTypeInfoByEntityId(
-						owner_record->declaration_node->entity_id())) {
-					return owner_info;
-				}
-			}
-		}
+// Published specialization TypeInfo for a canonical class TypeId. Prefer the
+// specialization's own TypeInfo over the primary-pattern record used for layout.
+inline const TypeInfo* tryFindPublishedClassTypeInfoForCanonicalOwner(
+	CanonicalTypeTable& table,
+	TypeId class_type) {
+	const CanonicalTypeKind kind = table.node(class_type).kind;
+	if (kind == CanonicalTypeKind::Record) {
+		return tryFindTypeInfoByEntityId(table.recordEntity(class_type));
 	}
-	if (owner_entity) {
-		return tryFindTypeInfoByEntityId(owner_entity);
+	if (kind != CanonicalTypeKind::TemplateSpecialization &&
+		!isCanonicalClassTypeKind(kind)) {
+		return nullptr;
+	}
+	for (size_t slot = 1; slot < getTypeInfoCount(); ++slot) {
+		const TypeInfo* const type_info = tryGetTypeInfo(TypeIndex{slot});
+		if (type_info == nullptr || type_info->getStructInfo() == nullptr) {
+			continue;
+		}
+		CanonicalTypeTransaction transaction(table);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *type_info);
+		if (imported.status == CanonicalTypeImportStatus::Supported && imported.type == class_type) {
+			transaction.commit();
+			return type_info;
+		}
 	}
 	return nullptr;
 }
 
-inline std::string_view getMsvcOrderedMemberPointerClassName(
-	const DeclaratorComponent& component,
-	const TypeSpecifierNode& type_node) {
-	if (component.kind == DeclaratorComponentKind::MemberObjectPointer ||
-		component.kind == DeclaratorComponentKind::MemberFunctionPointer) {
-		if (const TypeInfo* owner_info = tryResolvePublishedMemberPointerOwnerTypeInfo(
-				component.memberOwnerEntity(),
-				component.memberOwnerType())) {
-			return StringTable::getStringView(owner_info->name());
+// Ordered member-pointer components publish their declaring class as EntityId or
+// TypeId. Resolve the published specialization/record TypeInfo without collapsing
+// TemplateSpecialization owners to their primary pattern. Flat spelling remains a
+// legacy fallback for non-identity declarators.
+inline const TypeInfo* tryResolvePublishedMemberPointerOwnerTypeInfo(
+	EntityId owner_entity,
+	TypeId owner_type,
+	const TypeSpecifierNode& flat_fallback) {
+	if (owner_type) {
+		if (const TypeInfo* owner_info = tryFindPublishedClassTypeInfoForCanonicalOwner(
+				requireFrontendContext().canonicalTypes(), owner_type)) {
+			return owner_info;
 		}
 	}
-	return getMsvcMemberPointerClassName(type_node);
+	if (owner_entity) {
+		if (const TypeInfo* owner_info = tryFindTypeInfoByEntityId(owner_entity)) {
+			return owner_info;
+		}
+	}
+	if (flat_fallback.has_member_class()) {
+		const auto type_it = getTypesByNameMap().find(flat_fallback.member_class_name());
+		if (type_it != getTypesByNameMap().end()) {
+			return type_it->second;
+		}
+	}
+	if (flat_fallback.has_member_class_entity()) {
+		return tryFindTypeInfoByEntityId(flat_fallback.member_class_entity());
+	}
+	if (flat_fallback.has_member_class_type_id()) {
+		return tryFindPublishedClassTypeInfoForCanonicalOwner(
+			requireFrontendContext().canonicalTypes(),
+			flat_fallback.member_class_type_id());
+	}
+	return nullptr;
+}
+
+// MSVC encodes integers as [?] <0-9 for 1..10> | <A-P hex digits> @.
+template <typename OutputType>
+inline void appendMsvcNumber(OutputType& output, int64_t number) {
+	if (number < 0) {
+		output += '?';
+		number = -number;
+	}
+	if (number >= 1 && number <= 10) {
+		output += static_cast<char>('0' + static_cast<int>(number) - 1);
+		return;
+	}
+	char digits[16];
+	size_t count = 0;
+	uint64_t value = static_cast<uint64_t>(number);
+	if (value == 0) {
+		digits[count++] = 'A';
+	} else {
+		while (value != 0) {
+			digits[count++] = static_cast<char>('A' + (value & 0xf));
+			value >>= 4;
+		}
+	}
+	while (count > 0) {
+		output += digits[--count];
+	}
+	output += '@';
+}
+
+template <typename OutputType>
+inline void appendMsvcTemplateArgCode(OutputType& output, const TypeInfo::TemplateArgInfo& arg);
+
+template <typename OutputType>
+inline void appendMsvcPublishedClassNestedName(OutputType& output, const TypeInfo& type_info) {
+	if (type_info.isTemplateInstantiation()) {
+		const StringHandle primary_name = type_info.baseTemplateName();
+		if (!primary_name.isValid()) {
+			throw InternalError("MSVC name mangling: specialization missing primary template name");
+		}
+		output += "?$";
+		output += primary_name.view();
+		output += '@';
+		for (const TypeInfo::TemplateArgInfo& arg : type_info.templateArgs()) {
+			appendMsvcTemplateArgCode(output, arg);
+		}
+		const NamespaceHandle ns = type_info.sourceNamespace().isValid()
+			? type_info.sourceNamespace()
+			: type_info.namespaceHandle();
+		const std::vector<std::string_view> namespace_path = buildNamespacePathFromHandle(ns);
+		for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
+			output += '@';
+			output += *it;
+		}
+		return;
+	}
+	const std::string_view type_name = StringTable::getStringView(type_info.name());
+	if (type_name.find("::") != std::string_view::npos ||
+		!type_info.namespaceHandle().isValid() ||
+		type_info.namespaceHandle().isGlobal()) {
+		appendMsvcReversedQualifiedName(output, type_name);
+		return;
+	}
+	appendMsvcReversedQualifiedName(
+		output,
+		gNamespaceRegistry.buildQualifiedIdentifier(
+			type_info.namespaceHandle(), type_info.name()).view());
+}
+
+template <typename OutputType>
+inline bool tryAppendMsvcMemberPointerOwnerNestedName(
+	OutputType& output,
+	EntityId owner_entity,
+	TypeId owner_type,
+	const TypeSpecifierNode& flat_fallback) {
+	if (const TypeInfo* owner_info = tryResolvePublishedMemberPointerOwnerTypeInfo(
+			owner_entity, owner_type, flat_fallback)) {
+		appendMsvcPublishedClassNestedName(output, *owner_info);
+		return true;
+	}
+	const std::string_view flat_name = getMsvcMemberPointerClassName(flat_fallback);
+	if (flat_name.empty()) {
+		return false;
+	}
+	appendMsvcReversedQualifiedName(output, flat_name);
+	return true;
+}
+
+template <typename OutputType>
+inline bool tryAppendMsvcOrderedMemberPointerOwnerNestedName(
+	OutputType& output,
+	const DeclaratorComponent& component,
+	const TypeSpecifierNode& type_node) {
+	if (component.kind != DeclaratorComponentKind::MemberObjectPointer &&
+		component.kind != DeclaratorComponentKind::MemberFunctionPointer) {
+		return tryAppendMsvcMemberPointerOwnerNestedName(
+			output, {}, {}, type_node);
+	}
+	return tryAppendMsvcMemberPointerOwnerNestedName(
+		output,
+		component.memberOwnerEntity(),
+		component.memberOwnerType(),
+		type_node);
 }
 
 inline TypeIndex resolveTypeAliasIndex(TypeIndex idx);
@@ -762,11 +882,6 @@ inline void appendMsvcOrderedDeclaratorTypeCode(
 				component.kind != DeclaratorComponentKind::MemberFunctionPointer) {
 				throw InternalError("MSVC name mangling: ordered member object pointer is not innermost");
 			}
-			const std::string_view class_name =
-				getMsvcOrderedMemberPointerClassName(component, normalized);
-			if (class_name.empty()) {
-				throw InternalError("MSVC name mangling: ordered member pointer missing declaring class");
-			}
 			if (component.cv_qualifier == CVQualifier::None) {
 				output += 'P';
 			} else if (component.cv_qualifier == CVQualifier::Const) {
@@ -780,7 +895,9 @@ inline void appendMsvcOrderedDeclaratorTypeCode(
 			}
 			if (component.kind == DeclaratorComponentKind::MemberObjectPointer) {
 				output += "EQ";
-				appendMsvcReversedQualifiedName(output, class_name);
+				if (!tryAppendMsvcOrderedMemberPointerOwnerNestedName(output, component, normalized)) {
+					throw InternalError("MSVC name mangling: ordered member pointer missing declaring class");
+				}
 				output += "@@";
 				TypeSpecifierNode member_type = normalized;
 				member_type.clear_declarator_shape();
@@ -798,7 +915,9 @@ inline void appendMsvcOrderedDeclaratorTypeCode(
 				throw InternalError("MSVC name mangling: ordered member function pointer missing function signature");
 			}
 			output += '8';
-			appendMsvcReversedQualifiedName(output, class_name);
+			if (!tryAppendMsvcOrderedMemberPointerOwnerNestedName(output, component, normalized)) {
+				throw InternalError("MSVC name mangling: ordered member pointer missing declaring class");
+			}
 			output += "@@";
 			const FunctionSignature& signature = normalized.function_signature();
 			appendMsvcMemberFunctionPointerQualifierCode(output, signature);
@@ -893,13 +1012,14 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 	}
 
 	if (is_member_object_pointer_like) {
-		std::string_view class_name = getMsvcMemberPointerClassName(normalized);
-		if (class_name.empty()) {
+		output += "PEQ";
+		if (!tryAppendMsvcMemberPointerOwnerNestedName(
+				output,
+				normalized.has_member_class_entity() ? normalized.member_class_entity() : EntityId{},
+				normalized.has_member_class_type_id() ? normalized.member_class_type_id() : TypeId{},
+				normalized)) {
 			throw InternalError("MSVC name mangling: member object pointer missing declaring class");
 		}
-
-		output += "PEQ";
-		appendMsvcReversedQualifiedName(output, class_name);
 		output += "@@";
 
 		TypeSpecifierNode member_type =
@@ -1025,31 +1145,29 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 		break;
 	}
 	case TypeCategory::MemberFunctionPointer: {
-		std::string_view class_name = getMsvcMemberPointerClassName(normalized);
-		if (class_name.empty()) {
-			StringBuilder message;
-			message.append("MSVC name mangling: member function pointer missing declaring class; type=")
-				.append(normalized.getReadableString())
-				.append(", token=")
-				.append(normalized.token().value())
-				.append(", has_sig=")
-				.append(normalized.has_function_signature() ? "1" : "0")
-				.append(", has_member_class=")
-				.append(normalized.has_member_class() ? "1" : "0");
-			if (normalized.has_function_signature()) {
-				const FunctionSignature& sig = normalized.function_signature();
-				message.append(", sig.class_name=")
-					.append(sig.class_name.isValid() ? sig.class_name.view() : "<none>");
-			}
-			throw InternalError(std::string(message.commit()));
-		}
 		if (!normalized.has_function_signature()) {
 			throw InternalError("MSVC name mangling: MemberFunctionPointer type missing function signature — cannot generate valid symbol");
 		}
 
 		const FunctionSignature& sig = normalized.function_signature();
 		output += "P8";
-		appendMsvcReversedQualifiedName(output, class_name);
+		if (!tryAppendMsvcMemberPointerOwnerNestedName(
+				output,
+				normalized.has_member_class_entity() ? normalized.member_class_entity() : EntityId{},
+				normalized.has_member_class_type_id() ? normalized.member_class_type_id() : TypeId{},
+				normalized)) {
+			StringBuilder message;
+			message.append("MSVC name mangling: member function pointer missing declaring class; type=")
+				.append(normalized.getReadableString())
+				.append(", token=")
+				.append(normalized.token().value())
+				.append(", has_sig=1")
+				.append(", has_member_class=")
+				.append(normalized.has_member_class() ? "1" : "0");
+			message.append(", sig.class_name=")
+				.append(sig.class_name.isValid() ? sig.class_name.view() : "<none>");
+			throw InternalError(std::string(message.commit()));
+		}
 		output += "@@";
 		appendMsvcMemberFunctionPointerQualifierCode(output, sig);
 
@@ -1078,6 +1196,91 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 	default:
 		throw CompileError("MSVC name mangling: unknown type — cannot generate valid symbol");
 	}
+}
+
+template <typename OutputType>
+inline bool tryAppendMsvcBuiltinTypeCode(OutputType& output, TypeCategory category) {
+	switch (category) {
+	case TypeCategory::Void: output += 'X'; return true;
+	case TypeCategory::Bool: output += "_N"; return true;
+	case TypeCategory::Char: output += 'D'; return true;
+	case TypeCategory::UnsignedChar: output += 'E'; return true;
+	case TypeCategory::WChar: output += "_W"; return true;
+	case TypeCategory::Char8: output += "_Q"; return true;
+	case TypeCategory::Char16: output += "_S"; return true;
+	case TypeCategory::Char32: output += "_U"; return true;
+	case TypeCategory::Short: output += 'F'; return true;
+	case TypeCategory::UnsignedShort: output += 'G'; return true;
+	case TypeCategory::Int: output += 'H'; return true;
+	case TypeCategory::UnsignedInt: output += 'I'; return true;
+	case TypeCategory::Long: output += 'J'; return true;
+	case TypeCategory::UnsignedLong: output += 'K'; return true;
+	case TypeCategory::LongLong: output += "_J"; return true;
+	case TypeCategory::UnsignedLongLong: output += "_K"; return true;
+	case TypeCategory::Float: output += 'M'; return true;
+	case TypeCategory::Double: output += 'N'; return true;
+	case TypeCategory::LongDouble: output += 'O'; return true;
+	default: return false;
+	}
+}
+
+template <typename OutputType>
+inline void appendMsvcTemplateArgCode(OutputType& output, const TypeInfo::TemplateArgInfo& arg) {
+	if (arg.is_value) {
+		output += "$0";
+		appendMsvcNumber(output, arg.intValue());
+		return;
+	}
+	if (arg.is_template_template_arg) {
+		throw InternalError("MSVC name mangling: template-template arguments are not encoded yet");
+	}
+	const TypeCategory category = arg.category();
+	if (arg.pointer_depth == 0 && arg.ref_qualifier == ReferenceQualifier::None &&
+		!arg.is_array && arg.ordered_declarator.empty() && arg.cv_qualifier == CVQualifier::None &&
+		tryAppendMsvcBuiltinTypeCode(output, category)) {
+		return;
+	}
+	if ((category == TypeCategory::Struct || category == TypeCategory::UserDefined ||
+		 category == TypeCategory::TypeAlias || category == TypeCategory::Enum) &&
+		arg.type_index.is_valid() && arg.type_index.index() < getTypeInfoCount() &&
+		arg.pointer_depth == 0 && arg.ref_qualifier == ReferenceQualifier::None &&
+		!arg.is_array && arg.ordered_declarator.empty()) {
+		const TypeInfo& arg_type = getTypeInfo(arg.type_index);
+		if (category == TypeCategory::Enum) {
+			output += "W4";
+		} else if (category == TypeCategory::Struct) {
+			output += 'U';
+		} else {
+			output += 'V';
+		}
+		appendMsvcPublishedClassNestedName(output, arg_type);
+		output += "@@";
+		return;
+	}
+	TypeSpecifierNode type_spec(
+		arg.type_index.is_valid() ? arg.type_index : nativeTypeIndex(category),
+		TypeQualifier::None,
+		0,
+		Token{},
+		arg.cv_qualifier);
+	type_spec.set_type_index(arg.type_index.is_valid() ? arg.type_index : nativeTypeIndex(category));
+	for (size_t i = 0; i < arg.pointer_depth; ++i) {
+		CVQualifier cv = i < arg.pointer_cv_qualifiers.size()
+			? arg.pointer_cv_qualifiers[i]
+			: CVQualifier::None;
+		type_spec.add_pointer_level(cv);
+	}
+	type_spec.set_reference_qualifier(arg.ref_qualifier);
+	if (!arg.ordered_declarator.empty()) {
+		type_spec.set_ordered_declarator(arg.ordered_declarator);
+	}
+	if (arg.member_class_name.isValid()) {
+		type_spec.set_member_class_name(arg.member_class_name);
+	}
+	if (arg.function_signature().has_value()) {
+		type_spec.set_function_signature(*arg.function_signature());
+	}
+	appendTypeCode(output, type_spec);
 }
 
 template <typename OutputType>
@@ -1364,7 +1567,8 @@ inline std::string_view getItaniumOrderedMemberPointerClassName(
 		component.kind == DeclaratorComponentKind::MemberFunctionPointer) {
 		if (const TypeInfo* owner_info = tryResolvePublishedMemberPointerOwnerTypeInfo(
 				component.memberOwnerEntity(),
-				component.memberOwnerType())) {
+				component.memberOwnerType(),
+				type_node)) {
 			return getItaniumTypeInfoName(*owner_info);
 		}
 	}
