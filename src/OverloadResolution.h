@@ -3272,7 +3272,7 @@ inline bool lambdaClosureHasGenericCallOperator(const StructTypeInfo& struct_inf
 }
 
 inline UserDefinedConversionOperatorSelection makeLambdaClosureConversionSelection(
-	StructTypeInfo& struct_info, const TypeSpecifierNode& target_type, const TypeInfo& source_type_info) {
+	const StructTypeInfo& struct_info, const TypeSpecifierNode& target_type, const TypeInfo& source_type_info) {
 	Token conversion_token(Token::Type::Identifier, StringBuilder()
 		.append("operator ")
 		.append(target_type.getReadableString())
@@ -3292,10 +3292,6 @@ inline UserDefinedConversionOperatorSelection makeLambdaClosureConversionSelecti
 	conversion_func.set_is_const_member_function((static_cast<uint8_t>(call_operator_cv) & static_cast<uint8_t>(CVQualifier::Const)) != 0);
 	conversion_func.set_is_volatile_member_function((static_cast<uint8_t>(call_operator_cv) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0);
 	conversion_func.set_is_constexpr(true);
-	StructMemberFunction conversion_member(conversion_token.handle(), conversion_func_node, AccessSpecifier::Public);
-	conversion_member.cv_qualifier = call_operator_cv;
-	conversion_member.conversion_target_type = getCanonicalConversionTargetType(target_type);
-	struct_info.member_functions.push_back(std::move(conversion_member));
 	UserDefinedConversionOperatorSelection selection;
 	selection.function = &conversion_func;
 	selection.compatibility_declaring_type_index = source_type_info.type_index_;
@@ -3351,12 +3347,7 @@ trySelectLambdaClosureConversionOperator(const TypeSpecifierNode& source_type, c
 	if (!lambdaClosureHasGenericCallOperator(*source_struct_info)) {
 		return std::nullopt;
 	}
-	TypeInfo* mutable_source_type_info = tryGetTypeInfoMut(source_type.type_index());
-	StructTypeInfo* mutable_source_struct_info = mutable_source_type_info != nullptr ? mutable_source_type_info->getStructInfo() : nullptr;
-	if (mutable_source_struct_info == nullptr) {
-		return std::nullopt;
-	}
-	return makeLambdaClosureConversionSelection(*mutable_source_struct_info, target_type, *source_type_info);
+	return makeLambdaClosureConversionSelection(*source_struct_info, target_type, *source_type_info);
 }
 
 inline std::optional<UserDefinedConversionOperatorSelection>

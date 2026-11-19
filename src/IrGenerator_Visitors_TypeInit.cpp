@@ -349,8 +349,6 @@ void AstToIr::generateCollectedLambdas() {
 			// Process from the end (newly added lambdas) backwards
 			size_t current_size = collected_lambdas_.size();
 			for (size_t i = current_size; i > processed_count; --i) {
-				sema_.normalizeInstantiatedLambdaBody(collected_lambdas_[i - 1]);
-
 				// Re-access via index after normalization to avoid any stale-
 				// reference risk (the vector could theoretically reallocate).
 				LambdaInfo& stored_lambda_info = collected_lambdas_[i - 1];
@@ -361,8 +359,16 @@ void AstToIr::generateCollectedLambdas() {
 				if (stored_lambda_info.is_generic && stored_lambda_info.deduced_auto_types.empty()) {
 					continue;
 				}
-				// Skip if this lambda has already been generated (prevents duplicate definitions)
-				if (generated_lambda_ids_.find(stored_lambda_info.lambda_id) != generated_lambda_ids_.end()) {
+				if (stored_lambda_info.is_generic && stored_lambda_info.generation_id >= kLambdaVariantGenerationBase) {
+					// Variant instantiations re-normalize the shared lambda body with
+					// their own deduced parameter types immediately before emission.
+					stored_lambda_info.normalized_deduced_auto_types_generation = 0;
+				}
+				sema_.normalizeInstantiatedLambdaBody(stored_lambda_info);
+
+				// Skip if this lambda generation has already been emitted (prevents
+				// duplicate definitions while allowing several instantiations).
+				if (generated_lambda_ids_.find(stored_lambda_info.generation_id) != generated_lambda_ids_.end()) {
 					continue;
 				}
 
@@ -370,7 +376,7 @@ void AstToIr::generateCollectedLambdas() {
 				// function may push new lambdas which can reallocate the vector and
 				// invalidate any references.
 				LambdaInfo lambda_info = stored_lambda_info;
-				generated_lambda_ids_.insert(lambda_info.lambda_id);
+				generated_lambda_ids_.insert(lambda_info.generation_id);
 				generateLambdaFunctions(lambda_info);
 			}
 			processed_count = current_size;
@@ -378,7 +384,6 @@ void AstToIr::generateCollectedLambdas() {
 
 		bool generated_deferred_lambda = false;
 		for (size_t di = deferred_scan_start; di < collected_lambdas_.size(); ++di) {
-			sema_.normalizeInstantiatedLambdaBody(collected_lambdas_[di]);
 			LambdaInfo& stored_lambda_info = collected_lambdas_[di];
 
 			if (!stored_lambda_info.is_generic || stored_lambda_info.deduced_auto_types.empty()) {
@@ -392,12 +397,16 @@ void AstToIr::generateCollectedLambdas() {
 				}
 				continue;
 			}
-			if (generated_lambda_ids_.find(stored_lambda_info.lambda_id) != generated_lambda_ids_.end()) {
+			if (stored_lambda_info.generation_id >= kLambdaVariantGenerationBase) {
+				stored_lambda_info.normalized_deduced_auto_types_generation = 0;
+			}
+			sema_.normalizeInstantiatedLambdaBody(stored_lambda_info);
+			if (generated_lambda_ids_.find(stored_lambda_info.generation_id) != generated_lambda_ids_.end()) {
 				continue;
 			}
 
 			LambdaInfo lambda_info = stored_lambda_info;
-			generated_lambda_ids_.insert(lambda_info.lambda_id);
+			generated_lambda_ids_.insert(lambda_info.generation_id);
 			generateLambdaFunctions(lambda_info);
 			generated_deferred_lambda = true;
 		}
