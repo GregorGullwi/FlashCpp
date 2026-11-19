@@ -763,29 +763,11 @@ ParseResult Parser::parse_lambda_expression() {
 		}
 	}
 
-	// Skip optional requires clause (C++20)
+	std::optional<ASTNode> lambda_requires_clause;
 	if (peek() == "requires"_tok) {
-		advance(); // consume 'requires'
-		// Skip the requires expression/clause
-		if (peek() == "("_tok) {
-			// requires(expr) form
-			advance(); // consume '('
-			int paren_depth = 1;
-			while (!peek().is_eof() && paren_depth > 0) {
-				if (peek() == "("_tok)
-					paren_depth++;
-				else if (peek() == ")"_tok)
-					paren_depth--;
-				if (paren_depth > 0)
-					advance();
-			}
-			consume(")"_tok);
-		} else {
-			// Simple requires constraint expression (e.g., requires SomeConcept<T>)
-			// Skip tokens until we reach '->' or '{'
-			while (!peek().is_eof() && peek() != "->"_tok && peek() != "{"_tok) {
-				advance();
-			}
+		lambda_requires_clause = parse_trailing_requires_clause();
+		if (!lambda_requires_clause.has_value()) {
+			return ParseResult::error("Expected a constraint-expression after 'requires'", current_token_);
 		}
 	}
 
@@ -1202,6 +1184,7 @@ ParseResult Parser::parse_lambda_expression() {
 		lambda_is_noexcept,
 		lambda_is_constexpr,
 		lambda_is_consteval,
+		lambda_requires_clause,
 		has_capture_all);
 	auto& lambda_ref = lambda_node.as<LambdaExpressionNode>();
 	if (hasActiveTemplateParameters() && !template_param_substitutions_.empty()) {

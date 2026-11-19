@@ -3444,6 +3444,10 @@ inline std::optional<UserDefinedConversionOperatorSelection> trySelectGenericLam
 			return std::nullopt;
 		}
 	}
+	if (lambda.has_requires_clause() &&
+		!tryEvaluateLambdaConversionConstraints(lambda, explicit_arguments).value_or(false)) {
+		return std::nullopt;
+	}
 
 	std::optional<TypeSpecifierNode> actual_return;
 	if (lambda.return_type().has_value() && lambda.return_type()->is<TypeSpecifierNode>()) {

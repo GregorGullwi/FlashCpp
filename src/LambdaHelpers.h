@@ -26,6 +26,9 @@ inline bool isCapturelessLambdaDeclaration(const LambdaExpressionNode& lambda) {
 std::optional<TypeSpecifierNode> tryDeduceLambdaConversionReturnType(
 	const LambdaExpressionNode& lambda, std::span<const TypeSpecifierNode> parameter_types,
 	std::span<const std::optional<TypeSpecifierNode>> explicit_template_arguments);
+std::optional<bool> tryEvaluateLambdaConversionConstraints(
+	const LambdaExpressionNode& lambda,
+	std::span<const std::optional<TypeSpecifierNode>> explicit_template_arguments);
 
 inline std::optional<LambdaStructSignature> getFunctionSignatureFromLambdaStruct(const StructTypeInfo& struct_info) {
 	if (!isLambdaClosureStruct(struct_info)) {

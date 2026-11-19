@@ -337,6 +337,7 @@ private:
 				node.is_noexcept(),
 				node.is_constexpr(),
 				node.is_consteval(),
+				node.requires_clause(),
 				node.has_capture_default());
 			if (node.outer_template_environment_snapshot() != nullptr) {
 				rewritten.set_outer_template_bindings(node.outer_template_environment_snapshot());

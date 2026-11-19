@@ -862,6 +862,7 @@ public:
 		bool is_noexcept,
 		bool is_constexpr,
 		bool is_consteval,
+		std::optional<ASTNode> requires_clause,
 		bool has_capture_default)
 		: captures_(std::move(captures)),
 		  parameters_(std::move(parameters)),
@@ -874,6 +875,7 @@ public:
 		  is_noexcept_(is_noexcept),
 		  is_constexpr_(is_constexpr),
 		  is_consteval_(is_consteval),
+		  requires_clause_(requires_clause),
 		  has_capture_default_(has_capture_default) {}
 
 	std::span<const LambdaCaptureNode> captures() const { return captures_; }
@@ -891,6 +893,8 @@ public:
 	// Preserves the original capture-default syntax after the capture-all list
 	// has been expanded into concrete captures for the closure layout.
 	bool has_capture_default() const { return has_capture_default_; }
+	const std::optional<ASTNode>& requires_clause() const { return requires_clause_; }
+	bool has_requires_clause() const { return requires_clause_.has_value(); }
 
 	template <typename NameContainer, typename ArgContainer>
 	void set_outer_template_bindings(const NameContainer& template_param_names, const ArgContainer& template_args) {
@@ -942,6 +946,7 @@ private:
 	bool is_noexcept_;	   // Whether the lambda is noexcept
 	bool is_constexpr_;	// Whether the lambda is constexpr
 	bool is_consteval_;	// Whether the lambda is consteval
+	std::optional<ASTNode> requires_clause_;	// Optional RequiresClauseNode for a generic lambda
 	bool has_capture_default_;	// Original syntax used [=] or [&], even when nothing was captured
 	const TemplateEnvironmentSnapshotNode* outer_template_environment_snapshot_node_{};
 	TemplateParamNameVector outer_template_param_names_;
