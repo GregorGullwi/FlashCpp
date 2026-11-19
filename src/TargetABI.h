@@ -9,6 +9,7 @@
 #include "AstNodeTypes.h"
 #include "CompileError.h"
 #include "SizeTypes.h"
+#include "TypeTraitEvaluator.h"
 
 enum class SysVRegisterClass : uint8_t {
 	None,
@@ -266,3 +267,138 @@ inline SysVAbiValueLayout classifySysVValue(TypeIndex type_index, SizeInBits siz
 }
 
 } // namespace TargetABI
+
+// Aggregate return classification is the single decision point for function
+// definitions and every call kind. The SysV and Win64 paths share the size and
+// layout plumbing but consult their own record-fact predicate: Itanium's
+// non-trivial-for-calls rule for SysV, and the Microsoft POD-like return rule
+// for Win64.
+static constexpr int SYSV_STRUCT_RETURN_THRESHOLD = 128;	 // Linux/SysV ABI: structs > 16 bytes returned via hidden pointer
+static constexpr int WIN64_STRUCT_RETURN_THRESHOLD = 64;	 // Windows x64: only 1, 2, 4, and 8 byte records use RAX
+
+inline int getStructReturnThreshold(bool is_llp64) {
+	return is_llp64 ? WIN64_STRUCT_RETURN_THRESHOLD : SYSV_STRUCT_RETURN_THRESHOLD;
+}
+
+// Microsoft x64 widens the scalar return to RAX only for exactly 1, 2, 4, or 8
+// byte records. A 3-byte or 16-byte record uses the caller-provided slot even
+// when its object representation is otherwise trivial.
+inline bool isWin64DirectAggregateReturnSize(int size_in_bits) {
+	return size_in_bits == 8 || size_in_bits == 16 || size_in_bits == 32 || size_in_bits == 64;
+}
+
+inline bool returnsStructByValue(TypeCategory type, int pointer_depth, bool is_reference) {
+	return is_struct_type(type) && pointer_depth == 0 && !is_reference;
+}
+
+inline bool returnsStructByValue(const TypeSpecifierNode& return_type) {
+	return returnsStructByValue(
+		return_type.type(), static_cast<int>(return_type.runtime_pointer_depth()), return_type.is_reference());
+}
+
+/// Aggregate return ABI disposition for a function or call result.
+/// Dependent means the return type is not yet concrete enough to classify; concrete
+/// function/call IR must never treat Dependent as Direct.
+enum class ReturnAbiDisposition : uint8_t {
+	Direct,
+	Indirect,
+	Dependent,
+};
+
+inline ReturnAbiDisposition planAggregateReturnDisposition(
+	TypeIndex type_index,
+	TypeCategory type,
+	int pointer_depth,
+	bool is_reference,
+	int size_in_bits,
+	bool is_llp64) {
+	if (!returnsStructByValue(type, pointer_depth, is_reference)) {
+		return ReturnAbiDisposition::Direct;
+	}
+	if (size_in_bits <= 0) {
+		return ReturnAbiDisposition::Dependent;
+	}
+
+	if (is_llp64) {
+		// Size alone settles every record outside the four direct-return widths.
+		if (!isWin64DirectAggregateReturnSize(size_in_bits)) {
+			return ReturnAbiDisposition::Indirect;
+		}
+	} else if (size_in_bits > SYSV_STRUCT_RETURN_THRESHOLD) {
+		// SysV: any aggregate larger than two eightbytes is MEMORY regardless of layout.
+		return ReturnAbiDisposition::Indirect;
+	}
+
+	if (!type_index.is_valid()) {
+		return ReturnAbiDisposition::Dependent;
+	}
+
+	const TypeInfo* type_info = tryGetTypeInfo(type_index);
+	const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+	if (!struct_info || !struct_info->hasCompleteObjectLayout()) {
+		return ReturnAbiDisposition::Dependent;
+	}
+
+	if (is_llp64) {
+		return isStructReturnedInWin64Registers(struct_info)
+			? ReturnAbiDisposition::Direct
+			: ReturnAbiDisposition::Indirect;
+	}
+
+	// Itanium C++ ABI: non-trivial copy/move construction or destruction makes
+	// the class indirect for calls even when its scalar layout fits registers.
+	if (!isStructTrivialForCalls(struct_info)) {
+		return ReturnAbiDisposition::Indirect;
+	}
+
+	const SysVAbiValueLayout layout = TargetABI::classifySysVValue(
+		type_index, SizeInBits{size_in_bits}, pointer_depth, is_reference);
+	// x87 aggregate returns stay on the legacy direct path until X87/X87UP
+	// return registers are modeled in the backend.
+	if (layout.contains_x87) {
+		return ReturnAbiDisposition::Direct;
+	}
+	return layout.isMemory() ? ReturnAbiDisposition::Indirect : ReturnAbiDisposition::Direct;
+}
+
+inline ReturnAbiDisposition planAggregateReturnDisposition(
+	const TypeSpecifierNode& return_type, bool is_llp64) {
+	return planAggregateReturnDisposition(
+		return_type.type_index(),
+		return_type.type(),
+		static_cast<int>(return_type.runtime_pointer_depth()),
+		return_type.is_reference(),
+		getTypeSpecSizeBits(return_type),
+		is_llp64);
+}
+
+inline bool needsHiddenReturnParam(
+	TypeIndex type_index,
+	TypeCategory type,
+	int pointer_depth,
+	bool is_reference,
+	int size_in_bits,
+	bool is_llp64) {
+	const ReturnAbiDisposition disposition = planAggregateReturnDisposition(
+		type_index, type, pointer_depth, is_reference, size_in_bits, is_llp64);
+	switch (disposition) {
+	case ReturnAbiDisposition::Direct:
+		return false;
+	case ReturnAbiDisposition::Indirect:
+		return true;
+	case ReturnAbiDisposition::Dependent:
+		throw InternalError(
+			"Concrete function/call IR requires a resolved aggregate return ABI plan");
+	}
+	throw InternalError("Unhandled aggregate return ABI disposition");
+}
+
+inline bool needsHiddenReturnParam(const TypeSpecifierNode& return_type, bool is_llp64) {
+	return needsHiddenReturnParam(
+		return_type.type_index(),
+		return_type.type(),
+		static_cast<int>(return_type.runtime_pointer_depth()),
+		return_type.is_reference(),
+		getTypeSpecSizeBits(return_type),
+		is_llp64);
+}

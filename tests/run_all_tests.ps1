@@ -262,6 +262,7 @@ Write-Host ""
 $extraCHelpers = @{
 	"test_external_abi.cpp" = @("test_external_abi_helper.c")
 	"test_external_abi_simple.cpp" = @("test_external_abi_simple_helper.c")
+	"test_aggregate_return_abi_ret0.cpp" = @("abi_reference/aggregate_return_reference.cpp")
 	"test_atomic_builtin_pointer_intrinsics_ret0.cpp" = @("test_atomic_builtin_pointer_intrinsics_helper.c")
 	"test_extern_var_ret42.cpp" = @("test_extern_var_ret42_helper.c")
 	"test_declspec_dllimport_var_ret42.cpp" = @("test_declspec_dllimport_var_ret42_helper.c")
@@ -436,13 +437,16 @@ function Invoke-TestOneFile {
 						$helperBaseName = [System.IO.Path]::GetFileNameWithoutExtension($helperFileName)
 						$helperSourcePath = Join-Path $repoRoot "tests\$helperFileName"
 						$helperObjFile = Join-Path $resultDir "${helperBaseName}_$uniqueSuffix.obj"
-						$helperCompileArgs = @(
-							"/nologo",
-							"/c",
-							"/TC",
-							"/Fo$helperObjFile",
-							$helperSourcePath
-						)
+						$isCppHelper = $helperFileName -match '\.(cpp|cc|cxx)$'
+						$helperCompileArgs = @("/nologo", "/c")
+						if ($isCppHelper) {
+							# C++ helpers use the platform C++ ABI and mangling, so
+							# reference objects can exercise class return rules.
+							$helperCompileArgs += @("/TP", "/std:c++20", "/EHsc")
+						} else {
+							$helperCompileArgs += "/TC"
+						}
+						$helperCompileArgs += @("/Fo$helperObjFile", $helperSourcePath)
 						$helperCompileOutput = & $cCompilerPath $helperCompileArgs 2>&1 | Out-String
 						if ($LASTEXITCODE -ne 0 -or -not (Test-Path $helperObjFile)) {
 							$helperErrors = ($helperCompileOutput -split "`n" | Where-Object { $_ -match "error" } | Select-Object -Last 5) -join "`n"

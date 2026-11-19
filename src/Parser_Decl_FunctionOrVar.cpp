@@ -607,6 +607,10 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 						{});
 				}
 				target_func.set_is_implicit(true);
+				// This is an out-of-line `= default`, so the function is still
+				// user-provided ([dcl.fct.def.default]/5); first-declaration
+				// defaulting is recorded separately from explicit defaulting.
+				target_func.set_is_explicitly_defaulted(true);
 				target_func.set_is_inline(true);
 				target_func.set_definition(
 					create_defaulted_member_function_body(target_func));

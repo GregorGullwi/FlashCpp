@@ -194,7 +194,7 @@ fi
 # Format: "test_file.cpp:helper_file.c" pairs, space-separated.
 # The helper .c file is expected to live in the tests/ directory.
 # This is exported so the parallel worker function can access it.
-EXTRA_C_HELPERS="test_external_abi.cpp:test_external_abi_helper.c test_external_abi_simple.cpp:test_external_abi_simple_helper.c test_atomic_builtin_pointer_intrinsics_ret0.cpp:test_atomic_builtin_pointer_intrinsics_helper.c test_extern_var_ret42.cpp:test_extern_var_ret42_helper.c test_declspec_dllimport_var_ret42.cpp:test_declspec_dllimport_var_ret42_helper.c"
+EXTRA_C_HELPERS="test_external_abi.cpp:test_external_abi_helper.c test_external_abi_simple.cpp:test_external_abi_simple_helper.c test_aggregate_return_abi_ret0.cpp:abi_reference/aggregate_return_reference.cpp test_atomic_builtin_pointer_intrinsics_ret0.cpp:test_atomic_builtin_pointer_intrinsics_helper.c test_extern_var_ret42.cpp:test_extern_var_ret42_helper.c test_declspec_dllimport_var_ret42.cpp:test_declspec_dllimport_var_ret42_helper.c"
 export EXTRA_C_HELPERS
 
 contains() {
@@ -559,12 +559,21 @@ test_one_file() {
         local map_base="${mapping%%:*}"
         local map_helper="${mapping##*:}"
         if [ "$map_base" = "$base" ]; then
-            local helper_obj="/tmp/${map_helper%.c}_$$.o"
+            local helper_base="${map_helper%.*}"
+            local helper_obj="/tmp/$(basename "$helper_base")_$$.o"
+            local helper_compiler="clang"
             local helper_cflags=()
+            case "${map_helper##*.}" in
+                cpp|cc|cxx)
+                    # C++ helpers use the platform C++ ABI and mangling.
+                    helper_compiler="clang++"
+                    helper_cflags+=("-std=c++20")
+                    ;;
+            esac
             if [ "$map_helper" = "test_atomic_builtin_pointer_intrinsics_helper.c" ]; then
                 helper_cflags+=("-fno-builtin")
             fi
-            clang "${helper_cflags[@]}" -c "$repo_root/tests/$map_helper" -o "$helper_obj" 2>/dev/null
+            "$helper_compiler" "${helper_cflags[@]}" -c "$repo_root/tests/$map_helper" -o "$helper_obj" 2>/dev/null
             local helper_exit=$?
             if [ "$helper_exit" -ne 0 ] || [ ! -f "$helper_obj" ]; then
                 echo "SUPPORT_COMPILE_FAIL|$base|failed to compile helper $map_helper" > "$result_file"

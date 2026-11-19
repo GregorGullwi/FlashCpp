@@ -3179,6 +3179,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Mark as implicit (same behavior as compiler-generated).
 				// First-declaration `= default` is implicitly inline ([dcl.fct.def.default]).
 				member_func_ref.set_is_implicit(true);
+				member_func_ref.set_is_explicitly_defaulted(true);
+				member_func_ref.set_was_defaulted_on_first_declaration(true);
 				member_func_ref.set_is_inline(true);
 
 				ASTNode block_node = create_defaulted_member_function_body(member_func_ref);

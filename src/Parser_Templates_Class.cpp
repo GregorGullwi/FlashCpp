@@ -4581,6 +4581,8 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 						// Mark as implicit. First-declaration `= default` is implicitly inline.
 						member_func_ref.set_is_implicit(true);
+						member_func_ref.set_is_explicitly_defaulted(true);
+						member_func_ref.set_was_defaulted_on_first_declaration(true);
 						member_func_ref.set_is_inline(true);
 
 						ASTNode block_node = create_defaulted_member_function_body(member_func_ref);
