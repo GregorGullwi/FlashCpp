@@ -260,14 +260,14 @@ successful return in both regular functions and lambda call operators. Exception
 cleanup still needs construction-completion tracking so it never visits a
 destination whose initialization never finished.
 
-## Generic lambda function-pointer conversion needs a templated conversion function
+## Explicit-template generic lambda function-pointer conversion
 
-Non-generic captureless lambdas now publish an implicit conversion operator and
-every conversion context lowers it to the generated `__invoke` address,
-including aggregate returns that use a hidden return slot. A captureless generic
-lambda still has no templated conversion function, so converting it to a
-concrete function pointer reaches mangling with an unresolved `auto` parameter.
-Materialize the per-instantiation conversion target before enabling that path.
+Captureless lambdas with `auto` parameters now instantiate their call operator
+and `__invoke` from the target function-pointer signature in every conversion
+context. A captureless generic lambda with an explicit template parameter list
+(`[]<class T>(T value)`) still has no templated conversion declaration because
+the target types must also bind the lambda's own template parameters. Add that
+per-target template-argument deduction before enabling the path.
 
 ## Constexpr namespace-scope pointer dereference is not yet supported
 

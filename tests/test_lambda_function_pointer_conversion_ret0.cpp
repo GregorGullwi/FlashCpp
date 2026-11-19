@@ -2,8 +2,6 @@
 // the generated __invoke entry point in every conversion context, not a copy of
 // the closure object.
 
-extern "C" int printf(const char*, ...);
-
 static int calls = 0;
 
 struct Large {

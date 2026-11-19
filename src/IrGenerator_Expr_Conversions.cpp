@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "CallNodeHelpers.h"
+#include "CanonicalTypeAdapter.h"
 #include "IrGenerator.h"
 #include "LambdaHelpers.h"
 #include "SemanticAnalysis.h"
@@ -986,6 +987,96 @@ std::optional<ExprResult> AstToIr::decayLambdaStructToFunctionPointer(const Stru
 	op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), source_token));
 	return makeExprResult(nativeTypeIndex(TypeCategory::FunctionPointer), SizeInBits{64}, IrOperand{func_addr_var}, PointerDepth{}, ValueStorage::ContainsData);
+}
+
+std::optional<ExprResult> AstToIr::decayLambdaStructToFunctionPointer(
+	const StructTypeInfo& struct_info, const FunctionSignature& target_signature, const Token& source_token) {
+	if (!target_signature.hasStructuredTypes()) {
+		return std::nullopt;
+	}
+	const std::string_view closure_name = StringTable::getStringView(struct_info.getName());
+	LambdaInfo* lambda_info = nullptr;
+	for (LambdaInfo& candidate : collected_lambdas_) {
+		if (candidate.closure_type_name == closure_name) {
+			lambda_info = &candidate;
+			break;
+		}
+	}
+	if (lambda_info == nullptr) {
+		return std::nullopt;
+	}
+	const std::span<const FunctionType> target_parameters = target_signature.parameter_types();
+	if (target_parameters.size() != lambda_info->parameter_nodes.size()) {
+		return std::nullopt;
+	}
+	bool deduced_parameter = false;
+	for (size_t index = 0; index < lambda_info->parameter_nodes.size(); ++index) {
+		const ASTNode& parameter_node = lambda_info->parameter_nodes[index];
+		if (!parameter_node.is<DeclarationNode>()) {
+			continue;
+		}
+		const TypeSpecifierNode& original_type = parameter_node.as<DeclarationNode>().type_specifier_node();
+		bool needs_deduction = isPlaceholderAutoType(original_type.type());
+		if (!needs_deduction) {
+			const std::string_view parameter_name = original_type.token().value();
+			needs_deduction = !parameter_name.empty() && std::any_of(
+				lambda_info->own_template_param_names.begin(), lambda_info->own_template_param_names.end(),
+				[parameter_name](StringHandle template_parameter) {
+					return StringTable::getStringView(template_parameter) == parameter_name;
+				});
+		}
+		if (!needs_deduction) {
+			continue;
+		}
+		TypeSpecifierNode deduced_type = typeSpecifierFromFunctionType(target_parameters[index]);
+		deduced_type.set_size_in_bits(getTypeSpecSizeBits(deduced_type));
+		lambda_info->setDeducedType(index, deduced_type);
+		deduced_parameter = true;
+	}
+	if (lambda_info->is_generic) {
+		if (!deduced_parameter && lambda_info->deduced_auto_types.empty()) {
+			return std::nullopt;
+		}
+		sema_.normalizeInstantiatedLambdaBody(*lambda_info);
+		const TypeSpecifierNode lambda_return = lambda_info->makeReturnTypeNode();
+		const TypeSpecifierNode target_return = typeSpecifierFromFunctionType(target_signature.return_type());
+		if (isPlaceholderAutoType(lambda_return.type()) || lambda_return.type() != target_return.type() ||
+			lambda_return.runtime_pointer_depth() != target_return.runtime_pointer_depth() ||
+			lambda_return.reference_qualifier() != target_return.reference_qualifier() ||
+			(is_struct_type(lambda_return.type()) && lambda_return.type_index() != target_return.type_index())) {
+			return std::nullopt;
+		}
+	}
+	StringHandle mangled_name = computeLambdaInvokeMangledName(*lambda_info);
+	const StringHandle invoke_name = StringTable::getOrInternStringHandle(lambda_info->invoke_name);
+	TempVar func_addr_var = var_counter.next();
+	FunctionAddressOp op;
+	op.result.setType(TypeCategory::FunctionPointer);
+	op.result.ir_type = IrType::FunctionPointer;
+	op.result.size_in_bits = SizeInBits{64};
+	op.result.value = func_addr_var;
+	op.function_name = invoke_name;
+	op.mangled_name = mangled_name;
+	ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), source_token));
+	return makeExprResult(nativeTypeIndex(TypeCategory::FunctionPointer), SizeInBits{64}, IrOperand{func_addr_var}, PointerDepth{},
+		ValueStorage::ContainsData);
+}
+
+std::optional<ExprResult> AstToIr::tryDecayLambdaClosureToFunctionPointer(
+	const ExprResult& source, const TypeSpecifierNode& target_type, const Token& token) {
+	if ((!target_type.is_function_pointer() && !target_type.has_function_signature()) ||
+		source.category() != TypeCategory::Struct || !source.type_index.is_valid()) {
+		return std::nullopt;
+	}
+	const TypeInfo* source_type_info = tryGetTypeInfo(source.type_index);
+	const StructTypeInfo* source_struct_info = source_type_info != nullptr ? source_type_info->getStructInfo() : nullptr;
+	if (source_struct_info == nullptr || !isLambdaClosureStruct(*source_struct_info)) {
+		return std::nullopt;
+	}
+	if (!target_type.has_function_signature()) {
+		return decayLambdaStructToFunctionPointer(*source_struct_info, token);
+	}
+	return decayLambdaStructToFunctionPointer(*source_struct_info, target_type.function_signature(), token);
 }
 
 std::optional<ExprResult> AstToIr::tryDecayLambdaClosureToFunctionPointer(

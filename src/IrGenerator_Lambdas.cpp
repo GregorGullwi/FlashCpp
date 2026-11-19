@@ -920,35 +920,11 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 	// Track hidden return parameter flag for current function context
 	current_function_has_hidden_return_param_ = needs_hidden_return_param;
 
-		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
-	std::vector<TypeSpecifierNode> param_types;
+	func_decl_op.mangled_name = computeLambdaInvokeMangledName(lambda_info);
+
 	const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
 								  ? lambda_info.parameter_nodes
 								  : lambda_info.resolved_param_nodes;
-	for (const auto& param_node : param_nodes) {
-		if (param_node.is<DeclarationNode>()) {
-			const auto& param_decl = param_node.as<DeclarationNode>();
-			const auto& param_type = param_decl.type_specifier_node();
-
-			if (isPlaceholderAutoType(param_type.type())) {
-				throw InternalError("Unresolved generic lambda parameter reached __invoke mangling");
-			}
-			param_types.push_back(param_type);
-		}
-	}
-
-		// Generate mangled name for the __invoke function (free function, not member)
-	std::string_view mangled = generateMangledNameForCall(
-		lambda_info.invoke_name,
-		return_type_node,
-		param_types,
-		false,  // not variadic
-		StringHandle{},		// not a member function
-		{},		// namespace_path
-		false	  // free function, never const
-	);
-	func_decl_op.mangled_name = StringTable::getOrInternStringHandle(mangled);
-
 		// Add parameters - use parameter_nodes to get complete type information
 	size_t invoke_unnamed_param_counter = 0;
 	for (const auto& param_node : param_nodes) {
@@ -1081,6 +1057,33 @@ void AstToIr::addCapturedVariablesToSymbolTable(std::span<const LambdaCaptureNod
 
 		capture_index++;
 	}
+}
+
+StringHandle AstToIr::computeLambdaInvokeMangledName(const LambdaInfo& lambda_info) {
+	TypeSpecifierNode return_type_node = lambda_info.makeReturnTypeNode();
+	const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
+								  ? lambda_info.parameter_nodes
+								  : lambda_info.resolved_param_nodes;
+	std::vector<TypeSpecifierNode> param_types;
+	for (const auto& param_node : param_nodes) {
+		if (param_node.is<DeclarationNode>()) {
+			const auto& param_decl = param_node.as<DeclarationNode>();
+			const auto& param_type = param_decl.type_specifier_node();
+			if (isPlaceholderAutoType(param_type.type())) {
+				throw InternalError("Unresolved generic lambda parameter reached __invoke mangling");
+			}
+			param_types.push_back(param_type);
+		}
+	}
+	std::string_view mangled = generateMangledNameForCall(
+		lambda_info.invoke_name,
+		return_type_node,
+		param_types,
+		false,
+		StringHandle{},
+		{},
+		false);
+	return StringTable::getOrInternStringHandle(mangled);
 }
 
 // Helper to generate FunctionAddress IR for a lambda's __invoke function

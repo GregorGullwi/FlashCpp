@@ -1440,7 +1440,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 		}
 		if (param_type && !materialized_selected_ctor && param_ref_qualifier == CVReferenceQualifier::None) {
-			if (auto decayed = tryDecayLambdaClosureToFunctionPointer(argumentIrOperands, param_type->category(), callExprNode.called_from())) {
+			if (auto decayed = tryDecayLambdaClosureToFunctionPointer(argumentIrOperands, *param_type, callExprNode.called_from())) {
 				argumentIrOperands = *decayed;
 				materialized_selected_ctor = true;
 			}

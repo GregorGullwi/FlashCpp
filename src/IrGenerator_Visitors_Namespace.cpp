@@ -556,7 +556,14 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 				expr_size = return_size;
 			}
 			if (!sema_applied_conversion) {
-				if (auto decayed = tryDecayLambdaClosureToFunctionPointer(operands, return_type, node.return_token())) {
+				std::optional<ExprResult> decayed;
+				if (current_function_node_ != nullptr && !current_lambda_context_.isActive()) {
+					const TypeSpecifierNode& declared_return_type = current_function_node_->decl_node().type_specifier_node();
+					decayed = tryDecayLambdaClosureToFunctionPointer(operands, declared_return_type, node.return_token());
+				} else {
+					decayed = tryDecayLambdaClosureToFunctionPointer(operands, return_type, node.return_token());
+				}
+				if (decayed.has_value()) {
 					operands = *decayed;
 					expr_type = operands.typeEnum();
 					expr_category = operands.category();

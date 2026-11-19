@@ -3,7 +3,6 @@
 #include "MigrationStats.h"
 #include "SemanticAnalysis.h"
 #include "CallNodeHelpers.h"
-#include "LambdaHelpers.h"
 #include "TypeSizeQuery.h"
 #include "TypeTraitEvaluator.h"
 
@@ -3429,12 +3428,10 @@ std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCallInterna
 	}
 	const FunctionDeclarationNode& conversion_function = *cast_info.selected_conversion_function;
 	const TypeSpecifierNode& conversion_return_type = conversion_function.decl_node().type_specifier_node();
-	const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
-	if (source_struct_info != nullptr && isLambdaClosureStruct(*source_struct_info) &&
-		conversion_return_type.is_function_pointer()) {
+	if (conversion_return_type.has_function_signature()) {
 		// The implicit closure-to-function-pointer conversion ignores the closure
 		// object and yields the address of the generated __invoke function.
-		if (auto decayed = decayLambdaStructToFunctionPointer(*source_struct_info, token)) {
+		if (auto decayed = tryDecayLambdaClosureToFunctionPointer(source, conversion_return_type, token)) {
 			return decayed;
 		}
 	}

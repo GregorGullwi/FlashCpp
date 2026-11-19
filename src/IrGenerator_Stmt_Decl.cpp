@@ -2657,7 +2657,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 					}
 					if (need_conversion && init_cat == TypeCategory::Struct) {
-						if (auto decayed = tryDecayLambdaClosureToFunctionPointer(init_operands, type_node.category(), decl.identifier_token())) {
+						if (auto decayed = tryDecayLambdaClosureToFunctionPointer(init_operands, type_node, decl.identifier_token())) {
 							init_operands = *decayed;
 						} else if (init_node.is<ExpressionNode>()) {
 							// First check for a sema-annotated user-defined conversion.

@@ -353,9 +353,12 @@ private:
 	ExprResult generateIdentifierIr(const IdentifierNode& identifierNode,
 									ExpressionContext context = ExpressionContext::Load);
 	std::optional<ExprResult> decayLambdaStructToFunctionPointer(const StructTypeInfo& struct_info, const Token& source_token);
+	std::optional<ExprResult> decayLambdaStructToFunctionPointer(
+		const StructTypeInfo& struct_info, const FunctionSignature& target_signature, const Token& source_token);
 	// Applies the implicit captureless-closure to pointer-to-function conversion
 	// when the source expression denotes a lambda closure and the target is a
 	// function pointer. Returns nullopt for every other conversion.
+	std::optional<ExprResult> tryDecayLambdaClosureToFunctionPointer(const ExprResult& source, const TypeSpecifierNode& target_type, const Token& token);
 	std::optional<ExprResult> tryDecayLambdaClosureToFunctionPointer(const ExprResult& source, TypeCategory target_category, const Token& token);
 	ExprResult generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode,
 											ExpressionContext context);
@@ -540,6 +543,7 @@ private:
 	void generateLambdaFunctions(LambdaInfo& lambda_info);
 	void generateLambdaOperatorCallFunction(LambdaInfo& lambda_info);
 	void generateLambdaInvokeFunction(LambdaInfo& lambda_info);
+	StringHandle computeLambdaInvokeMangledName(const LambdaInfo& lambda_info);
 	void addCapturedVariablesToSymbolTable(std::span<const LambdaCaptureNode> captures,
 										   std::span<const ASTNode> captured_var_decls);
 
