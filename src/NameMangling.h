@@ -246,6 +246,53 @@ inline std::string_view getMsvcMemberPointerClassName(
 	return {};
 }
 
+// Ordered member-pointer components publish their declaring class as EntityId or
+// TypeId. Resolve that identity the same way the canonical adapter prefers TypeId
+// then EntityId; flat spelling remains a legacy/fallback projection.
+inline const TypeInfo* tryResolvePublishedMemberPointerOwnerTypeInfo(
+	EntityId owner_entity,
+	TypeId owner_type) {
+	if (owner_type) {
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		const CanonicalTypeNode owner_node = table.node(owner_type);
+		if (owner_node.kind == CanonicalTypeKind::Record) {
+			if (const TypeInfo* owner_info =
+					tryFindTypeInfoByEntityId(table.recordEntity(owner_type))) {
+				return owner_info;
+			}
+		} else if (isCanonicalClassTypeKind(owner_node.kind)) {
+			if (const StructTypeInfo* owner_record =
+					tryResolveCanonicalMemberPointerOwnerRecord(table, owner_type);
+				owner_record != nullptr &&
+				owner_record->declaration_node != nullptr &&
+				owner_record->declaration_node->has_entity_id()) {
+				if (const TypeInfo* owner_info = tryFindTypeInfoByEntityId(
+						owner_record->declaration_node->entity_id())) {
+					return owner_info;
+				}
+			}
+		}
+	}
+	if (owner_entity) {
+		return tryFindTypeInfoByEntityId(owner_entity);
+	}
+	return nullptr;
+}
+
+inline std::string_view getMsvcOrderedMemberPointerClassName(
+	const DeclaratorComponent& component,
+	const TypeSpecifierNode& type_node) {
+	if (component.kind == DeclaratorComponentKind::MemberObjectPointer ||
+		component.kind == DeclaratorComponentKind::MemberFunctionPointer) {
+		if (const TypeInfo* owner_info = tryResolvePublishedMemberPointerOwnerTypeInfo(
+				component.memberOwnerEntity(),
+				component.memberOwnerType())) {
+			return StringTable::getStringView(owner_info->name());
+		}
+	}
+	return getMsvcMemberPointerClassName(type_node);
+}
+
 inline TypeIndex resolveTypeAliasIndex(TypeIndex idx);
 
 inline TypeSpecifierNode buildFunctionTypeComponentForMangling(
@@ -715,7 +762,8 @@ inline void appendMsvcOrderedDeclaratorTypeCode(
 				component.kind != DeclaratorComponentKind::MemberFunctionPointer) {
 				throw InternalError("MSVC name mangling: ordered member object pointer is not innermost");
 			}
-			const std::string_view class_name = getMsvcMemberPointerClassName(normalized);
+			const std::string_view class_name =
+				getMsvcOrderedMemberPointerClassName(component, normalized);
 			if (class_name.empty()) {
 				throw InternalError("MSVC name mangling: ordered member pointer missing declaring class");
 			}
@@ -759,6 +807,7 @@ inline void appendMsvcOrderedDeclaratorTypeCode(
 			return_type = applyOrderedReturnComponentsForMangling(
 				return_type, components.subspan(index + 1));
 			appendTypeCode(output, return_type);
+			// Match free-function signature termination: empty params are XZ, not X@Z.
 			if (signature.parameter_type_indices.empty()) {
 				output += 'X';
 			} else {
@@ -767,11 +816,9 @@ inline void appendMsvcOrderedDeclaratorTypeCode(
 						TypeQualifier::None, 0, Token{}, CVQualifier::None);
 					appendTypeCode(output, parameter_spec.adjusted_function_parameter_type());
 				}
+				output += '@';
 			}
-			if (signature.is_noexcept) {
-				output += "_E";
-			}
-			output += "@Z";
+			output += signature.is_noexcept ? "_E" : "Z";
 			return;
 		}
 		}
@@ -1008,6 +1055,7 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 
 		TypeSpecifierNode ret_spec = buildFunctionSignatureReturnTypeForMangling(sig);
 		appendTypeCode(output, ret_spec);
+		// Match free-function signature termination: empty params are XZ, not X@Z.
 		if (sig.parameter_type_indices.empty()) {
 			output += 'X';
 		} else {
@@ -1015,11 +1063,9 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 				TypeSpecifierNode param_spec(resolveTypeAliasIndex(pt), TypeQualifier::None, 0, Token{}, CVQualifier::None);
 				appendTypeCode(output, param_spec.adjusted_function_parameter_type());
 			}
+			output += '@';
 		}
-		if (sig.is_noexcept) {
-			output += "_E";
-		}
-		output += "@Z";
+		output += sig.is_noexcept ? "_E" : "Z";
 		break;
 	}
 	case TypeCategory::Nullptr:
@@ -1307,6 +1353,22 @@ inline std::string_view getItaniumMemberPointerClassName(
 			type_node.function_signature().class_name);
 	}
 	return {};
+}
+
+template <typename OutputType>
+inline std::string_view getItaniumOrderedMemberPointerClassName(
+	const OutputType& output,
+	const DeclaratorComponent& component,
+	const TypeSpecifierNode& type_node) {
+	if (component.kind == DeclaratorComponentKind::MemberObjectPointer ||
+		component.kind == DeclaratorComponentKind::MemberFunctionPointer) {
+		if (const TypeInfo* owner_info = tryResolvePublishedMemberPointerOwnerTypeInfo(
+				component.memberOwnerEntity(),
+				component.memberOwnerType())) {
+			return getItaniumTypeInfoName(*owner_info);
+		}
+	}
+	return getItaniumMemberPointerClassName(output, type_node);
 }
 
 template <typename OutputType>
@@ -1602,7 +1664,8 @@ inline void appendItaniumOrderedDeclaratorTypeCode(OutputType& output, const Typ
 			if (index + 1 != components.size() && component.kind != DeclaratorComponentKind::MemberFunctionPointer) {
 				throw InternalError("Itanium name mangling: ordered member object pointer is not innermost");
 			}
-			const std::string_view class_name = getItaniumMemberPointerClassName(output, normalized);
+			const std::string_view class_name =
+				getItaniumOrderedMemberPointerClassName(output, component, normalized);
 			if (class_name.empty()) {
 				throw InternalError("Itanium name mangling: ordered member pointer missing declaring class");
 			}
