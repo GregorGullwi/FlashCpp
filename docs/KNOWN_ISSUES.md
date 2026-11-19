@@ -236,6 +236,18 @@ bracket operand, including the reversed form `index()[object()]`. Reads,
 writes, and address-taking share this lowering, including when a conversion
 supplies the array or when subscripts are combined across dimensions.
 
+## Out-of-line static data member definitions are not parsed
+
+A namespace-scope definition such as `int S::data;` or `int S::data[3];` is
+rejected with `Expected '(' for parameter list` because the declarator is
+parsed as a function declaration. The class-template form
+`template<class T> T S<T>::data[3];` crashes the compiler with an access
+violation instead of reporting the same parse gap.
+
+Until this is implemented, class templates cannot define static data members
+out of line, and tests that need a static array member must initialize it
+inline or use a non-static member instead.
+
 ## NRVO coverage and exception lifetime
 
 The safe NRVO slice covers top-level named locals in lambda call operators and
