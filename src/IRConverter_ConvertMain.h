@@ -918,6 +918,7 @@ private:
 	// ============================================================================
 
 	void emitInlineDestructorCall(const std::pair<StringHandle, VariableKey>& cleanup_var);
+	void emitInlineDestructorCall(const CleanupAction& cleanup_action);
 
 	void emitWindowsCleanupFuncletsAndPopulateUnwindMap();
 
@@ -1227,7 +1228,7 @@ private:
 	uint32_t eh_prologue_extra_sub_rsp_offset_ = 0;	// Offset of the post-SEH-frame SUB RSP imm32 in C++ EH prologue, patched with any extra stack allocation
 	std::vector<uint32_t> catch_funclet_lea_rbp_patches_;  // Offsets of LEA RBP,[RDX+N] in catch funclets, patched with the effective frame size
 	std::vector<uint32_t> cleanup_funclet_lea_rbp_patches_;	// Offsets of LEA RBP,[RDX+N] in cleanup funclets, patched with the effective frame size
-	std::vector<std::pair<StringHandle, VariableKey>> pending_windows_function_cleanup_vars_;  // Function-scope cleanup vars for Windows FH3 unwind funclets
+	std::vector<CleanupAction> pending_windows_function_cleanup_vars_;  // Function-scope cleanup actions for Windows FH3 unwind funclets
 	std::vector<LocalObject> current_function_local_objects_;  // Objects with destructors
 	std::vector<UnwindMapEntry> current_function_unwind_map_;  // Unwind map for destructors
 	int current_exception_state_ = -1;  // Current exception handling state number

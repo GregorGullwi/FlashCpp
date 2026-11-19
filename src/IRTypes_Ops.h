@@ -1208,12 +1208,22 @@ struct CatchEndOp {
 	std::string_view continuation_label;	 // Label to continue parent function execution after catch funclet returns
 };
 
+// One destructor invoked by an unwind cleanup action. Locals use their
+// VariableKey; a hidden return-slot result uses the caller-owned slot pointer
+// and its synthetic construction flag because it has no local variable.
+struct CleanupAction {
+	StringHandle struct_name;
+	VariableKey variable_key;
+	bool is_hidden_return_slot = false;
+	LocalVarId construction_flag_id;
+};
+
 // Function-level cleanup landing pad (ELF/Linux only)
 // Emitted after the function return; called by the unwinder during phase-2 exception propagation.
 	// Calls each listed destructor (LIFO order), then either calls _Unwind_Resume or
 	// __cxa_call_terminate depending on whether the enclosing function is noexcept.
 struct FunctionCleanupLPOp {
-	std::vector<std::pair<StringHandle, VariableKey>> cleanup_vars;	 // {struct_name, variable key} LIFO order
+	std::vector<CleanupAction> cleanup_actions;	 // LIFO order; hidden return-slot result last
 };
 
 // ELF-only marker: no typed catch handler matched the thrown exception.

@@ -281,11 +281,17 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 					  exprNode);
 }
 
+CanonicalTypeId AstToIr::canonicalResultTypeId(const TypeSpecifierNode& type) {
+	// Copy elision depends on the class being initialized, not on top-level cv.
+	// `const Big x = make();` still initializes a Big object in place even when
+	// Big's copy constructor is deleted.
+	TypeSpecifierNode unqualified_type = type;
+	unqualified_type.set_cv_qualifier(CVQualifier::None);
+	return sema_.canonicalizeTypeForImplicitConversion(unqualified_type);
+}
+
 bool AstToIr::resultDestinationMatchesType(const ResultDestination& destination, const TypeSpecifierNode& type) {
-	if (!destination.canonical_type_id) {
-		return false;
-	}
-	return destination.canonical_type_id == sema_.canonicalizeTypeForImplicitConversion(type);
+	return destination.canonical_type_id && destination.canonical_type_id == canonicalResultTypeId(type);
 }
 
 ExprResult AstToIr::visitExpressionNodeWithDestination(const ExpressionNode& exprNode, ExpressionContext context,

@@ -164,6 +164,26 @@ bool visitASTImpl(const ASTNode& node, VisitorFn&& visitor) {
 			return false;
 		}
 
+		if (current.is<SehTryExceptStatementNode>()) {
+			const auto& seh_stmt = current.as<SehTryExceptStatementNode>();
+			return visit_child(seh_stmt.try_block()) ||
+				   visit_child(seh_stmt.except_clause());
+		}
+
+		if (current.is<SehTryFinallyStatementNode>()) {
+			const auto& seh_stmt = current.as<SehTryFinallyStatementNode>();
+			return visit_child(seh_stmt.try_block()) ||
+				   visit_child(seh_stmt.finally_clause());
+		}
+
+		if (current.is<SehExceptClauseNode>()) {
+			return visit_child(current.as<SehExceptClauseNode>().body());
+		}
+
+		if (current.is<SehFinallyClauseNode>()) {
+			return visit_child(current.as<SehFinallyClauseNode>().body());
+		}
+
 		if (current.is<VariableDeclarationNode>()) {
 			const auto& var_decl = current.as<VariableDeclarationNode>();
 			return var_decl.initializer().has_value() &&

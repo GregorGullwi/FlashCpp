@@ -232,7 +232,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			result_destination = ResultDestination{
 				ResultDestination::Kind::HiddenReturnSlot,
 				LocalVarId{},
-				sema_.canonicalizeTypeForImplicitConversion(return_type_spec)};
+				canonicalResultTypeId(return_type_spec)};
 		}
 
 		// Fast path: reference return of '*this' can directly return the this pointer
@@ -807,6 +807,15 @@ return_conversion_done:
 					operands.value = address_temp;
 				}
 			}
+		}
+
+		// If the return expression constructed the result directly in the hidden
+		// return slot, a later destructor or finally action that throws must destroy
+		// that completed result during unwinding. The caller has not finished its
+		// initialization yet, so the callee owns this cleanup.
+		if (const auto* result_temp = std::get_if<TempVar>(&operands.value); result_temp != nullptr &&
+			isTempVarConstructedInReturnSlot(*result_temp)) {
+			registerHiddenReturnSlotCleanup(node.return_token());
 		}
 
 		// Call any enclosing __finally funclets before returning

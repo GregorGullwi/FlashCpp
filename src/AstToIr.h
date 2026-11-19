@@ -286,9 +286,13 @@ private:
 	// Stores captured vars in pending_function_cleanup_vars_ for later LP emission.
 	void exitFunctionScope();
 
-	// Emits FunctionCleanupLP if pending_function_cleanup_vars_ is non-empty.
+	// Emits FunctionCleanupLP if local or return-slot cleanup actions are pending.
 	// Must be called AFTER the function's return instruction.
 	void emitPendingFunctionCleanupLP(const Token& token);
+	// Registers the hidden return-slot object as an unwind cleanup action. The
+	// caller must already have constructed it; the synthetic flag records that
+	// completion so earlier exceptional exits do not destroy unconstructed storage.
+	void registerHiddenReturnSlotCleanup(const Token& token);
 
 	void registerVariableWithDestructor(VariableKey variable_key, StringHandle struct_name);
 	void registerVariableWithDestructor(VariableKey variable_key, StringHandle struct_name, DestructorSkip skip);
@@ -308,7 +312,9 @@ private:
 	std::vector<ScopeVariableInfo> captured_try_cleanup_vars_;
 
 	// Phase 2 capture state: vars captured by exitFunctionScope() awaiting LP emission
-	std::vector<std::pair<StringHandle, VariableKey>> pending_function_cleanup_vars_;
+	std::vector<CleanupAction> pending_function_cleanup_vars_;
+	std::vector<CleanupAction> pending_return_slot_cleanup_actions_;
+	uint32_t next_synthetic_construction_flag_id_ = 0x80000000u;
 	std::vector<FullExpressionTempDestructorInfo> pending_full_expression_temp_dtors_;
 	TemplateVector<CatchScopeContext, 4> catch_scope_stack_;
 	size_t active_try_statement_depth_ = 0;
@@ -375,6 +381,7 @@ private:
 	ExprResult visitExpressionNodeWithDestination(const ExpressionNode& exprNode, ExpressionContext context,
 		const std::optional<ResultDestination>& destination);
 	bool resultDestinationMatchesType(const ResultDestination& destination, const TypeSpecifierNode& type);
+	CanonicalTypeId canonicalResultTypeId(const TypeSpecifierNode& type);
 	ExprResult generateNoexceptExprIr(const NoexceptExprNode& noexcept_node);
 	ExprResult generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor);
 	ExprResult generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode, ExpressionContext context);
