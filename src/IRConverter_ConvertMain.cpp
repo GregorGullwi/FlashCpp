@@ -128,6 +128,12 @@ void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_vie
 				FLASH_LOG(Codegen, Debug, "Processing IrOpcode::VariableDecl");
 				handleVariableDecl(instruction);
 				break;
+			case IrOpcode::InitLocalConstruction:
+				handleInitLocalConstruction(instruction);
+				break;
+			case IrOpcode::MarkConstructed:
+				handleMarkConstructed(instruction);
+				break;
 			case IrOpcode::Return:
 				FLASH_LOG(Codegen, Debug, "Processing IrOpcode::Return");
 				handleReturn(instruction);
@@ -2238,6 +2244,10 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 					max_outgoing_arg_bytes = outgoing_bytes;
 				}
 			}
+		}
+
+		if (instruction.getOpcode() == IrOpcode::InitLocalConstruction) {
+			addTemporaryStorageBytes(additional_temporary_storage_bytes, 8);
 		}
 
 		if (instruction.getOpcode() == IrOpcode::VariableDecl) {
@@ -7152,6 +7162,33 @@ void IrToObjConverter<TWriterClass>::emitVirtualBasePointerAdjust(
 }
 
 template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::handleInitLocalConstruction(const IrInstruction& instruction) {
+	const LocalConstructionOp& op = instruction.getTypedPayload<LocalConstructionOp>();
+	const VariableInfo* var_info = findVariableInfo(op.local_id);
+	if (var_info == nullptr) {
+		throw InternalError("Construction tracking local has no frame slot");
+	}
+	next_temp_var_offset_ += 8;
+	const int32_t flag_offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
+	construction_flag_offsets_[var_info->offset] = flag_offset;
+	emitMovDwordPtrImmToRegOffset(X64Register::RBP, flag_offset, 0);
+}
+
+template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::handleMarkConstructed(const IrInstruction& instruction) {
+	const LocalConstructionOp& op = instruction.getTypedPayload<LocalConstructionOp>();
+	const VariableInfo* var_info = findVariableInfo(op.local_id);
+	if (var_info == nullptr) {
+		throw InternalError("Constructed local has no frame slot");
+	}
+	const auto flag_it = construction_flag_offsets_.find(var_info->offset);
+	if (flag_it == construction_flag_offsets_.end()) {
+		return;
+	}
+	emitMovDwordPtrImmToRegOffset(X64Register::RBP, flag_it->second, 1);
+}
+
+template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& instruction) {
 		// Extract typed payload
 	const VariableDeclOp& op = std::any_cast<const VariableDeclOp&>(instruction.getTypedPayload());
@@ -7777,6 +7814,7 @@ void IrToObjConverter<TWriterClass>::resetFunctionState() {
 	current_catch_handler_ = nullptr;
 	current_catch_handler_ref_ = ActiveCatchHandlerRef{};
 	current_function_local_objects_.clear();
+	construction_flag_offsets_.clear();
 	current_function_unwind_map_.clear();
 	current_exception_state_ = -1;
 	current_function_seh_try_blocks_.clear();
@@ -16132,12 +16170,9 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 
 			// Determine handler index within this try block
 		size_t handler_index = 0;
-		bool is_multi_handler = false;
 		if (pending_catch_try_index_ != SIZE_MAX && pending_catch_try_index_ < current_function_try_blocks_.size()) {
 			const TryBlock& try_block = current_function_try_blocks_[pending_catch_try_index_];
 			handler_index = try_block.catch_handlers.size() - 1;	 // Just added
-				// We don't know total count yet, but if handler_index > 0, we're multi
-			is_multi_handler = (handler_index > 0);
 		}
 
 		if (handler_index == 0) {
@@ -16185,14 +16220,9 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 			pending_branches_.push_back({catch_end_handle, jne_patch});
 		}
 
-			// Load exception pointer from saved slot and call __cxa_begin_catch
-		if (is_multi_handler || !catch_op.is_catch_all) {
-				// Multi-handler or typed: use saved exception pointer
-			emitMovFromFrameBySize(X64Register::RDI, elf_exc_ptr_offset_, 64);
-		} else {
-				// Single catch-all handler: RAX still has the exception pointer
-			emitMovRegReg(X64Register::RDI, X64Register::RAX);
-		}
+		// Load exception pointer from the slot saved on entry. Cleanup
+		// destructor calls above may clobber RAX.
+		emitMovFromFrameBySize(X64Register::RDI, elf_exc_ptr_offset_, 64);
 		emitCall("__cxa_begin_catch");
 
 			// Result in RAX is pointer to the actual exception object.
@@ -16782,10 +16812,17 @@ void IrToObjConverter<TWriterClass>::emitInlineDestructorCall(const std::pair<St
 		return;
 	}
 
+	const auto flag_it = construction_flag_offsets_.find(var_info->offset);
+	std::optional<uint32_t> skip_destructor_patch;
+	if (flag_it != construction_flag_offsets_.end()) {
+		emitCmpFrameImm32(flag_it->second, 0);
+		skip_destructor_patch = emitJumpIfZeroRel32Placeholder();
+	}
+
 	X64Register this_reg = getIntParamReg<TWriterClass>(0);
 	if (nrvo_local_offsets_.contains(var_info->offset)) {
-			// An NRVO local lives in the caller's hidden return slot; the frame
-			// slot only holds its address.
+		// An NRVO local lives in the caller's hidden return slot; the frame
+		// slot only holds its address.
 		emitMovFromFrame(this_reg, var_info->offset);
 	} else {
 		emitLeaFromFrame(this_reg, var_info->offset);
@@ -16795,6 +16832,9 @@ void IrToObjConverter<TWriterClass>::emitInlineDestructorCall(const std::pair<St
 	auto mangled_name = buildDestructorMangledNameFromString(StringTable::getStringView(struct_name_h));
 	emitCall(mangled_name);
 	regAlloc.invalidateCallerSavedRegisters();
+	if (skip_destructor_patch.has_value()) {
+		patchRel32(*skip_destructor_patch, static_cast<uint32_t>(textSectionData.size()));
+	}
 }
 
 template <class TWriterClass>

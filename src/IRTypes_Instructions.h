@@ -1020,6 +1020,14 @@ public:
 			break;
 		}
 
+		case IrOpcode::InitLocalConstruction:
+		case IrOpcode::MarkConstructed: {
+			const LocalConstructionOp& op = getTypedPayload<LocalConstructionOp>();
+			oss << (getOpcode() == IrOpcode::InitLocalConstruction ? "begin_construction %" : "mark_constructed %");
+			appendLocalVarName(oss, op.local_id, local_debug_names);
+			break;
+		}
+
 		case IrOpcode::GlobalVariableDecl: {
 			const GlobalVariableDeclOp& op = getTypedPayload<GlobalVariableDeclOp>();
 			StringHandle var_name_handle = op.getVarName();

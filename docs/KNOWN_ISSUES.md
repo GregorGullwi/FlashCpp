@@ -242,23 +242,16 @@ The safe NRVO slice covers top-level named locals in lambda call operators and
 regular functions with constructor-style initialization and one top-level
 identifier return. The following shapes remain unsupported: nested-block locals,
 multiple return statements, conversion-operator initialization, and
-copy-initialization from a function call. Calls still allocate a temporary return
-slot and copy into the caller's local; direct initialization of the caller's
-destination through the return slot is not implemented.
+copy-initialization from a function call.
 
-Exception cleanup can currently destroy a caller destination whose
-initialization never completed. For example,
-`struct Big { ~Big(); }; Big make_fail(int) { Big local(1); throw 7; }` followed
-by `try { Big failed = make_fail(1); } catch (...) {}` runs destructors for both
-the callee local and the never-constructed `failed` destination (two calls
-instead of one). This is a pre-existing cleanup bug, not specific to NRVO, and
-must be fixed by tracking construction completion or cleanup ranges before
-claiming exception-safe return-slot construction.
-
-NRVO locals are registered for exception cleanup and skipped only on a
-successful return in both regular functions and lambda call operators. Exception
-cleanup still needs construction-completion tracking so it never visits a
-destination whose initialization never finished.
+Hidden-return calls now construct directly in the caller destination; no
+temporary return slot or caller-side copy is emitted. Constructor-initialized and
+call-initialized struct locals with destructors reserve a construction flag
+before evaluation and set it only after initialization completes. Exception
+cleanup checks that flag, so an incomplete callee local or caller destination is
+not destroyed. Remaining lifetime gaps are initialization paths that bypass the
+tracked struct-initialization tail, such as some array and member-aggregate
+forms.
 
 ## Constexpr namespace-scope pointer dereference is not yet supported
 

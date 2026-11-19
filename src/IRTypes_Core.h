@@ -120,6 +120,8 @@ enum class IrOpcode : int_fast16_t {
 	Unreachable,
 	FunctionDecl,
 	VariableDecl,
+	InitLocalConstruction,
+	MarkConstructed,
 	FunctionCall,
 	Assignment,
 	StackAlloc,
