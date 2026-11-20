@@ -3517,8 +3517,16 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			// [expr.ref] qualifies the pointer object, not its pointee.
 			if (member_type.runtime_pointer_depth() == 0) {
 				member_type.add_cv_qualifier(cv);
+			} else if (member_type.has_ordered_declarator()) {
+				// The pointer object is the outermost ordered wrapper. A
+				// non-projectable spine such as int* (*)[3] has no flat pointer
+				// levels, so the wrapper must be replaced in place.
+				const DeclaratorComponent outer_wrapper = member_type.declarator_components().front();
+				member_type.remove_outermost_ordered_declarator_component();
+				member_type.prepend_ordered_declarator_component(
+					DeclaratorComponent::pointer(outer_wrapper.cv_qualifier | cv));
 			} else {
-				cv |= member_type.pointer_levels().back().cv_qualifier;
+				cv |= member_type.top_level_cv_qualifier();
 				member_type.remove_pointer_level();
 				member_type.add_pointer_level(cv);
 			}
@@ -4228,6 +4236,8 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			if (!operand_type.has_ordered_declarator() && operand_type.is_array() &&
 				!operand_type.has_pointee_array_declarator()) {
 				TypeSpecifierNode result = operand_type;
+				// An unordered array carries its extents only in the flat
+				// projection; there is no declarator spine to read.
 				if (result.array_dimensions().size() > 1) {
 					result.remove_outermost_array_dimension();
 					result.set_pointee_array_declarator(true);
@@ -4263,7 +4273,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				}
 			}
 			if (operand_type.category() == TypeCategory::FunctionPointer &&
-				operand_type.pointer_levels().empty() &&
+				operand_type.runtime_pointer_depth() == 0 &&
 				operand_type.has_function_signature()) {
 				// FunctionPointer is a legacy category that carries its outer
 				// pointer implicitly. Dereferencing it produces a function lvalue,
@@ -4282,7 +4292,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				TypeSpecifierNode result = operand_type;
 				result.set_reference_qualifier(ReferenceQualifier::LValueReference);
 				return result;
-			} else if (operand_type.pointer_levels().size() > 0) {
+			} else if (operand_type.runtime_pointer_depth() > 0) {
 				// Dereferencing a pointer removes one level of pointer and yields
 				// an lvalue of the pointee type, so the reference rule and
 				// overload ranking see the same value category.
@@ -4290,7 +4300,9 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				result.remove_pointer_level();
 				result.set_reference_qualifier(ReferenceQualifier::LValueReference);
 				// The array bounds now describe the dereferenced array object,
-				// rather than the pointee of a still-present pointer.
+				// rather than the pointee of a still-present pointer. The peel
+				// above only rewrites the flat projection, so an interleaved
+				// spine such as int* (*)[3] still holds its pointer wrapper.
 				if (result.pointer_levels().empty() &&
 					result.has_pointee_array_declarator()) {
 					result.markPointeeArrayAsArrayObject();
@@ -4366,7 +4378,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		// C++20 [expr.unary.op]: unary +, -, and ~ promote small integral
 		// operands to int before the result type is observed by auto/decltype.
 		if ((op == "+" || op == "-" || op == "~") &&
-			operand_type.pointer_levels().empty() &&
+			operand_type.runtime_pointer_depth() == 0 &&
 			!operand_type.is_array() &&
 			!operand_type.is_reference() &&
 			(isIntegralType(operand_type.category()) || operand_type.category() == TypeCategory::Bool)) {
@@ -4463,6 +4475,8 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				if (!current.has_member_class() && candidate.has_member_class()) {
 					return true;
 				}
+				// Array alias targets are not promoted to an ordered declarator, so
+				// the caller's preference still compares the flat extent list.
 				if (current.array_dimensions().empty() &&
 					!candidate.array_dimensions().empty()) {
 					return true;
@@ -4676,14 +4690,18 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			return std::nullopt;
 		}
 
+		// [expr.mptr.oper]: the result is the designated member. A dependent
+		// member-pointer operand has no published pointee until instantiation,
+		// so this parser-side result still peels the flat member-pointer levels;
+		// sema resolves the canonical pointee for the typed paths.
 		TypeSpecifierNode result(
 			member_pointer_type.type_index(),
 			member_pointer_type.qualifier(),
 			member_pointer_type.sizeBits(),
 			member_pointer_type.token(),
 			member_pointer_type.cv_qualifier());
-		for (size_t i = 1; i < member_pointer_type.pointer_depth(); ++i) {
-			result.add_pointer_level(member_pointer_type.pointer_levels()[i].cv_qualifier);
+		for (size_t level = 1; level < member_pointer_type.pointer_depth(); ++level) {
+			result.add_pointer_level(member_pointer_type.pointer_levels()[level].cv_qualifier);
 		}
 		if (member_pointer_type.has_pointee_array_declarator()) {
 			result.set_pointee_array_declarator(true);
@@ -4747,7 +4765,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			// If both types are the same, return that type
 			if (true_type.type() == false_type.type() &&
 				true_type.type_index() == false_type.type_index() &&
-				true_type.pointer_levels().size() == false_type.pointer_levels().size()) {
+				true_type.has_same_pointer_shape(false_type)) {
 				// Return the common type (prefer the true branch for reference/const qualifiers)
 				return true_type;
 			}
@@ -4924,22 +4942,14 @@ std::optional<TypeSpecifierNode> newExpressionResultType(const NewExpressionNode
 	}
 	result.clear_ordered_declarator();
 	result.set_reference_qualifier(ReferenceQualifier::None);
-	const bool allocated_object_is_array = !new_expr.is_array() && result.is_array() && !result.has_pointee_array_declarator();
-	if (allocated_object_is_array) {
-		std::vector<size_t> inner_extents;
-		const std::span<const size_t> dimensions = result.array_dimensions();
-		if (dimensions.size() > 1) {
-			inner_extents.assign(dimensions.begin() + 1, dimensions.end());
-		}
-		result.set_array(false);
-		if (!inner_extents.empty()) {
-			result.set_array_dimensions(inner_extents);
-		}
-	}
+	// [expr.new]: the result points at the initial element of an allocated
+	// array, so the outermost bound becomes the result pointer and any remaining
+	// bounds stay on that element. The ordered spine expresses that interleaving;
+	// flattening it would have to guess which bound belongs to the pointer.
 	if (result.is_array() && !result.has_pointee_array_declarator()) {
-		const std::vector<size_t> extents(result.array_dimensions().begin(), result.array_dimensions().end());
-		result.set_pointee_array_declarator(true);
-		result.set_pointee_array_dimensions(extents);
+		promoteDeclaratorShapeToOrdered(result);
+		decayOrderedArrayToPointer(result);
+		return result;
 	}
 	result.add_pointer_level(CVQualifier::None);
 	return result;
@@ -5359,7 +5369,10 @@ bool Parser::are_types_compatible(const TypeSpecifierNode& type1, const TypeSpec
 		}
 	}
 
-	// Check pointer levels
+	// Check pointer levels. Array-of-pointer declarators carry their pointer
+	// wrappers inside the array spine, and runtime_pointer_depth() reports zero
+	// for them, so this verdict keeps counting the flat projection to stay at
+	// the current lambda return-type agreement.
 	if (type1.pointer_levels().size() != type2.pointer_levels().size()) {
 		return false;
 	}
@@ -5468,7 +5481,9 @@ std::string Parser::type_to_string(const TypeSpecifierNode& type) const {
 		break;
 	}
 
-	// Add pointer levels
+	// Add pointer levels. This is diagnostic spelling: an interleaved
+	// declarator such as int* (*)[3] has no rendering here, and replacing the
+	// flat text would change existing messages.
 	for (size_t i = 0; i < type.pointer_levels().size(); ++i) {
 		result += "*";
 		const PointerLevel& ptr_level = type.pointer_levels()[i];
