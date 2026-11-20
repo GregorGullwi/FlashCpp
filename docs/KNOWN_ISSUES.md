@@ -5,6 +5,17 @@ remaining behavior and the next required change; completed work belongs in
 `MIGRATION_PROGRESS.md`, which should link here instead of restating issue
 details.
 
+## AST-to-IR still resolves namespace-scope names by spelling
+
+`IdentifierNode::resolved_name` is populated for static members and static
+locals, but not for ordinary namespace-scope variables or functions. IR lowering
+therefore re-runs unqualified lookup through `current_namespace_stack_`, and IR
+constant evaluation reconstructs a namespace context from that stack. This is
+the Boundary 5 migration item: publish the resolved declaration/entity identity
+on the identifier in sema, consume it in AST-to-IR, and delete the IR lookup
+paths. Until then the IR namespace context is a transitional bridge, not a
+second semantic authority.
+
 ## Operator candidate lookup still lacks complete member-name provenance
 
 Direct unary, binary, and assignment operator lookup now stop at the first class
