@@ -3823,6 +3823,11 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 			context.return_type_info = return_type_info;
 	}
 
+	// A member function body resolves unqualified names in its class's
+	// declaration namespace, not in the namespace that triggered the call.
+	ScopedFunctionLookupContext member_lookup_context(
+		context, struct_info != nullptr ? struct_info->getNamespaceHandle() : NamespaceHandle{});
+
 	// Increase recursion depth
 	context.current_depth++;
 	auto* saved_local_bindings = context.local_bindings;

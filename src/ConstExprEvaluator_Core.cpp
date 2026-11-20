@@ -4563,7 +4563,7 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	std::optional<ASTNode> symbol_opt;
 	std::optional<NamespaceHandle> symbol_namespace;
 	auto lookup_in_declaration_namespace = [&](const SymbolTable& symbols) -> std::optional<ASTNode> {
-		auto found = symbols.lookup_in_namespace_chain(context.lookup_namespace, var_name);
+		auto found = symbols.lookup_in_namespace_chain(context.lookup_namespace, name_handle);
 		if (!found.has_value()) {
 			return std::nullopt;
 		}
@@ -4605,29 +4605,11 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			symbol_opt = context.symbols->lookup(var_name, ScopeHandle{.scope_level = 1});
 		}
 		if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
-			symbol_opt = context.global_symbols->lookup(var_name, ScopeHandle{.scope_level = 1});
-		}
-	} else if (context.lookup_namespace.isValid() && !context.lookup_namespace.isGlobal()) {
-		// Declaration-context evaluation: resolved bindings win, then the
-		// declaration namespace chain, then ambient scopes.
-		if (identifier.resolved_name().isValid()) {
-			symbol_opt = context.symbols->lookup(identifier.resolved_name());
-		}
-		if (!symbol_opt.has_value()) {
-			symbol_opt = lookup_in_declaration_namespace(*context.symbols);
-		}
-		if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
-			if (identifier.resolved_name().isValid()) {
-				symbol_opt = context.global_symbols->lookup(identifier.resolved_name());
-			}
-			if (!symbol_opt.has_value()) {
+			if (context.lookup_namespace.isValid() && !context.lookup_namespace.isGlobal()) {
 				symbol_opt = lookup_in_declaration_namespace(*context.global_symbols);
 			}
-		}
-		if (!symbol_opt.has_value()) {
-			symbol_opt = lookup_identifier_symbol(&identifier, var_name, *context.symbols);
-			if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
-				symbol_opt = lookup_identifier_symbol(&identifier, var_name, *context.global_symbols);
+			if (!symbol_opt.has_value()) {
+				symbol_opt = context.global_symbols->lookup(var_name, ScopeHandle{.scope_level = 1});
 			}
 		}
 	} else {
@@ -4635,6 +4617,14 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		// If not in local scope, also check global symbols for global constexpr variables
 		if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
 			symbol_opt = lookup_identifier_symbol(&identifier, var_name, *context.global_symbols);
+		}
+		// Lexical lookup wins; the declaration namespace chain is the fallback for
+		// names not visible through the ambient scope stack.
+		if (!symbol_opt.has_value() && context.lookup_namespace.isValid() && !context.lookup_namespace.isGlobal()) {
+			symbol_opt = lookup_in_declaration_namespace(*context.symbols);
+			if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
+				symbol_opt = lookup_in_declaration_namespace(*context.global_symbols);
+			}
 		}
 	}
 
@@ -5151,6 +5141,8 @@ EvalResult Evaluator::evaluate_callable_object(
 		auto saved_struct_type_index = context.struct_type_index;
 		context.struct_info = struct_info;
 		context.struct_type_index = type_spec.type_index();
+		ScopedFunctionLookupContext callable_lookup_context(
+			context, struct_info != nullptr ? struct_info->getNamespaceHandle() : NamespaceHandle{});
 		context.current_depth++;
 		auto result = evaluate_block_with_bindings(
 			definition.value(),
@@ -5217,6 +5209,8 @@ EvalResult Evaluator::evaluate_callable_object(
 		auto saved_struct_type_index = context.struct_type_index;
 		context.struct_info = struct_info;
 		context.struct_type_index = type_spec.type_index();
+		ScopedFunctionLookupContext callable_lookup_context(
+			context, struct_info != nullptr ? struct_info->getNamespaceHandle() : NamespaceHandle{});
 		context.current_depth++;
 		auto result = evaluate_block_with_bindings(
 			definition.value(),
@@ -6910,6 +6904,8 @@ EvalResult Evaluator::invoke_constexpr_destructor(
 	context.struct_info = struct_info;
 	context.struct_type_index = object.object_type_index;
 	context.return_type_info = nullptr;
+	ScopedFunctionLookupContext destructor_lookup_context(
+		context, struct_info != nullptr ? struct_info->getNamespaceHandle() : NamespaceHandle{});
 	context.current_depth++;
 
 	auto* saved_local_bindings = context.local_bindings;

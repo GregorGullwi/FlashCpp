@@ -9,12 +9,12 @@ details.
 
 `IdentifierNode::resolved_name` is populated for static members and static
 locals, but not for ordinary namespace-scope variables or functions. IR lowering
-therefore re-runs unqualified lookup through `current_namespace_stack_`, and IR
-constant evaluation reconstructs a namespace context from that stack. This is
-the Boundary 5 migration item: publish the resolved declaration/entity identity
-on the identifier in sema, consume it in AST-to-IR, and delete the IR lookup
-paths. Until then the IR namespace context is a transitional bridge, not a
-second semantic authority.
+therefore re-runs unqualified lookup through `current_namespace_stack_`, and
+detached static-storage initializer evaluation reconstructs a namespace context
+from that stack. This is the Boundary 5 migration item: publish the resolved
+declaration/entity identity on the identifier in sema, consume it in
+AST-to-IR, and delete the IR lookup paths. Until then the IR namespace context is
+a transitional bridge, not a second semantic authority.
 
 ## Operator candidate lookup still lacks complete member-name provenance
 
@@ -294,18 +294,22 @@ member-aggregate forms. Small aggregates returned in registers still initialize
 through the ABI result temporary, so copy-initialization from such a call is not
 elided yet and still requires an accessible copy or move constructor.
 
-## Runtime lowering does not reuse declaration-namespace lookup for namespace-scope variables
+## Remaining namespace-scope initializer lowering gaps
 
-Constexpr evaluation resolves unqualified names in the declaration namespace and
-its enclosing namespaces, including reopened namespaces, and keeps the source
-declaration of qualified arrays so array-to-pointer decay works. Runtime lowering
-of a namespace-scope pointer that targets an array still crashes: the IR path
-re-resolves the qualified reference instead of applying the pointer's array
-origin. Namespace-scope `using`-directives are also not consulted when an
-initializer is evaluated outside its lexical scope. Inline and nested namespace
-variables can additionally be emitted with a name that does not match their
-reference (`undefined reference to 'N::a'`), which is a separate symbol-emission
-gap.
+Declaration-namespace lookup now covers runtime initializers, including reopened
+and enclosing namespaces, using-declarations, and array-to-pointer decay for a
+whole array. Remaining gaps:
+
+- A decayed pointer with a nonzero element offset (`values + 1`) is emitted as
+  null because static relocations carry no addend.
+- `&arr[i]` and static-member array decay still fail constant evaluation.
+- A namespace-scope reference records the referenced value instead of its
+  address, so runtime reads of `N::r` are wrong.
+- Namespace-scope `using`-directives are not consulted during detached
+  evaluation.
+- Inline and nested namespace variables can be emitted with a name that does not
+  match their reference (`undefined reference to 'N::a'`), which is a separate
+  symbol-emission gap.
 
 ## Subscript storage follow-up architecture
 

@@ -172,12 +172,6 @@ ConstExpr::EvaluationContext AstToIr::makeEvalContext(const SymbolTable& symbols
 			}
 		}
 	}
-	// Transitional bridge: identifiers do not yet publish their declaration
-	// namespace, so IR constant evaluation reconstructs it from the namespace
-	// stack. Remove with the AST-to-IR lookup migration (Boundary 5).
-	if (!current_namespace_stack_.empty()) {
-		ctx.lookup_namespace = buildNamespaceHandleFromStrings(current_namespace_stack_);
-	}
 	return ctx;
 }
 

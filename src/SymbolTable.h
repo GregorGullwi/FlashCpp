@@ -1164,6 +1164,32 @@ public:
 		NamespaceHandle namespace_handle;
 	};
 
+	// A namespace-scope using-declaration stores the imported name in
+	// namespace_symbols_, so the found namespace is the importer, not the
+	// declaration's namespace. Recover the nominated namespace from the
+	// persistent namespace scope's using-declaration map.
+	std::optional<NamespaceHandle> find_using_declaration_origin(NamespaceHandle namespace_handle, StringHandle identifier) const {
+		const NamespaceHandle target = namespace_handle.isGlobal() ? NamespaceRegistry::GLOBAL_NAMESPACE : namespace_handle;
+		for (std::size_t index = 0; index < scopes_.size(); ++index) {
+			const ScopeMetadataView metadata = scopeMetadataAtIndex(index);
+			if (metadata.scope_type != ScopeType::Namespace && metadata.scope_type != ScopeType::Global) {
+				continue;
+			}
+			const NamespaceHandle scope_namespace = metadata.namespace_handle.isValid()
+				? metadata.namespace_handle
+				: NamespaceRegistry::GLOBAL_NAMESPACE;
+			if (scope_namespace != target) {
+				continue;
+			}
+			const auto& handles = scopes_[index].using_declarations_handles;
+			const auto it = handles.find(StringTable::getStringView(identifier));
+			if (it != handles.end()) {
+				return it->second.first;
+			}
+		}
+		return std::nullopt;
+	}
+
 	// C++20 [basic.lookup.unqual] restricted to a known declaration namespace:
 	// the namespace itself, each enclosing namespace, then the global scope.
 	// Used when evaluating or instantiating code outside its original lexical
@@ -1171,7 +1197,15 @@ public:
 	std::optional<NamespaceChainLookupResult> lookup_in_namespace_chain(NamespaceHandle start, StringHandle identifier) const {
 		for (NamespaceHandle current = start; current.isValid(); current = gNamespaceRegistry.getParent(current)) {
 			if (auto symbol = lookup_qualified(current, identifier); symbol.has_value()) {
-				return NamespaceChainLookupResult{std::move(*symbol), current};
+				NamespaceHandle declaration_namespace = current;
+				for (uint32_t depth = 0; depth < 32; ++depth) {
+					const std::optional<NamespaceHandle> origin = find_using_declaration_origin(declaration_namespace, identifier);
+					if (!origin.has_value() || *origin == declaration_namespace) {
+						break;
+					}
+					declaration_namespace = *origin;
+				}
+				return NamespaceChainLookupResult{std::move(*symbol), declaration_namespace};
 			}
 			if (current.isGlobal()) {
 				break;
