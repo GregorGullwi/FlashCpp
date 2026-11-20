@@ -4,6 +4,8 @@ import pathlib
 import subprocess
 import sys
 
+from host_compiler import windows_clang_cl
+
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "tests/architecture/return_flow_graph_ret0.cpp"
@@ -13,11 +15,12 @@ OUTPUT = ROOT / "x64/return-flow-graph"
 def main():
 	OUTPUT.mkdir(parents=True, exist_ok=True)
 	if sys.platform == "win32":
+		compiler = windows_clang_cl()
 		obj = OUTPUT / "return_flow_graph_ret0.obj"
 		executable = OUTPUT / "return_flow_graph_ret0.exe"
-		compile_command = ["clang-cl", "/nologo", "/std:c++20", "/EHsc", "/W4", "/WX",
+		compile_command = [compiler, "/nologo", "/std:c++20", "/EHsc", "/W4", "/WX",
 			"/I" + str(ROOT / "src"), "/c", str(SOURCE), "/Fo" + str(obj), "/clang:-fstack-usage"]
-		link_command = ["clang-cl", "/nologo", str(obj), "/Fe" + str(executable)]
+		link_command = [compiler, "/nologo", str(obj), "/Fe" + str(executable)]
 	else:
 		obj = OUTPUT / "return_flow_graph_ret0.o"
 		executable = OUTPUT / "return_flow_graph_ret0"
