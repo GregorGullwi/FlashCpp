@@ -399,6 +399,13 @@ remaining pattern schemas by identity, and remove the name fallback.
    conversion. A selected scalar-to-class parameter conversion propagates the
    nested constructor's nothrow result into the outer nothrow query, while an
    undecidable nested conversion keeps the query deferred.
+   Implicit conversions supplied by two different converting constructors stay
+   indistinguishable: [over.ics.rank]/3.3 orders user-defined sequences by a
+   standard conversion sequence only when they contain the same conversion
+   function or constructor, so the leading parameter rank must not order
+   distinct constructors and the call stays ambiguous.
+   `test_conversion_distinct_converting_constructors_ambiguous_e1701.cpp` pins
+   that rule against ranking the leading sequence.
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are
