@@ -4066,10 +4066,17 @@ inline std::optional<ConversionPlan> tryBuildCanonicalConversionValueTailPlan(Ca
 	if (source_kind == CanonicalTypeKind::Array && target_kind == CanonicalTypeKind::Pointer) {
 		return buildCanonicalStructuralConversionPlan(table, source, target);
 	}
+	const bool is_member_pointer_pair =
+		(source_kind == CanonicalTypeKind::MemberObjectPointer || source_kind == CanonicalTypeKind::MemberFunctionPointer) &&
+		source_kind == target_kind;
+	if (is_member_pointer_pair) {
+		if (table.hasDependentTypeComponents(source) || table.hasDependentTypeComponents(target)) {
+			return std::nullopt;
+		}
+		return tryBuildCanonicalMemberPointerConversionPlan(table, source, target);
+	}
 	const bool is_function_pointer_pair = canonicalFunctionPointerTarget(table, source) && canonicalFunctionPointerTarget(table, target);
-	const bool is_same_owner_member_pair = source_kind == CanonicalTypeKind::MemberFunctionPointer &&
-		target_kind == CanonicalTypeKind::MemberFunctionPointer && table.memberPointerOwner(source) == table.memberPointerOwner(target);
-	if (is_function_pointer_pair || is_same_owner_member_pair) {
+	if (is_function_pointer_pair) {
 		if (table.hasDependentTypeComponents(source) || table.hasDependentTypeComponents(target)) {
 			return std::nullopt;
 		}
