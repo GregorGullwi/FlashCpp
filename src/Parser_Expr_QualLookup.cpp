@@ -3523,8 +3523,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				// levels, so the wrapper must be replaced in place.
 				const DeclaratorComponent outer_wrapper = member_type.declarator_components().front();
 				member_type.remove_outermost_ordered_declarator_component();
-				member_type.prepend_ordered_declarator_component(
-					DeclaratorComponent::pointer(outer_wrapper.cv_qualifier | cv));
+				member_type.prepend_ordered_declarator_component(DeclaratorComponent::pointer(outer_wrapper.cv_qualifier | cv));
 			} else {
 				cv |= member_type.top_level_cv_qualifier();
 				member_type.remove_pointer_level();
