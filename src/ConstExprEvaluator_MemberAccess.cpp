@@ -1466,18 +1466,30 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 		if (!initializer.has_value()) {
 			return EvalResult::error("Constexpr variable has no initializer: " + qualified_id.full_name());
 		}
+
+		const NamespaceHandle variable_namespace = qualified_id.namespace_handle();
+		const bool saved_force_global_lookup = context.force_global_lookup;
+		const NamespaceHandle saved_lookup_namespace = context.lookup_namespace;
+		context.force_global_lookup = true;
+		context.lookup_namespace = variable_namespace;
+		ScopeGuard restore_variable_scope([&]() {
+			context.force_global_lookup = saved_force_global_lookup;
+			context.lookup_namespace = saved_lookup_namespace;
+		});
+
 		if (initializer->is<InitializerListNode>()) {
 			const TypeSpecifierNode& type_spec = var_decl.declaration().type_specifier_node();
 			if (type_spec.array_dimension_count() > 0) {
-				return materializeArrayInitializer(
+				EvalResult array_result = materializeArrayInitializer(
 					type_spec.type_index(),
 					type_spec.array_dimensions(),
 					initializer->as<InitializerListNode>(),
 					context);
+				return finalize_variable_initialization(var_decl, qualified_id.name(), initializer.value(), std::move(array_result), context);
 			}
 		}
 
-		return evaluate(initializer.value(), context);
+		return finalize_variable_initialization(var_decl, qualified_id.name(), initializer.value(), evaluate(initializer.value(), context), context);
 	}
 
 	if (symbol_node.is<DeclarationNode>()) {

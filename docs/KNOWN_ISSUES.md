@@ -283,13 +283,14 @@ member-aggregate forms. Small aggregates returned in registers still initialize
 through the ABI result temporary, so copy-initialization from such a call is not
 elided yet and still requires an accessible copy or move constructor.
 
-## Constexpr namespace-scope pointer dereference is not yet supported
+## Runtime dereference of a qualified namespace pointer to an array is not lowered
 
-Global constexpr pointer targets now carry the source declaration and evaluate
-global initializers without local scope, so a shadowing local with the same
-name cannot redirect the pointer. Qualified namespace-scope pointer targets
-still need the same treatment: dereferencing `N::pointer` where the initializer
-names a namespace-scope array currently reports a non-pointer value.
+Constexpr evaluation now resolves qualified namespace-scope pointer initializers
+in their declaring namespace and keeps the array source declaration, so
+`constexpr int value = *N::pointer;` works when `pointer` targets `N::values`.
+The same expression in runtime lowering still crashes: code generation must
+apply the namespace-qualified variable's pointer/array origin instead of
+treating the qualified reference as a non-pointer value.
 
 ## Subscript storage follow-up architecture
 

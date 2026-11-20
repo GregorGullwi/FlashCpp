@@ -536,6 +536,9 @@ struct EvaluationContext {
 	// When evaluating a global or namespace-scope initializer, local scopes and
 	// shadowing bindings must not participate in name lookup.
 	bool force_global_lookup = false;
+	// Namespace owning a namespace-scope initializer. Unqualified names in that
+	// initializer resolve here before the global scope.
+	NamespaceHandle lookup_namespace;
 
 	// Pointer to the innermost active block scope tracker (null at top level).
 	// Each BlockScopeGuard saves/restores this so that nested blocks each get
@@ -661,6 +664,13 @@ public:
 
 	// Qualified/member access evaluation
 	static EvalResult evaluate_qualified_identifier(const QualifiedIdentifierNode& qualified_id, EvaluationContext& context);
+	// Applies the declared variable's initialization semantics to an already
+	// evaluated initializer: exact type publication, array-to-pointer decay for
+	// pointer objects, and narrow-unsigned normalization. Shared by unqualified
+	// and qualified constexpr variable lookup.
+	static EvalResult finalize_variable_initialization(
+		const VariableDeclarationNode& var_decl, std::string_view variable_name,
+		const ASTNode& init_expr, EvalResult result, EvaluationContext& context);
 	static EvalResult evaluate_member_access(const MemberAccessNode& member_access, EvaluationContext& context);
 	static EvalResult evaluate_pointer_to_member_access(const PointerToMemberAccessNode& member_access, EvaluationContext& context);
 

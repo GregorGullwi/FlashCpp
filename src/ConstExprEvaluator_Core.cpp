@@ -1382,6 +1382,27 @@ EvalResult makeConvertedEvalResult(const TypeSpecifierNode& target_type, const E
 
 } // namespace
 
+EvalResult Evaluator::finalize_variable_initialization(
+	const VariableDeclarationNode& var_decl, std::string_view variable_name,
+	const ASTNode& init_expr, EvalResult result, EvaluationContext& context) {
+	if (!result.success()) {
+		return result;
+	}
+	maybe_set_binding_result_exact_type(result, var_decl.declaration(), &init_expr, context);
+	if (result.is_array && result.array_origin_var.isValid()) {
+		if (auto decayed_ptr = try_decay_array_initializer_to_pointer(
+				result, init_expr, var_decl.declaration().type_specifier_node(), variable_name)) {
+			result = std::move(*decayed_ptr);
+			if (!result.success()) {
+				return result;
+			}
+			maybe_set_binding_result_exact_type(result, var_decl.declaration(), &init_expr, context);
+		}
+	}
+	apply_uint_init_narrowing(result);
+	return result;
+}
+
 const TemplateTypeArg* findTemplateValueParameterBinding(
 	StringHandle param_name_handle,
 	const EvaluationContext& context) {
@@ -4555,9 +4576,19 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			return EvalResult::error("Bound static member not found in constant expression: " + std::string(var_name));
 		}
 	} else if (context.force_global_lookup) {
-		symbol_opt = context.symbols->lookup(var_name, ScopeHandle{.scope_level = 1});
+		if (context.lookup_namespace.isValid()) {
+			symbol_opt = context.symbols->lookup_qualified(context.lookup_namespace, var_name);
+		}
+		if (!symbol_opt.has_value()) {
+			symbol_opt = context.symbols->lookup(var_name, ScopeHandle{.scope_level = 1});
+		}
 		if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
-			symbol_opt = context.global_symbols->lookup(var_name, ScopeHandle{.scope_level = 1});
+			if (context.lookup_namespace.isValid()) {
+				symbol_opt = context.global_symbols->lookup_qualified(context.lookup_namespace, var_name);
+			}
+			if (!symbol_opt.has_value()) {
+				symbol_opt = context.global_symbols->lookup(var_name, ScopeHandle{.scope_level = 1});
+			}
 		}
 	} else {
 		symbol_opt = lookup_identifier_symbol(&identifier, var_name, *context.symbols);
@@ -4706,24 +4737,7 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		context.force_global_lookup = true;
 	}
 
-	EvalResult result = evaluateIdentifierInitializer();
-	if (!result.success()) {
-		return result;
-	}
-
-	maybe_set_binding_result_exact_type(result, var_decl.declaration(), &initializer.value(), context);
-	if (result.is_array && result.array_origin_var.isValid()) {
-		if (auto decayed_ptr = try_decay_array_initializer_to_pointer(
-				result, initializer.value(), var_decl.declaration().type_specifier_node(), var_name)) {
-			result = std::move(*decayed_ptr);
-			if (!result.success()) {
-				return result;
-			}
-			maybe_set_binding_result_exact_type(result, var_decl.declaration(), &initializer.value(), context);
-		}
-	}
-	apply_uint_init_narrowing(result);
-	return result;
+	return finalize_variable_initialization(var_decl, var_name, initializer.value(), evaluateIdentifierInitializer(), context);
 }
 
 EvalResult Evaluator::evaluate_ternary_operator(const TernaryOperatorNode& ternary, EvaluationContext& context) {
