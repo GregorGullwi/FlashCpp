@@ -582,7 +582,18 @@ remaining pattern schemas by identity, and remove the name fallback.
    semantic paths.
    A native member-pointer regression independently reverses declaration and
    string insertion order, then checks owner and pointee identity after parser
-   teardown. Other type families still need equivalent coverage.
+   teardown. Function and member-function pointers with distinct parameter
+   lists, interleaved pointer/array declarators including pointer-to-array and
+   multidimensional arrays, records and class-template specializations with
+   nested owner composition, and dependent names and dependent template members
+   now have the same reverse-order, string-insertion, and no-parser
+   reconstruction evidence, and the canonical runner rejects reintroducing a
+   `Parser`, `SemanticAnalysis`, or member-context dependency into that harness.
+   That evidence also exposed `sameStructure` comparing the packed
+   member-specialization owner slot numerically, which hid cross-table owner
+   identity; it now compares the primary and the owner structurally. Member
+   aliases, partial-pattern identity, and owner/non-type argument combinations
+   still need equivalent coverage.
 
 Before declaring 3A complete, check every exit criterion in the plan and read its
 [parallel architecture experiment](2026-08-24-parallel-front-end-architecture-experiment.md).
