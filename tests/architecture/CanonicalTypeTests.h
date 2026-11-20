@@ -94,7 +94,19 @@ inline bool sameStructure(const CanonicalTypeTable& left, TypeId left_id,
 			continue;
 		}
 		if (a.kind == CanonicalTypeKind::TemplateSpecialization) {
-			if (a.array_extent != b.array_extent) {
+			// The packed extent holds both the primary TemplateDeclId and an
+			// optional member owner TypeId. Owner slots are table-local, so the
+			// owner has to be compared structurally rather than numerically.
+			if (unpackTemplateSpecializationDecl(a.array_extent) !=
+				unpackTemplateSpecializationDecl(b.array_extent)) {
+				return false;
+			}
+			const TypeId left_owner = unpackTemplateSpecializationOwner(a.array_extent);
+			const TypeId right_owner = unpackTemplateSpecializationOwner(b.array_extent);
+			if (static_cast<bool>(left_owner) != static_cast<bool>(right_owner)) {
+				return false;
+			}
+			if (left_owner && !sameStructure(left, left_owner, right, right_owner)) {
 				return false;
 			}
 			TypeId left_arg = left.templateSpecializationArguments(left_id);
@@ -3243,7 +3255,393 @@ inline void checkRecordMemberProperties() {
 	require(rejected);
 }
 
+// The native harness links only CanonicalTypes.cpp and the adapter. No Parser
+// and no SemanticAnalysis member-context stack exist in this translation unit,
+// so every probe below rebuilds identity from stable structural inputs: TypeId,
+// EntityId, TemplateDeclId, and identifier bytes.
+inline void internUnrelatedCanonicalSpelling(std::string_view spelling) {
+	StringTable::getOrInternStringHandle(spelling);
+}
+
+inline void checkFunctionIdentityIndependence() {
+	CanonicalTypeTable forward;
+	const auto void_type = forward.builtin(CanonicalBuiltinKind::Void);
+	const auto integer = forward.builtin(CanonicalBuiltinKind::Int);
+	const auto long_integer = forward.builtin(CanonicalBuiltinKind::Long);
+	const TypeId int_parameter[] = {integer};
+	const TypeId long_parameter[] = {long_integer};
+	const TypeId mixed_parameters[] = {integer, long_integer};
+	const auto plain_function = [&](std::span<const TypeId> parameters, bool variadic) {
+		return forward.function(void_type, parameters, variadic, CVQualifier::None, ReferenceQualifier::None,
+			false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	};
+	const auto void_int = plain_function(int_parameter, false);
+	const auto void_long = plain_function(long_parameter, false);
+	const auto void_mixed = plain_function(mixed_parameters, false);
+	const auto void_variadic = plain_function(int_parameter, true);
+	const auto int_pointer = forward.pointer(void_int);
+	const auto long_pointer = forward.pointer(void_long);
+	const auto mixed_pointer = forward.pointer(void_mixed);
+	const auto variadic_pointer = forward.pointer(void_variadic);
+	const auto owner = forward.record(EntityId{7601});
+	const auto other_owner = forward.record(EntityId{7602});
+	const auto member_int = forward.memberFunctionPointer(owner, void_int);
+	const auto member_long = forward.memberFunctionPointer(owner, void_long);
+	const auto member_mixed = forward.memberFunctionPointer(owner, void_mixed);
+	const auto member_other_owner = forward.memberFunctionPointer(other_owner, void_int);
+	require(void_int != void_long && void_long != void_mixed && void_int != void_variadic);
+	require(int_pointer != long_pointer && int_pointer != mixed_pointer && int_pointer != variadic_pointer);
+	require(member_int != member_long && member_int != member_mixed && member_int != member_other_owner);
+	require(member_int != int_pointer);
+
+	const size_t forward_count = forward.size();
+	internUnrelatedCanonicalSpelling("unrelated function identity spelling E");
+	require(forward.memberFunctionPointer(owner, void_int) == member_int);
+	internUnrelatedCanonicalSpelling("unrelated function identity spelling D");
+	require(plain_function(int_parameter, false) == void_int);
+	internUnrelatedCanonicalSpelling("unrelated function identity spelling C");
+	require(forward.pointer(void_int) == int_pointer);
+	internUnrelatedCanonicalSpelling("unrelated function identity spelling B");
+	require(forward.pointer(void_mixed) == mixed_pointer);
+	internUnrelatedCanonicalSpelling("unrelated function identity spelling A");
+	require(forward.pointer(void_long) == long_pointer);
+	require(forward.pointer(void_variadic) == variadic_pointer);
+	require(forward.memberFunctionPointer(other_owner, void_int) == member_other_owner);
+	require(forward.size() == forward_count);
+
+	CanonicalTypeTable reverse;
+	// Opposite order: unrelated structural requests first, then owners, then the
+	// long parameter form, with the remaining probes in reverse declaration order.
+	reverse.templateParameter(TemplateDeclId{7699}, 0);
+	reverse.array(reverse.builtin(CanonicalBuiltinKind::Char), 7);
+	const auto reverse_owner = reverse.record(EntityId{7601});
+	const auto reverse_other_owner = reverse.record(EntityId{7602});
+	const auto reverse_long = reverse.builtin(CanonicalBuiltinKind::Long);
+	const auto reverse_void = reverse.builtin(CanonicalBuiltinKind::Void);
+	const auto reverse_int = reverse.builtin(CanonicalBuiltinKind::Int);
+	const TypeId reverse_int_parameter[] = {reverse_int};
+	const TypeId reverse_long_parameter[] = {reverse_long};
+	const TypeId reverse_mixed_parameters[] = {reverse_int, reverse_long};
+	const auto reverse_plain_function = [&](std::span<const TypeId> parameters, bool variadic) {
+		return reverse.function(reverse_void, parameters, variadic, CVQualifier::None, ReferenceQualifier::None,
+			false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	};
+	const auto reverse_void_long = reverse_plain_function(reverse_long_parameter, false);
+	const auto reverse_void_int = reverse_plain_function(reverse_int_parameter, false);
+	const auto reverse_void_mixed = reverse_plain_function(reverse_mixed_parameters, false);
+	const auto reverse_void_variadic = reverse_plain_function(reverse_int_parameter, true);
+	const auto reverse_long_pointer = reverse.pointer(reverse_void_long);
+	const auto reverse_int_pointer = reverse.pointer(reverse_void_int);
+	const auto reverse_mixed_pointer = reverse.pointer(reverse_void_mixed);
+	const auto reverse_variadic_pointer = reverse.pointer(reverse_void_variadic);
+	const auto reverse_member_int = reverse.memberFunctionPointer(reverse_owner, reverse_void_int);
+	const auto reverse_member_long = reverse.memberFunctionPointer(reverse_owner, reverse_void_long);
+	const auto reverse_member_mixed = reverse.memberFunctionPointer(reverse_owner, reverse_void_mixed);
+	const auto reverse_member_other_owner = reverse.memberFunctionPointer(reverse_other_owner, reverse_void_int);
+	require(sameStructure(forward, void_int, reverse, reverse_void_int));
+	require(sameStructure(forward, void_mixed, reverse, reverse_void_mixed));
+	require(sameStructure(forward, void_variadic, reverse, reverse_void_variadic));
+	require(sameStructure(forward, int_pointer, reverse, reverse_int_pointer));
+	require(sameStructure(forward, mixed_pointer, reverse, reverse_mixed_pointer));
+	require(sameStructure(forward, variadic_pointer, reverse, reverse_variadic_pointer));
+	require(sameStructure(forward, member_int, reverse, reverse_member_int));
+	require(sameStructure(forward, member_mixed, reverse, reverse_member_mixed));
+	require(sameStructure(forward, member_other_owner, reverse, reverse_member_other_owner));
+	require(!sameStructure(forward, int_pointer, reverse, reverse_long_pointer));
+	require(!sameStructure(forward, void_int, reverse, reverse_void_long));
+	require(!sameStructure(forward, member_int, reverse, reverse_member_long));
+	require(!sameStructure(forward, member_int, reverse, reverse_member_other_owner));
+}
+
+inline void checkDeclaratorIdentityIndependence() {
+	CanonicalTypeTable forward;
+	const auto integer = forward.builtin(CanonicalBuiltinKind::Int);
+	forward.builtin(CanonicalBuiltinKind::Long);
+	const auto int_array_3 = forward.array(integer, 3);
+	const auto int_array_2x3 = forward.array(int_array_3, 2);
+	const auto int_array_2x3_swapped = forward.array(forward.array(integer, 2), 3);
+	const auto pointer_to_int = forward.pointer(integer);
+	const auto array_of_pointer_3 = forward.array(pointer_to_int, 3);
+	const auto pointer_to_array_3 = forward.pointer(int_array_3);
+	const auto pointer_to_array_2x3 = forward.pointer(int_array_2x3);
+	const auto array_of_pointer_to_array_4 = forward.array(forward.pointer(forward.array(integer, 4)), 3);
+	const auto interleaved_shape = forward.pointer(forward.array(forward.pointer(forward.array(integer, 4)), 3));
+	require(int_array_2x3 != int_array_2x3_swapped);
+	require(pointer_to_array_3 != array_of_pointer_3);
+	require(pointer_to_array_2x3 != interleaved_shape);
+	require(array_of_pointer_to_array_4 != interleaved_shape);
+	require(pointer_to_array_2x3 != pointer_to_array_3);
+
+	TypeSpecifierNode ordinary_array(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	const size_t dimensions[] = {2, 3};
+	ordinary_array.set_array_dimensions(dimensions);
+	require(importCanonicalType(forward, ordinary_array).type == int_array_2x3);
+	TypeSpecifierNode pointee_array(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	pointee_array.add_pointer_level(CVQualifier::None);
+	pointee_array.set_pointee_array_dimensions(dimensions);
+	pointee_array.set_pointee_array_declarator(true);
+	require(importCanonicalType(forward, pointee_array).type == pointer_to_array_2x3);
+	TypeSpecifierNode interleaved_syntax(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	interleaved_syntax.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(4),
+	});
+	require(importCanonicalType(forward, interleaved_syntax).type == interleaved_shape);
+
+	const size_t forward_count = forward.size();
+	internUnrelatedCanonicalSpelling("unrelated declarator identity spelling D");
+	require(forward.array(integer, 3) == int_array_3);
+	internUnrelatedCanonicalSpelling("unrelated declarator identity spelling C");
+	require(forward.array(int_array_3, 2) == int_array_2x3);
+	internUnrelatedCanonicalSpelling("unrelated declarator identity spelling B");
+	require(forward.pointer(int_array_2x3) == pointer_to_array_2x3);
+	internUnrelatedCanonicalSpelling("unrelated declarator identity spelling A");
+	require(forward.array(forward.pointer(forward.array(integer, 4)), 3) == array_of_pointer_to_array_4);
+	require(importCanonicalType(forward, interleaved_syntax).type == interleaved_shape);
+	require(forward.size() == forward_count);
+
+	CanonicalTypeTable reverse;
+	// The adapter reconstructs the interleaved syntax before any of the direct
+	// structural probes, and the long base is interned first.
+	TypeSpecifierNode reverse_interleaved_syntax = interleaved_syntax;
+	TypeSpecifierNode reverse_pointee_array = pointee_array;
+	TypeSpecifierNode reverse_ordinary_array = ordinary_array;
+	reverse.builtin(CanonicalBuiltinKind::Long);
+	const auto reverse_interleaved = importCanonicalType(reverse, reverse_interleaved_syntax).type;
+	const auto reverse_pointee_array_type = importCanonicalType(reverse, reverse_pointee_array).type;
+	const auto reverse_ordinary_array_type = importCanonicalType(reverse, reverse_ordinary_array).type;
+	const auto reverse_integer = reverse.builtin(CanonicalBuiltinKind::Int);
+	const auto reverse_array_pointer_to_array_4 = reverse.array(
+		reverse.pointer(reverse.array(reverse_integer, 4)), 3);
+	const auto reverse_pointer_to_array_2x3 = reverse.pointer(reverse.array(reverse.array(reverse_integer, 3), 2));
+	const auto reverse_pointer_to_array_3 = reverse.pointer(reverse.array(reverse_integer, 3));
+	const auto reverse_array_of_pointer_3 = reverse.array(reverse.pointer(reverse_integer), 3);
+	const auto reverse_int_array_2x3_swapped = reverse.array(reverse.array(reverse_integer, 2), 3);
+	const auto reverse_int_array_2x3 = reverse.array(reverse.array(reverse_integer, 3), 2);
+	const auto reverse_int_array_3 = reverse.array(reverse_integer, 3);
+	require(sameStructure(forward, interleaved_shape, reverse, reverse_interleaved));
+	require(sameStructure(forward, pointer_to_array_2x3, reverse, reverse_pointer_to_array_2x3));
+	require(sameStructure(forward, int_array_2x3, reverse, reverse_int_array_2x3));
+	require(sameStructure(forward, int_array_2x3, reverse, reverse_ordinary_array_type));
+	require(sameStructure(forward, pointer_to_array_2x3, reverse, reverse_pointee_array_type));
+	require(sameStructure(forward, array_of_pointer_to_array_4, reverse, reverse_array_pointer_to_array_4));
+	require(sameStructure(forward, pointer_to_array_3, reverse, reverse_pointer_to_array_3));
+	require(sameStructure(forward, array_of_pointer_3, reverse, reverse_array_of_pointer_3));
+	require(sameStructure(forward, int_array_3, reverse, reverse_int_array_3));
+	require(!sameStructure(forward, pointer_to_array_3, reverse, reverse_array_of_pointer_3));
+	require(!sameStructure(forward, int_array_2x3, reverse, reverse_int_array_2x3_swapped));
+	require(!sameStructure(forward, interleaved_shape, reverse, reverse_array_pointer_to_array_4));
+	require(!sameStructure(forward, pointer_to_array_2x3, reverse, reverse_pointer_to_array_3));
+
+	// The structural export is a declarator spine, not parser or member-context
+	// state, so importing it into the opposite-order table rebuilds identity.
+	const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(forward, interleaved_shape);
+	require(exported.status == CanonicalTypeImportStatus::Supported);
+	TypeSpecifierNode reconstructed(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	reconstructed.set_ordered_declarator(exported.components);
+	require(sameStructure(forward, interleaved_shape, reverse, importCanonicalType(reverse, reconstructed).type));
+}
+
+inline void checkRecordSpecializationIdentityIndependence() {
+	CanonicalTypeTable forward;
+	const auto integer = forward.builtin(CanonicalBuiltinKind::Int);
+	const auto long_integer = forward.builtin(CanonicalBuiltinKind::Long);
+	forward.builtin(CanonicalBuiltinKind::Char);
+	const auto record_a = forward.record(EntityId{7701});
+	const auto record_b = forward.record(EntityId{7702});
+	const TypeId first_args[] = {integer, long_integer};
+	const TypeId reversed_args[] = {long_integer, integer};
+	const auto spec_a = forward.templateSpecialization(TemplateDeclId{7801}, first_args);
+	const auto spec_reordered = forward.templateSpecialization(TemplateDeclId{7801}, reversed_args);
+	const auto spec_other = forward.templateSpecialization(TemplateDeclId{7802}, first_args);
+	const auto nested_a = forward.nestedRecord(spec_a, EntityId{7703});
+	const auto nested_a_deep = forward.nestedRecord(nested_a, EntityId{7704});
+	const auto nested_other = forward.nestedRecord(spec_other, EntityId{7703});
+	const CanonicalTemplateArgument member_int_arg[] = {CanonicalTemplateArgument::makeType(integer)};
+	const CanonicalTemplateArgument member_long_arg[] = {CanonicalTemplateArgument::makeType(long_integer)};
+	const auto member_a = forward.memberTemplateSpecialization(TemplateDeclId{7803}, spec_a, member_int_arg);
+	const auto member_a_long = forward.memberTemplateSpecialization(TemplateDeclId{7803}, spec_a, member_long_arg);
+	const auto member_b = forward.memberTemplateSpecialization(TemplateDeclId{7804}, spec_a, member_int_arg);
+	const auto member_other_owner = forward.memberTemplateSpecialization(
+		TemplateDeclId{7803}, spec_other, member_int_arg);
+	const auto inner_member = forward.memberTemplateSpecialization(TemplateDeclId{7805}, member_a, member_int_arg);
+	require(record_a != record_b);
+	require(spec_a != spec_reordered && spec_a != spec_other);
+	require(nested_a != nested_other && nested_a != nested_a_deep);
+	require(member_a != member_a_long && member_a != member_b && member_a != member_other_owner);
+	require(forward.nestedRecordOwner(nested_a) == spec_a);
+	require(forward.nestedRecordEntity(nested_a) == EntityId{7703});
+	require(forward.nestedRecordOwner(nested_a_deep) == nested_a);
+	require(forward.nestedRecordEntity(nested_a_deep) == EntityId{7704});
+	require(forward.templateSpecializationDecl(member_a) == TemplateDeclId{7803});
+	require(forward.templateSpecializationOwner(member_a) == spec_a);
+	require(forward.templateSpecializationDecl(inner_member) == TemplateDeclId{7805});
+	require(forward.templateSpecializationOwner(inner_member) == member_a);
+
+	const size_t forward_count = forward.size();
+	internUnrelatedCanonicalSpelling("unrelated specialization identity spelling D");
+	require(forward.record(EntityId{7701}) == record_a);
+	internUnrelatedCanonicalSpelling("unrelated specialization identity spelling C");
+	require(forward.templateSpecialization(TemplateDeclId{7801}, first_args) == spec_a);
+	internUnrelatedCanonicalSpelling("unrelated specialization identity spelling B");
+	require(forward.nestedRecord(nested_a, EntityId{7704}) == nested_a_deep);
+	internUnrelatedCanonicalSpelling("unrelated specialization identity spelling A");
+	require(forward.memberTemplateSpecialization(TemplateDeclId{7805}, member_a, member_int_arg) == inner_member);
+	require(forward.size() == forward_count);
+
+	CanonicalTypeTable reverse;
+	reverse.pointer(reverse.builtin(CanonicalBuiltinKind::Float));
+	const auto reverse_long = reverse.builtin(CanonicalBuiltinKind::Long);
+	reverse.builtin(CanonicalBuiltinKind::Char);
+	const auto reverse_integer = reverse.builtin(CanonicalBuiltinKind::Int);
+	const auto reverse_record_b = reverse.record(EntityId{7702});
+	const auto reverse_record_a = reverse.record(EntityId{7701});
+	const TypeId reverse_first_args[] = {reverse_integer, reverse_long};
+	const TypeId reverse_reversed_args[] = {reverse_long, reverse_integer};
+	const auto reverse_spec_other = reverse.templateSpecialization(TemplateDeclId{7802}, reverse_first_args);
+	const auto reverse_spec_reordered = reverse.templateSpecialization(
+		TemplateDeclId{7801}, reverse_reversed_args);
+	const auto reverse_spec_a = reverse.templateSpecialization(TemplateDeclId{7801}, reverse_first_args);
+	const auto reverse_nested_other = reverse.nestedRecord(reverse_spec_other, EntityId{7703});
+	const auto reverse_nested_a = reverse.nestedRecord(reverse_spec_a, EntityId{7703});
+	const auto reverse_nested_a_deep = reverse.nestedRecord(reverse_nested_a, EntityId{7704});
+	const CanonicalTemplateArgument reverse_member_int_arg[] = {
+		CanonicalTemplateArgument::makeType(reverse_integer)};
+	const CanonicalTemplateArgument reverse_member_long_arg[] = {
+		CanonicalTemplateArgument::makeType(reverse_long)};
+	const auto reverse_member_other_owner = reverse.memberTemplateSpecialization(
+		TemplateDeclId{7803}, reverse_spec_other, reverse_member_int_arg);
+	const auto reverse_member_b = reverse.memberTemplateSpecialization(
+		TemplateDeclId{7804}, reverse_spec_a, reverse_member_int_arg);
+	const auto reverse_member_a_long = reverse.memberTemplateSpecialization(
+		TemplateDeclId{7803}, reverse_spec_a, reverse_member_long_arg);
+	const auto reverse_member_a = reverse.memberTemplateSpecialization(
+		TemplateDeclId{7803}, reverse_spec_a, reverse_member_int_arg);
+	const auto reverse_inner_member = reverse.memberTemplateSpecialization(
+		TemplateDeclId{7805}, reverse_member_a, reverse_member_int_arg);
+	require(sameStructure(forward, record_a, reverse, reverse_record_a));
+	require(sameStructure(forward, spec_a, reverse, reverse_spec_a));
+	require(sameStructure(forward, nested_a, reverse, reverse_nested_a));
+	require(sameStructure(forward, nested_a_deep, reverse, reverse_nested_a_deep));
+	require(sameStructure(forward, member_a, reverse, reverse_member_a));
+	require(sameStructure(forward, inner_member, reverse, reverse_inner_member));
+	require(!sameStructure(forward, record_a, reverse, reverse_record_b));
+	require(!sameStructure(forward, spec_a, reverse, reverse_spec_reordered));
+	require(!sameStructure(forward, spec_a, reverse, reverse_spec_other));
+	require(!sameStructure(forward, nested_a, reverse, reverse_nested_other));
+	require(!sameStructure(forward, member_a, reverse, reverse_member_a_long));
+	require(!sameStructure(forward, member_a, reverse, reverse_member_b));
+	require(!sameStructure(forward, member_a, reverse, reverse_member_other_owner));
+
+	// A published EntityId and a stamped TemplateDeclId plus concrete arguments
+	// are enough to rebuild the same identity through the adapter.
+	TypeSpecifierNode record_syntax(TypeCategory::Struct, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	record_syntax.set_type_entity(EntityId{7701});
+	require(sameStructure(forward, record_a, reverse, importCanonicalType(reverse, record_syntax).type));
+	TypeSpecifierNode int_argument(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	TypeSpecifierNode long_argument(TypeCategory::Long, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	std::vector<TypeSpecifierNode> specialization_arguments{int_argument, long_argument};
+	TypeSpecifierNode spec_syntax(TypeCategory::Template, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	spec_syntax.set_template_specialization(TemplateDeclId{7801}, specialization_arguments);
+	require(sameStructure(forward, spec_a, reverse, importCanonicalType(reverse, spec_syntax).type));
+}
+
+inline void checkDependentIdentityIndependence() {
+	CanonicalTypeTable forward;
+	const auto integer = forward.builtin(CanonicalBuiltinKind::Int);
+	const auto long_integer = forward.builtin(CanonicalBuiltinKind::Long);
+	const auto parameter = forward.templateParameter(TemplateDeclId{7901}, 0);
+	const auto other_parameter = forward.templateParameter(TemplateDeclId{7901}, 1);
+	const auto foreign_parameter = forward.templateParameter(TemplateDeclId{7902}, 0);
+	const auto member = forward.dependentName(parameter, "member");
+	const auto other_member = forward.dependentName(parameter, "other");
+	const auto parameter_member = forward.dependentName(other_parameter, "member");
+	const auto nested_member = forward.dependentName(member, "type");
+	const TypeId int_arguments[] = {integer};
+	const TypeId long_arguments[] = {long_integer};
+	const auto template_member = forward.dependentTemplateMember(parameter, "Member", int_arguments);
+	const auto template_member_long = forward.dependentTemplateMember(parameter, "Member", long_arguments);
+	const auto other_template_member = forward.dependentTemplateMember(parameter, "Other", int_arguments);
+	const auto foreign_template_member = forward.dependentTemplateMember(foreign_parameter, "Member", int_arguments);
+	const auto nested_template_member = forward.dependentName(template_member, "type");
+	const auto member_alias = forward.dependentMemberAlias(parameter, TemplateDeclId{7903}, int_arguments);
+	const auto other_member_alias = forward.dependentMemberAlias(parameter, TemplateDeclId{7904}, int_arguments);
+	require(member != other_member && member != parameter_member);
+	require(template_member != template_member_long && template_member != other_template_member);
+	require(template_member != foreign_template_member);
+	require(nested_template_member != forward.dependentName(other_template_member, "type"));
+	require(member_alias != other_member_alias && member_alias != member);
+	require(forward.dependentNameIdentifier(member) == "member");
+	require(forward.dependentNameQualifier(member) == parameter);
+	require(forward.dependentNameIdentifier(template_member) == "Member");
+	require(forward.dependentNameQualifier(template_member) == parameter);
+	require(forward.dependentMemberAliasDecl(member_alias) == TemplateDeclId{7903});
+	require(forward.templateArgumentType(forward.dependentTemplateMemberArguments(template_member)) == integer);
+
+	const size_t forward_count = forward.size();
+	internUnrelatedCanonicalSpelling("unrelated dependent identity spelling D");
+	require(forward.dependentName(parameter, "member") == member);
+	internUnrelatedCanonicalSpelling("unrelated dependent identity spelling C");
+	require(forward.dependentName(member, "type") == nested_member);
+	internUnrelatedCanonicalSpelling("unrelated dependent identity spelling B");
+	require(forward.dependentTemplateMember(parameter, "Member", int_arguments) == template_member);
+	internUnrelatedCanonicalSpelling("unrelated dependent identity spelling A");
+	require(forward.dependentMemberAlias(parameter, TemplateDeclId{7903}, int_arguments) == member_alias);
+	require(forward.size() == forward_count);
+
+	CanonicalTypeTable reverse;
+	reverse.dependentName(reverse.templateParameter(TemplateDeclId{7999}, 0), "unrelated");
+	const auto reverse_foreign_parameter = reverse.templateParameter(TemplateDeclId{7902}, 0);
+	const auto reverse_other_parameter = reverse.templateParameter(TemplateDeclId{7901}, 1);
+	const auto reverse_parameter = reverse.templateParameter(TemplateDeclId{7901}, 0);
+	const auto reverse_long = reverse.builtin(CanonicalBuiltinKind::Long);
+	const auto reverse_integer = reverse.builtin(CanonicalBuiltinKind::Int);
+	const TypeId reverse_long_arguments[] = {reverse_long};
+	const TypeId reverse_int_arguments[] = {reverse_integer};
+	const auto reverse_other_member_alias = reverse.dependentMemberAlias(
+		reverse_parameter, TemplateDeclId{7904}, reverse_int_arguments);
+	const auto reverse_member_alias = reverse.dependentMemberAlias(
+		reverse_parameter, TemplateDeclId{7903}, reverse_int_arguments);
+	const auto reverse_other_template_member = reverse.dependentTemplateMember(
+		reverse_parameter, "Other", reverse_int_arguments);
+	const auto reverse_template_member_long = reverse.dependentTemplateMember(
+		reverse_parameter, "Member", reverse_long_arguments);
+	const auto reverse_foreign_template_member = reverse.dependentTemplateMember(
+		reverse_foreign_parameter, "Member", reverse_int_arguments);
+	const auto reverse_template_member = reverse.dependentTemplateMember(
+		reverse_parameter, "Member", reverse_int_arguments);
+	const auto reverse_parameter_member = reverse.dependentName(reverse_other_parameter, "member");
+	const auto reverse_other_member = reverse.dependentName(reverse_parameter, "other");
+	const auto reverse_member = reverse.dependentName(reverse_parameter, "member");
+	const auto reverse_nested_member = reverse.dependentName(reverse_member, "type");
+	const auto reverse_nested_template_member = reverse.dependentName(reverse_template_member, "type");
+	require(sameStructure(forward, member, reverse, reverse_member));
+	require(sameStructure(forward, nested_member, reverse, reverse_nested_member));
+	require(sameStructure(forward, template_member, reverse, reverse_template_member));
+	require(sameStructure(forward, nested_template_member, reverse, reverse_nested_template_member));
+	require(sameStructure(forward, member_alias, reverse, reverse_member_alias));
+	require(!sameStructure(forward, member, reverse, reverse_other_member));
+	require(!sameStructure(forward, member, reverse, reverse_parameter_member));
+	require(!sameStructure(forward, template_member, reverse, reverse_template_member_long));
+	require(!sameStructure(forward, template_member, reverse, reverse_other_template_member));
+	require(!sameStructure(forward, template_member, reverse, reverse_foreign_template_member));
+	require(!sameStructure(forward, member_alias, reverse, reverse_other_member_alias));
+
+	// The adapter consumes a DependentName-family TypeId directly; the only
+	// inputs are the canonical qualifier link and the stored identifier bytes.
+	TypeSpecifierNode dependent_syntax(TypeCategory::UserDefined, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	dependent_syntax.set_dependent_name_type(reverse_nested_template_member);
+	require(importCanonicalType(reverse, dependent_syntax).type ==
+		reverse.qualify(reverse_nested_template_member, CVQualifier::None));
+}
+
 inline int run() {
+	checkFunctionIdentityIndependence();
+	checkDeclaratorIdentityIndependence();
+	checkRecordSpecializationIdentityIndependence();
+	checkDependentIdentityIndependence();
 	checkSpecializationFieldSchemas();
 	checkNestedFieldSchemas();
 	checkRecordMemberProperties();

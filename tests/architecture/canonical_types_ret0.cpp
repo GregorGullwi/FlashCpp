@@ -4,6 +4,10 @@
 // importCanonicalMemberPointer calls tryBindPublishedTypeEntity to recover a nominal
 // pointee from the legacy type registry, which this translation unit does not provide.
 // Pointees here already carry an EntityId or stay unpublished.
+// The identity-independence probes in CanonicalTypeTests.h run in this same
+// translation unit, which links no Parser and no SemanticAnalysis state. They can
+// therefore rebuild canonical identity only from structural inputs, never from a
+// parser stack or a member-context stack.
 void tryBindPublishedTypeEntity(TypeSpecifierNode&) {}
 
 ChunkedStringAllocator gChunkedStringAllocator;

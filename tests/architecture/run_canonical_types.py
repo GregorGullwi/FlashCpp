@@ -77,6 +77,15 @@ def check_guards():
     for forbidden in ("StringTable", "gTypeInfo", "matches_signature", "Parser"):
         if re.search(r"\b" + forbidden + r"\b", adapter):
             raise RuntimeError("adapter identity dependency: " + forbidden)
+    # The native harness links only the canonical table and the adapter. A
+    # Parser or SemanticAnalysis member-context dependency would be an
+    # unresolved link symbol; keep these textual checks so a future probe
+    # cannot opt back into either stack.
+    for path in (ROOT / "tests/architecture/CanonicalTypeTests.h", SOURCE):
+        code = re.sub(r"//[^\n]*", "", read_text(path))
+        for forbidden in ("Parser", "SemanticAnalysis", "MemberContext", "member_context_stack"):
+            if re.search(r"\b" + forbidden + r"\b", code):
+                raise RuntimeError("canonical harness parser dependency: " + path.name + ": " + forbidden)
     for name in ("DeclarationBuilder.h", "DeclarationBuilder.cpp"):
         bridge = read_text(ROOT / "src" / name)
         if re.search(r"\bTypeId\s+(signature_id|return_type_id|internDeclaratorType|internParameterListSignature)\b", bridge):
