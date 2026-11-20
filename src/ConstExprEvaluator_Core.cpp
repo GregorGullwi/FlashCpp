@@ -1382,6 +1382,19 @@ EvalResult makeConvertedEvalResult(const TypeSpecifierNode& target_type, const E
 
 } // namespace
 
+ScopedFunctionLookupContext::ScopedFunctionLookupContext(EvaluationContext& context, NamespaceHandle declaration_namespace) :
+	context_(context),
+	saved_force_global_lookup_(context.force_global_lookup),
+	saved_lookup_namespace_(context.lookup_namespace) {
+	context_.force_global_lookup = false;
+	context_.lookup_namespace = declaration_namespace;
+}
+
+ScopedFunctionLookupContext::~ScopedFunctionLookupContext() {
+	context_.force_global_lookup = saved_force_global_lookup_;
+	context_.lookup_namespace = saved_lookup_namespace_;
+}
+
 EvalResult Evaluator::finalize_variable_initialization(
 	const VariableDeclarationNode& var_decl, std::string_view variable_name,
 	const ASTNode& init_expr, EvalResult result, EvaluationContext& context) {
@@ -4548,6 +4561,15 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	};
 
 	std::optional<ASTNode> symbol_opt;
+	std::optional<NamespaceHandle> symbol_namespace;
+	auto lookup_in_declaration_namespace = [&](const SymbolTable& symbols) -> std::optional<ASTNode> {
+		auto found = symbols.lookup_in_namespace_chain(context.lookup_namespace, var_name);
+		if (!found.has_value()) {
+			return std::nullopt;
+		}
+		symbol_namespace = found->namespace_handle;
+		return std::move(found->symbol);
+	};
 	if (identifier.binding() == IdentifierBinding::StaticMember) {
 		auto bound_static_initializer = resolve_current_struct_static_initializer(
 			&identifier,
@@ -4576,18 +4598,36 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			return EvalResult::error("Bound static member not found in constant expression: " + std::string(var_name));
 		}
 	} else if (context.force_global_lookup) {
-		if (context.lookup_namespace.isValid()) {
-			symbol_opt = context.symbols->lookup_qualified(context.lookup_namespace, var_name);
+		if (context.lookup_namespace.isValid() && !context.lookup_namespace.isGlobal()) {
+			symbol_opt = lookup_in_declaration_namespace(*context.symbols);
 		}
 		if (!symbol_opt.has_value()) {
 			symbol_opt = context.symbols->lookup(var_name, ScopeHandle{.scope_level = 1});
 		}
 		if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
-			if (context.lookup_namespace.isValid()) {
-				symbol_opt = context.global_symbols->lookup_qualified(context.lookup_namespace, var_name);
+			symbol_opt = context.global_symbols->lookup(var_name, ScopeHandle{.scope_level = 1});
+		}
+	} else if (context.lookup_namespace.isValid() && !context.lookup_namespace.isGlobal()) {
+		// Declaration-context evaluation: resolved bindings win, then the
+		// declaration namespace chain, then ambient scopes.
+		if (identifier.resolved_name().isValid()) {
+			symbol_opt = context.symbols->lookup(identifier.resolved_name());
+		}
+		if (!symbol_opt.has_value()) {
+			symbol_opt = lookup_in_declaration_namespace(*context.symbols);
+		}
+		if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
+			if (identifier.resolved_name().isValid()) {
+				symbol_opt = context.global_symbols->lookup(identifier.resolved_name());
 			}
 			if (!symbol_opt.has_value()) {
-				symbol_opt = context.global_symbols->lookup(var_name, ScopeHandle{.scope_level = 1});
+				symbol_opt = lookup_in_declaration_namespace(*context.global_symbols);
+			}
+		}
+		if (!symbol_opt.has_value()) {
+			symbol_opt = lookup_identifier_symbol(&identifier, var_name, *context.symbols);
+			if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
+				symbol_opt = lookup_identifier_symbol(&identifier, var_name, *context.global_symbols);
 			}
 		}
 	} else {
@@ -4596,16 +4636,17 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
 			symbol_opt = lookup_identifier_symbol(&identifier, var_name, *context.global_symbols);
 		}
-		// If still not found, try namespace-qualified lookup using the struct's namespace.
-		// This handles identifiers like enum enumerators ('denorm_absent') that live in the
-		// same namespace as the enclosing struct but aren't visible at global scope.
-		if (!symbol_opt.has_value() && context.struct_info != nullptr) {
-			NamespaceHandle ns_handle = context.struct_info->getNamespaceHandle();
-			if (ns_handle.isValid() && !ns_handle.isGlobal()) {
-				symbol_opt = context.symbols->lookup_qualified(ns_handle, var_name);
-				if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
-					symbol_opt = context.global_symbols->lookup_qualified(ns_handle, var_name);
-				}
+	}
+
+	// If still not found, try namespace-qualified lookup using the struct's namespace.
+	// This handles identifiers like enum enumerators ('denorm_absent') that live in the
+	// same namespace as the enclosing struct but aren't visible at global scope.
+	if (!symbol_opt.has_value() && context.struct_info != nullptr) {
+		NamespaceHandle ns_handle = context.struct_info->getNamespaceHandle();
+		if (ns_handle.isValid() && !ns_handle.isGlobal()) {
+			symbol_opt = context.symbols->lookup_qualified(ns_handle, var_name);
+			if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
+				symbol_opt = context.global_symbols->lookup_qualified(ns_handle, var_name);
 			}
 		}
 	}
@@ -4727,14 +4768,19 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	};
 
 	const std::optional<ScopeType> declaration_scope = context.symbols->get_scope_type_of_symbol(var_name);
-	const bool evaluate_initializer_at_global_scope = declaration_scope.has_value() &&
-		*declaration_scope == ScopeType::Global;
+	const bool initializer_has_static_storage = symbol_namespace.has_value() ||
+		(declaration_scope.has_value() && (*declaration_scope == ScopeType::Global || *declaration_scope == ScopeType::Namespace));
 	const bool saved_force_global_lookup = context.force_global_lookup;
+	const NamespaceHandle saved_initializer_namespace = context.lookup_namespace;
 	ScopeGuard restore_global_lookup([&]() {
 		context.force_global_lookup = saved_force_global_lookup;
+		context.lookup_namespace = saved_initializer_namespace;
 	});
-	if (evaluate_initializer_at_global_scope) {
+	if (initializer_has_static_storage) {
 		context.force_global_lookup = true;
+	}
+	if (symbol_namespace.has_value()) {
+		context.lookup_namespace = *symbol_namespace;
 	}
 
 	return finalize_variable_initialization(var_decl, var_name, initializer.value(), evaluateIdentifierInitializer(), context);
@@ -6588,6 +6634,14 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 			context.template_environment.bindings.push_back(std::move(binding));
 		}
 	}
+
+	// A function body resolves unqualified names in its declaration namespace,
+	// not in the namespace that happened to trigger the evaluation.
+	const NamespaceHandle declared_namespace = func_decl.namespace_handle();
+	const NamespaceHandle function_declaration_namespace = declared_namespace.isValid()
+		? declared_namespace
+		: context.symbols->find_namespace_of_function(func_decl).value_or(NamespaceHandle{});
+	ScopedFunctionLookupContext function_lookup_context(context, function_declaration_namespace);
 
 	// Increase recursion depth
 	context.current_depth++;

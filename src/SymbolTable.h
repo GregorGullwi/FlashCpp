@@ -1156,6 +1156,50 @@ public:
 		return lookup_qualified_all(resolve_namespace_handle_impl(namespaces), identifier);
 	}
 
+	// Result of an unqualified lookup whose lexical context is a declaration
+	// namespace rather than the current scope stack. The namespace identifies
+	// the scope that declared the found entity (for qualified-name recovery).
+	struct NamespaceChainLookupResult {
+		ASTNode symbol;
+		NamespaceHandle namespace_handle;
+	};
+
+	// C++20 [basic.lookup.unqual] restricted to a known declaration namespace:
+	// the namespace itself, each enclosing namespace, then the global scope.
+	// Used when evaluating or instantiating code outside its original lexical
+	// scope. Inline namespace transparency comes from lookup_qualified.
+	std::optional<NamespaceChainLookupResult> lookup_in_namespace_chain(NamespaceHandle start, StringHandle identifier) const {
+		for (NamespaceHandle current = start; current.isValid(); current = gNamespaceRegistry.getParent(current)) {
+			if (auto symbol = lookup_qualified(current, identifier); symbol.has_value()) {
+				return NamespaceChainLookupResult{std::move(*symbol), current};
+			}
+			if (current.isGlobal()) {
+				break;
+			}
+		}
+		return std::nullopt;
+	}
+
+	std::optional<NamespaceChainLookupResult> lookup_in_namespace_chain(NamespaceHandle start, std::string_view identifier) const {
+		return lookup_in_namespace_chain(start, StringTable::getOrInternStringHandle(identifier));
+	}
+
+	// Overload-set variant for call and type lookup, merging declarations from
+	// the first namespace in the chain that declares the name.
+	std::vector<ASTNode> lookup_all_in_namespace_chain(NamespaceHandle start, StringHandle identifier) const {
+		for (NamespaceHandle current = start; current.isValid(); current = gNamespaceRegistry.getParent(current)) {
+			std::vector<ASTNode> symbols = lookup_qualified_all(current, identifier);
+			if (!symbols.empty() || current.isGlobal()) {
+				return symbols;
+			}
+		}
+		return {};
+	}
+
+	std::vector<ASTNode> lookup_all_in_namespace_chain(NamespaceHandle start, std::string_view identifier) const {
+		return lookup_all_in_namespace_chain(start, StringTable::getOrInternStringHandle(identifier));
+	}
+
 	// Returns true if name exists in adl_only_symbols_ (across any namespace).
 	// Used to emit a proper compile error when a hidden friend is called without
 	// an argument that triggers ADL (C++20 [basic.lookup.argdep]).

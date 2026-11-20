@@ -1481,6 +1481,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		if (const TypeInfo* return_type_info = tryGetTypeInfo(ret_idx))
 			context.return_type_info = return_type_info;
 	}
+	ScopedFunctionLookupContext member_lookup_context(context, bound_struct_info ? bound_struct_info->getNamespaceHandle() : NamespaceHandle{});
 	context.current_depth++;
 	auto* saved_local_bindings = context.local_bindings;
 	context.local_bindings = &member_bindings;
@@ -1683,6 +1684,7 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 		if (const TypeInfo* return_type_info = tryGetTypeInfo(ret_idx))
 			context.return_type_info = return_type_info;
 	}
+	ScopedFunctionLookupContext member_lookup_context(context, struct_info ? struct_info->getNamespaceHandle() : NamespaceHandle{});
 	context.current_depth++;
 
 	auto result = evaluate_block_with_bindings(
@@ -2035,6 +2037,7 @@ EvalResult Evaluator::invokeConstexprMemberFunction(
 		if (const TypeInfo* rtype = tryGetTypeInfo(ret_idx))
 			context.return_type_info = rtype;
 	}
+	ScopedFunctionLookupContext member_lookup_context(context, struct_info ? struct_info->getNamespaceHandle() : NamespaceHandle{});
 	context.current_depth++;
 	auto* saved_local_bindings = context.local_bindings;
 	context.local_bindings = &member_bindings;

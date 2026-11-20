@@ -1951,17 +1951,7 @@ std::vector<ASTNode> lookupDefinitionContextOrdinaryCandidates(
 	if (!definition_context.is_valid() || !name.isValid()) {
 		return {};
 	}
-
-	NamespaceHandle lookup_namespace = definition_context.definition_namespace;
-	while (lookup_namespace.isValid()) {
-		std::vector<ASTNode> candidates =
-			gSymbolTable.lookup_qualified_all(lookup_namespace, name);
-		if (!candidates.empty() || lookup_namespace.isGlobal()) {
-			return candidates;
-		}
-		lookup_namespace = gNamespaceRegistry.getParent(lookup_namespace);
-	}
-	return {};
+	return gSymbolTable.lookup_all_in_namespace_chain(definition_context.definition_namespace, name);
 }
 
 }
