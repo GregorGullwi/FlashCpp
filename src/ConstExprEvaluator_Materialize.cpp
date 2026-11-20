@@ -1030,6 +1030,8 @@ EvalResult Evaluator::materialize_members_from_constructor(
 	bool ignore_default_initializer_errors,
 	std::vector<EvalResult>* base_values) {
 	auto* saved_local_bindings = context.local_bindings;
+	ScopedFunctionLookupContext constructor_lookup_context(
+		context, struct_info != nullptr ? struct_info->getNamespaceHandle() : NamespaceHandle{});
 	std::vector<std::optional<EvalResult>> ordered_base_values(struct_info->base_classes.size());
 
 	// Handle delegating constructors: S() : S(42) {} — the delegation performs

@@ -883,6 +883,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			if (is_static_local && global_symbol_table_) {
 				ctx.global_symbols = global_symbol_table_;
 			}
+			// A global/namespace-scope initializer is detached from any lexical
+			// scope. It resolves unqualified names in its declaration namespace,
+			// not in a function body or caller namespace that happens to be active.
+			if (!current_namespace_stack_.empty()) {
+				ctx.lookup_namespace = buildNamespaceHandleFromStrings(current_namespace_stack_);
+			}
+			ctx.force_global_lookup = !is_static_local;
 			if (node.is_constexpr() || node.is_constinit()) {
 				ctx.storage_duration = ConstExpr::StorageDuration::Global;
 			} else {
@@ -1426,7 +1433,18 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					op.is_initialized = true;
 					auto ctx = makeStaticStorageEvalContext();
 					auto eval_result = ConstExpr::Evaluator::evaluate(init_node, ctx);
-					if ((is_struct_type(type_node.category())) &&
+					// A detached pointer initializer that decays an array or takes a
+					// variable's address carries a symbol plus offset. With no offset,
+					// emit a relocation instead of writing the pointer payload (which
+					// is not a runtime address).
+					const StringHandle pointer_origin = eval_result.pointer_to_var.isValid()
+						? eval_result.pointer_to_var
+						: eval_result.array_origin_var;
+					if (eval_result.success() && type_node.is_pointer() && pointer_origin.isValid() &&
+						eval_result.pointer_offset == 0) {
+						op.init_data.assign(element_size, 0);
+						op.reloc_target = resolveGlobalRelocTarget(StringTable::getStringView(pointer_origin));
+					} else if ((is_struct_type(type_node.category())) &&
 						eval_result.success() &&
 						type_node.type_index().is_valid()) {
 						const TypeInfo* struct_type_info = resolveToConcreteStructTypeInfo(type_node.type_index());
