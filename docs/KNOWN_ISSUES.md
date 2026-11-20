@@ -78,7 +78,11 @@ works.
 Nested anonymous-union-in-anonymous-union hierarchy still needs an explicit
 representation; flat contiguous layout groups alone cannot distinguish an
 inactive outer union from an active outer variant containing an inactive inner
-union.
+union. The parser currently flattens the inner group into the outer record and
+can drop or duplicate members: `union { union { int first; int second; };
+int direct; }` reports members `direct, second, direct`, so `Outer{}.first` is
+reported as not found. Replace the flattening with an explicit nested union group
+before adding any canonical representation.
 
 Long double structural values are explicitly deferred until the backend gains
 real long-double support. Do not extend structural identity carriers for a type
@@ -91,6 +95,18 @@ declaration identity in their live constexpr payloads. Selected non-null functio
 target identity must survive evaluation, structural serialization/rehydration,
 equality/hash, and template argument binding. Do not recover target identity from
 a spelling or ABI symbol.
+
+Object pointer arguments publish a target only when the address-of operand is a
+bare identifier. For a qualified variable, a class static member, a data-member
+address, or an array element, the payload keeps the spelling or degenerates to an
+integral value, so two distinct objects can instantiate the same specialization:
+`Tag<&scope_a::first>` and `Tag<&scope_a::second>` compare equal, as do
+`Tag<&HolderA::value>` and `Tag<&HolderB::value>`. Pointer members and pointer
+array elements of structural values are refused by the producer, so the owning
+value collapses and compares equal to a different one. Resolve the evaluator's own
+declaration origin into a published `EntityId` for every address-of and subobject
+form; that carrier change belongs to constexpr evaluation and template-argument
+construction, not to canonical import.
 
 Missing field-layout and dependent base facts still fail closed. The
 partial-specialization parser gap above and nested anonymous-union hierarchy
@@ -110,7 +126,9 @@ Non-null object-, function-, and member-pointer template arguments now carry
 published target identity; function pointers also carry their target signature
 and member pointers their canonical member value. Canonical import fails closed
 for object-pointer element offsets outside the canonical 32-bit range or targets
-without a published identity.
+without a published identity. That identity is published for a declaration-named
+address-of operand only; qualified, data-member, and array-element origins still
+arrive without a target, as recorded above.
 
 ## Expression parsing and constraint evaluation can overflow a 1 MB native stack
 

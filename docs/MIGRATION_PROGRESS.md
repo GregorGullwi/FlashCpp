@@ -568,7 +568,14 @@ remaining pattern schemas by identity, and remove the name fallback.
    that spine and yields an lvalue of the pointee, and a call or xvalue operand
    keeps the value category [expr.call] and [expr.ref] give it.
    `UnsupportedStaticMemberType` (1020) remains the fail-closed guard for
-   canonical type families not yet imported.
+   canonical type families not yet imported, now pinned by
+   `test_static_member_member_pointer_array_e1020.cpp`. Non-null object pointer
+   arguments that originate from qualified or subobject addresses, and pointer
+   members of structural values, still lack declaration identity in their
+   constexpr payload, so the template-argument comparator can report two distinct
+   objects as equal; the importer remains fail-closed for them until that
+   publication lands. Nested anonymous unions additionally need the parser to stop
+   flattening inner groups before any canonical representation can be added.
    Stamped template specializations now use the shared ordered declarator
    applicator. The native guard preserves inner array bounds and pointer CV,
    and checks that parameter adjustment decays only the outer array. Field
