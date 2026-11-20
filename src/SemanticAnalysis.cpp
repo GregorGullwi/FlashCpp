@@ -775,6 +775,42 @@ TypeSpecifierNode materializeTypeSpecifierWithMaxPointerDepth(
 	return type_node;
 }
 
+// Diagnostic spelling for a conversion diagnostic that keeps the member-pointer
+// owner. The flat readable renderer has no owner spelling for this shape.
+static std::string readableConversionType(const TypeSpecifierNode& syntax, const CanonicalTypeDesc& desc) {
+	if (!desc.structural_type_id) {
+		if (desc.category() == TypeCategory::Struct && desc.type_index.is_valid()) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(desc.type_index)) {
+				return std::string(StringTable::getStringView(type_info->name()));
+			}
+		}
+		return syntax.getReadableString();
+	}
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	const TypeId member_pointer = table.withoutTopLevelQualifiers(desc.structural_type_id);
+	const CanonicalTypeKind kind = table.node(member_pointer).kind;
+	if (kind != CanonicalTypeKind::MemberObjectPointer && kind != CanonicalTypeKind::MemberFunctionPointer) {
+		return syntax.getReadableString();
+	}
+	const TypeId owner = table.memberPointerOwner(member_pointer);
+	const TypeInfo* owner_info = owner ? tryFindCanonicalOverloadClassTypeInfo(table, owner) : nullptr;
+	const std::string owner_name = owner_info != nullptr ? std::string(StringTable::getStringView(owner_info->name())) : std::string("class");
+	if (kind == CanonicalTypeKind::MemberFunctionPointer) {
+		TypeSpecifierNode member_function_syntax = syntax;
+		member_function_syntax.set_member_class_name(StringTable::getOrInternStringHandle(owner_name));
+		return member_function_syntax.getReadableString();
+	}
+	const TypeId pointee = table.memberPointerPointee(member_pointer);
+	const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(table, pointee);
+	if (exported.status != CanonicalTypeImportStatus::Supported) {
+		return owner_name + "::*";
+	}
+	TypeSpecifierNode pointee_syntax;
+	applyCanonicalDeclaratorBase(pointee_syntax, table, exported.base);
+	pointee_syntax.set_ordered_declarator(exported.components);
+	return pointee_syntax.getReadableString() + " " + owner_name + "::*";
+}
+
 CanonicalTypeImport tryImportCanonicalTypeDesc(const CanonicalTypeDesc& desc) {
 	if (desc.structural_type_id) {
 		return {desc.structural_type_id, CanonicalTypeImportStatus::Supported};
@@ -12687,7 +12723,8 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 							DiagnosticId::NoMatchingConversion,
 							DiagnosticSeverity::Error,
 							SourceLocation::fromToken(source_token),
-							"no viable conversion from '" + source_type.getReadableString() + "' to '" + target_type.getReadableString() + "'",
+							"no viable conversion from '" + readableConversionType(source_type, from_desc) + "' to '" +
+								readableConversionType(target_type, to_desc) + "'",
 							{});
 					}
 				} else if (member_plan->kind == StandardConversionKind::None) {
@@ -13022,7 +13059,8 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 				DiagnosticId::NoMatchingConversion,
 				DiagnosticSeverity::Error,
 				SourceLocation::fromToken(source_token),
-				"no viable conversion from '" + source_type.getReadableString() + "' to '" + target_type.getReadableString() + "'",
+				"no viable conversion from '" + readableConversionType(source_type, from_desc) + "' to '" +
+					readableConversionType(target_type, to_desc) + "'",
 				{});
 		}
 		return false;
