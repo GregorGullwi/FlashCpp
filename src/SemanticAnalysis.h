@@ -296,6 +296,8 @@ public:
 	TypeSpecifierQueryResult analyzeExpressionTypeQuery(const ASTNode& node);
 	std::optional<TypeSpecifierNode> getExpressionType(const ASTNode& node) const;
 	std::optional<TypeSpecifierNode> getMemberPointerPointeeType(const ASTNode& node);
+	std::optional<TypeId> getMemberPointerOwnerType(const ASTNode& node);
+	TypeId getExpressionStructuralTypeId(const ASTNode& node);
 	std::optional<size_t> getExpressionSizeBytes(const ASTNode& node) const;
 	std::optional<size_t> getTypeSizeBytes(CanonicalTypeId type_id) const;
 	std::optional<TypeSpecifierNode> getTernaryResultType(const TernaryOperatorNode& ternary_node) const;

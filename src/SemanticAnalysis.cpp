@@ -710,11 +710,17 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 				"semantic materialization rejected ordered declarator");
 		}
 		// A flat callable descriptor's category denotes the pointer object, not
-		// the return base expected below the exported Function component.
+		// the return base expected below the exported Function component. Member
+		// pointer descriptors likewise need the pointee base rather than their
+		// pointer-object category.
 		const bool has_function_component = std::ranges::any_of(exported.components, [](const DeclaratorComponent& component) {
 			return component.kind == DeclaratorComponentKind::Function;
 		});
-		if (hasFlag(desc.flags, CanonicalTypeFlags::PublishedPointerArray) || has_function_component) {
+		const bool has_member_pointer_component = std::ranges::any_of(exported.components, [](const DeclaratorComponent& component) {
+			return component.kind == DeclaratorComponentKind::MemberObjectPointer ||
+				component.kind == DeclaratorComponentKind::MemberFunctionPointer;
+		});
+		if (hasFlag(desc.flags, CanonicalTypeFlags::PublishedPointerArray) || has_function_component || has_member_pointer_component) {
 			applyCanonicalDeclaratorBase(type_node, requireFrontendContext().canonicalTypes(), exported.base);
 		}
 		type_node.set_ordered_declarator(exported.components);
@@ -7017,10 +7023,13 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 	// A bare data-member-pointer declarator keeps the flat parser projection
 	// (pointee category + one pointer level + a member class). Publish the
 	// structural MemberObjectPointer node as the authoritative shape so the
-	// owner travels with the canonical type instead of a parallel scalar.
-	if (!type.has_ordered_declarator() && type.has_member_class() &&
-		type.category() != TypeCategory::MemberFunctionPointer &&
-		type.runtime_pointer_depth() == 1) {
+	// owner travels with the canonical type instead of a parallel scalar. The
+	// address-of and cast paths already spell the member-object-pointer category
+	// with an explicit pointee, so accept that form too.
+	const bool is_member_object_pointer_syntax =
+		(type.category() == TypeCategory::MemberObjectPointer && type.has_member_object_pointee()) ||
+		(type.has_member_class() && type.category() != TypeCategory::MemberFunctionPointer);
+	if (!type.has_ordered_declarator() && is_member_object_pointer_syntax) {
 		TypeSpecifierNode syntax = type;
 		tryBindPublishedMemberClassEntity(syntax);
 		if (syntax.has_member_class_entity() || syntax.has_member_class_type_id()) {
@@ -7315,26 +7324,6 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::getMemberPointerPointeeType(const ASTNode& member_pointer_expression) {
-	if (member_pointer_expression.is<ExpressionNode>()) {
-		const ExpressionNode& expression = member_pointer_expression.as<ExpressionNode>();
-		if (const auto* cast = std::get_if<StaticCastNode>(&expression)) {
-			const TypeSpecifierNode& target = cast->target_type();
-			if (target.has_member_object_pointee()) {
-				return target.member_object_pointee();
-			}
-		}
-		if (const auto* unary = std::get_if<UnaryOperatorNode>(&expression);
-			unary != nullptr && unary->op() == "&" && unary->get_operand().is<ExpressionNode>()) {
-			const ExpressionNode& operand = unary->get_operand().as<ExpressionNode>();
-			if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&operand)) {
-				const auto resolved = tryResolveQualifiedIdentifier(*qualified, true);
-				if (resolved.has_value() &&
-					resolved->kind == ResolvedQualifiedIdentifierInfo::Kind::NonStaticDataMember) {
-					return resolved->type;
-				}
-			}
-		}
-	}
 	const CanonicalTypeId type_id = inferExpressionType(member_pointer_expression);
 	if (!type_id) {
 		return std::nullopt;
@@ -7361,6 +7350,33 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getMemberPointerPointeeType(c
 	pointee_syntax.set_ordered_declarator(exported.components);
 	setMaterializedTypeSpecifierSize(pointee_syntax);
 	return pointee_syntax;
+}
+
+std::optional<TypeId> SemanticAnalysis::getMemberPointerOwnerType(const ASTNode& member_pointer_expression) {
+	const CanonicalTypeId type_id = inferExpressionType(member_pointer_expression);
+	if (!type_id) {
+		return std::nullopt;
+	}
+	const CanonicalTypeDesc& desc = type_context_.get(type_id);
+	if (!desc.structural_type_id) {
+		return std::nullopt;
+	}
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	const TypeId member_pointer = table.withoutTopLevelQualifiers(desc.structural_type_id);
+	const CanonicalTypeKind kind = table.node(member_pointer).kind;
+	if (kind != CanonicalTypeKind::MemberObjectPointer && kind != CanonicalTypeKind::MemberFunctionPointer) {
+		return std::nullopt;
+	}
+	const TypeId owner = table.memberPointerOwner(member_pointer);
+	return owner ? std::optional<TypeId>(owner) : std::nullopt;
+}
+
+TypeId SemanticAnalysis::getExpressionStructuralTypeId(const ASTNode& node) {
+	const CanonicalTypeId type_id = inferExpressionType(node);
+	if (!type_id) {
+		return {};
+	}
+	return type_context_.get(type_id).structural_type_id;
 }
 
 std::optional<size_t> SemanticAnalysis::getExpressionSizeBytes(const ASTNode& node) const {

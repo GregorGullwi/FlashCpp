@@ -418,6 +418,48 @@ ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessN
 		}
 	}
 
+	// The member pointer value is relative to its declared owner. When the
+	// object's class derives from that owner, adjust the object address to the
+	// owner subobject before adding the member offset.
+	const std::optional<TypeId> member_owner = sema_.getMemberPointerOwnerType(ptmNode.member_pointer());
+	if (!member_owner.has_value()) {
+		throw InternalError("Pointer-to-member access is missing the published member owner type");
+	}
+	{
+		const std::optional<TypeSpecifierNode> object_syntax = sema_.getExpressionType(ptmNode.object());
+		if (object_syntax.has_value()) {
+			CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+			const TypeId object_type = sema_.getExpressionStructuralTypeId(ptmNode.object());
+			TypeId object_class = object_type
+				? stripCanonicalTopCv(canonical_types, canonicalTypeWithoutReference(canonical_types, object_type)).first
+				: TypeId{};
+			if (!object_class && object_syntax->type_index().is_valid()) {
+				if (const TypeInfo* object_info = tryGetTypeInfo(object_syntax->type_index())) {
+					const CanonicalTypeImport imported_object = importCanonicalClassTypeInfo(canonical_types, *object_info);
+					if (imported_object.status == CanonicalTypeImportStatus::Supported) {
+						object_class = imported_object.type;
+					}
+				}
+			}
+			const CanonicalTypeKind object_kind = object_class ? canonical_types.node(object_class).kind : CanonicalTypeKind::Builtin;
+			if (object_class && (object_kind == CanonicalTypeKind::Record || object_kind == CanonicalTypeKind::TemplateSpecialization) &&
+				object_class != *member_owner) {
+				const std::optional<int64_t> base_offset =
+					findCanonicalNonVirtualBaseOffset(canonical_types, object_class, *member_owner, BaseSubobjectAccess::PublicOnly);
+				if (base_offset.has_value() && *base_offset > 0) {
+					TempVar adjusted_object = var_counter.next();
+					BinaryOp add_base;
+					add_base.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, object_addr);
+					add_base.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS},
+						static_cast<unsigned long long>(*base_offset));
+					add_base.result = adjusted_object;
+					ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_base), ptmNode.operator_token()));
+					object_addr = adjusted_object;
+				}
+			}
+		}
+	}
+
 	TempVar member_addr = var_counter.next();
 	BinaryOp add_op;
 	add_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, object_addr);
@@ -427,38 +469,16 @@ ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessN
 
 	// The member pointer expression's own type is the pointer object (word
 	// sized). The selected member's shape comes from the member pointer's
-	// pointee type; the full access expression may already be annotated with the
-	// surrounding conversion target (for example `double d = p.*pm`), so it
-	// cannot supply the member shape.
+	// published pointee type; the full access expression may already be annotated
+	// with the surrounding conversion target (for example `double d = p.*pm`), so
+	// it cannot supply the member shape.
 	const std::optional<TypeSpecifierNode> member_pointee = sema_.getMemberPointerPointeeType(ptmNode.member_pointer());
-	const std::optional<TypeSpecifierNode> member_pointer_syntax = sema_.getExpressionType(ptmNode.member_pointer());
-	TypeCategory member_type = ptr_result.typeEnum();
-	int member_size = ptr_result.size_in_bits.value;
-	TypeIndex member_type_index = ptr_result.type_index;
-	if (member_pointee.has_value()) {
-		member_type = member_pointee->category();
-		member_type_index = member_pointee->type_index();
-		member_size = member_pointee->size_in_bits();
-	} else if (member_pointer_syntax.has_value()) {
-		if (member_pointer_syntax->has_member_object_pointee()) {
-			const TypeSpecifierNode& pointee = member_pointer_syntax->member_object_pointee();
-			member_type = pointee.category();
-			member_type_index = pointee.type_index();
-			member_size = pointee.size_in_bits();
-		} else {
-			member_type = member_pointer_syntax->category();
-			member_type_index = member_pointer_syntax->type_index();
-			const size_t pointer_levels = member_pointer_syntax->pointer_levels().size();
-			// The flat projection adds one level for the member pointer itself when
-			// the pointee is not a scalar; the pointee's own indirection is the rest.
-			const size_t member_pointer_depth = pointer_levels > 0 ? pointer_levels - 1 : 0;
-			if (member_pointer_depth > 0) {
-				member_size = POINTER_SIZE_BITS;
-			} else if (const TypeInfo* member_type_info = tryGetTypeInfo(member_type_index)) {
-				member_size = static_cast<int>(member_type_info->sizeInBits().value);
-			}
-		}
+	if (!member_pointee.has_value()) {
+		throw InternalError("Pointer-to-member access is missing the published member pointee type");
 	}
+	const TypeCategory member_type = member_pointee->category();
+	const TypeIndex member_type_index = member_pointee->type_index();
+	const int member_size = member_pointee->size_in_bits();
 
 	// As an lvalue target (for example the LHS of `obj.*pm = value`), `obj.*pm`
 	// denotes the addressed subobject itself, so return the computed address

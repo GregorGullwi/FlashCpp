@@ -535,6 +535,9 @@ The following remain unsupported and are rejected or left unresolved:
 - Address-of does not encode a `this` adjustment for a member pointer whose
   target owner is a non-primary base. Calls adjust only when the pointer's
   canonical owner is already a base of the object.
+- Direct conversion of a member-function pointer from a base owner to a derived
+  owner is accepted but does not encode the `this` adjustment; calls through the
+  converted pointer use the unadjusted receiver.
 - Some member-template address overload shapes can still route instantiation
   through a parser-owned root. `ensureMemberFunctionAddressMaterialized` logs a
   warning and leaves the address unresolved in that case rather than failing
@@ -548,6 +551,14 @@ the raw value against zero. A pointer to an offset-zero member (`&D::first`)
 therefore compares equal to `nullptr` even though it is a valid non-null
 pointer-to-member. Align the equality path with the `~0ULL` sentinel and cover
 the offset-zero case.
+
+## Pointer-to-member operand validation is missing in sema
+
+`object.*operand` and `pointer->*operand` do not diagnose an operand whose type
+is not a pointer-to-member during normalization. Expression inference returns an
+empty type, and lowering can then fail as an internal error instead of reporting
+a source diagnostic at the operator. Add the operand check to sema and emit the
+appropriate compile error before IR.
 
 ## Static-member template initializer replay still handles unresolved lookups
 
