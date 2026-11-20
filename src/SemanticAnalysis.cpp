@@ -718,12 +718,12 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 			applyCanonicalDeclaratorBase(type_node, requireFrontendContext().canonicalTypes(), exported.base);
 		}
 		type_node.set_ordered_declarator(exported.components);
-		if ((desc.category() == TypeCategory::MemberObjectPointer || desc.category() == TypeCategory::MemberFunctionPointer) &&
-			desc.structural_type_id) {
+		if ((desc.category() == TypeCategory::MemberObjectPointer || desc.category() == TypeCategory::MemberFunctionPointer) && desc.structural_type_id) {
 			CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-			const CanonicalTypeKind kind = table.node(desc.structural_type_id).kind;
+			const TypeId member_pointer = table.withoutTopLevelQualifiers(desc.structural_type_id);
+			const CanonicalTypeKind kind = table.node(member_pointer).kind;
 			if (kind == CanonicalTypeKind::MemberObjectPointer || kind == CanonicalTypeKind::MemberFunctionPointer) {
-				const TypeId owner = table.memberPointerOwner(desc.structural_type_id);
+				const TypeId owner = table.memberPointerOwner(member_pointer);
 				const CanonicalTypeKind owner_kind = owner ? table.node(owner).kind : CanonicalTypeKind::Builtin;
 				if (owner_kind == CanonicalTypeKind::Record || owner_kind == CanonicalTypeKind::TemplateSpecialization) {
 					type_node.set_member_class_type_id(owner);
@@ -7278,6 +7278,55 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 	return query.hasValue() ? query.type : std::nullopt;
 }
 
+std::optional<TypeSpecifierNode> SemanticAnalysis::getMemberPointerPointeeType(const ASTNode& member_pointer_expression) {
+	if (member_pointer_expression.is<ExpressionNode>()) {
+		const ExpressionNode& expression = member_pointer_expression.as<ExpressionNode>();
+		if (const auto* cast = std::get_if<StaticCastNode>(&expression)) {
+			const TypeSpecifierNode& target = cast->target_type();
+			if (target.has_member_object_pointee()) {
+				return target.member_object_pointee();
+			}
+		}
+		if (const auto* unary = std::get_if<UnaryOperatorNode>(&expression);
+			unary != nullptr && unary->op() == "&" && unary->get_operand().is<ExpressionNode>()) {
+			const ExpressionNode& operand = unary->get_operand().as<ExpressionNode>();
+			if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&operand)) {
+				const auto resolved = tryResolveQualifiedIdentifier(*qualified, true);
+				if (resolved.has_value() &&
+					resolved->kind == ResolvedQualifiedIdentifierInfo::Kind::NonStaticDataMember) {
+					return resolved->type;
+				}
+			}
+		}
+	}
+	const CanonicalTypeId type_id = inferExpressionType(member_pointer_expression);
+	if (!type_id) {
+		return std::nullopt;
+	}
+	const CanonicalTypeDesc& desc = type_context_.get(type_id);
+	if (!desc.structural_type_id) {
+		return std::nullopt;
+	}
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	const TypeId member_pointer = table.withoutTopLevelQualifiers(desc.structural_type_id);
+	if (table.node(member_pointer).kind != CanonicalTypeKind::MemberObjectPointer) {
+		return std::nullopt;
+	}
+	const TypeId pointee = table.memberPointerPointee(member_pointer);
+	if (!pointee) {
+		return std::nullopt;
+	}
+	const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(table, pointee);
+	if (exported.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	TypeSpecifierNode pointee_syntax;
+	applyCanonicalDeclaratorBase(pointee_syntax, table, exported.base);
+	pointee_syntax.set_ordered_declarator(exported.components);
+	setMaterializedTypeSpecifierSize(pointee_syntax);
+	return pointee_syntax;
+}
+
 std::optional<size_t> SemanticAnalysis::getExpressionSizeBytes(const ASTNode& node) const {
 	if (!node.is<ExpressionNode>()) {
 		return std::nullopt;
@@ -12618,6 +12667,42 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 			return true;
 		}
 		CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+		const TypeId source_member_pointer = canonical_types.withoutTopLevelQualifiers(from_import.type);
+		const TypeId target_member_pointer = canonical_types.withoutTopLevelQualifiers(to_import.type);
+		const CanonicalTypeKind source_member_kind = canonical_types.node(source_member_pointer).kind;
+		const CanonicalTypeKind target_member_kind = canonical_types.node(target_member_pointer).kind;
+		if ((source_member_kind == CanonicalTypeKind::MemberObjectPointer || source_member_kind == CanonicalTypeKind::MemberFunctionPointer) &&
+			source_member_kind == target_member_kind) {
+			const std::optional<ConversionPlan> member_plan =
+				tryBuildCanonicalMemberPointerConversionPlan(canonical_types, from_import.type, to_import.type);
+			if (member_plan.has_value()) {
+				if (!member_plan->is_valid) {
+					if (!canonical_types.hasDependentTypeComponents(from_import.type) &&
+						!canonical_types.hasDependentTypeComponents(to_import.type)) {
+						const TypeSpecifierNode source_type = materializeTypeSpecifier(from_desc);
+						const TypeSpecifierNode target_type = materializeTypeSpecifier(to_desc);
+						const Token source_token = FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(expr_node).value_or(Token{});
+						throw makeStructuredCompileError(
+							context_.diagnostics(),
+							DiagnosticId::NoMatchingConversion,
+							DiagnosticSeverity::Error,
+							SourceLocation::fromToken(source_token),
+							"no viable conversion from '" + source_type.getReadableString() + "' to '" + target_type.getReadableString() + "'",
+							{});
+					}
+				} else if (member_plan->kind == StandardConversionKind::None) {
+					return false;
+				} else {
+					SemanticSlot member_slot;
+					member_slot.type_id = target_type_id;
+					member_slot.cast_info_index = allocateNonUserDefinedCastInfo(expr_type_id, target_type_id, member_plan->kind);
+					member_slot.value_category = ValueCategory::PRValue;
+					setSlot(getExpressionKey(expr_node), member_slot);
+					stats_.slots_filled++;
+					return true;
+				}
+			}
+		}
 		const TypeId source_function = canonicalFunctionPointerTarget(canonical_types, from_import.type);
 		const TypeId target_function = canonicalFunctionPointerTarget(canonical_types, to_import.type);
 		if (source_function && target_function &&
@@ -12908,7 +12993,29 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 			return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion, SemanticContextFlags::None);
 		}
 		if ((target_is_member_object_pointer || target_is_member_function_pointer) && !selected_conversion.has_value()) {
+			if (from_import.status != CanonicalTypeImportStatus::Supported || to_import.status != CanonicalTypeImportStatus::Supported) {
+				return false;
+			}
+			CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+			if (canonical_types.hasDependentTypeComponents(from_import.type) || canonical_types.hasDependentTypeComponents(to_import.type)) {
+				return false;
+			}
 			const TypeSpecifierNode source_type = materializeTypeSpecifier(type_context_.get(expr_type_id));
+			const auto explicit_conversion = selectBestUserDefinedConversion(
+				source_type, target_type, ConversionFunctionContext::Explicit, true, source_value_category,
+				FunctionTemplateInstantiation::Definition);
+			if (explicit_conversion.has_value() && !explicit_conversion->ambiguous && explicit_conversion->function != nullptr &&
+				explicit_conversion->function->is_explicit()) {
+				const StringHandle conversion_name = explicit_conversion->function->decl_node().identifier_token().handle();
+				throw makeStructuredCompileError(
+					context_.diagnostics(),
+					DiagnosticId::ExplicitConversionFunctionCopyInitialization,
+					DiagnosticSeverity::Error,
+					SourceLocation::fromToken(FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(expr_node).value_or(Token{})),
+					"conversion function '" + std::string(StringTable::getStringView(conversion_name)) +
+						"' is explicit and cannot be used for copy-initialization",
+					{});
+			}
 			const Token source_token = FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(expr_node).value_or(Token{});
 			throw makeStructuredCompileError(
 				context_.diagnostics(),

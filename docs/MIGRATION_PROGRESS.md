@@ -351,13 +351,16 @@ remaining pattern schemas by identity, and remove the name fallback.
    Conversion value tails now route every member-pointer pair through the
    canonical member-pointer plan, including differing owners, so a derived-to-
    base member-pointer result is rejected while the valid base-to-derived
-   direction stays viable. Materializing a canonical member pointer target
-   restores its published owner identity, and a failed struct-to-member-pointer
-   copy-initialization reports `NoMatchingConversion` instead of silently
-   lowering as a null pointer. Member-object pointer access now takes the
-   selected member's category and size from the member-pointer expression's
-   published type, so `double d = object.*pointer` no longer loads a word-sized
-   value.
+   direction stays viable. Direct member-object-pointer copy-initialization,
+   return, and call-argument conversions consume the same plan and lower the
+   published base-subobject adjustment; the inverse and virtual-base directions
+   fail closed. Materializing a canonical member pointer target restores its
+   published owner identity, address-of and cast forms publish their member
+   pointee, and a failed struct-to-member-pointer copy-initialization reports
+   `NoMatchingConversion` instead of silently lowering as a null pointer.
+   Member-object pointer access takes the selected member's category and size
+   from the member-pointer expression's published pointee type, so
+   `double d = object.*pointer` no longer loads a word-sized value.
    Explicit conversion-function templates retain their explicit flag through
    member-template instantiation, so copy-initialization rejects them with the
    existing explicit-conversion diagnostic while `explicit(false)` remains

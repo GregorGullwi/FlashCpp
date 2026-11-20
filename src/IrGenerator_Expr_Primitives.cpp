@@ -426,25 +426,37 @@ ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessN
 	ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), ptmNode.operator_token()));
 
 	// The member pointer expression's own type is the pointer object (word
-	// sized). Its category and type index name the selected member type; use the
-	// published type info for the member's size. The full access expression may
-	// already be annotated with the surrounding conversion target (for example
-	// `double d = p.*pm`), so it cannot supply the member shape.
+	// sized). The selected member's shape comes from the member pointer's
+	// pointee type; the full access expression may already be annotated with the
+	// surrounding conversion target (for example `double d = p.*pm`), so it
+	// cannot supply the member shape.
+	const std::optional<TypeSpecifierNode> member_pointee = sema_.getMemberPointerPointeeType(ptmNode.member_pointer());
 	const std::optional<TypeSpecifierNode> member_pointer_syntax = sema_.getExpressionType(ptmNode.member_pointer());
 	TypeCategory member_type = ptr_result.typeEnum();
 	int member_size = ptr_result.size_in_bits.value;
 	TypeIndex member_type_index = ptr_result.type_index;
-	if (member_pointer_syntax.has_value()) {
-		member_type = member_pointer_syntax->category();
-		member_type_index = member_pointer_syntax->type_index();
-		const size_t pointer_levels = member_pointer_syntax->pointer_levels().size();
-		// The flat projection adds one level for the member pointer itself when
-		// the pointee is not a scalar; the pointee's own indirection is the rest.
-		const size_t member_pointer_depth = pointer_levels > 0 ? pointer_levels - 1 : 0;
-		if (member_pointer_depth > 0) {
-			member_size = static_cast<int>(sizeof(void*) * 8);
-		} else if (const TypeInfo* member_type_info = tryGetTypeInfo(member_type_index)) {
-			member_size = static_cast<int>(member_type_info->sizeInBits().value);
+	if (member_pointee.has_value()) {
+		member_type = member_pointee->category();
+		member_type_index = member_pointee->type_index();
+		member_size = member_pointee->size_in_bits();
+	} else if (member_pointer_syntax.has_value()) {
+		if (member_pointer_syntax->has_member_object_pointee()) {
+			const TypeSpecifierNode& pointee = member_pointer_syntax->member_object_pointee();
+			member_type = pointee.category();
+			member_type_index = pointee.type_index();
+			member_size = pointee.size_in_bits();
+		} else {
+			member_type = member_pointer_syntax->category();
+			member_type_index = member_pointer_syntax->type_index();
+			const size_t pointer_levels = member_pointer_syntax->pointer_levels().size();
+			// The flat projection adds one level for the member pointer itself when
+			// the pointee is not a scalar; the pointee's own indirection is the rest.
+			const size_t member_pointer_depth = pointer_levels > 0 ? pointer_levels - 1 : 0;
+			if (member_pointer_depth > 0) {
+				member_size = POINTER_SIZE_BITS;
+			} else if (const TypeInfo* member_type_info = tryGetTypeInfo(member_type_index)) {
+				member_size = static_cast<int>(member_type_info->sizeInBits().value);
+			}
 		}
 	}
 

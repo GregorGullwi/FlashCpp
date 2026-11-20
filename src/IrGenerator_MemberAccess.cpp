@@ -3536,6 +3536,24 @@ std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCallInterna
 	return generateTypeConversion(*result, conversion_return_type.category(), destination_type_category, cast_info.trailing_standard_conversion, token);
 }
 
+bool AstToIr::tryAdjustMemberObjectPointerCast(const ImplicitCastInfo& cast_info, ExprResult& result, const Token& token) {
+	if (cast_info.cast_kind != StandardConversionKind::PointerConversion ||
+		!sema_.isMemberObjectPointerType(cast_info.source_type_id) ||
+		!sema_.isMemberObjectPointerType(cast_info.target_type_id)) {
+		return false;
+	}
+	const CanonicalTypeDesc& source_desc = sema_.typeContext().get(cast_info.source_type_id);
+	const CanonicalTypeDesc& target_desc = sema_.typeContext().get(cast_info.target_type_id);
+	if (!source_desc.structural_type_id || !target_desc.structural_type_id) {
+		return false;
+	}
+	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+	const TypeId source_member_pointer = canonical_types.withoutTopLevelQualifiers(source_desc.structural_type_id);
+	const TypeId target_member_pointer = canonical_types.withoutTopLevelQualifiers(target_desc.structural_type_id);
+	result = adjustMemberObjectPointerForCanonicalBaseConversion(std::move(result), source_member_pointer, target_member_pointer, token);
+	return true;
+}
+
 ExprResult AstToIr::adjustMemberObjectPointerForCanonicalBaseConversion(
 	ExprResult source_member_pointer,
 	TypeId source_member_pointer_type,

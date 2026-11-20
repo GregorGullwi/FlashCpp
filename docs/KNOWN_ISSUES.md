@@ -521,13 +521,13 @@ The following remain unsupported and are rejected or left unresolved:
   the translation unit, so the old uninitialized-slot behavior can still appear
   there.
 
-## Member-object-pointer null comparison uses the raw offset
+## Member-object-pointer null comparison uses the wrong sentinel
 
-The 64-bit member-pointer representation stores a data-member offset directly, so
-a pointer to an offset-zero member (`&D::first`) compares equal to `nullptr` even
-though it is a valid non-null pointer-to-member. Closing this needs a reserved
-null encoding (or a flag) in the representation and matching comparison and
-lowering support.
+The null data-member-pointer sentinel is `~0ULL`, but equality lowering compares
+the raw value against zero. A pointer to an offset-zero member (`&D::first`)
+therefore compares equal to `nullptr` even though it is a valid non-null
+pointer-to-member. Align the equality path with the `~0ULL` sentinel and cover
+the offset-zero case.
 
 ## Static-member template initializer replay still handles unresolved lookups
 

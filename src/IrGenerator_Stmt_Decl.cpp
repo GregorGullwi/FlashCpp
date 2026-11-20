@@ -2707,6 +2707,18 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					}
 				}
 
+					// Direct member-object-pointer conversions need the same
+					// base-subobject adjustment as conversion-operator tails.
+				if (init_node.is<ExpressionNode>()) {
+					const void* pointer_init_key = static_cast<const void*>(&init_node.as<ExpressionNode>());
+					const auto pointer_init_slot = sema_.getSlot(pointer_init_key);
+					if (pointer_init_slot.has_value() && pointer_init_slot->has_cast()) {
+						const ImplicitCastInfo& pointer_cast =
+							sema_.castInfoTable()[pointer_init_slot->cast_info_index.value - 1];
+						(void)tryAdjustMemberObjectPointerCast(pointer_cast, init_operands, decl.identifier_token());
+					}
+				}
+
 					// C++20 [conv.bool]: the sema cast kind is authoritative, so
 					// a struct-pointer initializer (Struct category, Struct IR
 					// type, pointer depth 0, exactly like a struct object) is
