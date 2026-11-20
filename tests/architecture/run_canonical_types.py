@@ -1,8 +1,9 @@
 """Build the native canonical type regression; --mutations checks broken copies.
 
-Run from any directory with Python and clang-cl (Windows) or clang++ (Unix).
-Outputs stay in x64/canonical-types. This is a host architecture test, not input
-to FlashCpp's source-language test runner.
+Run from any directory with Python and Visual Studio's clang-cl (Windows, found
+through vswhere rather than PATH) or clang++ (Unix). Outputs stay in
+x64/canonical-types. This is a host architecture test, not input to FlashCpp's
+source-language test runner.
 """
 
 import argparse
@@ -13,6 +14,8 @@ import re
 import subprocess
 import sys
 import threading
+
+from host_compiler import windows_clang_cl
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -83,7 +86,7 @@ def check_guards():
 def compile_tu(source, include, obj, cwd):
     """Compile one translation unit to an object against the given headers."""
     if sys.platform == "win32":
-        command = ["clang-cl", "/nologo", "/std:c++20", "/EHsc", "/W4", "/WX",
+        command = [windows_clang_cl(), "/nologo", "/std:c++20", "/EHsc", "/W4", "/WX",
                    "/I" + str(include), "/I" + str(ROOT / "src"),
                    "/c", str(source), "/Fo" + str(obj), "/clang:-fstack-usage"]
     else:
@@ -95,7 +98,7 @@ def compile_tu(source, include, obj, cwd):
 
 def link_executable(objects, executable):
     if sys.platform == "win32":
-        command = ["clang-cl", "/nologo", *(str(obj) for obj in objects),
+        command = [windows_clang_cl(), "/nologo", *(str(obj) for obj in objects),
                    "/Fe" + str(executable), "/link", "/STACK:1048576"]
     else:
         command = ["clang++", *(str(obj) for obj in objects), "-o", str(executable)]
