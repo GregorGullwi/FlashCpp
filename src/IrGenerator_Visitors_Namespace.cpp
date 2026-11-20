@@ -296,6 +296,17 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			operands = visitExpressionNodeWithDestination(expr_opt->as<ExpressionNode>(), return_context, result_destination);
 		}
 
+		// Direct member-object-pointer returns need the same base-subobject
+		// adjustment as conversion-operator tails.
+		if (expr_opt->is<ExpressionNode>()) {
+			const auto return_slot = sema_.getSlot(&expr_opt->as<ExpressionNode>());
+			if (return_slot.has_value() && return_slot->has_cast()) {
+				const ImplicitCastInfo& cast_info =
+					sema_.castInfoTable()[return_slot->cast_info_index.value - 1];
+				(void)tryAdjustMemberObjectPointerCast(cast_info, operands, node.return_token());
+			}
+		}
+
 		// Check if this is a void return with a void expression (e.g., return void_func();)
 		{
 			TypeCategory expr_category = operands.category();

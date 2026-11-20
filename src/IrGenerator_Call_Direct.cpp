@@ -1505,6 +1505,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						arg_type_index = argumentIrOperands.type_index;
 						return true;
 					}
+					if (tryAdjustMemberObjectPointerCast(cast_info, argumentIrOperands, callExprNode.called_from())) {
+						arg_type = argumentIrOperands.typeEnum();
+						arg_type_index = argumentIrOperands.type_index;
+						return true;
+					}
 					if (cast_info.cast_kind == StandardConversionKind::BooleanConversion &&
 						param_type != nullptr &&
 						param_type->category() == TypeCategory::Bool &&
