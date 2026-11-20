@@ -292,7 +292,13 @@ remaining pattern schemas by identity, and remove the name fallback.
    planner for exact, qualification, derived-to-base, pointer, builtin, and enum
    shapes before compatibility is considered. A runtime regression checks that an
    instantiated conversion returning `short` wins by promotion over one returning
-   `long long`.
+   `long long`. Pointer qualification adjustment, object pointer to `cv void`,
+   pointer to `bool`, and array decay value tails now come from the structural
+   planner, so the syntax compatibility path is only reached for pairs that
+   planner rejects;
+   `test_conversion_operator_pointer_qualification_tail_ret0.cpp` pins the
+   qualification-versus-exact ranking, the `void*` tail, and nested pointer
+   qualification.
    Class-pointer tails rank through the published canonical base graph, check
    access after selection, and preserve null for fixed-offset and virtual-base
    adjustments in lowering. Calling an inherited conversion operator adjusts the

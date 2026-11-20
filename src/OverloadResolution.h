@@ -4100,6 +4100,12 @@ inline std::optional<ConversionPlan> tryBuildCanonicalConversionValueTailPlan(Ca
 	if (source_kind == CanonicalTypeKind::Builtin && target_kind == CanonicalTypeKind::Builtin) {
 		return buildCanonicalStructuralConversionPlan(table, source, target);
 	}
+	// Pointer qualification adjustment, object pointer to cv void, pointer to bool,
+	// and array decay tails are fully described by the structural planner, so the
+	// syntax compatibility tail is only needed for pairs it rejects.
+	if (const ConversionPlan structural = buildCanonicalStructuralConversionPlan(table, source, target); structural.is_valid) {
+		return structural;
+	}
 	use_compatibility = true;
 	return std::nullopt;
 }
