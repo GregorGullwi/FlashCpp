@@ -1202,6 +1202,7 @@ private:
 		TypeId target_member_pointer_type,
 		const Token& source_token);
 	bool tryAdjustMemberObjectPointerCast(const ImplicitCastInfo& cast_info, ExprResult& result, const Token& token);
+	bool tryAdjustMemberObjectPointerTypes(TypeId source_member_pointer, TypeId target_member_pointer, ExprResult& result, const Token& token);
 	const FunctionDeclarationNode* findCurrentStructStaticMemberFunction(StringHandle member_name) const {
 		if (!current_struct_name_.isValid()) {
 			return nullptr;

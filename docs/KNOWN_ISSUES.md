@@ -558,7 +558,17 @@ the offset-zero case.
 is not a pointer-to-member during normalization. Expression inference returns an
 empty type, and lowering can then fail as an internal error instead of reporting
 a source diagnostic at the operator. Add the operand check to sema and emit the
-appropriate compile error before IR.
+appropriate compile error before IR. The base relation itself is diagnosed when
+lowering sees a virtual or inaccessible owner; moving that check into sema keeps
+the diagnostic at the operator instead of IR.
+
+## Array member-pointer pointees are not represented
+
+Address-of and auto deduction for an array member (`auto p = &C::arr;`) reduce the
+pointee to its element type, so `(object.*p)[i]` cannot lower as an array.
+Declaring `int (C::*p)[3]` through an ordered declarator is also rejected by the
+canonical import path. Publish the array pointee shape before claiming full
+member-object pointer coverage.
 
 ## Static-member template initializer replay still handles unresolved lookups
 

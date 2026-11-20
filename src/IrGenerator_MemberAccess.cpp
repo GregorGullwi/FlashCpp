@@ -3536,6 +3536,20 @@ std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCallInterna
 	return generateTypeConversion(*result, conversion_return_type.category(), destination_type_category, cast_info.trailing_standard_conversion, token);
 }
 
+bool AstToIr::tryAdjustMemberObjectPointerTypes(TypeId source_member_pointer, TypeId target_member_pointer,
+	ExprResult& result, const Token& token) {
+	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+	source_member_pointer = canonical_types.withoutTopLevelQualifiers(canonicalTypeWithoutReference(canonical_types, source_member_pointer));
+	target_member_pointer = canonical_types.withoutTopLevelQualifiers(canonicalTypeWithoutReference(canonical_types, target_member_pointer));
+	if (canonical_types.node(source_member_pointer).kind != CanonicalTypeKind::MemberObjectPointer ||
+		canonical_types.node(target_member_pointer).kind != CanonicalTypeKind::MemberObjectPointer) {
+		return false;
+	}
+	result = adjustMemberObjectPointerForCanonicalBaseConversion(
+		std::move(result), source_member_pointer, target_member_pointer, token);
+	return true;
+}
+
 bool AstToIr::tryAdjustMemberObjectPointerCast(const ImplicitCastInfo& cast_info, ExprResult& result, const Token& token) {
 	if (cast_info.cast_kind != StandardConversionKind::PointerConversion ||
 		!sema_.isMemberObjectPointerType(cast_info.source_type_id) ||
@@ -3547,11 +3561,8 @@ bool AstToIr::tryAdjustMemberObjectPointerCast(const ImplicitCastInfo& cast_info
 	if (!source_desc.structural_type_id || !target_desc.structural_type_id) {
 		return false;
 	}
-	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
-	const TypeId source_member_pointer = canonical_types.withoutTopLevelQualifiers(source_desc.structural_type_id);
-	const TypeId target_member_pointer = canonical_types.withoutTopLevelQualifiers(target_desc.structural_type_id);
-	result = adjustMemberObjectPointerForCanonicalBaseConversion(std::move(result), source_member_pointer, target_member_pointer, token);
-	return true;
+	return tryAdjustMemberObjectPointerTypes(
+		source_desc.structural_type_id, target_desc.structural_type_id, result, token);
 }
 
 ExprResult AstToIr::adjustMemberObjectPointerForCanonicalBaseConversion(

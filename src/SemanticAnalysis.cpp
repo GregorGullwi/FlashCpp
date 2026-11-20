@@ -1109,6 +1109,12 @@ std::optional<CanonicalTypeDesc> tryGetConditionalPointerType(
 				pointer.ref_qualifier = ReferenceQualifier::None;
 				return pointer;
 			}
+			if (node.kind == CanonicalTypeKind::MemberObjectPointer || node.kind == CanonicalTypeKind::MemberFunctionPointer) {
+				CanonicalTypeDesc member_pointer = desc;
+				member_pointer.structural_type_id = structural_id;
+				member_pointer.ref_qualifier = ReferenceQualifier::None;
+				return member_pointer;
+			}
 			// A published pointer/array id is authoritative. Do not fall back
 			// to flat pointer levels for that family.
 			if (hasFlag(desc.flags, CanonicalTypeFlags::PublishedPointerArray)) {
@@ -7324,51 +7330,121 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::getMemberPointerPointeeType(const ASTNode& member_pointer_expression) {
+	bool claimed_member_pointer_identity = false;
 	const CanonicalTypeId type_id = inferExpressionType(member_pointer_expression);
-	if (!type_id) {
+	if (type_id) {
+		const CanonicalTypeDesc& desc = type_context_.get(type_id);
+		if (desc.structural_type_id) {
+			CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+			const TypeId member_pointer = table.withoutTopLevelQualifiers(canonicalTypeWithoutReference(table, desc.structural_type_id));
+			if (table.node(member_pointer).kind == CanonicalTypeKind::MemberObjectPointer) {
+				claimed_member_pointer_identity = true;
+				const TypeId pointee = table.memberPointerPointee(member_pointer);
+				if (pointee) {
+					const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(table, pointee);
+					if (exported.status == CanonicalTypeImportStatus::Supported) {
+						TypeSpecifierNode pointee_syntax;
+						applyCanonicalDeclaratorBase(pointee_syntax, table, exported.base);
+						pointee_syntax.set_ordered_declarator(exported.components);
+						setMaterializedTypeSpecifierSize(pointee_syntax);
+						return pointee_syntax;
+					}
+				}
+			}
+		}
+	}
+	if (claimed_member_pointer_identity) {
 		return std::nullopt;
 	}
-	const CanonicalTypeDesc& desc = type_context_.get(type_id);
-	if (!desc.structural_type_id) {
+	// Transitional guard: dependent, substituted, and ternary member-pointer
+	// expressions may not have published structural identity yet. The access
+	// operator already establishes that the operand is a member pointer, so peel
+	// one flat level as the pointee until identity publication covers the form.
+	const std::optional<TypeSpecifierNode> syntax = getExpressionType(member_pointer_expression);
+	if (!syntax.has_value()) {
 		return std::nullopt;
 	}
-	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-	const TypeId member_pointer = table.withoutTopLevelQualifiers(desc.structural_type_id);
-	if (table.node(member_pointer).kind != CanonicalTypeKind::MemberObjectPointer) {
+	TypeSpecifierNode pointee = *syntax;
+	pointee.set_reference_qualifier(ReferenceQualifier::None);
+	if (pointee.has_member_object_pointee()) {
+		return pointee.member_object_pointee();
+	}
+	pointee.clear_member_class_identity();
+	pointee.clear_injected_class_declaration();
+	if (pointee.has_ordered_declarator() && !pointee.declarator_components().empty()) {
+		while (!pointee.declarator_components().empty()) {
+			const DeclaratorComponentKind outer = pointee.declarator_components().front().kind;
+			if (outer != DeclaratorComponentKind::LValueReference && outer != DeclaratorComponentKind::RValueReference) {
+				break;
+			}
+			pointee.remove_outermost_ordered_declarator_component();
+		}
+		if (!pointee.declarator_components().empty()) {
+			const DeclaratorComponentKind outer = pointee.declarator_components().front().kind;
+			if (outer == DeclaratorComponentKind::Pointer || outer == DeclaratorComponentKind::MemberObjectPointer ||
+				outer == DeclaratorComponentKind::MemberFunctionPointer) {
+				pointee.remove_outermost_ordered_declarator_component();
+			}
+		}
+	} else if (!pointee.pointer_levels().empty()) {
+		pointee.remove_pointer_level();
+	} else {
 		return std::nullopt;
 	}
-	const TypeId pointee = table.memberPointerPointee(member_pointer);
-	if (!pointee) {
-		return std::nullopt;
-	}
-	const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(table, pointee);
-	if (exported.status != CanonicalTypeImportStatus::Supported) {
-		return std::nullopt;
-	}
-	TypeSpecifierNode pointee_syntax;
-	applyCanonicalDeclaratorBase(pointee_syntax, table, exported.base);
-	pointee_syntax.set_ordered_declarator(exported.components);
-	setMaterializedTypeSpecifierSize(pointee_syntax);
-	return pointee_syntax;
+	setMaterializedTypeSpecifierSize(pointee);
+	return pointee;
 }
 
 std::optional<TypeId> SemanticAnalysis::getMemberPointerOwnerType(const ASTNode& member_pointer_expression) {
+	if (member_pointer_expression.is<ExpressionNode>()) {
+		const ExpressionNode& expression = member_pointer_expression.as<ExpressionNode>();
+		if (const auto* unary = std::get_if<UnaryOperatorNode>(&expression);
+			unary != nullptr && unary->op() == "&" && unary->get_operand().is<ExpressionNode>()) {
+			const ExpressionNode& operand = unary->get_operand().as<ExpressionNode>();
+			if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&operand)) {
+				const auto resolved = tryResolveQualifiedIdentifier(*qualified, true);
+				if (resolved.has_value() && resolved->kind == ResolvedQualifiedIdentifierInfo::Kind::NonStaticDataMember &&
+					resolved->member_owner_type_index.is_valid()) {
+					if (const TypeInfo* owner_info = tryGetTypeInfo(resolved->member_owner_type_index)) {
+						CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+						const CanonicalTypeImport imported_owner = importCanonicalClassTypeInfo(table, *owner_info);
+						if (imported_owner.status == CanonicalTypeImportStatus::Supported) {
+							return imported_owner.type;
+						}
+					}
+				}
+			}
+		}
+	}
 	const CanonicalTypeId type_id = inferExpressionType(member_pointer_expression);
-	if (!type_id) {
+	if (type_id) {
+		const CanonicalTypeDesc& desc = type_context_.get(type_id);
+		if (desc.structural_type_id) {
+			CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+			const TypeId member_pointer = table.withoutTopLevelQualifiers(canonicalTypeWithoutReference(table, desc.structural_type_id));
+			const CanonicalTypeKind kind = table.node(member_pointer).kind;
+			if (kind == CanonicalTypeKind::MemberObjectPointer || kind == CanonicalTypeKind::MemberFunctionPointer) {
+				const TypeId owner = table.memberPointerOwner(member_pointer);
+				return owner ? std::optional<TypeId>(owner) : std::nullopt;
+			}
+		}
+	}
+	const std::optional<TypeSpecifierNode> syntax = getExpressionType(member_pointer_expression);
+	if (!syntax.has_value()) {
 		return std::nullopt;
 	}
-	const CanonicalTypeDesc& desc = type_context_.get(type_id);
-	if (!desc.structural_type_id) {
-		return std::nullopt;
+	TypeSpecifierNode bound_syntax = *syntax;
+	bound_syntax.set_reference_qualifier(ReferenceQualifier::None);
+	tryBindPublishedMemberClassEntity(bound_syntax);
+	if (bound_syntax.has_member_class_type_id()) {
+		return bound_syntax.member_class_type_id();
 	}
-	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-	const TypeId member_pointer = table.withoutTopLevelQualifiers(desc.structural_type_id);
-	const CanonicalTypeKind kind = table.node(member_pointer).kind;
-	if (kind != CanonicalTypeKind::MemberObjectPointer && kind != CanonicalTypeKind::MemberFunctionPointer) {
-		return std::nullopt;
+	if (bound_syntax.has_member_class_entity()) {
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		const TypeId owner = table.record(bound_syntax.member_class_entity());
+		return owner ? std::optional<TypeId>(owner) : std::nullopt;
 	}
-	const TypeId owner = table.memberPointerOwner(member_pointer);
-	return owner ? std::optional<TypeId>(owner) : std::nullopt;
+	return std::nullopt;
 }
 
 TypeId SemanticAnalysis::getExpressionStructuralTypeId(const ASTNode& node) {
@@ -10930,6 +11006,19 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return {};
 				const CanonicalTypeDesc t_desc = type_context_.get(t_id);
 				const CanonicalTypeDesc f_desc = type_context_.get(f_id);
+				const bool true_is_null_pointer =
+					isIntegerLiteralZeroNullPointerConstant(e.true_expr()) || t_desc.category() == TypeCategory::Nullptr;
+				const bool false_is_null_pointer =
+					isIntegerLiteralZeroNullPointerConstant(e.false_expr()) || f_desc.category() == TypeCategory::Nullptr;
+				if (true_is_null_pointer != false_is_null_pointer) {
+					const ASTNode& non_null_branch = true_is_null_pointer ? e.false_expr() : e.true_expr();
+					const std::optional<TypeSpecifierNode> branch_syntax = getExpressionType(non_null_branch);
+					if (branch_syntax.has_value() &&
+						(branch_syntax->has_member_class() || branch_syntax->category() == TypeCategory::MemberObjectPointer ||
+						 branch_syntax->category() == TypeCategory::MemberFunctionPointer)) {
+						return canonicalizeType(*branch_syntax);
+					}
+				}
 				// C++20 [expr.cond]/3: array-to-pointer conversion applies to
 				// the branches before the common type is chosen, so an array
 				// branch never makes the conditional result an array type. This

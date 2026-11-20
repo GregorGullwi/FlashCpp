@@ -226,6 +226,7 @@ enum class DiagnosticId : uint32_t {
 	DerivedToBasePointerCastDepthUnsupported = 1631,
 	MemberPointerOwnerNotClass = 1632,
 	ReferenceMemberBindsTemporary = 1633,
+	VirtualBaseMemberPointerAccessUnsupported = 1634,
 
 	// Call-expression family (1701..1799).
 	AmbiguousFunctionCall = 1701,
@@ -559,6 +560,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "MemberPointerOwnerNotClass";
 	case DiagnosticId::ReferenceMemberBindsTemporary:
 		return "ReferenceMemberBindsTemporary";
+	case DiagnosticId::VirtualBaseMemberPointerAccessUnsupported:
+		return "VirtualBaseMemberPointerAccessUnsupported";
 	case DiagnosticId::AmbiguousFunctionCall:
 		return "AmbiguousFunctionCall";
 	case DiagnosticId::AmbiguousCallOperator:

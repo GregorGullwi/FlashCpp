@@ -1949,11 +1949,19 @@ void AstToIr::generateStaticMemberDeclarations() {
 										op.init_data.push_back(0);
 									}
 								} else {
-									FLASH_LOG(Codegen, Debug, "Address-of non-identifier for static member '",
-											  qualified_name, "' - zero-initializing");
-									fail_constexpr_initializer("address-of operand is not an identifier");
-									allowNormalizedWriteBack = false;
-									append_bytes(0, op.size_in_bits.value, op.init_data);
+									// Address-of a qualified member (`&D::member`) is a
+									// member-pointer constant, not an object address. Let the
+									// constexpr evaluator produce its owner-relative value.
+									unsigned long long evaluated_value = 0;
+									if (evaluate_static_initializer(*static_member.initializer, evaluated_value, struct_info)) {
+										append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
+									} else {
+										FLASH_LOG(Codegen, Debug, "Address-of non-identifier for static member '",
+												  qualified_name, "' - zero-initializing");
+										fail_constexpr_initializer("address-of operand is not an identifier");
+										allowNormalizedWriteBack = false;
+										append_bytes(0, op.size_in_bits.value, op.init_data);
+									}
 								}
 							} else {
 								// Other unary operators - try constexpr evaluation
