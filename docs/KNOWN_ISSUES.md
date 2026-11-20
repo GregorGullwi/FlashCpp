@@ -44,6 +44,35 @@ canonical publication; supported nested primary-member expansions now retain
 independent inner bindings. Keep those unsupported fields
 fail-closed; the lockstep follow-up entry below records the remaining paths.
 
+## Member-pointer access into a pointer-to-array member is unsupported
+
+`struct S { int (*row)[3]; }; S s; int (&r)[3] = s.*(&S::row);` reads through the
+wrong address and yields garbage, and dereferencing the resulting reference
+crashes. A pointer member (`int* S::*`) works. Codegen takes the member shape
+from the member pointer's published pointee but lowers the access with the
+member-pointer word size.
+
+## Object cv is dropped for non-projectable interleaved members
+
+With `struct S { int* (*p)[3]; };`, `const S s; auto& r = s.p; r = nullptr;` is
+accepted; the const qualification lands on the ordered pointer wrapper, which
+sema's flat-based const-assignment check does not read. The equivalent
+projectable shapes (`int (*)[3]`, `int*`) are diagnosed. Before the parser
+migration this input crashed the compiler instead.
+
+## Member-pointer declarators spelled `T* C::*` are rejected
+
+`int* C::* pm = &C::p;` reports `OutOfLineDefinitionMalformedTarget` (1023) in an
+out-of-line definition; `int C::*` and a typedef (`typedef int* IP; IP C::* pm;`)
+work.
+
+## Built-in indirection of a callable copy is unsupported
+
+`auto x = *function_pointer;` fails in IR conversion with
+"Type with no runtime size reached codegen" instead of a source diagnostic, and
+`int (*table[2])(int); auto& first = *table;` crashes. `auto& r = *function_pointer;`
+works.
+
 ## Remaining structural NTTP shapes need canonical value import
 
 Nested anonymous-union-in-anonymous-union hierarchy still needs an explicit

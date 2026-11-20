@@ -519,6 +519,24 @@ remaining pattern schemas by identity, and remove the name fallback.
      pointer arithmetic, pointer subscripts, and direct dereference of pointer
      variables initialized from arrays evaluate. Other flat readers still need
      migration before the projection fields can be removed.
+   - `Parser_Expr_QualLookup` now asks `runtime_pointer_depth()` for its
+     pointer-object tests, compares ternary pointer shapes through the shared
+     `has_same_pointer_shape` helper, and builds the `new` result by decaying the
+     ordered declarator spine instead of rebuilding a flat extent list. Member
+     access on an interleaved member such as `int* (*)[3]` replaces the outermost
+     ordered pointer wrapper instead of reading a missing flat level, which was
+     undefined and crashed the compiler. Ten readers remain, each annotated with
+     the shape that still forces the projection: unordered array dereference, the
+     indirection pointee-array marker that a flat peel leaves behind, array-alias
+     return preference, dependent member-pointer access whose published pointee
+     arrives only at instantiation, lambda return-type compatibility, and
+     diagnostic spelling. Replacing member-pointer access with sema's published
+     pointee was tried and reverted, because a dependent
+     `decltype(pointer->*member)` has no published pointee while the enclosing
+     template is still being parsed. `test_member_access_interleaved_pointer_member_ret42.cpp`,
+     `test_member_pointer_access_pointee_shape_ret42.cpp`, and
+     `test_new_and_conditional_ordered_pointer_shape_ret42.cpp` pin the migrated
+     shapes.
    - Lambda and function trailing return types now consume pointer, reference,
      and grouped pointer-to-array abstract declarators with the shared type-id
      helper, so `[]() -> int*` and `-> int (*)[4]` reach the body instead of
