@@ -541,6 +541,14 @@ The following remain unsupported and are rejected or left unresolved:
   the translation unit, so the old uninitialized-slot behavior can still appear
   there.
 
+## Member-object-pointer null comparison uses the raw offset
+
+The 64-bit member-pointer representation stores a data-member offset directly, so
+a pointer to an offset-zero member (`&D::first`) compares equal to `nullptr` even
+though it is a valid non-null pointer-to-member. Closing this needs a reserved
+null encoding (or a flag) in the representation and matching comparison and
+lowering support.
+
 ## Static-member template initializer replay still handles unresolved lookups
 
 All four static-member initializer sites (in-class primary and partial
