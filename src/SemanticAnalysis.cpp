@@ -718,6 +718,18 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 			applyCanonicalDeclaratorBase(type_node, requireFrontendContext().canonicalTypes(), exported.base);
 		}
 		type_node.set_ordered_declarator(exported.components);
+		if ((desc.category() == TypeCategory::MemberObjectPointer || desc.category() == TypeCategory::MemberFunctionPointer) &&
+			desc.structural_type_id) {
+			CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+			const CanonicalTypeKind kind = table.node(desc.structural_type_id).kind;
+			if (kind == CanonicalTypeKind::MemberObjectPointer || kind == CanonicalTypeKind::MemberFunctionPointer) {
+				const TypeId owner = table.memberPointerOwner(desc.structural_type_id);
+				const CanonicalTypeKind owner_kind = owner ? table.node(owner).kind : CanonicalTypeKind::Builtin;
+				if (owner_kind == CanonicalTypeKind::Record || owner_kind == CanonicalTypeKind::TemplateSpecialization) {
+					type_node.set_member_class_type_id(owner);
+				}
+			}
+		}
 		// The cold signature is declaration identity for the single Function
 		// component. Export reconstructs that component; the parameter list
 		// stays on the descriptor that canonicalization copied from syntax.
@@ -12894,6 +12906,17 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 		const auto selected_conversion = select_conversion_operator(expr_type_id, target_type);
 		if (selected_conversion.has_value() && !selected_conversion->ambiguous) {
 			return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion, SemanticContextFlags::None);
+		}
+		if ((target_is_member_object_pointer || target_is_member_function_pointer) && !selected_conversion.has_value()) {
+			const TypeSpecifierNode source_type = materializeTypeSpecifier(type_context_.get(expr_type_id));
+			const Token source_token = FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(expr_node).value_or(Token{});
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::NoMatchingConversion,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(source_token),
+				"no viable conversion from '" + source_type.getReadableString() + "' to '" + target_type.getReadableString() + "'",
+				{});
 		}
 		return false;
 	}
