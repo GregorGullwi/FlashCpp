@@ -1826,16 +1826,20 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceArgumentConversio
 std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgument(const TypeSpecifierNode& target_type,
 	const TypeSpecifierNode& source_type, const ASTNode* argument_node);
 
-// Check if target_struct has a non-explicit converting constructor whose first parameter
-// accepts source_type and whose remaining parameters are all defaulted, OR if source
-// derives from target (implicit derived-to-base conversion).
-// Used to determine if struct-to-struct conversions are viable.
-// Published canonical class-base relations are authoritative for supported class pairs.
-// Unsupported constructor schemas retain compatibility declaration selection.
-inline bool hasConvertingConstructorFrom(const TypeSpecifierNode& target_type_spec, const TypeSpecifierNode& source_type_spec) {
+// Build the conversion plan for target_struct's implicit converting constructor,
+// its same-class route, or its derived-to-base route. Published canonical
+// class-base relations are authoritative for supported class pairs, and
+// unsupported constructor schemas retain compatibility declaration selection.
+// The plan stays unranked on purpose: [over.ics.rank]/3.3 orders two user-defined
+// conversion sequences by a standard conversion sequence only when they contain
+// the same conversion function or constructor, and this probe cannot prove that
+// two candidates share one. Ordering distinct converting constructors by their
+// parameter conversion would turn required ambiguities into silent acceptances.
+inline std::optional<ConversionPlan> tryBuildConvertingConstructorConversionPlan(
+	const TypeSpecifierNode& target_type_spec, const TypeSpecifierNode& source_type_spec) {
 	const auto canonical_constructor_result = tryHasCanonicalImplicitConvertingConstructorForArgument(target_type_spec, source_type_spec, nullptr);
 	if (canonical_constructor_result.has_value() && *canonical_constructor_result) {
-		return true;
+		return ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 	}
 	bool has_canonical_class_pair = false;
 	FrontendContext* const context = FrontendContext::active();
@@ -1858,44 +1862,49 @@ inline bool hasConvertingConstructorFrom(const TypeSpecifierNode& target_type_sp
 			if (both_are_classes) {
 				has_canonical_class_pair = true;
 				if (source_class == target_class) {
-					return true;
+					return ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 				}
 				const auto base_conversion = classifyCanonicalDerivedBaseConversion(table, source_class, target_class);
 				if (base_conversion == DerivedBaseConversionKind::UniquePublicNonVirtual || base_conversion == DerivedBaseConversionKind::PublicVirtual) {
-					return true;
-				}
-				if (canonical_constructor_result.has_value()) {
-					return *canonical_constructor_result;
+					return ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 				}
 				// Canonical import covers this class pair; do not fall back to
 				// compatibility constructor selection when canonical has no answer.
-				return false;
+				return std::nullopt;
 			}
 		}
 	}
 	const TypeIndex target_idx = target_type_spec.type_index();
 	const TypeIndex source_idx = source_type_spec.type_index();
 	if (!target_idx.is_valid() || !source_idx.is_valid())
-		return false;
+		return std::nullopt;
 	const TypeInfo* target_type = tryGetTypeInfo(target_idx);
 	if (!target_type || !tryGetTypeInfo(source_idx))
-		return false;
+		return std::nullopt;
 	const StructTypeInfo* target = target_type->getStructInfo();
 	if (!target)
-		return false;
+		return std::nullopt;
 	// Only unimportable class pairs may use the compatibility inheritance graph.
-	if (!has_canonical_class_pair && hasUsablePublicDerivedBaseConversion(source_idx, target_idx))
-		return true;
+	if (!has_canonical_class_pair && hasUsablePublicDerivedBaseConversion(source_idx, target_idx)) {
+		return ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+	}
 	// Check constructors whose first argument consumes the source and whose
 	// remaining arguments are defaulted.
 	for (const auto& mf : target->member_functions) {
 		const TypeSpecifierNode* first_param = getImplicitCtorFirstParamType(mf);
 		if (!first_param)
 			continue;
-		if (first_param->type_index() == source_idx)
-			return true;
+		if (first_param->type_index() == source_idx) {
+			return ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+		}
 	}
-	return false;
+	return std::nullopt;
+}
+
+// Viability-only view of the same probe, for callers that ask whether the
+// conversion exists rather than what it plans.
+inline bool hasConvertingConstructorFrom(const TypeSpecifierNode& target_type_spec, const TypeSpecifierNode& source_type_spec) {
+	return tryBuildConvertingConstructorConversionPlan(target_type_spec, source_type_spec).has_value();
 }
 
 inline bool isDirectCtorTemplateParameterMatch(
@@ -1939,24 +1948,26 @@ inline ConversionPlan buildConversionPlan(
 	const TypeSpecifierNode& to,
 	const ASTNode* argument_node);
 
-inline bool hasImplicitConvertingConstructorForArgument(const TypeSpecifierNode& target_type_spec,
+inline std::optional<ConversionPlan> tryBuildImplicitConvertingConstructorConversionPlan(const TypeSpecifierNode& target_type_spec,
 	const TypeSpecifierNode& source_type, const ASTNode* argument_node) {
-	if (const std::optional<bool> canonical_result = tryHasCanonicalImplicitConvertingConstructorForArgument(target_type_spec,
-		source_type, argument_node);
-		canonical_result.has_value()) {
-		return *canonical_result;
+	const std::optional<bool> canonical_result = tryHasCanonicalImplicitConvertingConstructorForArgument(target_type_spec, source_type, argument_node);
+	if (canonical_result.has_value()) {
+		if (!*canonical_result) {
+			return std::nullopt;
+		}
+		return ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 	}
 	const TypeIndex target_idx = target_type_spec.type_index();
 	if (!target_idx.is_valid()) {
-		return false;
+		return std::nullopt;
 	}
 	const TypeInfo* target_type = tryGetTypeInfo(target_idx);
 	if (!target_type) {
-		return false;
+		return std::nullopt;
 	}
 	const StructTypeInfo* target = target_type->getStructInfo();
 	if (!target) {
-		return false;
+		return std::nullopt;
 	}
 	for (const auto& mf : target->member_functions) {
 		const TypeSpecifierNode* first_param = getImplicitCtorFirstParamType(mf);
@@ -1985,7 +1996,7 @@ inline bool hasImplicitConvertingConstructorForArgument(const TypeSpecifierNode&
 			}
 			const ConversionPlan conversion = buildConversionPlan(effective_source_type, param_spec);
 			if (conversion.is_valid) {
-				return true;
+				return ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 			}
 			continue;
 		}
@@ -1995,20 +2006,25 @@ inline bool hasImplicitConvertingConstructorForArgument(const TypeSpecifierNode&
 			// the ctor's own template parameter name keeps the viability check
 			// narrow while still allowing the later template-deduction path to
 			// instantiate the concrete conversion when needed.
-			return true;
+			return ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 		}
 		if (param_spec.category() == TypeCategory::Struct) {
 			if (hasConvertingConstructorFrom(param_spec, source_type)) {
-				return true;
+				return ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 			}
 			continue;
 		}
 		const auto conversion = can_convert_type(source_type.category(), param_spec.category());
 		if (conversion.is_valid) {
-			return true;
+			return ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 		}
 	}
-	return false;
+	return std::nullopt;
+}
+
+inline bool hasImplicitConvertingConstructorForArgument(const TypeSpecifierNode& target_type_spec, const TypeSpecifierNode& source_type,
+	const ASTNode* argument_node) {
+	return tryBuildImplicitConvertingConstructorConversionPlan(target_type_spec, source_type, argument_node).has_value();
 }
 
 // C++20 [conv.array]/1: an lvalue or rvalue of type "array of N T" or
@@ -4784,8 +4800,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 					from_resolved_index != to_resolved_index) {
 					// Different struct types: a converting constructor (e.g. Target(const Source&))
 					// may allow this conversion. Check gTypeInfo if available.
-					if (hasConvertingConstructorFrom(to, from)) {
-						return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+					if (const std::optional<ConversionPlan> constructor_plan = tryBuildConvertingConstructorConversionPlan(to, from); constructor_plan.has_value()) {
+						return *constructor_plan;
 					}
 					// A conversion operator on the referenced source type reaches the
 					// target through the same user-defined sequence as a by-value source.
@@ -4865,8 +4881,11 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				}
 			}
 		}
-		if (target_is_struct && to.type_index().is_valid() && hasImplicitConvertingConstructorForArgument(to, from, argument_node)) {
-			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+		if (target_is_struct && to.type_index().is_valid()) {
+			if (const std::optional<ConversionPlan> constructor_plan = tryBuildImplicitConvertingConstructorConversionPlan(to, from, argument_node);
+				constructor_plan.has_value()) {
+				return *constructor_plan;
+			}
 		}
 		if (!hasCompleteStructInfo(from.type_index())) {
 			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
@@ -4877,8 +4896,11 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	// Check for user-defined conversions in reverse: if 'to' is Struct and 'from' is not
 	// This handles constructor conversions (not conversion operators, but similar concept).
 	if (target_is_struct && !source_is_struct) {
-		if (to.type_index().is_valid() && hasImplicitConvertingConstructorForArgument(to, from, argument_node)) {
-			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+		if (to.type_index().is_valid()) {
+			if (const std::optional<ConversionPlan> constructor_plan = tryBuildImplicitConvertingConstructorConversionPlan(to, from, argument_node);
+				constructor_plan.has_value()) {
+				return *constructor_plan;
+			}
 		}
 		if (!hasCompleteStructInfo(to.type_index())) {
 			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
@@ -4942,8 +4964,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			return ConversionPlan::exact_match();
 		}
 		// Different struct types: check for a converting constructor
-		if (hasConvertingConstructorFrom(to, from)) {
-			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+		if (const std::optional<ConversionPlan> constructor_plan = tryBuildConvertingConstructorConversionPlan(to, from); constructor_plan.has_value()) {
+			return *constructor_plan;
 		}
 		// Struct info not yet finalized (parse-time): optimistically allow.
 		if (to.type_index().index() >= getTypeInfoCount() ||

@@ -18,7 +18,10 @@
 
 // Canonical probe shared with overload resolution. Defined here because this
 // unit can include both OverloadResolution.h and the constructor-selection
-// service without creating a header cycle.
+// service without creating a header cycle. The answer is deliberately a
+// yes/no/existence triple: a selected constructor only proves that the
+// conversion exists, because [over.ics.rank]/3.3 cannot order two different
+// converting constructors.
 std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgument(const TypeSpecifierNode& target_type,
 	const TypeSpecifierNode& source_type, const ASTNode* argument_node) {
 	FrontendContext& context = requireFrontendContext();
