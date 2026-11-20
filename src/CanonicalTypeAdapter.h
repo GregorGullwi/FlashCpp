@@ -1086,7 +1086,10 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 		pointee.clear_member_class_identity();
 		pointee.clear_injected_class_declaration();
 		pointee.clear_ordered_declarator();
-		pointee.limit_pointer_depth(0);
+		if (!syntax.has_member_object_pointee()) {
+			pointee.remove_pointer_level();
+		}
+		tryBindPublishedTypeEntity(pointee);
 		const CanonicalTypeImport imported_pointee = importCanonicalTypeImpl(
 			table, pointee, CanonicalTypeImportContext::Exact);
 		if (imported_pointee.status != CanonicalTypeImportStatus::Supported) {
@@ -1098,7 +1101,7 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 	CVQualifier member_pointer_cv = syntax.cv_qualifier();
 	if (!syntax.pointer_levels().empty()) {
 		const CVQualifier outer_pointer_cv =
-			syntax.pointer_levels().front().cv_qualifier;
+			syntax.pointer_levels().back().cv_qualifier;
 		if (!isValidCVQualifier(outer_pointer_cv)) {
 			return {{}, CanonicalTypeImportStatus::Invalid};
 		}
@@ -1159,8 +1162,9 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 	TypeSpecifierNode pointee = syntax;
 	pointee.clear_member_class_identity();
 	pointee.clear_injected_class_declaration();
-	pointee.limit_pointer_depth(0);
+	pointee.remove_pointer_level();
 	pointee.set_reference_qualifier(ReferenceQualifier::None);
+	tryBindPublishedTypeEntity(pointee);
 	const auto imported_pointee = importCanonicalTypeImpl(
 		table, pointee, CanonicalTypeImportContext::Exact);
 	if (imported_pointee.status != CanonicalTypeImportStatus::Supported) {

@@ -1619,13 +1619,20 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 						StringTable::getOrInternStringHandle(member_name));
 
 					if (member_result) {
-							// This is a pointer-to-member: return the member offset as a constant
+							// This is a pointer-to-member: return the member offset as a constant.
+							// The value is relative to the member's declaring class; a later
+							// base-to-derived conversion adds the base subobject adjustment.
 						FLASH_LOG(Codegen, Debug, "Address-of non-static member '", class_name, "::", member_name,
-								  "' - returning offset ", member_result.adjusted_offset, " as pointer-to-member constant");
+								  "' - returning owner-relative offset ", member_result.member->offset, " as pointer-to-member constant");
 
 							// Return the offset directly as a constant value (no IR instruction needed)
 							// This is a pointer-to-member constant - use 64-bit size and the member's type
-						return makeExprResult(nativeTypeIndex(TypeCategory::MemberObjectPointer), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member_result.adjusted_offset)}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(
+							nativeTypeIndex(TypeCategory::MemberObjectPointer),
+							SizeInBits{64},
+							IrOperand{static_cast<unsigned long long>(member_result.member->offset)},
+							PointerDepth{},
+							ValueStorage::ContainsData);
 					}
 				}
 			}
