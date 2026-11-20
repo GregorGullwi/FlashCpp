@@ -172,6 +172,9 @@ ConstExpr::EvaluationContext AstToIr::makeEvalContext(const SymbolTable& symbols
 			}
 		}
 	}
+	if (!current_namespace_stack_.empty()) {
+		ctx.lookup_namespace = buildNamespaceHandleFromStrings(current_namespace_stack_);
+	}
 	return ctx;
 }
 

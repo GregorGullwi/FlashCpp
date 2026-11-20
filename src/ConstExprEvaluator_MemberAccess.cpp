@@ -1485,6 +1485,10 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					type_spec.array_dimensions(),
 					initializer->as<InitializerListNode>(),
 					context);
+				if (array_result.success()) {
+					array_result.array_origin_var = qualified_id.nameHandle();
+					array_result.source_declaration = &var_decl;
+				}
 				return finalize_variable_initialization(var_decl, qualified_id.name(), initializer.value(), std::move(array_result), context);
 			}
 		}

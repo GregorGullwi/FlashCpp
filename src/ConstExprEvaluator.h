@@ -647,6 +647,23 @@ struct MemberPointerTarget {
 	int64_t offset = 0;
 };
 
+// Installs a function body's declaration namespace as the context for
+// unqualified lookup. Names in the body must not resolve through the namespace
+// that triggered the call. Restores the caller's context on destruction.
+class ScopedFunctionLookupContext {
+public:
+	ScopedFunctionLookupContext(EvaluationContext& context, NamespaceHandle declaration_namespace);
+	~ScopedFunctionLookupContext();
+
+	ScopedFunctionLookupContext(const ScopedFunctionLookupContext&) = delete;
+	ScopedFunctionLookupContext& operator=(const ScopedFunctionLookupContext&) = delete;
+
+private:
+	EvaluationContext& context_;
+	bool saved_force_global_lookup_;
+	NamespaceHandle saved_lookup_namespace_;
+};
+
 std::optional<MemberPointerTarget> tryResolveMemberPointerTarget(const QualifiedIdentifierNode& qualified_id);
 EvalResult validateConstexprRead(const EvalResult& heap_val);
 

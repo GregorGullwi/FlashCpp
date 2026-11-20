@@ -283,14 +283,18 @@ member-aggregate forms. Small aggregates returned in registers still initialize
 through the ABI result temporary, so copy-initialization from such a call is not
 elided yet and still requires an accessible copy or move constructor.
 
-## Runtime dereference of a qualified namespace pointer to an array is not lowered
+## Runtime lowering does not reuse declaration-namespace lookup for namespace-scope variables
 
-Constexpr evaluation now resolves qualified namespace-scope pointer initializers
-in their declaring namespace and keeps the array source declaration, so
-`constexpr int value = *N::pointer;` works when `pointer` targets `N::values`.
-The same expression in runtime lowering still crashes: code generation must
-apply the namespace-qualified variable's pointer/array origin instead of
-treating the qualified reference as a non-pointer value.
+Constexpr evaluation resolves unqualified names in the declaration namespace and
+its enclosing namespaces, including reopened namespaces, and keeps the source
+declaration of qualified arrays so array-to-pointer decay works. Runtime lowering
+of a namespace-scope pointer that targets an array still crashes: the IR path
+re-resolves the qualified reference instead of applying the pointer's array
+origin. Namespace-scope `using`-directives are also not consulted when an
+initializer is evaluated outside its lexical scope. Inline and nested namespace
+variables can additionally be emitted with a name that does not match their
+reference (`undefined reference to 'N::a'`), which is a separate symbol-emission
+gap.
 
 ## Subscript storage follow-up architecture
 
