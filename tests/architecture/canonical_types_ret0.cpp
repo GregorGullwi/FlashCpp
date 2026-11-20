@@ -1,5 +1,11 @@
 #include "CanonicalTypeTests.h"
 
+// This host regression links the adapter without AstNodeTypes.cpp.
+// importCanonicalMemberPointer calls tryBindPublishedTypeEntity to recover a nominal
+// pointee from the legacy type registry, which this translation unit does not provide.
+// Pointees here already carry an EntityId or stay unpublished.
+void tryBindPublishedTypeEntity(TypeSpecifierNode&) {}
+
 ChunkedStringAllocator gChunkedStringAllocator;
 #ifdef _WIN32
 TargetDataModel g_target_data_model = TargetDataModel::LLP64;

@@ -361,14 +361,20 @@ remaining pattern schemas by identity, and remove the name fallback.
    Member-object pointer access takes the selected member's category and size
    from the member-pointer expression's published pointee type, so
    `double d = object.*pointer` no longer loads a word-sized value.
-   Member-object pointer identity now also covers flat declarations at any
-   pointee depth, address-of expressions, and `static_cast` results. Canonical
-   import keeps the pointee's own pointer levels and binds nominal pointees;
-   auto deduction retains the owner. Member-object access adjusts the object
-   address to the member's declaring owner before applying the member offset, so
-   direct base-owner access and inherited members use the same canonical base
-   graph. Address-of member constants are owner-relative, so a base-to-derived
-   conversion adds the published subobject adjustment exactly once.
+   Member-object pointer identity now covers flat declarations at scalar,
+   pointer, and record pointee shapes, address-of expressions, and
+   `static_cast` results. Canonical import keeps the pointee's own pointer
+   levels and binds nominal pointees; auto deduction retains the owner. Global,
+   `static`, and `constexpr` member-pointer initializers now store the same
+   declaring-owner offset as local initialization, and assignment and explicit
+   `static_cast` apply the published base-subobject adjustment. Member-object
+   access adjusts the object address to the member's declaring owner before
+   applying the offset, including `->*` and `this->*`, so direct base-owner
+   access and inherited members use the same canonical base graph. Dependent
+   and conditional member-pointer operands keep a guarded flat fallback until
+   their structural identity is published. Access through a virtual or
+   inaccessible base is diagnosed instead of silently reading the wrong
+   subobject.
    Explicit conversion-function templates retain their explicit flag through
    member-template instantiation, so copy-initialization rejects them with the
    existing explicit-conversion diagnostic while `explicit(false)` remains

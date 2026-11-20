@@ -2403,6 +2403,51 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		return lhsExprResult;
 	}
 
+	// Direct member-object-pointer assignment needs the same base-subobject
+	// adjustment as initialization and return conversions. Apply it before the
+	// lvalue handler so the stored value is already owner-normalized.
+	if (op == "=") {
+		auto member_pointer_operand_type = [&](const ASTNode& operand) -> TypeId {
+			if (operand.is<ExpressionNode>()) {
+				if (const auto* identifier = std::get_if<IdentifierNode>(&operand.as<ExpressionNode>())) {
+					if (const std::optional<ASTNode> symbol = lookupSymbol(identifier->name()); symbol.has_value()) {
+						const DeclarationNode* declaration = nullptr;
+						if (symbol->is<DeclarationNode>()) {
+							declaration = &symbol->as<DeclarationNode>();
+						} else if (symbol->is<VariableDeclarationNode>()) {
+							declaration = &symbol->as<VariableDeclarationNode>().declaration();
+						}
+						if (declaration != nullptr) {
+							return sema_.canonicalStructuralTypeId(declaration->type_specifier_node());
+						}
+					}
+				}
+			}
+			if (const std::optional<TypeSpecifierNode> syntax = sema_.getExpressionType(operand); syntax.has_value()) {
+				return sema_.canonicalStructuralTypeId(*syntax);
+			}
+			return sema_.getExpressionStructuralTypeId(operand);
+		};
+		const TypeId assignment_source = member_pointer_operand_type(binaryOperatorNode.get_rhs());
+		const TypeId assignment_target = member_pointer_operand_type(binaryOperatorNode.get_lhs());
+		const std::optional<TypeId> source_owner = sema_.getMemberPointerOwnerType(binaryOperatorNode.get_rhs());
+		const std::optional<TypeId> target_owner = sema_.getMemberPointerOwnerType(binaryOperatorNode.get_lhs());
+		if (source_owner.has_value() && target_owner.has_value() && *source_owner != *target_owner && assignment_target) {
+			CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+			const TypeId target_member_pointer =
+				canonical_types.withoutTopLevelQualifiers(canonicalTypeWithoutReference(canonical_types, assignment_target));
+			if (canonical_types.node(target_member_pointer).kind == CanonicalTypeKind::MemberObjectPointer) {
+				const TypeId pointee = canonical_types.memberPointerPointee(target_member_pointer);
+				const TypeId source_member_pointer = canonical_types.memberObjectPointer(*source_owner, pointee);
+				(void)tryAdjustMemberObjectPointerTypes(
+					source_member_pointer, target_member_pointer, rhsExprResult, binaryOperatorNode.get_token());
+			}
+		} else if (assignment_source && assignment_target) {
+			(void)tryAdjustMemberObjectPointerTypes(
+				assignment_source, assignment_target, rhsExprResult, binaryOperatorNode.get_token());
+		}
+	}
+
 	// Try unified lvalue-based assignment handler (uses value category metadata)
 	// This handles assignments like *ptr = value using lvalue metadata
 	if (op == "=" && handleLValueAssignment(lhsExprResult, rhsExprResult, binaryOperatorNode.get_token())) {

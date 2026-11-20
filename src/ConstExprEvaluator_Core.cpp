@@ -1299,7 +1299,9 @@ std::optional<MemberPointerTarget> tryResolveMemberPointerTargetRecursive(
 
 	for (const auto& member : struct_info->members) {
 		if (member.getName() == member_name) {
-			return MemberPointerTarget{member_name, base_offset + static_cast<int64_t>(member.offset)};
+			// The member pointer value is relative to its declaring owner; a
+			// base-to-derived conversion adds the subobject adjustment later.
+			return MemberPointerTarget{member_name, static_cast<int64_t>(member.offset)};
 		}
 	}
 

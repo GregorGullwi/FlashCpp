@@ -422,10 +422,20 @@ ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessN
 	// object's class derives from that owner, adjust the object address to the
 	// owner subobject before adding the member offset.
 	const std::optional<TypeId> member_owner = sema_.getMemberPointerOwnerType(ptmNode.member_pointer());
-	if (!member_owner.has_value()) {
+	const TypeId member_pointer_identity = sema_.getExpressionStructuralTypeId(ptmNode.member_pointer());
+	bool member_pointer_has_identity = false;
+	if (member_pointer_identity) {
+		CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+		const TypeId member_pointer =
+			canonical_types.withoutTopLevelQualifiers(canonicalTypeWithoutReference(canonical_types, member_pointer_identity));
+		const CanonicalTypeKind kind = canonical_types.node(member_pointer).kind;
+		member_pointer_has_identity =
+			kind == CanonicalTypeKind::MemberObjectPointer || kind == CanonicalTypeKind::MemberFunctionPointer;
+	}
+	if (!member_owner.has_value() && member_pointer_has_identity) {
 		throw InternalError("Pointer-to-member access is missing the published member owner type");
 	}
-	{
+	if (member_owner.has_value()) {
 		const std::optional<TypeSpecifierNode> object_syntax = sema_.getExpressionType(ptmNode.object());
 		if (object_syntax.has_value()) {
 			CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
@@ -439,6 +449,15 @@ ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessN
 					if (imported_object.status == CanonicalTypeImportStatus::Supported) {
 						object_class = imported_object.type;
 					}
+				}
+			}
+			if (ptmNode.is_arrow() && object_class) {
+				for (uint32_t depth = 0; depth < 8; ++depth) {
+					object_class = stripCanonicalTopCv(canonical_types, canonicalTypeWithoutReference(canonical_types, object_class)).first;
+					if (canonical_types.node(object_class).kind != CanonicalTypeKind::Pointer) {
+						break;
+					}
+					object_class = canonical_types.node(object_class).child;
 				}
 			}
 			const CanonicalTypeKind object_kind = object_class ? canonical_types.node(object_class).kind : CanonicalTypeKind::Builtin;
@@ -455,8 +474,40 @@ ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessN
 					add_base.result = adjusted_object;
 					ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_base), ptmNode.operator_token()));
 					object_addr = adjusted_object;
+				} else if (!base_offset.has_value()) {
+					const std::optional<DerivedBaseConversionKind> conversion =
+						classifyCanonicalDerivedBaseConversion(canonical_types, object_class, *member_owner);
+					if (conversion == DerivedBaseConversionKind::PublicVirtual) {
+						throw makeStructuredCompileError(
+							context_->diagnostics(),
+							DiagnosticId::VirtualBaseMemberPointerAccessUnsupported,
+							DiagnosticSeverity::Error,
+							SourceLocation::fromToken(ptmNode.operator_token()),
+							"member pointer access through a virtual base is not supported",
+							{});
+					}
+					if (conversion == DerivedBaseConversionKind::Inaccessible) {
+						throw makeStructuredCompileError(
+							context_->diagnostics(),
+							DiagnosticId::InaccessibleDerivedToBaseConversion,
+							DiagnosticSeverity::Error,
+							SourceLocation::fromToken(ptmNode.operator_token()),
+							"Cannot convert to an inaccessible base class",
+							{});
+					}
+					if (conversion == DerivedBaseConversionKind::Ambiguous) {
+						throw makeStructuredCompileError(
+							context_->diagnostics(),
+							DiagnosticId::AmbiguousDerivedToBaseConversion,
+							DiagnosticSeverity::Error,
+							SourceLocation::fromToken(ptmNode.operator_token()),
+							"Ambiguous derived-to-base conversion",
+							{});
+					}
 				}
 			}
+		} else {
+			throw InternalError("Pointer-to-member access is missing the object type");
 		}
 	}
 

@@ -4732,6 +4732,18 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			const TypeSpecifierNode& true_type = *true_type_opt;
 			const TypeSpecifierNode& false_type = *false_type_opt;
 
+			// C++20 [expr.cond]: a null pointer constant combines with a
+			// pointer-to-member branch to yield that member-pointer type.
+			const bool true_is_null = true_type.category() == TypeCategory::Nullptr;
+			const bool false_is_null = false_type.category() == TypeCategory::Nullptr;
+			if (true_is_null != false_is_null) {
+				const TypeSpecifierNode& non_null_type = true_is_null ? false_type : true_type;
+				if (non_null_type.has_member_class() || non_null_type.category() == TypeCategory::MemberObjectPointer ||
+					non_null_type.category() == TypeCategory::MemberFunctionPointer) {
+					return non_null_type;
+				}
+			}
+
 			// If both types are the same, return that type
 			if (true_type.type() == false_type.type() &&
 				true_type.type_index() == false_type.type_index() &&

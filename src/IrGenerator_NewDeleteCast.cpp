@@ -957,6 +957,14 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 	TypeCategory source_type = expr_operands.typeEnum();
 	int source_size = expr_operands.size_in_bits.value;
 	TypeIndex source_type_index = expr_operands.type_index;
+	// An explicit member-object-pointer cast adjusts the value through the same
+	// published base-subobject relation as implicit conversions.
+	const TypeId cast_source_member_pointer = sema_.getExpressionStructuralTypeId(staticCastNode.expr());
+	const TypeId cast_target_member_pointer = sema_.canonicalStructuralTypeId(target_type_node);
+	if (cast_source_member_pointer && cast_target_member_pointer) {
+		(void)tryAdjustMemberObjectPointerTypes(
+			cast_source_member_pointer, cast_target_member_pointer, expr_operands, staticCastNode.cast_token());
+	}
 	// Fail closed: a class operand cast to a non-class, non-void, non-reference
 	// target must be lowered by the sema-selected conversion operator above.
 	// Reaching here means no conversion was recorded, so the reinterpretation
