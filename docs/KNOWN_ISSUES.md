@@ -229,6 +229,24 @@ gone now that canonical operator lookup handles specialized aliases, but the
 proper owner remains semantics (boundary 4): sema should publish the resolved
 expression type and the parser should only consume it.
 
+## User-defined conversion sequences cannot be ordered by a shared conversion function
+
+C++20 [over.ics.rank]/3.3 orders two user-defined conversion sequences by a
+standard conversion sequence only when they contain the same conversion function
+or constructor. The conversion plan records a trailing standard rank, so a
+conversion operator that reaches two parameter types through one function is
+ordered correctly, but a converting-constructor sequence carries no identity for
+the constructor it used. A plan therefore cannot tell "two candidates share this
+constructor, compare their second sequences" from "two candidates use different
+constructors, which is ambiguous", and the constructor route stays unranked.
+
+Filling that gap needs the selected conversion function or constructor identity
+on the plan, followed by a comparison that applies the trailing rank only to
+equal identity. Ranking the parameter conversion instead is wrong and is pinned
+against by
+`test_conversion_distinct_converting_constructors_ambiguous_e1701.cpp`: it would
+accept calls that MSVC rejects with C2668.
+
 ## Remaining conversion function template cases
 
 - Resolve any remaining deferred base shapes that have not produced a concrete

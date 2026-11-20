@@ -405,7 +405,13 @@ remaining pattern schemas by identity, and remove the name fallback.
    function or constructor, so the leading parameter rank must not order
    distinct constructors and the call stays ambiguous.
    `test_conversion_distinct_converting_constructors_ambiguous_e1701.cpp` pins
-   that rule against ranking the leading sequence.
+   that rule against ranking the leading sequence. Both implicit-conversion
+   probes return a `ConversionPlan` rather than a bare yes/no, so "the canonical
+   schema proves no conversion" and "no canonical answer exists" stay separate
+   while the unranked `UserDefined` shape is shared with the compatibility
+   routes. Ordering two sequences that share one constructor by its second
+   standard conversion sequence is still unimplemented; see
+   [known issues](KNOWN_ISSUES.md#user-defined-conversion-sequences-cannot-be-ordered-by-a-shared-conversion-function).
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are
