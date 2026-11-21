@@ -438,6 +438,7 @@ public:
 		TypeIndex enum_owner_type_index{};  // For EnumConstant kind: TypeIndex of the owning enum type
 		TypeIndex member_owner_type_index{};
 		TypeIndex member_class_type_index{};
+		EntityId member_owner_entity{};  // Published class identity that owns the member
 		const FunctionDeclarationNode* member_function = nullptr;
 		AccessSpecifier member_access = AccessSpecifier::Public;
 		bool is_static_member_function = false;
@@ -453,6 +454,14 @@ public:
 	};
 	std::optional<ResolvedIdentifierMemberInfo> getResolvedIdentifierMember(const IdentifierNode* key) const;
 	std::optional<ResolvedQualifiedIdentifierInfo> getResolvedQualifiedIdentifier(const QualifiedIdentifierNode* key) const;
+	// Whether a qualified identifier may resolve to a non-static data member. A
+	// nested-name-specifier operand and an address-of operand both reject those.
+	enum class QualifiedDataMemberPolicy : uint8_t {
+		Reject,
+		Allow,
+	};
+	std::optional<ResolvedQualifiedIdentifierInfo> tryResolveQualifiedIdentifier(
+		const QualifiedIdentifierNode& qualified_identifier, QualifiedDataMemberPolicy data_member_policy);
 	ResolvedMemberAccessQueryResult getResolvedMemberAccessQuery(const MemberAccessNode* key) const;
 	ResolvedMemberAccessQueryResult getResolvedMemberAccessQuery(const MemberAccessNode& key) const;
 	bool resolveOrGetMemberAccess(const MemberAccessNode& key,
@@ -835,7 +844,6 @@ private:
 				   TypeIndex base_type_index,
 				   bool require_accessible_path) const;
 	std::optional<ResolvedIdentifierMemberInfo> tryResolveIdentifierMember(const IdentifierNode& identifier) const;
-	std::optional<ResolvedQualifiedIdentifierInfo> tryResolveQualifiedIdentifier(const QualifiedIdentifierNode& qualified_identifier, bool allow_nonstatic_data_member);
 
 	// Annotate constructor-call arguments with their parameter-type conversions.
 	void tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node);

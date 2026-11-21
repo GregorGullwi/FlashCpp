@@ -576,13 +576,12 @@ remaining pattern schemas by identity, and remove the name fallback.
    `UnsupportedStaticMemberType` (1020) remains the fail-closed guard for
    canonical type families not yet imported, now pinned by
    `test_static_member_member_pointer_array_e1020.cpp`. Non-null object pointer
-   arguments now publish a target for a bare identifier and for a
-   namespace-qualified variable; class static members, data-member addresses, and
-   array elements still lack declaration identity in their constexpr payload,
-   because the qualified lookup used for an address-of argument returns no
-   candidate for a class member, so the template-argument comparator can report two
-   distinct objects as equal. The importer remains fail-closed for them until
-   that lookup reaches class members. Structural values keep their non-null object pointer
+   arguments now publish a target for a bare identifier, a namespace-qualified
+   variable, and a static member of a non-template class; a static member of a
+   class-template instance, a data-member address, and an array element still lack
+   declaration identity in their constexpr payload, because publication needs the
+   owning class's declaration entity and an instantiated class has no declaration
+   node. The importer remains fail-closed for them until that identity exists. Structural values keep their non-null object pointer
    members with the published target and element offset instead of collapsing, so
    a value that differs only in a pointer member or a neighbouring scalar member
    now instantiates a distinct specialization;

@@ -4467,7 +4467,7 @@ void SemanticAnalysis::checkAccessControlInTemplatePattern(
 		} else if (current.is<QualifiedIdentifierNode>()) {
 			const QualifiedIdentifierNode& qualified =
 				current.as<QualifiedIdentifierNode>();
-			if (auto resolved = tryResolveQualifiedIdentifier(qualified, false);
+			if (auto resolved = tryResolveQualifiedIdentifier(qualified, QualifiedDataMemberPolicy::Reject);
 				resolved.has_value() &&
 				resolved->kind ==
 					ResolvedQualifiedIdentifierInfo::Kind::StaticMember) {
@@ -4496,7 +4496,7 @@ void SemanticAnalysis::checkAccessControlInTemplatePattern(
 					unary.get_operand().as<ExpressionNode>();
 				if (const auto* qualified =
 						std::get_if<QualifiedIdentifierNode>(&operand)) {
-					auto resolved = tryResolveQualifiedIdentifier(*qualified, true);
+					auto resolved = tryResolveQualifiedIdentifier(*qualified, QualifiedDataMemberPolicy::Allow);
 					if (resolved.has_value() &&
 						resolved->kind ==
 							ResolvedQualifiedIdentifierInfo::Kind::NonStaticDataMember) {
@@ -6366,7 +6366,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 						if (const auto* qualified =
 								std::get_if<QualifiedIdentifierNode>(&operand_expression)) {
 							const auto resolved_member =
-								tryResolveQualifiedIdentifier(*qualified, true);
+								tryResolveQualifiedIdentifier(*qualified, QualifiedDataMemberPolicy::Allow);
 							if (resolved_member.has_value() &&
 								resolved_member->kind ==
 									ResolvedQualifiedIdentifierInfo::Kind::NonStaticDataMember) {
@@ -6705,7 +6705,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 					}
 				}
 			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
-				if (auto resolved = tryResolveQualifiedIdentifier(e, false); resolved.has_value()) {
+				if (auto resolved = tryResolveQualifiedIdentifier(e, QualifiedDataMemberPolicy::Reject); resolved.has_value()) {
 					resolved_qualified_identifier_table_[&e] = *resolved;
 					if (resolved->kind == ResolvedQualifiedIdentifierInfo::Kind::StaticMember) {
 						const StructTypeInfo* owner_struct =
@@ -7548,7 +7548,7 @@ std::optional<TypeId> SemanticAnalysis::getMemberPointerOwnerType(const ASTNode&
 			unary != nullptr && unary->op() == "&" && unary->get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operand = unary->get_operand().as<ExpressionNode>();
 			if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&operand)) {
-				const auto resolved = tryResolveQualifiedIdentifier(*qualified, true);
+				const auto resolved = tryResolveQualifiedIdentifier(*qualified, QualifiedDataMemberPolicy::Allow);
 				if (resolved.has_value() && resolved->kind == ResolvedQualifiedIdentifierInfo::Kind::NonStaticDataMember &&
 					resolved->member_owner_type_index.is_valid()) {
 					if (const TypeInfo* owner_info = tryGetTypeInfo(resolved->member_owner_type_index)) {
@@ -9200,7 +9200,7 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 	}
 	auto resolved = getResolvedQualifiedIdentifier(qualified);
 	if (!resolved.has_value()) {
-		resolved = tryResolveQualifiedIdentifier(*qualified, true);
+		resolved = tryResolveQualifiedIdentifier(*qualified, QualifiedDataMemberPolicy::Allow);
 	}
 	if (!resolved.has_value() ||
 		resolved->kind != ResolvedQualifiedIdentifierInfo::Kind::MemberFunction) {
@@ -9833,7 +9833,7 @@ std::optional<SemanticAnalysis::ResolvedIdentifierMemberInfo> SemanticAnalysis::
 }
 
 std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysis::tryResolveQualifiedIdentifier(
-	const QualifiedIdentifierNode& qualified_identifier, bool allow_nonstatic_data_member) {
+	const QualifiedIdentifierNode& qualified_identifier, QualifiedDataMemberPolicy data_member_policy) {
 	const NamespaceHandle ns_handle = qualified_identifier.namespace_handle();
 	const StringHandle name_handle = qualified_identifier.nameHandle();
 
@@ -10000,6 +10000,12 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 							throw InternalError(
 								"Resolved static member owner has no semantic type identity");
 						}
+						// The class-owner identity for publication comes from the declaration,
+						// which carries the declaration builder's entity, not from canonical
+						// types: those ids are a different identity space.
+						if (owner_struct->declaration_node != nullptr) {
+							resolved.member_owner_entity = owner_struct->declaration_node->entity_id();
+						}
 						resolved.storage_name = StringTable::getOrInternStringHandle(
 							StringBuilder()
 								.append(owner_struct->getName())
@@ -10014,7 +10020,7 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 							canonicalTypeDescFromStaticMember(*static_member));
 						return resolved;
 					}
-					if (allow_nonstatic_data_member) {
+					if (data_member_policy == QualifiedDataMemberPolicy::Allow) {
 						if (auto member = FlashCpp::gLazyMemberResolver.resolve(
 								owner_type_info->registeredTypeIndex(), name_handle)) {
 							ResolvedQualifiedIdentifierInfo resolved;
@@ -10891,7 +10897,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 							// consider data members instead of trusting the cached
 							// value resolution (which classifies `S::member` as a
 							// generic symbol and would hide the member-pointer type).
-							auto resolved = tryResolveQualifiedIdentifier(*qualified, true);
+							auto resolved = tryResolveQualifiedIdentifier(*qualified, QualifiedDataMemberPolicy::Allow);
 							if (resolved.has_value() &&
 								resolved->kind == ResolvedQualifiedIdentifierInfo::Kind::NonStaticDataMember) {
 								const TypeInfo* owner = tryGetTypeInfo(resolved->member_owner_type_index);
@@ -11278,7 +11284,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
 				auto resolved = getResolvedQualifiedIdentifier(&e);
 				if (!resolved.has_value()) {
-					resolved = tryResolveQualifiedIdentifier(e, false);
+					resolved = tryResolveQualifiedIdentifier(e, QualifiedDataMemberPolicy::Reject);
 				}
 				if (resolved.has_value()) {
 					switch (resolved->kind) {

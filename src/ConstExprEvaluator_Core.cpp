@@ -43,6 +43,15 @@ constexpr std::string_view kLambdaDidNotReturnValue = "Constexpr lambda did not 
 
 std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNode& expr_node, EvaluationContext& context);
 
+// Structural values publish the identity of the objects their pointer members
+// designate. The declaration's own scope is used when the parse recorded one; a
+// declaration reached through instantiation may not carry it, which fails closed.
+EntityId publishDeclarationIdentity(const DeclarationNode& declaration) {
+	const ScopeId scope = declaration.has_lexical_scope_id() ? declaration.lexical_scope_id() : ScopeId{};
+	return publishVariableDeclarationIdentity(
+		requireFrontendContext().declarationBuilder(), gSymbolTable, declaration, scope, OwnerId{});
+}
+
 bool isStatementExecutedWithoutReturn(const EvalResult& result) {
 	return !result.success() && result.error_message == kStatementExecutedWithoutReturn;
 }
@@ -1055,8 +1064,7 @@ std::optional<FlashCpp::StructuralClassValue*> makeStructuralArrayValueIdentityI
 							requireFrontendContext().canonicalTypes(), target).value_or(TypeId{});
 						member.scalar_value = identity;
 					} else if (element.pointer_to_var.isValid() && element.source_declaration != nullptr) {
-						const EntityId target = publishVariableDeclarationIdentity(requireFrontendContext().declarationBuilder(),
-							gSymbolTable, element.source_declaration->declaration());
+						const EntityId target = publishDeclarationIdentity(element.source_declaration->declaration());
 						if (!target) {
 							return std::nullopt;
 						}
@@ -1185,8 +1193,7 @@ std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentityIm
 						// [temp.arg.nontype]: a pointer member contributes the object it
 						// points to. Without a published target the value has no identity,
 						// so it stays non-structural instead of comparing equal by spelling.
-						const EntityId target = publishVariableDeclarationIdentity(requireFrontendContext().declarationBuilder(),
-							gSymbolTable, member_result.source_declaration->declaration());
+						const EntityId target = publishDeclarationIdentity(member_result.source_declaration->declaration());
 						if (!target) {
 							return false;
 						}
