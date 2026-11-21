@@ -101,10 +101,9 @@ identifier or a namespace-qualified variable; both now resolve the declaration a
 publish its `EntityId`. A class static member, a data-member address, and an array
 element still lose identity, so two distinct objects can instantiate the same
 specialization: `Tag<&HolderA::value>` and `Tag<&HolderB::value>` compare equal. The
-class-owned forms cannot reuse the variable publication path, because publication
-resolves the owner from the lexical scope and class scopes are not publishable;
-they need a class-owner handoff (an `OwnerId` or published `EntityId` for the
-enclosing class) that a static-member declaration does not currently carry. Object
+class-owned forms do not reach publication at all: the qualified lookup used for an
+address-of argument returns no candidate for a static member, because class members
+live in the class's member list rather than in that scope's symbol table. Object
 pointer members and pointer array elements of structural values now carry their
 published target and element offset, so a value that differs only in a pointer
 member or in a neighbouring scalar member instantiates a distinct specialization; a
