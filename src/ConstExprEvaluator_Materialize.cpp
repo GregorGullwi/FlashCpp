@@ -12,6 +12,7 @@
 #include <numeric>
 
 #include "ConstExprEvalHelpers.h"
+#include "CanonicalShapeTelemetry.h"
 
 namespace ConstExpr {
 
@@ -520,6 +521,10 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 	EvaluationContext& context,
 	const std::unordered_map<std::string_view, EvalResult>* bindings) {
 
+	if (FrontendContext* active = FrontendContext::active()) {
+		const CanonicalShapeProbeTableGuard probe_guard(active->canonicalTypes());
+		noteCanonicalShapeImport(active->canonicalTypes(), type_spec, CanonicalShapeSite::ConstExprEvaluator_Materialize_ArrayExtent);
+	}
 	const auto& dims = type_spec.array_dimensions();
 	if (dims.size() <= 1) {
 		// Single-dimension or unspecified: delegate to the base overload.

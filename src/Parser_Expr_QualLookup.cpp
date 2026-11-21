@@ -7,6 +7,7 @@
 #include "TemplatePackExpansion.h"
 #include "CanonicalTypeAdapter.h"
 #include "FrontendContext.h"
+#include "CanonicalShapeTelemetry.h"
 #include "MemberFunctionLookupShared.h"
 #include "FlatHashTable.h"
 #include <span>
@@ -4684,6 +4685,10 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		}
 
 		const TypeSpecifierNode& member_pointer_type = *member_pointer_type_opt;
+		if (FrontendContext* active = FrontendContext::active()) {
+			noteCanonicalShapeImport(active->canonicalTypes(), member_pointer_type,
+				CanonicalShapeSite::Parser_Expr_QualLookup_PointerDepth);
+		}
 		if (!member_pointer_type.has_member_class() || member_pointer_type.pointer_depth() == 0 ||
 			member_pointer_type.is_member_function_pointer() || member_pointer_type.has_function_signature()) {
 			return std::nullopt;
@@ -5372,6 +5377,9 @@ bool Parser::are_types_compatible(const TypeSpecifierNode& type1, const TypeSpec
 	// wrappers inside the array spine, and runtime_pointer_depth() reports zero
 	// for them, so this verdict keeps counting the flat projection to stay at
 	// the current lambda return-type agreement.
+	if (FrontendContext* active = FrontendContext::active()) {
+		noteCanonicalShapeImport(active->canonicalTypes(), type1, CanonicalShapeSite::Parser_Expr_QualLookup_PointerLevelsIdentity);
+	}
 	if (type1.pointer_levels().size() != type2.pointer_levels().size()) {
 		return false;
 	}

@@ -6,6 +6,7 @@
 #include "StringLiteralTokenUtils.h"
 #include "TypeSizeQuery.h"
 #include "AstTraversal.h"
+#include "CanonicalShapeTelemetry.h"
 
 namespace {
 static bool tryGetOrderedArrayObjectStorage(
@@ -963,6 +964,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		};
 		// Check if this is an array and get element count (product of all dimensions for multidimensional)
 		if (decl.is_array_object() || type_node.is_array()) {
+			noteCanonicalShapeImport(
+				requireFrontendContext().canonicalTypes(), type_node, CanonicalShapeSite::IrGenerator_Stmt_Decl_ArrayExtent);
 			if (type_node.is_array() && !type_node.array_dimensions().empty()) {
 				op.element_count = 1;
 				for (size_t dim_size : type_node.array_dimensions()) {

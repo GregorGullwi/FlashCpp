@@ -5,6 +5,7 @@
 #include "OverloadResolution.h"
 #include "ExpressionStructure.h"
 #include "TypeTraitEvaluator.h"
+#include "CanonicalShapeTelemetry.h"
 
 namespace {
 bool isBoolResultOperator(std::string_view op) {
@@ -50,6 +51,10 @@ bool requiresReferenceArrayArgumentSyntax(
 		template_params.begin(),
 		template_params.end(),
 		[](const TemplateParameterNode& param) {
+			if (FrontendContext* active = FrontendContext::active()) {
+				noteCanonicalShapeImport(active->canonicalTypes(), param.type_specifier_node(),
+					CanonicalShapeSite::Parser_Templates_Params_ArrayExtent);
+			}
 			return param.kind() == TemplateParameterKind::NonType &&
 				param.has_type() &&
 				param.type_specifier_node().is_reference_to_array() &&

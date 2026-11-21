@@ -22,6 +22,7 @@ inline uint64_t gCanonicalStructuralTraitFallbackCount = 0;
 inline uint64_t gLazyConstraintTraitFallbackCount = 0;
 inline uint64_t gCanonicalTypeEntityImportRecoveryCount = 0;
 inline uint64_t gPartialPatternNameFallbackCount = 0;
+inline uint64_t gCanonicalShapeImportGapCount = 0;
 
 inline void recordTokenReplay() {
 	FLASHCPP_MIGRATION_COUNTER_BODY(++gTokenReplayCount);
@@ -85,6 +86,10 @@ inline void recordPartialPatternNameFallback() {
 	FLASHCPP_MIGRATION_COUNTER_BODY(++gPartialPatternNameFallbackCount);
 }
 
+inline void recordCanonicalShapeImportGap() {
+	FLASHCPP_MIGRATION_COUNTER_BODY(++gCanonicalShapeImportGapCount);
+}
+
 inline uint64_t tokenReplayCount() {
 	return gTokenReplayCount;
 }
@@ -125,6 +130,10 @@ inline uint64_t partialPatternNameFallbackCount() {
 	return gPartialPatternNameFallbackCount;
 }
 
+inline uint64_t canonicalShapeImportGapCount() {
+	return gCanonicalShapeImportGapCount;
+}
+
 inline void printMigrationTelemetry() {
 	FLASH_LOG(General, Info, "\nToken replays: ", gTokenReplayCount);
 	FLASH_LOG(General, Info, "Post-parse parser typing queries: ", gPostParseParserTypingQueryCount);
@@ -138,6 +147,7 @@ inline void printMigrationTelemetry() {
 	FLASH_LOG(General, Info, "Lazy-constraint trait fallbacks: ", gLazyConstraintTraitFallbackCount);
 	FLASH_LOG(General, Info, "Canonical TypeIndex EntityId import recoveries: ", gCanonicalTypeEntityImportRecoveryCount);
 	FLASH_LOG(General, Info, "Partial-pattern name-lookup fallbacks: ", gPartialPatternNameFallbackCount);
+	FLASH_LOG(General, Info, "Canonical shape import gaps: ", gCanonicalShapeImportGapCount);
 	FLASH_LOG(General, Info, "InlineVector spill events: ", FlashCpp::inlineVectorSpillCount());
 	for (std::size_t index = 0; index < static_cast<std::size_t>(FlashCpp::InlineVectorSpillFamily::Count); ++index) {
 		const uint64_t count =

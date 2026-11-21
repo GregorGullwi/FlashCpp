@@ -102,7 +102,8 @@ try {
 		"Canonical structural trait fallbacks: 10",
 		"Lazy-constraint trait fallbacks: 11",
 		"Canonical TypeIndex EntityId import recoveries: 12",
-		"Partial-pattern name-lookup fallbacks: 13"
+		"Partial-pattern name-lookup fallbacks: 13",
+		"Canonical shape import gaps: 0"
 	) -join "`n"
 	$migrationValues = Get-FlashCppMigrationCounterValues -CompilerOutput $migrationOutput
 	Assert-Runner ($migrationValues.outside_engine -eq 1) "migration telemetry parses outside-engine count"
@@ -112,6 +113,7 @@ try {
 	Assert-Runner ($migrationValues.canonical_type_entity_import_recovery -eq 12) "migration telemetry parses canonical EntityId import recovery count"
 	Assert-Runner ($migrationValues.template_old_engine -eq 6) "migration telemetry parses template route count"
 	Assert-Runner ($migrationValues.partial_pattern_name_fallback -eq 13) "migration telemetry parses partial-pattern fallback count"
+	Assert-Runner ($migrationValues.canonical_shape_import_gap -eq 0) "migration telemetry parses canonical shape import gap count"
 	$missingMigration = Get-FlashCppMigrationCounterValues -CompilerOutput "compiler crashed without telemetry"
 	Assert-Runner ($null -eq $missingMigration) "output missing migration telemetry yields no values"
 

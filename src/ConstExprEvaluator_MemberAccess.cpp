@@ -12,6 +12,7 @@
 #include <limits>
 
 #include "ConstExprEvalHelpers.h"
+#include "CanonicalShapeTelemetry.h"
 
 namespace ConstExpr {
 
@@ -1480,6 +1481,10 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 		if (initializer->is<InitializerListNode>()) {
 			const TypeSpecifierNode& type_spec = var_decl.declaration().type_specifier_node();
 			if (type_spec.array_dimension_count() > 0) {
+				if (FrontendContext* active = FrontendContext::active()) {
+					noteCanonicalShapeImport(active->canonicalTypes(), type_spec,
+						CanonicalShapeSite::ConstExprEvaluator_MemberAccess_Derived);
+				}
 				EvalResult array_result = materializeArrayInitializer(
 					type_spec.type_index(),
 					type_spec.array_dimensions(),

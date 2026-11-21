@@ -457,6 +457,7 @@
     <ClInclude Include="src\CompileContext.h" />
     <ClInclude Include="src\Diagnostics.h" />
     <ClInclude Include="src\MigrationStats.h" />
+    <ClInclude Include="src\CanonicalShapeTelemetry.h" />
     <ClInclude Include="src\MigrationTelemetryConfig.h" />
     <ClInclude Include="src\FrontendIds.h" />
     <ClInclude Include="src\CanonicalTypes.h" />

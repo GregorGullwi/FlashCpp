@@ -53,3 +53,4 @@ jobs:
         run: |
           bash tests/run_migration_counters.sh
           bash tests/run_migration_dollar_inventory.sh
+          bash tests/run_flat_projection_reader.sh

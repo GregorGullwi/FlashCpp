@@ -6,6 +6,7 @@
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
+#include "CanonicalShapeTelemetry.h"
 #include <atomic>
 
 namespace {
@@ -110,6 +111,9 @@ std::optional<StringHandle> SemanticValidation::findInvalidConcreteSizeofTypeOpe
 		if (category == TypeCategory::Void || category == TypeCategory::Function ||
 			type_spec.has_unsized_outer_array_dimension()) {
 			return reject_type();
+		}
+		if (FrontendContext* active = FrontendContext::active()) {
+			noteCanonicalShapeImport(active->canonicalTypes(), type_spec, CanonicalShapeSite::Parser_Expr_PrimaryUnary_Derived);
 		}
 		for (size_t extent : type_spec.array_dimensions()) {
 			if (extent == 0) {

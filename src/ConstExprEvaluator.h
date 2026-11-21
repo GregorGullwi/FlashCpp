@@ -11,6 +11,7 @@
 #include "Log.h"	 // For FLASH_LOG
 #include "InlineVector.h"  // For InlineVector (small-buffer-optimized vector)
 #include "MemberFunctionLookupShared.h"
+#include "CanonicalShapeTelemetry.h"
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -68,6 +69,10 @@ inline std::optional<size_t> tryGetConstexprTypeSizeBytes(const TypeSpecifierNod
 		return static_cast<size_t>(size_bits) / 8;
 	}
 	if (type_spec.is_array()) {
+		if (gCanonicalShapeProbeTable != nullptr) {
+			noteCanonicalShapeImport(*gCanonicalShapeProbeTable, type_spec,
+				CanonicalShapeSite::ConstExprEvaluator_TryGetTypeSize_ArrayExtent);
+		}
 		const std::span<const size_t> dimensions = type_spec.array_dimensions();
 		TypeSpecifierNode element_type = type_spec;
 		element_type.set_array_dimensions({});

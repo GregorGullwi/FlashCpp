@@ -33,6 +33,7 @@
 #include "TemplateTypes.h"
 #include "TemplateConstraintSubsumption.h"
 #include "AstTraversal.h"
+#include "CanonicalShapeTelemetry.h"
 #include "StructHierarchyWalk.h"
 #include "StructInfoSet.h"
 #include "TypeVisitSets.h"
@@ -310,6 +311,9 @@ void applyDeclarationArrayBoundsToTypeSpec(
 	// the pointee. Store them without turning the declared entity into an
 	// array object.
 	if (type_spec.has_pointee_array_declarator()) {
+		if (FrontendContext* active = FrontendContext::active()) {
+			noteCanonicalShapeImport(active->canonicalTypes(), type_spec, CanonicalShapeSite::SemanticAnalysis_ArrayExtent);
+		}
 		if (!type_spec.array_dimensions().empty()) {
 			return;
 		}
@@ -924,6 +928,9 @@ CanonicalTypeDesc adoptPublishedStructuralType(CanonicalTypeDesc desc, TypeId st
 	}
 	desc.array_dimensions.clear();
 	desc.pointee_array_declarator = projected.has_pointee_array_declarator();
+	if (FrontendContext* active = FrontendContext::active()) {
+		noteCanonicalShapeImport(active->canonicalTypes(), projected, CanonicalShapeSite::SemanticAnalysis_AdoptStructuralRefresh);
+	}
 	if (projected.is_array() || desc.pointee_array_declarator) {
 		for (const size_t dimension : projected.array_dimensions()) {
 			desc.array_dimensions.push_back(dimension);
