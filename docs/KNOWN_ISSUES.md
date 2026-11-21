@@ -104,13 +104,15 @@ specialization: `Tag<&HolderA::value>` and `Tag<&HolderB::value>` compare equal.
 class-owned forms cannot reuse the variable publication path, because publication
 resolves the owner from the lexical scope and class scopes are not publishable;
 they need a class-owner handoff (an `OwnerId` or published `EntityId` for the
-enclosing class) that a static-member declaration does not currently carry. Pointer
-members and pointer array elements of structural values are refused by the producer,
-so the owning value collapses and compares equal to a different one. Resolve the
+enclosing class) that a static-member declaration does not currently carry. Object
+pointer members and pointer array elements of structural values now carry their
+published target and element offset, so a value that differs only in a pointer
+member or in a neighbouring scalar member instantiates a distinct specialization; a
+member whose pointer has no publishable target still makes the whole value
+non-structural (fail closed) rather than comparing equal by spelling. Resolve the
 evaluator's own declaration origin into a published `EntityId` for every address-of
 and subobject form; that carrier change belongs to constexpr evaluation and
-template-argument
-construction, not to canonical import.
+template-argument construction, not to canonical import.
 
 Missing field-layout and dependent base facts still fail closed. The
 partial-specialization parser gap above and nested anonymous-union hierarchy

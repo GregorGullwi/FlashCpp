@@ -576,7 +576,13 @@ remaining pattern schemas by identity, and remove the name fallback.
    because publication resolves an owner from the lexical scope and class scopes
    are not publishable, so the template-argument comparator can report two
    distinct objects as equal. The importer remains fail-closed for them until
-   that publication lands. Nested anonymous unions additionally need the parser
+   that publication lands. Structural values keep their non-null object pointer
+   members with the published target and element offset instead of collapsing, so
+   a value that differs only in a pointer member or a neighbouring scalar member
+   now instantiates a distinct specialization;
+   `test_structural_pointer_member_identity_ret0.cpp` pins both, and a pointer
+   member without a publishable target keeps the value non-structural rather than
+   comparing equal by spelling. Nested anonymous unions additionally need the parser
    to stop flattening inner groups before any canonical representation can be
    added.
    Stamped template specializations now use the shared ordered declarator

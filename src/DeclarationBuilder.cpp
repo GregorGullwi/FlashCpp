@@ -700,6 +700,19 @@ PublishResult DeclarationBuilder::publishVariable(
 	return publishClass(request, symbol_table);
 }
 
+EntityId publishVariableDeclarationIdentity(DeclarationBuilder& builder, const SymbolTable& symbol_table, const DeclarationNode& declaration) {
+	if (!declaration.has_lexical_scope_id()) {
+		return EntityId{};
+	}
+	ClassDeclRequest request{};
+	request.lexical_scope_id = declaration.lexical_scope_id();
+	request.name = declaration.identifier_token().handle();
+	request.is_definition = false;
+	request.kind = DeclKind::Variable;
+	const PublishResult published = builder.publishVariable(request, symbol_table);
+	return published.status == PublishStatus::Rejected ? EntityId{} : published.entity_id;
+}
+
 TelemetryTypeId DeclarationBuilder::internDeclaratorType(const TypeSpecifierNode& type_spec) {
 	TypeSpecifierNode bound = type_spec;
 	tryBindPublishedTypeEntity(bound);

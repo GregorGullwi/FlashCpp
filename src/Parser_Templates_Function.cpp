@@ -1188,16 +1188,7 @@ std::optional<Parser::ConstantValue> Parser::tryEvaluateConstantExpression(const
 	// payload keeps no target and must not later be accepted as template-argument
 	// identity.
 	auto publishObjectTarget = [&](const DeclarationNode& declaration) {
-		if (!declaration.has_lexical_scope_id()) {
-			return EntityId{};
-		}
-		ClassDeclRequest request{};
-		request.lexical_scope_id = declaration.lexical_scope_id();
-		request.name = declaration.identifier_token().handle();
-		request.is_definition = false;
-		request.kind = DeclKind::Variable;
-		const PublishResult published = requireFrontendContext().declarationBuilder().publishVariable(request, gSymbolTable);
-		return published.status == PublishStatus::Rejected ? EntityId{} : published.entity_id;
+		return publishVariableDeclarationIdentity(requireFrontendContext().declarationBuilder(), gSymbolTable, declaration);
 	};
 	auto inferMemberPointerClassNameFromNode =
 		[&](const ASTNode& node, const auto& self) -> StringHandle {

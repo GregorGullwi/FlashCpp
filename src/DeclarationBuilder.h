@@ -23,6 +23,7 @@ class FunctionDeclarationNode;
 class PublicationTransaction;
 class StructDeclarationNode;
 class EnumDeclarationNode;
+class DeclarationNode;
 class SymbolTable;
 class TypeSpecifierNode;
 
@@ -549,3 +550,9 @@ PublishResult commitParserEnumPublication(
 	OwnerId owner_id,
 	bool is_definition,
 	const SymbolTable& symbol_table);
+
+// Publish the identity of an object whose address appears in a non-type template
+// argument. A rejected publication is reported as an empty EntityId: block-scope
+// and class-owned declarations have no publishable owner, and their identity must
+// not be recovered from spelling instead.
+EntityId publishVariableDeclarationIdentity(DeclarationBuilder& builder, const SymbolTable& symbol_table, const DeclarationNode& declaration);
