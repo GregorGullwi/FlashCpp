@@ -151,6 +151,37 @@ without a published identity. That identity is published for a declaration-named
 address-of operand only; qualified, data-member, and array-element origins still
 arrive without a target, as recorded above.
 
+## Partial-specialization constraints are not checked during selection
+
+A constrained partial specialization is selected even when its constraint is false,
+so an ill-formed specialization can be instantiated instead of the primary template.
+Both forms reproduce, verified against MSVC on the same object:
+
+```cpp
+template<class T> struct Pick { static constexpr int value = 0; };
+template<class T> requires (sizeof(T) != 4) struct Pick<T*> { static constexpr int value = 1; };
+Pick<int*>::value    // FlashCpp 1, MSVC 0 (primary)
+
+template<class T> concept FourBytes = sizeof(T) == 4;
+template<FourBytes T> struct Pick2<T*> { static constexpr int value = 1; };
+Pick2<double*>::value // FlashCpp 1, MSVC 0 (primary)
+```
+
+Two things combine. Registration discards the clause: the class pattern record
+carries template parameters, pattern arguments, the specialized node and an optional
+SFINAE condition, but no requires-clause. And the canonical pattern environment
+records requires-clause identity so two constrained patterns stay distinct for
+ordering, which means ordering can compare constraints without any path ever
+evaluating whether a candidate's constraint holds for the deduced arguments.
+
+The fix is to carry the clause from the parsed declaration through registration,
+then evaluate it against the deduced bindings before ordering candidates — a concept
+form through the existing concept evaluator, a requires-expression form through the
+ordinary constant-expression path after substitution — and skip unsatisfied
+candidates rather than ordering them. Partial ordering itself must keep using the
+environment identity it already has. Regressions must cover both forms and assert
+the primary template is selected.
+
 ## Expression parsing and constraint evaluation can overflow a 1 MB native stack
 
 The nested NTTP-field regression
