@@ -179,7 +179,9 @@ The evaluator lives in `src/ConstExprEvaluator*.cpp` (split into `_Core`, `_Memb
 
 - **`EvalResult`** — carries a scalar value, optional `object_member_bindings` (for struct objects), `array_elements` (for arrays), `callable_lambda` / `callable_var_decl` / `callable_bindings` (for lambda/functor callables), and `pointer_to_var` (for pointers). All evaluation results pass through this type; copies are value-semantic and expensive for large objects.
 - **`EvaluationContext`** — requires a live parser and obtains semantic services from that same owner. It holds binding maps, struct info,
-  evaluation depth, and flags (`is_speculative`); parserless evaluation is not a supported production mode.
+  evaluation depth, and flags (`is_speculative`); parserless evaluation is not a supported production mode. The long-term target is
+  architecture boundary 12 in `docs/2026-08-24-front-end-rearchitecture-plan.md`, and that boundary is not done. Parserless evaluation is the
+  consequence of architecture boundary 10F deleting `EvaluationContext::parser`. Boundary 10F has not exited.
 - **`evaluate_block_with_bindings`** — evaluates a sequence of statements, returning either a successful value (return statement) or a sentinel error. Loops, conditionals, switch, break/continue all terminate the block early via specific error sentinel strings (`kBreakExecuted`, `kContinueExecuted`, etc.).
 
 Key design constraint: the evaluator is a tree-walk interpreter with no heap or mutable global state between evaluations. Each constexpr call starts fresh from the AST and binding maps.
@@ -213,8 +215,20 @@ The most impactful next improvements in rough priority order:
 
 ---
 
+## Long-term value model
+
+Architecture boundary 12 in `docs/2026-08-24-front-end-rearchitecture-plan.md` is the later exit to one value model for this interpreter. That boundary is not implemented. Until it exits, `EvalResult` still has these competing representations:
+
+- `exact_type` versus a type inferred from the scalar variant (`try_get_type_from_eval_result` in `src/ConstExprEvalHelpers.cpp`);
+- `array_elements` versus legacy `array_values` (the subscript fallback in `src/ConstExprEvaluator_Materialize.cpp` rebuilds a bare `from_int`);
+- `pointer_to_var` versus `source_declaration` versus `pointer_value_snapshot`;
+- name-keyed `object_member_bindings`.
+
+Parserless evaluation remains unsupported. It arrives only as the consequence of architecture boundary 10F deleting `EvaluationContext::parser`, which is still ahead of boundary 12.
+
 ## See Also
 
+- `docs/2026-08-24-front-end-rearchitecture-plan.md` — architecture boundary 12, the long-term constexpr value model
 - `src/ConstExprEvaluator.h` / `src/ConstExprEvaluator_Core.cpp` / `src/ConstExprEvaluator_Members.cpp` — evaluator implementation
 - `tests/test_constexpr_comprehensive.cpp` — general working constexpr patterns
 - `tests/test_constexpr_structs.cpp` — struct construction and member access

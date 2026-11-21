@@ -7,7 +7,8 @@
 
 FlashCpp will keep the existing repository, backend, constexpr evaluator,
 lexer, preprocessor directive handling, support containers, and regression
-corpus. The object writers will be kept and extended, but their monolithic
+corpus. Architecture boundary 12 is the value model for that evaluator.
+The object writers will be kept and extended, but their monolithic
 section model will be replaced where multi-translation-unit support requires
 it.
 
@@ -49,7 +50,8 @@ The target ownership model is:
 - The template engine operates on AST patterns and semantic identities. It
   does not restore lexer positions or mutate parser state.
 - Constexpr consumes sema-owned types and declarations. It requests
-  instantiation through the template-engine facade.
+  instantiation through the template-engine facade. Architecture boundary
+  12 is that interpreter's single value model.
 - AST-to-IR consumes normalized semantic nodes. It cannot perform lookup,
   overload resolution, access checks, template materialization, or writes into
   sema.
@@ -1388,7 +1390,127 @@ Exit criteria:
 - cloning and substitution cannot orphan semantic state;
 - syntax nodes contain no backend names or codegen lifecycle state;
 - the outside-`DiagnosticEngine` counter is zero;
-- the final pipeline matches this document.
+- the front-end pipeline through this boundary matches the target pipeline
+  above. The constexpr value model remains architecture boundary 12.
+
+## Architecture boundary 12: constexpr value model
+
+Begin only after architecture boundaries 4, 5, and 10F. Those three are
+the input migrations this exit consumes. Boundary 4 publishes the
+expression result the interpreter reads, including constant-expression
+requirements. Boundary 5 publishes declaration-keyed constexpr bindings.
+Boundary 10F deletes `EvaluationContext::parser`. After that exit,
+constexpr cannot call parser methods.
+
+FlashCpp keeps this constexpr interpreter: the tree walk that produces
+`EvalResult` in `src/ConstExprEvaluator.h`. This boundary is that walk's
+single value model. Speculation is a mode of the same interpreter.
+
+`docs/CONSTEXPR_LIMITATIONS.md` currently states that parserless
+evaluation is not a supported production mode. That statement stands
+until boundary 10F exits. Parserless evaluation is the consequence of
+deleting `EvaluationContext::parser` there. The interpreter consumes
+sema-owned types and declarations and requests instantiation through the
+template facade.
+
+The exit is a single value model.
+
+`EvalResult` carries one value kind, one type identity, and one
+declaration identity for addresses. The type identity is the canonical
+structural `TypeId`. The address identity is the declaration's `DeclId`.
+These stop being parallel authorities:
+
+- `exact_type` versus a type inferred from the scalar variant.
+  `try_get_type_from_eval_result` in `src/ConstExprEvalHelpers.cpp`
+  returns `exact_type` when it is set, and otherwise builds a
+  `TypeSpecifierNode` from `bool`, `long long`, `unsigned long long`,
+  or `double` in `value`;
+- `array_elements` versus legacy `array_values`. The subscript fallback
+  in `Evaluator::evaluate_member_array_subscript`
+  (`src/ConstExprEvaluator_Materialize.cpp`) returns an
+  `array_elements` entry when that vector is non-empty, and otherwise
+  rebuilds a bare `EvalResult::from_int` from `array_values`. The
+  `array_values` member on `EvalResult` is that legacy authority;
+- `pointer_to_var` versus `source_declaration` versus
+  `pointer_value_snapshot`. One result carries a `StringHandle` name, a
+  `VariableDeclarationNode*`, and a copied value vector as address
+  state;
+- name-keyed `object_member_bindings`
+  (`std::unordered_map<std::string_view, EvalResult>`).
+
+An evaluation outcome is a distinct kind: value, dependent, ill-formed,
+not a constant expression, or not yet implemented. Callers must be able
+to tell those outcomes apart. `break`, `continue`, and statement-executed
+stop being sentinel strings compared against `error_message`. In
+`src/ConstExprEvaluator_Core.cpp`, `isBreakExecuted`,
+`isContinueExecuted`, and `isStatementExecutedWithoutReturn` hold when
+`success()` is false and `error_message` equals `kBreakExecuted`
+("Break executed"), `kContinueExecuted` ("Continue executed"), or
+`kStatementExecutedWithoutReturn` ("Statement executed (not a return)").
+`EvalErrorType` is `None`, `TemplateDependentExpression`,
+`NotConstantExpression`, or `Other`, and `success()` is
+`error_type == EvalErrorType::None`. This schedules the debt already
+described in `docs/KNOWN_ISSUES.md` under "Constexpr evaluation does not
+yet expose standard semantic outcomes." A dependent expression stays
+deferred until substitution. An ill-formed expression, and an expression
+that is not a constant expression, are diagnosable failures. Coverage the
+evaluator does not yet implement is neither a constant value nor an
+ill-formed program.
+
+`EvaluationContext` owns declaration-keyed bindings, the static-member
+cycle set, and the speculation flag. Bindings use declaration identity.
+The name-keyed maps reached through `local_bindings` and
+`resolve_declaration_bindings` are the store this exit replaces. The
+cycle set is the process `thread_local` `gEvaluatingStaticMembers` in
+`src/ConstExprEvaluator.h`, an
+`std::unordered_set<const StructStaticMember*>` maintained by
+`StaticMemberEvaluationGuard`. The speculation flag is
+`EvaluationContext::is_speculative`. Disabling `&&` / `||` short-circuit
+in `Evaluator::evaluate_binary_operator` is a result of that mode only,
+so real constant evaluation keeps short-circuit. The gate today is
+`!context.is_speculative && (op == "&&" || op == "||")` in
+`src/ConstExprEvaluator_Core.cpp`.
+
+This boundary does not:
+
+- change the array-extent flat-reader migration. That migration is the
+  remaining flat readers of array extents in `docs/KNOWN_ISSUES.md`
+  under "Legacy flat consumers cannot yet handle interleaved
+  pointer/array declarators." Closing `array_elements` versus
+  `array_values` leaves that migration unchanged;
+- replace the interpreter or rewrite its tree walk;
+- add new constexpr language features.
+
+Exit criteria:
+
+- `EvalResult` has one value kind, the canonical structural `TypeId`,
+  and one `DeclId` for an address;
+- the type of an `EvalResult` is that `TypeId`.
+  `try_get_type_from_eval_result` no longer builds a `TypeSpecifierNode`
+  from the scalar variant;
+- `evaluate_member_array_subscript` no longer rebuilds
+  `EvalResult::from_int` from `array_values`, and `EvalResult` has no
+  `array_values` member;
+- an address is the declaration's `DeclId`. `pointer_to_var`,
+  `source_declaration`, and `pointer_value_snapshot` are not separate
+  address authorities;
+- `object_member_bindings` are keyed by declaration identity;
+- callers distinguish value, dependent, ill-formed, not a constant
+  expression, and not yet implemented without comparing
+  `error_message`;
+- `break`, `continue`, and statement-executed are not the sentinel
+  strings `kBreakExecuted`, `kContinueExecuted`, and
+  `kStatementExecutedWithoutReturn`;
+- `EvaluationContext` owns the declaration-keyed bindings, the
+  static-member cycle set, and `is_speculative`;
+- the static-member cycle set is not the process `thread_local`
+  `gEvaluatingStaticMembers`;
+- built-in `&&` and `||` skip the right-hand operand only when
+  speculation is off and the left-hand operand determines the result;
+- the interpreter reads sema-owned types and declarations and requests
+  instantiation through the template facade;
+- `EvaluationContext::parser` is already absent because boundary 10F
+  has exited.
 
 ## Deferred work
 
@@ -1670,6 +1792,10 @@ superseded as implementation plans:
 - `docs/2026-04-08-template-instantiation-materialization-plan.md`;
 - `docs/2026-04-04-codegen-name-lookup-investigation.md`;
 - archived parser, sema, constexpr, and implicit-cast plan pointers.
+
+`docs/CONSTEXPR_LIMITATIONS.md` remains the inventory of current constexpr
+support and limitations. Its long-term value model section points at
+architecture boundary 12.
 
 `docs/SEMANTIC_ANALYSIS_STATUS.md` continues to describe the shipping compiler
 until architecture boundaries are reached. Existing plans remain useful as
