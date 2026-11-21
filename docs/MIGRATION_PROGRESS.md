@@ -845,7 +845,13 @@ anchors while preserving each mutation's required rejection.
 
 Run the host-native migration-counter and identity-inventory scripts under
 `tests/migration_counters/` after compiler changes and keep every fixed-corpus
-entry within baseline. The baseline is shared by the Windows and Linux jobs and
+entry within baseline. A full `run_all_tests.ps1` run also executes the
+flat-projection reader inventory (`tests/architecture/run_flat_projection_reader.py`);
+focused runs skip it, so a source change that adds a reader is caught by a full run
+and by CI's separate gate step, not by a single-file iteration. The gate counts the
+alias accessors as well as the direct field reads, so a guard written with
+`is_pointer()`/`is_array()` raises a file's count even when it replaces logic that
+was already flat. The baseline is shared by the Windows and Linux jobs and
 the ratchet only rejects values above it, so an entry whose count differs per
 platform records the higher measured value: lowering it to a Windows-only
 measurement makes the Linux job fail even though nothing regressed.

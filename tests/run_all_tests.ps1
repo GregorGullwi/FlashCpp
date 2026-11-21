@@ -1155,6 +1155,30 @@ if ($failTestFailed.Count -gt 0) {
 $exitCode = 0
 $failureReasons = @()
 
+# The flat-projection reader gate is a source inventory, not a compiler test, so it
+# runs once for a full suite: every open pull request is failed on it, and leaving
+# it out of local validation lets a source change pass here and fail there. Focused
+# runs skip it so a single-file iteration is not blocked by unrelated source state.
+$flatProjectionGate = "skipped"
+if ($requestedTestNames.Count -eq 0) {
+	$pythonCommand = Get-Command python -ErrorAction SilentlyContinue
+	if (-not $pythonCommand) {
+		$pythonCommand = Get-Command python3 -ErrorAction SilentlyContinue
+	}
+	if ($pythonCommand) {
+		Write-Host "Flat projection reader gate..."
+		& $pythonCommand.Source (Join-Path $RepoRoot "tests/architecture/run_flat_projection_reader.py")
+		if ($LASTEXITCODE -ne 0) {
+			$flatProjectionGate = "failed"
+		} else {
+			$flatProjectionGate = "ok"
+		}
+	} else {
+		$flatProjectionGate = "no-python"
+		Write-Host "WARNING: python not found; flat projection reader gate skipped." -ForegroundColor Yellow
+	}
+}
+
 if ($failTestFailed.Count -gt 0) {
 	$failureReasons += "Some negative tests failed their diagnostic contract"
 }
@@ -1175,6 +1199,9 @@ if ($staleExpectations.Count -gt 0) {
 }
 if ($nonWaivableFailures.Count -gt 0) {
 	$failureReasons += "Some tests had non-waivable runner or compiler failures"
+}
+if ($flatProjectionGate -eq "failed") {
+	$failureReasons += "Flat projection reader gate failed"
 }
 
 if ($failureReasons.Count -gt 0) {
