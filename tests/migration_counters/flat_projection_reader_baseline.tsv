@@ -1,4 +1,4 @@
-src/AggregateElementCursor.h	4
+src/AggregateElementCursor.h	1
 src/AstNodeTypes.cpp	8
 src/AstToIr.h	1
 src/CanonicalShapeTelemetry.h	2

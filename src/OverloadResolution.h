@@ -2686,8 +2686,8 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 	// type, when the target is a by-value builtin. Both planners share the
 	// arithmetic category table, so strip the marker and plan canonically.
 	if (from.is_lvalue_reference() && !to.is_reference() && !to.is_rvalue_reference() && !orderedDeclaratorIsReference(to) &&
-		!from.is_pointer() && !from.is_array() && !from.has_ordered_declarator() &&
-		!to.is_pointer() && !to.is_array() && !to.has_ordered_declarator() &&
+		from.runtime_pointer_depth() == 0 && !from.is_array_object() && !from.has_ordered_declarator() &&
+		to.runtime_pointer_depth() == 0 && !to.is_array_object() && !to.has_ordered_declarator() &&
 		is_builtin_type(from.category()) && is_builtin_type(to.category()) &&
 		from.category() != TypeCategory::Nullptr && to.category() != TypeCategory::Void) {
 		TypeSpecifierNode value_source = from;
