@@ -930,6 +930,7 @@ ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExp
 					}
 					object_decl = ptr_decl;
 					TypeSpecifierNode ptr_type = ptr_decl->type_specifier_node();
+					// Missing canonical shape: UnmigratedNominal struct pointer. The dereference stays on the flat pointer level.
 					if (ptr_type.pointer_levels().size() > 0) {
 						object_type = ptr_type;
 						object_type.remove_pointer_level();
