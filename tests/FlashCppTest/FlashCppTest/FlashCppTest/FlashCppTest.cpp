@@ -15,6 +15,7 @@
 #include "TemplateEngine.h"
 #include <string>
 #include <fstream>
+#include <filesystem>
 #include <algorithm>
 #include <typeindex>
 #include <memory>
@@ -560,24 +561,45 @@ TEST_CASE("preprocessor") {
 	}
 
 	SUBCASE("__has_include") {
-		const std::string input = R"(
-			#if __has_include(<iostream>)
-			  const bool has_iostream = true;
+		// __has_include(<name>) asks whether an angled header name resolves against the include search
+		// list (C++20 [cpp.cond]p5). Use a hermetic probe header in a temporary directory instead of an
+		// installed toolchain path, so the positive case does not depend on which Visual Studio version
+		// (or any toolchain at all) the test machine happens to have installed.
+		const std::filesystem::path probe_dir = std::filesystem::temp_directory_path() / "flashcpp_has_include_probe";
+		const std::filesystem::path probe_header = probe_dir / "flashcpp_has_include_probe.h";
+		std::filesystem::create_directories(probe_dir);
+		{
+			std::ofstream header_file(probe_header);
+			REQUIRE(header_file.is_open());
+			header_file << "// probe header for __has_include\n";
+		}
+
+		const std::string input_missing = R"(
+			#if __has_include(<flashcpp_missing_probe_header.h>)
+			  const bool has_probe_header = true;
 			#else
-			  const bool has_iostream = false;
+			  const bool has_probe_header = false;
 			#endif
 		  )";
 		const std::string expected_output_false = R"(
-			  const bool has_iostream = false;
+			  const bool has_probe_header = false;
 		  )";
 		const std::string expected_output_true = R"(
-			  const bool has_iostream = true;
+			  const bool has_probe_header = true;
 		  )";
-		run_test_case(input, expected_output_false);
-#ifdef _WIN32
-		compile_context.addIncludeDir(R"(C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.38.33130\include)"sv);
-		run_test_case(input, expected_output_true);
-#endif
+		run_test_case(input_missing, expected_output_false);
+
+		const std::string input_probe = R"(
+			#if __has_include(<flashcpp_has_include_probe.h>)
+			  const bool has_probe_header = true;
+			#else
+			  const bool has_probe_header = false;
+			#endif
+		  )";
+		compile_context.addIncludeDir(probe_dir.string());
+		run_test_case(input_probe, expected_output_true);
+
+		std::filesystem::remove_all(probe_dir);
 	}
 
 	SUBCASE("__COUNTER__") {
