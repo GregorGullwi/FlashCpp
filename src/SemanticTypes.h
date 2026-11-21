@@ -172,7 +172,6 @@ struct hash<CanonicalTypeDesc> {
 		if (d.structural_type_id) {
 			h = combine(h, 0x3A);
 			h = combine(h, d.structural_type_id.value);
-			h = combine(h, static_cast<size_t>(d.flags));
 			return h;
 		}
 		h = combine(h, static_cast<size_t>(d.type_index.category()));

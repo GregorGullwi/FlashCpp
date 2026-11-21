@@ -239,6 +239,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 	};
 
 	auto looksLikeQualifiedTemplateDeclaration = [&]() -> bool {
+		[[maybe_unused]] SpeculativeParseRegion speculative_region;
 		SaveHandle saved_pos = save_token_position();
 		ScopeGuard restore_guard([&]() { restore_token_position(saved_pos); });
 
@@ -282,6 +283,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 	// construction cannot be a declarator; parentheses still prefer declarations
 	// unless their continuation rules that out ([stmt.ambig]).
 	auto typeConstructionContinuesExpression = [&]() -> bool {
+		[[maybe_unused]] SpeculativeParseRegion speculative_region;
 		if (peek() == "{"_tok) {
 			return true;
 		}
@@ -314,6 +316,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 	};
 
 	auto looksLikeIdentifierDeclarationStart = [&]() -> bool {
+		[[maybe_unused]] SpeculativeParseRegion speculative_region;
 		if (!peek().is_identifier()) {
 			return false;
 		}
