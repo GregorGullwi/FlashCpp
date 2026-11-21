@@ -182,6 +182,26 @@ candidates rather than ordering them. Partial ordering itself must keep using th
 environment identity it already has. Regressions must cover both forms and assert
 the primary template is selected.
 
+## Nominal import gaps are publication gaps, not importer gaps
+
+`UserDefined` and `TypeAlias` indexes import as `UnmigratedNominal`. Instrumenting the
+adapter over the whole suite shows why a category-dispatch fix cannot help: all 203
+distinct `UserDefined` request shapes carry no published declaration `EntityId`, and
+`TypeAlias` never reaches the adapter at all because the parser resolves
+`using`/`typedef` uses to `Struct`/`Enum` before import. There is nothing for an
+importer to read.
+
+A class-template instantiation is the common `UserDefined` case, and its canonical
+identity is a `TemplateSpecialization`, not a `Record`. Importing the pattern
+declaration's `EntityId` would collapse distinct specializations into one, so these
+shapes need a dedicated specialization publication path; that is boundary-6
+structural-key work, not adapter wiring. Opaque indexes and unresolved dependent
+names stay deferred for the same reason.
+
+Do not add a nominal dispatch that reads an entity the producers never publish, and
+do not pin it with a harness stub that fabricates one: a host test with a stubbed
+`tryGetTypeInfo` proves the code compiles, not that any program can reach it.
+
 ## Expression parsing and constraint evaluation can overflow a 1 MB native stack
 
 The nested NTTP-field regression
