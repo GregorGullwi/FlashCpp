@@ -616,9 +616,13 @@ remaining pattern schemas by identity, and remove the name fallback.
    `Parser`, `SemanticAnalysis`, or member-context dependency into that harness.
    That evidence also exposed `sameStructure` comparing the packed
    member-specialization owner slot numerically, which hid cross-table owner
-   identity; it now compares the primary and the owner structurally. Member
-   aliases, partial-pattern identity, and owner/non-type argument combinations
-   still need equivalent coverage.
+   identity; it now compares the primary and the owner structurally.
+   Member-alias owner resolution and concrete pack argument identity now have
+   the same evidence: a second table resolves the alias and interns the pack
+   elements in the opposite order, the two identities compare structurally, and
+   paired negative controls reject the swapped owner/alias order and the
+   permuted pack. Partial-pattern identity and owner/non-type argument
+   combinations still need equivalent coverage.
 
 Before declaring 3A complete, check every exit criterion in the plan and read its
 [parallel architecture experiment](2026-08-24-parallel-front-end-architecture-experiment.md).

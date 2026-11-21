@@ -3637,11 +3637,115 @@ inline void checkDependentIdentityIndependence() {
 		reverse.qualify(reverse_nested_template_member, CVQualifier::None));
 }
 
+// A member alias resolves through its published owner environment. Two tables
+// that see the same declarations in opposite order must resolve to the same
+// structural target, and unrelated string-table insertions must not renumber it.
+inline void checkMemberAliasOwnerIdentityIndependence() {
+	CanonicalTypeTable forward;
+	const TemplateDeclId owner{8601};
+	const TemplateDeclId alias{8602};
+	const TemplateDeclId target_decl{8603};
+	const TypeId owner_arg = forward.builtin(CanonicalBuiltinKind::Int);
+	const TypeId alias_arg = forward.builtin(CanonicalBuiltinKind::Char);
+	const TypeId owner_parameter = forward.templateParameter(owner, 0);
+	const TypeId alias_parameter = forward.templateParameter(alias, 0);
+	const TypeId target = forward.templateSpecialization(target_decl, std::array<TypeId, 2>{owner_parameter, alias_parameter});
+	const CanonicalTemplateArgKind kinds[] = {CanonicalTemplateArgKind::Type};
+	forward.publishAliasTemplateTarget(alias, owner, target, kinds);
+	const TypeId owner_arguments[] = {owner_arg};
+	const TypeId alias_arguments[] = {alias_arg};
+	const TypeId qualifier = forward.templateSpecialization(owner, owner_arguments);
+	const TypeId member_use = forward.dependentTemplateMember(qualifier, "Pointer", alias_arguments);
+	const TypeId member_argument = forward.templateArgumentType(forward.dependentTemplateMemberArguments(member_use));
+	const TypeId resolved_arguments[] = {member_argument};
+	const std::optional<TypeId> resolved =
+		forward.resolveMemberAliasTarget(alias, forward.dependentNameQualifier(member_use), resolved_arguments);
+	require(resolved.has_value());
+	require(*resolved == forward.templateSpecialization(target_decl, std::array<TypeId, 2>{owner_arg, alias_arg}));
+
+	const size_t forward_count = forward.size();
+	internUnrelatedCanonicalSpelling("unrelated member alias identity spelling C");
+	require(forward.resolveMemberAliasTarget(alias, forward.dependentNameQualifier(member_use), resolved_arguments) == resolved);
+	internUnrelatedCanonicalSpelling("unrelated member alias identity spelling B");
+	require(forward.dependentTemplateMember(qualifier, "Pointer", alias_arguments) == member_use);
+	internUnrelatedCanonicalSpelling("unrelated member alias identity spelling A");
+	require(forward.templateSpecialization(owner, owner_arguments) == qualifier);
+	require(forward.size() == forward_count);
+
+	CanonicalTypeTable reverse;
+	reverse.templateParameter(TemplateDeclId{8699}, 0);
+	reverse.array(reverse.builtin(CanonicalBuiltinKind::Char), 5);
+	const TypeId reverse_alias_argument = reverse.builtin(CanonicalBuiltinKind::Char);
+	const TypeId reverse_alias_parameter = reverse.templateParameter(alias, 0);
+	const TypeId reverse_owner_argument = reverse.builtin(CanonicalBuiltinKind::Int);
+	const TypeId reverse_owner_parameter = reverse.templateParameter(owner, 0);
+	const TypeId reverse_target = reverse.templateSpecialization(target_decl,
+		std::array<TypeId, 2>{reverse_owner_parameter, reverse_alias_parameter});
+	reverse.publishAliasTemplateTarget(alias, owner, reverse_target, kinds);
+	const TypeId reverse_owner_arguments[] = {reverse_owner_argument};
+	const TypeId reverse_alias_arguments[] = {reverse_alias_argument};
+	const TypeId reverse_qualifier = reverse.templateSpecialization(owner, reverse_owner_arguments);
+	const TypeId reverse_member_use = reverse.dependentTemplateMember(reverse_qualifier, "Pointer", reverse_alias_arguments);
+	const TypeId reverse_member_argument = reverse.templateArgumentType(reverse.dependentTemplateMemberArguments(reverse_member_use));
+	const TypeId reverse_resolved_arguments[] = {reverse_member_argument};
+	const std::optional<TypeId> reverse_resolved = reverse.resolveMemberAliasTarget(alias,
+		reverse.dependentNameQualifier(reverse_member_use), reverse_resolved_arguments);
+	require(reverse_resolved.has_value());
+	require(sameStructure(forward, *resolved, reverse, *reverse_resolved));
+	// Swapping owner and alias arguments must not produce the same target.
+	require(forward.templateSpecialization(target_decl, std::array<TypeId, 2>{alias_arg, owner_arg}) != *resolved);
+}
+
+// Concrete pack arguments keep their ordered identity across intern order and
+// unrelated string-table insertions, including when the element types are
+// requested in the reverse order in a second table.
+inline void checkConcretePackSpecArgIdentityIndependence() {
+	CanonicalTypeTable forward;
+	const TypeId integer = forward.builtin(CanonicalBuiltinKind::Int);
+	const TypeId character = forward.builtin(CanonicalBuiltinKind::Char);
+	const TypeId floating = forward.builtin(CanonicalBuiltinKind::Double);
+	const CanonicalTemplateArgument pack[] = {
+		CanonicalTemplateArgument::makeType(integer),
+		CanonicalTemplateArgument::makeType(character),
+		CanonicalTemplateArgument::makeType(floating),
+	};
+	const TypeId spec = forward.templateSpecialization(TemplateDeclId{8610}, pack);
+	const TypeId permuted = forward.templateSpecialization(TemplateDeclId{8610},
+		std::array<CanonicalTemplateArgument, 3>{
+			CanonicalTemplateArgument::makeType(integer),
+			CanonicalTemplateArgument::makeType(floating),
+			CanonicalTemplateArgument::makeType(character),
+		});
+	require(spec != permuted);
+
+	const size_t forward_count = forward.size();
+	internUnrelatedCanonicalSpelling("unrelated pack argument identity spelling B");
+	require(forward.templateSpecialization(TemplateDeclId{8610}, pack) == spec);
+	internUnrelatedCanonicalSpelling("unrelated pack argument identity spelling A");
+	require(forward.size() == forward_count);
+
+	CanonicalTypeTable reverse;
+	const TypeId reverse_floating = reverse.builtin(CanonicalBuiltinKind::Double);
+	reverse.templateParameter(TemplateDeclId{8698}, 0);
+	const TypeId reverse_character = reverse.builtin(CanonicalBuiltinKind::Char);
+	const TypeId reverse_integer = reverse.builtin(CanonicalBuiltinKind::Int);
+	const CanonicalTemplateArgument reverse_pack[] = {
+		CanonicalTemplateArgument::makeType(reverse_integer),
+		CanonicalTemplateArgument::makeType(reverse_character),
+		CanonicalTemplateArgument::makeType(reverse_floating),
+	};
+	const TypeId reverse_spec = reverse.templateSpecialization(TemplateDeclId{8610}, reverse_pack);
+	require(sameStructure(forward, spec, reverse, reverse_spec));
+	require(!sameStructure(forward, permuted, reverse, reverse_spec));
+}
+
 inline int run() {
 	checkFunctionIdentityIndependence();
 	checkDeclaratorIdentityIndependence();
 	checkRecordSpecializationIdentityIndependence();
 	checkDependentIdentityIndependence();
+	checkMemberAliasOwnerIdentityIndependence();
+	checkConcretePackSpecArgIdentityIndependence();
 	checkSpecializationFieldSchemas();
 	checkNestedFieldSchemas();
 	checkRecordMemberProperties();
