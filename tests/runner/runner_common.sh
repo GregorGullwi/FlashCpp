@@ -436,6 +436,9 @@ runner_migration_counter_value() {
 		canonical_shape_import_gap)
 			line=$(printf '%s\n' "$output" | grep -E '^Canonical shape import gaps:' | head -1 || true)
 			;;
+		canonical_conversion_compatibility_fallback)
+			line=$(printf '%s\n' "$output" | grep -E '^Canonical conversion compatibility fallbacks:' | head -1 || true)
+			;;
 		*)
 			return 1
 			;;
@@ -453,7 +456,8 @@ runner_parse_migration_counter_values() {
 		codegen_to_parser template_old_engine dollar_identity declaration_builder_publish \
 		unscoped_enum_typeindex_fallback canonical_structural_trait_fallback \
 		canonical_type_entity_import_recovery lazy_constraint_trait_fallback \
-		partial_pattern_name_fallback canonical_shape_import_gap; do
+		partial_pattern_name_fallback canonical_shape_import_gap \
+		canonical_conversion_compatibility_fallback; do
 		value=$(runner_migration_counter_value "$output" "$counter") || return 1
 		RUNNER_MIGRATION_COUNTER_VALUES["$counter"]=$value
 	done
