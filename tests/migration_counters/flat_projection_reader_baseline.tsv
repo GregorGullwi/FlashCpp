@@ -3,7 +3,7 @@ src/AstNodeTypes.cpp	8
 src/AstToIr.h	1
 src/CanonicalShapeTelemetry.h	2
 src/ConstExprEvalHelpers.cpp	8
-src/ConstExprEvaluator.h	1
+src/ConstExprEvaluator.h	3
 src/ConstExprEvaluator_Bindings.cpp	9
 src/ConstExprEvaluator_Core.cpp	22
 src/ConstExprEvaluator_Materialize.cpp	5
