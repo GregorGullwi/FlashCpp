@@ -798,7 +798,11 @@ anchors while preserving each mutation's required rejection.
 
 Run the host-native migration-counter and identity-inventory scripts under
 `tests/migration_counters/` after compiler changes and keep every fixed-corpus
-entry within baseline. `canonical_structural_trait_fallback` is 0 on the
+entry within baseline. The baseline is shared by the Windows and Linux jobs and
+the ratchet only rejects values above it, so an entry whose count differs per
+platform records the higher measured value: lowering it to a Windows-only
+measurement makes the Linux job fail even though nothing regressed.
+`canonical_structural_trait_fallback` is 0 on the
 structural-trait and lazy-constraint regressions; residual lazy-constraint
 fallbacks are the constructibility probes, which need the canonical
 constructor-query path. Record emptiness now ignores
