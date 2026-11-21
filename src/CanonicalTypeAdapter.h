@@ -782,15 +782,7 @@ inline EntityId publishedNominalEntity(const TypeSpecifierNode& syntax) {
 
 inline CanonicalTypeImport importCanonicalCompleteNominalArray(CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
-	const EntityId entity = publishedNominalEntity(syntax);
-	if (!entity) {
-		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
-	}
 	const bool is_record = syntax.category() == TypeCategory::Struct;
-	if ((is_record && !table.hasRecordLayout(entity)) ||
-		(!is_record && !table.hasEnumLayout(entity))) {
-		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
-	}
 	const bool has_ordinary_array = syntax.is_array() && !syntax.has_pointee_array_declarator();
 	const bool has_pointee_array = syntax.has_pointee_array_declarator();
 	if (!has_ordinary_array && !has_pointee_array) {
@@ -808,8 +800,32 @@ inline CanonicalTypeImport importCanonicalCompleteNominalArray(CanonicalTypeTabl
 		}
 	}
 	CanonicalTypeTransaction transaction(table);
-	auto id = is_record ? table.record(entity) : table.enumeration(entity);
-	id = table.qualify(id, syntax.cv_qualifier());
+	TypeId element{};
+	const EntityId entity = publishedNominalEntity(syntax);
+	if (entity) {
+		if ((is_record && !table.hasRecordLayout(entity)) || (!is_record && !table.hasEnumLayout(entity))) {
+			return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+		}
+		element = is_record ? table.record(entity) : table.enumeration(entity);
+	} else if (is_record) {
+		const TypeInfo* type_info = tryGetTypeInfo(syntax.type_index());
+		const StructTypeInfo* record = type_info != nullptr ? type_info->getStructInfo() : nullptr;
+		const StructDeclarationNode* declaration = record != nullptr ? record->declaration_node : nullptr;
+		const StructDeclarationNode* pattern = declaration != nullptr ? declaration->injected_class_pattern_declaration() : nullptr;
+		// An instantiated class template publishes its pattern template, not an entity.
+		// Array import reuses that specialization instead of inventing an entity.
+		if (pattern == nullptr || !pattern->has_template_decl_id() || type_info == nullptr) {
+			return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+		}
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *type_info);
+		if (imported.status != CanonicalTypeImportStatus::Supported) {
+			return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+		}
+		element = imported.type;
+	} else {
+		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+	}
+	TypeId id = table.qualify(element, syntax.cv_qualifier());
 	// Share the builtin/dependent array shaping so an unknown outer bound is
 	// represented for nominal elements exactly as for builtin ones.
 	id = applyCanonicalPointerArrayReference(table, id, syntax, context, has_ordinary_array, has_pointee_array);
