@@ -519,6 +519,12 @@ remaining pattern schemas by identity, and remove the name fallback.
      pointer arithmetic, pointer subscripts, and direct dereference of pointer
      variables initialized from arrays evaluate. Other flat readers still need
      migration before the projection fields can be removed.
+   - TypeId shape queries are already on main. This branch adds the flat-reader
+     gate, sampled import-gap telemetry, and published class/enum entity lookup
+     for array import, and moves array-extent consumers onto `requireCanonicalShape`
+     except two sizeof shapes that still read the flat extent. The remaining gaps
+     are in
+     [known issues](KNOWN_ISSUES.md#sizeof-of-two-unimported-array-shapes-still-uses-the-flat-extent).
    - `Parser_Expr_QualLookup` now asks `runtime_pointer_depth()` for its
      pointer-object tests, compares ternary pointer shapes through the shared
      `has_same_pointer_shape` helper, and builds the `new` result by decaying the
