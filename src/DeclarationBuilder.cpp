@@ -700,24 +700,33 @@ PublishResult DeclarationBuilder::publishVariable(
 	return publishClass(request, symbol_table);
 }
 
-EntityId publishVariableDeclarationIdentity(DeclarationBuilder& builder, const SymbolTable& symbol_table, const DeclarationNode& declaration) {
-	if (!declaration.has_lexical_scope_id()) {
+EntityId publishVariableDeclarationIdentity(DeclarationBuilder& builder, const SymbolTable& symbol_table,
+	const DeclarationNode& declaration, ScopeId lexical_scope_id, OwnerId owner_id) {
+	if (!lexical_scope_id || !declaration.identifier_token().handle().isValid()) {
 		return EntityId{};
 	}
 	// A block-scope declaration has no publishable owner, and a class-owned member
 	// reaches publication through its class, not through the lexical scope. Both are
 	// representation limits rather than inconsistencies, so they report no identity.
-	const ScopeMetadataView metadata = readScopeMetadata(symbol_table, declaration.lexical_scope_id());
-	if (metadata.scope_type != ScopeType::Global && metadata.scope_type != ScopeType::Namespace) {
-		return EntityId{};
+	if (!owner_id) {
+		const ScopeMetadataView metadata = readScopeMetadata(symbol_table, lexical_scope_id);
+		if (metadata.scope_type != ScopeType::Global && metadata.scope_type != ScopeType::Namespace) {
+			return EntityId{};
+		}
 	}
 	ClassDeclRequest request{};
-	request.lexical_scope_id = declaration.lexical_scope_id();
+	request.lexical_scope_id = lexical_scope_id;
 	request.name = declaration.identifier_token().handle();
 	request.is_definition = false;
 	request.kind = DeclKind::Variable;
+	request.owner_id = owner_id;
 	const PublishResult published = builder.publishVariable(request, symbol_table);
 	if (published.status == PublishStatus::Rejected) {
+		// A class-owned publication depends on the class already being published; a
+		// namespace-scope rejection is an inconsistency.
+		if (owner_id) {
+			return EntityId{};
+		}
 		throw InternalError("namespace-scope variable declaration was rejected during publication");
 	}
 	return published.entity_id;

@@ -97,13 +97,14 @@ equality/hash, and template argument binding. Do not recover target identity fro
 a spelling or ABI symbol.
 
 Object pointer arguments publish a target when the address-of operand is a bare
-identifier or a namespace-qualified variable; both now resolve the declaration and
-publish its `EntityId`. A class static member, a data-member address, and an array
-element still lose identity, so two distinct objects can instantiate the same
-specialization: `Tag<&HolderA::value>` and `Tag<&HolderB::value>` compare equal. The
-class-owned forms do not reach publication at all: the qualified lookup used for an
-address-of argument returns no candidate for a static member, because class members
-live in the class's member list rather than in that scope's symbol table. Object
+identifier, a namespace-qualified variable, or a static data member of a
+non-template class. A static member of a class-template instance, a data-member
+address, and an array element still lose identity, so two distinct objects can
+instantiate the same specialization. The class-owned forms are not in the qualified
+scope's symbol table; the class member list owns them, and publishing one needs the
+class's declaration-builder entity as its owner. A non-template class declaration
+provides that entity, but an instantiated class has no declaration node, so its
+members have no owner to publish under until template instances carry one. Object
 pointer members and pointer array elements of structural values now carry their
 published target and element offset, so a value that differs only in a pointer
 member or in a neighbouring scalar member instantiates a distinct specialization; a

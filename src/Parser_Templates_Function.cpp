@@ -1188,7 +1188,8 @@ std::optional<Parser::ConstantValue> Parser::tryEvaluateConstantExpression(const
 	// payload keeps no target and must not later be accepted as template-argument
 	// identity.
 	auto publishObjectTarget = [&](const DeclarationNode& declaration) {
-		return publishVariableDeclarationIdentity(requireFrontendContext().declarationBuilder(), gSymbolTable, declaration);
+		const ScopeId declaration_scope = declaration.has_lexical_scope_id() ? declaration.lexical_scope_id() : ScopeId{};
+		return publishVariableDeclarationIdentity(requireFrontendContext().declarationBuilder(), gSymbolTable, declaration, declaration_scope, OwnerId{});
 	};
 	auto inferMemberPointerClassNameFromNode =
 		[&](const ASTNode& node, const auto& self) -> StringHandle {
@@ -1733,6 +1734,43 @@ std::optional<Parser::ConstantValue> Parser::tryEvaluateConstantExpression(const
 						pointee_type, qualified->nameHandle(), 0, object_target);
 					FLASH_LOG(Templates, Trace, "Address-of qualified variable evaluated as ObjectPointer identity");
 					return ConstantValue{0, type_node.type(), pointee_type, identity};
+				}
+			}
+			// A class static member is not in the qualified scope's symbol table; the
+			// class member list owns it. Resolve it there and publish the member under its
+			// class owner, or two classes' same-named statics compare equal. The lexical
+			// scope comes from the declaration or, because a lazily stored or replayed
+			// member may not carry it, from the declaring class.
+			if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&op_expr);
+				qualified != nullptr && qualified->namespace_handle().isValid() && !qualified->has_template_arguments()) {
+				const std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> resolved =
+					semantic_analysis_.tryResolveQualifiedIdentifier(*qualified, SemanticAnalysis::QualifiedDataMemberPolicy::Reject);
+				if (resolved.has_value() &&
+					resolved->kind == SemanticAnalysis::ResolvedQualifiedIdentifierInfo::Kind::StaticMember &&
+					resolved->member_owner_entity) {
+					const StructTypeInfo* owner = tryGetStructTypeInfo(resolved->member_owner_type_index);
+					if (owner != nullptr) {
+						auto [member, declaring_owner] = owner->findStaticMemberRecursive(qualified->nameHandle());
+						(void)declaring_owner;
+						const DeclarationNode* declaration = member != nullptr && member->declaration.has_value()
+							? get_decl_from_symbol(*member->declaration)
+							: nullptr;
+						if (declaration != nullptr) {
+							const ScopeId member_scope = declaration->has_lexical_scope_id()
+								? declaration->lexical_scope_id()
+								: owner->declaration_node != nullptr ? owner->declaration_node->lexical_scope_id() : ScopeId{};
+							const EntityId object_target = publishVariableDeclarationIdentity(
+								requireFrontendContext().declarationBuilder(), gSymbolTable, *declaration, member_scope,
+								ownerIdFromClassEntity(resolved->member_owner_entity));
+							if (object_target) {
+								const TypeIndex pointee_type = member->type_index;
+								auto identity = FlashCpp::NonTypeValueIdentity::makeObjectPointer(
+									pointee_type, qualified->nameHandle(), 0, object_target);
+								FLASH_LOG(Templates, Trace, "Address-of static member evaluated as ObjectPointer identity");
+								return ConstantValue{0, pointee_type.category(), pointee_type, identity};
+							}
+						}
+					}
 				}
 			}
 		}
