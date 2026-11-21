@@ -1180,6 +1180,21 @@ std::optional<Parser::ConstantValue> Parser::tryEvaluateConstantExpression(const
 	auto makeConstantValueFromCategory = [&](int64_t value, TypeCategory category) {
 		return makeConstantValue(value, category, TypeIndex{});
 	};
+	// A pointer non-type argument identifies the object it points to, so every
+	// address-of form needs the declaration published as an EntityId, not only the
+	// plain identifiers the parser resolves before the generic evaluator runs.
+	auto publishObjectTarget = [&](const DeclarationNode& declaration) {
+		if (!declaration.has_lexical_scope_id()) {
+			return EntityId{};
+		}
+		ClassDeclRequest request{};
+		request.lexical_scope_id = declaration.lexical_scope_id();
+		request.name = declaration.identifier_token().handle();
+		request.is_definition = false;
+		request.kind = DeclKind::Variable;
+		const PublishResult published = requireFrontendContext().declarationBuilder().publishVariable(request, gSymbolTable);
+		return published.status == PublishStatus::Rejected ? EntityId{} : published.entity_id;
+	};
 	auto inferMemberPointerClassNameFromNode =
 		[&](const ASTNode& node, const auto& self) -> StringHandle {
 		if (!node.is<ExpressionNode>()) {
@@ -1229,10 +1244,15 @@ std::optional<Parser::ConstantValue> Parser::tryEvaluateConstantExpression(const
 		if (category == TypeCategory::Nullptr) {
 			value.identity = FlashCpp::NonTypeValueIdentity::makeNullptr(value.type_index);
 		} else if (eval_result.pointer_to_var.isValid()) {
+			EntityId object_target{};
+			if (eval_result.source_declaration != nullptr) {
+				object_target = publishObjectTarget(eval_result.source_declaration->declaration());
+			}
 			value.identity = FlashCpp::NonTypeValueIdentity::makeObjectPointer(
 				value.type_index,
 				eval_result.pointer_to_var,
-				eval_result.pointer_offset);
+				eval_result.pointer_offset,
+				object_target);
 		} else if (eval_result.member_pointer_member.isValid() || eval_result.is_null_member_pointer) {
 			if (eval_result.member_pointer_member.isValid()) {
 				std::optional<TypeSpecifierNode> member_pointer_type = eval_result.exact_type;
@@ -1689,7 +1709,7 @@ std::optional<Parser::ConstantValue> Parser::tryEvaluateConstantExpression(const
 					else if (sym->is<DeclarationNode>())
 						type_node = &sym->as<DeclarationNode>().type_specifier_node();
 					if (type_node) {
-						TypeIndex pointee_type = type_node->type_index().withCategory(type_node->type());
+						TypeIndex pointee_type = type_node->type_index();
 						EntityId object_target{};
 						const DeclarationNode* target_declaration = nullptr;
 						if (sym->is<VariableDeclarationNode>()) {
@@ -1697,21 +1717,34 @@ std::optional<Parser::ConstantValue> Parser::tryEvaluateConstantExpression(const
 						} else if (sym->is<DeclarationNode>()) {
 							target_declaration = &sym->as<DeclarationNode>();
 						}
-						if (target_declaration != nullptr && target_declaration->has_lexical_scope_id()) {
-							ClassDeclRequest request{};
-							request.lexical_scope_id = target_declaration->lexical_scope_id();
-							request.name = target_declaration->identifier_token().handle();
-							request.is_definition = false;
-							request.kind = DeclKind::Variable;
-							const PublishResult published = requireFrontendContext().declarationBuilder().publishVariable(request, gSymbolTable);
-							if (published.status != PublishStatus::Rejected) {
-								object_target = published.entity_id;
-							}
+						if (target_declaration != nullptr) {
+							object_target = publishObjectTarget(*target_declaration);
 						}
 						auto identity = FlashCpp::NonTypeValueIdentity::makeObjectPointer(pointee_type, entity_handle, 0, object_target);
 						FLASH_LOG(Templates, Trace, "Address-of variable '", id.name(), "' evaluated as ObjectPointer identity");
 						return ConstantValue{0, type_node->type(), pointee_type, identity};
 					}
+				}
+			}
+			// A qualified address names the same declarations as &identifier, but the
+			// parser never resolves it before the generic evaluator runs, so the target
+			// has to be published here or two distinct objects compare equal.
+			if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&op_expr);
+				qualified != nullptr && qualified->namespace_handle().isValid() && !qualified->has_template_arguments()) {
+				const std::vector<ASTNode> candidates = gSymbolTable.lookup_qualified_all(qualified->namespace_handle(), qualified->nameHandle());
+				if (candidates.size() == 1 &&
+					(candidates.front().is<VariableDeclarationNode>() || candidates.front().is<DeclarationNode>())) {
+					const ASTNode& symbol = candidates.front();
+					const DeclarationNode* declaration = symbol.is<VariableDeclarationNode>()
+						? &symbol.as<VariableDeclarationNode>().declaration()
+						: &symbol.as<DeclarationNode>();
+					const TypeSpecifierNode& type_node = declaration->type_specifier_node();
+					const TypeIndex pointee_type = type_node.type_index();
+					const EntityId object_target = publishObjectTarget(*declaration);
+					auto identity = FlashCpp::NonTypeValueIdentity::makeObjectPointer(
+						pointee_type, qualified->nameHandle(), 0, object_target);
+					FLASH_LOG(Templates, Trace, "Address-of qualified variable evaluated as ObjectPointer identity");
+					return ConstantValue{0, type_node.type(), pointee_type, identity};
 				}
 			}
 		}
