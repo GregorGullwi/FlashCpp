@@ -23,6 +23,7 @@ inline uint64_t gLazyConstraintTraitFallbackCount = 0;
 inline uint64_t gCanonicalTypeEntityImportRecoveryCount = 0;
 inline uint64_t gPartialPatternNameFallbackCount = 0;
 inline uint64_t gCanonicalShapeImportGapCount = 0;
+inline uint64_t gCanonicalConversionCompatibilityFallbackCount = 0;
 
 inline void recordTokenReplay() {
 	FLASHCPP_MIGRATION_COUNTER_BODY(++gTokenReplayCount);
@@ -90,6 +91,13 @@ inline void recordCanonicalShapeImportGap() {
 	FLASHCPP_MIGRATION_COUNTER_BODY(++gCanonicalShapeImportGapCount);
 }
 
+// Boundary 3A: overload resolution stopped planning a conversion from canonical
+// types and used the syntax compatibility planner instead. Direction down to
+// zero as conversion shapes gain canonical plans; removal boundary is 3A exit.
+inline void recordCanonicalConversionCompatibilityFallback() {
+	FLASHCPP_MIGRATION_COUNTER_BODY(++gCanonicalConversionCompatibilityFallbackCount);
+}
+
 inline uint64_t tokenReplayCount() {
 	return gTokenReplayCount;
 }
@@ -134,6 +142,10 @@ inline uint64_t canonicalShapeImportGapCount() {
 	return gCanonicalShapeImportGapCount;
 }
 
+inline uint64_t canonicalConversionCompatibilityFallbackCount() {
+	return gCanonicalConversionCompatibilityFallbackCount;
+}
+
 inline void printMigrationTelemetry() {
 	FLASH_LOG(General, Info, "\nToken replays: ", gTokenReplayCount);
 	FLASH_LOG(General, Info, "Post-parse parser typing queries: ", gPostParseParserTypingQueryCount);
@@ -148,6 +160,7 @@ inline void printMigrationTelemetry() {
 	FLASH_LOG(General, Info, "Canonical TypeIndex EntityId import recoveries: ", gCanonicalTypeEntityImportRecoveryCount);
 	FLASH_LOG(General, Info, "Partial-pattern name-lookup fallbacks: ", gPartialPatternNameFallbackCount);
 	FLASH_LOG(General, Info, "Canonical shape import gaps: ", gCanonicalShapeImportGapCount);
+	FLASH_LOG(General, Info, "Canonical conversion compatibility fallbacks: ", gCanonicalConversionCompatibilityFallbackCount);
 	FLASH_LOG(General, Info, "InlineVector spill events: ", FlashCpp::inlineVectorSpillCount());
 	for (std::size_t index = 0; index < static_cast<std::size_t>(FlashCpp::InlineVectorSpillFamily::Count); ++index) {
 		const uint64_t count =

@@ -333,6 +333,7 @@ function Get-FlashCppMigrationCounterValues {
 		canonical_type_entity_import_recovery = 'Canonical TypeIndex EntityId import recoveries:\s*(\d+)'
 		partial_pattern_name_fallback = 'Partial-pattern name-lookup fallbacks:\s*(\d+)'
 		canonical_shape_import_gap = 'Canonical shape import gaps:\s*(\d+)'
+		canonical_conversion_compatibility_fallback = 'Canonical conversion compatibility fallbacks:\s*(\d+)'
 	}
 	$values = @{}
 	foreach ($entry in $patterns.GetEnumerator()) {
