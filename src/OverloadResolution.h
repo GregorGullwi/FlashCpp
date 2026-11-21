@@ -2682,6 +2682,18 @@ inline CanonicalTypeImport importCanonicalOverloadNominalType(CanonicalTypeTable
 // imported function and member-function pointer pairs. Unsupported callable
 // families remain on their compatibility paths.
 inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
+	// An lvalue-marked builtin source is a value category marker, not a reference
+	// type, when the target is a by-value builtin. Both planners share the
+	// arithmetic category table, so strip the marker and plan canonically.
+	if (from.is_lvalue_reference() && !to.is_reference() && !to.is_rvalue_reference() && !orderedDeclaratorIsReference(to) &&
+		!from.is_pointer() && !from.is_array() && !from.has_ordered_declarator() &&
+		!to.is_pointer() && !to.is_array() && !to.has_ordered_declarator() &&
+		is_builtin_type(from.category()) && is_builtin_type(to.category()) &&
+		from.category() != TypeCategory::Nullptr && to.category() != TypeCategory::Void) {
+		TypeSpecifierNode value_source = from;
+		value_source.set_reference_qualifier(ReferenceQualifier::None);
+		return tryBuildCanonicalProjectableConversionPlan(value_source, to);
+	}
 	if (from.is_member_object_pointer_type() && to.is_member_object_pointer_type()) {
 		FrontendContext* const context = FrontendContext::active();
 		if (context == nullptr) {
