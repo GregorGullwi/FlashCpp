@@ -10,6 +10,7 @@
 
 #include <limits>
 #include <optional>
+#include <string>
 #include <unordered_set>
 
 inline std::optional<TypeCategory> canonicalBuiltinToTypeCategory(
@@ -1567,6 +1568,30 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 
 inline CanonicalTypeImport importCanonicalType(CanonicalTypeTable& table, const TypeSpecifierNode& syntax) {
 	return importCanonicalTypeImpl(table, syntax, CanonicalTypeImportContext::Exact);
+}
+
+inline const char* canonicalTypeImportStatusName(CanonicalTypeImportStatus status) {
+	switch (status) {
+	case CanonicalTypeImportStatus::Supported: return "Supported";
+	case CanonicalTypeImportStatus::UnmigratedArray: return "UnmigratedArray";
+	case CanonicalTypeImportStatus::UnmigratedCallable: return "UnmigratedCallable";
+	case CanonicalTypeImportStatus::UnmigratedNominal: return "UnmigratedNominal";
+	case CanonicalTypeImportStatus::Unresolved: return "Unresolved";
+	case CanonicalTypeImportStatus::Invalid: return "Invalid";
+	}
+	return "Unknown";
+}
+
+// Throws InternalError in a speculative parse region and on any import status other than Supported.
+inline TypeId requireCanonicalShape(CanonicalTypeTable& table, const TypeSpecifierNode& syntax) {
+	if (inSpeculativeParseRegion()) {
+		throw InternalError("requireCanonicalShape must not be called during speculative parsing");
+	}
+	const CanonicalTypeImport imported = importCanonicalType(table, syntax);
+	if (imported.status != CanonicalTypeImportStatus::Supported) {
+		throw InternalError(std::string("requireCanonicalShape import status: ") + canonicalTypeImportStatusName(imported.status));
+	}
+	return imported.type;
 }
 
 // Collapses the common "import this operand, then bail unless it imported as

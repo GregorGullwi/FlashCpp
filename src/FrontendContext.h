@@ -852,6 +852,24 @@ private:
 static_assert(!std::is_copy_constructible_v<FrontendContext>);
 static_assert(!std::is_move_constructible_v<FrontendContext>);
 
+inline uint32_t& speculativeParseRegionDepth() {
+	static thread_local uint32_t depth = 0;
+	return depth;
+}
+
+// Active while a declaration/expression lookahead has saved the token position and not yet committed it.
+class SpeculativeParseRegion {
+public:
+	SpeculativeParseRegion() { ++speculativeParseRegionDepth(); }
+	~SpeculativeParseRegion() { --speculativeParseRegionDepth(); }
+	SpeculativeParseRegion(const SpeculativeParseRegion&) = delete;
+	SpeculativeParseRegion& operator=(const SpeculativeParseRegion&) = delete;
+};
+
+inline bool inSpeculativeParseRegion() {
+	return speculativeParseRegionDepth() != 0;
+}
+
 inline FrontendContext* frontendContext() {
 	return FrontendContext::active();
 }
