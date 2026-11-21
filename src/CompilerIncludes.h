@@ -76,6 +76,7 @@
 
 // Canonical type table (out-of-line definitions for the header-only identity)
 #include "CanonicalTypes.cpp"
+#include "CanonicalTypeAdapter_NominalArray.cpp"
 
 // Header implementation units kept as separate .cpp files for organization
 #include "IrType.cpp"
