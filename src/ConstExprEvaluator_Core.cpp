@@ -10,6 +10,8 @@
 #include "ConstExprEvalHelpers.h"
 #include "BuiltinListInitNarrowing.h"
 #include "CallNodeHelpers.h"
+#include "DeclarationBuilder.h"
+#include "FrontendContext.h"
 #include "SemanticAnalysis.h"
 #include "StringLiteralTokenUtils.h"
 #include "TemplateArgumentMaterialization.h"
@@ -1038,10 +1040,19 @@ std::optional<FlashCpp::StructuralClassValue*> makeStructuralArrayValueIdentityI
 					const bool is_null = !element.is_indeterminate && !element.pointer_to_var.isValid() &&
 						!element.member_pointer_member.isValid() &&
 						(element.is_null_member_pointer || element.as_int() == 0);
-					if (!is_null) {
+					if (is_null) {
+						member.scalar_value = FlashCpp::NonTypeValueIdentity::makeNullptr(element_type);
+					} else if (element.pointer_to_var.isValid() && element.source_declaration != nullptr) {
+						const EntityId target = publishVariableDeclarationIdentity(requireFrontendContext().declarationBuilder(),
+							gSymbolTable, element.source_declaration->declaration());
+						if (!target) {
+							return std::nullopt;
+						}
+						member.scalar_value = FlashCpp::NonTypeValueIdentity::makeObjectPointer(
+							element_type, element.pointer_to_var, element.pointer_offset, target);
+					} else {
 						return std::nullopt;
 					}
-					member.scalar_value = FlashCpp::NonTypeValueIdentity::makeNullptr(element_type);
 				}
 			} else {
 				EvalResult converted = Evaluator::convertEvalResultToTargetType(
@@ -1142,10 +1153,22 @@ std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentityIm
 					const bool is_null = !member_result.is_indeterminate && !member_result.pointer_to_var.isValid() &&
 						!member_result.member_pointer_member.isValid() &&
 						(member_result.is_null_member_pointer || member_result.as_int() == 0);
-					if (!is_null) {
+					if (is_null) {
+						member.scalar_value = FlashCpp::NonTypeValueIdentity::makeNullptr(member_info.type_index);
+					} else if (member_result.pointer_to_var.isValid() && member_result.source_declaration != nullptr) {
+						// [temp.arg.nontype]: a pointer member contributes the object it
+						// points to. Without a published target the value has no identity,
+						// so it stays non-structural instead of comparing equal by spelling.
+						const EntityId target = publishVariableDeclarationIdentity(requireFrontendContext().declarationBuilder(),
+							gSymbolTable, member_result.source_declaration->declaration());
+						if (!target) {
+							return false;
+						}
+						member.scalar_value = FlashCpp::NonTypeValueIdentity::makeObjectPointer(
+							member_info.type_index, member_result.pointer_to_var, member_result.pointer_offset, target);
+					} else {
 						return false;
 					}
-					member.scalar_value = FlashCpp::NonTypeValueIdentity::makeNullptr(member_info.type_index);
 				}
 			} else if (declared_category == TypeCategory::Nullptr) {
 				member.scalar_value = FlashCpp::NonTypeValueIdentity::makeNullptr(member_info.type_index);
@@ -1897,7 +1920,14 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 		if (operand_node.is<ExpressionNode>()) {
 			const ExpressionNode& expr = operand_node.as<ExpressionNode>();
 			if (const auto* id = std::get_if<IdentifierNode>(&expr)) {
-				return EvalResult::from_pointer(id->name());
+				EvalResult result = EvalResult::from_pointer(id->name());
+				if (context.symbols != nullptr) {
+					const std::optional<ASTNode> symbol = lookup_identifier_symbol(id, id->name(), *context.symbols);
+					if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
+						result.source_declaration = &symbol->as<VariableDeclarationNode>();
+					}
+				}
+				return result;
 			}
 			if (const auto* qualified_id = std::get_if<QualifiedIdentifierNode>(&expr)) {
 				if (auto member = tryResolveMemberPointerTarget(*qualified_id)) {
