@@ -104,6 +104,22 @@ struct TypeSpecifierQueryResult {
 	}
 };
 
+struct DataMemberPointerAccessPlan {
+	struct VirtualBase {
+		TypeIndex receiver_layout_type;
+		TypeIndex anchor_layout_type;
+		uint32_t table_index;
+	};
+
+	TypeId receiver_class;
+	TypeId member_owner;
+	TypeId member_pointee;
+	bool decay_array_receiver = false;
+	// Offset from the receiver, or from the virtual anchor after a table lookup.
+	int64_t fixed_offset_bytes = 0;
+	std::optional<VirtualBase> virtual_base;
+};
+
 // Semantic ODR-use publication for implicitly-declared (or explicitly
 // defaulted) copy/move constructors and assignment operators.
 //
@@ -296,6 +312,8 @@ public:
 	TypeSpecifierQueryResult analyzeExpressionTypeQuery(const ASTNode& node);
 	std::optional<TypeSpecifierNode> getExpressionType(const ASTNode& node) const;
 	std::optional<TypeSpecifierNode> getMemberPointerPointeeType(const ASTNode& node);
+	std::optional<TypeSpecifierNode> projectDataMemberPointerPointee(TypeId pointee) const;
+	const DataMemberPointerAccessPlan* getDataMemberPointerAccessPlan(const PointerToMemberAccessNode& access) const;
 	std::optional<TypeId> getMemberPointerOwnerType(const ASTNode& node);
 	TypeId getExpressionStructuralTypeId(const ASTNode& node);
 	std::optional<size_t> getExpressionSizeBytes(const ASTNode& node) const;
@@ -561,6 +579,7 @@ private:
 
 	// Expression handler (counts and infers types for annotatable expressions)
 	SemanticExprInfo normalizeExpression(ASTNode node, const SemanticContext& ctx);
+	void annotateDataMemberPointerAccess(const PointerToMemberAccessNode& access);
 	void normalizeUnevaluatedOperand(ASTNode node, const SemanticContext& ctx);
 
 	// Helpers
@@ -950,6 +969,7 @@ private:
 	std::unordered_set<const void*> analyzed_op_call_queries_;
 	std::unordered_set<const void*> analyzed_direct_call_queries_;
 	std::unordered_map<const void*, ResolvedMemberAccessInfo> resolved_member_access_table_;
+	std::unordered_map<const PointerToMemberAccessNode*, DataMemberPointerAccessPlan> data_member_pointer_access_plans_;
 	std::unordered_set<const void*> analyzed_member_access_queries_;
 	std::unordered_map<const IdentifierNode*, ResolvedIdentifierMemberInfo> resolved_identifier_member_table_;
 	std::unordered_set<const void*> access_checked_template_pattern_bodies_;

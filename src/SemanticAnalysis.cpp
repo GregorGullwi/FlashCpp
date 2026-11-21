@@ -1109,9 +1109,9 @@ std::optional<CanonicalTypeDesc> tryGetConditionalPointerType(
 				pointer.ref_qualifier = ReferenceQualifier::None;
 				return pointer;
 			}
-			if (node.kind == CanonicalTypeKind::MemberObjectPointer || node.kind == CanonicalTypeKind::MemberFunctionPointer) {
+			if (unqualified.kind == CanonicalTypeKind::MemberObjectPointer || unqualified.kind == CanonicalTypeKind::MemberFunctionPointer) {
 				CanonicalTypeDesc member_pointer = desc;
-				member_pointer.structural_type_id = structural_id;
+				member_pointer.structural_type_id = stripCanonicalTopCv(table, structural_id).first;
 				member_pointer.ref_qualifier = ReferenceQualifier::None;
 				return member_pointer;
 			}
@@ -6480,6 +6480,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
 				normalizeExpression(e.object(), ctx);
 				normalizeExpression(e.member_pointer(), ctx);
+				annotateDataMemberPointerAccess(e);
 			} else if constexpr (std::is_same_v<T, CallExprNode>) {
 				if (e.has_receiver()) {
 					normalizeExpression(e.receiver(), ctx);
@@ -6982,12 +6983,10 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 				"semantic canonicalization rejected ordered declarator");
 		}
 		const std::optional<TypeId> imported = imported_component.type;
-		const bool has_member_function_pointer = std::ranges::any_of(
-			resolved_syntax.declarator_components(),
-			[](const DeclaratorComponent& component) {
-				return component.kind == DeclaratorComponentKind::MemberFunctionPointer;
-			});
-		if (!alias_components.empty() && resolved_syntax.ordered_declarator_has_legacy_projection() && !has_member_function_pointer) {
+		const bool has_member_pointer = std::ranges::any_of(resolved_syntax.declarator_components(), [](const DeclaratorComponent& component) {
+			return component.kind == DeclaratorComponentKind::MemberObjectPointer || component.kind == DeclaratorComponentKind::MemberFunctionPointer;
+		});
+		if (!alias_components.empty() && resolved_syntax.ordered_declarator_has_legacy_projection() && !has_member_pointer) {
 			// Projectable shapes are reimported from these flat fields. The alias
 			// wrappers are only in the composed spine, so the descriptor must
 			// carry that projection or the publisher rebuilds the outer declarator.
@@ -7005,7 +7004,7 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 			desc.has_unsized_outer_array_dimension = resolved_syntax.has_unsized_outer_array_dimension();
 			desc.ref_qualifier = resolved_syntax.reference_qualifier();
 			desc.base_cv = resolved_syntax.cv_qualifier();
-		} else if (!resolved_syntax.ordered_declarator_has_legacy_projection() || has_member_function_pointer) {
+		} else if (!resolved_syntax.ordered_declarator_has_legacy_projection() || has_member_pointer) {
 			desc.structural_type_id = *imported;
 		}
 		// [dcl.ptr]/1: a pointer whose immediate pointee is an array designates
@@ -7038,8 +7037,22 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 	if (!type.has_ordered_declarator() && is_member_object_pointer_syntax) {
 		TypeSpecifierNode syntax = type;
 		tryBindPublishedMemberClassEntity(syntax);
+		CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+		if (!syntax.has_member_class_entity() && !syntax.has_member_class_type_id() && syntax.has_member_class()) {
+			// A substituted parameter may retain its dependent owner spelling.
+			// Resolve its type in the existing template parameter scope before
+			// the flat pointer/array publisher can erase the member wrapper.
+			if (const CanonicalTypeId owner_id = lookupLocalType(syntax.member_class_name())) {
+				const CanonicalTypeImport owner = tryImportCanonicalTypeDesc(type_context_.get(owner_id));
+				if (owner.status == CanonicalTypeImportStatus::Supported) {
+					const TypeId owner_type = canonical_types.withoutTopLevelQualifiers(owner.type);
+					if (isCanonicalClassTypeKind(canonical_types.node(owner_type).kind)) {
+						syntax.set_member_class_type_id(owner_type);
+					}
+				}
+			}
+		}
 		if (syntax.has_member_class_entity() || syntax.has_member_class_type_id()) {
-			CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
 			const CanonicalTypeImport imported = importCanonicalType(canonical_types, syntax);
 			if (imported.status == CanonicalTypeImportStatus::Supported) {
 				desc.structural_type_id = imported.type;
@@ -7329,8 +7342,147 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 	return query.hasValue() ? query.type : std::nullopt;
 }
 
+namespace {
+
+TypeIndex findDataMemberReceiverLayout(CanonicalTypeTable& table, TypeId type, TypeIndex hint) {
+	if (const TypeInfo* info = hint.is_valid() ? tryGetTypeInfo(hint) : nullptr) {
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *info);
+		if (imported.status == CanonicalTypeImportStatus::Supported && imported.type == type) {
+			return hint.withCategory(TypeCategory::Struct);
+		}
+	}
+	const TypeInfo* exact = tryFindCanonicalOverloadClassTypeInfo(table, type);
+	return exact != nullptr ? exact->registeredTypeIndex().withCategory(TypeCategory::Struct) : TypeIndex{};
+}
+
+struct VirtualDataMemberPath {
+	TypeId anchor;
+	uint32_t table_index;
+	int64_t fixed_offset_bytes;
+};
+
+// The canonical base graph has already selected a unique subobject. The last
+// virtual edge on that path is represented in the receiver's virtual-base table.
+std::optional<VirtualDataMemberPath> findVirtualDataMemberPath(const CanonicalTypeTable& table, TypeId receiver, TypeId owner) {
+	if (const auto index = table.findVirtualBaseIndex(receiver, owner)) {
+		return VirtualDataMemberPath{owner, *index, 0};
+	}
+	const size_t count = table.virtualBaseCount(receiver);
+	for (size_t index = 0; index < count; ++index) {
+		const TypeId anchor = table.virtualBaseAt(receiver, index).type;
+		if (const auto offset = findCanonicalNonVirtualBaseOffset(table, anchor, owner, BaseSubobjectAccess::IgnoreAccess)) {
+			return VirtualDataMemberPath{anchor, static_cast<uint32_t>(index), *offset};
+		}
+	}
+	return std::nullopt;
+}
+
+} // namespace
+
+void SemanticAnalysis::annotateDataMemberPointerAccess(const PointerToMemberAccessNode& access) {
+	data_member_pointer_access_plans_.erase(&access);
+	const TypeId operand_type = getExpressionStructuralTypeId(access.member_pointer());
+	if (!operand_type) {
+		return;
+	}
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	const TypeId member_pointer = table.withoutTopLevelQualifiers(canonicalTypeWithoutReference(table, operand_type));
+	if (table.node(member_pointer).kind != CanonicalTypeKind::MemberObjectPointer || table.hasDependentTypeComponents(member_pointer)) {
+		return;
+	}
+	const CanonicalTypeId receiver_id = inferExpressionType(access.object());
+	if (!receiver_id) {
+		return;
+	}
+	const CanonicalTypeDesc& receiver_desc = type_context_.get(receiver_id);
+	const CanonicalTypeImport imported_receiver = tryImportCanonicalTypeDesc(receiver_desc);
+	if (imported_receiver.status != CanonicalTypeImportStatus::Supported || table.hasDependentTypeComponents(imported_receiver.type)) {
+		return;
+	}
+
+	auto report = [this, &access](DiagnosticId id, std::string_view message) {
+		throw makeStructuredCompileError(context_.diagnostics(), id, DiagnosticSeverity::Error, SourceLocation::fromToken(access.operator_token()),
+			message, {});
+	};
+	TypeId receiver = table.withoutTopLevelQualifiers(canonicalTypeWithoutReference(table, imported_receiver.type));
+	bool decay_array_receiver = false;
+	if (access.is_arrow()) {
+		const CanonicalTypeNode pointer = table.node(receiver);
+		// An array receiver decays once to a pointer to its first element.
+		decay_array_receiver = pointer.kind == CanonicalTypeKind::Array;
+		receiver = (pointer.kind == CanonicalTypeKind::Pointer || decay_array_receiver) ? table.withoutTopLevelQualifiers(pointer.child) : TypeId{};
+	}
+	if (!receiver || !isCanonicalClassTypeKind(table.node(receiver).kind)) {
+		report(DiagnosticId::InvalidDataMemberPointerReceiver, "Data-member pointer access requires a class object or a pointer to a class object for ->*");
+	}
+	const TypeId owner = table.memberPointerOwner(member_pointer);
+	DataMemberPointerAccessPlan plan{
+		.receiver_class = receiver,
+		.member_owner = owner,
+		.member_pointee = table.memberPointerPointee(member_pointer),
+		.decay_array_receiver = decay_array_receiver,
+		.virtual_base = std::nullopt};
+
+	if (receiver != owner) {
+		auto relation = classifyCanonicalDerivedBaseConversion(table, receiver, owner);
+		if (!relation) {
+			// Some declaration families have yet to publish a class-base schema.
+			return;
+		}
+		if (relation == DerivedBaseConversionKind::Inaccessible) {
+			if (!context_.isAccessControlDisabled() && !receiverBaseIsAccessible(findDataMemberReceiverLayout(table, receiver, receiver_desc.type_index),
+					findDataMemberReceiverLayout(table, owner, TypeIndex{}))) {
+				report(DiagnosticId::InaccessibleDerivedToBaseConversion, "Cannot convert to an inaccessible base class");
+			}
+			relation = classifyCanonicalDerivedBaseConversion(table, receiver, owner, BaseSubobjectAccess::IgnoreAccess);
+		}
+		if (relation == DerivedBaseConversionKind::Ambiguous) {
+			report(DiagnosticId::AmbiguousDerivedToBaseConversion, "Ambiguous derived-to-base conversion");
+		}
+		if (relation == DerivedBaseConversionKind::PublicVirtual) {
+			const auto path = findVirtualDataMemberPath(table, receiver, owner);
+			if (!path) {
+				throw InternalError("Data-member pointer receiver is missing its virtual-base layout");
+			}
+			const TypeIndex receiver_layout = findDataMemberReceiverLayout(table, receiver, receiver_desc.type_index);
+			const TypeIndex anchor_layout = findDataMemberReceiverLayout(table, path->anchor, TypeIndex{});
+			if (!receiver_layout.is_valid() || !anchor_layout.is_valid()) {
+				throw InternalError("Data-member pointer receiver is missing a virtual-base layout projection");
+			}
+			plan.virtual_base = DataMemberPointerAccessPlan::VirtualBase{receiver_layout, anchor_layout, path->table_index};
+			plan.fixed_offset_bytes = path->fixed_offset_bytes;
+		} else if (relation == DerivedBaseConversionKind::UniquePublicNonVirtual) {
+			const auto offset = findCanonicalNonVirtualBaseOffset(table, receiver, owner, BaseSubobjectAccess::IgnoreAccess);
+			if (!offset) {
+				throw InternalError("Data-member pointer receiver is missing its base offset");
+			}
+			plan.fixed_offset_bytes = *offset;
+		} else {
+			report(DiagnosticId::InvalidDataMemberPointerReceiver, "Data-member pointer owner is not a base of the receiver class");
+		}
+	}
+	data_member_pointer_access_plans_.insert_or_assign(&access, plan);
+}
+
+const DataMemberPointerAccessPlan* SemanticAnalysis::getDataMemberPointerAccessPlan(const PointerToMemberAccessNode& access) const {
+	const auto it = data_member_pointer_access_plans_.find(&access);
+	return it != data_member_pointer_access_plans_.end() ? &it->second : nullptr;
+}
+
+std::optional<TypeSpecifierNode> SemanticAnalysis::projectDataMemberPointerPointee(TypeId pointee) const {
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(table, pointee);
+	if (exported.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	TypeSpecifierNode syntax;
+	applyCanonicalDeclaratorBase(syntax, table, exported.base);
+	syntax.set_ordered_declarator(exported.components);
+	setMaterializedTypeSpecifierSize(syntax);
+	return syntax;
+}
+
 std::optional<TypeSpecifierNode> SemanticAnalysis::getMemberPointerPointeeType(const ASTNode& member_pointer_expression) {
-	bool claimed_member_pointer_identity = false;
 	const CanonicalTypeId type_id = inferExpressionType(member_pointer_expression);
 	if (type_id) {
 		const CanonicalTypeDesc& desc = type_context_.get(type_id);
@@ -7338,23 +7490,10 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getMemberPointerPointeeType(c
 			CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
 			const TypeId member_pointer = table.withoutTopLevelQualifiers(canonicalTypeWithoutReference(table, desc.structural_type_id));
 			if (table.node(member_pointer).kind == CanonicalTypeKind::MemberObjectPointer) {
-				claimed_member_pointer_identity = true;
 				const TypeId pointee = table.memberPointerPointee(member_pointer);
-				if (pointee) {
-					const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(table, pointee);
-					if (exported.status == CanonicalTypeImportStatus::Supported) {
-						TypeSpecifierNode pointee_syntax;
-						applyCanonicalDeclaratorBase(pointee_syntax, table, exported.base);
-						pointee_syntax.set_ordered_declarator(exported.components);
-						setMaterializedTypeSpecifierSize(pointee_syntax);
-						return pointee_syntax;
-					}
-				}
+				return pointee ? projectDataMemberPointerPointee(pointee) : std::nullopt;
 			}
 		}
-	}
-	if (claimed_member_pointer_identity) {
-		return std::nullopt;
 	}
 	// Transitional guard: dependent, substituted, and ternary member-pointer
 	// expressions may not have published structural identity yet. The access
@@ -10543,20 +10682,20 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				// wrapper because member-function publication stores one. A published
 				// member pointer adopts that pointee. A pointer with no structural
 				// pointee still peels one flat level.
-				bool adopted_pointee = false;
-				if (result_desc.structural_type_id) {
+				const DataMemberPointerAccessPlan* plan = getDataMemberPointerAccessPlan(e);
+				TypeId pointee = plan ? plan->member_pointee : TypeId{};
+				if (!pointee && result_desc.structural_type_id) {
 					CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
 					const CanonicalTypeNode member_node = nodeUnderQualifiersAndReferences(table, result_desc.structural_type_id);
 					const bool member_pointer = member_node.kind == CanonicalTypeKind::MemberObjectPointer || member_node.kind ==
 						CanonicalTypeKind::MemberFunctionPointer;
-					if (member_pointer && member_node.child) {
-						result_desc = adoptPublishedStructuralType(result_desc, member_node.child);
-						adopted_pointee = true;
-					} else if (member_pointer) {
-						result_desc.structural_type_id = member_node.child;
+					if (member_pointer) {
+						pointee = member_node.child;
 					}
 				}
-				if (!adopted_pointee && !result_desc.pointer_levels.empty()) {
+				if (pointee) {
+					result_desc = adoptPublishedStructuralType(result_desc, pointee);
+				} else if (!result_desc.pointer_levels.empty()) {
 					result_desc.pointer_levels.pop_back();
 				}
 				if (!result_desc.function_signature.has_value() &&
@@ -11006,19 +11145,6 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return {};
 				const CanonicalTypeDesc t_desc = type_context_.get(t_id);
 				const CanonicalTypeDesc f_desc = type_context_.get(f_id);
-				const bool true_is_null_pointer =
-					isIntegerLiteralZeroNullPointerConstant(e.true_expr()) || t_desc.category() == TypeCategory::Nullptr;
-				const bool false_is_null_pointer =
-					isIntegerLiteralZeroNullPointerConstant(e.false_expr()) || f_desc.category() == TypeCategory::Nullptr;
-				if (true_is_null_pointer != false_is_null_pointer) {
-					const ASTNode& non_null_branch = true_is_null_pointer ? e.false_expr() : e.true_expr();
-					const std::optional<TypeSpecifierNode> branch_syntax = getExpressionType(non_null_branch);
-					if (branch_syntax.has_value() &&
-						(branch_syntax->has_member_class() || branch_syntax->category() == TypeCategory::MemberObjectPointer ||
-						 branch_syntax->category() == TypeCategory::MemberFunctionPointer)) {
-						return canonicalizeType(*branch_syntax);
-					}
-				}
 				// C++20 [expr.cond]/3: array-to-pointer conversion applies to
 				// the branches before the common type is chosen, so an array
 				// branch never makes the conditional result an array type. This
