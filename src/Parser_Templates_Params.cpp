@@ -51,14 +51,17 @@ bool requiresReferenceArrayArgumentSyntax(
 		template_params.begin(),
 		template_params.end(),
 		[](const TemplateParameterNode& param) {
-			if (FrontendContext* active = FrontendContext::active()) {
-				noteCanonicalShapeImport(active->canonicalTypes(), param.type_specifier_node(),
-					CanonicalShapeSite::Parser_Templates_Params_ArrayExtent);
+			// type_specifier_node() throws if the parameter has no type specifier.
+			// Type, template, and pack parameters reach this scan during explicit
+			// argument parsing, including void_t, and must stay unprobed.
+			if (param.kind() != TemplateParameterKind::NonType || !param.has_type()) {
+				return false;
 			}
-			return param.kind() == TemplateParameterKind::NonType &&
-				param.has_type() &&
-				param.type_specifier_node().is_reference_to_array() &&
-				!param.type_specifier_node().array_dimensions().empty();
+			const TypeSpecifierNode& type_spec = param.type_specifier_node();
+			if (FrontendContext* active = FrontendContext::active()) {
+				noteCanonicalShapeImport(active->canonicalTypes(), type_spec, CanonicalShapeSite::Parser_Templates_Params_ArrayExtent);
+			}
+			return type_spec.is_reference_to_array() && !type_spec.array_dimensions().empty();
 		});
 }
 
