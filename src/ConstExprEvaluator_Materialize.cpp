@@ -525,7 +525,8 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 		const CanonicalShapeProbeTableGuard probe_guard(active->canonicalTypes());
 		noteCanonicalShapeImport(active->canonicalTypes(), type_spec, CanonicalShapeSite::ConstExprEvaluator_Materialize_ArrayExtent);
 	}
-	const auto& dims = type_spec.array_dimensions();
+	std::vector<size_t> extent_storage;
+	const std::span<const size_t> dims = copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), type_spec, extent_storage);
 	if (dims.size() <= 1) {
 		// Single-dimension or unspecified: delegate to the base overload.
 		auto base_result = materialize_array_value(type_spec.type_index(), init_list, context, bindings);

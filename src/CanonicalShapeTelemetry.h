@@ -3,7 +3,9 @@
 #include <array>
 #include <cstdint>
 #include <span>
+#include <vector>
 
+#include "CanonicalShapeQueries.h"
 #include "CanonicalTypeAdapter.h"
 #include "CanonicalTypes.h"
 #include "FrontendContext.h"
@@ -224,6 +226,27 @@ inline void printCanonicalShapeImportHistogram() {
 		}
 	}
 #endif
+}
+
+// storage must outlive the returned span. Unknown bounds are extent 0.
+inline std::span<const size_t> copyRequiredArrayExtents(CanonicalTypeTable& table, const TypeSpecifierNode& syntax, std::vector<size_t>& storage) {
+	const TypeId shape = requireCanonicalShape(table, syntax);
+	const size_t rank = canonicalArrayExtentCount(table, shape);
+	storage.resize(rank);
+	canonicalCopyArrayExtents(table, shape, storage);
+	return storage;
+}
+
+// A descriptor that reached an array-extent consumer without structural_type_id
+// is a publication defect. Unknown bounds are extent 0.
+inline std::span<const size_t> copyPublishedArrayExtents(const CanonicalTypeTable& table, TypeId structural_type_id, std::vector<size_t>& storage) {
+	if (!structural_type_id) {
+		throw InternalError("array extent descriptor has no published structural identity");
+	}
+	const size_t rank = canonicalArrayExtentCount(table, structural_type_id);
+	storage.resize(rank);
+	canonicalCopyArrayExtents(table, structural_type_id, storage);
+	return storage;
 }
 
 inline void printCanonicalTypeTableEndOfCompileStats() {
