@@ -271,6 +271,14 @@ non-projectable shapes;
 remove this entry when those consumers migrate and the compatibility projection
 fields are deleted.
 
+## sizeof of two unimported array shapes still uses the flat extent
+
+The flat-projection reader gate counts alias accessors. `requireCanonicalShape`
+throws on a non-Supported import and during speculative parsing. sizeof of a
+dependent `UserDefined` or `TypeAlias` array with no published element identity,
+and sizeof of an ordinary array with an omitted bound that is not marked unsized,
+still use the flat extent.
+
 ## Decltype operator overload result typing is parser-owned
 
 `get_overload_return_type` in `Parser_Expr_QualLookup.cpp` still derives a binary
