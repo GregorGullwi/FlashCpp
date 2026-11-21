@@ -1183,6 +1183,10 @@ std::optional<Parser::ConstantValue> Parser::tryEvaluateConstantExpression(const
 	// A pointer non-type argument identifies the object it points to, so every
 	// address-of form needs the declaration published as an EntityId, not only the
 	// plain identifiers the parser resolves before the generic evaluator runs.
+	// A rejected publication is a valid outcome rather than a compiler bug: a
+	// block-scope or class-owned declaration has no publishable owner, so the
+	// payload keeps no target and must not later be accepted as template-argument
+	// identity.
 	auto publishObjectTarget = [&](const DeclarationNode& declaration) {
 		if (!declaration.has_lexical_scope_id()) {
 			return EntityId{};
@@ -1703,26 +1707,19 @@ std::optional<Parser::ConstantValue> Parser::tryEvaluateConstantExpression(const
 						FLASH_LOG(Templates, Trace, "Address-of function '", id.name(), "' evaluated as FunctionPointer identity");
 						return ConstantValue{0, TypeCategory::FunctionPointer, fp_type, identity};
 					}
-					const TypeSpecifierNode* type_node = nullptr;
-					if (sym->is<VariableDeclarationNode>())
-						type_node = &sym->as<VariableDeclarationNode>().declaration().type_specifier_node();
-					else if (sym->is<DeclarationNode>())
-						type_node = &sym->as<DeclarationNode>().type_specifier_node();
-					if (type_node) {
-						TypeIndex pointee_type = type_node->type_index();
-						EntityId object_target{};
-						const DeclarationNode* target_declaration = nullptr;
-						if (sym->is<VariableDeclarationNode>()) {
-							target_declaration = &sym->as<VariableDeclarationNode>().declaration();
-						} else if (sym->is<DeclarationNode>()) {
-							target_declaration = &sym->as<DeclarationNode>();
-						}
-						if (target_declaration != nullptr) {
-							object_target = publishObjectTarget(*target_declaration);
-						}
+					const DeclarationNode* declaration = nullptr;
+					if (sym->is<VariableDeclarationNode>()) {
+						declaration = &sym->as<VariableDeclarationNode>().declaration();
+					} else if (sym->is<DeclarationNode>()) {
+						declaration = &sym->as<DeclarationNode>();
+					}
+					if (declaration != nullptr) {
+						const TypeSpecifierNode& type_node = declaration->type_specifier_node();
+						const TypeIndex pointee_type = type_node.type_index();
+						const EntityId object_target = publishObjectTarget(*declaration);
 						auto identity = FlashCpp::NonTypeValueIdentity::makeObjectPointer(pointee_type, entity_handle, 0, object_target);
 						FLASH_LOG(Templates, Trace, "Address-of variable '", id.name(), "' evaluated as ObjectPointer identity");
-						return ConstantValue{0, type_node->type(), pointee_type, identity};
+						return ConstantValue{0, type_node.type(), pointee_type, identity};
 					}
 				}
 			}
