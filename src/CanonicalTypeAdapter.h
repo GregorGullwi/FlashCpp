@@ -751,9 +751,38 @@ inline CanonicalTypeImport importCanonicalEnum(CanonicalTypeTable& table,
 	return {id, CanonicalTypeImportStatus::Supported};
 }
 
+// Published class and enum identity lives on the type index when a declarator
+// copied the category and array bounds without copying the entity. Array import
+// reads that publication; it does not invent an entity from spelling.
+inline EntityId publishedNominalEntity(const TypeSpecifierNode& syntax) {
+	const EntityId direct = resolveNamedTypeEntity(syntax);
+	if (direct) {
+		return direct;
+	}
+	const TypeInfo* type_info = tryGetTypeInfo(syntax.type_index());
+	if (type_info == nullptr || type_info->isTypeAlias()) {
+		return {};
+	}
+	if (syntax.category() == TypeCategory::Struct) {
+		const StructTypeInfo* struct_info = type_info->getStructInfo();
+		if (struct_info == nullptr || struct_info->declaration_node == nullptr || !struct_info->declaration_node->has_entity_id()) {
+			return {};
+		}
+		return struct_info->declaration_node->entity_id();
+	}
+	if (syntax.category() == TypeCategory::Enum) {
+		const EnumTypeInfo* enum_info = type_info->getEnumInfo();
+		if (enum_info == nullptr || enum_info->declaration_node == nullptr || !enum_info->declaration_node->has_entity_id()) {
+			return {};
+		}
+		return enum_info->declaration_node->entity_id();
+	}
+	return {};
+}
+
 inline CanonicalTypeImport importCanonicalCompleteNominalArray(CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
-	const EntityId entity = resolveNamedTypeEntity(syntax);
+	const EntityId entity = publishedNominalEntity(syntax);
 	if (!entity) {
 		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
 	}

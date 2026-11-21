@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <span>
 
 #include "CanonicalTypeAdapter.h"
 #include "CanonicalTypes.h"
@@ -128,6 +129,44 @@ inline std::size_t canonicalTypeImportStatusIndex(CanonicalTypeImportStatus stat
 	return static_cast<std::size_t>(status);
 }
 
+inline const char* canonicalShapeCategoryLabel(TypeCategory category) {
+	switch (category) {
+	case TypeCategory::Invalid: return "Invalid";
+	case TypeCategory::Void: return "Void";
+	case TypeCategory::Bool: return "Bool";
+	case TypeCategory::Char: return "Char";
+	case TypeCategory::UnsignedChar: return "UnsignedChar";
+	case TypeCategory::WChar: return "WChar";
+	case TypeCategory::Char8: return "Char8";
+	case TypeCategory::Char16: return "Char16";
+	case TypeCategory::Char32: return "Char32";
+	case TypeCategory::Short: return "Short";
+	case TypeCategory::UnsignedShort: return "UnsignedShort";
+	case TypeCategory::Int: return "Int";
+	case TypeCategory::UnsignedInt: return "UnsignedInt";
+	case TypeCategory::Long: return "Long";
+	case TypeCategory::UnsignedLong: return "UnsignedLong";
+	case TypeCategory::LongLong: return "LongLong";
+	case TypeCategory::UnsignedLongLong: return "UnsignedLongLong";
+	case TypeCategory::Float: return "Float";
+	case TypeCategory::Double: return "Double";
+	case TypeCategory::LongDouble: return "LongDouble";
+	case TypeCategory::FunctionPointer: return "FunctionPointer";
+	case TypeCategory::MemberFunctionPointer: return "MemberFunctionPointer";
+	case TypeCategory::MemberObjectPointer: return "MemberObjectPointer";
+	case TypeCategory::UserDefined: return "UserDefined";
+	case TypeCategory::TypeAlias: return "TypeAlias";
+	case TypeCategory::Auto: return "Auto";
+	case TypeCategory::DeclTypeAuto: return "DeclTypeAuto";
+	case TypeCategory::Function: return "Function";
+	case TypeCategory::Struct: return "Struct";
+	case TypeCategory::Enum: return "Enum";
+	case TypeCategory::Nullptr: return "Nullptr";
+	case TypeCategory::Template: return "Template";
+	}
+	return "Unknown";
+}
+
 inline void noteCanonicalShapeImport(CanonicalTypeTable& table, const TypeSpecifierNode& syntax, CanonicalShapeSite site) {
 #if !FLASHCPP_CANONICAL_SHAPE_TELEMETRY
 	(void)table;
@@ -152,6 +191,20 @@ inline void noteCanonicalShapeImport(CanonicalTypeTable& table, const TypeSpecif
 	++gCanonicalShapeImportHistogram[site_index][status_index];
 	if (imported.status != CanonicalTypeImportStatus::Supported) {
 		recordCanonicalShapeImportGap();
+		const std::span<const size_t> dimensions = syntax.array_dimensions();
+		const size_t dimension_count = dimensions.size();
+		const size_t first_dimension = dimension_count > 0 ? dimensions[0] : 0;
+		const size_t second_dimension = dimension_count > 1 ? dimensions[1] : 0;
+		const EntityId nominal_entity = publishedNominalEntity(syntax);
+		const int nominal_layout = nominal_entity && syntax.category() == TypeCategory::Struct && table.hasRecordLayout(nominal_entity) ? 1 :
+			nominal_entity && syntax.category() == TypeCategory::Enum && table.hasEnumLayout(nominal_entity) ? 1 : 0;
+		FLASH_LOG_FORMAT(Types, Debug,
+			"canonical-shape-import-shape site={} status={} category={} array={} dims={} d0={} d1={} ptr={} "
+			"ordered={} pointee_array={} ref={} entity={} layout={}",
+			canonicalShapeSiteLabel(site), canonicalTypeImportStatusLabel(imported.status), canonicalShapeCategoryLabel(syntax.category()),
+			syntax.is_array() ? 1 : 0, dimension_count, first_dimension, second_dimension, syntax.pointer_depth(),
+			syntax.has_ordered_declarator() ? 1 : 0, syntax.has_pointee_array_declarator() ? 1 : 0,
+			static_cast<unsigned>(syntax.reference_qualifier()), nominal_entity ? 1 : 0, nominal_layout);
 	}
 #endif
 }
