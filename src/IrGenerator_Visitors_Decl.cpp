@@ -3789,7 +3789,9 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 ExprResult AstToIr::generateArrayAggregatePrvalueIr(const ConstructorCallNode& constructorCallNode) {
 	const TypeSpecifierNode& type_spec = constructorCallNode.type_node();
 	const InitializerListNode* initializer = constructorCallNode.aggregateInitializer();
-	if (initializer == nullptr || initializer->has_any_designated() || type_spec.array_dimensions().empty()) {
+	std::vector<size_t> extent_storage;
+	const std::span<const size_t> dimensions = copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), type_spec, extent_storage);
+	if (initializer == nullptr || initializer->has_any_designated() || dimensions.empty()) {
 		throw InternalError("Array prvalue initialization requires a positional initializer list");
 	}
 	const TypeCategory element_category = type_spec.category();
@@ -3799,7 +3801,7 @@ ExprResult AstToIr::generateArrayAggregatePrvalueIr(const ConstructorCallNode& c
 	size_t element_count = 1;
 	noteCanonicalShapeImport(
 		requireFrontendContext().canonicalTypes(), type_spec, CanonicalShapeSite::IrGenerator_Visitors_Decl_ArrayExtent);
-	for (size_t dimension : type_spec.array_dimensions()) {
+	for (size_t dimension : dimensions) {
 		if (dimension == 0 || element_count > (static_cast<size_t>(-1) / dimension)) {
 			throw InternalError("Array prvalue dimensions do not form a finite element count");
 		}

@@ -482,6 +482,14 @@ void AstToIr::prepareNRVOCandidates(const ASTNode& body, const TypeSpecifierNode
 	}
 	nrvo_candidate_declarations_.insert(candidate_raw_pointer);
 }
+static size_t publishedArrayRank(const TypeSpecifierNode& type_node) {
+	if (!type_node.is_array()) {
+		return 0;
+	}
+	std::vector<size_t> storage;
+	return copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), type_node, storage).size();
+}
+
 void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	const VariableDeclarationNode& node = ast_node.as<VariableDeclarationNode>();
 	const auto& decl = node.declaration();
@@ -966,12 +974,27 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		if (decl.is_array_object() || type_node.is_array()) {
 			noteCanonicalShapeImport(
 				requireFrontendContext().canonicalTypes(), type_node, CanonicalShapeSite::IrGenerator_Stmt_Decl_ArrayExtent);
-			if (type_node.is_array() && !type_node.array_dimensions().empty()) {
-				op.element_count = 1;
-				for (size_t dim_size : type_node.array_dimensions()) {
-					op.element_count *= dim_size;
+			bool used_published_extents = false;
+			if (type_node.is_array()) {
+				std::vector<size_t> extent_storage;
+				const std::span<const size_t> published_extents = copyRequiredArrayExtents(
+					requireFrontendContext().canonicalTypes(), type_node, extent_storage);
+				bool known_bounds = !published_extents.empty();
+				for (size_t extent : published_extents) {
+					if (extent == 0) {
+						known_bounds = false;
+						break;
+					}
 				}
-			} else {
+				if (known_bounds) {
+					op.element_count = 1;
+					for (size_t dim_size : published_extents) {
+						op.element_count *= dim_size;
+					}
+					used_published_extents = true;
+				}
+			}
+			if (!used_published_extents) {
 				const auto& dims = decl.array_dimensions();
 				if (!dims.empty()) {
 						// Calculate total element count as product of all dimensions
@@ -983,6 +1006,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							op.element_count *= static_cast<size_t>(eval_result.as_int());
 						}
 					}
+				// Missing canonical shape: outermost array extent when the type is not an array object.
 				} else if (type_node.array_size().has_value()) {
 					op.element_count = *type_node.array_size();
 				}
@@ -1103,7 +1127,20 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 					}
 					bool materialized_as_constexpr_array = handled_as_pointer_array;
-					if (!handled_as_pointer_array && type_node.is_array() && !type_node.array_dimensions().empty()) {
+					bool known_array_bounds = false;
+					if (type_node.is_array()) {
+						std::vector<size_t> extent_storage;
+						const std::span<const size_t> published_extents = copyRequiredArrayExtents(
+							requireFrontendContext().canonicalTypes(), type_node, extent_storage);
+						known_array_bounds = !published_extents.empty();
+						for (size_t extent : published_extents) {
+							if (extent == 0) {
+								known_array_bounds = false;
+								break;
+							}
+						}
+					}
+					if (!handled_as_pointer_array && known_array_bounds) {
 						auto constexpr_ctx = makeStaticStorageEvalContext();
 						auto array_result = ConstExpr::Evaluator::materialize_array_value_with_spec(
 							type_node,
@@ -1405,6 +1442,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						handled_as_reloc = true;
 					}
 				}
+				// Missing canonical shape: pointer presence.
 				if (!handled_as_reloc && type_node.is_pointer() && std::holds_alternative<StringLiteralNode>(init_expr)) {
 						// Global pointer initialized with a string literal: const char* s = "hello";
 						// Emit the string bytes as a .rodata global (same copy-bytes path as any other global),
@@ -1443,6 +1481,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					const StringHandle pointer_origin = eval_result.pointer_to_var.isValid()
 						? eval_result.pointer_to_var
 						: eval_result.array_origin_var;
+					// Missing canonical shape: pointer presence.
 					if (eval_result.success() && type_node.is_pointer() && pointer_origin.isValid() &&
 						eval_result.pointer_offset == 0) {
 						op.init_data.assign(element_size, 0);
@@ -1852,16 +1891,27 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	// For arrays, calculate total element count (product of all dimensions for multidimensional arrays)
 	size_t array_count = has_ordered_array_storage ? ordered_array_element_count : 0;
 	if (owns_inline_array_storage && !has_ordered_array_storage) {
-		if (type_node.is_array() && !type_node.array_dimensions().empty()) {
-			array_count = 1;
-			for (size_t dim_size : type_node.array_dimensions()) {
-				if (dim_size == 0) {
-					array_count = 0;
+		bool used_published_extents = false;
+		if (type_node.is_array()) {
+			std::vector<size_t> extent_storage;
+			const std::span<const size_t> published_extents = copyRequiredArrayExtents(
+				requireFrontendContext().canonicalTypes(), type_node, extent_storage);
+			bool known_bounds = !published_extents.empty();
+			for (size_t extent : published_extents) {
+				if (extent == 0) {
+					known_bounds = false;
 					break;
 				}
-				array_count *= dim_size;
 			}
-		} else {
+			if (known_bounds) {
+				array_count = 1;
+				for (size_t dim_size : published_extents) {
+					array_count *= dim_size;
+				}
+				used_published_extents = true;
+			}
+		}
+		if (!used_published_extents) {
 			const auto& dims = decl.array_dimensions();
 			if (!dims.empty()) {
 				// Calculate total element count as product of all dimensions
@@ -2019,6 +2069,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							const StructTypeInfo& struct_info = *type_info->getStructInfo();
 
 								// Check if this is an abstract class (only for non-pointer types)
+							// Missing canonical shape: pointer levels.
 							if (struct_info.is_abstract && type_node.pointer_levels().empty()) {
 								throw makeStructuredCompileError(
 									context_->diagnostics(),
@@ -2828,6 +2879,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					// Pointer derived-to-base conversion in variable init: verify the
 					// relationship before the backend emits an adjustment. Direct variable
 					// initialization can bypass overload-resolution diagnostics.
+					// Missing canonical shape: pointer presence.
 					if (need_conversion && init_cat == TypeCategory::Struct &&
 						runtime_pointer_depth > 0 && init_operands.pointer_depth.is_pointer() &&
 						init_type_index.is_valid() && type_node.type_index().is_valid() &&
@@ -3090,7 +3142,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			std::holds_alternative<StringLiteralNode>(init_node.as<ExpressionNode>()) &&
 			type_node.category() == TypeCategory::Char &&
 			runtime_pointer_depth == 0 &&
-			type_node.array_dimension_count() <= 1) {
+			publishedArrayRank(type_node) <= 1) {
 			const auto& string_literal = std::get<StringLiteralNode>(init_node.as<ExpressionNode>());
 			std::string literal_bytes = FlashCpp::decodeStringLiteralBytes(string_literal.value());
 			const size_t required_elements = literal_bytes.size() + 1;
@@ -3150,7 +3202,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					struct_info_ptr = type_info->getStructInfo();
 				}
 			}
-			if (type_node.array_dimension_count() > 1) {
+			std::vector<size_t> extent_storage;
+			const std::span<const size_t> published_extents = type_node.is_array()
+				? copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), type_node, extent_storage)
+				: std::span<const size_t>{};
+			if (published_extents.size() > 1) {
 				const int element_size_bits = resolveArrayElementSizeBits();
 				if (element_size_bits <= 0 || (element_size_bits % 8) != 0) {
 					throw InternalError("Failed to resolve local multidimensional array element size");
@@ -3158,7 +3214,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				const size_t element_size_bytes = static_cast<size_t>(element_size_bits / 8);
 				if (element_size_bytes > 0 && array_count > std::numeric_limits<size_t>::max() / element_size_bytes)
 					throw InternalError("Local array initializer size overflow");
-				const std::span<const size_t> type_array_dimensions = type_node.array_dimensions();
+				const std::span<const size_t> type_array_dimensions = published_extents;
 				const TypeId array_type_id = importCanonicalStructMemberType(
 					requireFrontendContext().canonicalTypes(), type_node, true, false, type_array_dimensions);
 				StructMember array_member(
@@ -3259,6 +3315,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 			if (type_info->getStructInfo()) {
 					// Check if this is an abstract class (only for non-pointer types)
+				// Missing canonical shape: pointer levels.
 				if (type_info->getStructInfo()->is_abstract && type_node.pointer_levels().empty()) {
 					throw makeStructuredCompileError(
 						context_->diagnostics(),
@@ -3925,7 +3982,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							} // end else (no ref-type mismatch)
 
 							if (param_type) {
+								// Missing canonical shape: pointer depth.
 								init_arg.pointer_depth = PointerDepth{static_cast<int>(param_type->pointer_depth())};
+								// Missing canonical shape: pointer presence and pointer levels.
 								if (param_type->is_pointer() && !param_type->pointer_levels().empty()) {
 									if (!init_arg.is_reference()) {
 										init_arg.cv_qualifier = param_type->cv_qualifier();
@@ -4077,6 +4136,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								// Get array size
 								size_t ctor_array_count = array_count > 0 ? array_count : 1;
 								if (ctor_array_count <= 1) {
+									// Missing canonical shape: declaration array bound expression.
 									auto size_expr = decl.array_size();
 									if (size_expr.has_value()) {
 										// Evaluate the array size expression using ConstExprEvaluator
@@ -4183,6 +4243,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 					// Check if it's a DeclarationNode with array information
 				if (symbol->is<DeclarationNode>()) {
 					const DeclarationNode& decl = symbol->as<DeclarationNode>();
+					// Missing canonical shape: declaration array bound expression.
 					if (decl.is_array() && decl.array_size().has_value()) {
 							// Evaluate array size
 						ConstExpr::EvaluationContext ctx = makeEvalContext(gSymbolTable);
@@ -4203,6 +4264,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 				else if (symbol->is<VariableDeclarationNode>()) {
 					const VariableDeclarationNode& var_decl = symbol->as<VariableDeclarationNode>();
 					const DeclarationNode& decl = var_decl.declaration();
+					// Missing canonical shape: declaration array bound expression.
 					if (decl.is_array() && decl.array_size().has_value()) {
 							// Evaluate array size
 						ConstExpr::EvaluationContext ctx = makeEvalContext(gSymbolTable);

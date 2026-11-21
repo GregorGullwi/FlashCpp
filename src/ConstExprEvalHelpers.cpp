@@ -784,7 +784,8 @@ EvalResult makeConstructorDefaultInitFromType(const TypeSpecifierNode& type_spec
 		if (FrontendContext* active = FrontendContext::active()) {
 			noteCanonicalShapeImport(active->canonicalTypes(), type_spec, CanonicalShapeSite::ConstExprEvalHelpers_ArrayExtent);
 		}
-		std::span<const size_t> dims = type_spec.array_dimensions();
+		std::vector<size_t> extent_storage;
+		const std::span<const size_t> dims = copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), type_spec, extent_storage);
 		if (dims.empty()) {
 			return EvalResult::error("Missing dimensions for default-initialized array member");
 		}
@@ -1693,7 +1694,12 @@ std::optional<EvalResult> tryMaterializeMultidimArrayRow(
 	const InitializerListNode& init_list,
 	size_t index,
 	ConstExpr::EvaluationContext& context) {
-	if (!type_spec || type_spec->array_dimension_count() <= 1) {
+	if (type_spec == nullptr) {
+		return std::nullopt;
+	}
+	std::vector<size_t> extent_storage;
+	const std::span<const size_t> extents = copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), *type_spec, extent_storage);
+	if (extents.size() <= 1) {
 		return std::nullopt;
 	}
 	EvalResult materialized = ConstExpr::Evaluator::materialize_array_value_with_spec(*type_spec, init_list, context, nullptr);

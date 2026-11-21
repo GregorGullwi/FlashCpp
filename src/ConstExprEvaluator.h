@@ -73,7 +73,8 @@ inline std::optional<size_t> tryGetConstexprTypeSizeBytes(const TypeSpecifierNod
 			noteCanonicalShapeImport(*gCanonicalShapeProbeTable, type_spec,
 				CanonicalShapeSite::ConstExprEvaluator_TryGetTypeSize_ArrayExtent);
 		}
-		const std::span<const size_t> dimensions = type_spec.array_dimensions();
+		std::vector<size_t> extent_storage;
+		const std::span<const size_t> dimensions = copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), type_spec, extent_storage);
 		TypeSpecifierNode element_type = type_spec;
 		element_type.set_array_dimensions({});
 		const int element_size_bits = getTypeSpecSizeBits(element_type);

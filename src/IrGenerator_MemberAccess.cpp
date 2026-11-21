@@ -31,7 +31,9 @@ static std::optional<size_t> tryGetTypeSizeForSizeof(const TypeSpecifierNode& ty
 			return std::nullopt;
 		}
 		size_t total_size = static_cast<size_t>(element_size_bits) / 8;
-		for (size_t dimension : type_spec.array_dimensions()) {
+		std::vector<size_t> extent_storage;
+		const std::span<const size_t> dimensions = copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), type_spec, extent_storage);
+		for (size_t dimension : dimensions) {
 			total_size *= dimension;
 		}
 		return total_size;
@@ -155,30 +157,30 @@ static int deriveElementStrideBitsFromType(
 }
 
 size_t AstToIr::getEffectiveArrayDimensionCountForCodegen(const DeclarationNode& decl) const {
-	const CanonicalTypeId type_id = sema_.canonicalizeTypeForImplicitConversion(decl.type_specifier_node());
-	if (type_id) {
-		const CanonicalTypeDesc& desc = sema_.typeContext().get(type_id);
-		if (desc.structural_type_id) {
-			if (const auto dimensions = requireFrontendContext().canonicalTypes().arrayDimensions(desc.structural_type_id)) {
-				return dimensions->size();
-			}
-		}
+	const TypeSpecifierNode& type_spec = decl.type_specifier_node();
+	if (type_spec.is_array() || type_spec.has_pointee_array_declarator()) {
+		std::vector<size_t> storage;
+		return copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), type_spec, storage).size();
 	}
+	if (!decl.is_array()) {
+		return 0;
+	}
+	// Missing canonical shape: array rank still stored as declaration bound expressions.
 	return decl.array_dimension_count();
 }
 
 std::vector<size_t> AstToIr::getEffectiveArrayDimensionsForCodegen(const DeclarationNode& decl) const {
-	const CanonicalTypeId type_id = sema_.canonicalizeTypeForImplicitConversion(decl.type_specifier_node());
-	if (type_id) {
-		const CanonicalTypeDesc& desc = sema_.typeContext().get(type_id);
-		if (desc.structural_type_id) {
-			if (auto dimensions = requireFrontendContext().canonicalTypes().arrayDimensions(desc.structural_type_id)) {
-				return *dimensions;
-			}
-		}
+	const TypeSpecifierNode& type_spec = decl.type_specifier_node();
+	if (type_spec.is_array() || type_spec.has_pointee_array_declarator()) {
+		std::vector<size_t> storage;
+		const std::span<const size_t> extents = copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), type_spec, storage);
+		return std::vector<size_t>(extents.begin(), extents.end());
 	}
-
+	if (!decl.is_array()) {
+		return {};
+	}
 	std::vector<size_t> dim_sizes;
+	// Missing canonical shape: array extents still stored as declaration bound expressions.
 	dim_sizes.reserve(decl.array_dimension_count());
 	ConstExpr::EvaluationContext ctx = makeEvalContext(gSymbolTable);
 	for (const auto& dim_expr : decl.array_dimensions()) {
@@ -842,7 +844,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			const TypeSpecifierNode& array_type = constructed_array.type_node();
 			noteCanonicalShapeImport(
 				requireFrontendContext().canonicalTypes(), array_type, CanonicalShapeSite::IrGenerator_MemberAccess_ArrayExtent);
-			const std::span<const size_t> dimensions = array_type.array_dimensions();
+			std::vector<size_t> extent_storage;
+			const std::span<const size_t> dimensions = copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), array_type, extent_storage);
 			if (constructed_array.isAggregateInitialization() && array_type.is_array() && dimensions.size() == multi_dim_chain.subscripts.size()) {
 				const TypeCategory element_type = array_type.category();
 				const int element_size_bits = get_type_size_bits(element_type);
@@ -1152,6 +1155,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			// we need pointer indirection
 			// NOTE: Local arrays with explicit size (e.g., int arr[3]) are NOT pointers
 			// EXCEPTION: Reference-to-array parameters (e.g., int (&arr)[3]) ARE pointers
+			// Missing canonical shape: declaration array bound expression.
 			if (base_uses_array_elements && decl_ptr->array_size().has_value()) {
 				// Check if this is a reference to an array (parameter)
 				// References to arrays need pointer indirection

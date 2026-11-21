@@ -2753,14 +2753,18 @@ ParseResult Parser::parse_array_brace_initializer(const TypeSpecifierNode& type_
 		context.ordered_array_object = orderedDeclaratorIsArrayObject(spec) && !spec.is_array();
 		const bool has_unsized_outer_dimension = spec.has_unsized_outer_array_dimension();
 		if (!has_unsized_outer_dimension) {
+			// Missing canonical shape: outermost array extent while the element may still be dependent.
 			context.array_size = spec.array_size();
 		}
+		// Missing canonical shape: array rank while the element may still be dependent.
 		if (!has_unsized_outer_dimension && spec.array_dimension_count() > 1 && context.array_size.has_value()) {
 			size_t total = 1;
 			if (FrontendContext* active = FrontendContext::active()) {
 				noteCanonicalShapeImport(active->canonicalTypes(), spec, CanonicalShapeSite::Parser_Statements_ArrayExtent);
 			}
-			for (size_t dimension : spec.array_dimensions()) {
+			std::vector<size_t> extent_storage;
+			const std::span<const size_t> dimensions = copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), spec, extent_storage);
+			for (size_t dimension : dimensions) {
 				total *= dimension;
 			}
 			context.flat_total_size = total;
@@ -2776,8 +2780,13 @@ ParseResult Parser::parse_array_brace_initializer(const TypeSpecifierNode& type_
 		} else if (has_unsized_outer_dimension) {
 			element_type_spec.set_unsized_outer_array_dimension(false);
 		} else if (spec.array_dimension_count() > 1) {
-			std::vector<size_t> element_dimensions(
-				spec.array_dimensions().begin() + 1, spec.array_dimensions().end());
+			// Missing canonical shape: array rank while the element may still be dependent.
+			std::vector<size_t> extent_storage;
+			const std::span<const size_t> dimensions = copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), spec, extent_storage);
+			if (dimensions.size() <= 1) {
+				throw InternalError("canonical array rank does not match the parsed rank");
+			}
+			std::vector<size_t> element_dimensions(dimensions.begin() + 1, dimensions.end());
 			element_type_spec.set_array_dimensions(element_dimensions);
 		} else {
 			element_type_spec.set_array(false);
