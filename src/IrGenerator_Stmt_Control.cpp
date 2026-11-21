@@ -3,6 +3,7 @@
 #include "SemanticAnalysis.h"
 #include "CallNodeHelpers.h"
 #include "OverloadResolution.h"
+#include "CanonicalShapeTelemetry.h"
 
 namespace {
 TypeSpecifierNode makeLValueType(TypeSpecifierNode type_spec) {
@@ -983,7 +984,13 @@ void AstToIr::visitRangedForArray(const RangedForStatementNode& node, std::strin
 	if (element_type.array_dimensions().empty()) {
 		element_type.set_array_dimensions({});
 	} else {
-		element_type.remove_outermost_array_dimension();
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		const TypeId shape = requireCanonicalShape(table, element_type);
+		const std::optional<TypeId> element = canonicalArrayElement(table, shape);
+		if (!element.has_value()) {
+			throw InternalError("canonical ranged-for array element is missing");
+		}
+		projectCanonicalDerivedShape(element_type, table, *element, DerivedArrayRankZero::KeepArrayObject);
 	}
 	element_type.set_reference_qualifier(ReferenceQualifier::None);
 	element_type.set_size_in_bits(element_size_bits);

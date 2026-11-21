@@ -519,12 +519,57 @@ remaining pattern schemas by identity, and remove the name fallback.
      pointer arithmetic, pointer subscripts, and direct dereference of pointer
      variables initialized from arrays evaluate. Other flat readers still need
      migration before the projection fields can be removed.
-   - TypeId shape queries are already on main. This branch adds the flat-reader
-     gate, sampled import-gap telemetry, and published class/enum entity lookup
-     for array import, and moves array-extent consumers onto `requireCanonicalShape`
-     except two sizeof shapes that still read the flat extent. The remaining gaps
-     are in
+   - TypeId shape queries, `requireCanonicalShape`, the flat-reader gate, sampled
+     import-gap telemetry, published class/enum array import, and the array-extent
+     consumer move are on main. The flat-reader inventory at that point was 845
+     reads across 69 files. The gate counts alias accessors and only goes down.
+     `requireCanonicalShape` throws on a non-Supported import and during
+     speculative parsing. Production speculative parsing is not the scratch
+     transaction. sizeof of a dependent `UserDefined`/`TypeAlias` array (the
+     array type targets placeholder `T` with extent 5 and has no entity while the
+     template is being defined) and sizeof of an ordinary array with an omitted
+     bound that is not marked unsized stay on the flat extent. See
      [known issues](KNOWN_ISSUES.md#sizeof-of-two-unimported-array-shapes-still-uses-the-flat-extent).
+     Pointer presence and per-level cv did not move. 154 Supported samples
+     disagree with flat depth: a function pointer is one canonical Pointer, flat
+     depth 0 for category `FunctionPointer` and flat depth 1 for category
+     `Function` plus an explicit pointer level, and a member pointer stays
+     canonical depth 0 with `canonicalIsPointer` false because the host test
+     requires that, while flat readers still see depth 1. Where the depth
+     matched, the per-level cv matched. See
+     [known issues](KNOWN_ISSUES.md#pointer-depth-still-disagrees-with-the-canonical-pointer).
+     `__is_same(int* const*, int**)` is true today while overload resolution
+     still distinguishes those types. Identity comparison did not move:
+     `equalTypeSpecifierIdentityImpl`, `are_types_compatible`, and
+     `sameTypeSpecifierShape` still use the flat pointer and array fields. 153
+     pairs that both import match `TypeId` equality and
+     `canonicalSameIgnoringTopCvRef`. The other 227 flat-equal pairs have no
+     publishable identity that can cover the whole compare. Lambda return
+     compatibility is not canonical type equality, and the constexpr overload
+     compare had no suite hits. See
+     [known issues](KNOWN_ISSUES.md#type-identity-comparison-still-uses-the-flat-projection).
+     Derived pointee and element reads: the flat array-element peel in
+     `arrayElementType` (51 Supported calls, canonical element matched the flat
+     peel) and the range-for array element peel (12 Supported calls, same match)
+     now import with `requireCanonicalShape` and project the canonical element
+     back onto the flat depth and extents those consumers use. The flat-reader
+     count for `AggregateElementCursor.h` went from 4 to 1; the range-for site
+     still reads `array_dimensions()` to choose the empty-bound branch.
+     `test_derived_array_row_ret100.cpp` returns 100 from a range-for over
+     `int[2][2]`, and dropping the remaining row bound changes that result.
+     Indirect call dereference (3 of 4 imports `UnmigratedNominal` struct
+     pointer), arrow pseudo-destructor (a struct pointer main accepts is
+     `UnmigratedNominal`, so requiring the canonical pointee throws),
+     member-access dereference (no suite hits), the flat member-pointer pointee
+     fallback (no suite hits), and the QualLookup member-pointer result (61
+     Supported imports with no canonical pointee, plus `UnmigratedCallable`) stay
+     on the flat read. See
+     [known issues](KNOWN_ISSUES.md#derived-pointee-and-element-readers-are-only-partly-canonical).
+     Flat projection fields are not deletable. Writer-adjacent copies of those
+     fields were out of scope. `ConstExprEvaluator_Core.cpp` and
+     `Parser_Templates_Function.cpp` were left for the pointer-payload slice.
+     Boundary 12 is the later constexpr value model; this work did not change
+     `EvalResult`.
    - `Parser_Expr_QualLookup` now asks `runtime_pointer_depth()` for its
      pointer-object tests, compares ternary pointer shapes through the shared
      `has_same_pointer_shape` helper, and builds the `new` result by decaying the

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "AstNodeTypes_DeclNodes.h"
+#include "CanonicalShapeTelemetry.h"
 
 namespace AggregateElements {
 
@@ -74,14 +75,13 @@ inline TypeSpecifierNode arrayElementType(const TypeSpecifierNode& type) {
 		}
 	}
 	if (element_type.is_array() && !element_type.array_dimensions().empty()) {
-		if (element_type.array_dimensions().size() > 1) {
-			std::vector<size_t> remaining_dimensions(
-				element_type.array_dimensions().begin() + 1,
-				element_type.array_dimensions().end());
-			element_type.set_array_dimensions(remaining_dimensions);
-		} else {
-			element_type.set_array(false);
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		const TypeId shape = requireCanonicalShape(table, element_type);
+		const std::optional<TypeId> element = canonicalArrayElement(table, shape);
+		if (!element.has_value()) {
+			throw InternalError("canonical aggregate array element is missing");
 		}
+		projectCanonicalDerivedShape(element_type, table, *element, DerivedArrayRankZero::ClearArray);
 	}
 	return element_type;
 }

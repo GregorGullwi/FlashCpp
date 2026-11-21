@@ -344,6 +344,7 @@ ExprResult AstToIr::generatePseudoDestructorCallIr(const PseudoDestructorCallNod
 				object_decl = get_decl_from_symbol(*symbol);
 				if (object_decl) {
 					object_type = object_decl->type_specifier_node();
+					// Missing canonical shape: UnmigratedNominal struct pointer. The arrow pointee stays on the flat pointer level.
 					if (dtor.is_arrow_access() && object_type.pointer_levels().size() > 0) {
 						object_type.remove_pointer_level();
 					}

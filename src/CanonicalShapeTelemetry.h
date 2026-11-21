@@ -228,6 +228,43 @@ inline void printCanonicalShapeImportHistogram() {
 #endif
 }
 
+// A canonical pointee or array element, written back as the flat pointer depth and array extents the consumer peels.
+// KeepArrayObject matches remove_outermost_array_dimension, which leaves is_array set after the last bound is gone.
+enum class DerivedArrayRankZero : uint8_t {
+	ClearArray,
+	KeepArrayObject,
+};
+
+inline void projectCanonicalDerivedShape(TypeSpecifierNode& syntax, const CanonicalTypeTable& table, TypeId derived, DerivedArrayRankZero rank_zero) {
+	syntax.limit_pointer_depth(0);
+	const size_t depth = canonicalPointerLevelCount(table, derived);
+	if (depth > 8) {
+		throw InternalError("canonical derived pointer depth exceeds the flat projection buffer");
+	}
+	if (depth > 0) {
+		CVQualifier cvs[8] = {};
+		canonicalCopyPointerLevelCvs(table, derived, std::span<CVQualifier>(cvs, depth));
+		for (size_t index = 0; index < depth; ++index) {
+			syntax.add_pointer_level(cvs[index]);
+		}
+	}
+	const size_t rank = canonicalArrayExtentCount(table, derived);
+	if (rank > 8) {
+		throw InternalError("canonical derived array rank exceeds the flat projection buffer");
+	}
+	if (rank == 0) {
+		if (rank_zero == DerivedArrayRankZero::KeepArrayObject && syntax.is_array() && !syntax.has_pointee_array_declarator()) {
+			syntax.set_array(true, std::nullopt);
+			return;
+		}
+		syntax.set_array(false, std::nullopt);
+		return;
+	}
+	size_t extents[8] = {};
+	canonicalCopyArrayExtents(table, derived, std::span<size_t>(extents, rank));
+	syntax.set_array_dimensions(std::span<const size_t>(extents, rank));
+}
+
 // storage must outlive the returned span. Unknown bounds are extent 0.
 inline std::span<const size_t> copyRequiredArrayExtents(CanonicalTypeTable& table, const TypeSpecifierNode& syntax, std::vector<size_t>& storage) {
 	const TypeId shape = requireCanonicalShape(table, syntax);
