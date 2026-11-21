@@ -2683,6 +2683,55 @@ inline void checkNullPointerValues() {
 	}
 }
 
+inline void checkStructuralPointerIdentities() {
+	CanonicalTypeTable table;
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId object_pointer = table.pointer(integer);
+	const TypeIndex integer_value{0, TypeCategory::Int};
+	const auto import_object = [&](EntityId target, int64_t offset, std::optional<TypeId> field_type) {
+		return tryImportCanonicalPointerIdentityPayload(table, FlashCpp::NonTypeValueIdentityKind::ObjectPointer, target,
+			offset, TypeId{}, integer_value, field_type);
+	};
+	const auto object_value = import_object(EntityId{40341}, -3, object_pointer);
+	require(object_value.has_value());
+	const CanonicalTypeNode object_node = table.node(*object_value);
+	require(object_node.kind == CanonicalTypeKind::ObjectPointerValue);
+	require(object_node.child == object_pointer);
+	require(unpackObjectPointerValueTarget(object_node.array_extent) == EntityId{40341});
+	require(unpackObjectPointerValueOffset(object_node.array_extent) == -3);
+	require(object_value == import_object(EntityId{40341}, -3, object_pointer));
+	// A top-level template argument publishes the pointee type instead of a field type.
+	require(object_value == import_object(EntityId{40341}, -3, std::nullopt));
+	require(object_value != import_object(EntityId{40342}, -3, object_pointer));
+	require(object_value != import_object(EntityId{40341}, -2, object_pointer));
+	require(!import_object(EntityId{}, -3, object_pointer).has_value());
+	require(!import_object(EntityId{40341}, int64_t{1} << 40, object_pointer).has_value());
+	require(!import_object(EntityId{40341}, -3, integer).has_value());
+
+	const TypeId parameters[] = {table.builtin(CanonicalBuiltinKind::Short)};
+	const TypeId function = table.function(integer, parameters, false, CVQualifier::None, ReferenceQualifier::None,
+		false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	const TypeId wide_function = table.function(table.builtin(CanonicalBuiltinKind::LongLong), parameters, false,
+		CVQualifier::None, ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	const TypeId function_pointer = table.pointer(function);
+	const auto import_function = [&](EntityId target, TypeId signature, std::optional<TypeId> field_type) {
+		return tryImportCanonicalPointerIdentityPayload(table, FlashCpp::NonTypeValueIdentityKind::FunctionPointer, target,
+			0, signature, TypeIndex{}, field_type);
+	};
+	const auto function_value = import_function(EntityId{40351}, function, function_pointer);
+	require(function_value.has_value());
+	const CanonicalTypeNode function_node = table.node(*function_value);
+	require(function_node.kind == CanonicalTypeKind::FunctionPointerValue);
+	require(function_node.child == function_pointer);
+	require(function_node.array_extent == EntityId{40351}.value);
+	require(function_value == import_function(EntityId{40351}, function, std::nullopt));
+	require(!import_function(EntityId{}, function, function_pointer).has_value());
+	require(!import_function(EntityId{40351}, TypeId{}, function_pointer).has_value());
+	require(!import_function(EntityId{40351}, table.record(EntityId{40352}), function_pointer).has_value());
+	require(!import_function(EntityId{40351}, wide_function, function_pointer).has_value());
+	require(!import_function(EntityId{40351}, function, table.pointer(wide_function)).has_value());
+}
+
 inline void checkTemplateSpecializationStructuralValues() {
 	CanonicalTypeTable table;
 	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
@@ -3751,6 +3800,7 @@ inline int run() {
 	checkRecordMemberProperties();
 	checkMemberFunctionSignatureTransactions();
 	checkFunctionPointerValues();
+	checkStructuralPointerIdentities();
 	checkUnionValues();
 	checkStructuralEnumScalars();
 	checkStructuralBitfieldScalars();

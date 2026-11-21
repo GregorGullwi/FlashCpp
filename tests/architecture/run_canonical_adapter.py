@@ -7,6 +7,41 @@ import subprocess
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 BASELINE = ROOT / "tests/migration_counters/canonical_adapter_baseline.tsv"
 
+TRACE_PATTERN = re.compile(
+    r"(?:(?:\d+,\d+,[0-3],\d+,\d+)/)*(?:0,\d+,0,0,0|8,0,0,0,\d+|11,0,0,0,\d+)"
+)
+STRUCTURAL_VALUE_TRACE_PATTERN = re.compile(r"2[567],")
+
+
+def flatten_structural_trace(trace):
+    """Drop the balanced subobject parentheses of a structural value trace."""
+    depth = 0
+    flattened = []
+    for character in trace:
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth < 0:
+                return None
+        else:
+            flattened.append(character)
+    if depth != 0:
+        return None
+    return "".join(flattened)
+
+
+def is_valid_trace(trace):
+    if TRACE_PATTERN.fullmatch(trace):
+        return True
+    # A structural value request nests its member values in parentheses. Its
+    # flattened node sequence must still be a type chain ending in a concrete
+    # type node, so numeric TypeIds cannot leak into a structural trace.
+    if not STRUCTURAL_VALUE_TRACE_PATTERN.match(trace):
+        return False
+    flattened = flatten_structural_trace(trace)
+    return flattened is not None and TRACE_PATTERN.fullmatch(flattened) is not None
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -39,10 +74,7 @@ def main():
         if not traces:
             raise RuntimeError(f"{source}: no production structural trace")
         for trace in traces:
-            if not re.fullmatch(
-                r"(?:(?:\d+,\d+,[0-3],\d+,\d+)/)*(?:0,\d+,0,0,0|8,0,0,0,\d+|11,0,0,0,\d+)",
-                trace,
-            ):
+            if not is_valid_trace(trace):
                 raise RuntimeError(f"{source}: malformed structural request {trace}")
         if not any(re.search(r"(?:^|/)5,0,0,", trace) for trace in traces):
             raise RuntimeError(f"{source}: no canonical array request")

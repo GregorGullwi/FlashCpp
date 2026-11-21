@@ -2257,10 +2257,76 @@ inline std::optional<TypeId> tryImportCanonicalMemberPointerValue(CanonicalTypeT
 	return std::nullopt;
 }
 
+// A non-null pointer identity is the published target EntityId plus, for an
+// object pointer, a bounded element offset. Structural members already have the
+// canonical declared field type; a template argument publishes only the source
+// value type, which names the pointee for an object pointer and is not used for
+// a function pointer because its target signature is published separately.
+// Both import paths reach this payload guard through the identity wrapper below,
+// so a missing target or an out-of-range offset cannot be accepted on one path
+// and deferred on the other.
+inline std::optional<TypeId> tryImportCanonicalPointerIdentityPayload(CanonicalTypeTable& table,
+	FlashCpp::NonTypeValueIdentityKind kind, EntityId target, int64_t offset, TypeId canonical_function_type,
+	TypeIndex value_type_index, std::optional<TypeId> field_type) {
+	if (kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer) {
+		if (!target || !canonical_function_type) {
+			return std::nullopt;
+		}
+		const CanonicalTypeNode function = table.node(canonical_function_type);
+		if (function.kind != CanonicalTypeKind::Function) {
+			return std::nullopt;
+		}
+		TypeId pointer_type{};
+		if (field_type.has_value()) {
+			pointer_type = *field_type;
+			if (!pointer_type) {
+				return std::nullopt;
+			}
+			const CanonicalTypeNode pointer = table.node(pointer_type);
+			if (pointer.kind != CanonicalTypeKind::Pointer ||
+				!isCanonicalFunctionPointerTargetCompatible(function, table.node(pointer.child))) {
+				return std::nullopt;
+			}
+		} else {
+			pointer_type = table.pointer(canonical_function_type);
+		}
+		return table.functionPointerValue(pointer_type, target, canonical_function_type);
+	}
+	if (kind != FlashCpp::NonTypeValueIdentityKind::ObjectPointer || !target ||
+		offset < std::numeric_limits<int32_t>::min() || offset > std::numeric_limits<int32_t>::max()) {
+		return std::nullopt;
+	}
+	TypeId pointer_type{};
+	if (field_type.has_value()) {
+		pointer_type = *field_type;
+	} else {
+		const CanonicalTypeImport projected = importCanonicalFunctionComponentFromProjection(
+			table, value_type_index, 1, ReferenceQualifier::None, CanonicalTypeImportContext::Exact);
+		if (projected.status != CanonicalTypeImportStatus::Supported) {
+			return std::nullopt;
+		}
+		pointer_type = projected.type;
+	}
+	if (!pointer_type || table.node(pointer_type).kind != CanonicalTypeKind::Pointer) {
+		return std::nullopt;
+	}
+	return table.objectPointerValue(pointer_type, target, offset);
+}
+
+inline std::optional<TypeId> tryImportCanonicalPointerIdentityValue(CanonicalTypeTable& table,
+	const FlashCpp::NonTypeValueIdentity& value, std::optional<TypeId> field_type) {
+	return tryImportCanonicalPointerIdentityPayload(table, value.kind, value.object_target, value.pointer_offset,
+		value.canonical_function_type, value.value_type_index, field_type);
+}
+
 inline std::optional<TypeId> tryImportCanonicalStructuralFieldValue(CanonicalTypeTable& table, TypeId field_type,
 	const FlashCpp::NonTypeValueIdentity& value, size_t storage_size, std::optional<uint8_t> bit_width) {
 	if (value.is_dependent) {
 		return std::nullopt;
+	}
+	if (value.kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
+		value.kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer) {
+		return tryImportCanonicalPointerIdentityValue(table, value, std::optional<TypeId>{field_type});
 	}
 	if (value.kind == FlashCpp::NonTypeValueIdentityKind::Integral) {
 		return tryImportCanonicalStructuralScalar(table, field_type, static_cast<uint64_t>(value.value), storage_size, bit_width);
@@ -2641,6 +2707,10 @@ inline std::optional<TypeId> tryImportCanonicalValue(CanonicalTypeTable& table, 
 	}
 	if (value.kind == FlashCpp::NonTypeValueIdentityKind::Integral) {
 		return tryImportCanonicalIntegralValue(table, value.value_type_index, value.value);
+	}
+	if (value.kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
+		value.kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer) {
+		return tryImportCanonicalPointerIdentityValue(table, value, std::nullopt);
 	}
 	if (value.kind == FlashCpp::NonTypeValueIdentityKind::StructuralClass) {
 		return tryImportCanonicalStructuralValue(table, value.structural_value);
