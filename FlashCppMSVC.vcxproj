@@ -212,6 +212,9 @@
     <ClCompile Include="src\CanonicalTypes.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="src\CanonicalTypeAdapter_NominalArray.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="src\CodeViewDebug.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
     </ClCompile>

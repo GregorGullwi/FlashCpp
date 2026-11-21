@@ -780,6 +780,28 @@ inline EntityId publishedNominalEntity(const TypeSpecifierNode& syntax) {
 	return {};
 }
 
+// Defined in CanonicalTypeAdapter_NominalArray.cpp. A class or enum array whose
+// element identity is only on the type index, including an instantiated class
+// template, needs the legacy type registry. The host architecture test never
+// builds that shape and defines this as UnmigratedNominal.
+CanonicalTypeImport importCanonicalNominalArrayWithoutDirectEntity(CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context);
+
+inline CanonicalTypeImport importPublishedNominalArray(CanonicalTypeTable& table, const TypeSpecifierNode& syntax,
+	CanonicalTypeImportContext context, EntityId entity, bool is_record, bool has_ordinary_array, bool has_pointee_array) {
+	if (!entity || (is_record && !table.hasRecordLayout(entity)) || (!is_record && !table.hasEnumLayout(entity))) {
+		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+	}
+	CanonicalTypeTransaction transaction(table);
+	const TypeId element = is_record ? table.record(entity) : table.enumeration(entity);
+	TypeId id = table.qualify(element, syntax.cv_qualifier());
+	// Share the builtin/dependent array shaping so an unknown outer bound is
+	// represented for nominal elements exactly as for builtin ones.
+	id = applyCanonicalPointerArrayReference(table, id, syntax, context, has_ordinary_array, has_pointee_array);
+	transaction.commit();
+	return {id, CanonicalTypeImportStatus::Supported};
+}
+
 inline CanonicalTypeImport importCanonicalCompleteNominalArray(CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
 	const bool is_record = syntax.category() == TypeCategory::Struct;
@@ -799,38 +821,11 @@ inline CanonicalTypeImport importCanonicalCompleteNominalArray(CanonicalTypeTabl
 			return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
 		}
 	}
-	CanonicalTypeTransaction transaction(table);
-	TypeId element{};
-	const EntityId entity = publishedNominalEntity(syntax);
+	const EntityId entity = resolveNamedTypeEntity(syntax);
 	if (entity) {
-		if ((is_record && !table.hasRecordLayout(entity)) || (!is_record && !table.hasEnumLayout(entity))) {
-			return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
-		}
-		element = is_record ? table.record(entity) : table.enumeration(entity);
-	} else if (is_record) {
-		const TypeInfo* type_info = tryGetTypeInfo(syntax.type_index());
-		const StructTypeInfo* record = type_info != nullptr ? type_info->getStructInfo() : nullptr;
-		const StructDeclarationNode* declaration = record != nullptr ? record->declaration_node : nullptr;
-		const StructDeclarationNode* pattern = declaration != nullptr ? declaration->injected_class_pattern_declaration() : nullptr;
-		// An instantiated class template publishes its pattern template, not an entity.
-		// Array import reuses that specialization instead of inventing an entity.
-		if (pattern == nullptr || !pattern->has_template_decl_id() || type_info == nullptr) {
-			return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
-		}
-		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *type_info);
-		if (imported.status != CanonicalTypeImportStatus::Supported) {
-			return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
-		}
-		element = imported.type;
-	} else {
-		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+		return importPublishedNominalArray(table, syntax, context, entity, is_record, has_ordinary_array, has_pointee_array);
 	}
-	TypeId id = table.qualify(element, syntax.cv_qualifier());
-	// Share the builtin/dependent array shaping so an unknown outer bound is
-	// represented for nominal elements exactly as for builtin ones.
-	id = applyCanonicalPointerArrayReference(table, id, syntax, context, has_ordinary_array, has_pointee_array);
-	transaction.commit();
-	return {id, CanonicalTypeImportStatus::Supported};
+	return importCanonicalNominalArrayWithoutDirectEntity(table, syntax, context);
 }
 
 inline CanonicalCallingConvention toCanonicalCallingConvention(CallingConvention convention) {

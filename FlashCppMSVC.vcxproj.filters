@@ -24,6 +24,9 @@
     <ClCompile Include="src\AstNodeTypes.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\CanonicalTypeAdapter_NominalArray.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\CodeViewDebug.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

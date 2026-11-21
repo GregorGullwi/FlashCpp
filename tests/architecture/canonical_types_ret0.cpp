@@ -10,6 +10,13 @@
 // parser stack or a member-context stack.
 void tryBindPublishedTypeEntity(TypeSpecifierNode&) {}
 
+// Arrays exercised here already carry an EntityId. The type-index and
+// class-template array import lives in the compiler translation unit.
+CanonicalTypeImport importCanonicalNominalArrayWithoutDirectEntity(CanonicalTypeTable&,
+	const TypeSpecifierNode&, CanonicalTypeImportContext) {
+	return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+}
+
 ChunkedStringAllocator gChunkedStringAllocator;
 #ifdef _WIN32
 TargetDataModel g_target_data_model = TargetDataModel::LLP64;
