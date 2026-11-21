@@ -1042,6 +1042,18 @@ std::optional<FlashCpp::StructuralClassValue*> makeStructuralArrayValueIdentityI
 						(element.is_null_member_pointer || element.as_int() == 0);
 					if (is_null) {
 						member.scalar_value = FlashCpp::NonTypeValueIdentity::makeNullptr(element_type);
+					} else if (declared_category == TypeCategory::FunctionPointer && element.pointer_to_var.isValid()) {
+						const std::optional<ASTNode> symbol =
+							gSymbolTable.lookup(StringTable::getStringView(element.pointer_to_var));
+						if (!symbol.has_value() || !symbol->is<FunctionDeclarationNode>()) {
+							return std::nullopt;
+						}
+						const FunctionDeclarationNode& target = symbol->as<FunctionDeclarationNode>();
+						FlashCpp::NonTypeValueIdentity identity = FlashCpp::NonTypeValueIdentity::makeFunctionPointer(
+							element_type, element.pointer_to_var, target.entity_id());
+						identity.canonical_function_type = tryImportCanonicalTargetFunctionType(
+							requireFrontendContext().canonicalTypes(), target).value_or(TypeId{});
+						member.scalar_value = identity;
 					} else if (element.pointer_to_var.isValid() && element.source_declaration != nullptr) {
 						const EntityId target = publishVariableDeclarationIdentity(requireFrontendContext().declarationBuilder(),
 							gSymbolTable, element.source_declaration->declaration());
@@ -1155,6 +1167,20 @@ std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentityIm
 						(member_result.is_null_member_pointer || member_result.as_int() == 0);
 					if (is_null) {
 						member.scalar_value = FlashCpp::NonTypeValueIdentity::makeNullptr(member_info.type_index);
+					} else if (declared_category == TypeCategory::FunctionPointer && member_result.pointer_to_var.isValid()) {
+						// A function pointer member contributes the function it designates, so
+						// the target entity and its published signature are part of the value.
+						const std::optional<ASTNode> symbol =
+							gSymbolTable.lookup(StringTable::getStringView(member_result.pointer_to_var));
+						if (!symbol.has_value() || !symbol->is<FunctionDeclarationNode>()) {
+							return false;
+						}
+						const FunctionDeclarationNode& target = symbol->as<FunctionDeclarationNode>();
+						FlashCpp::NonTypeValueIdentity identity = FlashCpp::NonTypeValueIdentity::makeFunctionPointer(
+							member_info.type_index, member_result.pointer_to_var, target.entity_id());
+						identity.canonical_function_type = tryImportCanonicalTargetFunctionType(
+							requireFrontendContext().canonicalTypes(), target).value_or(TypeId{});
+						member.scalar_value = identity;
 					} else if (member_result.pointer_to_var.isValid() && member_result.source_declaration != nullptr) {
 						// [temp.arg.nontype]: a pointer member contributes the object it
 						// points to. Without a published target the value has no identity,
