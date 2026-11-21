@@ -3217,6 +3217,7 @@ trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const Typ
 			trailing_plan = tryBuildCanonicalConversionValueTailPlan(table, candidate.return_type, target_import.type, use_compatibility);
 		}
 		if (use_compatibility) {
+			recordCanonicalConversionCompatibilityFallback();
 			trailing_plan = tryBuildCanonicalConversionFunctionTailPlan(candidate.selection.function->decl_node().type_specifier_node(), target_type);
 		}
 		if (!trailing_plan.has_value() || !trailing_plan->is_valid || trailing_plan->rank == ConversionRank::UserDefined) {
@@ -4045,6 +4046,7 @@ inline std::optional<ConversionPlan> tryBuildCanonicalConversionValueTailPlan(Ca
 			return reference_plan;
 		}
 		use_compatibility = true;
+		recordCanonicalConversionCompatibilityFallback();
 		return std::nullopt;
 	}
 	const TypeId target = stripCanonicalTopCv(table, resolved_target).first;
@@ -4123,6 +4125,7 @@ inline std::optional<ConversionPlan> tryBuildCanonicalConversionValueTailPlan(Ca
 		return structural;
 	}
 	use_compatibility = true;
+	recordCanonicalConversionCompatibilityFallback();
 	return std::nullopt;
 }
 
@@ -4307,6 +4310,7 @@ inline ConversionPlan buildOrderedDeclaratorConversionPlan(
 		canonical_plan.has_value()) {
 		return *canonical_plan;
 	}
+	recordCanonicalConversionCompatibilityFallback();
 	return buildOrderedDeclaratorCompatibilityPlan(from, to);
 }
 
@@ -4356,6 +4360,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			StandardConversionKind::PointerConversion,
 			true};
 	}
+	recordCanonicalConversionCompatibilityFallback();
 	from.require_legacy_declarator_projection("overload/conversion resolution");
 	to.require_legacy_declarator_projection("overload/conversion resolution");
 	auto stripReferenceQualifier = [](TypeSpecifierNode spec) {
