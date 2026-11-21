@@ -110,6 +110,15 @@ class entity by owner, name and a signature that is always zero for classes, and
 `OwnerId` has no payload for a structural argument identity, so distinguishing two
 instances of one template needs the structural-keyed registry work
 `TemplateDeclId`-keyed owners belong to. Do not distinguish instances by spelling.
+A function pointer member whose target returns a non-void type loses its identity
+before the structural value exists: `constexpr Key key{&function, 1}` with an
+`int (*)()` member records an integer zero instead of the function target, while a
+`void (*)()` member keeps its published target and signature. Two such values
+therefore compare equal as template arguments, and two distinct functions collapse
+into the same one. This is producer-side, in the constexpr evaluation of a
+non-void function address-of; canonical import cannot recover the target and must
+not guess one from a name.
+
 Object pointer members and pointer array elements of structural values now carry
 their
 published target and element offset, so a value that differs only in a pointer
