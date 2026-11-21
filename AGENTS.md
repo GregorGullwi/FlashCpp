@@ -23,7 +23,7 @@
 - Prefer StringBuilder instead of using std::string concatination, apart from when throwing exceptions, since we don't care about performance in that context.
 - Call `emit` functions like `emitMovFromFrameBySize` instead of `generateMov`. Do not add opcodes manually to `textSectionData` in `IRConverter.h`, make helper functions if no fitting `emit` function exist.
 - Never use default parameter values in function or method signatures in the codebase, tests are excluded from this rule. Every argument must be passed explicitly by the caller. Default parameters hide misuse (e.g., forgetting to propagate a flag) and make call sites silently wrong instead of producing a compile error.
-- Multi-line comments should have the same indentation as the code it describes.
+- Comments should have the same indentation as the code it describes.
 - Avoid shared_ptr and unique_ptr. Prefer `FrontendContext`-owned typed arenas
   and stable IDs. A `ChunkedVector<T>` arena must be pinned because copying or
   moving the arena can invalidate element addresses; stable addresses are an
@@ -94,11 +94,12 @@ To show IR, use `--log-level=Codegen:debug`
   headers, conditions, ternaries, and nested calls. Breaking such a line is a
   defect: re-join it when touching the code, and do not introduce new wraps for
   a line that fits.
-* Break a construct only when the joined line would exceed 150 characters, or
+* Break a construct only when the joined line would exceed 160 characters, or
   when a braced/initializer list or a call whose arguments form a nested block
   is genuinely clearer multi-line. When a construct must be broken, fill each
   line up to the limit before wrapping rather than wrapping one argument or
-  operand per line.
+  operand per line. The exception is if-statements, which never should be a
+  one-liner;
  - bad:
 	std::string_view base_template_name =
 		StringTable::getStringView(deferred_base.base_template_name);
@@ -109,8 +110,12 @@ To show IR, use `--log-level=Codegen:debug`
 		size_t parent_scope) const;
 	const std::vector<TypeSpecifierNode> deduced_arg_types =
 		apply_lvalue_reference_deduction(args, arg_types);
+	if (cond) { do(); }
  - good:
 	std::string_view base_template_name = StringTable::getStringView(deferred_base.base_template_name);
 	for (int i : collection) {
 	std::optional<ParameterMapping> mapArgument(const ASTNode& argument, size_t parent_scope) const;
 	const std::vector<TypeSpecifierNode> deduced_arg_types = apply_lvalue_reference_deduction(args, arg_types);
+	if (cond) {
+		do();
+	}
