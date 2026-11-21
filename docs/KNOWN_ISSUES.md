@@ -96,16 +96,20 @@ target identity must survive evaluation, structural serialization/rehydration,
 equality/hash, and template argument binding. Do not recover target identity from
 a spelling or ABI symbol.
 
-Object pointer arguments publish a target only when the address-of operand is a
-bare identifier. For a qualified variable, a class static member, a data-member
-address, or an array element, the payload keeps the spelling or degenerates to an
-integral value, so two distinct objects can instantiate the same specialization:
-`Tag<&scope_a::first>` and `Tag<&scope_a::second>` compare equal, as do
-`Tag<&HolderA::value>` and `Tag<&HolderB::value>`. Pointer members and pointer
-array elements of structural values are refused by the producer, so the owning
-value collapses and compares equal to a different one. Resolve the evaluator's own
-declaration origin into a published `EntityId` for every address-of and subobject
-form; that carrier change belongs to constexpr evaluation and template-argument
+Object pointer arguments publish a target when the address-of operand is a bare
+identifier or a namespace-qualified variable; both now resolve the declaration and
+publish its `EntityId`. A class static member, a data-member address, and an array
+element still lose identity, so two distinct objects can instantiate the same
+specialization: `Tag<&HolderA::value>` and `Tag<&HolderB::value>` compare equal. The
+class-owned forms cannot reuse the variable publication path, because publication
+resolves the owner from the lexical scope and class scopes are not publishable;
+they need a class-owner handoff (an `OwnerId` or published `EntityId` for the
+enclosing class) that a static-member declaration does not currently carry. Pointer
+members and pointer array elements of structural values are refused by the producer,
+so the owning value collapses and compares equal to a different one. Resolve the
+evaluator's own declaration origin into a published `EntityId` for every address-of
+and subobject form; that carrier change belongs to constexpr evaluation and
+template-argument
 construction, not to canonical import.
 
 Missing field-layout and dependent base facts still fail closed. The
