@@ -60,6 +60,27 @@ struct ConstAwareMemberCandidateSet;
 
 namespace ConstExpr {
 
+// A dependent alias target such as T[5] can carry a flat extent before the element has a
+// published entity. UserDefined and TypeAlias placeholders in that state have no canonical
+// element to wrap. A stamped entity still goes through the importer.
+inline bool dependentAliasTargetLacksPublishedElement(const TypeSpecifierNode& type_spec) {
+	const TypeCategory category = type_spec.category();
+	if (category != TypeCategory::UserDefined && category != TypeCategory::TypeAlias) {
+		return false;
+	}
+	if (type_spec.has_type_entity()) {
+		return false;
+	}
+	if (type_spec.has_injected_class_declaration() && type_spec.injected_class_declaration()->has_entity_id()) {
+		return false;
+	}
+	const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+	if (type_info == nullptr || !type_info->isDependentPlaceholder()) {
+		return false;
+	}
+	return true;
+}
+
 inline std::optional<size_t> tryGetConstexprTypeSizeBytes(const TypeSpecifierNode& type_spec) {
 	if (type_spec.has_ordered_declarator()) {
 		const int size_bits = getTypeSpecSizeBits(type_spec);
@@ -74,7 +95,14 @@ inline std::optional<size_t> tryGetConstexprTypeSizeBytes(const TypeSpecifierNod
 				CanonicalShapeSite::ConstExprEvaluator_TryGetTypeSize_ArrayExtent);
 		}
 		std::vector<size_t> extent_storage;
-		const std::span<const size_t> dimensions = copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), type_spec, extent_storage);
+		const bool published_array_bound = !type_spec.array_dimensions().empty() || type_spec.has_unsized_outer_array_dimension();
+		const bool dependent_alias_without_element = dependentAliasTargetLacksPublishedElement(type_spec);
+		// Missing canonical shapes: a published element identity for a dependent alias
+		// target, and an omitted bound that is not an unsized array.
+		std::span<const size_t> dimensions = type_spec.array_dimensions();
+		if (published_array_bound && !dependent_alias_without_element) {
+			dimensions = copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), type_spec, extent_storage);
+		}
 		TypeSpecifierNode element_type = type_spec;
 		element_type.set_array_dimensions({});
 		const int element_size_bits = getTypeSpecSizeBits(element_type);
