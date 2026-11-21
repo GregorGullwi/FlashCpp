@@ -373,184 +373,96 @@ ExprResult AstToIr::generatePseudoDestructorCallIr(const PseudoDestructorCallNod
 }
 
 ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode, ExpressionContext context) {
-	ExprResult object_result = visitExpressionNode(ptmNode.object().as<ExpressionNode>(), ExpressionContext::LValueAddress);
-	if (object_result.effectiveIrType() == IrType::Void && !object_result.size_in_bits.is_set()) {
-		FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: object expression returned empty operands");
-		return ExprResult{};
+	const Token& token = ptmNode.operator_token();
+	const SizeInBits pointer_size{POINTER_SIZE_BITS};
+	const DataMemberPointerAccessPlan* plan = sema_.getDataMemberPointerAccessPlan(ptmNode);
+	const bool receiver_needs_address = !ptmNode.is_arrow() || (plan != nullptr && plan->decay_array_receiver);
+	ExprResult receiver = visitExpressionNode(ptmNode.object().as<ExpressionNode>(), receiver_needs_address ? ExpressionContext::LValueAddress
+		: ExpressionContext::Load);
+	if (receiver.effectiveIrType() == IrType::Void && !receiver.size_in_bits.is_set()) {
+		FLASH_LOG(Codegen, Error, "Pointer-to-member access receiver returned an empty value");
+		return {};
 	}
 
-	ExprResult ptr_result = visitExpressionNode(ptmNode.member_pointer().as<ExpressionNode>());
-	if (ptr_result.effectiveIrType() == IrType::Void && !ptr_result.size_in_bits.is_set()) {
-		FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: member pointer expression returned empty operands");
-		return ExprResult{};
+	// Capture the receiver's address before evaluating the right operand.
+	if (!receiver_needs_address) {
+		receiver = materializeAddressResultForValueContext(receiver, nativeTypeIndex(TypeCategory::UnsignedLongLong), TypeCategory::UnsignedLongLong,
+			pointer_size, PointerDepth{1}, ReferenceQualifier::None, token);
 	}
-
-	TempVar object_addr = var_counter.next();
-	if (ptmNode.is_arrow()) {
-		if (std::holds_alternative<StringHandle>(object_result.value) || std::holds_alternative<LocalVarId>(object_result.value)) {
-			AssignmentOp assign_op;
-			assign_op.result = object_addr;
-			assign_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, object_addr);
-			assign_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, toIrValue(object_result.value));
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
-		} else if (const auto* temp_var = std::get_if<TempVar>(&object_result.value)) {
-			object_addr = *temp_var;
-		} else {
-			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: unexpected object operand type for ->*");
-			return ExprResult{};
+	TempVar receiver_address = [&] {
+		if (receiver_needs_address && receiver.storage != ValueStorage::ContainsAddress) {
+			return emitAddressOf(receiver.category(), receiver.size_in_bits.value, toIrValue(receiver.value), token);
 		}
-	} else {
-		if (std::holds_alternative<StringHandle>(object_result.value) || std::holds_alternative<LocalVarId>(object_result.value)) {
-			AddressOfOp addr_op;
-			addr_op.result = object_addr;
-			addr_op.operand = TypedValue{
-				.size_in_bits = object_result.size_in_bits,
-				.value = toIrValue(object_result.value),
-				.type_index = nativeTypeIndex(object_result.typeEnum()),
-				.pointer_depth = PointerDepth{},
-				.ir_type = toIrType(object_result.typeEnum())};
-			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
-		} else if (const auto* temp_var = std::get_if<TempVar>(&object_result.value)) {
-			object_addr = *temp_var;
-		} else {
-			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: unexpected object operand type for .*");
-			return ExprResult{};
+		if (const auto* temp = std::get_if<TempVar>(&receiver.value)) {
+			return *temp;
 		}
+		const TempVar result = var_counter.next();
+		AssignmentOp capture;
+		capture.result = result;
+		capture.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, pointer_size, result);
+		capture.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, pointer_size, toIrValue(receiver.value));
+		capture.dereference_rhs_references = false;
+		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(capture), token));
+		return result;
+	}();
+
+	const ExprResult member_pointer = visitExpressionNode(ptmNode.member_pointer().as<ExpressionNode>());
+	if (member_pointer.effectiveIrType() == IrType::Void && !member_pointer.size_in_bits.is_set()) {
+		FLASH_LOG(Codegen, Error, "Pointer-to-member access right operand returned an empty value");
+		return {};
 	}
 
-	// The member pointer value is relative to its declared owner. When the
-	// object's class derives from that owner, adjust the object address to the
-	// owner subobject before adding the member offset.
-	const std::optional<TypeId> member_owner = sema_.getMemberPointerOwnerType(ptmNode.member_pointer());
-	const TypeId member_pointer_identity = sema_.getExpressionStructuralTypeId(ptmNode.member_pointer());
-	bool member_pointer_has_identity = false;
-	if (member_pointer_identity) {
-		CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
-		const TypeId member_pointer =
-			canonical_types.withoutTopLevelQualifiers(canonicalTypeWithoutReference(canonical_types, member_pointer_identity));
-		const CanonicalTypeKind kind = canonical_types.node(member_pointer).kind;
-		member_pointer_has_identity =
-			kind == CanonicalTypeKind::MemberObjectPointer || kind == CanonicalTypeKind::MemberFunctionPointer;
-	}
-	if (!member_owner.has_value() && member_pointer_has_identity) {
-		throw InternalError("Pointer-to-member access is missing the published member owner type");
-	}
-	if (member_owner.has_value()) {
-		const std::optional<TypeSpecifierNode> object_syntax = sema_.getExpressionType(ptmNode.object());
-		if (object_syntax.has_value()) {
-			CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
-			const TypeId object_type = sema_.getExpressionStructuralTypeId(ptmNode.object());
-			TypeId object_class = object_type
-				? stripCanonicalTopCv(canonical_types, canonicalTypeWithoutReference(canonical_types, object_type)).first
-				: TypeId{};
-			if (!object_class && object_syntax->type_index().is_valid()) {
-				if (const TypeInfo* object_info = tryGetTypeInfo(object_syntax->type_index())) {
-					const CanonicalTypeImport imported_object = importCanonicalClassTypeInfo(canonical_types, *object_info);
-					if (imported_object.status == CanonicalTypeImportStatus::Supported) {
-						object_class = imported_object.type;
-					}
-				}
-			}
-			if (ptmNode.is_arrow() && object_class) {
-				for (uint32_t depth = 0; depth < 8; ++depth) {
-					object_class = stripCanonicalTopCv(canonical_types, canonicalTypeWithoutReference(canonical_types, object_class)).first;
-					if (canonical_types.node(object_class).kind != CanonicalTypeKind::Pointer) {
-						break;
-					}
-					object_class = canonical_types.node(object_class).child;
-				}
-			}
-			const CanonicalTypeKind object_kind = object_class ? canonical_types.node(object_class).kind : CanonicalTypeKind::Builtin;
-			if (object_class && (object_kind == CanonicalTypeKind::Record || object_kind == CanonicalTypeKind::TemplateSpecialization) &&
-				object_class != *member_owner) {
-				const std::optional<int64_t> base_offset =
-					findCanonicalNonVirtualBaseOffset(canonical_types, object_class, *member_owner, BaseSubobjectAccess::PublicOnly);
-				if (base_offset.has_value() && *base_offset > 0) {
-					TempVar adjusted_object = var_counter.next();
-					BinaryOp add_base;
-					add_base.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, object_addr);
-					add_base.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS},
-						static_cast<unsigned long long>(*base_offset));
-					add_base.result = adjusted_object;
-					ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_base), ptmNode.operator_token()));
-					object_addr = adjusted_object;
-				} else if (!base_offset.has_value()) {
-					const std::optional<DerivedBaseConversionKind> conversion =
-						classifyCanonicalDerivedBaseConversion(canonical_types, object_class, *member_owner);
-					if (conversion == DerivedBaseConversionKind::PublicVirtual) {
-						throw makeStructuredCompileError(
-							context_->diagnostics(),
-							DiagnosticId::VirtualBaseMemberPointerAccessUnsupported,
-							DiagnosticSeverity::Error,
-							SourceLocation::fromToken(ptmNode.operator_token()),
-							"member pointer access through a virtual base is not supported",
-							{});
-					}
-					if (conversion == DerivedBaseConversionKind::Inaccessible) {
-						throw makeStructuredCompileError(
-							context_->diagnostics(),
-							DiagnosticId::InaccessibleDerivedToBaseConversion,
-							DiagnosticSeverity::Error,
-							SourceLocation::fromToken(ptmNode.operator_token()),
-							"Cannot convert to an inaccessible base class",
-							{});
-					}
-					if (conversion == DerivedBaseConversionKind::Ambiguous) {
-						throw makeStructuredCompileError(
-							context_->diagnostics(),
-							DiagnosticId::AmbiguousDerivedToBaseConversion,
-							DiagnosticSeverity::Error,
-							SourceLocation::fromToken(ptmNode.operator_token()),
-							"Ambiguous derived-to-base conversion",
-							{});
-					}
-				}
-			}
-		} else {
-			throw InternalError("Pointer-to-member access is missing the object type");
+	if (plan != nullptr) {
+		if (plan->virtual_base) {
+			VirtualBaseAdjustOp adjust;
+			adjust.result = var_counter.next();
+			adjust.source = receiver_address;
+			// The source temporary already contains the object address.
+			adjust.source_is_address = false;
+			adjust.source_type_index = plan->virtual_base->receiver_layout_type;
+			adjust.target_type_index = plan->virtual_base->anchor_layout_type;
+			adjust.virtual_base_index = plan->virtual_base->table_index;
+			adjust.base_resolution = VirtualBaseAdjustOp::BaseResolution::MemberReceiver;
+			receiver_address = adjust.result;
+			ir_.addInstruction(IrInstruction(IrOpcode::VirtualBaseAdjust, std::move(adjust), token));
+		}
+		if (plan->fixed_offset_bytes != 0) {
+			BinaryOp add_base;
+			add_base.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, pointer_size, receiver_address);
+			add_base.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, pointer_size, static_cast<unsigned long long>(plan->fixed_offset_bytes));
+			receiver_address = var_counter.next();
+			add_base.result = receiver_address;
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_base), token));
 		}
 	}
 
-	TempVar member_addr = var_counter.next();
-	BinaryOp add_op;
-	add_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, object_addr);
-	add_op.rhs = toTypedValue(ptr_result);
-	add_op.result = member_addr;
-	ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), ptmNode.operator_token()));
+	const TempVar member_address = var_counter.next();
+	BinaryOp add_member;
+	add_member.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, pointer_size, receiver_address);
+	add_member.rhs = toTypedValue(member_pointer);
+	add_member.result = member_address;
+	ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_member), token));
 
-	// The member pointer expression's own type is the pointer object (word
-	// sized). The selected member's shape comes from the member pointer's
-	// published pointee type; the full access expression may already be annotated
-	// with the surrounding conversion target (for example `double d = p.*pm`), so
-	// it cannot supply the member shape.
-	const std::optional<TypeSpecifierNode> member_pointee = sema_.getMemberPointerPointeeType(ptmNode.member_pointer());
-	if (!member_pointee.has_value()) {
+	// The result expression can carry an enclosing conversion's target type.
+	// Use the selected member's own shape to describe the load or store.
+	const auto member_pointee = plan != nullptr ? sema_.projectDataMemberPointerPointee(plan->member_pointee)
+		: sema_.getMemberPointerPointeeType(ptmNode.member_pointer());
+	if (!member_pointee) {
 		throw InternalError("Pointer-to-member access is missing the published member pointee type");
 	}
 	const TypeCategory member_type = member_pointee->category();
-	const TypeIndex member_type_index = member_pointee->type_index();
-	const int member_size = member_pointee->size_in_bits();
+	const TypeIndex member_type_index = member_pointee->type_index().withCategory(member_type);
+	const PointerDepth member_pointer_depth{static_cast<int>(member_pointee->runtime_pointer_depth())};
+	const SizeInBits member_size{member_pointer_depth.value > 0 ? POINTER_SIZE_BITS : static_cast<int>(member_pointee->size_in_bits())};
 
-	// As an lvalue target (for example the LHS of `obj.*pm = value`), `obj.*pm`
-	// denotes the addressed subobject itself, so return the computed address
-	// instead of the loaded value. Loading here would make the assignment store
-	// into a temporary and leave the object unchanged.
 	if (context == ExpressionContext::LValueAddress) {
-		// member_addr holds the address of the subobject, so mark it as an
-		// indirect lvalue; the unified assignment handler then stores through it
-		// instead of writing to the temp's own frame slot.
-		LValueInfo pointer_lvalue_info(LValueInfo::Kind::Indirect, member_addr, 0);
-		setTempVarMetadata(member_addr, TempVarMetadata::makeLValue(pointer_lvalue_info, TypeCategory::Invalid, 0));
-		return makeExprResult(
-			member_type_index.withCategory(member_type),
-			SizeInBits{static_cast<int>(member_size)},
-			IrOperand{member_addr},
-			PointerDepth{},
-			ValueStorage::ContainsAddress);
+		LValueInfo member_lvalue(LValueInfo::Kind::Indirect, member_address, 0);
+		setTempVarMetadata(member_address, TempVarMetadata::makeLValue(member_lvalue, TypeCategory::Invalid, 0));
+		return makeExprResult(member_type_index, member_size, IrOperand{member_address}, member_pointer_depth, ValueStorage::ContainsAddress);
 	}
 
-	TempVar result_var = emitDereference(member_type, member_size, 1, member_addr, ptmNode.operator_token());
-	return makeExprResult(member_type_index.withCategory(member_type), SizeInBits{static_cast<int>(member_size)}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+	const TempVar value = emitDereference(member_type, member_size.value, member_pointer_depth.value + 1, member_address, token);
+	return makeExprResult(member_type_index, member_size, IrOperand{value}, member_pointer_depth, ValueStorage::ContainsData);
 }
 
 static TypeCategory resolveCodegenTypeCategory(const TypeSpecifierNode& type_node, std::string_view context) {

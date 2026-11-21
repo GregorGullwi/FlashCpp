@@ -5,8 +5,18 @@ struct C {
 	int x;
 };
 
+struct Prefix {
+	int pad;
+};
+struct D : Prefix, C {};
+
 template <class T>
 int read_member(C& object, int T::* pointer) {
+	return object.*pointer;
+}
+
+template <class T>
+int read_derived_member(D& object, int T::* pointer) {
 	return object.*pointer;
 }
 
@@ -29,6 +39,15 @@ int main() {
 	auto conditional = true ? &C::x : nullptr;
 	if (object.*conditional != 9) {
 		return 3;
+	}
+	D derived;
+	derived.pad = 11;
+	derived.x = 42;
+	if (derived.*conditional != 42) {
+		return 4;
+	}
+	if (read_derived_member<const C>(derived, &C::x) != 42) {
+		return 5;
 	}
 	return 0;
 }

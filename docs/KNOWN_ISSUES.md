@@ -621,15 +621,20 @@ therefore compares equal to `nullptr` even though it is a valid non-null
 pointer-to-member. Align the equality path with the `~0ULL` sentinel and cover
 the offset-zero case.
 
-## Pointer-to-member operand validation is missing in sema
+## Pointer-to-member right operand validation is missing in sema
 
 `object.*operand` and `pointer->*operand` do not diagnose an operand whose type
 is not a pointer-to-member during normalization. Expression inference returns an
 empty type, and lowering can then fail as an internal error instead of reporting
 a source diagnostic at the operator. Add the operand check to sema and emit the
-appropriate compile error before IR. The base relation itself is diagnosed when
-lowering sees a virtual or inaccessible owner; moving that check into sema keeps
-the diagnostic at the operator instead of IR.
+appropriate compile error before IR.
+
+## Dependent data-member pointee substitution can lose the receiver adjustment
+
+For `template<class T> int read(D& d, T B::* p) { return d.*p; }`, a call to
+`read<int>` can read at the wrong offset when `B` is a non-primary base of `D`.
+The instantiated operand needs to reach sema with both its member owner and
+substituted pointee in the published member-pointer type.
 
 ## Array member-pointer pointees are not represented
 
