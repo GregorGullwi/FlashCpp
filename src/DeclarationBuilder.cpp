@@ -704,13 +704,23 @@ EntityId publishVariableDeclarationIdentity(DeclarationBuilder& builder, const S
 	if (!declaration.has_lexical_scope_id()) {
 		return EntityId{};
 	}
+	// A block-scope declaration has no publishable owner, and a class-owned member
+	// reaches publication through its class, not through the lexical scope. Both are
+	// representation limits rather than inconsistencies, so they report no identity.
+	const ScopeMetadataView metadata = readScopeMetadata(symbol_table, declaration.lexical_scope_id());
+	if (metadata.scope_type != ScopeType::Global && metadata.scope_type != ScopeType::Namespace) {
+		return EntityId{};
+	}
 	ClassDeclRequest request{};
 	request.lexical_scope_id = declaration.lexical_scope_id();
 	request.name = declaration.identifier_token().handle();
 	request.is_definition = false;
 	request.kind = DeclKind::Variable;
 	const PublishResult published = builder.publishVariable(request, symbol_table);
-	return published.status == PublishStatus::Rejected ? EntityId{} : published.entity_id;
+	if (published.status == PublishStatus::Rejected) {
+		throw InternalError("namespace-scope variable declaration was rejected during publication");
+	}
+	return published.entity_id;
 }
 
 TelemetryTypeId DeclarationBuilder::internDeclaratorType(const TypeSpecifierNode& type_spec) {
