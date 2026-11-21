@@ -581,7 +581,10 @@ remaining pattern schemas by identity, and remove the name fallback.
    class-template instance, a data-member address, and an array element still lack
    declaration identity in their constexpr payload, because publication needs the
    owning class's declaration entity and an instantiated class has no declaration
-   node. The importer remains fail-closed for them until that identity exists. Structural values keep their non-null object pointer
+   node. Instance entities need a key that distinguishes specialization arguments,
+   which is boundary 6 registry work; do not substitute spelling for it. The importer
+   remains fail-closed for them until that identity exists. Structural values keep
+   their non-null object pointer
    members with the published target and element offset instead of collapsing, so
    a value that differs only in a pointer member or a neighbouring scalar member
    now instantiates a distinct specialization;

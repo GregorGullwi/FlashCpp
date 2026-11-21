@@ -104,8 +104,14 @@ instantiate the same specialization. The class-owned forms are not in the qualif
 scope's symbol table; the class member list owns them, and publishing one needs the
 class's declaration-builder entity as its owner. A non-template class declaration
 provides that entity, but an instantiated class has no declaration node, so its
-members have no owner to publish under until template instances carry one. Object
-pointer members and pointer array elements of structural values now carry their
+members have no owner to publish under until template instances carry one. That is
+postponed to boundary 6 rather than solved here: the declaration builder keys a
+class entity by owner, name and a signature that is always zero for classes, and an
+`OwnerId` has no payload for a structural argument identity, so distinguishing two
+instances of one template needs the structural-keyed registry work
+`TemplateDeclId`-keyed owners belong to. Do not distinguish instances by spelling.
+Object pointer members and pointer array elements of structural values now carry
+their
 published target and element offset, so a value that differs only in a pointer
 member or in a neighbouring scalar member instantiates a distinct specialization; a
 member whose pointer has no publishable target still makes the whole value
