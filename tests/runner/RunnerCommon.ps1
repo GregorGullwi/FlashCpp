@@ -318,6 +318,10 @@ function Get-FlashCppOutsideEngineDiagnosticCount {
 function Get-FlashCppMigrationCounterValues {
 	param([string]$CompilerOutput)
 
+	# Every counter printed by printMigrationTelemetry must appear here and in the
+	# sample telemetry of tests/runner/run_runner_self_tests.ps1. A missing match
+	# returns $null for the whole output, which reports every corpus entry as
+	# unmeasurable rather than silently skipping the counter.
 	$patterns = [ordered]@{
 		outside_engine = 'Diagnostics emitted outside DiagnosticEngine:\s*(\d+)'
 		token_replay = 'Token replays:\s*(\d+)'
