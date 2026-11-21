@@ -1,5 +1,6 @@
 #include "ConstExprEvalHelpers.h"
 #include "MigrationStats.h"
+#include "CanonicalShapeTelemetry.h"
 
 namespace ConstExpr {
 
@@ -780,6 +781,9 @@ TypeSpecifierNode makeTypeSpecForDefaultInit(TypeIndex type_index) {
 
 EvalResult makeConstructorDefaultInitFromType(const TypeSpecifierNode& type_spec, EvaluationContext& context) {
 	if (type_spec.is_array()) {
+		if (FrontendContext* active = FrontendContext::active()) {
+			noteCanonicalShapeImport(active->canonicalTypes(), type_spec, CanonicalShapeSite::ConstExprEvalHelpers_ArrayExtent);
+		}
 		std::span<const size_t> dims = type_spec.array_dimensions();
 		if (dims.empty()) {
 			return EvalResult::error("Missing dimensions for default-initialized array member");

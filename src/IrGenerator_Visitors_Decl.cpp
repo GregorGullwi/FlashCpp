@@ -4,6 +4,7 @@
 #include "SemanticAnalysis.h"
 #include "BuiltinListInitNarrowing.h"
 #include <bit>
+#include "CanonicalShapeTelemetry.h"
 
 namespace {
 
@@ -3796,6 +3797,8 @@ ExprResult AstToIr::generateArrayAggregatePrvalueIr(const ConstructorCallNode& c
 		throw InternalError("Array prvalue initialization requires an arithmetic element type");
 	}
 	size_t element_count = 1;
+	noteCanonicalShapeImport(
+		requireFrontendContext().canonicalTypes(), type_spec, CanonicalShapeSite::IrGenerator_Visitors_Decl_ArrayExtent);
 	for (size_t dimension : type_spec.array_dimensions()) {
 		if (dimension == 0 || element_count > (static_cast<size_t>(-1) / dimension)) {
 			throw InternalError("Array prvalue dimensions do not form a finite element count");

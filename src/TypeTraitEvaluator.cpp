@@ -13,6 +13,7 @@
 #include "MigrationStats.h"
 #include "OverloadResolution.h"
 #include "StructHierarchyWalk.h"
+#include "CanonicalShapeTelemetry.h"
 #include "StructInfoSet.h"
 #include "TypeVisitSets.h"
 
@@ -518,6 +519,9 @@ TypeSpecifierNode normalizeTypeTraitOperand(const TypeSpecifierNode& type_spec) 
 			type_spec.reference_qualifier(),
 			resolved_alias.reference_qualifier));
 
+	if (FrontendContext* active = FrontendContext::active()) {
+		noteCanonicalShapeImport(active->canonicalTypes(), type_spec, CanonicalShapeSite::TypeTraitEvaluator_PointerCv);
+	}
 	for (const PointerLevel& pointer_level : type_spec.pointer_levels()) {
 		normalized_type.add_pointer_level(pointer_level.cv_qualifier);
 	}

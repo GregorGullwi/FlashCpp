@@ -3,6 +3,8 @@
 #include "ExpressionStructure.h"
 #include "TemplateRegistry_Types.h"
 #include "TemplateTypes.h"
+#include "CanonicalShapeTelemetry.h"
+#include "FrontendContext.h"
 #include <cstring>
 #include <vector>
 
@@ -204,6 +206,9 @@ bool equalTypeSpecifierIdentityImpl(const TypeSpecifierNode& lhs, const TypeSpec
 		return false;
 	}
 
+	if (FrontendContext* active = FrontendContext::active()) {
+		noteCanonicalShapeImport(active->canonicalTypes(), lhs, CanonicalShapeSite::TemplateExpressionEquivalence_Identity);
+	}
 	const auto& lhs_levels = lhs.pointer_levels();
 	const auto& rhs_levels = rhs.pointer_levels();
 	if (lhs_levels.size() != rhs_levels.size()) {

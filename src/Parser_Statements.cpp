@@ -5,6 +5,7 @@
 #include "OverloadResolution.h"
 #include "StringLiteralTokenUtils.h"
 #include "TypeTraitEvaluator.h"
+#include "CanonicalShapeTelemetry.h"
 
 // Tokens that can ONLY follow an expression after Type(args), never a declaration.
 // Used by the Type(args) disambiguation in parse_statement_or_declaration() for both
@@ -2756,6 +2757,9 @@ ParseResult Parser::parse_array_brace_initializer(const TypeSpecifierNode& type_
 		}
 		if (!has_unsized_outer_dimension && spec.array_dimension_count() > 1 && context.array_size.has_value()) {
 			size_t total = 1;
+			if (FrontendContext* active = FrontendContext::active()) {
+				noteCanonicalShapeImport(active->canonicalTypes(), spec, CanonicalShapeSite::Parser_Statements_ArrayExtent);
+			}
 			for (size_t dimension : spec.array_dimensions()) {
 				total *= dimension;
 			}

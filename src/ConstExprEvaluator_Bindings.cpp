@@ -11,6 +11,7 @@
 #include <limits>
 
 #include "ConstExprEvalHelpers.h"
+#include "CanonicalShapeTelemetry.h"
 
 namespace ConstExpr {
 
@@ -1875,6 +1876,9 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::findConstexprOperatorOverl
 		return {};
 	}
 	auto sameTypeSpecifierShape = [](const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+		if (FrontendContext* active = FrontendContext::active()) {
+			noteCanonicalShapeImport(active->canonicalTypes(), lhs, CanonicalShapeSite::ConstExprEvaluator_Bindings_Identity);
+		}
 		if (lhs.category() != rhs.category() ||
 			lhs.cv_qualifier() != rhs.cv_qualifier() ||
 			lhs.reference_qualifier() != rhs.reference_qualifier() ||

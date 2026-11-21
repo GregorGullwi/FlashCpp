@@ -4,6 +4,7 @@
 #include "IrGenerator.h"
 #include "LambdaHelpers.h"
 #include "SemanticAnalysis.h"
+#include "CanonicalShapeTelemetry.h"
 
 namespace {
 void markAddressOnlyResult(TempVar result_var, TypeIndex value_type_index, SizeInBits value_size_bits) {
@@ -1970,6 +1971,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 				throw InternalError("Dereference result type has no concrete object size");
 			}
 			element_size = result_size_bits;
+			noteCanonicalShapeImport(table, *sema_deref_result, CanonicalShapeSite::IrGenerator_Expr_Conversions_Derived);
 			pointer_depth = static_cast<int>(sema_deref_result->runtime_pointer_depth()) + 1;
 		}
 

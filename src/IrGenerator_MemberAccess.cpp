@@ -5,6 +5,7 @@
 #include "CallNodeHelpers.h"
 #include "TypeSizeQuery.h"
 #include "TypeTraitEvaluator.h"
+#include "CanonicalShapeTelemetry.h"
 
 // Returns the ExprResult for a sizeof/alignof/offsetof result with the correct size_t
 // type for the current target data model (unsigned long long on LLP64/Windows,
@@ -839,6 +840,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 		if (multi_dim_chain.root_expression != nullptr && std::holds_alternative<ConstructorCallNode>(*multi_dim_chain.root_expression)) {
 			const ConstructorCallNode& constructed_array = std::get<ConstructorCallNode>(*multi_dim_chain.root_expression);
 			const TypeSpecifierNode& array_type = constructed_array.type_node();
+			noteCanonicalShapeImport(
+				requireFrontendContext().canonicalTypes(), array_type, CanonicalShapeSite::IrGenerator_MemberAccess_ArrayExtent);
 			const std::span<const size_t> dimensions = array_type.array_dimensions();
 			if (constructed_array.isAggregateInitialization() && array_type.is_array() && dimensions.size() == multi_dim_chain.subscripts.size()) {
 				const TypeCategory element_type = array_type.category();

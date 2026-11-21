@@ -1,4 +1,5 @@
 #include "CompilerIncludes.h"
+#include "CanonicalShapeTelemetry.h"
 
 // Timing helper
 struct PhaseTimer {
@@ -173,6 +174,8 @@ static void printOutsideDiagnosticTelemetry() {
 	FLASH_LOG(General, Info, "\nDiagnostics emitted outside DiagnosticEngine: ",
 			  diagnosticsEmittedOutsideEngineCount());
 	printMigrationTelemetry();
+	printCanonicalShapeImportHistogram();
+	printCanonicalTypeTableEndOfCompileStats();
 	if (FrontendContext* active = FrontendContext::active()) {
 		if (gSymbolTable.persistentScopePublicationEnabled()) {
 			const FrontendContext& publisher = requirePersistentScopePublicationContext(gSymbolTable);
