@@ -4689,6 +4689,9 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			noteCanonicalShapeImport(active->canonicalTypes(), member_pointer_type,
 				CanonicalShapeSite::Parser_Expr_QualLookup_PointerDepth);
 		}
+		// Missing canonical shape: UnmigratedCallable and Unresolved operands, and
+		// Supported member pointers whose canonical kind is not Pointer so the
+		// canonical level count is below this flat depth.
 		if (!member_pointer_type.has_member_class() || member_pointer_type.pointer_depth() == 0 ||
 			member_pointer_type.is_member_function_pointer() || member_pointer_type.has_function_signature()) {
 			return std::nullopt;

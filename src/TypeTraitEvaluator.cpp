@@ -522,6 +522,9 @@ TypeSpecifierNode normalizeTypeTraitOperand(const TypeSpecifierNode& type_spec) 
 	if (FrontendContext* active = FrontendContext::active()) {
 		noteCanonicalShapeImport(active->canonicalTypes(), type_spec, CanonicalShapeSite::TypeTraitEvaluator_PointerCv);
 	}
+	// Missing canonical shape: UnmigratedNominal and UnmigratedCallable operands, plus
+	// Supported shapes whose canonical pointer count disagrees with this flat depth
+	// (a FunctionPointer's implicit pointer, and scalars that are not a canonical Pointer).
 	for (const PointerLevel& pointer_level : type_spec.pointer_levels()) {
 		normalized_type.add_pointer_level(pointer_level.cv_qualifier);
 	}
@@ -596,6 +599,8 @@ bool areSameTypeTraitOperands(
 		 normalized_lhs.type_index() != normalized_rhs.type_index()) ||
 		normalized_lhs.cv_qualifier() != normalized_rhs.cv_qualifier() ||
 		normalized_lhs.reference_qualifier() != normalized_rhs.reference_qualifier() ||
+		// Missing canonical shape: this comparison runs for UnmigratedNominal,
+		// UnmigratedCallable, and Unresolved operands, whose pointer levels are not imported.
 		normalized_lhs.pointer_levels().size() != normalized_rhs.pointer_levels().size() ||
 		!std::ranges::equal(
 			normalized_lhs.array_dimensions(),
