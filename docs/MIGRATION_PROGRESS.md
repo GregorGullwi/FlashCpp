@@ -854,7 +854,13 @@ alias accessors as well as the direct field reads, so a guard written with
 was already flat. The baseline is shared by the Windows and Linux jobs and
 the ratchet only rejects values above it, so an entry whose count differs per
 platform records the higher measured value: lowering it to a Windows-only
-measurement makes the Linux job fail even though nothing regressed.
+measurement makes the Linux job fail even though nothing regressed. A new counter
+has four registration surfaces, and missing any one of them fails a platform rather
+than a test: the print in `MigrationStats.h`, the PowerShell mapping in
+`tests/runner/RunnerCommon.ps1`, the bash mapping in `tests/runner/runner_common.sh`,
+and the sample telemetry strings in both runner self-test scripts. A parser resolves
+no counter at all when a single mapped name is absent, so the failure appears as
+every corpus entry being unmeasurable rather than as one missing counter.
 `canonical_structural_trait_fallback` is 0 on the
 structural-trait and lazy-constraint regressions; residual lazy-constraint
 fallbacks are the constructibility probes, which need the canonical
