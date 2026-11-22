@@ -170,6 +170,17 @@ specialization whose constraint uses a construct the evaluator cannot classify
 is conservatively skipped; extend the canonical/constexpr atom path instead of
 treating that atom as satisfied.
 
+Constraint type-trait atoms deliberately stay on the canonical trait evaluator,
+which publishes the operand entity before import. The general constexpr
+`evaluate_type_trait` path still imports raw syntax operands, so traits evaluated
+outside constraint atoms can still record canonical shape-gap, structural-trait
+fallback, or TypeIndex entity-recovery counters. Boundary 3A owns publishing
+those trait operands in the shared path. Boundary 7 owns consolidating comparison
+atom evaluation so the constraint evaluator does not need to probe the general
+constexpr path first. Until both are done, keep `TypeTraitExprNode` atoms routed
+to `evaluateConstraintAtom`; moving them back through the generic constexpr
+probe regresses the migration counters without improving constraint semantics.
+
 ## Nominal import gaps are publication gaps, not importer gaps
 
 `UserDefined` and `TypeAlias` indexes import as `UnmigratedNominal`. Instrumenting the
