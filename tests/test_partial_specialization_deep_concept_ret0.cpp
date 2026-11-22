@@ -1,0 +1,30 @@
+template<class T> concept C0 = sizeof(T) == sizeof(int);
+template<class T> concept C1 = C0<T>;
+template<class T> concept C2 = C1<T>;
+template<class T> concept C3 = C2<T>;
+template<class T> concept C4 = C3<T>;
+template<class T> concept C5 = C4<T>;
+template<class T> concept C6 = C5<T>;
+template<class T> concept C7 = C6<T>;
+template<class T> concept C8 = C7<T>;
+template<class T> concept C9 = C8<T>;
+template<class T> concept C10 = C9<T>;
+template<class T> concept C11 = C10<T>;
+template<class T> concept C12 = C11<T>;
+template<class T> concept C13 = C12<T>;
+template<class T> concept C14 = C13<T>;
+template<class T> concept C15 = C14<T>;
+template<class T> concept C16 = C15<T>;
+template<class T> concept C17 = C16<T>;
+template<class T> concept C18 = C17<T>;
+template<class T> concept C19 = C18<T>;
+template<class T> concept C20 = C19<T>;
+template<class T> concept C21 = C20<T>;
+template<class T> concept C22 = C21<T>;
+template<class T> concept C23 = C22<T>;
+template<class T> concept C24 = C23<T>;
+template<class T> struct Pick { static constexpr int value = 0; };
+template<C24 T> struct Pick<T*> { static constexpr int value = 1; };
+int main() {
+	return (Pick<int*>::value != 1) + Pick<char*>::value;
+}

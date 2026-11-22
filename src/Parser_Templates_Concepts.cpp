@@ -5,6 +5,74 @@
 #include "SemanticAnalysis.h"
 #include "TypeTraitEvaluator.h"
 
+bool specializationPatternConstraintsSatisfied(const TemplatePattern& pattern, std::span<const TemplateBinding> bindings, Parser& parser) {
+	TemplateArgumentVector arguments;
+	TemplateParamNameViewVector names;
+	for (const TemplateBinding& binding : bindings) {
+		for (const TemplateTypeArg& argument : binding.args) {
+			arguments.push_back(argument);
+			names.push_back(StringTable::getStringView(binding.name));
+		}
+	}
+	for (const TemplateParameterNode& parameter : pattern.template_params) {
+		if (!parameter.has_concept_constraint()) {
+			continue;
+		}
+		const auto concept_node = gConceptRegistry.lookupConcept(parameter.concept_constraint());
+		if (!concept_node.has_value() || !concept_node->is<ConceptDeclarationNode>()) {
+			return false;
+		}
+		for (const TemplateBinding& binding : bindings) {
+			if (binding.name != parameter.nameHandle()) {
+				continue;
+			}
+			for (const TemplateTypeArg& argument : binding.args) {
+				TemplateArgumentVector concept_arguments;
+				concept_arguments.push_back(argument);
+				for (const ASTNode& argument_node : parameter.concept_args()) {
+					ASTNode substituted = parser.substituteTemplateParameters(argument_node, pattern.template_params, arguments);
+					if (substituted.is<TypeSpecifierNode>()) {
+						concept_arguments.emplace_back(substituted.as<TypeSpecifierNode>());
+					} else if (substituted.is<ExpressionNode>()) {
+						const ExpressionNode& expression = substituted.as<ExpressionNode>();
+						const IdentifierNode* identifier = std::get_if<IdentifierNode>(&expression);
+						bool found = false;
+						if (identifier != nullptr) {
+							for (const TemplateBinding& other : bindings) {
+								if (other.name == identifier->nameHandle() && other.args.size() == 1) {
+									concept_arguments.push_back(other.args.front());
+									found = true;
+									break;
+								}
+							}
+						}
+						if (!found) {
+							return false;
+						}
+					} else {
+						return false;
+					}
+				}
+				if (!evaluateConstraint(concept_node->as<ConceptDeclarationNode>(), concept_arguments, parser).satisfied()) {
+					return false;
+				}
+			}
+		}
+	}
+	if (pattern.requires_clause.has_value()) {
+		const RequiresClauseNode& clause = pattern.requires_clause->as<RequiresClauseNode>();
+		ASTNode substituted = parser.substituteTemplateParameters(clause.constraint_expr(), pattern.template_params, arguments);
+		ConstExpr::EvaluationContext context(gSymbolTable, parser);
+		context.is_speculative = true;
+		const ConstExpr::EvalResult evaluated = ConstExpr::Evaluator::evaluate(substituted, context);
+		if (evaluated.success()) {
+			return evaluated.as_bool();
+		}
+		return evaluateConstraint(clause.constraint_expr(), arguments, names, parser, pattern.template_params).satisfied();
+	}
+	return true;
+}
+
 ParseResult Parser::parse_concept_declaration() {
 	ScopedTokenPosition saved_position(*this);
 

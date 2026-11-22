@@ -3015,7 +3015,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 						gTemplateRegistry.lookupExactSpecialization(base_template_name, exact_args);
 					if (!specialization_ast.has_value()) {
 						specialization_ast =
-							gTemplateRegistry.matchSpecializationPattern(base_template_name, exact_args);
+							gTemplateRegistry.matchSpecializationPattern(base_template_name, exact_args, *this);
 					}
 					if (specialization_ast.has_value() && specialization_ast->is<StructDeclarationNode>()) {
 						const auto& specialization_struct =

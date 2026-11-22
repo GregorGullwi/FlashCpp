@@ -138,6 +138,7 @@ struct TemplatePattern {
 	TemplateArgumentVector pattern_args; // Pattern like T&, T*, etc.
 	ASTNode specialized_node; // The AST node for the specialized template
 	std::optional<SfinaeCondition> sfinae_condition; // Optional SFINAE check for void_t patterns
+	std::optional<ASTNode> requires_clause;
 
 	// Constructor to avoid aggregate initialization issues with mutable cache fields
 	TemplatePattern() = default;

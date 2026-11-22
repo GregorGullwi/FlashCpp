@@ -3459,7 +3459,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					template_param_nodes,
 					template_args.toVector(),
 					struct_node,
-					std::nullopt);
+					std::nullopt, requires_clause);
 			}
 
 			// Reset parsing context flags
@@ -4904,7 +4904,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				template_param_nodes,
 				pattern_args.toVector(),
 				struct_node,
-				std::nullopt);
+				std::nullopt, requires_clause);
 
 			// Clean up template parameter context before returning
 			clearCurrentTemplateParameters();
@@ -6923,7 +6923,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			template_param_nodes,
 			pattern_args.toVector(),
 			template_struct_node,
-			std::nullopt);
+			std::nullopt, requires_clause);
 
 		// Also register pattern under simple name (List) for consistency with primary template
 		// This ensures patterns are found regardless of whether qualified or simple name is used
@@ -6934,7 +6934,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			template_param_nodes,
 			pattern_args.toVector(),
 			template_struct_node,
-			std::nullopt);
+			std::nullopt, requires_clause);
 
 		FLASH_LOG_FORMAT(Parser, Info, "Registered member struct template partial specialization: {} with pattern",
 						 StringTable::getStringView(qualified_pattern_name));

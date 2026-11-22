@@ -3858,7 +3858,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	}
 	// FIRST: Check if we have an explicit specialization for these template arguments
 	// This handles cases like: template<> int sum<int, int>(int, int) being called as sum<int, int>(3, 7)
-	auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, explicit_types);
+	auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, explicit_types, *this);
 	if (specialization_opt.has_value()) {
 		FLASH_LOG(Templates, Debug, "Found explicit specialization for ", template_name);
 		return *specialization_opt;
@@ -4779,7 +4779,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 
 						// Check explicit specializations before body instantiation.
 						auto specialization_opt = gTemplateRegistry.lookupSpecialization(
-							template_name, winner.template_args);
+							template_name, winner.template_args, *this);
 						if (specialization_opt.has_value()) {
 							FLASH_LOG_FORMAT(Templates, Trace,
 								"[depth={}]: Shape-winner: found explicit specialization for '{}'",
@@ -5512,7 +5512,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	}
 
 	// Check for explicit specialization before instantiating the primary template.
-	auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, template_args);
+	auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, template_args, *this);
 	if (specialization_opt.has_value()) {
 		FLASH_LOG(Templates, Debug, "[depth=", recursion_depth, "]: Found explicit specialization for deduced args of '", template_name, "'");
 		return *specialization_opt;
