@@ -537,7 +537,13 @@ ConstraintEvaluationResult evaluateConstraint(const ASTNode& root, const Templat
 	const auto currentScope = [&]() -> size_t {
 		return concept_scopes.empty() ? root_scope_index : concept_scopes.size() - 1;
 	};
-	const auto evaluateAtom = [&](const ASTNode& atom, const ScopeView& view) -> ConstraintEvaluationResult {
+	const auto evaluateAtom = [&](const ASTNode& atom, const ASTNode& unwrapped, const ScopeView& view) -> ConstraintEvaluationResult {
+		// Type traits already have a canonical evaluator that publishes operand
+		// identity before import; keep them on that path instead of probing the
+		// raw syntax shape in the general constexpr evaluator.
+		if (unwrapped.is<TypeTraitExprNode>()) {
+			return evaluateConstraintAtom(unwrapped, *view.arguments, *view.names, parser, view.parameters);
+		}
 		const auto evaluateConstant = [&](const ASTNode& expression) -> std::optional<ConstraintEvaluationResult> {
 			ConstExpr::EvaluationContext context(gSymbolTable, parser);
 			context.is_speculative = true;
@@ -698,9 +704,9 @@ ConstraintEvaluationResult evaluateConstraint(const ASTNode& root, const Templat
 				} else {
 					if (requires_probe_depth > 0) {
 						Parser::ScopedParserInstantiationContext requires_probe(parser, Parser::TemplateInstantiationMode::SoftProbe, StringHandle{});
-						result = evaluateAtom(expression, view);
+						result = evaluateAtom(expression, node, view);
 					} else {
-						result = evaluateAtom(expression, view);
+						result = evaluateAtom(expression, node, view);
 					}
 					have_result = true;
 				}
