@@ -1270,6 +1270,9 @@ struct ConstraintEvaluationResult {
 	bool satisfied() const noexcept {
 		return satisfaction != ConstraintSatisfaction::Unsatisfied;
 	}
+	bool proven() const noexcept {
+		return satisfaction == ConstraintSatisfaction::Satisfied;
+	}
 	bool unknown() const noexcept {
 		return satisfaction == ConstraintSatisfaction::Unknown;
 	}
@@ -2392,9 +2395,10 @@ inline ConstraintEvaluationResult evaluateConstraintAtom(const ASTNode& constrai
 		return ConstraintEvaluationResult::success();
 	}
 
-	// Default: assume satisfied for unknown expressions
-	// This allows templates to compile even with complex constraints
-	return ConstraintEvaluationResult::success();
+	// An unclassified atom is not proof of satisfaction. Callers that keep
+	// candidates viable on unknown results still see the old behavior through
+	// satisfied(), while partial-specialization selection requires proven().
+	return ConstraintEvaluationResult::unknown_result(constraint_expr.type_name());
 }
 
 inline void appendDefaultConceptTemplateArguments(
@@ -2415,125 +2419,12 @@ inline void appendDefaultConceptTemplateArguments(
 	}
 }
 
-// Keep short-circuit continuations and concept bindings off the native stack.
-inline ConstraintEvaluationResult evaluateConstraint(const ASTNode& root, const TemplateArgumentVector& root_arguments,
-	const TemplateParamNameViewVector& root_names, Parser& parser, std::span<const TemplateParameterNode> root_parameters) {
-	enum class Resume : uint8_t { AndLeft, AndRight, OrLeft, OrRight, Negate, LeaveConcept };
-	struct Continuation {
-		Resume resume;
-		ASTNode right;
-		ConstraintEvaluationResult left;
-	};
-	struct ConceptScope {
-		const ConceptDeclarationNode* declaration;
-		TemplateArgumentVector arguments;
-		TemplateParamNameViewVector names;
-	};
-	std::vector<Continuation> continuations;
-	std::vector<ConceptScope> scopes;
-	ASTNode expression = root;
-	for (;;) {
-		if (expression.is<ExpressionNode>()) {
-			expression = std::visit([](const auto& node) { return ASTNode(&node); }, expression.as<ExpressionNode>());
-		}
-		if (const auto* binary = expression.get_if<BinaryOperatorNode>()) {
-			const auto op = binary->op();
-			if (op == "&&" || op == "||") {
-				continuations.push_back({op == "&&" ? Resume::AndLeft : Resume::OrLeft, binary->get_rhs(), {}});
-				expression = binary->get_lhs();
-				continue;
-			}
-		}
-		if (const auto* unary = expression.get_if<UnaryOperatorNode>(); unary != nullptr && unary->op() == "!") {
-			continuations.push_back({Resume::Negate, {}, {}});
-			expression = unary->get_operand();
-			continue;
-		}
-		const TemplateArgumentVector& arguments = scopes.empty() ? root_arguments : scopes.back().arguments;
-		const TemplateParamNameViewVector& names = scopes.empty() ? root_names : scopes.back().names;
-		const auto parameters = scopes.empty() ? root_parameters : std::span<const TemplateParameterNode>(scopes.back().declaration->template_params());
-		std::optional<ASTNode> concept_node;
-		const auto* call = expression.get_if<CallExprNode>();
-		if (call != nullptr) {
-			concept_node = gConceptRegistry.lookupConcept(call->called_from().value());
-		} else if (const auto* identifier = expression.get_if<IdentifierNode>()) {
-			const auto name = identifier->name();
-			if (name != "true" && name != "false" && !name.starts_with("is_") && name.find("_v") == std::string_view::npos) {
-				concept_node = gConceptRegistry.lookupConcept(name);
-			}
-		}
-		if (concept_node.has_value()) {
-			const auto& declaration = concept_node->as<ConceptDeclarationNode>();
-			if (std::ranges::any_of(scopes, [&](const ConceptScope& scope) { return scope.declaration == &declaration; })) {
-				return ConstraintEvaluationResult::failure("cycle in concept constraint");
-			}
-			ConceptScope scope{&declaration, {}, {}};
-			if (call != nullptr) {
-				scope.arguments = bindConstraintConceptArguments(*call, declaration, arguments, names);
-				appendDefaultConceptTemplateArguments(declaration.template_params(), scope.arguments);
-				for (const TemplateParameterNode& parameter : declaration.template_params()) {
-					scope.names.push_back(parameter.name());
-				}
-			} else {
-				scope.arguments = arguments;
-				scope.names = names;
-			}
-			scopes.push_back(std::move(scope));
-			continuations.push_back({Resume::LeaveConcept, {}, {}});
-			expression = declaration.constraint_expr();
-			continue;
-		}
-		ConstraintEvaluationResult result = evaluateConstraintAtom(expression, arguments, names, parser, parameters);
-		bool evaluate_right = false;
-		while (!continuations.empty()) {
-			auto& next = continuations.back();
-			if ((next.resume == Resume::AndLeft && result.satisfied()) ||
-				(next.resume == Resume::OrLeft && (!result.satisfied() || result.unknown()))) {
-				next.resume = next.resume == Resume::AndLeft ? Resume::AndRight : Resume::OrRight;
-				next.left = std::move(result);
-				expression = next.right;
-				evaluate_right = true;
-				break;
-			}
-			switch (next.resume) {
-			case Resume::AndRight:
-				if (result.satisfied() && (next.left.unknown() || result.unknown())) {
-					result = ConstraintEvaluationResult::unknown_result(next.left.failed_requirement + " && " + result.failed_requirement);
-				}
-				break;
-			case Resume::OrRight:
-				if (!result.satisfied() || result.unknown()) {
-					const auto message = next.left.failed_requirement + " || " + result.failed_requirement;
-					result = next.left.unknown() || result.unknown()
-						? ConstraintEvaluationResult::unknown_result(message)
-						: ConstraintEvaluationResult::failure("constraint not satisfied: neither alternative of disjunction is satisfied",
-							message, "ensure at least one of the constraints is met");
-				}
-				break;
-			case Resume::Negate:
-				if (result.unknown()) {
-					result = ConstraintEvaluationResult::unknown_result("!" + result.failed_requirement);
-				} else if (result.satisfied()) {
-					result = ConstraintEvaluationResult::failure("constraint not satisfied: negated constraint is true",
-						"!" + result.failed_requirement, "remove the negation or use a different constraint");
-				} else {
-					result = ConstraintEvaluationResult::success();
-				}
-				break;
-			case Resume::LeaveConcept:
-				scopes.pop_back();
-				break;
-			case Resume::AndLeft:
-			case Resume::OrLeft:
-				break;
-			}
-			continuations.pop_back();
-		}
-		if (!evaluate_right) {
-			return result;
-		}
-	}
-}
+// The evaluator substitutes one atomic constraint at a time and keeps concept
+// expansion, boolean continuations, and nested requirements on one worklist.
+// Its definition lives beside the requires-expression machinery in
+// Parser_Templates_Concepts.cpp so requirement validation can use Parser.
+ConstraintEvaluationResult evaluateConstraint(const ASTNode& root, const TemplateArgumentVector& root_arguments,
+	const TemplateParamNameViewVector& root_names, Parser& parser, std::span<const TemplateParameterNode> root_parameters);
 
 inline ConstraintEvaluationResult evaluateConstraint(const ConceptDeclarationNode& concept_node, const TemplateArgumentVector& template_args,
 	Parser& parser) {

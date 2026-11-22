@@ -559,6 +559,8 @@ class Parser {
 	friend ConstraintEvaluationResult evaluateRequiresExpressionConstraint(const RequiresExpressionNode& requires_expr,
 		const TemplateArgumentVector& template_args, const TemplateParamNameViewVector& template_param_names, Parser& parser,
 		std::span<const TemplateParameterNode> template_params);
+	friend ConstraintEvaluationResult evaluateConstraint(const ASTNode& root, const TemplateArgumentVector& root_arguments,
+		const TemplateParamNameViewVector& root_names, Parser& parser, std::span<const TemplateParameterNode> root_parameters);
 	template <typename ParserLike, typename ParamContainer, typename ArgContainer>
 	friend TypeIndex resolveDependentMemberTemplateSubstitutionArtifacts(
 		ParserLike& parser,
