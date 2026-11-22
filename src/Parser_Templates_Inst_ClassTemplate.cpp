@@ -734,7 +734,7 @@ bool Parser::preinstantiate_class_template_dependencies(std::string_view templat
 			if (gTemplateRegistry.lookupExactSpecialization(request_name, request_args).has_value()) {
 				return true;
 			}
-			auto pattern_match = gTemplateRegistry.matchSpecializationPatternWithBindings(request_name, request_args);
+			auto pattern_match = gTemplateRegistry.matchSpecializationPatternWithBindings(request_name, request_args, *this);
 			const TemplateParameterVector* pattern_template_params = nullptr;
 			const StructDeclarationNode* pattern_struct = nullptr;
 			std::pmr::vector<TemplateTypeArg>& pattern_arguments =
@@ -3283,9 +3283,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 	{
 		PROFILE_TEMPLATE_SPECIALIZATION_MATCH();
 		FLASH_LOG(Templates, Debug, "Looking for pattern match for ", template_name, " with ", filled_args_for_pattern_match.size(), " args (after default fill-in)");
-		auto pattern_match_opt = gTemplateRegistry.matchSpecializationPatternWithBindings(
-			template_name,
-			filled_args_for_pattern_match);
+		auto pattern_match_opt = gTemplateRegistry.matchSpecializationPatternWithBindings(template_name, filled_args_for_pattern_match, *this);
 		if (pattern_match_opt.has_value()) {
 			FLASH_LOG(Templates, Debug, "Found pattern match!");
 			// Found a matching pattern - we need to instantiate it with concrete types

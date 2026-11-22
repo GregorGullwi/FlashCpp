@@ -5841,7 +5841,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 				}
 				std::optional<ASTNode> specialization = use_exact_match
 					? gTemplateRegistry.lookupExactSpecialization(template_name.view(), template_args)
-					: gTemplateRegistry.matchSpecializationPattern(template_name.view(), template_args);
+					: gTemplateRegistry.matchSpecializationPattern(template_name.view(), template_args, parser());
 				if (!specialization.has_value() || !specialization->is<StructDeclarationNode>()) {
 					continue;
 				}
@@ -5873,7 +5873,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 				}
 				std::optional<ASTNode> spec = use_exact_match
 					? gTemplateRegistry.lookupExactSpecialization(template_name.view(), get_template_args)
-					: gTemplateRegistry.matchSpecializationPattern(template_name.view(), get_template_args);
+					: gTemplateRegistry.matchSpecializationPattern(template_name.view(), get_template_args, parser());
 				if (spec.has_value()) {
 					matches.push_back(std::move(*spec));
 				}

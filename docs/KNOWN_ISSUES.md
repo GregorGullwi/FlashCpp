@@ -159,6 +159,12 @@ origins still arrive without a target, as recorded above.
 
 ## Partial-specialization constraints are not checked during selection
 
+Boundary 7 owns constraint satisfaction, including short-circuit substitution,
+atomic evaluation, and scheduling nested requirements. Boundary 8A consumes
+those results in canonical partial-specialization selection and owns scheduling
+any required instantiations. Boundary 3A publishes the pattern identity those
+consumers use.
+
 A constrained partial specialization is selected even when its constraint is false,
 so an ill-formed specialization can be instantiated instead of the primary template.
 Both forms reproduce, verified against MSVC on the same object:
@@ -187,6 +193,30 @@ ordinary constant-expression path after substitution — and skip unsatisfied
 candidates rather than ordering them. Partial ordering itself must keep using the
 environment identity it already has. Regressions must cover both forms and assert
 the primary template is selected.
+
+Constraint satisfaction needs to schedule substitution at the atomic constraint.
+Substituting a whole clause up front can instantiate `Explode<T>` in
+`sizeof(T) == 1 && sizeof(Explode<T>) != 0` even when the left operand rules out
+the candidate. An atomic condition such as `T::value` needs substitution and
+constant evaluation when reached. The evaluator's unknown result must remain
+distinct from proven satisfaction and substitution failure.
+The legacy comparison evaluator also loses declarator shape. Given
+`template<class T> concept IntSized = sizeof(T) == sizeof(int)`, a partial
+specialization `template<IntSized T> struct Pick<T*>` can be selected for
+`Pick<int**>` on x64 because the legacy `sizeof` reads the index for `int`
+instead of the deduced type `int*`. Use the substituted type for evaluation.
+The same legacy evaluator cannot resolve the nested `sizeof` in
+`test_requires_sizeof_dependent_member_value_type_ret8.cpp`. Turning on
+constraint filtering without improving atomic evaluation changes that test
+from the matching specialization to the primary template.
+
+Track concept expansion, boolean operations, and nested requirements in one
+scheduler. A worklist for concept expansion and boolean operations handles a
+128-level concept chain with a 1 MB compiler stack, but a chain of the same
+depth through `requires { requires Previous<T>; }` still overflows if the
+requirement evaluator calls back into the scheduler. A nested requirement
+needs to suspend its active scope and resume at the next requirement after
+its child constraint completes. See the native-stack issue below.
 
 ## Nominal import gaps are publication gaps, not importer gaps
 

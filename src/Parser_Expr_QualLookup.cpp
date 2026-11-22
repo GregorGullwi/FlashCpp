@@ -3322,12 +3322,12 @@ std::optional<TypeSpecifierNode> Parser::tryBuildFunctionTemplateAddressType(
 	std::optional<ASTNode> explicit_specialization =
 		gTemplateRegistry.lookupSpecialization(
 			qualified_name,
-			*template_args);
+			*template_args, *this);
 	if (!explicit_specialization.has_value() &&
 		qualified_name != function_id.name()) {
 		explicit_specialization = gTemplateRegistry.lookupSpecialization(
 			function_id.name(),
-			*template_args);
+			*template_args, *this);
 	}
 	if (const FunctionDeclarationNode* function =
 			get_function_decl_node(explicit_specialization);

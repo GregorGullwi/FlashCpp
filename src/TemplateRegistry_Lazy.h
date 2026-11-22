@@ -1932,35 +1932,120 @@ inline std::optional<long long> evaluateConstraintExpression(
 	return std::nullopt;
 }
 
-// Enhanced constraint evaluator for C++20 concepts
-// Evaluates constraints and provides detailed error messages when they fail
-inline ConstraintEvaluationResult evaluateConstraint(const ConceptDeclarationNode& concept_node, const TemplateArgumentVector& template_args,
-	Parser& parser);
+// Bind a named concept use before the evaluator advances to its definition.
+inline TemplateArgumentVector bindConstraintConceptArguments(const CallExprNode& func_call, const ConceptDeclarationNode& concept_node,
+	const TemplateArgumentVector& template_args, const TemplateParamNameViewVector& template_param_names) {
+	// Build the template arguments for the concept from the function call's template arguments
+	// Map the concept's template parameters to the actual template arguments
+	TemplateArgumentVector concept_args;
 
-inline ConstraintEvaluationResult evaluateConstraint(const ASTNode& constraint_expr, const TemplateArgumentVector& template_args,
-	const TemplateParamNameViewVector& template_param_names, Parser& parser, std::span<const TemplateParameterNode> template_params) {
+	const auto& concept_params = concept_node.template_params();
+	const std::string_view concept_name = func_call.called_from().value();
 
-	FLASH_LOG(Templates, Trace, "evaluateConstraint: constraint type=", constraint_expr.type_name(), ", template_args.size()=", template_args.size());
-	for (size_t i = 0; i < template_param_names.size(); ++i) {
-		if (i < template_args.size()) {
-			const auto& arg = template_args[i];
-			FLASH_LOG(Templates, Trace, "  param '", template_param_names[i], "' -> is_template_template_arg=", arg.is_template_template_arg,
-					  ", base_type=", static_cast<int>(arg.typeEnum()), ", type_index=", arg.type_index);
+	// Get the explicit template arguments from the function call
+	const auto& explicit_args = func_call.template_arguments();
+
+	// Map concept parameters to the arguments
+	for (size_t i = 0; i < concept_params.size(); ++i) {
+		if (i < explicit_args.size()) {
+			const ASTNode& arg_node = explicit_args[i];
+
+			// The argument might be a reference to a template parameter from the enclosing context
+			// We need to resolve it using the original template_args
+			if (arg_node.is<ExpressionNode>()) {
+				const ExpressionNode& expr = arg_node.as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(expr)) {
+					const IdentifierNode& ident = std::get<IdentifierNode>(expr);
+					std::string_view arg_name = ident.name();
+
+					// Look for this name in the enclosing template parameters
+					for (size_t j = 0; j < template_param_names.size() && j < template_args.size(); ++j) {
+						if (template_param_names[j] == arg_name) {
+							// Found the template parameter - use its substituted value
+							concept_args.push_back(template_args[j]);
+							break;
+						}
+					}
+
+					// If we haven't added an argument yet, try to look up as a type
+					if (concept_args.size() == i) {
+						auto type_handle = StringTable::getOrInternStringHandle(arg_name);
+						auto type_it = getTypesByNameMap().find(type_handle);
+						if (type_it != getTypesByNameMap().end()) {
+							TemplateTypeArg type_arg;
+							type_arg.type_index = type_it->second->type_index_;
+							concept_args.push_back(type_arg);
+						}
+					}
+				} else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+					const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
+					std::string_view arg_name = tparam_ref.param_name().view();
+
+					// Look for this name in the enclosing template parameters
+					for (size_t j = 0; j < template_param_names.size() && j < template_args.size(); ++j) {
+						if (template_param_names[j] == arg_name) {
+							concept_args.push_back(template_args[j]);
+							break;
+						}
+					}
+				}
+			} else if (arg_node.is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& type_spec = arg_node.as<TypeSpecifierNode>();
+				const TemplateTypeArg* bound_base = nullptr;
+				if (type_spec.has_template_parameter_identity()) {
+					const std::string_view base_name = type_spec.template_parameter_name().view();
+					for (size_t j = 0; j < template_param_names.size() && j < template_args.size(); ++j) {
+						if (template_param_names[j] == base_name) {
+							bound_base = &template_args[j];
+							break;
+						}
+					}
+				}
+				if (bound_base != nullptr) {
+					// Start from the bound base argument and reuse the shared
+					// dependent-pattern rebinding so pointer levels, cv, and
+					// reference collapsing match ordinary substitution (`T*`
+					// becomes the bound type with one extra pointer level).
+					TemplateTypeArg pattern;
+					pattern.pointer_depth = static_cast<uint8_t>(type_spec.runtime_pointer_depth());
+					pattern.cv_qualifier = type_spec.cv_qualifier();
+					pattern.ref_qualifier = type_spec.reference_qualifier();
+					for (const PointerLevel& pointer_level : type_spec.pointer_levels()) {
+						pattern.pointer_cv_qualifiers.push_back(pointer_level.cv_qualifier);
+					}
+					concept_args.push_back(rebindDependentTemplateTypeArg(*bound_base, pattern));
+				} else {
+					TemplateTypeArg type_arg;
+					type_arg.type_index = type_spec.type_index();
+					type_arg.ref_qualifier = type_spec.reference_qualifier();
+					type_arg.pointer_depth = type_spec.runtime_pointer_depth();
+					type_arg.cv_qualifier = type_spec.cv_qualifier();
+					concept_args.push_back(type_arg);
+				}
+			}
+		}
+
+		// If we still haven't resolved the argument, use a placeholder
+		if (concept_args.size() == i) {
+			TemplateTypeArg placeholder;
+			placeholder.is_dependent = true;
+			concept_args.push_back(placeholder);
 		}
 	}
 
-	// Handle ExpressionNode wrapper - unwrap it and evaluate the inner node
-	if (constraint_expr.is<ExpressionNode>()) {
-		const ExpressionNode& expr_variant = constraint_expr.as<ExpressionNode>();
-		// ExpressionNode is a variant, visit it to get the actual inner node
-		return std::visit([&](const auto& inner) -> ConstraintEvaluationResult {
-			// Create an ASTNode wrapper around the inner node
-			ASTNode inner_ast_node(&inner);
-			return evaluateConstraint(inner_ast_node, template_args, template_param_names, parser, template_params);
-		},
-						  expr_variant);
+	FLASH_LOG(Templates, Trace, "CallExprNode concept evaluation: concept='", concept_name, "', concept_args.size()=", concept_args.size(), ", concept_params.size()=", concept_params.size());
+	for (size_t i = 0; i < concept_params.size(); ++i) {
+		if (i < concept_args.size()) {
+			FLASH_LOG(Templates, Trace, "  param[", i, "] name='", concept_params[i].name(), "', is_template_template_arg=", concept_args[i].is_template_template_arg, ", base_type=", static_cast<int>(concept_args[i].typeEnum()));
+		}
 	}
 
+
+	return concept_args;
+}
+
+inline ConstraintEvaluationResult evaluateConstraintAtom(const ASTNode& constraint_expr, const TemplateArgumentVector& template_args,
+	const TemplateParamNameViewVector& template_param_names, Parser& parser, std::span<const TemplateParameterNode> template_params) {
 	// For BoolLiteralNode (true/false keywords parsed as boolean literals)
 	if (constraint_expr.is<BoolLiteralNode>()) {
 		const auto& literal = constraint_expr.as<BoolLiteralNode>();
@@ -2025,200 +2110,16 @@ inline ConstraintEvaluationResult evaluateConstraint(const ASTNode& constraint_e
 			return ConstraintEvaluationResult::success();
 		}
 
-		// Otherwise, look up as a concept
-		auto concept_opt = gConceptRegistry.lookupConcept(name);
-		if (!concept_opt.has_value()) {
-			return ConstraintEvaluationResult::failure(
-				std::string("constraint not satisfied: concept '") + std::string(name) + "' not found",
-				std::string(name),
-				std::string("declare the concept before using it in a requires clause"));
-		}
-
-		// Concept found - evaluate its constraint expression with the template arguments
-		const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
-		return evaluateConstraint(concept_node.constraint_expr(), template_args, template_param_names, parser, concept_node.template_params());
+		return ConstraintEvaluationResult::failure(
+			std::string("constraint not satisfied: concept '") + std::string(name) + "' not found",
+			std::string(name), "declare the concept before using it in a requires clause");
 	}
 
-	// For member access nodes (e.g., std::is_integral_v<T>)
-	if (constraint_expr.is<MemberAccessNode>()) {
-		[[maybe_unused]] const auto& member = constraint_expr.as<MemberAccessNode>();
-		// Try to get the member name for type trait evaluation
-		// This handles std::is_integral_v syntax
-		// For now, we'll accept these as satisfied
-		return ConstraintEvaluationResult::success();
-	}
-
-	// For function call nodes (concept with template arguments like Integral<T>)
-	// This handles the Concept<T> syntax in requires clauses
-	if (constraint_expr.is<CallExprNode>()) {
-		const auto& func_call = constraint_expr.as<CallExprNode>();
-		std::string_view concept_name = func_call.called_from().value();
-
-		// Look up the concept
-		auto concept_opt = gConceptRegistry.lookupConcept(concept_name);
-		if (!concept_opt.has_value()) {
-			// Not a concept - might be a function call, assume satisfied
-			return ConstraintEvaluationResult::success();
-		}
-
-		// Get the concept's constraint expression and evaluate it
-		const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
-		const auto& concept_params = concept_node.template_params();
-
-		// Build the template arguments for the concept from the function call's template arguments
-		// Map the concept's template parameters to the actual template arguments
-		TemplateArgumentVector concept_args;
-
-		// Get the explicit template arguments from the function call
-		const auto& explicit_args = func_call.template_arguments();
-
-		// Map concept parameters to the arguments
-		for (size_t i = 0; i < concept_params.size(); ++i) {
-			if (i < explicit_args.size()) {
-				const ASTNode& arg_node = explicit_args[i];
-
-				// The argument might be a reference to a template parameter from the enclosing context
-				// We need to resolve it using the original template_args
-				if (arg_node.is<ExpressionNode>()) {
-					const ExpressionNode& expr = arg_node.as<ExpressionNode>();
-					if (std::holds_alternative<IdentifierNode>(expr)) {
-						const IdentifierNode& ident = std::get<IdentifierNode>(expr);
-						std::string_view arg_name = ident.name();
-
-						// Look for this name in the enclosing template parameters
-						for (size_t j = 0; j < template_param_names.size() && j < template_args.size(); ++j) {
-							if (template_param_names[j] == arg_name) {
-								// Found the template parameter - use its substituted value
-								concept_args.push_back(template_args[j]);
-								break;
-							}
-						}
-
-						// If we haven't added an argument yet, try to look up as a type
-						if (concept_args.size() == i) {
-							auto type_handle = StringTable::getOrInternStringHandle(arg_name);
-							auto type_it = getTypesByNameMap().find(type_handle);
-							if (type_it != getTypesByNameMap().end()) {
-								TemplateTypeArg type_arg;
-								type_arg.type_index = type_it->second->type_index_;
-								concept_args.push_back(type_arg);
-							}
-						}
-					} else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
-						const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
-						std::string_view arg_name = tparam_ref.param_name().view();
-
-						// Look for this name in the enclosing template parameters
-						for (size_t j = 0; j < template_param_names.size() && j < template_args.size(); ++j) {
-							if (template_param_names[j] == arg_name) {
-								concept_args.push_back(template_args[j]);
-								break;
-							}
-						}
-					}
-				} else if (arg_node.is<TypeSpecifierNode>()) {
-					const TypeSpecifierNode& type_spec = arg_node.as<TypeSpecifierNode>();
-					const TemplateTypeArg* bound_base = nullptr;
-					if (type_spec.has_template_parameter_identity()) {
-						const std::string_view base_name = type_spec.template_parameter_name().view();
-						for (size_t j = 0; j < template_param_names.size() && j < template_args.size(); ++j) {
-							if (template_param_names[j] == base_name) {
-								bound_base = &template_args[j];
-								break;
-							}
-						}
-					}
-					if (bound_base != nullptr) {
-						// Start from the bound base argument and reuse the shared
-						// dependent-pattern rebinding so pointer levels, cv, and
-						// reference collapsing match ordinary substitution (`T*`
-						// becomes the bound type with one extra pointer level).
-						TemplateTypeArg pattern;
-						pattern.pointer_depth = static_cast<uint8_t>(type_spec.runtime_pointer_depth());
-						pattern.cv_qualifier = type_spec.cv_qualifier();
-						pattern.ref_qualifier = type_spec.reference_qualifier();
-						for (const PointerLevel& pointer_level : type_spec.pointer_levels()) {
-							pattern.pointer_cv_qualifiers.push_back(pointer_level.cv_qualifier);
-						}
-						concept_args.push_back(rebindDependentTemplateTypeArg(*bound_base, pattern));
-					} else {
-						TemplateTypeArg type_arg;
-						type_arg.type_index = type_spec.type_index();
-						type_arg.ref_qualifier = type_spec.reference_qualifier();
-						type_arg.pointer_depth = type_spec.runtime_pointer_depth();
-						type_arg.cv_qualifier = type_spec.cv_qualifier();
-						concept_args.push_back(type_arg);
-					}
-				}
-			}
-
-			// If we still haven't resolved the argument, use a placeholder
-			if (concept_args.size() == i) {
-				TemplateTypeArg placeholder;
-				placeholder.is_dependent = true;
-				concept_args.push_back(placeholder);
-			}
-		}
-
-		FLASH_LOG(Templates, Trace, "CallExprNode concept evaluation: concept='", concept_name, "', concept_args.size()=", concept_args.size(), ", concept_params.size()=", concept_params.size());
-		for (size_t i = 0; i < concept_params.size(); ++i) {
-			if (i < concept_args.size()) {
-				FLASH_LOG(Templates, Trace, "  param[", i, "] name='", concept_params[i].name(), "', is_template_template_arg=", concept_args[i].is_template_template_arg, ", base_type=", static_cast<int>(concept_args[i].typeEnum()));
-			}
-		}
-
-		// Evaluate the concept's constraint with the resolved arguments
-		return evaluateConstraint(concept_node, concept_args, parser);
-	}
-
-	// For binary operators (&&, ||)
-	if (constraint_expr.is<BinaryOperatorNode>()) {
-		const auto& binop = constraint_expr.as<BinaryOperatorNode>();
-		std::string_view op = binop.op();
-
-		if (op == "&&") {
-			// Conjunction - both must be satisfied
-			auto left_result = evaluateConstraint(binop.get_lhs(), template_args, template_param_names, parser, template_params);
-			if (!left_result.satisfied()) {
-				return left_result;	// Return first failure
-			}
-
-			auto right_result = evaluateConstraint(binop.get_rhs(), template_args, template_param_names, parser, template_params);
-			if (!right_result.satisfied()) {
-				return right_result;
-			}
-
-			return left_result.unknown() || right_result.unknown()
-				? ConstraintEvaluationResult::unknown_result(
-					left_result.failed_requirement + " && " + right_result.failed_requirement)
-				: ConstraintEvaluationResult::success();
-		} else if (op == "||") {
-			// Disjunction - at least one must be satisfied
-			auto left_result = evaluateConstraint(binop.get_lhs(), template_args, template_param_names, parser, template_params);
-			if (left_result.satisfied() && !left_result.unknown()) {
-				return ConstraintEvaluationResult::success();
-			}
-
-			auto right_result = evaluateConstraint(binop.get_rhs(), template_args, template_param_names, parser, template_params);
-			if (right_result.satisfied() && !right_result.unknown()) {
-				return ConstraintEvaluationResult::success();
-			}
-
-			// Neither side is a proven satisfaction. An unknown side cannot prove
-			// the disjunction false either.
-			if (left_result.unknown() || right_result.unknown()) {
-				return ConstraintEvaluationResult::unknown_result(
-					left_result.failed_requirement + " || " + right_result.failed_requirement);
-			}
-
-			// Both failed
-			return ConstraintEvaluationResult::failure(
-				"constraint not satisfied: neither alternative of disjunction is satisfied",
-				left_result.failed_requirement + " || " + right_result.failed_requirement,
-				"ensure at least one of the constraints is met");
-		}
+	if (const auto* binary = constraint_expr.get_if<BinaryOperatorNode>()) {
+		const BinaryOperatorNode& binop = *binary;
+		const std::string_view op = binop.op();
 		// Handle comparison operators for constraint evaluation (<, >, <=, >=, ==, !=)
-		else if (op == "<" || op == ">" || op == "<=" || op == ">=" || op == "==" || op == "!=") {
+		if (op == "<" || op == ">" || op == "<=" || op == ">=" || op == "==" || op == "!=") {
 			// Try to evaluate both sides as constant expressions
 			auto lhs_value = evaluateConstraintExpression(binop.get_lhs(), template_args, template_param_names);
 			auto rhs_value = evaluateConstraintExpression(binop.get_rhs(), template_args, template_param_names);
@@ -2261,28 +2162,6 @@ inline ConstraintEvaluationResult evaluateConstraint(const ASTNode& constraint_e
 					"constraint not satisfied: comparison evaluated to false",
 					std::to_string(*lhs_value) + " " + std::string(op) + " " + std::to_string(*rhs_value),
 					"check the constraint expression");
-			}
-			return ConstraintEvaluationResult::success();
-		}
-	}
-
-	// For unary operators (!)
-	if (constraint_expr.is<UnaryOperatorNode>()) {
-		const auto& unop = constraint_expr.as<UnaryOperatorNode>();
-		if (unop.op() == "!") {
-			auto operand_result = evaluateConstraint(unop.get_operand(), template_args, template_param_names, parser, template_params);
-			if (operand_result.unknown()) {
-				// Negating an unknown operand yields an unknown operand. Treating
-				// it as a failure here is what used to reject every concept whose
-				// requirement is a negated unclassified trait.
-				return ConstraintEvaluationResult::unknown_result(
-					"!" + operand_result.failed_requirement);
-			}
-			if (operand_result.satisfied()) {
-				return ConstraintEvaluationResult::failure(
-					"constraint not satisfied: negated constraint is true",
-					"!" + operand_result.failed_requirement,
-					"remove the negation or use a different constraint");
 			}
 			return ConstraintEvaluationResult::success();
 		}
@@ -2533,6 +2412,126 @@ inline void appendDefaultConceptTemplateArguments(
 			continue;
 		}
 		break;
+	}
+}
+
+// Keep short-circuit continuations and concept bindings off the native stack.
+inline ConstraintEvaluationResult evaluateConstraint(const ASTNode& root, const TemplateArgumentVector& root_arguments,
+	const TemplateParamNameViewVector& root_names, Parser& parser, std::span<const TemplateParameterNode> root_parameters) {
+	enum class Resume : uint8_t { AndLeft, AndRight, OrLeft, OrRight, Negate, LeaveConcept };
+	struct Continuation {
+		Resume resume;
+		ASTNode right;
+		ConstraintEvaluationResult left;
+	};
+	struct ConceptScope {
+		const ConceptDeclarationNode* declaration;
+		TemplateArgumentVector arguments;
+		TemplateParamNameViewVector names;
+	};
+	std::vector<Continuation> continuations;
+	std::vector<ConceptScope> scopes;
+	ASTNode expression = root;
+	for (;;) {
+		if (expression.is<ExpressionNode>()) {
+			expression = std::visit([](const auto& node) { return ASTNode(&node); }, expression.as<ExpressionNode>());
+		}
+		if (const auto* binary = expression.get_if<BinaryOperatorNode>()) {
+			const auto op = binary->op();
+			if (op == "&&" || op == "||") {
+				continuations.push_back({op == "&&" ? Resume::AndLeft : Resume::OrLeft, binary->get_rhs(), {}});
+				expression = binary->get_lhs();
+				continue;
+			}
+		}
+		if (const auto* unary = expression.get_if<UnaryOperatorNode>(); unary != nullptr && unary->op() == "!") {
+			continuations.push_back({Resume::Negate, {}, {}});
+			expression = unary->get_operand();
+			continue;
+		}
+		const TemplateArgumentVector& arguments = scopes.empty() ? root_arguments : scopes.back().arguments;
+		const TemplateParamNameViewVector& names = scopes.empty() ? root_names : scopes.back().names;
+		const auto parameters = scopes.empty() ? root_parameters : std::span<const TemplateParameterNode>(scopes.back().declaration->template_params());
+		std::optional<ASTNode> concept_node;
+		const auto* call = expression.get_if<CallExprNode>();
+		if (call != nullptr) {
+			concept_node = gConceptRegistry.lookupConcept(call->called_from().value());
+		} else if (const auto* identifier = expression.get_if<IdentifierNode>()) {
+			const auto name = identifier->name();
+			if (name != "true" && name != "false" && !name.starts_with("is_") && name.find("_v") == std::string_view::npos) {
+				concept_node = gConceptRegistry.lookupConcept(name);
+			}
+		}
+		if (concept_node.has_value()) {
+			const auto& declaration = concept_node->as<ConceptDeclarationNode>();
+			if (std::ranges::any_of(scopes, [&](const ConceptScope& scope) { return scope.declaration == &declaration; })) {
+				return ConstraintEvaluationResult::failure("cycle in concept constraint");
+			}
+			ConceptScope scope{&declaration, {}, {}};
+			if (call != nullptr) {
+				scope.arguments = bindConstraintConceptArguments(*call, declaration, arguments, names);
+				appendDefaultConceptTemplateArguments(declaration.template_params(), scope.arguments);
+				for (const TemplateParameterNode& parameter : declaration.template_params()) {
+					scope.names.push_back(parameter.name());
+				}
+			} else {
+				scope.arguments = arguments;
+				scope.names = names;
+			}
+			scopes.push_back(std::move(scope));
+			continuations.push_back({Resume::LeaveConcept, {}, {}});
+			expression = declaration.constraint_expr();
+			continue;
+		}
+		ConstraintEvaluationResult result = evaluateConstraintAtom(expression, arguments, names, parser, parameters);
+		bool evaluate_right = false;
+		while (!continuations.empty()) {
+			auto& next = continuations.back();
+			if ((next.resume == Resume::AndLeft && result.satisfied()) ||
+				(next.resume == Resume::OrLeft && (!result.satisfied() || result.unknown()))) {
+				next.resume = next.resume == Resume::AndLeft ? Resume::AndRight : Resume::OrRight;
+				next.left = std::move(result);
+				expression = next.right;
+				evaluate_right = true;
+				break;
+			}
+			switch (next.resume) {
+			case Resume::AndRight:
+				if (result.satisfied() && (next.left.unknown() || result.unknown())) {
+					result = ConstraintEvaluationResult::unknown_result(next.left.failed_requirement + " && " + result.failed_requirement);
+				}
+				break;
+			case Resume::OrRight:
+				if (!result.satisfied() || result.unknown()) {
+					const auto message = next.left.failed_requirement + " || " + result.failed_requirement;
+					result = next.left.unknown() || result.unknown()
+						? ConstraintEvaluationResult::unknown_result(message)
+						: ConstraintEvaluationResult::failure("constraint not satisfied: neither alternative of disjunction is satisfied",
+							message, "ensure at least one of the constraints is met");
+				}
+				break;
+			case Resume::Negate:
+				if (result.unknown()) {
+					result = ConstraintEvaluationResult::unknown_result("!" + result.failed_requirement);
+				} else if (result.satisfied()) {
+					result = ConstraintEvaluationResult::failure("constraint not satisfied: negated constraint is true",
+						"!" + result.failed_requirement, "remove the negation or use a different constraint");
+				} else {
+					result = ConstraintEvaluationResult::success();
+				}
+				break;
+			case Resume::LeaveConcept:
+				scopes.pop_back();
+				break;
+			case Resume::AndLeft:
+			case Resume::OrLeft:
+				break;
+			}
+			continuations.pop_back();
+		}
+		if (!evaluate_right) {
+			return result;
+		}
 	}
 }
 

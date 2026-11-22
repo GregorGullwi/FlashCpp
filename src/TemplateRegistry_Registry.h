@@ -2,6 +2,9 @@
 #include "TemplateRegistry_Pattern.h"
 #include <span>
 
+class Parser;
+bool specializationPatternConstraintsSatisfied(const TemplatePattern& pattern, std::span<const TemplateBinding> bindings, Parser& parser);
+
 class TemplateRegistry {
 public:
 	using OuterTemplateBindingMap = std::unordered_map<StringHandle, OuterTemplateBinding, StringHandleHash, std::equal_to<>>;
@@ -884,14 +887,14 @@ public:
 									   std::span<const TemplateParameterNode> template_params,
 									   std::span<const TemplateTypeArg> pattern_args,
 									   ASTNode specialized_node,
-									   std::optional<SfinaeCondition> sfinae_cond) {
+									   std::optional<SfinaeCondition> sfinae_cond, std::optional<ASTNode> requires_clause) {
 		forEachQualifiedName(qi, [&](std::string_view name) {
 			registerSpecializationPatternByName(
 				StringTable::getOrInternStringHandle(name),
 				template_params,
 				pattern_args,
 				specialized_node,
-				sfinae_cond);
+				sfinae_cond, requires_clause);
 		});
 	}
 
@@ -951,7 +954,7 @@ public:
 	}
 
 	// Look up a template specialization (exact match first, then pattern match)
-	std::optional<ASTNode> lookupSpecialization(std::string_view template_name, std::span<const TemplateTypeArg> template_args) const {
+	std::optional<ASTNode> lookupSpecialization(std::string_view template_name, std::span<const TemplateTypeArg> template_args, Parser& parser) const {
 		FLASH_LOG(Templates, Trace, "lookupSpecialization: template_name='", template_name, "', num_args=", template_args.size());
 
 		// First, try exact match
@@ -963,7 +966,7 @@ public:
 
 		// No exact match - try pattern matching
 		FLASH_LOG(Templates, Trace, "  No exact match, trying pattern matching...");
-		auto pattern_result = matchSpecializationPattern(template_name, template_args);
+		auto pattern_result = matchSpecializationPattern(template_name, template_args, parser);
 		if (pattern_result.has_value()) {
 			FLASH_LOG(Templates, Debug, "  Found pattern match!");
 		} else {
@@ -974,15 +977,15 @@ public:
 
 	// Look up a template specialization using QualifiedIdentifier.
 	// Tries qualified name first, then falls back to unqualified.
-	std::optional<ASTNode> lookupSpecialization(QualifiedIdentifier qi, std::span<const TemplateTypeArg> template_args) const {
+	std::optional<ASTNode> lookupSpecialization(QualifiedIdentifier qi, std::span<const TemplateTypeArg> template_args, Parser& parser) const {
 		if (qi.hasNamespace()) {
 			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
 				qi.namespace_handle, qi.identifier_handle);
-			auto result = lookupSpecialization(StringTable::getStringView(qualified), template_args);
+			auto result = lookupSpecialization(StringTable::getStringView(qualified), template_args, parser);
 			if (result.has_value())
 				return result;
 		}
-		return lookupSpecialization(StringTable::getStringView(qi.identifier_handle), template_args);
+		return lookupSpecialization(StringTable::getStringView(qi.identifier_handle), template_args, parser);
 	}
 
 	bool hasExactSpecializationsForName(std::string_view template_name) const {
@@ -996,23 +999,20 @@ public:
 	}
 
 	// Find a matching specialization pattern (StringHandle overload)
-	std::optional<ASTNode> matchSpecializationPattern(StringHandle template_name,
-											  std::span<const TemplateTypeArg> concrete_args) const {
-		return matchSpecializationPattern(StringTable::getStringView(template_name), concrete_args);
+	std::optional<ASTNode> matchSpecializationPattern(StringHandle template_name, std::span<const TemplateTypeArg> concrete_args, Parser& parser) const {
+		return matchSpecializationPattern(StringTable::getStringView(template_name), concrete_args, parser);
 	}
 
 	// Find a matching specialization pattern (string_view overload)
-	std::optional<ASTNode> matchSpecializationPattern(std::string_view template_name,
-											  std::span<const TemplateTypeArg> concrete_args) const {
-		auto match = matchSpecializationPatternWithBindings(template_name, concrete_args);
+	std::optional<ASTNode> matchSpecializationPattern(std::string_view template_name, std::span<const TemplateTypeArg> concrete_args, Parser& parser) const {
+		auto match = matchSpecializationPatternWithBindings(template_name, concrete_args, parser);
 		return match.has_value()
 			? std::optional<ASTNode>(match->node)
 			: std::nullopt;
 	}
 
 	std::optional<SpecializationPatternMatch> matchSpecializationPatternWithBindings(
-		std::string_view template_name,
-		std::span<const TemplateTypeArg> concrete_args) const {
+		std::string_view template_name, std::span<const TemplateTypeArg> concrete_args, Parser& parser) const {
 		// Heterogeneous lookup - string_view accepted directly
 		auto patterns_it = specialization_patterns_.find(template_name);
 		if (patterns_it == specialization_patterns_.end()) {
@@ -1035,6 +1035,11 @@ public:
 			std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> substitutions;
 			std::vector<TemplateBinding> bindings;
 			if (pattern.matches(concrete_args, substitutions, bindings)) {
+				const bool has_constraints = pattern.requires_clause.has_value() || std::ranges::any_of(pattern.template_params,
+					[](const TemplateParameterNode& parameter) { return parameter.has_concept_constraint(); });
+				if (has_constraints && !specializationPatternConstraintsSatisfied(pattern, bindings, parser)) {
+					continue;
+				}
 				FLASH_LOG(Templates, Trace, "      Pattern #", i, " MATCHES!");
 				int spec = pattern.specificity();
 				if (spec > best_specificity) {
@@ -1225,7 +1230,7 @@ private:
 											 const TemplateParameterVector& template_params,
 											 std::span<const TemplateTypeArg> pattern_args,
 											 ASTNode specialized_node,
-											 std::optional<SfinaeCondition> sfinae_cond) {
+											 std::optional<SfinaeCondition> sfinae_cond, std::optional<ASTNode> requires_clause) {
 
 		if (FLASH_LOG_ENABLED(Templates, Debug)) {
 			FLASH_LOG(Templates, Debug, "registerSpecializationPattern: template_name='", StringTable::getStringView(template_name),
@@ -1251,6 +1256,7 @@ private:
 		pattern.pattern_args = pattern_args;
 		pattern.specialized_node = specialized_node;
 		pattern.sfinae_condition = sfinae_cond;
+		pattern.requires_clause = requires_clause;
 
 		if (!pattern.sfinae_condition.has_value()) {
 			pattern.sfinae_condition = inferSfinaeCondition(template_params, pattern_args);
@@ -1288,13 +1294,13 @@ private:
 											 std::span<const TemplateParameterNode> template_params,
 											 std::span<const TemplateTypeArg> pattern_args,
 											 ASTNode specialized_node,
-											 std::optional<SfinaeCondition> sfinae_cond) {
+											 std::optional<SfinaeCondition> sfinae_cond, std::optional<ASTNode> requires_clause) {
 		TemplateParameterVector typed_template_params;
 		typed_template_params.reserve(template_params.size());
 		for (const TemplateParameterNode& template_param : template_params) {
 			typed_template_params.push_back(template_param);
 		}
-		registerSpecializationPatternByName(template_name, typed_template_params, pattern_args, specialized_node, sfinae_cond);
+		registerSpecializationPatternByName(template_name, typed_template_params, pattern_args, specialized_node, sfinae_cond, requires_clause);
 	}
 
 	// Register a template specialization under an already-normalized registry key.

@@ -8634,7 +8634,7 @@ int main() { return 0; }
 	int_pointer.add_pointer_level(CVQualifier::None);
 	const TemplateTypeArg concrete_argument(int_pointer);
 	const auto pattern_match = gTemplateRegistry.matchSpecializationPatternWithBindings("Owner::Box",
-		std::span<const TemplateTypeArg>(&concrete_argument, 1));
+		std::span<const TemplateTypeArg>(&concrete_argument, 1), parser);
 	REQUIRE(pattern_match.has_value());
 	REQUIRE(pattern_match->node.is<TemplateClassDeclarationNode>());
 	const StructDeclarationNode& pattern = pattern_match->node.as<TemplateClassDeclarationNode>().class_decl_node();
@@ -8690,7 +8690,7 @@ int main() { return 0; }
 	const TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 	const TemplateTypeArg concrete_argument(int_type);
 	const auto pattern_match = gTemplateRegistry.matchSpecializationPatternWithBindings(
-		"Owner::Box", std::span<const TemplateTypeArg>(&concrete_argument, 1));
+		"Owner::Box", std::span<const TemplateTypeArg>(&concrete_argument, 1), parser);
 	REQUIRE(pattern_match.has_value());
 	REQUIRE(pattern_match->node.is<TemplateClassDeclarationNode>());
 	const StructDeclarationNode& pattern = pattern_match->node.as<TemplateClassDeclarationNode>().class_decl_node();
@@ -8737,7 +8737,7 @@ int main() { return 0; }
 	const TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 	const TemplateTypeArg arguments[] = {TemplateTypeArg(int_type), TemplateTypeArg(1, TypeCategory::Bool)};
 	const auto pattern_match = gTemplateRegistry.matchSpecializationPatternWithBindings(
-		"Owner::Select", std::span<const TemplateTypeArg>(arguments, 2));
+		"Owner::Select", std::span<const TemplateTypeArg>(arguments, 2), parser);
 	REQUIRE(pattern_match.has_value());
 	REQUIRE(pattern_match->node.is<TemplateClassDeclarationNode>());
 	const StructDeclarationNode& pattern = pattern_match->node.as<TemplateClassDeclarationNode>().class_decl_node();
@@ -8854,7 +8854,7 @@ int main() { return 0; }
 	const TypeSpecifierNode long_type(TypeCategory::Long, TypeQualifier::None, 64, Token{}, CVQualifier::None);
 	const TemplateTypeArg arguments[] = {TemplateTypeArg(int_type), TemplateTypeArg(char_type), TemplateTypeArg(long_type)};
 	const auto pattern_match = gTemplateRegistry.matchSpecializationPatternWithBindings(
-		"Owner::List", std::span<const TemplateTypeArg>(arguments, 3));
+		"Owner::List", std::span<const TemplateTypeArg>(arguments, 3), parser);
 	REQUIRE(pattern_match.has_value());
 	REQUIRE(pattern_match->node.is<TemplateClassDeclarationNode>());
 	const StructDeclarationNode& pattern = pattern_match->node.as<TemplateClassDeclarationNode>().class_decl_node();
@@ -9302,7 +9302,7 @@ template<class T> struct Holder {
 	const TemplateArgumentVector box_args{
 		TemplateTypeArg::makeType(pair_char_int.resolved_type_info->registeredTypeIndex()),
 		TemplateTypeArg::makeType(pair_double_long.resolved_type_info->registeredTypeIndex())};
-	const auto pattern_match = gTemplateRegistry.matchSpecializationPatternWithBindings("Holder::Box", box_args);
+	const auto pattern_match = gTemplateRegistry.matchSpecializationPatternWithBindings("Holder::Box", box_args, parser);
 	REQUIRE(pattern_match.has_value());
 	REQUIRE(pattern_match->node.is<TemplateClassDeclarationNode>());
 	const StructDeclarationNode& pattern = pattern_match->node.as<TemplateClassDeclarationNode>().class_decl_node();
@@ -10103,7 +10103,7 @@ struct Owner {
 	arguments[1].is_pack = true;
 	arguments[2].is_pack = true;
 	const std::span<const TemplateTypeArg> bound(arguments);
-	const auto match = gTemplateRegistry.matchSpecializationPatternWithBindings("Owner::List", bound.first(3));
+	const auto match = gTemplateRegistry.matchSpecializationPatternWithBindings("Owner::List", bound.first(3), parser);
 	REQUIRE(match.has_value());
 	const auto& parameters = match->node.as<TemplateClassDeclarationNode>().template_parameters();
 	REQUIRE(parameters.size() == 2);
@@ -10229,7 +10229,7 @@ TEST_CASE("Multipack pattern deduction returns ordered complete bindings") {
 		pair_arg(nativeTypeIndex(TypeCategory::Char), nativeTypeIndex(TypeCategory::Int)),
 		pair_arg(small->registeredTypeIndex(), nativeTypeIndex(TypeCategory::LongLong)),
 		pair_arg(nativeTypeIndex(TypeCategory::Double), wide->registeredTypeIndex())};
-	const auto match = gTemplateRegistry.matchSpecializationPatternWithBindings("Box", concrete);
+	const auto match = gTemplateRegistry.matchSpecializationPatternWithBindings("Box", concrete, parser);
 	REQUIRE(match.has_value());
 	std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> scalar_bindings;
 	std::vector<TemplateBinding> bindings;
@@ -10252,7 +10252,7 @@ TEST_CASE("Multipack pattern deduction returns ordered complete bindings") {
 		CHECK(bindings[0].args[index].type_index == pair->templateArgs()[0].type_index);
 		CHECK(bindings[1].args[index].type_index == pair->templateArgs()[1].type_index);
 	}
-	const auto empty_match = gTemplateRegistry.matchSpecializationPatternWithBindings("Box", std::span<const TemplateTypeArg>{});
+	const auto empty_match = gTemplateRegistry.matchSpecializationPatternWithBindings("Box", std::span<const TemplateTypeArg>{}, parser);
 	REQUIRE(empty_match.has_value());
 	bindings.clear();
 	CHECK(empty_match->pattern->matches(std::span<const TemplateTypeArg>{}, scalar_bindings, bindings));
@@ -10264,11 +10264,11 @@ TEST_CASE("Multipack pattern deduction returns ordered complete bindings") {
 	const TemplateTypeArg conflicting[] = {
 		pair_arg(nativeTypeIndex(TypeCategory::Char), nativeTypeIndex(TypeCategory::Int)),
 		pair_arg(nativeTypeIndex(TypeCategory::Double), nativeTypeIndex(TypeCategory::Double))};
-	CHECK_FALSE(gTemplateRegistry.matchSpecializationPatternWithBindings("EqualBox", conflicting).has_value());
+	CHECK_FALSE(gTemplateRegistry.matchSpecializationPatternWithBindings("EqualBox", conflicting, parser).has_value());
 	const TemplateTypeArg scalar_reuse[] = {
 		pair_arg(nativeTypeIndex(TypeCategory::Char), nativeTypeIndex(TypeCategory::Int)),
 		pair_arg(nativeTypeIndex(TypeCategory::Double), nativeTypeIndex(TypeCategory::LongLong))};
-	CHECK_FALSE(gTemplateRegistry.matchSpecializationPatternWithBindings("ReuseBox", scalar_reuse).has_value());
+	CHECK_FALSE(gTemplateRegistry.matchSpecializationPatternWithBindings("ReuseBox", scalar_reuse, parser).has_value());
 }
 
 TEST_CASE("Nested structural NTTP member pointers bind the specialized target owner") {

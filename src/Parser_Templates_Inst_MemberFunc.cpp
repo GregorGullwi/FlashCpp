@@ -1692,7 +1692,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	// FIRST: Check if we have an explicit specialization for these template arguments
 	auto specialization_opt = gTemplateRegistry.lookupSpecialization(
 		specialization_lookup_name.view(),
-		template_type_args);
+		template_type_args, *this);
 	if (!specialization_opt.has_value()) {
 		std::string_view qualified_base_class_name;
 		if (struct_type_info && struct_type_info->isTemplateInstantiation()) {
@@ -1704,7 +1704,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			specialization_lookup_name = build_member_lookup_name(qualified_base_class_name);
 			specialization_opt = gTemplateRegistry.lookupSpecialization(
 				specialization_lookup_name.view(),
-				template_type_args);
+				template_type_args, *this);
 		}
 		if (!specialization_opt.has_value()) {
 			std::string_view base_class_name = extractBaseTemplateName(struct_name);
@@ -1712,7 +1712,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				specialization_lookup_name = build_member_lookup_name(base_class_name);
 				specialization_opt = gTemplateRegistry.lookupSpecialization(
 					specialization_lookup_name.view(),
-					template_type_args);
+					template_type_args, *this);
 			}
 		}
 	}

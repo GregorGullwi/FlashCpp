@@ -1369,7 +1369,7 @@ std::optional<Parser::ConstantValue> Parser::tryEvaluateConstantExpression(const
 		auto specialization_ast = gTemplateRegistry.lookupExactSpecialization(base_template_name, exact_args);
 		if (!specialization_ast.has_value()) {
 			FLASH_LOG_FORMAT(Templates, Trace, "No exact specialization AST for '{}', trying patterns", base_template_name);
-			specialization_ast = gTemplateRegistry.matchSpecializationPattern(base_template_name, exact_args);
+			specialization_ast = gTemplateRegistry.matchSpecializationPattern(base_template_name, exact_args, *this);
 		}
 		if (!specialization_ast.has_value() || !specialization_ast->is<StructDeclarationNode>()) {
 			FLASH_LOG_FORMAT(Templates, Trace, "No specialization AST found for '{}'", base_template_name);

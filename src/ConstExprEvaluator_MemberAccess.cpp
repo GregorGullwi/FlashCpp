@@ -1059,7 +1059,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 
 					auto specialization_ast = gTemplateRegistry.lookupExactSpecialization(base_template_name, exact_args);
 					if (!specialization_ast.has_value()) {
-						specialization_ast = gTemplateRegistry.matchSpecializationPattern(base_template_name, exact_args);
+						specialization_ast = gTemplateRegistry.matchSpecializationPattern(base_template_name, exact_args, context.parser);
 					}
 					if (!specialization_ast.has_value() || !specialization_ast->is<StructDeclarationNode>()) {
 						return std::nullopt;
