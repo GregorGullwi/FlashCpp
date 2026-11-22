@@ -1,9 +1,10 @@
 // Reduced regression for canonical planning of lvalue-marked builtin array
 // decay: an ordinary array argument records its value category with a
-// reference marker, and one-dimensional arrays without a pointer element must
-// convert through the canonical projectable plan instead of the syntax
-// compatibility tail. Pointer-element arrays and pointer-to-array targets keep
-// the compatibility path and their existing results.
+// reference marker, and every supported by-value array decay shape now
+// converts through the canonical projectable plan instead of the syntax
+// compatibility tail: element pointers, pointer-element arrays decaying to
+// pointer-to-pointer, pointer-to-row targets, cv-void targets, and arrays of
+// bool. This file must keep the compatibility fallback counter at zero.
 
 static int acceptIntPointer(int* values) {
 	return values[0] + values[1];
