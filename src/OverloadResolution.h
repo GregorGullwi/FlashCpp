@@ -2757,6 +2757,15 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 		value_source.set_reference_qualifier(ReferenceQualifier::None);
 		return tryBuildCanonicalProjectableConversionPlan(value_source, to);
 	}
+	// An array object has no implicit conversion to a non-bool builtin scalar;
+	// its standard conversions are array-to-pointer decay and pointer-like to
+	// bool. Class targets stay on their converting-constructor path.
+	if (from.is_array() && !from.has_pointee_array_declarator() && to.runtime_pointer_depth() == 0 &&
+		!to.is_array_object() && !to.is_reference() && !to.is_rvalue_reference() &&
+		!orderedDeclaratorIsReference(to) && is_builtin_type(to.category()) &&
+		to.category() != TypeCategory::Bool && to.category() != TypeCategory::Void) {
+		return ConversionPlan::no_match();
+	}
 	if (from.is_member_object_pointer_type() && to.is_member_object_pointer_type()) {
 		FrontendContext* const context = FrontendContext::active();
 		if (context == nullptr) {
@@ -4012,6 +4021,12 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(const
 			}
 			return buildCanonicalStructuralConversionPlan(
 				table, source_type, target_type);
+		}
+		// An array cannot bind to a reference to a scalar builtin. Only
+		// reference-to-array binding reaches this point with matching shapes.
+		if (unqualified_source_node.kind == CanonicalTypeKind::Array &&
+			unqualified_target_node.kind == CanonicalTypeKind::Builtin) {
+			return ConversionPlan::no_match();
 		}
 		if (unqualified_source_node.kind != CanonicalTypeKind::Builtin ||
 			unqualified_target_node.kind != CanonicalTypeKind::Builtin) {
