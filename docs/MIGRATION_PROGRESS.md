@@ -864,7 +864,17 @@ every corpus entry being unmeasurable rather than as one missing counter.
 `canonical_structural_trait_fallback` is 0 on the
 structural-trait and lazy-constraint regressions; residual lazy-constraint
 fallbacks are the constructibility probes, which need the canonical
-constructor-query path. Record emptiness now ignores
+constructor-query path.
+Constraint evaluation keeps `TypeTraitExprNode` atoms on the canonical trait
+evaluator, because that path publishes the operand entity before canonical
+import. The general constexpr `evaluate_type_trait` path still imports raw
+syntax operands and can record canonical shape-gap, structural trait fallback,
+and TypeIndex entity-recovery counters for traits evaluated outside constraint
+atoms. Boundary 3A owns publishing trait operands in that shared evaluator;
+boundary 7 owns consolidating comparison atoms so constraint evaluation does not
+need a generic constexpr first pass. Do not route type-trait atoms back through
+the generic probe without completing those steps.
+Record emptiness now ignores
 `[[no_unique_address]]` empty members, and destructibility walks deleted
 subobject destructors, including non-trivial variant members of union-like
 classes. Deleted, protected, and first-declaration-defaulted special members
