@@ -2736,18 +2736,19 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 		if (from.elementPointerDepth() != 0) {
 			return false;
 		}
-		if (to.runtime_pointer_depth() != 1 || isCallablePointer(to)) {
+		if (to.runtime_pointer_depth() == 0 || isCallablePointer(to)) {
 			return false;
 		}
 		if (!is_builtin_type(from.category()) || !is_builtin_type(to.category()) ||
 			from.category() == TypeCategory::Nullptr) {
 			return false;
 		}
-		if (from.has_single_array_extent()) {
-			return !to.has_pointee_array_declarator();
-		}
-		if (from.has_multiple_array_extents()) {
-			return to.has_pointee_array_declarator() && to.category() != TypeCategory::Void;
+		// A by-value array source decays to a pointer to its first element for
+		// any object-pointer target. The canonical structural planner owns both
+		// the element-pointer and pointer-to-row results; leaving sized arrays
+		// here would hand the same shape to the compatibility planner.
+		if (from.is_array()) {
+			return !from.has_unsized_outer_array_dimension();
 		}
 		return false;
 	};
@@ -3041,7 +3042,13 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 	const ConversionPlan plan = buildCanonicalStructuralConversionPlan(
 		table, from_import.type, to_import.type);
 	if (!plan.is_valid) {
-		if (is_pointer_pair) {
+		// Object-pointer and sized array-to-pointer pairs have a complete
+		// canonical answer, so an invalid plan is authoritative instead of
+		// re-planning the same shape through the syntax compatibility path.
+		// Unsized and dependent arrays keep the compatibility bridge until their
+		// extent and decay rules are represented canonically.
+		if (is_pointer_pair || (is_array_decay && !from.has_unsized_outer_array_dimension() &&
+			!table.hasDependentTypeComponents(from_import.type) && !table.hasDependentTypeComponents(to_import.type))) {
 			return plan;
 		}
 		return std::nullopt;

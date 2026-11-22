@@ -979,3 +979,18 @@ while parsing the template argument list. A reduced friend/ADL form reaches an
 incorrect constructor diagnostic. These parser/lookup gaps prevent a source-level
 friend-effect regression here; native tests retain a successfully instantiated
 `Check<Good>` after a later class-body error without rolling back its cache entry.
+
+## Top-level cv on a pointer-to-array argument breaks call verification
+
+Passing a variable whose type is `int (*const q)[3]` or `int (*volatile q)[3]`
+to a parameter of type `int (*)[3]` is a valid identity conversion: the
+top-level cv-qualifier on the pointer object is dropped for by-value parameter
+passing. Sema currently compares the argument and parameter `CanonicalTypeId`s
+without dropping that top-level cv, so the identity fast path in
+`ensureResolvedCallArgConversionsComplete` is skipped; because the argument also
+carries pointee array dimensions, the fallback throws
+`Phase 1: sema missed resolved function call argument conversion`. The
+conversion plan itself is an exact match, so the fix is to compare the
+argument's top-level-cv-dropped value type there (and for the plan lookup),
+without dropping pointee cv such as `const int (*)[3]`. This is independent of
+the canonical array-decay plan; a reduced probe reproduces it on `origin/main`.
