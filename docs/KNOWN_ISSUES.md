@@ -157,66 +157,18 @@ for object-pointer element offsets outside the canonical 32-bit range or targets
 without a published identity. Some qualified, data-member, and complex array-element
 origins still arrive without a target, as recorded above.
 
-## Partial-specialization constraints are not checked during selection
+## Partial-specialization constraint atoms must be proven before selection
 
-Boundary 7 owns constraint satisfaction, including short-circuit substitution,
-atomic evaluation, and scheduling nested requirements. Boundary 8A consumes
-those results in canonical partial-specialization selection and owns scheduling
-any required instantiations. Boundary 3A publishes the pattern identity those
-consumers use.
-
-A constrained partial specialization is selected even when its constraint is false,
-so an ill-formed specialization can be instantiated instead of the primary template.
-Both forms reproduce, verified against MSVC on the same object:
-
-```cpp
-template<class T> struct Pick { static constexpr int value = 0; };
-template<class T> requires (sizeof(T) != 4) struct Pick<T*> { static constexpr int value = 1; };
-Pick<int*>::value    // FlashCpp 1, MSVC 0 (primary)
-
-template<class T> concept FourBytes = sizeof(T) == 4;
-template<FourBytes T> struct Pick2<T*> { static constexpr int value = 1; };
-Pick2<double*>::value // FlashCpp 1, MSVC 0 (primary)
-```
-
-Two things combine. Registration discards the clause: the class pattern record
-carries template parameters, pattern arguments, the specialized node and an optional
-SFINAE condition, but no requires-clause. And the canonical pattern environment
-records requires-clause identity so two constrained patterns stay distinct for
-ordering, which means ordering can compare constraints without any path ever
-evaluating whether a candidate's constraint holds for the deduced arguments.
-
-The fix is to carry the clause from the parsed declaration through registration,
-then evaluate it against the deduced bindings before ordering candidates — a concept
-form through the existing concept evaluator, a requires-expression form through the
-ordinary constant-expression path after substitution — and skip unsatisfied
-candidates rather than ordering them. Partial ordering itself must keep using the
-environment identity it already has. Regressions must cover both forms and assert
-the primary template is selected.
-
-Constraint satisfaction needs to schedule substitution at the atomic constraint.
-Substituting a whole clause up front can instantiate `Explode<T>` in
-`sizeof(T) == 1 && sizeof(Explode<T>) != 0` even when the left operand rules out
-the candidate. An atomic condition such as `T::value` needs substitution and
-constant evaluation when reached. The evaluator's unknown result must remain
-distinct from proven satisfaction and substitution failure.
-The legacy comparison evaluator also loses declarator shape. Given
-`template<class T> concept IntSized = sizeof(T) == sizeof(int)`, a partial
-specialization `template<IntSized T> struct Pick<T*>` can be selected for
-`Pick<int**>` on x64 because the legacy `sizeof` reads the index for `int`
-instead of the deduced type `int*`. Use the substituted type for evaluation.
-Nested requirements first attempt constant evaluation after substitution, which
-resolves the dependent member type in
-`test_requires_sizeof_dependent_member_value_type_ret8.cpp`. Other unevaluated
-requirements still reach the legacy constraint evaluator.
-
-Track concept expansion, boolean operations, and nested requirements in one
-scheduler. A worklist for concept expansion and boolean operations handles a
-128-level concept chain with a 1 MB compiler stack, but a chain of the same
-depth through `requires { requires Previous<T>; }` still overflows if the
-requirement evaluator calls back into the scheduler. A nested requirement
-needs to suspend its active scope and resume at the next requirement after
-its child constraint completes. See the native-stack issue below.
+Partial-specialization selection carries the requires-clause through
+registration, checks concept-constrained parameters and the clause against the
+deduced bindings, and only orders candidates whose constraints are proven
+satisfied. The constraint worklist substitutes each atomic constraint when its
+boolean path is reached, evaluates it with the canonical type and constexpr
+machinery, and schedules nested requirements and boolean continuations without
+native recursion. An unknown atomic result is not proof of satisfaction, so a
+specialization whose constraint uses a construct the evaluator cannot classify
+is conservatively skipped; extend the canonical/constexpr atom path instead of
+treating that atom as satisfied.
 
 ## Nominal import gaps are publication gaps, not importer gaps
 
@@ -238,7 +190,7 @@ Do not add a nominal dispatch that reads an entity the producers never publish, 
 do not pin it with a harness stub that fabricates one: a host test with a stubbed
 `tryGetTypeInfo` proves the code compiles, not that any program can reach it.
 
-## Expression parsing and constraint evaluation can overflow a 1 MB native stack
+## Expression parsing can overflow a 1 MB native stack
 
 The nested NTTP-field regression
 `test_nested_inner_value_pack_member_field_ret0.cpp` overflows during compilation
@@ -248,9 +200,10 @@ materialization still needs smaller frames and bounded scheduling.
 Parenthesized `requires` operands in concept definitions can also overflow a
 1 MB stack in expression parsing before constraint evaluation starts, for example
 `Base<T> && (requires(T value) { value.probe(); } || __is_integral(T))`.
-Named-concept evaluation also retains native recursion: a 16-level chain of
-`Next<T> = Previous<T> && Base<T>` also crashes with a 1 MB compiler reserve,
-even with a builtin-trait leaf. Constraint traversal needs bounded scheduling as well.
+Named-concept expansion, boolean continuations, and nested requirements are
+worklist-scheduled: a 128-level named-concept chain and a 128-level
+`requires { requires Previous<T>; }` chain compile under a 1 MB reserve. The
+remaining overflow above is in expression parsing, before constraint evaluation.
 
 Persistent payload handles and out-of-line argument vectors are not reclaimed
 when rolled-back probes abandon entries; they remain allocated until process
