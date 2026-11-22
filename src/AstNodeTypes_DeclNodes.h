@@ -2256,6 +2256,12 @@ public:
 	bool has_single_array_extent() const {
 		return is_array_ && !pointee_array_declarator_ && !has_unsized_outer_array_dimension_ && array_dimensions_.size() == 1;
 	}
+	// True for a sized array object with more than one stored extent, such as
+	// T[N][M]. Unsized outer arrays and pointer-to-array wrappers keep their
+	// existing conversion paths.
+	bool has_multiple_array_extents() const {
+		return is_array_ && !pointee_array_declarator_ && !has_unsized_outer_array_dimension_ && array_dimensions_.size() > 1;
+	}
 	// True when the declared entity is a reference whose referred-to type is an
 	// array (T (&r)[N...]). Such an entity stores the array's address.
 	bool is_reference_to_array() const {
