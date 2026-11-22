@@ -393,6 +393,18 @@ ParseResult Parser::parse_requires_expression() {
 	return saved_position.success(requires_expr_node);
 }
 
+static std::optional<bool> tryEvaluateNestedRequirement(const ASTNode& expression, std::span<const TemplateParameterNode> parameters,
+	std::span<const TemplateTypeArg> arguments, Parser& parser) {
+	const ASTNode substituted = parser.substituteTemplateParameters(expression, parameters, arguments);
+	ConstExpr::EvaluationContext context(gSymbolTable, parser);
+	context.is_speculative = true;
+	const ConstExpr::EvalResult result = ConstExpr::Evaluator::evaluate(substituted, context);
+	if (!result.success()) {
+		return std::nullopt;
+	}
+	return result.as_bool();
+}
+
 ConstraintEvaluationResult evaluateRequiresExpressionConstraint(const RequiresExpressionNode& requires_expr,
 	const TemplateArgumentVector& template_args, const TemplateParamNameViewVector& template_param_names, Parser& parser,
 	std::span<const TemplateParameterNode> template_params) {
@@ -488,6 +500,13 @@ ConstraintEvaluationResult evaluateRequiresExpressionConstraint(const RequiresEx
 		}
 		if (substituted_requirement.is<RequiresClauseNode>()) {
 			const auto& nested_req = substituted_requirement.as<RequiresClauseNode>();
+			const std::optional<bool> evaluated = tryEvaluateNestedRequirement(nested_req.constraint_expr(), template_params, template_args, parser);
+			if (evaluated.has_value()) {
+				if (!*evaluated) {
+					return ConstraintEvaluationResult::failure("nested requirement is not satisfied");
+				}
+				continue;
+			}
 			auto nested_result = evaluateConstraint(nested_req.constraint_expr(), template_args, template_param_names, parser, template_params);
 			if (!nested_result.satisfied()) {
 				return nested_result;

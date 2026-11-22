@@ -205,10 +205,10 @@ The legacy comparison evaluator also loses declarator shape. Given
 specialization `template<IntSized T> struct Pick<T*>` can be selected for
 `Pick<int**>` on x64 because the legacy `sizeof` reads the index for `int`
 instead of the deduced type `int*`. Use the substituted type for evaluation.
-The same legacy evaluator cannot resolve the nested `sizeof` in
-`test_requires_sizeof_dependent_member_value_type_ret8.cpp`. Turning on
-constraint filtering without improving atomic evaluation changes that test
-from the matching specialization to the primary template.
+Nested requirements first attempt constant evaluation after substitution, which
+resolves the dependent member type in
+`test_requires_sizeof_dependent_member_value_type_ret8.cpp`. Other unevaluated
+requirements still reach the legacy constraint evaluator.
 
 Track concept expansion, boolean operations, and nested requirements in one
 scheduler. A worklist for concept expansion and boolean operations handles a
