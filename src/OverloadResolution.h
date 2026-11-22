@@ -2683,11 +2683,13 @@ inline CanonicalTypeImport importCanonicalOverloadNominalType(CanonicalTypeTable
 // families remain on their compatibility paths.
 inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
 	// An lvalue-marked source is a value category marker, not a reference type,
-	// when the target is a by-value builtin or a by-value pointer whose pointee
-	// is a builtin value. Both planners share the same standard conversion table
-	// for these pairs, so strip the marker and plan canonically. Reference
-	// targets, arrays, callable pointers, member pointers, class pointers, and
-	// void pointers keep their existing paths.
+	// when the target is a by-value builtin, a by-value builtin object pointer,
+	// or a by-value builtin pointer reached by one-dimensional array decay. Both
+	// planners share the same standard conversion table for these pairs, so
+	// strip the marker and plan canonically. Reference targets, multidimensional
+	// and unsized arrays, pointer-element arrays, pointer-to-array targets,
+	// callable pointers, member pointers, and class pointers keep their existing
+	// paths.
 	const bool lvalue_marked_by_value =
 		from.is_lvalue_reference() && !to.is_reference() && !to.is_rvalue_reference() &&
 		!orderedDeclaratorIsReference(to) && !from.is_array_object() && !to.is_array_object();
@@ -2706,7 +2708,13 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 		!from.is_member_object_pointer() && !to.is_member_object_pointer() &&
 		is_builtin_type(from.category()) && is_builtin_type(to.category()) &&
 		from.category() != TypeCategory::Void && to.category() != TypeCategory::Void;
-	if (lvalue_marked_by_value && (builtin_value_source || builtin_pointer_value_source)) {
+	const bool builtin_array_decay_source =
+		legacy_ordered_projection && from.has_single_array_extent() && from.elementPointerDepth() == 0 &&
+		to.runtime_pointer_depth() == 1 && !to.has_pointee_array_declarator() &&
+		!to.is_function_pointer() && !to.is_member_function_pointer() && !to.is_member_object_pointer() &&
+		is_builtin_type(from.category()) && is_builtin_type(to.category()) &&
+		from.category() != TypeCategory::Nullptr;
+	if (lvalue_marked_by_value && (builtin_value_source || builtin_pointer_value_source || builtin_array_decay_source)) {
 		TypeSpecifierNode value_source = from;
 		value_source.set_reference_qualifier(ReferenceQualifier::None);
 		return tryBuildCanonicalProjectableConversionPlan(value_source, to);

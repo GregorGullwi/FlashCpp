@@ -2250,6 +2250,12 @@ public:
 	bool is_array_object() const {
 		return is_array_ && !has_pointee_array_declarator() && !is_reference();
 	}
+	// True for an array object or reference-to-array with exactly one stored
+	// extent and no pointer-to-array wrapper, such as T[N]. Multidimensional and
+	// unsized outer arrays keep their existing conversion paths.
+	bool has_single_array_extent() const {
+		return is_array_ && !pointee_array_declarator_ && !has_unsized_outer_array_dimension_ && array_dimensions_.size() == 1;
+	}
 	// True when the declared entity is a reference whose referred-to type is an
 	// array (T (&r)[N...]). Such an entity stores the array's address.
 	bool is_reference_to_array() const {
