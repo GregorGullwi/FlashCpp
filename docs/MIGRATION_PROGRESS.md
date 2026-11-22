@@ -16,6 +16,13 @@ transaction. The flat-consumer migration in item 2 remains the independent
 parallel track. Type-pack materialization stays deferred to boundary 8A until 3A
 closes.
 
+The consolidated lvalue-marker guard in the projectable conversion planner is a
+temporary 3A bridge. Value category still rides on `TypeSpecifierNode` for
+ordinary lvalue expressions; boundary 4 moves it to the semantic expression
+result and deletes that guard rather than extending it with another conversion
+tail. See boundary 4 in the
+[rearchitecture plan](2026-08-24-front-end-rearchitecture-plan.md).
+
 ## Provisional-publication slice
 
 **Separate provisional type publication from required instantiations.**

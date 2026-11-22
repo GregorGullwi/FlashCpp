@@ -958,6 +958,15 @@ Introduce a semantic expression node or result containing:
 - constant-expression requirements;
 - semantic rewrite or lowering records.
 
+The current parser records ordinary lvalue value category by setting a reference
+qualifier on `TypeSpecifierNode`, so conversion planning strips that marker per
+conversion tail before projecting a by-value source. That guard is a 3A stopgap,
+not a second value-category model. Boundary 4 must carry the category on the
+semantic expression result, pass it to reference binding, and use the source
+`TypeId` unchanged for by-value conversion. Once callers do that, delete the
+conversion planner's lvalue-marker stripping instead of extending it with
+another tail.
+
 Start with:
 
 1. literals and identifiers;
