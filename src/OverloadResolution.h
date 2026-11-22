@@ -2694,45 +2694,57 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 	// marker and plan canonically. Reference targets, unsized arrays,
 	// pointer-element arrays, single-extent pointer-to-array targets, callable
 	// pointers, member pointers, and class pointers keep their existing paths.
-	const bool lvalue_marked_by_value =
-		from.is_lvalue_reference() && !to.is_reference() && !to.is_rvalue_reference() &&
-		!orderedDeclaratorIsReference(to) && !from.is_array_object() && !to.is_array_object();
-	const bool legacy_ordered_projection =
-		(!from.has_ordered_declarator() || from.ordered_declarator_has_legacy_projection()) &&
-		(!to.has_ordered_declarator() || to.ordered_declarator_has_legacy_projection());
-	const bool builtin_value_source =
-		!from.has_ordered_declarator() && !to.has_ordered_declarator() &&
-		from.runtime_pointer_depth() == 0 && to.runtime_pointer_depth() == 0 &&
-		is_builtin_type(from.category()) && is_builtin_type(to.category()) &&
-		from.category() != TypeCategory::Nullptr && to.category() != TypeCategory::Void;
-	const bool builtin_pointer_value_source =
-		legacy_ordered_projection && from.runtime_pointer_depth() > 0 && to.runtime_pointer_depth() > 0 &&
-		!from.is_function_pointer() && !to.is_function_pointer() &&
-		!from.is_member_function_pointer() && !to.is_member_function_pointer() &&
-		!from.is_member_object_pointer() && !to.is_member_object_pointer() &&
-		is_builtin_type(from.category()) && is_builtin_type(to.category()) &&
-		from.category() != TypeCategory::Void && to.category() != TypeCategory::Void;
-	const bool builtin_void_pointer_value_source =
-		legacy_ordered_projection && from.runtime_pointer_depth() == 1 && to.runtime_pointer_depth() == 1 &&
-		from.category() == TypeCategory::Void && to.category() == TypeCategory::Void &&
-		(static_cast<uint8_t>(from.cv_qualifier()) & ~static_cast<uint8_t>(to.cv_qualifier())) == 0 &&
-		!from.is_function_pointer() && !to.is_function_pointer() &&
-		!from.is_member_function_pointer() && !to.is_member_function_pointer() &&
-		!from.is_member_object_pointer() && !to.is_member_object_pointer();
-	const bool builtin_array_decay_source =
-		legacy_ordered_projection && from.has_single_array_extent() && from.elementPointerDepth() == 0 &&
-		to.runtime_pointer_depth() == 1 && !to.has_pointee_array_declarator() &&
-		!to.is_function_pointer() && !to.is_member_function_pointer() && !to.is_member_object_pointer() &&
-		is_builtin_type(from.category()) && is_builtin_type(to.category()) &&
-		from.category() != TypeCategory::Nullptr;
-	const bool builtin_row_decay_source =
-		legacy_ordered_projection && from.has_multiple_array_extents() && from.elementPointerDepth() == 0 &&
-		to.runtime_pointer_depth() == 1 && to.has_pointee_array_declarator() &&
-		!to.is_function_pointer() && !to.is_member_function_pointer() && !to.is_member_object_pointer() &&
-		is_builtin_type(from.category()) && is_builtin_type(to.category()) &&
-		from.category() != TypeCategory::Nullptr && to.category() != TypeCategory::Void;
-	if (lvalue_marked_by_value && (builtin_value_source || builtin_pointer_value_source || builtin_void_pointer_value_source ||
-			builtin_array_decay_source || builtin_row_decay_source)) {
+	const auto isCallablePointer = [](const TypeSpecifierNode& type) {
+		return type.is_function_pointer() || type.is_member_function_pointer() || type.is_member_object_pointer();
+	};
+	const auto hasLegacyOrderedProjection = [](const TypeSpecifierNode& type) {
+		return !type.has_ordered_declarator() || type.ordered_declarator_has_legacy_projection();
+	};
+	const auto shouldStripLvalueMarker = [&]() {
+		if (!from.is_lvalue_reference() || to.is_reference() || to.is_rvalue_reference() ||
+			orderedDeclaratorIsReference(to) || from.is_array_object() || to.is_array_object()) {
+			return false;
+		}
+		if (!hasLegacyOrderedProjection(from) || !hasLegacyOrderedProjection(to)) {
+			return false;
+		}
+		const bool from_pointer = from.runtime_pointer_depth() > 0;
+		const bool to_pointer = to.runtime_pointer_depth() > 0;
+		if (!from_pointer && !to_pointer) {
+			return !from.has_ordered_declarator() && !to.has_ordered_declarator() &&
+				is_builtin_type(from.category()) && is_builtin_type(to.category()) &&
+				from.category() != TypeCategory::Nullptr && to.category() != TypeCategory::Void;
+		}
+		if (from_pointer && to_pointer) {
+			if (isCallablePointer(from) || isCallablePointer(to)) {
+				return false;
+			}
+			if (from.category() == TypeCategory::Void || to.category() == TypeCategory::Void) {
+				return from.category() == TypeCategory::Void && to.category() == TypeCategory::Void &&
+					from.runtime_pointer_depth() == 1 && to.runtime_pointer_depth() == 1 &&
+					(static_cast<uint8_t>(from.cv_qualifier()) & ~static_cast<uint8_t>(to.cv_qualifier())) == 0;
+			}
+			return is_builtin_type(from.category()) && is_builtin_type(to.category());
+		}
+		if (from.elementPointerDepth() != 0) {
+			return false;
+		}
+		if (to.runtime_pointer_depth() != 1 || isCallablePointer(to)) {
+			return false;
+		}
+		if (!is_builtin_type(from.category()) || !is_builtin_type(to.category()) ||
+			from.category() == TypeCategory::Nullptr) {
+			return false;
+		}
+		if (from.has_single_array_extent()) {
+			return !to.has_pointee_array_declarator();
+		}
+		if (from.has_multiple_array_extents()) {
+			return to.has_pointee_array_declarator() && to.category() != TypeCategory::Void;
+		}
+		return false;
+	};
+	if (shouldStripLvalueMarker()) {
 		TypeSpecifierNode value_source = from;
 		value_source.set_reference_qualifier(ReferenceQualifier::None);
 		return tryBuildCanonicalProjectableConversionPlan(value_source, to);
