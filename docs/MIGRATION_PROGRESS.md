@@ -305,7 +305,14 @@ remaining pattern schemas by identity, and remove the name fallback.
    planner rejects;
    `test_conversion_operator_pointer_qualification_tail_ret0.cpp` pins the
    qualification-versus-exact ranking, the `void*` tail, and nested pointer
-   qualification.
+   qualification. By-value argument conversion now strips the lvalue
+   value-category marker for non-callable object pointer sources whose target is
+   `bool`, so pointer-to-boolean candidates use the structural planner; callable,
+   member, and class pointers keep their compatibility paths.
+   `test_canonical_lvalue_object_pointer_bool_conversion_ret0.cpp` pins exact,
+   multi-level, cv-qualified, and cv void pointer-to-boolean conversions. The
+   existing pointer, cv void pointer, and array-decay regressions lower their
+   fallback baselines.
    Class-pointer tails rank through the published canonical base graph, check
    access after selection, and preserve null for fixed-offset and virtual-base
    adjustments in lowering. Calling an inherited conversion operator adjusts the
