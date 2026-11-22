@@ -39,4 +39,3 @@ struct detector<Default, Holder, Prefix, Wrap, T> {
 int main() {
 	return detector<int, holder, char, identity, int>::value;
 }
-
