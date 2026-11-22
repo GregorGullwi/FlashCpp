@@ -97,10 +97,10 @@ equality/hash, and template argument binding. Do not recover target identity fro
 a spelling or ABI symbol.
 
 Object pointer arguments publish a target when the address-of operand is a bare
-identifier, a namespace-qualified variable, or a static data member of a
-non-template class. A static member of a class-template instance, a data-member
-address, and an array element still lose identity, so two distinct objects can
-instantiate the same specialization. The class-owned forms are not in the qualified
+identifier, a namespace-qualified variable, a static data member of a
+non-template class, or an element of a named array. A static member of a
+class-template instance and a data-member address still lose identity, so two
+distinct objects can instantiate the same specialization. The class-owned forms are not in the qualified
 scope's symbol table; the class member list owns them, and publishing one needs the
 class's declaration-builder entity as its owner. A non-template class declaration
 provides that entity, but an instantiated class has no declaration node, so its
@@ -123,11 +123,18 @@ Object pointer members and pointer array elements of structural values now carry
 their
 published target and element offset, so a value that differs only in a pointer
 member or in a neighbouring scalar member instantiates a distinct specialization; a
-member whose pointer has no publishable target still makes the whole value
-non-structural (fail closed) rather than comparing equal by spelling. Resolve the
-evaluator's own declaration origin into a published `EntityId` for every address-of
+member whose pointer has no publishable target makes structural extraction fail.
+The parser can then attempt scalar construction from the same evaluation result;
+whether an unsupported structural value can be accepted through that path needs a
+reduced regression. Resolve the evaluator's own declaration origin into a published `EntityId` for every address-of
 and subobject form; that carrier change belongs to constexpr evaluation and
 template-argument construction, not to canonical import.
+
+A structural argument initialized with a namespace-qualified function address,
+such as `constexpr Key k{&ns::function, 1}` for a function-pointer member, can
+leave a comparison of its specialization referring to an undefined `value` symbol
+at link time. The equivalent unqualified function-pointer member is covered by
+`test_structural_function_pointer_member_identity_ret0.cpp`.
 
 Missing field-layout and dependent base facts still fail closed. The
 partial-specialization parser gap above and nested anonymous-union hierarchy
@@ -147,9 +154,8 @@ Non-null object-, function-, and member-pointer template arguments now carry
 published target identity; function pointers also carry their target signature
 and member pointers their canonical member value. Canonical import fails closed
 for object-pointer element offsets outside the canonical 32-bit range or targets
-without a published identity. That identity is published for a declaration-named
-address-of operand only; qualified, data-member, and array-element origins still
-arrive without a target, as recorded above.
+without a published identity. Some qualified, data-member, and complex array-element
+origins still arrive without a target, as recorded above.
 
 ## Partial-specialization constraints are not checked during selection
 

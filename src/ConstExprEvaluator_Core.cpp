@@ -1946,6 +1946,12 @@ std::optional<EvalResult> Evaluator::try_evaluate_constexpr_member_binary_operat
 	return std::nullopt;
 }
 
+static EvalResult makePointerWithSourceDeclaration(StringHandle name, int64_t offset, const VariableDeclarationNode* declaration) {
+	EvalResult result = EvalResult::from_pointer(name, offset);
+	result.source_declaration = declaration;
+	return result;
+}
+
 EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::string_view op,
 											  EvaluationContext& context) {
 	// Handle address-of (&) for simple entities, resolving array-subscript bases by declared type.
@@ -1983,9 +1989,8 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 
 				if (const EvalResult* array_binding = findLocalBinding(array_identifier->name(), context);
 					array_binding && array_binding->pointer_to_var.isValid()) {
-					return EvalResult::from_pointer(
-						array_binding->pointer_to_var,
-						array_binding->pointer_offset + index_result.as_int());
+					return makePointerWithSourceDeclaration(
+						array_binding->pointer_to_var, array_binding->pointer_offset + index_result.as_int(), array_binding->source_declaration);
 				}
 
 				const IdentifierNode* base_identifier = array_identifier;
@@ -2006,7 +2011,8 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 
 					const TypeSpecifierNode& type = declaration->type_specifier_node();
 					if (type.is_array_object()) {
-						return EvalResult::from_pointer(base_identifier->name(), index_result.as_int());
+						const VariableDeclarationNode* variable = symbol->is<VariableDeclarationNode>() ? &symbol->as<VariableDeclarationNode>() : nullptr;
+						return makePointerWithSourceDeclaration(StringTable::getOrInternStringHandle(base_identifier->name()), index_result.as_int(), variable);
 					}
 					if (!type.is_reference_to_array() || !symbol->is<VariableDeclarationNode>()) {
 						return EvalResult::error(
