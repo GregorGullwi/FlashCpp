@@ -556,19 +556,12 @@ remaining pattern schemas by identity, and remove the name fallback.
      codegen, and substitution keeps every pointer level's cv, so the
      `int* const*`/`int**` wrong answer is gone. `are_types_compatible` (lambda
      return-type deduction) and `sameTypeSpecifierShape` (function-template
-     signature keys) are canonical-first: when both operands publish an identity
-     they decide from it, and the flat fields only decide shapes with no
-     publishable identity. The single-file suite shows 4 and 70 published pairs
-     agreeing with the flat verdict and 2 and 9 disagreeing in the safe direction
-     only, because flat merged per-level pointer cv or same-spelling entities;
-     no published pair became equal that flat kept apart. The constexpr
-     operator-overload compare now calls the shared signature-shape compare
-     instead of keeping a second pointer rule. `equalTypeSpecifierIdentityImpl`
-     and `hashTypeSpecifierIdentityImpl` still read the flat projection: 150
-     published pairs agree and 227 flat-equal pairs have no publishable identity.
-     They must move together with a structural canonical hash that is invariant
-     under the identity, because the interning and class-template identity
-     tables hash the same nodes. See
+     signature keys) now decide from canonical identity when both operands
+     publish one, and keep the flat compare only for shapes with no publishable
+     identity. The constexpr operator-overload compare consumes the shared
+     signature-shape compare. `equalTypeSpecifierIdentityImpl` and its
+     `hashTypeSpecifierIdentityImpl` partner still read the flat projection and
+     cannot move alone. See
      [known issues](KNOWN_ISSUES.md#type-identity-equality-still-uses-the-flat-projection).
      Derived pointee and element reads: the flat array-element peel in
      `arrayElementType` (51 Supported calls, canonical element matched the flat

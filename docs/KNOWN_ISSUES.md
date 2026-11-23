@@ -395,61 +395,28 @@ spelling is not.
 ## Type identity equality still uses the flat projection
 
 `equalTypeSpecifierIdentityImpl` and its `hashTypeSpecifierIdentityImpl` partner
-still compare and hash the flat pointer and array fields. The other two
-consumers are canonical-first now. `are_types_compatible` (lambda return-type
-deduction) and `sameTypeSpecifierShape` (function-template signature keys) import
-both operands inside one rolled-back `CanonicalTypeTransaction` and decide from
-`TypeId` equality; `are_types_compatible` uses
-`canonicalSameIgnoringTopCvRef` because that consumer compares value types. Shapes
-with no publishable identity keep the flat compare and no placeholder is
-published.
+still compare and hash the flat pointer and array fields. 227 flat-equal
+expression-identity pairs have no publishable identity: 146 opaque `UserDefined`
+type indexes (109 unresolved template-parameter names without a `TemplateDeclId`
+and 37 other opaque indexes), 40 structs with a type index and no entity, 29
+pre-deduction `Auto`, 11 structs that have an entity but cannot take over while
+the other side stays unpublished, and 1 injected class whose entity is shared
+across specializations
+(`test_injected_identity_ctor_dtor_expressions_ret0.cpp`). A shared placeholder
+would merge distinct types.
 
-Measured over the 4,372 single-file suite compilations:
-
-- Lambda return compatibility: 4 published pairs agree with the flat verdict and
-  2 disagree because the flat compare counted pointer levels and ignored
-  per-level cv (`int* const*`/`int**` and `const int**`/`int**`); both now
-  reject. 1 unpublished pair keeps the flat compare.
-- Template signature shape: 70 published pairs agree and 9 disagree in the safe
-  direction only. 8 are same-spelling `UserDefined` names that canonical
-  identity resolves to different entities and 1 is a class-template
-  specialization pair (`Box<int>`/`Box<double>`); no published pair became
-  equal that flat kept apart. The flat fallback still decides 25 flat-equal and
-  39 flat-distinct pairs.
-- Expression identity: 150 published pairs agree with the flat verdict, no
-  published pair disagrees, and 227 flat-equal pairs have no publishable
-  identity: 146 opaque `UserDefined` type indexes (109 of them unresolved
-  template-parameter names without a `TemplateDeclId` and 37 other opaque
-  indexes), 40 structs with a type index and no entity, 29 pre-deduction `Auto`,
-  11 structs that have an entity but cannot take over while the other side stays
-  unpublished, and 1 injected class whose entity is shared across
-  specializations (`test_injected_identity_ctor_dtor_expressions_ret0.cpp`). A
-  shared placeholder would merge distinct types.
-
-The expression-identity consumer cannot move alone. Equality is paired with the
-hash in `DependentExpressionTable` interning and in the class-template identity
-vectors built by `Parser_Templates_Class.cpp`, so equality may become
-canonical-first only together with a hash that is invariant under the
-equivalence: a typedef and its underlying type have different `TypeIndex` values
-and therefore different flat hashes, yet canonical identity merges them. A
-`TypeId`-valued hash is not usable because these imports are rolled back, so the
-same shape receives different `TypeId` values at different times. The conversion
-needs a structural canonical hash (builtin kind, per-level pointer cv, array
-extents, `EntityId` for records and enums, callable signature), a test that
-equal implies equal hash, and a hash that does not depend on whether a nominal
-layout is already published when the hash is computed.
-
-The `__is_same` wrong answer for `int* const*` and `int**` is fixed: codegen no
-longer re-implements the compare from a flat pointer-depth count and base cv, it
-delegates to `evaluateTypeTrait`, which prefers canonical `TypeId` identity and
-keeps per-level cv in its compatibility fallback. Template substitution also
-preserves every pointer level's cv instead of rebuilding the chain from a depth
-count. `test_is_same_pointer_level_cv_ret42.cpp` pins the runtime expression
-answer and `test_is_same_pointer_level_cv_substitution_ret42.cpp` pins the
-instantiated class, variable, function, and explicit-instantiation answers.
-Lambda return compatibility now uses the same canonical identity answer, and the
-constexpr operator-overload compare delegates to the shared signature-shape
-compare instead of keeping its own pointer rule.
+Equality cannot move alone. It is paired with the hash in
+`DependentExpressionTable` interning and in the class-template identity vectors
+built by `Parser_Templates_Class.cpp`, so equality may become canonical-first
+only together with a hash that is invariant under the equivalence: a typedef and
+its underlying type have different `TypeIndex` values and therefore different
+flat hashes, yet canonical identity merges them. A `TypeId`-valued hash is not
+usable because these imports are rolled back, so the same shape receives
+different `TypeId` values at different times. The conversion needs a structural
+canonical hash over builtin kind, per-level pointer cv, array extents, `EntityId`
+for records and enums, and the callable signature, a test that equal implies
+equal hash, and a hash that does not depend on whether a nominal layout is
+already published when the hash is computed.
 
 ## Derived pointee and element readers are only partly canonical
 
