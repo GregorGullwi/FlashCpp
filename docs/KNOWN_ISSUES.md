@@ -392,31 +392,27 @@ operand. Member-pointer trait answers reached through a substituted template
 parameter, alias, or second operand are covered; the direct first-operand
 spelling is not.
 
-## Type identity equality still uses the flat projection
+## Opaque type-identity terminals still fall back to `TypeIndex`
 
-`equalTypeSpecifierIdentityImpl` and its `hashTypeSpecifierIdentityImpl` partner
-still compare and hash the flat pointer and array fields. 227 flat-equal
-expression-identity pairs have no publishable identity: 146 opaque `UserDefined`
-type indexes (109 unresolved template-parameter names without a `TemplateDeclId`
-and 37 other opaque indexes), 40 structs with a type index and no entity, 29
-pre-deduction `Auto`, 11 structs that have an entity but cannot take over while
-the other side stays unpublished, and 1 injected class whose entity is shared
-across specializations
+`equalTypeSpecifierIdentityImpl` and `hashTypeSpecifierIdentityImpl` now share
+one canonical structure: outer-first declarator components (alias-composed, with
+per-level pointer cv and array extents including an unknown bound) plus a
+terminal identity. The terminal is a builtin kind, a published record/enum
+`EntityId`, a callable signature, or a class-template specialization. The pair
+therefore merges a typedef with its underlying type and keeps distinct
+specializations and per-level cv distinct, and it stays publication-independent
+because no canonical `TypeId` is compared or hashed and no nominal layout is
+required.
+
+Shapes with no canonical terminal still compare and hash by the opaque
+`TypeIndex`: 146 `UserDefined` indexes (109 unresolved template-parameter names
+without a `TemplateDeclId` and 37 other opaque indexes), 40 structs with a type
+index and no entity, 29 pre-deduction `Auto`, 11 structs whose entity cannot
+take over while the other side stays unpublished, and the injected class whose
+entity is shared across specializations
 (`test_injected_identity_ctor_dtor_expressions_ret0.cpp`). A shared placeholder
-would merge distinct types.
-
-Equality cannot move alone. It is paired with the hash in
-`DependentExpressionTable` interning and in the class-template identity vectors
-built by `Parser_Templates_Class.cpp`, so equality may become canonical-first
-only together with a hash that is invariant under the equivalence: a typedef and
-its underlying type have different `TypeIndex` values and therefore different
-flat hashes, yet canonical identity merges them. A `TypeId`-valued hash is not
-usable because these imports are rolled back, so the same shape receives
-different `TypeId` values at different times. The conversion needs a structural
-canonical hash over builtin kind, per-level pointer cv, array extents, `EntityId`
-for records and enums, and the callable signature, a test that equal implies
-equal hash, and a hash that does not depend on whether a nominal layout is
-already published when the hash is computed.
+would merge distinct types, so those pairs keep their fallback until identity is
+published for them.
 
 ## Derived pointee and element readers are only partly canonical
 

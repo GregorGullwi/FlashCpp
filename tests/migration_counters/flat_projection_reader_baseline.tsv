@@ -59,7 +59,6 @@ src/TargetABI.h	1
 src/TemplateArgumentMaterialization.h	2
 src/TemplateConstraintSubsumption.h	1
 src/TemplateEnvironment.cpp	6
-src/TemplateExpressionEquivalence.cpp	12
 src/TemplateFunctionSignatureShape.h	2
 src/TemplateRegistry_Lazy.h	6
 src/TemplateRegistry_Pattern.h	14

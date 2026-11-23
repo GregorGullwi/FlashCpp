@@ -506,6 +506,18 @@ remaining pattern schemas by identity, and remove the name fallback.
       pointer-to-array call returns publish the flat pointee shape so
       subscripting uses the row stride. Non-projectable ordered spines remain
       deferred elsewhere.
+   - Type identity equality and hashing now share one canonical structure built
+     from outer-first declarator components and a terminal kind (builtin,
+     record/enum `EntityId`, callable signature, class-template specialization,
+     or the opaque `TypeIndex` fallback). A typedef and its underlying type
+     compare and hash the same, distinct specializations and per-level pointer cv
+     stay distinct, and the hash never uses a canonical `TypeId`, so
+     `DependentExpressionTable` interning and the class-template identity vectors
+     in `Parser_Templates_Class.cpp` no longer depend on the flat projection or
+     on whether a nominal layout is published. The native
+     `Type identity hashes canonically and equal implies equal hash` regression
+     pins the equal-implies-equal-hash pair and the interning consumer; opaque
+     terminals remain in [KNOWN_ISSUES](KNOWN_ISSUES.md).
    - Interleaved pointer/array member storage now sizes and aligns from the
      ordered declarator spine, and constexpr member typing prefers the published
      member `TypeId`. Local array objects also allocate from the ordered element
