@@ -2036,10 +2036,12 @@ inline TemplateArgumentVector bindConstraintConceptArguments(const CallExprNode&
 		}
 	}
 
-	FLASH_LOG(Templates, Trace, "CallExprNode concept evaluation: concept='", concept_name, "', concept_args.size()=", concept_args.size(), ", concept_params.size()=", concept_params.size());
+	FLASH_LOG(Templates, Trace, "CallExprNode concept evaluation: concept='", concept_name, "', concept_args.size()=", concept_args.size(),
+		", concept_params.size()=", concept_params.size());
 	for (size_t i = 0; i < concept_params.size(); ++i) {
 		if (i < concept_args.size()) {
-			FLASH_LOG(Templates, Trace, "  param[", i, "] name='", concept_params[i].name(), "', is_template_template_arg=", concept_args[i].is_template_template_arg, ", base_type=", static_cast<int>(concept_args[i].typeEnum()));
+			FLASH_LOG(Templates, Trace, "  param[", i, "] name='", concept_params[i].name(), "', is_template_template_arg=",
+				concept_args[i].is_template_template_arg, ", base_type=", static_cast<int>(concept_args[i].typeEnum()));
 		}
 	}
 
