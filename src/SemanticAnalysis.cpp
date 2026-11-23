@@ -15212,6 +15212,10 @@ void SemanticAnalysis::ensureResolvedCallArgConversionsComplete(
 				param_type,
 				&arg);
 		arg_value_type.set_reference_qualifier(ReferenceQualifier::None);
+		// [dcl.fct]/5: a by-value parameter is initialized from the argument's
+		// value, so cv on the argument object itself is dropped. Pointee cv
+		// remains part of the compared type.
+		arg_value_type = arg_value_type.without_top_level_cv();
 		const CanonicalTypeId arg_value_type_id = canonicalizeType(arg_value_type);
 			// C++20 [dcl.arr]/2, [basic.fct]: parameter types are enriched with
 			// their declaration's array bounds before comparison so that
@@ -15220,6 +15224,9 @@ void SemanticAnalysis::ensureResolvedCallArgConversionsComplete(
 		TypeSpecifierNode comparable_param_type = param_type;
 		applyDeclarationArrayBoundsToTypeSpec(
 			param_node.as<DeclarationNode>(), comparable_param_type, *this);
+		// [dcl.fct]/5 also deletes top-level cv-qualifiers when the parameter
+		// list forms the function type, so both value types compare the same way.
+		comparable_param_type = comparable_param_type.without_top_level_cv();
 		const CanonicalTypeId param_type_id = canonicalizeType(comparable_param_type);
 		if (!arg_value_type_id || !param_type_id) {
 			continue;
@@ -15244,6 +15251,7 @@ void SemanticAnalysis::ensureResolvedCallArgConversionsComplete(
 
 		TypeSpecifierNode param_value_type = param_type;
 		param_value_type.set_reference_qualifier(ReferenceQualifier::None);
+		param_value_type = param_value_type.without_top_level_cv();
 		const ConversionPlan value_plan =
 			buildConversionPlan(arg_value_type, param_value_type);
 		const bool needs_standard_conversion =

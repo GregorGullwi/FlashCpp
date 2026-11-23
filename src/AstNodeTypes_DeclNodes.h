@@ -2791,6 +2791,11 @@ public:
 
 	CVQualifier pointee_cv_for_pointer_conversion() const;
 	TypeSpecifierNode adjusted_function_parameter_type() const;
+	// [basic.type.qualifier], [dcl.fct]/5: the cv-qualifiers of the outermost
+	// object only. A by-value parameter is initialized from the argument's
+	// value, so these qualifiers do not participate in the parameter's type
+	// identity, while cv below the top level (pointee cv) still does.
+	TypeSpecifierNode without_top_level_cv() const;
 
 	// Compare two type specifiers for function overload resolution.
 	// Returns true if they represent the same parameter type signature.
@@ -3615,26 +3620,15 @@ inline CVQualifier TypeSpecifierNode::pointee_cv_for_pointer_conversion() const 
 	return alias_info.cv_qualifier;
 }
 
-inline TypeSpecifierNode TypeSpecifierNode::adjusted_function_parameter_type() const {
+inline TypeSpecifierNode TypeSpecifierNode::without_top_level_cv() const {
 	TypeSpecifierNode adjusted = *this;
-	if (adjusted.has_ordered_declarator() &&
-		!adjusted.ordered_declarator_has_legacy_projection()) {
-		DeclaratorComponent& outer =
-			adjusted.declarator_components_.front();
-		if (outer.kind == DeclaratorComponentKind::LValueReference ||
-			outer.kind == DeclaratorComponentKind::RValueReference) {
+	if (adjusted.has_ordered_declarator() && !adjusted.ordered_declarator_has_legacy_projection()) {
+		DeclaratorComponent& outer = adjusted.declarator_components_.front();
+		if (outer.kind == DeclaratorComponentKind::LValueReference || outer.kind == DeclaratorComponentKind::RValueReference) {
 			return adjusted;
 		}
 		if (outer.kind == DeclaratorComponentKind::Pointer) {
 			outer.cv_qualifier = CVQualifier::None;
-		} else if (outer.kind == DeclaratorComponentKind::Array ||
-			outer.kind == DeclaratorComponentKind::UnknownBoundArray) {
-			// [dcl.fct]/5: an array parameter adjusts to a pointer to its
-			// element type. Decay the outer ordered component instead of
-			// dropping the non-projectable spine and passing the array through.
-			adjusted.declarator_components_.erase(adjusted.declarator_components_.begin());
-			adjusted.prepend_ordered_declarator_component(DeclaratorComponent::pointer(CVQualifier::None));
-			return adjusted;
 		}
 		adjusted.rebuild_legacy_declarator_projection();
 		return adjusted;
@@ -3643,20 +3637,38 @@ inline TypeSpecifierNode TypeSpecifierNode::adjusted_function_parameter_type() c
 		return adjusted;
 	}
 	if (adjusted.pointer_levels_.empty()) {
-		adjusted.cv_qualifier_ = CVQualifier::None;
+		// An array type has no top-level qualifiers of its own: cv written on
+		// it qualifies the element type, so it is not removed here.
+		if (!adjusted.is_array()) {
+			adjusted.cv_qualifier_ = CVQualifier::None;
+		}
 		return adjusted;
 	}
 
 	adjusted.cv_qualifier_ = adjusted.pointee_cv_for_pointer_conversion();
 	adjusted.pointer_levels_.back().cv_qualifier = CVQualifier::None;
 	if (adjusted.has_ordered_declarator() &&
-		adjusted.declarator_components_.front().kind ==
-			DeclaratorComponentKind::Pointer) {
-		adjusted.declarator_components_.front().cv_qualifier =
-			CVQualifier::None;
+		adjusted.declarator_components_.front().kind == DeclaratorComponentKind::Pointer) {
+		adjusted.declarator_components_.front().cv_qualifier = CVQualifier::None;
 		adjusted.rebuild_legacy_declarator_projection();
 	}
 	return adjusted;
+}
+
+inline TypeSpecifierNode TypeSpecifierNode::adjusted_function_parameter_type() const {
+	if (has_ordered_declarator() && !ordered_declarator_has_legacy_projection()) {
+		const DeclaratorComponentKind outer_kind = declarator_components_.front().kind;
+		if (outer_kind == DeclaratorComponentKind::Array || outer_kind == DeclaratorComponentKind::UnknownBoundArray) {
+			// [dcl.fct]/5: an array parameter adjusts to a pointer to its
+			// element type. Decay the outer ordered component instead of
+			// dropping the non-projectable spine and passing the array through.
+			TypeSpecifierNode adjusted = *this;
+			adjusted.declarator_components_.erase(adjusted.declarator_components_.begin());
+			adjusted.prepend_ordered_declarator_component(DeclaratorComponent::pointer(CVQualifier::None));
+			return adjusted;
+		}
+	}
+	return without_top_level_cv();
 }
 
 inline bool TypeSpecifierNode::matches_signature(const TypeSpecifierNode& other) const {
