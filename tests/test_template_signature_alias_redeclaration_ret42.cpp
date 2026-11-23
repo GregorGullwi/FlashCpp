@@ -8,8 +8,7 @@ struct Record {
 
 using RecordAlias = Record;
 
-template <class T>
-int take(T tag, Record value);
+template <class T> int take(T tag, Record value);
 
 template <class T>
 int take(T tag, RecordAlias value) {
