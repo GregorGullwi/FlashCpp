@@ -9,6 +9,7 @@
 
 #include "CanonicalShapeQueries.h"
 #include "CanonicalTypeAdapter.h"
+#include "CanonicalTypeIdentityShape.h"
 #include "TemplateDeclTable.h"
 
 namespace CanonicalTypeTests {
@@ -3841,7 +3842,80 @@ inline void checkPointerShapeQuery() {
 	require(member_function_pointer.pointee == CanonicalPointeeKind::MemberPointer);
 }
 
+#if defined(FLASHCPP_CANONICAL_IDENTITY_HARNESS)
+// The harness gives this translation unit a tiny type registry so an alias can
+// otherwise be expressed at all; records use the normal set_type_entity hook.
+TypeIndex publishHarnessAliasType(const TypeSpecifierNode& underlying);
+
+// The identity pair is one structure: outer-first declarator components plus a
+// terminal identity. Equality merges a typedef with its underlying type without
+// reading a flat projection, and the hash must agree with it in both
+// directions, so an opaque TypeIndex fallback or a collision cannot pass.
+inline void checkCanonicalTypeIdentityHash() {
+	auto same_identity = [](const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+		require(FlashCpp::canonicalTypeSpecifierIdentityEqual(lhs, rhs));
+		require(FlashCpp::canonicalTypeSpecifierIdentityHash(lhs) == FlashCpp::canonicalTypeSpecifierIdentityHash(rhs));
+	};
+	auto distinct_identity = [](const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+		require(!FlashCpp::canonicalTypeSpecifierIdentityEqual(lhs, rhs));
+		require(FlashCpp::canonicalTypeSpecifierIdentityHash(lhs) != FlashCpp::canonicalTypeSpecifierIdentityHash(rhs));
+	};
+
+	TypeSpecifierNode integer(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	TypeSpecifierNode wider_integer(TypeCategory::Long, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	same_identity(integer, integer);
+	distinct_identity(integer, wider_integer);
+
+	// A typedef and its underlying builtin are one identity even though their
+	// TypeIndex values differ.
+	TypeSpecifierNode integer_alias(publishHarnessAliasType(integer), TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	same_identity(integer, integer_alias);
+
+	TypeSpecifierNode record(TypeCategory::Struct, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	record.set_type_entity(EntityId{5201});
+	TypeSpecifierNode record_alias = record;
+	record_alias.set_type_index(TypeIndex{9001, TypeCategory::Struct});
+	TypeSpecifierNode other_record(TypeCategory::Struct, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	other_record.set_type_entity(EntityId{5202});
+	same_identity(record, record_alias);
+	distinct_identity(record, other_record);
+
+	TypeSpecifierNode int_pointer = integer;
+	int_pointer.add_pointer_level();
+	TypeSpecifierNode int_const_inner_pointer = integer;
+	int_const_inner_pointer.add_pointer_level(CVQualifier::Const);
+	TypeSpecifierNode int_const_pointer_type = int_const_inner_pointer;
+	int_const_pointer_type.add_pointer_level();
+	TypeSpecifierNode int_double_pointer = int_pointer;
+	int_double_pointer.add_pointer_level();
+	distinct_identity(int_double_pointer, int_const_pointer_type);
+
+	TypeSpecifierNode array_two = integer;
+	array_two.set_array(true, 2);
+	TypeSpecifierNode array_three = integer;
+	array_three.set_array(true, 3);
+	TypeSpecifierNode array_unknown_bound = integer;
+	array_unknown_bound.set_array(true, std::nullopt);
+	same_identity(array_two, array_two);
+	distinct_identity(array_two, array_three);
+	distinct_identity(array_two, array_unknown_bound);
+
+	FunctionSignature int_returning_signature;
+	int_returning_signature.return_type_index = nativeTypeIndex(TypeCategory::Int);
+	FunctionSignature long_returning_signature;
+	long_returning_signature.return_type_index = nativeTypeIndex(TypeCategory::Long);
+	TypeSpecifierNode int_returning_function(TypeCategory::Function, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	int_returning_function.set_function_signature(int_returning_signature);
+	TypeSpecifierNode long_returning_function(TypeCategory::Function, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	long_returning_function.set_function_signature(long_returning_signature);
+	distinct_identity(int_returning_function, long_returning_function);
+}
+#endif
+
 inline int run() {
+#if defined(FLASHCPP_CANONICAL_IDENTITY_HARNESS)
+	checkCanonicalTypeIdentityHash();
+#endif
 	checkPointerShapeQuery();
 	checkFunctionIdentityIndependence();
 	checkDeclaratorIdentityIndependence();
