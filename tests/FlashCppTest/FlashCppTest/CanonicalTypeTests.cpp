@@ -10971,6 +10971,109 @@ TEST_CASE("Dependent initializer list identity preserves style designators and n
 	CHECK(FlashCpp::hashDependentExpressionIdentity(deep_left) == FlashCpp::hashDependentExpressionIdentity(deep_right));
 }
 
+TEST_CASE("Type identity hashes canonically and equal implies equal hash") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear();
+	gConceptRegistry.clear();
+	gSymbolTable.clear();
+	FrontendContext frontend;
+	CompileContext compile_context;
+	compile_context.setInputFile("type_identity_canonical_hash.cpp");
+	Lexer lexer(R"(
+struct Cell { int value; };
+struct Other { int value; };
+using IntAlias = int;
+using CellAlias = Cell;
+)");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+
+	auto named_type = [](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		return TypeSpecifierNode(info->type_index_, TypeQualifier::None, SizeInBits{32}, Token{}, CVQualifier::None);
+	};
+	auto builtin_type = [](TypeCategory category) {
+		return TypeSpecifierNode(category, TypeQualifier::None, SizeInBits{32}, Token{}, CVQualifier::None);
+	};
+	auto expression_node = [](const TypeSpecifierNode& type) {
+		return ASTNode::emplace_node<TypeSpecifierNode>(type);
+	};
+	auto same_identity = [&](const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+		return FlashCpp::equalDependentExpressionIdentity(expression_node(lhs), expression_node(rhs));
+	};
+	auto identity_hash = [&](const TypeSpecifierNode& type) {
+		return FlashCpp::hashDependentExpressionIdentity(expression_node(type));
+	};
+	auto require_same_identity = [&](const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+		REQUIRE(same_identity(lhs, rhs));
+		REQUIRE(identity_hash(lhs) == identity_hash(rhs));
+	};
+	auto require_distinct_identity = [&](const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+		REQUIRE_FALSE(same_identity(lhs, rhs));
+		REQUIRE(identity_hash(lhs) != identity_hash(rhs));
+	};
+
+	const TypeSpecifierNode int_type = builtin_type(TypeCategory::Int);
+	const TypeSpecifierNode long_type = builtin_type(TypeCategory::Long);
+	require_distinct_identity(int_type, long_type);
+	require_same_identity(int_type, named_type("IntAlias"));
+
+	const TypeSpecifierNode cell_type = named_type("Cell");
+	require_distinct_identity(cell_type, named_type("Other"));
+	require_same_identity(cell_type, named_type("CellAlias"));
+
+	TypeSpecifierNode int_pointer = int_type;
+	int_pointer.add_pointer_level();
+	TypeSpecifierNode int_const_inner_pointer = int_type;
+	int_const_inner_pointer.add_pointer_level(CVQualifier::Const);
+	TypeSpecifierNode int_const_pointer_type = int_const_inner_pointer;
+	int_const_pointer_type.add_pointer_level();
+	TypeSpecifierNode int_double_pointer = int_pointer;
+	int_double_pointer.add_pointer_level();
+	require_distinct_identity(int_double_pointer, int_const_pointer_type);
+	TypeSpecifierNode alias_pointer = named_type("IntAlias");
+	alias_pointer.add_pointer_level();
+	require_same_identity(int_pointer, alias_pointer);
+
+	TypeSpecifierNode array_two = int_type;
+	array_two.set_array(true, 2);
+	TypeSpecifierNode array_three = int_type;
+	array_three.set_array(true, 3);
+	TypeSpecifierNode array_unknown_bound = int_type;
+	array_unknown_bound.set_array(true, std::nullopt);
+	require_distinct_identity(array_two, array_three);
+	require_distinct_identity(array_two, array_unknown_bound);
+	require_same_identity(array_two, array_two);
+
+	FunctionSignature int_returning_signature;
+	int_returning_signature.return_type_index = nativeTypeIndex(TypeCategory::Int);
+	FunctionSignature long_returning_signature;
+	long_returning_signature.return_type_index = nativeTypeIndex(TypeCategory::Long);
+	TypeSpecifierNode int_returning_function(TypeCategory::Function, TypeQualifier::None, SizeInBits{0}, Token{}, CVQualifier::None);
+	int_returning_function.set_function_signature(int_returning_signature);
+	TypeSpecifierNode long_returning_function(TypeCategory::Function, TypeQualifier::None, SizeInBits{0}, Token{}, CVQualifier::None);
+	long_returning_function.set_function_signature(long_returning_signature);
+	require_distinct_identity(int_returning_function, long_returning_function);
+	require_same_identity(int_returning_function, int_returning_function);
+
+	const TemplateDeclId specialization_primary{7001};
+	TypeSpecifierNode int_specialization(TypeCategory::Struct, TypeQualifier::None, SizeInBits{0}, Token{}, CVQualifier::None);
+	int_specialization.set_template_specialization(specialization_primary, std::vector<TypeSpecifierNode>{int_type});
+	TypeSpecifierNode long_specialization(TypeCategory::Struct, TypeQualifier::None, SizeInBits{0}, Token{}, CVQualifier::None);
+	long_specialization.set_template_specialization(specialization_primary, std::vector<TypeSpecifierNode>{long_type});
+	TypeSpecifierNode int_specialization_copy(TypeCategory::Struct, TypeQualifier::None, SizeInBits{0}, Token{}, CVQualifier::None);
+	int_specialization_copy.set_template_specialization(specialization_primary, std::vector<TypeSpecifierNode>{int_type});
+	require_same_identity(int_specialization, int_specialization_copy);
+	require_distinct_identity(int_specialization, long_specialization);
+
+	DependentExpressionTable& interned = frontend.dependentExpressions();
+	REQUIRE(interned.intern(expression_node(int_type)) == interned.intern(expression_node(named_type("IntAlias"))));
+	REQUIRE(interned.intern(expression_node(cell_type)) == interned.intern(expression_node(named_type("CellAlias"))));
+	REQUIRE(interned.intern(expression_node(int_double_pointer)) != interned.intern(expression_node(int_const_pointer_type)));
+}
+
 TEST_CASE("Structural value importer bounds native stack across deep subobject graphs") {
 	clearLegacyTypeTablesForTesting();
 	FrontendContext context;
