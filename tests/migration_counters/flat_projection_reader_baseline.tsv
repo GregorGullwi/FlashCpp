@@ -4,7 +4,7 @@ src/AstToIr.h	1
 src/CanonicalShapeTelemetry.h	2
 src/ConstExprEvalHelpers.cpp	8
 src/ConstExprEvaluator.h	3
-src/ConstExprEvaluator_Bindings.cpp	9
+src/ConstExprEvaluator_Bindings.cpp	2
 src/ConstExprEvaluator_Core.cpp	22
 src/ConstExprEvaluator_Materialize.cpp	5
 src/ConstExprEvaluator_MemberAccess.cpp	7
@@ -38,7 +38,7 @@ src/Parser_Expr_BinaryPrecedence.cpp	1
 src/Parser_Expr_ControlFlowStmt.cpp	3
 src/Parser_Expr_PrimaryExpr.cpp	9
 src/Parser_Expr_PrimaryUnary.cpp	1
-src/Parser_Expr_QualLookup.cpp	13
+src/Parser_Expr_QualLookup.cpp	11
 src/Parser_FunctionBodies.cpp	2
 src/Parser_FunctionHeaders.cpp	2
 src/Parser_Statements.cpp	20
