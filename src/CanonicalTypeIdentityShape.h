@@ -55,6 +55,16 @@ struct CanonicalTypeIdentityShape {
 	CanonicalTypeIdentityTerminalKind terminal_kind = CanonicalTypeIdentityTerminalKind::Opaque;
 	EntityId nominal_entity{};
 	TypeIndex opaque_type_index{};
+	// Opaque terminators with an invalid TypeIndex need content identity of
+	// their own, or distinct unresolved names would silently merge. The name is
+	// set only in that invalid-index branch: an invalid StringHandle is the
+	// absence marker, and carrying a name beside a valid index would duplicate
+	// tryGetTypeInfo(index)->name() as a second source of truth. TemplateDeclId
+	// zero is likewise reserved invalid (real ids start at one), so an absent
+	// template parameter cannot collide with a real declaration id.
+	StringHandle opaque_name;
+	TemplateDeclId opaque_template_decl{};
+	uint32_t opaque_template_parameter_index = 0;
 	TemplateDeclId specialization_template_decl{};
 	bool specialization_is_alias = false;
 	std::vector<SpecTemplateArgKind> specialization_arg_kinds;
@@ -102,39 +112,41 @@ inline CanonicalTypeIdentityShape buildCanonicalTypeIdentityShape(const TypeSpec
 		appendDeclaratorShapeForSubstitution(type, shape.components);
 	}
 
-	// An alias contributes its own declarator shape inside the use-site shape.
-	// appendOrderedAliasDeclaratorShape also sinks the pending cv onto the first
-	// pointer level, matching the canonical adapter's alias composition.
+	const ResolvedAliasTypeInfo resolved = resolveAliasTypeInfo(type.type_index());
+
+	// One alias walk supplies both the terminal and every alias-contributed
+	// declarator component, with each alias level's cv already sunk onto that
+	// level's first pointer-like or reference component. The use-site cv
+	// qualifies the aliased type, so sink it once across that accumulated span
+	// instead of threading a pending cv through a second alias walk.
+	std::vector<DeclaratorComponent> alias_components = resolved.declarator_components;
 	CVQualifier pending_cv = type.cv_qualifier();
-	TypeIndex alias_index = type.type_index();
-	size_t alias_depth_limit = getTypeInfoCount();
-	while (alias_index.is_valid() && alias_depth_limit-- > 0) {
-		const TypeInfo* alias_info = tryGetTypeInfo(alias_index);
-		if (alias_info == nullptr || !alias_info->isTypeAlias()) {
-			break;
-		}
-		const TypeSpecifierNode* alias_spec = alias_info->aliasTypeSpecifier();
-		if (alias_spec == nullptr) {
-			break;
-		}
-		appendOrderedAliasDeclaratorShape(shape.components, *alias_spec, pending_cv);
-		alias_index = alias_spec->type_index().is_valid() ? alias_spec->type_index() : alias_info->type_index_;
-	}
-	shape.base_cv = pending_cv;
+	const bool alias_cv_applied = sinkAliasCvOntoComponents(alias_components, pending_cv);
+	shape.components.insert(shape.components.end(), alias_components.begin(), alias_components.end());
+	shape.base_cv = alias_cv_applied ? resolved.cv_qualifier_after_sinking
+									 : static_cast<CVQualifier>(resolved.cv_qualifier_after_sinking | pending_cv);
 	shape.is_pack_expansion = type.is_pack_expansion();
 	if (type.has_concept_constraint()) {
 		shape.has_concept_constraint = true;
 		shape.concept_constraint = type.concept_constraint();
 	}
-	if (type.has_member_class() &&
-		std::ranges::none_of(shape.components, [](const DeclaratorComponent& component) {
-			return component.hasMemberOwner();
-		})) {
+	// A member pointer without a published owner must fall back to its class
+	// name, which then participates in equality and hashing. Fabricating an
+	// empty owner would compare every unpublished owner as identical.
+	const size_t ownerless_member_pointers = static_cast<size_t>(std::ranges::count_if(
+		shape.components, [](const DeclaratorComponent& component) {
+			const bool is_member_pointer = component.kind == DeclaratorComponentKind::MemberObjectPointer ||
+				component.kind == DeclaratorComponentKind::MemberFunctionPointer;
+			return is_member_pointer && !component.hasMemberOwner();
+		}));
+	if (ownerless_member_pointers != 0) {
+		if (ownerless_member_pointers > 1 || !type.has_member_class() || !type.member_class_name().isValid()) {
+			throw InternalError("member-pointer type identity is missing its class owner");
+		}
 		shape.has_member_class_name = true;
 		shape.member_class_name = type.member_class_name();
 	}
 
-	const ResolvedAliasTypeInfo resolved = resolveAliasTypeInfo(type.type_index());
 	TypeIndex terminal_index = resolved.type_index.is_valid() ? resolved.type_index : type.type_index();
 	TypeCategory terminal_category = type.category();
 	if (resolved.terminal_type_info != nullptr) {
@@ -174,7 +186,26 @@ inline CanonicalTypeIdentityShape buildCanonicalTypeIdentityShape(const TypeSpec
 	}
 	const bool terminal_is_instantiation = resolved.terminal_type_info != nullptr && resolved.terminal_type_info->isTemplateInstantiation();
 	if (!terminal_is_instantiation && (terminal_category == TypeCategory::Struct || terminal_category == TypeCategory::Enum)) {
-		EntityId entity = publishedNominalEntity(type);
+		// An alias to a record keeps the class entity on the terminal TypeInfo.
+		// Reading it there avoids depending on the alias use-site carrying a
+		// type_entity of its own.
+		EntityId entity;
+		if (resolved.terminal_type_info != nullptr) {
+			if (terminal_category == TypeCategory::Struct) {
+				if (const StructTypeInfo* struct_info = resolved.terminal_type_info->getStructInfo();
+					struct_info != nullptr && struct_info->declaration_node != nullptr && struct_info->declaration_node->has_entity_id()) {
+					entity = struct_info->declaration_node->entity_id();
+				}
+			} else if (terminal_category == TypeCategory::Enum) {
+				if (const EnumTypeInfo* enum_info = resolved.terminal_type_info->getEnumInfo();
+					enum_info != nullptr && enum_info->declaration_node != nullptr && enum_info->declaration_node->has_entity_id()) {
+					entity = enum_info->declaration_node->entity_id();
+				}
+			}
+		}
+		if (!entity) {
+			entity = publishedNominalEntity(type);
+		}
 		if (!entity) {
 			TypeSpecifierNode terminal_spec(terminal_index, TypeQualifier::None, SizeInBits{0}, Token{}, CVQualifier::None);
 			entity = publishedNominalEntity(terminal_spec);
@@ -197,6 +228,13 @@ inline CanonicalTypeIdentityShape buildCanonicalTypeIdentityShape(const TypeSpec
 			shape.has_function_signature = true;
 			shape.function_signature = *resolved.function_signature;
 		}
+		// A callable terminal without a signature has no identity: the TypeIndex
+		// fallback only knows the category, so different function types would
+		// merge. Production always carries one; reaching this state is a bug.
+		if (!shape.has_function_signature &&
+			(terminal_category == TypeCategory::Function || terminal_category == TypeCategory::FunctionPointer)) {
+			throw InternalError("callable type identity is missing its function signature");
+		}
 		return shape;
 	}
 
@@ -205,6 +243,27 @@ inline CanonicalTypeIdentityShape buildCanonicalTypeIdentityShape(const TypeSpec
 		return shape;
 	}
 	shape.terminal_kind = CanonicalTypeIdentityTerminalKind::Opaque;
+	// An invalid TypeIndex is not identity: TypeIndex{0, category} is equal for
+	// every shape in that category. Keep the content that actually distinguishes
+	// the remaining unresolved terminators, and fail closed when there is none.
+	if (!terminal_index.is_valid()) {
+		if (type.has_template_parameter_decl()) {
+			shape.opaque_template_decl = type.template_decl_id();
+			shape.opaque_template_parameter_index = type.template_parameter_index();
+		} else if (type.has_template_parameter_identity()) {
+			shape.opaque_name = type.template_parameter_name();
+		} else {
+			// Placeholder categories (pre-deduction auto, template, dependent)
+			// have no publishable TypeIndex here. Their spelling is the only
+			// stable content left, so use it as the discriminator and fail
+			// closed when even that is absent.
+			const std::string_view spelling = type.token().value();
+			if (spelling.empty()) {
+				throw InternalError("type identity has no canonical terminal and no opaque discriminator");
+			}
+			shape.opaque_name = StringTable::getOrInternStringHandle(spelling);
+		}
+	}
 	return shape;
 }
 
@@ -290,6 +349,14 @@ inline bool canonicalTypeIdentityShapesEqual(const CanonicalTypeIdentityShape& l
 		}
 		return true;
 	case CanonicalTypeIdentityTerminalKind::Opaque:
+		if (lhs.opaque_name.isValid() != rhs.opaque_name.isValid() ||
+			lhs.opaque_template_decl != rhs.opaque_template_decl ||
+			lhs.opaque_template_parameter_index != rhs.opaque_template_parameter_index) {
+			return false;
+		}
+		if (lhs.opaque_name.isValid() && lhs.opaque_name != rhs.opaque_name) {
+			return false;
+		}
 		return equalTypeIndexIdentity(lhs.opaque_type_index, rhs.opaque_type_index);
 	}
 	return false;
@@ -305,6 +372,11 @@ inline size_t canonicalTypeIdentityComponentsHash(const std::vector<DeclaratorCo
 		}
 		if (component.kind == DeclaratorComponentKind::MemberObjectPointer || component.kind == DeclaratorComponentKind::MemberFunctionPointer) {
 			detail::canonicalIdentityHashCombine(seed, std::hash<uint8_t>{}(static_cast<uint8_t>(component.owner_identity_kind)));
+			if (component.owner_identity_kind == DeclaratorOwnerIdentityKind::Entity) {
+				detail::canonicalIdentityHashCombine(seed, std::hash<uint32_t>{}(component.member_owner.value));
+			} else if (component.owner_identity_kind == DeclaratorOwnerIdentityKind::Type) {
+				detail::canonicalIdentityHashCombine(seed, std::hash<uint64_t>{}(component.payload));
+			}
 		}
 	}
 	return seed;
@@ -357,6 +429,12 @@ inline size_t canonicalTypeIdentityShapeHash(const CanonicalTypeIdentityShape& s
 		break;
 	case CanonicalTypeIdentityTerminalKind::Opaque:
 		detail::canonicalIdentityHashCombine(seed, hashTypeIndexIdentity(shape.opaque_type_index));
+		detail::canonicalIdentityHashCombine(seed, shape.opaque_name.isValid());
+		if (shape.opaque_name.isValid()) {
+			detail::canonicalIdentityHashCombine(seed, std::hash<StringHandle>{}(shape.opaque_name));
+		}
+		detail::canonicalIdentityHashCombine(seed, std::hash<uint32_t>{}(shape.opaque_template_decl.value));
+		detail::canonicalIdentityHashCombine(seed, std::hash<uint32_t>{}(shape.opaque_template_parameter_index));
 		break;
 	}
 	return seed;

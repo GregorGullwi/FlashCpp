@@ -337,36 +337,42 @@ inline void checkAdapter() {
 	different_legacy_bound.set_array_dimensions(different_bound);
 	require(!projectable_syntax.has_same_ordered_declarator(
 		different_legacy_bound));
-	const PointerLevel plain_alias_pointer[] = {PointerLevel{CVQualifier::None}};
-	const PointerLevel const_alias_pointer[] = {PointerLevel{CVQualifier::Const}};
-	std::vector<DeclaratorComponent> alias_components;
+	// Alias cv sinks onto the first pointer-like component, is consumed by a
+	// reference, and otherwise carries to the next level.
+	std::vector<DeclaratorComponent> alias_components{
+		DeclaratorComponent::pointer(CVQualifier::None)};
 	CVQualifier pending_alias_cv = CVQualifier::Const;
-	appendOrderedAliasPointerLevels(alias_components, plain_alias_pointer,
-		CVQualifier::None, pending_alias_cv);
+	require(sinkAliasCvOntoComponents(alias_components, pending_alias_cv));
 	require(alias_components == std::vector<DeclaratorComponent>{
 		DeclaratorComponent::pointer(CVQualifier::Const)});
-	require(pending_alias_cv == CVQualifier::None);
-	alias_components.clear();
-	pending_alias_cv = CVQualifier::None;
-	appendOrderedAliasPointerLevels(alias_components, std::span<const PointerLevel>{},
-		CVQualifier::Const, pending_alias_cv);
-	appendOrderedAliasPointerLevels(alias_components, plain_alias_pointer,
-		CVQualifier::None, pending_alias_cv);
-	require(alias_components == std::vector<DeclaratorComponent>{
+
+	TypeSpecifierNode plain_pointer_alias(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	plain_pointer_alias.add_pointer_level(CVQualifier::None);
+	std::vector<DeclaratorComponent> composed_alias_components;
+	CVQualifier composed_pending_cv = CVQualifier::Const;
+	appendOrderedAliasDeclaratorShape(composed_alias_components, plain_pointer_alias, composed_pending_cv);
+	require(composed_alias_components == std::vector<DeclaratorComponent>{
 		DeclaratorComponent::pointer(CVQualifier::Const)});
-	alias_components.clear();
-	pending_alias_cv = CVQualifier::None;
-	appendOrderedAliasPointerLevels(alias_components, const_alias_pointer,
-		CVQualifier::None, pending_alias_cv);
-	require(alias_components == std::vector<DeclaratorComponent>{
+	require(composed_pending_cv == CVQualifier::None);
+
+	TypeSpecifierNode base_cv_alias(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::Const);
+	composed_alias_components.clear();
+	composed_pending_cv = CVQualifier::None;
+	appendOrderedAliasDeclaratorShape(composed_alias_components, base_cv_alias, composed_pending_cv);
+	appendOrderedAliasDeclaratorShape(composed_alias_components, plain_pointer_alias, composed_pending_cv);
+	require(composed_alias_components == std::vector<DeclaratorComponent>{
 		DeclaratorComponent::pointer(CVQualifier::Const)});
+	require(composed_pending_cv == CVQualifier::None);
+
 	TypeSpecifierNode const_pointer_alias = interleaved_syntax;
 	const_pointer_alias.set_ordered_declarator({
 		DeclaratorComponent::pointer(CVQualifier::None),
 		DeclaratorComponent::array(3),
 		DeclaratorComponent::pointer(CVQualifier::None),
 		DeclaratorComponent::array(4),
-		alias_components.front(),
+		DeclaratorComponent::pointer(CVQualifier::Const),
 	});
 	require(importCanonicalType(table, const_pointer_alias).type ==
 		table.pointer(table.array(table.pointer(table.array(
@@ -3860,6 +3866,15 @@ inline void checkCanonicalTypeIdentityHash() {
 		require(!FlashCpp::canonicalTypeSpecifierIdentityEqual(lhs, rhs));
 		require(FlashCpp::canonicalTypeSpecifierIdentityHash(lhs) != FlashCpp::canonicalTypeSpecifierIdentityHash(rhs));
 	};
+	auto require_identity_error = [](auto&& operation) {
+		bool threw = false;
+		try {
+			operation();
+		} catch (const InternalError&) {
+			threw = true;
+		}
+		require(threw);
+	};
 
 	TypeSpecifierNode integer(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 	TypeSpecifierNode wider_integer(TypeCategory::Long, TypeQualifier::None, 64, Token{}, CVQualifier::None);
@@ -3870,15 +3885,47 @@ inline void checkCanonicalTypeIdentityHash() {
 	// TypeIndex values differ.
 	TypeSpecifierNode integer_alias(publishHarnessAliasType(integer), TypeQualifier::None, 32, Token{}, CVQualifier::None);
 	same_identity(integer, integer_alias);
+	TypeSpecifierNode pointer_alias_underlying = integer;
+	pointer_alias_underlying.add_pointer_level(CVQualifier::Const);
+	pointer_alias_underlying.add_pointer_level();
+	TypeSpecifierNode pointer_alias(
+		publishHarnessAliasType(pointer_alias_underlying), TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	same_identity(pointer_alias_underlying, pointer_alias);
 
 	TypeSpecifierNode record(TypeCategory::Struct, TypeQualifier::None, 64, Token{}, CVQualifier::None);
 	record.set_type_entity(EntityId{5201});
 	TypeSpecifierNode record_alias = record;
 	record_alias.set_type_index(TypeIndex{9001, TypeCategory::Struct});
+	TypeSpecifierNode registry_record_alias(
+		publishHarnessAliasType(record), TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	registry_record_alias.set_type_entity(EntityId{5201});
 	TypeSpecifierNode other_record(TypeCategory::Struct, TypeQualifier::None, 64, Token{}, CVQualifier::None);
 	other_record.set_type_entity(EntityId{5202});
 	same_identity(record, record_alias);
+	same_identity(record, registry_record_alias);
 	distinct_identity(record, other_record);
+
+	// using ConstInt = const int; using ConstIntPointer = ConstInt*;
+	TypeSpecifierNode const_integer(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::Const);
+	const TypeIndex const_integer_alias = publishHarnessAliasType(const_integer);
+	TypeSpecifierNode pointer_to_const_integer_alias(const_integer_alias, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	pointer_to_const_integer_alias.add_pointer_level();
+	TypeSpecifierNode const_integer_pointer(
+		publishHarnessAliasType(pointer_to_const_integer_alias), TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	TypeSpecifierNode expected_pointer_to_const_integer = const_integer;
+	expected_pointer_to_const_integer.add_pointer_level();
+	same_identity(expected_pointer_to_const_integer, const_integer_pointer);
+
+	// using IntPointer = int*; using ConstIntPointer = const IntPointer;
+	TypeSpecifierNode int_pointer_unqualified = integer;
+	int_pointer_unqualified.add_pointer_level();
+	const TypeIndex int_pointer_alias = publishHarnessAliasType(int_pointer_unqualified);
+	TypeSpecifierNode const_alias_of_pointer(int_pointer_alias, TypeQualifier::None, 64, Token{}, CVQualifier::Const);
+	TypeSpecifierNode alias_of_const_pointer(
+		publishHarnessAliasType(const_alias_of_pointer), TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	TypeSpecifierNode expected_const_pointer = integer;
+	expected_const_pointer.add_pointer_level(CVQualifier::Const);
+	same_identity(expected_const_pointer, alias_of_const_pointer);
 
 	TypeSpecifierNode int_pointer = integer;
 	int_pointer.add_pointer_level();
@@ -3909,6 +3956,47 @@ inline void checkCanonicalTypeIdentityHash() {
 	TypeSpecifierNode long_returning_function(TypeCategory::Function, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 	long_returning_function.set_function_signature(long_returning_signature);
 	distinct_identity(int_returning_function, long_returning_function);
+
+	// A callable terminal without any signature has no identity; the categor-
+	// only TypeIndex fallback would merge different function types.
+	TypeSpecifierNode signatureless_function(TypeCategory::Function, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	require_identity_error([&] { (void)FlashCpp::canonicalTypeSpecifierIdentityHash(signatureless_function); });
+
+	// Member pointers without a published owner discriminate by class name;
+	// an ownerless pointer with no name fails closed instead of merging.
+	TypeSpecifierNode member_owner_a(TypeCategory::MemberObjectPointer, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	member_owner_a.set_member_class_name(StringTable::getOrInternStringHandle("OwnerA"));
+	TypeSpecifierNode member_owner_b(TypeCategory::MemberObjectPointer, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	member_owner_b.set_member_class_name(StringTable::getOrInternStringHandle("OwnerB"));
+	distinct_identity(member_owner_a, member_owner_b);
+	TypeSpecifierNode ownerless_member(TypeCategory::MemberObjectPointer, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	require_identity_error([&] { (void)FlashCpp::canonicalTypeSpecifierIdentityHash(ownerless_member); });
+
+	// An invalid TypeIndex is not identity for unresolved names: the spelling
+	// discriminates, and a nameless unresolved name fails closed.
+	TypeSpecifierNode unresolved_a(TypeCategory::UserDefined, TypeQualifier::None, 0,
+		Token(Token::Type::Identifier, std::string_view("MissingA"), 0, 0, 0), CVQualifier::None);
+	TypeSpecifierNode unresolved_b(TypeCategory::UserDefined, TypeQualifier::None, 0,
+		Token(Token::Type::Identifier, std::string_view("MissingB"), 0, 0, 0), CVQualifier::None);
+	TypeSpecifierNode unresolved_a_copy(TypeCategory::UserDefined, TypeQualifier::None, 0,
+		Token(Token::Type::Identifier, std::string_view("MissingA"), 0, 0, 0), CVQualifier::None);
+	same_identity(unresolved_a, unresolved_a_copy);
+	distinct_identity(unresolved_a, unresolved_b);
+	TypeSpecifierNode nameless_user_defined(TypeCategory::UserDefined, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	require_identity_error([&] { (void)FlashCpp::canonicalTypeSpecifierIdentityHash(nameless_user_defined); });
+
+	// Placeholder categories with an invalid TypeIndex use the same spelling
+	// discriminator, so different unresolved autos do not silently merge.
+	TypeSpecifierNode auto_a(TypeCategory::Auto, TypeQualifier::None, 0,
+		Token(Token::Type::Identifier, std::string_view("auto_a"), 0, 0, 0), CVQualifier::None);
+	TypeSpecifierNode auto_b(TypeCategory::Auto, TypeQualifier::None, 0,
+		Token(Token::Type::Identifier, std::string_view("auto_b"), 0, 0, 0), CVQualifier::None);
+	TypeSpecifierNode auto_a_copy(TypeCategory::Auto, TypeQualifier::None, 0,
+		Token(Token::Type::Identifier, std::string_view("auto_a"), 0, 0, 0), CVQualifier::None);
+	same_identity(auto_a, auto_a_copy);
+	distinct_identity(auto_a, auto_b);
+	TypeSpecifierNode nameless_auto(TypeCategory::Auto, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	require_identity_error([&] { (void)FlashCpp::canonicalTypeSpecifierIdentityHash(nameless_auto); });
 }
 #endif
 
