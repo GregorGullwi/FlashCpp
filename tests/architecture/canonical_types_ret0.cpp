@@ -2,7 +2,7 @@
 
 #include "CanonicalTypeTests.h"
 
-#include <memory>
+#include <deque>
 #include <vector>
 
 // This host regression links the adapter without AstNodeTypes.cpp.
@@ -15,25 +15,33 @@
 // parser stack or a member-context stack.
 void tryBindPublishedTypeEntity(TypeSpecifierNode&) {}
 
-// The identity-pair check needs one alias to compare a typedef with its
-// underlying type. A parser-owned alias would come from AstNodeTypes.cpp, which
-// this harness does not link, so keep a minimal registry for the single shape
-// the check publishes. The registry is empty otherwise and every lookup misses.
+// The identity-pair check needs aliases to compare a typedef with its underlying
+// type. A parser-owned alias would come from AstNodeTypes.cpp, which builds the
+// whole type registry and is deliberately not linked here; register the rows
+// with the same setters production registration uses. A deque keeps row
+// addresses stable across growth and supports the index lookup below.
 namespace {
 
-std::vector<TypeInfo*>& harnessTypeRegistry() {
-	static std::vector<TypeInfo*> registry(1, nullptr);
+std::deque<TypeInfo>& harnessTypeRegistry() {
+	static std::deque<TypeInfo> registry;
+	if (registry.empty()) {
+		registry.emplace_back(); // reserved slot 0, so a TypeIndex index is a row index
+	}
 	return registry;
 }
+
+// Native indices sit far above any row the alias check can publish (one
+// reserved row plus a handful of aliases), so the two ranges cannot collide.
+constexpr uint32_t kHarnessNativeTypeIndexBase = 0x40000000u;
 
 } // namespace
 
 const TypeInfo* tryGetTypeInfo(TypeIndex idx) {
-	const std::vector<TypeInfo*>& registry = harnessTypeRegistry();
+	const std::deque<TypeInfo>& registry = harnessTypeRegistry();
 	if (!idx.is_valid() || idx.index() >= registry.size()) {
 		return nullptr;
 	}
-	return registry[idx.index()];
+	return &registry[idx.index()];
 }
 
 size_t getTypeInfoCount() {
@@ -41,6 +49,10 @@ size_t getTypeInfoCount() {
 }
 
 void tryBindPublishedMemberClassEntity(TypeSpecifierNode&) {}
+
+void journalLegacyTypeInfoInPlaceMutation(TypeIndex) {}
+
+void journalLegacyTypeInfoInPlaceMutation(const TypeInfo&) {}
 
 // FunctionSignature identity only consults dependent expression identity for a
 // dependent noexcept clause. The identity-pair check uses signatures without
@@ -57,23 +69,53 @@ size_t hashDependentExpressionIdentity(const ASTNode&) {
 
 } // namespace FlashCpp
 
-// The harness has no AstNodeTypes.cpp registry; native builtins project to the
-// category-only TypeIndex the structural type nodes already use.
+// Mirrors AstNodeTypes.cpp:nativeTypeIndex. The real helper reads the registry
+// that initialize_native_types builds in AstNodeTypes.cpp, which this harness
+// does not link, so native categories get a valid, distinct high index here and
+// non-native categories keep the production TypeIndex{0, category} placeholder.
 TypeIndex nativeTypeIndex(TypeCategory category) {
-	return TypeIndex{0, category};
+	switch (category) {
+	case TypeCategory::Void:
+	case TypeCategory::Bool:
+	case TypeCategory::Char:
+	case TypeCategory::WChar:
+	case TypeCategory::Char8:
+	case TypeCategory::Char16:
+	case TypeCategory::Char32:
+	case TypeCategory::UnsignedChar:
+	case TypeCategory::Short:
+	case TypeCategory::UnsignedShort:
+	case TypeCategory::Int:
+	case TypeCategory::UnsignedInt:
+	case TypeCategory::Long:
+	case TypeCategory::UnsignedLong:
+	case TypeCategory::LongLong:
+	case TypeCategory::UnsignedLongLong:
+	case TypeCategory::Float:
+	case TypeCategory::Double:
+	case TypeCategory::LongDouble:
+	case TypeCategory::Auto:
+	case TypeCategory::DeclTypeAuto:
+	case TypeCategory::FunctionPointer:
+	case TypeCategory::MemberFunctionPointer:
+		return TypeIndex{kHarnessNativeTypeIndexBase + static_cast<uint32_t>(category), category};
+	default:
+		return TypeIndex{0, category};
+	}
 }
 
 namespace CanonicalTypeTests {
 
 TypeIndex publishHarnessAliasType(const TypeSpecifierNode& underlying) {
-	std::vector<TypeInfo*>& registry = harnessTypeRegistry();
+	std::deque<TypeInfo>& registry = harnessTypeRegistry();
 	const TypeIndex alias_index{static_cast<uint32_t>(registry.size()), TypeCategory::TypeAlias};
-	TypeInfo* info = new TypeInfo(StringTable::getOrInternStringHandle("HarnessAlias"),
+	TypeInfo& info = registry.emplace_back(StringTable::getOrInternStringHandle("HarnessAlias"),
 		underlying.type_index(), underlying.size_in_bits());
-	info->registered_type_index_ = alias_index;
-	info->is_type_alias_ = true;
-	info->alias_type_spec_ = std::make_unique<TypeSpecifierNode>(underlying);
-	registry.push_back(info);
+	// Production register_type_alias writes these two members directly; TypeInfo
+	// exposes no setters for them. The alias specifier goes through its setter.
+	info.registered_type_index_ = alias_index;
+	info.is_type_alias_ = true;
+	info.setAliasTypeSpecifier(underlying);
 	return alias_index;
 }
 

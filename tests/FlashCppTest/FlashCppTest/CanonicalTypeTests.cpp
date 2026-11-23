@@ -10984,6 +10984,9 @@ struct Cell { int value; };
 struct Other { int value; };
 using IntAlias = int;
 using CellAlias = Cell;
+using IntPointerAlias = int* const*;
+using ConstIntAlias = const int;
+using ConstIntPointerAlias = ConstIntAlias*;
 )");
 	SemanticAnalysis sema(compile_context, gSymbolTable);
 	Parser parser(lexer, compile_context, sema);
@@ -10992,7 +10995,7 @@ using CellAlias = Cell;
 	auto named_type = [](std::string_view name) {
 		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
 		REQUIRE(info != nullptr);
-		return TypeSpecifierNode(info->type_index_, TypeQualifier::None, SizeInBits{32}, Token{}, CVQualifier::None);
+		return TypeSpecifierNode(info->registeredTypeIndex(), TypeQualifier::None, SizeInBits{32}, Token{}, CVQualifier::None);
 	};
 	auto builtin_type = [](TypeCategory category) {
 		return TypeSpecifierNode(category, TypeQualifier::None, SizeInBits{32}, Token{}, CVQualifier::None);
@@ -11036,6 +11039,18 @@ using CellAlias = Cell;
 	TypeSpecifierNode alias_pointer = named_type("IntAlias");
 	alias_pointer.add_pointer_level();
 	require_same_identity(int_pointer, alias_pointer);
+
+	TypeSpecifierNode pointer_alias_type = named_type("IntPointerAlias");
+	TypeSpecifierNode expected_pointer_alias = int_type;
+	expected_pointer_alias.add_pointer_level(CVQualifier::Const);
+	expected_pointer_alias.add_pointer_level();
+	require_same_identity(expected_pointer_alias, pointer_alias_type);
+
+	TypeSpecifierNode const_integer_pointer_alias = named_type("ConstIntPointerAlias");
+	TypeSpecifierNode expected_const_integer_pointer = int_type;
+	expected_const_integer_pointer.add_cv_qualifier(CVQualifier::Const);
+	expected_const_integer_pointer.add_pointer_level();
+	require_same_identity(expected_const_integer_pointer, const_integer_pointer_alias);
 
 	TypeSpecifierNode array_two = int_type;
 	array_two.set_array(true, 2);

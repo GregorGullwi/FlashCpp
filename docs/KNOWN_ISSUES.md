@@ -404,15 +404,20 @@ specializations and per-level cv distinct, and it stays publication-independent
 because no canonical `TypeId` is compared or hashed and no nominal layout is
 required.
 
-Shapes with no canonical terminal still compare and hash by the opaque
-`TypeIndex`: 146 `UserDefined` indexes (109 unresolved template-parameter names
-without a `TemplateDeclId` and 37 other opaque indexes), 40 structs with a type
-index and no entity, 29 pre-deduction `Auto`, 11 structs whose entity cannot
-take over while the other side stays unpublished, and the injected class whose
-entity is shared across specializations
+Shapes with no canonical terminal and a valid `TypeIndex` still compare and hash
+by that index: 146 `UserDefined` indexes (109 unresolved template-parameter
+names without a `TemplateDeclId` and 37 other opaque indexes), 40 structs with a
+type index and no entity, 29 pre-deduction `Auto`, 11 structs whose entity
+cannot take over while the other side stays unpublished, and the injected class
+whose entity is shared across specializations
 (`test_injected_identity_ctor_dtor_expressions_ret0.cpp`). A shared placeholder
-would merge distinct types, so those pairs keep their fallback until identity is
-published for them.
+would merge distinct types, so those pairs keep that fallback until identity is
+published for them. An opaque terminal with an invalid `TypeIndex` is never
+identified by the placeholder: it uses the template-parameter declaration/index
+or the normalized spelling, and fails closed when neither exists, so distinct
+unresolved names and placeholders cannot silently merge. A member pointer with
+no published owner likewise uses its class name or fails closed, and a callable
+terminal without any signature is a hard error.
 
 ## Derived pointee and element readers are only partly canonical
 

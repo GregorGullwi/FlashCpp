@@ -3044,6 +3044,86 @@ inline void appendDeclaratorShapeForSubstitution(
 	}
 }
 
+// [dcl.typedef]: cv written on an alias applies to the aliased type as a whole.
+// The first pointer-like component consumes it, a reference consumes it, and
+// the remainder carries on to the terminal type. Arrays let it through. The
+// caller owns the post-sink remainder rule; this helper only reports whether a
+// component consumed the pending cv and mutates the component it lands on.
+inline bool sinkAliasCvOntoComponents(std::vector<DeclaratorComponent>& components, CVQualifier& pending_cv) {
+	bool applied_cv = false;
+	for (DeclaratorComponent& component : components) {
+		const bool is_pointer_like = component.kind == DeclaratorComponentKind::Pointer ||
+			component.kind == DeclaratorComponentKind::MemberObjectPointer ||
+			component.kind == DeclaratorComponentKind::MemberFunctionPointer;
+		const bool is_reference = component.kind == DeclaratorComponentKind::LValueReference ||
+			component.kind == DeclaratorComponentKind::RValueReference;
+		if (!applied_cv && is_pointer_like) {
+			component.cv_qualifier |= pending_cv;
+			applied_cv = true;
+		} else if (!applied_cv && is_reference) {
+			applied_cv = true;
+			pending_cv = CVQualifier::None;
+		}
+	}
+	return applied_cv;
+}
+
+// Compose one alias level's declarator shape with the pending cv, then carry the
+// alias's own cv into the next level. Shared by alias-ranked identity, the
+// canonical adapter's ordered import, and alias substitution in semantics.
+inline void appendOrderedAliasDeclaratorShape(std::vector<DeclaratorComponent>& components, const TypeSpecifierNode& alias,
+	CVQualifier& pending_cv) {
+	std::vector<DeclaratorComponent> alias_components;
+	if (alias.has_ordered_declarator()) {
+		alias_components.assign(alias.declarator_components().begin(), alias.declarator_components().end());
+	} else {
+		if (alias.reference_qualifier() == ReferenceQualifier::LValueReference) {
+			alias_components.push_back(DeclaratorComponent::lvalueReference());
+		} else if (alias.reference_qualifier() == ReferenceQualifier::RValueReference) {
+			alias_components.push_back(DeclaratorComponent::rvalueReference());
+		}
+		auto append_arrays = [&]() {
+			if (alias.array_dimensions().empty()) {
+				if (alias.is_array() || alias.has_pointee_array_declarator() || alias.has_unsized_outer_array_dimension()) {
+					alias_components.push_back(DeclaratorComponent::unknownBoundArray());
+				}
+				return;
+			}
+			for (const size_t extent : alias.array_dimensions()) {
+				alias_components.push_back(extent == 0 ? DeclaratorComponent::unknownBoundArray() : DeclaratorComponent::array(extent));
+			}
+		};
+		auto append_pointers = [&]() {
+			if (alias.has_member_class() && alias.runtime_pointer_depth() != 0) {
+				TypeSpecifierNode member_pointer_type = alias;
+				tryBindPublishedMemberClassEntity(member_pointer_type);
+				const CVQualifier member_cv = member_pointer_type.pointer_levels().empty() ?
+					CVQualifier::None : member_pointer_type.pointer_levels().front().cv_qualifier;
+				const bool is_function = member_pointer_type.category() == TypeCategory::MemberFunctionPointer;
+				alias_components.push_back(member_pointer_type.has_member_class_type_id()
+					? DeclaratorComponent::memberPointer(member_pointer_type.member_class_type_id(), is_function, member_cv)
+					: DeclaratorComponent::memberPointer(EntityId{}, is_function, member_cv));
+				return;
+			}
+			for (size_t index = alias.pointer_levels().size(); index-- > 0;) {
+				alias_components.push_back(DeclaratorComponent::pointer(alias.pointer_levels()[index].cv_qualifier));
+			}
+		};
+		if (alias.has_pointee_array_declarator()) {
+			append_pointers();
+			append_arrays();
+		} else {
+			if (alias.is_array() || alias.has_unsized_outer_array_dimension()) {
+				append_arrays();
+			}
+			append_pointers();
+		}
+	}
+	const bool applied_cv = sinkAliasCvOntoComponents(alias_components, pending_cv);
+	components.insert(components.end(), alias_components.begin(), alias_components.end());
+	pending_cv = applied_cv ? alias.cv_qualifier() : static_cast<CVQualifier>(pending_cv | alias.cv_qualifier());
+}
+
 inline void promoteDeclaratorShapeToOrdered(TypeSpecifierNode& type) {
 	if (type.has_ordered_declarator()) {
 		return;
@@ -3321,6 +3401,13 @@ struct ResolvedAliasTypeInfo {
 	bool pointee_array_declarator = false;
 	bool has_ordered_declarator = false;
 	std::vector<DeclaratorComponent> ordered_declarator;
+	// Alias-contributed declarator components with each alias level's cv already
+	// sunk onto that level's first pointer-like or reference component. The base
+	// cv left after the same sinking is cv_qualifier_after_sinking. These stay
+	// populated for legacy flat aliases too, where ordered_declarator does not
+	// publish and the per-level pointer cv would otherwise be lost.
+	std::vector<DeclaratorComponent> declarator_components;
+	CVQualifier cv_qualifier_after_sinking = CVQualifier::None;
 	std::optional<FunctionSignature> function_signature;
 	std::optional<StringHandle> member_class_name;
 	TypeId member_class_type_id{};
@@ -3408,7 +3495,11 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 	}
 	std::vector<DeclaratorComponent> alias_declarator_components;
 	bool has_ordered_alias_declarator = false;
+	CVQualifier sunk_pending_cv = CVQualifier::None;
+	std::vector<DeclaratorComponent> sunk_alias_declarator_components;
 	auto finalize = [&]() {
+		resolved.declarator_components = std::move(sunk_alias_declarator_components);
+		resolved.cv_qualifier_after_sinking = sunk_pending_cv;
 		if (has_ordered_alias_declarator) {
 			resolved.has_ordered_declarator = true;
 			resolved.ordered_declarator = std::move(alias_declarator_components);
@@ -3439,6 +3530,10 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 				appendDeclaratorShapeForSubstitution(
 					*alias_type_spec,
 					alias_declarator_components);
+				appendOrderedAliasDeclaratorShape(
+					sunk_alias_declarator_components,
+					*alias_type_spec,
+					sunk_pending_cv);
 				resolved.cv_qualifier |= alias_type_spec->cv_qualifier();
 				resolved.pointer_depth += alias_type_spec->pointer_depth();
 				if (alias_type_spec->reference_qualifier() == ReferenceQualifier::LValueReference) {
