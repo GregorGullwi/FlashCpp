@@ -2730,8 +2730,7 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 			// [conv.bool]: a non-callable object pointer converts to bool without
 			// consulting the pointee. The marker describes the source expression's
 			// value category, so strip it and let the structural planner decide.
-			return !isCallablePointer(from) && is_builtin_type(from.category()) &&
-				to.category() == TypeCategory::Bool && !to.has_ordered_declarator();
+			return !isCallablePointer(from) && is_builtin_type(from.category()) && to.category() == TypeCategory::Bool && !to.has_ordered_declarator();
 		}
 		if (from.elementPointerDepth() != 0) {
 			return false;

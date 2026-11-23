@@ -445,9 +445,7 @@ static bool isValidRequirementExpression(const ASTNode& expr_node, Parser& parse
 
 static ConstraintEvaluationResult evaluateRequirement(const ASTNode& requirement,
 	const TemplateArgumentVector& arguments, Parser& parser, std::span<const TemplateParameterNode> parameters) {
-	ASTNode substituted_requirement = parameters.empty()
-		? requirement
-		: parser.substituteTemplateParameters(requirement, parameters, arguments);
+	ASTNode substituted_requirement = parameters.empty() ? requirement : parser.substituteTemplateParameters(requirement, parameters, arguments);
 
 	if (substituted_requirement.is<CompoundRequirementNode>()) {
 		return ConstraintEvaluationResult::success();
@@ -572,9 +570,7 @@ ConstraintEvaluationResult evaluateConstraint(const ASTNode& root, const Templat
 			// Substitute only this atomic constraint after its boolean path was
 			// reached, then let the canonical type table and constexpr evaluator
 			// decide it. The legacy evaluator remains the compatibility fallback.
-			const ASTNode substituted = view.parameters.empty()
-				? atom
-				: parser.substituteTemplateParameters(atom, view.parameters, *view.arguments);
+			const ASTNode substituted = view.parameters.empty() ? atom : parser.substituteTemplateParameters(atom, view.parameters, *view.arguments);
 			if (std::optional<ConstraintEvaluationResult> result = evaluateConstant(substituted); result.has_value()) {
 				return *result;
 			}
