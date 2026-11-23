@@ -30,11 +30,8 @@ enum class CanonicalIdentityMode : uint8_t {
 	IgnoringTopCvAndReference,
 };
 
-inline CanonicalIdentityVerdict canonicalTypeIdentityVerdict(CanonicalTypeTable& table,
-	const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs, CanonicalIdentityMode mode) {
-	if (inSpeculativeParseRegion()) {
-		return CanonicalIdentityVerdict::Unpublished;
-	}
+inline CanonicalIdentityVerdict canonicalTypeIdentityVerdict(CanonicalTypeTable& table, const TypeSpecifierNode& lhs,
+	const TypeSpecifierNode& rhs, CanonicalIdentityMode mode) {
 	CanonicalTypeTransaction transaction(table);
 	const CanonicalTypeImport left = importCanonicalType(table, lhs);
 	if (left.status != CanonicalTypeImportStatus::Supported) {
