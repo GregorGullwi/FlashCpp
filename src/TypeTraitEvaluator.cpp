@@ -1133,7 +1133,10 @@ std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property, cons
 	case CanonicalTraitProperty::IsRvalueReference:
 		return kind == CanonicalTypeKind::RValueReference;
 	case CanonicalTraitProperty::IsPointer:
-		return kind == CanonicalTypeKind::Pointer;
+		// Presence comes from the same unified pointer shape every migrated
+		// consumer reads, so a callable pointer counts once and a member pointer
+		// never counts as an object pointer.
+		return !is_reference && canonicalPointerShape(table, type).isPointer();
 	case CanonicalTraitProperty::IsArray:
 		return is_bounded_array || is_unbounded_array;
 	case CanonicalTraitProperty::IsBoundedArray:

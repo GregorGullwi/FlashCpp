@@ -2761,7 +2761,6 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 	TypeCategory type = type_spec.type();
 	const TypeCategory type_category = type_spec.category();
 	bool is_reference = type_spec.is_reference();
-	bool is_rvalue_reference = type_spec.is_rvalue_reference();
 	size_t pointer_depth = type_spec.runtime_pointer_depth();
 	auto getStructInfoIfPlainObject = [](const TypeSpecifierNode& spec) -> const StructTypeInfo* {
 		if (spec.category() != TypeCategory::Struct || spec.is_reference() || spec.runtime_pointer_depth() != 0 ||
@@ -2827,25 +2826,14 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 		}
 		break;
 
-	case TypeTraitKind::IsSame:
-		// __is_same(T, U) - Check if T and U are the same type (exactly the same)
-		if (traitNode.has_second_type()) {
-			const ASTNode& second_type_node = traitNode.second_type_node();
-			if (second_type_node.is<TypeSpecifierNode>()) {
-				const TypeSpecifierNode& second_spec = second_type_node.as<TypeSpecifierNode>();
-
-				// Check if all properties match exactly
-				result = (type_category == second_spec.category() &&
-						  is_reference == second_spec.is_reference() &&
-						  is_rvalue_reference == second_spec.is_rvalue_reference() &&
-						  pointer_depth == second_spec.runtime_pointer_depth() &&
-						  type_spec.type_index() == second_spec.type_index() &&
-						  type_spec.is_array() == second_spec.is_array() &&
-						  type_spec.is_const() == second_spec.is_const() &&
-						  type_spec.is_volatile() == second_spec.is_volatile());
-			}
-		}
+	case TypeTraitKind::IsSame: {
+		// Identity is `TypeId` equality. The shared evaluator decides it from the
+		// canonical types and keeps every pointer level's cv; a local flat
+		// comparison here answered true for `int* const*` and `int**`.
+		const TypeTraitResult eval_result = evaluateTypeTrait(traitNode);
+		result = eval_result.success && eval_result.value;
 		break;
+	}
 
 	case TypeTraitKind::IsConvertible:
 		// __is_convertible(From, To) - Check if From can be converted to To

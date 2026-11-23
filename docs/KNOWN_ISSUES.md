@@ -349,17 +349,48 @@ with extent 5 and has no entity while the template is being defined, and sizeof
 of an ordinary array with an omitted bound that is not marked unsized, still
 use the flat extent.
 
-## Pointer depth still disagrees with the canonical pointer
+## Flat pointer depth still differs from the canonical pointer shape
 
-Pointer presence and per-level cv stayed on the flat accessors. 154 Supported
-imports disagree with flat depth, so consumers cannot switch until one query
-reports both. A function pointer is one canonical Pointer: the flat depth is 0
-when the category is `FunctionPointer`, and 1 when the category is `Function`
-with an explicit pointer level. A member pointer is canonical depth 0 and
-`canonicalIsPointer` is false, because the host test requires that; flat readers
-still see depth 1. Where the depth matched, the per-level cv matched.
-`__is_same(int* const*, int**)` is true today while overload resolution still
-distinguishes those types. That disagreement is not fixed.
+`canonicalPointerShape` in `CanonicalShapeQueries.h` is the single answer for
+pointer presence, pointer depth, and per-level cv: one walk reports `depth`,
+`member_pointer`, `function_pointer`, and the cv of every level, ordered
+outermost-first. `canonicalIsPointer`, `canonicalPointerLevelCount`, and
+`canonicalCopyPointerLevelCvs` delegate to it, so the three facts cannot
+disagree, and `projectCanonicalDerivedShape` writes it into the flat
+innermost-first order. The canonical structural `__is_pointer` answer also
+reads it.
+
+The compatibility projection still encodes two shapes differently, so its raw
+depth is not a substitute for the query:
+
+- A function pointer is one canonical `Pointer`. The flat syntax stores an
+  implicit `FunctionPointer` category (flat depth 0) or an explicit level on a
+  `Function` category (flat depth 1); both import to depth 1.
+- A member pointer is canonical depth 0 with `member_pointer` set and no
+  object-pointer presence, while the flat declarator still stores one pointer
+  level plus the member owner. A pointer to a member pointer is canonical depth
+  1 with `member_pointer` set.
+
+Measured over the source suite at the sampled import sites: 22,746 Supported
+imports, 153 whose canonical depth differs from `runtime_pointer_depth()` (72
+spell a callable with the function-pointer category, 64 are member pointers,
+and 17 are other shapes whose flat runtime depth and canonical chain differ),
+and 0 per-level cv differences where the depth matched. Consumers that need
+presence, depth, or cv read `canonicalPointerShape` directly; the compatibility
+projection is written from that shape in the flat order. Other flat readers
+still fail closed for non-projectable shapes; remove this entry when those
+consumers migrate and the compatibility projection fields are deleted.
+
+## Pointer-to-member types are not accepted as direct type-trait operands
+
+`__is_member_object_pointer(int S::*)`, `__is_member_function_pointer(int S::*)`
+and `__is_same(int S::*, int)` fail in the parser with "Expected ')' after type
+trait argument" or "Expected ',' after first type in binary type trait", because
+the type-trait argument parser does not accept a member-pointer declarator.
+`__is_same(int, int S::*)` parses because the member pointer is the second
+operand. Member-pointer trait answers reached through a substituted template
+parameter, alias, or second operand are covered; the direct first-operand
+spelling is not.
 
 ## Type identity comparison still uses the flat projection
 
@@ -373,9 +404,18 @@ index and no entity, 37 opaque `UserDefined` type indexes, 1 injected class
 whose entity is shared across specializations
 (`test_injected_identity_ctor_dtor_expressions_ret0.cpp`), and 11 structs that
 do have an entity but cannot take over the compare while the others stay
-unpublished. A shared placeholder would merge distinct types. Lambda return
-compatibility is not canonical type equality. The constexpr overload compare
-had no suite hits.
+unpublished. A shared placeholder would merge distinct types.
+
+The `__is_same` wrong answer for `int* const*` and `int**` is fixed: codegen no
+longer re-implements the compare from a flat pointer-depth count and base cv, it
+delegates to `evaluateTypeTrait`, which prefers canonical `TypeId` identity and
+keeps per-level cv in its compatibility fallback. Template substitution also
+preserves every pointer level's cv instead of rebuilding the chain from a depth
+count. `test_is_same_pointer_level_cv_ret42.cpp` pins the runtime expression
+answer and `test_is_same_pointer_level_cv_substitution_ret42.cpp` pins the
+instantiated class, variable, function, and explicit-instantiation answers.
+Lambda return compatibility is not canonical type equality. The constexpr
+overload compare had no suite hits.
 
 ## Derived pointee and element readers are only partly canonical
 

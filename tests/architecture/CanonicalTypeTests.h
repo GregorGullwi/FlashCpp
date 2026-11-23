@@ -7,6 +7,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "CanonicalShapeQueries.h"
 #include "CanonicalTypeAdapter.h"
 #include "TemplateDeclTable.h"
 
@@ -3788,7 +3789,58 @@ inline void checkConcretePackSpecArgIdentityIndependence() {
 	require(!sameStructure(forward, permuted, reverse, reverse_spec));
 }
 
+// Presence, depth, and per-level cv must be one answer. A callable pointer is a
+// canonical Pointer, a member pointer is not, and the level order is
+// outermost-first so a consumer cannot pair a depth from one walk with cv from
+// another.
+inline void checkPointerShapeQuery() {
+	CanonicalTypeTable table;
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId const_inner = table.pointer(table.qualify(integer, CVQualifier::Const));
+	const TypeId outer = table.qualify(table.pointer(const_inner), CVQualifier::Volatile);
+	const CanonicalPointerShape plain = canonicalPointerShape(table, outer);
+	require(plain.isPointer());
+	require(!plain.member_pointer);
+	require(!plain.function_pointer);
+	require(plain.depth == 2);
+	require(plain.levels[0] == CVQualifier::Volatile);
+	require(plain.levels[1] == CVQualifier::None);
+	require(canonicalIsPointer(table, outer));
+	require(canonicalPointerLevelCount(table, outer) == 2);
+	CVQualifier levels[2] = {};
+	canonicalCopyPointerLevelCvs(table, outer, std::span<CVQualifier>(levels, 2));
+	require(levels[0] == plain.levels[0] && levels[1] == plain.levels[1]);
+	const CanonicalPointerShape referenced = canonicalPointerShape(table, table.reference(outer, ReferenceQualifier::RValueReference));
+	require(referenced.depth == 2 && referenced.levels[0] == CVQualifier::Volatile);
+
+	const TypeId callable = table.function(integer, std::span<const TypeId>(), false, CVQualifier::None,
+		ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	const CanonicalPointerShape function_pointer = canonicalPointerShape(table, table.pointer(callable));
+	require(function_pointer.isPointer());
+	require(function_pointer.function_pointer);
+	require(function_pointer.depth == 1);
+	const CanonicalPointerShape nested_function_pointer = canonicalPointerShape(table, table.pointer(table.pointer(callable)));
+	require(nested_function_pointer.depth == 2 && nested_function_pointer.function_pointer);
+	require(!canonicalPointerShape(table, callable).isPointer());
+
+	const TypeId owner = table.record(EntityId{40011});
+	const TypeId member = table.memberObjectPointer(owner, integer);
+	const CanonicalPointerShape member_shape = canonicalPointerShape(table, table.qualify(member, CVQualifier::Const));
+	require(!member_shape.isPointer());
+	require(member_shape.member_pointer);
+	require(member_shape.depth == 0);
+	const CanonicalPointerShape member_pointer_pointer = canonicalPointerShape(table, table.pointer(member));
+	require(member_pointer_pointer.isPointer());
+	require(member_pointer_pointer.member_pointer);
+	require(member_pointer_pointer.depth == 1);
+	const CanonicalPointerShape member_function_pointer = canonicalPointerShape(table, table.memberFunctionPointer(owner, callable));
+	require(!member_function_pointer.isPointer());
+	require(member_function_pointer.member_pointer);
+	require(!member_function_pointer.function_pointer);
+}
+
 inline int run() {
+	checkPointerShapeQuery();
 	checkFunctionIdentityIndependence();
 	checkDeclaratorIdentityIndependence();
 	checkRecordSpecializationIdentityIndependence();
