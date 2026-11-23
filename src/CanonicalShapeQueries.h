@@ -1,5 +1,6 @@
 #pragma once
 
+#include <limits>
 #include <optional>
 #include <span>
 
@@ -33,17 +34,27 @@ inline TypeId shapeAfterTopCvAndReference(const CanonicalTypeTable& table, TypeI
 // running separate walks, so presence, depth, and cv cannot disagree.
 //
 // Ordering is outermost-pointer first, matching the canonical Pointer chain.
-// `member_pointer` reports a pointer-to-member: it is pointer-like for storage
-// and declarators but is not a canonical Pointer, so `depth` stays zero.
-// `function_pointer` reports that the innermost pointee is callable, which is one
-// canonical Pointer level regardless of the compatibility category that spelled
-// it.
+// The pointee kind is one exclusive state: a pointer-to-member is pointer-like
+// for storage and declarators but is not a canonical Pointer, so `depth` stays
+// zero, and a callable pointee is one canonical Pointer level regardless of the
+// compatibility category that spelled it.
 inline constexpr size_t kCanonicalPointerShapeCapacity = 8;
 
+// The level buffer bound is what keeps depth representable; if the buffer grows
+// past the depth type, `++shape.depth` would wrap instead of reaching the
+// overflow check that throws.
+static_assert(kCanonicalPointerShapeCapacity <= std::numeric_limits<uint8_t>::max(), "pointer shape depth must fit the level counter");
+
+enum class CanonicalPointeeKind : uint8_t {
+	None,
+	Function,
+	MemberPointer,
+};
+
+// A by-value query result: 10 bytes, so it stays cheap to return and copy.
 struct CanonicalPointerShape {
-	size_t depth = 0;
-	bool member_pointer = false;
-	bool function_pointer = false;
+	uint8_t depth = 0;
+	CanonicalPointeeKind pointee = CanonicalPointeeKind::None;
 	CVQualifier levels[kCanonicalPointerShapeCapacity] = {};
 
 	bool isPointer() const {
@@ -63,9 +74,11 @@ inline CanonicalPointerShape canonicalPointerShape(const CanonicalTypeTable& tab
 			node = table.node(type);
 		}
 		if (node.kind != CanonicalTypeKind::Pointer) {
-			shape.member_pointer =
-				node.kind == CanonicalTypeKind::MemberObjectPointer || node.kind == CanonicalTypeKind::MemberFunctionPointer;
-			shape.function_pointer = shape.depth != 0 && node.kind == CanonicalTypeKind::Function;
+			if (node.kind == CanonicalTypeKind::MemberObjectPointer || node.kind == CanonicalTypeKind::MemberFunctionPointer) {
+				shape.pointee = CanonicalPointeeKind::MemberPointer;
+			} else if (shape.depth != 0 && node.kind == CanonicalTypeKind::Function) {
+				shape.pointee = CanonicalPointeeKind::Function;
+			}
 			return shape;
 		}
 		if (shape.depth == kCanonicalPointerShapeCapacity) {

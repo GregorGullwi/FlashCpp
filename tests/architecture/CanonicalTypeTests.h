@@ -3789,6 +3789,10 @@ inline void checkConcretePackSpecArgIdentityIndependence() {
 	require(!sameStructure(forward, permuted, reverse, reverse_spec));
 }
 
+// The shape is a by-value query result; a future field must not quietly re-add
+// padding to it.
+static_assert(sizeof(CanonicalPointerShape) == 10, "pointer shape stays a packed by-value result");
+
 // Presence, depth, and per-level cv must be one answer. A callable pointer is a
 // canonical Pointer, a member pointer is not, and the level order is
 // outermost-first so a consumer cannot pair a depth from one walk with cv from
@@ -3800,8 +3804,7 @@ inline void checkPointerShapeQuery() {
 	const TypeId outer = table.qualify(table.pointer(const_inner), CVQualifier::Volatile);
 	const CanonicalPointerShape plain = canonicalPointerShape(table, outer);
 	require(plain.isPointer());
-	require(!plain.member_pointer);
-	require(!plain.function_pointer);
+	require(plain.pointee == CanonicalPointeeKind::None);
 	require(plain.depth == 2);
 	require(plain.levels[0] == CVQualifier::Volatile);
 	require(plain.levels[1] == CVQualifier::None);
@@ -3817,26 +3820,25 @@ inline void checkPointerShapeQuery() {
 		ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
 	const CanonicalPointerShape function_pointer = canonicalPointerShape(table, table.pointer(callable));
 	require(function_pointer.isPointer());
-	require(function_pointer.function_pointer);
+	require(function_pointer.pointee == CanonicalPointeeKind::Function);
 	require(function_pointer.depth == 1);
 	const CanonicalPointerShape nested_function_pointer = canonicalPointerShape(table, table.pointer(table.pointer(callable)));
-	require(nested_function_pointer.depth == 2 && nested_function_pointer.function_pointer);
+	require(nested_function_pointer.depth == 2 && nested_function_pointer.pointee == CanonicalPointeeKind::Function);
 	require(!canonicalPointerShape(table, callable).isPointer());
 
 	const TypeId owner = table.record(EntityId{40011});
 	const TypeId member = table.memberObjectPointer(owner, integer);
 	const CanonicalPointerShape member_shape = canonicalPointerShape(table, table.qualify(member, CVQualifier::Const));
 	require(!member_shape.isPointer());
-	require(member_shape.member_pointer);
+	require(member_shape.pointee == CanonicalPointeeKind::MemberPointer);
 	require(member_shape.depth == 0);
 	const CanonicalPointerShape member_pointer_pointer = canonicalPointerShape(table, table.pointer(member));
 	require(member_pointer_pointer.isPointer());
-	require(member_pointer_pointer.member_pointer);
+	require(member_pointer_pointer.pointee == CanonicalPointeeKind::MemberPointer);
 	require(member_pointer_pointer.depth == 1);
 	const CanonicalPointerShape member_function_pointer = canonicalPointerShape(table, table.memberFunctionPointer(owner, callable));
 	require(!member_function_pointer.isPointer());
-	require(member_function_pointer.member_pointer);
-	require(!member_function_pointer.function_pointer);
+	require(member_function_pointer.pointee == CanonicalPointeeKind::MemberPointer);
 }
 
 inline int run() {
