@@ -20,11 +20,13 @@
 // Canonical probe shared with overload resolution. Defined here because this
 // unit can include both OverloadResolution.h and the constructor-selection
 // service without creating a header cycle. The answer is deliberately a
-// yes/no/existence triple: a selected constructor only proves that the
-// conversion exists, because [over.ics.rank]/3.3 cannot order two different
-// converting constructors.
+// yes/no/existence triple, and the selected canonical constructor identity is
+// reported so the caller can record which constructor the conversion sequence
+// contains. Two different converting constructors stay unordered: the identity
+// only lets [over.ics.rank]/3.3 compare the second standard conversion
+// sequences of sequences that share this constructor.
 std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgument(const TypeSpecifierNode& target_type,
-	const TypeSpecifierNode& source_type, const ASTNode* argument_node) {
+	const TypeSpecifierNode& source_type, const ASTNode* argument_node, UserDefinedConversionIdentity* selected_identity) {
 	FrontendContext& context = requireFrontendContext();
 	CanonicalTypeTable& table = context.canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
@@ -55,6 +57,14 @@ std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgument(cons
 		std::span<const CanonicalConstructorArgument>(&argument, 1), CanonicalConstructorSelectionPolicy::AllowUserDefinedArgumentConversion |
 			CanonicalConstructorSelectionPolicy::ExistenceOnly);
 	if (selection.status == CanonicalConstructorSelectionStatus::Selected) {
+		if (selected_identity != nullptr) {
+			if (selection.constructor_index >= kInvalidUserDefinedConversionOrdinal) {
+				throw InternalError("canonical constructor index does not fit the conversion identity");
+			}
+			selected_identity->kind = UserDefinedConversionIdentity::Kind::CanonicalConstructor;
+			selected_identity->owner = target_class;
+			selected_identity->ordinal = static_cast<uint32_t>(selection.constructor_index);
+		}
 		return true;
 	}
 	if (selection.status == CanonicalConstructorSelectionStatus::Unknown) {

@@ -12518,8 +12518,11 @@ ArgumentConversionInfo SemanticAnalysis::buildCallArgumentConversion(const TypeS
 	TypeSpecifierNode result = selected->function->decl_node().type_specifier_node();
 	tryBindPublishedTypeEntity(result);
 	const auto result_type = tryImportSupportedCanonical(requireFrontendContext().canonicalTypes(), result);
-	ArgumentConversionInfo selected_info{ConversionRank::UserDefined, &parameter_type, true, selected->trailing_standard_rank,
-		result_type.value_or(TypeId{}), selected->conversion_template};
+	ArgumentConversionInfo selected_info{ConversionRank::UserDefined, &parameter_type, true, selected->trailing_standard_rank};
+	selected_info.user_defined_identity = makeUserDefinedConversionFunctionIdentity(*selected, result_type.value_or(TypeId{}));
+	if (!hasUserDefinedConversionIdentity(selected_info)) {
+		selected_info.trailing_standard_rank = ConversionRank::NoMatch;
+	}
 	if (!conversion.is_valid) {
 		return selected_info;
 	}

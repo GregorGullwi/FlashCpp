@@ -462,23 +462,41 @@ gone now that canonical operator lookup handles specialized aliases, but the
 proper owner remains semantics (boundary 4): sema should publish the resolved
 expression type and the parser should only consume it.
 
-## User-defined conversion sequences cannot be ordered by a shared conversion function
+## User-defined conversion identity gaps
 
-C++20 [over.ics.rank]/3.3 orders two user-defined conversion sequences by a
-standard conversion sequence only when they contain the same conversion function
-or constructor. The conversion plan records a trailing standard rank, so a
-conversion operator that reaches two parameter types through one function is
-ordered correctly, but a converting-constructor sequence carries no identity for
-the constructor it used. A plan therefore cannot tell "two candidates share this
-constructor, compare their second sequences" from "two candidates use different
-constructors, which is ambiguous", and the constructor route stays unranked.
+A user-defined conversion sequence is ranked by its second standard conversion
+sequence only when the plan carries the selected conversion function or
+constructor identity. Member functions publish no declaration `EntityId`, so a
+conversion operator is identified by its declaring class `TypeId` plus its
+member-function ordinal, and a conversion function template only by its template
+declaration id plus the return type its specialization instantiated. A
+lambda-closure conversion (declared on the closure or synthesized for it) and a
+constructor selected only through the compatibility declaration bridge publish
+no such identity, and a conversion function template specialization publishes no
+specialization id of its own, so two specializations of one template that share
+an instantiated return type but differ in other template arguments compare as one
+conversion function. A sequence without identity keeps no standard tail and stays
+unordered, which is the conservative answer; ranking it needs a published numeric
+identity for the selected declaration.
 
-Filling that gap needs the selected conversion function or constructor identity
-on the plan, followed by a comparison that applies the trailing rank only to
-equal identity. Ranking the parameter conversion instead is wrong and is pinned
-against by
-`test_conversion_distinct_converting_constructors_ambiguous_e1701.cpp`: it would
-accept calls that MSVC rejects with C2668.
+The member-function ordinal and the constructor schema index are within-snapshot
+keys, not durable identity: they disambiguate selections inside one published
+schema snapshot and do not survive a schema republication that reorders entries.
+Both have to move to the declaration or entity identity once constructors and
+member functions publish one.
+
+One constructor can currently be identified two ways: the canonical owner `TypeId`
+plus constructor schema index, or the compatibility bridge's declaration. The same
+constructor reached through both routes is therefore treated as two different
+conversions, even though [over.ics.rank]/3.3 compares their second sequences for
+one constructor. One identity per constructor, whichever route selected it, is the
+invariant a fix needs.
+
+Conversion-function selection for a `const int&` target can still prefer
+`operator int&()` over `operator const int&()` ([over.match.conv]/3.2.7), so
+`f(int&)` and `f(const int&)` with both operators is accepted where clang reports
+the reference initialization as ambiguous. This happens before argument-sequence
+ordering and is not closed by the plan identity.
 
 ## Remaining conversion function template cases
 
