@@ -6,6 +6,7 @@
 #include "ExpressionSubstitutor.h"
 #include "TemplatePackExpansion.h"
 #include "CanonicalTypeAdapter.h"
+#include "CanonicalIdentityCompare.h"
 #include "FrontendContext.h"
 #include "CanonicalShapeTelemetry.h"
 #include "MemberFunctionLookupShared.h"
@@ -5364,6 +5365,21 @@ ParseResult Parser::parse_extern_block(Linkage linkage) {
 // Helper function to get the size of a type in bits
 // Helper function to check if two types are compatible (same type, ignoring qualifiers)
 bool Parser::are_types_compatible(const TypeSpecifierNode& type1, const TypeSpecifierNode& type2) const {
+	// Canonical-first: two operands that both publish an identity compare by that
+	// identity. Top-level cv and references stay outside the value-type compare;
+	// per-level pointer cv is part of the identity, so `int* const*` and `int**`
+	// are not compatible. The flat fields below still decide the shapes that have
+	// no publishable identity (unresolved template parameters, pre-deduction auto,
+	// opaque nominal indexes).
+	if (FrontendContext* active = FrontendContext::active()) {
+		const FlashCpp::CanonicalIdentityVerdict verdict = FlashCpp::canonicalTypeIdentityVerdict(
+			active->canonicalTypes(), type1, type2, FlashCpp::CanonicalIdentityMode::IgnoringTopCvAndReference);
+		if (verdict != FlashCpp::CanonicalIdentityVerdict::Unpublished) {
+			return verdict == FlashCpp::CanonicalIdentityVerdict::Identical;
+		}
+		noteCanonicalShapeImport(active->canonicalTypes(), type1, CanonicalShapeSite::Parser_Expr_QualLookup_PointerLevelsIdentity);
+	}
+
 	// Check basic type
 	if (type1.type() != type2.type()) {
 		return false;
@@ -5380,9 +5396,6 @@ bool Parser::are_types_compatible(const TypeSpecifierNode& type1, const TypeSpec
 	// wrappers inside the array spine, and runtime_pointer_depth() reports zero
 	// for them, so this verdict keeps counting the flat projection to stay at
 	// the current lambda return-type agreement.
-	if (FrontendContext* active = FrontendContext::active()) {
-		noteCanonicalShapeImport(active->canonicalTypes(), type1, CanonicalShapeSite::Parser_Expr_QualLookup_PointerLevelsIdentity);
-	}
 	if (type1.pointer_levels().size() != type2.pointer_levels().size()) {
 		return false;
 	}
