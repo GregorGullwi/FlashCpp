@@ -43,9 +43,7 @@ inline CanonicalIdentityVerdict canonicalTypeIdentityVerdict(CanonicalTypeTable&
 		transaction.rollback();
 		return CanonicalIdentityVerdict::Unpublished;
 	}
-	const bool identical = mode == CanonicalIdentityMode::Exact
-		? left.type == right.type
-		: canonicalSameIgnoringTopCvRef(table, left.type, right.type);
+	const bool identical = mode == CanonicalIdentityMode::Exact ? left.type == right.type : canonicalSameIgnoringTopCvRef(table, left.type, right.type);
 	transaction.rollback();
 	return identical ? CanonicalIdentityVerdict::Identical : CanonicalIdentityVerdict::Distinct;
 }
