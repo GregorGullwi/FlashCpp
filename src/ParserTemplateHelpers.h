@@ -4282,7 +4282,7 @@ inline std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 	}
 	if (unresolved_sizeof_policy == UnresolvedSizeofPolicy::RejectAfterSubstitution) {
 		if (std::optional<StringHandle> invalid_type =
-				SemanticValidation::findInvalidConcreteSizeofTypeOperand(*initializer);
+				SemanticValidation::findInvalidConcreteSizeofTypeOperand(*initializer, SemanticValidation::SizeofOperandDependence::Reject);
 			invalid_type.has_value()) {
 			StringBuilder diagnostic;
 			diagnostic.append("sizeof operand '")

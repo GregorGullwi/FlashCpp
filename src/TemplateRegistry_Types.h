@@ -1448,7 +1448,12 @@ inline TypeSpecifierNode makeTypeSpecifierFromTemplateTypeArg(
 		substituted_spec.set_pointee_array_dimensions(arg.array_dimensions);
 	} else if (arg.is_array) {
 		if (arg.array_dimensions.empty()) {
+			// A type argument that is an array always records its bounds; no
+			// bound means the array of unknown bound T[]. Keep that fact on the
+			// specifier so canonical import sees an unsized array instead of a
+			// sized array with no extent.
 			substituted_spec.set_array(true, std::nullopt);
+			substituted_spec.set_unsized_outer_array_dimension(true);
 		} else {
 			substituted_spec.set_array_dimensions(arg.array_dimensions);
 		}
@@ -1517,7 +1522,10 @@ inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 		substituted_spec.set_pointee_array_dimensions(arg_info.array_dimensions);
 	} else if (arg_info.is_array) {
 		if (arg_info.array_dimensions.empty() || arg_info.array_dimensions[0] == 0) {
+			// See makeTypeSpecifierFromTemplateTypeArg: an array type argument
+			// with no recorded bound denotes the array of unknown bound.
 			substituted_spec.set_array(true, std::nullopt);
+			substituted_spec.set_unsized_outer_array_dimension(true);
 		} else {
 			substituted_spec.set_array_dimensions(arg_info.array_dimensions);
 		}
@@ -1697,8 +1705,8 @@ inline TypeSpecifierNode resolveTypeInfoToTypeSpec(
 		Token());
 	ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
 		type_info.registeredTypeIndex().withCategory(type_info.typeEnum()));
-	if (resolved_alias.has_ordered_declarator ||
-		outer_spec.has_ordered_declarator()) {
+	TypeSpecifierNode result;
+	if (resolved_alias.has_ordered_declarator || outer_spec.has_ordered_declarator()) {
 		TypeSpecifierNode ordered_type = resolved_type;
 		ordered_type.clear_declarator_shape();
 		const bool outer_repeats_alias = resolved_alias.has_ordered_declarator && outer_spec.has_ordered_declarator() &&
@@ -1714,14 +1722,15 @@ inline TypeSpecifierNode resolveTypeInfoToTypeSpec(
 		if (resolved_alias.has_member_class_owner()) {
 			applyResolvedAliasMemberOwner(ordered_type, resolved_alias);
 		}
-		return ordered_type;
+		result = ordered_type;
+	} else if (resolved_alias.has_member_class_owner()) {
+		result = resolved_type;
+		applyResolvedAliasMemberOwner(result, resolved_alias);
+	} else {
+		result = resolved_type;
 	}
-	if (resolved_alias.has_member_class_owner()) {
-		TypeSpecifierNode owned_type = resolved_type;
-		applyResolvedAliasMemberOwner(owned_type, resolved_alias);
-		return owned_type;
-	}
-	return resolved_type;
+	applyResolvedAliasTemplateParameter(result, resolved_alias);
+	return result;
 }
 
 // Convert a TypeInfo::TemplateArgInfo to a TemplateTypeArg, optionally substituting

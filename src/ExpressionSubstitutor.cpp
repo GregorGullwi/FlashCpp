@@ -148,6 +148,7 @@ void appendArrayDimensions(TypeSpecifierNode& target, std::span<const size_t> pr
 }
 
 void applyResolvedAliasModifiers(TypeSpecifierNode& target, const ResolvedAliasTypeInfo& resolved_alias) {
+	applyResolvedAliasTemplateParameter(target, resolved_alias);
 	if (resolved_alias.has_ordered_declarator) {
 		target.set_ordered_declarator(resolved_alias.ordered_declarator);
 		target.add_cv_qualifier(resolved_alias.cv_qualifier);

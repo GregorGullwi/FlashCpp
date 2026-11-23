@@ -134,7 +134,24 @@ struct EvalResult;
 }
 
 namespace SemanticValidation {
-std::optional<StringHandle> findInvalidConcreteSizeofTypeOperand(const ASTNode& root);
+
+// Whether a sizeof operand that still uses a dependent placeholder is reported
+// as invalid or left for the point of instantiation. The sizeof-expression
+// emit sites validate concrete operands and reject; requirement validity runs
+// on a substituted requirement that may still be dependent and defers.
+enum class SizeofOperandDependence : uint8_t {
+	Reject,
+	Defer,
+};
+
+// One sizeof operand's validity. Pointer operands have no completeness
+// requirement; void, function, unknown-bound array, zero-extent array, and
+// incomplete record operands are invalid ([expr.sizeof]/2). Returns the
+// operand's name, or nullopt when the operand is valid for sizeof.
+std::optional<StringHandle> findInvalidSizeofTypeOperand(const TypeSpecifierNode& type_spec, SizeofOperandDependence dependence);
+
+// Applies findInvalidSizeofTypeOperand to every sizeof(type) operand in root.
+std::optional<StringHandle> findInvalidConcreteSizeofTypeOperand(const ASTNode& root, SizeofOperandDependence dependence);
 }
 class FrontendContext;
 class SemanticAnalysis;

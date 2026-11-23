@@ -5270,6 +5270,7 @@ ParseResult Parser::parse_type_specifier() {
 					applyResolvedAliasMemberOwner(
 						type_spec_node.as<TypeSpecifierNode>(), resolved_alias);
 				}
+				applyResolvedAliasTemplateParameter(type_spec_node.as<TypeSpecifierNode>(), resolved_alias);
 				return ParseResult::success(type_spec_node);
 			} else {
 				// Not a typedef - might be a struct type without size set in TypeInfo

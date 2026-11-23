@@ -546,16 +546,24 @@ remaining pattern schemas by identity, and remove the name fallback.
      variables initialized from arrays evaluate. Other flat readers still need
      migration before the projection fields can be removed.
    - TypeId shape queries, `requireCanonicalShape`, the flat-reader gate, sampled
-     import-gap telemetry, published class/enum array import, and the array-extent
-     consumer move are on main. The flat-reader inventory at that point was 845
-     reads across 69 files. The gate counts alias accessors and only goes down.
+     import-gap telemetry, published class/enum array import, and every
+     array-extent consumer are on main. The flat-reader inventory is now 819
+     reads across 68 files; the gate counts alias accessors and only goes down.
      `requireCanonicalShape` throws on a non-Supported import and during
      speculative parsing. Production speculative parsing is not the scratch
-     transaction. sizeof of a dependent `UserDefined`/`TypeAlias` array (the
-     array type targets placeholder `T` with extent 5 and has no entity while the
-     template is being defined) and sizeof of an ordinary array with an omitted
-     bound that is not marked unsized stay on the flat extent. See
-     [known issues](KNOWN_ISSUES.md#sizeof-of-two-unimported-array-shapes-still-uses-the-flat-extent).
+     transaction. sizeof reads a projected array extent through the canonical
+     array shape: an alias whose declared target is a template parameter keeps
+     that parameter's structural identity through alias resolution, and an array
+     template argument with no recorded bound materializes as the array of
+     unknown bound. Unknown-bound arrays answer "no object size" instead of an
+     element-sized flat read. An ordered-declarator sizeof operand is still
+     sized from `DeclaratorComponent::payload` by `getTypeSpecSizeBits` without
+     consulting the canonical table; that declarator spine is a structural
+     second store, not the flat projection, so the reader gate does not count
+     it. Simple requirements consume the same sizeof-operand rule as the sizeof
+     expression sites instead of a second validity check. Remaining
+     template-argument gaps are in
+     [known issues](KNOWN_ISSUES.md#array-template-arguments-cannot-carry-an-omitted-outer-bound).
      Pointer presence, depth, and per-level cv now come from one canonical query,
      `canonicalPointerShape`, which reports one shape for callable pointers
      (depth 1) and member pointers (depth 0 plus a member-pointer fact). The flat
