@@ -124,10 +124,12 @@ if [ "$update_baseline" -eq 1 ]; then
 	fi
 	{
 		printf '# FlashCpp migration counter baseline (path<TAB>counter<TAB>count).\n'
-		for key in $(printf '%s\n' "${!compiled_values[@]}" | sort); do
+		# Path/counter keys contain a tab, so keep word splitting out of the
+		# enumeration; the default IFS would split each key into pieces.
+		while IFS= read -r key; do
 			IFS=$'\t' read -r path counter <<< "$key"
 			printf '%s\t%s\t%s\n' "$path" "$counter" "${compiled_values[$key]}"
-		done
+		done < <(printf '%s\n' "${!compiled_values[@]}" | sort)
 	} > "$baseline_path"
 	printf 'Baseline updated: %s\n' "$baseline_path"
 	exit 0
