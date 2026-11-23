@@ -237,16 +237,11 @@ enum class DerivedArrayRankZero : uint8_t {
 
 inline void projectCanonicalDerivedShape(TypeSpecifierNode& syntax, const CanonicalTypeTable& table, TypeId derived, DerivedArrayRankZero rank_zero) {
 	syntax.limit_pointer_depth(0);
-	const size_t depth = canonicalPointerLevelCount(table, derived);
-	if (depth > 8) {
-		throw InternalError("canonical derived pointer depth exceeds the flat projection buffer");
-	}
-	if (depth > 0) {
-		CVQualifier cvs[8] = {};
-		canonicalCopyPointerLevelCvs(table, derived, std::span<CVQualifier>(cvs, depth));
-		for (size_t index = 0; index < depth; ++index) {
-			syntax.add_pointer_level(cvs[index]);
-		}
+	const CanonicalPointerShape pointer = canonicalPointerShape(table, derived);
+	// The flat projection stores pointer levels innermost-first while the
+	// canonical chain is outermost-first, so the append walks the shape backwards.
+	for (size_t index = 0; index < pointer.depth; ++index) {
+		syntax.add_pointer_level(pointer.levels[pointer.depth - 1 - index]);
 	}
 	const size_t rank = canonicalArrayExtentCount(table, derived);
 	if (rank > 8) {

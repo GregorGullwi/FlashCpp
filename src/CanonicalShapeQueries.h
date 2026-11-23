@@ -28,8 +28,57 @@ inline TypeId shapeAfterTopCvAndReference(const CanonicalTypeTable& table, TypeI
 	return shapeWithoutTopCv(table, shapeWithoutReference(table, type));
 }
 
+// One canonical answer for pointer presence, pointer depth, and per-level cv.
+// Every consumer that needs two of those three facts reads this shape instead of
+// running separate walks, so presence, depth, and cv cannot disagree.
+//
+// Ordering is outermost-pointer first, matching the canonical Pointer chain.
+// `member_pointer` reports a pointer-to-member: it is pointer-like for storage
+// and declarators but is not a canonical Pointer, so `depth` stays zero.
+// `function_pointer` reports that the innermost pointee is callable, which is one
+// canonical Pointer level regardless of the compatibility category that spelled
+// it.
+inline constexpr size_t kCanonicalPointerShapeCapacity = 8;
+
+struct CanonicalPointerShape {
+	size_t depth = 0;
+	bool member_pointer = false;
+	bool function_pointer = false;
+	CVQualifier levels[kCanonicalPointerShapeCapacity] = {};
+
+	bool isPointer() const {
+		return depth != 0;
+	}
+};
+
+inline CanonicalPointerShape canonicalPointerShape(const CanonicalTypeTable& table, TypeId type) {
+	CanonicalPointerShape shape;
+	type = shapeWithoutReference(table, type);
+	while (true) {
+		CVQualifier cv = CVQualifier::None;
+		CanonicalTypeNode node = table.node(type);
+		while (node.kind == CanonicalTypeKind::Qualified) {
+			cv |= node.qualifiers;
+			type = node.child;
+			node = table.node(type);
+		}
+		if (node.kind != CanonicalTypeKind::Pointer) {
+			shape.member_pointer =
+				node.kind == CanonicalTypeKind::MemberObjectPointer || node.kind == CanonicalTypeKind::MemberFunctionPointer;
+			shape.function_pointer = shape.depth != 0 && node.kind == CanonicalTypeKind::Function;
+			return shape;
+		}
+		if (shape.depth == kCanonicalPointerShapeCapacity) {
+			throw InternalError("canonical pointer shape exceeds its level buffer");
+		}
+		shape.levels[shape.depth] = cv;
+		++shape.depth;
+		type = node.child;
+	}
+}
+
 inline bool canonicalIsPointer(const CanonicalTypeTable& table, TypeId type) {
-	return table.node(shapeAfterTopCvAndReference(table, type)).kind == CanonicalTypeKind::Pointer;
+	return canonicalPointerShape(table, type).isPointer();
 }
 
 inline std::optional<TypeId> canonicalPointee(const CanonicalTypeTable& table, TypeId type) {
@@ -100,41 +149,16 @@ inline std::optional<size_t> canonicalArrayElementCount(const CanonicalTypeTable
 }
 
 inline size_t canonicalPointerLevelCount(const CanonicalTypeTable& table, TypeId type) {
-	type = shapeWithoutReference(table, type);
-	size_t count = 0;
-	while (true) {
-		while (table.node(type).kind == CanonicalTypeKind::Qualified) {
-			type = table.node(type).child;
-		}
-		if (table.node(type).kind != CanonicalTypeKind::Pointer) {
-			return count;
-		}
-		++count;
-		type = table.node(type).child;
-	}
+	return canonicalPointerShape(table, type).depth;
 }
 
 inline void canonicalCopyPointerLevelCvs(const CanonicalTypeTable& table, TypeId type, std::span<CVQualifier> qualifiers) {
-	const size_t count = canonicalPointerLevelCount(table, type);
-	if (qualifiers.size() < count) {
+	const CanonicalPointerShape shape = canonicalPointerShape(table, type);
+	if (qualifiers.size() < shape.depth) {
 		throw InternalError("canonical pointer cv span is too small");
 	}
-	type = shapeWithoutReference(table, type);
-	size_t index = 0;
-	while (true) {
-		CanonicalTypeNode node = table.node(type);
-		CVQualifier cv = CVQualifier::None;
-		while (node.kind == CanonicalTypeKind::Qualified) {
-			cv |= node.qualifiers;
-			type = node.child;
-			node = table.node(type);
-		}
-		if (node.kind != CanonicalTypeKind::Pointer) {
-			return;
-		}
-		qualifiers[index] = cv;
-		++index;
-		type = node.child;
+	for (size_t index = 0; index < shape.depth; ++index) {
+		qualifiers[index] = shape.levels[index];
 	}
 }
 

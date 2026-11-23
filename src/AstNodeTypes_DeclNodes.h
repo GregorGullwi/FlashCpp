@@ -2023,6 +2023,13 @@ public:
 		journalTypeSpecifierRewrite(*this);
 		pointer_levels_ = other.pointer_levels_;
 	}
+	// Append an outer declarator's pointer wrappers while keeping every level's cv.
+	// Substitution must not rebuild a pointer chain from a depth count: that drops
+	// per-level cv, so `T* const*` would become `int**` for T = int.
+	void append_pointer_levels_from(const TypeSpecifierNode& other) {
+		journalTypeSpecifierRewrite(*this);
+		pointer_levels_.insert(pointer_levels_.end(), other.pointer_levels_.begin(), other.pointer_levels_.end());
+	}
 
 	bool has_ordered_declarator() const { return !declarator_components_.empty(); }
 	std::span<const DeclaratorComponent> declarator_components() const {

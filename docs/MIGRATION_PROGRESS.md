@@ -544,18 +544,19 @@ remaining pattern schemas by identity, and remove the name fallback.
      template is being defined) and sizeof of an ordinary array with an omitted
      bound that is not marked unsized stay on the flat extent. See
      [known issues](KNOWN_ISSUES.md#sizeof-of-two-unimported-array-shapes-still-uses-the-flat-extent).
-     Pointer presence and per-level cv did not move. 154 Supported samples
-     disagree with flat depth: a function pointer is one canonical Pointer, flat
-     depth 0 for category `FunctionPointer` and flat depth 1 for category
-     `Function` plus an explicit pointer level, and a member pointer stays
-     canonical depth 0 with `canonicalIsPointer` false because the host test
-     requires that, while flat readers still see depth 1. Where the depth
-     matched, the per-level cv matched. See
-     [known issues](KNOWN_ISSUES.md#pointer-depth-still-disagrees-with-the-canonical-pointer).
-     `__is_same(int* const*, int**)` is true today while overload resolution
-     still distinguishes those types. Identity comparison did not move:
-     `equalTypeSpecifierIdentityImpl`, `are_types_compatible`, and
-     `sameTypeSpecifierShape` still use the flat pointer and array fields. 153
+     Pointer presence, depth, and per-level cv now come from one canonical query,
+     `canonicalPointerShape`, which reports one shape for callable pointers
+     (depth 1) and member pointers (depth 0 plus a member-pointer fact). The flat
+     derived-shape projection writes that shape in the flat innermost-first
+     order. The compatibility projection still encodes a callable's pointer in
+     its category and a member pointer as one level, so 153 of 22,746 sampled
+     Supported imports have a different raw flat depth. See
+     [known issues](KNOWN_ISSUES.md#flat-pointer-depth-still-differs-from-the-canonical-pointer-shape).
+     `__is_same` no longer re-implements the compare from a flat depth count in
+     codegen, and substitution keeps every pointer level's cv, so the
+     `int* const*`/`int**` wrong answer is gone. Identity comparison itself
+     (`equalTypeSpecifierIdentityImpl`, `are_types_compatible`,
+     `sameTypeSpecifierShape`) still reads the flat pointer and array fields. 153
      pairs that both import match `TypeId` equality and
      `canonicalSameIgnoringTopCvRef`. The other 227 flat-equal pairs have no
      publishable identity that can cover the whole compare. Lambda return
