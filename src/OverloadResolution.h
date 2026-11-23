@@ -75,6 +75,44 @@ inline bool isPlainNoexceptFunctionPointerConversion(
 	return FlashCpp::equalFunctionSignatureIdentity(non_noexcept_from, to);
 }
 
+inline constexpr uint32_t kInvalidUserDefinedConversionOrdinal = 0xFFFFFFFFu;
+
+// [over.ics.rank]/3.3: two user-defined conversion sequences are ordered by
+// their second standard conversion sequence only when both contain the same
+// conversion function or constructor. This records that selected identity using
+// numeric semantic identities only; a declaration address is never identity.
+struct UserDefinedConversionIdentity {
+	enum class Kind : uint8_t {
+		None = 0,
+		CanonicalMemberFunction = 1,
+		CanonicalConstructor = 2,
+		ConversionFunctionTemplate = 3,
+	};
+
+	Kind kind = Kind::None;
+	// Declaring class of the selected member conversion function or constructor.
+	TypeId owner{};
+	// Member-function ordinal or constructor index inside owner's published schema.
+	uint32_t ordinal = kInvalidUserDefinedConversionOrdinal;
+	// Conversion function template and the return type its specialization instantiated.
+	TemplateDeclId template_decl{};
+	TypeId template_return_type{};
+};
+
+inline bool hasUserDefinedConversionIdentity(const UserDefinedConversionIdentity& identity) {
+	return identity.kind != UserDefinedConversionIdentity::Kind::None;
+}
+
+inline bool sameUserDefinedConversionIdentity(const UserDefinedConversionIdentity& lhs, const UserDefinedConversionIdentity& rhs) {
+	if (lhs.kind == UserDefinedConversionIdentity::Kind::None || lhs.kind != rhs.kind) {
+		return false;
+	}
+	if (lhs.kind == UserDefinedConversionIdentity::Kind::ConversionFunctionTemplate) {
+		return lhs.template_decl == rhs.template_decl && lhs.template_return_type == rhs.template_return_type;
+	}
+	return lhs.owner == rhs.owner && lhs.ordinal == rhs.ordinal;
+}
+
 // Unified conversion plan: combines ConversionRank (for overload resolution ranking)
 // with StandardConversionKind (for semantic annotation).
 // Replaces the previous two-call pattern of can_convert_type() + determineConversionKind().
@@ -83,6 +121,7 @@ struct ConversionPlan {
 	StandardConversionKind kind = StandardConversionKind::None;
 	bool is_valid = false;
 	ConversionRank trailing_standard_rank = ConversionRank::NoMatch;
+	UserDefinedConversionIdentity user_defined_identity{};
 
 	// Convert to TypeConversionResult for backward compatibility with callers
 	// that only need rank + validity.
@@ -105,8 +144,7 @@ struct ArgumentConversionInfo {
 	const TypeSpecifierNode* parameter_type = nullptr;
 	bool is_valid = false;
 	ConversionRank trailing_standard_rank = ConversionRank::NoMatch;
-	TypeId conversion_return_type{};
-	const TemplateFunctionDeclarationNode* conversion_template = nullptr;
+	UserDefinedConversionIdentity user_defined_identity{};
 
 	TypeConversionResult toResult() const { return {rank, is_valid}; }
 
@@ -424,30 +462,21 @@ inline int compareReferenceBindingCvDestinations(const TypeSpecifierNode& lhs_pa
 	return 0;
 }
 
-inline int compareArgumentConversionInfo(
-	const TypeSpecifierNode& argument_type,
-	const ArgumentConversionInfo& lhs,
-	const ArgumentConversionInfo& rhs) {
-	if (lhs.rank < rhs.rank) {
-		return -1;
-	}
-	if (lhs.rank > rhs.rank) {
-		return 1;
-	}
-	if (lhs.rank == ConversionRank::UserDefined && (lhs.conversion_template != nullptr || rhs.conversion_template != nullptr)) {
-		// [over.ics.rank]: compare the standard tails only for the same specialization.
-		if (lhs.conversion_template != rhs.conversion_template || lhs.conversion_return_type != rhs.conversion_return_type) {
-			return 0;
-		}
-		if (lhs.parameter_type->is_reference() && rhs.parameter_type->is_reference() &&
-			lhs.parameter_type->is_rvalue_reference() != rhs.parameter_type->is_rvalue_reference()) {
-			const bool prefer_rvalue_ref = lhs.parameter_type->category() != TypeCategory::Function;
-			return lhs.parameter_type->is_rvalue_reference() == prefer_rvalue_ref ? -1 : 1;
-		}
-	}
-	if (lhs.rank == ConversionRank::UserDefined &&
-		lhs.trailing_standard_rank != ConversionRank::NoMatch &&
-		rhs.trailing_standard_rank != ConversionRank::NoMatch) {
+inline bool hasUserDefinedConversionIdentity(const ArgumentConversionInfo& info) {
+	return hasUserDefinedConversionIdentity(info.user_defined_identity);
+}
+
+inline bool sameUserDefinedConversionIdentity(const ArgumentConversionInfo& lhs, const ArgumentConversionInfo& rhs) {
+	return sameUserDefinedConversionIdentity(lhs.user_defined_identity, rhs.user_defined_identity);
+}
+
+// The second standard conversion sequence of a user-defined conversion sequence
+// is ranked only when both sequences selected the same conversion function or
+// constructor; different conversions stay indistinguishable ([over.ics.rank]/3.3).
+inline int compareUserDefinedSecondStandardSequences(const ArgumentConversionInfo& lhs, const ArgumentConversionInfo& rhs) {
+	const bool lhs_has_tail = lhs.trailing_standard_rank != ConversionRank::NoMatch;
+	const bool rhs_has_tail = rhs.trailing_standard_rank != ConversionRank::NoMatch;
+	if (lhs_has_tail && rhs_has_tail) {
 		if (lhs.trailing_standard_rank < rhs.trailing_standard_rank) {
 			return -1;
 		}
@@ -455,10 +484,45 @@ inline int compareArgumentConversionInfo(
 			return 1;
 		}
 	}
-	if (lhs.rank == ConversionRank::UserDefined && lhs.parameter_type != nullptr && rhs.parameter_type != nullptr) {
-		const int reference_cv_comparison = compareReferenceBindingCvDestinations(*lhs.parameter_type, *rhs.parameter_type);
-		if (reference_cv_comparison != 0) {
-			return reference_cv_comparison;
+	if (lhs.parameter_type == nullptr || rhs.parameter_type == nullptr) {
+		return 0;
+	}
+	// [over.ics.rank]/3.2.3: binding an rvalue to an rvalue reference is better
+	// than binding it to an lvalue reference, also inside a second sequence.
+	if (lhs.parameter_type->is_reference() && rhs.parameter_type->is_reference() &&
+		lhs.parameter_type->is_rvalue_reference() != rhs.parameter_type->is_rvalue_reference()) {
+		const bool prefer_rvalue_ref = lhs.parameter_type->category() != TypeCategory::Function;
+		return lhs.parameter_type->is_rvalue_reference() == prefer_rvalue_ref ? -1 : 1;
+	}
+	return compareReferenceBindingCvDestinations(*lhs.parameter_type, *rhs.parameter_type);
+}
+
+inline int compareArgumentConversionInfo(const TypeSpecifierNode& argument_type, const ArgumentConversionInfo& lhs, const ArgumentConversionInfo& rhs) {
+	if (lhs.rank < rhs.rank) {
+		return -1;
+	}
+	if (lhs.rank > rhs.rank) {
+		return 1;
+	}
+	if (lhs.rank == ConversionRank::UserDefined) {
+		// A sequence that claims a standard tail must name the conversion it
+		// contains; otherwise the tail can never be ranked and the omission is
+		// an invariant violation rather than an ambiguity.
+		const bool lhs_has_tail = lhs.trailing_standard_rank != ConversionRank::NoMatch;
+		const bool rhs_has_tail = rhs.trailing_standard_rank != ConversionRank::NoMatch;
+		const bool lhs_missing_identity = lhs_has_tail && !hasUserDefinedConversionIdentity(lhs);
+		const bool rhs_missing_identity = rhs_has_tail && !hasUserDefinedConversionIdentity(rhs);
+		if (lhs_missing_identity || rhs_missing_identity) {
+			throw InternalError("User-defined conversion sequence carries a standard conversion tail without a selected conversion function or constructor identity");
+		}
+		// Different conversion functions or constructors are indistinguishable
+		// ([over.ics.rank]/3.3), so no tie-breaker may order their tails.
+		if (!sameUserDefinedConversionIdentity(lhs, rhs)) {
+			return 0;
+		}
+		const int second_sequence_comparison = compareUserDefinedSecondStandardSequences(lhs, rhs);
+		if (second_sequence_comparison != 0) {
+			return second_sequence_comparison;
 		}
 	}
 	if (lhs.rank == ConversionRank::Promotion &&
@@ -1039,6 +1103,9 @@ struct UserDefinedConversionOperatorSelection {
 	const TemplateFunctionDeclarationNode* conversion_template = nullptr;
 	TypeIndex compatibility_declaring_type_index{};
 	TypeId declaring_type{};
+	// Ordinal of the selected member in its declaring class's published
+	// member-function schema; the numeric identity of that conversion function.
+	uint32_t member_ordinal = kInvalidUserDefinedConversionOrdinal;
 	StandardConversionKind trailing_standard_kind = StandardConversionKind::None;
 	ConversionRank trailing_standard_rank = ConversionRank::NoMatch;
 	CVQualifier member_cv_qualifier = CVQualifier::None;
@@ -1058,6 +1125,57 @@ inline bool canonicalConversionOperatorAllowsValueCategory(ReferenceQualifier re
 		return true;
 	}
 	return true;
+}
+
+// A conversion function is identified by the member-function ordinal its
+// declaring class published, or by its template plus the return type the
+// specialization instantiated. A selection with neither keeps no identity and
+// therefore no standard tail: the sequence stays unordered instead of being
+// ranked against a conversion it may not actually share.
+inline UserDefinedConversionIdentity makeUserDefinedConversionFunctionIdentity(
+	const UserDefinedConversionOperatorSelection& selection, TypeId template_return_type) {
+	UserDefinedConversionIdentity identity;
+	if (selection.conversion_template != nullptr) {
+		if (selection.conversion_template->has_template_decl_id() && template_return_type) {
+			identity.kind = UserDefinedConversionIdentity::Kind::ConversionFunctionTemplate;
+			identity.template_decl = selection.conversion_template->template_decl_id();
+			identity.template_return_type = template_return_type;
+		}
+		return identity;
+	}
+	if (selection.declaring_type && selection.member_ordinal != kInvalidUserDefinedConversionOrdinal) {
+		identity.kind = UserDefinedConversionIdentity::Kind::CanonicalMemberFunction;
+		identity.owner = selection.declaring_type;
+		identity.ordinal = selection.member_ordinal;
+	}
+	return identity;
+}
+
+// A selected conversion function carries the standard tail from its result to
+// the destination as well as the function identity that tail may be compared
+// under. Both travel on the plan so [over.ics.rank]/3.3 can tell a shared
+// conversion function from two different ones. Conversion function templates
+// only reach this path through their instantiated declaration, which publishes
+// no specialization identity, so those sequences stay unordered here.
+inline ConversionPlan makeUserDefinedConversionFunctionPlan(const UserDefinedConversionOperatorSelection& selection) {
+	ConversionPlan plan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+	plan.user_defined_identity = makeUserDefinedConversionFunctionIdentity(selection, TypeId{});
+	if (hasUserDefinedConversionIdentity(plan.user_defined_identity)) {
+		plan.trailing_standard_rank = selection.trailing_standard_rank;
+	}
+	return plan;
+}
+
+// A selected converting constructor produces a prvalue of its own class, so the
+// second standard conversion sequence reaches the parameter as an identity
+// binding. The identity and that tail are set together for the same reason.
+inline ConversionPlan makeUserDefinedConstructorConversionPlan(const UserDefinedConversionIdentity& identity) {
+	ConversionPlan plan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+	plan.user_defined_identity = identity;
+	if (hasUserDefinedConversionIdentity(identity)) {
+		plan.trailing_standard_rank = ConversionRank::ExactMatch;
+	}
+	return plan;
 }
 
 inline std::optional<UserDefinedConversionOperatorSelection>
@@ -1828,22 +1946,24 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceArgumentConversio
 }
 
 std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgument(const TypeSpecifierNode& target_type,
-	const TypeSpecifierNode& source_type, const ASTNode* argument_node);
+	const TypeSpecifierNode& source_type, const ASTNode* argument_node, UserDefinedConversionIdentity* selected_identity);
 
 // Build the conversion plan for target_struct's implicit converting constructor,
 // its same-class route, or its derived-to-base route. Published canonical
 // class-base relations are authoritative for supported class pairs, and
 // unsupported constructor schemas retain compatibility declaration selection.
-// The plan stays unranked on purpose: [over.ics.rank]/3.3 orders two user-defined
-// conversion sequences by a standard conversion sequence only when they contain
-// the same conversion function or constructor, and this probe cannot prove that
-// two candidates share one. Ordering distinct converting constructors by their
-// parameter conversion would turn required ambiguities into silent acceptances.
+// The plan records the selected constructor and its second standard conversion
+// sequence so [over.ics.rank]/3.3 can order it against a sequence that uses the
+// same constructor. Ordering distinct converting constructors by their
+// parameter conversion is still rejected: those sequences are indistinguishable
+// and must stay ambiguous.
 inline std::optional<ConversionPlan> tryBuildConvertingConstructorConversionPlan(
 	const TypeSpecifierNode& target_type_spec, const TypeSpecifierNode& source_type_spec) {
-	const auto canonical_constructor_result = tryHasCanonicalImplicitConvertingConstructorForArgument(target_type_spec, source_type_spec, nullptr);
+	UserDefinedConversionIdentity selected_identity;
+	const auto canonical_constructor_result =
+		tryHasCanonicalImplicitConvertingConstructorForArgument(target_type_spec, source_type_spec, nullptr, &selected_identity);
 	if (canonical_constructor_result.has_value() && *canonical_constructor_result) {
-		return ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+		return makeUserDefinedConstructorConversionPlan(selected_identity);
 	}
 	bool has_canonical_class_pair = false;
 	FrontendContext* const context = FrontendContext::active();
@@ -1899,7 +2019,9 @@ inline std::optional<ConversionPlan> tryBuildConvertingConstructorConversionPlan
 		if (!first_param)
 			continue;
 		if (first_param->type_index() == source_idx) {
-			return ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+			// The declaration bridge publishes no constructor identity, so this
+			// sequence keeps no standard tail and stays unordered.
+			return makeUserDefinedConstructorConversionPlan(UserDefinedConversionIdentity{});
 		}
 	}
 	return std::nullopt;
@@ -1954,12 +2076,14 @@ inline ConversionPlan buildConversionPlan(
 
 inline std::optional<ConversionPlan> tryBuildImplicitConvertingConstructorConversionPlan(const TypeSpecifierNode& target_type_spec,
 	const TypeSpecifierNode& source_type, const ASTNode* argument_node) {
-	const std::optional<bool> canonical_result = tryHasCanonicalImplicitConvertingConstructorForArgument(target_type_spec, source_type, argument_node);
+	UserDefinedConversionIdentity selected_identity;
+	const std::optional<bool> canonical_result =
+		tryHasCanonicalImplicitConvertingConstructorForArgument(target_type_spec, source_type, argument_node, &selected_identity);
 	if (canonical_result.has_value()) {
 		if (!*canonical_result) {
 			return std::nullopt;
 		}
-		return ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+		return makeUserDefinedConstructorConversionPlan(selected_identity);
 	}
 	const TypeIndex target_idx = target_type_spec.type_index();
 	if (!target_idx.is_valid()) {
@@ -1978,6 +2102,9 @@ inline std::optional<ConversionPlan> tryBuildImplicitConvertingConstructorConver
 		if (!first_param) {
 			continue;
 		}
+		// The declaration bridge publishes no constructor identity, so a sequence
+		// built here keeps no standard tail and stays unordered.
+		const UserDefinedConversionIdentity identity{};
 		const auto& param_spec = *first_param;
 		if (param_spec.is_pointer() || param_spec.is_function_pointer() ||
 			param_spec.is_member_function_pointer() || param_spec.is_member_object_pointer()) {
@@ -2000,7 +2127,7 @@ inline std::optional<ConversionPlan> tryBuildImplicitConvertingConstructorConver
 			}
 			const ConversionPlan conversion = buildConversionPlan(effective_source_type, param_spec);
 			if (conversion.is_valid) {
-				return ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+				return makeUserDefinedConstructorConversionPlan(identity);
 			}
 			continue;
 		}
@@ -2010,17 +2137,17 @@ inline std::optional<ConversionPlan> tryBuildImplicitConvertingConstructorConver
 			// the ctor's own template parameter name keeps the viability check
 			// narrow while still allowing the later template-deduction path to
 			// instantiate the concrete conversion when needed.
-			return ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+			return makeUserDefinedConstructorConversionPlan(identity);
 		}
 		if (param_spec.category() == TypeCategory::Struct) {
 			if (hasConvertingConstructorFrom(param_spec, source_type)) {
-				return ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+				return makeUserDefinedConstructorConversionPlan(identity);
 			}
 			continue;
 		}
 		const auto conversion = can_convert_type(source_type.category(), param_spec.category());
 		if (conversion.is_valid) {
-			return ConversionPlan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+			return makeUserDefinedConstructorConversionPlan(identity);
 		}
 	}
 	return std::nullopt;
@@ -3260,9 +3387,16 @@ collectCanonicalConversionOperators(CanonicalTypeTable& table, TypeId source_typ
 				if (!canonicalConversionOperatorAllowsValueCategory(member_function.ref_qualifier, source_value_category)) {
 					return;
 				}
+				// The declaring class's member index is the conversion function's
+				// numeric identity. It is the ordinal the canonical schema publishes
+				// for this declaration, and it stays available when that schema cannot
+				// be published for the class.
+				const size_t member_index = static_cast<size_t>(&member_function - struct_info->member_functions.data());
+				const bool member_index_fits = member_index < kInvalidUserDefinedConversionOrdinal;
 				UserDefinedConversionOperatorSelection candidate;
 				candidate.function = &function;
 				candidate.declaring_type = pending_type.type;
+				candidate.member_ordinal = member_index_fits ? static_cast<uint32_t>(member_index) : kInvalidUserDefinedConversionOrdinal;
 				candidate.member_cv_qualifier = member_function.cv_qualifier;
 				candidate.access = member_function.access;
 				candidates.push_back({candidate, conversion_target, pending_type.depth});
@@ -4731,12 +4865,23 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 								return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
 							}
 						}
-						if (const auto selected_conversion = trySelectUserDefinedConversionOperator(from, to, false);
-							selected_conversion.has_value()) {
-							if (selected_conversion->ambiguous) {
+						const auto selected_conversion = trySelectUserDefinedConversionOperator(from, to, false);
+						// A converting constructor of the referenced class produces a
+						// prvalue temporary, which binds the target reference when that
+						// reference accepts a temporary. Both routes are one user-defined
+						// conversion sequence, so the plan cannot prefer either of them.
+						const bool target_reference_binds_temporary = to_is_rvalue || to.is_const();
+						const std::optional<ConversionPlan> constructor_plan = target_reference_binds_temporary
+							? tryBuildImplicitConvertingConstructorConversionPlan(to, from, argument_node)
+							: std::nullopt;
+						if (selected_conversion.has_value()) {
+							if (selected_conversion->ambiguous || constructor_plan.has_value()) {
 								return ConversionPlan::no_match();
 							}
-							return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true, selected_conversion->trailing_standard_rank};
+							return makeUserDefinedConversionFunctionPlan(*selected_conversion);
+						}
+						if (constructor_plan.has_value()) {
+							return *constructor_plan;
 						}
 						return ConversionPlan::no_match();
 					}
@@ -4783,15 +4928,19 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				}
 
 				// A named lvalue does not bind directly to an rvalue reference, but a
-				// conversion operator can produce a prvalue that does. Direct binding
-				// of the original lvalue stays ill-formed.
+				// conversion operator or a converting constructor can produce a prvalue
+				// that does. Direct binding of the original lvalue stays ill-formed.
 				if (to_is_rvalue && !from_is_rvalue && from_base_index.isStruct() && from_base_index.is_valid()) {
-					if (const auto selected_conversion = trySelectUserDefinedConversionOperator(from, to, false);
-						selected_conversion.has_value()) {
-						if (selected_conversion->ambiguous) {
+					const auto selected_conversion = trySelectUserDefinedConversionOperator(from, to, false);
+					const std::optional<ConversionPlan> constructor_plan = tryBuildImplicitConvertingConstructorConversionPlan(to, from, argument_node);
+					if (selected_conversion.has_value()) {
+						if (selected_conversion->ambiguous || constructor_plan.has_value()) {
 							return ConversionPlan::no_match();
 						}
-						return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true, selected_conversion->trailing_standard_rank};
+						return makeUserDefinedConversionFunctionPlan(*selected_conversion);
+					}
+					if (constructor_plan.has_value()) {
+						return *constructor_plan;
 					}
 				}
 				// A conversion operator returning an lvalue reference can bind an
@@ -4803,7 +4952,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 							return ConversionPlan::no_match();
 						}
 						if (conversionOperatorResultBindsLvalueReference(*selected_conversion, to)) {
-							return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true, selected_conversion->trailing_standard_rank};
+							return makeUserDefinedConversionFunctionPlan(*selected_conversion);
 						}
 					}
 				}
@@ -4839,8 +4988,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 								return ConversionPlan::no_match();
 							}
 							if (conversionOperatorResultBindsLvalueReference(*selected_conversion, to)) {
-								return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true,
-									selected_conversion->trailing_standard_rank};
+								return makeUserDefinedConversionFunctionPlan(*selected_conversion);
 							}
 						}
 					}
@@ -4910,7 +5058,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 						if (selected_conversion->ambiguous) {
 							return ConversionPlan::no_match();
 						}
-						return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true, selected_conversion->trailing_standard_rank};
+						return makeUserDefinedConversionFunctionPlan(*selected_conversion);
 					}
 					// Struct info not yet finalized (parse-time): optimistically allow.
 					if (to.type_index().index() >= getTypeInfoCount() ||
@@ -4977,7 +5125,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 					if (selected_conversion->ambiguous) {
 						return ConversionPlan::no_match();
 					}
-					return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true, selected_conversion->trailing_standard_rank};
+					return makeUserDefinedConversionFunctionPlan(*selected_conversion);
 				}
 			}
 		}
@@ -5170,6 +5318,7 @@ inline ArgumentConversionInfo buildArgumentConversionInfo(
 	ArgumentConversionInfo result{
 		conversion.rank, &parameter_type, conversion.is_valid};
 	result.trailing_standard_rank = conversion.trailing_standard_rank;
+	result.user_defined_identity = conversion.user_defined_identity;
 	return result;
 }
 

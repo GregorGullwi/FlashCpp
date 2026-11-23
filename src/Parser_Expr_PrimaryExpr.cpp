@@ -978,11 +978,13 @@ ArgumentConversionInfo buildQualifiedMemberFunctionAddressArgumentConversion(
 	if (!conversion.has_value() || !conversion->is_valid) {
 		return ArgumentConversionInfo::no_match();
 	}
-	return ArgumentConversionInfo{
+	ArgumentConversionInfo result{
 		conversion->rank,
 		&parameter_type,
 		true,
 		conversion->trailing_standard_rank};
+	result.user_defined_identity = conversion->user_defined_identity;
+	return result;
 }
 
 void appendQualifiedMemberFunctionAddressAssociatedTypes(

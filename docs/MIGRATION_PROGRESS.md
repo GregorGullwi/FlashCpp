@@ -422,10 +422,19 @@ remaining pattern schemas by identity, and remove the name fallback.
    that rule against ranking the leading sequence. Both implicit-conversion
    probes return a `ConversionPlan` rather than a bare yes/no, so "the canonical
    schema proves no conversion" and "no canonical answer exists" stay separate
-   while the unranked `UserDefined` shape is shared with the compatibility
-   routes. Ordering two sequences that share one constructor by its second
-   standard conversion sequence is still unimplemented; see
-   [known issues](KNOWN_ISSUES.md#user-defined-conversion-sequences-cannot-be-ordered-by-a-shared-conversion-function).
+   while the `UserDefined` shape is shared with the compatibility routes.
+   A user-defined conversion plan carries the selected conversion function or
+   constructor identity, and its second standard conversion sequence is ranked
+   only for a shared identity, so distinct conversion functions and distinct
+   converting constructors stay ambiguous. Two sequences that share one
+   constructor are ranked by their second sequences, including the reference
+   binding of the constructed prvalue.
+   `test_conversion_shared_converting_constructor_second_sequence_ret0.cpp` pins
+   the shared-constructor winner, while
+   `test_conversion_distinct_conversion_functions_ambiguous_e1701.cpp` and
+   `test_conversion_shared_constructor_by_value_and_reference_ambiguous_e1701.cpp`
+   pin the indistinguishable cases. Residual identity gaps are tracked in
+   [known issues](KNOWN_ISSUES.md#user-defined-conversion-identity-gaps).
 
 2. **Migrate remaining flat consumers (independent parallel track).**
    - Constructibility: zero-argument variants and published record facts are
