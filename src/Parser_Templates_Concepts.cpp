@@ -399,6 +399,12 @@ static bool isValidRequirementExpression(const ASTNode& expr_node, Parser& parse
 			(binary->has_no_match_operator_overload() || binary->has_ambiguous_operator_overload())) {
 			return false;
 		}
+		// Reuse the sizeof operand rule instead of a second authority for the same
+		// shapes. A dependent operand is deferred; a concrete ill-formed operand
+		// (void, function, unknown-bound array, incomplete record) is unsatisfied.
+		if (SemanticValidation::findInvalidConcreteSizeofTypeOperand(expr_node, SemanticValidation::SizeofOperandDependence::Defer).has_value()) {
+			return false;
+		}
 		TypeSpecifierQueryResult type_query = parser.semanticAnalysis().analyzeExpressionTypeQuery(expr_node);
 
 		if (expr_node.is<ExpressionNode>()) {

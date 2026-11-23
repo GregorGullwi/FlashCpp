@@ -3414,6 +3414,18 @@ struct ResolvedAliasTypeInfo {
 	EntityId member_class_entity{};
 	std::vector<size_t> array_dimensions;
 	const TypeInfo* terminal_type_info = nullptr;
+	// A chain such as `using A = T[5]` resolves to the placeholder row for `T`.
+	// The row carries no structural identity, so the parameter facts are kept
+	// from the alias target specifier: the denoted shape is `T` plus the
+	// collected wrappers. Consumers that materialize a specifier from this
+	// resolution stamp them so the shape remains importable and substitutable
+	// instead of reading the placeholder's spelling.
+	// The name is a lookup key only: ExpressionSubstitutor's substitution map
+	// and the `has_template_parameter_identity()` gate are spelling-keyed.
+	// Declaration identity is the TemplateDeclId and index pair below.
+	StringHandle template_parameter_name{};
+	TemplateDeclId template_parameter_decl{};
+	uint32_t template_parameter_index = 0;
 
 	TypeCategory typeEnum() const { return type_index.category(); }
 	bool isArray() const {
@@ -3481,6 +3493,27 @@ inline void applyResolvedAliasMemberOwner(
 	}
 	if (type_spec.has_member_class()) {
 		tryBindPublishedMemberClassEntity(type_spec);
+	}
+}
+
+// A resolved `using A = T[5]` denotes the template parameter with wrappers, not
+// the opaque placeholder row its chain terminates on. Project the parameter
+// identity kept by resolveAliasTypeInfo so import and substitution keep the
+// structural `T` instead of the row's spelling. The setters below clear a
+// dependent-name or specialization stamp, so a target that already publishes
+// one is a contradiction rather than something to discard silently.
+inline void applyResolvedAliasTemplateParameter(TypeSpecifierNode& type_spec, const ResolvedAliasTypeInfo& resolved) {
+	if (!resolved.template_parameter_name.isValid() && !resolved.template_parameter_decl) {
+		return;
+	}
+	if (type_spec.has_template_specialization() || type_spec.has_dependent_name_type()) {
+		throw InternalError("resolved alias template-parameter stamp would clear a structural type stamp");
+	}
+	if (resolved.template_parameter_name.isValid()) {
+		type_spec.set_template_parameter_identity(resolved.template_parameter_name);
+	}
+	if (resolved.template_parameter_decl) {
+		type_spec.set_template_parameter_decl(resolved.template_parameter_decl, resolved.template_parameter_index);
 	}
 }
 
@@ -3567,6 +3600,17 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 				if (alias_type_spec->is_array() ||
 					alias_type_spec->has_pointee_array_declarator()) {
 					appendArrayDimensions(resolved.array_dimensions, alias_type_spec->array_dimensions());
+				}
+				// The chain terminates on the placeholder row for a template
+				// parameter, which carries no structural identity. Keep the
+				// parameter facts from the level whose target names it; the
+				// innermost such level wins because the walk ends there.
+				if (alias_type_spec->has_template_parameter_decl()) {
+					resolved.template_parameter_decl = alias_type_spec->template_decl_id();
+					resolved.template_parameter_index = alias_type_spec->template_parameter_index();
+				}
+				if (alias_type_spec->has_template_parameter_identity()) {
+					resolved.template_parameter_name = alias_type_spec->template_parameter_name();
 				}
 			}
 		}

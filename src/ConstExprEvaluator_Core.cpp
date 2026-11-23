@@ -2403,6 +2403,12 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 				if (auto size_bytes = tryGetConstexprTypeSizeBytes(bound_spec); size_bytes.has_value()) {
 					return static_cast<long long>(*size_bytes);
 				}
+				// An array argument's size is its canonical array shape. Falling
+				// back to the argument's element type would report an element-sized
+				// object for an unresolved or unknown bound.
+				if (arg.is_array || arg.pointee_array_declarator) {
+					return std::nullopt;
+				}
 				if (arg.type_index.is_valid()) {
 					if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
 						size_t fallback_size = toSizeT(type_info->sizeInBytes());
@@ -2669,6 +2675,11 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 					const TypeSpecifierNode bound_spec = makeTypeSpecifierFromTemplateTypeArg(arg, type_spec.token());
 					if (auto size_opt = tryGetConstexprTypeSizeBytes(bound_spec); size_opt.has_value()) {
 						return static_cast<unsigned long long>(*size_opt);
+					}
+					// An array argument's size is its canonical array shape; the
+					// element type must not stand in for an unresolved bound.
+					if (arg.is_array || arg.pointee_array_declarator) {
+						return std::nullopt;
 					}
 					if (arg.type_index.is_valid()) {
 						if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index); type_info != nullptr) {

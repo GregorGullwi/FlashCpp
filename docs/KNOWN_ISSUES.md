@@ -339,15 +339,39 @@ non-projectable shapes;
 remove this entry when those consumers migrate and the compatibility projection
 fields are deleted.
 
-## sizeof of two unimported array shapes still uses the flat extent
+## Array template arguments cannot carry an omitted outer bound
 
-The flat-projection reader gate counts alias accessors. `requireCanonicalShape`
-throws on a non-Supported import and during speculative parsing. Production
-speculative parsing is not the scratch transaction. sizeof of a dependent
-`UserDefined` or `TypeAlias` array whose array type targets placeholder `T`
-with extent 5 and has no entity while the template is being defined, and sizeof
-of an ordinary array with an omitted bound that is not marked unsized, still
-use the flat extent.
+An explicit array template argument keeps only one `parsed_array_size` while its
+type-id is parsed, so `long long[][3]` is stored as the sized array
+`long long[3]` and `requires { sizeof(T); }` accepts it. `TemplateTypeArg` and
+`TemplateArgInfo` also have no unsized-outer-bound field, so rebuilding a
+specifier from a stored argument cannot restore the omitted extent. In addition,
+a plain function-template parameter used as `sizeof(T)` is canonicalized from
+its placeholder's default builtin category before the substitution map is
+consulted, so `size_of<int[]>()` with an explicit array argument still compiles
+to `sizeof(int)`. Track the omitted outer bound on the template argument and
+only canonicalize a builtin spelling, then `sizeof` and requirement validity see
+the same unknown-bound shape the direct type-id does.
+
+## Alias template-parameter facts are projected per materialization site
+
+`resolveAliasTypeInfo` keeps a target such as `using A = T[5]` as the structural
+`TemplateDeclId` and parameter index plus the target spelling. The spelling is
+only a lookup key for `ExpressionSubstitutor`'s name-keyed substitution map and
+the `has_template_parameter_identity()` gate; declaration identity is the
+`TemplateDeclId` and index pair.
+
+Three sites materialize a specifier from that resolution and must project the
+facts: `resolveTypeInfoToTypeSpec`, `applyResolvedAliasModifiers` in
+`ExpressionSubstitutor.cpp`, and the typedef branch of `parse_type_specifier`. A
+new site that builds a specifier from a resolution can omit the projection and
+silently fall back to the placeholder row's spelling, so the invariant is that a
+resolution result should project itself when it is materialized.
+
+The projection throws when its target already carries a template-specialization
+or dependent-name stamp, because `set_template_parameter_decl` clears both. A
+caller that legitimately needs to apply it to a stamped specifier needs an
+apply-without-clearing path instead of relying on the current assertion.
 
 ## Flat pointer depth still differs from the canonical pointer shape
 
@@ -451,7 +475,11 @@ The flat projection fields cannot be deleted. Writer-adjacent copies of those
 fields were out of scope for the shape-query slices. `ConstExprEvaluator_Core.cpp`
 and `Parser_Templates_Function.cpp` were left for the pointer-payload slice.
 Boundary 12 in the rearchitecture plan is the later constexpr value model; the
-shape-query work did not change `EvalResult`.
+shape-query work did not change `EvalResult`. One alias-field read remains in
+`canonicalizeConstexprObjectReuseTypeIndex` (`ConstExprEvaluator.h`): it compares
+alias-applied pointer, reference, function, member-owner, and array shape to
+decide whether two constexpr objects may share a value. It is off the sizeof
+path and has no canonical replacement yet.
 
 ## Decltype operator overload result typing is parser-owned
 

@@ -70,8 +70,49 @@ bool qualifiedNameNamesDataMember(std::string_view qualified_name) {
 
 } // namespace
 
-std::optional<StringHandle> SemanticValidation::findInvalidConcreteSizeofTypeOperand(
-	const ASTNode& root) {
+std::optional<StringHandle> SemanticValidation::findInvalidSizeofTypeOperand(const TypeSpecifierNode& type_spec, SizeofOperandDependence dependence) {
+	if (type_spec.runtime_pointer_depth() > 0) {
+		return std::nullopt;
+	}
+
+	auto invalid_name = [&]() -> std::optional<StringHandle> {
+		StringHandle structured_name = getStructuredTypeName(type_spec);
+		return structured_name.isValid() ? structured_name : type_spec.token().handle();
+	};
+
+	if (typeSpecStillUsesDependentPlaceholder(type_spec)) {
+		return dependence == SizeofOperandDependence::Reject ? invalid_name() : std::nullopt;
+	}
+
+	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_spec.type_index());
+	const TypeCategory category = resolved_alias.type_index.is_valid() ? resolved_alias.typeEnum() : type_spec.category();
+	if (category == TypeCategory::Void || category == TypeCategory::Function || type_spec.has_unsized_outer_array_dimension()) {
+		return invalid_name();
+	}
+	if (FrontendContext* active = FrontendContext::active()) {
+		noteCanonicalShapeImport(active->canonicalTypes(), type_spec, CanonicalShapeSite::Parser_Expr_PrimaryUnary_Derived);
+	}
+	for (size_t extent : type_spec.array_dimensions()) {
+		if (extent == 0) {
+			return invalid_name();
+		}
+	}
+
+	const TypeInfo* terminal_type_info = resolved_alias.terminal_type_info;
+	if (terminal_type_info == nullptr && resolved_alias.type_index.is_valid()) {
+		terminal_type_info = tryGetTypeInfo(resolved_alias.type_index);
+	}
+	if (terminal_type_info != nullptr && terminal_type_info->isStruct()) {
+		const StructTypeInfo* struct_info = terminal_type_info->getStructInfo();
+		if (struct_info == nullptr || !struct_info->hasCompleteObjectLayout()) {
+			return invalid_name();
+		}
+	}
+
+	return std::nullopt;
+}
+
+std::optional<StringHandle> SemanticValidation::findInvalidConcreteSizeofTypeOperand(const ASTNode& root, SizeofOperandDependence dependence) {
 	std::optional<StringHandle> invalid_type_name;
 	AstTraversal::visitASTWithDecisions(root, [&](const ASTNode& current) {
 		const SizeofExprNode* sizeof_expression = nullptr;
@@ -85,54 +126,8 @@ std::optional<StringHandle> SemanticValidation::findInvalidConcreteSizeofTypeOpe
 			return AstTraversal::VisitDecision::Continue;
 		}
 
-		const TypeSpecifierNode& type_spec =
-			sizeof_expression->type_or_expr().as<TypeSpecifierNode>();
-		if (type_spec.runtime_pointer_depth() > 0) {
-			return AstTraversal::VisitDecision::Continue;
-		}
-
-		auto reject_type = [&]() {
-			StringHandle structured_name = getStructuredTypeName(type_spec);
-			invalid_type_name = structured_name.isValid()
-				? structured_name
-				: type_spec.token().handle();
-			return AstTraversal::VisitDecision::Stop;
-		};
-
-		if (typeSpecStillUsesDependentPlaceholder(type_spec)) {
-			return reject_type();
-		}
-
-		const ResolvedAliasTypeInfo resolved_alias =
-			resolveAliasTypeInfo(type_spec.type_index());
-		const TypeCategory category = resolved_alias.type_index.is_valid()
-			? resolved_alias.typeEnum()
-			: type_spec.category();
-		if (category == TypeCategory::Void || category == TypeCategory::Function ||
-			type_spec.has_unsized_outer_array_dimension()) {
-			return reject_type();
-		}
-		if (FrontendContext* active = FrontendContext::active()) {
-			noteCanonicalShapeImport(active->canonicalTypes(), type_spec, CanonicalShapeSite::Parser_Expr_PrimaryUnary_Derived);
-		}
-		for (size_t extent : type_spec.array_dimensions()) {
-			if (extent == 0) {
-				return reject_type();
-			}
-		}
-
-		const TypeInfo* terminal_type_info = resolved_alias.terminal_type_info;
-		if (terminal_type_info == nullptr && resolved_alias.type_index.is_valid()) {
-			terminal_type_info = tryGetTypeInfo(resolved_alias.type_index);
-		}
-		if (terminal_type_info != nullptr && terminal_type_info->isStruct()) {
-			const StructTypeInfo* struct_info = terminal_type_info->getStructInfo();
-			if (struct_info == nullptr || !struct_info->hasCompleteObjectLayout()) {
-				return reject_type();
-			}
-		}
-
-		return AstTraversal::VisitDecision::Continue;
+		invalid_type_name = findInvalidSizeofTypeOperand(sizeof_expression->type_or_expr().as<TypeSpecifierNode>(), dependence);
+		return invalid_type_name.has_value() ? AstTraversal::VisitDecision::Stop : AstTraversal::VisitDecision::Continue;
 	});
 	return invalid_type_name;
 }
@@ -941,7 +936,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 				auto sizeof_expr = emplace_node<ExpressionNode>(SizeofExprNode(*type_result.node(), sizeof_token));
 				if (!typeSpecStillUsesDependentPlaceholder(type_spec)) {
 					if (std::optional<StringHandle> invalid_type =
-							SemanticValidation::findInvalidConcreteSizeofTypeOperand(sizeof_expr);
+							SemanticValidation::findInvalidConcreteSizeofTypeOperand(sizeof_expr, SemanticValidation::SizeofOperandDependence::Reject);
 						invalid_type.has_value()) {
 						throw makeStructuredCompileError(
 							context_.diagnostics(),
