@@ -979,3 +979,12 @@ while parsing the template argument list. A reduced friend/ADL form reaches an
 incorrect constructor diagnostic. These parser/lookup gaps prevent a source-level
 friend-effect regression here; native tests retain a successfully instantiated
 `Check<Good>` after a later class-body error without rolling back its cache entry.
+
+## Pointer arithmetic on a decayed record array is rejected
+
+`Cell cells[2]; Cell* p = cells + 1;` is rejected with
+`OperatorOverloadNotFound#1319`, while `int values[2]; int* p = values + 1;`
+compiles and `Cell* p = cells; Cell* q = p + 1;` also compiles. The binary
+`operator+` path does not apply [conv.array] decay to an array operand whose
+element type is a record, so the decayed pointer never reaches builtin pointer
+arithmetic. A reduced probe reproduces this on `origin/main`.
