@@ -554,15 +554,22 @@ remaining pattern schemas by identity, and remove the name fallback.
      [known issues](KNOWN_ISSUES.md#flat-pointer-depth-still-differs-from-the-canonical-pointer-shape).
      `__is_same` no longer re-implements the compare from a flat depth count in
      codegen, and substitution keeps every pointer level's cv, so the
-     `int* const*`/`int**` wrong answer is gone. Identity comparison itself
-     (`equalTypeSpecifierIdentityImpl`, `are_types_compatible`,
-     `sameTypeSpecifierShape`) still reads the flat pointer and array fields. 153
-     pairs that both import match `TypeId` equality and
-     `canonicalSameIgnoringTopCvRef`. The other 227 flat-equal pairs have no
-     publishable identity that can cover the whole compare. Lambda return
-     compatibility is not canonical type equality, and the constexpr overload
-     compare had no suite hits. See
-     [known issues](KNOWN_ISSUES.md#type-identity-comparison-still-uses-the-flat-projection).
+     `int* const*`/`int**` wrong answer is gone. `are_types_compatible` (lambda
+     return-type deduction) and `sameTypeSpecifierShape` (function-template
+     signature keys) are canonical-first: when both operands publish an identity
+     they decide from it, and the flat fields only decide shapes with no
+     publishable identity. The single-file suite shows 4 and 70 published pairs
+     agreeing with the flat verdict and 2 and 9 disagreeing in the safe direction
+     only, because flat merged per-level pointer cv or same-spelling entities;
+     no published pair became equal that flat kept apart. The constexpr
+     operator-overload compare now calls the shared signature-shape compare
+     instead of keeping a second pointer rule. `equalTypeSpecifierIdentityImpl`
+     and `hashTypeSpecifierIdentityImpl` still read the flat projection: 150
+     published pairs agree and 227 flat-equal pairs have no publishable identity.
+     They must move together with a structural canonical hash that is invariant
+     under the identity, because the interning and class-template identity
+     tables hash the same nodes. See
+     [known issues](KNOWN_ISSUES.md#type-identity-equality-still-uses-the-flat-projection).
      Derived pointee and element reads: the flat array-element peel in
      `arrayElementType` (51 Supported calls, canonical element matched the flat
      peel) and the range-for array element peel (12 Supported calls, same match)
