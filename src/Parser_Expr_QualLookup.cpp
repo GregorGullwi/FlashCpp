@@ -5372,8 +5372,8 @@ bool Parser::are_types_compatible(const TypeSpecifierNode& type1, const TypeSpec
 	// no publishable identity (unresolved template parameters, pre-deduction auto,
 	// opaque nominal indexes).
 	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-	const FlashCpp::CanonicalIdentityVerdict verdict =
-		FlashCpp::canonicalTypeIdentityVerdict(table, type1, type2, FlashCpp::CanonicalIdentityMode::IgnoringTopCvAndReference);
+	const FlashCpp::CanonicalIdentityVerdict verdict = FlashCpp::canonicalTypeIdentityVerdict(
+		table, type1, type2, FlashCpp::CanonicalIdentityMode::IgnoringTopCvAndReference);
 	if (verdict != FlashCpp::CanonicalIdentityVerdict::Unpublished) {
 		return verdict == FlashCpp::CanonicalIdentityVerdict::Identical;
 	}
