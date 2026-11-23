@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AstNodeTypes.h"
+#include "CanonicalIdentityCompare.h"
 #include "TemplateRegistry_Types.h"
 #include "TemplateTypes.h"
 
@@ -12,8 +13,19 @@
 // spellings still participate via type-specifier tokens (same as existing
 // instantiation shape checks); forward→definition merges rely on registry
 // replace preserving TemplateDeclId when parameter names change.
+//
+// The compare is canonical-first: two specifiers that both publish a canonical
+// identity compare by that identity, so aliases and equivalent declarator
+// spellings keep matching. The flat fields below still decide the shapes with no
+// publishable identity (unresolved template parameters, pre-deduction auto,
+// opaque nominal indexes).
 
 inline bool sameTypeSpecifierShape(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	const FlashCpp::CanonicalIdentityVerdict verdict = FlashCpp::canonicalTypeIdentityVerdict(table, lhs, rhs, FlashCpp::CanonicalIdentityMode::Exact);
+	if (verdict != FlashCpp::CanonicalIdentityVerdict::Unpublished) {
+		return verdict == FlashCpp::CanonicalIdentityVerdict::Identical;
+	}
 	if (lhs.category() != rhs.category() ||
 		lhs.cv_qualifier() != rhs.cv_qualifier() ||
 		lhs.reference_qualifier() != rhs.reference_qualifier() ||

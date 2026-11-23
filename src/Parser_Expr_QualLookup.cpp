@@ -5371,14 +5371,13 @@ bool Parser::are_types_compatible(const TypeSpecifierNode& type1, const TypeSpec
 	// are not compatible. The flat fields below still decide the shapes that have
 	// no publishable identity (unresolved template parameters, pre-deduction auto,
 	// opaque nominal indexes).
-	if (FrontendContext* active = FrontendContext::active()) {
-		const FlashCpp::CanonicalIdentityVerdict verdict = FlashCpp::canonicalTypeIdentityVerdict(
-			active->canonicalTypes(), type1, type2, FlashCpp::CanonicalIdentityMode::IgnoringTopCvAndReference);
-		if (verdict != FlashCpp::CanonicalIdentityVerdict::Unpublished) {
-			return verdict == FlashCpp::CanonicalIdentityVerdict::Identical;
-		}
-		noteCanonicalShapeImport(active->canonicalTypes(), type1, CanonicalShapeSite::Parser_Expr_QualLookup_PointerLevelsIdentity);
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	const FlashCpp::CanonicalIdentityVerdict verdict =
+		FlashCpp::canonicalTypeIdentityVerdict(table, type1, type2, FlashCpp::CanonicalIdentityMode::IgnoringTopCvAndReference);
+	if (verdict != FlashCpp::CanonicalIdentityVerdict::Unpublished) {
+		return verdict == FlashCpp::CanonicalIdentityVerdict::Identical;
 	}
+	noteCanonicalShapeImport(table, type1, CanonicalShapeSite::Parser_Expr_QualLookup_PointerLevelsIdentity);
 
 	// Check basic type
 	if (type1.type() != type2.type()) {

@@ -12,6 +12,7 @@
 
 #include "ConstExprEvalHelpers.h"
 #include "CanonicalShapeTelemetry.h"
+#include "TemplateFunctionSignatureShape.h"
 
 namespace ConstExpr {
 
@@ -1875,47 +1876,6 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::findConstexprOperatorOverl
 	if (!candidate.ambiguous) {
 		return {};
 	}
-	auto sameTypeSpecifierShape = [](const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
-		if (FrontendContext* active = FrontendContext::active()) {
-			noteCanonicalShapeImport(active->canonicalTypes(), lhs, CanonicalShapeSite::ConstExprEvaluator_Bindings_Identity);
-		}
-		if (lhs.category() != rhs.category() ||
-			lhs.cv_qualifier() != rhs.cv_qualifier() ||
-			lhs.reference_qualifier() != rhs.reference_qualifier() ||
-			lhs.pointer_levels().size() != rhs.pointer_levels().size() ||
-			lhs.is_array() != rhs.is_array()) {
-			return false;
-		}
-		for (size_t i = 0; i < lhs.pointer_levels().size(); ++i) {
-			if (lhs.pointer_levels()[i].cv_qualifier != rhs.pointer_levels()[i].cv_qualifier) {
-				return false;
-			}
-		}
-		if (!std::ranges::equal(lhs.array_dimensions(), rhs.array_dimensions())) {
-			return false;
-		}
-		if (lhs.has_function_signature() != rhs.has_function_signature()) {
-			return false;
-		}
-		if (lhs.has_function_signature()) {
-			const FunctionSignature& lhs_sig = lhs.function_signature();
-			const FunctionSignature& rhs_sig = rhs.function_signature();
-			if (!FlashCpp::equalFunctionSignatureIdentity(lhs_sig, rhs_sig)) {
-				return false;
-			}
-		}
-		TypeIndex lhs_type_index = lhs.type_index();
-		TypeIndex rhs_type_index = rhs.type_index();
-		if (lhs_type_index.needsTypeIndex() != rhs_type_index.needsTypeIndex()) {
-			return false;
-		}
-		if (lhs_type_index.needsTypeIndex() && rhs_type_index.needsTypeIndex() &&
-			lhs_type_index != rhs_type_index &&
-			lhs.token().value() != rhs.token().value()) {
-			return false;
-		}
-		return true;
-	};
 	auto sameParameterTypes = [&](const FunctionDeclarationNode& lhs, const FunctionDeclarationNode& rhs) {
 		const auto& lhs_params = lhs.parameter_nodes();
 		const auto& rhs_params = rhs.parameter_nodes();
