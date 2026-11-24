@@ -575,11 +575,21 @@ remaining pattern schemas by identity, and remove the name fallback.
      `long long g[][3]` reject instead of reporting an element or inner-array
      width. A misplaced omitted bound is diagnosed at the bracket in
      declarators, type-ids, and template arguments instead of collapsing to
-     `T[]`. An ordered-declarator sizeof operand is still
-     sized from `DeclaratorComponent::payload` by `getTypeSpecSizeBits` without
-     consulting the canonical table; that declarator spine is a structural
-     second store, not the flat projection, so the reader gate does not count
-     it. Simple requirements consume the same sizeof-operand rule as the sizeof
+     `T[]`. An ordered-declarator sizeof operand now takes every array extent
+     that can change the total from the canonical leading array shape: only
+     arrays outside the outermost pointer multiply the object size, and a
+     pointer-only spine is 64 bits. `getTypeSpecSizeBits` no longer reads
+     `DeclaratorComponent::payload` for any ordered spine, so the declarator
+     spine is not a second size authority. An unknown outer bound, or an
+     ordered operand that needs an outer array extent and whose canonical
+     import is unmigrated, has no object size and is rejected by the
+     sizeof-operand rule instead of falling back to the payload; see
+     [known issues](KNOWN_ISSUES.md#ordered-declarator-size-fails-closed-when-the-canonical-import-is-unmigrated).
+     Struct-member layout still reads the outer array components for the
+     element count it publishes as member `array_dimensions`, but it is not a
+     sizeof path and the element size it multiplies already comes from the
+     canonical query.
+     Simple requirements consume the same sizeof-operand rule as the sizeof
      expression sites instead of a second validity check. The omitted-bound bit
      still lives on four legacy template-argument representations until
      boundary 6; see

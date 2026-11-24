@@ -339,6 +339,26 @@ non-projectable shapes;
 remove this entry when those consumers migrate and the compatibility projection
 fields are deleted.
 
+## Ordered-declarator size fails closed when the canonical import is unmigrated
+
+An ordered declarator's array extents come from the canonical array shape, not
+from `DeclaratorComponent::payload`. Two bases still import as
+`UnmigratedNominal`, so an ordered operand with an array outside its outermost
+pointer has no canonical object size:
+
+- a template-parameter element in a pattern, such as `T (*[2])[4]` in
+  `test_template_pattern_interleaved_declarator_ret0.cpp`; a dependent sizeof
+  operand is deferred, so this is a gap only for a consumer that reaches the
+  pattern type without substituting it first.
+- an alias to a nested class of a class-template specialization, such as
+  `using Inner = Outer<int>::Inner; sizeof(Inner (*[2])[3])`; the type-id form
+  fails closed with `IncompleteSizeofOperand` instead of reporting the 16-byte
+  array of two pointers.
+
+Needed: publish the nominal entity for these bases so the canonical array
+import can size them. Until then the query returns 0 and the sizeof-operand
+rule rejects the operand rather than reading the spine payload.
+
 ## Omitted array bounds live on four legacy template-argument representations
 
 `sizeof(T)` and `requires { sizeof(T); }` in a function or class template reject
@@ -917,6 +937,19 @@ pointee to its element type, so `(object.*p)[i]` cannot lower as an array.
 Declaring `int (C::*p)[3]` through an ordered declarator is also rejected by the
 canonical import path. Publish the array pointee shape before claiming full
 member-object pointer coverage.
+
+## An array of member pointers is sized as one member pointer
+
+`int C::*cells[2];` declares an array of two data-member pointers, so
+`sizeof(cells)` is 16 bytes on this x64 ABI, where each member pointer is two
+words wide. The compiler reports 8, the size of one member pointer, so the
+outer array extent is lost when the member-pointer element type is sized. The
+same answer appears on `origin/main`; this is independent of the ordered
+declarator sizeof work because the missing fact is the member-pointer element
+size, not an array extent. A fix needs to examine how the array declarator
+around a member-pointer element is represented and which size query answers for
+that element; the declaration retains the array extent, but the size path uses
+the element width.
 
 ## Static-member template initializer replay still handles unresolved lookups
 

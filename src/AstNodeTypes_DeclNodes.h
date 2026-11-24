@@ -4226,6 +4226,12 @@ inline TypeSpecifierNode applyPlaceholderDeclaratorDeduction(
 	return result;
 }
 
+// Defined in AstNodeTypes.cpp. An ordered declarator's component payload only
+// names the wrapper at each level; every array extent comes from the canonical
+// array shape. Returns 0 when the shape cannot be imported canonically or has
+// no object size, so sizeof rejects it instead of reading a second store.
+int getCanonicalOrderedDeclaratorSizeBits(const TypeSpecifierNode& type_spec);
+
 // Compute the size in bits of the value type described by a TypeSpecifierNode.
 // Per C++20 [expr.sizeof], this returns the object representation size for complete types.
 // For Struct/UserDefined: authoritative lookup via toBits(StructTypeInfo::total_size).value,
@@ -4235,50 +4241,7 @@ inline TypeSpecifierNode applyPlaceholderDeclaratorDeduction(
 // Returns 0 only for genuinely incomplete or void types.
 inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 	if (type_spec.has_ordered_declarator()) {
-		TypeSpecifierNode base_type = type_spec;
-		base_type.clear_declarator_shape();
-		size_t size_bits = static_cast<size_t>(getTypeSpecSizeBits(base_type));
-		bool incomplete = false;
-		for (size_t index = type_spec.declarator_components().size(); index-- > 0;) {
-			const DeclaratorComponent& component =
-				type_spec.declarator_components()[index];
-			switch (component.kind) {
-			case DeclaratorComponentKind::Pointer:
-			case DeclaratorComponentKind::MemberObjectPointer:
-			case DeclaratorComponentKind::MemberFunctionPointer:
-				size_bits = 64;
-				incomplete = false;
-				break;
-			case DeclaratorComponentKind::LValueReference:
-			case DeclaratorComponentKind::RValueReference:
-				break;
-			case DeclaratorComponentKind::Array:
-				if (incomplete) {
-					break;
-				}
-				if (component.payload == 0 ||
-					size_bits > std::numeric_limits<size_t>::max() /
-						static_cast<size_t>(component.payload)) {
-					return 0;
-				}
-				size_bits *= static_cast<size_t>(component.payload);
-				break;
-			case DeclaratorComponentKind::UnknownBoundArray:
-				size_bits = 0;
-				incomplete = true;
-				break;
-			case DeclaratorComponentKind::Function:
-				// A function has no object size. An outer pointer still does:
-				// the walk is inside-out, so a later Pointer wrapper sets 64.
-				size_bits = 0;
-				incomplete = true;
-				break;
-			}
-		}
-		return incomplete ||
-				size_bits > static_cast<size_t>(std::numeric_limits<int>::max())
-			? 0
-			: static_cast<int>(size_bits);
+		return getCanonicalOrderedDeclaratorSizeBits(type_spec);
 	}
 	// Pointers are always 64 bits on x64 regardless of the pointee type
 	if (type_spec.runtime_pointer_depth() > 0) {
