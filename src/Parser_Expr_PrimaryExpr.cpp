@@ -5482,8 +5482,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			if (!consume(")"_tok)) {
 				return ParseResult::error("Expected ')' after decltype functional cast expression", current_token_);
 			}
-			return ParseResult::success(emplace_node<ExpressionNode>(
-				StaticCastNode(type_node, *final_expr, decltype_token)));
+			return ParseResult::success(emplace_node<ExpressionNode>(StaticCastNode(type_node, *final_expr, decltype_token, StaticCastNode::Form::FunctionalCast)));
 		};
 
 		ASTNode decltype_type_node = *decltype_result.node();

@@ -296,7 +296,7 @@ private:
 			TypeSpecifierNode target = rewriteType(node.target_type(), Role::CastTarget, one_to_one);
 			ASTNode operand = rewriteOne(node.expr(), Role::Operand, one_to_one);
 			if constexpr (std::is_same_v<T, StaticCastNode>) {
-				return wrap<OneToOne, ZeroToMany>(ExpressionNode(StaticCastNode(target, operand, node.cast_token())));
+				return wrap<OneToOne, ZeroToMany>(ExpressionNode(StaticCastNode(target, operand, node.cast_token(), node.form())));
 			} else if constexpr (std::is_same_v<T, DynamicCastNode>) {
 				return wrap<OneToOne, ZeroToMany>(ExpressionNode(DynamicCastNode(target, operand, node.cast_token())));
 			} else if constexpr (std::is_same_v<T, ConstCastNode>) {

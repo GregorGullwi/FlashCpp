@@ -321,7 +321,7 @@ ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view
 	switch (kind) {
 	case CppCastKind::Static:
 		cast_expr = emplace_node<ExpressionNode>(
-			StaticCastNode(*type_result.node(), *expr_result.node(), cast_token));
+			StaticCastNode(*type_result.node(), *expr_result.node(), cast_token, StaticCastNode::Form::StaticCast));
 		break;
 	case CppCastKind::Dynamic:
 		cast_expr = emplace_node<ExpressionNode>(
@@ -477,8 +477,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 						}
 #endif
 						// Create a StaticCastNode (C-style casts behave like static_cast in most cases)
-						auto cast_expr = emplace_node<ExpressionNode>(
-							StaticCastNode(*type_result.node(), *expr_result.node(), cast_token));
+						auto cast_expr = emplace_node<ExpressionNode>(StaticCastNode(*type_result.node(), *expr_result.node(), cast_token, StaticCastNode::Form::CStyleCast));
 
 						// Apply postfix operators (e.g., .operator<=>(), .member, etc.)
 						return apply_postfix_operators(cast_expr);

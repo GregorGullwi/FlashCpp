@@ -19,7 +19,9 @@
 #include "AstNodeTypes.h"
 #include "AstNodeTypes_Expr.h"
 #include "CallNodeHelpers.h"
+#include "CanonicalShapeQueries.h"
 #include "CanonicalTypeAdapter.h"
+#include "CanonicalTypeIdentityShape.h"
 #include "OverloadResolution.h"
 #include "Log.h"
 #include "IrGenerator.h"
@@ -125,6 +127,152 @@ std::optional<size_t> tryGetCanonicalObjectSizeBytes(
 		}
 	}
 	return std::nullopt;
+}
+
+// [conv.qual]/3 restricts a qualification conversion to a decomposition with
+// the same pointer components, where cv may only be added, and a cv addition
+// below the outermost pointer requires const on every level outside it. This
+// is the combined-type rule, not the [expr.const.cast]/3 similarity rule that
+// the constexpr evaluator uses to decide value reuse.
+constexpr uint8_t kCastQualificationLevelCapacity = kCanonicalPointerShapeCapacity;
+
+enum class CastQualificationVerdict : uint8_t {
+	NotApplicable,
+	Valid,
+	Invalid,
+};
+
+struct CastQualificationShape {
+	std::array<CVQualifier, kCastQualificationLevelCapacity> levels{};
+	uint8_t depth = 0;
+	CVQualifier terminal_cv = CVQualifier::None;
+	TypeId terminal_type{};
+	bool terminal_is_void = false;
+};
+
+struct IdentityCastQualificationShape {
+	std::array<CVQualifier, kCastQualificationLevelCapacity> levels{};
+	uint8_t depth = 0;
+	CVQualifier terminal_cv = CVQualifier::None;
+	FlashCpp::CanonicalTypeIdentityShape identity;
+	bool terminal_is_void = false;
+};
+
+bool cvQualifierContains(CVQualifier superset, CVQualifier subset) {
+	const uint8_t superset_bits = static_cast<uint8_t>(superset);
+	const uint8_t subset_bits = static_cast<uint8_t>(subset);
+	return (subset_bits & static_cast<uint8_t>(~superset_bits)) == 0;
+}
+
+std::optional<CastQualificationShape> tryDecomposeCanonicalPointerChain(const CanonicalTypeTable& table, TypeId type) {
+	CastQualificationShape shape;
+	type = shapeWithoutReference(table, type);
+	while (true) {
+		CVQualifier cv = CVQualifier::None;
+		CanonicalTypeNode node = table.node(type);
+		while (node.kind == CanonicalTypeKind::Qualified) {
+			cv = cv | node.qualifiers;
+			type = node.child;
+			node = table.node(type);
+		}
+		if (node.kind != CanonicalTypeKind::Pointer) {
+			if (node.kind != CanonicalTypeKind::Builtin && node.kind != CanonicalTypeKind::Record &&
+				node.kind != CanonicalTypeKind::Enum && node.kind != CanonicalTypeKind::TemplateSpecialization) {
+				return std::nullopt;
+			}
+			shape.terminal_cv = cv;
+			shape.terminal_type = type;
+			shape.terminal_is_void = node.kind == CanonicalTypeKind::Builtin && node.builtin == CanonicalBuiltinKind::Void;
+			return shape;
+		}
+		if (shape.depth == kCastQualificationLevelCapacity) {
+			return std::nullopt;
+		}
+		shape.levels[shape.depth] = cv;
+		++shape.depth;
+		type = node.child;
+	}
+}
+
+std::optional<IdentityCastQualificationShape> tryDecomposeIdentityPointerChain(const TypeSpecifierNode& type) {
+	FlashCpp::CanonicalTypeIdentityShape identity = FlashCpp::buildCanonicalTypeIdentityShape(type);
+	size_t first_component = 0;
+	while (first_component < identity.components.size() &&
+		(identity.components[first_component].kind == DeclaratorComponentKind::LValueReference ||
+			identity.components[first_component].kind == DeclaratorComponentKind::RValueReference)) {
+		++first_component;
+	}
+	if (first_component != 0) {
+		identity.components.erase(identity.components.begin(), identity.components.begin() + static_cast<std::ptrdiff_t>(first_component));
+	}
+	if (identity.components.size() > kCastQualificationLevelCapacity || identity.is_pack_expansion || identity.has_concept_constraint) {
+		return std::nullopt;
+	}
+	if (identity.terminal_kind != FlashCpp::CanonicalTypeIdentityTerminalKind::Builtin &&
+		identity.terminal_kind != FlashCpp::CanonicalTypeIdentityTerminalKind::Record &&
+		identity.terminal_kind != FlashCpp::CanonicalTypeIdentityTerminalKind::Enum &&
+		identity.terminal_kind != FlashCpp::CanonicalTypeIdentityTerminalKind::TemplateSpecialization) {
+		return std::nullopt;
+	}
+	IdentityCastQualificationShape shape;
+	shape.terminal_cv = identity.base_cv;
+	shape.terminal_is_void = identity.terminal_kind == FlashCpp::CanonicalTypeIdentityTerminalKind::Builtin && identity.terminal_category == TypeCategory::Void;
+	for (const DeclaratorComponent& component : identity.components) {
+		if (component.kind != DeclaratorComponentKind::Pointer) {
+			return std::nullopt;
+		}
+		shape.levels[shape.depth] = component.cv_qualifier;
+		++shape.depth;
+	}
+	shape.identity = std::move(identity);
+	return shape;
+}
+
+template <typename Shape> CastQualificationVerdict classifyCastQualificationConversion(const Shape& source, const Shape& target) {
+	if (source.depth == 0 || target.depth == 0) {
+		return CastQualificationVerdict::NotApplicable;
+	}
+	if (source.depth != target.depth) {
+		// A qualification conversion keeps the same pointer components. A
+		// pointer-to-void target is the separate [conv.ptr] conversion and
+		// accepts a source pointer at any depth.
+		return target.depth == 1 && target.terminal_is_void ? CastQualificationVerdict::NotApplicable : CastQualificationVerdict::Invalid;
+	}
+	std::array<CVQualifier, kCastQualificationLevelCapacity> combined = target.levels;
+	for (uint8_t level = 1; level < target.depth; ++level) {
+		if (!cvQualifierContains(target.levels[level], source.levels[level])) {
+			return CastQualificationVerdict::Invalid;
+		}
+		if (target.levels[level] != source.levels[level]) {
+			// The combined type gains const on every level between the added cv
+			// and the outermost pointer, so the target must spell that const too.
+			for (uint8_t outer = 1; outer < level; ++outer) {
+				combined[outer] = combined[outer] | CVQualifier::Const;
+			}
+		}
+	}
+	if (!cvQualifierContains(target.terminal_cv, source.terminal_cv)) {
+		return CastQualificationVerdict::Invalid;
+	}
+	if (target.terminal_cv != source.terminal_cv) {
+		for (uint8_t outer = 1; outer < target.depth; ++outer) {
+			combined[outer] = combined[outer] | CVQualifier::Const;
+		}
+	}
+	for (uint8_t level = 1; level < target.depth; ++level) {
+		if (combined[level] != target.levels[level]) {
+			return CastQualificationVerdict::Invalid;
+		}
+	}
+	return CastQualificationVerdict::Valid;
+}
+
+bool canonicalIdentityTerminalsEqual(FlashCpp::CanonicalTypeIdentityShape left, FlashCpp::CanonicalTypeIdentityShape right) {
+	left.components.clear();
+	right.components.clear();
+	left.base_cv = CVQualifier::None;
+	right.base_cv = CVQualifier::None;
+	return FlashCpp::canonicalTypeIdentityShapesEqual(left, right);
 }
 
 bool isCanonicalArrayOrPointer(
@@ -6576,6 +6724,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				normalizeExpression(e.expr(), ctx);
 			} else if constexpr (std::is_same_v<T, StaticCastNode>) {
 				normalizeExpression(e.expr(), ctx);
+				checkStaticCastQualificationConversion(e);
 				checkMemberFunctionAddressAccessForTarget(
 					e.expr(),
 					canonicalizeType(e.target_type()));
@@ -11970,6 +12119,58 @@ void SemanticAnalysis::diagnoseScopedEnumBinaryOperands(BinaryOperatorNode& bin_
 			enum_name + "' with operator '" + std::string(op) +
 			"'; use static_cast for explicit conversion",
 		{});
+}
+
+void SemanticAnalysis::checkStaticCastQualificationConversion(const StaticCastNode& cast_node) {
+	if (cast_node.isCStyleCast()) {
+		// [expr.cast]/4: a C-style cast may perform a const_cast, so the
+		// implicit-conversion qualification rule does not constrain it.
+		return;
+	}
+	const TypeSpecifierNode& target_type = cast_node.target_type();
+	if (target_type.is_reference() || target_type.is_rvalue_reference()) {
+		// Reference binding has its own cv rules and value category; this check
+		// covers the pointer value conversion only.
+		return;
+	}
+	const TypeSpecifierQueryResult source_query = getExpressionTypeQuery(cast_node.expr());
+	if (!source_query.hasValue() || !source_query.type.has_value()) {
+		return;
+	}
+	const TypeSpecifierNode& source_type = *source_query.type;
+	const auto is_dependent_or_unresolved = [](const TypeSpecifierNode& type) {
+		const TypeCategory category = type.type();
+		return category == TypeCategory::Invalid || category == TypeCategory::UserDefined || category == TypeCategory::Template ||
+			isPlaceholderAutoType(category) || typeIndexContainsDependentPlaceholder(type.type_index());
+	};
+	if (is_dependent_or_unresolved(target_type) || is_dependent_or_unresolved(source_type)) {
+		return;
+	}
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	CastQualificationVerdict verdict = CastQualificationVerdict::NotApplicable;
+	const CanonicalTypeImport target_import = importCanonicalType(table, target_type);
+	const CanonicalTypeImport source_import = importCanonicalType(table, source_type);
+	if (target_import.status == CanonicalTypeImportStatus::Supported && source_import.status == CanonicalTypeImportStatus::Supported) {
+		const std::optional<CastQualificationShape> target_shape = tryDecomposeCanonicalPointerChain(table, target_import.type);
+		const std::optional<CastQualificationShape> source_shape = tryDecomposeCanonicalPointerChain(table, source_import.type);
+		if (target_shape.has_value() && source_shape.has_value() && target_shape->terminal_type == source_shape->terminal_type) {
+			verdict = classifyCastQualificationConversion(*source_shape, *target_shape);
+		}
+	} else {
+		const std::optional<IdentityCastQualificationShape> target_shape = tryDecomposeIdentityPointerChain(target_type);
+		const std::optional<IdentityCastQualificationShape> source_shape = tryDecomposeIdentityPointerChain(source_type);
+		if (target_shape.has_value() && source_shape.has_value() && canonicalIdentityTerminalsEqual(target_shape->identity, source_shape->identity)) {
+			verdict = classifyCastQualificationConversion(*source_shape, *target_shape);
+		}
+	}
+	transaction.rollback();
+	if (verdict != CastQualificationVerdict::Invalid) {
+		return;
+	}
+	throw makeStructuredCompileError(context_.diagnostics(), DiagnosticId::InvalidStaticCastQualificationConversion, DiagnosticSeverity::Error,
+		SourceLocation::fromToken(cast_node.cast_token()),
+		"static_cast cannot drop cv-qualification, change pointer depth, or add cv below the outermost pointer without const on every level outside it", {});
 }
 
 // Lazy class-template conversion declarations can expose a canonical target

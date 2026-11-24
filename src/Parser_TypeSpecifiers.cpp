@@ -758,8 +758,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 	auto type_node = make_type_node();
 
 	// Create a static cast node (functional cast behaves like static_cast)
-	auto result = emplace_node<ExpressionNode>(
-		StaticCastNode(type_node, *final_expr, type_token));
+	auto result = emplace_node<ExpressionNode>(StaticCastNode(type_node, *final_expr, type_token, StaticCastNode::Form::FunctionalCast));
 
 	return ParseResult::success(result);
 }
