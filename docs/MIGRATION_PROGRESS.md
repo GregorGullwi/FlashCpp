@@ -556,8 +556,8 @@ remaining pattern schemas by identity, and remove the name fallback.
      migration before the projection fields can be removed.
    - TypeId shape queries, `requireCanonicalShape`, the flat-reader gate, sampled
      import-gap telemetry, published class/enum array import, and every
-     array-extent consumer are on main. The flat-reader inventory is now 819
-     reads across 68 files; the gate counts alias accessors and only goes down.
+     array-extent consumer are on main. The flat-reader inventory is now 811
+     reads across 67 files; the gate counts alias accessors and only goes down.
      `requireCanonicalShape` throws on a non-Supported import and during
      speculative parsing. Production speculative parsing is not the scratch
      transaction. sizeof reads a projected array extent through the canonical
@@ -609,9 +609,27 @@ remaining pattern schemas by identity, and remove the name fallback.
      Supported imports with no canonical pointee, plus `UnmigratedCallable`) stay
      on the flat read. See
      [known issues](KNOWN_ISSUES.md#derived-pointee-and-element-readers-are-only-partly-canonical).
-     Flat projection fields are not deletable. Writer-adjacent copies of those
-     fields were out of scope. `ConstExprEvaluator_Core.cpp` and
-     `Parser_Templates_Function.cpp` were left for the pointer-payload slice.
+     The constexpr pointer-payload slice is closed. `ConstExprEvaluator.h` no
+     longer reads the alias projection: same-type constexpr object reuse decides
+     from `canonicalTypeSpecifierIdentityEqual` over the two object types, so a
+     typedef spelling of one record still shares and a different record, a
+     per-level pointer cv, or a different array extent does not. The evaluator
+     takes alias-resolved array extents from `copyRequiredArrayExtents` for the
+     element-count, `sizeof` sub-array, and default-initialization queries, and
+     asks the runtime-representation query `runtime_pointer_depth()` for the
+     pointer-object tests in array-to-pointer decay, integer promotion, and null
+     dereference. Per-file reads dropped from 22 to 15 in
+     `ConstExprEvaluator_Core.cpp` and from 1 to 0 in `ConstExprEvaluator.h`; the
+     inventory is 811 reads across 67 files. The remaining readers are the flat
+     result-shape peels that write `EvalResult.exact_type` (subscript result,
+     arrow access, unary `*`), the `StructMember` payload writers for the
+     structural value and member type spec, `sizeof`'s class-member bound
+     expressions, and `typesMatchIgnoringCvAndRef`, which needs a canonical
+     similarity rule that ignores cv at every pointer level.
+     `Parser_Templates_Function.cpp` keeps its three reads because it copies
+     `TypeInfo::TemplateArgInfo` into a `TemplateTypeArg` for the legacy registry
+     lookup. See
+     [known issues](KNOWN_ISSUES.md#flat-pointer-and-array-fields-are-still-required).
      Boundary 12 is the later constexpr value model; this work did not change
      `EvalResult`.
    - `Parser_Expr_QualLookup` now asks `runtime_pointer_depth()` for its

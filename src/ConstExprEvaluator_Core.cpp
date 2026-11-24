@@ -165,22 +165,22 @@ std::optional<EvalResult> tryEvaluateSimpleConstexprTypeHelperCall(
 // determine it immediately. Handles both explicit dimensions (`int a[2][3]`) and
 // inferred-size arrays backed by an initializer list (`int a[] = {1, 2, 3}`).
 // Returns std::nullopt when any dimension cannot be evaluated or when the total would overflow.
-std::optional<size_t> tryGetConstexprArrayElementCount(
-	const DeclarationNode& decl,
-	const ASTNode& symbol,
-	EvaluationContext& context) {
+std::optional<size_t> tryGetConstexprArrayElementCount(const DeclarationNode& decl, const ASTNode& symbol, EvaluationContext& context) {
 	{
 		const auto& type_spec = decl.type_specifier_node();
-		if (type_spec.is_array() && !type_spec.has_unsized_outer_array_dimension() &&
-			!type_spec.array_dimensions().empty()) {
-			size_t total_count = 1;
-			for (size_t dim_count : type_spec.array_dimensions()) {
-				if (dim_count == 0 || dim_count > std::numeric_limits<size_t>::max() / total_count) {
-					return std::nullopt;
+		if (type_spec.is_array() && !type_spec.has_unsized_outer_array_dimension()) {
+			std::vector<size_t> extent_storage;
+			const std::span<const size_t> extents = copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), type_spec, extent_storage);
+			if (!extents.empty()) {
+				size_t total_count = 1;
+				for (size_t dim_count : extents) {
+					if (dim_count == 0 || dim_count > std::numeric_limits<size_t>::max() / total_count) {
+						return std::nullopt;
+					}
+					total_count *= dim_count;
 				}
-				total_count *= dim_count;
+				return total_count;
 			}
-			return total_count;
 		}
 	}
 
@@ -711,7 +711,7 @@ void apply_uint_init_narrowing(EvalResult& result) {
 
 std::optional<EvalResult> try_decay_array_initializer_to_pointer(const EvalResult& init_result, const ASTNode& init_expr,
 	const TypeSpecifierNode& decl_type_spec, std::string_view var_name) {
-	if (!(decl_type_spec.is_pointer() || decl_type_spec.runtime_pointer_depth() > 0) || !init_result.is_array) {
+	if (decl_type_spec.runtime_pointer_depth() == 0 || !init_result.is_array) {
 		return std::nullopt;
 	}
 
@@ -1952,8 +1952,7 @@ static EvalResult makePointerWithSourceDeclaration(StringHandle name, int64_t of
 	return result;
 }
 
-EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::string_view op,
-											  EvaluationContext& context) {
+EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::string_view op, EvaluationContext& context) {
 	// Handle address-of (&) for simple entities, resolving array-subscript bases by declared type.
 	if (op == "&") {
 		if (operand_node.is<ExpressionNode>()) {
@@ -2053,11 +2052,10 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 		return operand_result;
 	}
 
-	if ((op == "+" || op == "-" || op == "~") &&
-		operand_result.exact_type.has_value() &&
-		operand_result.exact_type->pointer_levels().empty() &&
-		!operand_result.exact_type->is_array() &&
-		!operand_result.exact_type->is_reference()) {
+	const bool unary_promotion_candidate = (op == "+" || op == "-" || op == "~") && operand_result.exact_type.has_value() &&
+		operand_result.exact_type->runtime_pointer_depth() == 0 && !operand_result.exact_type->is_array() &&
+		!operand_result.exact_type->is_reference();
+	if (unary_promotion_candidate) {
 		const TypeCategory operand_category = operand_result.exact_type->category();
 		if (isIntegralType(operand_category) || operand_category == TypeCategory::Bool) {
 			const TypeCategory promoted_category = promote_integer_type(operand_category);
@@ -2082,7 +2080,7 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 			if (!operand_result.pointer_to_var.isValid() &&
 				operand_result.exact_type.has_value() &&
 				(operand_result.exact_type->category() == TypeCategory::Nullptr ||
-				 (!operand_result.exact_type->pointer_levels().empty() &&
+				 (operand_result.exact_type->runtime_pointer_depth() > 0 &&
 				  operand_result.as_uint_raw() == 0))) {
 				return EvalResult::error(
 					"Dereference of null pointer in constant expression",
@@ -2866,7 +2864,8 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 									size_t element_size = get_typespec_size_bytes(element_type_spec);
 
 									// For multidimensional arrays, calculate sub-array size
-									const auto& dims = array_type_spec.array_dimensions();
+									std::vector<size_t> extent_storage;
+									const std::span<const size_t> dims = copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), array_type_spec, extent_storage);
 									if (dims.size() > 1) {
 										// Calculate size of sub-array: element_size * product of dims[1..]
 										size_t sub_array_count = 1;
@@ -3971,7 +3970,8 @@ static TypeSpecifierNode make_member_type_spec(const StructMember& member) {
 
 static EvalResult make_local_default_init(const TypeSpecifierNode& type_spec, EvaluationContext& context) {
 	if (type_spec.is_array()) {
-		std::span<const size_t> dims = type_spec.array_dimensions();
+		std::vector<size_t> extent_storage;
+		const std::span<const size_t> dims = copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), type_spec, extent_storage);
 		if (dims.empty()) {
 			return EvalResult::error("Default-initialized local array is missing dimensions in constexpr evaluation");
 		}

@@ -12,6 +12,7 @@
 #include "InlineVector.h"  // For InlineVector (small-buffer-optimized vector)
 #include "MemberFunctionLookupShared.h"
 #include "CanonicalShapeTelemetry.h"
+#include "CanonicalTypeIdentityShape.h"
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -376,27 +377,23 @@ inline const ASTNode* tryGetSingleExpressionInitializer(const AstNodeContainer& 
 	return &initializers[0];
 }
 
-inline TypeIndex canonicalizeConstexprObjectReuseTypeIndex(TypeIndex type_index) {
-	if (!type_index.is_valid()) {
-		return type_index;
-	}
-	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_index);
-	if (!resolved_alias.type_index.is_valid() ||
-		resolved_alias.pointer_depth != 0 ||
-		resolved_alias.reference_qualifier != ReferenceQualifier::None ||
-		resolved_alias.function_signature.has_value() ||
-		resolved_alias.member_class_name.has_value() ||
-		!resolved_alias.array_dimensions.empty()) {
-		return type_index;
-	}
-	return resolved_alias.type_index.withCategory(resolved_alias.typeEnum());
+// A constexpr object's type is published only as a TypeIndex, so the reuse
+// decision resolves the alias chain through canonical identity instead of
+// comparing the flat alias shape itself. Canonical identity keeps alias
+// spellings of one type shareable and keeps per-level pointer cv, array
+// extents, function signatures, and member owners distinct.
+inline TypeSpecifierNode constexprObjectReuseTypeSpecifier(TypeIndex type_index) {
+	return TypeSpecifierNode(type_index, TypeQualifier::None, SizeInBits{0}, Token{}, CVQualifier::None);
 }
 
-inline bool canReuseConstexprSameTypeObjectValue(
-	const EvalResult& source_value,
-	TypeIndex destination_type_index) {
-	return canonicalizeConstexprObjectReuseTypeIndex(source_value.object_type_index) ==
-		canonicalizeConstexprObjectReuseTypeIndex(destination_type_index);
+inline bool canReuseConstexprSameTypeObjectValue(const EvalResult& source_value, TypeIndex destination_type_index) {
+	const TypeIndex source_type_index = source_value.object_type_index;
+	// An absent type is not identity: two invalid indices would else compare equal.
+	if (!source_type_index.is_valid() || !destination_type_index.is_valid()) {
+		return false;
+	}
+	return FlashCpp::canonicalTypeSpecifierIdentityEqual(constexprObjectReuseTypeSpecifier(source_type_index),
+		constexprObjectReuseTypeSpecifier(destination_type_index));
 }
 
 // Storage duration for variable declarations

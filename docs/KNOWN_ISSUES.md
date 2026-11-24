@@ -471,15 +471,54 @@ to a pointee, element, subscript result, or dereference result:
 
 ## Flat pointer and array fields are still required
 
-The flat projection fields cannot be deleted. Writer-adjacent copies of those
-fields were out of scope for the shape-query slices. `ConstExprEvaluator_Core.cpp`
-and `Parser_Templates_Function.cpp` were left for the pointer-payload slice.
-Boundary 12 in the rearchitecture plan is the later constexpr value model; the
-shape-query work did not change `EvalResult`. One alias-field read remains in
-`canonicalizeConstexprObjectReuseTypeIndex` (`ConstExprEvaluator.h`): it compares
-alias-applied pointer, reference, function, member-owner, and array shape to
-decide whether two constexpr objects may share a value. It is off the sizeof
-path and has no canonical replacement yet.
+The flat pointer-level and array-dimension fields cannot be removed yet. Each
+remaining reader exists for one of the reasons below, and the entries say what
+would remove it and when that work is due. Until an entry's condition is met the
+fields stay, and the per-file reader inventory must keep ratcheting down.
+
+`ConstExprEvaluator.h` has no reader left: same-type constexpr object reuse now
+decides from `canonicalTypeSpecifierIdentityEqual` over the two object types, so
+a typedef spelling of one record shares while a different record, a per-level
+pointer cv difference, or a different array extent does not.
+
+`ConstExprEvaluator_Core.cpp` keeps fifteen readers in four groups:
+
+- **Result-shape peels** in `tryGetConstexprSubscriptResultType`, pointer-to-member
+  arrow access, and unary `*`. They are the source of the flat
+  `EvalResult.exact_type` that the rest of the evaluator still consumes through
+  `set_array_dimensions` and `remove_pointer_level`, so they cannot be migrated
+  on their own. Needed: the boundary 12 constexpr value model, whose `EvalResult`
+  carries the canonical `TypeId` and drops the flat exact type. Do them then, not
+  before. A `requireCanonicalShape` peel is not a substitute today either: local
+  nominal records import as `UnmigratedNominal`, so a canonical pointee or
+  element would throw for `test_constexpr_ptr_arrow_local_struct_ret0.cpp`,
+  `test_constexpr_ptr_member_call_ret0.cpp`, and
+  `test_constexpr_lambda_copy_state_ret0.cpp` until those entities are
+  published.
+- **Structural descriptor writers**: `makeStructuralArrayValueIdentityImpl` and
+  `make_member_type_spec` copy `StructMember` descriptor fields into the
+  structural value and type-spec payloads. Needed: the boundary 12 structural
+  value carriers; these are writers for consumers that still read those
+  descriptors, so they move with the value model.
+- **`typesMatchIgnoringCvAndRef`**, used by static_cast pass-through and
+  const_cast validation, compares flat array extents and pointer depth. Needed:
+  a canonical similarity query that ignores cv at every pointer level. The
+  existing `canonicalSameIgnoringTopCvRef` drops only top-level cv, so identity
+  equality cannot stand in for it. This one can be done before boundary 12, as a
+  small canonical addition, and is the only entry here that is not blocked.
+- **`sizeof` over a class member** reads `DeclarationNode::array_dimensions()`,
+  which holds bound expressions rather than the type projection; the reader gate
+  counts it because the access is spelled through `->`. Nothing migrates here.
+  The eventual fix is for the gate to tell bound expressions apart from type
+  shape, not a code change in this path.
+
+`Parser_Templates_Function.cpp` keeps three readers that copy
+`TypeInfo::TemplateArgInfo` flat fields into a `TemplateTypeArg` for the legacy
+`TemplateRegistry` specialization lookup. Needed: the boundary 6 template
+argument identity and the deletion of the flat `TemplateArgInfo`/`TemplateTypeArg`
+projection; until then these are writers for a consumer that is not shape-based.
+
+The inventory is 811 reads across 67 files.
 
 ## Decltype operator overload result typing is parser-owned
 

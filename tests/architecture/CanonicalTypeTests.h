@@ -3947,6 +3947,24 @@ inline void checkCanonicalTypeIdentityHash() {
 	distinct_identity(array_two, array_three);
 	distinct_identity(array_two, array_unknown_bound);
 
+	// The constexpr object-reuse decision only has a TypeIndex row to identify an
+	// object's type, so the alias row itself must carry the same distinctions as
+	// the underlying specifier: an alias of one type still shares, while a
+	// per-level pointer cv difference and a different array extent stay apart.
+	const TypeIndex integer_alias_row = publishHarnessAliasType(integer);
+	TypeSpecifierNode integer_alias_row_type(integer_alias_row, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	same_identity(integer, integer_alias_row_type);
+	const TypeIndex int_double_pointer_alias = publishHarnessAliasType(int_double_pointer);
+	const TypeIndex int_const_pointer_alias = publishHarnessAliasType(int_const_pointer_type);
+	TypeSpecifierNode int_double_pointer_alias_type(int_double_pointer_alias, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	TypeSpecifierNode int_const_pointer_alias_type(int_const_pointer_alias, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	distinct_identity(int_double_pointer_alias_type, int_const_pointer_alias_type);
+	const TypeIndex array_two_alias = publishHarnessAliasType(array_two);
+	const TypeIndex array_three_alias = publishHarnessAliasType(array_three);
+	TypeSpecifierNode array_two_alias_type(array_two_alias, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	TypeSpecifierNode array_three_alias_type(array_three_alias, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	distinct_identity(array_two_alias_type, array_three_alias_type);
+
 	FunctionSignature int_returning_signature;
 	int_returning_signature.return_type_index = nativeTypeIndex(TypeCategory::Int);
 	FunctionSignature long_returning_signature;
