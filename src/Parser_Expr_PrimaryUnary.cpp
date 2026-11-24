@@ -97,6 +97,12 @@ std::optional<StringHandle> SemanticValidation::findInvalidSizeofTypeOperand(con
 			return invalid_name();
 		}
 	}
+	// An interleaved ordered declarator has no complete flat array projection
+	// to inspect; its object size is the canonical answer the sizeof path uses.
+	// A shape that cannot be sized there has no object size here either.
+	if (type_spec.has_ordered_declarator() && getTypeSpecSizeBits(type_spec) <= 0) {
+		return invalid_name();
+	}
 
 	const TypeInfo* terminal_type_info = resolved_alias.terminal_type_info;
 	if (terminal_type_info == nullptr && resolved_alias.type_index.is_valid()) {

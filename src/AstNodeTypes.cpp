@@ -1515,6 +1515,143 @@ void tryBindPublishedTypeEntity(TypeSpecifierNode& type_spec) {
 	}
 }
 
+// The ordered spine names which wrapper applies at each level; the extent
+// itself is a canonical array fact. Only arrays outside the outermost pointer
+// can change the total: a pointer resets every inner array to pointer size. The
+// canonical leading extents are exactly those outer arrays, so the walk never
+// reads DeclaratorComponent::payload.
+int getCanonicalOrderedDeclaratorSizeBits(const TypeSpecifierNode& type_spec) {
+	TypeSpecifierNode bound_spec = type_spec;
+	tryBindPublishedTypeEntity(bound_spec);
+	const std::span<const DeclaratorComponent> components = bound_spec.declarator_components();
+
+	size_t first_pointer = components.size();
+	size_t outer_array_count = 0;
+	for (size_t index = 0; index < components.size(); ++index) {
+		const DeclaratorComponentKind kind = components[index].kind;
+		if (kind == DeclaratorComponentKind::Pointer || kind == DeclaratorComponentKind::MemberObjectPointer ||
+			kind == DeclaratorComponentKind::MemberFunctionPointer) {
+			first_pointer = index;
+			break;
+		}
+		if (kind == DeclaratorComponentKind::Array || kind == DeclaratorComponentKind::UnknownBoundArray) {
+			++outer_array_count;
+		}
+	}
+	const bool has_pointer = first_pointer != components.size();
+	if (has_pointer && outer_array_count == 0) {
+		return 64;
+	}
+
+	size_t needed_extents = 0;
+	for (const DeclaratorComponent& component : components) {
+		if (component.kind == DeclaratorComponentKind::Array || component.kind == DeclaratorComponentKind::UnknownBoundArray) {
+			++needed_extents;
+		}
+	}
+	if (has_pointer) {
+		needed_extents = outer_array_count;
+	}
+
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalTypeImport imported = importCanonicalType(table, bound_spec);
+	if (imported.status != CanonicalTypeImportStatus::Supported) {
+		FLASH_LOG_FORMAT(Types, Debug, "ordered-size import gap status={} components={} needed_extents={}",
+			canonicalTypeImportStatusName(imported.status), components.size(), needed_extents);
+		return 0;
+	}
+	const size_t rank = canonicalArrayExtentCount(table, imported.type);
+	if (rank < needed_extents) {
+		FLASH_LOG_FORMAT(Types, Debug, "ordered-size extent gap rank={} needed_extents={} components={}", rank, needed_extents, components.size());
+		return 0;
+	}
+	std::vector<size_t> extent_storage(rank);
+	canonicalCopyArrayExtents(table, imported.type, extent_storage);
+
+	if (has_pointer) {
+		size_t size_bits = 64;
+		size_t extent_index = 0;
+		for (size_t index = 0; index < first_pointer; ++index) {
+			switch (components[index].kind) {
+			case DeclaratorComponentKind::LValueReference:
+			case DeclaratorComponentKind::RValueReference:
+				break;
+			case DeclaratorComponentKind::Array: {
+				const size_t extent = extent_storage[extent_index++];
+				if (extent == 0 || size_bits > std::numeric_limits<size_t>::max() / extent) {
+					return 0;
+				}
+				size_bits *= extent;
+				break;
+			}
+			case DeclaratorComponentKind::UnknownBoundArray:
+				return 0;
+			default:
+				return 0;
+			}
+		}
+		if (size_bits > static_cast<size_t>(std::numeric_limits<int>::max())) {
+			return 0;
+		}
+		if (!inSpeculativeParseRegion()) {
+			transaction.commit();
+		}
+		return static_cast<int>(size_bits);
+	}
+
+	TypeSpecifierNode base_type = bound_spec;
+	base_type.clear_declarator_shape();
+	size_t size_bits = static_cast<size_t>(getTypeSpecSizeBits(base_type));
+	std::vector<size_t> component_extents(components.size(), 0);
+	size_t extent_index = 0;
+	for (size_t index = 0; index < components.size(); ++index) {
+		if (components[index].kind == DeclaratorComponentKind::Array ||
+			components[index].kind == DeclaratorComponentKind::UnknownBoundArray) {
+			component_extents[index] = extent_storage[extent_index++];
+		}
+	}
+	bool incomplete = false;
+	for (size_t index = components.size(); index-- > 0;) {
+		switch (components[index].kind) {
+		case DeclaratorComponentKind::LValueReference:
+		case DeclaratorComponentKind::RValueReference:
+			break;
+		case DeclaratorComponentKind::Array:
+			if (incomplete) {
+				break;
+			}
+			if (component_extents[index] == 0 ||
+				size_bits > std::numeric_limits<size_t>::max() / component_extents[index]) {
+				return 0;
+			}
+			size_bits *= component_extents[index];
+			break;
+		case DeclaratorComponentKind::UnknownBoundArray:
+			size_bits = 0;
+			incomplete = true;
+			break;
+		case DeclaratorComponentKind::Function:
+			// A function has no object size. An outer pointer still does; such a
+			// spine never reaches this branch because it has a pointer component.
+			size_bits = 0;
+			incomplete = true;
+			break;
+		case DeclaratorComponentKind::Pointer:
+		case DeclaratorComponentKind::MemberObjectPointer:
+		case DeclaratorComponentKind::MemberFunctionPointer:
+			return 0;
+		}
+	}
+	if (incomplete || size_bits > static_cast<size_t>(std::numeric_limits<int>::max())) {
+		return 0;
+	}
+	if (!inSpeculativeParseRegion()) {
+		transaction.commit();
+	}
+	return static_cast<int>(size_bits);
+}
+
 const TypeInfo* tryFindTypeInfoByEntityId(EntityId entity) {
 	if (!entity) {
 		return nullptr;

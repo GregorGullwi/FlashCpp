@@ -57,7 +57,7 @@ TYPE_SPEC_RECEIVERS = re.compile(
 # Named spelling / diagnostic sites (function-local allowlists).
 FUNCTION_ALLOWLIST_SPANS: dict[str, list[tuple[int, int]]] = {
 	"src/Parser_Expr_QualLookup.cpp": [(5389, 5600)],  # Parser::type_to_string
-	"src/AstNodeTypes.cpp": [(2133, 2205)],  # readableFunctionDeclarator spelling
+	"src/AstNodeTypes.cpp": [(2270, 2342)],  # readableFunctionDeclarator spelling
 	"src/IrGenerator_Visitors_Decl.cpp": [(390, 410)],  # debug FLASH_LOG loop
 }
 
