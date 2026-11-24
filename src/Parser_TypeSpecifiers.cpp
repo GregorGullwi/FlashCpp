@@ -49,6 +49,25 @@ int resolvedAliasElementSizeBits(const TypeInfo& type_info, const ResolvedAliasT
 	return alias_spec->size_in_bits();
 }
 
+// [dcl.typedef]: a flat alias resolution still records every pointer level's
+// cv in declarator_components. Rebuilding the chain from pointer_depth alone
+// would turn "const int* const*" into "const int**", so copy each cv in the
+// flat innermost-first order when the alias chain is nothing but pointers.
+void addAliasPointerLevels(const ResolvedAliasTypeInfo& resolved_alias, TypeSpecifierNode& type_spec) {
+	const std::vector<DeclaratorComponent>& components = resolved_alias.declarator_components;
+	const bool all_pointers = resolved_alias.pointer_depth != 0 && components.size() == resolved_alias.pointer_depth &&
+		std::ranges::all_of(components, [](const DeclaratorComponent& component) {
+			return component.kind == DeclaratorComponentKind::Pointer;
+		});
+	if (!all_pointers) {
+		type_spec.add_pointer_levels(static_cast<int>(resolved_alias.pointer_depth));
+		return;
+	}
+	for (size_t index = components.size(); index-- > 0;) {
+		type_spec.add_pointer_level(components[index].cv_qualifier);
+	}
+}
+
 // Whether a canonical type is a builtin/record/enum value wrapped only by cv,
 // pointer, or reference nodes. Arrays, specializations, callable types, and
 // dependent defaults keep their own substitution path.
@@ -5169,7 +5188,7 @@ ParseResult Parser::parse_type_specifier() {
 				type_spec_node.as<TypeSpecifierNode>().set_ordered_declarator(
 					resolved_alias.ordered_declarator);
 			} else {
-				type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(resolved_alias.pointer_depth);
+				addAliasPointerLevels(resolved_alias, type_spec_node.as<TypeSpecifierNode>());
 				if (resolved_alias.pointee_array_declarator) {
 					type_spec_node.as<TypeSpecifierNode>().set_pointee_array_dimensions(
 						resolved_alias.array_dimensions);
@@ -5249,8 +5268,7 @@ ParseResult Parser::parse_type_specifier() {
 					type_spec_node.as<TypeSpecifierNode>().set_ordered_declarator(
 						resolved_alias.ordered_declarator);
 				} else {
-					type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(
-						resolved_alias.pointer_depth);
+					addAliasPointerLevels(resolved_alias, type_spec_node.as<TypeSpecifierNode>());
 					if (resolved_alias.pointee_array_declarator) {
 						type_spec_node.as<TypeSpecifierNode>().set_pointee_array_dimensions(
 							resolved_alias.array_dimensions);

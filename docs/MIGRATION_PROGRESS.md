@@ -305,7 +305,11 @@ remaining pattern schemas by identity, and remove the name fallback.
    planner rejects;
    `test_conversion_operator_pointer_qualification_tail_ret0.cpp` pins the
    qualification-versus-exact ranking, the `void*` tail, and nested pointer
-   qualification. By-value argument conversion now strips the lvalue
+   qualification. Explicit `static_cast` qualification validation consumes the
+   same canonical decomposition for reference, array, and pointer-to-member
+   components, with the publication-independent identity shape as its
+   `UnmigratedNominal` fallback; it stays a cast-site legality check rather than
+   a conversion planner. By-value argument conversion now strips the lvalue
    value-category marker for non-callable object pointer sources whose target is
    `bool`, so pointer-to-boolean candidates use the structural planner; callable,
    member, and class pointers keep their compatibility paths.

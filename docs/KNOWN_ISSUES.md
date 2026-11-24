@@ -537,15 +537,31 @@ projection; until then these are writers for a consumer that is not shape-based.
 
 The inventory is 806 reads across 67 files.
 
-## static_cast reference and composite qualification conversions are not validated
+## static_cast qualification covers references and composite components, not general conversion validity
 
-The pointer value form now enforces [conv.qual]/3, but `static_cast<T&>` and
-`static_cast<T&&>` return before the check because reference binding has its own
-cv and value-category rules, and a decomposition whose components include an
-array or a pointer-to-member is skipped. `static_cast<int&>(const int&)`,
-`static_cast<int(*)[4]>(const int(*)[4])`, and a pointer-to-member cv drop are
-therefore still accepted. These need the corresponding reference-binding,
-array-element, and member-pointer rules added at the same cast-validation point.
+`static_cast` now validates qualification at one cast site for every
+qualification-decomposition shape. A reference target compares the bound
+referent with [conv.qual]/3 through [dcl.init.ref]/4 reference-compatibility,
+applies reference collapsing, and additionally enforces the [dcl.init.ref]/5.2
+rule that only a const, non-volatile lvalue reference binds an rvalue. Array
+components carry their element cv and bound, including the [conv.qual]/1 rule
+that an array's cv is its element's cv and the [conv.qual]/3.2 unknown-bound
+result. Pointer-to-member components carry their class owner and member-type cv;
+[conv.qual]/1 and /4 put pointer-to-member in the same qualification rule as an
+object pointer, so no separate member-pointer rule applies. The identity shape
+remains the fallback for `UnmigratedNominal`.
+
+The check classifies only casts whose source and target terminals are the same
+type and whose components are similar. A `static_cast` that changes an array
+bound between two known bounds, binds a reference to a non-similar referent
+(for example `int**` to `const int* const* const* const&`), or converts between
+unrelated pointer-like types is still accepted because no pass validates the
+remaining conversions ([conv.ptr], [conv.mem], array-bound similarity, or a
+user-defined conversion sequence).
+
+Functional-cast spelling is still classified as a static_cast conversion even
+though [expr.type.conv]/1.1 makes a single-expression functional cast
+equivalent to the corresponding C-style cast, which may perform a const_cast.
 
 ## Decltype operator overload result typing is parser-owned
 
