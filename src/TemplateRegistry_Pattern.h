@@ -185,6 +185,7 @@ struct TemplatePattern {
 			deduced.is_array = c.is_array;
 			deduced.pointee_array_declarator =
 				c.pointee_array_declarator;
+			deduced.has_unsized_outer_array_dimension = c.has_unsized_outer_array_dimension;
 			deduced.array_dimensions.assign(
 				c.array_dimensions.begin(),
 				c.array_dimensions.end());

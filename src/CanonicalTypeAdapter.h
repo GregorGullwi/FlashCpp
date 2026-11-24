@@ -219,6 +219,25 @@ inline const FunctionSignature* orderedDeclaratorCallableSignature(const TypeSpe
 	return current;
 }
 
+// [dcl.array]/2: an array element must be a complete object type, so void,
+// references, functions, and arrays of unknown bound cannot be elements.
+inline CanonicalTypeImportStatus canonicalArrayElementStatus(const CanonicalTypeTable& table, TypeId element) {
+	const CanonicalTypeNode node = table.node(table.withoutTopLevelQualifiers(element));
+	if (node.kind == CanonicalTypeKind::Function) {
+		return CanonicalTypeImportStatus::UnmigratedCallable;
+	}
+	if (node.kind == CanonicalTypeKind::Array &&
+		node.flags != CanonicalTypeNodeFlags::KnownArrayBound) {
+		return CanonicalTypeImportStatus::UnmigratedArray;
+	}
+	if (node.kind == CanonicalTypeKind::LValueReference ||
+		node.kind == CanonicalTypeKind::RValueReference ||
+		(node.kind == CanonicalTypeKind::Builtin && node.builtin == CanonicalBuiltinKind::Void)) {
+		return CanonicalTypeImportStatus::Invalid;
+	}
+	return CanonicalTypeImportStatus::Supported;
+}
+
 inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 	CanonicalTypeTable& table,
 	TypeId base,
@@ -227,24 +246,6 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 	TypeId id = base;
 	const std::span<const DeclaratorComponent> components =
 		syntax.declarator_components();
-	auto arrayElementStatus = [&table](TypeId element) {
-		const CanonicalTypeNode node = table.node(
-			table.withoutTopLevelQualifiers(element));
-		if (node.kind == CanonicalTypeKind::Function) {
-			return CanonicalTypeImportStatus::UnmigratedCallable;
-		}
-		if (node.kind == CanonicalTypeKind::Array &&
-			node.flags != CanonicalTypeNodeFlags::KnownArrayBound) {
-			return CanonicalTypeImportStatus::UnmigratedArray;
-		}
-		if (node.kind == CanonicalTypeKind::LValueReference ||
-			node.kind == CanonicalTypeKind::RValueReference ||
-			(node.kind == CanonicalTypeKind::Builtin &&
-				node.builtin == CanonicalBuiltinKind::Void)) {
-			return CanonicalTypeImportStatus::Invalid;
-		}
-		return CanonicalTypeImportStatus::Supported;
-	};
 	for (size_t index = components.size(); index-- > 0;) {
 		const DeclaratorComponent& component = components[index];
 		switch (component.kind) {
@@ -265,14 +266,14 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 				component.payload > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
 				return {{}, CanonicalTypeImportStatus::Invalid};
 			}
-			if (const CanonicalTypeImportStatus status = arrayElementStatus(id);
+			if (const CanonicalTypeImportStatus status = canonicalArrayElementStatus(table, id);
 				status != CanonicalTypeImportStatus::Supported) {
 				return {{}, status};
 			}
 			id = table.array(id, static_cast<size_t>(component.payload));
 			break;
 		case DeclaratorComponentKind::UnknownBoundArray:
-			if (const CanonicalTypeImportStatus status = arrayElementStatus(id);
+			if (const CanonicalTypeImportStatus status = canonicalArrayElementStatus(table, id);
 				status != CanonicalTypeImportStatus::Supported) {
 				return {{}, status};
 			}
@@ -409,21 +410,19 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 
 // Shared pointer/array/reference shaping after a base TypeId and top-level cv
 // have been formed. Keeps parameter-array decay in one mutation-tested place.
-inline TypeId applyCanonicalPointerArrayReference(CanonicalTypeTable& table, TypeId id,
-	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context,
-	bool has_ordinary_array, bool has_pointee_array) {
+inline CanonicalTypeImport applyCanonicalPointerArrayReference(CanonicalTypeTable& table, TypeId id, const TypeSpecifierNode& syntax,
+	CanonicalTypeImportContext context, bool has_ordinary_array, bool has_pointee_array) {
 	if (syntax.has_ordered_declarator()) {
-		const CanonicalTypeImport imported =
-			applyCanonicalOrderedDeclarator(table, id, syntax, context);
-		if (imported.status != CanonicalTypeImportStatus::Supported) {
-			throw InternalError("canonical type adapter: ordered declarator was not importable");
-		}
-		return imported.type;
+		return applyCanonicalOrderedDeclarator(table, id, syntax, context);
 	}
 	const auto reference = syntax.reference_qualifier();
 	if (has_pointee_array) {
 		// T (*)[N] is pointer to array of N T. T (*)[][N] adds an unknown
 		// outer bound, so the unknown wrap goes outside the known dimensions.
+		if (const CanonicalTypeImportStatus status = canonicalArrayElementStatus(table, id);
+			status != CanonicalTypeImportStatus::Supported) {
+			return {{}, status};
+		}
 		if (!syntax.array_dimensions().empty()) {
 			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
 		}
@@ -436,9 +435,19 @@ inline TypeId applyCanonicalPointerArrayReference(CanonicalTypeTable& table, Typ
 		if (has_ordinary_array && context == CanonicalTypeImportContext::FunctionParameter &&
 			reference == ReferenceQualifier::None) {
 			const size_t first_inner_dimension = syntax.has_unsized_outer_array_dimension() ? 0 : 1;
+			if (syntax.array_dimensions().size() > first_inner_dimension) {
+				if (const CanonicalTypeImportStatus status = canonicalArrayElementStatus(table, id);
+					status != CanonicalTypeImportStatus::Supported) {
+					return {{}, status};
+				}
+			}
 			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), first_inner_dimension);
 			id = table.pointer(id);
 		} else if (has_ordinary_array) {
+			if (const CanonicalTypeImportStatus status = canonicalArrayElementStatus(table, id);
+				status != CanonicalTypeImportStatus::Supported) {
+				return {{}, status};
+			}
 			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
 			if (syntax.has_unsized_outer_array_dimension()) {
 				id = table.arrayOfUnknownBound(id);
@@ -448,7 +457,7 @@ inline TypeId applyCanonicalPointerArrayReference(CanonicalTypeTable& table, Typ
 	if (reference != ReferenceQualifier::None) {
 		id = table.reference(id, reference);
 	}
-	return id;
+	return {id, CanonicalTypeImportStatus::Supported};
 }
 
 // Recover the base independently of compatibility pointer/callable categories.
@@ -707,9 +716,12 @@ inline CanonicalTypeImport importPublishedNominalArray(CanonicalTypeTable& table
 	TypeId id = table.qualify(element, syntax.cv_qualifier());
 	// Share the builtin/dependent array shaping so an unknown outer bound is
 	// represented for nominal elements exactly as for builtin ones.
-	id = applyCanonicalPointerArrayReference(table, id, syntax, context, has_ordinary_array, has_pointee_array);
+	const CanonicalTypeImport shaped = applyCanonicalPointerArrayReference(table, id, syntax, context, has_ordinary_array, has_pointee_array);
+	if (shaped.status != CanonicalTypeImportStatus::Supported) {
+		return shaped;
+	}
 	transaction.commit();
-	return {id, CanonicalTypeImportStatus::Supported};
+	return shaped;
 }
 
 inline CanonicalTypeImport importCanonicalCompleteNominalArray(CanonicalTypeTable& table,
@@ -958,13 +970,12 @@ inline CanonicalTypeImport importCanonicalMemberPointerFunctionSignature(
 				return_shape.has_pointee_array_declarator();
 			const bool has_ordinary_array =
 				return_shape.is_array() && !has_pointee_array;
-			return_type_override = applyCanonicalPointerArrayReference(
-				table,
-				return_type_override,
-				return_shape,
-				CanonicalTypeImportContext::Exact,
-				has_ordinary_array,
-				has_pointee_array);
+			const CanonicalTypeImport shaped_return = applyCanonicalPointerArrayReference(table, return_type_override, return_shape, CanonicalTypeImportContext::Exact,
+				has_ordinary_array, has_pointee_array);
+			if (shaped_return.status != CanonicalTypeImportStatus::Supported) {
+				return shaped_return;
+			}
+			return_type_override = shaped_return.type;
 		}
 	}
 	return importCanonicalFunctionSignature(
@@ -1259,9 +1270,7 @@ inline CanonicalTypeImport importCanonicalShapedBase(CanonicalTypeTable& table,
 		}
 	}
 	id = table.qualify(id, syntax.cv_qualifier());
-	id = applyCanonicalPointerArrayReference(
-		table, id, syntax, context, has_ordinary_array, has_pointee_array);
-	return {id, CanonicalTypeImportStatus::Supported};
+	return applyCanonicalPointerArrayReference(table, id, syntax, context, has_ordinary_array, has_pointee_array);
 }
 
 // Opaque type-template-parameter import. Spelling-only bindings stay Unresolved
@@ -1510,10 +1519,12 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 	CanonicalTypeTransaction transaction(table);
 	auto id = table.builtin(builtin);
 	id = table.qualify(id, syntax.cv_qualifier());
-	id = applyCanonicalPointerArrayReference(
-		table, id, syntax, context, has_ordinary_array, has_pointee_array);
+	const CanonicalTypeImport shaped = applyCanonicalPointerArrayReference(table, id, syntax, context, has_ordinary_array, has_pointee_array);
+	if (shaped.status != CanonicalTypeImportStatus::Supported) {
+		return shaped;
+	}
 	transaction.commit();
-	return {id, CanonicalTypeImportStatus::Supported};
+	return shaped;
 }
 
 inline CanonicalTypeImport importCanonicalType(CanonicalTypeTable& table, const TypeSpecifierNode& syntax) {

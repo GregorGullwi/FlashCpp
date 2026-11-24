@@ -452,6 +452,7 @@ void copyTemplateArgInfoScalarFields(TypeInfo::TemplateArgInfo& dst, const TypeI
 	dst.is_pack = src.is_pack;
 	dst.is_array = src.is_array;
 	dst.pointee_array_declarator = src.pointee_array_declarator;
+	dst.has_unsized_outer_array_dimension = src.has_unsized_outer_array_dimension;
 	dst.array_dimensions = src.array_dimensions;
 	dst.array_dimension_parameter_names = src.array_dimension_parameter_names;
 	dst.ordered_declarator = src.ordered_declarator;
@@ -502,6 +503,7 @@ TypeInfo::TemplateArgInfo::TemplateArgInfo(const TemplateArgInfo& other)
 	  is_pack(other.is_pack),
 	  is_array(other.is_array),
 	  pointee_array_declarator(other.pointee_array_declarator),
+	  has_unsized_outer_array_dimension(other.has_unsized_outer_array_dimension),
 	  array_dimensions(other.array_dimensions),
 	  array_dimension_parameter_names(other.array_dimension_parameter_names),
 	  ordered_declarator(other.ordered_declarator),
@@ -533,6 +535,7 @@ TypeInfo::TemplateArgInfo::TemplateArgInfo(TemplateArgInfo&& other) noexcept
 	  is_pack(other.is_pack),
 	  is_array(other.is_array),
 	  pointee_array_declarator(other.pointee_array_declarator),
+	  has_unsized_outer_array_dimension(other.has_unsized_outer_array_dimension),
 	  array_dimensions(std::move(other.array_dimensions)),
 	  array_dimension_parameter_names(std::move(other.array_dimension_parameter_names)),
 	  ordered_declarator(std::move(other.ordered_declarator)),

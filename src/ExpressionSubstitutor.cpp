@@ -172,13 +172,16 @@ void applyResolvedAliasModifiers(TypeSpecifierNode& target, const ResolvedAliasT
 		target.set_reference_qualifier(ReferenceQualifier::RValueReference);
 	}
 	appendArrayDimensions(target, resolved_alias.array_dimensions);
+	if (resolved_alias.has_unsized_outer_array_dimension) {
+		target.set_unsized_outer_array_dimension(true);
+	}
 	if (resolved_alias.function_signature.has_value() && !target.has_function_signature()) {
 		target.set_function_signature(*resolved_alias.function_signature);
 	}
 }
 
 // Reapply modifiers that were written on the outer alias spelling after the alias target is substituted.
-void applyOuterTypeModifiers(TypeSpecifierNode& target, const TypeSpecifierNode& source) {
+void applyOuterTypeModifiers(TypeSpecifierNode& target, const TypeSpecifierNode& source, bool append_array_dimensions) {
 	if (source.has_ordered_declarator() || target.has_ordered_declarator()) {
 		applyOuterDeclaratorShapeForSubstitution(target, source);
 	} else {
@@ -191,7 +194,9 @@ void applyOuterTypeModifiers(TypeSpecifierNode& target, const TypeSpecifierNode&
 		if (source.reference_qualifier() != ReferenceQualifier::None) {
 			target.set_reference_qualifier(source.reference_qualifier());
 		}
-		appendArrayDimensions(target, source.array_dimensions());
+		if (append_array_dimensions) {
+			appendArrayDimensions(target, source.array_dimensions());
+		}
 		if (source.has_function_signature() && !target.has_function_signature()) {
 			target.set_function_signature(source.function_signature());
 		}
@@ -446,7 +451,7 @@ bool ExpressionSubstitutor::tryAppendExpandedTypeArgumentPack(
 	for (const TemplateTypeArg& pack_arg : pack_it->second) {
 		TypeSpecifierNode expanded =
 			makeTypeSpecifierFromTemplateTypeArg(pack_arg, source.token());
-		applyOuterTypeModifiers(expanded, source);
+		applyOuterTypeModifiers(expanded, source, true);
 		expanded.set_pack_expansion(false);
 		TypeSpecifierNode& stored =
 			gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(std::move(expanded));
@@ -921,7 +926,7 @@ TypeSpecifierNode ExpressionSubstitutor::makeSubstitutedTypeFromResolvedTypeInfo
 	if (resolved_alias.type_index.is_valid()) {
 		applyResolvedAliasModifiers(substituted_type, resolved_alias);
 	}
-	applyOuterTypeModifiers(substituted_type, source);
+	applyOuterTypeModifiers(substituted_type, source, true);
 	if (source.is_pack_expansion()) {
 		substituted_type.set_pack_expansion(true);
 	}
@@ -5183,6 +5188,19 @@ ASTNode ExpressionSubstitutor::substituteSizeofExpr(const SizeofExprNode& sizeof
 		// This is sizeof(type) - substitute the type
 		const TypeSpecifierNode& type_spec = type_or_expr.as<TypeSpecifierNode>();
 		TypeSpecifierNode substituted_type = substituteTypeSpecifier(type_spec);
+		// [expr.sizeof]/2: substituting an array of unknown bound makes the
+		// operand invalid exactly as the direct type-id was. Defer keeps a still
+		// dependent operand dependent instead of rejecting it too early.
+		// A requirement or SFINAE probe treats the invalid operand as an
+		// unsatisfied substitution instead of a hard error.
+		if (parser_.currentTemplateSubstitutionFailurePolicy() == TemplateSubstitutionFailurePolicy::HardUse) {
+			std::optional<StringHandle> invalid_type = SemanticValidation::findInvalidSizeofTypeOperand(substituted_type,
+				SemanticValidation::SizeofOperandDependence::Defer);
+			if (invalid_type.has_value()) {
+				throw makeStructuredCompileError(parser_.context_.diagnostics(), DiagnosticId::IncompleteSizeofOperand, DiagnosticSeverity::Error,
+					SourceLocation::fromToken(sizeof_expr.sizeof_token()), "sizeof operand is an incomplete or invalid type", {});
+			}
+		}
 		if (const std::optional<size_t> size_bytes =
 				ConstExpr::tryGetConstexprTypeSizeBytes(substituted_type);
 			size_bytes.has_value() && *size_bytes > 0) {
@@ -5637,9 +5655,13 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 			if (parameter_it->second.is_value) {
 				throw CompileError("Template argument used in a type position did not resolve to a type");
 			}
-			TypeSpecifierNode substituted_type =
-				makeTypeSpecifierFromTemplateTypeArg(parameter_it->second, type.token());
-			applyOuterTypeModifiers(substituted_type, type);
+			const TemplateTypeArg& bound_arg = parameter_it->second;
+			TypeSpecifierNode substituted_type = makeTypeSpecifierFromTemplateTypeArg(bound_arg, makeTemplateArgumentTypeToken(bound_arg, type.token()));
+			const bool projected_array_shape = templateParameterArrayShapeIsProjected(substituted_type, type);
+			applyOuterTypeModifiers(substituted_type, type, !projected_array_shape);
+			if (projected_array_shape) {
+				copyProjectedParameterArrayShape(substituted_type, type);
+			}
 			return substituted_type;
 		}
 	}
@@ -5663,7 +5685,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 			if (resolved_alias.type_index.is_valid() && resolved_alias.type_index != type.type_index()) {
 				TypeSpecifierNode substituted_alias = substituteInType(buildTerminalTypeFromResolvedAlias(resolved_alias, type.token()));
 				applyResolvedAliasModifiers(substituted_alias, resolved_alias);
-				applyOuterTypeModifiers(substituted_alias, type);
+				applyOuterTypeModifiers(substituted_alias, type, true);
 				return substituted_alias;
 			}
 		}
@@ -5745,7 +5767,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 									makeTypeSpecifierFromTemplateTypeArg(
 										*rebound_arg,
 										type.token());
-								applyOuterTypeModifiers(substituted_type, type);
+								applyOuterTypeModifiers(substituted_type, type, true);
 								return substituted_type;
 							}
 						}
@@ -5765,7 +5787,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 							if (substituted_type.category() != TypeCategory::Invalid &&
 								substituted_type.category() != TypeCategory::Template &&
 								!isPlaceholderAutoType(substituted_type.category())) {
-								applyOuterTypeModifiers(substituted_type, type);
+								applyOuterTypeModifiers(substituted_type, type, true);
 								return substituted_type;
 							}
 						}
@@ -5809,7 +5831,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 					if (materialized_type.resolved_type_specifier.has_value()) {
 						TypeSpecifierNode substituted_type =
 							*materialized_type.resolved_type_specifier;
-						applyOuterTypeModifiers(substituted_type, type);
+						applyOuterTypeModifiers(substituted_type, type, true);
 						return substituted_type;
 					}
 					if (resolved_type_info != nullptr) {
@@ -5820,25 +5842,25 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 		}
 	}
 
-	if (std::optional<TypeSpecifierNode> canonical_builtin =
-			makeCanonicalBuiltinTypeSpecifier(type)) {
-		// makeCanonicalBuiltinTypeSpecifier rebuilds pointee sugar but drops
-		// member-pointer owner identity and ordered declarator shape.
-		if (type.has_ordered_declarator() &&
-			!canonical_builtin->has_ordered_declarator()) {
-			applyOuterDeclaratorShapeForSubstitution(*canonical_builtin, type);
-		}
-		if (type.has_member_class()) {
-			canonical_builtin->set_member_class_name(type.member_class_name());
-			if (type.has_member_class_type_id()) {
-				canonical_builtin->set_member_class_type_id(
-					type.member_class_type_id());
-			} else if (type.has_member_class_entity()) {
-				canonical_builtin->set_member_class_entity(
-					type.member_class_entity());
+	if (typeSpecifierSpellsBuiltinType(type)) {
+		std::optional<TypeSpecifierNode> canonical_builtin = makeCanonicalBuiltinTypeSpecifier(type);
+		if (canonical_builtin.has_value()) {
+			// makeCanonicalBuiltinTypeSpecifier rebuilds pointee sugar but drops
+			// member-pointer owner identity and ordered declarator shape.
+			if (type.has_ordered_declarator() &&
+				!canonical_builtin->has_ordered_declarator()) {
+				applyOuterDeclaratorShapeForSubstitution(*canonical_builtin, type);
 			}
+			if (type.has_member_class()) {
+				canonical_builtin->set_member_class_name(type.member_class_name());
+				if (type.has_member_class_type_id()) {
+					canonical_builtin->set_member_class_type_id(type.member_class_type_id());
+				} else if (type.has_member_class_entity()) {
+					canonical_builtin->set_member_class_entity(type.member_class_entity());
+				}
+			}
+			return *canonical_builtin;
 		}
-		return *canonical_builtin;
 	}
 
 	// First, check whether this type spelling names a template parameter that needs substitution.
@@ -5866,7 +5888,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 			}
 			// Reuse the shared outer-modifier path so ordered declarators,
 			// member-pointer owners, and other surface wrappers survive.
-			applyOuterTypeModifiers(builtin_spec, type);
+			applyOuterTypeModifiers(builtin_spec, type, true);
 			return builtin_spec;
 		}
 
@@ -5921,16 +5943,19 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 								type.token(),
 								type.cv_qualifier(),
 								ReferenceQualifier::None);
-							applyOuterTypeModifiers(resolved_type, type);
+							applyOuterTypeModifiers(resolved_type, type, true);
 							return resolved_type;
 						}
 					}
 				}
 			}
 
-			TypeSpecifierNode substituted_type =
-				makeTypeSpecifierFromTemplateTypeArg(subst, type.token());
-			applyOuterTypeModifiers(substituted_type, type);
+			TypeSpecifierNode substituted_type = makeTypeSpecifierFromTemplateTypeArg(subst, makeTemplateArgumentTypeToken(subst, type.token()));
+			const bool projected_array_shape = templateParameterArrayShapeIsProjected(substituted_type, type);
+			applyOuterTypeModifiers(substituted_type, type, !projected_array_shape);
+			if (projected_array_shape) {
+				copyProjectedParameterArrayShape(substituted_type, type);
+			}
 			return substituted_type;
 		}
 

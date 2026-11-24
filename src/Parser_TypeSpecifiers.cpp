@@ -5179,6 +5179,9 @@ ParseResult Parser::parse_type_specifier() {
 					type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(
 						resolved_alias.array_dimensions);
 				}
+				if (resolved_alias.has_unsized_outer_array_dimension) {
+					type_spec_node.as<TypeSpecifierNode>().set_unsized_outer_array_dimension(true);
+				}
 			}
 			if (resolved_alias.reference_qualifier != ReferenceQualifier::None) {
 				type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(resolved_alias.reference_qualifier);
@@ -5256,6 +5259,9 @@ ParseResult Parser::parse_type_specifier() {
 					} else if (resolved_alias.isArray()) {
 						type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(
 							resolved_alias.array_dimensions);
+					}
+					if (resolved_alias.has_unsized_outer_array_dimension) {
+						type_spec_node.as<TypeSpecifierNode>().set_unsized_outer_array_dimension(true);
 					}
 				}
 				// Add reference qualifiers from typedef

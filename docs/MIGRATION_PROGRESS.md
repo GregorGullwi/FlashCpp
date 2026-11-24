@@ -562,17 +562,21 @@ remaining pattern schemas by identity, and remove the name fallback.
      speculative parsing. Production speculative parsing is not the scratch
      transaction. sizeof reads a projected array extent through the canonical
      array shape: an alias whose declared target is a template parameter keeps
-     that parameter's structural identity through alias resolution, and an array
-     template argument with no recorded bound materializes as the array of
-     unknown bound. Unknown-bound arrays answer "no object size" instead of an
-     element-sized flat read. An ordered-declarator sizeof operand is still
+     that parameter's structural identity through alias resolution, and an
+     explicit array template argument keeps the omitted outermost bound distinct
+     from a sized array through storage, materialization, and canonical import.
+     Unknown-bound arrays answer "no object size" instead of an element-sized
+     flat read, and a function-template parameter is only canonicalized as a
+     builtin when its spelling really is a builtin, so an explicit `int[]` or
+     `long long[][3]` argument reaches `sizeof` and requirement validity as an
+     array. An ordered-declarator sizeof operand is still
      sized from `DeclaratorComponent::payload` by `getTypeSpecSizeBits` without
      consulting the canonical table; that declarator spine is a structural
      second store, not the flat projection, so the reader gate does not count
      it. Simple requirements consume the same sizeof-operand rule as the sizeof
-     expression sites instead of a second validity check. Remaining
-     template-argument gaps are in
-     [known issues](KNOWN_ISSUES.md#array-template-arguments-cannot-carry-an-omitted-outer-bound).
+     expression sites instead of a second validity check. Remaining array-bound
+     gaps are in
+     [known issues](KNOWN_ISSUES.md#some-array-shapes-still-lose-an-omitted-bound).
      Pointer presence, depth, and per-level cv now come from one canonical query,
      `canonicalPointerShape`, which reports one shape for callable pointers
      (depth 1) and member pointers (depth 0 plus a member-pointer fact). The flat

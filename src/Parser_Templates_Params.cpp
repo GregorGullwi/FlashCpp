@@ -3139,9 +3139,10 @@ try_type_template_argument_parse:
 			}
 		}
 
-		// Check for array declarators (e.g., T[], T[N])
+		// Check for array declarators (e.g., T[], T[N], T[][N])
 		bool is_array_type = false;
-		std::optional<size_t> parsed_array_size;
+		bool parsed_has_unsized_outer_array_dimension = false;
+		std::vector<size_t> parsed_array_dimensions;
 		TemplateParamNameVector parsed_array_dimension_parameter_names;
 		for (const ASTNode& bound_expression : type_id_array_bound_expressions) {
 			StringHandle dimension_parameter_name{};
@@ -3168,7 +3169,8 @@ try_type_template_argument_parse:
 			advance(); // consume '['
 			StringHandle dimension_parameter_name{};
 
-			// Optional size expression
+			// Optional size expression. [dcl.array]/1: only the outermost
+			// bound may be omitted; an omitted bound is not a missing extent.
 			if (peek() != "]"_tok) {
 				auto size_result = parse_expression(0, ExpressionContext::TemplateTypeArg);
 				if (size_result.is_error() || !size_result.node().has_value()) {
@@ -3179,12 +3181,12 @@ try_type_template_argument_parse:
 
 				if (auto const_size = tryEvaluateConstantExpression(*size_result.node(), ConstantEvaluationMode::Speculative)) {
 					if (const_size->value >= 0) {
-						parsed_array_size = static_cast<size_t>(const_size->value);
+						parsed_array_dimensions.push_back(static_cast<size_t>(const_size->value));
 					}
 				} else {
 					// Size expression present but not evaluable (e.g., template parameter N)
 					// Use SIZE_MAX as a sentinel to indicate "sized array with unknown size"
-					parsed_array_size = SIZE_MAX;
+					parsed_array_dimensions.push_back(SIZE_MAX);
 				}
 				if (size_result.node()->is<ExpressionNode>()) {
 					const ExpressionNode& dimension_expr = size_result.node()->as<ExpressionNode>();
@@ -3202,6 +3204,11 @@ try_type_template_argument_parse:
 						}
 					}
 				}
+			} else {
+				// Matches parseArrayDeclaratorSuffix: an omitted bound only
+				// contributes the unknown outer bound.
+				parsed_array_dimensions.clear();
+				parsed_has_unsized_outer_array_dimension = true;
 			}
 
 			if (!consume("]"_tok)) {
@@ -3213,7 +3220,14 @@ try_type_template_argument_parse:
 		}
 
 		if (is_array_type) {
-			type_node.set_array(true, parsed_array_size);
+			if (parsed_array_dimensions.empty()) {
+				type_node.set_array(true, std::nullopt);
+			} else {
+				type_node.set_array_dimensions(parsed_array_dimensions);
+			}
+			if (parsed_has_unsized_outer_array_dimension) {
+				type_node.set_unsized_outer_array_dimension(true);
+			}
 		}
 
 		// Check for pack expansion (...)
