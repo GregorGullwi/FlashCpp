@@ -300,10 +300,9 @@ const DeclarationNode& requireCallDeclaration(const CallInfo& call_info, const c
 
 } // namespace
 
-void applyDeclarationArrayBoundsToTypeSpec(
-	const DeclarationNode& decl,
-	TypeSpecifierNode& type_spec,
-	SemanticAnalysis& sema) {
+namespace {
+
+void applyDeclarationArrayBoundsToTypeSpecWithContext(const DeclarationNode& decl, TypeSpecifierNode& type_spec, ConstExpr::EvaluationContext& eval_ctx) {
 	if (!decl.is_array()) {
 		return;
 	}
@@ -311,15 +310,11 @@ void applyDeclarationArrayBoundsToTypeSpec(
 	// the pointee. Store them without turning the declared entity into an
 	// array object.
 	if (type_spec.has_pointee_array_declarator()) {
-		if (FrontendContext* active = FrontendContext::active()) {
-			noteCanonicalShapeImport(active->canonicalTypes(), type_spec, CanonicalShapeSite::SemanticAnalysis_ArrayExtent);
-		}
 		if (!type_spec.array_dimensions().empty()) {
 			return;
 		}
 		std::vector<size_t> pointee_dimensions;
 		pointee_dimensions.reserve(decl.array_dimension_count());
-		ConstExpr::EvaluationContext eval_ctx(gSymbolTable, sema);
 		for (const auto& dim_expr : decl.array_dimensions()) {
 			auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
 			if (!eval_result.success() || eval_result.as_int() <= 0) {
@@ -338,13 +333,25 @@ void applyDeclarationArrayBoundsToTypeSpec(
 
 	std::vector<size_t> resolved_dimensions;
 	resolved_dimensions.reserve(decl.array_dimension_count());
-	ConstExpr::EvaluationContext eval_ctx(gSymbolTable, sema);
 	for (const auto& dim_expr : decl.array_dimensions()) {
 		auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
 		if (!eval_result.success() || eval_result.as_int() <= 0) {
 			return;
 		}
 		resolved_dimensions.push_back(static_cast<size_t>(eval_result.as_int()));
+	}
+
+	if (decl.is_unsized_array()) {
+		// [dcl.array]/1: keep the omitted outer bound on the declared type so
+		// sizeof and requirement checks see Array(unknown, known...). An array
+		// whose bound was already supplied (an explicit or inferred outer
+		// extent on the type specifier) returned above.
+		type_spec.set_array_dimensions(resolved_dimensions);
+		if (resolved_dimensions.empty()) {
+			type_spec.set_array(true);
+		}
+		type_spec.set_unsized_outer_array_dimension(true);
+		return;
 	}
 
 	if (!resolved_dimensions.empty()) {
@@ -352,53 +359,25 @@ void applyDeclarationArrayBoundsToTypeSpec(
 	}
 }
 
-void applyDeclarationArrayBoundsToTypeSpec(
-	const DeclarationNode& decl,
-	TypeSpecifierNode& type_spec,
-	Parser& parser) {
-	if (!decl.is_array()) {
-		return;
-	}
-	// C++20 [dcl.ptr]/1: pointer-to-array declarators carry their bounds on
-	// the pointee. Store them without turning the declared entity into an
-	// array object.
-	if (type_spec.has_pointee_array_declarator()) {
-		if (!type_spec.array_dimensions().empty()) {
-			return;
-		}
-		std::vector<size_t> pointee_dimensions;
-		pointee_dimensions.reserve(decl.array_dimension_count());
-		ConstExpr::EvaluationContext eval_ctx(gSymbolTable, parser);
-		for (const auto& dim_expr : decl.array_dimensions()) {
-			auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
-			if (!eval_result.success() || eval_result.as_int() <= 0) {
-				return;
-			}
-			pointee_dimensions.push_back(static_cast<size_t>(eval_result.as_int()));
-		}
-		if (!pointee_dimensions.empty()) {
-			type_spec.set_pointee_array_dimensions(pointee_dimensions);
-		}
-		return;
-	}
-	if (type_spec.is_array()) {
-		return;
-	}
+} // namespace
 
-	std::vector<size_t> resolved_dimensions;
-	resolved_dimensions.reserve(decl.array_dimension_count());
+void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpecifierNode& type_spec, ConstExpr::EvaluationContext& eval_ctx) {
+	applyDeclarationArrayBoundsToTypeSpecWithContext(decl, type_spec, eval_ctx);
+}
+
+void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpecifierNode& type_spec, SemanticAnalysis& sema) {
+	if (decl.is_array() && type_spec.has_pointee_array_declarator()) {
+		if (FrontendContext* active = FrontendContext::active()) {
+			noteCanonicalShapeImport(active->canonicalTypes(), type_spec, CanonicalShapeSite::SemanticAnalysis_ArrayExtent);
+		}
+	}
+	ConstExpr::EvaluationContext eval_ctx(gSymbolTable, sema);
+	applyDeclarationArrayBoundsToTypeSpecWithContext(decl, type_spec, eval_ctx);
+}
+
+void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpecifierNode& type_spec, Parser& parser) {
 	ConstExpr::EvaluationContext eval_ctx(gSymbolTable, parser);
-	for (const auto& dim_expr : decl.array_dimensions()) {
-		auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
-		if (!eval_result.success() || eval_result.as_int() <= 0) {
-			return;
-		}
-		resolved_dimensions.push_back(static_cast<size_t>(eval_result.as_int()));
-	}
-
-	if (!resolved_dimensions.empty()) {
-		type_spec.set_array_dimensions(resolved_dimensions);
-	}
+	applyDeclarationArrayBoundsToTypeSpecWithContext(decl, type_spec, eval_ctx);
 }
 
 namespace {

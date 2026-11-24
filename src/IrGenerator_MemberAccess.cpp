@@ -3,6 +3,7 @@
 #include "MigrationStats.h"
 #include "SemanticAnalysis.h"
 #include "CallNodeHelpers.h"
+#include "Parser_FunctionTypeHelpers.h"
 #include "TypeSizeQuery.h"
 #include "TypeTraitEvaluator.h"
 #include "CanonicalShapeTelemetry.h"
@@ -34,6 +35,12 @@ static std::optional<size_t> tryGetTypeSizeForSizeof(const TypeSpecifierNode& ty
 		std::vector<size_t> extent_storage;
 		const std::span<const size_t> dimensions = copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), type_spec, extent_storage);
 		for (size_t dimension : dimensions) {
+			// The canonical extent query stores an unknown bound as 0. Such an
+			// array has no object size ([expr.sizeof]/2); never guess one from
+			// the element type.
+			if (dimension == 0) {
+				return std::nullopt;
+			}
 			total_size *= dimension;
 		}
 		return total_size;
@@ -44,6 +51,21 @@ static std::optional<size_t> tryGetTypeSizeForSizeof(const TypeSpecifierNode& ty
 		return std::nullopt;
 	}
 	return static_cast<size_t>(size_bits) / 8;
+}
+
+// The declared entity's complete type: the specifier plus the declaration's
+// array bounds, including an omitted outer bound. sizeof consults this single
+// canonical shape instead of re-evaluating declaration-side bound expressions.
+static TypeSpecifierNode declaredEntityTypeSpecifier(const DeclarationNode& decl, ConstExpr::EvaluationContext& eval_ctx) {
+	TypeSpecifierNode declared_type = decl.type_specifier_node();
+	applyDeclarationArrayBoundsToTypeSpec(decl, declared_type, eval_ctx);
+	if (decl.is_unsized_array() && decl.is_array_object() && !declared_type.is_array() && !declared_type.has_ordered_declarator()) {
+		// An omitted-bound array entity whose bound could not be folded into its
+		// type would otherwise be sized from the element type. Fail closed
+		// instead of guessing an object size.
+		throw InternalError("array declaration bounds were not resolved into the declared type");
+	}
+	return declared_type;
 }
 
 static bool orderedSpecifierIsArrayObject(const TypeSpecifierNode& type_spec) {
@@ -2267,67 +2289,27 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	return makeMemberResult(SizeInBits{result_bits}, result_var, result_type, result_depth, ValueStorage::ContainsData);
 }
 
-std::optional<size_t> AstToIr::calculateArraySize(const DeclarationNode& decl) {
-	// C++20 [dcl.ptr]/1: a pointer-to-array entity such as T (*p)[N] is a
-	// scalar pointer object, not an array object, so its sizeof is the pointer
-	// size and array sizing must not apply.
-	if (!decl.is_array_object()) {
-		return std::nullopt;
-	}
-
-	const TypeSpecifierNode& type_spec = decl.type_specifier_node();
-	TypeSpecifierNode element_type = type_spec;
-	element_type.set_array_dimensions({});
-	size_t element_size = 0;
-	if (std::optional<size_t> resolved_element_size = tryGetTypeSizeForSizeof(element_type)) {
-		element_size = *resolved_element_size;
-	}
-
-	if (element_size == 0) {
-		return std::nullopt;
-	}
-
-	// Get array size - support multidimensional arrays
-	const auto& dims = decl.array_dimensions();
-	if (dims.empty()) {
-		return std::nullopt;
-	}
-
-	// Evaluate all dimension size expressions and compute total element count
-	size_t array_count = 1;
-	ConstExpr::EvaluationContext ctx = makeEvalContext(symbol_table);
-
-	for (const auto& dim_expr : dims) {
-		auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
-		if (!eval_result.success()) {
-			return std::nullopt;
-		}
-
-		long long dim_size = eval_result.as_int();
-		if (dim_size <= 0) {
-			return std::nullopt;
-		}
-
-		// Check for potential overflow in multiplication
-		size_t dim_size_u = static_cast<size_t>(dim_size);
-		if (array_count > SIZE_MAX / dim_size_u) {
-			FLASH_LOG(Codegen, Warning, "Array dimension count calculation would overflow");
-			return std::nullopt;
-		}
-		array_count *= dim_size_u;
-	}
-
-	// Check for potential overflow in multiplication with element size
-	if (array_count > SIZE_MAX / element_size) {
-		FLASH_LOG(Codegen, Warning, "Array size calculation would overflow: ", array_count, " * ", element_size);
-		return std::nullopt;
-	}
-
-	return element_size * array_count;
-}
-
 ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 	size_t size_in_bytes = 0;
+
+	// The declaration's complete type, including an omitted outer array bound,
+	// is the canonical shape for sizeof of an identifier. An unknown bound or
+	// another incomplete operand is invalid exactly as in the type-id form.
+	auto sizeofDeclarationSize = [&](const DeclarationNode& decl, const Token& sizeof_token) -> size_t {
+		ConstExpr::EvaluationContext eval_ctx = makeEvalContext(symbol_table);
+		const TypeSpecifierNode declared_type = declaredEntityTypeSpecifier(decl, eval_ctx);
+		if (SemanticValidation::findInvalidSizeofTypeOperand(declared_type,
+				SemanticValidation::SizeofOperandDependence::Reject)
+				.has_value()) {
+			throw makeStructuredCompileError(context_->diagnostics(), DiagnosticId::IncompleteSizeofOperand, DiagnosticSeverity::Error,
+				SourceLocation::fromToken(sizeof_token), "sizeof operand is an incomplete or invalid type", {});
+		}
+		const std::optional<size_t> resolved_size = tryGetOrderedAwareTypeSize(declared_type);
+		if (!resolved_size.has_value()) {
+			throw InternalError("sizeof declaration has no canonical object size");
+		}
+		return *resolved_size;
+	};
 
 	// Helper: look up sizeof a struct member (static or non-static) by qualified name.
 	// Returns the member size in bytes, or 0 if not found.
@@ -2405,11 +2387,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 			// Look up the identifier in the symbol table
 			const DeclarationNode* decl = lookupDeclaration(identifier);
 			if (decl) {
-				auto array_size = calculateArraySize(*decl);
-				if (array_size.has_value()) {
-					// Return sizeof result for array
-					return makeSizeTExprResult(*array_size);
-				}
+				return makeSizeTExprResult(sizeofDeclarationSize(*decl, sizeofNode.sizeof_token()));
 			}
 
 			// Handle template parameters in member functions with trailing requires clauses
@@ -2454,19 +2432,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 				}
 			}
 			if (decl) {
-				// Check if it's an array
-				auto array_size = calculateArraySize(*decl);
-				if (array_size.has_value()) {
-					// Return sizeof result for array
-					return makeSizeTExprResult(*array_size);
-				}
-
-				// For regular variables, get the type size from the declaration
-				const TypeSpecifierNode& var_type = decl->type_specifier_node();
-				if (std::optional<size_t> resolved_size = tryGetTypeSizeForSizeof(var_type)) {
-					size_in_bytes = *resolved_size;
-					return makeSizeTExprResult(size_in_bytes);
-				}
+				return makeSizeTExprResult(sizeofDeclarationSize(*decl, sizeofNode.sizeof_token()));
 			}
 		}
 		// Special handling for member access: sizeof(s.member) where member is an array

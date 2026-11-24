@@ -7,10 +7,19 @@
 
 class Parser;
 
+namespace ConstExpr {
+struct EvaluationContext;
+}
+
 void applyDeclarationArrayBoundsToTypeSpec(
 	const DeclarationNode& decl,
 	TypeSpecifierNode& type_spec,
 	Parser& parser);
+
+// Codegen and constant evaluation already hold an evaluation context with the
+// correct local and global symbol tables. The context overload keeps bound
+// resolution in one place instead of rebuilding a global-only context.
+void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpecifierNode& type_spec, ConstExpr::EvaluationContext& eval_ctx);
 
 namespace FlashCpp::ParserFunctionTypeHelpers {
 

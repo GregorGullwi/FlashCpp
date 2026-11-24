@@ -3165,6 +3165,7 @@ try_type_template_argument_parse:
 			parsed_array_dimension_parameter_names.push_back(dimension_parameter_name);
 		}
 		while (peek() == "["_tok) {
+			const Token opening_bracket_token = peek_info();
 			is_array_type = true;
 			advance(); // consume '['
 			StringHandle dimension_parameter_name{};
@@ -3206,7 +3207,18 @@ try_type_template_argument_parse:
 				}
 			} else {
 				// Matches parseArrayDeclaratorSuffix: an omitted bound only
-				// contributes the unknown outer bound.
+				// contributes the unknown outer bound. A later omitted bound is
+				// misplaced, so report it at the bracket instead of collapsing the
+				// shape to T[].
+				if (!parsed_array_dimensions.empty() || parsed_has_unsized_outer_array_dimension) {
+					if (template_instantiation_mode_ == TemplateInstantiationMode::SoftProbe) {
+						restore_token_position(saved_pos);
+						last_failed_template_arg_parse_handle_ = saved_pos;
+						return std::nullopt;
+					}
+					throw makeStructuredCompileError(context_.diagnostics(), DiagnosticId::OmittedArrayBoundNotOutermost, DiagnosticSeverity::Error,
+						lexer_.getSourceLocation(opening_bracket_token), "Only the outermost array bound may be omitted", std::span<const DiagnosticArgument>{});
+				}
 				parsed_array_dimensions.clear();
 				parsed_has_unsized_outer_array_dimension = true;
 			}

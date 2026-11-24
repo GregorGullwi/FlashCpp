@@ -889,17 +889,17 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 		}
 	}
 	while (peek() == "["_tok) {
+		const Token opening_bracket_token = peek_info();
 		advance(); // consume '['
 
 		// Check for empty brackets (unsized array, size inferred from initializer)
-		// Only the first dimension can be unsized
+		// Only the outermost array bound may be omitted ([dcl.array]/1).
 		if (peek() == "]"_tok) {
-			if (array_dimensions.empty()) {
-				// Empty brackets - array size will be inferred from initializer
-				is_unsized_array = true;
-			} else {
-				return ParseResult::error("Only the first array dimension can be unsized", current_token_);
+			if (!array_dimensions.empty() || is_unsized_array) {
+				return error(DiagnosticId::OmittedArrayBoundNotOutermost, opening_bracket_token, "Only the outermost array bound may be omitted");
 			}
+			// Empty brackets - array size will be inferred from initializer
+			is_unsized_array = true;
 		} else {
 			// Parse the array size expression
 			ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
@@ -983,6 +983,12 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 				decl_node.as<DeclarationNode>().set_unsized_array(true);
 			}
 		} else if (is_unsized_array) {
+			// An array-alias specifier already carries its inner extents. The
+			// omitted declarator bound is a new unknown outer bound around them,
+			// so A a[] for A=int[3] declares int[][3], not int[3].
+			if (TypeSpecifierNode* spec = node->get_if<TypeSpecifierNode>(); spec != nullptr && spec->is_array()) {
+				spec->set_unsized_outer_array_dimension(true);
+			}
 			// Mark as an unsized array - size will be inferred from initializer
 			decl_node = emplace_node<DeclarationNode>(*node, identifier_token);
 			decl_node.as<DeclarationNode>().set_unsized_array(true);
@@ -1213,6 +1219,7 @@ ParseResult Parser::parseArrayDeclaratorSuffix(TypeSpecifierNode& type_spec, std
 	const bool is_alias_template = declarator_context == ArrayDeclaratorContext::AliasTemplate;
 	std::vector<size_t> dimensions;
 	bool has_unsized_outer_dimension = false;
+	bool saw_omitted_bound = false;
 	while (peek() == "["_tok) {
 		const Token opening_bracket_token = peek_info();
 		ParsedArrayBound bound;
@@ -1227,6 +1234,13 @@ ParseResult Parser::parseArrayDeclaratorSuffix(TypeSpecifierNode& type_spec, std
 			array_bound_expressions->push_back(bound.expression);
 		}
 		if (bound.kind == ArrayBoundKind::Omitted) {
+			// [dcl.array]/1: only the outermost array bound may be omitted. A later
+			// omitted bound is misplaced, so report it where it is written instead
+			// of collapsing the shape to T[].
+			if (!dimensions.empty() || saw_omitted_bound) {
+				return error(DiagnosticId::OmittedArrayBoundNotOutermost, opening_bracket_token, "Only the outermost array bound may be omitted");
+			}
+			saw_omitted_bound = true;
 			dimensions.clear();
 			has_unsized_outer_dimension = !is_alias_template;
 			type_spec.set_array(true);
@@ -2313,14 +2327,14 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 		return error(DiagnosticId::FunctionTypeDeclarator, identifier, "An array cannot have a function type as its element type");
 	}
 	while (peek() == "["_tok) {
+		const Token opening_bracket_token = peek_info();
 		advance(); // consume '['
 
 		if (peek() == "]"_tok) {
-			if (array_dimensions.empty()) {
-				is_unsized_array = true;
-			} else {
-				return ParseResult::error("Only the first array dimension can be unsized", current_token_);
+			if (!array_dimensions.empty() || is_unsized_array) {
+				return error(DiagnosticId::OmittedArrayBoundNotOutermost, opening_bracket_token, "Only the outermost array bound may be omitted");
 			}
+			is_unsized_array = true;
 		} else {
 			auto size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (size_result.is_error()) {

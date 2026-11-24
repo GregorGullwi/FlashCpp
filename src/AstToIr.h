@@ -541,7 +541,6 @@ private:
 		bool& is_pointer_dereference);
 	ExprResult generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
 									  ExpressionContext context = ExpressionContext::Load);
-	std::optional<size_t> calculateArraySize(const DeclarationNode& decl);
 	ExprResult generateSizeofIr(const SizeofExprNode& sizeofNode);
 	ExprResult generateAlignofIr(const AlignofExprNode& alignofNode);
 	ExprResult generateOffsetofIr(const OffsetofExprNode& offsetofNode);

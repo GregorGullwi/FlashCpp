@@ -339,31 +339,22 @@ non-projectable shapes;
 remove this entry when those consumers migrate and the compatibility projection
 fields are deleted.
 
-## Some array shapes still lose an omitted bound
+## Omitted array bounds live on four legacy template-argument representations
 
-Explicit array template arguments now keep the omitted outermost bound distinct
-from a sized array. `TemplateTypeArg`, `TemplateArgInfo`, `TypeIndexArg`, and
-`ResolvedAliasTypeInfo` carry `has_unsized_outer_array_dimension` beside the
-known inner extents, the template-argument materializers restore it onto a
-`TypeSpecifierNode`, and canonical import sees `Array(unknown, Array(N, T))`.
-`sizeof(T)` and `requires { sizeof(T); }` in a function or class template
-therefore reject `long long[][3]` and `int[]` instead of reporting the inner or
-element extent. That fact now lives on four legacy argument representations;
-boundary 6 replaces them with the canonical template-argument identity, and
-until then every new representation of a template argument must carry the
-omitted-bound bit or `sizeof` and requirement validity will disagree again.
+`sizeof(T)` and `requires { sizeof(T); }` in a function or class template reject
+`long long[][3]` and `int[]` instead of reporting the inner or element extent,
+and `sizeof(identifier)` of a declaration with an omitted bound reaches the same
+canonical `Array(unknown, Array(N, T))` shape in codegen and constant
+evaluation. A misplaced omitted bound is diagnosed where it is written in
+declarators, type-ids, and template arguments, so it cannot collapse to `T[]`
+and surface later as an unknown-bound `sizeof`.
 
-Two shapes still cannot restore or diagnose the bound:
-
-- `sizeof(identifier)` for a variable declared with an omitted bound
-  (`int a[]; sizeof(a);`, `long long g[][3]; sizeof(g);`) still reports the
-  element or inner-array size. The declaration-side array-bound expressions are
-  the source there, and the codegen and constexpr identifier paths do not consult
-  the unknown-bound flag.
-- An omitted bound that is not the outermost one is not diagnosed as such.
-  `int[3][]` and `T[3][]` collapse to `int[]`/`T[]` in both the direct type-id
-  and template-argument parsers, so the ill-formed inner bound is only caught as
-  an unknown-bound `sizeof` rather than as a misplaced omitted bound.
+The remaining gap is representational: `TemplateTypeArg`, `TemplateArgInfo`,
+`TypeIndexArg`, and `ResolvedAliasTypeInfo` each carry
+`has_unsized_outer_array_dimension` beside the known inner extents. Boundary 6
+replaces them with the canonical template-argument identity, and until then
+every new representation of a template argument must carry the omitted-bound
+bit or `sizeof` and requirement validity will disagree again.
 
 ## Alias template-parameter facts are projected per materialization site
 
@@ -530,7 +521,7 @@ pointer cv difference, or a different array extent does not.
 argument identity and the deletion of the flat `TemplateArgInfo`/`TemplateTypeArg`
 projection; until then these are writers for a consumer that is not shape-based.
 
-The inventory is 811 reads across 67 files.
+The inventory is 808 reads across 67 files.
 
 ## Decltype operator overload result typing is parser-owned
 
