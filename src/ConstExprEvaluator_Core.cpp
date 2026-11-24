@@ -12,6 +12,7 @@
 #include "CallNodeHelpers.h"
 #include "DeclarationBuilder.h"
 #include "FrontendContext.h"
+#include "Parser_FunctionTypeHelpers.h"
 #include "SemanticAnalysis.h"
 #include "StringLiteralTokenUtils.h"
 #include "TemplateArgumentMaterialization.h"
@@ -160,65 +161,6 @@ std::optional<EvalResult> tryEvaluateSimpleConstexprTypeHelperCall(
 	return EvalResult::from_bool(trait.value);
 }
 
-
-// Returns the total element count for an array declaration when constexpr evaluation can
-// determine it immediately. Handles both explicit dimensions (`int a[2][3]`) and
-// inferred-size arrays backed by an initializer list (`int a[] = {1, 2, 3}`).
-// Returns std::nullopt when any dimension cannot be evaluated or when the total would overflow.
-std::optional<size_t> tryGetConstexprArrayElementCount(const DeclarationNode& decl, const ASTNode& symbol, EvaluationContext& context) {
-	{
-		const auto& type_spec = decl.type_specifier_node();
-		if (type_spec.is_array() && !type_spec.has_unsized_outer_array_dimension()) {
-			std::vector<size_t> extent_storage;
-			const std::span<const size_t> extents = copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), type_spec, extent_storage);
-			if (!extents.empty()) {
-				size_t total_count = 1;
-				for (size_t dim_count : extents) {
-					if (dim_count == 0 || dim_count > std::numeric_limits<size_t>::max() / total_count) {
-						return std::nullopt;
-					}
-					total_count *= dim_count;
-				}
-				return total_count;
-			}
-		}
-	}
-
-	const auto& dims = decl.array_dimensions();
-	if (!dims.empty()) {
-		size_t total_count = 1;
-		for (const auto& dim_expr : dims) {
-			auto eval_result = Evaluator::evaluate(dim_expr, context);
-			if (!eval_result.success()) {
-				return std::nullopt;
-			}
-			const long long dim_value = eval_result.as_int();
-			if (dim_value <= 0 ||
-				static_cast<unsigned long long>(dim_value) > std::numeric_limits<size_t>::max()) {
-				return std::nullopt;
-			}
-			const size_t dim_count = static_cast<size_t>(dim_value);
-			if (dim_count > std::numeric_limits<size_t>::max() / total_count) {
-				return std::nullopt;
-			}
-			total_count *= dim_count;
-		}
-		return total_count;
-	}
-
-	if (decl.is_unsized_array() && symbol.is<VariableDeclarationNode>()) {
-		const auto& var_decl = symbol.as<VariableDeclarationNode>();
-		if (var_decl.initializer().has_value() && var_decl.initializer()->is<InitializerListNode>()) {
-			const size_t initializer_count = var_decl.initializer()->as<InitializerListNode>().initializers().size();
-			if (initializer_count == 0) {
-				return std::nullopt;
-			}
-			return initializer_count;
-		}
-	}
-
-	return std::nullopt;
-}
 
 std::optional<size_t> tryGetConstexprTypeAlignment(const TypeSpecifierNode& type_spec) {
 	TypeSpecifierNode aligned_type = type_spec;
@@ -2385,6 +2327,19 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 	return dereference_constexpr_pointer(var_name, ptr.source_declaration, context, offset);
 }
 
+static TypeSpecifierNode declaredSizeofTypeSpecifier(const DeclarationNode& decl, EvaluationContext& context) {
+	TypeSpecifierNode declared_type = decl.type_specifier_node();
+	applyDeclarationArrayBoundsToTypeSpec(decl, declared_type, context);
+	return declared_type;
+}
+
+// An omitted-bound array entity whose bound did not reach the declared type
+// would otherwise be sized from its element type. Fail closed instead of
+// guessing.
+static bool hasUnrepresentedArrayShape(const DeclarationNode& decl, const TypeSpecifierNode& declared_type) {
+	return decl.is_unsized_array() && decl.is_array_object() && !declared_type.is_array() && !declared_type.has_ordered_declarator();
+}
+
 EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, EvaluationContext& context) {
 	// sizeof is always a constant expression
 	// Get the actual size from the type
@@ -2468,25 +2423,26 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 				if (symbol.has_value()) {
 					const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 					if (decl) {
-						// Check if it's an array object.  A pointer-to-array
-						// entity such as T (*p)[N] is a scalar pointer
-						// ([dcl.ptr]/1), so array sizing must not apply.
-						if (decl->has_outer_array_extents()) {
-							const auto& array_type_spec = decl->type_specifier_node();
-							size_t element_size = get_typespec_size_bytes(array_type_spec);
-							if (element_size > 0) {
-								if (auto total_count = tryGetConstexprArrayElementCount(*decl, *symbol, context); total_count.has_value()) {
-									if (*total_count > std::numeric_limits<size_t>::max() / element_size) {
-										return EvalResult::error("sizeof array byte size overflow in constant expression");
-									}
-									return EvalResult::from_int(static_cast<long long>(element_size * *total_count));
-								}
+						// The declaration's complete type, including an omitted outer
+						// array bound, is the canonical shape. A pointer-to-array
+						// entity such as T (*p)[N] stays a scalar pointer.
+						const TypeSpecifierNode declared_type = declaredSizeofTypeSpecifier(*decl, context);
+						if (hasUnrepresentedArrayShape(*decl, declared_type)) {
+							return EvalResult::error("sizeof operand has an unresolved array bound", EvalErrorType::NotConstantExpression, DiagnosticId::IncompleteSizeofOperand);
+						}
+						if (declared_type.has_unsized_outer_array_dimension()) {
+							return EvalResult::error("sizeof operand is an array of unknown bound", EvalErrorType::NotConstantExpression, DiagnosticId::IncompleteSizeofOperand);
+						}
+						if (declared_type.is_array() || declared_type.has_ordered_declarator()) {
+							if (const std::optional<size_t> array_size = tryGetConstexprTypeSizeBytes(declared_type);
+								array_size.has_value()) {
+								return EvalResult::from_int(static_cast<long long>(*array_size));
 							}
+							return EvalResult::error("sizeof operand has an incomplete array type", EvalErrorType::NotConstantExpression, DiagnosticId::IncompleteSizeofOperand);
 						}
 
 						// Not an array, just return the variable's type size
-						const auto& var_type = decl->type_specifier_node();
-						size_t var_size = get_typespec_size_bytes(var_type);
+						size_t var_size = get_typespec_size_bytes(declared_type);
 						if (var_size > 0) {
 							return EvalResult::from_int(static_cast<long long>(var_size));
 						}
@@ -2797,29 +2753,25 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 						const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 
 						if (decl) {
-							// Check if it's an array object - if so, calculate
-							// total size.  A pointer-to-array entity such as
-							// T (*p)[N] is a scalar pointer ([dcl.ptr]/1), so
-							// array sizing must not apply.
-							if (decl->has_outer_array_extents()) {
-								const auto& type_spec = decl->type_specifier_node();
-								size_t element_size = get_typespec_size_bytes(type_spec);
-								if (element_size > 0) {
-									if (auto total_count = tryGetConstexprArrayElementCount(*decl, *symbol, context); total_count.has_value()) {
-										if (*total_count > std::numeric_limits<size_t>::max() / element_size) {
-											return EvalResult::error("sizeof array byte size overflow in constant expression");
-										}
-										return EvalResult::from_int(static_cast<long long>(element_size * *total_count));
-									}
+							// The declaration's complete type, including an omitted
+							// outer array bound, is the canonical shape. A
+							// pointer-to-array entity such as T (*p)[N] stays a
+							// scalar pointer.
+							const TypeSpecifierNode declared_type = declaredSizeofTypeSpecifier(*decl, context);
+							if (hasUnrepresentedArrayShape(*decl, declared_type)) {
+								return EvalResult::error("sizeof operand has an unresolved array bound", EvalErrorType::NotConstantExpression, DiagnosticId::IncompleteSizeofOperand);
+							}
+							if (declared_type.has_unsized_outer_array_dimension()) {
+								return EvalResult::error("sizeof operand is an array of unknown bound", EvalErrorType::NotConstantExpression, DiagnosticId::IncompleteSizeofOperand);
+							}
+							if (declared_type.is_array() || declared_type.has_ordered_declarator()) {
+								if (const std::optional<size_t> array_size = tryGetConstexprTypeSizeBytes(declared_type);
+									array_size.has_value()) {
+									return EvalResult::from_int(static_cast<long long>(*array_size));
 								}
+								return EvalResult::error("sizeof operand has an incomplete array type", EvalErrorType::NotConstantExpression, DiagnosticId::IncompleteSizeofOperand);
 							}
-
-							const auto& type_node = decl->type_node();
-							if (type_node.is<TypeSpecifierNode>()) {
-								const auto& type_spec = type_node.as<TypeSpecifierNode>();
-								unsigned long long size_in_bytes = get_typespec_size_bytes(type_spec);
-								return EvalResult::from_int(static_cast<long long>(size_in_bytes));
-							}
+							return EvalResult::from_int(static_cast<long long>(get_typespec_size_bytes(declared_type)));
 						}
 					}
 				}

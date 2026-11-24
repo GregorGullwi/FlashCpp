@@ -569,14 +569,21 @@ remaining pattern schemas by identity, and remove the name fallback.
      flat read, and a function-template parameter is only canonicalized as a
      builtin when its spelling really is a builtin, so an explicit `int[]` or
      `long long[][3]` argument reaches `sizeof` and requirement validity as an
-     array. An ordered-declarator sizeof operand is still
+     array. `sizeof(identifier)` of a declaration with an omitted bound reads
+     the declaration's complete type through the same canonical array extent
+     query in codegen and constant evaluation, so `int a[]` and
+     `long long g[][3]` reject instead of reporting an element or inner-array
+     width. A misplaced omitted bound is diagnosed at the bracket in
+     declarators, type-ids, and template arguments instead of collapsing to
+     `T[]`. An ordered-declarator sizeof operand is still
      sized from `DeclaratorComponent::payload` by `getTypeSpecSizeBits` without
      consulting the canonical table; that declarator spine is a structural
      second store, not the flat projection, so the reader gate does not count
      it. Simple requirements consume the same sizeof-operand rule as the sizeof
-     expression sites instead of a second validity check. Remaining array-bound
-     gaps are in
-     [known issues](KNOWN_ISSUES.md#some-array-shapes-still-lose-an-omitted-bound).
+     expression sites instead of a second validity check. The omitted-bound bit
+     still lives on four legacy template-argument representations until
+     boundary 6; see
+     [known issues](KNOWN_ISSUES.md#omitted-array-bounds-live-on-four-legacy-template-argument-representations).
      Pointer presence, depth, and per-level cv now come from one canonical query,
      `canonicalPointerShape`, which reports one shape for callable pointers
      (depth 1) and member pointers (depth 0 plus a member-pointer fact). The flat
@@ -624,7 +631,7 @@ remaining pattern schemas by identity, and remove the name fallback.
      pointer-object tests in array-to-pointer decay, integer promotion, and null
      dereference. Per-file reads dropped from 22 to 15 in
      `ConstExprEvaluator_Core.cpp` and from 1 to 0 in `ConstExprEvaluator.h`; the
-     inventory is 811 reads across 67 files. The remaining readers are the flat
+     inventory is 808 reads across 67 files. The remaining readers are the flat
      result-shape peels that write `EvalResult.exact_type` (subscript result,
      arrow access, unary `*`), the `StructMember` payload writers for the
      structural value and member type spec, `sizeof`'s class-member bound

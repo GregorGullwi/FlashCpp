@@ -107,6 +107,7 @@ enum class DiagnosticId : uint32_t {
 	InvalidBitfieldDeclaredType = 1036,
 	BitfieldWidthExceedsType = 1037,
 	NamedZeroWidthBitfield = 1038,
+	OmittedArrayBoundNotOutermost = 1039,
 
 	// Notes attached to declarator-family diagnostics (1051..1079).
 	NoteToMatchOpeningBracket = 1051,
@@ -327,6 +328,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "BitfieldWidthExceedsType";
 	case DiagnosticId::NamedZeroWidthBitfield:
 		return "NamedZeroWidthBitfield";
+	case DiagnosticId::OmittedArrayBoundNotOutermost:
+		return "OmittedArrayBoundNotOutermost";
 	case DiagnosticId::OutOfLineDefinitionMismatch:
 		return "OutOfLineDefinitionMismatch";
 	case DiagnosticId::OutOfLineDefinitionMalformedTarget:
