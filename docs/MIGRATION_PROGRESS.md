@@ -629,14 +629,19 @@ remaining pattern schemas by identity, and remove the name fallback.
      element-count, `sizeof` sub-array, and default-initialization queries, and
      asks the runtime-representation query `runtime_pointer_depth()` for the
      pointer-object tests in array-to-pointer decay, integer promotion, and null
-     dereference. Per-file reads dropped from 22 to 15 in
-     `ConstExprEvaluator_Core.cpp` and from 1 to 0 in `ConstExprEvaluator.h`; the
-     inventory is 808 reads across 67 files. The remaining readers are the flat
-     result-shape peels that write `EvalResult.exact_type` (subscript result,
-     arrow access, unary `*`), the `StructMember` payload writers for the
-     structural value and member type spec, `sizeof`'s class-member bound
-     expressions, and `typesMatchIgnoringCvAndRef`, which needs a canonical
-     similarity rule that ignores cv at every pointer level.
+     dereference. Per-file reads are 13 in `ConstExprEvaluator_Core.cpp` and 0 in
+     `ConstExprEvaluator.h`; the inventory is 806 reads across 67 files. The
+     cast pass-through and const_cast validation now ask
+     `canonicalSimilarIgnoringCvAndRef`, the [expr.const.cast]/3 operand rule:
+     the pointer, array, and member-pointer components must be identical, cv is
+     ignored at every level, and references are stripped. Shapes the importer
+     leaves `UnmigratedNominal` use the same rule over
+     `canonicalTypeSpecifierSimilarIgnoringCvAndRef`, their publication-independent
+     identity structure, so a namespace-scope struct pointer const_cast keeps
+     working. The remaining readers are the flat result-shape peels that write
+     `EvalResult.exact_type` (subscript result, arrow access, unary `*`), the
+     `StructMember` payload writers for the structural value and member type
+     spec, and `sizeof`'s class-member bound expressions.
      `Parser_Templates_Function.cpp` keeps its three reads because it copies
      `TypeInfo::TemplateArgInfo` into a `TemplateTypeArg` for the legacy registry
      lookup. See

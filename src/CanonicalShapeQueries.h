@@ -175,10 +175,22 @@ inline void canonicalCopyPointerLevelCvs(const CanonicalTypeTable& table, TypeId
 	}
 }
 
-inline bool canonicalSameIgnoringTopCvRef(const CanonicalTypeTable& table, TypeId left, TypeId right) {
+// How much cv the declarator walk below ignores. TopLevel strips only the
+// qualification on the outermost type; EveryLevel strips cv on every pointer,
+// array element, and member-pointer level.
+enum class CanonicalCvScope : uint8_t {
+	TopLevel,
+	EveryLevel,
+};
+
+inline bool canonicalSameIgnoringCvImpl(const CanonicalTypeTable& table, TypeId left, TypeId right, CanonicalCvScope scope) {
 	left = shapeWithoutReference(table, left);
 	right = shapeWithoutReference(table, right);
 	while (true) {
+		if (scope == CanonicalCvScope::EveryLevel) {
+			left = shapeWithoutTopCv(table, left);
+			right = shapeWithoutTopCv(table, right);
+		}
 		const CanonicalTypeNode left_node = table.node(left);
 		const CanonicalTypeNode right_node = table.node(right);
 		if (left_node.kind == CanonicalTypeKind::Array || right_node.kind == CanonicalTypeKind::Array) {
@@ -190,6 +202,22 @@ inline bool canonicalSameIgnoringTopCvRef(const CanonicalTypeTable& table, TypeI
 			right = right_node.child;
 			continue;
 		}
+		if (scope == CanonicalCvScope::EveryLevel) {
+			const bool left_derived = left_node.kind == CanonicalTypeKind::Pointer || left_node.kind == CanonicalTypeKind::MemberObjectPointer ||
+				left_node.kind == CanonicalTypeKind::MemberFunctionPointer;
+			const bool right_derived = right_node.kind == CanonicalTypeKind::Pointer || right_node.kind == CanonicalTypeKind::MemberObjectPointer ||
+				right_node.kind == CanonicalTypeKind::MemberFunctionPointer;
+			if (left_derived || right_derived) {
+				// A member pointer stores its owner TypeId in array_extent, so the
+				// owner is part of this component rather than its child.
+				if (left_node.kind != right_node.kind || left_node.array_extent != right_node.array_extent) {
+					return false;
+				}
+				left = left_node.child;
+				right = right_node.child;
+				continue;
+			}
+		}
 		if (left_node.kind == CanonicalTypeKind::Qualified) {
 			left = left_node.child;
 		}
@@ -198,4 +226,25 @@ inline bool canonicalSameIgnoringTopCvRef(const CanonicalTypeTable& table, TypeI
 		}
 		return left == right;
 	}
+}
+
+inline bool canonicalSameIgnoringTopCvRef(const CanonicalTypeTable& table, TypeId left, TypeId right) {
+	return canonicalSameIgnoringCvImpl(table, left, right, CanonicalCvScope::TopLevel);
+}
+
+// The operand rule of [expr.const.cast]/3: a const_cast target and source must
+// be similar object-pointer or pointer-to-data-member types with identical
+// pointer/array/member-pointer components, and they may differ in
+// cv-qualification at every level. [conv.qual]/2 similarity would also merge a
+// known array bound with an unknown one, but /3 requires each Pi to be
+// identical, so extents stay exact here. References are not part of a
+// qualification decomposition, so they are stripped; that also covers the
+// reference form of the cast, which /4 derives from the pointer case.
+//
+// This is deliberately stronger than identity equality for cv (two types with
+// per-level cv differences are similar but not identical) and deliberately
+// weaker than the [conv.qual]/3 qualification conversion, which may only add cv
+// under the outer-level const propagation rule.
+inline bool canonicalSimilarIgnoringCvAndRef(const CanonicalTypeTable& table, TypeId left, TypeId right) {
+	return canonicalSameIgnoringCvImpl(table, left, right, CanonicalCvScope::EveryLevel);
 }

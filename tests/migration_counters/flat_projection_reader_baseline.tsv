@@ -4,7 +4,7 @@ src/AstToIr.h	1
 src/CanonicalShapeTelemetry.h	2
 src/ConstExprEvalHelpers.cpp	8
 src/ConstExprEvaluator_Bindings.cpp	2
-src/ConstExprEvaluator_Core.cpp	15
+src/ConstExprEvaluator_Core.cpp	13
 src/ConstExprEvaluator_Materialize.cpp	5
 src/ConstExprEvaluator_MemberAccess.cpp	7
 src/ExpressionSubstitutor.cpp	4

@@ -3308,13 +3308,16 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		if (!inner_result.success()) {
 			return inner_result;
 		}
-		// For struct/user-defined/enum types, a static_cast that only changes cv/ref
-		// qualification (e.g., static_cast<const T&>(obj)) should pass through the
-		// value unchanged — no scalar conversion is needed.  This mirrors the
-		// typesMatchIgnoringCvAndRef short-circuit in evaluate_static_cast.
-		// Guard with a type-match check so that cross-struct casts fall through to
-		// the scalar conversion switch (which correctly errors for struct types).
-		if (needs_type_index(type_spec.type())) {
+		// A static_cast that only changes cv/ref qualification (e.g.,
+		// static_cast<const T&>(obj) or static_cast<const int*>(pointer)) passes the
+		// value through unchanged — no scalar conversion is needed. This mirrors the
+		// typesMatchIgnoringCvAndRef short-circuit in evaluate_static_cast. Pointer
+		// and reference targets are included because a pointer's category is its
+		// pointee category, so a category-only guard sent pointer casts through the
+		// scalar conversion switch and dropped the value. Guard with a type-match
+		// check so that cross-struct casts fall through to that switch (which
+		// correctly errors for struct types).
+		if (needs_type_index(type_spec.type()) || type_spec.runtime_pointer_depth() != 0 || type_spec.is_reference()) {
 			auto source_type = tryGetExpressionType(inner_result, static_cast_node->expr(), context);
 			if (source_type.has_value() && typesMatchIgnoringCvAndRef(type_spec, *source_type)) {
 				inner_result.set_exact_type(type_spec);
