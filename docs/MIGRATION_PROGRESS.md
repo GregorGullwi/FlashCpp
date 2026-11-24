@@ -398,7 +398,10 @@ remaining pattern schemas by identity, and remove the name fallback.
    and conditional member-pointer operands keep a guarded flat fallback until
    their structural identity is published. Access through a virtual or
    inaccessible base is diagnosed instead of silently reading the wrong
-   subobject.
+   subobject. An array of member-object pointers keeps its extents outside the
+   member-pointer element, and address-of a pointer-to-array member publishes
+   that member's complete pointee, so `sizeof` and array-reference binding use
+   the member shape rather than a single pointer word.
    Explicit conversion-function templates retain their explicit flag through
    member-template instantiation, so copy-initialization rejects them with the
    existing explicit-conversion diagnostic while `explicit(false)` remains
