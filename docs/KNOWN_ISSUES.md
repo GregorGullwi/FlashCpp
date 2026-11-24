@@ -484,7 +484,7 @@ decides from `canonicalTypeSpecifierIdentityEqual` over the two object types, so
 a typedef spelling of one record shares while a different record, a per-level
 pointer cv difference, or a different array extent does not.
 
-`ConstExprEvaluator_Core.cpp` keeps fifteen readers in four groups:
+`ConstExprEvaluator_Core.cpp` keeps thirteen readers in three groups:
 
 - **Result-shape peels** in `tryGetConstexprSubscriptResultType`, pointer-to-member
   arrow access, and unary `*`. They are the source of the flat
@@ -503,12 +503,6 @@ pointer cv difference, or a different array extent does not.
   structural value and type-spec payloads. Needed: the boundary 12 structural
   value carriers; these are writers for consumers that still read those
   descriptors, so they move with the value model.
-- **`typesMatchIgnoringCvAndRef`**, used by static_cast pass-through and
-  const_cast validation, compares flat array extents and pointer depth. Needed:
-  a canonical similarity query that ignores cv at every pointer level. The
-  existing `canonicalSameIgnoringTopCvRef` drops only top-level cv, so identity
-  equality cannot stand in for it. This one can be done before boundary 12, as a
-  small canonical addition, and is the only entry here that is not blocked.
 - **`sizeof` over a class member** reads `DeclarationNode::array_dimensions()`,
   which holds bound expressions rather than the type projection; the reader gate
   counts it because the access is spelled through `->`. Nothing migrates here.
@@ -521,7 +515,18 @@ pointer cv difference, or a different array extent does not.
 argument identity and the deletion of the flat `TemplateArgInfo`/`TemplateTypeArg`
 projection; until then these are writers for a consumer that is not shape-based.
 
-The inventory is 808 reads across 67 files.
+The inventory is 806 reads across 67 files.
+
+## static_cast does not validate cv-qualification conversions
+
+`static_cast<int**>(int* const*)` and `static_cast<const int**>(int**)` are
+accepted even though neither is a qualification conversion: [expr.static.cast]/5
+only permits an implicit conversion sequence, and [conv.qual]/3 adds const to
+every outer level when a deeper level gains cv. The constexpr evaluator's cast
+similarity query is not a validity check; it only decides whether an
+already-validated cast can reuse the operand value. C-style casts also travel as
+`StaticCastNode`, so a shared validity check must keep their const-casting forms
+valid. The fix belongs to cast validation, not to the similarity query.
 
 ## Decltype operator overload result typing is parser-owned
 

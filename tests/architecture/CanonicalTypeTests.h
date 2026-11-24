@@ -3848,6 +3848,62 @@ inline void checkPointerShapeQuery() {
 	require(member_function_pointer.pointee == CanonicalPointeeKind::MemberPointer);
 }
 
+// [expr.const.cast]/3 needs two object-pointer types to be similar with
+// identical pointer, array, and member-pointer components. cv may differ at
+// every level and references are stripped, but pointer depth, array extents,
+// and the terminal type still distinguish. Identity equality keeps per-level
+// cv distinct, so it cannot answer this question.
+inline void checkCvSimilarityQuery() {
+	CanonicalTypeTable table;
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId long_integer = table.builtin(CanonicalBuiltinKind::Long);
+	const TypeId const_integer = table.qualify(integer, CVQualifier::Const);
+	const TypeId plain_pointer = table.pointer(integer);
+	const TypeId const_pointee = table.pointer(const_integer);
+	require(canonicalSimilarIgnoringCvAndRef(table, const_integer, integer));
+	require(canonicalSimilarIgnoringCvAndRef(table, const_pointee, plain_pointer));
+	require(canonicalSimilarIgnoringCvAndRef(table, plain_pointer, const_pointee));
+
+	const TypeId inner_const_pointer = table.pointer(table.qualify(plain_pointer, CVQualifier::Const));
+	const TypeId plain_pointer_pointer = table.pointer(plain_pointer);
+	const TypeId const_deep_pointee = table.pointer(table.pointer(const_integer));
+	require(canonicalSimilarIgnoringCvAndRef(table, inner_const_pointer, plain_pointer_pointer));
+	require(canonicalSimilarIgnoringCvAndRef(table, plain_pointer_pointer, inner_const_pointer));
+	require(canonicalSimilarIgnoringCvAndRef(table, plain_pointer_pointer, const_deep_pointee));
+	require(canonicalSimilarIgnoringCvAndRef(table, const_deep_pointee, plain_pointer_pointer));
+	// Similarity ignores the cv that the top-level rule and identity keep distinct.
+	require(!canonicalSameIgnoringTopCvRef(table, inner_const_pointer, plain_pointer_pointer));
+	require(!canonicalSameIgnoringTopCvRef(table, plain_pointer_pointer, const_deep_pointee));
+	require(inner_const_pointer != plain_pointer_pointer);
+	require(!canonicalSimilarIgnoringCvAndRef(table, plain_pointer, plain_pointer_pointer));
+	require(!canonicalSimilarIgnoringCvAndRef(table, integer, plain_pointer));
+	require(!canonicalSimilarIgnoringCvAndRef(table, plain_pointer, table.pointer(long_integer)));
+
+	require(canonicalSimilarIgnoringCvAndRef(table, table.reference(integer, ReferenceQualifier::LValueReference), integer));
+	require(canonicalSimilarIgnoringCvAndRef(table, integer, table.reference(const_integer, ReferenceQualifier::RValueReference)));
+	require(!canonicalSimilarIgnoringCvAndRef(table, table.reference(integer, ReferenceQualifier::LValueReference), long_integer));
+
+	const TypeId array_three = table.array(integer, 3);
+	require(canonicalSimilarIgnoringCvAndRef(table, array_three, table.array(integer, 3)));
+	require(canonicalSimilarIgnoringCvAndRef(table, array_three, table.array(const_integer, 3)));
+	require(!canonicalSimilarIgnoringCvAndRef(table, array_three, table.array(integer, 4)));
+	const TypeId unknown_array = table.arrayOfUnknownBound(integer);
+	require(canonicalSimilarIgnoringCvAndRef(table, unknown_array, table.arrayOfUnknownBound(const_integer)));
+	require(!canonicalSimilarIgnoringCvAndRef(table, unknown_array, array_three));
+	require(!canonicalSimilarIgnoringCvAndRef(table, array_three, unknown_array));
+
+	const TypeId record = table.record(EntityId{40021});
+	const TypeId other_record = table.record(EntityId{40022});
+	require(canonicalSimilarIgnoringCvAndRef(table, table.qualify(record, CVQualifier::Volatile), record));
+	require(!canonicalSimilarIgnoringCvAndRef(table, record, other_record));
+	require(!canonicalSimilarIgnoringCvAndRef(table, record, integer));
+
+	const TypeId member = table.memberObjectPointer(record, integer);
+	require(canonicalSimilarIgnoringCvAndRef(table, table.qualify(member, CVQualifier::Const), member));
+	require(canonicalSimilarIgnoringCvAndRef(table, member, table.memberObjectPointer(record, const_integer)));
+	require(!canonicalSimilarIgnoringCvAndRef(table, member, table.memberObjectPointer(other_record, integer)));
+}
+
 #if defined(FLASHCPP_CANONICAL_IDENTITY_HARNESS)
 // The harness gives this translation unit a tiny type registry so an alias can
 // otherwise be expressed at all; records use the normal set_type_entity hook.
@@ -4016,13 +4072,74 @@ inline void checkCanonicalTypeIdentityHash() {
 	TypeSpecifierNode nameless_auto(TypeCategory::Auto, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 	require_identity_error([&] { (void)FlashCpp::canonicalTypeSpecifierIdentityHash(nameless_auto); });
 }
+
+// The publication-independent similarity path applies the same rule to shapes
+// the canonical table leaves UnmigratedNominal: cv at every level and references
+// are ignored, while pointer depth, array extents, and the terminal stay exact.
+// Identity equality keeps each cv difference distinct, so it cannot stand in.
+inline void checkTypeSpecifierSimilarityQuery() {
+	auto similar = [](const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+		return FlashCpp::canonicalTypeSpecifierSimilarIgnoringCvAndRef(lhs, rhs);
+	};
+	TypeSpecifierNode integer(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	TypeSpecifierNode const_integer(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::Const);
+	TypeSpecifierNode long_integer(TypeCategory::Long, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	require(similar(integer, const_integer));
+
+	TypeSpecifierNode int_pointer = integer;
+	int_pointer.add_pointer_level();
+	TypeSpecifierNode const_pointer = const_integer;
+	const_pointer.add_pointer_level();
+	require(similar(int_pointer, const_pointer));
+	require(similar(const_pointer, int_pointer));
+	require(!FlashCpp::canonicalTypeSpecifierIdentityEqual(int_pointer, const_pointer));
+
+	TypeSpecifierNode int_pointer_pointer = integer;
+	int_pointer_pointer.add_pointer_level();
+	int_pointer_pointer.add_pointer_level();
+	TypeSpecifierNode inner_const_pointer_pointer = integer;
+	inner_const_pointer_pointer.add_pointer_level();
+	inner_const_pointer_pointer.add_pointer_level(CVQualifier::Const);
+	TypeSpecifierNode deep_const_pointer_pointer = const_integer;
+	deep_const_pointer_pointer.add_pointer_level();
+	deep_const_pointer_pointer.add_pointer_level();
+	require(similar(int_pointer_pointer, inner_const_pointer_pointer));
+	require(similar(int_pointer_pointer, deep_const_pointer_pointer));
+	require(!FlashCpp::canonicalTypeSpecifierIdentityEqual(int_pointer_pointer, inner_const_pointer_pointer));
+	require(!similar(int_pointer, int_pointer_pointer));
+	require(!similar(int_pointer_pointer, int_pointer));
+
+	TypeSpecifierNode int_reference = integer;
+	int_reference.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	require(similar(int_reference, integer));
+	require(similar(int_reference, const_integer));
+	require(!similar(int_reference, long_integer));
+
+	TypeSpecifierNode int_array_three = integer;
+	int_array_three.add_array_dimension(3);
+	TypeSpecifierNode const_int_array_three = const_integer;
+	const_int_array_three.add_array_dimension(3);
+	TypeSpecifierNode int_array_four = integer;
+	int_array_four.add_array_dimension(4);
+	require(similar(int_array_three, const_int_array_three));
+	require(!similar(int_array_three, int_array_four));
+
+	TypeSpecifierNode record(TypeCategory::Struct, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	record.set_type_entity(EntityId{5301});
+	TypeSpecifierNode other_record(TypeCategory::Struct, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	other_record.set_type_entity(EntityId{5302});
+	require(!similar(record, other_record));
+	require(!similar(record, integer));
+}
 #endif
 
 inline int run() {
 #if defined(FLASHCPP_CANONICAL_IDENTITY_HARNESS)
 	checkCanonicalTypeIdentityHash();
+	checkTypeSpecifierSimilarityQuery();
 #endif
 	checkPointerShapeQuery();
+	checkCvSimilarityQuery();
 	checkFunctionIdentityIndependence();
 	checkDeclaratorIdentityIndependence();
 	checkRecordSpecializationIdentityIndependence();

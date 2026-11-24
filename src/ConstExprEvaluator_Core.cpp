@@ -3774,28 +3774,23 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 }
 
 bool Evaluator::typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
-	if (lhs.type() != rhs.type() ||
-		lhs.type_index() != rhs.type_index() ||
-		lhs.runtime_pointer_depth() != rhs.runtime_pointer_depth() ||
-		!std::ranges::equal(lhs.array_dimensions(), rhs.array_dimensions()) ||
-		lhs.has_member_class() != rhs.has_member_class() ||
-		lhs.has_function_signature() != rhs.has_function_signature()) {
-		return false;
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	// A probe: both operands import inside one rolled-back transaction, because a
+	// similarity question must not publish nodes of its own.
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalTypeImport left = importCanonicalType(table, lhs);
+	const CanonicalTypeImport right = importCanonicalType(table, rhs);
+	const bool both_imported = left.status == CanonicalTypeImportStatus::Supported && right.status == CanonicalTypeImportStatus::Supported;
+	// A shape the importer leaves unmigrated has no canonical TypeId yet, so the
+	// same rule runs over its publication-independent identity structure.
+	bool matched;
+	if (both_imported) {
+		matched = canonicalSimilarIgnoringCvAndRef(table, left.type, right.type);
+	} else {
+		matched = FlashCpp::canonicalTypeSpecifierSimilarIgnoringCvAndRef(lhs, rhs);
 	}
-
-	if (lhs.has_member_class() && lhs.member_class_name() != rhs.member_class_name()) {
-		return false;
-	}
-
-	if (lhs.has_function_signature()) {
-		const FunctionSignature& lhs_sig = lhs.function_signature();
-		const FunctionSignature& rhs_sig = rhs.function_signature();
-		if (!FlashCpp::equalFunctionSignatureIdentity(lhs_sig, rhs_sig)) {
-			return false;
-		}
-	}
-
-	return true;
+	transaction.rollback();
+	return matched;
 }
 
 std::optional<TypeSpecifierNode> Evaluator::tryGetExpressionType(

@@ -448,4 +448,33 @@ inline size_t canonicalTypeSpecifierIdentityHash(const TypeSpecifierNode& type) 
 	return canonicalTypeIdentityShapeHash(buildCanonicalTypeIdentityShape(type));
 }
 
+// Publication-independent form of the [expr.const.cast]/3 operand rule for
+// shapes the canonical table deliberately leaves UnmigratedNominal: the same
+// declarator component sequence and terminal identity with cv ignored at every
+// level and references dropped. The array-extent and member-owner components
+// stay exact, and template arguments keep their own identity.
+inline void ignoreCanonicalIdentityCvAndReferences(CanonicalTypeIdentityShape& shape) {
+	shape.base_cv = CVQualifier::None;
+	size_t first_non_reference = 0;
+	while (first_non_reference < shape.components.size() &&
+		(shape.components[first_non_reference].kind == DeclaratorComponentKind::LValueReference ||
+			shape.components[first_non_reference].kind == DeclaratorComponentKind::RValueReference)) {
+		++first_non_reference;
+	}
+	if (first_non_reference != 0) {
+		shape.components.erase(shape.components.begin(), shape.components.begin() + static_cast<std::ptrdiff_t>(first_non_reference));
+	}
+	for (DeclaratorComponent& component : shape.components) {
+		component.cv_qualifier = CVQualifier::None;
+	}
+}
+
+inline bool canonicalTypeSpecifierSimilarIgnoringCvAndRef(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+	CanonicalTypeIdentityShape left = buildCanonicalTypeIdentityShape(lhs);
+	CanonicalTypeIdentityShape right = buildCanonicalTypeIdentityShape(rhs);
+	ignoreCanonicalIdentityCvAndReferences(left);
+	ignoreCanonicalIdentityCvAndReferences(right);
+	return canonicalTypeIdentityShapesEqual(left, right);
+}
+
 } // namespace FlashCpp
