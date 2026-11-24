@@ -1060,6 +1060,33 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 		return applyCanonicalOrderedDeclarator(table, imported_pointee.type, syntax,
 			CanonicalTypeImportContext::Exact);
 	}
+	// An array of member pointers stores the member pointer as its element. The
+	// flat projection carries the bounds on the same specifier, so import the
+	// element first and put the extents outside it ([dcl.array]). Leaving the
+	// bounds on the pointee would turn `int C::*cells[2]` into a member pointer
+	// to an array and drop the outer extent from the canonical shape.
+	if (syntax.is_array() && !syntax.has_pointee_array_declarator()) {
+		TypeSpecifierNode element = syntax;
+		element.set_array_dimensions({});
+		element.set_reference_qualifier(ReferenceQualifier::None);
+		const CanonicalTypeImport imported_element = importCanonicalMemberPointer(table, element);
+		if (imported_element.status != CanonicalTypeImportStatus::Supported) {
+			return imported_element;
+		}
+		CanonicalTypeTransaction transaction(table);
+		TypeId id = imported_element.type;
+		if (!syntax.array_dimensions().empty()) {
+			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
+		}
+		if (syntax.has_unsized_outer_array_dimension()) {
+			id = table.arrayOfUnknownBound(id);
+		}
+		if (syntax.reference_qualifier() != ReferenceQualifier::None) {
+			id = table.reference(id, syntax.reference_qualifier());
+		}
+		transaction.commit();
+		return {id, CanonicalTypeImportStatus::Supported};
+	}
 	CVQualifier member_pointer_cv = syntax.cv_qualifier();
 	if (!syntax.pointer_levels().empty()) {
 		const CVQualifier outer_pointer_cv =

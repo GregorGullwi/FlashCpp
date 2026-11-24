@@ -44,14 +44,6 @@ canonical publication; supported nested primary-member expansions now retain
 independent inner bindings. Keep those unsupported fields
 fail-closed; the lockstep follow-up entry below records the remaining paths.
 
-## Member-pointer access into a pointer-to-array member is unsupported
-
-`struct S { int (*row)[3]; }; S s; int (&r)[3] = s.*(&S::row);` reads through the
-wrong address and yields garbage, and dereferencing the resulting reference
-crashes. A pointer member (`int* S::*`) works. Codegen takes the member shape
-from the member pointer's published pointee but lowers the access with the
-member-pointer word size.
-
 ## Object cv is dropped for non-projectable interleaved members
 
 With `struct S { int* (*p)[3]; };`, `const S s; auto& r = s.p; r = nullptr;` is
@@ -938,18 +930,14 @@ Declaring `int (C::*p)[3]` through an ordered declarator is also rejected by the
 canonical import path. Publish the array pointee shape before claiming full
 member-object pointer coverage.
 
-## An array of member pointers is sized as one member pointer
+## Reference-to-array call arguments from pointer values bind the pointer object
 
-`int C::*cells[2];` declares an array of two data-member pointers, so
-`sizeof(cells)` is 16 bytes on this x64 ABI, where each member pointer is two
-words wide. The compiler reports 8, the size of one member pointer, so the
-outer array extent is lost when the member-pointer element type is sized. The
-same answer appears on `origin/main`; this is independent of the ordered
-declarator sizeof work because the missing fact is the member-pointer element
-size, not an array extent. A fix needs to examine how the array declarator
-around a member-pointer element is represented and which size query answers for
-that element; the declaration retains the array extent, but the size path uses
-the element width.
+`void read(int (&)[3]); int (*p)[3]; read(p);` is lowered as though the argument
+named the storage of `p`, so the callee reads the pointer bytes as array
+elements. `read(object.*(&S::row))` has the same gap. Local initialization such
+as `int (&r)[3] = p;` uses the pointer value as the array address. Function
+argument reference binding still needs that same pointer-value-to-array-address
+lowering.
 
 ## Static-member template initializer replay still handles unresolved lookups
 

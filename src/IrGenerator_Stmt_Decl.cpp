@@ -1822,9 +1822,31 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	};
 	auto visitVariableInitializer = [&](const ExpressionNode& initializer) {
 		const bool binds_reference = type_node.is_reference() || type_node.is_rvalue_reference();
-		ExprResult result = visitExpressionNode(
-			initializer,
-			binds_reference ? ExpressionContext::LValueAddress : ExpressionContext::Load);
+		// A reference to an array binds the array object itself. A pointer-valued
+		// initializer (for example a pointer-to-array member) supplies that
+		// object's address as its value; an lvalue-address evaluation would
+		// instead yield the address of the pointer object.
+		bool reference_binds_pointer_value = false;
+		if (binds_reference && type_node.is_reference_to_array()) {
+			const TypeId initializer_identity = sema_.getExpressionStructuralTypeId(ASTNode(&initializer));
+			if (initializer_identity) {
+				CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+				const TypeId unqualified = canonical_types.withoutTopLevelQualifiers(canonicalTypeWithoutReference(canonical_types, initializer_identity));
+				reference_binds_pointer_value = canonical_types.node(unqualified).kind == CanonicalTypeKind::Pointer;
+			}
+		}
+		ExprResult result = visitExpressionNode(initializer, (binds_reference && !reference_binds_pointer_value) ? ExpressionContext::LValueAddress
+			: ExpressionContext::Load);
+		if (reference_binds_pointer_value) {
+			TempVar address_temp = var_counter.next();
+			AssignmentOp copy_pointer;
+			copy_pointer.result = address_temp;
+			copy_pointer.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, address_temp);
+			copy_pointer.rhs = makeTypedValue(result.category(), SizeInBits{POINTER_SIZE_BITS}, toIrValue(result.value));
+			copy_pointer.dereference_rhs_references = false;
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(copy_pointer), decl.identifier_token()));
+			result = makeExprResult(result.type_index, SizeInBits{POINTER_SIZE_BITS}, IrOperand{address_temp}, PointerDepth{1}, ValueStorage::ContainsAddress);
+		}
 		if (type_node.is_member_object_pointer_type() &&
 			result.category() == TypeCategory::Nullptr) {
 			result = generateTypeConversion(result, TypeCategory::Nullptr,

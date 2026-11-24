@@ -10166,13 +10166,7 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 								throw InternalError(
 									"Resolved non-static data member owner has no semantic type identity");
 							}
-							resolved.type = TypeSpecifierNode(
-								member.member->type_index.withCategory(member.member->memberType()),
-								SizeInBits{static_cast<int>(member.member->size * 8)},
-								qualified_identifier.identifier_token(),
-								CVQualifier::None,
-								member.member->reference_qualifier);
-							resolved.type.add_pointer_levels(member.member->pointer_depth);
+							resolved.type = typeSpecifierFromStructMemberProjection(*member.member);
 							return resolved;
 						}
 					}
