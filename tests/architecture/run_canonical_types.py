@@ -678,12 +678,10 @@ def main():
             ("adapter_array_binding", "CanonicalTypeAdapter.h",
              "auto id = table.builtin(builtin);\n"
              "\tid = table.qualify(id, syntax.cv_qualifier());\n"
-             "\tid = applyCanonicalPointerArrayReference(\n"
-             "\t\ttable, id, syntax, context, has_ordinary_array, has_pointee_array);",
+             "\tconst CanonicalTypeImport shaped = applyCanonicalPointerArrayReference(table, id, syntax, context, has_ordinary_array, has_pointee_array);",
              "auto id = table.builtin(builtin);\n"
              "\tid = table.qualify(id, syntax.cv_qualifier());\n"
-             "\tid = applyCanonicalPointerArrayReference(\n"
-             "\t\ttable, id, syntax, context, has_ordinary_array, false);"),
+             "\tconst CanonicalTypeImport shaped = applyCanonicalPointerArrayReference(table, id, syntax, context, has_ordinary_array, false);"),
             ("adapter_parameter_decay", "CanonicalTypeAdapter.h",
              "has_ordinary_array && context == CanonicalTypeImportContext::FunctionParameter &&",
              "has_ordinary_array && context == CanonicalTypeImportContext::Exact &&"),

@@ -1226,6 +1226,9 @@ struct TypeInfo {
 		bool is_pack;
 		bool is_array;
 		bool pointee_array_declarator = false;
+		// [dcl.array]/1: an omitted outermost bound (T[][N]) is not a missing
+		// extent. The known inner extents stay in array_dimensions.
+		bool has_unsized_outer_array_dimension = false;
 		TemplateVector<size_t, 2> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
 		TemplateVector<StringHandle, 2> array_dimension_parameter_names; // Direct dependent bound for each dimension, if any
 		std::vector<DeclaratorComponent> ordered_declarator;
@@ -3324,6 +3327,42 @@ inline void applyOuterDeclaratorShapeForSubstitution(
 	}
 }
 
+// A parameter spelling that already carries projected array extents denotes the
+// bound argument, not an outer array wrapper: the source extents end with the
+// bound argument's own extents. Appending the source extents to the bound
+// argument's extents would square the shape, so the caller keeps the source
+// shape instead of appending.
+inline bool templateParameterArrayShapeIsProjected(const TypeSpecifierNode& target, const TypeSpecifierNode& source) {
+	if (source.has_ordered_declarator() || target.has_ordered_declarator() ||
+		source.has_pointee_array_declarator() || target.has_pointee_array_declarator()) {
+		return false;
+	}
+	std::span<const size_t> source_dimensions = source.array_dimensions();
+	if (source_dimensions.empty() && !source.has_unsized_outer_array_dimension()) {
+		return false;
+	}
+	std::span<const size_t> target_dimensions = target.array_dimensions();
+	if (target_dimensions.size() > source_dimensions.size()) {
+		return false;
+	}
+	const size_t offset = source_dimensions.size() - target_dimensions.size();
+	for (size_t index = 0; index < target_dimensions.size(); ++index) {
+		if (target_dimensions[index] != source_dimensions[offset + index]) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// The source shape already contains the bound argument's extents, so it is the
+// complete substituted array shape.
+inline void copyProjectedParameterArrayShape(TypeSpecifierNode& target, const TypeSpecifierNode& source) {
+	target.set_array_dimensions(source.array_dimensions());
+	if (source.has_unsized_outer_array_dimension()) {
+		target.set_unsized_outer_array_dimension(true);
+	}
+}
+
 TypeSpecifierNode typeSpecifierFromStructMemberProjection(const StructMember& member);
 
 inline FunctionType makeFunctionTypeFromSpecifier(const TypeSpecifierNode& type_spec) {
@@ -3413,6 +3452,9 @@ struct ResolvedAliasTypeInfo {
 	TypeId member_class_type_id{};
 	EntityId member_class_entity{};
 	std::vector<size_t> array_dimensions;
+	// [dcl.array]/1: the alias chain applied an omitted outermost array bound.
+	// Kept separately from array_dimensions so T[] stays distinct from T.
+	bool has_unsized_outer_array_dimension = false;
 	const TypeInfo* terminal_type_info = nullptr;
 	// A chain such as `using A = T[5]` resolves to the placeholder row for `T`.
 	// The row carries no structural identity, so the parameter facts are kept
@@ -3429,7 +3471,7 @@ struct ResolvedAliasTypeInfo {
 
 	TypeCategory typeEnum() const { return type_index.category(); }
 	bool isArray() const {
-		return !pointee_array_declarator && !array_dimensions.empty();
+		return !pointee_array_declarator && (!array_dimensions.empty() || has_unsized_outer_array_dimension);
 	}
 	size_t runtimePointerDepth() const {
 		if (!has_ordered_declarator || ordered_declarator.empty()) {
@@ -3600,6 +3642,9 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 				if (alias_type_spec->is_array() ||
 					alias_type_spec->has_pointee_array_declarator()) {
 					appendArrayDimensions(resolved.array_dimensions, alias_type_spec->array_dimensions());
+					if (alias_type_spec->has_unsized_outer_array_dimension()) {
+						resolved.has_unsized_outer_array_dimension = true;
+					}
 				}
 				// The chain terminates on the placeholder row for a template
 				// parameter, which carries no structural identity. Keep the

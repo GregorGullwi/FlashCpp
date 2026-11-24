@@ -1212,6 +1212,7 @@ ParseResult Parser::parseArrayDeclaratorSuffix(TypeSpecifierNode& type_spec, std
 	ArrayDeclaratorContext declarator_context) {
 	const bool is_alias_template = declarator_context == ArrayDeclaratorContext::AliasTemplate;
 	std::vector<size_t> dimensions;
+	bool has_unsized_outer_dimension = false;
 	while (peek() == "["_tok) {
 		const Token opening_bracket_token = peek_info();
 		ParsedArrayBound bound;
@@ -1227,8 +1228,9 @@ ParseResult Parser::parseArrayDeclaratorSuffix(TypeSpecifierNode& type_spec, std
 		}
 		if (bound.kind == ArrayBoundKind::Omitted) {
 			dimensions.clear();
+			has_unsized_outer_dimension = !is_alias_template;
 			type_spec.set_array(true);
-			type_spec.set_unsized_outer_array_dimension(!is_alias_template);
+			type_spec.set_unsized_outer_array_dimension(has_unsized_outer_dimension);
 			continue;
 		}
 		dimensions.push_back(bound.extent);
@@ -1248,6 +1250,11 @@ ParseResult Parser::parseArrayDeclaratorSuffix(TypeSpecifierNode& type_spec, std
 		const auto inner_dimensions = type_spec.array_dimensions();
 		dimensions.insert(dimensions.end(), inner_dimensions.begin(), inner_dimensions.end());
 		type_spec.set_array_dimensions(dimensions);
+		// set_array_dimensions clears stale unknown-bound state; the suffix that
+		// was just parsed still owns the omitted outer bound.
+		if (has_unsized_outer_dimension) {
+			type_spec.set_unsized_outer_array_dimension(true);
+		}
 	}
 	return ParseResult::success();
 }

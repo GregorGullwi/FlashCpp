@@ -462,6 +462,9 @@ struct TypeIndexArg {
 	// Array information - critical for differentiating T[], T[N], and T
 	bool is_array = false;
 	bool pointee_array_declarator = false;
+	// [dcl.array]/1: an omitted outermost bound (T[][N]) is distinct from a
+	// sized array and from a missing bound list.
+	bool has_unsized_outer_array_dimension = false;
 	TemplateVector<size_t, 2> array_sizes;  // Empty for T, full dimension list for arrays
 	std::vector<DeclaratorComponent> ordered_declarator;
 	std::optional<FunctionSignature> function_signature; // Needed for function pointer identity
@@ -480,6 +483,7 @@ struct TypeIndexArg {
 			   pointer_depth == other.pointer_depth &&
 			   is_array == other.is_array &&
 			   pointee_array_declarator == other.pointee_array_declarator &&
+			   has_unsized_outer_array_dimension == other.has_unsized_outer_array_dimension &&
 			   array_sizes == other.array_sizes &&
 			   ordered_declarator == other.ordered_declarator &&
 			   function_signature.has_value() == other.function_signature.has_value() &&
@@ -502,6 +506,9 @@ struct TypeIndexArg {
 		// Include array info in hash - critical for differentiating T[] from T[N] from T
 		h ^= std::hash<bool>{}(is_array) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		if (pointee_array_declarator) {
+			h ^= std::hash<uint8_t>{}(1) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		if (has_unsized_outer_array_dimension) {
 			h ^= std::hash<uint8_t>{}(1) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		for (size_t array_size : array_sizes) {

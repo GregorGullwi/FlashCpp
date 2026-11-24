@@ -7898,6 +7898,7 @@ inline FlashCpp::TypeIndexArg makeTypeIndexArgFromSpec(const TypeSpecifierNode& 
 	// Include array info - critical for differentiating T[] from T[N] from T
 	arg.is_array = spec.is_array();
 	arg.pointee_array_declarator = spec.has_pointee_array_declarator();
+	arg.has_unsized_outer_array_dimension = spec.has_unsized_outer_array_dimension();
 	arg.array_sizes.assign(spec.array_dimensions().begin(), spec.array_dimensions().end());
 	if (spec.has_ordered_declarator() && !spec.ordered_declarator_has_legacy_projection()) {
 		const std::span<const DeclaratorComponent> components = spec.declarator_components();

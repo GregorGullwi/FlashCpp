@@ -339,19 +339,31 @@ non-projectable shapes;
 remove this entry when those consumers migrate and the compatibility projection
 fields are deleted.
 
-## Array template arguments cannot carry an omitted outer bound
+## Some array shapes still lose an omitted bound
 
-An explicit array template argument keeps only one `parsed_array_size` while its
-type-id is parsed, so `long long[][3]` is stored as the sized array
-`long long[3]` and `requires { sizeof(T); }` accepts it. `TemplateTypeArg` and
-`TemplateArgInfo` also have no unsized-outer-bound field, so rebuilding a
-specifier from a stored argument cannot restore the omitted extent. In addition,
-a plain function-template parameter used as `sizeof(T)` is canonicalized from
-its placeholder's default builtin category before the substitution map is
-consulted, so `size_of<int[]>()` with an explicit array argument still compiles
-to `sizeof(int)`. Track the omitted outer bound on the template argument and
-only canonicalize a builtin spelling, then `sizeof` and requirement validity see
-the same unknown-bound shape the direct type-id does.
+Explicit array template arguments now keep the omitted outermost bound distinct
+from a sized array. `TemplateTypeArg`, `TemplateArgInfo`, `TypeIndexArg`, and
+`ResolvedAliasTypeInfo` carry `has_unsized_outer_array_dimension` beside the
+known inner extents, the template-argument materializers restore it onto a
+`TypeSpecifierNode`, and canonical import sees `Array(unknown, Array(N, T))`.
+`sizeof(T)` and `requires { sizeof(T); }` in a function or class template
+therefore reject `long long[][3]` and `int[]` instead of reporting the inner or
+element extent. That fact now lives on four legacy argument representations;
+boundary 6 replaces them with the canonical template-argument identity, and
+until then every new representation of a template argument must carry the
+omitted-bound bit or `sizeof` and requirement validity will disagree again.
+
+Two shapes still cannot restore or diagnose the bound:
+
+- `sizeof(identifier)` for a variable declared with an omitted bound
+  (`int a[]; sizeof(a);`, `long long g[][3]; sizeof(g);`) still reports the
+  element or inner-array size. The declaration-side array-bound expressions are
+  the source there, and the codegen and constexpr identifier paths do not consult
+  the unknown-bound flag.
+- An omitted bound that is not the outermost one is not diagnosed as such.
+  `int[3][]` and `T[3][]` collapse to `int[]`/`T[]` in both the direct type-id
+  and template-argument parsers, so the ill-formed inner bound is only caught as
+  an unknown-bound `sizeof` rather than as a misplaced omitted bound.
 
 ## Alias template-parameter facts are projected per materialization site
 

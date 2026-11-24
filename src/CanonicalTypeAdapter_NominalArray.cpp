@@ -27,7 +27,10 @@ CanonicalTypeImport importCanonicalNominalArrayWithoutDirectEntity(CanonicalType
 		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
 	}
 	TypeId id = table.qualify(imported.type, syntax.cv_qualifier());
-	id = applyCanonicalPointerArrayReference(table, id, syntax, context, has_ordinary_array, has_pointee_array);
+	const CanonicalTypeImport shaped = applyCanonicalPointerArrayReference(table, id, syntax, context, has_ordinary_array, has_pointee_array);
+	if (shaped.status != CanonicalTypeImportStatus::Supported) {
+		return shaped;
+	}
 	transaction.commit();
-	return {id, CanonicalTypeImportStatus::Supported};
+	return shaped;
 }

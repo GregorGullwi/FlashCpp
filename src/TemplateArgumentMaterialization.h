@@ -110,6 +110,22 @@ inline std::optional<TemplateTypeArg> materializeTemplateTypeArgumentFromExpress
 	return std::nullopt;
 }
 
+// A builtin canonicalization is only valid for a specifier whose spelling
+// denotes a builtin. A dependent placeholder row defaults to Int, so its
+// category alone must not decide the shape; the substitution map has to see
+// the argument first.
+inline bool typeSpecifierSpellsBuiltinType(const TypeSpecifierNode& type) {
+	if (type.has_template_parameter_identity() || type.has_template_parameter_decl() || type.has_dependent_name_type()) {
+		return false;
+	}
+	const std::string_view spelling = type.token().value();
+	if (!spelling.empty()) {
+		return getTemplateArgumentBuiltinCategoryFromTokenText(spelling) != TypeCategory::Invalid;
+	}
+	const TypeInfo* type_info = tryGetTypeInfo(type.type_index());
+	return type_info == nullptr || !type_info->isDependentPlaceholder();
+}
+
 inline std::optional<TypeSpecifierNode> makeCanonicalBuiltinTypeSpecifier(
 	const TypeSpecifierNode& type) {
 	TypeCategory category = type.type_index().is_valid()
@@ -142,6 +158,9 @@ inline std::optional<TypeSpecifierNode> makeCanonicalBuiltinTypeSpecifier(
 		for (size_t dim : type.array_dimensions()) {
 			builtin_spec.add_array_dimension(dim);
 		}
+	}
+	if (type.has_unsized_outer_array_dimension()) {
+		builtin_spec.set_unsized_outer_array_dimension(true);
 	}
 	if (type.has_function_signature()) {
 		builtin_spec.set_function_signature(type.function_signature());
