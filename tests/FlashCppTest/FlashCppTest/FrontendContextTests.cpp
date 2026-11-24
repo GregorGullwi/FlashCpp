@@ -1922,7 +1922,7 @@ TEST_SUITE("FrontendContext") {
 		const StringHandle parameter_name = StringTable::getOrInternStringHandle("frontend_tx_mutable_type_parameter");
 		ASTNode parameter_node = ASTNode::emplace_node<TemplateParameterNode>(parameter_name, int_type, Token{});
 		TemplateParameterNode& parameter = parameter_node.as<TemplateParameterNode>();
-		ASTNode cast_node = ASTNode::emplace_node<StaticCastNode>(int_type, make_expression(), Token{});
+		ASTNode cast_node = ASTNode::emplace_node<StaticCastNode>(int_type, make_expression(), Token{}, StaticCastNode::Form::StaticCast);
 		StaticCastNode& cast = cast_node.as<StaticCastNode>();
 		ASTNode offsetof_node = ASTNode::emplace_node<OffsetofExprNode>(int_type, std::vector<Token>{}, Token{});
 		OffsetofExprNode& offsetof_node_ref = offsetof_node.as<OffsetofExprNode>();

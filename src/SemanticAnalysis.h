@@ -36,6 +36,7 @@ class BinaryOperatorNode;
 struct BinaryOperatorCallTarget;
 class UnaryOperatorNode;
 class StructuredBindingNode;
+class StaticCastNode;
 
 class ConstructorCallNode;
 class InitializerListNode;
@@ -932,6 +933,10 @@ private:
 	// operators between values of the same scoped enum type.
 	void diagnoseScopedEnumBinaryOperands(BinaryOperatorNode& bin_op,
 										  CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id);
+	// [expr.static.cast]/5 admits only an implicit conversion sequence, so a
+	// pointer cv conversion must be a valid [conv.qual]/3 qualification
+	// conversion. C-style casts may also const_cast, so they are exempt.
+	void checkStaticCastQualificationConversion(const StaticCastNode& cast_node);
 	bool tryResolveLateBinaryOperatorOverload(BinaryOperatorNode& bin_op,
 											  const CanonicalTypeDesc& lhs_desc,
 											  const CanonicalTypeDesc& rhs_desc);

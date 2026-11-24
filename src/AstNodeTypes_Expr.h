@@ -709,13 +709,23 @@ private:
 	bool is_array_;		// true for delete[], false for delete
 };
 
-// Static cast expression node: static_cast<Type>(expr)
+// Static cast expression node: static_cast<Type>(expr). Functional casts and
+// C-style casts share the node because they share the conversion selection;
+// the form records which cast syntax produced it so conversion legality can
+// distinguish the const_cast-like power of a C-style cast without inspecting
+// the token spelling.
 class StaticCastNode {
 public:
-	explicit StaticCastNode(const TypeSpecifierNode& target_type, ASTNode expr, Token cast_token)
-		: target_type_(target_type), expr_(expr), cast_token_(cast_token) {}
-	explicit StaticCastNode(ASTNode target_type, ASTNode expr, Token cast_token)
-		: StaticCastNode(target_type.as<TypeSpecifierNode>(), expr, cast_token) {}
+	enum class Form : uint8_t {
+		StaticCast,	 // static_cast<Type>(expr)
+		FunctionalCast, // Type(expr), including decltype-specifier forms
+		CStyleCast,	 // (Type)expr
+	};
+
+	explicit StaticCastNode(const TypeSpecifierNode& target_type, ASTNode expr, Token cast_token, Form form)
+		: target_type_(target_type), expr_(expr), cast_token_(cast_token), form_(form) {}
+	explicit StaticCastNode(ASTNode target_type, ASTNode expr, Token cast_token, Form form)
+		: StaticCastNode(target_type.as<TypeSpecifierNode>(), expr, cast_token, form) {}
 
 	const TypeSpecifierNode& target_type() const { return target_type_; }
 	TypeSpecifierNode& target_type_node() {
@@ -725,11 +735,14 @@ public:
 	const TypeSpecifierNode& target_type_node() const { return target_type_; }
 	const ASTNode& expr() const { return expr_; }
 	const Token& cast_token() const { return cast_token_; }
+	Form form() const { return form_; }
+	bool isCStyleCast() const { return form_ == Form::CStyleCast; }
 
 private:
 	TypeSpecifierNode target_type_;  // The type to cast to
 	ASTNode expr_;		   // ExpressionNode - the expression to cast
 	Token cast_token_;	   // Token for error reporting
+	Form form_;		   // Cast syntax that produced this node
 };
 
 // Dynamic cast expression node: dynamic_cast<Type>(expr)

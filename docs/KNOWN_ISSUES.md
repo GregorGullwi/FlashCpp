@@ -517,16 +517,15 @@ projection; until then these are writers for a consumer that is not shape-based.
 
 The inventory is 806 reads across 67 files.
 
-## static_cast does not validate cv-qualification conversions
+## static_cast reference and composite qualification conversions are not validated
 
-`static_cast<int**>(int* const*)` and `static_cast<const int**>(int**)` are
-accepted even though neither is a qualification conversion: [expr.static.cast]/5
-only permits an implicit conversion sequence, and [conv.qual]/3 adds const to
-every outer level when a deeper level gains cv. The constexpr evaluator's cast
-similarity query is not a validity check; it only decides whether an
-already-validated cast can reuse the operand value. C-style casts also travel as
-`StaticCastNode`, so a shared validity check must keep their const-casting forms
-valid. The fix belongs to cast validation, not to the similarity query.
+The pointer value form now enforces [conv.qual]/3, but `static_cast<T&>` and
+`static_cast<T&&>` return before the check because reference binding has its own
+cv and value-category rules, and a decomposition whose components include an
+array or a pointer-to-member is skipped. `static_cast<int&>(const int&)`,
+`static_cast<int(*)[4]>(const int(*)[4])`, and a pointer-to-member cv drop are
+therefore still accepted. These need the corresponding reference-binding,
+array-element, and member-pointer rules added at the same cast-validation point.
 
 ## Decltype operator overload result typing is parser-owned
 
