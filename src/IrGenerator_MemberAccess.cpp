@@ -215,12 +215,11 @@ std::vector<size_t> AstToIr::getEffectiveArrayDimensionsForCodegen(const Declara
 	return dim_sizes;
 }
 
-std::optional<CanonicalArrayDecayStep> AstToIr::canonicalArrayDecayStepForOperand(const ASTNode& operand) const {
+TypeId AstToIr::canonicalOperandStructuralTypeId(const ASTNode& operand) const {
 	if (!operand.is<ExpressionNode>()) {
-		return std::nullopt;
+		return TypeId{};
 	}
 	const ExpressionNode& expression = operand.as<ExpressionNode>();
-	TypeId structural_type_id{};
 	if (const auto* identifier = std::get_if<IdentifierNode>(&expression)) {
 		if (const DeclarationNode* declaration = lookupDeclaration(identifier->name())) {
 			TypeSpecifierNode declared_type = declaration->type_specifier_node();
@@ -231,12 +230,16 @@ std::optional<CanonicalArrayDecayStep> AstToIr::canonicalArrayDecayStepForOperan
 				ConstExpr::EvaluationContext eval_ctx = makeEvalContext(gSymbolTable);
 				declared_type = declaredEntityTypeSpecifier(*declaration, eval_ctx);
 			}
-			structural_type_id = sema_.canonicalStructuralTypeId(declared_type);
+			if (const TypeId declared_type_id = sema_.canonicalStructuralTypeId(declared_type)) {
+				return declared_type_id;
+			}
 		}
 	}
-	if (!structural_type_id) {
-		structural_type_id = sema_.getExpressionStructuralTypeId(operand);
-	}
+	return sema_.getExpressionStructuralTypeId(operand);
+}
+
+std::optional<CanonicalArrayDecayStep> AstToIr::canonicalArrayDecayStepForOperand(const ASTNode& operand) const {
+	const TypeId structural_type_id = canonicalOperandStructuralTypeId(operand);
 	if (!structural_type_id) {
 		return std::nullopt;
 	}

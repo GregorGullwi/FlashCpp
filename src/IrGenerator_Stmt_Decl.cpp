@@ -736,7 +736,17 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		auto record_static_local = [&]() {
 			StaticLocalInfo info;
 			info.mangled_name = var_name;
-			info.size_in_bits = SizeInBits{type_node.size_in_bits()};
+			int size_bits = type_node.size_in_bits();
+			// A pointer-to-array is one pointer whose flat projection may keep the
+			// row's element size. Loads of this storage must still read the whole
+			// pointer; the canonical pointer shape decides, not the flat width.
+			if (size_bits != POINTER_SIZE_BITS) {
+				const TypeId canonical_type_id = sema_.canonicalStructuralTypeId(type_node);
+				if (canonical_type_id && canonicalPointerShape(requireFrontendContext().canonicalTypes(), canonical_type_id).isPointer()) {
+					size_bits = POINTER_SIZE_BITS;
+				}
+			}
+			info.size_in_bits = SizeInBits{size_bits};
 			TypeCategory semantic_type = resolve_type_alias(type_node.type_index());
 			info.type_index = carriesSemanticTypeIndex(semantic_type)
 				? type_node.type_index()
@@ -976,7 +986,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		// Byte offset of the addressed subobject inside the relocation target.
 		// `pointer_offset` counts elements of the pointer's pointee type, so the
 		// same pointer-arithmetic stride that scales `p + n` scales the addend.
-		auto globalRelocAddend = [&](TypeIndex pointee_type, int pointer_depth, int64_t element_offset) -> int64_t {
+		// The canonical pointee decides that stride: a pointer-to-array steps by
+		// the complete array object, not by its flat scalar element.
+		auto globalRelocAddend = [&](TypeIndex pointee_type, TypeId pointer_type, int pointer_depth, int64_t element_offset) -> int64_t {
 			if (element_offset == 0) {
 				return 0;
 			}
@@ -986,7 +998,20 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			if (pointer_depth <= 0) {
 				throw InternalError("static pointer relocation has no pointee type");
 			}
-			const int64_t stride = static_cast<int64_t>(getPointerElementSize(pointee_type, pointer_depth));
+			int64_t stride = 0;
+			if (pointer_type) {
+				const CanonicalPointerShape shape = canonicalPointerShape(requireFrontendContext().canonicalTypes(), pointer_type);
+				if (shape.isPointer()) {
+					const std::optional<CanonicalArrayDecayStep> step = canonicalArrayDecayStep(requireFrontendContext().canonicalTypes(), pointer_type);
+					if (!step.has_value() || step->element_size_bits <= 0) {
+						throw InternalError("static pointer relocation has no canonical pointee size");
+					}
+					stride = step->element_size_bits / 8;
+				}
+			}
+			if (stride == 0) {
+				stride = static_cast<int64_t>(getPointerElementSize(pointee_type, pointer_depth));
+			}
 			if (stride <= 0) {
 				throw InternalError("static pointer relocation has no pointee size");
 			}
@@ -1009,7 +1034,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				if (site > init_data.size() || init_data.size() - site < sizeof(void*)) {
 					throw InternalError("static aggregate pointer relocation site is outside its object");
 				}
-				const int64_t addend = globalRelocAddend(member.type_index, member.pointer_depth, pointer_result.pointer_offset);
+				const int64_t addend = globalRelocAddend(member.type_index, member.canonical_type_id, member.pointer_depth, pointer_result.pointer_offset);
 				writeRawValueAtOffset(init_data, site, sizeof(void*), static_cast<unsigned long long>(addend));
 				relocations.push_back(DataRelocation{static_cast<uint32_t>(site), resolveGlobalRelocTarget(StringTable::getStringView(origin)), addend});
 			};
@@ -1682,7 +1707,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					// Missing canonical shape: pointer presence.
 					const int pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());
 					if (eval_result.success() && type_node.is_pointer() && pointer_origin.isValid()) {
-						const int64_t addend = globalRelocAddend(type_node.type_index(), pointer_depth, eval_result.pointer_offset);
+						const int64_t addend = globalRelocAddend(type_node.type_index(), sema_.canonicalStructuralTypeId(type_node), pointer_depth, eval_result.pointer_offset);
 						if (element_size < sizeof(void*)) {
 							throw InternalError("static pointer relocation slot is narrower than a pointer");
 						}
