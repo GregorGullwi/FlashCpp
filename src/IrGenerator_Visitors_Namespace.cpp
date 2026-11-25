@@ -6,6 +6,13 @@ bool AstToIr::isNullPointerConstantExpr(const ExprResult& expr_result, const AST
 	if (expr_result.category() == TypeCategory::Nullptr) {
 		return true;
 	}
+	// A pointer-to-member expression is never a null pointer constant, even
+	// when its object representation is zero: an offset-zero member address is
+	// a valid non-null pointer-to-member.
+	const IrType runtime_type = expr_result.effectiveIrType();
+	if (runtime_type == IrType::MemberObjectPointer || runtime_type == IrType::MemberFunctionPointer) {
+		return false;
+	}
 	if (const auto* ull_value = std::get_if<unsigned long long>(&expr_result.value)) {
 		return *ull_value == 0;
 	}
@@ -461,15 +468,16 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 					}
 				}
 			}
+			const bool returns_member_object_pointer = (current_function_node_ != nullptr && current_function_node_->decl_node()
+				.type_specifier_node().is_member_object_pointer_type()) || return_category == TypeCategory::MemberObjectPointer;
 			if (!sema_applied_conversion &&
 				currentFunctionReturnsPointer() &&
 				AstToIr::isNullPointerConstantExpr(operands, *expr_opt)) {
-				operands = makeExprResult(
-					return_type_index,
-					SizeInBits{return_size},
-					IrOperand{0ULL},
-					PointerDepth{1},
-					ValueStorage::ContainsData);
+				const unsigned long long null_representation = returns_member_object_pointer ? kNullMemberObjectPointerRepresentation : 0ULL;
+				operands = makeExprResult(return_type_index, SizeInBits{return_size}, IrOperand{null_representation}, PointerDepth{1}, ValueStorage::ContainsData);
+				if (returns_member_object_pointer) {
+					operands.ir_type = IrType::MemberObjectPointer;
+				}
 				expr_type = return_type;
 				expr_category = return_category;
 				expr_size = return_size;

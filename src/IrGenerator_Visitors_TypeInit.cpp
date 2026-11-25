@@ -2870,6 +2870,16 @@ void AstToIr::emitZeroInitializedMember(
 		const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index);
 		const bool is_struct_element =
 			isIrStructType(toIrType(member.memberType())) && member_struct_info && element_size_bits > 64;
+		bool element_is_member_object_pointer = false;
+		if (member.canonical_type_id) {
+			const CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+			const TypeId unqualified = canonical_types.withoutTopLevelQualifiers(member.canonical_type_id);
+			const CanonicalTypeNode array_node = canonical_types.node(unqualified);
+			if (array_node.kind == CanonicalTypeKind::Array && array_node.child) {
+				element_is_member_object_pointer = canonical_types.node(canonical_types.withoutTopLevelQualifiers(array_node.child)).kind ==
+					CanonicalTypeKind::MemberObjectPointer;
+			}
+		}
 		for (size_t i = 0; i < element_count; ++i) {
 			if (is_struct_element) {
 				int element_byte_offset =
@@ -2883,15 +2893,9 @@ void AstToIr::emitZeroInitializedMember(
 				continue;
 			}
 
-			emitArrayStore(
-				member.memberType(),
-				element_size_bits,
-				base_object,
-				makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
-				makeTypedValue(member.memberType(), SizeInBits{element_size_bits}, 0ULL),
-				base_offset + static_cast<int>(member.offset),
-				base_object_is_pointer,
-				token);
+			emitArrayStore(member.memberType(), element_size_bits, base_object, makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
+				makeTypedValue(member.memberType(), SizeInBits{element_size_bits}, element_is_member_object_pointer ? kNullMemberObjectPointerRepresentation : 0ULL),
+				base_offset + static_cast<int>(member.offset), base_object_is_pointer, token);
 		}
 		return;
 	}
@@ -2917,7 +2921,16 @@ void AstToIr::emitZeroInitializedMember(
 	MemberStoreOp member_store;
 	member_store.value.setType(member.type_index.category());
 	member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
-	member_store.value.value = 0ULL;
+	unsigned long long zero_value = 0ULL;
+	if (member.canonical_type_id) {
+		const CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+		const TypeId unqualified = canonical_types.withoutTopLevelQualifiers(member.canonical_type_id);
+		if (canonical_types.node(unqualified).kind == CanonicalTypeKind::MemberObjectPointer) {
+			member_store.value.ir_type = IrType::MemberObjectPointer;
+			zero_value = kNullMemberObjectPointerRepresentation;
+		}
+	}
+	member_store.value.value = zero_value;
 	member_store.object = base_object;
 	member_store.member_name = member.getName();
 	member_store.offset = base_offset + static_cast<int>(member.offset);

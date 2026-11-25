@@ -1014,6 +1014,18 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		}
 	};
 
+	// static_cast of a null pointer constant to a data-member pointer is null
+	// member-pointer initialization, so it uses the same sentinel a direct
+	// initialization does. A member-pointer source such as &D::first is not a
+	// null pointer constant even when its own representation is zero.
+	if ((target_type_node.is_member_object_pointer_type() || target_type == TypeCategory::MemberObjectPointer) && isNullPointerConstantExpr(
+		expr_operands, staticCastNode.expr())) {
+		ExprResult result = makeExprResult(target_type_index, SizeInBits{64}, IrOperand{kNullMemberObjectPointerRepresentation},
+			PointerDepth{static_cast<int>(target_pointer_depth)}, ValueStorage::ContainsData);
+		result.ir_type = IrType::MemberObjectPointer;
+		return result;
+	}
+
 	// Special handling for rvalue reference casts: static_cast<T&&>(expr)
 	// This produces an xvalue - has identity but can be moved from
 	// Equivalent to std::move
@@ -1624,6 +1636,16 @@ ExprResult AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinter
 	// Special handling for lvalue reference casts: reinterpret_cast<T&>(expr)
 	if (target_type_node.is_lvalue_reference()) {
 		return handleLValueReferenceCast(expr_operands, target_size, target_type_index, reinterpretCastNode.cast_token(), "reinterpret_cast");
+	}
+
+	// reinterpret_cast of a null pointer constant to a data-member pointer is
+	// null member-pointer initialization, so it uses the same sentinel.
+	if ((target_type_node.is_member_object_pointer_type() || target_type == TypeCategory::MemberObjectPointer) && isNullPointerConstantExpr(
+		expr_operands, reinterpretCastNode.expr())) {
+		ExprResult result = makeExprResult(target_type_index, SizeInBits{64}, IrOperand{kNullMemberObjectPointerRepresentation},
+			PointerDepth{target_pointer_depth}, ValueStorage::ContainsData);
+		result.ir_type = IrType::MemberObjectPointer;
+		return result;
 	}
 
 	// reinterpret_cast reinterprets the bits without conversion

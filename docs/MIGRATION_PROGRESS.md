@@ -1086,3 +1086,22 @@ synthesized default-constructor stores now use the existing numeric conversion
 helper. The local aggregate store boundary still needs migration, as documented
 in `KNOWN_ISSUES.md`; nested aggregate and contextual-bool gaps are recorded there
 too.
+
+### Null data-member-pointer representation boundary
+
+The null data-member-pointer object representation is one shared ABI constant
+(`kNullMemberObjectPointerRepresentation`, all bits one) owned by `IrType.h`.
+Every direct producer the front end lowers uses it: declaration and
+value-initialization, `static_cast`/`reinterpret_cast`, assignment, return,
+argument passing, and conditional operands. Equality and inequality read the
+same representation over the full 64-bit value, bool conversion zero-tests
+against it, and base-to-derived member-pointer adjustment preserves it. A
+data-member-pointer expression is no longer treated as a null pointer constant
+merely because its offset is zero. Namespace-scope aggregate subobjects of
+member-pointer type remain outside this boundary and stay in `KNOWN_ISSUES.md`.
+
+The `.*`/`->*` right-operand check lives in sema normalisation and reports
+`InvalidDataMemberPointerOperand` at the operator before IR conversion.
+Conclusive non-member-pointer operand types are rejected; dependent forms and
+plain-pointer locals whose member identity was lost during dependent
+substitution are deferred, as recorded in `KNOWN_ISSUES.md`.

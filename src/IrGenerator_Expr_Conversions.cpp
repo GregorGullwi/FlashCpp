@@ -41,7 +41,7 @@ ExprResult AstToIr::emitNonZeroBoolValue(ExprResult operand, const Token& source
 		: toTypedValue(operand);
 	TypedValue rhs = use_integer_pointer_rep
 		? makeTypedValue(TypeCategory::UnsignedLongLong, test_size_bits,
-			operand.effectiveIrType() == IrType::MemberObjectPointer ? ~0ULL : 0ULL)
+			operand.effectiveIrType() == IrType::MemberObjectPointer ? kNullMemberObjectPointerRepresentation : 0ULL)
 		: makeTypedValue(operand.typeEnum(), test_size_bits, 0ULL);
 
 	if (const auto* value = std::get_if<unsigned long long>(&lhs.value)) {
@@ -73,8 +73,8 @@ ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, TypeCateg
 	}
 	if (toType == TypeCategory::MemberObjectPointer &&
 		(fromType == TypeCategory::Nullptr || operands.category() == TypeCategory::Nullptr)) {
-		return makeExprResult(nativeTypeIndex(TypeCategory::MemberObjectPointer),
-			SizeInBits{64}, IrOperand{~0ULL}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(nativeTypeIndex(TypeCategory::MemberObjectPointer), SizeInBits{64}, IrOperand{kNullMemberObjectPointerRepresentation},
+			PointerDepth{}, ValueStorage::ContainsData);
 	}
 	// C++20 [conv.bool] with a sema cast kind: the cast kind is the authority,
 	// so an object pointer converts correctly even though its operand metadata

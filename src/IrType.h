@@ -37,6 +37,12 @@ enum class IrType : int_fast16_t {
 	Nullptr,				// Transitional null-pointer family; can disappear once lowered earlier to concrete zero/pointer form
 };
 
+// Object representation of a null data-member pointer on the current x64
+// target ABI: all bits one. Every producer and consumer of a null
+// pointer-to-data-member must agree with this value; comparing the raw member
+// offset against zero would make an offset-zero member look null.
+inline constexpr unsigned long long kNullMemberObjectPointerRepresentation = ~0ULL;
+
 // ============================================================================
 // toIrType — Convert a TypeCategory to its runtime IrType representation.
 //

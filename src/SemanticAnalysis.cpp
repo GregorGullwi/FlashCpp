@@ -7702,14 +7702,104 @@ std::optional<VirtualDataMemberPath> findVirtualDataMemberPath(const CanonicalTy
 
 void SemanticAnalysis::annotateDataMemberPointerAccess(const PointerToMemberAccessNode& access) {
 	data_member_pointer_access_plans_.erase(&access);
-	const TypeId operand_type = getExpressionStructuralTypeId(access.member_pointer());
-	if (!operand_type) {
-		return;
-	}
+	auto report = [this, &access](DiagnosticId id, std::string_view message) {
+		throw makeStructuredCompileError(context_.diagnostics(), id, DiagnosticSeverity::Error, SourceLocation::fromToken(access.operator_token()), message, {});
+	};
 	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-	const TypeId member_pointer = table.withoutTopLevelQualifiers(canonicalTypeWithoutReference(table, operand_type));
-	if (table.node(member_pointer).kind != CanonicalTypeKind::MemberObjectPointer || table.hasDependentTypeComponents(member_pointer)) {
-		return;
+	const TypeId operand_type = getExpressionStructuralTypeId(access.member_pointer());
+	TypeId member_pointer{};
+	if (operand_type) {
+		member_pointer = table.withoutTopLevelQualifiers(canonicalTypeWithoutReference(table, operand_type));
+		if (table.hasDependentTypeComponents(member_pointer)) {
+			return;
+		}
+	}
+	const std::optional<TypeSpecifierNode> operand_syntax = getExpressionType(access.member_pointer());
+	// The flat declarator projection can still identify a member pointer whose
+	// canonical identity is not published yet (auto-deduced and dependent
+	// forms). A publication gap must not become a wrong rejection.
+	const bool flat_syntax_is_member_pointer = operand_syntax.has_value() && (operand_syntax->is_member_object_pointer_type() ||
+		operand_syntax->is_member_function_pointer() || operand_syntax->has_member_class());
+	// A plain pointer operand can still be a member pointer whose member identity
+	// was dropped by dependent return-type substitution or an auto-deduced
+	// local, and the legacy lowering peels that pointer back to the member.
+	// Defer those forms. A parameter whose declared type is a plain pointer, or
+	// an expression such as address-of, is unambiguous.
+	auto parameter_declares_plain_pointer = [&]() {
+		if (!access.member_pointer().is<ExpressionNode>() || current_function_stack_.empty()) {
+			return false;
+		}
+		const auto* identifier = std::get_if<IdentifierNode>(&access.member_pointer().as<ExpressionNode>());
+		if (identifier == nullptr) {
+			return false;
+		}
+		for (const ASTNode& parameter_node : current_function_stack_.back()->parameter_nodes()) {
+			if (!parameter_node.is<DeclarationNode>()) {
+				continue;
+			}
+			const DeclarationNode& parameter = parameter_node.as<DeclarationNode>();
+			if (parameter.identifier_token().value() != identifier->name()) {
+				continue;
+			}
+			const TypeSpecifierNode& parameter_type = parameter.type_specifier_node();
+			return !parameter_type.is_member_object_pointer_type() && !parameter_type.is_member_function_pointer() && !parameter_type.has_member_class() &&
+				parameter_type.runtime_pointer_depth() > 0;
+		}
+		return false;
+	};
+	auto ambiguous_pointer_operand = [&]() {
+		if (!access.member_pointer().is<ExpressionNode>()) {
+			return false;
+		}
+		const ExpressionNode& expression = access.member_pointer().as<ExpressionNode>();
+		if (std::holds_alternative<CallExprNode>(expression)) {
+			return true;
+		}
+		const auto* identifier = std::get_if<IdentifierNode>(&expression);
+		if (identifier == nullptr) {
+			return false;
+		}
+		if (parameter_declares_plain_pointer()) {
+			return false;
+		}
+		return !symbols_.lookup(identifier->getOrInternNameHandle()).has_value();
+	};
+	const bool operand_pointer_is_ambiguous = ambiguous_pointer_operand();
+	if (member_pointer) {
+		const CanonicalTypeKind member_pointer_kind = table.node(member_pointer).kind;
+		if (member_pointer_kind == CanonicalTypeKind::MemberFunctionPointer) {
+			// A member-function pointer access is a call operand; the call path
+			// owns its operand and signature diagnostics.
+			return;
+		}
+		if (member_pointer_kind != CanonicalTypeKind::MemberObjectPointer) {
+			if (flat_syntax_is_member_pointer) {
+				return;
+			}
+			if (operand_pointer_is_ambiguous && operand_syntax.has_value() && operand_syntax->runtime_pointer_depth() > 0) {
+				return;
+			}
+			report(DiagnosticId::InvalidDataMemberPointerOperand, "Pointer-to-member access requires a pointer-to-member right operand");
+		}
+	} else {
+		// A concrete builtin operand has no structural identity of its own. The
+		// flat expression type is still conclusive when it cannot name a
+		// pointer-to-member; defer anything dependent or unresolved.
+		if (!operand_syntax.has_value() || flat_syntax_is_member_pointer) {
+			return;
+		}
+		const TypeSpecifierNode& syntax = *operand_syntax;
+		const TypeCategory resolved = syntax.type_index().is_valid() ? resolve_type_alias(syntax.type_index()) : syntax.category();
+		if (resolved == TypeCategory::MemberObjectPointer || resolved == TypeCategory::MemberFunctionPointer) {
+			return;
+		}
+		const bool concrete_non_pointer = is_primitive_type(resolved) || resolved == TypeCategory::Enum || resolved == TypeCategory::Struct ||
+			resolved == TypeCategory::FunctionPointer;
+		const bool concrete_pointer = syntax.runtime_pointer_depth() > 0 && !operand_pointer_is_ambiguous;
+		if (!concrete_non_pointer && !concrete_pointer) {
+			return;
+		}
+		report(DiagnosticId::InvalidDataMemberPointerOperand, "Pointer-to-member access requires a pointer-to-member right operand");
 	}
 	const CanonicalTypeId receiver_id = inferExpressionType(access.object());
 	if (!receiver_id) {
@@ -7721,10 +7811,6 @@ void SemanticAnalysis::annotateDataMemberPointerAccess(const PointerToMemberAcce
 		return;
 	}
 
-	auto report = [this, &access](DiagnosticId id, std::string_view message) {
-		throw makeStructuredCompileError(context_.diagnostics(), id, DiagnosticSeverity::Error, SourceLocation::fromToken(access.operator_token()),
-			message, {});
-	};
 	TypeId receiver = table.withoutTopLevelQualifiers(canonicalTypeWithoutReference(table, imported_receiver.type));
 	bool decay_array_receiver = false;
 	if (access.is_arrow()) {
