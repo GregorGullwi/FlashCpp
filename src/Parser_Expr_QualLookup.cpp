@@ -4149,14 +4149,11 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 									// The member pointer's pointee is the member's complete declared type,
 									// including array bounds. Rebuilding it from the flat member
 									// fields would reduce an array member to its element type.
-									ASTNode pointee_node = emplace_node<TypeSpecifierNode>(
-										typeSpecifierFromStructMemberProjection(*member_result.member));
+									ASTNode pointee_node = emplace_node<TypeSpecifierNode>(typeSpecifierFromStructMemberProjection(*member_result.member));
 									TypeSpecifierNode member_pointer(nativeTypeIndex(TypeCategory::MemberObjectPointer), SizeInBits{POINTER_SIZE_BITS},
 										qualified_identifier->identifier_token(), CVQualifier::None, ReferenceQualifier::None);
-									member_pointer.set_member_class_name(
-										declaring_owner->name());
-									tryBindPublishedMemberClassEntity(
-										member_pointer, declaring_owner_index);
+									member_pointer.set_member_class_name(declaring_owner->name());
+									tryBindPublishedMemberClassEntity(member_pointer, declaring_owner_index);
 									member_pointer.set_member_object_pointee(&pointee_node.as<TypeSpecifierNode>());
 									return member_pointer;
 								}
@@ -4704,8 +4701,8 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		// Missing canonical shape: UnmigratedCallable and Unresolved operands, and
 		// Supported member pointers whose canonical kind is not Pointer so the
 		// canonical level count is below this flat depth.
-		if (!member_pointer_type.has_member_class() || member_pointer_type.pointer_depth() == 0 ||
-			member_pointer_type.is_member_function_pointer() || member_pointer_type.has_function_signature()) {
+		if (!member_pointer_type.has_member_class() || member_pointer_type.pointer_depth() == 0 || member_pointer_type.is_member_function_pointer() ||
+			member_pointer_type.has_function_signature()) {
 			return std::nullopt;
 		}
 

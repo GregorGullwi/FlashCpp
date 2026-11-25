@@ -1710,32 +1710,18 @@ ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExp
 				: nullptr;
 			const CVReferenceQualifier param_ref_qualifier = param_view.ref_qualifier;
 			const bool array_reference_from_pointer = param_type && callArgumentBindsArrayReferenceFromPointer(argument, *param_type, sema_ref_binding);
-			const ExpressionContext arg_context =
-				!array_reference_from_pointer &&
-				param_ref_qualifier != CVReferenceQualifier::None &&
-				(!sema_ref_binding || !sema_ref_binding->is_valid() || sema_ref_binding->binds_directly())
-					? ExpressionContext::LValueAddress
-					: ExpressionContext::Load;
-			ExprResult argument_result = visitExpressionNode(
-				argument.as<ExpressionNode>(),
-				arg_context);
+			const ExpressionContext arg_context = !array_reference_from_pointer && param_ref_qualifier != CVReferenceQualifier::None &&
+				(!sema_ref_binding || !sema_ref_binding->is_valid() || sema_ref_binding->binds_directly()) ? ExpressionContext::LValueAddress : ExpressionContext::Load;
+			ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
 
 			if (array_reference_from_pointer) {
-				vcall_op.arguments.push_back(buildArrayReferencePointerCallArgument(
-					argument_result,
-					*param_type,
-					callExprNode.called_from()));
+				vcall_op.arguments.push_back(buildArrayReferencePointerCallArgument(argument_result, *param_type, callExprNode.called_from()));
 				arg_index++;
 				return;
 			}
 
 			if (param_type) {
-				if (auto sema_bound_arg = tryBuildSemaBoundCallArgument(
-						argument_result,
-						argument,
-						*param_type,
-						sema_ref_binding,
-						callExprNode.called_from())) {
+				if (auto sema_bound_arg = tryBuildSemaBoundCallArgument(argument_result, argument, *param_type, sema_ref_binding, callExprNode.called_from())) {
 					vcall_op.arguments.push_back(std::move(*sema_bound_arg));
 					arg_index++;
 					return;
@@ -2453,20 +2439,14 @@ ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExp
 			std::optional<ExprResult> sema_evaluated_arg;
 			if (param_type && array_reference_from_pointer) {
 				ExprResult pointer_value = visitExpressionNode(argument.as<ExpressionNode>(), ExpressionContext::Load);
-				call_op.args.push_back(buildArrayReferencePointerCallArgument(
-					pointer_value,
-					*param_type,
-					callExprNode.called_from()));
+				call_op.args.push_back(buildArrayReferencePointerCallArgument(pointer_value, *param_type, callExprNode.called_from()));
 				arg_index++;
 				return;
 			}
 			if (param_type && sema_ref_binding && sema_ref_binding->is_valid()) {
-				ExpressionContext arg_context = sema_ref_binding->binds_directly()
-													? ExpressionContext::LValueAddress
-													: ExpressionContext::Load;
+				ExpressionContext arg_context = sema_ref_binding->binds_directly() ? ExpressionContext::LValueAddress : ExpressionContext::Load;
 				sema_evaluated_arg = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
-				if (auto sema_bound_arg = tryBuildSemaBoundCallArgument(
-						*sema_evaluated_arg, argument, *param_type, sema_ref_binding, callExprNode.called_from())) {
+				if (auto sema_bound_arg = tryBuildSemaBoundCallArgument(*sema_evaluated_arg, argument, *param_type, sema_ref_binding, callExprNode.called_from())) {
 					call_op.args.push_back(std::move(*sema_bound_arg));
 					arg_index++;
 					return;

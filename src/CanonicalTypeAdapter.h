@@ -1045,8 +1045,7 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 			// extents inside the member pointer.
 			size_t member_object_pointer_index = components.size();
 			for (size_t index = 0; index < components.size(); ++index) {
-				if (components[index].kind ==
-					DeclaratorComponentKind::MemberObjectPointer) {
+				if (components[index].kind == DeclaratorComponentKind::MemberObjectPointer) {
 					member_object_pointer_index = index;
 					break;
 				}
