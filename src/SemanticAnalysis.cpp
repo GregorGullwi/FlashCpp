@@ -493,6 +493,9 @@ bool isFunctionCandidateViableForArgCount(const FunctionDeclarationNode& candida
 }
 
 bool isCanonicalObjectConstQualified(const CanonicalTypeDesc& type) {
+	if (type.structural_type_id) {
+		return hasCVQualifier(canonicalTopObjectCv(requireFrontendContext().canonicalTypes(), type.structural_type_id), CVQualifier::Const);
+	}
 	if (!type.pointer_levels.empty()) {
 		return hasCVQualifier(
 			type.pointer_levels.back().cv_qualifier,

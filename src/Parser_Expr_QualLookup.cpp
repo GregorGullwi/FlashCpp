@@ -3512,8 +3512,10 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	auto apply_member_access_value_category = [](TypeSpecifierNode& member_type, const TypeSpecifierNode& object_type, bool is_arrow,
 		CVQualifier declared_cv, bool adjust_value_category, ReferenceQualifier object_value_category) {
 			CVQualifier cv = declared_cv;
+			CVQualifier receiver_cv = CVQualifier::None;
 			if (adjust_value_category && member_type.reference_qualifier() == ReferenceQualifier::None) {
-				cv |= object_type.cv_qualifier();
+				receiver_cv = object_type.cv_qualifier();
+				cv |= receiver_cv;
 			}
 			// The declared member type retains its pointee qualification.
 			// [expr.ref] qualifies the pointer object, not its pointee.
@@ -3522,10 +3524,13 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			} else if (member_type.has_ordered_declarator()) {
 				// The pointer object is the outermost ordered wrapper. A
 				// non-projectable spine such as int* (*)[3] has no flat pointer
-				// levels, so the wrapper must be replaced in place.
+				// levels, so the wrapper must be replaced in place. The spine
+				// already carries the declared member qualifiers on its own
+				// wrappers, so only the receiver's cv is added: declared_cv is
+				// the member's flat base cv here and must not move to the top.
 				const DeclaratorComponent outer_wrapper = member_type.declarator_components().front();
 				member_type.remove_outermost_ordered_declarator_component();
-				member_type.prepend_ordered_declarator_component(DeclaratorComponent::pointer(outer_wrapper.cv_qualifier | cv));
+				member_type.prepend_ordered_declarator_component(DeclaratorComponent::pointer(outer_wrapper.cv_qualifier | receiver_cv));
 			} else {
 				cv |= member_type.top_level_cv_qualifier();
 				member_type.remove_pointer_level();
