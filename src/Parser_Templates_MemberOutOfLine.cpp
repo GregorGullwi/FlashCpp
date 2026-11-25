@@ -581,6 +581,19 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		}
 	}
 
+	// An out-of-line static data member may carry its own array declarator:
+	//   template<class T> int S<T>::data[3];
+	// The element type parsed above becomes the array's element type here.
+	if (peek() == "["_tok) {
+		if (!return_type_node.is<TypeSpecifierNode>()) {
+			return std::nullopt;
+		}
+		ParseResult array_result = parseArrayDeclaratorSuffix(return_type_node.as<TypeSpecifierNode>(), nullptr, ArrayDeclaratorContext::Ordinary);
+		if (array_result.is_error()) {
+			return std::nullopt;
+		}
+	}
+
 	std::string_view qualified_class_name = StringTable::getStringView(
 		StringTable::getOrInternStringHandle(qualified_class_name_storage));
 	auto build_out_of_line_static_replay_params =

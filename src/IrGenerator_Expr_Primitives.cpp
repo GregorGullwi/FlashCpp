@@ -1696,7 +1696,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 		const size_t runtime_pointer_depth = type_node.runtime_pointer_depth();
 		const bool ordered_pointer =
 			!type_node.ordered_declarator_has_legacy_projection();
-		const bool is_array_type = is_array_decl || sema_.typeDenotesArrayObject(type_node);
+		const bool is_array_type = is_array_decl || sema_.typeDenotesArrayObject(type_node) || orderedDeclaratorIsArrayObject(type_node);
 		const bool is_ptr_or_ref = runtime_pointer_depth > 0 || type_node.is_reference() || type_node.is_function_pointer();
 		const int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 		GlobalLoadOp op;
@@ -1707,14 +1707,19 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 		op.global_name = global_name;
 		op.is_array = is_array_type;
 		ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
-		if (!is_array_type) {
-			setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
-												LValueInfo(LValueInfo::Kind::Global, global_name, 0),
-												type_node.category(), size_bits));
+		ValueStorage storage = ValueStorage::ContainsData;
+		if (is_array_type) {
+			// handleGlobalLoad emits LEA for an array, so this temp already holds
+			// the array's address. Mark it so array-to-pointer decay reuses that
+			// address instead of materializing the temp's own frame slot.
+			setTempVarMetadata(result_temp, TempVarMetadata::makeAddressOnly(nativeTypeIndex(type_node.type()), SizeInBits{size_bits}, ValueCategory::LValue));
+			storage = ValueStorage::ContainsAddress;
+		} else {
+			setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(LValueInfo(LValueInfo::Kind::Global, global_name, 0), type_node.category(), size_bits));
 		}
 		TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : nativeTypeIndex(type_node.type());
 		const PointerDepth pointer_depth{ordered_pointer ? static_cast<int>(runtime_pointer_depth) : 0};
-		return makeExprResult(type_index, SizeInBits{size_bits}, IrOperand{result_temp}, pointer_depth, ValueStorage::ContainsData);
+		return makeExprResult(type_index, SizeInBits{size_bits}, IrOperand{result_temp}, pointer_depth, storage);
 	};
 
 		// First preserve the legacy local enum-class lookup path.  Function-local

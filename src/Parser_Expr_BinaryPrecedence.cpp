@@ -2332,11 +2332,10 @@ Parser::AttributeInfo Parser::parse_attributes() {
 	tryParseDeclspecSpecifiers(info);
 	info.calling_convention = parse_calling_convention(info.calling_convention);
 
-	// Handle potential interleaved attributes (e.g., __declspec(...) [[nodiscard]] __declspec(...))
-	if (!peek().is_eof() &&
-		(peek() == "["_tok ||
-		 peek() == "__declspec"_tok ||
-		 peek_info().value() == "__attribute__")) {
+	// Handle potential interleaved attributes (e.g., __declspec(...) [[nodiscard]] __declspec(...)).
+	// A lone '[' starts an array declarator, not an attribute; recursing on it would
+	// never consume a token and overflow the native stack on a declarator suffix.
+	if (!peek().is_eof() && ((peek() == "["_tok && peek_info(1).value() == "[") || peek() == "__declspec"_tok || peek_info().value() == "__attribute__")) {
 		// Recurse to handle more attributes (prefer more specific linkage)
 		AttributeInfo more_info = parse_attributes();
 		if (more_info.linkage != Linkage::None) {

@@ -1602,12 +1602,16 @@ ParseResult Parser::parse_declarator(
 						advance();
 						// A declarator-id may be qualified (`Owner::name`), as in an
 						// out-of-line static data-member definition
-						// `int (*Registry::table)[2][4]`. The member-pointer form
-						// (`Owner::*`) was already handled above.
+						// `int (*Registry::table)[2][4]` or `int Outer::Inner::data;`.
+						// The member-pointer form (`Owner::*`) was already handled above.
+						StringBuilder qualified_owner_builder;
+						bool has_qualified_owner = false;
 						while (peek() == "::"_tok) {
-							if (!qualified_declarator_owner.isValid()) {
-								qualified_declarator_owner = identifier.handle();
+							if (has_qualified_owner) {
+								qualified_owner_builder.append("::");
 							}
+							qualified_owner_builder.append(identifier.value());
+							has_qualified_owner = true;
 							advance();
 							if (!peek().is_identifier()) {
 								failed = true;
@@ -1615,6 +1619,13 @@ ParseResult Parser::parse_declarator(
 							}
 							identifier = peek_info();
 							advance();
+						}
+						if (has_qualified_owner) {
+							qualified_declarator_owner = StringTable::getOrInternStringHandle(qualified_owner_builder.commit());
+						} else {
+							// Every StringBuilder must be committed or reset, including
+							// the common unqualified declarator case.
+							qualified_owner_builder.commit();
 						}
 						if (failed) {
 							break;

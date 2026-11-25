@@ -610,17 +610,14 @@ bracket operand, including the reversed form `index()[object()]`. Reads,
 writes, and address-taking share this lowering, including when a conversion
 supplies the array or when subscripts are combined across dimensions.
 
-## Out-of-line static data member definitions are not parsed
+## Out-of-line static data member definition edge cases
 
-A namespace-scope definition such as `int S::data;` or `int S::data[3];` is
-rejected with `Expected '(' for parameter list` because the declarator is
-parsed as a function declaration. The class-template form
-`template<class T> T S<T>::data[3];` crashes the compiler with an access
-violation instead of reporting the same parse gap.
-
-Until this is implemented, class templates cannot define static data members
-out of line, and tests that need a static array member must initialize it
-inline or use a non-static member instead.
+Scalar, array, nested-class, namespace-qualified, and class-template
+definitions attach to the in-class declaration, and concrete type conflicts
+are reported. Two boundaries remain: a repeated out-of-line definition is
+accepted as another attachment instead of producing a redefinition diagnostic,
+and the class-template conflict check covers concrete arithmetic member types;
+a dependent element type is validated against the instantiated declaration.
 
 ## NRVO coverage and exception lifetime
 
@@ -673,13 +670,8 @@ referent's address: the initializer follows reference aliases and adds the membe
 or array-element byte offset, and reads and writes through the reference
 dereference that stored address. A static-member array used as a pointer
 (`S::arr`) resolves the member's emitted storage for the in-class `static
-constexpr` and `inline static` forms. Remaining gaps:
+constexpr`, `inline static`, and out-of-line definition forms. Remaining gaps:
 
-- Out-of-line static array definitions (`int S::arr[3];`) are still unparsed (see
-  "Out-of-line static data member definitions are not parsed"). Only a static
-  array member with an in-class definition has storage today, so a non-const
-  static array member declared without an in-class initializer remains blocked by
-  that parse gap rather than by this lowering.
 - A namespace-scope reference initializer that needs a runtime pointer value
   (for example `int& r = *p;`, a reference-returning call, or a reference to a
   reference member or bit-field) cannot be expressed as a static relocation and

@@ -5561,6 +5561,9 @@ private:	 // Resume private methods
 											DeclarationNode& decl_node,
 											const Token& name_token,
 											ScopedTokenPosition& saved_position);
+	// Validate that an out-of-line static data-member definition names the same
+	// object type as the in-class declaration it completes.
+	bool staticMemberDefinitionTypeMatches(const StructStaticMember& member, DeclarationNode& definition_decl, bool definition_is_constexpr);
 
 		// Parse a function type parameter list for template argument parsing
 		// Parses types separated by commas, handling pack expansion (...), C-style varargs,

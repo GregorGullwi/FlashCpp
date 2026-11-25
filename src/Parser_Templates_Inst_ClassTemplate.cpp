@@ -14335,6 +14335,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			// If it exists, update the initializer; otherwise add a new member
 			StructStaticMember* existing_member = struct_info_ptr->findStaticMember(static_member_name_handle);
 			if (existing_member != nullptr) {
+				// A concrete out-of-line definition must describe the same object
+				// type as the in-class declaration. Dependent element types (T) are
+				// skipped here; the instantiated declaration carries their shape.
+				if (out_of_line_var.type_node.is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& definition_type = out_of_line_var.type_node.as<TypeSpecifierNode>();
+					if (isArithmeticType(definition_type.type()) && isArithmeticType(existing_member->memberType())) {
+						const bool definition_is_array = definition_type.is_array() || definition_type.is_array_object();
+						const bool shape_matches = definition_type.type() == existing_member->memberType() && definition_is_array == existing_member->is_array &&
+							definition_type.runtime_pointer_depth() == static_cast<size_t>(existing_member->pointer_depth);
+						if (!shape_matches) {
+							Token conflict_token;
+							if (out_of_line_var.declaration.has_value()) {
+								conflict_token = out_of_line_var.declaration->as<VariableDeclarationNode>().declaration().identifier_token();
+							}
+							throw makeStructuredCompileError(context_.diagnostics(), DiagnosticId::OutOfLineDefinitionMismatch, DiagnosticSeverity::Error,
+								SourceLocation::fromToken(conflict_token), std::string(StringBuilder().append("Definition of static data member '")
+									.append(StringTable::getStringView(existing_member->getName())).append("' conflicts with its in-class declaration").commit()), {});
+						}
+					}
+				}
 				if (out_of_line_is_constexpr) {
 					existing_member->is_constexpr = true;
 				}
