@@ -27,6 +27,17 @@ const TypeInfo* typeInfoForStaticMemberOwner(
 	return fallback_type;
 }
 
+// A static data member's object storage is the global emitted under its
+// qualified owner/member name. An array read has no binding-map key to record
+// as a decay origin, so name the member storage here. Without it an array
+// initializer such as `int* p = S::arr;` has no symbol and stores null.
+static void attachStaticMemberArrayStorageOrigin(EvalResult& result, const StructTypeInfo* owner_struct, StringHandle member_name) {
+	if (!result.success() || !result.is_array || result.array_origin_var.isValid() || owner_struct == nullptr) {
+		return;
+	}
+	result.array_origin_var = StringTable::getOrInternStringHandle(StringBuilder().append(owner_struct->getName()).append("::"sv).append(member_name).commit());
+}
+
 // Evaluate qualified identifier (e.g., Namespace::var or Template<T>::member)
 EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNode& qualified_id, EvaluationContext& context) {
 	// Look up the qualified name in the symbol table
@@ -1266,7 +1277,9 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						if (relookup_result.first && relookup_result.first->initializer.has_value()) {
 							FLASH_LOG(ConstExpr, Debug, "After lazy instantiation, evaluating initializer");
 							ScopedTemplateBindingsFromType owner_bindings(context, typeInfoForStaticMemberOwner(relookup_result.second, resolved_type_info));
-							return evaluate_static_member_initializer(relookup_result.first->initializer.value());
+							EvalResult instantiated_result = evaluate_static_member_initializer(relookup_result.first->initializer.value());
+							attachStaticMemberArrayStorageOrigin(instantiated_result, relookup_result.second, member_handle);
+							return instantiated_result;
 						}
 					}
 
@@ -1401,7 +1414,9 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					ScopedTemplateBindingsFromType owner_bindings(
 						context,
 						typeInfoForStaticMemberOwner(owner_struct, resolved_type_info));
-					return tryReadStaticMemberConstant(*static_member, context);
+					EvalResult static_member_result = tryReadStaticMemberConstant(*static_member, context);
+					attachStaticMemberArrayStorageOrigin(static_member_result, owner_struct, member_handle);
+					return static_member_result;
 				}
 			}
 		}

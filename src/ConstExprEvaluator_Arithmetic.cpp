@@ -466,25 +466,34 @@ EvalResult Evaluator::apply_binary_op(
 	// This enables `return data + size;` style begin()/end() member functions in constexpr
 	// range-based for loops, where `data` is a member array that has been tagged with its
 	// origin variable name via array_origin_var.
-	if (lhs.is_array && lhs.array_origin_var.isValid() && !rhs.is_array && !rhs.pointer_to_var.isValid() && op == "+") {
-		int64_t offset = rhs.as_int();
-		EvalResult result = make_checked_constexpr_pointer_result(
-			StringTable::getStringView(lhs.array_origin_var),
-			offset,
-			context,
-			bindings);
-		result.source_declaration = lhs.source_declaration;
+	auto checked_array_decay = [&](const EvalResult& array_result, int64_t offset) -> EvalResult {
+		if (offset < 0) {
+			return EvalResult::error("Pointer arithmetic produced negative offset " + std::to_string(offset) + " in constant expression",
+				EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionPointerCreationOutsideObject);
+		}
+		// The materialized array knows its own extent. Checking here keeps the
+		// bound for an array whose storage name (for example a static data
+		// member) cannot be resolved by name in the enclosing symbol tables.
+		std::optional<size_t> extent;
+		if (!array_result.array_elements.empty()) {
+			extent = array_result.array_elements.size();
+		} else if (!array_result.array_values.empty()) {
+			extent = array_result.array_values.size();
+		}
+		if (extent.has_value() && static_cast<uint64_t>(offset) > static_cast<uint64_t>(*extent)) {
+			return EvalResult::error("Pointer arithmetic produced offset " + std::to_string(offset) + " outside the valid range [0, " +
+				std::to_string(*extent) + "] for '" + std::string(StringTable::getStringView(array_result.array_origin_var)) + "' in constant expression",
+				EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionPointerCreationOutsideObject);
+		}
+		EvalResult result = make_checked_constexpr_pointer_result(StringTable::getStringView(array_result.array_origin_var), offset, context, bindings);
+		result.source_declaration = array_result.source_declaration;
 		return result;
+	};
+	if (lhs.is_array && lhs.array_origin_var.isValid() && !rhs.is_array && !rhs.pointer_to_var.isValid() && op == "+") {
+		return checked_array_decay(lhs, rhs.as_int());
 	}
 	if (rhs.is_array && rhs.array_origin_var.isValid() && !lhs.is_array && !lhs.pointer_to_var.isValid() && op == "+") {
-		int64_t offset = lhs.as_int();
-		EvalResult result = make_checked_constexpr_pointer_result(
-			StringTable::getStringView(rhs.array_origin_var),
-			offset,
-			context,
-			bindings);
-		result.source_declaration = rhs.source_declaration;
-		return result;
+		return checked_array_decay(rhs, lhs.as_int());
 	}
 
 	// Determine the operand kinds so we can dispatch to the correct domain.

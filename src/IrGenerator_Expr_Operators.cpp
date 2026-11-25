@@ -328,6 +328,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 
 		const auto& ts = decl_ptr->type_specifier_node();
 		info.type_index = nativeTypeIndex(ts.type());
+		info.is_reference = ts.is_reference() || ts.is_rvalue_reference();
 		// C++20 [dcl.ptr]/1, [expr.sizeof]: a pointer or reference object
 		// occupies the pointer width regardless of its pointee, so stores
 		// through the binding must not truncate to the element width. A
@@ -425,6 +426,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 		if (static_member) {
 			info.type_index = nativeTypeIndex(static_member->memberType());
 			info.size_in_bits = SizeInBits{static_cast<int>(static_member->size * 8)};
+			info.is_reference = static_member->is_reference();
 			// A non-projectable ordered pointer member is pointer-sized; the flat
 			// member size only reflects the base type.
 			if (std::optional<TypeSpecifierNode> ordered_type =
@@ -2180,8 +2182,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
 			const auto gsi = resolveGlobalOrStaticBinding(lhs_ident);
 
-			if (gsi.is_global_or_static &&
-				(gsi.is_pointer_like || !isIrStructType(toIrType(gsi.bindingType())))) {
+			if (gsi.is_global_or_static && !gsi.is_reference && (gsi.is_pointer_like || !isIrStructType(toIrType(gsi.bindingType())))) {
 				// This is a global variable or static local assignment - generate GlobalStore instruction
 				// Generate IR for the RHS
 				ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
@@ -2231,9 +2232,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
 			const auto gsi = resolveGlobalOrStaticBinding(lhs_ident);
 
-			if (gsi.is_global_or_static &&
-				gsi.type_index.category() != TypeCategory::Void &&
-				gsi.size_in_bits.is_set()) {
+			if (gsi.is_global_or_static && !gsi.is_reference && gsi.type_index.category() != TypeCategory::Void && gsi.size_in_bits.is_set()) {
 				// Load current value from global
 				TempVar loaded = var_counter.next();
 				GlobalLoadOp load_op;
