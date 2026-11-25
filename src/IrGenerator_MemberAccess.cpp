@@ -215,6 +215,34 @@ std::vector<size_t> AstToIr::getEffectiveArrayDimensionsForCodegen(const Declara
 	return dim_sizes;
 }
 
+std::optional<CanonicalArrayDecayStep> AstToIr::canonicalArrayDecayStepForOperand(const ASTNode& operand) const {
+	if (!operand.is<ExpressionNode>()) {
+		return std::nullopt;
+	}
+	const ExpressionNode& expression = operand.as<ExpressionNode>();
+	TypeId structural_type_id{};
+	if (const auto* identifier = std::get_if<IdentifierNode>(&expression)) {
+		if (const DeclarationNode* declaration = lookupDeclaration(identifier->name())) {
+			TypeSpecifierNode declared_type = declaration->type_specifier_node();
+			// A declaration can keep its array bounds on the declaration node
+			// instead of the type specifier, so materialize the complete entity
+			// type before asking the canonical shape.
+			if (!declared_type.is_array() && !declared_type.has_pointee_array_declarator() && declaration->is_array()) {
+				ConstExpr::EvaluationContext eval_ctx = makeEvalContext(gSymbolTable);
+				declared_type = declaredEntityTypeSpecifier(*declaration, eval_ctx);
+			}
+			structural_type_id = sema_.canonicalStructuralTypeId(declared_type);
+		}
+	}
+	if (!structural_type_id) {
+		structural_type_id = sema_.getExpressionStructuralTypeId(operand);
+	}
+	if (!structural_type_id) {
+		return std::nullopt;
+	}
+	return canonicalArrayDecayStep(requireFrontendContext().canonicalTypes(), structural_type_id);
+}
+
 AstToIr::MultiDimSubscriptChain AstToIr::collectMultiDimSubscriptChain(
 	const ArraySubscriptNode& subscript) {
 	MultiDimSubscriptChain chain;
@@ -577,6 +605,12 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 	}
 	const bool subscript_result_is_array = subscript_result_type && (subscript_result_type->has_ordered_declarator()
 		? orderedSpecifierIsArrayObject(*subscript_result_type) : subscript_result_type->is_array_object());
+	// The selected object and its stride come from the canonical operand shape.
+	// `subscript_size_bits` describes the expression result, which sema may have
+	// already converted to the decayed pointer type (int* for `grid[1]` of
+	// int[2][3]); using that width as the stride lands on the previous row.
+	const std::optional<CanonicalArrayDecayStep> canonical_decay_step = canonicalArrayDecayStepForOperand(arraySubscriptNode.array_expr());
+	const std::optional<int> canonical_stride_bits = canonical_decay_step.has_value() ? std::optional<int>(canonical_decay_step->element_size_bits) : std::nullopt;
 	using OperandOrder = ArraySubscriptNode::OperandOrder;
 	std::optional<TypedValue> leading_index;
 	if (arraySubscriptNode.operandOrder() == OperandOrder::IndexFirst) {
@@ -623,14 +657,19 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 		}
 		return indices;
 	};
-	const auto emitScalarAccess = [&](ArrayAccessOp access, PointerDepth pointer_depth) {
+	const auto emitScalarAccess = [&](ArrayAccessOp access, PointerDepth pointer_depth, std::optional<int> stride_override) {
 		if (subscript_result_type && subscript_result_type->runtime_pointer_depth() > 0) {
 			pointer_depth = PointerDepth{static_cast<int>(subscript_result_type->runtime_pointer_depth())};
-			access.element_size_in_bits = POINTER_SIZE_BITS;
+			if (!stride_override.has_value()) {
+				access.element_size_in_bits = POINTER_SIZE_BITS;
+			}
 		}
-		access.element_size_in_bits = subscript_size_bits.value_or(access.element_size_in_bits);
+		const int stride_bits = stride_override.value_or(access.element_size_in_bits);
+		access.element_size_in_bits = stride_bits;
+		// The result keeps the width sema published (possibly the decayed
+		// pointer), while the stride advances by the selected object's size.
+		const SizeInBits size{subscript_size_bits.value_or(stride_bits)};
 		const TypeIndex type = access.element_type_index;
-		const SizeInBits size{access.element_size_in_bits};
 		return emitSubscriptAccess(std::move(access), type, size, pointer_depth, ValueStorage::ContainsData, context, token);
 	};
 	const auto emitFlattenedAccess = [&](ArrayAccessOp access, const MultiDimSubscriptChain& chain, std::span<const size_t> dimensions,
@@ -638,7 +677,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 		captureBaseAddress(access);
 		const TempVar flat_index = emitRowMajorSubscriptIndex(chain, dimensions, leading_indices, token);
 		access.index = makeTypedValue(TypeCategory::LongLong, SizeInBits{64}, flat_index);
-		return emitScalarAccess(std::move(access), pointer_depth);
+		// The flattened row-major index already encodes every extent stride.
+		return emitScalarAccess(std::move(access), pointer_depth, std::nullopt);
 	};
 
 	auto materializeMemberArrayBase = [&](const ExpressionNode& member_expression,
@@ -916,7 +956,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 					access.member_offset = member_offset;
 					access.base_holds_address = base_is_address;
 					access.index = getIndex(access);
-					return emitScalarAccess(std::move(access), PointerDepth{});
+					return emitScalarAccess(std::move(access), PointerDepth{}, canonical_stride_bits);
 				};
 
 				const DeclarationNode* member_decl_ptr = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
@@ -1060,7 +1100,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 						access.element_type_index = member->type_index.withCategory(element_type);
 						access.element_size_in_bits = element_size_bits;
 						access.index = getIndex(access);
-						return emitScalarAccess(std::move(access), PointerDepth{});
+						return emitScalarAccess(std::move(access), PointerDepth{}, canonical_stride_bits);
 					}
 				}
 			}
@@ -1367,7 +1407,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 	ArrayAccessOp access;
 	access.array = base_variant;
 	access.element_type_index = element_type_index.withCategory(element_type);
-	access.element_size_in_bits = element_size_bits;
+	access.element_size_in_bits = canonical_stride_bits.value_or(element_size_bits);
 	access.member_offset = base_member_offset;
 	access.base_holds_address = array_base_holds_address;
 	access.index = getIndex(access);

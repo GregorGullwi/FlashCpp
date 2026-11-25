@@ -1141,19 +1141,22 @@ incorrect constructor diagnostic. These parser/lookup gaps prevent a source-leve
 friend-effect regression here; native tests retain a successfully instantiated
 `Check<Good>` after a later class-body error without rolling back its cache entry.
 
-## Pointer arithmetic on a decayed record array is rejected
+## Built-in pointer addition accepts two pointer operands
 
-`Cell cells[2]; Cell* p = cells + 1;` is rejected with
-`OperatorOverloadNotFound#1319`, while `int values[2]; int* p = values + 1;`
-compiles and `Cell* p = cells; Cell* q = p + 1;` also compiles. The binary
-`operator+` path does not apply [conv.array] decay to an array operand whose
-element type is a record, so the decayed pointer never reaches builtin pointer
-arithmetic. A reduced probe reproduces this on `origin/main`.
+`int* a; int* b; int* p = a + b;` and the record-pointer form compile and add
+the two pointer values, although [expr.add]/1 only defines pointer plus integer
+and pointer minus pointer. Sema accepts both operands and the lowering treats
+the right pointer as an offset. Array operands decay into the same accepted
+form.
 
-## Decaying a non-first row of a two-dimensional array uses the wrong row
+## Pointer-to-array comparisons use the pointer object instead of its value
 
-`int grid[2][3]; int* row = grid[1];` produces a pointer that reads
-`grid[0][2]` instead of `grid[1][0]`. The explicit `&grid[1][0]` form and
-`int (*row)[3] = &grid[1];` are correct, so only the implicit row-to-element
-decay path is wrong. The same failure reproduces with a local `grid`, outside
-the namespace-scope array initializer path.
+`int arr[2][3]; int (*p)[3] = &arr[1]; if (p != &arr[1]) ...` takes the branch
+even though both pointers designate the same row; the comparison lowers the
+pointer-to-array operands as 32-bit objects. A pointer-difference expression
+used directly as a comparison operand, such as `if (values - other != 0)`, is
+rejected during IR generation with "Missing sema-owned overload-resolution
+argument type ... for BinaryOperatorNode"; binding the difference to an integral
+variable first compiles and compares correctly. Both reproduce with `int`
+arrays, so they are independent of the [conv.array] element type and of array
+decay to a record pointer.

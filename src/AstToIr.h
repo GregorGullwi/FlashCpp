@@ -3,6 +3,7 @@
 #include <unordered_set>
 #include "IrGenerator.h"
 #include "InlineVector.h"
+#include "CanonicalArrayDecay.h"
 
 // Forward-declare to avoid pulling SemanticAnalysis.h into every TU that includes AstToIr.h
 class SemanticAnalysis;
@@ -515,6 +516,11 @@ private:
 		const MultiDimSubscriptChain& chain);
 	std::vector<size_t> getEffectiveArrayDimensionsForCodegen(const DeclarationNode& decl) const;
 	size_t getEffectiveArrayDimensionCountForCodegen(const DeclarationNode& decl) const;
+	// The one canonical [conv.array]/[expr.sub] step for an operand: array
+	// element or pointer pointee, with its object stride. Consumers that need to
+	// decay an array or index through a pointer read this instead of deriving a
+	// stride from the expression result type.
+	std::optional<CanonicalArrayDecayStep> canonicalArrayDecayStepForOperand(const ASTNode& operand) const;
 	TypedValue lowerSubscriptIndex(const ArraySubscriptNode& subscript);
 	TempVar emitRowMajorSubscriptIndex(const MultiDimSubscriptChain& chain, std::span<const size_t> dimensions,
 		std::span<const std::optional<TypedValue>> leading_indices, const Token& token);
