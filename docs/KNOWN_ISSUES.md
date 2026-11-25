@@ -666,7 +666,9 @@ member pointer now place each scalar leaf at its element stride, including neste
 rows and brace elision; arrays of records and scalars keep their previous paths.
 Static pointer initializers now record a base symbol plus a byte addend, so a
 decayed element (`values + 1`, `&values[i]`) and a pointer-valued aggregate member
-at any offset store the addressed subobject instead of null. Remaining gaps:
+at any offset store the addressed subobject instead of null. A pointer-to-array
+addend uses the canonical pointee object, so `&cells[1]` of `int[2][3]` advances
+one row instead of one `int`. Remaining gaps:
 
 - A static-member array used as a pointer (`S::arr`) still stores null because the
   qualified-name decay path does not resolve the member's storage; out-of-line
@@ -1141,22 +1143,15 @@ incorrect constructor diagnostic. These parser/lookup gaps prevent a source-leve
 friend-effect regression here; native tests retain a successfully instantiated
 `Check<Good>` after a later class-body error without rolling back its cache entry.
 
-## Built-in pointer addition accepts two pointer operands
+## Namespace-scope pointer-to-array initializers need a materialized row
 
-`int* a; int* b; int* p = a + b;` and the record-pointer form compile and add
-the two pointer values, although [expr.add]/1 only defines pointer plus integer
-and pointer minus pointer. Sema accepts both operands and the lowering treats
-the right pointer as an offset. Array operands decay into the same accepted
-form.
-
-## Pointer-to-array comparisons use the pointer object instead of its value
-
-`int arr[2][3]; int (*p)[3] = &arr[1]; if (p != &arr[1]) ...` takes the branch
-even though both pointers designate the same row; the comparison lowers the
-pointer-to-array operands as 32-bit objects. A pointer-difference expression
-used directly as a comparison operand, such as `if (values - other != 0)`, is
-rejected during IR generation with "Missing sema-owned overload-resolution
-argument type ... for BinaryOperatorNode"; binding the difference to an integral
-variable first compiles and compares correctly. Both reproduce with `int`
-arrays, so they are independent of the [conv.array] element type and of array
-decay to a record pointer.
+A pointer-to-array global initialized from a row of an array with no initializer
+(`static int cells[512][3]; static int (*row)[3] = &cells[400];`) is rejected as
+a non-constant initializer, while the `= {}` form initializes the same row
+correctly. An array of such pointers (`static int (*rows[2])[3] = {&cells[0],
+&cells[1]};`) also records no data relocations, so both elements stay null. The
+canonical pointee stride applies once the initializer evaluates; what remains is
+constant-evaluating `&array[index]` for an unmaterialized static array and
+collecting one relocation per pointer leaf of an array whose element is a
+pointer-to-array. Record-row pointers at namespace scope reach the same
+non-constant path.

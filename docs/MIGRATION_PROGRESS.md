@@ -565,7 +565,13 @@ remaining pattern schemas by identity, and remove the name fallback.
      subscript lowering treats pointer-to-array declarators as scalar pointers
      rather than array objects, builtin unary `*` consumes the canonical
      indirection result, and pointer arithmetic scales by the canonical pointee
-     size after ordered array decay. Identifier and qualified-global array
+     size after ordered array decay. Built-in pointer comparisons classify each
+     operand through `canonicalPointerShape` and widen pointer operands to the
+     target pointer width, `[expr.add]` infers its result after the canonical
+     array-to-pointer decay so a direct `values - other` comparison carries the
+     same operand type as a named intermediate, and namespace-scope
+     pointer-to-array relocations step by the canonical pointee object.
+     Identifier and qualified-global array
      detection now consume the sema canonical predicates instead of projection
      fields. A published member-pointer access adopts that member's canonical
      type, and a published class-to-pointer subscript conversion adopts the

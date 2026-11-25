@@ -1329,11 +1329,12 @@ TypeId resolveUnaryOperandStructuralType(const CanonicalTypeDesc& desc) {
 	return exported.status == CanonicalTypeImportStatus::Supported ? imported.type : TypeId{};
 }
 
-// [expr.cond] applies the array-to-pointer conversion before choosing a
-// common pointer result.  Keep this canonical so string literals and ordinary
-// array expressions follow the same path; their parser-facing expression
-// types are not necessarily already decayed.
-std::optional<CanonicalTypeDesc> decayArrayForConditional(const CanonicalTypeDesc& desc) {
+// C++20 [conv.array]/1 applies before [expr.cond] chooses a common pointer
+// result and before [expr.add] selects pointer arithmetic. Keep this canonical
+// so string literals, ordinary array expressions, and the operands of a
+// difference such as `values - other` all decay through one rule; their
+// parser-facing expression types are not necessarily already decayed.
+std::optional<CanonicalTypeDesc> decayArrayToPointer(const CanonicalTypeDesc& desc) {
 	// Every projectable array shape now publishes structural identity, so an
 	// array/pointee-array descriptor without one is a publication defect rather
 	// than a reason to read the flat projection.
@@ -1393,7 +1394,7 @@ std::optional<CanonicalTypeDesc> tryGetConditionalPointerType(
 	bool lhs_is_null_pointer_constant,
 	bool rhs_is_null_pointer_constant) {
 	auto asPointer = [](const CanonicalTypeDesc& desc) -> std::optional<CanonicalTypeDesc> {
-		if (auto decayed = decayArrayForConditional(desc)) {
+		if (auto decayed = decayArrayToPointer(desc)) {
 			return decayed;
 		}
 		TypeId structural_id = desc.structural_type_id;
@@ -11408,8 +11409,22 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					const CanonicalTypeId rhs_id = inferExpressionType(e.get_rhs());
 					if (!lhs_id || !rhs_id)
 						return {};
-					const CanonicalTypeDesc& l = type_context_.get(lhs_id);
-					const CanonicalTypeDesc& r = type_context_.get(rhs_id);
+					// C++20 [conv.array]/1 converts an array operand before
+					// [expr.add] decides whether the operands are pointers. An
+					// array minus a pointer is a pointer difference even though
+					// the array's inferred identity is not yet a pointer.
+					CanonicalTypeId arithmetic_lhs_id = lhs_id;
+					CanonicalTypeId arithmetic_rhs_id = rhs_id;
+					if (op == "+" || op == "-") {
+						if (const std::optional<CanonicalTypeDesc> decayed = decayArrayToPointer(type_context_.get(arithmetic_lhs_id))) {
+							arithmetic_lhs_id = type_context_.intern(*decayed);
+						}
+						if (const std::optional<CanonicalTypeDesc> decayed = decayArrayToPointer(type_context_.get(arithmetic_rhs_id))) {
+							arithmetic_rhs_id = type_context_.intern(*decayed);
+						}
+					}
+					const CanonicalTypeDesc& l = type_context_.get(arithmetic_lhs_id);
+					const CanonicalTypeDesc& r = type_context_.get(arithmetic_rhs_id);
 					if (l.category() == TypeCategory::Invalid || r.category() == TypeCategory::Invalid)
 						return {};
 					if (isPlaceholderAutoType(l.category()) || isPlaceholderAutoType(r.category()))
@@ -11417,19 +11432,31 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					// C++20 [expr.add]: pointer arithmetic.
 					//   T* + integral -> T*; integral + T* -> T*
 					//   T* - integral -> T*; T* - T*       -> ptrdiff_t
-					const bool l_is_ptr = !l.pointer_levels.empty();
-					const bool r_is_ptr = !r.pointer_levels.empty();
+					// Pointer presence is the canonical shape, so a pointer-to-array
+					// stays one Pointer even when its flat projection also carries
+					// array extents.
+					auto descIsPointer = [](const CanonicalTypeDesc& desc) {
+						if (desc.structural_type_id) {
+							return canonicalPointerShape(requireFrontendContext().canonicalTypes(), desc.structural_type_id).isPointer();
+						}
+						return !desc.pointer_levels.empty();
+					};
+					const bool l_is_ptr = descIsPointer(l);
+					const bool r_is_ptr = descIsPointer(r);
 					if (l_is_ptr || r_is_ptr) {
 						if (op == "+") {
-							if (l_is_ptr && !r_is_ptr && (isIntegralType(r.category()) || r.category() == TypeCategory::Bool))
-								return lhs_id;
-							if (r_is_ptr && !l_is_ptr && (isIntegralType(l.category()) || l.category() == TypeCategory::Bool))
-								return rhs_id;
+							if (l_is_ptr && !r_is_ptr && (isIntegralType(r.category()) || r.category() == TypeCategory::Bool)) {
+								return arithmetic_lhs_id;
+							}
+							if (r_is_ptr && !l_is_ptr && (isIntegralType(l.category()) || l.category() == TypeCategory::Bool)) {
+								return arithmetic_rhs_id;
+							}
 							return {};
 						}
 						if (op == "-") {
-							if (l_is_ptr && !r_is_ptr && (isIntegralType(r.category()) || r.category() == TypeCategory::Bool))
-								return lhs_id;
+							if (l_is_ptr && !r_is_ptr && (isIntegralType(r.category()) || r.category() == TypeCategory::Bool)) {
+								return arithmetic_lhs_id;
+							}
 							if (l_is_ptr && r_is_ptr) {
 								CanonicalTypeDesc diff_desc;
 								const TypeCategory diff_cat = (g_target_data_model == TargetDataModel::LLP64) ? TypeCategory::LongLong : TypeCategory::Long;
@@ -11470,10 +11497,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				// branch never makes the conditional result an array type. This
 				// includes non-projectable ordered arrays, whose structure lives
 				// in the canonical table.
-				const std::optional<CanonicalTypeDesc> t_decayed =
-					decayArrayForConditional(t_desc);
-				const std::optional<CanonicalTypeDesc> f_decayed =
-					decayArrayForConditional(f_desc);
+				const std::optional<CanonicalTypeDesc> t_decayed = decayArrayToPointer(t_desc);
+				const std::optional<CanonicalTypeDesc> f_decayed = decayArrayToPointer(f_desc);
 				if (t_decayed || f_decayed) {
 					if (auto pointer_result = tryGetConditionalPointerType(
 						t_decayed.value_or(t_desc),
@@ -17956,10 +17981,10 @@ void SemanticAnalysis::tryAnnotateTernaryBranchConversions(const TernaryOperator
 	// branch so codegen emits the decay instead of copying the array object;
 	// this is required even when both branches share the same array type, where
 	// no branch-to-common conversion would otherwise be recorded.
-	if (const std::optional<CanonicalTypeDesc> true_decayed = decayArrayForConditional(true_desc)) {
+	if (const std::optional<CanonicalTypeDesc> true_decayed = decayArrayToPointer(true_desc)) {
 		tryAnnotateConversionByTypeId(ternary_node.true_expr(), type_context_.intern(*true_decayed), true_type_id);
 	}
-	if (const std::optional<CanonicalTypeDesc> false_decayed = decayArrayForConditional(false_desc)) {
+	if (const std::optional<CanonicalTypeDesc> false_decayed = decayArrayToPointer(false_desc)) {
 		tryAnnotateConversionByTypeId(ternary_node.false_expr(), type_context_.intern(*false_decayed), false_type_id);
 	}
 

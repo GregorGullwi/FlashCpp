@@ -51,7 +51,7 @@ src/Parser_Templates_Lazy.cpp	6
 src/Parser_Templates_Params.cpp	7
 src/Parser_Templates_Substitution.cpp	5
 src/Parser_TypeSpecifiers.cpp	14
-src/SemanticAnalysis.cpp	186
+src/SemanticAnalysis.cpp	185
 src/SemanticTypes.h	4
 src/SymbolTable.h	9
 src/TargetABI.h	1

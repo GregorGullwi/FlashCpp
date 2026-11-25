@@ -516,6 +516,10 @@ private:
 		const MultiDimSubscriptChain& chain);
 	std::vector<size_t> getEffectiveArrayDimensionsForCodegen(const DeclarationNode& decl) const;
 	size_t getEffectiveArrayDimensionCountForCodegen(const DeclarationNode& decl) const;
+	// The published canonical type of an expression operand, read from the
+	// declaration for an identifier and from the sema slot otherwise. Pointer
+	// presence and [conv.array] decay both classify from this identity.
+	TypeId canonicalOperandStructuralTypeId(const ASTNode& operand) const;
 	// The one canonical [conv.array]/[expr.sub] step for an operand: array
 	// element or pointer pointee, with its object stride. Consumers that need to
 	// decay an array or index through a pointer read this instead of deriving a

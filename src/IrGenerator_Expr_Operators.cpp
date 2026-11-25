@@ -2444,6 +2444,23 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	const std::optional<CanonicalArrayDecayStep> rhs_array_decay_step = canonicalArrayDecayStepForOperand(binaryOperatorNode.get_rhs());
 	const bool lhs_operand_is_array = lhs_array_decay_step.has_value() && lhs_array_decay_step->operand_is_array;
 	const bool rhs_operand_is_array = rhs_array_decay_step.has_value() && rhs_array_decay_step->operand_is_array;
+	// Pointer presence comes from the canonical pointer shape, not from the flat
+	// depth: a reference to a pointer-to-array, a pointer-to-array parameter, and
+	// a plain object pointer are all one canonical Pointer. An array operand
+	// contributes a pointer through [conv.array]. Comparisons and built-in
+	// pointer arithmetic read these two facts from the same classification.
+	CanonicalTypeTable& canonical_table = requireFrontendContext().canonicalTypes();
+	auto operandPointerShape = [&](const ASTNode& operand) -> CanonicalPointerShape {
+		const TypeId operand_type = canonicalOperandStructuralTypeId(operand);
+		if (!operand_type) {
+			return {};
+		}
+		return canonicalPointerShape(canonical_table, operand_type);
+	};
+	const CanonicalPointerShape lhs_pointer_shape = operandPointerShape(binaryOperatorNode.get_lhs());
+	const CanonicalPointerShape rhs_pointer_shape = operandPointerShape(binaryOperatorNode.get_rhs());
+	const bool lhs_operand_is_pointer = lhs_pointer_shape.isPointer() || lhs_operand_is_array;
+	const bool rhs_operand_is_pointer = rhs_pointer_shape.isPointer() || rhs_operand_is_array;
 	auto buildDecayedOperandType = [&](const TypeSpecifierNode& source, const CanonicalArrayDecayStep& step) {
 		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
 		TypeSpecifierNode decayed(source.type_index().withCategory(source.type()), TypeQualifier::None, 0, source.token(), source.cv_qualifier());
@@ -3737,6 +3754,30 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			}
 		}
 	}
+	// The canonical shape is the last word on pointer presence. A reference to a
+	// pointer-to-array and any other pointer shape the flat declarator depth
+	// missed still enters pointer comparison and pointer arithmetic at its real
+	// depth, never as a 32-bit scalar.
+	if (lhs_pointer_depth == 0 && lhs_pointer_shape.isPointer()) {
+		lhs_pointer_depth = lhs_pointer_shape.depth;
+	}
+	if (rhs_pointer_depth == 0 && rhs_pointer_shape.isPointer()) {
+		rhs_pointer_depth = rhs_pointer_shape.depth;
+	}
+	// [conv.array] turns an array operand into a one-level pointer before
+	// pointer arithmetic selects its candidate, including subscripts such as
+	// `grid[1]` whose own result type is still the row array.
+	if (lhs_pointer_depth == 0 && lhs_operand_is_array) {
+		lhs_pointer_depth = 1;
+	}
+	if (rhs_pointer_depth == 0 && rhs_operand_is_array) {
+		rhs_pointer_depth = 1;
+	}
+	// C++20 [expr.add]/1 defines pointer plus integer and pointer minus pointer;
+	// two pointer operands have no built-in candidate.
+	if (op == "+" && lhs_operand_is_pointer && rhs_operand_is_pointer) {
+		throwOperatorOverloadNotFoundDiagnostic(*context_, binaryOperatorNode.get_token(), op);
+	}
 
 	auto makeNullPointerExpr = [&](const ExprResult& pointer_expr, int pointer_depth) {
 		TypeIndex pointer_type_index = pointer_expr.type_index;
@@ -4452,16 +4493,17 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 	}
 	// Comparison operations (typed)
-	// For pointer comparisons, override types to use 64-bit unsigned integers
-	// Helper lambda to apply pointer comparison type override
+	// A pointer comparison compares the pointer values, never the pointee or a
+	// narrowed scalar. Both operands are widened to the target pointer width
+	// with unsigned ordering; pointer-to-array is one Pointer, not an aggregate.
 	auto applyPointerComparisonOverride = [&](BinaryOp& bin_op, IrOpcode& op_ref) {
 		if (lhs_pointer_depth > 0 && rhs_pointer_depth > 0) {
 			bin_op.lhs.setType(TypeCategory::UnsignedLongLong);
 			bin_op.lhs.ir_type = IrType::Integer;
-			bin_op.lhs.size_in_bits = SizeInBits{64};
+			bin_op.lhs.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
 			bin_op.rhs.setType(TypeCategory::UnsignedLongLong);
 			bin_op.rhs.ir_type = IrType::Integer;
-			bin_op.rhs.size_in_bits = SizeInBits{64};
+			bin_op.rhs.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
 
 			// For ordered comparisons, ensure we use unsigned comparison for pointers
 			if (op_ref == IrOpcode::LessThan)
@@ -4472,6 +4514,11 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				op_ref = IrOpcode::UnsignedGreaterThan;
 			else if (op_ref == IrOpcode::GreaterEqual)
 				op_ref = IrOpcode::UnsignedGreaterEqual;
+		} else if (lhs_operand_is_pointer && rhs_operand_is_pointer) {
+			// Both operands classify as pointers, so one of the depths is a
+			// publication defect. Comparing them as scalars would silently
+			// truncate; refuse to emit the comparison instead.
+			throw InternalError("pointer comparison operands have no classifiable pointer depth");
 		}
 	};
 
