@@ -1595,6 +1595,10 @@ private:
 	TypedValue buildOrdinaryCallArgument(const ASTNode& argument, const TypeSpecifierNode* param_type, const std::optional<ExprResult>& evaluated_arg, const Token& token);
 	TypedValue buildReferenceCallArgumentFromDeclaration(const DeclarationNode& decl_node, VariableKey identifier_key);
 	TypedValue buildReferenceCallArgumentFromResult(const ExprResult& argument_result, const Token& token, bool reuse_address_valued_temp);
+	bool callArgumentBindsArrayReferenceFromPointer(const ASTNode& argument, const TypeSpecifierNode& param_type,
+		const CallArgReferenceBindingInfo* sema_ref_binding);
+	bool callArgumentBindsArrayReferenceFromPointer(const ASTNode& argument, const FunctionSignature* signature, size_t arg_index);
+	TypedValue buildArrayReferencePointerCallArgument(const ExprResult& argument_result, const TypeSpecifierNode& param_type, const Token& token);
 	bool canUseDirectIdentifierCallArgument(const DeclarationNode* decl_node, CVReferenceQualifier param_ref_qualifier, const CallArgReferenceBindingInfo* sema_ref_binding) const;
 	TypedValue buildDirectIdentifierCallArgument(const DeclarationNode& arg_decl_node, VariableKey identifier_key, CVReferenceQualifier param_ref_qualifier, const ASTNode& argument, const Token& token);
 	TypedValue buildConstructorArgumentValue(const ExprResult& argument_result,

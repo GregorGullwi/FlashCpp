@@ -4146,21 +4146,18 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 										member_result.member == nullptr) {
 										return std::nullopt;
 									}
-									TypeSpecifierNode member_pointer(
-										member_result.member->type_index.withCategory(
-											member_result.member->memberType()),
-										SizeInBits{static_cast<int>(
-											member_result.member->size * 8)},
-										qualified_identifier->identifier_token(),
-										CVQualifier::None,
-										member_result.member->reference_qualifier);
-									member_pointer.add_pointer_levels(
-										member_result.member->pointer_depth);
-									member_pointer.add_pointer_level();
+									// The member pointer's pointee is the member's complete declared type,
+									// including array bounds. Rebuilding it from the flat member
+									// fields would reduce an array member to its element type.
+									ASTNode pointee_node = emplace_node<TypeSpecifierNode>(
+										typeSpecifierFromStructMemberProjection(*member_result.member));
+									TypeSpecifierNode member_pointer(nativeTypeIndex(TypeCategory::MemberObjectPointer), SizeInBits{POINTER_SIZE_BITS},
+										qualified_identifier->identifier_token(), CVQualifier::None, ReferenceQualifier::None);
 									member_pointer.set_member_class_name(
 										declaring_owner->name());
 									tryBindPublishedMemberClassEntity(
 										member_pointer, declaring_owner_index);
+									member_pointer.set_member_object_pointee(&pointee_node.as<TypeSpecifierNode>());
 									return member_pointer;
 								}
 							}
@@ -4694,6 +4691,15 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		if (FrontendContext* active = FrontendContext::active()) {
 			noteCanonicalShapeImport(active->canonicalTypes(), member_pointer_type,
 				CanonicalShapeSite::Parser_Expr_QualLookup_PointerDepth);
+		}
+		if (member_pointer_type.has_member_object_pointee()) {
+			// The published pointee is the designated member's complete type. It
+			// keeps array bounds that the flat member-pointer projection lacks.
+			TypeSpecifierNode result = member_pointer_type.member_object_pointee();
+			const ReferenceQualifier object_value_category = pointer_to_member_access.is_arrow() ? ReferenceQualifier::LValueReference :
+				expressionValueCategoryQualifier(pointer_to_member_access.object());
+			apply_member_access_value_category(result, *object_type_opt, pointer_to_member_access.is_arrow(), CVQualifier::None, true, object_value_category);
+			return result;
 		}
 		// Missing canonical shape: UnmigratedCallable and Unresolved operands, and
 		// Supported member pointers whose canonical kind is not Pointer so the

@@ -1709,7 +1709,9 @@ ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExp
 				? sema_.getCallRefBinding(sema_call_key, arg_index)
 				: nullptr;
 			const CVReferenceQualifier param_ref_qualifier = param_view.ref_qualifier;
+			const bool array_reference_from_pointer = param_type && callArgumentBindsArrayReferenceFromPointer(argument, *param_type, sema_ref_binding);
 			const ExpressionContext arg_context =
+				!array_reference_from_pointer &&
 				param_ref_qualifier != CVReferenceQualifier::None &&
 				(!sema_ref_binding || !sema_ref_binding->is_valid() || sema_ref_binding->binds_directly())
 					? ExpressionContext::LValueAddress
@@ -1717,6 +1719,15 @@ ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExp
 			ExprResult argument_result = visitExpressionNode(
 				argument.as<ExpressionNode>(),
 				arg_context);
+
+			if (array_reference_from_pointer) {
+				vcall_op.arguments.push_back(buildArrayReferencePointerCallArgument(
+					argument_result,
+					*param_type,
+					callExprNode.called_from()));
+				arg_index++;
+				return;
+			}
 
 			if (param_type) {
 				if (auto sema_bound_arg = tryBuildSemaBoundCallArgument(
@@ -2435,10 +2446,20 @@ ExprResult AstToIr::generateMemberFunctionCallIrBody(const CallExprNode& callExp
 					arg_index);
 			}
 			const CVReferenceQualifier param_ref_qualifier = param_view.ref_qualifier;
+			const bool array_reference_from_pointer = param_type && callArgumentBindsArrayReferenceFromPointer(argument, *param_type, sema_ref_binding);
 
 			// Evaluate the argument expression once when sema ref-binding is active so that
 			// the result can be reused in the fallback path without double evaluation.
 			std::optional<ExprResult> sema_evaluated_arg;
+			if (param_type && array_reference_from_pointer) {
+				ExprResult pointer_value = visitExpressionNode(argument.as<ExpressionNode>(), ExpressionContext::Load);
+				call_op.args.push_back(buildArrayReferencePointerCallArgument(
+					pointer_value,
+					*param_type,
+					callExprNode.called_from()));
+				arg_index++;
+				return;
+			}
 			if (param_type && sema_ref_binding && sema_ref_binding->is_valid()) {
 				ExpressionContext arg_context = sema_ref_binding->binds_directly()
 													? ExpressionContext::LValueAddress

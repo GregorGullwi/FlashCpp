@@ -728,7 +728,8 @@ TypedValue AstToIr::buildSemaAwareConstructorArgument(const ASTNode& argument, c
 		throw InternalError("Constructor argument is not an expression");
 	}
 	ExpressionContext arg_context = ExpressionContext::Load;
-	if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference()) &&
+	const bool array_reference_from_pointer = param_type && callArgumentBindsArrayReferenceFromPointer(argument, *param_type, sema_ref_binding);
+	if (!array_reference_from_pointer && param_type && (param_type->is_reference() || param_type->is_rvalue_reference()) &&
 		(!sema_ref_binding || !sema_ref_binding->is_valid() || sema_ref_binding->binds_directly())) {
 		arg_context = ExpressionContext::LValueAddress;
 	}
@@ -740,6 +741,12 @@ TypedValue AstToIr::buildSemaAwareConstructorArgument(
 	ExprResult argument_result, const ASTNode& argument,
 	const TypeSpecifierNode* param_type, const CallArgReferenceBindingInfo* sema_ref_binding, const Token& token) {
 	if (param_type) {
+		if (callArgumentBindsArrayReferenceFromPointer(argument, *param_type, sema_ref_binding)) {
+			if (argument_result.storage != ValueStorage::ContainsData) {
+				throw InternalError("array-reference constructor argument was pre-evaluated as an address");
+			}
+			return buildArrayReferencePointerCallArgument(argument_result, *param_type, token);
+		}
 		if (auto sema_bound_arg = tryBuildSemaBoundCallArgument(argument_result, argument, *param_type, sema_ref_binding, token)) {
 			return std::move(*sema_bound_arg);
 		}
@@ -880,6 +887,70 @@ TypedValue AstToIr::buildReferenceCallArgumentFromResult(
 	return value;
 }
 
+bool AstToIr::callArgumentBindsArrayReferenceFromPointer(const ASTNode& argument, const TypeSpecifierNode& param_type,
+	const CallArgReferenceBindingInfo* sema_ref_binding) {
+	if (!param_type.is_reference_to_array()) {
+		return false;
+	}
+	const TypeId argument_identity = sema_.getExpressionStructuralTypeId(argument);
+	if (!argument_identity) {
+		return false;
+	}
+	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+	const TypeId argument_object = shapeAfterTopCvAndReference(canonical_types, argument_identity);
+	const std::optional<TypeId> pointee = canonicalPointee(canonical_types, argument_object);
+	if (!pointee.has_value() || !canonicalArrayElement(canonical_types, *pointee).has_value()) {
+		return false;
+	}
+	if (sema_ref_binding && sema_ref_binding->is_valid()) {
+		const TypeId parameter_shape = sema_.typeContext().get(sema_ref_binding->parameter_type_id).structural_type_id;
+		if (!parameter_shape) {
+			throw InternalError("array-reference call binding has no published parameter shape");
+		}
+		const TypeId parameter_array = shapeAfterTopCvAndReference(canonical_types, parameter_shape);
+		if (!canonicalArrayElement(canonical_types, parameter_array).has_value()) {
+			throw InternalError("array-reference call binding parameter is not an array");
+		}
+		// The pointer's pointee must denote the same array shape the reference binds.
+		if (!canonicalSimilarIgnoringCvAndRef(canonical_types, *pointee, parameter_array)) {
+			throw InternalError("array-reference call binding shape does not match the pointer pointee");
+		}
+	}
+	return true;
+}
+
+bool AstToIr::callArgumentBindsArrayReferenceFromPointer(const ASTNode& argument, const FunctionSignature* signature, size_t arg_index) {
+	if (!signature || !signature->hasStructuredTypes()) {
+		return false;
+	}
+	const std::span<const FunctionType> parameters = signature->parameter_types();
+	if (arg_index >= parameters.size()) {
+		return false;
+	}
+	const TypeSpecifierNode parameter_type = typeSpecifierFromFunctionType(parameters[arg_index]);
+	return callArgumentBindsArrayReferenceFromPointer(argument, parameter_type, nullptr);
+}
+
+TypedValue AstToIr::buildArrayReferencePointerCallArgument(const ExprResult& argument_result, const TypeSpecifierNode& param_type, const Token& token) {
+	// A reference to an array binds the array object. A pointer whose pointee is
+	// that array already holds the array address as its value, so passing the
+	// address of the pointer object would make the callee read pointer bytes as
+	// elements. Copy the value into a fresh pointer object and pass that value
+	// as the reference address, matching local reference initialization.
+	TempVar pointer_temp = var_counter.next();
+	AssignmentOp copy_pointer;
+	copy_pointer.result = pointer_temp;
+	copy_pointer.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, pointer_temp);
+	copy_pointer.rhs = makeTypedValue(argument_result.category(), SizeInBits{POINTER_SIZE_BITS}, toIrValue(argument_result.value));
+	copy_pointer.dereference_rhs_references = false;
+	ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(copy_pointer), token));
+	TypedValue argument = makeTypedValue(argument_result.type_index, SizeInBits{POINTER_SIZE_BITS}, IrValue(pointer_temp), ReferenceQualifier::LValueReference);
+	argument.pointer_depth = PointerDepth{1};
+	argument.storage = ValueStorage::ContainsAddress;
+	applyCallParameterBindingMetadata(argument, param_type);
+	return argument;
+}
+
 CVReferenceQualifier AstToIr::functionSignatureParamRefQualifier(const FunctionSignature* signature, size_t arg_index) const {
 	if (!signature || arg_index >= signature->parameter_types().size()) {
 		return CVReferenceQualifier::None;
@@ -922,9 +993,14 @@ TypedValue AstToIr::buildIndirectCallArgument(
 	size_t arg_index,
 	const Token& token) {
 	const CVReferenceQualifier param_ref_qualifier = functionSignatureParamRefQualifier(signature, arg_index);
-	ExprResult argument_result = visitExpressionNode(
-		argument.as<ExpressionNode>(),
-		indirectCallArgumentContext(signature, arg_index));
+	const bool array_reference_from_pointer = callArgumentBindsArrayReferenceFromPointer(argument, signature, arg_index);
+	ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>(), array_reference_from_pointer ? ExpressionContext::Load
+		: indirectCallArgumentContext(signature, arg_index));
+	if (array_reference_from_pointer) {
+		const std::span<const FunctionType> parameters = signature->parameter_types();
+		const TypeSpecifierNode parameter_type = typeSpecifierFromFunctionType(parameters[arg_index]);
+		return buildArrayReferencePointerCallArgument(argument_result, parameter_type, token);
+	}
 	return buildIndirectCallArgumentFromResult(argument_result, param_ref_qualifier, token);
 }
 

@@ -940,22 +940,14 @@ For `template<class T> int read(D& d, T B::* p) { return d.*p; }`, a call to
 The instantiated operand needs to reach sema with both its member owner and
 substituted pointee in the published member-pointer type.
 
-## Array member-pointer pointees are not represented
+## A pointer-to-member declarator with a pointer pointee needs parentheses
 
-Address-of and auto deduction for an array member (`auto p = &C::arr;`) reduce the
-pointee to its element type, so `(object.*p)[i]` cannot lower as an array.
-Declaring `int (C::*p)[3]` through an ordered declarator is also rejected by the
-canonical import path. Publish the array pointee shape before claiming full
-member-object pointer coverage.
-
-## Reference-to-array call arguments from pointer values bind the pointer object
-
-`void read(int (&)[3]); int (*p)[3]; read(p);` is lowered as though the argument
-named the storage of `p`, so the callee reads the pointer bytes as array
-elements. `read(object.*(&S::row))` has the same gap. Local initialization such
-as `int (&r)[3] = p;` uses the pointer value as the array address. Function
-argument reference binding still needs that same pointer-value-to-array-address
-lowering.
+`int* C::*p;` is parsed as an out-of-line definition target instead of a
+data-member pointer whose pointee is `int*`, while the parenthesized
+`int* (C::*p)` accepted by tests keeps working. The qualified declarator is
+recognised before the pointer prefix can become part of the member pointee.
+Use the parenthesized spelling until the declarator parser handles the
+unparenthesized form.
 
 ## Static-member template initializer replay still handles unresolved lookups
 
