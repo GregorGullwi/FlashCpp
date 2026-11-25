@@ -1578,10 +1578,19 @@ bool AstToIr::setupBaseFromIdentifier(
 		return false;
 	}
 	const auto binding_info = resolveGlobalOrStaticBinding(identifier);
+	const DeclarationNode* declared_base = lookupDeclaration(identifier.nameHandle().isValid() ? identifier.nameHandle() :
+		StringTable::getOrInternStringHandle(identifier.name()));
+	const bool referent_is_pointer = binding_info.is_reference && declared_base != nullptr && declared_base->type_specifier_node().runtime_pointer_depth() > 0;
 	// Member-access validation resolves the declaration/type using the source-level identifier,
 	// but codegen must use the actual storage symbol for globals/static locals.
 	if (binding_info.is_global_or_static && std::holds_alternative<StringHandle>(base_object)) {
-		if (is_pointer_dereference) {
+		if (referent_is_pointer) {
+			// A reference to a pointer stores the address of the pointer object,
+			// so the pointer value used as the member-access base is one load
+			// further in than the reference slot itself.
+			TempVar referent_address = emitGlobalStoredAddressLoad(binding_info.store_name, member_token);
+			base_object = emitDereference(TypeCategory::UnsignedLongLong, POINTER_SIZE_BITS, 1, IrValue{referent_address});
+		} else if (is_pointer_dereference) {
 			TempVar pointer_value = var_counter.next();
 			GlobalLoadOp load_op;
 			load_op.result.value = pointer_value;

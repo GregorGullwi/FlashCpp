@@ -668,14 +668,23 @@ Static pointer initializers now record a base symbol plus a byte addend, so a
 decayed element (`values + 1`, `&values[i]`) and a pointer-valued aggregate member
 at any offset store the addressed subobject instead of null. A pointer-to-array
 addend uses the canonical pointee object, so `&cells[1]` of `int[2][3]` advances
-one row instead of one `int`. Remaining gaps:
+one row instead of one `int`. A namespace-scope reference object now stores the
+referent's address: the initializer follows reference aliases and adds the member
+or array-element byte offset, and reads and writes through the reference
+dereference that stored address. A static-member array used as a pointer
+(`S::arr`) resolves the member's emitted storage for the in-class `static
+constexpr` and `inline static` forms. Remaining gaps:
 
-- A static-member array used as a pointer (`S::arr`) still stores null because the
-  qualified-name decay path does not resolve the member's storage; out-of-line
-  static array definitions are also unparsed (see "Out-of-line static data member
-  definitions are not parsed").
-- A namespace-scope reference records the referenced value instead of its
-  address, so runtime reads of `N::r` are wrong.
+- Out-of-line static array definitions (`int S::arr[3];`) are still unparsed (see
+  "Out-of-line static data member definitions are not parsed"). Only a static
+  array member with an in-class definition has storage today, so a non-const
+  static array member declared without an in-class initializer remains blocked by
+  that parse gap rather than by this lowering.
+- A namespace-scope reference initializer that needs a runtime pointer value
+  (for example `int& r = *p;`, a reference-returning call, or a reference to a
+  reference member or bit-field) cannot be expressed as a static relocation and
+  now fails closed. Binding a reference to a prvalue is materialized only for a
+  scalar constant.
 - Namespace-scope `using`-directives are not consulted during detached
   evaluation.
 - Inline and nested namespace variables can be emitted with a name that does not

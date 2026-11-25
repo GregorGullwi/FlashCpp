@@ -1036,11 +1036,15 @@ member initializers. Reference members bound to temporaries in default or
 constructor mem-initializers are rejected with `ReferenceMemberBindsTemporary`
 when the constructor is lowered; source regressions cover both initializer forms.
 Named-object bindings evaluate in an address context, so global and local lvalues
-store the bound object's address rather than its value. Static pointer
-initializers carry a base symbol plus a byte addend, so a decayed array element
-and a pointer-valued aggregate member at any offset store the addressed
-subobject; shapes whose storage symbol is unresolved stay in the namespace-scope
-gaps.
+store the bound object's address rather than its value. Namespace-scope reference
+objects are part of that boundary: their storage holds the referent's address,
+including a member or array-element byte offset, and reference reads and writes
+dereference it. Static pointer initializers carry a base symbol plus a byte
+addend, so a decayed array element, an in-class static-member array, and a
+pointer-valued aggregate member at any offset store the addressed subobject.
+Out-of-line static data member definitions are still unparsed, so a static array
+member without an in-class definition has no storage; that is a parse boundary,
+not a lowering gap.
 Empty and standard-layout
 publication now aggregate member and base facts for represented records, covering
 no-unique-address empty members and cross-base ownership rules; the existing

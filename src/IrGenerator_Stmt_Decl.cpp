@@ -585,6 +585,186 @@ static size_t publishedArrayRank(const TypeSpecifierNode& type_node) {
 	return copyRequiredArrayExtents(requireFrontendContext().canonicalTypes(), type_node, storage).size();
 }
 
+StringHandle AstToIr::resolveStaticStorageSymbol(std::string_view name) {
+	// A function target is stored under its mangled symbol; an object under its
+	// (possibly namespace-mangled or static-member-qualified) variable name.
+	std::optional<ASTNode> symbol = lookupSymbol(name);
+	if (!symbol.has_value()) {
+		symbol = gSymbolTable.lookup(name);
+	}
+	if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
+		return StringTable::getOrInternStringHandle(generateMangledNameForCall(symbol->as<FunctionDeclarationNode>(), StringHandle{}, {}));
+	}
+	const StringHandle simple_name_handle = StringTable::getOrInternStringHandle(name);
+	auto it = global_variable_names_.find(simple_name_handle);
+	return (it != global_variable_names_.end()) ? it->second : simple_name_handle;
+}
+
+std::optional<AstToIr::StaticStorageAddress> AstToIr::resolveStaticStorageAddress(const ASTNode& node, ConstExpr::EvaluationContext& evaluation_context) {
+	if (!node.is<ExpressionNode>() || global_symbol_table_ == nullptr) {
+		return std::nullopt;
+	}
+	// Namespace-scope initializers resolve simple names through the enclosing
+	// namespace chain, not only the global scope.
+	auto lookup_static_object_symbol = [&](StringHandle handle) -> std::optional<ASTNode> {
+		if (!current_namespace_stack_.empty()) {
+			const NamespaceHandle current_namespace = buildNamespaceHandleFromStrings(current_namespace_stack_);
+			if (current_namespace.isValid()) {
+				if (auto resolved = global_symbol_table_->lookup_in_namespace_chain(current_namespace, handle); resolved.has_value()) {
+					return resolved->symbol;
+				}
+			}
+		}
+		return global_symbol_table_->lookup(handle);
+	};
+	const ExpressionNode& expr = node.as<ExpressionNode>();
+	if (const auto* identifier = std::get_if<IdentifierNode>(&expr)) {
+		const std::optional<ASTNode> symbol = lookup_static_object_symbol(identifier->nameHandle());
+		if (!symbol.has_value() || !symbol->is<VariableDeclarationNode>()) {
+			return std::nullopt;
+		}
+		const VariableDeclarationNode& declaration = symbol->as<VariableDeclarationNode>();
+		const DeclarationNode& declaring_node = declaration.declaration();
+		const TypeSpecifierNode& declared_type = declaring_node.type_specifier_node();
+		if (declared_type.is_reference() || declared_type.is_rvalue_reference()) {
+			// The name denotes the referenced object, not the reference slot, so
+			// follow the stored alias rather than addressing the alias object.
+			if (!declaration.initializer().has_value()) {
+				return std::nullopt;
+			}
+			return resolveStaticStorageAddress(*declaration.initializer(), evaluation_context);
+		}
+		StaticStorageAddress result;
+		result.symbol = declaring_node.has_mangled_name()
+			? StringTable::getOrInternStringHandle(declaring_node.mangled_name())
+			: resolveStaticStorageSymbol(identifier->name());
+		result.is_array_object = sema_.declarationDenotesArrayObject(declaring_node);
+		return result;
+	}
+	if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&expr)) {
+		if (const std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> resolved = sema_.getResolvedQualifiedIdentifier(qualified); resolved.has_value()) {
+			if (resolved->kind != SemanticAnalysis::ResolvedQualifiedIdentifierInfo::Kind::Symbol &&
+				resolved->kind != SemanticAnalysis::ResolvedQualifiedIdentifierInfo::Kind::StaticMember) {
+				// Enum constants, member functions, and non-static data members
+				// are values or member pointers here, not static object storage.
+				return std::nullopt;
+			}
+			const TypeSpecifierNode& declared_type = resolved->type;
+			if (declared_type.is_reference() || declared_type.is_rvalue_reference()) {
+				const auto* variable = resolved->symbol.get_if<VariableDeclarationNode>();
+				if (variable == nullptr || !variable->initializer().has_value()) {
+					return std::nullopt;
+				}
+				return resolveStaticStorageAddress(*variable->initializer(), evaluation_context);
+			}
+			if (resolved->storage_name.isValid()) {
+				StaticStorageAddress result;
+				result.symbol = resolved->storage_name;
+				result.is_array_object = sema_.typeDenotesArrayObject(declared_type) || declared_type.is_array();
+				return result;
+			}
+		}
+		std::optional<ASTNode> symbol = global_symbol_table_->lookup_qualified(qualified->namespace_handle(), qualified->nameHandle());
+		if (!symbol.has_value()) {
+			symbol = global_symbol_table_->lookup(qualified->full_name());
+		}
+		if (!symbol.has_value()) {
+			symbol = lookup_static_object_symbol(qualified->nameHandle());
+		}
+		if (!symbol.has_value()) {
+			return std::nullopt;
+		}
+		const DeclarationNode* declaration = get_decl_from_symbol(*symbol);
+		if (declaration == nullptr) {
+			return std::nullopt;
+		}
+		const TypeSpecifierNode& declared_type = declaration->type_specifier_node();
+		if (declared_type.is_reference() || declared_type.is_rvalue_reference()) {
+			const auto* variable = symbol->get_if<VariableDeclarationNode>();
+			if (variable == nullptr || !variable->initializer().has_value()) {
+				return std::nullopt;
+			}
+			return resolveStaticStorageAddress(*variable->initializer(), evaluation_context);
+		}
+		StaticStorageAddress result;
+		result.symbol = declaration->has_mangled_name()
+			? StringTable::getOrInternStringHandle(declaration->mangled_name())
+			: resolveStaticStorageSymbol(qualified->full_name());
+		result.is_array_object = sema_.declarationDenotesArrayObject(*declaration);
+		return result;
+	}
+	if (const auto* member_access = std::get_if<MemberAccessNode>(&expr)) {
+		if (member_access->is_arrow()) {
+			return std::nullopt;
+		}
+		std::optional<StaticStorageAddress> base = resolveStaticStorageAddress(member_access->object(), evaluation_context);
+		if (!base.has_value()) {
+			return std::nullopt;
+		}
+		const std::optional<TypeSpecifierNode> base_type = ConstExpr::Evaluator::tryQueryExpressionType(member_access->object(), evaluation_context);
+		if (!base_type.has_value() || !base_type->type_index().is_valid()) {
+			return std::nullopt;
+		}
+		const auto resolved_member = FlashCpp::gLazyMemberResolver.resolve(base_type->type_index(), StringTable::getOrInternStringHandle(
+			member_access->member_name()));
+		if (!resolved_member) {
+			return std::nullopt;
+		}
+		if (resolved_member.member->is_reference() || resolved_member.member->bitfield_width.has_value()) {
+			// A reference member's slot stores an address; a bit-field has no
+			// addressable storage. Neither can be named by this relocation.
+			return std::nullopt;
+		}
+		const int64_t member_offset = static_cast<int64_t>(resolved_member.adjusted_offset);
+		if (member_offset < 0 || base->byte_addend > std::numeric_limits<int64_t>::max() - member_offset) {
+			throw InternalError("static member address offset is not representable");
+		}
+		base->byte_addend += member_offset;
+		base->is_array_object = resolved_member.member->is_array;
+		return base;
+	}
+	if (const auto* subscript = std::get_if<ArraySubscriptNode>(&expr)) {
+		const TypeId base_type_id = sema_.getExpressionStructuralTypeId(subscript->array_expr());
+		if (!base_type_id) {
+			return std::nullopt;
+		}
+		CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+		const std::optional<CanonicalArrayDecayStep> step = canonicalArrayDecayStep(canonical_types, base_type_id);
+		if (!step.has_value() || !step->operand_is_array) {
+			// A pointer-valued base needs the pointer's current value, which is
+			// not available while an object file's data section is being built.
+			return std::nullopt;
+		}
+		std::optional<StaticStorageAddress> base = resolveStaticStorageAddress(subscript->array_expr(), evaluation_context);
+		if (!base.has_value()) {
+			return std::nullopt;
+		}
+		const ConstExpr::EvalResult index_result = ConstExpr::Evaluator::evaluate(subscript->index_expr(), evaluation_context);
+		if (!index_result.success() || index_result.as_int() < 0) {
+			return std::nullopt;
+		}
+		const int64_t element_index = index_result.as_int();
+		const int64_t stride = step->element_size_bits / 8;
+		if (stride <= 0 || element_index > std::numeric_limits<int64_t>::max() / stride) {
+			throw InternalError("static array element offset is not representable");
+		}
+		const int64_t element_offset = element_index * stride;
+		if (base->byte_addend > std::numeric_limits<int64_t>::max() - element_offset) {
+			throw InternalError("static array element address offset is not representable");
+		}
+		base->byte_addend += element_offset;
+		const TypeId element_type = shapeAfterTopCvAndReference(canonical_types, step->element_type);
+		base->is_array_object = canonical_types.node(element_type).kind == CanonicalTypeKind::Array;
+		return base;
+	}
+	if (const auto* unary = std::get_if<UnaryOperatorNode>(&expr)) {
+		if (unary->op() == "&") {
+			return resolveStaticStorageAddress(unary->get_operand(), evaluation_context);
+		}
+	}
+	return std::nullopt;
+}
+
 void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	const VariableDeclarationNode& node = ast_node.as<VariableDeclarationNode>();
 	const auto& decl = node.declaration();
@@ -949,18 +1129,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				packLevel(packLevel, array_result);
 			};
 		auto resolveGlobalRelocTarget = [&](std::string_view name) -> StringHandle {
-			// A function target is stored under its mangled symbol; an object under
-			// its (possibly namespace-mangled global) variable name.
-			std::optional<ASTNode> symbol = lookupSymbol(name);
-			if (!symbol.has_value()) {
-				symbol = gSymbolTable.lookup(name);
-			}
-			if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
-				return StringTable::getOrInternStringHandle(generateMangledNameForCall(symbol->as<FunctionDeclarationNode>(), StringHandle{}, {}));
-			}
-			StringHandle reloc_simple_name_handle = StringTable::getOrInternStringHandle(name);
-			auto it = global_variable_names_.find(reloc_simple_name_handle);
-			return (it != global_variable_names_.end()) ? it->second : reloc_simple_name_handle;
+			return resolveStaticStorageSymbol(name);
 		};
 		// Resolve one aggregate-initializer element to a symbol whose absolute
 		// address is stored. Accepts `&name`, a bare function name, `&name` for
@@ -1585,32 +1754,32 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					op.reloc_target = resolveGlobalRelocTarget(target_name);
 					handled_as_reloc = true;
 				};
-					// Handle address-of initializer: int* ptr = &x;
+				auto initializeGlobalAddressReloc = [&](const StaticStorageAddress& address) {
+					if (element_size < sizeof(void*)) {
+						throw InternalError("static address relocation slot is narrower than a pointer");
+					}
+					op.is_initialized = true;
+					op.init_data.assign(element_size, 0);
+					writeRawValueAtOffset(op.init_data, 0, sizeof(void*), static_cast<unsigned long long>(address.byte_addend));
+					op.reloc_target = address.symbol;
+					op.reloc_addend = address.byte_addend;
+					handled_as_reloc = true;
+				};
+					// Handle address-of initializer: int* ptr = &x;  The resolver also
+					// follows a reference target and adds a member or element offset.
 				if (std::holds_alternative<UnaryOperatorNode>(init_expr)) {
 					const auto& unary = std::get<UnaryOperatorNode>(init_expr);
 					if (unary.op() == "&" && unary.get_operand().is<ExpressionNode>()) {
-						const ExpressionNode& inner = unary.get_operand().as<ExpressionNode>();
-						if (const auto* inner_target_id = std::get_if<IdentifierNode>(&inner)) {
+						auto address_ctx = makeStaticStorageEvalContext();
+						const std::optional<StaticStorageAddress> addressed = resolveStaticStorageAddress(init_node, address_ctx);
+						if (addressed.has_value()) {
+							FLASH_LOG(Codegen, Debug, "Global pointer '", decl.identifier_token().value(), "' initialized with address of ",
+									StringTable::getStringView(addressed->symbol));
+							initializeGlobalAddressReloc(*addressed);
+						} else if (const auto* inner_target_id = std::get_if<IdentifierNode>(&unary.get_operand().as<ExpressionNode>())) {
+							// Function and other non-object address targets keep the
+							// legacy symbol resolution.
 							initializeGlobalReloc(inner_target_id->name());
-						} else if (std::holds_alternative<ArraySubscriptNode>(inner)) {
-							const auto& subscript = std::get<ArraySubscriptNode>(inner);
-							if (subscript.array_expr().is<ExpressionNode>() && subscript.index_expr().is<ExpressionNode>()) {
-								const ExpressionNode& base_expr = subscript.array_expr().as<ExpressionNode>();
-								if (std::holds_alternative<IdentifierNode>(base_expr)) {
-									const auto& target_id = std::get<IdentifierNode>(base_expr);
-									const DeclarationNode* base_decl = nullptr;
-									if (auto symbol = lookupSymbol(target_id.name())) {
-										base_decl = get_decl_from_symbol(*symbol);
-									}
-									if (base_decl && (base_decl->is_array() || base_decl->type_specifier_node().is_array())) {
-										auto ctx = makeStaticStorageEvalContext();
-										auto index_result = ConstExpr::Evaluator::evaluate(subscript.index_expr(), ctx);
-										if (index_result.success() && index_result.as_int() == 0) {
-											initializeGlobalReloc(target_id.name(), "[0]");
-										}
-									}
-								}
-							}
 						}
 					}
 					if (!handled_as_reloc && unary.op() == "&") {
@@ -1624,15 +1793,50 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 					}
 				}
-					// Handle reference initializer: int& ref = x;
-				if (!handled_as_reloc && type_node.is_reference() && std::holds_alternative<IdentifierNode>(init_expr)) {
-					const auto& target_id = std::get<IdentifierNode>(init_expr);
-					FLASH_LOG(Codegen, Debug, "Global reference '", decl.identifier_token().value(),
-							  "' initialized with address of ", target_id.name());
-					op.is_initialized = true;
-					op.init_data.resize(element_size, 0);
-					op.reloc_target = resolveGlobalRelocTarget(target_id.name());
-					handled_as_reloc = true;
+					// A reference object's storage holds the referent's address, so a
+					// namespace-scope reference initializer is a relocation, not a
+					// value. Resolve the addressed subobject and reuse the byte-addend
+					// relocation path; a form with no static storage fails closed
+					// instead of storing a stale copy of the referred value.
+				if (!handled_as_reloc && type_node.is_reference()) {
+					auto reference_ctx = makeStaticStorageEvalContext();
+					const std::optional<StaticStorageAddress> address = resolveStaticStorageAddress(init_node, reference_ctx);
+					StringHandle referent_symbol;
+					int64_t referent_addend = 0;
+					if (address.has_value()) {
+						referent_symbol = address->symbol;
+						referent_addend = address->byte_addend;
+					} else {
+						// Binding to a prvalue requires a static temporary object: the
+						// reference stores that object's address, not the value copy.
+						// A glvalue form with no resolvable storage would store a stale
+						// value, so it fails closed instead.
+						const ValueCategory value_category = sema_.expressionValueCategory(init_node);
+						if (value_category == ValueCategory::LValue || value_category == ValueCategory::XValue) {
+							throw InternalError("namespace-scope reference initializer does not name a statically allocated object");
+						}
+						const ConstExpr::EvalResult value = ConstExpr::Evaluator::evaluate(init_node, reference_ctx);
+						const int referent_size_bits = requireConcreteAliasResolvedCodegenSizeBits(type_node, "reference temporary storage");
+						if (!value.success() || value.is_array || !value.object_member_bindings.empty() || !value.callable_bindings.empty() || referent_size_bits <= 0) {
+							throw InternalError("namespace-scope reference temporary initializer is not a scalar constant");
+						}
+						const size_t referent_size = static_cast<size_t>(referent_size_bits) / 8;
+						StringBuilder temporary_name_builder;
+						temporary_name_builder.append(".gref.").append(static_cast<uint64_t>(reference_temporary_counter_++));
+						referent_symbol = StringTable::getOrInternStringHandle(temporary_name_builder.commit());
+						GlobalVariableDeclOp temporary_op;
+						temporary_op.type_index = type_node.type_index();
+						temporary_op.size_in_bits = SizeInBits{referent_size_bits};
+						temporary_op.var_name = referent_symbol;
+						temporary_op.element_count = 1;
+						temporary_op.is_initialized = true;
+						temporary_op.init_data.assign(referent_size, 0);
+						writeRawValueAtOffset(temporary_op.init_data, 0, referent_size, evalResultMemberToRaw(value, type_node.type()));
+						ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(temporary_op), decl.identifier_token()));
+					}
+					FLASH_LOG(Codegen, Debug, "Global reference '", decl.identifier_token().value(), "' initialized with address of ",
+							StringTable::getStringView(referent_symbol));
+					initializeGlobalAddressReloc(StaticStorageAddress{referent_symbol, referent_addend, false});
 				}
 					// Handle function pointer initializer:
 					//   int (*fp)(int, int) = add;          — from function name
@@ -1706,18 +1910,28 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						: eval_result.array_origin_var;
 					// Missing canonical shape: pointer presence.
 					const int pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());
-					if (eval_result.success() && type_node.is_pointer() && pointer_origin.isValid()) {
+					const bool initializer_is_object_pointer = type_node.is_pointer();
+					const bool pointer_has_origin = eval_result.success() && initializer_is_object_pointer && pointer_origin.isValid();
+					// A non-constexpr array object has no evaluated origin, but its
+					// declaration still names static storage. Canonical array identity
+					// decides that this initializer denotes the array object to decay,
+					// not a scalar value to store.
+					std::optional<StaticStorageAddress> resolved_array_decay;
+					if (!pointer_has_origin && initializer_is_object_pointer) {
+						std::optional<StaticStorageAddress> candidate = resolveStaticStorageAddress(init_node, ctx);
+						if (candidate.has_value() && candidate->is_array_object) {
+							resolved_array_decay = std::move(candidate);
+						}
+					}
+					if (pointer_has_origin) {
 						const int64_t addend = globalRelocAddend(type_node.type_index(), sema_.canonicalStructuralTypeId(type_node), pointer_depth, eval_result.pointer_offset);
 						if (element_size < sizeof(void*)) {
 							throw InternalError("static pointer relocation slot is narrower than a pointer");
 						}
-						op.init_data.assign(element_size, 0);
-						writeRawValueAtOffset(op.init_data, 0, sizeof(void*), static_cast<unsigned long long>(addend));
-						op.reloc_target = resolveGlobalRelocTarget(StringTable::getStringView(pointer_origin));
-						op.reloc_addend = addend;
-					} else if ((is_struct_type(type_node.category())) &&
-						eval_result.success() &&
-						type_node.type_index().is_valid()) {
+						initializeGlobalAddressReloc(StaticStorageAddress{resolveGlobalRelocTarget(StringTable::getStringView(pointer_origin)), addend, false});
+					} else if (resolved_array_decay.has_value()) {
+						initializeGlobalAddressReloc(*resolved_array_decay);
+					} else if ((is_struct_type(type_node.category())) && eval_result.success() && type_node.type_index().is_valid()) {
 						const TypeInfo* struct_type_info = resolveToConcreteStructTypeInfo(type_node.type_index());
 						const StructTypeInfo* struct_info = struct_type_info ? struct_type_info->getStructInfo() : nullptr;
 						if (struct_info && !eval_result.object_member_bindings.empty()) {

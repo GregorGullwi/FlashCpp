@@ -515,6 +515,73 @@ int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, boo
 	return size_bits;
 }
 
+TempVar AstToIr::emitGlobalStoredAddressLoad(StringHandle global_name, const Token& token) {
+	TempVar address_temp = var_counter.next();
+	GlobalLoadOp op;
+	op.result.setType(TypeCategory::UnsignedLongLong);
+	op.result.ir_type = IrType::Integer;
+	op.result.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+	op.result.value = address_temp;
+	op.global_name = global_name;
+	ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), token));
+	setTempVarMetadata(address_temp, TempVarMetadata::makeAddressOnly(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{POINTER_SIZE_BITS},
+		ValueCategory::LValue));
+	return address_temp;
+}
+
+ExprResult AstToIr::emitReferenceAccessFromAddress(std::variant<StringHandle, TempVar, LocalVarId> stored_address, const TypeSpecifierNode& type_node,
+	bool referent_is_array_object, ExpressionContext context, const Token& token) {
+	// A reference to an array carries the array's address as its value; there is
+	// no scalar pointee to load.
+	if (referent_is_array_object) {
+		return makeExprResult(nativeTypeIndex(type_node.type()), SizeInBits{POINTER_SIZE_BITS},
+			std::visit([](auto value) -> IrOperand { return IrOperand{value}; }, stored_address), PointerDepth{}, ValueStorage::ContainsData);
+	}
+	const IrValue address_value = std::visit([](auto value) -> IrValue { return value; }, stored_address);
+	if (context == ExpressionContext::LValueAddress) {
+		// Expose the stored address as an indirect lvalue so assignments and
+		// compound assignments write through it instead of replacing the address.
+		const TypeSpecifierNode resolved_type_node = makeConcreteAliasResolvedCodegenSizeQueryType(type_node, "reference access lvalue lowering");
+		const TypeCategory pointee_type = resolved_type_node.type();
+		const int pointee_size = queryConcreteAliasResolvedTypeSizeBits(resolved_type_node).size_bits;
+		if (pointee_size <= 0) {
+			throw InternalError("reference access has no concrete pointee size");
+		}
+		TempVar lvalue_temp = var_counter.next();
+		AssignmentOp assign_op;
+		assign_op.result = lvalue_temp;
+		assign_op.lhs = withStorage(makeTypedValue(pointee_type, SizeInBits{64}, lvalue_temp), ValueStorage::ContainsAddress);
+		assign_op.rhs = withStorage(makeTypedValue(pointee_type, SizeInBits{64}, address_value), ValueStorage::ContainsAddress);
+		assign_op.is_pointer_store = false;
+		assign_op.dereference_rhs_references = false;
+		assign_op.propagate_rhs_address_metadata = true;
+		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), token));
+		const LValueInfo lvalue_info(LValueInfo::Kind::Indirect, lvalue_temp, 0);
+		// Record the referent's runtime category and width so an indirect store
+		// uses the object size rather than the promoted scalar width (an enum
+		// reference must not write four bytes through a one-byte object).
+		const TypeCategory runtime_pointee_type = getRuntimeValueType(type_node.type_index().withCategory(pointee_type), PointerDepth{});
+		setTempVarMetadata(lvalue_temp, TempVarMetadata::makeLValue(lvalue_info, runtime_pointee_type, pointee_size));
+		const TypeIndex type_index = carriesSemanticTypeIndex(pointee_type) ? type_node.type_index() : TypeIndex{};
+		return makeExprResult(type_index.withCategory(pointee_type), SizeInBits{pointee_size}, IrOperand{lvalue_temp},
+			PointerDepth{static_cast<int>(type_node.runtime_pointer_depth())}, ValueStorage::ContainsAddress);
+	}
+	int pointee_size = requireConcreteAliasResolvedCodegenSizeBits(type_node, "reference access load lowering");
+	const TypeCategory semantic_pointee_type = type_node.type();
+	TypeCategory pointee_type = getRuntimeValueType(type_node.type_index().withCategory(semantic_pointee_type), PointerDepth{});
+	pointee_size = getRuntimeValueSizeBits(type_node.type_index(), pointee_size, PointerDepth{});
+	assert(type_node.runtime_pointer_depth() <= static_cast<size_t>(std::numeric_limits<int>::max()) &&
+		"Pointer depth exceeds maximum int value for PointerDepth construction");
+	const int referenced_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());
+	TempVar result_temp = emitDereference(pointee_type, pointee_size, referenced_pointer_depth + 1, address_value);
+	const LValueInfo lvalue_info(LValueInfo::Kind::Indirect, stored_address, 0);
+	setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
+	const TypeIndex type_index = carriesSemanticTypeIndex(type_node.type()) ? type_node.type_index() : TypeIndex{};
+	const PointerDepth result_pointer_depth{isIrStructType(toIrType(type_node.type())) ? 0 : referenced_pointer_depth};
+	return makeExprResult(type_index.withCategory(pointee_type), SizeInBits{pointee_size}, IrOperand{result_temp},
+		result_pointer_depth, ValueStorage::ContainsData);
+}
+
 ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 										 ExpressionContext context) {
 	const bool reference_binding = context == ExpressionContext::ReferenceBinding;
@@ -787,6 +854,10 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					const auto& vd = fast_sym->as<VariableDeclarationNode>();
 					const auto& decl_n = vd.declaration();
 					const auto& type_n = decl_n.type_specifier_node();
+					if (type_n.is_reference()) {
+						return emitReferenceAccessFromAddress(emitGlobalStoredAddressLoad(effective_name, Token()), type_n, sema_.declarationDenotesArrayObject(decl_n),
+							context, Token());
+					}
 					const size_t runtime_pointer_depth = type_n.runtime_pointer_depth();
 					const bool is_array_type = sema_.declarationDenotesArrayObject(decl_n);
 					bool is_ptr_or_ref = runtime_pointer_depth > 0 || type_n.is_reference() || type_n.is_function_pointer();
@@ -826,6 +897,10 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					const auto& type_n = decl_n.type_specifier_node();
 					if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(type_n, identifier_handle)) {
 						return *enumerator_constant;
+					}
+					if (type_n.is_reference()) {
+						return emitReferenceAccessFromAddress(emitGlobalStoredAddressLoad(effective_name, Token()), type_n, sema_.declarationDenotesArrayObject(decl_n),
+							context, Token());
 					}
 					const bool is_array_type = sema_.declarationDenotesArrayObject(decl_n);
 					const bool wants_address = reference_binding && !is_array_type;
@@ -1294,6 +1369,21 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 
 			// Check if this is a global variable
 		if (is_global) {
+			StringHandle effective_global_name;
+				// If we resolved this via a using declaration, use the resolved qualified name
+				// Otherwise, check if this global has a mangled name (e.g., anonymous namespace variable)
+			if (resolved_qualified_name.has_value()) {
+				effective_global_name = *resolved_qualified_name;
+			} else {
+					// Phase 4: Using StringHandle for lookup
+				StringHandle simple_name_handle = StringTable::getOrInternStringHandle(identifierNode.name());
+				auto it = global_variable_names_.find(simple_name_handle);
+				effective_global_name = (it != global_variable_names_.end()) ? it->second : StringTable::getOrInternStringHandle(identifierNode.name());
+			}
+			if (type_node.is_reference()) {
+				return emitReferenceAccessFromAddress(emitGlobalStoredAddressLoad(effective_global_name, Token()), type_node,
+					sema_.declarationDenotesArrayObject(decl_node), context, Token());
+			}
 				// Generate GlobalLoad IR instruction
 			TempVar result_temp = var_counter.next();
 				// For arrays, result is a pointer (64-bit address)
@@ -1304,21 +1394,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			op.result.ir_type = toIrType(type_node.type());
 			op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 			op.result.value = result_temp;
-
-				// If we resolved this via a using declaration, use the resolved qualified name
-				// Otherwise, check if this global has a mangled name (e.g., anonymous namespace variable)
-			if (resolved_qualified_name.has_value()) {
-				op.global_name = *resolved_qualified_name;
-			} else {
-					// Phase 4: Using StringHandle for lookup
-				StringHandle simple_name_handle = StringTable::getOrInternStringHandle(identifierNode.name());
-				auto it = global_variable_names_.find(simple_name_handle);
-				if (it != global_variable_names_.end()) {
-					op.global_name = it->second;	 // Use mangled StringHandle
-				} else {
-					op.global_name = StringTable::getOrInternStringHandle(identifierNode.name());  // Use simple name as StringHandle
-				}
-			}
+			op.global_name = effective_global_name;
 
 			op.is_array = is_array_type;	 // Arrays need LEA to get address
 			StringHandle saved_global_name = op.global_name;
@@ -1355,111 +1431,11 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			// - Reference parameters: stored in VariableDeclOp with is_reference=true during code generation
 			// - Local reference variables: created with DeclarationNode that has reference TypeSpecifierNode
 		if (type_node.is_reference()) {
-				// Check if this is actually a local reference variable (not a parameter)
-				// Local reference variables are stored on the stack and hold a pointer value
-				// We can detect this by checking if a VariableDeclOp was generated with is_reference=true
-				// For now, we'll treat all references as parameters unless they fail the parameter test
-
-			// For references to arrays (e.g., int (&arr)[3]), the reference parameter
-			// already holds the array address directly. We don't dereference it.
-			// Array extents can live on either the declaration node or the type node,
-			// so check both representations before falling through to ordinary reference
-			// dereference handling. Non-projectable ordered referents such as
-			// int (* (&)[N])[M] only expose their outer array on the ordered spine.
-			if (sema_.declarationDenotesArrayObject(decl_node)) {
-					// Return the array reference as a 64-bit pointer
-				return makeExprResult(nativeTypeIndex(type_node.type()), SizeInBits{POINTER_SIZE_BITS}, toIrOperand(identifier_frame_name), PointerDepth{}, ValueStorage::ContainsData);
-			}
-
-				// For LValueAddress context (e.g., LHS of assignment, function call with reference parameter)
-				// For compound assignments, we need to return a TempVar with lvalue metadata
-				// For simple assignments and function calls, we can return the reference directly
-			if (context == ExpressionContext::LValueAddress) {
-				TypeSpecifierNode resolved_type_node = makeConcreteAliasResolvedCodegenSizeQueryType(type_node, "reference identifier lvalue lowering");
-				TypeCategory pointee_type = resolved_type_node.type();
-				int pointee_size = queryConcreteAliasResolvedTypeSizeBits(resolved_type_node).size_bits;
-				if (pointee_size <= 0) {
-					FLASH_LOG(Codegen, Warning, "Reference identifier '", identifierNode.name(),
-							  "' has unresolved pointee size in lvalue lowering",
-							  "; using pointer-size fallback");
-					pointee_size = POINTER_SIZE_BITS;
-				}
-
-				TypeIndex type_index = preserveSemanticTypeIndex(pointee_type, type_node.type_index());
-
-					// Create a TempVar with Indirect lvalue metadata for compound assignments
-					// This allows handleLValueCompoundAssignment to work with reference variables
-				TempVar lvalue_temp = var_counter.next();
-				FLASH_LOG_FORMAT(Codegen, Debug, "Reference LValueAddress: Creating TempVar {} for reference '{}'",
-								 lvalue_temp.var_number, identifierNode.name());
-
-					// Generate Assignment to copy the pointer value from the reference parameter to the temp
-				IrValue var_handle = toIrValue(identifier_frame_name);
-				AssignmentOp assign_op;
-				assign_op.result = lvalue_temp;
-				assign_op.lhs = withStorage(
-					makeTypedValue(pointee_type, SizeInBits{64}, lvalue_temp),
-					ValueStorage::ContainsAddress);
-				assign_op.rhs = withStorage(
-					makeTypedValue(pointee_type, SizeInBits{64}, var_handle),
-					ValueStorage::ContainsAddress);
-				assign_op.is_pointer_store = false;
-				assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
-				assign_op.propagate_rhs_address_metadata = true;
-				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
-
-				LValueInfo lvalue_info(
-					LValueInfo::Kind::Indirect,
-					lvalue_temp,	 // Use the temp var holding the address, not the parameter name
-					0  // offset is 0 for simple dereference
-				);
-				setTempVarMetadata(lvalue_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
-				FLASH_LOG_FORMAT(Codegen, Debug, "Reference LValueAddress: Set metadata on TempVar {}", lvalue_temp.var_number);
-
-					// Return with TempVar that has lvalue metadata
-					// The type/size are for the pointee (what the reference refers to)
-				return makeExprResult(type_index.withCategory(pointee_type), SizeInBits{pointee_size}, IrOperand{lvalue_temp},
-					PointerDepth{static_cast<int>(type_node.runtime_pointer_depth())}, ValueStorage::ContainsAddress);
-			}
-
-				// For non-array references in Load context, we need to dereference to get the value
-
-			TypeCategory pointee_type = type_node.category();
-			int pointee_size = requireConcreteAliasResolvedCodegenSizeBits(type_node, "reference identifier load lowering");
-
-			TypeCategory semantic_pointee_type = type_node.type();
-
-			// For enum references, lower the dereferenced value to its runtime
-			// representation so arithmetic/bitwise operations consume the
-			// underlying integer type. Pointer depth stays on the result:
-			// passing it here would skip that lowering for a referenced enum.
-			pointee_type = getRuntimeValueType(type_node.type_index().withCategory(semantic_pointee_type), PointerDepth{});
-			pointee_size = getRuntimeValueSizeBits(
-				type_node.type_index(), pointee_size, PointerDepth{});
-
-			// A reference is one address above the referenced object. Depth 1
-			// loads a scalar (double&). A referenced pointer (double*&) is still
-			// a pointer after that load, so its dereference depth is one greater.
-			// Depth 1 with a floating-point pointee category emits movsd/movss
-			// and leaves contextual bool conversion comparing an unrelated GPR.
-			assert(type_node.runtime_pointer_depth() <= static_cast<size_t>(std::numeric_limits<int>::max()) &&
-				"Pointer depth exceeds maximum int value for PointerDepth construction");
-			const int referenced_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());
-			TempVar result_temp = emitDereference(pointee_type, pointee_size, referenced_pointer_depth + 1,
-												  toIrValue(identifier_frame_name));
-
-				// Mark as lvalue with Indirect metadata for unified assignment handler
-				// This allows compound assignments (like x *= 2) to work on dereferenced references
-			LValueInfo lvalue_info(
-				LValueInfo::Kind::Indirect,
-				toVariableBase(identifier_frame_name),	 // The reference variable name
-				0  // offset is 0 for simple dereference
-			);
-			setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
-
-			TypeIndex type_index = preserveSemanticTypeIndex(type_node.type(), type_node.type_index());
-			const PointerDepth result_pointer_depth{isIrStructType(toIrType(type_node.type())) ? 0 : referenced_pointer_depth};
-			return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index, result_pointer_depth);
+				// A local reference, reference parameter, and namespace-scope
+				// reference all store the referent's address in one word. Array
+				// referents expose that address directly; scalar referents
+				// dereference it, and LValueAddress yields an indirect lvalue.
+			return emitReferenceAccessFromAddress(toVariableBase(identifier_frame_name), type_node, sema_.declarationDenotesArrayObject(decl_node), context, Token());
 		}
 
 			// Regular local variable
@@ -1699,6 +1675,10 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 	auto emitQualifiedGlobalLoad = [&](const TypeSpecifierNode& type_node,
 									 bool is_array_decl,
 									 StringHandle global_name) -> ExprResult {
+		if (type_node.is_reference()) {
+			return emitReferenceAccessFromAddress(emitGlobalStoredAddressLoad(global_name, Token()), type_node, is_array_decl || sema_.typeDenotesArrayObject(type_node),
+				context, Token());
+		}
 		if (type_node.has_ordered_declarator() &&
 			type_node.runtime_pointer_depth() == 0 &&
 			!type_node.is_reference() &&

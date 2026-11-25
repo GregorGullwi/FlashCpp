@@ -158,6 +158,9 @@ private:
 	struct GlobalStaticBindingInfo {
 		bool is_global_or_static = false;
 		bool is_pointer_like = false;
+		// A reference object's storage holds the referent's address, so a store to
+		// the name must go through that address instead of replacing it.
+		bool is_reference = false;
 		StringHandle store_name;
 		// TypeCategory is embedded in type_index; default = Void to preserve original sentinel.
 		TypeIndex type_index = nativeTypeIndex(TypeCategory::Void);
@@ -165,6 +168,18 @@ private:
 
 		// Returns the TypeCategory derived from the embedded TypeIndex.
 		TypeCategory bindingType() const { return type_index.category(); }
+	};
+
+	// A statically allocated object named by an lvalue expression, resolved to
+	// the storage symbol that holds it plus the byte offset of the addressed
+	// subobject. A reference initializer needs the object's address, not its
+	// current value, so the offset can come from a member or an array element.
+	struct StaticStorageAddress {
+		StringHandle symbol;
+		int64_t byte_addend = 0;
+		// The resolved object is itself an array, so a pointer initializer
+		// performs an array-to-pointer decay instead of copying a value.
+		bool is_array_object = false;
 	};
 
 	struct StructCodegenFrame {
@@ -402,6 +417,22 @@ private:
 	std::optional<ExprResult> tryDecayLambdaClosureToFunctionPointer(const ExprResult& source, TypeCategory target_category, const Token& token);
 	ExprResult generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode,
 											ExpressionContext context);
+	// Lower an access through a reference whose stored referent address is
+	// already available (a frame name for a reference variable, or the loaded
+	// word of a namespace-scope reference). Loads dereference once;
+	// LValueAddress yields an indirect lvalue so stores reach the referent.
+	ExprResult emitReferenceAccessFromAddress(std::variant<StringHandle, TempVar, LocalVarId> stored_address, const TypeSpecifierNode& type_node,
+		bool referent_is_array_object, ExpressionContext context, const Token& token);
+	// Load the word that a namespace-scope reference object stores: the address
+	// of its referent. The result is address-only, not a dereferenceable value.
+	TempVar emitGlobalStoredAddressLoad(StringHandle global_name, const Token& token);
+	// Resolve a statically allocated lvalue to its storage symbol and the byte
+	// offset of the addressed subobject. Returns nullopt for values, temporaries,
+	// and objects without static storage; callers fail closed instead of storing
+	// a value where an address is required.
+	std::optional<StaticStorageAddress> resolveStaticStorageAddress(const ASTNode& node, ConstExpr::EvaluationContext& evaluation_context);
+	// Emitted storage symbol for a namespace-scope object or static member.
+	StringHandle resolveStaticStorageSymbol(std::string_view name);
 	ExprResult generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode);
 	ExprResult generateTypeConversion(const ExprResult& operands, TypeCategory fromType, TypeCategory toType, const Token& source_token);
 	// Variant that carries the sema cast kind. [conv.bool] is routed to the
@@ -1508,6 +1539,7 @@ private:
 	// Clears per-function local identity together with the temporary counter.
 	void resetLocalVarIds();
 	uint32_t string_literal_counter_ = 0;  // Counter for unique .str.N global names
+	uint32_t reference_temporary_counter_ = 0;	// Counter for unique .gref.N reference-temporary names
 	SymbolTable symbol_table;
 	SymbolTable* global_symbol_table_;  // Reference to the global symbol table for function overload lookup
 	CompileContext* context_;  // Reference to compile context for flags

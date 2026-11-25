@@ -370,8 +370,7 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 			// preserve the actual storage symbol for downstream ComputeAddress handling.
 		{
 			const auto binding_info = resolveGlobalOrStaticBinding(identifier);
-			if (binding_info.is_global_or_static &&
-				binding_info.type_index.category() != TypeCategory::Void &&
+			if (binding_info.is_global_or_static && !binding_info.is_reference && binding_info.type_index.category() != TypeCategory::Void &&
 				binding_info.size_in_bits.is_set()) {
 				AddressComponents result;
 				result.base = binding_info.store_name;
@@ -1209,7 +1208,8 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 
 		if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && type_node) {
 			const auto binding_info = resolveGlobalOrStaticBinding(identifier);
-			if (binding_info.is_global_or_static && binding_info.type_index.category() != TypeCategory::Void && binding_info.size_in_bits.is_set()) {
+			if (binding_info.is_global_or_static && !binding_info.is_reference && binding_info.type_index.category() != TypeCategory::Void &&
+				binding_info.size_in_bits.is_set()) {
 				int size_bits = (type_node->runtime_pointer_depth() > 0 || type_node->is_reference() || type_node->is_function_pointer())
 									? 64
 									: static_cast<int>(type_node->size_in_bits());
@@ -1241,6 +1241,13 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		}
 
 		if (!decl) {
+			return false;
+		}
+
+		if (type_node->is_reference()) {
+			// A reference operand names its referent. Leaving it to the normal
+			// identifier lowering produces the dereferenced value with indirect
+			// lvalue metadata instead of the reference slot itself.
 			return false;
 		}
 
@@ -2656,6 +2663,41 @@ ExprResult AstToIr::generateBuiltinIncDec(
 		IrOpcode pre_opcode = is_increment ? IrOpcode::PreIncrement : IrOpcode::PreDecrement;
 		IrOpcode post_opcode = is_increment ? IrOpcode::PostIncrement : IrOpcode::PostDecrement;
 
+		// An indirect lvalue (a reference or `*p`) must load, update, and store
+		// through the stored address. Emitting Pre/PostIncrement directly would
+		// update the address temporary instead of the referent.
+		if (std::holds_alternative<TempVar>(operandIrResult.value)) {
+			const TempVarMetadata operand_metadata = getTempVarMetadata(std::get<TempVar>(operandIrResult.value));
+			if (operand_metadata.lvalue_info.has_value() && (operand_metadata.lvalue_info->kind == LValueInfo::Kind::Indirect ||
+				operand_metadata.lvalue_info->kind == LValueInfo::Kind::ReferenceDeref)) {
+				const TypeCategory elem_category = operandIrResult.category();
+				const int elem_size = operandIrResult.size_in_bits.value;
+				TempVar old_value;
+				if (!is_prefix) {
+					old_value = var_counter.next();
+					AssignmentOp save_op;
+					save_op.result = old_value;
+					save_op.lhs = makeTypedValue(elem_category, SizeInBits{elem_size}, old_value);
+					save_op.rhs = makeTypedValue(elem_category, SizeInBits{elem_size}, toIrValue(operandIrResult.value));
+					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), unaryOperatorNode.get_token()));
+				}
+				BinaryOp update_op{
+					.lhs = makeTypedValue(elem_category, SizeInBits{elem_size}, toIrValue(operandIrResult.value)),
+					.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, 1ULL),
+					.result = result_var,
+				};
+				ir_.addInstruction(IrInstruction(is_increment ? IrOpcode::Add : IrOpcode::Subtract, std::move(update_op), unaryOperatorNode.get_token()));
+				const ExprResult updated = makeExprResult(operandIrResult.type_index.withCategory(elem_category), SizeInBits{elem_size}, IrOperand{result_var},
+					PointerDepth{}, ValueStorage::ContainsData);
+				if (!storeBackUpdatedValue(updated)) {
+					throw InternalError("Failed to store back reference increment/decrement result");
+				}
+				const TempVar return_value = is_prefix ? result_var : old_value;
+				return makeExprResult(operandIrResult.type_index.withCategory(elem_category), SizeInBits{elem_size}, IrOperand{return_value},
+					PointerDepth{}, ValueStorage::ContainsData);
+			}
+		}
+
 		// Check if the operand is a global/static variable that needs GlobalStore.
 		GlobalStaticBindingInfo gsi;
 		if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
@@ -2665,7 +2707,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			}
 		}
 
-		if (gsi.is_global_or_static) {
+		if (gsi.is_global_or_static && !gsi.is_reference) {
 			// For global/static: manually do load → add/sub 1 → store
 			IrOpcode arith_opcode_int = is_increment ? IrOpcode::Add : IrOpcode::Subtract;
 			const TypeCategory elem_category = operandIrResult.category();
