@@ -41,21 +41,6 @@
 #include "TypeVisitSets.h"
 
 
-namespace {
-
-void requireParserSemanticServicesAttachment(const SemanticAnalysis& sema, const char* operation) {
-	if (!sema.isParserAttached()) {
-		throw InternalError(std::string("ParserSemanticServices::") + operation + " requires an attached parser");
-	}
-}
-
-const FunctionDeclarationNode* getCallTargetFunctionCandidate(const ASTNode& overload);
-
-bool isTemplateDerivedFreeFunctionTarget(const FunctionDeclarationNode* func_decl) {
-	return func_decl != nullptr &&
-		(func_decl->has_template_body_position() || func_decl->has_template_declaration_position());
-}
-
 std::optional<size_t> tryGetCanonicalObjectSizeBytes(
 	const CanonicalTypeTable& canonical_types,
 	TypeId type_id) {
@@ -127,6 +112,20 @@ std::optional<size_t> tryGetCanonicalObjectSizeBytes(
 		}
 	}
 	return std::nullopt;
+}
+
+namespace {
+
+void requireParserSemanticServicesAttachment(const SemanticAnalysis& sema, const char* operation) {
+	if (!sema.isParserAttached()) {
+		throw InternalError(std::string("ParserSemanticServices::") + operation + " requires an attached parser");
+	}
+}
+
+const FunctionDeclarationNode* getCallTargetFunctionCandidate(const ASTNode& overload);
+
+bool isTemplateDerivedFreeFunctionTarget(const FunctionDeclarationNode* func_decl) {
+	return func_decl != nullptr && (func_decl->has_template_body_position() || func_decl->has_template_declaration_position());
 }
 
 // [conv.qual]/1 decomposes a type into cv components separated by "pointer

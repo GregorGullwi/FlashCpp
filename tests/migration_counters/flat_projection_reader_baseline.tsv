@@ -15,7 +15,7 @@ src/IrGenerator.h	2
 src/IrGenerator_Call_Direct.cpp	5
 src/IrGenerator_Call_Indirect.cpp	4
 src/IrGenerator_Expr_Conversions.cpp	13
-src/IrGenerator_Expr_Operators.cpp	9
+src/IrGenerator_Expr_Operators.cpp	8
 src/IrGenerator_Expr_Primitives.cpp	1
 src/IrGenerator_Helpers.cpp	2
 src/IrGenerator_Lambdas.cpp	4

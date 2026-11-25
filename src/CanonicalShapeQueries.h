@@ -123,6 +123,13 @@ inline std::optional<TypeId> canonicalPointee(const CanonicalTypeTable& table, T
 	return node.child;
 }
 
+// Complete object size of a canonical type, including array extents, record
+// layout, and one pointer width. This is the single size read for consumers
+// that must turn a canonical element (or pointee) into a byte stride; it is
+// defined by SemanticAnalysis.cpp so this low-level header does not pull in the
+// declarator adapter.
+std::optional<size_t> tryGetCanonicalObjectSizeBytes(const CanonicalTypeTable& table, TypeId type);
+
 inline std::optional<TypeId> canonicalArrayElement(const CanonicalTypeTable& table, TypeId type) {
 	const CanonicalTypeNode node = table.node(shapeAfterTopCvAndReference(table, type));
 	if (node.kind != CanonicalTypeKind::Array) {

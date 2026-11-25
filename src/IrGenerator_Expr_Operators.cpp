@@ -4,6 +4,7 @@
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 #include "TypeSizeQuery.h"
+#include "CanonicalShapeTelemetry.h"
 
 namespace {
 [[noreturn]] void throwFloatingPointModuloDiagnostic(
@@ -2434,40 +2435,53 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	ExprResult lhsExprResult = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>(), lhs_context);
 	ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
-	auto decayArrayIdentifierForPointerOperand = [&](ExprResult& operand_result,
-													 const ASTNode& operand_node,
-													 const ExprResult& other_result) {
-		if (!other_result.pointer_depth.is_pointer() ||
-			!operand_node.is<ExpressionNode>() ||
+	// C++20 [conv.array]/1 applies before binary operator candidate selection:
+	// an array operand decays to a pointer to its first element. The canonical
+	// step identifies that decay and its stride, so an array whose element is a
+	// record is not mistaken for a class operand that needs a user-defined
+	// operator before built-in pointer arithmetic can run.
+	const std::optional<CanonicalArrayDecayStep> lhs_array_decay_step = canonicalArrayDecayStepForOperand(binaryOperatorNode.get_lhs());
+	const std::optional<CanonicalArrayDecayStep> rhs_array_decay_step = canonicalArrayDecayStepForOperand(binaryOperatorNode.get_rhs());
+	const bool lhs_operand_is_array = lhs_array_decay_step.has_value() && lhs_array_decay_step->operand_is_array;
+	const bool rhs_operand_is_array = rhs_array_decay_step.has_value() && rhs_array_decay_step->operand_is_array;
+	auto buildDecayedOperandType = [&](const TypeSpecifierNode& source, const CanonicalArrayDecayStep& step) {
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		TypeSpecifierNode decayed(source.type_index().withCategory(source.type()), TypeQualifier::None, 0, source.token(), source.cv_qualifier());
+		projectCanonicalDerivedShape(decayed, table, step.operand_type, DerivedArrayRankZero::KeepArrayObject);
+		applyArrayToPointerDecay(decayed);
+		return decayed;
+	};
+	auto operandTypeSource = [](const TypeSpecifierNode* type_node, TypeIndex type_index, TypeCategory category) {
+		if (type_node != nullptr) {
+			return *type_node;
+		}
+		return TypeSpecifierNode(type_index.withCategory(category), SizeInBits{0}, Token{}, CVQualifier::None, ReferenceQualifier::None);
+	};
+
+	auto decayArrayIdentifierForPointerOperand = [&](ExprResult& operand_result, const ASTNode& operand_node, bool other_is_pointer_like,
+													const std::optional<CanonicalArrayDecayStep>& decay_step) {
+		if (!decay_step.has_value() || !decay_step->operand_is_array || !other_is_pointer_like || !operand_node.is<ExpressionNode>() ||
 			!std::holds_alternative<IdentifierNode>(operand_node.as<ExpressionNode>())) {
 			return;
 		}
 		const IdentifierNode& ident = std::get<IdentifierNode>(operand_node.as<ExpressionNode>());
-		auto symbol = lookupSymbol(ident.name());
-		const DeclarationNode* decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
-		if (!decl || !decl->is_array()) {
-			return;
+		const DeclarationNode* decl = lookupDeclaration(ident.name());
+		if (!decl) {
+			throw InternalError("Array operand decay has no declaration");
 		}
 		const TypeSpecifierNode& type_node = decl->type_specifier_node();
-		int element_size_bits = get_type_size_bits(type_node.type());
-		if (element_size_bits <= 0) {
-			element_size_bits = static_cast<int>(type_node.size_in_bits());
-		}
 		const VariableKey array_key = resolvedVariableKey(ident.name());
-		TempVar addr_var = emitAddressOf(
-			type_node.type(),
-			element_size_bits > 0 ? element_size_bits : 32,
-			toIrValue(array_key),
-			binaryOperatorNode.get_token());
-		operand_result = makeExprResult(
-			TypeIndex{}.withCategory(type_node.type()),
-			SizeInBits{POINTER_SIZE_BITS},
-			IrOperand{addr_var},
-			PointerDepth{1},
+		TempVar addr_var = emitAddressOf(type_node.type(), decay_step->element_size_bits, toIrValue(array_key), binaryOperatorNode.get_token());
+		operand_result = makeExprResult(type_node.type_index().withCategory(type_node.type()), SizeInBits{POINTER_SIZE_BITS}, IrOperand{addr_var}, PointerDepth{1},
 			ValueStorage::ContainsData);
 	};
-	decayArrayIdentifierForPointerOperand(lhsExprResult, binaryOperatorNode.get_lhs(), rhsExprResult);
-	decayArrayIdentifierForPointerOperand(rhsExprResult, binaryOperatorNode.get_rhs(), lhsExprResult);
+	// A pointer operand or another array operand (which decays to a pointer)
+	// makes this a pointer operation, so the array side must decay to its first
+	// element's address before the operation is lowered.
+	const bool lhs_operand_is_pointer_like = lhsExprResult.pointer_depth.value != 0 || lhs_array_decay_step.has_value();
+	const bool rhs_operand_is_pointer_like = rhsExprResult.pointer_depth.value != 0 || rhs_array_decay_step.has_value();
+	decayArrayIdentifierForPointerOperand(lhsExprResult, binaryOperatorNode.get_lhs(), rhs_operand_is_pointer_like, lhs_array_decay_step);
+	decayArrayIdentifierForPointerOperand(rhsExprResult, binaryOperatorNode.get_rhs(), lhs_operand_is_pointer_like, rhs_array_decay_step);
 
 	// Try unified metadata-based handler for compound assignments on identifiers
 	// This ensures implicit member accesses (including [*this] lambdas) use the correct base object
@@ -2800,8 +2814,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			concrete_type_specs = std::make_pair(*lhs_syntax_type, *rhs_syntax_type);
 		}
 	}
-	bool concrete_operands_require_user_defined_operator =
-		concrete_type_specs.has_value() && (isUserDefinedBinaryOperatorOperandType(concrete_type_specs->first) || isUserDefinedBinaryOperatorOperandType(concrete_type_specs->second));
+	bool concrete_operands_require_user_defined_operator = concrete_type_specs.has_value() && ((!lhs_operand_is_array &&
+		isUserDefinedBinaryOperatorOperandType(concrete_type_specs->first)) || (!rhs_operand_is_array &&
+			isUserDefinedBinaryOperatorOperandType(concrete_type_specs->second)));
 	auto syntaxOperandRequiresUserDefinedOperator = [&](const ASTNode& operand) -> std::optional<bool> {
 		auto type_spec = syntaxOperandTypeSpec(operand);
 		if (type_spec.has_value()) {
@@ -2848,6 +2863,15 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		if (rhs_syntax_requires_user_defined.has_value()) {
 			rhs_has_user_defined_identity = *rhs_syntax_requires_user_defined;
 		}
+	}
+
+	// The decayed operand is a pointer before operator selection, so its array
+	// element's record identity cannot require a user-defined operator.
+	if (lhs_operand_is_array) {
+		lhs_has_user_defined_identity = false;
+	}
+	if (rhs_operand_is_array) {
+		rhs_has_user_defined_identity = false;
 	}
 
 	bool recorded_overload_still_relevant = binaryOperatorNode.has_recorded_operator_overload_resolution();
@@ -3767,7 +3791,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		// Note: lhs_type_node->size_in_bits() returns the POINTER size (64), not the
 		// pointee size. Use getPointerElementSize which correctly uses the base type size.
 		size_t element_size;
-		if (lhs_pointer_depth > 1) {
+		if (lhs_array_decay_step.has_value()) {
+			element_size = static_cast<size_t>(lhs_array_decay_step->element_size_bits / 8);
+		} else if (lhs_pointer_depth > 1) {
 			element_size = 8; // Multi-level pointer: element is a pointer
 		} else if (lhs_type_node) {
 			element_size = static_cast<size_t>(getPointerElementSize(lhs_type_node->type_index(), lhs_pointer_depth));
@@ -3803,7 +3829,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		// Note: lhs_type_node->size_in_bits() returns the POINTER size (64), not the
 		// pointee size. Use getPointerElementSize which correctly uses the base type size.
 		size_t element_size = 0;
-		if (lhs_type_node) {
+		if (lhs_array_decay_step.has_value()) {
+			element_size = static_cast<size_t>(lhs_array_decay_step->element_size_bits / 8);
+		} else if (lhs_type_node) {
 			if (const std::optional<TypeSpecifierNode> pointee =
 					sema_.builtinDereferenceResultType(*lhs_type_node);
 				pointee.has_value()) {
@@ -3850,16 +3878,18 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		IrOpcode ptr_opcode = (op == "+") ? IrOpcode::Add : IrOpcode::Subtract;
 		ir_.addInstruction(IrInstruction(ptr_opcode, std::move(ptr_arith_op), binaryOperatorNode.get_token()));
 
-		if (lhs_is_array_object && lhs_type_node != nullptr) {
-			// Publish the decayed pointer-to-element type, not a pointer to the
-			// flat base category.
-			TypeSpecifierNode result_type = *lhs_type_node;
-			applyArrayToPointerDecay(result_type);
+		if (lhs_operand_is_array && lhs_array_decay_step.has_value()) {
+			// Publish the decayed pointer-to-element type from the canonical
+			// operand shape, not a pointer to the flat base category.
+			const TypeSpecifierNode source = operandTypeSource(lhs_type_node, lhsExprResult.type_index, lhsCat);
+			const TypeSpecifierNode result_type = buildDecayedOperandType(source, *lhs_array_decay_step);
 			return makeExprResult(result_type.type_index().withCategory(result_type.type()), SizeInBits{64}, IrOperand{result_var},
 				PointerDepth{static_cast<int>(result_type.runtime_pointer_depth())}, ValueStorage::ContainsData);
 		}
-		// Return pointer type with 64-bit size, preserving pointer depth from LHS
-		return makeExprResult(nativeTypeIndex(lhsCat), SizeInBits{64}, IrOperand{result_var}, PointerDepth{lhs_pointer_depth}, ValueStorage::ContainsData);
+		// A pointer expression keeps its own pointer depth. An array operand that
+		// lost its declaration type keeps the decayed one-level pointer.
+		const int result_pointer_depth = lhs_operand_is_array ? 1 : lhs_pointer_depth;
+		return makeExprResult(nativeTypeIndex(lhsCat), SizeInBits{64}, IrOperand{result_var}, PointerDepth{result_pointer_depth}, ValueStorage::ContainsData);
 	}
 
 	// Special handling for commutative pointer arithmetic: int + ptr
@@ -3869,7 +3899,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	if (op == "+" && rhsSize == 64 && rhs_pointer_depth > 0 && is_integer_type(lhsCat)) {
 		// Right side is the pointer, left side is the integer offset.
 		size_t element_size = 0;
-		if (rhs_type_node) {
+		if (rhs_array_decay_step.has_value()) {
+			element_size = static_cast<size_t>(rhs_array_decay_step->element_size_bits / 8);
+		} else if (rhs_type_node) {
 			if (const std::optional<TypeSpecifierNode> pointee =
 					sema_.builtinDereferenceResultType(*rhs_type_node);
 				pointee.has_value()) {
@@ -3906,14 +3938,15 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(ptr_arith_op), binaryOperatorNode.get_token()));
 
-		if (rhs_is_array_object && rhs_type_node != nullptr) {
-			TypeSpecifierNode result_type = *rhs_type_node;
-			applyArrayToPointerDecay(result_type);
+		if (rhs_operand_is_array && rhs_array_decay_step.has_value()) {
+			const TypeSpecifierNode source = operandTypeSource(rhs_type_node, rhsExprResult.type_index, rhsCat);
+			const TypeSpecifierNode result_type = buildDecayedOperandType(source, *rhs_array_decay_step);
 			return makeExprResult(result_type.type_index().withCategory(result_type.type()), SizeInBits{64}, IrOperand{result_var},
 				PointerDepth{static_cast<int>(result_type.runtime_pointer_depth())}, ValueStorage::ContainsData);
 		}
 		// Return pointer type with 64-bit size, preserving pointer depth from RHS
-		return makeExprResult(nativeTypeIndex(rhsCat), SizeInBits{64}, IrOperand{result_var}, PointerDepth{rhs_pointer_depth}, ValueStorage::ContainsData);
+		const int result_pointer_depth = rhs_operand_is_array ? 1 : rhs_pointer_depth;
+		return makeExprResult(nativeTypeIndex(rhsCat), SizeInBits{64}, IrOperand{result_var}, PointerDepth{result_pointer_depth}, ValueStorage::ContainsData);
 	}
 
 	// Special handling for pointer compound assignment (ptr += int or ptr -= int)
