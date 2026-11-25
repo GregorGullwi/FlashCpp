@@ -950,35 +950,8 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 						restore_token_position(after_type_pos);
 					}
 
-					// Check for pointer-to-member type syntax: Type Class::* or Type Class<Args>::*
-					// This is used in <type_traits> for result_of patterns
-					// Pattern: using _MemPtr = _Res _Class::*;
-					if (peek().is_identifier()) {
-						// Look ahead to see if this is Class::* pattern
-						auto saved_pos = save_token_position();
-						Token class_token = peek_info();
-						advance(); // consume potential class name
-						const MemberPointerOwnerParse owner = parseMemberPointerOwnerAfterName(class_token);
-
-						if (peek() == "::"_tok) {
-							advance(); // consume '::'
-							if (peek() == "*"_tok) {
-								advance(); // consume '*'
-								// This is a pointer-to-member type: Type Class::*
-								// Mark the type as a pointer-to-member
-								type_spec.add_pointer_level(CVQualifier::None);	// Add pointer level
-								applyMemberPointerOwner(type_spec, owner);
-								FLASH_LOG(Parser, Debug, "Parsed pointer-to-member type: ", type_spec.token().value(), " ", class_token.value(), "::*");
-								discard_saved_token(saved_pos);
-							} else {
-								// Not a pointer-to-member, restore position
-								restore_token_position(saved_pos);
-							}
-						} else {
-							// Not a pointer-to-member, restore position
-							restore_token_position(saved_pos);
-						}
-					}
+					// [dcl.mptr]: Type Class::* or Type Class<Args>::*.
+					(void)tryConsumeMemberPointerDeclarator(type_spec);
 
 					// Parse pointer declarators: * [const] [volatile] *...
 					while (peek() == "*"_tok) {

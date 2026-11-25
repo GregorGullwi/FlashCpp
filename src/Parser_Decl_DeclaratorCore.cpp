@@ -483,6 +483,28 @@ void Parser::bindMemberPointerOwner(TypeSpecifierNode& type_spec, Token class_na
 	applyMemberPointerOwner(type_spec, parseMemberPointerOwnerAfterName(class_name_token));
 }
 
+bool Parser::tryConsumeMemberPointerDeclarator(TypeSpecifierNode& type_spec) {
+	if (!peek().is_identifier()) {
+		return false;
+	}
+	SaveHandle saved_pos = save_token_position();
+	Token class_name_token = peek_info();
+	advance(); // consume class name
+	const MemberPointerOwnerParse owner = parseMemberPointerOwnerAfterName(class_name_token);
+	if (!consume("::"_tok) || !consume("*"_tok)) {
+		restore_token_position(saved_pos);
+		return false;
+	}
+	applyMemberPointerOwner(type_spec, owner);
+	CVQualifier member_pointer_cv = parse_cv_qualifiers();
+	skip_noop_gnu_qualifiers();
+	member_pointer_cv |= parse_cv_qualifiers();
+	type_spec.add_pointer_level(member_pointer_cv);
+	FLASH_LOG(Parser, Debug, "Consumed pointer-to-member declarator: ", class_name_token.value(), "::*");
+	discard_saved_token(saved_pos);
+	return true;
+}
+
 ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 	// Add parsing depth check to prevent infinite loops
 	if (++parsing_depth_ > MAX_PARSING_DEPTH) {
@@ -631,50 +653,10 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 	skip_noop_gnu_qualifiers();
 
 	// Regular pointer/reference/identifier parsing (existing code)
-	// Check for pointer-to-member syntax: ClassName::* or ClassTemplate<Args>::*
-	// Pattern: int Point::*ptr_to_x
-	if (peek().is_identifier()) {
-		// Save position in case this isn't a pointer-to-member
-		SaveHandle saved_pos = save_token_position();
-		Token class_name_token = peek_info();
-		advance(); // consume class name
-		const MemberPointerOwnerParse owner =
-			parseMemberPointerOwnerAfterName(class_name_token);
-
-		// Check for ::
-		if (peek() == "::"_tok) {
-			advance(); // consume '::'
-
-			// Check for *
-			if (peek() == "*"_tok) {
-				advance(); // consume '*'
-
-				// This is a pointer-to-member declaration!
-				FLASH_LOG(Parser, Debug, "parse_type_and_name: Detected pointer-to-member: ",
-						  class_name_token.value(), "::*");
-
-				applyMemberPointerOwner(type_spec, owner);
-
-				// Add a pointer level to indicate this is a pointer
-				CVQualifier member_pointer_cv = parse_cv_qualifiers();
-				skip_noop_gnu_qualifiers();
-				member_pointer_cv |= parse_cv_qualifiers();
-				type_spec.add_pointer_level(member_pointer_cv);
-
-				// Discard the saved position and continue parsing
-				discard_saved_token(saved_pos);
-			} else {
-				// Not a pointer-to-member, restore position
-				restore_token_position(saved_pos);
-			}
-		} else {
-			// Not followed by ::, restore position
-			restore_token_position(saved_pos);
-		}
-	}
-
 	// Parse pointer declarators: * [const] [volatile] *...
-	// Example: int* const* volatile ptr
+	// A member-pointer ptr-operator is detected with the declarator-id below,
+	// so the chain order stays `int Point::*ptr`, `int* Point::*ptr` and
+	// `int Point::**ptr` all bind in source order.
 	while (peek() == "*"_tok) {
 		advance(); // consume '*'
 
@@ -725,7 +707,12 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 
 	// [dcl.decl]: after the decl-specifier-seq, one declarator owns every
 	// parenthesized ptr-declarator. A failure is not retried as an identifier.
-	if (peek() == "("_tok) {
+	// A member-pointer ptr-operator detected below can be followed by the same
+	// group, so the whole suffix stays in one helper.
+	auto parseParenthesizedDeclarator = [&]() -> std::optional<ParseResult> {
+		if (peek() != "("_tok) {
+			return std::nullopt;
+		}
 		// Reference-to-array: T (&name)[N][M]...
 		Token ref_identifier;
 		bool has_name = false;
@@ -753,7 +740,10 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 				function->decl_node().set_custom_alignment(*custom_alignment);
 			}
 		}
-		return declarator_result;
+		return std::move(declarator_result);
+	};
+	if (std::optional<ParseResult> parenthesized = parseParenthesizedDeclarator()) {
+		return std::move(*parenthesized);
 	}
 
 	// Check for parameter pack: Type... identifier
@@ -783,46 +773,14 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 	Token identifier_token;
 	bool has_noreturn_attribute = false;
 
-	// Check for operator overload (e.g., operator=, operator())
-	if (peek() == "operator"_tok) {
-
-		Token operator_keyword_token = peek_info();
-		advance(); // consume 'operator'
-
-		std::string_view operator_name;
-
-		// Use the shared helper to parse the operator name
-		if (auto err = parse_operator_name(operator_keyword_token, operator_name)) {
-			return std::move(*err);
-		}
-
-		// Create a synthetic identifier token for the operator
-		identifier_token = Token(Token::Type::Identifier, operator_name,
-								 operator_keyword_token.line(), operator_keyword_token.column(),
-								 operator_keyword_token.file_index());
-
-		// Skip any C++ attributes like [[nodiscard]] that may appear after the operator name
-		// but before the parameter list (e.g., operator() [[nodiscard]] (args))
-		has_noreturn_attribute = skip_cpp_attributes_with_info().has_noreturn;
-	} else {
-		// Regular identifier (or unnamed parameter)
-		// First, skip any specifiers that may appear after the return type but before the identifier
-		// This handles non-standard (but valid in GCC/libstdc++) patterns like: void constexpr operator=()
-		while (peek().is_keyword()) {
-			std::string_view kw = peek_info().value();
-			if (kw == "constexpr" || kw == "consteval" || kw == "inline") {
-				advance(); // skip the specifier
-			} else {
-				break;
-			}
-		}
-
-		// Skip GCC __attribute__((...)) that may appear between return type and function name
-		// e.g., inline _Atomic_word __attribute__((__always_inline__)) __exchange_and_add(...)
-		skip_gcc_attributes();
-
-		// After skipping specifiers, check if this is now an operator (e.g., void constexpr operator=())
+	// [dcl.mptr]: a member-pointer ptr-operator can follow the pointer chain
+	// (`int* C::* pm`, `int C::** pm`): the owner is consumed as a declarator-id
+	// candidate and `C::*` decides. A non-member owner falls through with only
+	// the `::` replay the out-of-line path already pays.
+	while (true) {
+		// Check for operator overload (e.g., operator=, operator())
 		if (peek() == "operator"_tok) {
+
 			Token operator_keyword_token = peek_info();
 			advance(); // consume 'operator'
 
@@ -837,38 +795,89 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 			identifier_token = Token(Token::Type::Identifier, operator_name,
 									 operator_keyword_token.line(), operator_keyword_token.column(),
 									 operator_keyword_token.file_index());
+
+			// Skip any C++ attributes like [[nodiscard]] that may appear after the operator name
+			// but before the parameter list (e.g., operator() [[nodiscard]] (args))
+			has_noreturn_attribute = skip_cpp_attributes_with_info().has_noreturn;
 		} else {
-			// Check if this might be an unnamed parameter (next token is ',', ')', '=', or '[')
-			FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Parsing identifier. current_token={}, peek={}",
-							 std::string(current_token_.value()),
-							 !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
-			if (!peek().is_eof()) {
-				auto next = peek_info().value();
-				if (next == "," || next == ")" || next == "=" || next == "[" ||
-					next == ">" || next == ">>" ||
-					next == ":" || next == ";") {
-					// This is an unnamed parameter/member - create a synthetic empty identifier
-					// ':' handles unnamed bitfields (e.g., int :32;) and ';' handles unnamed members
-					FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Unnamed parameter detected, next={}", std::string(next));
-					identifier_token = Token(Token::Type::Identifier, ""sv,
-											 current_token_.line(), current_token_.column(),
-											 current_token_.file_index());
+			// Regular identifier (or unnamed parameter)
+			// First, skip any specifiers that may appear after the return type but before the identifier
+			// This handles non-standard (but valid in GCC/libstdc++) patterns like: void constexpr operator=()
+			while (peek().is_keyword()) {
+				std::string_view kw = peek_info().value();
+				if (kw == "constexpr" || kw == "consteval" || kw == "inline") {
+					advance(); // skip the specifier
 				} else {
-					// Regular identifier
-					FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Consuming token as identifier, peek={}", std::string(next));
-					auto id_token = advance();
-					if (id_token.type() != Token::Type::Identifier) {
-						return ParseResult::error("Expected identifier token", id_token);
-					}
-					identifier_token = id_token;
-					FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Consumed identifier={}, now current_token={}, peek={}",
-									 std::string(identifier_token.value()),
-									 std::string(current_token_.value()),
-									 !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
+					break;
 				}
-			} else {
-				return ParseResult::error("Expected identifier or end of parameter", Token());
 			}
+
+			// Skip GCC __attribute__((...)) that may appear between return type and function name
+			// e.g., inline _Atomic_word __attribute__((__always_inline__)) __exchange_and_add(...)
+			skip_gcc_attributes();
+
+			// After skipping specifiers, check if this is now an operator (e.g., void constexpr operator=())
+			if (peek() == "operator"_tok) {
+				Token operator_keyword_token = peek_info();
+				advance(); // consume 'operator'
+
+				std::string_view operator_name;
+
+				// Use the shared helper to parse the operator name
+				if (auto err = parse_operator_name(operator_keyword_token, operator_name)) {
+					return std::move(*err);
+				}
+
+				// Create a synthetic identifier token for the operator
+				identifier_token = Token(Token::Type::Identifier, operator_name, operator_keyword_token.line(), operator_keyword_token.column(),
+										 operator_keyword_token.file_index());
+			} else {
+				// Check if this might be an unnamed parameter (next token is ',', ')', '=', or '[')
+				FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Parsing identifier. current_token={}, peek={}",
+								 std::string(current_token_.value()),
+								 !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
+				if (!peek().is_eof()) {
+					auto next = peek_info().value();
+					if (next == "," || next == ")" || next == "=" || next == "[" || next == ">" || next == ">>" || next == ":" || next == ";") {
+						// This is an unnamed parameter/member - create a synthetic empty identifier
+						// ':' handles unnamed bitfields (e.g., int :32;) and ';' handles unnamed members
+						FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Unnamed parameter detected, next={}", std::string(next));
+						identifier_token = Token(Token::Type::Identifier, ""sv, current_token_.line(), current_token_.column(), current_token_.file_index());
+					} else {
+						// Regular identifier
+						FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Consuming token as identifier, peek={}", std::string(next));
+						auto id_token = advance();
+						if (id_token.type() != Token::Type::Identifier) {
+							return ParseResult::error("Expected identifier token", id_token);
+						}
+						identifier_token = id_token;
+						FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Consumed identifier={}, now current_token={}, peek={}",
+										 std::string(identifier_token.value()), std::string(current_token_.value()), !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
+					}
+				} else {
+					return ParseResult::error("Expected identifier or end of parameter", Token());
+				}
+			}
+		}
+
+		if (identifier_token.value().empty() || (peek() != "::"_tok && peek() != "<"_tok)) {
+			break;
+		}
+		SaveHandle owner_start = save_token_position();
+		const MemberPointerOwnerParse owner = parseMemberPointerOwnerAfterName(identifier_token);
+		if (!consume("::"_tok) || !consume("*"_tok)) {
+			restore_token_position(owner_start);
+			break;
+		}
+		applyMemberPointerOwner(type_spec, owner);
+		CVQualifier member_pointer_cv = parse_cv_qualifiers();
+		skip_noop_gnu_qualifiers();
+		member_pointer_cv |= parse_cv_qualifiers();
+		type_spec.add_pointer_level(member_pointer_cv);
+		discard_saved_token(owner_start);
+		consume_pointer_ref_modifiers(type_spec);
+		if (std::optional<ParseResult> parenthesized = parseParenthesizedDeclarator()) {
+			return std::move(*parenthesized);
 		}
 	}
 

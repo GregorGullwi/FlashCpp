@@ -1754,7 +1754,12 @@ void Parser::consume_type_id_abstract_declarators(
 		}
 		restore_token_position(group_start);
 	}
+	// [dcl.decl]: plain pointer and member-pointer ptr-operators form one chain,
+	// so a type-id may be spelled `int S::*`, `int* S::*` or `int S::**`.
 	consume_pointer_ref_modifiers(type_spec);
+	while (tryConsumeMemberPointerDeclarator(type_spec)) {
+		consume_pointer_ref_modifiers(type_spec);
+	}
 	if (typeSpecCanHaveArrayAbstractDeclarator(type_spec)) {
 		if (ParseResult array_result = parseArrayDeclaratorSuffix(type_spec, array_bound_expressions, ArrayDeclaratorContext::Ordinary);
 			array_result.is_error()) {
