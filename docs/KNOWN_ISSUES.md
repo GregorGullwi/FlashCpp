@@ -44,12 +44,6 @@ canonical publication; supported nested primary-member expansions now retain
 independent inner bindings. Keep those unsupported fields
 fail-closed; the lockstep follow-up entry below records the remaining paths.
 
-## Member-pointer declarators spelled `T* C::*` are rejected
-
-`int* C::* pm = &C::p;` reports `OutOfLineDefinitionMalformedTarget` (1023) in an
-out-of-line definition; `int C::*` and a typedef (`typedef int* IP; IP C::* pm;`)
-work.
-
 ## Built-in indirection of a callable copy is unsupported
 
 `auto x = *function_pointer;` fails in IR conversion with
@@ -419,17 +413,6 @@ projection is written from that shape in the flat order. Other flat readers
 still fail closed for non-projectable shapes; remove this entry when those
 consumers migrate and the compatibility projection fields are deleted.
 
-## Pointer-to-member types are not accepted as direct type-trait operands
-
-`__is_member_object_pointer(int S::*)`, `__is_member_function_pointer(int S::*)`
-and `__is_same(int S::*, int)` fail in the parser with "Expected ')' after type
-trait argument" or "Expected ',' after first type in binary type trait", because
-the type-trait argument parser does not accept a member-pointer declarator.
-`__is_same(int, int S::*)` parses because the member pointer is the second
-operand. Member-pointer trait answers reached through a substituted template
-parameter, alias, or second operand are covered; the direct first-operand
-spelling is not.
-
 ## Opaque type-identity terminals still fall back to `TypeIndex`
 
 `equalTypeSpecifierIdentityImpl` and `hashTypeSpecifierIdentityImpl` now share
@@ -553,6 +536,23 @@ user-defined conversion sequence).
 Functional-cast spelling is still classified as a static_cast conversion even
 though [expr.type.conv]/1.1 makes a single-expression functional cast
 equivalent to the corresponding C-style cast, which may perform a const_cast.
+
+## C-style casts to member-pointer type-ids are not parsed
+
+`(int S::*)p` still fails with "Unexpected keyword in expression context"
+because the C-style cast probe consumes the target type-id through
+`consume_cast_type_id_postfix_modifiers` and
+`consume_cast_type_id_paren_declarator`, which accept `*`, `&` and parenthesized
+declarators but not a `nested-name-specifier *` abstract declarator. The shared
+type-id helper now accepts `int S::*`, `int* S::*` and `int (S::*)()` for trait
+operands, `sizeof`, `alignof`, alias targets and trailing return types, so the
+cast probe is the remaining spelling that cannot reach a member-pointer type.
+Routing the cast probe through that same helper closes the gap. A
+`static_cast` to a member pointer is a separate conversion rule
+([expr.static.cast], [conv.mem]), so this is a parsing gap rather than an
+operand-ordering one. Functional-cast spelling is classified as the same
+conversion (see the entry above), so it shares the same probe and the same
+routing fix.
 
 ## Decltype operator overload result typing is parser-owned
 

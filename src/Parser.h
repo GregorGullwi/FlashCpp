@@ -4052,6 +4052,11 @@ private:
 	// parseMemberPointerOwnerAfterName + applyMemberPointerOwner.
 	void bindMemberPointerOwner(TypeSpecifierNode& type_spec, Token class_name_token);
 
+	// [dcl.mptr]: consume one `nested-name-specifier *` ptr-operator and apply
+	// its owner and pointer level to the type specifier. Restores the token
+	// position and returns false when the next tokens are not one.
+	bool tryConsumeMemberPointerDeclarator(TypeSpecifierNode& type_spec);
+
 		// Template name extraction helpers - extract base template names from mangled/instantiated names
 	std::string_view extract_base_template_name(std::string_view mangled_name);	// Extract by searching for underscores left-to-right
 	std::string_view extract_base_template_name_by_stripping(std::string_view instantiated_name);  // Extract by stripping suffixes right-to-left
