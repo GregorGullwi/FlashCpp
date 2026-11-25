@@ -238,8 +238,9 @@ public:
 	 * @param var_name  The global variable whose .data slot should receive the address
 	 * @param target_name  The symbol whose absolute address is stored
 	 * @param offset_in_symbol  Byte offset of the slot within the global's storage
+	 * @param addend  Byte offset of the addressed subobject within target_name
 	 */
-	void add_data_relocation(std::string_view var_name, std::string_view target_name, uint32_t offset_in_symbol) {
+	void add_data_relocation(std::string_view var_name, std::string_view target_name, uint32_t offset_in_symbol, int64_t addend) {
 		// Find the variable's offset and containing section by looking up its symbol.
 		ELFIO::Elf64_Addr var_offset = 0;
 		ELFIO::Elf_Half data_section_index = 0;
@@ -301,11 +302,11 @@ public:
 		ELFIO::relocation_section_accessor rela_accessor(elf_writer_, rela_data);
 		ELFIO::Elf_Xword rel_info = (static_cast<ELFIO::Elf_Xword>(target_index) << 32) |
 									(static_cast<ELFIO::Elf_Xword>(ELFIO::R_X86_64_64) & 0xffffffffUL);
-		rela_accessor.add_entry(var_offset, rel_info, 0);
+		rela_accessor.add_entry(var_offset, rel_info, static_cast<ELFIO::Elf_Sxword>(addend));
 
 		if (g_enable_debug_output) {
-			std::cerr << "Added data relocation: " << var_name << " -> " << target_name
-					  << " in " << data_section->get_name() << " at offset " << var_offset << std::endl;
+			std::cerr << "Added data relocation: " << var_name << " -> " << target_name << " in " << data_section->get_name() << " at offset " << var_offset
+					  << " addend " << addend << std::endl;
 		}
 	}
 

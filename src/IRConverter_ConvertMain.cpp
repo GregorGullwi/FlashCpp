@@ -7137,6 +7137,7 @@ void IrToObjConverter<TWriterClass>::handleGlobalVariableDecl(const IrInstructio
 	global_info.is_initialized = op.is_initialized;
 	global_info.size_in_bytes = (op.size_in_bits.value / 8) * op.element_count;
 	global_info.reloc_target = op.reloc_target;
+	global_info.reloc_addend = op.reloc_addend;
 	global_info.data_relocations = op.data_relocations;
 	global_info.is_rodata = op.is_rodata;
 	global_info.is_extern_only = op.is_extern_only;
@@ -17868,18 +17869,18 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 		if (global.is_extern_only) {
 			continue;
 		}
-		writer.add_global_variable_data(StringTable::getStringView(global.name), global.size_in_bytes,
-										global.is_initialized, global.init_data, global.is_rodata,
-										global.is_selectany, global.reloc_target.isValid());
+		const bool has_absolute_relocation = global.reloc_target.isValid() || !global.data_relocations.empty();
+		writer.add_global_variable_data(StringTable::getStringView(global.name), global.size_in_bytes, global.is_initialized, global.init_data, global.is_rodata,
+										global.is_selectany, has_absolute_relocation);
 	}
 
 		// Emit data section relocations for pointer/reference globals initialized with &symbol
 	for (const auto& global : global_variables_) {
 		if (global.reloc_target.isValid()) {
-			writer.add_data_relocation(StringTable::getStringView(global.name), StringTable::getStringView(global.reloc_target), 0);
+			writer.add_data_relocation(StringTable::getStringView(global.name), StringTable::getStringView(global.reloc_target), 0, global.reloc_addend);
 		}
 		for (const DataRelocation& element : global.data_relocations) {
-			writer.add_data_relocation(StringTable::getStringView(global.name), StringTable::getStringView(element.target), element.offset_in_symbol);
+			writer.add_data_relocation(StringTable::getStringView(global.name), StringTable::getStringView(element.target), element.offset_in_symbol, element.addend);
 		}
 	}
 

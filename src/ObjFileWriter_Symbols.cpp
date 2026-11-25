@@ -231,7 +231,11 @@ void ObjectFileWriter::add_text_relocation(uint64_t offset, const std::string& s
 				  << " type: 0x" << std::hex << relocation_type << std::dec << std::endl;
 }
 
-void ObjectFileWriter::add_data_relocation(std::string_view var_name, std::string_view target_name, uint32_t offset_in_symbol) {
+void ObjectFileWriter::add_data_relocation(std::string_view var_name, std::string_view target_name, uint32_t offset_in_symbol, int64_t addend) {
+	// COFF's IMAGE_REL_AMD64_ADDR64 has no addend field: the addend is the
+	// two's-complement value already stored at the relocation site, which the
+	// initializer path writes alongside the relocation record.
+	(void)addend;
 	// Find the variable's symbol to get its offset in the containing data section.
 	auto* var_symbol = coffi_.get_symbol(var_name);
 	if (!var_symbol)

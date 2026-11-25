@@ -664,14 +664,14 @@ and enclosing namespaces, using-declarations, and array-to-pointer decay for a
 whole array. Namespace-scope arrays whose canonical leaf element is a pointer or
 member pointer now place each scalar leaf at its element stride, including nested
 rows and brace elision; arrays of records and scalars keep their previous paths.
-Remaining gaps:
+Static pointer initializers now record a base symbol plus a byte addend, so a
+decayed element (`values + 1`, `&values[i]`) and a pointer-valued aggregate member
+at any offset store the addressed subobject instead of null. Remaining gaps:
 
-- A decayed pointer with a nonzero element offset (`values + 1`) is emitted as
-  null because static relocations carry no addend.
-- A namespace-scope aggregate with a pointer-valued member
-  (`struct S { int* p; }; S s{&x};`) leaves the member null, while a local
-  aggregate and a namespace-scope scalar pointer initialize correctly.
-- `&arr[i]` and static-member array decay still fail constant evaluation.
+- A static-member array used as a pointer (`S::arr`) still stores null because the
+  qualified-name decay path does not resolve the member's storage; out-of-line
+  static array definitions are also unparsed (see "Out-of-line static data member
+  definitions are not parsed").
 - A namespace-scope reference records the referenced value instead of its
   address, so runtime reads of `N::r` are wrong.
 - Namespace-scope `using`-directives are not consulted during detached
