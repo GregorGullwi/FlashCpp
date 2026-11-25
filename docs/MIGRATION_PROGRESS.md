@@ -1042,9 +1042,13 @@ including a member or array-element byte offset, and reference reads and writes
 dereference it. Static pointer initializers carry a base symbol plus a byte
 addend, so a decayed array element, an in-class static-member array, and a
 pointer-valued aggregate member at any offset store the addressed subobject.
-Out-of-line static data member definitions are still unparsed, so a static array
-member without an in-class definition has no storage; that is a parse boundary,
-not a lowering gap.
+Out-of-line static data member definitions now attach to the in-class
+declaration for scalar, array, nested-class, namespace-qualified, and
+class-template forms, so a non-const static array member without an in-class
+initializer reaches the same qualified storage and decay path as an inline
+member. Concrete conflicting definitions fail closed with
+`OutOfLineDefinitionMismatch`, and the class-template array form parses without
+crashing.
 Empty and standard-layout
 publication now aggregate member and base facts for represented records, covering
 no-unique-address empty members and cross-base ownership rules; the existing

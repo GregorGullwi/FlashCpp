@@ -7,6 +7,52 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+// A namespace-scope out-of-line static data-member definition must describe the
+// same object type as the in-class declaration. Compare the published canonical
+// type when both sides support it; otherwise fall back to the flat declarator
+// shape that the legacy representation exposes.
+bool Parser::staticMemberDefinitionTypeMatches(const StructStaticMember& member, DeclarationNode& definition_decl, bool definition_is_constexpr) {
+	const TypeSpecifierNode& definition_type = definition_decl.type_specifier_node();
+	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+	TypeSpecifierNode definition_type_copy = definition_type;
+	if (definition_is_constexpr) {
+		definition_type_copy.add_cv_qualifier(CVQualifier::Const);
+	}
+	const std::optional<TypeId> definition_type_id = tryImportSupportedCanonical(canonical_types, definition_type_copy);
+	const bool definition_has_unknown_array_bound = definition_decl.is_unsized_array() || definition_type.has_unsized_outer_array_dimension();
+	if (!definition_has_unknown_array_bound && member.canonical_type_id && definition_type_id.has_value()) {
+		TypeSpecifierNode member_type = materializeStaticMemberTypeSpecifier(canonical_types, member, definition_decl.identifier_token());
+		const std::optional<TypeId> member_type_id = tryImportSupportedCanonical(canonical_types, member_type);
+		if (member_type_id.has_value()) {
+			return *member_type_id == *definition_type_id;
+		}
+	}
+
+	const bool definition_is_array = definition_decl.owns_inline_array_storage() || definition_type.is_array_object();
+	if (member.is_array != definition_is_array) {
+		return false;
+	}
+	CVQualifier definition_cv = definition_type.cv_qualifier();
+	if (definition_is_constexpr) {
+		// [dcl.constexpr]/9: a constexpr variable is implicitly const even when
+		// the out-of-line definition does not repeat the qualifier.
+		definition_cv |= CVQualifier::Const;
+	}
+	if (member.cv_qualifier != definition_cv || member.reference_qualifier != definition_type.reference_qualifier()) {
+		return false;
+	}
+	if (member.pointer_depth != static_cast<int>(definition_type.runtime_pointer_depth())) {
+		return false;
+	}
+	if (member.memberType() == TypeCategory::Struct || member.memberType() == TypeCategory::UserDefined) {
+		const TypeIndex definition_type_index = definition_type.type_index();
+		if (member.type_index.is_valid() && definition_type_index.is_valid() && member.type_index != definition_type_index) {
+			return false;
+		}
+	}
+	return member.memberType() == definition_type.type();
+}
+
 ParseResult Parser::duplicateVariableDeclarationError(const Token& identifier_token) {
 	return error(DiagnosticId::DuplicateDeclaration, identifier_token,
 		"Redefined symbol with different value");
@@ -329,62 +375,81 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			function_name_token = decl_node.identifier_token();
 		} else if (peek() == "::"_tok) {
 			advance();  // consume '::'
-			class_name = decl_node.identifier_token().handle();
-			if (peek() == "operator"_tok) {
-				// Out-of-line operator definition: ClassName::operator=(...) etc.
-				is_operator = true;
-				function_name_token = peek_info();
-				advance();  // consume 'operator'
+			// Consume the remaining nested-name-specifier so that
+			// `Outer::Inner::data` and `N::S::data` look up the innermost owner
+			// instead of stopping at the first qualifier.
+			StringBuilder owner_builder;
+			struct OwnerBuilderGuard { StringBuilder& builder; ~OwnerBuilderGuard() { builder.reset(); } } owner_builder_guard{owner_builder};
+			owner_builder.append(decl_node.identifier_token().value());
+			while (true) {
+				if (peek() == "operator"_tok) {
+					// Out-of-line operator definition: ClassName::operator=(...) etc.
+					is_operator = true;
+					function_name_token = peek_info();
+					advance();  // consume 'operator'
 
-				// Consume the operator symbol (=, ==, !=, <<, >>, etc.)
-				if (peek().is_eof()) {
-					return error(DiagnosticId::OutOfLineDefinitionMalformedTarget, function_name_token,
-						"Expected an operator symbol after 'operator' in an out-of-line definition");
-				}
+					// Consume the operator symbol (=, ==, !=, <<, >>, etc.)
+					if (peek().is_eof()) {
+						return error(DiagnosticId::OutOfLineDefinitionMalformedTarget, function_name_token,
+							"Expected an operator symbol after 'operator' in an out-of-line definition");
+					}
 
-				// Build the full operator name using StringBuilder
-				StringBuilder operator_builder;
-				operator_builder.append("operator");
-				std::string_view op = peek_info().value();
-				operator_builder.append(op);
-				advance();
+					// Build the full operator name using StringBuilder
+					StringBuilder operator_builder;
+					operator_builder.append("operator");
+					std::string_view op = peek_info().value();
+					operator_builder.append(op);
+					advance();
 
-				// Handle multi-character operators like >>=, <<=, etc.
-				while (!peek().is_eof()) {
-					std::string_view next = peek_info().value();
-					if (next == "=" || next == ">" || next == "<") {
-						// Could be part of >>=, <<=, etc.
-						if (op == ">" && (next == ">" || next == "=")) {
-							operator_builder.append(next);
-							advance();
-							op = next;
-						} else if (op == "<" && (next == "<" || next == "=")) {
-							operator_builder.append(next);
-							advance();
-							op = next;
-						} else if ((op == ">" || op == "<" || op == "!" || op == "=") && next == "=") {
-							operator_builder.append(next);
-							advance();
-							break;
+					// Handle multi-character operators like >>=, <<=, etc.
+					while (!peek().is_eof()) {
+						std::string_view next = peek_info().value();
+						if (next == "=" || next == ">" || next == "<") {
+							// Could be part of >>=, <<=, etc.
+							if (op == ">" && (next == ">" || next == "=")) {
+								operator_builder.append(next);
+								advance();
+								op = next;
+							} else if (op == "<" && (next == "<" || next == "=")) {
+								operator_builder.append(next);
+								advance();
+								op = next;
+							} else if ((op == ">" || op == "<" || op == "!" || op == "=") && next == "=") {
+								operator_builder.append(next);
+								advance();
+								break;
+							} else {
+								break;
+							}
 						} else {
 							break;
 						}
-					} else {
-						break;
 					}
-				}
 
-				// Create a token with the full operator name
-				std::string_view operator_symbol = operator_builder.commit();
-				function_name_token = Token(Token::Type::Identifier, operator_symbol,
-											function_name_token.line(), function_name_token.column(), function_name_token.file_index());
-			} else if (peek().is_identifier()) {
-				function_name_token = peek_info();
+					// Create a token with the full operator name
+					std::string_view operator_symbol = operator_builder.commit();
+					function_name_token = Token(Token::Type::Identifier, operator_symbol, function_name_token.line(), function_name_token.column(),
+						function_name_token.file_index());
+					break;
+				}
+				if (peek() == "template"_tok) {
+					advance();	// `::template name` disambiguator
+				}
+				if (!peek().is_identifier()) {
+					return error(DiagnosticId::OutOfLineDefinitionMalformedTarget, peek_info(),
+						"Expected a function name or 'operator' after '::' in an out-of-line definition");
+				}
+				const Token qualifier_or_member = peek_info();
 				advance();
-			} else {
-				return error(DiagnosticId::OutOfLineDefinitionMalformedTarget, peek_info(),
-					"Expected a function name or 'operator' after '::' in an out-of-line definition");
+				if (peek() == "::"_tok) {
+					owner_builder.append("::").append(qualifier_or_member.value());
+					advance();	// consume '::'
+					continue;
+				}
+				function_name_token = qualifier_or_member;
+				break;
 			}
+			class_name = StringTable::getOrInternStringHandle(owner_builder.commit());
 		}
 
 		// Find the struct in the type registry
@@ -430,6 +495,21 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 					.append("::"sv)
 					.append(function_name_token.value())
 					.commit());
+			// The qualified declarator-id path stops at the member name, so an
+			// out-of-line array definition carries its bounds here:
+			//   int S::data[3];  int S::data[3] = { ... };
+			if (peek() == "["_tok) {
+				ParseResult array_result = parseArrayDeclaratorSuffix(decl_node.type_specifier_node(), nullptr, ArrayDeclaratorContext::Ordinary);
+				if (array_result.is_error()) {
+					return array_result;
+				}
+			}
+			const bool defines_static_member = peek() == "("_tok || peek() == "{"_tok || peek() == "="_tok || peek() == ";"_tok;
+			if (defines_static_member && !staticMemberDefinitionTypeMatches(*static_member, decl_node, is_constexpr)) {
+				return error(DiagnosticId::OutOfLineDefinitionMismatch, function_name_token, StringBuilder().append("Definition of static data member '")
+					.append(StringTable::getStringView(struct_info->getName())).append("::").append(function_name_token.value())
+					.append("' conflicts with its in-class declaration").commit());
+			}
 		}
 		if (static_member != nullptr && peek() == "("_tok) {
 			// This is a static member variable definition with parenthesized initializer
@@ -527,6 +607,18 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			}
 
 			return finalize_static_member_init(static_member, init_result.node(), decl_node, function_name_token, saved_position);
+		}
+
+		// Out-of-line static member variable definition without an initializer:
+		//   int S::data;  int S::data[3];
+		// The in-class declaration already carries the entity and its storage is
+		// emitted from the struct's static-member table, so the definition only
+		// completes the existing declaration instead of creating a new one.
+		if (static_member != nullptr && peek() == ";"_tok) {
+			advance();	// consume ';'
+			FLASH_LOG(Parser, Debug, "Found out-of-line static member definition without initializer: ", StringTable::getStringView(struct_info->getName()),
+					  "::", function_name_token.value());
+			return saved_position.success();
 		}
 
 		// Create a new declaration node with the function name

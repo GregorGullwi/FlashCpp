@@ -2567,6 +2567,13 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				orderedTypeFromStaticMemberDeclaration(static_member);
 			TypeSpecifierNode canonical_static_type =
 				ordered_static_type.value_or(type_spec);
+			// A directly written array declarator keeps its extents on the
+			// declaration, not on the element type specifier. Apply them before
+			// publishing canonical identity so the member's TypeId is the array
+			// type rather than its element type.
+			if (decl.is_array_object() && !canonical_static_type.is_array_object()) {
+				applyDeclarationArrayBoundsToTypeSpec(decl, canonical_static_type, *this);
+			}
 			const std::optional<TypeId> canonical_static_member_type =
 				tryImportCanonicalStaticMemberType(canonical_static_type);
 			if (ordered_static_type.has_value() &&

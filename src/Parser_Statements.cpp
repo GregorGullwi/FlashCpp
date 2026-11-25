@@ -801,11 +801,23 @@ ParseResult Parser::parse_statement_or_declaration() {
 						return parse_expression_statement();
 					}
 					if (peek().is_identifier()) {
+						const Token member_token = peek_info();
 						advance(); // consume member name
 						// Handle deeper nesting: Type::Inner::func(
 						skip_qualified_name_parts();
 						if (peek() == "("_tok) {
 							// This is Type<T>::member(...) - a function call expression
+							restore_token_position(scope_check);
+							restore_token_position(check_pos);
+							return parse_expression_statement();
+						}
+						// `S<int>::data = ...` and `S<int>::data[0] = ...` name a
+						// static data member, so the statement is an expression even
+						// though the leading qualified template-id is a type.
+						const StructTypeInfo* pattern_struct = type_info_ctx->getStructInfo();
+						const bool names_static_data_member = pattern_struct != nullptr && pattern_struct->findStaticMemberRecursive(member_token.handle()).first != nullptr;
+						const bool expression_only_follows = !peek().is_eof() && kExpressionOnlyAfterLeadingIdentifier.count(peek_info().value());
+						if (names_static_data_member && (peek() == "["_tok || expression_only_follows)) {
 							restore_token_position(scope_check);
 							restore_token_position(check_pos);
 							return parse_expression_statement();
@@ -867,11 +879,27 @@ ParseResult Parser::parse_statement_or_declaration() {
 					if (peek() == "::"_tok) {
 						advance(); // consume '::'
 						if (peek().is_identifier()) {
+							const Token member_token = peek_info();
 							advance(); // consume member name
 							// Handle deeper nesting: Base<T>::Inner::func(
 							skip_qualified_name_parts();
 							if (peek() == "("_tok) {
 								// This is Base<T>::member(...) - a function call expression
+								restore_token_position(template_check);
+								restore_token_position(saved_pos);
+								return parse_expression_statement();
+							}
+							// `S<int>::data = ...` and `S<int>::data[0] = ...` name a
+							// static data member of the pattern, so the statement is an
+							// expression even though the leading template-id is a type.
+							bool names_static_data_member = false;
+							if (const TypeInfo* pattern_type = lookupTypeInCurrentContext(type_name_handle)) {
+								if (const StructTypeInfo* pattern_struct = pattern_type->getStructInfo()) {
+									names_static_data_member = pattern_struct->findStaticMemberRecursive(member_token.handle()).first != nullptr;
+								}
+							}
+							const bool expression_only_follows = !peek().is_eof() && kExpressionOnlyAfterLeadingIdentifier.count(peek_info().value());
+							if (names_static_data_member && (peek() == "["_tok || expression_only_follows)) {
 								restore_token_position(template_check);
 								restore_token_position(saved_pos);
 								return parse_expression_statement();
