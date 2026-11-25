@@ -401,7 +401,12 @@ remaining pattern schemas by identity, and remove the name fallback.
    subobject. An array of member-object pointers keeps its extents outside the
    member-pointer element, and address-of a pointer-to-array member publishes
    that member's complete pointee, so `sizeof` and array-reference binding use
-   the member shape rather than a single pointer word.
+   the member shape rather than a single pointer word. Address-of and auto
+   deduction for an array member publish the array as the member-pointer
+   pointee, including the ordered `int (C::*p)[N]` declarator, so `.*` access
+   lowers as an array. Call arguments that pass a pointer whose pointee is an
+   array to an array-reference parameter bind the pointer value as the array
+   address instead of the pointer object's storage.
    Explicit conversion-function templates retain their explicit flag through
    member-template instantiation, so copy-initialization rejects them with the
    existing explicit-conversion diagnostic while `explicit(false)` remains

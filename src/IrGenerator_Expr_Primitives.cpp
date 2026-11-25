@@ -456,6 +456,26 @@ ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessN
 	const PointerDepth member_pointer_depth{static_cast<int>(member_pointee->runtime_pointer_depth())};
 	const SizeInBits member_size{member_pointer_depth.value > 0 ? POINTER_SIZE_BITS : static_cast<int>(member_pointee->size_in_bits())};
 
+	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+	TypeId member_pointee_shape = plan != nullptr ? plan->member_pointee : TypeId{};
+	if (!member_pointee_shape) {
+		const TypeId member_pointer_shape = sema_.getExpressionStructuralTypeId(ptmNode.member_pointer());
+		if (member_pointer_shape) {
+			const TypeId member_pointer_type = canonical_types.withoutTopLevelQualifiers(canonicalTypeWithoutReference(canonical_types, member_pointer_shape));
+			if (canonical_types.node(member_pointer_type).kind == CanonicalTypeKind::MemberObjectPointer) {
+				member_pointee_shape = canonical_types.memberPointerPointee(member_pointer_type);
+			}
+		}
+	}
+	if (member_pointee_shape && canonicalArrayExtentCount(canonical_types, member_pointee_shape) > 0) {
+		// An array pointee has no scalar value to load. The computed member
+		// address is the array object's address, which both reference binding and
+		// subscripting consume directly, matching direct array-member access.
+		LValueInfo member_lvalue(LValueInfo::Kind::Indirect, member_address, 0);
+		setTempVarMetadata(member_address, TempVarMetadata::makeLValue(member_lvalue, member_type, member_size.value));
+		return makeExprResult(member_type_index, member_size, IrOperand{member_address}, PointerDepth{}, ValueStorage::ContainsAddress);
+	}
+
 	if (context == ExpressionContext::LValueAddress) {
 		LValueInfo member_lvalue(LValueInfo::Kind::Indirect, member_address, 0);
 		setTempVarMetadata(member_address, TempVarMetadata::makeLValue(member_lvalue, TypeCategory::Invalid, 0));

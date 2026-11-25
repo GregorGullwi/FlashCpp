@@ -354,8 +354,11 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 			break;
 		}
 		case DeclaratorComponentKind::MemberObjectPointer:
-			if (index != components.size() - 1 || !component.hasMemberOwner() ||
-				!isValidCVQualifier(component.cv_qualifier)) {
+			// Components at higher indices were already folded into `id`, so the
+			// member object pointer wraps the complete pointee shape. That pointee
+			// can itself be an array (`int (Owner::*p)[N]`), which puts the array
+			// component after the member pointer in the ordered spine.
+			if (!component.hasMemberOwner() || !isValidCVQualifier(component.cv_qualifier)) {
 				return {{}, CanonicalTypeImportStatus::Invalid};
 			}
 			{
@@ -1036,7 +1039,31 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 		}
 		const DeclaratorComponent& innermost = components.back();
 		if (innermost.kind != DeclaratorComponentKind::MemberObjectPointer) {
-			return {{}, CanonicalTypeImportStatus::Invalid};
+			// A member object pointer can own an array pointee: `int (Owner::*p)[N]`
+			// keeps the member pointer before the array component in the spine.
+			// Import the declarator base and let the complete spine place the
+			// extents inside the member pointer.
+			size_t member_object_pointer_index = components.size();
+			for (size_t index = 0; index < components.size(); ++index) {
+				if (components[index].kind ==
+					DeclaratorComponentKind::MemberObjectPointer) {
+					member_object_pointer_index = index;
+					break;
+				}
+			}
+			if (member_object_pointer_index == components.size()) {
+				return {{}, CanonicalTypeImportStatus::Invalid};
+			}
+			TypeSpecifierNode base = syntax;
+			base.clear_declarator_shape();
+			base.clear_member_class_identity();
+			base.clear_injected_class_declaration();
+			base.clear_function_signature();
+			const CanonicalTypeImport imported_base = importCanonicalTypeImpl(table, base, CanonicalTypeImportContext::Exact);
+			if (imported_base.status != CanonicalTypeImportStatus::Supported) {
+				return imported_base;
+			}
+			return applyCanonicalOrderedDeclarator(table, imported_base.type, syntax, CanonicalTypeImportContext::Exact);
 		}
 		if (syntax.category() == TypeCategory::MemberObjectPointer &&
 			!syntax.has_member_object_pointee()) {

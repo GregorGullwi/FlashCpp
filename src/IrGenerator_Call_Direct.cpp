@@ -1413,13 +1413,15 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				sema_call_key,
 				arg_index);
 		}
+		const bool array_reference_from_pointer = param_type && callArgumentBindsArrayReferenceFromPointer(argument, *param_type, sema_ref_binding);
 
 		// Special case: if argument is a reference identifier being passed to a reference parameter,
 		// handle it directly without visiting the expression. This prevents the Load context from
 		// generating a Dereference operation (which would give us the value, not the address).
 		// For reference-to-reference passing, we just want to pass the variable name directly,
 		// and let the IRConverter use MOV to load the address stored in the reference.
-		if ((!sema_ref_binding || !sema_ref_binding->is_valid()) &&
+		if (!array_reference_from_pointer &&
+			(!sema_ref_binding || !sema_ref_binding->is_valid()) &&
 			param_ref_qualifier != CVReferenceQualifier::None &&
 			std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 			const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
@@ -1446,13 +1448,22 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 		// If the parameter expects a reference, use LValueAddress context to avoid dereferencing
 		// This is needed for non-reference arguments being passed to reference parameters
-		if (param_ref_qualifier != CVReferenceQualifier::None &&
+		if (!array_reference_from_pointer && param_ref_qualifier != CVReferenceQualifier::None &&
 			(!sema_ref_binding || !sema_ref_binding->is_valid() || sema_ref_binding->binds_directly())) {
 			arg_context = ExpressionContext::LValueAddress;
 		}
 
 		ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
 		arg_index++;
+
+		if (array_reference_from_pointer) {
+			// The pointer value is the array address the reference parameter binds.
+			call_arguments.push_back(buildArrayReferencePointerCallArgument(
+				argumentIrOperands,
+				*param_type,
+				callExprNode.called_from()));
+			return;
+		}
 
 		if (param_type) {
 			if (auto sema_bound_arg = tryBuildSemaBoundCallArgument(
