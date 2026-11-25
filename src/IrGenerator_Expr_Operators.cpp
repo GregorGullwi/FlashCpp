@@ -2434,6 +2434,29 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	ExprResult lhsExprResult = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>(), lhs_context);
 	ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
+	// A null pointer constant compared with or assigned to a data-member pointer
+	// must use the all-bits-one sentinel that null member-pointer initialization
+	// stores, not a raw zero offset: `&D::first` designates the member at offset
+	// zero and is therefore a valid non-null pointer-to-member.
+	auto operandIsMemberObjectPointer = [&](const ExprResult& operand_result, const ASTNode& operand) {
+		if (operand_result.effectiveIrType() == IrType::MemberObjectPointer) {
+			return true;
+		}
+		const TypeId operand_type = canonicalOperandStructuralTypeId(operand);
+		if (!operand_type) {
+			return false;
+		}
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		const TypeId normalized = table.withoutTopLevelQualifiers(canonicalTypeWithoutReference(table, operand_type));
+		return table.node(normalized).kind == CanonicalTypeKind::MemberObjectPointer;
+	};
+	bool member_object_pointer_null_assignment = false;
+	if (op == "=" && operandIsMemberObjectPointer(lhsExprResult, binaryOperatorNode.get_lhs()) && isNullPointerConstantExpr(
+		rhsExprResult, binaryOperatorNode.get_rhs())) {
+		rhsExprResult = generateTypeConversion(rhsExprResult, TypeCategory::Nullptr, TypeCategory::MemberObjectPointer, binaryOperatorNode.get_token());
+		member_object_pointer_null_assignment = true;
+	}
+
 	// C++20 [conv.array]/1 applies before binary operator candidate selection:
 	// an array operand decays to a pointer to its first element. The canonical
 	// step identifies that decay and its stride, so an array whose element is a
@@ -3791,10 +3814,25 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			ValueStorage::ContainsData);
 	};
 
+	// A null pointer constant compared with a data-member pointer must use the
+	// all-bits-one sentinel that null member-pointer initialization stores, not
+	// a raw zero offset: `&D::first` designates the member at offset zero and is
+	// therefore a valid non-null pointer-to-member.
+	bool is_member_object_pointer_null_comparison = false;
 	if (op == "==" || op == "!=") {
 		const bool lhs_is_null_pointer_constant = AstToIr::isNullPointerConstantExpr(lhsExprResult, binaryOperatorNode.get_lhs());
 		const bool rhs_is_null_pointer_constant = AstToIr::isNullPointerConstantExpr(rhsExprResult, binaryOperatorNode.get_rhs());
-		if (lhs_pointer_depth > 0 && rhs_is_null_pointer_constant) {
+		if (operandIsMemberObjectPointer(lhsExprResult, binaryOperatorNode.get_lhs()) && rhs_is_null_pointer_constant) {
+			rhsExprResult = generateTypeConversion(rhsExprResult, TypeCategory::Nullptr, TypeCategory::MemberObjectPointer, binaryOperatorNode.get_token());
+			rhsSize = rhsExprResult.size_in_bits.value;
+			rhsCat = rhsExprResult.category();
+			is_member_object_pointer_null_comparison = true;
+		} else if (operandIsMemberObjectPointer(rhsExprResult, binaryOperatorNode.get_rhs()) && lhs_is_null_pointer_constant) {
+			lhsExprResult = generateTypeConversion(lhsExprResult, TypeCategory::Nullptr, TypeCategory::MemberObjectPointer, binaryOperatorNode.get_token());
+			lhsSize = lhsExprResult.size_in_bits.value;
+			lhsCat = lhsExprResult.category();
+			is_member_object_pointer_null_comparison = true;
+		} else if (lhs_pointer_depth > 0 && rhs_is_null_pointer_constant) {
 			rhsExprResult = makeNullPointerExpr(lhsExprResult, lhs_pointer_depth);
 			rhs_pointer_depth = lhs_pointer_depth;
 			rhsSize = rhsExprResult.size_in_bits.value;
@@ -4153,7 +4191,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 		// Convert RHS to LHS type if they differ — lhsType is the ground truth for the destination.
 		// Phase 15: prefer sema annotation; log warning on fallback for arithmetic types.
-		if (rhsCat != lhsCat) {
+		if (rhsCat != lhsCat && !member_object_pointer_null_assignment) {
 			if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), lhsCat)) {
 				if (sema_normalized_current_function_ &&
 					(is_standard_arithmetic_type(rhsCat) || rhsCat == TypeCategory::Enum) &&
@@ -4293,7 +4331,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// for any type that sema is expected to cover (arithmetic).
 	// Reuse tryGlobalSemaConv (defined above) which performs sema slot lookup, struct-type
 	// guard, expected-target verification, enum type mismatch handling, and conversion.
-	if (!is_pointer_comparison && lhsCat != commonType) {
+	if (!is_pointer_comparison && !is_member_object_pointer_null_comparison && lhsCat != commonType) {
 		if (!tryGlobalSemaConv(lhsExprResult, binaryOperatorNode.get_lhs(), commonType)) {
 			if (sema_normalized_current_function_ && is_same_scoped_enum_comparison) {
 				throw InternalError("Phase 15: expected sema annotation for scoped-enum comparison LHS promotion");
@@ -4328,7 +4366,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				rhsExprResult = generateTypeConversion(rhsExprResult, rhsCat, promoted_rhs, binaryOperatorNode.get_token());
 			}
 		}
-	} else if (!is_pointer_comparison && rhsCat != commonType) {
+	} else if (!is_pointer_comparison && !is_member_object_pointer_null_comparison && rhsCat != commonType) {
 		if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), commonType)) {
 			if (sema_normalized_current_function_ && is_same_scoped_enum_comparison) {
 				throw InternalError("Phase 15: expected sema annotation for scoped-enum comparison RHS promotion");
@@ -4513,6 +4551,15 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				op_ref = IrOpcode::UnsignedGreaterThan;
 			else if (op_ref == IrOpcode::GreaterEqual)
 				op_ref = IrOpcode::UnsignedGreaterEqual;
+		} else if (is_member_object_pointer_null_comparison) {
+			// Compare the full 64-bit member-pointer object representation, so
+			// the arithmetic common-type path cannot narrow the sentinel.
+			bin_op.lhs.setType(TypeCategory::UnsignedLongLong);
+			bin_op.lhs.ir_type = IrType::Integer;
+			bin_op.lhs.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+			bin_op.rhs.setType(TypeCategory::UnsignedLongLong);
+			bin_op.rhs.ir_type = IrType::Integer;
+			bin_op.rhs.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
 		} else if (lhs_operand_is_pointer && rhs_operand_is_pointer) {
 			// Both operands classify as pointers, so one of the depths is a
 			// publication defect. Comparing them as scalars would silently

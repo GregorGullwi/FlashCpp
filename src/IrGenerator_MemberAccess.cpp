@@ -3606,8 +3606,6 @@ ExprResult AstToIr::adjustMemberObjectPointerForCanonicalBaseConversion(
 	}
 
 	const SizeInBits member_pointer_size{POINTER_SIZE_BITS};
-	static constexpr unsigned long long kNullMemberObjectPointerRepresentation =
-		~0ULL;
 	const TypedValue source_value = makeTypedValue(
 		TypeCategory::MemberObjectPointer,
 		member_pointer_size,

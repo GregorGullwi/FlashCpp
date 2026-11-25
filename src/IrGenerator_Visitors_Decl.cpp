@@ -3111,6 +3111,21 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 							MemberStoreOp member_store;
 							member_store.value.setType(member.type_index.category());
 							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
+							// A default-constructed data-member pointer member is null,
+							// which the target ABI represents with the sentinel rather
+							// than an all-zero member offset.
+							bool member_is_member_object_pointer = member.type_index.category() == TypeCategory::MemberObjectPointer;
+							if (!member_is_member_object_pointer && member.canonical_type_id) {
+								const CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+								const TypeId unqualified = canonical_types.withoutTopLevelQualifiers(member.canonical_type_id);
+								member_is_member_object_pointer = canonical_types.node(unqualified).kind == CanonicalTypeKind::MemberObjectPointer;
+							}
+							if (member_is_member_object_pointer) {
+								member_store.value.ir_type = IrType::MemberObjectPointer;
+								if (std::holds_alternative<unsigned long long>(member_value) && std::get<unsigned long long>(member_value) == 0ULL) {
+									member_value = kNullMemberObjectPointerRepresentation;
+								}
+							}
 							member_store.value.value = member_value;
 							member_store.object = StringTable::getOrInternStringHandle("this");
 							member_store.member_name = member.getName();
@@ -3913,6 +3928,8 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		}
 	}
 	const TypeCategory constructor_type_category = normalized_type_spec.category();
+	const bool constructs_member_object_pointer = type_spec.is_member_object_pointer_type() || normalized_type_spec.is_member_object_pointer_type() ||
+		constructor_type_category == TypeCategory::MemberObjectPointer;
 	size_t num_args = 0;
 	constructorCallNode.arguments().visit([&](ASTNode) { num_args++; });
 
@@ -3921,12 +3938,14 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			static_cast<int>(type_spec.runtime_pointer_depth())};
 		const SizeInBits pointer_size_bits{64};
 		if (num_args == 0) {
-			return makeExprResult(
-				type_spec.type_index(),
-				pointer_size_bits,
-				IrOperand{0ULL},
-				pointer_depth,
-				ValueStorage::ContainsData);
+			// Value-initialization of a data-member pointer is the null sentinel,
+			// not a zero member offset (which would name an offset-zero member).
+			const unsigned long long representation = constructs_member_object_pointer ? kNullMemberObjectPointerRepresentation : 0ULL;
+			ExprResult result = makeExprResult(type_spec.type_index(), pointer_size_bits, IrOperand{representation}, pointer_depth, ValueStorage::ContainsData);
+			if (constructs_member_object_pointer) {
+				result.ir_type = IrType::MemberObjectPointer;
+			}
+			return result;
 		}
 		if (num_args == 1) {
 			ASTNode first_arg;
@@ -3959,6 +3978,12 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		if (num_args == 0) {
 			if (is_floating_point_type(constructor_type_category)) {
 				return makeExprResult(normalized_type_spec.type_index(), SizeInBits{type_size_bits}, IrOperand{0.0}, PointerDepth{}, ValueStorage::ContainsData);
+			}
+			if (constructs_member_object_pointer) {
+				ExprResult result = makeExprResult(normalized_type_spec.type_index(), SizeInBits{type_size_bits},
+					IrOperand{kNullMemberObjectPointerRepresentation}, PointerDepth{}, ValueStorage::ContainsData);
+				result.ir_type = IrType::MemberObjectPointer;
+				return result;
 			}
 			return makeExprResult(normalized_type_spec.type_index(), SizeInBits{type_size_bits}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 		}

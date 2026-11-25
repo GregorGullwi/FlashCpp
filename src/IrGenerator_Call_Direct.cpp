@@ -1606,7 +1606,14 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 			// Check sema annotation first: if the semantic pass pre-computed a conversion, use it.
 			bool sema_applied_arg_conversion = false;
-			if (argument.is<ExpressionNode>()) {
+			if (param_ref_qualifier == CVReferenceQualifier::None && (param_type->is_member_object_pointer_type() ||
+				param_type->category() == TypeCategory::MemberObjectPointer) && isNullPointerConstantExpr(argumentIrOperands, argument)) {
+				argumentIrOperands = generateTypeConversion(argumentIrOperands, TypeCategory::Nullptr, TypeCategory::MemberObjectPointer, callExprNode.called_from());
+				arg_type = argumentIrOperands.typeEnum();
+				arg_type_index = argumentIrOperands.type_index;
+				sema_applied_arg_conversion = true;
+			}
+			if (!sema_applied_arg_conversion && argument.is<ExpressionNode>()) {
 				const void* key = &argument.as<ExpressionNode>();
 				const auto slot = sema_.getSlot(key);
 				if (slot.has_value()) {

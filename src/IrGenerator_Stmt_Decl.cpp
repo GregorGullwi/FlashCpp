@@ -920,9 +920,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			// A pointer-to-array is one pointer whose flat projection may keep the
 			// row's element size. Loads of this storage must still read the whole
 			// pointer; the canonical pointer shape decides, not the flat width.
+			// A member pointer is one 64-bit object too, even when its flat
+			// projection keeps the pointee's 32-bit size.
 			if (size_bits != POINTER_SIZE_BITS) {
 				const TypeId canonical_type_id = sema_.canonicalStructuralTypeId(type_node);
-				if (canonical_type_id && canonicalPointerShape(requireFrontendContext().canonicalTypes(), canonical_type_id).isPointer()) {
+				if (type_node.is_member_object_pointer_type() || type_node.is_member_function_pointer() || (canonical_type_id &&
+					canonicalPointerShape(requireFrontendContext().canonicalTypes(), canonical_type_id).isPointer())) {
 					size_bits = POINTER_SIZE_BITS;
 				}
 			}
@@ -1374,6 +1377,18 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		size_t element_size = op.size_in_bits.value / 8;
 		if (node.initializer()) {
 			const ASTNode& init_node = *node.initializer();
+			auto initializerIsNullPointerConstant = [&]() {
+				if (!init_node.is<ExpressionNode>()) {
+					return false;
+				}
+				const ExpressionNode& expression = init_node.as<ExpressionNode>();
+				if (const auto* literal = std::get_if<NumericLiteralNode>(&expression)) {
+					if (literal->type() == TypeCategory::Nullptr) {
+						return true;
+					}
+				}
+				return isIntegerLiteralZeroNullPointerConstant(init_node);
+			};
 
 			if (const LambdaExpressionNode* lambda_ptr = extractLambdaFromInitializer(init_node)) {
 				auto closure_type = deduceLambdaClosureType(ast_node, decl.identifier_token());
@@ -1957,6 +1972,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 					} else if (eval_result.success()) {
 						unsigned long long value = evalResultMemberToRaw(eval_result, type_node.type());
+						if (type_node.is_member_object_pointer_type() && initializerIsNullPointerConstant()) {
+							value = kNullMemberObjectPointerRepresentation;
+						}
 						appendValueAsBytes(op.init_data, value, element_size);
 				} else {
 						// Evaluation failed: for constexpr variables this is an error;
@@ -2066,6 +2084,14 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			}
 		}
 
+		// A namespace-scope or static-storage data-member pointer with no
+		// initializer is still null, which the target ABI represents with the
+		// sentinel rather than an all-zero member offset.
+		if (type_node.is_member_object_pointer_type() && !op.is_initialized && element_size > 0) {
+			op.is_initialized = true;
+			op.init_data.assign(element_size, 0);
+			writeRawValueAtOffset(op.init_data, 0, element_size, kNullMemberObjectPointerRepresentation);
+		}
 			// constexpr variables are compile-time constants and should go to .rodata (read-only data section).
 			// constinit variables may be modified at runtime, so they stay in .data.
 		if (node.is_constexpr() && op.is_initialized) {
@@ -2292,10 +2318,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(copy_pointer), decl.identifier_token()));
 			result = makeExprResult(result.type_index, SizeInBits{POINTER_SIZE_BITS}, IrOperand{address_temp}, PointerDepth{1}, ValueStorage::ContainsAddress);
 		}
-		if (type_node.is_member_object_pointer_type() &&
-			result.category() == TypeCategory::Nullptr) {
-			result = generateTypeConversion(result, TypeCategory::Nullptr,
-				TypeCategory::MemberObjectPointer, decl.identifier_token());
+		if (type_node.is_member_object_pointer_type() && isNullPointerConstantExpr(result, ASTNode(&initializer))) {
+			result = generateTypeConversion(result, TypeCategory::Nullptr, TypeCategory::MemberObjectPointer, decl.identifier_token());
 		}
 		// A string literal is an array lvalue even though its lowered result does
 		// not carry lvalue metadata, so a reference bound to one must still bind
@@ -2521,10 +2545,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				}
 				decl_op.pointer_depth = PointerDepth{static_cast<int>(runtime_pointer_depth)};
 				decl_op.is_array = decl.owns_inline_array_storage();
-				if (type_node.is_member_object_pointer_type() &&
-					init_list.initializers().empty()) {
-					decl_op.initializer = makeTypedValue(
-						TypeCategory::MemberObjectPointer, SizeInBits{64}, ~0ULL);
+				if (type_node.is_member_object_pointer_type() && init_list.initializers().empty()) {
+					decl_op.initializer = makeTypedValue(TypeCategory::MemberObjectPointer, SizeInBits{64}, kNullMemberObjectPointerRepresentation);
 				}
 				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
 

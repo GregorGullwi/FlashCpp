@@ -7,6 +7,7 @@
 #include "TypeTraitEvaluator.h"	// For evaluateTypeTrait
 #include "TemplateInstantiationHelper.h"	 // For shared template instantiation utilities
 #include "IROperandHelpers.h"  // For isCompoundAssignmentOp / kCompoundOpTable
+#include "IrType.h"  // For kNullMemberObjectPointerRepresentation
 #include "StringBuilder.h"  // For StringBuilder (heap key construction)
 #include "Log.h"	 // For FLASH_LOG
 #include "InlineVector.h"  // For InlineVector (small-buffer-optimized vector)
@@ -128,7 +129,7 @@ enum class EvalErrorType {
 struct EvalResult {
 	// Itanium encodes null data-member pointers as -1; using the ABI sentinel keeps
 	// constexpr materialization aligned with the object representation on Linux.
-	static constexpr long long kNullMemberPointerSentinel = -1;
+	static constexpr long long kNullMemberPointerSentinel = static_cast<long long>(kNullMemberObjectPointerRepresentation);
 
 	std::variant<
 		bool,					// Boolean constant

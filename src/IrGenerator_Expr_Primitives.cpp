@@ -1469,12 +1469,11 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 		PointerDepth pointer_depth{isIrStructType(toIrType(type_node.type()))
 									   ? 0
 									   : static_cast<int>(type_node.runtime_pointer_depth())};
-		return makeIdentifierResult(
-			return_type,
-			size_bits,
-			toIrOperand(identifier_frame_name),
-			type_index,
-			pointer_depth);
+		ExprResult result = makeIdentifierResult(return_type, size_bits, toIrOperand(identifier_frame_name), type_index, pointer_depth);
+		if (type_node.is_member_object_pointer_type()) {
+			result.ir_type = IrType::MemberObjectPointer;
+		}
+		return result;
 	}
 
 		// Check if it's a VariableDeclarationNode

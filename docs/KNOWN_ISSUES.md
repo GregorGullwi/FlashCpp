@@ -924,21 +924,32 @@ The following remain unsupported and are rejected or left unresolved:
   the translation unit, so the old uninitialized-slot behavior can still appear
   there.
 
-## Member-object-pointer null comparison uses the wrong sentinel
+## Static-storage aggregate members of data-member-pointer type zero-fill to a null offset
 
-The null data-member-pointer sentinel is `~0ULL`, but equality lowering compares
-the raw value against zero. A pointer to an offset-zero member (`&D::first`)
-therefore compares equal to `nullptr` even though it is a valid non-null
-pointer-to-member. Align the equality path with the `~0ULL` sentinel and cover
-the offset-zero case.
+Direct null member-pointer initialization now stores the all-bits-one sentinel:
+declarations and value-initialization, assignment, return, argument passing,
+`static_cast`/`reinterpret_cast`, and conditional operands all produce it, and
+equality/inequality, bool conversion, and base-subobject adjustment agree with
+it. `&D::first` (offset zero) therefore compares as a valid non-null
+pointer-to-member. Zero-initialized aggregate subobjects of that type still
+write zero bytes, which is a valid offset-zero member pointer rather than the
+null sentinel: a namespace-scope `Holder g{};` reads its member pointer back as
+non-null, and a zero-initialized array of data-member pointers has zero
+elements. Local struct aggregates and implicitly generated default constructors
+do write the sentinel.
 
-## Pointer-to-member right operand validation is missing in sema
+## Local plain pointer operands of `.*`/`->*` can escape the operand check
 
-`object.*operand` and `pointer->*operand` do not diagnose an operand whose type
-is not a pointer-to-member during normalization. Expression inference returns an
-empty type, and lowering can then fail as an internal error instead of reporting
-a source diagnostic at the operator. Add the operand check to sema and emit the
-appropriate compile error before IR.
+`object.*operand` and `pointer->*operand` now report
+`InvalidDataMemberPointerOperand` at the operator for a right operand that is
+conclusively not a pointer-to-member: `int`, `double`, `nullptr`, an enum, a
+class without a conversion, a function pointer, or a plain-pointer parameter.
+A plain-pointer *local* remains deferred: dependent member-pointer return
+substitution can collapse `T C::*` to a plain pointer before sema sees
+the call result, and the legacy lowering peels that pointer back to the member,
+so a local that is genuinely `int*` is not distinguishable from the collapsed
+form at this boundary. See also the dependent data-member pointee substitution
+entry below.
 
 ## Dependent data-member pointee substitution can lose the receiver adjustment
 

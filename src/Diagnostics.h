@@ -230,6 +230,7 @@ enum class DiagnosticId : uint32_t {
 	VirtualBaseMemberPointerAccessUnsupported = 1634,
 	InvalidDataMemberPointerReceiver = 1635,
 	InvalidStaticCastQualificationConversion = 1636,
+	InvalidDataMemberPointerOperand = 1637,
 
 	// Call-expression family (1701..1799).
 	AmbiguousFunctionCall = 1701,
@@ -571,6 +572,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "InvalidDataMemberPointerReceiver";
 	case DiagnosticId::InvalidStaticCastQualificationConversion:
 		return "InvalidStaticCastQualificationConversion";
+	case DiagnosticId::InvalidDataMemberPointerOperand:
+		return "InvalidDataMemberPointerOperand";
 	case DiagnosticId::AmbiguousFunctionCall:
 		return "AmbiguousFunctionCall";
 	case DiagnosticId::AmbiguousCallOperator:
