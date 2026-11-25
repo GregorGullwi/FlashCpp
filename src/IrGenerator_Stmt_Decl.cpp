@@ -33,6 +33,14 @@ static bool tryGetOrderedArrayObjectStorage(
 	return true;
 }
 
+static size_t structMemberArrayElementCount(const StructMember& member) {
+	size_t element_count = 1;
+	for (const size_t dimension : member.array_dimensions) {
+		element_count *= dimension;
+	}
+	return element_count;
+}
+
 // [dcl.init.aggr] brace elision: a braced subaggregate owns its clauses, while
 // an unbraced scalar starts filling the current subaggregate from the enclosing
 // list. The extents are the canonical array extents, so nested rows land on the
@@ -794,8 +802,17 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			}
 		};
 		static constexpr size_t kPackStructMaxDepth = 64;
-		auto packStructEvalResultIntoInitData = [&](auto& self, std::vector<char>& init_data, const StructTypeInfo& struct_info, const ConstExpr::EvalResult& eval_result, size_t base_offset, size_t depth) -> void {
+		// One schema walk over a materialized aggregate EvalResult tree. Packing
+		// bytes and collecting relocations differ only in the leaf action, so both
+		// share this base/member/nested-record/array traversal and its absolute
+		// offsets. Leaf callbacks also receive the leaf byte width because an array
+		// element is narrower than its member.
+		auto walkStructEvalResultLeaves = [&](auto& self, const StructTypeInfo& struct_info, const ConstExpr::EvalResult& eval_result,
+											  size_t base_offset, size_t depth, bool fail_closed_on_depth_limit, auto& on_leaf) -> void {
 			if (depth >= kPackStructMaxDepth) {
+				if (fail_closed_on_depth_limit) {
+					throw InternalError("static aggregate relocation walk exceeded its recursion limit");
+				}
 				FLASH_LOG(Codegen, Warning, "packStructEvalResultIntoInitData: recursion depth limit (",
 						  kPackStructMaxDepth, ") exceeded, skipping deeper nesting");
 				return;
@@ -805,7 +822,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				const TypeInfo* base_type_info = resolveToConcreteStructTypeInfo(base.type_index);
 				const StructTypeInfo* base_struct = base_type_info ? base_type_info->getStructInfo() : nullptr;
 				if (base_struct != nullptr) {
-					self(self, init_data, *base_struct, eval_result.object_base_values[base_index], base_offset + base.offset, depth + 1);
+					self(self, *base_struct, eval_result.object_base_values[base_index], base_offset + base.offset, depth + 1, fail_closed_on_depth_limit, on_leaf);
 				}
 			}
 			for (const auto& member : struct_info.members) {
@@ -814,62 +831,49 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				if (it == eval_result.object_member_bindings.end()) {
 					continue;
 				}
-
 				const ConstExpr::EvalResult& member_result = it->second;
 				const size_t abs_offset = base_offset + member.offset;
 				if (member.is_array && member_result.is_array) {
-					size_t total_elements = 1;
-					for (size_t dim : member.array_dimensions) {
-						total_elements *= dim;
-					}
+					const size_t total_elements = structMemberArrayElementCount(member);
 					if (total_elements == 0) {
 						continue;
 					}
-
 					if (const TypeInfo* elem_type_info = resolveToConcreteStructTypeInfo(member.type_index)) {
 						if (const StructTypeInfo* elem_struct = elem_type_info->getStructInfo()) {
+							const size_t element_bytes = toSizeT(elem_struct->sizeInBytes());
 							for (size_t elem_i = 0; elem_i < member_result.array_elements.size() && elem_i < total_elements; ++elem_i) {
-								self(self,
-									 init_data,
-									 *elem_struct,
-									 member_result.array_elements[elem_i],
-									 abs_offset + elem_i * toSizeT(elem_struct->sizeInBytes()),
-									 depth + 1);
+								self(self, *elem_struct, member_result.array_elements[elem_i], abs_offset + elem_i * element_bytes, depth + 1, fail_closed_on_depth_limit, on_leaf);
 							}
 							continue;
 						}
 					}
-
 					const size_t element_size = member.size / total_elements;
 					if (!member_result.array_elements.empty()) {
 						for (size_t elem_i = 0; elem_i < member_result.array_elements.size() && elem_i < total_elements; ++elem_i) {
-							writeRawValueAtOffset(
-								init_data,
-								abs_offset + elem_i * element_size,
-								element_size,
-								evalResultMemberToRaw(member_result.array_elements[elem_i], member.memberType()));
+							on_leaf(abs_offset + elem_i * element_size, member, element_size, member_result.array_elements[elem_i]);
 						}
 					} else {
 						for (size_t elem_i = 0; elem_i < member_result.array_values.size() && elem_i < total_elements; ++elem_i) {
-							writeRawValueAtOffset(
-								init_data,
-								abs_offset + elem_i * element_size,
-								element_size,
-								evalResultMemberToRaw(ConstExpr::EvalResult::from_int(member_result.array_values[elem_i]), member.memberType()));
+							const ConstExpr::EvalResult element_value = ConstExpr::EvalResult::from_int(member_result.array_values[elem_i]);
+							on_leaf(abs_offset + elem_i * element_size, member, element_size, element_value);
 						}
 					}
 					continue;
 				}
-
 				if (const TypeInfo* member_type_info = resolveToConcreteStructTypeInfo(member.type_index)) {
 					if (const StructTypeInfo* nested_struct = member_type_info->getStructInfo();
 						nested_struct && !member_result.object_member_bindings.empty()) {
-						self(self, init_data, *nested_struct, member_result, abs_offset, depth + 1);
+						self(self, *nested_struct, member_result, abs_offset, depth + 1, fail_closed_on_depth_limit, on_leaf);
 						continue;
 					}
 				}
-
-				unsigned long long value = evalResultMemberToRaw(member_result, member.memberType());
+				on_leaf(abs_offset, member, member.size, member_result);
+			}
+		};
+		auto packStructEvalResultIntoInitData = [&](std::vector<char>& init_data, const StructTypeInfo& struct_info, const ConstExpr::EvalResult& eval_result,
+													size_t base_offset) -> void {
+			auto write_leaf = [&](size_t abs_offset, const StructMember& member, size_t leaf_size, const ConstExpr::EvalResult& leaf) {
+				unsigned long long value = evalResultMemberToRaw(leaf, member.memberType());
 				if (member.bitfield_width.has_value()) {
 					size_t width = *member.bitfield_width;
 					size_t bit_offset = member.bitfield_bit_offset;
@@ -882,9 +886,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					existing |= (value << bit_offset);
 					writeRawValueAtOffset(init_data, abs_offset, member.size, existing);
 				} else {
-					writeRawValueAtOffset(init_data, abs_offset, member.size, value);
+					writeRawValueAtOffset(init_data, abs_offset, leaf_size, value);
 				}
-			}
+			};
+			walkStructEvalResultLeaves(walkStructEvalResultLeaves, struct_info, eval_result, base_offset, 0, false, write_leaf);
 		};
 		auto packArrayResultIntoInitData =
 			[&](std::vector<char>& init_data, const ConstExpr::EvalResult& array_result, TypeCategory element_type, size_t total_elements, size_t element_size) {
@@ -916,13 +921,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					if (current.object_type_index.is_valid() && !current.object_member_bindings.empty()) {
 						if (const TypeInfo* element_type_info = resolveToConcreteStructTypeInfo(current.object_type_index)) {
 							if (const StructTypeInfo* element_struct = element_type_info->getStructInfo()) {
-								packStructEvalResultIntoInitData(
-									packStructEvalResultIntoInitData,
-									init_data,
-									*element_struct,
-									current,
-									element_index * element_size,
-									0);
+								packStructEvalResultIntoInitData(init_data, *element_struct, current, element_index * element_size);
 								element_index++;
 								return;
 							}
@@ -973,6 +972,83 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			if (identifier == nullptr)
 				return std::nullopt;
 			return resolveGlobalRelocTarget(identifier->name());
+		};
+		// Byte offset of the addressed subobject inside the relocation target.
+		// `pointer_offset` counts elements of the pointer's pointee type, so the
+		// same pointer-arithmetic stride that scales `p + n` scales the addend.
+		auto globalRelocAddend = [&](TypeIndex pointee_type, int pointer_depth, int64_t element_offset) -> int64_t {
+			if (element_offset == 0) {
+				return 0;
+			}
+			if (element_offset < 0) {
+				throw InternalError("static pointer relocation has a negative element offset");
+			}
+			if (pointer_depth <= 0) {
+				throw InternalError("static pointer relocation has no pointee type");
+			}
+			const int64_t stride = static_cast<int64_t>(getPointerElementSize(pointee_type, pointer_depth));
+			if (stride <= 0) {
+				throw InternalError("static pointer relocation has no pointee size");
+			}
+			if (element_offset > std::numeric_limits<int64_t>::max() / stride) {
+				throw InternalError("static pointer relocation addend is not representable");
+			}
+			return element_offset * stride;
+		};
+		// Collect one absolute relocation for every pointer-valued leaf of an
+		// aggregate constant. The shared schema walk supplies the leaf site, so a
+		// pointer member at a nonzero offset (and a nested one) stores the right
+		// address; the addend is the subobject offset inside the target symbol.
+		auto collectAggregateRelocations = [&](std::vector<DataRelocation>& relocations, std::vector<char>& init_data,
+											   const StructTypeInfo& struct_info, const ConstExpr::EvalResult& eval_result, size_t base_offset) -> void {
+			auto record_leaf = [&](size_t site, const StructMember& member, size_t, const ConstExpr::EvalResult& pointer_result) {
+				const StringHandle origin = pointer_result.pointer_to_var.isValid() ? pointer_result.pointer_to_var : pointer_result.array_origin_var;
+				if (!origin.isValid()) {
+					return;
+				}
+				if (site > init_data.size() || init_data.size() - site < sizeof(void*)) {
+					throw InternalError("static aggregate pointer relocation site is outside its object");
+				}
+				const int64_t addend = globalRelocAddend(member.type_index, member.pointer_depth, pointer_result.pointer_offset);
+				writeRawValueAtOffset(init_data, site, sizeof(void*), static_cast<unsigned long long>(addend));
+				relocations.push_back(DataRelocation{static_cast<uint32_t>(site), resolveGlobalRelocTarget(StringTable::getStringView(origin)), addend});
+			};
+			walkStructEvalResultLeaves(walkStructEvalResultLeaves, struct_info, eval_result, base_offset, 0, true, record_leaf);
+		};
+		// Collect the pointer leaves of a materialized array constant. The walk
+		// mirrors packArrayResultIntoInitData so record elements land on the same
+		// stride and element index as their packed bytes.
+		auto collectArrayRelocations = [&](std::vector<DataRelocation>& relocations, std::vector<char>& init_data,
+										   const ConstExpr::EvalResult& array_result, size_t element_size, size_t total_elements, size_t& element_index) -> void {
+			auto visitLevel = [&](auto& recurse, const ConstExpr::EvalResult& current) -> void {
+				if (element_size == 0 || element_index >= total_elements) {
+					return;
+				}
+				if (current.is_array) {
+					if (!current.array_elements.empty()) {
+						for (const auto& child : current.array_elements) {
+							if (element_index >= total_elements) {
+								break;
+							}
+							recurse(recurse, child);
+						}
+					} else {
+						element_index += current.array_values.size();
+					}
+					return;
+				}
+				if (current.object_type_index.is_valid() && !current.object_member_bindings.empty()) {
+					if (const TypeInfo* element_type_info = resolveToConcreteStructTypeInfo(current.object_type_index)) {
+						if (const StructTypeInfo* element_struct = element_type_info->getStructInfo()) {
+							collectAggregateRelocations(relocations, init_data, *element_struct, current, element_index * element_size);
+							element_index++;
+							return;
+						}
+					}
+				}
+				element_index++;
+			};
+			visitLevel(visitLevel, array_result);
 		};
 		auto makeStaticStorageEvalContext = [&]() {
 			ConstExpr::EvaluationContext ctx = makeEvalContext(is_static_local ? symbol_table : gSymbolTable);
@@ -1148,7 +1224,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					element_relocations.reserve(initializers.size());
 					for (size_t elem_i = 0; elem_i < initializers.size(); ++elem_i) {
 						if (const std::optional<StringHandle> target = resolveGlobalElementReloc(initializers[elem_i]); target.has_value()) {
-							element_relocations.push_back(DataRelocation{static_cast<uint32_t>(elem_i * element_bytes), *target});
+							element_relocations.push_back(DataRelocation{static_cast<uint32_t>(elem_i * element_bytes), *target, 0});
 							continue;
 						}
 						const unsigned long long value = evalToValue(initializers[elem_i], TypeCategory::UnsignedLongLong);
@@ -1167,13 +1243,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							constexpr_ctx);
 						if (object_result.success()) {
 							op.init_data.resize(toSizeT(struct_info_ptr->sizeInBytes()), 0);
-							packStructEvalResultIntoInitData(
-								packStructEvalResultIntoInitData,
-								op.init_data,
-								*struct_info_ptr,
-								object_result,
-								0,
-								0);
+							packStructEvalResultIntoInitData(op.init_data, *struct_info_ptr, object_result, 0);
+							collectAggregateRelocations(op.data_relocations, op.init_data, *struct_info_ptr, object_result, 0);
 						} else {
 							if (shouldRejectStaticStorageEvalFailure(object_result.error_type)) {
 								throw makeStaticStorageEvaluationError(object_result);
@@ -1229,7 +1300,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								const size_t offset = element_index * element_size;
 								const std::optional<StringHandle> target = resolveGlobalElementReloc(expression);
 								if (target.has_value()) {
-									element_relocations.push_back(DataRelocation{static_cast<uint32_t>(offset), *target});
+									element_relocations.push_back(DataRelocation{static_cast<uint32_t>(offset), *target, 0});
 									return;
 								}
 								writeRawValueAtOffset(op.init_data, offset, element_size, evalToValue(expression, TypeCategory::UnsignedLongLong));
@@ -1247,7 +1318,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								all_resolved = false;
 								break;
 							}
-							element_relocations.push_back(DataRelocation{static_cast<uint32_t>(elem_i * element_size), *target});
+							element_relocations.push_back(DataRelocation{static_cast<uint32_t>(elem_i * element_size), *target, 0});
 						}
 						if (all_resolved) {
 							op.is_initialized = true;
@@ -1280,6 +1351,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						if (array_result.success()) {
 							op.init_data.assign(op.element_count * element_size, 0);
 							packArrayResultIntoInitData(op.init_data, array_result, type_node.type(), op.element_count, element_size);
+							size_t relocation_element_index = 0;
+							collectArrayRelocations(op.data_relocations, op.init_data, array_result, element_size, op.element_count, relocation_element_index);
 							materialized_as_constexpr_array = true;
 						} else if (shouldRejectStaticStorageEvalFailure(array_result.error_type)) {
 							throw makeStaticStorageEvaluationError(array_result);
@@ -1311,13 +1384,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											elem_init.as<InitializerListNode>(),
 											constexpr_ctx);
 										if (element_result.success()) {
-											packStructEvalResultIntoInitData(
-												packStructEvalResultIntoInitData,
-												op.init_data,
-												*elem_struct,
-												element_result,
-												elem_i * toSizeT(elem_struct->sizeInBytes()),
-												0);
+											packStructEvalResultIntoInitData(op.init_data, *elem_struct, element_result, elem_i * toSizeT(elem_struct->sizeInBytes()));
+											collectAggregateRelocations(op.data_relocations, op.init_data, *elem_struct, element_result, elem_i * toSizeT(elem_struct->sizeInBytes()));
 										} else {
 											if (shouldRejectStaticStorageEvalFailure(element_result.error_type)) {
 												throw makeStaticStorageEvaluationError(element_result);
@@ -1370,7 +1438,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					if (constexpr_result.success() && !constexpr_result.object_member_bindings.empty()) {
 						op.is_initialized = true;
 						op.init_data.resize(toSizeT(si->sizeInBytes()), 0);
-						packStructEvalResultIntoInitData(packStructEvalResultIntoInitData, op.init_data, *si, constexpr_result, 0, 0);
+						packStructEvalResultIntoInitData(op.init_data, *si, constexpr_result, 0);
 						ctor_evaluated = true;
 					}
 				}
@@ -1612,10 +1680,16 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						? eval_result.pointer_to_var
 						: eval_result.array_origin_var;
 					// Missing canonical shape: pointer presence.
-					if (eval_result.success() && type_node.is_pointer() && pointer_origin.isValid() &&
-						eval_result.pointer_offset == 0) {
+					const int pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());
+					if (eval_result.success() && type_node.is_pointer() && pointer_origin.isValid()) {
+						const int64_t addend = globalRelocAddend(type_node.type_index(), pointer_depth, eval_result.pointer_offset);
+						if (element_size < sizeof(void*)) {
+							throw InternalError("static pointer relocation slot is narrower than a pointer");
+						}
 						op.init_data.assign(element_size, 0);
+						writeRawValueAtOffset(op.init_data, 0, sizeof(void*), static_cast<unsigned long long>(addend));
 						op.reloc_target = resolveGlobalRelocTarget(StringTable::getStringView(pointer_origin));
+						op.reloc_addend = addend;
 					} else if ((is_struct_type(type_node.category())) &&
 						eval_result.success() &&
 						type_node.type_index().is_valid()) {
@@ -1623,7 +1697,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						const StructTypeInfo* struct_info = struct_type_info ? struct_type_info->getStructInfo() : nullptr;
 						if (struct_info && !eval_result.object_member_bindings.empty()) {
 							op.init_data.resize(toSizeT(struct_info->sizeInBytes()), 0);
-							packStructEvalResultIntoInitData(packStructEvalResultIntoInitData, op.init_data, *struct_info, eval_result, 0, 0);
+							packStructEvalResultIntoInitData(op.init_data, *struct_info, eval_result, 0);
+							collectAggregateRelocations(op.data_relocations, op.init_data, *struct_info, eval_result, 0);
 						} else if (struct_info && !eval_result.callable_bindings.empty()) {
 							ConstExpr::EvalResult synthetic_closure_result = ConstExpr::EvalResult::from_int(0LL);
 							synthetic_closure_result.object_type_index = type_node.type_index();
@@ -1635,7 +1710,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								}
 							}
 							op.init_data.resize(toSizeT(struct_info->sizeInBytes()), 0);
-							packStructEvalResultIntoInitData(packStructEvalResultIntoInitData, op.init_data, *struct_info, synthetic_closure_result, 0, 0);
+							packStructEvalResultIntoInitData(op.init_data, *struct_info, synthetic_closure_result, 0);
+							collectAggregateRelocations(op.data_relocations, op.init_data, *struct_info, synthetic_closure_result, 0);
 						} else {
 							unsigned long long value = evalResultMemberToRaw(eval_result, type_node.type());
 							appendValueAsBytes(op.init_data, value, element_size);

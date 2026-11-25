@@ -4738,6 +4738,15 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 
 	// Check if it's a constexpr variable
 	if (!var_decl.is_constexpr()) {
+		// A non-constexpr array of static storage duration still has a constant
+		// address. Its name decays to a pointer to the first element
+		// ([conv.array]), which lets a namespace-scope pointer initializer take
+		// the array's address without reading any array element.
+		if (var_decl.declaration().type_specifier_node().is_array_object()) {
+			EvalResult result = EvalResult::from_pointer(name_handle, 0);
+			result.source_declaration = &var_decl;
+			return result;
+		}
 		return EvalResult::error("Variable in constant expression must be constexpr: " + std::string(var_name));
 	}
 

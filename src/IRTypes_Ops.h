@@ -1060,9 +1060,13 @@ struct VariableDeclOp {
 // One absolute-address data relocation for an aggregate initializer element,
 // placed at a byte offset from the global symbol's start. Aggregate pointer
 // arrays (`int (*a[2])(int) = {&f,&g};`) store one relocation per element.
+// `addend` is the byte offset of the addressed subobject within `target`
+// (`values + 1`, `&values[i]`, `&s.member`). ELF records it in the RELA addend;
+// COFF has no addend field, so the same value is also written in place.
 struct DataRelocation {
 	uint32_t offset_in_symbol = 0;
 	StringHandle target;
+	int64_t addend = 0;
 };
 
 struct GlobalVariableDeclOp {
@@ -1073,6 +1077,7 @@ struct GlobalVariableDeclOp {
 	size_t element_count = 1;		  // Number of elements (1 for scalars, N for arrays)
 	std::vector<char> init_data;	 // Raw bytes for initialized data
 	StringHandle reloc_target;	   // If valid, init_data holds zeros and a data relocation (R_X86_64_64) is emitted for this symbol
+	int64_t reloc_addend = 0;		 // Byte offset of the addressed subobject within reloc_target
 	std::vector<DataRelocation> data_relocations;	 // Per-element absolute relocations for aggregate initializers
 	bool is_rodata = false;			// If true, init_data is emitted to .rodata (read-only) instead of .data
 	bool is_extern_only = false;	// If true, this is an extern declaration (no local storage allocation)
