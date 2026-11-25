@@ -33,6 +33,93 @@ static bool tryGetOrderedArrayObjectStorage(
 	return true;
 }
 
+// [dcl.init.aggr] brace elision: a braced subaggregate owns its clauses, while
+// an unbraced scalar starts filling the current subaggregate from the enclosing
+// list. The extents are the canonical array extents, so nested rows land on the
+// same strides the array type uses. Leaves are visited in row-major order with
+// an explicit frame stack, keeping array rank off the native stack.
+// This walk covers only arrays whose canonical leaf element is a pointer or
+// member pointer; arrays of records and scalars keep their previous paths.
+// It is not AggregateElements::ClauseCursor: that cursor has no array-root entry
+// point and yields member clause ranges, not the flat scalar index a relocation
+// needs.
+class StaticArrayInitializerWalker {
+public:
+	explicit StaticArrayInitializerWalker(std::span<const size_t> extents) : extents_(extents) {
+		strides_.resize(extents.size(), 1);
+		for (size_t dimension = extents.size(); dimension > 1; --dimension) {
+			const size_t extent = extents[dimension - 1];
+			if (extent != 0 && strides_[dimension - 1] > std::numeric_limits<size_t>::max() / extent) {
+				throw InternalError("static array initializer stride is not representable");
+			}
+			strides_[dimension - 2] = strides_[dimension - 1] * extent;
+		}
+	}
+
+	template <typename VisitLeaf> void walk(std::span<const ASTNode> clauses, VisitLeaf&& visit_leaf) {
+		struct Frame {
+			std::span<const ASTNode> clauses;
+			size_t cursor;
+			size_t next_index;
+			size_t first_index;
+			bool shares_parent_cursor;
+		};
+		std::vector<Frame> stack;
+		stack.reserve(extents_.size() + 1);
+		stack.push_back(Frame{clauses, 0, 0, 0, false});
+		while (!stack.empty()) {
+			Frame& frame = stack.back();
+			const size_t level = stack.size() - 1;
+			const size_t extent = extents_[level];
+			if (frame.next_index >= extent || frame.cursor >= frame.clauses.size()) {
+				const bool shares_parent_cursor = frame.shares_parent_cursor;
+				const size_t cursor = frame.cursor;
+				stack.pop_back();
+				if (shares_parent_cursor && !stack.empty()) {
+					stack.back().cursor = cursor;
+				}
+				continue;
+			}
+			const ASTNode& clause = frame.clauses[frame.cursor];
+			const size_t element_index = frame.first_index + frame.next_index * strides_[level];
+			++frame.next_index;
+			if (level + 1 == extents_.size()) {
+				++frame.cursor;
+				if (const ASTNode* expression = scalarExpression(clause); expression != nullptr) {
+					visit_leaf(*expression, element_index);
+				}
+				continue;
+			}
+			if (clause.is<InitializerListNode>()) {
+				++frame.cursor;
+				const std::span<const ASTNode> nested_clauses = clause.as<InitializerListNode>().initializers();
+				stack.push_back(Frame{nested_clauses, 0, 0, element_index, false});
+				continue;
+			}
+			// Brace elision: this subaggregate keeps consuming the enclosing list.
+			const std::span<const ASTNode> shared_clauses = frame.clauses;
+			const size_t shared_cursor = frame.cursor;
+			stack.push_back(Frame{shared_clauses, shared_cursor, 0, element_index, true});
+		}
+	}
+
+private:
+	static const ASTNode* scalarExpression(const ASTNode& clause) {
+		const ASTNode* current = &clause;
+		while (current->is<InitializerListNode>()) {
+			const InitializerListNode& list = current->as<InitializerListNode>();
+			if (list.size() == 0) {
+				return nullptr;
+			}
+			current = &list.initializers().front();
+		}
+		return current;
+	}
+
+	std::span<const size_t> extents_;
+	std::vector<size_t> strides_;
+};
+
 [[noreturn]] void throwAmbiguousConstructorCallDiagnostic(CompileContext& context) {
 	throw makeStructuredCompileError(
 		context.diagnostics(),
@@ -1107,7 +1194,50 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					// An array whose element is a pointer or callable stores one absolute address
 					// relocation per element instead of a raw scalar value.
 					bool handled_as_pointer_array = false;
-					if (type_node.is_function_pointer() || (type_node.is_array() && type_node.hasPointerElement())) {
+					if (type_node.is_array()) {
+						// The scalar element shape comes from the canonical array spine, so a
+						// two-dimensional array of pointers places its pointer leaves on the
+						// element stride instead of treating a row as one element.
+						CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+						std::vector<size_t> extent_storage;
+						const std::span<const size_t> extents = copyRequiredArrayExtents(canonical_types, type_node, extent_storage);
+						if (extents.empty()) {
+							throw InternalError("static array initializer has no canonical array extents");
+						}
+						TypeId element = requireCanonicalShape(canonical_types, type_node);
+						size_t scalar_count = 1;
+						for (const size_t extent : extents) {
+							if (extent == 0) {
+								throw InternalError("static array initializer has an unknown canonical extent");
+							}
+							const std::optional<TypeId> child = canonicalArrayElement(canonical_types, element);
+							if (!child.has_value() || !*child) {
+								throw InternalError("static array initializer lost a canonical array element");
+							}
+							element = *child;
+							scalar_count *= extent;
+						}
+						if (scalar_count != op.element_count) {
+							throw InternalError("static array initializer element count disagrees with its canonical shape");
+						}
+						const CanonicalPointerShape element_pointer = canonicalPointerShape(canonical_types, element);
+						if (element_pointer.isPointer() || element_pointer.pointee == CanonicalPointeeKind::MemberPointer) {
+							op.is_initialized = true;
+							op.init_data.assign(op.element_count * element_size, 0);
+							std::vector<DataRelocation> element_relocations;
+							StaticArrayInitializerWalker(extents).walk(initializers, [&](const ASTNode& expression, size_t element_index) {
+								const size_t offset = element_index * element_size;
+								const std::optional<StringHandle> target = resolveGlobalElementReloc(expression);
+								if (target.has_value()) {
+									element_relocations.push_back(DataRelocation{static_cast<uint32_t>(offset), *target});
+									return;
+								}
+								writeRawValueAtOffset(op.init_data, offset, element_size, evalToValue(expression, TypeCategory::UnsignedLongLong));
+							});
+							op.data_relocations = std::move(element_relocations);
+							handled_as_pointer_array = true;
+						}
+					} else if (type_node.is_function_pointer()) {
 						std::vector<DataRelocation> element_relocations;
 						element_relocations.reserve(initializers.size());
 						bool all_resolved = !initializers.empty();

@@ -317,13 +317,6 @@ non-projectable shapes;
 remove this entry when those consumers migrate and the compatibility projection
 fields are deleted.
 
-Dereferencing a pointer to a two-dimensional array of pointers is still wrong:
-with `int* cells[2][3]; int* (*p)[2][3] = &cells;`, `(*p)[1][0]` reads a null
-element. One-dimensional `int* (*p)[3]` and pointer-to-2D-int-array
-(`int (*p)[2][3]`) elements read correctly, so the gap is in the ordered array
-element lowering for the 2D pointer-element shape, not in object constness or
-member access.
-
 ## Ordered-declarator size fails closed when the canonical import is unmigrated
 
 An ordered declarator's array extents come from the canonical array shape, not
@@ -668,7 +661,10 @@ elided yet and still requires an accessible copy or move constructor.
 
 Declaration-namespace lookup now covers runtime initializers, including reopened
 and enclosing namespaces, using-declarations, and array-to-pointer decay for a
-whole array. Remaining gaps:
+whole array. Namespace-scope arrays whose canonical leaf element is a pointer or
+member pointer now place each scalar leaf at its element stride, including nested
+rows and brace elision; arrays of records and scalars keep their previous paths.
+Remaining gaps:
 
 - A decayed pointer with a nonzero element offset (`values + 1`) is emitted as
   null because static relocations carry no addend.
@@ -1153,3 +1149,11 @@ compiles and `Cell* p = cells; Cell* q = p + 1;` also compiles. The binary
 `operator+` path does not apply [conv.array] decay to an array operand whose
 element type is a record, so the decayed pointer never reaches builtin pointer
 arithmetic. A reduced probe reproduces this on `origin/main`.
+
+## Decaying a non-first row of a two-dimensional array uses the wrong row
+
+`int grid[2][3]; int* row = grid[1];` produces a pointer that reads
+`grid[0][2]` instead of `grid[1][0]`. The explicit `&grid[1][0]` form and
+`int (*row)[3] = &grid[1];` are correct, so only the implicit row-to-element
+decay path is wrong. The same failure reproduces with a local `grid`, outside
+the namespace-scope array initializer path.
