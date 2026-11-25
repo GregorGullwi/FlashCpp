@@ -23,6 +23,16 @@ result and deletes that guard rather than extending it with another conversion
 tail. See boundary 4 in the
 [rearchitecture plan](2026-08-24-front-end-rearchitecture-plan.md).
 
+## Const-object member qualification boundary
+
+Assignment constness reads the published canonical structural type when one
+exists, so an object's const qualification reaches the outermost ordered wrapper
+of a non-projectable member such as `int* (*)[3]`. The flat compatibility
+projection remains the fallback only for types without a structural identity.
+Parser member-access typing adds only the receiver's cv to an ordered wrapper;
+the spine already carries the member's declared qualifiers, so a base const in a
+shape like `const int* (*)[3]` cannot move to the wrapper.
+
 ## Provisional-publication slice
 
 **Separate provisional type publication from required instantiations.**

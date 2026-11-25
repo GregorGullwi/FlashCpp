@@ -2,6 +2,7 @@
 
 #include "AstNodeTypes.h"
 #include "SemanticTypes.h"
+#include "CanonicalShapeQueries.h"
 #include "CanonicalTypeAdapter.h"
 #include "SymbolTable.h"
 #include "CompileContext.h"
@@ -760,18 +761,6 @@ inline ConversionPlan buildCanonicalStructuralConversionPlan(
 		return ConversionPlan::exact_match();
 	}
 
-	auto topObjectCvThroughArrays = [&table](TypeId type) {
-		CVQualifier qualifiers = CVQualifier::None;
-		for (;;) {
-			const auto [unqualified, top_cv] = stripCanonicalTopCv(table, type);
-			qualifiers |= top_cv;
-			const CanonicalTypeNode node = table.node(unqualified);
-			if (node.kind != CanonicalTypeKind::Array) {
-				return qualifiers;
-			}
-			type = node.child;
-		}
-	};
 	auto compatibleFunctionTarget = [&table](TypeId source, TypeId target) {
 		const CanonicalTypeNode source_function = table.node(source);
 		const CanonicalTypeNode target_function = table.node(target);
@@ -922,8 +911,7 @@ inline ConversionPlan buildCanonicalStructuralConversionPlan(
 			stripCanonicalTopCv(table, target_pointer.child);
 		const CanonicalTypeNode source_pointee_node = table.node(source_pointee);
 		const CanonicalTypeNode target_pointee_node = table.node(target_pointee);
-		const CVQualifier source_object_cv =
-			topObjectCvThroughArrays(source_pointer.child);
+		const CVQualifier source_object_cv = canonicalTopObjectCv(table, source_pointer.child);
 		// A source pointee that is already cv void still needs the ordinary
 		// pointer cv comparison below; only a conversion to cv void from another
 		// object type is a pointer conversion.

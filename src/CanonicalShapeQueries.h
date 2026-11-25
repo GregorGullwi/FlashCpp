@@ -29,6 +29,27 @@ inline TypeId shapeAfterTopCvAndReference(const CanonicalTypeTable& table, TypeI
 	return shapeWithoutTopCv(table, shapeWithoutReference(table, type));
 }
 
+// C++20 [basic.type.qualifier]/1: the cv-qualification of an array is that of
+// its element type, so the qualification of an object type is read through its
+// array levels. References are not part of the object type: [expr.ref] adds
+// the receiver's cv to the member object, not to a reference the member spells.
+inline CVQualifier canonicalTopObjectCv(const CanonicalTypeTable& table, TypeId type) {
+	CVQualifier qualifiers = CVQualifier::None;
+	type = shapeWithoutReference(table, type);
+	while (true) {
+		const CanonicalTypeNode node = table.node(type);
+		if (node.kind == CanonicalTypeKind::Qualified) {
+			qualifiers |= node.qualifiers;
+			type = node.child;
+			continue;
+		}
+		if (node.kind != CanonicalTypeKind::Array) {
+			return qualifiers;
+		}
+		type = node.child;
+	}
+}
+
 // One canonical answer for pointer presence, pointer depth, and per-level cv.
 // Every consumer that needs two of those three facts reads this shape instead of
 // running separate walks, so presence, depth, and cv cannot disagree.

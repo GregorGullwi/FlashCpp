@@ -44,14 +44,6 @@ canonical publication; supported nested primary-member expansions now retain
 independent inner bindings. Keep those unsupported fields
 fail-closed; the lockstep follow-up entry below records the remaining paths.
 
-## Object cv is dropped for non-projectable interleaved members
-
-With `struct S { int* (*p)[3]; };`, `const S s; auto& r = s.p; r = nullptr;` is
-accepted; the const qualification lands on the ordered pointer wrapper, which
-sema's flat-based const-assignment check does not read. The equivalent
-projectable shapes (`int (*)[3]`, `int*`) are diagnosed. Before the parser
-migration this input crashed the compiler instead.
-
 ## Member-pointer declarators spelled `T* C::*` are rejected
 
 `int* C::* pm = &C::p;` reports `OutOfLineDefinitionMalformedTarget` (1023) in an
@@ -330,6 +322,13 @@ ordered projection. Other remaining flat readers still fail closed for
 non-projectable shapes;
 remove this entry when those consumers migrate and the compatibility projection
 fields are deleted.
+
+Dereferencing a pointer to a two-dimensional array of pointers is still wrong:
+with `int* cells[2][3]; int* (*p)[2][3] = &cells;`, `(*p)[1][0]` reads a null
+element. One-dimensional `int* (*p)[3]` and pointer-to-2D-int-array
+(`int (*p)[2][3]`) elements read correctly, so the gap is in the ordered array
+element lowering for the 2D pointer-element shape, not in object constness or
+member access.
 
 ## Ordered-declarator size fails closed when the canonical import is unmigrated
 
@@ -673,6 +672,9 @@ whole array. Remaining gaps:
 
 - A decayed pointer with a nonzero element offset (`values + 1`) is emitted as
   null because static relocations carry no addend.
+- A namespace-scope aggregate with a pointer-valued member
+  (`struct S { int* p; }; S s{&x};`) leaves the member null, while a local
+  aggregate and a namespace-scope scalar pointer initialize correctly.
 - `&arr[i]` and static-member array decay still fail constant evaluation.
 - A namespace-scope reference records the referenced value instead of its
   address, so runtime reads of `N::r` are wrong.
