@@ -1167,3 +1167,17 @@ constant-evaluating `&array[index]` for an unmaterialized static array and
 collecting one relocation per pointer leaf of an array whose element is a
 pointer-to-array. Record-row pointers at namespace scope reach the same
 non-constant path.
+
+## Windows FH3 unwinding still skips function-scope destructors in some try layouts
+
+Windows cleaner emission registers function-scope destructors as FH3 unwind-map
+actions. When the function also contains a try block, the cleanup is chained to a
+top-level try state only when that try has no cleanup landing of its own. A
+top-level try with try-scope destructible locals still leaves the function-scope
+cleanup unreachable, and a throw at function scope outside every try region maps
+to state -1 in the IP-to-state map. Both cases can skip a function-scope
+destructor on Windows even though the ELF path runs it from
+`FunctionCleanupLP`. Closing the remaining gap needs explicit EH-state
+transitions around construction and teardown, or a writer-level function-cleanup
+tail that a synthesized landing state can chain to, rather than the current
+IP-range map alone.

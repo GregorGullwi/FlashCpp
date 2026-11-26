@@ -17272,12 +17272,44 @@ void IrToObjConverter<TWriterClass>::emitWindowsCleanupFuncletsAndPopulateUnwind
 		}
 
 		current_function_unwind_map_.assign(static_cast<size_t>(next_state), UnwindMapEntry{});
+
+		// Function-scope cleanups run after the dtors of every scope a throwing
+		// statement is nested in. A function with try blocks currently registers
+		// only the per-try cleanups, so an exception escaping a top-level try
+		// never destroys an object constructed before that try. Append the
+		// function-scope cleanup chain and make it the unwind tail of a top-level
+		// try that has no cleanup landing of its own: a landing is entered with
+		// the unwind target set by the runtime, so chaining function-scope dtors
+		// behind it would also destroy them on a matched same-function catch.
+		bool needs_function_cleanup_tail = false;
+		for (size_t i = 0; i < sorted_indices.size(); ++i) {
+			if (parent_index[i] < 0 && current_function_try_blocks_[sorted_indices[i]].cleanup_vars.empty()) {
+				needs_function_cleanup_tail = true;
+				break;
+			}
+		}
+
+		int32_t function_cleanup_state = -1;
+		if (needs_function_cleanup_tail && !pending_windows_function_cleanup_vars_.empty()) {
+			const int32_t function_cleanup_state_start = next_state;
+			// populateCleanupChain() appends the remaining chain states itself.
+			current_function_unwind_map_.resize(static_cast<size_t>(next_state) + 1);
+			populateCleanupChain(pending_windows_function_cleanup_vars_, function_cleanup_state_start, -1);
+			if (current_function_unwind_map_[static_cast<size_t>(function_cleanup_state_start)].action.isValid()) {
+				function_cleanup_state = function_cleanup_state_start;
+			} else {
+				current_function_unwind_map_.resize(static_cast<size_t>(next_state));
+			}
+		}
+
 		for (size_t i = 0; i < sorted_indices.size(); ++i) {
 			const auto& try_block = current_function_try_blocks_[sorted_indices[i]];
 
 			int32_t to_state = -1;
 			if (parent_index[i] >= 0) {
 				to_state = try_low_by_sorted_index[parent_index[i]];
+			} else if (try_block.cleanup_vars.empty()) {
+				to_state = function_cleanup_state;
 			}
 
 			current_function_unwind_map_[static_cast<size_t>(try_low_by_sorted_index[i])].to_state = to_state;
