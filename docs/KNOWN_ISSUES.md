@@ -618,13 +618,14 @@ conversion operator is identified by its declaring class `TypeId` plus its
 member-function ordinal, and a conversion function template only by its template
 declaration id plus the return type its specialization instantiated. A
 lambda-closure conversion (declared on the closure or synthesized for it) and a
-constructor selected only through the compatibility declaration bridge publish
-no such identity, and a conversion function template specialization publishes no
-specialization id of its own, so two specializations of one template that share
-an instantiated return type but differ in other template arguments compare as one
-conversion function. A sequence without identity keeps no standard tail and stays
-unordered, which is the conservative answer; ranking it needs a published numeric
-identity for the selected declaration.
+constructor whose class publishes no schema entry for the selected declaration
+(or no declaration at all) publish no such identity, and a conversion function
+template specialization publishes no specialization id of its own, so two
+specializations of one template that share an instantiated return type but differ
+in other template arguments compare as one conversion function. A sequence
+without identity keeps no standard tail and stays unordered, which is the
+conservative answer; ranking it needs a published numeric identity for the
+selected declaration.
 
 The member-function ordinal and the constructor schema index are within-snapshot
 keys, not durable identity: they disambiguate selections inside one published
@@ -632,12 +633,15 @@ schema snapshot and do not survive a schema republication that reorders entries.
 Both have to move to the declaration or entity identity once constructors and
 member functions publish one.
 
-One constructor can currently be identified two ways: the canonical owner `TypeId`
-plus constructor schema index, or the compatibility bridge's declaration. The same
-constructor reached through both routes is therefore treated as two different
-conversions, even though [over.ics.rank]/3.3 compares their second sequences for
-one constructor. One identity per constructor, whichever route selected it, is the
-invariant a fix needs.
+The compatibility declaration bridge now reports the canonical owner `TypeId` and
+schema index of the constructor it selected, so one constructor has one identity
+whichever route selected it. The mapping needs the class's published constructor
+schema and a declaration that lists the selected constructor; a constructor that
+exists only in the compatibility `StructTypeInfo` (for example an implicit
+special member synthesized without a declaration entry), or a class whose
+constructor schema or declaration is unpublished, still keeps no identity and
+stays unordered. Those selections need a published declaration or entity identity
+before they can be ranked.
 
 ## Remaining conversion function template cases
 

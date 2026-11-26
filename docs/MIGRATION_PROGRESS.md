@@ -450,7 +450,10 @@ remaining pattern schemas by identity, and remove the name fallback.
    only for a shared identity, so distinct conversion functions and distinct
    converting constructors stay ambiguous. Two sequences that share one
    constructor are ranked by their second sequences, including the reference
-   binding of the constructed prvalue.
+   binding of the constructed prvalue. A selection made by the compatibility
+   declaration bridge reports the canonical owner `TypeId` and schema index of
+   that same constructor, so a constructor template that the canonical schema
+   cannot select still compares under one identity.
    `test_conversion_shared_converting_constructor_second_sequence_ret0.cpp` pins
    the shared-constructor winner, while
    `test_conversion_distinct_conversion_functions_ambiguous_e1701.cpp` and

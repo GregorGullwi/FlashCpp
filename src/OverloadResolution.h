@@ -1936,6 +1936,59 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceArgumentConversio
 std::optional<bool> tryHasCanonicalImplicitConvertingConstructorForArgument(const TypeSpecifierNode& target_type,
 	const TypeSpecifierNode& source_type, const ASTNode* argument_node, UserDefinedConversionIdentity* selected_identity);
 
+// The declaration bridge selects a constructor without naming it numerically,
+// but the same declaration is one entry of its owner's published constructor
+// schema, which is published in declaration order. That schema index is the
+// identity a canonical selection records, so the bridge can report the same one
+// constructor instead of a second, unordered identity. A class whose schema is
+// unpublished, or whose declaration list does not contain the selection, keeps
+// no identity rather than inventing an ordinal.
+inline UserDefinedConversionIdentity tryMakeCompatibilityConstructorIdentity(const TypeSpecifierNode& target_type_spec, const StructTypeInfo& target,
+	const StructMemberFunction& selected) {
+	const StructDeclarationNode* declaration = target.declaration_node;
+	if (declaration == nullptr || !selected.is_constructor) {
+		return UserDefinedConversionIdentity{};
+	}
+	size_t ordinal = 0;
+	bool found = false;
+	for (const StructMemberFunctionDecl& declared : declaration->member_functions()) {
+		if (!declared.is_constructor || !declared.function_declaration.is<ConstructorDeclarationNode>()) {
+			continue;
+		}
+		if (declared.function_declaration.raw_pointer() == selected.function_decl.raw_pointer()) {
+			found = true;
+			break;
+		}
+		++ordinal;
+	}
+	if (!found || ordinal >= kInvalidUserDefinedConversionOrdinal) {
+		return UserDefinedConversionIdentity{};
+	}
+	FrontendContext* const context = FrontendContext::active();
+	if (context == nullptr) {
+		return UserDefinedConversionIdentity{};
+	}
+	CanonicalTypeTable& table = context->canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	TypeSpecifierNode canonical_target = target_type_spec;
+	tryBindPublishedTypeEntity(canonical_target);
+	const CanonicalTypeImport target_import = importCanonicalTypeWithClassFallback(table, canonical_target);
+	if (target_import.status != CanonicalTypeImportStatus::Supported) {
+		return UserDefinedConversionIdentity{};
+	}
+	const TypeId owner = stripCanonicalTopCv(table, canonicalTypeWithoutReference(table, target_import.type)).first;
+	const CanonicalTypeKind owner_kind = table.node(owner).kind;
+	if ((owner_kind != CanonicalTypeKind::Record && owner_kind != CanonicalTypeKind::TemplateSpecialization) ||
+		!table.hasRecordConstructors(owner) || ordinal >= table.recordConstructorCount(owner)) {
+		return UserDefinedConversionIdentity{};
+	}
+	UserDefinedConversionIdentity identity;
+	identity.kind = UserDefinedConversionIdentity::Kind::CanonicalConstructor;
+	identity.owner = owner;
+	identity.ordinal = static_cast<uint32_t>(ordinal);
+	return identity;
+}
+
 // Build the conversion plan for target_struct's implicit converting constructor,
 // its same-class route, or its derived-to-base route. Published canonical
 // class-base relations are authoritative for supported class pairs, and
@@ -2007,9 +2060,7 @@ inline std::optional<ConversionPlan> tryBuildConvertingConstructorConversionPlan
 		if (!first_param)
 			continue;
 		if (first_param->type_index() == source_idx) {
-			// The declaration bridge publishes no constructor identity, so this
-			// sequence keeps no standard tail and stays unordered.
-			return makeUserDefinedConstructorConversionPlan(UserDefinedConversionIdentity{});
+			return makeUserDefinedConstructorConversionPlan(tryMakeCompatibilityConstructorIdentity(target_type_spec, *target, mf));
 		}
 	}
 	return std::nullopt;
@@ -2090,10 +2141,12 @@ inline std::optional<ConversionPlan> tryBuildImplicitConvertingConstructorConver
 		if (!first_param) {
 			continue;
 		}
-		// The declaration bridge publishes no constructor identity, so a sequence
-		// built here keeps no standard tail and stays unordered.
-		const UserDefinedConversionIdentity identity{};
+		// The selected declaration maps to its owner's published schema index, so
+		// a sequence that reaches the same constructor through the canonical route
+		// compares under one identity; a class without a published schema keeps no
+		// standard tail and stays unordered.
 		const auto& param_spec = *first_param;
+		const auto compatibility_identity = [&]() { return tryMakeCompatibilityConstructorIdentity(target_type_spec, *target, mf); };
 		if (param_spec.is_pointer() || param_spec.is_function_pointer() ||
 			param_spec.is_member_function_pointer() || param_spec.is_member_object_pointer()) {
 			TypeSpecifierNode effective_source_type = source_type;
@@ -2115,7 +2168,7 @@ inline std::optional<ConversionPlan> tryBuildImplicitConvertingConstructorConver
 			}
 			const ConversionPlan conversion = buildConversionPlan(effective_source_type, param_spec);
 			if (conversion.is_valid) {
-				return makeUserDefinedConstructorConversionPlan(identity);
+				return makeUserDefinedConstructorConversionPlan(compatibility_identity());
 			}
 			continue;
 		}
@@ -2125,17 +2178,17 @@ inline std::optional<ConversionPlan> tryBuildImplicitConvertingConstructorConver
 			// the ctor's own template parameter name keeps the viability check
 			// narrow while still allowing the later template-deduction path to
 			// instantiate the concrete conversion when needed.
-			return makeUserDefinedConstructorConversionPlan(identity);
+			return makeUserDefinedConstructorConversionPlan(compatibility_identity());
 		}
 		if (param_spec.category() == TypeCategory::Struct) {
 			if (hasConvertingConstructorFrom(param_spec, source_type)) {
-				return makeUserDefinedConstructorConversionPlan(identity);
+				return makeUserDefinedConstructorConversionPlan(compatibility_identity());
 			}
 			continue;
 		}
 		const auto conversion = can_convert_type(source_type.category(), param_spec.category());
 		if (conversion.is_valid) {
-			return makeUserDefinedConstructorConversionPlan(identity);
+			return makeUserDefinedConstructorConversionPlan(compatibility_identity());
 		}
 	}
 	return std::nullopt;

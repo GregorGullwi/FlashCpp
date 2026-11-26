@@ -11563,6 +11563,90 @@ TEST_CASE("Canonical constructor selection reports reason codes across the polic
 	CHECK(existence.status == CanonicalConstructorSelectionStatus::Selected);
 }
 
+TEST_CASE("Compatibility constructor selections share the canonical schema identity") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	CompileContext compile_context;
+	compile_context.setInputFile("compatibility_constructor_identity.cpp");
+	Lexer lexer("struct Source { int value; }; struct Target { Target(Source); Target(int); };");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	auto class_spec = [](std::string_view name) {
+		const TypeInfo* info = findTypeByName(StringTable::getOrInternStringHandle(name));
+		REQUIRE(info != nullptr);
+		TypeSpecifierNode spec(TypeCategory::Struct, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+		spec.set_type_index(info->registeredTypeIndex());
+		tryBindPublishedTypeEntity(spec);
+		REQUIRE(spec.has_type_entity());
+		return spec;
+	};
+	const TypeSpecifierNode source_spec = class_spec("Source");
+	const TypeSpecifierNode target_spec = class_spec("Target");
+	const TypeInfo* target_info = findTypeByName(StringTable::getOrInternStringHandle("Target"));
+	REQUIRE(target_info != nullptr);
+	const StructTypeInfo* target = target_info->getStructInfo();
+	REQUIRE(target != nullptr);
+
+	UserDefinedConversionIdentity canonical_identity;
+	const std::optional<bool> canonical =
+		tryHasCanonicalImplicitConvertingConstructorForArgument(target_spec, source_spec, nullptr, &canonical_identity);
+	REQUIRE(canonical.has_value());
+	CHECK(*canonical);
+	CHECK(canonical_identity.kind == UserDefinedConversionIdentity::Kind::CanonicalConstructor);
+	CHECK(canonical_identity.ordinal == 0);
+
+	const StructMemberFunction* source_constructor = nullptr;
+	const StructMemberFunction* scalar_constructor = nullptr;
+	for (const StructMemberFunction& member : target->member_functions) {
+		const TypeSpecifierNode* first_parameter = getImplicitCtorFirstParamType(member);
+		if (first_parameter == nullptr) {
+			continue;
+		}
+		if (first_parameter->type_index() == source_spec.type_index()) {
+			source_constructor = &member;
+		} else if (first_parameter->category() == TypeCategory::Int) {
+			scalar_constructor = &member;
+		}
+	}
+	REQUIRE(source_constructor != nullptr);
+	REQUIRE(scalar_constructor != nullptr);
+
+	// The declaration bridge reports the same schema entry the canonical probe
+	// selected for this constructor.
+	const UserDefinedConversionIdentity compatibility_identity =
+		tryMakeCompatibilityConstructorIdentity(target_spec, *target, *source_constructor);
+	CHECK(hasUserDefinedConversionIdentity(compatibility_identity));
+	CHECK(sameUserDefinedConversionIdentity(canonical_identity, compatibility_identity));
+
+	// A different constructor of the same owner keeps its own index.
+	const UserDefinedConversionIdentity scalar_identity =
+		tryMakeCompatibilityConstructorIdentity(target_spec, *target, *scalar_constructor);
+	CHECK(hasUserDefinedConversionIdentity(scalar_identity));
+	CHECK(scalar_identity.owner == compatibility_identity.owner);
+	CHECK_FALSE(sameUserDefinedConversionIdentity(canonical_identity, scalar_identity));
+	CHECK_FALSE(sameUserDefinedConversionIdentity(compatibility_identity, scalar_identity));
+
+	// One shared constructor lets the second standard conversion sequences order
+	// ([over.ics.rank]/3.2.3 prefers Target&& over const Target&); two distinct
+	// constructors stay unordered ([over.ics.rank]/3.3).
+	TypeSpecifierNode rvalue_parameter = target_spec;
+	rvalue_parameter.set_reference_qualifier(ReferenceQualifier::RValueReference);
+	TypeSpecifierNode const_lvalue_parameter = target_spec;
+	const_lvalue_parameter.set_cv_qualifier(CVQualifier::Const);
+	const_lvalue_parameter.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	ArgumentConversionInfo shared_rvalue{ConversionRank::UserDefined, &rvalue_parameter, true, ConversionRank::ExactMatch};
+	shared_rvalue.user_defined_identity = compatibility_identity;
+	ArgumentConversionInfo shared_const_lvalue{ConversionRank::UserDefined, &const_lvalue_parameter, true, ConversionRank::ExactMatch};
+	shared_const_lvalue.user_defined_identity = compatibility_identity;
+	CHECK(compareArgumentConversionInfo(source_spec, shared_rvalue, shared_const_lvalue) < 0);
+	ArgumentConversionInfo distinct_const_lvalue = shared_const_lvalue;
+	distinct_const_lvalue.user_defined_identity = scalar_identity;
+	CHECK(compareArgumentConversionInfo(source_spec, shared_rvalue, distinct_const_lvalue) == 0);
+}
+
 TEST_CASE("Canonical constructor selection scopes non-complete statuses by arity") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();
