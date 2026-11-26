@@ -612,23 +612,27 @@ supplies the array or when subscripts are combined across dimensions.
 
 ## Out-of-line static data member definition edge cases
 
-Scalar, array, nested-class, namespace-qualified, and class-template
-definitions attach to the in-class declaration, and concrete type conflicts
-are reported. Two boundaries remain: a repeated out-of-line definition is
-accepted as another attachment instead of producing a redefinition diagnostic,
-and the class-template conflict check covers concrete arithmetic member types;
-a dependent element type is validated against the instantiated declaration.
+Scalar, array, nested-class, namespace-qualified, class-template, and
+nested-class-template definitions attach to the in-class declaration. A leading
+`::` on the out-of-line declarator-id names the global scope, so
+`int ::N::S::data = 7;` resolves the owner from the global namespace, and the
+`template` disambiguator of a dependent member class template
+(`Outer<T>::template Inner<U>::data`) reaches the same owner resolution. An
+out-of-line array definition of a static member of an explicitly specialized
+class template (`template<> struct S<int> { static int values[2]; };` followed by
+`int S<int>::values[2] = ...;`) binds when the declared and defined array shapes
+match. Concrete type conflicts are reported. Two boundaries remain: a repeated
+out-of-line definition is accepted as another attachment instead of producing a
+redefinition diagnostic, and the class-template conflict check covers concrete
+arithmetic member types; a dependent element type is validated against the
+instantiated declaration.
 
-An out-of-line definition of a static data member of a nested class template
-(`Outer<T>::template Inner<U>::data`) parses but does not attach its initializer
-to the nested instantiations; the template member path needs to share the
-nested-name-specifier owner resolution. A leading `::` before an out-of-line
-declarator-id also fails before the shared helper sees it because the
-type-and-name parser expects the first owner identifier. An out-of-line array
-definition of a static member of an explicitly specialized class template
-(`template<> struct S<int> { static int values[2]; };` followed by
-`int S<int>::values[2] = ...;`) is still rejected as a conflicting type even
-though both declarations have the same array shape.
+An assignment through an unparenthesized qualified chain that names a member
+class template or a nested owner (`Outer<T>::Inner<U>::data = 1;`) is currently
+lowered as a discarded value expression rather than an lvalue store, so the
+write has no effect; parenthesizing the chain keeps it an lvalue. This belongs
+to the statement-versus-declaration qualified-name disambiguation, not to the
+out-of-line definition itself.
 
 The out-of-line declarator-id carries the owner's class `OwnerId`, but the
 legacy type registry is still spelling-keyed. The owner spelling therefore

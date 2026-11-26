@@ -14141,6 +14141,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 	for (const auto& out_of_line_var : out_of_line_vars) {
 		// Substitute template parameters in the initializer
 		std::optional<ASTNode> substituted_initializer = out_of_line_var.initializer;
+		// A nested class template owner is instantiated with only its own
+		// arguments; its replay parameter set also contains the enclosing class
+		// template's parameters, which the effective argument vector supplies.
+		const bool replay_includes_outer_parameters = out_of_line_var.replay_template_params.size() > out_of_line_var.template_params.size();
+		std::span<const TemplateTypeArg> initializer_template_args = template_args_to_use;
+		if (replay_includes_outer_parameters) {
+			initializer_template_args = std::span<const TemplateTypeArg>(effective_template_args.data(), effective_template_args.size());
+		}
 		bool out_of_line_is_constexpr = false;
 		if (out_of_line_var.declaration.has_value() && out_of_line_var.declaration->is<VariableDeclarationNode>()) {
 			out_of_line_is_constexpr = out_of_line_var.declaration->as<VariableDeclarationNode>().is_constexpr();
@@ -14161,7 +14169,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 						structural_member_declaration = get_decl_from_symbol(*out_of_line_var.declaration);
 					}
 					std::optional<ASTNode> structural_initializer = substitute_static_member_initializer_if_bound(
-						out_of_line_var.initializer, structural_param_span, template_args_to_use, instantiated_name,
+						out_of_line_var.initializer, structural_param_span, initializer_template_args, instantiated_name,
 						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct), struct_info_ptr->declaration_node,
 						struct_info_ptr, structural_member_declaration, struct_info_ptr->getNamespaceHandle(), out_of_line_var.definition_lookup_context);
 					if (structural_initializer.has_value()) {
@@ -14195,18 +14203,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 				SaveHandle current_pos = save_token_position();
 				ScopedLexerPositionRestore lexer_restore(*this, current_pos);
 
-				TemplateInstantiationContext substitution_context =
-					buildTemplateInstantiationContext(
-						out_of_line_var.template_params,
-						template_args_to_use,
-						nullptr,
-						currentTemplateSubstitutionFailurePolicy());
-				substitution_context.current_instantiation_type =
-					struct_type_info.registeredTypeIndex().withCategory(
-						TypeCategory::Struct);
+				TemplateInstantiationContext substitution_context = buildTemplateInstantiationContext(replay_template_params, initializer_template_args, nullptr,
+					currentTemplateSubstitutionFailurePolicy());
+				substitution_context.current_instantiation_type = struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct);
 
-				const DeclarationNode* declaration_ptr =
-					get_decl_from_symbol(*out_of_line_var.declaration);
+				const DeclarationNode* declaration_ptr = get_decl_from_symbol(*out_of_line_var.declaration);
 				if (declaration_ptr == nullptr) {
 					throw InternalError(
 						"Out-of-line template static member initializer replay declaration is missing or invalid");

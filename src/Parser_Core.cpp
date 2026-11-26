@@ -1823,8 +1823,10 @@ StringHandle Parser::resolveNestedNameSpecifierOwner(const NestedNameSpecifierPa
 		}
 		// An unqualified owner written inside a namespace still needs the
 		// namespace-qualified fallback the out-of-line template lookup uses.
+		// A leading `::` already names the global scope, so it must not be
+		// re-qualified with the definition's current namespace.
 		StringHandle fallback_name = qualified_name;
-		if (!owner.isValid()) {
+		if (!owner.isValid() && !parsed.has_leading_global) {
 			NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
 			if (!current_namespace.isGlobal()) {
 				fallback_name = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, qualified_name);
