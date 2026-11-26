@@ -750,12 +750,15 @@ constexpr`, `inline static`, and out-of-line definition forms. Remaining gaps:
 - A namespace-scope reference initializer that needs a runtime pointer value
   (for example `int& r = *p;`, a reference-returning call, or a reference to a
   reference member or bit-field) cannot be expressed as a static relocation and
-  now fails closed. Binding a reference to a prvalue is materialized only for a
-  scalar constant.
-- A conversion-function call whose result is a reference is not treated as a
-  reference-returning call for this purpose: `int& r = A();` lowers the stored
-  address as zero instead of failing closed, so reads through `r` do not observe
-  the referent.
+  fails closed with `StaticReferenceInitializerRequiresConstantAddress` (#1518).
+  Binding a reference to a prvalue is materialized only for a scalar constant.
+- There is no dynamic global initializer for a reference whose referent address
+  is produced by a conversion function. The reference- and value-returning forms
+  (`int& r = A();` and `const int& r = A();` with `operator int&()` or
+  `operator int()`) are diagnosed with
+  `StaticReferenceInitializerRequiresConstantAddress` (#1518) instead of
+  materializing a zero-valued temporary. Local references and namespace-scope
+  references to statically allocated objects keep their existing lowering.
 - Namespace-scope `using`-directives are not consulted during detached
   evaluation.
 - Inline and nested namespace variables can be emitted with a name that does not
