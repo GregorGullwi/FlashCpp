@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
+#include "AggregateInitialization.h"
 #include "BuiltinListInitNarrowing.h"
 #include "CallNodeHelpers.h"
 #include "ExpressionSubstitutor.h"
@@ -182,9 +183,37 @@ EvalResult Evaluator::materialize_aggregate_object_value(
 
 	EvalResult object_result = EvalResult::from_int(0);
 	object_result.object_type_index = type_index;
-	const size_t positional_base_count = init_list.has_any_designated()
-		? 0
-		: std::min(struct_info->base_classes.size(), init_list.size());
+	// Bases and members consume clauses in declaration order. A brace-elided
+	// base clause does not appertain to the base as a whole, so the shared
+	// partition assigns every clause up to the base's last scalar leaf to that
+	// base; counting one clause per base would leave those leaves zero and push
+	// the remaining clauses onto the wrong member.
+	const AggregateInitialization::BasePartition partition = AggregateInitialization::partitionBases(
+		*struct_info,
+		init_list,
+		[&](const AggregateElements::Element& element, const ASTNode& clause) {
+			const std::optional<TypeSpecifierNode> source_type = tryQueryExpressionType(clause, context);
+			return source_type.has_value() && AggregateInitialization::acceptsWholeExpression(element, *source_type, clause);
+		});
+	if (partition.excess_clause.has_value()) {
+		return EvalResult::error("Excess or unrecognized initializer in aggregate initialization " "(no matching aggregate element for clause)");
+	}
+	if (partition.empty_element_clause.has_value()) {
+		return EvalResult::error("Initializer for aggregate with no elements requires explicit braces", EvalErrorType::NotConstantExpression,
+			DiagnosticId::AggregateInitializerForEmptyElementRequiresBraces);
+	}
+	auto materialize_base_from_initializer_list = [&](const StructTypeInfo& base_struct_info,
+													 const TypeIndex& base_type_index,
+													 const InitializerListNode& base_init_list) -> EvalResult {
+		ChunkedVector<ASTNode> base_args;
+		for (const ASTNode& arg : base_init_list.initializers()) {
+			base_args.push_back(arg);
+		}
+		if (auto ctor_result = try_materialize_struct_from_ctor_args(&base_struct_info, base_type_index, base_args, context, false, outer_bindings, nullptr, false)) {
+			return std::move(*ctor_result);
+		}
+		return materialize_aggregate_object_value(&base_struct_info, base_type_index, base_init_list, context, outer_bindings);
+	};
 	object_result.object_base_values.reserve(struct_info->base_classes.size());
 	for (size_t base_index = 0; base_index < struct_info->base_classes.size(); ++base_index) {
 		const BaseClassSpecifier& base = struct_info->base_classes[base_index];
@@ -195,61 +224,34 @@ EvalResult Evaluator::materialize_aggregate_object_value(
 		}
 
 		EvalResult base_result;
-		if (base_index < positional_base_count) {
-			const ASTNode& initializer = init_list.initializers()[base_index];
-			if (initializer.is<InitializerListNode>()) {
-				const InitializerListNode& base_init_list = initializer.as<InitializerListNode>();
+		const AggregateInitialization::ElementAssignment& assignment = partition.base_elements[base_index];
+		if (assignment.range.empty()) {
+			base_result = makeConstructorDefaultInitFromType(makeTypeSpecForDefaultInit(base.type_index), context);
+		} else if (assignment.form == AggregateInitialization::InitializationForm::WholeExpression) {
+			const ASTNode& initializer = init_list.initializers()[assignment.range.begin];
+			base_result = outer_bindings ? evaluate_expression_with_bindings_const(initializer, *outer_bindings, context) : evaluate(initializer, context);
+			if (!base_result.success() || !base_result.object_type_index.is_valid()) {
 				ChunkedVector<ASTNode> base_args;
-				for (const ASTNode& arg : base_init_list.initializers()) {
-					base_args.push_back(arg);
-				}
-				if (auto ctor_result = try_materialize_struct_from_ctor_args(
-						base_struct_info,
-						base.type_index,
-						base_args,
-						context,
-						false,
-						outer_bindings,
-						nullptr,
-						false)) {
+				base_args.push_back(initializer);
+				if (auto ctor_result = try_materialize_struct_from_ctor_args(base_struct_info, base.type_index, base_args, context, false, outer_bindings, nullptr,
+					false)) {
 					base_result = std::move(*ctor_result);
-				} else {
-					base_result = materialize_aggregate_object_value(
-						base_struct_info,
-						base.type_index,
-						base_init_list,
-						context,
-						outer_bindings);
 				}
-			} else {
-				base_result = outer_bindings
-					? evaluate_expression_with_bindings_const(initializer, *outer_bindings, context)
-					: evaluate(initializer, context);
-				if (!base_result.success() || !base_result.object_type_index.is_valid()) {
-					ChunkedVector<ASTNode> base_args;
-					base_args.push_back(initializer);
-					if (auto ctor_result = try_materialize_struct_from_ctor_args(
-							base_struct_info,
-							base.type_index,
-							base_args,
-							context,
-							false,
-							outer_bindings,
-							nullptr,
-							false)) {
-						base_result = std::move(*ctor_result);
-					}
-					if ((!base_result.success() || !base_result.object_type_index.is_valid()) && !base_struct_info->hasUserDeclaredConstructor()) {
-						InitializerListNode base_init_list;
-						base_init_list.add_initializer(initializer);
-						base_result = materialize_aggregate_object_value(base_struct_info, base.type_index, base_init_list, context, outer_bindings);
-					}
+				if ((!base_result.success() || !base_result.object_type_index.is_valid()) && !base_struct_info->hasUserDeclaredConstructor()) {
+					InitializerListNode base_init_list;
+					base_init_list.add_initializer(initializer);
+					base_result = materialize_aggregate_object_value(base_struct_info, base.type_index, base_init_list, context, outer_bindings);
 				}
 			}
+		} else if (assignment.form == AggregateInitialization::InitializationForm::Braced) {
+			const ASTNode& initializer = init_list.initializers()[assignment.range.begin];
+			base_result = materialize_base_from_initializer_list(*base_struct_info, base.type_index, initializer.as<InitializerListNode>());
 		} else {
-			base_result = makeConstructorDefaultInitFromType(
-				makeTypeSpecForDefaultInit(base.type_index),
-				context);
+			InitializerListNode base_init_list;
+			for (size_t clause_index = assignment.range.begin; clause_index < assignment.range.end; ++clause_index) {
+				base_init_list.add_initializer(init_list.initializers()[clause_index]);
+			}
+			base_result = materialize_base_from_initializer_list(*base_struct_info, base.type_index, base_init_list);
 		}
 		if (!base_result.success()) {
 			return base_result;
@@ -260,21 +262,14 @@ EvalResult Evaluator::materialize_aggregate_object_value(
 	InitializerListNode direct_init_list(init_list.is_paren_init()
 		? InitializerListNode::InitializationStyle::Paren
 		: InitializerListNode::InitializationStyle::Brace);
-	for (size_t init_index = positional_base_count; init_index < init_list.size(); ++init_index) {
+	for (size_t init_index = partition.member_begin; init_index < init_list.size(); ++init_index) {
 		if (init_list.is_designated(init_index)) {
-			direct_init_list.add_designated_initializer(
-				init_list.member_name(init_index),
-				init_list.initializers()[init_index]);
+			direct_init_list.add_designated_initializer(init_list.member_name(init_index), init_list.initializers()[init_index]);
 		} else {
 			direct_init_list.add_initializer(init_list.initializers()[init_index]);
 		}
 	}
-	auto bind_members_result = bind_members_from_initializer_list(
-		struct_info,
-		direct_init_list,
-		object_result.object_member_bindings,
-		context,
-		outer_bindings);
+	auto bind_members_result = bind_members_from_initializer_list(struct_info, direct_init_list, object_result.object_member_bindings, context, outer_bindings);
 	if (!bind_members_result.success()) {
 		return bind_members_result;
 	}
