@@ -41,6 +41,23 @@ static size_t structMemberArrayElementCount(const StructMember& member) {
 	return element_count;
 }
 
+// A user-defined conversion selected by sema runs at run time and the constant
+// evaluator does not fold conversion functions. For static storage such an
+// initializer is therefore a reference-returning call even when the source
+// expression is a prvalue such as `A()`, so the expression's own value category
+// cannot identify the runtime dependence.
+static bool initializerSelectsConversionFunction(const SemanticAnalysis& sema, const ASTNode& init_node) {
+	if (!init_node.is<ExpressionNode>()) {
+		return false;
+	}
+	const std::optional<SemanticSlot> slot = sema.getSlot(&init_node.as<ExpressionNode>());
+	if (!slot.has_value() || !slot->has_cast()) {
+		return false;
+	}
+	const ImplicitCastInfo& cast_info = sema.castInfoTable()[slot->cast_info_index.value - 1];
+	return cast_info.cast_kind == StandardConversionKind::UserDefined && cast_info.selected_conversion_function != nullptr;
+}
+
 // [dcl.init.aggr] brace elision: a braced subaggregate owns its clauses, while
 // an unbraced scalar starts filling the current subaggregate from the enclosing
 // list. The extents are the canonical array extents, so nested rows land on the
@@ -1814,6 +1831,25 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					// relocation path; a form with no static storage fails closed
 					// instead of storing a stale copy of the referred value.
 				if (!handled_as_reloc && type_node.is_reference()) {
+					auto failStaticReferenceInitializer = [&](std::string_view reason) -> void {
+						const std::string message = std::string(StringBuilder()
+							.append("static-storage reference initializer for '"sv)
+							.append(decl.identifier_token().value())
+							.append("' "sv)
+							.append(reason)
+							.commit());
+						throw makeStructuredCompileError(context_->diagnostics(), DiagnosticId::StaticReferenceInitializerRequiresConstantAddress,
+							DiagnosticSeverity::Error, SourceLocation::fromToken(decl.identifier_token()), message, {});
+					};
+					// A conversion function yields its result at run time, like any
+					// other call. Its source expression can still be a prvalue, so check
+					// the selected conversion before static address resolution or
+					// constant materialization can accept it. A conversion whose result
+					// is a reference (for example `int& r = A();`) would otherwise store
+					// a zero-valued temporary instead of the referent.
+					if (initializerSelectsConversionFunction(sema_, init_node)) {
+						failStaticReferenceInitializer("binds a conversion-function result that is only available at run time"sv);
+					}
 					auto reference_ctx = makeStaticStorageEvalContext();
 					const std::optional<StaticStorageAddress> address = resolveStaticStorageAddress(init_node, reference_ctx);
 					StringHandle referent_symbol;
@@ -1828,12 +1864,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						// value, so it fails closed instead.
 						const ValueCategory value_category = sema_.expressionValueCategory(init_node);
 						if (value_category == ValueCategory::LValue || value_category == ValueCategory::XValue) {
-							throw InternalError("namespace-scope reference initializer does not name a statically allocated object");
+							failStaticReferenceInitializer("does not name a statically allocated object"sv);
 						}
 						const ConstExpr::EvalResult value = ConstExpr::Evaluator::evaluate(init_node, reference_ctx);
 						const int referent_size_bits = requireConcreteAliasResolvedCodegenSizeBits(type_node, "reference temporary storage");
 						if (!value.success() || value.is_array || !value.object_member_bindings.empty() || !value.callable_bindings.empty() || referent_size_bits <= 0) {
-							throw InternalError("namespace-scope reference temporary initializer is not a scalar constant");
+							failStaticReferenceInitializer("requires a temporary that is not a scalar constant"sv);
 						}
 						const size_t referent_size = static_cast<size_t>(referent_size_bits) / 8;
 						StringBuilder temporary_name_builder;
