@@ -193,6 +193,7 @@ enum class DiagnosticId : uint32_t {
 	InvalidFunctionPointerNoexceptConversion = 1515,
 	NoMatchingConversion = 1516,
 	AmbiguousConversion = 1517,
+	StaticReferenceInitializerRequiresConstantAddress = 1518,
 
 	// Semantic validity family (1601..1699).
 	RangeForBeginEndRequired = 1601,
@@ -493,6 +494,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "NoMatchingConversion";
 	case DiagnosticId::AmbiguousConversion:
 		return "AmbiguousConversion";
+	case DiagnosticId::StaticReferenceInitializerRequiresConstantAddress:
+		return "StaticReferenceInitializerRequiresConstantAddress";
 	case DiagnosticId::AmbiguousConstructorCall:
 		return "AmbiguousConstructorCall";
 	case DiagnosticId::DllImportConstexprConflict:
