@@ -1792,6 +1792,62 @@ void Parser::consume_type_id_abstract_declarators(
 	}
 }
 
+void Parser::consume_type_id_parenthesized_declarator_followup(TypeSpecifierNode& type_spec) {
+	if (peek() != "("_tok) {
+		return;
+	}
+	// A member-pointer ptr-declarator group starts with an optional calling
+	// convention, an optional global `::`, then a nested-name-specifier and
+	// `*` (`(C::*)()`, `(::N::C::*)`). A functional-cast expression operand
+	// also starts with `(` (`sizeof(T())`), so look ahead without replaying
+	// tokens and leave every other shape to the expression interpretation.
+	const auto skip_template_arguments = [&](size_t& index) {
+		if (peek(index) != "<"_tok) {
+			return;
+		}
+		int angle_depth = 0;
+		do {
+			update_angle_depth(peek(index), angle_depth);
+			++index;
+		} while (angle_depth > 0 && !peek(index).is_eof());
+	};
+	size_t index = 1;
+	while (peek_info(index).type() == Token::Type::Identifier || peek(index).is_keyword()) {
+		const std::string_view value = peek_info(index).value();
+		auto it = std::ranges::find(calling_convention_map, value, &CallingConventionMapping::keyword);
+		if (it == std::end(calling_convention_map)) {
+			break;
+		}
+		++index;
+	}
+	if (peek(index) == "::"_tok) {
+		++index;
+	}
+	if (peek_info(index).type() != Token::Type::Identifier) {
+		return;
+	}
+	++index;
+	skip_template_arguments(index);
+	while (peek(index) == "::"_tok) {
+		++index;
+		if (peek(index) == "*"_tok) {
+			(void)consume_cast_type_id_paren_declarator(type_spec);
+			return;
+		}
+		if (peek_info(index).type() != Token::Type::Identifier) {
+			return;
+		}
+		++index;
+		skip_template_arguments(index);
+	}
+}
+
+void Parser::consume_type_id_function_type_followup(TypeSpecifierNode& type_spec) {
+	if (peek() == "("_tok) {
+		parse_type_alias_function_type(type_spec, "");
+	}
+}
+
 void Parser::consumeSubstitutedTypeIdDeclarators(TypeSpecifierNode& type_spec, const TypeSpecifierNode& pattern) {
 	consume_pointer_ref_modifiers(type_spec);
 	if (!pattern.has_member_class()) {

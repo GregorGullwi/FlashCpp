@@ -432,6 +432,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 			type_spec.add_cv_qualifier(parse_cv_qualifiers());
 			skip_noop_gnu_qualifiers();
 			consume_type_id_abstract_declarators(type_spec);
+			consume_type_id_parenthesized_declarator_followup(type_spec);
 			normalizeCastTypeIdMemberObjectPointer(type_spec);
 			if (consume(")"_tok)) {
 				// Before treating this as a C-style cast, verify that the type is actually valid.
@@ -840,6 +841,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 				// Parse pointer/reference declarators (ptr-operator in C++20 grammar)
 				TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 				consume_type_id_abstract_declarators(type_spec);
+				consume_type_id_parenthesized_declarator_followup(type_spec);
 
 				// Now check if ')' follows
 				if (peek() == ")"_tok) {
@@ -1003,6 +1005,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 			// Parse pointer/reference declarators (ptr-operator in C++20 grammar)
 			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 			consume_type_id_abstract_declarators(type_spec);
+			consume_type_id_parenthesized_declarator_followup(type_spec);
 
 			// Now check if ')' follows
 			if (peek() == ")"_tok) {
@@ -1129,6 +1132,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 			type_result.node()->is<TypeSpecifierNode>()) {
 			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 			consume_type_id_abstract_declarators(type_spec);
+			consume_type_id_parenthesized_declarator_followup(type_spec);
 			if (peek() == ")"_tok) {
 				const bool resolved_type =
 					type_spec.category() != TypeCategory::UserDefined || type_spec.type_index().is_valid();

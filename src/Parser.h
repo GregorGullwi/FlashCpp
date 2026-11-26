@@ -4800,6 +4800,17 @@ private:	 // Resume private methods
 	void consume_type_id_abstract_declarators(
 		TypeSpecifierNode& type_spec,
 		std::vector<ASTNode>* array_bound_expressions);
+	// A type-id may leave a parenthesized ptr-declarator group after its
+	// abstract declarators (`int* (C::*)()`, `int* (::N::C::*)`), because the
+	// pointer chain is consumed before the group. Only a group that carries a
+	// ptr-operator is consumed, so an expression operand such as a functional
+	// cast (`sizeof(T())`) stays an expression. Reuses the abstract-group
+	// parser rather than a second grammar.
+	void consume_type_id_parenthesized_declarator_followup(TypeSpecifierNode& type_spec);
+	// Trait operands also accept a plain function type (`int* (*)(int)` and
+	// `int(int)`) left after the abstract declarators; reuse the alias function
+	// type parser for that suffix.
+	void consume_type_id_function_type_followup(TypeSpecifierNode& type_spec);
 	// Consume the ptr-operator chain of a reparsed type-id. Member-pointer
 	// declarators are only attempted when the source pattern owns one, so a
 	// plain trailing return keeps the pointer-only scan without replaying the
