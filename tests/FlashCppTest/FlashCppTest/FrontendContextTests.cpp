@@ -3499,6 +3499,239 @@ TEST_SUITE("FrontendContext") {
 		CHECK(first_import.type == table.templateParameter(definition->template_decl_id(), 0u));
 	}
 
+	TEST_CASE("Member function template declarations merge only matching signatures") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"template<typename Outer> struct MergeOwner {\n"
+			"  template<typename Left, typename Right> Right pick(Left left, Right right);\n"
+			"  template<typename A, typename B> B pick(A left, B right) { return right; }\n"
+			"  template<typename Value> Value pick(Value value) { return value; }\n"
+			"  template<typename T> T* address(T* value) { return value; }\n"
+			"  template<typename T> T* address(T value);\n"
+			"};\n"
+			"template<typename Outer> struct SecondMergeOwner {\n"
+			"  template<typename Left, typename Right> Right pick(Left left, Right right) { return right; }\n"
+			"};\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("member_function_template_merge_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const auto merge_owner_opt =
+			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("MergeOwner"));
+		REQUIRE(merge_owner_opt.has_value());
+		REQUIRE(merge_owner_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& merge_owner =
+			merge_owner_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(merge_owner.has_template_decl_id());
+
+		const TemplateFunctionDeclarationNode* pick_pair_declaration = nullptr;
+		const TemplateFunctionDeclarationNode* pick_pair_definition = nullptr;
+		const TemplateFunctionDeclarationNode* pick_single = nullptr;
+		const TemplateFunctionDeclarationNode* address_pointer = nullptr;
+		const TemplateFunctionDeclarationNode* address_value = nullptr;
+		for (const StructMemberFunctionDecl& member : merge_owner.class_decl_node().member_functions()) {
+			if (!member.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+				continue;
+			}
+			const TemplateFunctionDeclarationNode& candidate =
+				member.function_declaration.as<TemplateFunctionDeclarationNode>();
+			const std::string_view name =
+				StringTable::getStringView(candidate.function_decl_node().decl_node().identifier_token().handle());
+			const bool has_body = candidate.function_decl_node().has_template_body_position();
+			if (name == "pick"sv) {
+				if (candidate.template_parameters().size() == 2u) {
+					if (has_body) {
+						pick_pair_definition = &candidate;
+					} else {
+						pick_pair_declaration = &candidate;
+					}
+				} else {
+					pick_single = &candidate;
+				}
+			} else if (name == "address"sv) {
+				const TypeSpecifierNode& parameter_type =
+					candidate.function_decl_node().parameter_nodes()[0].as<DeclarationNode>().type_specifier_node();
+				if (candidate.template_parameters().size() == 1u && parameter_type.runtime_pointer_depth() > 0u) {
+					address_pointer = &candidate;
+				} else {
+					address_value = &candidate;
+				}
+			}
+		}
+		REQUIRE(pick_pair_declaration != nullptr);
+		REQUIRE(pick_pair_definition != nullptr);
+		REQUIRE(pick_single != nullptr);
+		REQUIRE(address_pointer != nullptr);
+		REQUIRE(address_value != nullptr);
+		REQUIRE(pick_pair_declaration->has_template_decl_id());
+		REQUIRE(pick_pair_definition->has_template_decl_id());
+		REQUIRE(pick_single->has_template_decl_id());
+		REQUIRE(address_pointer->has_template_decl_id());
+		REQUIRE(address_value->has_template_decl_id());
+
+		// Renaming a template parameter does not make a new template.
+		CHECK(pick_pair_declaration->template_decl_id() == pick_pair_definition->template_decl_id());
+		// Different template arity and different function parameter types stay distinct.
+		CHECK(pick_single->template_decl_id() != pick_pair_definition->template_decl_id());
+		CHECK(address_pointer->template_decl_id() != address_value->template_decl_id());
+		CHECK(address_pointer->template_decl_id() != pick_pair_definition->template_decl_id());
+
+		const auto second_owner_opt =
+			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("SecondMergeOwner"));
+		REQUIRE(second_owner_opt.has_value());
+		REQUIRE(second_owner_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& second_owner =
+			second_owner_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(second_owner.has_template_decl_id());
+		const TemplateFunctionDeclarationNode* second_pick = nullptr;
+		for (const StructMemberFunctionDecl& member : second_owner.class_decl_node().member_functions()) {
+			if (member.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+				second_pick = &member.function_declaration.as<TemplateFunctionDeclarationNode>();
+			}
+		}
+		REQUIRE(second_pick != nullptr);
+		REQUIRE(second_pick->has_template_decl_id());
+		// The same spelling and signature under a different owner is a different template.
+		CHECK(second_pick->template_decl_id() != pick_pair_definition->template_decl_id());
+		CHECK(second_pick->template_decl_id() != merge_owner.template_decl_id());
+	}
+
+	TEST_CASE("Member function template merge requires equivalent constraints") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"template<typename T> concept MergeConstraint = sizeof(T) > 0;\n"
+			"template<typename T> concept OtherMergeConstraint = sizeof(T) > 0;\n"
+			"template<typename Outer> struct ConstrainedMergeOwner {\n"
+			"  template<typename T> requires MergeConstraint<T> T convert(T value);\n"
+			"  template<typename T> requires MergeConstraint<T> T convert(T value) { return value; }\n"
+			"  template<typename T> requires OtherMergeConstraint<T> T convert(T value) { return value; }\n"
+			"};\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("member_function_template_constraint_merge_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const auto owner_opt =
+			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("ConstrainedMergeOwner"));
+		REQUIRE(owner_opt.has_value());
+		REQUIRE(owner_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& owner = owner_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(owner.has_template_decl_id());
+
+		std::vector<const TemplateFunctionDeclarationNode*> constrained;
+		for (const StructMemberFunctionDecl& member : owner.class_decl_node().member_functions()) {
+			if (!member.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+				continue;
+			}
+			const TemplateFunctionDeclarationNode& candidate =
+				member.function_declaration.as<TemplateFunctionDeclarationNode>();
+			if (candidate.has_requires_clause()) {
+				constrained.push_back(&candidate);
+			}
+		}
+		REQUIRE(constrained.size() == 3u);
+		const TemplateFunctionDeclarationNode* declaration = constrained[0];
+		const TemplateFunctionDeclarationNode* definition = constrained[1];
+		const TemplateFunctionDeclarationNode* other_constraint = constrained[2];
+		REQUIRE(declaration->has_template_decl_id());
+		REQUIRE(definition->has_template_decl_id());
+		REQUIRE(other_constraint->has_template_decl_id());
+		CHECK(declaration->template_decl_id() == definition->template_decl_id());
+		CHECK(other_constraint->template_decl_id() != definition->template_decl_id());
+	}
+
+	TEST_CASE("Member function template merge accepts omitted and matching type defaults") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"template<typename Outer> struct DefaultMergeOwner {\n"
+			"  template<typename T = int> T repeat(T value);\n"
+			"  template<typename T = int> T repeat(T value) { return value; }\n"
+			"  template<typename T = long long> T widen(T value);\n"
+			"  template<typename T> T widen(T value) { return value; }\n"
+			"};\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("member_function_template_default_merge_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const auto owner_opt =
+			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("DefaultMergeOwner"));
+		REQUIRE(owner_opt.has_value());
+		REQUIRE(owner_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& owner = owner_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(owner.has_template_decl_id());
+
+		std::vector<const TemplateFunctionDeclarationNode*> repeats;
+		std::vector<const TemplateFunctionDeclarationNode*> widens;
+		for (const StructMemberFunctionDecl& member : owner.class_decl_node().member_functions()) {
+			if (!member.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+				continue;
+			}
+			const TemplateFunctionDeclarationNode& candidate =
+				member.function_declaration.as<TemplateFunctionDeclarationNode>();
+			const std::string_view name =
+				StringTable::getStringView(candidate.function_decl_node().decl_node().identifier_token().handle());
+			if (name == "repeat"sv) {
+				repeats.push_back(&candidate);
+			} else if (name == "widen"sv) {
+				widens.push_back(&candidate);
+			}
+		}
+		REQUIRE(repeats.size() == 2u);
+		REQUIRE(widens.size() == 2u);
+		const TemplateFunctionDeclarationNode* repeat_declaration = nullptr;
+		const TemplateFunctionDeclarationNode* repeat_definition = nullptr;
+		for (const TemplateFunctionDeclarationNode* candidate : repeats) {
+			if (candidate->function_decl_node().has_template_body_position()) {
+				repeat_definition = candidate;
+			} else {
+				repeat_declaration = candidate;
+			}
+		}
+		const TemplateFunctionDeclarationNode* widen_declaration = nullptr;
+		const TemplateFunctionDeclarationNode* widen_definition = nullptr;
+		for (const TemplateFunctionDeclarationNode* candidate : widens) {
+			if (candidate->function_decl_node().has_template_body_position()) {
+				widen_definition = candidate;
+			} else {
+				widen_declaration = candidate;
+			}
+		}
+		REQUIRE(repeat_declaration != nullptr);
+		REQUIRE(repeat_definition != nullptr);
+		REQUIRE(widen_declaration != nullptr);
+		REQUIRE(widen_definition != nullptr);
+		REQUIRE(repeat_declaration->has_template_decl_id());
+		REQUIRE(repeat_definition->has_template_decl_id());
+		REQUIRE(widen_declaration->has_template_decl_id());
+		REQUIRE(widen_definition->has_template_decl_id());
+		CHECK(repeat_declaration->template_decl_id() == repeat_definition->template_decl_id());
+		CHECK(widen_declaration->template_decl_id() == widen_definition->template_decl_id());
+		CHECK(repeat_definition->template_decl_id() != widen_definition->template_decl_id());
+	}
+
 	TEST_CASE("Free function template overloads publish distinct TemplateDeclIds") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

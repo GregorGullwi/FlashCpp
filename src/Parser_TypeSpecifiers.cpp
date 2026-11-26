@@ -5,6 +5,7 @@
 #include "FrontendContext.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "TemplateFunctionSignatureShape.h"
 #include "TypeTraitEvaluator.h"
 
 namespace {
@@ -5771,82 +5772,7 @@ void Parser::stampDependentMemberChainFromQualifier(
 }
 
 void Parser::stampPublishedFunctionTemplateParameters(TemplateFunctionDeclarationNode& template_decl) {
-	const TemplateDeclId template_decl_id = template_decl.template_decl_id();
-	if (!template_decl_id) {
-		return;
-	}
-	const TemplateParameterVector& template_parameters = template_decl.template_parameters();
-	const auto stampFunctionSignature = [&](FunctionSignature& root_signature) {
-		std::vector<FunctionSignature*> pending_signatures{&root_signature};
-		while (!pending_signatures.empty()) {
-			FunctionSignature& signature = *pending_signatures.back();
-			pending_signatures.pop_back();
-			const auto stampFunctionType = [&](FunctionType& function_type) {
-				if (function_type.template_parameter_name.isValid()) {
-					for (size_t index = 0; index < template_parameters.size(); ++index) {
-						const TemplateParameterNode& parameter = template_parameters[index];
-						if (parameter.kind() == TemplateParameterKind::Type && parameter.nameHandle() == function_type.template_parameter_name) {
-							function_type.template_parameter_decl = template_decl_id;
-							function_type.template_parameter_index = static_cast<uint32_t>(index);
-							break;
-						}
-					}
-				}
-				if (function_type.callable_signature) {
-					function_type.callable_signature = allocatePersistentFunctionSignature(*function_type.callable_signature);
-					pending_signatures.push_back(function_type.callable_signature);
-				}
-			};
-			if (signature.hasStructuredTypes()) {
-				signature.updateReturnType(stampFunctionType);
-				signature.updateParameterTypes([&](OverloadVector<FunctionType, 4>& parameter_types) {
-					for (FunctionType& parameter_type : parameter_types) {
-						stampFunctionType(parameter_type);
-					}
-				});
-			}
-		}
-	};
-	const auto stampTypeSpecifier = [&](TypeSpecifierNode& root_type) {
-		std::vector<TypeSpecifierNode*> pending_types{&root_type};
-		while (!pending_types.empty()) {
-			TypeSpecifierNode& type_spec = *pending_types.back();
-			pending_types.pop_back();
-			if (type_spec.has_template_parameter_identity()) {
-				const StringHandle param_name = type_spec.template_parameter_name();
-				for (size_t index = 0; index < template_parameters.size(); ++index) {
-					const TemplateParameterNode& parameter = template_parameters[index];
-					if (parameter.kind() == TemplateParameterKind::Type && parameter.nameHandle() == param_name) {
-						// A member function template parsed inside a class-template body can
-						// carry the enclosing active-template stamp provisionally. The
-						// function parameter list owns this matching binding, so replace it
-						// with the published child identity.
-						type_spec.set_template_parameter_decl(template_decl_id, static_cast<uint32_t>(index));
-						break;
-					}
-				}
-			}
-			if (type_spec.has_function_signature()) {
-				FunctionSignature signature = type_spec.function_signature();
-				stampFunctionSignature(signature);
-				type_spec.set_function_signature(signature);
-			}
-			if (type_spec.has_template_specialization()) {
-				for (size_t index = 0; index < type_spec.specialization_arg_count(); ++index) {
-					if (type_spec.specialization_arg_is_type(index)) {
-						pending_types.push_back(&type_spec.specialization_arg_type(index));
-					}
-				}
-			}
-		}
-	};
-	FunctionDeclarationNode& function_decl = template_decl.function_decl_node();
-	stampTypeSpecifier(function_decl.decl_node().type_specifier_node());
-	for (ASTNode& parameter_node : function_decl.parameter_nodes()) {
-		if (parameter_node.is<DeclarationNode>()) {
-			stampTypeSpecifier(parameter_node.as<DeclarationNode>().type_specifier_node());
-		}
-	}
+	stampFunctionTemplateOwnParameters(template_decl, template_decl.template_decl_id());
 }
 
 void Parser::tryStampDependentMemberChain(
