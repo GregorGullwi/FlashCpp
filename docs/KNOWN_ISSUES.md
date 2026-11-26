@@ -564,21 +564,6 @@ Functional-cast spelling is still classified as a static_cast conversion even
 though [expr.type.conv]/1.1 makes a single-expression functional cast
 equivalent to the corresponding C-style cast, which may perform a const_cast.
 
-## Some member-pointer type-id spellings still need the function suffix
-
-The shared type-id abstract-declarator helper accepts `T C::*`, `T* C::*` and
-the parenthesized member-function-pointer form `T (C::*)()`. A member-function
-pointer whose return type is a pointer, spelled with the group after that
-pointer (`T* (C::*)()`), is still rejected by `sizeof` and by a C-style cast
-target, because the helper sees `*` first and then stops at the group. Trait and
-alias type-id sites re-enter `parse_type_alias_function_type` when a `(` remains,
-so those spellings work there; the other sites need the same follow-up before
-the gap is closed everywhere.
-
-A leading-global member-pointer owner such as `int* ::N::C::*pm` is also not
-parsed: the leading `::` declarator-id path expects a terminal name after the
-nested-name-specifier, not a member-pointer ptr-operator.
-
 ## Decltype operator overload result typing is parser-owned
 
 `get_overload_return_type` in `Parser_Expr_QualLookup.cpp` still derives a binary
@@ -981,6 +966,27 @@ The following remain unsupported and are rejected or left unresolved:
   warning and leaves the address unresolved in that case rather than failing
   the translation unit, so the old uninitialized-slot behavior can still appear
   there.
+
+## type_info emission does not cover member-function-pointer types
+
+`typeid` parses a member-function-pointer type-id, including the pointer-return
+spelling `T* (C::*)()`, but code generation cannot resolve a type_info symbol
+for such an operand and fails the translation unit with `typeid: unable to
+resolve type_info symbol for operand type '<unknown>'`. Any
+member-function-pointer spelling is affected, including the `T (C::*)()` form
+that parsed before the pointer-return follow-up; data-member pointers such as
+`typeid(int C::*)` work. The missing piece is type_info symbol emission and
+mangling for member-function-pointer canonical types, not the type-id grammar.
+
+## Functional cast of a null member-function pointer builds an ownerless identity
+
+`using PF = int (C::*)(); PF p = PF(0);` fails with an internal error,
+`member-pointer type identity is missing its class owner`. The alias resolution
+used by the functional-cast type node keeps the member-function-pointer category
+but drops the class-owner identity, so canonical identity construction rejects
+it. `PF p = PF(&C::f);` works, and data-member-pointer aliases such as
+`using PM = int C::*; PM p = PM(0);` work. This is a member-pointer
+construction/lowering gap, not a declarator-grammar gap.
 
 ## Static-storage aggregate members of data-member-pointer type zero-fill to a null offset
 
