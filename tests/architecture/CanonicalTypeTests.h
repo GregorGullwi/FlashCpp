@@ -3955,6 +3955,107 @@ inline void checkMemberPartialSchemaIdentityIndependence() {
 		reverse_identity.narrow_seven, reverse_identity.narrow_five);
 }
 
+// A partial-pattern argument that is a bare function type composes its return
+// type and ordered parameter types. The published environment is keyed by that
+// canonical identity, so two tables that intern the inputs in opposite order
+// must produce the same structural identity, while a different parameter list,
+// an empty list, a parameter-shaped parameter, or another primary must not
+// compare equal.
+inline void checkFunctionSignaturePartialPatternIdentityIndependence() {
+	const TemplateDeclId primary{8711};
+	const TemplateDeclId other_primary{8712};
+	const StringHandle first_identity = StringTable::getOrInternStringHandle("function-pattern-declaration-first");
+	const StringHandle second_identity = StringTable::getOrInternStringHandle("function-pattern-declaration-second");
+	struct Patterns {
+		TypeId integer;
+		TypeId wide;
+		TypeId empty;
+		TypeId parameter;
+		TypeId other_primary_integer;
+	};
+	const auto build = [&](CanonicalTypeTable& table, bool reverse) {
+		if (reverse) {
+			table.pointer(table.builtin(CanonicalBuiltinKind::Char));
+			table.builtin(CanonicalBuiltinKind::UnsignedLongLong);
+		}
+		const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+		const TypeId wide = table.builtin(CanonicalBuiltinKind::Long);
+		const TypeId parameter = table.templateParameter(primary, 0);
+		const TypeId other_parameter = table.templateParameter(other_primary, 0);
+		const auto make_function = [&table](TypeId return_type, std::span<const TypeId> parameters) {
+			return table.function(return_type, parameters, false, CVQualifier::None, ReferenceQualifier::None, false,
+				CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+		};
+		const TypeId integer_parameters[] = {integer};
+		const TypeId wide_parameters[] = {wide};
+		const TypeId parameter_parameters[] = {parameter};
+		const std::span<const TypeId> empty_parameters;
+		const auto make_pattern = [&table](TemplateDeclId decl, TypeId function_type) {
+			const CanonicalTemplateArgument arguments[] = {CanonicalTemplateArgument::makeType(function_type)};
+			return table.templateSpecialization(decl, arguments);
+		};
+		return Patterns{
+			make_pattern(primary, make_function(parameter, integer_parameters)),
+			make_pattern(primary, make_function(parameter, wide_parameters)),
+			make_pattern(primary, make_function(parameter, empty_parameters)),
+			make_pattern(primary, make_function(parameter, parameter_parameters)),
+			make_pattern(other_primary, make_function(other_parameter, integer_parameters)),
+		};
+	};
+	CanonicalTypeTable forward;
+	const Patterns forward_patterns = build(forward, false);
+	require(forward_patterns.integer != forward_patterns.wide);
+	require(forward_patterns.integer != forward_patterns.empty);
+	require(forward_patterns.integer != forward_patterns.parameter);
+	require(forward_patterns.integer != forward_patterns.other_primary_integer);
+	const size_t forward_count = forward.size();
+	internUnrelatedCanonicalSpelling("unrelated function pattern identity spelling B");
+	require(forward.templateSpecialization(primary, std::array<CanonicalTemplateArgument, 1>{
+		CanonicalTemplateArgument::makeType(forward.function(forward.templateParameter(primary, 0),
+			std::array<TypeId, 1>{forward.builtin(CanonicalBuiltinKind::Int)}, false, CVQualifier::None,
+			ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{}))}) ==
+		forward_patterns.integer);
+	internUnrelatedCanonicalSpelling("unrelated function pattern identity spelling A");
+	require(forward.size() == forward_count);
+
+	CanonicalTypeTable reverse;
+	const Patterns reverse_patterns = build(reverse, true);
+	require(sameStructure(forward, forward_patterns.integer, reverse, reverse_patterns.integer));
+	require(sameStructure(forward, forward_patterns.wide, reverse, reverse_patterns.wide));
+	require(sameStructure(forward, forward_patterns.empty, reverse, reverse_patterns.empty));
+	require(sameStructure(forward, forward_patterns.parameter, reverse, reverse_patterns.parameter));
+	require(sameStructure(forward, forward_patterns.other_primary_integer, reverse, reverse_patterns.other_primary_integer));
+	// Paired negative controls: a different parameter list, an empty list, a
+	// parameter-shaped parameter, or a swapped primary must not compare equal.
+	require(!sameStructure(forward, forward_patterns.integer, reverse, reverse_patterns.wide));
+	require(!sameStructure(forward, forward_patterns.integer, reverse, reverse_patterns.empty));
+	require(!sameStructure(forward, forward_patterns.integer, reverse, reverse_patterns.parameter));
+	require(!sameStructure(forward, forward_patterns.integer, reverse, reverse_patterns.other_primary_integer));
+
+	// The environment key uses the same structural inputs: one normalized
+	// pattern and declaration identity merge, while a different parameter list
+	// or primary splits, regardless of publication order.
+	const auto check_environment_partition = [&](TemplateDeclTable& decls, TemplateDeclId pattern_primary,
+		TypeId pattern, TypeId other_pattern, TypeId third_pattern) {
+		const TemplateDeclId first = decls.publishClassPartialEnvironment(pattern_primary, pattern, first_identity);
+		const TemplateDeclId second = decls.publishClassPartialEnvironment(pattern_primary, pattern, second_identity);
+		require(first != second);
+		require(decls.publishClassPartialEnvironment(pattern_primary, pattern, first_identity) == first);
+		require(decls.publishClassPartialEnvironment(pattern_primary, other_pattern, first_identity) != first);
+		require(decls.publishClassPartialEnvironment(pattern_primary, third_pattern, first_identity) != first);
+	};
+	const OwnerId owner{8713};
+	const StringHandle name = StringTable::getOrInternStringHandle("FnPartialIdentity");
+	TemplateDeclTable forward_decls;
+	const TemplateDeclId forward_primary = forward_decls.publishPrimaryClassTemplate(owner, name);
+	check_environment_partition(forward_decls, forward_primary, forward_patterns.integer, forward_patterns.wide,
+		forward_patterns.empty);
+	TemplateDeclTable reverse_decls;
+	const TemplateDeclId reverse_primary = reverse_decls.publishPrimaryClassTemplate(owner, name);
+	check_environment_partition(reverse_decls, reverse_primary, reverse_patterns.wide, reverse_patterns.empty,
+		reverse_patterns.integer);
+}
+
 // The shape is a by-value query result; a future field must not quietly re-add
 // padding to it.
 static_assert(sizeof(CanonicalPointerShape) == 10, "pointer shape stays a packed by-value result");
@@ -4306,6 +4407,7 @@ inline int run() {
 	checkMemberAliasOwnerIdentityIndependence();
 	checkConcretePackSpecArgIdentityIndependence();
 	checkMemberPartialSchemaIdentityIndependence();
+	checkFunctionSignaturePartialPatternIdentityIndependence();
 	checkSpecializationFieldSchemas();
 	checkNestedFieldSchemas();
 	checkRecordMemberProperties();

@@ -1827,6 +1827,8 @@ template<class T, class... Rest> struct Pack<T*, Rest...> { T member; };
 template<class T> concept Any = true;
 template<class T> struct Constrained {};
 template<Any T> struct Constrained<T*> { T member; };
+template<class T> struct Signal {};
+template<class R> struct Signal<R(int)> { R member; };
 )");
 	SemanticAnalysis sema(compile_context, gSymbolTable);
 	Parser parser(lexer, compile_context, sema);
@@ -1842,8 +1844,85 @@ template<Any T> struct Constrained<T*> { T member; };
 		}
 		++patterns;
 	}
-	CHECK(patterns == 3);
-	CHECK(published_environments == 2);
+	CHECK(patterns == 4);
+	CHECK(published_environments == 3);
+}
+
+TEST_CASE("Function-signature partial patterns import canonical parameter environments") {
+	clearLegacyTypeTablesForTesting();
+	FrontendContext context;
+	initialize_native_types();
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const StringHandle return_name = StringTable::getOrInternStringHandle("R");
+	const StringHandle value_name = StringTable::getOrInternStringHandle("A");
+	TypeInfo& return_parameter = add_template_param_type(return_name, TypeCategory::UserDefined, 0);
+	TypeInfo& value_parameter = add_template_param_type(value_name, TypeCategory::UserDefined, 0);
+	TemplateParameterNode parameters[] = {TemplateParameterNode(return_name, Token{}), TemplateParameterNode(value_name, Token{})};
+	parameters[0].set_registered_type_index(return_parameter.type_index_);
+	parameters[1].set_registered_type_index(value_parameter.type_index_);
+	const TemplateDeclId primary = context.templateDecls().publishPrimaryClassTemplate(OwnerId{1}, StringTable::getOrInternStringHandle("Signal"));
+	const auto make_signature_syntax = [&](bool with_parameter, bool parameter_is_template) {
+		TypeSpecifierNode syntax(return_parameter.type_index_, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+		FunctionSignature signature;
+		signature.setReturnType(makeFunctionTypeFromSpecifier(syntax));
+		signature.return_type_index = syntax.type_index();
+		OverloadVector<FunctionType, 4> parameter_types;
+		if (with_parameter) {
+			const TypeIndex parameter_index = parameter_is_template
+				? value_parameter.type_index_
+				: nativeTypeIndex(TypeCategory::Int);
+			TypeSpecifierNode parameter(parameter_index, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+			parameter_types.push_back(makeFunctionTypeFromSpecifier(parameter));
+		}
+		signature.setParameterTypes(std::move(parameter_types));
+		syntax.set_function_signature(signature);
+		return syntax;
+	};
+	TemplateTypeArg arguments[1];
+	arguments[0].type_index = return_parameter.type_index_;
+	arguments[0].is_dependent = true;
+	arguments[0].dependent_name = return_name;
+	const auto import = [&](const TypeSpecifierNode& syntax) {
+		const ASTNode syntax_nodes[] = {ASTNode::emplace_node<TypeSpecifierNode>(syntax)};
+		return tryImportCanonicalPartialClassPattern(context, primary, parameters, arguments, syntax_nodes,
+			CanonicalPartialPatternOptions{});
+	};
+	const std::optional<TypeId> concrete = import(make_signature_syntax(true, false));
+	REQUIRE(concrete.has_value());
+	const TypeId concrete_function = table.templateArgumentType(table.templateSpecializationArguments(*concrete));
+	const CanonicalTypeNode concrete_node = table.node(concrete_function);
+	REQUIRE(concrete_node.kind == CanonicalTypeKind::Function);
+	CHECK(concrete_node.child == table.templateParameter(primary, 0));
+	const TypeId concrete_parameter = table.functionParameters(concrete_function);
+	REQUIRE(static_cast<bool>(concrete_parameter));
+	CHECK(table.functionParameterType(concrete_parameter) == table.builtin(CanonicalBuiltinKind::Int));
+	CHECK_FALSE(table.functionParameterNext(concrete_parameter));
+
+	// An empty parameter list stays a distinct function shape with a null
+	// parameter link rather than failing or reusing the one-parameter result.
+	const std::optional<TypeId> empty = import(make_signature_syntax(false, false));
+	REQUIRE(empty.has_value());
+	const TypeId empty_function = table.templateArgumentType(table.templateSpecializationArguments(*empty));
+	CHECK(table.node(empty_function).kind == CanonicalTypeKind::Function);
+	CHECK_FALSE(table.functionParameters(empty_function));
+	CHECK(empty_function != concrete_function);
+
+	// A parameter-shaped parameter alpha-normalizes to its partial parameter
+	// placeholder instead of keeping its registered TypeIndex.
+	const std::optional<TypeId> parameter = import(make_signature_syntax(true, true));
+	REQUIRE(parameter.has_value());
+	const TypeId parameter_function = table.templateArgumentType(table.templateSpecializationArguments(*parameter));
+	const TypeId parameter_link = table.functionParameters(parameter_function);
+	REQUIRE(static_cast<bool>(parameter_link));
+	CHECK(table.functionParameterType(parameter_link) == table.templateParameter(primary, 1));
+	CHECK(parameter_function != concrete_function);
+
+	// The published environment keys the same canonical pattern and splits a
+	// different parameter list.
+	const TemplateDeclId environment = context.templateDecls().publishClassPartialEnvironment(primary, *concrete, StringHandle{});
+	CHECK(environment != primary);
+	CHECK(context.templateDecls().publishClassPartialEnvironment(primary, *concrete, StringHandle{}) == environment);
+	CHECK(context.templateDecls().publishClassPartialEnvironment(primary, *empty, StringHandle{}) != environment);
 }
 
 TEST_CASE("Partial pattern normalization keeps deep declarators off the native stack") {
