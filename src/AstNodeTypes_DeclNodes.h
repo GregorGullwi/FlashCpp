@@ -241,6 +241,10 @@ struct StructTypeInfo {
 		return name;
 	}
 
+	// Published named-type entity for this record; empty until the declaration
+	// is published. This is semantic identity, never a spelling or TypeInfo slot.
+	EntityId typeEntity() const;
+
 	void classifyParticipation(StructEntityParticipation participation);
 	void markSemaReady();
 	bool isProgramEntity() const {
@@ -4329,6 +4333,18 @@ public:
 		journalDeclarationNodeRewrite(*this);
 		identifier_ = std::move(token);
 	}
+	// Identity: published class OwnerId of the out-of-line declarator owner.
+	// Empty when the owner is dependent or its declaration has not been
+	// published yet.
+	OwnerId qualified_declarator_owner_id() const { return qualified_declarator_owner_id_; }
+	void set_qualified_declarator_owner_id(OwnerId owner_id) {
+		journalDeclarationNodeRewrite(*this);
+		qualified_declarator_owner_id_ = owner_id;
+	}
+	bool has_qualified_declarator_owner_id() const { return static_cast<bool>(qualified_declarator_owner_id_); }
+	// Lookup key and diagnostic spelling only. This is interned spelling into
+	// the type table, never declaration, entity, or type identity; the OwnerId
+	// above is the identity.
 	void set_qualified_declarator_owner(StringHandle owner) {
 		journalDeclarationNodeRewrite(*this);
 		qualified_declarator_owner_ = owner;
@@ -4431,6 +4447,7 @@ public:
 		attribute_flags_ = other.attribute_flags_;
 		array_dimensions_ = other.array_dimensions_;
 		default_value_ = other.default_value_;
+		qualified_declarator_owner_id_ = other.qualified_declarator_owner_id_;
 		qualified_declarator_owner_ = other.qualified_declarator_owner_;
 		lexical_scope_id_ = other.lexical_scope_id_;
 	}
@@ -4461,6 +4478,9 @@ private:
 	bool is_unsized_array_;				// True for unsized arrays like int arr[] = {1, 2, 3}
 	uint8_t attribute_flags_ = 0; // Bit 0: noreturn on the declarator-id, never part of its function type.
 	std::optional<ASTNode> default_value_;  // Default argument value for function parameters
+	// Identity of the out-of-line declarator owner; empty for dependent owners.
+	OwnerId qualified_declarator_owner_id_;
+	// Lookup key and diagnostic spelling only; never identity.
 	StringHandle qualified_declarator_owner_;
 	StringHandle mangled_name_;
 	ScopeId lexical_scope_id_;

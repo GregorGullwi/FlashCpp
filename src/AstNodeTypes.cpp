@@ -2422,6 +2422,13 @@ std::string TypeSpecifierNode::getReadableString() const {
 
 // StructTypeInfo method implementations
 
+EntityId StructTypeInfo::typeEntity() const {
+	if (declaration_node != nullptr && declaration_node->has_entity_id()) {
+		return declaration_node->entity_id();
+	}
+	return EntityId{};
+}
+
 void StructTypeInfo::classifyParticipation(StructEntityParticipation participation) {
 	if (participation == StructEntityParticipation::Unclassified) {
 		throw InternalError("StructTypeInfo cannot transition back to Unclassified participation");

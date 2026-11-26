@@ -1492,10 +1492,20 @@ ParseResult Parser::parse_declarator(
 				// pointer-to-reference rejection ([dcl.ref]/5).
 				Token first_pointer_token;
 				// Out-of-line declarator-id owner, for `int (*Owner::name)[N]`.
+				// The spelling is the type-table lookup key; the OwnerId is the
+				// published class identity resolved from it.
 				StringHandle qualified_declarator_owner;
+				OwnerId qualified_declarator_owner_id;
 				auto attach_qualified_owner = [&](ASTNode& node) {
-					if (qualified_declarator_owner.isValid() && node.is<DeclarationNode>()) {
-						node.as<DeclarationNode>().set_qualified_declarator_owner(qualified_declarator_owner);
+					if (!node.is<DeclarationNode>()) {
+						return;
+					}
+					DeclarationNode& declaration = node.as<DeclarationNode>();
+					if (qualified_declarator_owner.isValid()) {
+						declaration.set_qualified_declarator_owner(qualified_declarator_owner);
+					}
+					if (qualified_declarator_owner_id) {
+						declaration.set_qualified_declarator_owner_id(qualified_declarator_owner_id);
 					}
 				};
 				CallingConvention member_function_calling_convention =
@@ -1604,31 +1614,17 @@ ParseResult Parser::parse_declarator(
 						// out-of-line static data-member definition
 						// `int (*Registry::table)[2][4]` or `int Outer::Inner::data;`.
 						// The member-pointer form (`Owner::*`) was already handled above.
-						StringBuilder qualified_owner_builder;
-						bool has_qualified_owner = false;
-						while (peek() == "::"_tok) {
-							if (has_qualified_owner) {
-								qualified_owner_builder.append("::");
-							}
-							qualified_owner_builder.append(identifier.value());
-							has_qualified_owner = true;
-							advance();
-							if (!peek().is_identifier()) {
+						if (peek() == "::"_tok || peek() == "<"_tok) {
+							NestedNameSpecifierParse qualified = parseNestedNameSpecifier(identifier);
+							if (!qualified.has_terminal) {
 								failed = true;
 								break;
 							}
-							identifier = peek_info();
-							advance();
-						}
-						if (has_qualified_owner) {
-							qualified_declarator_owner = StringTable::getOrInternStringHandle(qualified_owner_builder.commit());
-						} else {
-							// Every StringBuilder must be committed or reset, including
-							// the common unqualified declarator case.
-							qualified_owner_builder.commit();
-						}
-						if (failed) {
-							break;
+							identifier = qualified.terminal;
+							if (!qualified.segments.empty()) {
+								qualified_declarator_owner = resolveNestedNameSpecifierOwner(qualified);
+								qualified_declarator_owner_id = resolveDeclaratorOwnerId(qualified_declarator_owner);
+							}
 						}
 						frame.after_direct = true;
 					}
@@ -2560,6 +2556,27 @@ FlashCpp::DeclarationSpecifiers Parser::parse_declaration_specifiers() {
 	}
 
 	return specs;
+}
+
+OwnerId Parser::resolveDeclaratorOwnerId(StringHandle owner_spelling) const {
+	if (!owner_spelling.isValid()) {
+		return OwnerId{};
+	}
+	const TypeInfo* type_info = findTypeByName(owner_spelling);
+	if (type_info == nullptr) {
+		return OwnerId{};
+	}
+	const StructTypeInfo* struct_info = type_info->getStructInfo();
+	if (struct_info == nullptr) {
+		const TypeInfo* resolved_type_info = tryGetTypeInfo(type_info->type_index_);
+		if (resolved_type_info != nullptr && resolved_type_info != type_info) {
+			struct_info = resolved_type_info->getStructInfo();
+		}
+	}
+	if (struct_info == nullptr) {
+		return OwnerId{};
+	}
+	return ownerIdFromClassEntity(struct_info->typeEntity());
 }
 
 // Phase 2 Consolidation: Lookahead to detect if '(' starts function parameters

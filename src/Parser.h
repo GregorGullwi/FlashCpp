@@ -4042,6 +4042,48 @@ private:
 	};
 	MemberPointerOwnerParse parseMemberPointerOwnerAfterName(Token class_name_token);
 
+	// One nested-name-specifier component: `name` or `name<template-args>`
+	// followed by `::`. `has_template_keyword` records an explicit `::template`
+	// disambiguator. Template arguments are kept in parsed form so callers can
+	// materialize a class-template owner without re-reading the token stream.
+	struct NestedNameSpecifierSegment {
+		Token identifier{};
+		StringHandle name{};
+		TemplateArgumentVector template_arguments;
+		bool has_template_keyword = false;
+		bool has_template_arguments = false;
+	};
+
+	// A parsed `::? segment (`::` segment)*` followed by the unqualified name it
+	// qualifies. `segments` are the specifier components; `terminal` is the
+	// declarator-id after the final `::`. `has_terminal` is false when the token
+	// after the last `::` is not an identifier, which lets the out-of-line path
+	// keep handling `operator` names.
+	struct NestedNameSpecifierParse {
+		std::vector<NestedNameSpecifierSegment> segments;
+		bool has_leading_global = false;
+		Token terminal{};
+		bool has_terminal = false;
+		StringHandle ownerSpelling() const;
+	};
+
+	// Parses a nested-name-specifier at the current token. Pass the first
+	// identifier as `already_consumed_head` when the caller has already consumed
+	// it; the helper then owns its optional template-id arguments and every
+	// following `::segment`. The terminal unqualified name is consumed and
+	// returned, so one parse supplies both the owner and the member name.
+	NestedNameSpecifierParse parseNestedNameSpecifier(std::optional<Token> already_consumed_head);
+
+	// Interns the canonical owner spelling used as the type-table lookup key.
+	// Template-id segments are materialized so `N::S<int>` becomes the
+	// instantiated class name rather than an unresolved spelling.
+	StringHandle resolveNestedNameSpecifierOwner(const NestedNameSpecifierParse& parsed);
+
+	// Resolve an out-of-line declarator owner spelling to the published class
+	// OwnerId. The spelling is a type-system lookup key only; a dependent or
+	// not-yet-published owner yields an invalid id.
+	OwnerId resolveDeclaratorOwnerId(StringHandle owner_spelling) const;
+
 	// Publish mop/mfp owner identity from a prior parseMemberPointerOwnerAfterName
 	// result: TypeId for specializations, else EntityId via tryBind. Spelling is
 	// retained only as a lexical projection for has_member_class().

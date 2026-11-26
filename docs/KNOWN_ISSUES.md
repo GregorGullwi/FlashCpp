@@ -619,6 +619,26 @@ accepted as another attachment instead of producing a redefinition diagnostic,
 and the class-template conflict check covers concrete arithmetic member types;
 a dependent element type is validated against the instantiated declaration.
 
+An out-of-line definition of a static data member of a nested class template
+(`Outer<T>::template Inner<U>::data`) parses but does not attach its initializer
+to the nested instantiations; the template member path needs to share the
+nested-name-specifier owner resolution. A leading `::` before an out-of-line
+declarator-id also fails before the shared helper sees it because the
+type-and-name parser expects the first owner identifier. An out-of-line array
+definition of a static member of an explicitly specialized class template
+(`template<> struct S<int> { static int values[2]; };` followed by
+`int S<int>::values[2] = ...;`) is still rejected as a conflicting type even
+though both declarations have the same array shape.
+
+The out-of-line declarator-id carries the owner's class `OwnerId`, but the
+legacy type registry is still spelling-keyed. The owner spelling therefore
+remains on the declaration as the lookup key, and the carried identity is only
+cross-checked against the spelling resolution. The registry must answer by
+`OwnerId`/`EntityId` before the spelling can be removed. A template-id owner
+whose resolved struct declaration has no published entity (for example an
+explicitly specialized class template) carries no identity and stays on the
+spelling path.
+
 ## NRVO coverage and exception lifetime
 
 The safe NRVO slice covers top-level named locals in lambda call operators and
