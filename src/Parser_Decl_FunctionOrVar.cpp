@@ -368,99 +368,87 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		discard_saved_token(declaration_start);
 		StringHandle class_name;
 		Token function_name_token;
+		// The innermost parsed owner segment is the best source location for an
+		// unknown or non-class owner; the structural declarator path only keeps
+		// the owner spelling, so it falls back to the declarator-id token.
+		Token class_error_token = decl_node.identifier_token();
 		[[maybe_unused]] bool is_operator = false;
 
 		if (has_qualified_declarator_owner) {
 			class_name = decl_node.qualified_declarator_owner();
 			function_name_token = decl_node.identifier_token();
 		} else if (peek() == "::"_tok) {
-			advance();  // consume '::'
-			// Consume the remaining nested-name-specifier so that
-			// `Outer::Inner::data` and `N::S::data` look up the innermost owner
-			// instead of stopping at the first qualifier.
-			StringBuilder owner_builder;
-			struct OwnerBuilderGuard { StringBuilder& builder; ~OwnerBuilderGuard() { builder.reset(); } } owner_builder_guard{owner_builder};
-			owner_builder.append(decl_node.identifier_token().value());
-			while (true) {
-				if (peek() == "operator"_tok) {
-					// Out-of-line operator definition: ClassName::operator=(...) etc.
-					is_operator = true;
-					function_name_token = peek_info();
-					advance();  // consume 'operator'
+			// Parse the nested-name-specifier once: the segments supply the owner
+			// lookup key and the terminal token is the member name. The helper
+			// handles identifier chains, `template` disambiguators, and template-id
+			// owners such as `N::S<int>::data`.
+			NestedNameSpecifierParse parsed = parseNestedNameSpecifier(decl_node.identifier_token());
+			class_name = resolveNestedNameSpecifierOwner(parsed);
+			decl_node.set_qualified_declarator_owner_id(resolveDeclaratorOwnerId(class_name));
+			if (!parsed.segments.empty()) {
+				class_error_token = parsed.segments.back().identifier;
+			}
+			if (parsed.has_terminal) {
+				function_name_token = parsed.terminal;
+			} else if (peek() == "operator"_tok) {
+				// Out-of-line operator definition: ClassName::operator=(...) etc.
+				is_operator = true;
+				function_name_token = peek_info();
+				advance();	// consume 'operator'
 
-					// Consume the operator symbol (=, ==, !=, <<, >>, etc.)
-					if (peek().is_eof()) {
-						return error(DiagnosticId::OutOfLineDefinitionMalformedTarget, function_name_token,
-							"Expected an operator symbol after 'operator' in an out-of-line definition");
-					}
+				// Consume the operator symbol (=, ==, !=, <<, >>, etc.)
+				if (peek().is_eof()) {
+					return error(DiagnosticId::OutOfLineDefinitionMalformedTarget, function_name_token,
+						"Expected an operator symbol after 'operator' in an out-of-line definition");
+				}
 
-					// Build the full operator name using StringBuilder
-					StringBuilder operator_builder;
-					operator_builder.append("operator");
-					std::string_view op = peek_info().value();
-					operator_builder.append(op);
-					advance();
+				// Build the full operator name using StringBuilder
+				StringBuilder operator_builder;
+				operator_builder.append("operator");
+				std::string_view op = peek_info().value();
+				operator_builder.append(op);
+				advance();
 
-					// Handle multi-character operators like >>=, <<=, etc.
-					while (!peek().is_eof()) {
-						std::string_view next = peek_info().value();
-						if (next == "=" || next == ">" || next == "<") {
-							// Could be part of >>=, <<=, etc.
-							if (op == ">" && (next == ">" || next == "=")) {
-								operator_builder.append(next);
-								advance();
-								op = next;
-							} else if (op == "<" && (next == "<" || next == "=")) {
-								operator_builder.append(next);
-								advance();
-								op = next;
-							} else if ((op == ">" || op == "<" || op == "!" || op == "=") && next == "=") {
-								operator_builder.append(next);
-								advance();
-								break;
-							} else {
-								break;
-							}
+				// Handle multi-character operators like >>=, <<=, etc.
+				while (!peek().is_eof()) {
+					std::string_view next = peek_info().value();
+					if (next == "=" || next == ">" || next == "<") {
+						// Could be part of >>=, <<=, etc.
+						if (op == ">" && (next == ">" || next == "=")) {
+							operator_builder.append(next);
+							advance();
+							op = next;
+						} else if (op == "<" && (next == "<" || next == "=")) {
+							operator_builder.append(next);
+							advance();
+							op = next;
+						} else if ((op == ">" || op == "<" || op == "!" || op == "=") && next == "=") {
+							operator_builder.append(next);
+							advance();
+							break;
 						} else {
 							break;
 						}
+					} else {
+						break;
 					}
+				}
 
-					// Create a token with the full operator name
-					std::string_view operator_symbol = operator_builder.commit();
-					function_name_token = Token(Token::Type::Identifier, operator_symbol, function_name_token.line(), function_name_token.column(),
-						function_name_token.file_index());
-					break;
-				}
-				if (peek() == "template"_tok) {
-					advance();	// `::template name` disambiguator
-				}
-				if (!peek().is_identifier()) {
-					return error(DiagnosticId::OutOfLineDefinitionMalformedTarget, peek_info(),
-						"Expected a function name or 'operator' after '::' in an out-of-line definition");
-				}
-				const Token qualifier_or_member = peek_info();
-				advance();
-				if (peek() == "::"_tok) {
-					owner_builder.append("::").append(qualifier_or_member.value());
-					advance();	// consume '::'
-					continue;
-				}
-				function_name_token = qualifier_or_member;
-				break;
+				// Create a token with the full operator name
+				std::string_view operator_symbol = operator_builder.commit();
+				function_name_token = Token(Token::Type::Identifier, operator_symbol, function_name_token.line(), function_name_token.column(),
+					function_name_token.file_index());
+			} else {
+				return error(DiagnosticId::OutOfLineDefinitionMalformedTarget, peek_info(),
+					"Expected a function name or 'operator' after '::' in an out-of-line definition");
 			}
-			class_name = StringTable::getOrInternStringHandle(owner_builder.commit());
 		}
 
 		// Find the struct in the type registry
 		auto struct_iter = getTypesByNameMap().find(class_name);
 		if (struct_iter == getTypesByNameMap().end()) {
-			return error(DiagnosticId::OutOfLineDefinitionUnknownClass, decl_node.identifier_token(),
-				StringBuilder()
-					.append("Unknown class '")
-					.append(class_name.view())
-					.append("' in an out-of-line member definition")
-					.commit());
+			return error(DiagnosticId::OutOfLineDefinitionUnknownClass, class_error_token, StringBuilder()
+				.append("Unknown class '").append(class_name.view()).append("' in an out-of-line member definition").commit());
 		}
 
 		TypeInfo* type_info = struct_iter->second;
@@ -475,12 +463,21 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			}
 		}
 		if (!struct_info) {
-			return error(DiagnosticId::OutOfLineDefinitionNotAClass, decl_node.identifier_token(),
-				StringBuilder()
-					.append("'")
-					.append(class_name.view())
-					.append("' is not a class type in an out-of-line member definition")
-					.commit());
+			return error(DiagnosticId::OutOfLineDefinitionNotAClass, class_error_token, StringBuilder().append("'").append(class_name.view())
+				.append("' is not a class type in an out-of-line member definition").commit());
+		}
+
+		// The carried OwnerId is the declarator owner's identity. The spelling
+		// only found the TypeInfo, so the two must name the same class entity
+		// when both are available. A dependent or unpublished owner has no
+		// identity yet and keeps the spelling-only lookup.
+		const OwnerId resolved_owner_id = ownerIdFromClassEntity(struct_info->typeEntity());
+		if (decl_node.has_qualified_declarator_owner_id() && resolved_owner_id && decl_node.qualified_declarator_owner_id() != resolved_owner_id) {
+			throw InternalError(std::string("out-of-line declarator owner '") + std::string(class_name.view()) +
+				"' resolved to a different class entity than its carried OwnerId");
+		}
+		if (!decl_node.has_qualified_declarator_owner_id() && resolved_owner_id) {
+			decl_node.set_qualified_declarator_owner_id(resolved_owner_id);
 		}
 
 		// Check if this is an out-of-line static member variable definition with parenthesized initializer
@@ -624,6 +621,14 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		// Create a new declaration node with the function name
 		ASTNode return_type_node = decl_node.type_node();
 		auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
+		// The function's declaration node is the persistent form of the same
+		// out-of-line declarator-id, so it keeps the owner identity and spelling.
+		if (decl_node.has_qualified_declarator_owner_id()) {
+			func_decl_ref.set_qualified_declarator_owner_id(decl_node.qualified_declarator_owner_id());
+		}
+		if (decl_node.has_qualified_declarator_owner()) {
+			func_decl_ref.set_qualified_declarator_owner(decl_node.qualified_declarator_owner());
+		}
 
 		// Create the FunctionDeclarationNode with parent struct name (marks it as member function)
 		auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref, class_name);
@@ -1975,6 +1980,14 @@ ParseResult Parser::finalize_static_member_init(StructStaticMember* static_membe
 	auto [var_decl_node, var_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, name_token);
 	if (decl_node.has_mangled_name()) {
 		var_decl_ref.set_mangled_name(decl_node.mangled_name());
+	}
+	// The replacement declaration represents the same out-of-line declarator-id,
+	// so it keeps the owner identity and its spelling lookup key.
+	if (decl_node.has_qualified_declarator_owner_id()) {
+		var_decl_ref.set_qualified_declarator_owner_id(decl_node.qualified_declarator_owner_id());
+	}
+	if (decl_node.has_qualified_declarator_owner()) {
+		var_decl_ref.set_qualified_declarator_owner(decl_node.qualified_declarator_owner());
 	}
 
 	if (init_expr.has_value()) {

@@ -1715,6 +1715,129 @@ std::string_view Parser::consume_qualified_name_suffix(std::string_view base_nam
 	return builder.commit();
 }
 
+StringHandle Parser::NestedNameSpecifierParse::ownerSpelling() const {
+	if (segments.empty()) {
+		return StringHandle{};
+	}
+	StringBuilder builder;
+	for (size_t index = 0; index < segments.size(); ++index) {
+		if (index != 0) {
+			builder.append("::"sv);
+		}
+		builder.append(segments[index].name.view());
+	}
+	return StringTable::getOrInternStringHandle(builder.commit());
+}
+
+Parser::NestedNameSpecifierParse Parser::parseNestedNameSpecifier(std::optional<Token> already_consumed_head) {
+	NestedNameSpecifierParse parsed;
+	NestedNameSpecifierSegment first;
+	if (already_consumed_head.has_value()) {
+		first.identifier = *already_consumed_head;
+		first.name = first.identifier.handle();
+	} else {
+		if (peek() == "::"_tok) {
+			parsed.has_leading_global = true;
+			advance();
+		}
+		if (!peek().is_identifier()) {
+			return parsed;
+		}
+		first.identifier = peek_info();
+		first.name = first.identifier.handle();
+		advance();
+	}
+
+	// Consume the template-id arguments and the trailing `::` of an owner
+	// segment. A terminal name keeps its `<...>` tokens unconsumed so the
+	// function or variable parser still sees them; only a component that is
+	// followed by `::` is a nested-name-specifier segment.
+	auto consume_segment_suffix = [&](NestedNameSpecifierSegment& segment) {
+		if (peek() == "<"_tok) {
+			SaveHandle argument_start = save_token_position();
+			std::optional<TemplateArgumentVector> arguments = parse_explicit_template_arguments();
+			if (arguments.has_value() && peek() == "::"_tok) {
+				segment.template_arguments = std::move(*arguments);
+				segment.has_template_arguments = true;
+				discard_saved_token(argument_start);
+				advance();
+				return true;
+			}
+			restore_token_position(argument_start);
+			discard_saved_token(argument_start);
+			return false;
+		}
+		if (peek() == "::"_tok) {
+			advance();
+			return true;
+		}
+		return false;
+	};
+
+	if (!consume_segment_suffix(first)) {
+		parsed.terminal = first.identifier;
+		parsed.has_terminal = true;
+		return parsed;
+	}
+	parsed.segments.push_back(std::move(first));
+
+	while (true) {
+		bool has_template_keyword = false;
+		if (peek() == "template"_tok) {
+			has_template_keyword = true;
+			advance();
+		}
+		if (!peek().is_identifier()) {
+			return parsed;
+		}
+		NestedNameSpecifierSegment segment;
+		segment.identifier = peek_info();
+		segment.name = segment.identifier.handle();
+		segment.has_template_keyword = has_template_keyword;
+		advance();
+		if (consume_segment_suffix(segment)) {
+			parsed.segments.push_back(std::move(segment));
+			continue;
+		}
+		parsed.terminal = segment.identifier;
+		parsed.has_terminal = true;
+		return parsed;
+	}
+}
+
+StringHandle Parser::resolveNestedNameSpecifierOwner(const NestedNameSpecifierParse& parsed) {
+	const bool has_template_id_segment = std::ranges::any_of(parsed.segments,
+		[](const NestedNameSpecifierSegment& segment) { return segment.has_template_arguments; });
+	if (!has_template_id_segment) {
+		return parsed.ownerSpelling();
+	}
+	StringHandle owner{};
+	for (const NestedNameSpecifierSegment& segment : parsed.segments) {
+		StringHandle qualified_name = segment.name;
+		if (owner.isValid()) {
+			qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(owner).append("::"sv).append(segment.name).commit());
+		}
+		if (!segment.has_template_arguments) {
+			owner = qualified_name;
+			continue;
+		}
+		// An unqualified owner written inside a namespace still needs the
+		// namespace-qualified fallback the out-of-line template lookup uses.
+		StringHandle fallback_name = qualified_name;
+		if (!owner.isValid()) {
+			NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
+			if (!current_namespace.isGlobal()) {
+				fallback_name = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, qualified_name);
+			}
+		}
+		AliasTemplateMaterializationResult materialized = materializePrimaryTemplateOwnerForLookup(qualified_name.view(),
+			fallback_name.view(), segment.template_arguments);
+		StringHandle canonical_name = materialized.canonicalNameHandle();
+		owner = canonical_name.isValid() ? canonical_name : qualified_name;
+	}
+	return owner;
+}
+
 void Parser::skip_constructor_member_initializer_list() {
 	if (peek() != ":"_tok) {
 		return;
