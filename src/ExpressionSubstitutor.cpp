@@ -5844,14 +5844,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 				!canonical_builtin->has_ordered_declarator()) {
 				applyOuterDeclaratorShapeForSubstitution(*canonical_builtin, type);
 			}
-			if (type.has_member_class()) {
-				canonical_builtin->set_member_class_name(type.member_class_name());
-				if (type.has_member_class_type_id()) {
-					canonical_builtin->set_member_class_type_id(type.member_class_type_id());
-				} else if (type.has_member_class_entity()) {
-					canonical_builtin->set_member_class_entity(type.member_class_entity());
-				}
-			}
+			applyMemberClassIdentityForSubstitution(*canonical_builtin, type);
 			return *canonical_builtin;
 		}
 	}

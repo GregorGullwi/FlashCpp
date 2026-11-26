@@ -1768,6 +1768,16 @@ void Parser::consume_type_id_abstract_declarators(
 	}
 }
 
+void Parser::consumeSubstitutedTypeIdDeclarators(TypeSpecifierNode& type_spec, const TypeSpecifierNode& pattern) {
+	consume_pointer_ref_modifiers(type_spec);
+	if (!pattern.has_member_class()) {
+		return;
+	}
+	while (tryConsumeMemberPointerDeclarator(type_spec)) {
+		consume_pointer_ref_modifiers(type_spec);
+	}
+}
+
 void Parser::consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type) {
 	consume_pointer_ref_modifiers(target_type);
 }

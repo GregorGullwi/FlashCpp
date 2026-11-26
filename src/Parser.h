@@ -4795,6 +4795,11 @@ private:	 // Resume private methods
 	void consume_type_id_abstract_declarators(
 		TypeSpecifierNode& type_spec,
 		std::vector<ASTNode>* array_bound_expressions);
+	// Consume the ptr-operator chain of a reparsed type-id. Member-pointer
+	// declarators are only attempted when the source pattern owns one, so a
+	// plain trailing return keeps the pointer-only scan without replaying the
+	// identifier that follows it.
+	void consumeSubstitutedTypeIdDeclarators(TypeSpecifierNode& type_spec, const TypeSpecifierNode& pattern);
 	void consume_cast_type_id_postfix_modifiers(TypeSpecifierNode& type_spec); // Consume postfix cv-qualifiers and trailing ptr/ref modifiers in a cast type-id
 	bool consume_cast_type_id_paren_declarator(TypeSpecifierNode& type_spec); // Consume a parenthesized abstract-declarator group in a cast type-id
 	// Parse the body of a parenthesized reference-to-array declarator group:
