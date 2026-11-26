@@ -483,6 +483,44 @@ void Parser::bindMemberPointerOwner(TypeSpecifierNode& type_spec, Token class_na
 	applyMemberPointerOwner(type_spec, parseMemberPointerOwnerAfterName(class_name_token));
 }
 
+std::optional<CVQualifier> Parser::tryConsumeMemberPointerDeclaratorAfterCandidate(TypeSpecifierNode& type_spec, Token owner_token,
+	SaveHandle failure_position) {
+	MemberPointerOwnerParse owner = parseMemberPointerOwnerAfterName(owner_token);
+	if (!consume("::"_tok)) {
+		restore_token_position(failure_position);
+		return std::nullopt;
+	}
+	// [dcl.mptr]: a nested-name-specifier owner can carry further scope segments
+	// before the final `*` (`N::C::*`, `Outer::Inner::*`). Every segment reuses
+	// the single-owner parse so a template owner keeps its specialization
+	// identity, and the joined spelling stays the type-table lookup key.
+	StringBuilder owner_spelling;
+	owner_spelling.append(owner.spelling);
+	while (!consume("*"_tok)) {
+		if (!peek().is_identifier()) {
+			owner_spelling.reset();
+			restore_token_position(failure_position);
+			return std::nullopt;
+		}
+		const Token segment_token = peek_info();
+		advance(); // consume the scope segment name
+		owner = parseMemberPointerOwnerAfterName(segment_token);
+		owner_spelling.append("::"sv).append(owner.spelling);
+		if (!consume("::"_tok)) {
+			owner_spelling.reset();
+			restore_token_position(failure_position);
+			return std::nullopt;
+		}
+	}
+	owner.spelling = StringTable::getOrInternStringHandle(owner_spelling.commit());
+	applyMemberPointerOwner(type_spec, owner);
+	CVQualifier member_pointer_cv = parse_cv_qualifiers();
+	skip_noop_gnu_qualifiers();
+	member_pointer_cv |= parse_cv_qualifiers();
+	FLASH_LOG(Parser, Debug, "Consumed pointer-to-member declarator: ", owner_token.value(), "::*");
+	return member_pointer_cv;
+}
+
 bool Parser::tryConsumeMemberPointerDeclarator(TypeSpecifierNode& type_spec) {
 	if (!peek().is_identifier()) {
 		return false;
@@ -490,18 +528,12 @@ bool Parser::tryConsumeMemberPointerDeclarator(TypeSpecifierNode& type_spec) {
 	SaveHandle saved_pos = save_token_position();
 	Token class_name_token = peek_info();
 	advance(); // consume class name
-	const MemberPointerOwnerParse owner = parseMemberPointerOwnerAfterName(class_name_token);
-	if (!consume("::"_tok) || !consume("*"_tok)) {
-		restore_token_position(saved_pos);
+	const std::optional<CVQualifier> member_pointer_cv = tryConsumeMemberPointerDeclaratorAfterCandidate(type_spec, class_name_token, saved_pos);
+	discard_saved_token(saved_pos);
+	if (!member_pointer_cv.has_value()) {
 		return false;
 	}
-	applyMemberPointerOwner(type_spec, owner);
-	CVQualifier member_pointer_cv = parse_cv_qualifiers();
-	skip_noop_gnu_qualifiers();
-	member_pointer_cv |= parse_cv_qualifiers();
-	type_spec.add_pointer_level(member_pointer_cv);
-	FLASH_LOG(Parser, Debug, "Consumed pointer-to-member declarator: ", class_name_token.value(), "::*");
-	discard_saved_token(saved_pos);
+	type_spec.add_pointer_level(*member_pointer_cv);
 	return true;
 }
 
@@ -883,17 +915,12 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 			break;
 		}
 		SaveHandle owner_start = save_token_position();
-		const MemberPointerOwnerParse owner = parseMemberPointerOwnerAfterName(identifier_token);
-		if (!consume("::"_tok) || !consume("*"_tok)) {
-			restore_token_position(owner_start);
+		const std::optional<CVQualifier> member_pointer_cv = tryConsumeMemberPointerDeclaratorAfterCandidate(type_spec, identifier_token, owner_start);
+		discard_saved_token(owner_start);
+		if (!member_pointer_cv.has_value()) {
 			break;
 		}
-		applyMemberPointerOwner(type_spec, owner);
-		CVQualifier member_pointer_cv = parse_cv_qualifiers();
-		skip_noop_gnu_qualifiers();
-		member_pointer_cv |= parse_cv_qualifiers();
-		type_spec.add_pointer_level(member_pointer_cv);
-		discard_saved_token(owner_start);
+		type_spec.add_pointer_level(*member_pointer_cv);
 		consume_pointer_ref_modifiers(type_spec);
 		if (std::optional<ParseResult> parenthesized = parseParenthesizedDeclarator()) {
 			return std::move(*parenthesized);
@@ -1579,29 +1606,22 @@ ParseResult Parser::parse_declarator(
 							SaveHandle member_pointer_start = save_token_position();
 							Token owner_token = peek_info();
 							advance();
-							const MemberPointerOwnerParse owner =
-								parseMemberPointerOwnerAfterName(owner_token);
-							if (consume("::"_tok) && consume("*"_tok)) {
-								CVQualifier member_cv = parse_cv_qualifiers();
-								skip_noop_gnu_qualifiers();
-								member_cv |= parse_cv_qualifiers();
-								applyMemberPointerOwner(base_type, owner);
+							const std::optional<CVQualifier> member_cv = tryConsumeMemberPointerDeclaratorAfterCandidate(base_type, owner_token, member_pointer_start);
+							discard_saved_token(member_pointer_start);
+							if (member_cv.has_value()) {
 								frame.prefixes.push_back(
 									base_type.has_member_class_type_id()
 										? DeclaratorComponent::memberPointer(
 											base_type.member_class_type_id(), false,
-											member_cv)
+											*member_cv)
 										: DeclaratorComponent::memberPointer(
 											base_type.member_class_entity(), false,
-											member_cv));
+											*member_cv));
 								member_function_calling_convention =
 									frame.calling_convention;
 								has_member_pointer = true;
 								has_declared_member_pointer = true;
-								discard_saved_token(member_pointer_start);
 								continue;
-							} else {
-								restore_token_position(member_pointer_start);
 							}
 						}
 						if (peek() == "("_tok) {

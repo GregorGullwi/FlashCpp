@@ -4098,6 +4098,11 @@ private:
 	// its owner and pointer level to the type specifier. Restores the token
 	// position and returns false when the next tokens are not one.
 	bool tryConsumeMemberPointerDeclarator(TypeSpecifierNode& type_spec);
+	// The same ptr-operator after the caller consumed the first owner segment.
+	// `failure_position` is restored when the tokens are not a member pointer.
+	// Returns the member-pointer cv-qualifier on success; the caller decides
+	// whether it becomes a flat pointer level or an ordered component.
+	std::optional<CVQualifier> tryConsumeMemberPointerDeclaratorAfterCandidate(TypeSpecifierNode& type_spec, Token owner_token, SaveHandle failure_position);
 
 		// Template name extraction helpers - extract base template names from mangled/instantiated names
 	std::string_view extract_base_template_name(std::string_view mangled_name);	// Extract by searching for underscores left-to-right
@@ -4802,6 +4807,9 @@ private:	 // Resume private methods
 	void consumeSubstitutedTypeIdDeclarators(TypeSpecifierNode& type_spec, const TypeSpecifierNode& pattern);
 	void consume_cast_type_id_postfix_modifiers(TypeSpecifierNode& type_spec); // Consume postfix cv-qualifiers and trailing ptr/ref modifiers in a cast type-id
 	bool consume_cast_type_id_paren_declarator(TypeSpecifierNode& type_spec); // Consume a parenthesized abstract-declarator group in a cast type-id
+	// A cast target reads the member-pointer representation the cast lowering
+	// expects: the member-object-pointer category with explicit pointee syntax.
+	void normalizeCastTypeIdMemberObjectPointer(TypeSpecifierNode& type_spec);
 	// Parse the body of a parenthesized reference-to-array declarator group:
 	// "&"|"&&" [identifier] ")" "[" N "]"... , shared by named declarators,
 	// abstract type-ids and typedef aliases. The caller must have already
