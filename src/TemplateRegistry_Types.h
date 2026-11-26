@@ -1370,6 +1370,12 @@ inline TemplateTypeArg rebindDependentTemplateTypeArg(
 	for (const auto& pointer_cv : dependent_pattern.pointer_cv_qualifiers) {
 		rebound_arg.pointer_cv_qualifiers.push_back(pointer_cv);
 	}
+	// A flat member-pointer spelling (`T Owner::*`) carries its owner beside the
+	// pointer level. The pattern owns the outer member pointer, so the rebound
+	// argument must keep that owner instead of degrading to a plain pointer.
+	if (dependent_pattern.member_class_name.isValid()) {
+		rebound_arg.member_class_name = dependent_pattern.member_class_name;
+	}
 	// Rebinding `T&` / `T&&` must follow ordinary reference-collapsing rules:
 	// an outer lvalue reference always wins, while an outer rvalue reference only
 	// applies when the substituted argument was not already a reference.

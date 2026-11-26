@@ -2771,6 +2771,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 		}
 		if (rebound_arg.has_value()) {
 			substituted_type_spec = makeTypeSpecifierFromTemplateTypeArg(*rebound_arg, substituted_type_spec.token());
+			// Flat member-pointer targets keep the owner on the pattern spec, not
+			// on the rebound argument, so restore its EntityId/TypeId authority.
+			applyMemberClassIdentityForSubstitution(substituted_type_spec, alias_decl_pattern_spec);
 			substituted_type_index = substituted_type_spec.type_index();
 			substituted_type = substituted_type_spec.type();
 		}

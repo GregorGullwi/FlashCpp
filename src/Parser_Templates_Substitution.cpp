@@ -860,6 +860,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 				substituted_spec.set_reference_qualifier(collapseReferenceQualifiers(
 					arg.ref_qualifier,
 					type_spec.reference_qualifier()));
+				applyMemberClassIdentityForSubstitution(substituted_spec, type_spec);
 			}
 			if (orderedDeclaratorFormsPointerToReference(substituted_spec)) {
 				throw makeStructuredCompileError(

@@ -203,14 +203,7 @@ void applyOuterTypeModifiers(TypeSpecifierNode& target, const TypeSpecifierNode&
 	}
 	// Member-pointer owners are identity, not pointee sugar. Preserve spelling as
 	// a lexical projection and TypeId/EntityId as authority through substitution.
-	if (source.has_member_class()) {
-		target.set_member_class_name(source.member_class_name());
-		if (source.has_member_class_type_id()) {
-			target.set_member_class_type_id(source.member_class_type_id());
-		} else if (source.has_member_class_entity()) {
-			target.set_member_class_entity(source.member_class_entity());
-		}
-	}
+	applyMemberClassIdentityForSubstitution(target, source);
 }
 
 } // namespace

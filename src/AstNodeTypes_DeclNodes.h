@@ -3282,6 +3282,21 @@ inline bool resolveOrderedDeclaratorArrayBounds(
 	return true;
 }
 
+// A member-pointer owner is semantic identity, not pointee sugar. Carry the
+// published spelling and authority from an outer pattern onto a substituted
+// type so a dependent pointee cannot turn `T Owner::*` into a plain pointer.
+inline void applyMemberClassIdentityForSubstitution(TypeSpecifierNode& target, const TypeSpecifierNode& pattern) {
+	if (!pattern.has_member_class()) {
+		return;
+	}
+	target.set_member_class_name(pattern.member_class_name());
+	if (pattern.has_member_class_type_id()) {
+		target.set_member_class_type_id(pattern.member_class_type_id());
+	} else if (pattern.has_member_class_entity()) {
+		target.set_member_class_entity(pattern.member_class_entity());
+	}
+}
+
 inline void applyOuterDeclaratorShapeForSubstitution(
 	TypeSpecifierNode& target,
 	const TypeSpecifierNode& pattern) {
@@ -3321,14 +3336,7 @@ inline void applyOuterDeclaratorShapeForSubstitution(
 	if (pattern.has_function_signature() && !target.has_function_signature()) {
 		target.set_function_signature(pattern.function_signature());
 	}
-	if (pattern.has_member_class()) {
-		target.set_member_class_name(pattern.member_class_name());
-		if (pattern.has_member_class_type_id()) {
-			target.set_member_class_type_id(pattern.member_class_type_id());
-		} else if (pattern.has_member_class_entity()) {
-			target.set_member_class_entity(pattern.member_class_entity());
-		}
-	}
+	applyMemberClassIdentityForSubstitution(target, pattern);
 }
 
 // A parameter spelling that already carries projected array extents denotes the
