@@ -1101,13 +1101,7 @@ inline void materializeSubstitutedFunctionTypeMetadata(
 				original_owner, template_params, template_args);
 		substituted_type.set_member_class_name(substituted_owner);
 		if (resolved_decltype_type.has_value()) {
-			if (resolved_decltype_type->has_member_class_type_id()) {
-				substituted_type.set_member_class_type_id(
-					resolved_decltype_type->member_class_type_id());
-			} else if (resolved_decltype_type->has_member_class_entity()) {
-				substituted_type.set_member_class_entity(
-					resolved_decltype_type->member_class_entity());
-			}
+			applyMemberClassIdentityForSubstitution(substituted_type, *resolved_decltype_type);
 		}
 		substituted_signature.class_name = substituted_owner;
 	}

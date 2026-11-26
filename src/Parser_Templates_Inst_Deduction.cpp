@@ -3190,7 +3190,9 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			if (return_type_result.node().has_value() &&
 				return_type_result.node()->is<TypeSpecifierNode>()) {
 				auto& rt = return_type_result.node()->as<TypeSpecifierNode>();
-				consume_pointer_ref_modifiers(rt);
+				// This is a type-id reparse, so it must consume the same
+				// ptr-operator chain as parse_trailing_return_type_with_params.
+				consumeSubstitutedTypeIdDeclarators(rt, orig_decl.type_specifier_node());
 			}
 
 			if (return_type_result.is_error() ||
@@ -3236,6 +3238,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			TypeSpecifierNode& resolved_type = resolved_return_type.as<TypeSpecifierNode>();
 			resolveAliasTemplateInstantiation(resolved_type);
 			apply_resolved_alias_metadata_local(resolved_type);
+			applyMemberClassIdentityForSubstitution(resolved_type, orig_decl.type_specifier_node());
 			// Dependent-alias returns that failed to materialize can leave a valid Auto
 			// TypeIndex. Reject those SoftProbes; leave intentional undeduced `auto`
 			// returns alone (they are rewritten after body substitution).
@@ -3289,6 +3292,10 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 		const TypeSpecifierNode& orig_return_type = orig_decl.type_specifier_node();
 		if (reparsed_trailing_return_type != nullptr && reparsed_trailing_return_type->has_value()) {
 			TypeSpecifierNode reparsed_return_type = **reparsed_trailing_return_type;
+			// The reparse reads the trailing return type-id from source, but an
+			// alias or dependent spelling can still resolve to the bare pointee.
+			// The declared pattern owns the member-pointer identity.
+			applyMemberClassIdentityForSubstitution(reparsed_return_type, orig_return_type);
 			apply_resolved_alias_metadata_local(reparsed_return_type);
 			const int resolved_size_bits = getTypeSpecSizeBits(reparsed_return_type);
 			if (resolved_size_bits > 0) {
@@ -3320,7 +3327,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			auto return_type_result = parse_type_specifier();
 			if (return_type_result.node().has_value() && return_type_result.node()->is<TypeSpecifierNode>()) {
 				auto& rt = return_type_result.node()->as<TypeSpecifierNode>();
-				consume_pointer_ref_modifiers(rt);
+				consumeSubstitutedTypeIdDeclarators(rt, orig_return_type);
 				if (orig_return_type.has_function_signature()) {
 					// An ordered callable return is rebuilt from the reparsed
 					// concrete base plus the original spine and substituted
@@ -3330,9 +3337,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 						rt.set_type_index(orig_return_type.type_index());
 						rt.set_size_in_bits(orig_return_type.sizeBits());
 					}
-					if (orig_return_type.has_member_class()) {
-						rt.set_member_class_name(orig_return_type.member_class_name());
-					}
+					applyMemberClassIdentityForSubstitution(rt, orig_return_type);
 					materializeSubstitutedFunctionTypeMetadata(
 						*this,
 						rt,
@@ -3423,7 +3428,8 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			auto return_type_result = parse_type_specifier();
 			if (return_type_result.node().has_value() && return_type_result.node()->is<TypeSpecifierNode>()) {
 				auto& rt = return_type_result.node()->as<TypeSpecifierNode>();
-				consume_pointer_ref_modifiers(rt);
+				consumeSubstitutedTypeIdDeclarators(rt, orig_return_type);
+				applyMemberClassIdentityForSubstitution(rt, orig_return_type);
 			}
 			restore_lexer_position_only(current_pos);
 			if (return_type_result.is_error()) {
@@ -4350,6 +4356,14 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			register_parameters_in_scope(sfinae_params);
 
 			auto return_type_result = parse_type_specifier();
+			if (return_type_result.node().has_value() && return_type_result.node()->is<TypeSpecifierNode>()) {
+				auto& rt = return_type_result.node()->as<TypeSpecifierNode>();
+				// The reparse is a type-id; consume the ptr-operator chain that
+				// parse_trailing_return_type_with_params would have consumed so a
+				// member-pointer trailing return keeps its owner and pointer level.
+				consumeSubstitutedTypeIdDeclarators(rt, func_decl.decl_node().type_specifier_node());
+				applyMemberClassIdentityForSubstitution(rt, func_decl.decl_node().type_specifier_node());
+			}
 			// Explicitly exit the param scope before restoring the lexer position.
 			gSymbolTable.exit_scope();
 			sfinae_param_scope.dismiss();  // prevent double exit in destructor

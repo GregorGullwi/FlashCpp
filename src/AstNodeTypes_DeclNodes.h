@@ -2739,6 +2739,14 @@ public:
 		member_class_entity_ = {};
 		member_class_type_id_ = {};
 	}
+	// Drop TypeId/EntityId owner authority while keeping the published spelling.
+	// A pattern that only carries a spelling cannot confirm an identity inherited
+	// from a substituted pointee, so that identity must not stay behind.
+	void clear_member_class_authority() {
+		journalTypeSpecifierRewrite(*this);
+		member_class_entity_ = {};
+		member_class_type_id_ = {};
+	}
 	// Cast and non-type-template-parameter rewrites flatten a member object
 	// pointer to the MemberObjectPointer category and cannot carry the pointee
 	// category in the flat type_index. The parser preserves the pre-rewrite
@@ -3285,15 +3293,31 @@ inline bool resolveOrderedDeclaratorArrayBounds(
 // A member-pointer owner is semantic identity, not pointee sugar. Carry the
 // published spelling and authority from an outer pattern onto a substituted
 // type so a dependent pointee cannot turn `T Owner::*` into a plain pointer.
+//
+// The pattern is authoritative when it publishes a TypeId or EntityId. A
+// spelling-only pattern cannot confirm an identity that arrived with the
+// substituted pointee, so that identity is dropped instead of surviving as a
+// stale owner. When the target already names the same owner, its identity is
+// the best available evidence and is kept. A pattern without any member class
+// leaves the target alone: there the owner came from the substituted argument
+// itself and is legitimately part of the result.
 inline void applyMemberClassIdentityForSubstitution(TypeSpecifierNode& target, const TypeSpecifierNode& pattern) {
 	if (!pattern.has_member_class()) {
 		return;
 	}
+	const bool target_already_names_pattern = target.has_member_class() && target.member_class_name() == pattern.member_class_name();
 	target.set_member_class_name(pattern.member_class_name());
+	assert(target.has_member_class());
 	if (pattern.has_member_class_type_id()) {
 		target.set_member_class_type_id(pattern.member_class_type_id());
-	} else if (pattern.has_member_class_entity()) {
+		return;
+	}
+	if (pattern.has_member_class_entity()) {
 		target.set_member_class_entity(pattern.member_class_entity());
+		return;
+	}
+	if (!target_already_names_pattern) {
+		target.clear_member_class_authority();
 	}
 }
 

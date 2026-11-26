@@ -960,25 +960,35 @@ A plain-pointer *local* remains deferred: dependent member-pointer return
 substitution can collapse `T C::*` to a plain pointer before sema sees
 the call result, and the legacy lowering peels that pointer back to the member,
 so a local that is genuinely `int*` is not distinguishable from the collapsed
-form at this boundary. See also the dependent data-member pointee substitution
-entry below.
+form at this boundary. Member-pointer owner identity itself is carried by one
+substitution rule; see the projection notes below.
 
-## Dependent data-member pointee in a trailing return type still loses its owner
+## Member-pointer return values with a floating-point pointee use the pointee ABI
 
-Parameter declarations, local declarations, and alias templates that spell
-`T B::*` keep the member owner through dependent-pointee substitution, so
-`template<class T> int read(D& d, T B::* p) { return d.*p; }` adjusts a
-non-primary base before reading or writing the member.
+Parameter declarations, local declarations, trailing return types, and alias
+templates that spell `T B::*` keep the owner and pointer level through
+dependent-pointee substitution. A data-member pointer is an integer-class
+value, so returning one by value works when the pointee is integer-like or a
+record. A floating-point pointee still selects the pointee register class for
+the function signature: `template<class T> auto identity(T B::* p) -> T B::*`
+instantiated with `double` returns in an XMM register while the caller reads an
+integer register. Passing such a pointer as a parameter is unaffected because
+the projected `double*` parameter also travels in an integer register. The
+member owner and pointer level are correct in sema; the gap is in IR/codegen
+type lowering, which classifies the return value by its pointee category.
 
-A dependent member-pointer *trailing return type* still loses the owner. For
-`template<class T> auto identity(T B::* p) -> T B::*`, the trailing return type
-is reparsed with the template binding substituted, and that reparse projects
-`T B::*` onto the plain pointee type. Consequently `d.*identity<int>(p)` is
-rejected with `InvalidDataMemberPointerOperand#1637`, and storing the call
-result in an `int B::*` local truncates the member offset to 32 bits. The
-information is lost when the reparsed trailing return type replaces the
-substituted return `TypeSpecifierNode`; the reparse needs to retain the member
-owner (and its pointer level) from the pattern.
+## Member-pointer owner copies that stay lexical projections
+
+`applyMemberClassIdentityForSubstitution` is the single copy rule for deriving
+a `TypeSpecifierNode` from an outer pattern that already carries a member
+owner. Some paths deliberately do not use it because their source has no owner
+authority to copy or because they publish a different owner: alias metadata and
+`TemplateTypeArg`/`TemplateArgInfo` reconstruction, the address-of and member
+projection builders, and canonical rematerialization that rebinds a
+template-pattern owner to its concrete specialization. Those paths either bind
+authority from a record or `TypeInfo` at the canonical boundary or emit a
+spelling for lookup and mangling; they do not copy an owner triple from another
+specifier.
 
 ## A pointer-to-member declarator with a pointer pointee needs parentheses
 
