@@ -586,11 +586,23 @@ conversions, even though [over.ics.rank]/3.3 compares their second sequences for
 one constructor. One identity per constructor, whichever route selected it, is the
 invariant a fix needs.
 
-Conversion-function selection for a `const int&` target can still prefer
-`operator int&()` over `operator const int&()` ([over.match.conv]/3.2.7), so
-`f(int&)` and `f(const int&)` with both operators is accepted where clang reports
-the reference initialization as ambiguous. This happens before argument-sequence
-ordering and is not closed by the plan identity.
+## Indirect reference binding drops conversion-result cv-qualification
+
+[dcl.init.ref]/5.4.3 (CWG 1571) requires the cv-qualification of a reference
+initialized through a conversion function to be the same as, or greater than, the
+qualification of the conversion function result. The following is therefore
+ill-formed, but FlashCpp accepts it:
+
+```
+struct A { operator volatile int&(); };
+const int& r = A();
+```
+
+The direct-binding plan rejects the referent that would lose `volatile`, yet the
+temporary-materialization fallback strips the result referent's cv before it
+evaluates the standard conversion, so the invalid candidate still reaches the
+value path. The fallback has to preserve the result's cv when that result is
+reference-related to the target referent.
 
 ## Remaining conversion function template cases
 

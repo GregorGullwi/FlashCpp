@@ -3419,8 +3419,24 @@ trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const Typ
 	const CanonicalTypeImport target_import = importCanonicalOverloadNominalType(table, canonical_target_type);
 	const ConversionFunctionContext conversion_context = allow_explicit ? ConversionFunctionContext::Explicit : ConversionFunctionContext::Implicit;
 	const auto candidates = collectCanonicalConversionOperators(table, source_type_id, conversion_context, source_value_category);
-	std::optional<ConversionRank> best_trailing_rank;
-	std::vector<UserDefinedConversionOperatorSelection> visible_candidates;
+	// [over.match.ref]/1 selects the conversion functions that can bind the target
+	// reference directly before [dcl.init.ref] falls back to materializing a
+	// temporary. For an lvalue target the direct candidates are the conversion
+	// functions returning lvalue references; for an rvalue target they are the
+	// non-reference and rvalue-reference results. A direct candidate makes the
+	// copy-initialization fallback inapplicable, so its second sequence is not
+	// ranked against a value-producing conversion function.
+	const CanonicalTypeKind target_kind = target_import.status == CanonicalTypeImportStatus::Supported
+		? table.node(target_import.type).kind
+		: CanonicalTypeKind::Builtin;
+	const bool target_is_reference = target_kind == CanonicalTypeKind::LValueReference || target_kind == CanonicalTypeKind::RValueReference;
+	const bool target_is_lvalue_reference = target_kind == CanonicalTypeKind::LValueReference;
+	struct VisibleConversionCandidate {
+		UserDefinedConversionOperatorSelection selection;
+		ConversionRank trailing_rank;
+		bool direct_reference_binding;
+	};
+	std::vector<VisibleConversionCandidate> ranked_candidates;
 	for (const CanonicalConversionOperatorCandidate& candidate : candidates) {
 		std::optional<ConversionPlan> trailing_plan;
 		bool use_compatibility = true;
@@ -3434,15 +3450,38 @@ trySelectCanonicalUserDefinedConversionOperator(TypeId source_type_id, const Typ
 		if (!trailing_plan.has_value() || !trailing_plan->is_valid || trailing_plan->rank == ConversionRank::UserDefined) {
 			continue;
 		}
-		if (!best_trailing_rank.has_value() || trailing_plan->rank < *best_trailing_rank) {
-			best_trailing_rank = trailing_plan->rank;
+		bool direct_reference_binding = true;
+		if (target_is_reference) {
+			const CanonicalTypeKind result_kind = table.node(candidate.return_type).kind;
+			direct_reference_binding = target_is_lvalue_reference
+				? result_kind == CanonicalTypeKind::LValueReference
+				: result_kind != CanonicalTypeKind::LValueReference;
+			if (direct_reference_binding) {
+				const std::optional<ConversionPlan> direct_plan = tryBuildCanonicalDirectReferenceBindingPlan(table, candidate.return_type, target_import.type);
+				direct_reference_binding = !direct_plan.has_value() || direct_plan->is_valid;
+			}
+		}
+		UserDefinedConversionOperatorSelection selection = candidate.selection;
+		selection.trailing_standard_kind = trailing_plan->kind;
+		selection.trailing_standard_rank = trailing_plan->rank;
+		ranked_candidates.push_back({selection, trailing_plan->rank, direct_reference_binding});
+	}
+	const bool has_direct_reference_candidate = target_is_reference && std::any_of(
+		ranked_candidates.begin(),
+		ranked_candidates.end(),
+		[](const VisibleConversionCandidate& candidate) { return candidate.direct_reference_binding; });
+	if (has_direct_reference_candidate) {
+		std::erase_if(ranked_candidates, [](const VisibleConversionCandidate& candidate) { return !candidate.direct_reference_binding; });
+	}
+	std::optional<ConversionRank> best_trailing_rank;
+	std::vector<UserDefinedConversionOperatorSelection> visible_candidates;
+	for (const VisibleConversionCandidate& candidate : ranked_candidates) {
+		if (!best_trailing_rank.has_value() || candidate.trailing_rank < *best_trailing_rank) {
+			best_trailing_rank = candidate.trailing_rank;
 			visible_candidates.clear();
 		}
-		if (trailing_plan->rank == *best_trailing_rank) {
-			UserDefinedConversionOperatorSelection selection = candidate.selection;
-			selection.trailing_standard_kind = trailing_plan->kind;
-			selection.trailing_standard_rank = trailing_plan->rank;
-			visible_candidates.push_back(selection);
+		if (candidate.trailing_rank == *best_trailing_rank) {
+			visible_candidates.push_back(candidate.selection);
 		}
 	}
 	if (visible_candidates.empty()) {

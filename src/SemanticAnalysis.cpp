@@ -1133,6 +1133,16 @@ static std::string readableConversionType(const TypeSpecifierNode& syntax, const
 	return pointee_syntax.getReadableString() + " " + owner_name + "::*";
 }
 
+[[noreturn]] static void throwAmbiguousConversionDiagnostic(DiagnosticEngine& diagnostics, const Token& token, const TypeSpecifierNode& source_syntax,
+	const CanonicalTypeDesc& source_desc, const TypeSpecifierNode& target_syntax, const CanonicalTypeDesc& target_desc, bool reference_initialization) {
+	const std::string message = reference_initialization
+		? "reference initialization of type '" + readableConversionType(target_syntax, target_desc) + "' from '" +
+			readableConversionType(source_syntax, source_desc) + "' is ambiguous"
+		: "conversion from '" + readableConversionType(source_syntax, source_desc) + "' to '" +
+			readableConversionType(target_syntax, target_desc) + "' is ambiguous";
+	throw makeStructuredCompileError(diagnostics, DiagnosticId::AmbiguousConversion, DiagnosticSeverity::Error, SourceLocation::fromToken(token), message, {});
+}
+
 CanonicalTypeImport tryImportCanonicalTypeDesc(const CanonicalTypeDesc& desc) {
 	if (desc.structural_type_id) {
 		return {desc.structural_type_id, CanonicalTypeImportStatus::Supported};
@@ -13001,8 +13011,16 @@ ArgumentConversionInfo SemanticAnalysis::buildCallArgumentConversion(const TypeS
 	const ValueCategory source_category = argument_type.is_lvalue_reference() ? ValueCategory::LValue : inferExpressionValueCategory(*argument_node);
 	const auto selected = selectBestUserDefinedConversion(argument_type, parameter_type, ConversionFunctionContext::Implicit, false, source_category,
 		FunctionTemplateInstantiation::SignatureOnly);
-	if (!selected.has_value() || selected->ambiguous || selected->function == nullptr) {
+	if (!selected.has_value() || selected->function == nullptr) {
 		return conversion;
+	}
+	if (selected->ambiguous) {
+		// [over.best.ics]/12: an ambiguous conversion sequence is treated as a
+		// user-defined conversion sequence indistinguishable from any other
+		// user-defined sequence. It stays viable; binding the selected argument
+		// diagnoses it, and it ties against every other user-defined candidate.
+		ArgumentConversionInfo ambiguous_sequence{ConversionRank::UserDefined, &parameter_type, true, ConversionRank::NoMatch};
+		return ambiguous_sequence;
 	}
 	TypeSpecifierNode result = selected->function->decl_node().type_specifier_node();
 	tryBindPublishedTypeEntity(result);
@@ -13765,6 +13783,11 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 		if (selected_conversion.has_value() && !selected_conversion->ambiguous) {
 			return annotateSelectedConversionOperator(expr_node, expr_type_id, target_type_id, *selected_conversion, SemanticContextFlags::None);
 		}
+		if (selected_conversion.has_value() && selected_conversion->ambiguous) {
+			const Token source_token = FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(expr_node).value_or(Token{});
+			const TypeSpecifierNode source_type = materializeTypeSpecifier(from_desc);
+			throwAmbiguousConversionDiagnostic(context_.diagnostics(), source_token, source_type, from_desc, target_type, to_desc, false);
+		}
 		if ((target_is_member_object_pointer || target_is_member_function_pointer) && !selected_conversion.has_value()) {
 			if (from_import.status != CanonicalTypeImportStatus::Supported || to_import.status != CanonicalTypeImportStatus::Supported) {
 				return false;
@@ -14037,6 +14060,12 @@ bool SemanticAnalysis::annotateConversionImpl(const ASTNode& expr_node, Canonica
 		const TypeSpecifierNode target_type = materializeTypeSpecifier(type_context_.get(target_type_id));
 		const auto selected_conversion = select_conversion_operator(expr_type_id, target_type);
 		if (!selected_conversion.has_value() || selected_conversion->ambiguous) {
+			if (selected_conversion.has_value() && selected_conversion->ambiguous) {
+				const Token source_token = FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(expr_node).value_or(Token{});
+				const TypeSpecifierNode source_type = materializeTypeSpecifier(from_desc);
+				throwAmbiguousConversionDiagnostic(context_.diagnostics(), source_token, source_type, from_desc,
+					target_type, to_desc, to_desc.ref_qualifier != ReferenceQualifier::None);
+			}
 			FLASH_LOG(General, Debug, "SemanticAnalysis: skipping UserDefined annotation — " "conversion operator selection failed or was ambiguous");
 			return false;
 		}
@@ -15398,8 +15427,12 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 		const auto selected = selectBestUserDefinedConversion(arg_value_type, param_type, ConversionFunctionContext::Implicit, false, value_category,
 			FunctionTemplateInstantiation::Definition);
 		if (selected.has_value()) {
-			if (selected->ambiguous || !checkSelectedConversionOperatorAccess(arg, param_type_id, *selected, SemanticContextFlags::None,
-					arg_value_type.type_index())) {
+			if (selected->ambiguous) {
+				const Token source_token = FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(arg).value_or(Token{});
+				throwAmbiguousConversionDiagnostic(context_.diagnostics(), source_token, arg_value_type, type_context_.get(arg_value_type_id),
+					param_type, type_context_.get(param_type_id), true);
+			}
+			if (!checkSelectedConversionOperatorAccess(arg, param_type_id, *selected, SemanticContextFlags::None, arg_value_type.type_index())) {
 				return std::nullopt;
 			}
 			const TypeSpecifierNode& result = selected->function->decl_node().type_specifier_node();
