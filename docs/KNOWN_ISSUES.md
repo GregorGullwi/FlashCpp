@@ -703,21 +703,17 @@ constexpr`, `inline static`, and out-of-line definition forms. Remaining gaps:
   match their reference (`undefined reference to 'N::a'`), which is a separate
   symbol-emission gap.
 
-## In-class aggregate initializer of a derived member reads shifted values
+## Namespace-scope brace-elided aggregate initializer for a derived class drops base elements
 
-An in-class member initialized with a braced aggregate whose type derives from a
-base class applies the clause values at the wrong offsets. For example:
-
-```
-struct Base { int value; };
-struct Derived : Base { int extra; };
-struct Holder { Derived storage{11, 12}; };
-```
-
-`Holder{}.storage.value` reads garbage and `Holder{}.storage.extra` reads `11`
-instead of `12`. Assigning the same fields after construction behaves correctly,
-so the gap is in materializing the in-class aggregate initializer for a derived
-member rather than in base-subobject or reference lowering.
+A namespace-scope brace-elided aggregate initializer for a derived class whose
+base has more than one element drops the base members. For
+`struct Base { int first; int second; }; struct Derived : Base { int tail; };`
+and `Derived g{1, 2, 3};`, `g` reads back with the derived member taking the
+first clause instead of walking the base subobject. Local aggregates, in-class
+default member initializers, explicitly constructed members, and derived classes
+whose bases each contribute one element share the aggregate walker that handles
+base subobjects. Global aggregate initialization still uses its own relocation
+path and must adopt that walker.
 
 ## Subscript storage follow-up architecture
 
