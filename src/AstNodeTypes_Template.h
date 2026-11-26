@@ -2122,6 +2122,21 @@ public:
 		partial_specialization_environment_ = environment;
 	}
 
+	// A direct member class-template instantiation keeps its enclosing owner
+	// arguments at the head of outer_template_args() and its own template-id
+	// arguments in TypeInfo::templateArgs(). The two are not interchangeable:
+	// a partial pattern may list fewer parameters than its member primary, so
+	// the primary parameter count cannot recover the owner prefix. Record the
+	// count explicitly at materialization. Unrecorded (the sentinel) keeps the
+	// legacy layout inference for explicit specializations.
+	static constexpr uint32_t kNoCanonicalMemberOwnerArgumentCount = UINT32_MAX;
+	uint32_t canonical_member_owner_argument_count() const { return canonical_member_owner_argument_count_; }
+	bool has_canonical_member_owner_argument_count() const { return canonical_member_owner_argument_count_ != kNoCanonicalMemberOwnerArgumentCount; }
+	void set_canonical_member_owner_argument_count(uint32_t count) {
+		journalStructDeclarationRewrite(*this);
+		canonical_member_owner_argument_count_ = count;
+	}
+
 private:
 	StringHandle name_;	// Points directly into source text from lexer token
 	StringHandle semantic_name_; // Lookup-qualified TypeInfo name for local classes
@@ -2158,6 +2173,7 @@ private:
 	EntityId entity_id_;
 	TemplateDeclId template_decl_id_;
 	TemplateDeclId canonical_specialization_owner_template_decl_id_;
+	uint32_t canonical_member_owner_argument_count_ = kNoCanonicalMemberOwnerArgumentCount;
 };
 
 void journalTemplateClassDeclarationRewrite(TemplateClassDeclarationNode& node);

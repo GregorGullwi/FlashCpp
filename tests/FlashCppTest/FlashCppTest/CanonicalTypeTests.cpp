@@ -4389,7 +4389,7 @@ TEST_CASE("Converting constructor class checks cannot recover unpublished inheri
 	REQUIRE_FALSE(table.hasClassBaseSchema(base));
 	REQUIRE_FALSE(table.hasClassBaseSchema(derived));
 	SUBCASE("Absent constructor and base schemas cannot use legacy inheritance") {
-		CHECK_FALSE(tryHasCanonicalImplicitConvertingConstructorForArgument(base_spec, derived_spec, nullptr).has_value());
+		CHECK_FALSE(tryHasCanonicalImplicitConvertingConstructorForArgument(base_spec, derived_spec, nullptr, nullptr).has_value());
 		CHECK_FALSE(hasConvertingConstructorFrom(base_spec, derived_spec));
 	}
 	SUBCASE("A complete constructor answer cannot trigger base publication") {
@@ -4453,7 +4453,7 @@ TEST_CASE("Converting constructor class checks cannot recover unpublished inheri
 		};
 		table.publishRecordConstructors(receiver, constructors);
 		derived_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);
-		CHECK_FALSE(tryHasCanonicalImplicitConvertingConstructorForArgument(receiver_spec, derived_spec, nullptr).has_value());
+		CHECK_FALSE(tryHasCanonicalImplicitConvertingConstructorForArgument(receiver_spec, derived_spec, nullptr, nullptr).has_value());
 		CHECK_FALSE(hasConvertingConstructorFrom(receiver_spec, derived_spec));
 	}
 	CHECK_FALSE(table.hasRecordProperties(derived));
@@ -4477,7 +4477,7 @@ TEST_CASE("Canonical constructor arguments bind base references without compatib
 	argument.set_type_entity(EntityId{911});
 	argument.set_reference_qualifier(ReferenceQualifier::LValueReference);
 
-	const std::optional<bool> converting = tryHasCanonicalImplicitConvertingConstructorForArgument(consumer, argument, nullptr);
+	const std::optional<bool> converting = tryHasCanonicalImplicitConvertingConstructorForArgument(consumer, argument, nullptr, nullptr);
 	REQUIRE(converting.has_value());
 	CHECK(*converting);
 	const std::array<TypeSpecifierNode, 1> arguments{argument};
@@ -4491,7 +4491,7 @@ TEST_CASE("Canonical constructor arguments bind base references without compatib
 	CHECK(nothrow->value);
 
 	argument.set_cv_qualifier(CVQualifier::Const);
-	const std::optional<bool> rejected = tryHasCanonicalImplicitConvertingConstructorForArgument(consumer, argument, nullptr);
+	const std::optional<bool> rejected = tryHasCanonicalImplicitConvertingConstructorForArgument(consumer, argument, nullptr, nullptr);
 	REQUIRE(rejected.has_value());
 	CHECK_FALSE(*rejected);
 }
@@ -4688,7 +4688,7 @@ TEST_CASE("Canonical constructor schemas rank scalar reference temporaries witho
 	TypeSpecifierNode short_argument(TypeCategory::Short, TypeQualifier::None, 16, Token{}, CVQualifier::None);
 	short_argument.set_reference_qualifier(ReferenceQualifier::LValueReference);
 	const std::array<TypeSpecifierNode, 1> arguments{short_argument};
-	const std::optional<bool> converting = tryHasCanonicalImplicitConvertingConstructorForArgument(ranked_target, short_argument, nullptr);
+	const std::optional<bool> converting = tryHasCanonicalImplicitConvertingConstructorForArgument(ranked_target, short_argument, nullptr, nullptr);
 	REQUIRE(converting.has_value());
 	CHECK(*converting);
 	const auto constructible = evaluateConstructibility(TypeTraitKind::IsConstructible, ranked_target, arguments, ConstructibilityFallback::None);
@@ -4721,7 +4721,7 @@ TEST_CASE("Canonical constructor schemas rank scalar reference temporaries witho
 	table.publishRecordConstructors(table.record(mutable_entity), mutable_constructors);
 	TypeSpecifierNode mutable_target(TypeCategory::Struct, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 	mutable_target.set_type_entity(mutable_entity);
-	const std::optional<bool> mutable_conversion = tryHasCanonicalImplicitConvertingConstructorForArgument(mutable_target, short_argument, nullptr);
+	const std::optional<bool> mutable_conversion = tryHasCanonicalImplicitConvertingConstructorForArgument(mutable_target, short_argument, nullptr, nullptr);
 	REQUIRE(mutable_conversion.has_value());
 	CHECK_FALSE(*mutable_conversion);
 	const auto mutable_result = evaluateConstructibility(TypeTraitKind::IsConstructible, mutable_target, arguments, ConstructibilityFallback::None);
@@ -4741,7 +4741,7 @@ TEST_CASE("Canonical constructor schemas rank scalar reference temporaries witho
 	bool_target.set_type_entity(bool_entity);
 	TypeSpecifierNode null_pointer_argument(TypeCategory::Nullptr, TypeQualifier::None, 64, Token{}, CVQualifier::None);
 	const std::array<TypeSpecifierNode, 1> null_args{null_pointer_argument};
-	const std::optional<bool> bool_conversion = tryHasCanonicalImplicitConvertingConstructorForArgument(bool_target, null_pointer_argument, nullptr);
+	const std::optional<bool> bool_conversion = tryHasCanonicalImplicitConvertingConstructorForArgument(bool_target, null_pointer_argument, nullptr, nullptr);
 	REQUIRE(bool_conversion.has_value());
 	CHECK_FALSE(*bool_conversion);
 	const auto bool_result = evaluateConstructibility(TypeTraitKind::IsConstructible, bool_target, null_args, ConstructibilityFallback::None);
@@ -4952,7 +4952,7 @@ TEST_CASE("Canonical constructor schemas accept derived arguments over non-trivi
 		specifier.set_type_entity(entity);
 		return specifier;
 	};
-	auto evaluate = [&table](TypeTraitKind kind, TypeSpecifierNode consumer, TypeSpecifierNode argument) {
+	auto evaluate = [](TypeTraitKind kind, TypeSpecifierNode consumer, TypeSpecifierNode argument) {
 		std::array<TypeSpecifierNode, 1> arguments{argument};
 		return evaluateConstructibility(kind, consumer, arguments, ConstructibilityFallback::None);
 	};
@@ -5040,7 +5040,7 @@ TEST_CASE("Canonical constructor schemas use converting constructors for unrelat
 		specifier.set_type_entity(entity);
 		return specifier;
 	};
-	auto evaluate = [&table](TypeTraitKind kind, TypeSpecifierNode consumer, TypeSpecifierNode argument) {
+	auto evaluate = [](TypeTraitKind kind, TypeSpecifierNode consumer, TypeSpecifierNode argument) {
 		std::array<TypeSpecifierNode, 1> arguments{argument};
 		return evaluateConstructibility(kind, consumer, arguments, ConstructibilityFallback::None);
 	};
@@ -5125,7 +5125,7 @@ TEST_CASE("Canonical converting-constructor candidates rank by TypeId conversion
 	auto builtin_specifier = [](TypeCategory category, int size_bits) {
 		return TypeSpecifierNode(category, TypeQualifier::None, size_bits, Token{}, CVQualifier::None);
 	};
-	auto evaluate = [&table](TypeTraitKind kind, TypeSpecifierNode consumer, TypeSpecifierNode argument) {
+	auto evaluate = [](TypeTraitKind kind, TypeSpecifierNode consumer, TypeSpecifierNode argument) {
 		std::array<TypeSpecifierNode, 1> arguments{argument};
 		return evaluateConstructibility(kind, consumer, arguments, ConstructibilityFallback::None);
 	};

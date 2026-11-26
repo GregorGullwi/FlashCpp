@@ -2837,18 +2837,26 @@ inline CanonicalTypeImport importCanonicalClassSource(CanonicalTypeTable& table,
 			const TemplateDeclId member_specialization_owner = declaration->canonical_specialization_owner_template_decl_id();
 			const std::optional<OwnerId> owner = requireFrontendContext().templateDecls().primaryClassTemplateOwner(member_specialization_owner);
 			if (owner.has_value() && isTemplateOwnedOwnerId(*owner)) {
-				// A selected member partial carries owner bindings in
-				// outer_template_args and the actual member arguments on its TypeInfo.
-				// Compose them instead of flattening the member template-id into the
-				// member arguments alone.
+				// A direct member instantiation keeps the enclosing owner arguments
+				// at the head of its substitution environment and its own template-id
+				// arguments on the TypeInfo. A selected partial may list fewer
+				// parameters than the member primary, so the materializer records the
+				// owner prefix instead of letting the primary parameter count infer it.
 				const TemplateArgInfoVector& effective_arguments = declaration->outer_template_args();
 				const TemplateArgInfoVector& member_arguments = type_info->templateArgs();
-				if (effective_arguments.size() < member_arguments.size()) {
+				size_t owner_argument_count = 0;
+				if (declaration->has_canonical_member_owner_argument_count()) {
+					owner_argument_count = declaration->canonical_member_owner_argument_count();
+				} else if (effective_arguments.size() >= member_arguments.size()) {
+					owner_argument_count = effective_arguments.size() - member_arguments.size();
+				} else {
 					return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
 				}
-				const size_t owner_argument_count = effective_arguments.size() - member_arguments.size();
+				if (effective_arguments.size() < owner_argument_count) {
+					return CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedNominal};
+				}
 				TemplateArgInfoVector combined_arguments;
-				combined_arguments.reserve(effective_arguments.size());
+				combined_arguments.reserve(owner_argument_count + member_arguments.size());
 				for (size_t index = 0; index < owner_argument_count; ++index) {
 					combined_arguments.push_back(effective_arguments[index]);
 				}

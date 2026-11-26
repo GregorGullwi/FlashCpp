@@ -3525,6 +3525,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			const std::span<const TemplateTypeArg> effective_member_copy_template_args = effective_bindings.has_outer_binding
 				? std::span<const TemplateTypeArg>(effective_bindings.args.data(), effective_bindings.args.size())
 				: template_args_for_member_copy;
+			// The enclosing owner's concrete arguments prefix the substitution
+			// environment. A partial pattern lists only its own parameters, so the
+			// member primary's parameter count cannot recover this boundary later.
+			if (effective_member_copy_template_args.size() < template_args_for_member_copy.size()) {
+				throw InternalError("partial specialization owner arguments exceed its substitution environment");
+			}
+			const size_t canonical_member_owner_argument_count = effective_member_copy_template_args.size() - template_args_for_member_copy.size();
+			if (canonical_member_owner_argument_count > UINT32_MAX) {
+				throw InternalError("partial specialization owner argument count exceeds 32-bit identity");
+			}
 
 			// Copy members from pattern
 			FLASH_LOG(Templates, Trace, "Pattern struct '", pattern_struct.name(), "' has ", pattern_struct.members().size(), " members");
@@ -3823,14 +3833,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 			}
 
 			// Also copy deleted constructor flags from the pattern's StructTypeInfo (if available).
-			// Prefer the canonical pattern environment; the synthesized name remains a
-			// diagnostics-only spelling and a fallback for shapes 3A cannot publish.
+			// A published environment is the pattern's identity: the record is found
+			// through it and never through the synthesized spelling. Only a pattern
+			// whose canonical identity the importer cannot publish yet keeps the
+			// name-keyed fallback.
 			const TemplateDeclId pattern_environment = pattern_struct.partial_specialization_environment();
 			const StructTypeInfo* pattern_struct_info = gTemplateRegistry.tryGetPartialPatternStructInfo(pattern_environment);
 			if (pattern_struct_info == nullptr && pattern_environment) {
 				throw InternalError("partial-specialization pattern is missing its registered type record");
 			}
-			auto pattern_type_it = getTypesByNameMap().find(pattern_struct.name());
+			auto pattern_type_it = pattern_environment ? getTypesByNameMap().end() : getTypesByNameMap().find(pattern_struct.name());
 			if (pattern_struct_info != nullptr || pattern_type_it != getTypesByNameMap().end()) {
 				if (pattern_struct_info == nullptr) {
 					recordPartialPatternNameFallback();
@@ -4895,6 +4907,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template_body(std::string_v
 				instantiated_struct_ref,
 				effective_pattern_template_params,
 				effective_pattern_template_args);
+			instantiated_struct_ref.set_canonical_member_owner_argument_count(
+				static_cast<uint32_t>(canonical_member_owner_argument_count));
 			// The pattern bindings above stay the substitution environment. The
 			// canonical type is templateSpecialization(primary, published arguments),
 			// the same identity an explicit specialization already records.
