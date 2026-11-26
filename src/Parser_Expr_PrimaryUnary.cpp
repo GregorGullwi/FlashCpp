@@ -425,9 +425,14 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		if (!type_result.is_error() && type_result.node().has_value()) {
 			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 
-			consume_cast_type_id_postfix_modifiers(type_spec);
-			// Parenthesized abstract-declarator group, e.g. (int(*)[3])v.
-			consume_cast_type_id_paren_declarator(type_spec);
+			// A cast target is a type-id (C++20 [expr.cast]/1), so it shares the
+			// abstract-declarator grammar with sizeof, alignof and trait operands.
+			// That grammar owns `T C::*`, `T* C::*` and `T (C::*)()`. A postfix
+			// cv-qualifier on the base type is still consumed before the chain.
+			type_spec.add_cv_qualifier(parse_cv_qualifiers());
+			skip_noop_gnu_qualifiers();
+			consume_type_id_abstract_declarators(type_spec);
+			normalizeCastTypeIdMemberObjectPointer(type_spec);
 			if (consume(")"_tok)) {
 				// Before treating this as a C-style cast, verify that the type is actually valid.
 				// If type_spec is UserDefined with type_index 0, it means parse_type_specifier()

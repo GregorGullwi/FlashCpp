@@ -1696,6 +1696,29 @@ void Parser::consume_cast_type_id_postfix_modifiers(TypeSpecifierNode& type_spec
 	consume_pointer_ref_modifiers(type_spec);
 }
 
+// The shared type-id grammar keeps a member object pointer in its flat
+// projection (pointee category, one member-pointer level, owner). A cast target
+// instead needs the explicit pointee syntax the lowering reads, because the
+// flat level would otherwise select the plain pointer-cast path. The pointee is
+// the specifier with the member owner and the member-pointer level removed, so
+// `int* C::*` keeps `int*` as its pointee.
+void Parser::normalizeCastTypeIdMemberObjectPointer(TypeSpecifierNode& type_spec) {
+	if (type_spec.category() == TypeCategory::MemberObjectPointer || type_spec.has_ordered_declarator() ||
+		!type_spec.has_member_class() || type_spec.category() == TypeCategory::MemberFunctionPointer ||
+		type_spec.runtime_pointer_depth() == 0) {
+		return;
+	}
+	TypeSpecifierNode pointee = type_spec;
+	pointee.clear_member_class_identity();
+	pointee.clear_injected_class_declaration();
+	pointee.remove_pointer_level();
+	ASTNode pointee_node = emplace_node<TypeSpecifierNode>(std::move(pointee));
+	type_spec.set_type_index(nativeTypeIndex(TypeCategory::MemberObjectPointer));
+	type_spec.set_size_in_bits(64);
+	type_spec.limit_pointer_depth(0);
+	type_spec.set_member_object_pointee(&pointee_node.as<TypeSpecifierNode>());
+}
+
 // A cast type-id is a type-id (C++20 [expr.static.cast], [expr.cast], [dcl.decl]).
 // A parenthesized abstract-declarator may itself be parenthesized, so the token
 // after '(' is not required to be a ptr-operator. parse_declarator owns the

@@ -530,22 +530,20 @@ Functional-cast spelling is still classified as a static_cast conversion even
 though [expr.type.conv]/1.1 makes a single-expression functional cast
 equivalent to the corresponding C-style cast, which may perform a const_cast.
 
-## C-style casts to member-pointer type-ids are not parsed
+## Some member-pointer type-id spellings still need the function suffix
 
-`(int S::*)p` still fails with "Unexpected keyword in expression context"
-because the C-style cast probe consumes the target type-id through
-`consume_cast_type_id_postfix_modifiers` and
-`consume_cast_type_id_paren_declarator`, which accept `*`, `&` and parenthesized
-declarators but not a `nested-name-specifier *` abstract declarator. The shared
-type-id helper now accepts `int S::*`, `int* S::*` and `int (S::*)()` for trait
-operands, `sizeof`, `alignof`, alias targets and trailing return types, so the
-cast probe is the remaining spelling that cannot reach a member-pointer type.
-Routing the cast probe through that same helper closes the gap. A
-`static_cast` to a member pointer is a separate conversion rule
-([expr.static.cast], [conv.mem]), so this is a parsing gap rather than an
-operand-ordering one. Functional-cast spelling is classified as the same
-conversion (see the entry above), so it shares the same probe and the same
-routing fix.
+The shared type-id abstract-declarator helper accepts `T C::*`, `T* C::*` and
+the parenthesized member-function-pointer form `T (C::*)()`. A member-function
+pointer whose return type is a pointer, spelled with the group after that
+pointer (`T* (C::*)()`), is still rejected by `sizeof` and by a C-style cast
+target, because the helper sees `*` first and then stops at the group. Trait and
+alias type-id sites re-enter `parse_type_alias_function_type` when a `(` remains,
+so those spellings work there; the other sites need the same follow-up before
+the gap is closed everywhere.
+
+A leading-global member-pointer owner such as `int* ::N::C::*pm` is also not
+parsed: the leading `::` declarator-id path expects a terminal name after the
+nested-name-specifier, not a member-pointer ptr-operator.
 
 ## Decltype operator overload result typing is parser-owned
 
@@ -1005,15 +1003,6 @@ template-pattern owner to its concrete specialization. Those paths either bind
 authority from a record or `TypeInfo` at the canonical boundary or emit a
 spelling for lookup and mangling; they do not copy an owner triple from another
 specifier.
-
-## A pointer-to-member declarator with a pointer pointee needs parentheses
-
-`int* C::*p;` is parsed as an out-of-line definition target instead of a
-data-member pointer whose pointee is `int*`, while the parenthesized
-`int* (C::*p)` accepted by tests keeps working. The qualified declarator is
-recognised before the pointer prefix can become part of the member pointee.
-Use the parenthesized spelling until the declarator parser handles the
-unparenthesized form.
 
 ## Static-member template initializer replay still handles unresolved lookups
 
