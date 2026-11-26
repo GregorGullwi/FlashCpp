@@ -2910,130 +2910,55 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 										continue;
 									}
 
-									// For struct members with brace initializers, we need to handle them specially
-									// Get the type info for this member
-									TypeIndex member_type_index = member.type_index;
-									if (const TypeInfo* member_type_info = tryGetTypeInfo(member_type_index)) {
-
-										// If this is a struct type, we need to initialize its members
-										if (member_type_info->getStructInfo() && !member_type_info->getStructInfo()->members.empty()) {
-											// Build a map of member names to initializer expressions
-											std::unordered_map<StringHandle, const ASTNode*> member_values;
-											size_t positional_index = 0;
-
-											for (size_t i = 0; i < initializers.size(); ++i) {
-												if (init_list.is_designated(i)) {
-														// Designated initializer - use member name
-													StringHandle member_name = init_list.member_name(i);
-													member_values[member_name] = &initializers[i];
-												} else {
-														// Positional initializer - map to member by index
-													if (positional_index < member_type_info->getStructInfo()->members.size()) {
-														StringHandle member_name = member_type_info->getStructInfo()->members[positional_index].getName();
-														member_values[member_name] = &initializers[i];
-														positional_index++;
-													}
-												}
-											}
-
-											// Generate nested member stores for each member of the nested struct
-											for (const StructMember& nested_member : member_type_info->getStructInfo()->members) {
-												// Determine initial value for nested member
-												std::optional<IrValue> nested_member_value;
-												StringHandle nested_member_name_handle = nested_member.getName();
-
-												if (member_values.count(nested_member_name_handle)) {
-													const ASTNode& init_expr = *member_values[nested_member_name_handle];
-
-													// Check if this is a nested braced initializer (two-level nesting)
-													if (init_expr.is<InitializerListNode>()) {
-														// Handle nested braced initializers using the recursive helper
-														const InitializerListNode& nested_init_list = init_expr.as<InitializerListNode>();
-
-														// Get the type info for the nested member
-														TypeIndex nested_member_type_index = nested_member.type_index;
-														if (const TypeInfo* nested_member_type_info = tryGetTypeInfo(nested_member_type_index)) {
-
-															// If this is a struct type, use the recursive helper
-															if (nested_member_type_info->getStructInfo() && !nested_member_type_info->getStructInfo()->members.empty()) {
-																generateNestedMemberStores(
-																	*nested_member_type_info->getStructInfo(),
-																	nested_init_list,
-																	StringTable::getOrInternStringHandle("this"),
-																	static_cast<int>(member.offset + nested_member.offset),
-																	node.name_token());
-																continue;  // Skip the nested member store
-															} else {
-																// For non-struct types with single-element initializer lists
-																const auto& nested_initializers = nested_init_list.initializers();
-																if (nested_initializers.size() == 1 && nested_initializers[0].is<ExpressionNode>()) {
-																	ExprResult nested_init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
-																	if (const auto* temp_var = std::get_if<TempVar>(&nested_init_operands.value)) {
-																		nested_member_value = *temp_var;
-																	} else if (const auto* ull_val = std::get_if<unsigned long long>(&nested_init_operands.value)) {
-																		nested_member_value = *ull_val;
-																	} else if (const auto* d_val = std::get_if<double>(&nested_init_operands.value)) {
-																		nested_member_value = *d_val;
-																	} else if (const auto* string = std::get_if<StringHandle>(&nested_init_operands.value)) {
-																		nested_member_value = *string;
-																	}
-																}
-															}
-														}
-													} else if (init_expr.is<ExpressionNode>()) {
-														ExprResult init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
-														if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
-															nested_member_value = *temp_var;
-														} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
-															nested_member_value = *ull_val;
-														} else if (const auto* d_val_ptr = std::get_if<double>(&init_operands.value)) {
-															nested_member_value = *d_val_ptr;
-														} else if (const auto* string_ptr = std::get_if<StringHandle>(&init_operands.value)) {
-															nested_member_value = *string_ptr;
-														}
-													}
-												}
-
-												if (nested_member_value.has_value()) {
-													// Generate nested member store
-													MemberStoreOp nested_member_store;
-													nested_member_store.value.setType(nested_member.type_index.category());
-													nested_member_store.value.size_in_bits = SizeInBits{static_cast<int>(nested_member.size * 8)};
-													nested_member_store.value.value = nested_member_value.value();
-													nested_member_store.object = StringTable::getOrInternStringHandle("this");
-													nested_member_store.member_name = nested_member.getName();
-													// Calculate offset: parent member offset + nested member offset
-													nested_member_store.offset = static_cast<int>(member.offset + nested_member.offset);
-													nested_member_store.ref_qualifier = ((nested_member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((nested_member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-													nested_member_store.struct_type_info = nullptr;
-
-													ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(nested_member_store), node.name_token()));
-												}
-											}
-
-											// Skip the outer member store since we've already generated nested stores
-											continue;
-										} else {
-											// For non-struct types with single-element initializer lists
-											if (initializers.size() == 1 && initializers[0].is<ExpressionNode>()) {
-												ExprResult init_operands = visitExpressionNode(initializers[0].as<ExpressionNode>());
-												if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
-													member_value = *temp_var;
-												} else if (const auto* ull_val_ptr = std::get_if<unsigned long long>(&init_operands.value)) {
-													member_value = *ull_val_ptr;
-												} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
-													member_value = *d_val;
-												} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
-													member_value = *string;
-												} else {
-													member_value = 0ULL;
-												}
+									// A class-type member with a brace initializer is its own aggregate: base
+									// subobjects and members are initialized in declaration order with their layout
+									// offsets, exactly as local and namespace-scope aggregate initialization does.
+									// Delegate instead of mapping clauses onto member indexes here, which would
+									// skip base subobjects and shift every following clause.
+									const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
+									const StructTypeInfo* member_struct_info = member_type_info != nullptr ? member_type_info->getStructInfo() : nullptr;
+									if (member_struct_info == nullptr) {
+										// A dependent brace initializer can survive on a non-class member.
+										const std::span<const ASTNode> elements = init_list.initializers();
+										if (elements.empty()) {
+											member_value = isFloatingPointType(member.memberType()) ? IrValue{0.0} : IrValue{0ULL};
+										} else if (elements.size() == 1 && elements[0].is<ExpressionNode>()) {
+											ExprResult init_operands = visitExpressionNode(elements[0].as<ExpressionNode>());
+											if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+												member_value = *temp_var;
+											} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+												member_value = *ull_val;
+											} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
+												member_value = *d_val;
+											} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
+												member_value = *string;
 											} else {
-												member_value = 0ULL;
+												throw InternalError("Could not extract a dependent default-member initializer value");
 											}
+										} else {
+											throw InternalError("Non-class default-member initializer has an unsupported clause list");
 										}
+									} else if (!member_struct_info->isAggregate()) {
+										// A non-aggregate class member consumes the list through a constructor.
+										const ConstructorDeclarationNode* resolved_ctor = init_list.resolved_constructor();
+										if (resolved_ctor == nullptr) {
+											resolved_ctor = resolveCodegenConstructorFromArgs(*member_struct_info, init_list.initializers());
+										}
+										if (resolved_ctor == nullptr) {
+											throw InternalError("No matching constructor for class-type default-member initializer");
+										}
+										ConstructorCallOp ctor_op;
+										ctor_op.object = StringTable::getOrInternStringHandle("this");
+										ctor_op.is_heap_allocated = false;
+										ctor_op.base_class_offset = static_cast<int>(member.offset);
+										appendConstructorCallArguments(ctor_op, resolved_ctor, init_list.initializers(), node.name_token(), &init_list);
+										finalizeConstructorCallOp(ctor_op, *member_struct_info, node.name_token());
+										ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+										continue;
 									} else {
-										member_value = 0ULL;
+										generateNestedMemberStores(*member_struct_info, init_list, StringTable::getOrInternStringHandle("this"),
+											static_cast<int>(member.offset), false, node.name_token());
+										continue;
 									}
 								} else {
 									// Default initializer exists but isn't an expression, zero-initialize
@@ -3305,10 +3230,16 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 										member_value = 0ULL;
 									}
 								} else if ((is_struct_type(member.type_index.category()))) {
-									// Struct aggregate brace-init (e.g., inner{1, 2}): emit per-member stores.
-									if (const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
-										member_type_info && member_type_info->getStructInfo()) {
-										const StructTypeInfo* nested_info = member_type_info->getStructInfo();
+									// Struct aggregate brace-init (e.g., inner{1, 2}): delegate to the shared
+									// walker so base subobjects keep their offsets and clause order.
+									const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
+									const StructTypeInfo* nested_info = member_type_info != nullptr ? member_type_info->getStructInfo() : nullptr;
+									if (nested_info != nullptr && nested_info->isAggregate()) {
+										generateNestedMemberStores(*nested_info, init_list, StringTable::getOrInternStringHandle("this"),
+											static_cast<int>(member.offset), false, node.name_token());
+										continue;
+									}
+									if (nested_info != nullptr) {
 										const auto& agg_elements = init_list.initializers();
 										const auto& nested_members = nested_info->members;
 										for (size_t i = 0; i < nested_members.size(); ++i) {
