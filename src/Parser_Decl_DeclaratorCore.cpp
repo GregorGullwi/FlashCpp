@@ -772,6 +772,12 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 	// Parse the identifier (name) or operator overload
 	Token identifier_token;
 	bool has_noreturn_attribute = false;
+	// A leading `::` on an out-of-line declarator-id names the global scope:
+	// `int ::N::S::data = 7;`. The whole nested-name-specifier is consumed here
+	// so the owner spelling and identity stay with the declaration.
+	StringHandle leading_global_declarator_owner;
+	OwnerId leading_global_declarator_owner_id;
+	bool has_leading_global_declarator = false;
 
 	// [dcl.mptr]: a member-pointer ptr-operator can follow the pointer chain
 	// (`int* C::* pm`, `int C::** pm`): the owner is consumed as a declarator-id
@@ -831,6 +837,19 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 				// Create a synthetic identifier token for the operator
 				identifier_token = Token(Token::Type::Identifier, operator_name, operator_keyword_token.line(), operator_keyword_token.column(),
 										 operator_keyword_token.file_index());
+			} else if (peek() == "::"_tok && peek(1).is_identifier()) {
+				// A leading `::` qualifies the declarator-id from the global
+				// scope. The nested-name-specifier helper records the leading
+				// global and the per-segment template arguments, and leaves a
+				// terminal template-id's `<...>` for the declarator suffixes.
+				NestedNameSpecifierParse parsed = parseNestedNameSpecifier(std::nullopt);
+				if (!parsed.has_terminal) {
+					return ParseResult::error("Expected a declarator-id after '::'", peek_info());
+				}
+				identifier_token = parsed.terminal;
+				leading_global_declarator_owner = resolveNestedNameSpecifierOwner(parsed);
+				leading_global_declarator_owner_id = resolveDeclaratorOwnerId(leading_global_declarator_owner);
+				has_leading_global_declarator = true;
 			} else {
 				// Check if this might be an unnamed parameter (next token is ',', ')', '=', or '[')
 				FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Parsing identifier. current_token={}, peek={}",
@@ -1019,6 +1038,14 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 		// Apply parameter pack flag if this is a parameter pack
 		if (is_parameter_pack) {
 			decl_node.as<DeclarationNode>().set_parameter_pack(true);
+		}
+
+		// Carry the globally-qualified declarator owner with the declaration.
+		if (has_leading_global_declarator) {
+			decl_node.as<DeclarationNode>().set_qualified_declarator_owner(leading_global_declarator_owner);
+			if (leading_global_declarator_owner_id) {
+				decl_node.as<DeclarationNode>().set_qualified_declarator_owner_id(leading_global_declarator_owner_id);
+			}
 		}
 
 		return ParseResult::success(decl_node);
@@ -1603,6 +1630,13 @@ ParseResult Parser::parse_declarator(
 							frame.after_direct = true;
 							continue;
 						}
+						// A leading `::` on the declarator-id names the global
+						// scope: `int (*::N::S::table)[2]`.
+						bool leading_global_declarator_id = false;
+						if (peek() == "::"_tok && peek(1).is_identifier()) {
+							advance();
+							leading_global_declarator_id = true;
+						}
 						if (!peek().is_identifier() || has_identifier) {
 							failed = true;
 							break;
@@ -1616,6 +1650,9 @@ ParseResult Parser::parse_declarator(
 						// The member-pointer form (`Owner::*`) was already handled above.
 						if (peek() == "::"_tok || peek() == "<"_tok) {
 							NestedNameSpecifierParse qualified = parseNestedNameSpecifier(identifier);
+							if (leading_global_declarator_id) {
+								qualified.has_leading_global = true;
+							}
 							if (!qualified.has_terminal) {
 								failed = true;
 								break;

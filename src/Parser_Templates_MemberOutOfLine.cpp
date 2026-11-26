@@ -402,6 +402,13 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	}
 	advance();  // consume '::'
 
+	// The first nested-name-specifier segment may carry a dependent member class
+	// template introduced by the `template` disambiguator:
+	//   Outer<T>::template Inner<U>::data
+	if (peek() == "template"_tok) {
+		advance();
+	}
+
 	// This IS an out-of-line template member function definition!
 	// Discard the saved position - we're committed to parsing this
 	discard_saved_token(saved_pos);
@@ -670,7 +677,11 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 
 		// Register the static member variable definition
 		OutOfLineMemberVariable out_of_line_var;
-		out_of_line_var.template_params = template_params;
+		// A nested class template owner is instantiated with the inner template
+		// arguments. Its own parameters bind the argument vector, while the full
+		// outer+inner replay set keeps both parameter identities visible when the
+		// dependent initializer is re-parsed.
+		out_of_line_var.template_params = inner_template_params.empty() ? template_params : inner_template_params;
 		out_of_line_var.replay_template_params = build_out_of_line_static_replay_params();
 		out_of_line_var.member_name = function_name_token.handle();	// Actually the variable name
 		out_of_line_var.type_node = return_type_node;				  // Actually the variable type
@@ -678,7 +689,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_var.initializer = *initializer;
 		out_of_line_var.initializer_position = initializer_position;
 		out_of_line_var.definition_lookup_context = definition_lookup_context;
-		out_of_line_var.template_param_names = template_param_names;
+		out_of_line_var.template_param_names = inner_template_params.empty() ? template_param_names : inner_template_param_names;
 
 		gTemplateRegistry.registerOutOfLineMemberVariable(
 			makeQualifiedClassIdentifier(qualified_class_name),
@@ -698,13 +709,13 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		// Register the static member variable definition without initializer
 		// This is used for providing storage for static constexpr members declared in the class
 		OutOfLineMemberVariable out_of_line_var;
-		out_of_line_var.template_params = template_params;
+		out_of_line_var.template_params = inner_template_params.empty() ? template_params : inner_template_params;
 		out_of_line_var.replay_template_params = build_out_of_line_static_replay_params();
 		out_of_line_var.member_name = function_name_token.handle();	// Actually the variable name
 		out_of_line_var.type_node = return_type_node;				  // Actually the variable type
 		out_of_line_var.declaration = create_out_of_line_static_member_declaration();
 		// No initializer for this case
-		out_of_line_var.template_param_names = template_param_names;
+		out_of_line_var.template_param_names = inner_template_params.empty() ? template_param_names : inner_template_param_names;
 
 		gTemplateRegistry.registerOutOfLineMemberVariable(
 			makeQualifiedClassIdentifier(qualified_class_name),

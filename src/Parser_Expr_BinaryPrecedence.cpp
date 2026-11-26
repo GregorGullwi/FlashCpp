@@ -3,6 +3,7 @@
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "Parser_FunctionTypeHelpers.h"
 #include "TypeTraitEvaluator.h"
 
 namespace {
@@ -2239,9 +2240,18 @@ ParseResult Parser::parse_static_member_block(
 	if (published_struct_info != nullptr) {
 		StructStaticMember& published_member =
 			published_struct_info->static_members.back();
-		TypeSpecifierNode canonical_static_type = type_spec;
-		const std::optional<TypeId> imported_type =
-			tryImportCanonicalStaticMemberType(canonical_static_type);
+		const std::optional<TypeSpecifierNode> ordered_static_type = orderedTypeFromStaticMemberDeclaration(published_member);
+		TypeSpecifierNode canonical_static_type = ordered_static_type.value_or(type_spec);
+		// A directly written array declarator keeps its extents on the
+		// declaration, not on the element type specifier. Apply them before
+		// publishing canonical identity so an explicit specialization's
+		// `static int values[2]` member publishes `int[2]`, matching an
+		// out-of-line `int S<int>::values[2]` definition instead of looking
+		// like a scalar-vs-array conflict.
+		if (decl.is_array_object() && !canonical_static_type.is_array_object()) {
+			applyDeclarationArrayBoundsToTypeSpec(decl, canonical_static_type, *this);
+		}
+		const std::optional<TypeId> imported_type = tryImportCanonicalStaticMemberType(canonical_static_type);
 		if (canonical_static_type.has_ordered_declarator() &&
 			!isDependentTemplateContext() &&
 			!imported_type.has_value()) {

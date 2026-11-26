@@ -900,6 +900,10 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			const TemplateParamNameVector& inner_template_param_names = inner_template_param_metadata.names;
 
 			discard_saved_token(inner_saved);
+			// Start of the declaration after both template heads. A static data
+			// member definition is re-parsed from here once the manual scan has
+			// identified its terminal name.
+			SaveHandle nested_declaration_start = save_token_position();
 
 			// Manually parse the nested template out-of-line definition.
 			// We skip to find: ReturnType ClassName<Args>::FunctionName(params) { body }
@@ -910,6 +914,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			std::string nested_qualified_class_name;
 			Token nested_func_name_token;
 			bool found_nested_def = false;
+			bool attempted_static_member_definition = false;
 			// Set when a qualified component after the first class carries template
 			// arguments (e.g. Owner<T>::Box<U>::value), which means the inner
 			// template head belongs to that member class template, not the function.
@@ -928,7 +933,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				};
 
 				std::string qualified_prefix;
-				while (!peek().is_eof()) {
+				while (!peek().is_eof() && !attempted_static_member_definition) {
 					if (peek().is_identifier()) {
 						Token current_ident = peek_info();
 						advance();
@@ -948,6 +953,12 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 								advance(); // consume '::'
 
 								while (!peek().is_eof()) {
+									// A `template` disambiguator may separate the nested owner
+									// from a dependent member class template name:
+									// Outer<T>::template Inner<U>::name.
+									if (peek() == "template"_tok) {
+										advance();
+									}
 									if (peek_info().value() == "operator") {
 										nested_class_name = class_token.value();
 										nested_qualified_class_name = owner_name;
@@ -1011,6 +1022,24 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 										nested_class_name = candidate_token.value();
 										advance(); // consume '::'
 										continue;
+									}
+
+									// A static data member definition ends the
+									// nested-name-specifier at this terminal. Re-parse the
+									// whole declaration from the start of the return type
+									// through the shared out-of-line member path so the
+									// initializer is registered for instantiation.
+									if (peek() == "="_tok || peek() == "["_tok || peek() == ";"_tok || peek() == "{"_tok) {
+										restore_token_position(nested_declaration_start);
+										std::optional<bool> static_definition = try_parse_out_of_line_template_member(template_param_nodes, template_param_names, inner_template_params,
+											inner_template_param_names);
+										discard_saved_token(nested_declaration_start);
+										if (static_definition.has_value()) {
+											cleanup_template_state();
+											return saved_position.success();
+										}
+										attempted_static_member_definition = true;
+										break;
 									}
 
 									nested_class_name = class_token.value();
@@ -1082,6 +1111,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				FlashCpp::ParsedParameterList nested_params;
 				auto nested_param_result = parse_parameter_list(nested_params);
 				if (nested_param_result.is_error()) {
+					discard_saved_token(nested_declaration_start);
 					cleanup_template_state();
 					return saved_position.success();
 				}
@@ -1217,6 +1247,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						  " (outer params: ", template_param_nodes.size(),
 						  ", inner params: ", inner_template_params.size(), ")");
 
+				discard_saved_token(nested_declaration_start);
 				cleanup_template_state();
 				return saved_position.success();
 			}
@@ -1225,10 +1256,12 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			while (!peek().is_eof()) {
 				if (peek() == "{"_tok) {
 					skip_balanced_braces();
+					discard_saved_token(nested_declaration_start);
 					cleanup_template_state();
 					return saved_position.success();
 				} else if (peek() == ";"_tok) {
 					advance();
+					discard_saved_token(nested_declaration_start);
 					cleanup_template_state();
 					return saved_position.success();
 				} else if (peek() == "("_tok) {
@@ -1237,6 +1270,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					advance();
 				}
 			}
+			discard_saved_token(nested_declaration_start);
 			cleanup_template_state();
 			return saved_position.success();
 		}

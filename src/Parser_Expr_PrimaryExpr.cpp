@@ -10663,23 +10663,28 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									segment_access.template_arguments =
 										&segment_template_args_storage;
 								}
-								if (const TypeInfo* resolved_segment_type =
-										resolveBaseClassMemberTypeChain(
-											resolved_namespace_name,
-											std::vector<QualifiedTypeMemberAccess>{
-												segment_access});
-									resolved_segment_type != nullptr &&
-									resolved_segment_type->name().isValid()) {
-									resolved_namespace_name = std::string(
-										StringTable::getStringView(
-											resolved_segment_type->name()));
+								// The segment's owner is the concrete type named by
+								// `resolved_namespace_name` (for example `Outer<char>`).
+								// Pass it so a dependent member class template
+								// (`Inner<U>`) materializes with its outer binding
+								// (`T` = `char`) instead of losing the enclosing
+								// template arguments.
+								const TypeInfo* concrete_segment_owner = findTypeByName(StringTable::getOrInternStringHandle(resolved_namespace_name));
+								// Only a concrete template instantiation supplies an outer
+								// binding. A dependent placeholder must keep the ambient
+								// binding so an enclosing instantiation can bind it.
+								if (concrete_segment_owner != nullptr &&
+									(!concrete_segment_owner->isTemplateInstantiation() || concrete_segment_owner->isDependentPlaceholder())) {
+									concrete_segment_owner = nullptr;
+								}
+								if (const TypeInfo* resolved_segment_type = resolveBaseClassMemberTypeChain(resolved_namespace_name,
+									std::vector<QualifiedTypeMemberAccess>{segment_access}, concrete_segment_owner);
+									resolved_segment_type != nullptr && resolved_segment_type->name().isValid()) {
+									resolved_namespace_name = std::string(StringTable::getStringView(resolved_segment_type->name()));
 								} else {
 									resolved_namespace_name.append("::");
 									if (segment_template_args.has_value()) {
-										std::string_view instantiated_segment_name =
-											get_instantiated_class_name(
-												segment_identifier.value(),
-												*segment_template_args);
+										std::string_view instantiated_segment_name = get_instantiated_class_name(segment_identifier.value(), *segment_template_args);
 										if (!instantiated_segment_name.empty()) {
 											resolved_namespace_name.append(
 												instantiated_segment_name);
