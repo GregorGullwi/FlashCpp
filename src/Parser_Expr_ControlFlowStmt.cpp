@@ -785,6 +785,7 @@ ParseResult Parser::parse_lambda_expression() {
 		return_type = type_result.node();
 		if (return_type.has_value() && return_type->is<TypeSpecifierNode>()) {
 			consume_type_id_abstract_declarators(return_type->as<TypeSpecifierNode>());
+			consume_type_id_parenthesized_declarator_followup(return_type->as<TypeSpecifierNode>());
 		}
 	}
 

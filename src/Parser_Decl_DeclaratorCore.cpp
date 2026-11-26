@@ -522,10 +522,17 @@ std::optional<CVQualifier> Parser::tryConsumeMemberPointerDeclaratorAfterCandida
 }
 
 bool Parser::tryConsumeMemberPointerDeclarator(TypeSpecifierNode& type_spec) {
-	if (!peek().is_identifier()) {
+	// [dcl.mptr]: the nested-name-specifier may start at the global scope, as
+	// in `int* ::N::C::* pm`. The owner spelling stays global-relative, so a
+	// failed candidate restores the leading `::` for the out-of-line path.
+	const bool has_leading_global = peek() == "::"_tok && peek(1).is_identifier();
+	if (!has_leading_global && !peek().is_identifier()) {
 		return false;
 	}
 	SaveHandle saved_pos = save_token_position();
+	if (has_leading_global) {
+		advance();
+	}
 	Token class_name_token = peek_info();
 	advance(); // consume class name
 	const std::optional<CVQualifier> member_pointer_cv = tryConsumeMemberPointerDeclaratorAfterCandidate(type_spec, class_name_token, saved_pos);
@@ -870,6 +877,24 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 				identifier_token = Token(Token::Type::Identifier, operator_name, operator_keyword_token.line(), operator_keyword_token.column(),
 										 operator_keyword_token.file_index());
 			} else if (peek() == "::"_tok && peek(1).is_identifier()) {
+				// A leading `::` can open the out-of-line declarator-id or a
+				// global member-pointer owner (`int* ::N::C::* pm`). The first
+				// segment after `::` is the owner candidate; the shared
+				// member-pointer helper decides and restores the `::` on failure.
+				SaveHandle global_owner_start = save_token_position();
+				advance(); // consume leading '::'
+				Token owner_token = peek_info();
+				advance(); // consume the first owner segment
+				const std::optional<CVQualifier> member_pointer_cv = tryConsumeMemberPointerDeclaratorAfterCandidate(type_spec, owner_token, global_owner_start);
+				discard_saved_token(global_owner_start);
+				if (member_pointer_cv.has_value()) {
+					type_spec.add_pointer_level(*member_pointer_cv);
+					consume_pointer_ref_modifiers(type_spec);
+					if (std::optional<ParseResult> parenthesized = parseParenthesizedDeclarator()) {
+						return std::move(*parenthesized);
+					}
+					continue;
+				}
 				// A leading `::` qualifies the declarator-id from the global
 				// scope. The nested-name-specifier helper records the leading
 				// global and the per-segment template arguments, and leaves a
@@ -1602,8 +1627,15 @@ ParseResult Parser::parse_declarator(
 							}
 							break;
 						}
-						if (peek().is_identifier()) {
+						// `int* ::N::C::* p` starts the member owner at the global
+						// scope. The candidate and its `::*` decision stay in the
+						// shared helper; a failed candidate restores the `::` for
+						// the leading-global declarator-id path below.
+						if (peek().is_identifier() || (peek() == "::"_tok && peek(1).is_identifier())) {
 							SaveHandle member_pointer_start = save_token_position();
+							if (peek() == "::"_tok) {
+								advance();
+							}
 							Token owner_token = peek_info();
 							advance();
 							const std::optional<CVQualifier> member_cv = tryConsumeMemberPointerDeclaratorAfterCandidate(base_type, owner_token, member_pointer_start);
