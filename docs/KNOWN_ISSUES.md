@@ -963,12 +963,22 @@ so a local that is genuinely `int*` is not distinguishable from the collapsed
 form at this boundary. See also the dependent data-member pointee substitution
 entry below.
 
-## Dependent data-member pointee substitution can lose the receiver adjustment
+## Dependent data-member pointee in a trailing return type still loses its owner
 
-For `template<class T> int read(D& d, T B::* p) { return d.*p; }`, a call to
-`read<int>` can read at the wrong offset when `B` is a non-primary base of `D`.
-The instantiated operand needs to reach sema with both its member owner and
-substituted pointee in the published member-pointer type.
+Parameter declarations, local declarations, and alias templates that spell
+`T B::*` keep the member owner through dependent-pointee substitution, so
+`template<class T> int read(D& d, T B::* p) { return d.*p; }` adjusts a
+non-primary base before reading or writing the member.
+
+A dependent member-pointer *trailing return type* still loses the owner. For
+`template<class T> auto identity(T B::* p) -> T B::*`, the trailing return type
+is reparsed with the template binding substituted, and that reparse projects
+`T B::*` onto the plain pointee type. Consequently `d.*identity<int>(p)` is
+rejected with `InvalidDataMemberPointerOperand#1637`, and storing the call
+result in an `int B::*` local truncates the member offset to 32 bits. The
+information is lost when the reparsed trailing return type replaces the
+substituted return `TypeSpecifierNode`; the reparse needs to retain the member
+owner (and its pointer level) from the pattern.
 
 ## A pointer-to-member declarator with a pointer pointee needs parentheses
 
