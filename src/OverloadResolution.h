@@ -3885,6 +3885,35 @@ inline bool conversionOperatorResultBindsLvalueReference(const UserDefinedConver
 	return !target.is_rvalue_reference() && return_type.is_lvalue_reference() && trailing_preserves_reference && (return_cv & ~target_cv) == 0;
 }
 
+// [dcl.init.ref]/5.4.3 and /5.4.4: a conversion function result that is itself a
+// reference is used as the initializer of the indirect reference binding. When
+// the result referent is reference-related to the target referent, dropping cv
+// qualification or binding an lvalue to an rvalue reference is ill-formed, so
+// the result must not be projected to a value to find an otherwise valid
+// standard conversion.
+inline bool conversionResultFailsDirectReferenceBinding(CanonicalTypeTable& table, const UserDefinedConversionOperatorSelection& selected,
+	const TypeSpecifierNode& target) {
+	if (selected.function == nullptr) {
+		return false;
+	}
+	const TypeSpecifierNode& result_type = selected.function->decl_node().type_specifier_node();
+	if (!result_type.is_reference() && !result_type.is_rvalue_reference()) {
+		return false;
+	}
+	CanonicalTypeTransaction transaction(table);
+	TypeSpecifierNode canonical_result = result_type;
+	TypeSpecifierNode canonical_target = target;
+	tryBindPublishedTypeEntity(canonical_result);
+	tryBindPublishedTypeEntity(canonical_target);
+	const CanonicalTypeImport result_import = importCanonicalType(table, canonical_result);
+	const CanonicalTypeImport target_import = importCanonicalType(table, canonical_target);
+	if (result_import.status != CanonicalTypeImportStatus::Supported || target_import.status != CanonicalTypeImportStatus::Supported) {
+		return false;
+	}
+	const std::optional<ConversionPlan> direct = tryBuildCanonicalDirectReferenceBindingPlan(table, result_import.type, target_import.type);
+	return direct.has_value() && !direct->is_valid;
+}
+
 // Use canonical TypeIds for reference binding. Value category remains expression
 // metadata; same-shape binding preserves qualification ranking, while supported
 // standard conversions may materialize a temporary for an eligible reference.
@@ -5008,14 +5037,20 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				if (!types_match) {
 					// A conversion operator returning an lvalue reference can bind
 					// an lvalue reference directly to the referenced object.
-					if (!to_is_rvalue && from_base_index.isStruct() && from_base_index.is_valid()) {
+					if (from_base_index.isStruct() && from_base_index.is_valid()) {
 						if (const auto selected_conversion = trySelectUserDefinedConversionOperator(from, stripReferenceQualifier(to), false);
 							selected_conversion.has_value()) {
 							if (selected_conversion->ambiguous) {
 								return ConversionPlan::no_match();
 							}
-							if (conversionOperatorResultBindsLvalueReference(*selected_conversion, to)) {
+							if (!to_is_rvalue && conversionOperatorResultBindsLvalueReference(*selected_conversion, to)) {
 								return makeUserDefinedConversionFunctionPlan(*selected_conversion);
+							}
+							// The selected result may be a reference that is reference-related
+							// to the target referent. Do not strip its cv by projecting the
+							// result to a value; that is the ill-formed CWG 1571 shape.
+							if (conversionResultFailsDirectReferenceBinding(requireFrontendContext().canonicalTypes(), *selected_conversion, to)) {
+								return ConversionPlan::no_match();
 							}
 						}
 					}

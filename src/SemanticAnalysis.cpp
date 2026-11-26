@@ -4645,6 +4645,12 @@ void SemanticAnalysis::normalizeTopLevelNode(const ASTNode& node) {
 				if (decl_type_id && isMemberFunctionPointerType(decl_type_id)) {
 					checkMemberFunctionAddressAccessForTarget(*init, decl_type_id);
 				}
+				// Namespace-scope reference initializers do not pass through
+				// normalizeStatement either, so validate the conversion from a class
+				// initializer without leaving the reference uninitialized.
+				if (decl_type_id && (declared_type.is_reference() || declared_type.is_rvalue_reference())) {
+					tryAnnotateVariableInitializationConversion(*init, decl_type_id, " in reference initialization", true);
+				}
 			}
 		}
 	}
@@ -14599,6 +14605,21 @@ void SemanticAnalysis::tryAnnotateVariableInitializationConversion(
 				"conversion function '" + std::string(StringTable::getStringView(conversion_name)) +
 					"' is explicit and cannot be used for copy-initialization",
 				{});
+		}
+		// A class object that cannot reach a reference target through any viable
+		// conversion function is ill-formed. Report it here instead of leaving the
+		// reference uninitialized: [dcl.init.ref] rejects a conversion result that
+		// is reference-related to the target referent but loses cv-qualification.
+		if (target_desc.ref_qualifier != ReferenceQualifier::None) {
+			TypeSpecifierNode target_value_type = target_type;
+			target_value_type.set_reference_qualifier(ReferenceQualifier::None);
+			const ConversionPlan value_plan = buildConversionPlan(source_type, target_value_type, &init_expr);
+			if (value_plan.is_valid && value_plan.rank == ConversionRank::UserDefined && !buildConversionPlan(source_type, target_type, &init_expr).is_valid) {
+				const Token source_token = FlashCpp::detail::ConstraintSubsumption::tryGetSourceToken(init_expr).value_or(Token{});
+				throw makeStructuredCompileError(context_.diagnostics(), DiagnosticId::NoMatchingConversion, DiagnosticSeverity::Error,
+					SourceLocation::fromToken(source_token), "no viable conversion from '" + readableConversionType(source_type, source_desc) + "' to '" +
+						readableConversionType(target_type, target_desc) + "'", {});
+			}
 		}
 	}
 	diagnoseScopedEnumConversion(init_expr, target_type_id, context_description, init_type_id);

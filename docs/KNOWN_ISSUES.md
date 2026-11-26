@@ -584,24 +584,6 @@ conversions, even though [over.ics.rank]/3.3 compares their second sequences for
 one constructor. One identity per constructor, whichever route selected it, is the
 invariant a fix needs.
 
-## Indirect reference binding drops conversion-result cv-qualification
-
-[dcl.init.ref]/5.4.3 (CWG 1571) requires the cv-qualification of a reference
-initialized through a conversion function to be the same as, or greater than, the
-qualification of the conversion function result. The following is therefore
-ill-formed, but FlashCpp accepts it:
-
-```
-struct A { operator volatile int&(); };
-const int& r = A();
-```
-
-The direct-binding plan rejects the referent that would lose `volatile`, yet the
-temporary-materialization fallback strips the result referent's cv before it
-evaluates the standard conversion, so the invalid candidate still reaches the
-value path. The fallback has to preserve the result's cv when that result is
-reference-related to the target referent.
-
 ## Remaining conversion function template cases
 
 - Resolve any remaining deferred base shapes that have not produced a concrete
@@ -711,11 +693,31 @@ constexpr`, `inline static`, and out-of-line definition forms. Remaining gaps:
   reference member or bit-field) cannot be expressed as a static relocation and
   now fails closed. Binding a reference to a prvalue is materialized only for a
   scalar constant.
+- A conversion-function call whose result is a reference is not treated as a
+  reference-returning call for this purpose: `int& r = A();` lowers the stored
+  address as zero instead of failing closed, so reads through `r` do not observe
+  the referent.
 - Namespace-scope `using`-directives are not consulted during detached
   evaluation.
 - Inline and nested namespace variables can be emitted with a name that does not
   match their reference (`undefined reference to 'N::a'`), which is a separate
   symbol-emission gap.
+
+## In-class aggregate initializer of a derived member reads shifted values
+
+An in-class member initialized with a braced aggregate whose type derives from a
+base class applies the clause values at the wrong offsets. For example:
+
+```
+struct Base { int value; };
+struct Derived : Base { int extra; };
+struct Holder { Derived storage{11, 12}; };
+```
+
+`Holder{}.storage.value` reads garbage and `Holder{}.storage.extra` reads `11`
+instead of `12`. Assigning the same fields after construction behaves correctly,
+so the gap is in materializing the in-class aggregate initializer for a derived
+member rather than in base-subobject or reference lowering.
 
 ## Subscript storage follow-up architecture
 
