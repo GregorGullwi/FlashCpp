@@ -4,6 +4,7 @@
 #include "IrGenerator.h"
 #include "InlineVector.h"
 #include "CanonicalArrayDecay.h"
+#include "AggregateInitialization.h"
 
 // Forward-declare to avoid pulling SemanticAnalysis.h into every TU that includes AstToIr.h
 class SemanticAnalysis;
@@ -815,8 +816,56 @@ private:
 			return;
 		}
 
+		// This fallback runs when constant evaluation cannot materialize the
+		// aggregate, so it still has to place every clause at the layout offset of
+		// the base subobject or member it appertains to. Base clauses are not one
+		// per base: a brace-elided base consumes every clause its own aggregate
+		// leaves need. Reuse the shared partition so the fallback cannot shift
+		// later clauses onto the wrong member.
+		const AggregateInitialization::BasePartition partition = AggregateInitialization::partitionBases(
+			struct_info,
+			init_list,
+			[this](const AggregateElements::Element& element, const ASTNode& clause) {
+				const std::optional<TypeSpecifierNode> source_type = tryBuildCodegenOverloadResolutionArgType(clause);
+				return source_type.has_value() && AggregateInitialization::acceptsWholeExpression(element, *source_type, clause);
+			});
+		if (partition.excess_clause.has_value()) {
+			throw InternalError("aggregate fallback initializer has more clauses than aggregate elements");
+		}
+		if (partition.empty_element_clause.has_value()) {
+			throw InternalError("aggregate fallback initializer needs explicit braces for an empty element");
+		}
+		for (size_t base_index = 0; base_index < struct_info.base_classes.size(); ++base_index) {
+			const AggregateInitialization::ElementAssignment& assignment = partition.base_elements[base_index];
+			if (assignment.range.empty()) {
+				continue;
+			}
+			const BaseClassSpecifier& base = struct_info.base_classes[base_index];
+			const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+			const StructTypeInfo* base_struct_info = base_type_info != nullptr ? base_type_info->getStructInfo() : nullptr;
+			if (base_struct_info == nullptr) {
+				throw InternalError("aggregate fallback base has no struct type metadata");
+			}
+			const size_t abs_base_offset = base_offset + base.offset;
+			if (assignment.form == AggregateInitialization::InitializationForm::Braced) {
+				const InitializerListNode& base_init_list = init_list.initializers()[assignment.range.begin].as<InitializerListNode>();
+				fillAggregateInitData(init_data, *base_struct_info, base_init_list, eval_to_value, abs_base_offset, depth + 1);
+			} else if (assignment.form == AggregateInitialization::InitializationForm::BraceElided) {
+				InitializerListNode base_init_list;
+				for (size_t clause_index = assignment.range.begin; clause_index < assignment.range.end; ++clause_index) {
+					base_init_list.add_initializer(init_list.initializers()[clause_index]);
+				}
+				fillAggregateInitData(init_data, *base_struct_info, base_init_list, eval_to_value, abs_base_offset, depth + 1);
+			} else {
+				// A whole-expression base initializer denotes an object, not a scalar
+				// leaf this fallback can pack. Materialization handles it before this
+				// path; reaching here means that value could not be evaluated.
+				throw InternalError("aggregate fallback cannot lower a whole-expression base initializer");
+			}
+		}
+
 		size_t positional_index = 0;
-		for (size_t i = 0; i < init_list.size(); ++i) {
+		for (size_t i = partition.member_begin; i < init_list.size(); ++i) {
 			StringHandle member_name;
 			if (init_list.is_designated(i)) {
 				member_name = init_list.member_name(i);

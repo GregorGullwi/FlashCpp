@@ -762,17 +762,14 @@ constexpr`, `inline static`, and out-of-line definition forms. Remaining gaps:
   match their reference (`undefined reference to 'N::a'`), which is a separate
   symbol-emission gap.
 
-## Namespace-scope brace-elided aggregate initializer for a derived class drops base elements
+## Constexpr member access through an aggregate base subobject
 
-A namespace-scope brace-elided aggregate initializer for a derived class whose
-base has more than one element drops the base members. For
-`struct Base { int first; int second; }; struct Derived : Base { int tail; };`
-and `Derived g{1, 2, 3};`, `g` reads back with the derived member taking the
-first clause instead of walking the base subobject. Local aggregates, in-class
-default member initializers, explicitly constructed members, and derived classes
-whose bases each contribute one element share the aggregate walker that handles
-base subobjects. Global aggregate initialization still uses its own relocation
-path and must adopt that walker.
+A constant aggregate that initializes a base subobject materializes the base
+value for static storage, but evaluating a member access through that base
+(`constexpr Derived d{1, 2, 3}; static_assert(d.first == 1);`) reports that the
+member was not found. Member lookup consults the object's own member bindings
+and does not descend into the base subobject values. Namespace-scope runtime
+read-back of the same object is correct.
 
 ## Subscript storage follow-up architecture
 
