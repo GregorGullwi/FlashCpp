@@ -869,7 +869,10 @@ bool CanonicalTypeTable::dependsOnlyOnTemplateParameters(TypeId type, TemplateDe
 			pending.push_back(TypeId{static_cast<uint32_t>(node.array_extent)});
 		}
 		if (node.kind == CanonicalTypeKind::Function) {
-			pending.push_back(unpackFunctionParamLink(node.array_extent));
+			const TypeId parameter_link = unpackFunctionParamLink(node.array_extent);
+			if (parameter_link) {
+				pending.push_back(parameter_link);
+			}
 		}
 		if (node.child) {
 			pending.push_back(node.child);

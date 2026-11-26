@@ -777,10 +777,18 @@ remaining pattern schemas by identity, and remove the name fallback.
    instantiations that differ only in the owner or a non-type argument no longer
    publish conflicting schemas. A published environment is now the only lookup
    for the pattern record; the synthesized name is consulted only when no
-   environment exists. Other unsupported shapes remain on that explicit
-   name-keyed fallback. Normalize requires-clause constraints and extend
-   canonical pattern import coverage for the remaining constraint and argument
-   shapes, then remove the fallback. The per-declaration ordinal makes colliding
+   environment exists. Bare function-type pattern arguments now import as
+   canonical `Function` nodes over the alpha-normalized return type and ordered
+   parameter types, so partials such as `S<R(int)>` publish an environment for
+   empty, concrete, and parameter-shaped parameter lists, and the pattern
+   matcher compares the same signature before binding a parameter, so
+   `S<int(long)>` no longer selects `S<R(int)>`. A parameter pack in the
+   signature, a dependent noexcept expression, and callable shapes written
+   through an ordered declarator remain unsupported and stay documented. Other
+   unsupported shapes remain on that explicit name-keyed fallback. Normalize
+   requires-clause constraints and extend canonical pattern import coverage for
+   the remaining constraint and argument shapes, then remove the fallback. The
+   per-declaration ordinal makes colliding
    pattern spellings unique as a bridge for the fallback and registry lookups,
    but it is not semantic identity and does not satisfy the parse-order or
    string-table-order exit criteria. Moving the
@@ -802,6 +810,14 @@ remaining pattern schemas by identity, and remove the name fallback.
    now have the same reverse-order, string-insertion, and no-parser
    reconstruction evidence, and the canonical runner rejects reintroducing a
    `Parser`, `SemanticAnalysis`, or member-context dependency into that harness.
+   Function-signature pattern arguments now have the same evidence: two tables
+   build the same return/parameter pattern in opposite order and with unrelated
+   string insertions, the identities compare structurally, and paired negative
+   controls reject a different parameter list, an empty list, a
+   parameter-shaped parameter, and a swapped primary. The parser-side case
+   parses the same function-signature partial declarations in both orders and
+   compares the captured constructor and field facts, and its source regression
+   shows that a different parameter list selects the primary.
    That evidence also exposed `sameStructure` comparing the packed
    member-specialization owner slot numerically, which hid cross-table owner
    identity; it now compares the primary and the owner structurally.

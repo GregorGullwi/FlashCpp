@@ -1,5 +1,6 @@
 #pragma once
 
+#include <deque>
 #include <new>
 #include <string_view>
 
@@ -272,6 +273,28 @@ inline std::optional<TypeId> tryImportCanonicalTemplateTypeArgument(CanonicalTyp
 	return tryImportSupportedCanonical(table, syntax);
 }
 
+// A bare function type argument (`R(int)`) keeps the return type on the
+// specifier and its parameter list in the cold signature; function pointers and
+// member pointers carry a declarator shape mapping to another path. A reference
+// qualifier or an array shape on the specifier makes the callable ambiguous
+// with a function reference or array, so those stay unsupported here.
+inline bool isBareFunctionPartialPatternSyntax(const TypeSpecifierNode& syntax) {
+	if (!syntax.has_function_signature() || syntax.has_ordered_declarator() || syntax.has_member_class()) {
+		return false;
+	}
+	if (syntax.reference_qualifier() != ReferenceQualifier::None || syntax.is_array() || syntax.has_pointee_array_declarator() ||
+		syntax.has_unsized_outer_array_dimension()) {
+		return false;
+	}
+	return syntax.category() != TypeCategory::FunctionPointer && syntax.category() != TypeCategory::MemberFunctionPointer &&
+		syntax.category() != TypeCategory::MemberObjectPointer;
+}
+
+inline size_t bareFunctionPartialPatternParameterCount(const TypeSpecifierNode& syntax) {
+	const FunctionSignature& signature = syntax.function_signature();
+	return signature.hasStructuredTypes() ? signature.parameter_types().size() : 0;
+}
+
 // Normalize captured type-only argument syntax without copying nested specifier
 // trees or mapping logical template depth to native calls. Frame syntax pointers
 // remain stable while nodes are interned. The caller owns the canonical
@@ -288,9 +311,16 @@ inline std::optional<TypeId> tryImportCanonicalPartialTypePattern(CanonicalTypeT
 	static_assert(std::is_trivially_destructible_v<Frame> && std::is_trivially_destructible_v<TypeId>);
 	const ScratchArenaState scratch_mark = scratch.mark();
 	auto scratch_scope = ScopeGuard([&scratch, scratch_mark]() { scratch.rollbackTo(scratch_mark); });
+	const auto child_count = [](const TypeSpecifierNode& syntax) -> size_t {
+		if (isBareFunctionPartialPatternSyntax(syntax)) {
+			// Slot 0 is the return type; the remaining slots are parameters.
+			return bareFunctionPartialPatternParameterCount(syntax) + 1;
+		}
+		return syntax.has_template_specialization() ? syntax.specialization_arg_count() : 0;
+	};
 	// One allocation holds the frame header followed by its known-arity arguments.
-	const auto make_frame = [&](const TypeSpecifierNode& syntax, Frame* parent) {
-		const size_t count = syntax.has_template_specialization() ? syntax.specialization_arg_count() : 0;
+	const auto make_frame = [&scratch, &child_count](const TypeSpecifierNode& syntax, Frame* parent) {
+		const size_t count = child_count(syntax);
 		if (count > (std::numeric_limits<size_t>::max() - sizeof(Frame)) / sizeof(TypeId)) {
 			throw InternalError("partial pattern argument storage overflow");
 		}
@@ -299,11 +329,56 @@ inline std::optional<TypeId> tryImportCanonicalPartialTypePattern(CanonicalTypeT
 		if (count != 0) new (frame->arguments()) TypeId[count]{};
 		return frame;
 	};
+	// A pattern base is either an alpha-normalized parameter placeholder or a
+	// concrete supported type. Both are canonical identity; no spelling or
+	// declaration ordinal participates.
+	const auto import_base = [&](const TypeSpecifierNode& syntax, bool conversion_from_root) -> std::optional<TypeId> {
+		// A callable specifier carries its own signature. Matching its return
+		// TypeIndex against a partial parameter and shaping only the outer
+		// declarator would drop that signature, so callables use the concrete
+		// callable importer and fail closed while dependent.
+		if (!syntax.has_function_signature()) {
+			for (size_t index = 0; index < parameters.size(); ++index) {
+				const TypeIndex parameter = parameters[index].registered_type_index();
+				if (parameter.is_valid() && parameter == syntax.type_index() && parameter.category() == syntax.type_index().category()) {
+					const TypeId base = table.templateParameter(primary, static_cast<uint32_t>(index));
+					const CanonicalTypeImport shaped = importCanonicalShapedBase(table, syntax, CanonicalTypeImportContext::Exact, base);
+					if (shaped.status != CanonicalTypeImportStatus::Supported) return std::nullopt;
+					return shaped.type;
+				}
+			}
+		}
+		if ((conversion_from_root && root_dependent) || syntax.has_template_parameter_identity() || syntax.has_template_parameter_decl()) {
+			return std::nullopt;
+		}
+		TypeSpecifierNode bound = syntax;
+		tryBindPublishedTypeEntity(bound);
+		std::optional<TypeId> result = tryImportSupportedCanonical(table, bound);
+		if (!result.has_value()) return std::nullopt;
+		TypeId base = *result;
+		while (true) {
+			const CanonicalTypeNode node = table.node(base);
+			if (node.kind == CanonicalTypeKind::Qualified || node.kind == CanonicalTypeKind::Pointer || node.kind == CanonicalTypeKind::LValueReference ||
+				node.kind == CanonicalTypeKind::RValueReference || node.kind == CanonicalTypeKind::Array) {
+				base = node.child;
+				continue;
+			}
+			if (node.kind != CanonicalTypeKind::Builtin && node.kind != CanonicalTypeKind::Record && node.kind != CanonicalTypeKind::Enum) {
+				return std::nullopt;
+			}
+			break;
+		}
+		return base;
+	};
+	// Materialized parameter specifiers must stay address-stable while a child
+	// frame is pending, so they live in a deque rather than scratch storage whose
+	// value type owns inline vectors.
+	std::deque<TypeSpecifierNode> function_parameters;
 	Frame* pending = make_frame(root, nullptr);
 	while (pending != nullptr) {
 		Frame& frame = *pending;
 		const TypeSpecifierNode& syntax = *frame.syntax;
-		if (syntax.is_pack_expansion() || syntax.has_concept_constraint() || syntax.has_member_class() || syntax.has_function_signature() ||
+		if (syntax.is_pack_expansion() || syntax.has_concept_constraint() || syntax.has_member_class() ||
 			syntax.has_dependent_name_type() || syntax.is_alias_template_specialization()) {
 			return std::nullopt;
 		}
@@ -313,54 +388,64 @@ inline std::optional<TypeId> tryImportCanonicalPartialTypePattern(CanonicalTypeT
 				return std::nullopt;
 			}
 		}
+		const bool bare_function = isBareFunctionPartialPatternSyntax(syntax);
+		if (bare_function && !syntax.function_signature().hasStructuredTypes()) return std::nullopt;
+		const size_t count = child_count(syntax);
 		std::optional<TypeId> result;
-		if (syntax.has_template_specialization()) {
-			if (frame.next_argument < syntax.specialization_arg_count()) {
+		if (syntax.has_template_specialization() && !bare_function) {
+			if (frame.next_argument < count) {
 				const size_t index = frame.next_argument++;
 				if (!syntax.specialization_arg_is_type(index))
 					return std::nullopt;
 				pending = make_frame(syntax.specialization_arg_type(index), &frame);
 				continue;
 			}
-			const TypeId base = table.templateSpecialization(syntax.specialization_template_decl(), std::span<const TypeId>(frame.arguments(), syntax.specialization_arg_count()));
+			const TypeId base = table.templateSpecialization(syntax.specialization_template_decl(), std::span<const TypeId>(frame.arguments(), count));
 			const CanonicalTypeImport shaped = importCanonicalShapedBase(table, syntax, CanonicalTypeImportContext::Exact, base);
 			if (shaped.status != CanonicalTypeImportStatus::Supported)
 				return std::nullopt;
 			result = shaped.type;
+		} else if (bare_function) {
+			const FunctionSignature& signature = syntax.function_signature();
+			if (signature.class_name.isValid() || (signature.noexcept_expression.has_value() && !signature.dependent_noexcept) ||
+				(signature.is_noexcept && signature.dependent_noexcept)) {
+				return std::nullopt;
+			}
+			if (frame.next_argument < count) {
+				const size_t index = frame.next_argument++;
+				if (index == 0) {
+					TypeSpecifierNode return_syntax = syntax;
+					return_syntax.clear_function_signature();
+					function_parameters.push_back(std::move(return_syntax));
+				} else {
+					const FunctionType& parameter = signature.parameter_types()[index - 1];
+					if (parameter.is_pack_expansion) return std::nullopt;
+					function_parameters.push_back(typeSpecifierFromFunctionType(parameter));
+				}
+				pending = make_frame(function_parameters.back(), &frame);
+				continue;
+			}
+			const TypeId return_type = frame.arguments()[0];
+			std::vector<TypeId> parameter_types;
+			parameter_types.reserve(count - 1);
+			for (size_t index = 1; index < count; ++index) {
+				TypeId parameter_type = frame.arguments()[index];
+				// [dcl.fct]/5: a function type or an array type parameter is
+				// adjusted to a pointer to its function or element type.
+				const CanonicalTypeNode parameter_node = table.node(table.withoutTopLevelQualifiers(parameter_type));
+				if (parameter_node.kind == CanonicalTypeKind::Array) {
+					parameter_type = table.pointer(parameter_node.child);
+				} else if (parameter_node.kind == CanonicalTypeKind::Function) {
+					parameter_type = table.pointer(parameter_type);
+				}
+				parameter_types.push_back(parameter_type);
+			}
+			result = table.function(return_type, std::span<const TypeId>(parameter_types), signature.is_variadic,
+				functionSignatureCV(signature), signature.function_reference_qualifier, signature.is_noexcept,
+				toCanonicalCallingConvention(signature.calling_convention), toCanonicalDllLinkage(signature.linkage), signature.dependent_noexcept);
 		} else {
-			for (size_t index = 0; index < parameters.size(); ++index) {
-				const TypeIndex parameter = parameters[index].registered_type_index();
-				if (parameter.is_valid() && parameter == syntax.type_index() && parameter.category() == syntax.type_index().category()) {
-					const TypeId base = table.templateParameter(primary, static_cast<uint32_t>(index));
-					const CanonicalTypeImport shaped = importCanonicalShapedBase(table, syntax, CanonicalTypeImportContext::Exact, base);
-					if (shaped.status != CanonicalTypeImportStatus::Supported)
-						return std::nullopt;
-					result = shaped.type;
-					break;
-				}
-			}
-			if (!result.has_value()) {
-				if ((frame.syntax == &root && root_dependent) || syntax.has_template_parameter_identity() || syntax.has_template_parameter_decl()) {
-					return std::nullopt;
-				}
-				TypeSpecifierNode bound = syntax;
-				tryBindPublishedTypeEntity(bound);
-				result = tryImportSupportedCanonical(table, bound);
-				if (!result.has_value()) return std::nullopt;
-				TypeId base = *result;
-				while (true) {
-					const CanonicalTypeNode node = table.node(base);
-					if (node.kind == CanonicalTypeKind::Qualified || node.kind == CanonicalTypeKind::Pointer || node.kind == CanonicalTypeKind::LValueReference ||
-						node.kind == CanonicalTypeKind::RValueReference || node.kind == CanonicalTypeKind::Array) {
-						base = node.child;
-						continue;
-					}
-					if (node.kind != CanonicalTypeKind::Builtin && node.kind != CanonicalTypeKind::Record && node.kind != CanonicalTypeKind::Enum) {
-						return std::nullopt;
-					}
-					break;
-				}
-			}
+			result = import_base(syntax, frame.syntax == &root);
+			if (!result.has_value()) return std::nullopt;
 		}
 		pending = frame.parent;
 		if (pending == nullptr)
@@ -410,8 +495,7 @@ inline std::optional<TypeId> tryImportCanonicalPartialClassPattern(FrontendConte
 	CanonicalTemplateArgument* pattern_arguments = new (argument_storage) CanonicalTemplateArgument[arguments.size()]{};
 	for (size_t index = 0; index < arguments.size(); ++index) {
 		const TemplateTypeArg& argument = arguments[index];
-		if (argument.member_pointer_kind != MemberPointerKind::None ||
-			argument.hasFunctionSignature()) return std::nullopt;
+		if (argument.member_pointer_kind != MemberPointerKind::None) return std::nullopt;
 		if (argument.is_pack) {
 			if (!options.allow_pack_parameters || !argument.isTypeArgument() || !argument.dependent_name.isValid()) {
 				return std::nullopt;

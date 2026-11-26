@@ -427,6 +427,17 @@ struct TemplatePattern {
 			: calling_convention;
 	}
 
+	// A parameter pack in a bare function signature needs its own expansion
+	// binding; the strict signature comparison below cannot consume it yet.
+	static bool signatureHasPackParameter(const FunctionSignature& signature) {
+		for (const FunctionType& parameter : signature.parameter_types()) {
+			if (parameter.is_pack_expansion) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	static bool matchFunctionSignature(
 		const TemplateTypeArg& pattern_arg,
 		const TemplateTypeArg& concrete_arg,
@@ -570,10 +581,20 @@ struct TemplatePattern {
 			return false;
 		}
 
-		if ((pattern_arg.category() == TypeCategory::FunctionPointer || pattern_arg.category() == TypeCategory::MemberFunctionPointer) &&
+		const bool bare_function_argument = pattern_arg.hasFunctionSignature() && pattern_arg.category() != TypeCategory::FunctionPointer &&
+			pattern_arg.category() != TypeCategory::MemberFunctionPointer && pattern_arg.category() != TypeCategory::MemberObjectPointer &&
+			!signatureHasPackParameter(pattern_arg.functionSignature());
+		if ((bare_function_argument || pattern_arg.category() == TypeCategory::FunctionPointer || pattern_arg.category() == TypeCategory::MemberFunctionPointer) &&
 			!matchFunctionSignature(pattern_arg, concrete_arg, template_param_names, param_substitutions)) {
 			FLASH_LOG(Templates, Trace, "  FAILED: function signature mismatch");
 			return false;
+		}
+		// A bare function type's identity is its return and parameter types. The
+		// specifier category comes from the return type, so the whole-argument
+		// deduction below would bind a parameter to the callable shape instead of
+		// the return type the signature already deduced.
+		if (bare_function_argument) {
+			return true;
 		}
 
 		// For pattern matching, we need to extract the template parameter name

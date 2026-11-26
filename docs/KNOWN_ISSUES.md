@@ -162,15 +162,29 @@ probe regresses the migration counters without improving constraint semantics.
 ## Partial patterns without a canonical environment still resolve their record by spelling
 
 A partial class-template pattern whose canonical pattern environment cannot be
-published (for example a non-type-parameter or alias argument shape, or a
-function-signature argument) still resolves its `StructTypeInfo` through the
-synthesized `$pattern` name plus a per-declaration ordinal. That suffix only
-makes the synthesized spelling unique; it is not identity and must not be used
-by a new consumer. The environment-keyed record is authoritative whenever an
-environment exists, and a missing record for a published environment fails
-closed. `partial_pattern_name_fallback` counts every remaining name lookup;
-extend canonical pattern import coverage and then delete the fallback. Member
-and constructor schemas for supported shapes are keyed by the canonical
+published still resolves its `StructTypeInfo` through the synthesized `$pattern`
+name plus a per-declaration ordinal. That suffix only makes the synthesized
+spelling unique; it is not identity and must not be used by a new consumer. The
+environment-keyed record is authoritative whenever an environment exists, and a
+missing record for a published environment fails closed.
+`partial_pattern_name_fallback` counts every remaining name lookup; extend
+canonical pattern import coverage and then delete the fallback.
+
+A bare function-type argument such as `S<R(int)>` now publishes an environment
+composed from the canonical return type and the ordered canonical parameter
+types, including the empty parameter list, parameter adjustment, and plain
+noexcept/calling-convention qualifiers, so it no longer takes this fallback. The
+pattern matcher compares the same signature before binding a parameter, so a
+different parameter list selects another partial or the primary. Remaining
+unsupported function shapes are a parameter pack in the signature, a dependent
+noexcept expression, an alias or dependent-name component that the canonical
+importer cannot stamp, a reference-returning function type, and a
+function-pointer or member-pointer callable (or a
+callable written through an ordered declarator) instead of the bare
+function-type spelling; those keep the fallback. The fallback also remains for
+non-type-parameter and alias argument shapes and for patterns whose concept or
+requires-clause argument identity cannot be published. Member and constructor
+schemas for supported shapes are keyed by the canonical
 `TemplateSpecialization` composed from the enclosing owner, the member primary,
 and the member template-id arguments, never by the synthesized spelling.
 
