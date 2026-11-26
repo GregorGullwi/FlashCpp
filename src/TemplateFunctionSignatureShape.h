@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <ranges>
+#include <vector>
 
 // Structural signature shape for free function-template TemplateDeclId keys.
 // Distinguishes overloads without using source location. Template parameter
@@ -60,9 +61,52 @@ inline bool sameTypeSpecifierShape(const TypeSpecifierNode& lhs, const TypeSpeci
 	return true;
 }
 
-template <typename LeftParamContainer, typename RightParamContainer>
-inline bool templateParameterListsHaveMatchingShape(
-	const LeftParamContainer& lhs,
+// Default template arguments are not part of a function template's signature,
+// and a later declaration or a definition may omit them. When both spellings
+// publish a type default, compare those types so different defaults cannot make
+// two distinct declarations look like one template. Non-type default
+// expressions do not participate in signature identity.
+inline bool templateParameterDefaultsHaveMatchingShape(const TemplateParameterNode& lhs, const TemplateParameterNode& rhs) {
+	if (!lhs.has_default() || !rhs.has_default()) {
+		return true;
+	}
+	const ASTNode lhs_default = lhs.default_value();
+	const ASTNode rhs_default = rhs.default_value();
+	if (lhs_default.is<TypeSpecifierNode>() != rhs_default.is<TypeSpecifierNode>()) {
+		return false;
+	}
+	if (!lhs_default.is<TypeSpecifierNode>()) {
+		return true;
+	}
+	return sameTypeSpecifierShape(lhs_default.as<TypeSpecifierNode>(), rhs_default.as<TypeSpecifierNode>());
+}
+
+template <typename LeftParamContainer, typename RightParamContainer> inline bool templateParameterListsHaveMatchingDefaults(const LeftParamContainer& lhs,
+	const RightParamContainer& rhs) {
+	auto same_defaults = [&](const auto& self, const auto& lhs_params, const auto& rhs_params) -> bool {
+		if (lhs_params.size() != rhs_params.size()) {
+			return false;
+		}
+		for (size_t i = 0; i < lhs_params.size(); ++i) {
+			const TemplateParameterNode* lhs_param_ptr = tryGetTemplateParameterNode(lhs_params[i]);
+			const TemplateParameterNode* rhs_param_ptr = tryGetTemplateParameterNode(rhs_params[i]);
+			if (lhs_param_ptr == nullptr || rhs_param_ptr == nullptr) {
+				return false;
+			}
+			if (!templateParameterDefaultsHaveMatchingShape(*lhs_param_ptr, *rhs_param_ptr)) {
+				return false;
+			}
+			if (lhs_param_ptr->kind() == TemplateParameterKind::Template &&
+				!self(self, lhs_param_ptr->nested_parameters(), rhs_param_ptr->nested_parameters())) {
+				return false;
+			}
+		}
+		return true;
+	};
+	return same_defaults(same_defaults, lhs, rhs);
+}
+
+template <typename LeftParamContainer, typename RightParamContainer> inline bool templateParameterListsHaveMatchingShape(const LeftParamContainer& lhs,
 	const RightParamContainer& rhs) {
 	auto same_shape = [&](const auto& self, const auto& lhs_params, const auto& rhs_params) -> bool {
 		if (lhs_params.size() != rhs_params.size()) {
@@ -140,10 +184,100 @@ inline bool functionDeclarationsHaveMatchingShape(
 inline bool primaryFunctionTemplatesHaveMatchingSignature(
 	const TemplateFunctionDeclarationNode& lhs,
 	const TemplateFunctionDeclarationNode& rhs) {
-	return templateParameterListsHaveMatchingShape(
-			   lhs.template_parameters(),
-			   rhs.template_parameters()) &&
-		functionDeclarationsHaveMatchingShape(
-			lhs.function_decl_node(),
-			rhs.function_decl_node());
+	return templateParameterListsHaveMatchingShape(lhs.template_parameters(), rhs.template_parameters()) &&
+		templateParameterListsHaveMatchingDefaults(lhs.template_parameters(), rhs.template_parameters()) &&
+		functionDeclarationsHaveMatchingShape(lhs.function_decl_node(), rhs.function_decl_node());
+}
+
+// Stamp specifiers that name a Type parameter of this function template with
+// template_decl_id and the parameter's position. Publication calls this with the
+// function's own id. Redeclaration probing calls it with a candidate's id,
+// because a member definition parsed inside a class template can still carry
+// the enclosing template's provisional stamp on its own parameters.
+inline void stampFunctionTemplateOwnParameters(TemplateFunctionDeclarationNode& template_decl, TemplateDeclId template_decl_id) {
+	if (!template_decl_id) {
+		return;
+	}
+	TemplateParameterVector& template_parameters = template_decl.template_parameters();
+	const auto stampFunctionSignature = [&](FunctionSignature& root_signature) {
+		std::vector<FunctionSignature*> pending_signatures{&root_signature};
+		while (!pending_signatures.empty()) {
+			FunctionSignature& signature = *pending_signatures.back();
+			pending_signatures.pop_back();
+			const auto stampFunctionType = [&](FunctionType& function_type) {
+				if (function_type.template_parameter_name.isValid()) {
+					for (size_t index = 0; index < template_parameters.size(); ++index) {
+						const TemplateParameterNode& parameter = template_parameters[index];
+						if (parameter.kind() == TemplateParameterKind::Type && parameter.nameHandle() == function_type.template_parameter_name) {
+							function_type.template_parameter_decl = template_decl_id;
+							function_type.template_parameter_index = static_cast<uint32_t>(index);
+							break;
+						}
+					}
+				}
+				if (function_type.callable_signature) {
+					function_type.callable_signature = allocatePersistentFunctionSignature(*function_type.callable_signature);
+					pending_signatures.push_back(function_type.callable_signature);
+				}
+			};
+			if (signature.hasStructuredTypes()) {
+				signature.updateReturnType(stampFunctionType);
+				signature.updateParameterTypes([&](OverloadVector<FunctionType, 4>& parameter_types) {
+					for (FunctionType& parameter_type : parameter_types) {
+						stampFunctionType(parameter_type);
+					}
+				});
+			}
+		}
+	};
+	const auto stampTypeSpecifier = [&](TypeSpecifierNode& root_type) {
+		std::vector<TypeSpecifierNode*> pending_types{&root_type};
+		while (!pending_types.empty()) {
+			TypeSpecifierNode& type_spec = *pending_types.back();
+			pending_types.pop_back();
+			if (type_spec.has_template_parameter_identity()) {
+				const StringHandle param_name = type_spec.template_parameter_name();
+				for (size_t index = 0; index < template_parameters.size(); ++index) {
+					const TemplateParameterNode& parameter = template_parameters[index];
+					if (parameter.kind() == TemplateParameterKind::Type && parameter.nameHandle() == param_name) {
+						type_spec.set_template_parameter_decl(template_decl_id, static_cast<uint32_t>(index));
+						break;
+					}
+				}
+			}
+			if (type_spec.has_function_signature()) {
+				FunctionSignature signature = type_spec.function_signature();
+				stampFunctionSignature(signature);
+				type_spec.set_function_signature(signature);
+			}
+			if (type_spec.has_template_specialization()) {
+				for (size_t index = 0; index < type_spec.specialization_arg_count(); ++index) {
+					if (type_spec.specialization_arg_is_type(index)) {
+						pending_types.push_back(&type_spec.specialization_arg_type(index));
+					}
+				}
+			}
+		}
+	};
+	FunctionDeclarationNode& function_decl = template_decl.function_decl_node();
+	stampTypeSpecifier(function_decl.decl_node().type_specifier_node());
+	for (ASTNode& parameter_node : function_decl.parameter_nodes()) {
+		if (parameter_node.is<DeclarationNode>()) {
+			stampTypeSpecifier(parameter_node.as<DeclarationNode>().type_specifier_node());
+		}
+	}
+	// A non-type parameter type or a default type can also name a Type parameter
+	// of this same function template; those specifiers participate in the
+	// template parameter shape comparison just like signature specifiers.
+	for (TemplateParameterNode& parameter : template_parameters) {
+		if (parameter.has_type()) {
+			stampTypeSpecifier(parameter.type_specifier_node());
+		}
+		if (parameter.has_default()) {
+			ASTNode default_value = parameter.default_value();
+			if (default_value.is<TypeSpecifierNode>()) {
+				stampTypeSpecifier(default_value.as<TypeSpecifierNode>());
+			}
+		}
+	}
 }

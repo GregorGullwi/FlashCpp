@@ -195,17 +195,24 @@ supported member-partial materialization records it explicitly; the inference is
 kept only for declarations with no such producer and must be replaced when one
 appears rather than extended with a spelling heuristic.
 
-## A member function template declaration and its in-class definition publish different TemplateDeclIds
+## Out-of-line member function template definitions publish no TemplateDeclId
 
-In the native case "Member function template under published class template
-publishes TemplateDeclId", a class template declares and then defines the same
-member function template (`select<Left, Right>`) and also declares an
-`address<T>` member. The declaration and the in-class definition currently
-receive different `TemplateDeclId`s, so two spellings of one template are not
-merged. Member-template declaration/definition registration has to reuse the
-declaration's identity when the definition is attached. This is pre-existing on
-`main`, is independent of the member-partial schema identity, and is the one
-failing case in the native doctest target.
+An in-class member function template declaration and its in-class definition
+share one `TemplateDeclId` selected by owner, spelling, template parameter shape,
+signature shape, and equivalent constraints. An out-of-line definition of the
+same member template is stored as an `OutOfLineMemberFunction` and carries no
+`TemplateDeclId`, so the table has no second identity to merge and the
+out-of-line function node's own type-parameter references are not stamped with
+the declaration's identity.
+Instantiation still resolves through the in-class declaration and the definition
+keeps working. A consumer that needs the out-of-line node's canonical signature
+must first resolve its pattern owner, match the in-class declaration with the
+same structural rule, and stamp the node with that declaration's identity.
+
+Constrained redeclarations whose constraint formulas
+`compareMemberTemplateConstraints` cannot build fail closed and remain distinct,
+so such a declaration and definition can still publish two ids. Extending the
+formula builder is required before those shapes can merge.
 
 ## Nominal import gaps are publication gaps, not importer gaps
 

@@ -4,6 +4,7 @@
 #include "FrontendContext.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "TemplateConstraintSubsumption.h"
 #include "TemplateFunctionSignatureShape.h"
 #include "TypeTraitEvaluator.h"
 
@@ -25,17 +26,43 @@ TypeIndex makeConstantValueTypeIndex(TypeCategory category, TypeIndex type_index
 	return TypeIndex{0, resolved_category};
 }
 
+bool functionTemplateHasConstraints(const TemplateFunctionDeclarationNode& template_decl) {
+	if (template_decl.has_requires_clause()) {
+		return true;
+	}
+	for (const TemplateParameterNode& parameter : template_decl.template_parameters()) {
+		if (parameter.has_concept_constraint()) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Redeclarations of one function template must carry equivalent constraints.
+// Unconstrained spellings are equivalent; a constrained and an unconstrained
+// spelling never are. A constrained pair whose formulas cannot be built stays
+// distinct rather than guessing.
+bool functionTemplateConstraintsAreEquivalent(const TemplateFunctionDeclarationNode& lhs, const TemplateFunctionDeclarationNode& rhs) {
+	const bool lhs_constrained = functionTemplateHasConstraints(lhs);
+	const bool rhs_constrained = functionTemplateHasConstraints(rhs);
+	if (!lhs_constrained && !rhs_constrained) {
+		return true;
+	}
+	if (lhs_constrained != rhs_constrained) {
+		return false;
+	}
+	const FlashCpp::detail::ConstraintSubsumptionOrdering ordering = FlashCpp::detail::compareMemberTemplateConstraints(
+		requireFrontendContext().canonicalTypes(), lhs, rhs);
+	return ordering == FlashCpp::detail::ConstraintSubsumptionOrdering::Equivalent;
+}
+
 // Publish a member function-template when its immediately enclosing class has
 // namespace/global EntityId ownership or is a direct published class template.
 // Nested-class owners deliberately remain unstamped because they have neither
 // identity at this parse point. Structural signatures merge redeclarations while
 // distinct overloads get separate function signature indices.
-std::optional<TemplateDeclId> tryPublishMemberFunctionTemplate(
-	StructDeclarationNode& enclosing,
-	TemplateFunctionDeclarationNode& member,
-	StringHandle simple_name,
-	TemplateDeclId enclosing_template_decl,
-	bool is_direct_member_of_top_level_class_template) {
+std::optional<TemplateDeclId> tryPublishMemberFunctionTemplate(StructDeclarationNode& enclosing, TemplateFunctionDeclarationNode& member,
+	StringHandle simple_name, TemplateDeclId enclosing_template_decl, bool is_direct_member_of_top_level_class_template) {
 	if (!simple_name.isValid()) {
 		return std::nullopt;
 	}
@@ -62,17 +89,20 @@ std::optional<TemplateDeclId> tryPublishMemberFunctionTemplate(
 			sibling.function_decl_node().decl_node().identifier_token().handle() != simple_name) {
 			continue;
 		}
-		if (primaryFunctionTemplatesHaveMatchingSignature(member, sibling)) {
+		// The member's own type parameters can still carry the enclosing class
+		// template's provisional stamp. Probe with the candidate's published id so
+		// the canonical signature comparison sees the same positional identity the
+		// candidate's declaration already publishes. A later no-match path stamps
+		// the member with its fresh id, and the merge path keeps this stamp.
+		stampFunctionTemplateOwnParameters(member, sibling.template_decl_id());
+		if (primaryFunctionTemplatesHaveMatchingSignature(member, sibling) && functionTemplateConstraintsAreEquivalent(member, sibling)) {
 			member.set_template_decl_id(sibling.template_decl_id());
 			return member.template_decl_id();
 		}
 	}
 	FrontendContext& front_end = requireFrontendContext();
-	const uint32_t signature_index =
-		front_end.templateDecls().nextFunctionSignatureIndex(owner, simple_name);
-	member.set_template_decl_id(
-		front_end.templateDecls().publishPrimaryFunctionTemplate(
-			owner, simple_name, signature_index));
+	const uint32_t signature_index = front_end.templateDecls().nextFunctionSignatureIndex(owner, simple_name);
+	member.set_template_decl_id(front_end.templateDecls().publishPrimaryFunctionTemplate(owner, simple_name, signature_index));
 	return member.template_decl_id();
 }
 

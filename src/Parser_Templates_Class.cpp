@@ -5471,6 +5471,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						if (&sibling == &published_template || !sibling.has_template_decl_id()) {
 							continue;
 						}
+						stampFunctionTemplateOwnParameters(published_template, sibling.template_decl_id());
 						if (primaryFunctionTemplatesHaveMatchingSignature(
 								published_template, sibling)) {
 							published_template.set_template_decl_id(sibling.template_decl_id());
