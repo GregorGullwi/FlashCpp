@@ -767,12 +767,22 @@ remaining pattern schemas by identity, and remove the name fallback.
    Concept type arguments now import as canonical `TypeId`s with parameter
    references alpha-normalized by index, and instantiation prefers that record.
    Top-level non-type, pack, and concept-constrained pattern arguments now
-   publish environments; other unsupported shapes remain on the synthesized-name
-   fallback. Normalize requires-clause constraints and extend canonical pattern
-   import coverage for the remaining constraint and argument shapes, key the
-   remaining member and constructor schemas by identity, and remove the fallback.
-   The per-declaration ordinal makes colliding pattern spellings unique as a
-   bridge, but it is not semantic identity and does not satisfy the parse-order or
+   publish environments. A selected member partial now materializes its
+   enclosing-owner argument count explicitly, so the canonical
+   `TemplateSpecialization` composes the instantiated owner instead of inferring
+   a zero-length prefix from the member primary's parameter count; the member
+   template-id arguments come from `TypeInfo::templateArgs()`. Constructor,
+   field, and member-function schemas for such an instantiation are therefore
+   keyed by owner, member primary, and member arguments together, and two
+   instantiations that differ only in the owner or a non-type argument no longer
+   publish conflicting schemas. A published environment is now the only lookup
+   for the pattern record; the synthesized name is consulted only when no
+   environment exists. Other unsupported shapes remain on that explicit
+   name-keyed fallback. Normalize requires-clause constraints and extend
+   canonical pattern import coverage for the remaining constraint and argument
+   shapes, then remove the fallback. The per-declaration ordinal makes colliding
+   pattern spellings unique as a bridge for the fallback and registry lookups,
+   but it is not semantic identity and does not satisfy the parse-order or
    string-table-order exit criteria. Moving the
    remaining registries, specialization caches, and facade lookups to
    `TemplateDeclId` belongs to boundary 6; deleting name-based
@@ -799,8 +809,15 @@ remaining pattern schemas by identity, and remove the name fallback.
    the same evidence: a second table resolves the alias and interns the pack
    elements in the opposite order, the two identities compare structurally, and
    paired negative controls reject the swapped owner/alias order and the
-   permuted pack. Partial-pattern identity and owner/non-type argument
-   combinations still need equivalent coverage.
+   permuted pack. A member-partial identity check now builds the same
+   owner/non-type combinations in two tables with reversed declaration order and
+   reversed string insertion, publishes each constructor, field, and
+   member-function schema under that identity, and rejects the swapped owner and
+   permuted non-type argument; `sameStructure` now compares typed and integral
+   value arguments and integral-value payloads, which previously compared equal.
+   The parser-side case parses the declarations in both orders, tears down the
+   parser, and compares the captured constructor and field facts. Remaining
+   identity coverage is tracked in [known issues](KNOWN_ISSUES.md).
 
 Before declaring 3A complete, check every exit criterion in the plan and read its
 [parallel architecture experiment](2026-08-24-parallel-front-end-architecture-experiment.md).

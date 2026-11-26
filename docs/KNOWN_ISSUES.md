@@ -159,6 +159,40 @@ constexpr path first. Until both are done, keep `TypeTraitExprNode` atoms routed
 to `evaluateConstraintAtom`; moving them back through the generic constexpr
 probe regresses the migration counters without improving constraint semantics.
 
+## Partial patterns without a canonical environment still resolve their record by spelling
+
+A partial class-template pattern whose canonical pattern environment cannot be
+published (for example a non-type-parameter or alias argument shape, or a
+function-signature argument) still resolves its `StructTypeInfo` through the
+synthesized `$pattern` name plus a per-declaration ordinal. That suffix only
+makes the synthesized spelling unique; it is not identity and must not be used
+by a new consumer. The environment-keyed record is authoritative whenever an
+environment exists, and a missing record for a published environment fails
+closed. `partial_pattern_name_fallback` counts every remaining name lookup;
+extend canonical pattern import coverage and then delete the fallback. Member
+and constructor schemas for supported shapes are keyed by the canonical
+`TemplateSpecialization` composed from the enclosing owner, the member primary,
+and the member template-id arguments, never by the synthesized spelling.
+
+The class adapter still infers the enclosing-owner argument prefix by
+subtracting the member template-id argument count from
+`outer_template_args()` when a declaration does not record the boundary. Every
+supported member-partial materialization records it explicitly; the inference is
+kept only for declarations with no such producer and must be replaced when one
+appears rather than extended with a spelling heuristic.
+
+## A member function template declaration and its in-class definition publish different TemplateDeclIds
+
+In the native case "Member function template under published class template
+publishes TemplateDeclId", a class template declares and then defines the same
+member function template (`select<Left, Right>`) and also declares an
+`address<T>` member. The declaration and the in-class definition currently
+receive different `TemplateDeclId`s, so two spellings of one template are not
+merged. Member-template declaration/definition registration has to reuse the
+declaration's identity when the definition is attached. This is pre-existing on
+`main`, is independent of the member-partial schema identity, and is the one
+failing case in the native doctest target.
+
 ## Nominal import gaps are publication gaps, not importer gaps
 
 `UserDefined` and `TypeAlias` indexes import as `UnmigratedNominal`. Instrumenting the

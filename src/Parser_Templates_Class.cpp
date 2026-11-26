@@ -3618,10 +3618,11 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 			// Generate a unique name for the pattern template.
 			// Argument modifiers alone cannot distinguish Container<T*, int> from
-			// Container<T*, char>, so a per-declaration ordinal makes the internal
-			// pattern identity unique. The '$' separator cannot appear in standard
-			// C++ identifiers, avoiding collisions with user-defined names that
-			// might contain "_pattern".
+			// Container<T*, char>, so a per-declaration ordinal keeps the synthesized
+			// spelling unique for the registry and the name-keyed fallback. Pattern
+			// identity is the canonical environment published below. The '$'
+			// separator cannot appear in standard C++ identifiers, avoiding
+			// collisions with user-defined names that might contain "_pattern".
 			StringBuilder pattern_name_builder;
 			pattern_name_builder.append(template_name).append("$pattern");
 			for (const auto& arg : pattern_args) {
@@ -6246,10 +6247,11 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 		// Generate a unique name for the pattern template.
 		// Argument modifiers alone cannot distinguish List<T*, int> from
-		// List<T*, char>, so a per-declaration ordinal makes the internal pattern
-		// identity unique. The '$' separator cannot appear in standard C++
-		// identifiers, avoiding collisions with user-defined names that might
-		// contain "_pattern".
+		// List<T*, char>, so a per-declaration ordinal keeps the synthesized
+		// spelling unique for the registry and the name-keyed fallback. Pattern
+		// identity is the canonical environment published below. The '$'
+		// separator cannot appear in standard C++ identifiers, avoiding
+		// collisions with user-defined names that might contain "_pattern".
 		StringBuilder pattern_name;
 		pattern_name.append(struct_name).append("$pattern"sv);
 		for (const auto& arg : pattern_args) {

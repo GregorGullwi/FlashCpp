@@ -1111,7 +1111,9 @@ public:
 
 	// Allocates a translation-unit-unique suffix for a synthesized partial-
 	// specialization pattern name. Two partials can share all argument modifiers,
-	// so spelling alone is not an identity.
+	// so spelling alone is not a type-record identity. Pattern identity is the
+	// published environment: the suffix only keeps the legacy name-keyed fallback
+	// and registry spellings distinct for shapes without a canonical environment.
 	size_t nextPatternIdentityOrdinal() {
 		return pattern_identity_ordinal.fetch_add(1, std::memory_order_relaxed);
 	}
@@ -1432,7 +1434,9 @@ private:
 	// Pattern type records keyed by the canonical partial-pattern environment.
 	std::unordered_map<uint32_t, TypeInfo*> partial_pattern_type_infos_;
 
-	// Counter that makes synthesized partial-specialization pattern names unique.
+	// Counter that makes synthesized partial-specialization pattern names unique
+	// for the legacy name-keyed fallback and registry spellings. It is not
+	// pattern identity; schemas use the canonical environment instead.
 	std::atomic<size_t> pattern_identity_ordinal{0};
 
 public:

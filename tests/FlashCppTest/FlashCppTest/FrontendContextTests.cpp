@@ -1,5 +1,6 @@
 #include <array>
 #include <deque>
+#include <vector>
 
 #if defined(_WIN32) && defined(_DEBUG)
 #include <crtdbg.h>
@@ -6962,6 +6963,142 @@ int main() {
 		check_order(false, true);
 		check_order(true, false);
 		check_order(true, true);
+	}
+
+	TEST_CASE("Partial pattern constructor and member schemas survive declaration and string insertion order") {
+		struct SchemaFacts {
+			std::vector<uint64_t> constructor_parameters;
+			std::vector<uint64_t> member_types;
+			bool has_constructors = false;
+			bool has_members = false;
+			bool operator==(const SchemaFacts&) const = default;
+		};
+		constexpr std::array<std::string_view, 4> alias_names{
+			"IdentityOrderNarrow",
+			"IdentityOrderNarrowAgain",
+			"IdentityOrderWide",
+			"IdentityOrderSeven",
+		};
+		constexpr std::array<std::string_view, 2> partials{
+			"template <class U> struct Box<U*, 5> {\n"
+			"\tBox(T seed) : value(seed * 2) {}\n"
+			"\tU* pointer;\n"
+			"\tint value;\n"
+			"};\n",
+			"template <class U> struct Box<U*, 7> {\n"
+			"\tBox(int seed) : value(seed * 3) {}\n"
+			"\tU* pointer;\n"
+			"\tchar value;\n"
+			"};\n",
+		};
+		constexpr std::string_view owner =
+			"template <class T> struct IdentityOrderOwner {\n"
+			"\ttemplate <class U, int N> struct Box {\n"
+			"\t\tBox(long seed) : value(seed) {}\n"
+			"\t\tU* pointer;\n"
+			"\t\tlong value;\n"
+			"\t};\n";
+		const auto check_order = [&](bool reverse_parse, bool reverse_strings) {
+			CAPTURE(reverse_parse);
+			CAPTURE(reverse_strings);
+			clearLegacyTypeTablesForTesting();
+			gTemplateRegistry.clear();
+			gConceptRegistry.clear();
+			gSymbolTable.clear();
+			auto clear_globals = ScopeGuard([] {
+				gSymbolTable.clear();
+				clearLegacyTypeTablesForTesting();
+			});
+			FrontendContext context;
+			std::array<StringHandle, alias_names.size()> handles;
+			for (size_t index = 0; index < alias_names.size(); ++index) {
+				const size_t spelling = reverse_strings ? alias_names.size() - 1 - index : index;
+				handles[spelling] = StringTable::createStringHandle(alias_names[spelling]);
+			}
+			for (size_t index = 1; index < handles.size(); ++index) {
+				if (reverse_strings) {
+					CHECK(handles[index - 1].handle > handles[index].handle);
+				} else {
+					CHECK(handles[index - 1].handle < handles[index].handle);
+				}
+			}
+
+			std::string code(owner);
+			for (size_t index = 0; index < partials.size(); ++index) {
+				code.append(partials[reverse_parse ? partials.size() - 1 - index : index]);
+			}
+			code.append("};\n");
+			code.append("using IdentityOrderNarrow = IdentityOrderOwner<short>::Box<int*, 5>;\n");
+			code.append("using IdentityOrderNarrowAgain = IdentityOrderOwner<short>::Box<int*, 5>;\n");
+			code.append("using IdentityOrderWide = IdentityOrderOwner<long long>::Box<int*, 5>;\n");
+			code.append("using IdentityOrderSeven = IdentityOrderOwner<short>::Box<int*, 7>;\n");
+
+			CompileContext test_context;
+			test_context.setInputFile("partial_pattern_schema_order.cpp");
+			Lexer lexer(code);
+			SemanticAnalysis sema(test_context, gSymbolTable);
+			{
+				Parser parser(lexer, test_context, sema);
+				REQUIRE(!parser.parse().is_error());
+			}
+
+			CanonicalTypeTable& table = context.canonicalTypes();
+			const auto type_code = [&](TypeId id) {
+				const CanonicalTypeNode node = table.node(id);
+				uint64_t code = (static_cast<uint64_t>(node.kind) << 24) | (static_cast<uint64_t>(node.builtin) << 16);
+				if (node.kind == CanonicalTypeKind::Pointer) {
+					const CanonicalTypeNode pointee = table.node(node.child);
+					code |= (static_cast<uint64_t>(pointee.kind) << 8) | static_cast<uint64_t>(pointee.builtin);
+				}
+				return code;
+			};
+			std::array<SchemaFacts, alias_names.size()> facts;
+			std::array<TypeId, alias_names.size()> identities;
+			for (size_t index = 0; index < alias_names.size(); ++index) {
+				const TypeInfo* alias = findTypeByName(handles[index]);
+				REQUIRE(alias != nullptr);
+				const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *alias);
+				REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+				identities[index] = imported.type;
+				SchemaFacts& captured = facts[index];
+				captured.has_constructors = table.hasRecordConstructors(imported.type);
+				if (captured.has_constructors) {
+					for (size_t constructor = 0; constructor < table.recordConstructorCount(imported.type); ++constructor) {
+						const CanonicalRecordConstructor entry = table.recordConstructorAt(imported.type, constructor);
+						for (size_t parameter = 0; parameter < entry.parameter_count; ++parameter) {
+							captured.constructor_parameters.push_back(type_code(
+								table.recordConstructorParameterAt(imported.type, constructor, parameter)));
+						}
+					}
+				}
+				captured.has_members = table.hasRecordFieldSchema(imported.type);
+				if (captured.has_members) {
+					for (size_t member = 0; member < table.recordSubobjectMemberCount(imported.type); ++member) {
+						captured.member_types.push_back(type_code(table.recordMemberAt(imported.type, member).type));
+					}
+				}
+			}
+			// One declaration and one equivalent spelling resolve to one identity.
+			CHECK(identities[0] == identities[1]);
+			// Owner and non-type arguments must not merge.
+			CHECK(identities[0] != identities[2]);
+			CHECK(identities[0] != identities[3]);
+			CHECK(identities[2] != identities[3]);
+			return facts;
+		};
+		const auto forward = check_order(false, false);
+		const auto reversed = check_order(true, true);
+		CHECK(forward[0] == reversed[0]);
+		CHECK(forward[1] == reversed[1]);
+		CHECK(forward[2] == reversed[2]);
+		CHECK(forward[3] == reversed[3]);
+		// Paired negative controls: the schemas themselves distinguish the owner
+		// and the non-type argument, so equality above is not vacuous.
+		CHECK(forward[0].has_constructors);
+		CHECK(forward[0].has_members);
+		CHECK(forward[0].constructor_parameters != forward[2].constructor_parameters);
+		CHECK(forward[0].member_types != forward[3].member_types);
+		CHECK(forward[2].constructor_parameters != forward[3].constructor_parameters);
 	}
 
 	TEST_CASE("DeclarationBuilder merges compatible function redeclaration into one EntityId") {

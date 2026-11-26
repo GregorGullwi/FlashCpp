@@ -127,6 +127,11 @@ inline bool sameStructure(const CanonicalTypeTable& left, TypeId left_id,
 						right, right.templateArgumentType(right_arg))) {
 						return false;
 					}
+				} else if (left_kind == CanonicalTemplateArgKind::Value) {
+					if (!sameStructure(left, left.templateArgumentValue(left_arg),
+						right, right.templateArgumentValue(right_arg))) {
+						return false;
+					}
 				} else if (left_kind == CanonicalTemplateArgKind::NonType &&
 					left.templateArgumentExpr(left_arg) !=
 					right.templateArgumentExpr(right_arg)) {
@@ -172,6 +177,18 @@ inline bool sameStructure(const CanonicalTypeTable& left, TypeId left_id,
 			a.kind == CanonicalTypeKind::MemberFunctionPointer) {
 			if (!sameStructure(left, left.memberPointerOwner(left_id),
 				right, right.memberPointerOwner(right_id))) {
+				return false;
+			}
+			left_id = a.child;
+			right_id = b.child;
+			continue;
+		}
+		if (a.kind == CanonicalTypeKind::IntegralValue ||
+			a.kind == CanonicalTypeKind::FloatingValue) {
+			// The extent holds the converted bit pattern, which is independent of
+			// table-local ids. Two different non-type arguments must not compare
+			// equal just because their value types match.
+			if (a.array_extent != b.array_extent) {
 				return false;
 			}
 			left_id = a.child;
@@ -3796,6 +3813,148 @@ inline void checkConcretePackSpecArgIdentityIndependence() {
 	require(!sameStructure(forward, permuted, reverse, reverse_spec));
 }
 
+// A direct member class-template specialization identity composes the enclosing
+// owner specialization, the member primary, and the member's own arguments.
+// Constructor and member schemas keyed by that identity must stay separate when
+// only the owner or a non-type argument differs, and must compare structurally
+// when the same declaration is rebuilt in a table with opposite interning order.
+// The partial-pattern environment is keyed by the same structural inputs, so
+// publication order cannot merge two declarations or split one declaration.
+inline void checkMemberPartialSchemaIdentityIndependence() {
+	const TemplateDeclId owner_primary{8701};
+	const TemplateDeclId member_primary{8702};
+	const auto publish_schemas = [](CanonicalTypeTable& table, TypeId type, TypeId constructor_parameter, TypeId field_type) {
+		const CanonicalRecordConstructorSpec constructor{
+			.parameter_types = std::span<const TypeId>(&constructor_parameter, 1),
+			.flags = CanonicalRecordFunctionFlags::None,
+			.is_noexcept = false,
+			.minimum_parameter_count = 1,
+			.default_exception_bits = 0,
+			.status = CanonicalRecordConstructorStatus::Complete,
+			.declared_parameter_count = 1,
+		};
+		table.publishRecordConstructors(type, std::span<const CanonicalRecordConstructorSpec>(&constructor, 1));
+		const TypeId member_types[] = {field_type};
+		table.publishRecordSubobjectTypes(type, member_types);
+		table.publishClassBaseSchema(type, {});
+		const CanonicalRecordMember member{field_type, 0, 8, 0, 0, CanonicalAccess::Public, CanonicalRecordMemberFlags::None};
+		table.publishRecordFieldSchema(type, std::span<const CanonicalRecordMember>(&member, 1), {});
+		const CanonicalMemberFunctionSpec function{
+			.name = "read",
+			.signature = field_type,
+			.flags = CanonicalMemberFunctionFlags::None,
+			.operator_kind = 0,
+			.cv_qualifier = CVQualifier::None,
+			.ref_qualifier = ReferenceQualifier::None,
+			.ordinal = 0,
+			.conversion_target = TypeId{},
+		};
+		table.publishMemberFunctionSchema(type, std::span<const CanonicalMemberFunctionSpec>(&function, 1));
+	};
+	const auto build = [&](CanonicalTypeTable& table, bool reverse) {
+		struct Identity {
+			TypeId narrow_five;
+			TypeId wide_five;
+			TypeId narrow_seven;
+		};
+		if (reverse) {
+			table.pointer(table.builtin(CanonicalBuiltinKind::LongLong));
+			table.integralValue(table.builtin(CanonicalBuiltinKind::Int), 7);
+		}
+		const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+		const TypeId short_type = table.builtin(CanonicalBuiltinKind::Short);
+		const TypeId long_long = table.builtin(CanonicalBuiltinKind::LongLong);
+		const TypeId pointer = table.pointer(integer);
+		const TypeId five = table.integralValue(integer, 5);
+		const TypeId seven = table.integralValue(integer, 7);
+		const TypeId narrow_owner = table.templateSpecialization(owner_primary, std::array<TypeId, 1>{short_type});
+		const TypeId wide_owner = table.templateSpecialization(owner_primary, std::array<TypeId, 1>{long_long});
+		const CanonicalTemplateArgument five_args[] = {
+			CanonicalTemplateArgument::makeType(pointer), CanonicalTemplateArgument::makeValue(five)};
+		const CanonicalTemplateArgument seven_args[] = {
+			CanonicalTemplateArgument::makeType(pointer), CanonicalTemplateArgument::makeValue(seven)};
+		Identity identity{
+			table.memberTemplateSpecialization(member_primary, narrow_owner, five_args),
+			table.memberTemplateSpecialization(member_primary, wide_owner, five_args),
+			table.memberTemplateSpecialization(member_primary, narrow_owner, seven_args),
+		};
+		publish_schemas(table, identity.narrow_five, short_type, pointer);
+		publish_schemas(table, identity.wide_five, long_long, integer);
+		publish_schemas(table, identity.narrow_seven, integer, table.builtin(CanonicalBuiltinKind::Char));
+		return identity;
+	};
+
+	CanonicalTypeTable forward;
+	const auto forward_identity = build(forward, false);
+	require(forward_identity.narrow_five != forward_identity.wide_five);
+	require(forward_identity.narrow_five != forward_identity.narrow_seven);
+	require(forward_identity.wide_five != forward_identity.narrow_seven);
+	require(forward.recordConstructorParameterAt(forward_identity.narrow_five, 0, 0) ==
+		forward.builtin(CanonicalBuiltinKind::Short));
+	require(forward.recordConstructorParameterAt(forward_identity.wide_five, 0, 0) ==
+		forward.builtin(CanonicalBuiltinKind::LongLong));
+	require(forward.recordConstructorParameterAt(forward_identity.narrow_seven, 0, 0) ==
+		forward.builtin(CanonicalBuiltinKind::Int));
+	require(forward.recordMemberAt(forward_identity.narrow_five, 0).type == forward.pointer(forward.builtin(CanonicalBuiltinKind::Int)));
+	require(forward.recordMemberAt(forward_identity.wide_five, 0).type == forward.builtin(CanonicalBuiltinKind::Int));
+	require(forward.hasMemberFunctionSchema(forward_identity.narrow_five));
+	require(forward.memberFunctionAt(forward_identity.narrow_five, 0).ordinal == 0);
+
+	// Unrelated string interning must not renumber or repartition the schemas.
+	const TypeId forward_narrow_five = forward_identity.narrow_five;
+	const size_t forward_count = forward.size();
+	internUnrelatedCanonicalSpelling("unrelated partial schema identity spelling B");
+	require(forward.memberTemplateSpecialization(member_primary,
+		forward.templateSpecialization(owner_primary, std::array<TypeId, 1>{forward.builtin(CanonicalBuiltinKind::Short)}),
+		std::array<CanonicalTemplateArgument, 2>{
+			CanonicalTemplateArgument::makeType(forward.pointer(forward.builtin(CanonicalBuiltinKind::Int))),
+			CanonicalTemplateArgument::makeValue(forward.integralValue(forward.builtin(CanonicalBuiltinKind::Int), 5))}) ==
+		forward_narrow_five);
+	internUnrelatedCanonicalSpelling("unrelated partial schema identity spelling A");
+	require(forward.size() == forward_count);
+
+	CanonicalTypeTable reverse;
+	const auto reverse_identity = build(reverse, true);
+	require(reverse_identity.narrow_five != reverse_identity.wide_five);
+	require(reverse_identity.narrow_five != reverse_identity.narrow_seven);
+	require(sameStructure(forward, forward_identity.narrow_five, reverse, reverse_identity.narrow_five));
+	require(sameStructure(forward, forward_identity.wide_five, reverse, reverse_identity.wide_five));
+	require(sameStructure(forward, forward_identity.narrow_seven, reverse, reverse_identity.narrow_seven));
+	require(sameStructure(forward, forward.recordConstructorParameterAt(forward_identity.narrow_five, 0, 0),
+		reverse, reverse.recordConstructorParameterAt(reverse_identity.narrow_five, 0, 0)));
+	require(sameStructure(forward, forward.recordConstructorParameterAt(forward_identity.wide_five, 0, 0),
+		reverse, reverse.recordConstructorParameterAt(reverse_identity.wide_five, 0, 0)));
+	require(sameStructure(forward, forward.recordMemberAt(forward_identity.narrow_seven, 0).type,
+		reverse, reverse.recordMemberAt(reverse_identity.narrow_seven, 0).type));
+	require(!sameStructure(forward, forward_identity.narrow_five, reverse, reverse_identity.wide_five));
+	require(!sameStructure(forward, forward_identity.narrow_five, reverse, reverse_identity.narrow_seven));
+	require(reverse.recordConstructorParameterAt(reverse_identity.wide_five, 0, 0) ==
+		reverse.builtin(CanonicalBuiltinKind::LongLong));
+
+	// The published partial-pattern environment uses the same structural inputs
+	// as the schema identity: two declarations that normalize to one pattern stay
+	// distinct, re-publishing one declaration merges, and a different normalized
+	// pattern splits.
+	const StringHandle first_identity = StringTable::getOrInternStringHandle("partial-schema-declaration-first");
+	const StringHandle second_identity = StringTable::getOrInternStringHandle("partial-schema-declaration-second");
+	const StringHandle owner_name = StringTable::getOrInternStringHandle("PartialSchemaOwner");
+	const auto check_environment_partition = [&](TemplateDeclTable& decls, TemplateDeclId primary, TypeId pattern,
+		TypeId other_pattern) {
+		const TemplateDeclId first = decls.publishClassPartialEnvironment(primary, pattern, first_identity);
+		const TemplateDeclId second = decls.publishClassPartialEnvironment(primary, pattern, second_identity);
+		require(first != second);
+		require(decls.publishClassPartialEnvironment(primary, pattern, first_identity) == first);
+		require(decls.publishClassPartialEnvironment(primary, other_pattern, first_identity) != first);
+		require(decls.publishClassPartialEnvironment(primary, other_pattern, second_identity) != second);
+	};
+	TemplateDeclTable forward_decls;
+	check_environment_partition(forward_decls, forward_decls.publishPrimaryClassTemplate(OwnerId{8703}, owner_name),
+		forward_identity.narrow_five, forward_identity.narrow_seven);
+	TemplateDeclTable reverse_decls;
+	check_environment_partition(reverse_decls, reverse_decls.publishPrimaryClassTemplate(OwnerId{8703}, owner_name),
+		reverse_identity.narrow_seven, reverse_identity.narrow_five);
+}
+
 // The shape is a by-value query result; a future field must not quietly re-add
 // padding to it.
 static_assert(sizeof(CanonicalPointerShape) == 10, "pointer shape stays a packed by-value result");
@@ -4146,6 +4305,7 @@ inline int run() {
 	checkDependentIdentityIndependence();
 	checkMemberAliasOwnerIdentityIndependence();
 	checkConcretePackSpecArgIdentityIndependence();
+	checkMemberPartialSchemaIdentityIndependence();
 	checkSpecializationFieldSchemas();
 	checkNestedFieldSchemas();
 	checkRecordMemberProperties();
