@@ -382,7 +382,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			// lookup key and the terminal token is the member name. The helper
 			// handles identifier chains, `template` disambiguators, and template-id
 			// owners such as `N::S<int>::data`.
-			NestedNameSpecifierParse parsed = parseNestedNameSpecifier(decl_node.identifier_token());
+			NestedNameSpecifierParse parsed = parseNestedNameSpecifier(decl_node.identifier_token(), NestedNameSyntaxNodes::Skip);
 			class_name = resolveNestedNameSpecifierOwner(parsed);
 			decl_node.set_qualified_declarator_owner_id(resolveDeclaratorOwnerId(class_name));
 			if (!parsed.segments.empty()) {
