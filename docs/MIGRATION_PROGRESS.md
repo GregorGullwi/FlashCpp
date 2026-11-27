@@ -1123,11 +1123,13 @@ multi-translation-unit checks remain required compatibility evidence. See the
 plan for complete boundary-specific validation.
 
 Constexpr aggregate lookup walks materialized base subobjects with an explicit
-worklist and shares brace partitioning with runtime initialization. The focused
-Windows run on `9164bb81` passed the ordinary aggregate-base regression, while
-[`test_constexpr_deep_aggregate_base_member_access_ret42.cpp`](../tests/test_constexpr_deep_aggregate_base_member_access_ret42.cpp)
-hit the 120-second compiler timeout. Keep the 1,024-level case as the validation
-target. See the open
+worklist and shares brace partitioning with runtime initialization. Brace
+partitioning no longer calls conversion-planning/user-conversion lookup for
+aggregates without a user-declared constructor, which removed the O(depth^2)
+work on the 1,024-level deep aggregate base chain. The focused Windows run now
+compiles [`test_constexpr_deep_aggregate_base_member_access_ret42.cpp`](../tests/deep/test_constexpr_deep_aggregate_base_member_access_ret42.cpp)
+within the stock runner's 120-second limit and the compiled program returns 42.
+Keep the 1,024-level case as the validation target. See the open
 [qualified object](KNOWN_ISSUES.md#constexpr-member-access-requires-an-unqualified-object-spelling)
 and [reference argument](KNOWN_ISSUES.md#constexpr-aggregate-reference-parameters-lose-namespace-scope-arguments) cases.
 
