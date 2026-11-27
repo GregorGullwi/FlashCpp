@@ -1729,7 +1729,7 @@ StringHandle Parser::NestedNameSpecifierParse::ownerSpelling() const {
 	return StringTable::getOrInternStringHandle(builder.commit());
 }
 
-Parser::NestedNameSpecifierParse Parser::parseNestedNameSpecifier(std::optional<Token> already_consumed_head) {
+Parser::NestedNameSpecifierParse Parser::parseNestedNameSpecifier(std::optional<Token> already_consumed_head, NestedNameSyntaxNodes syntax_nodes) {
 	NestedNameSpecifierParse parsed;
 	// Consume the template-id arguments and the trailing `::` of an owner
 	// segment. A terminal name keeps its `<...>` tokens unconsumed so the
@@ -1739,7 +1739,9 @@ Parser::NestedNameSpecifierParse Parser::parseNestedNameSpecifier(std::optional<
 		if (peek() == "<"_tok) {
 			SaveHandle argument_start = save_token_position();
 			std::vector<ASTNode> argument_syntax_nodes;
-			std::optional<TemplateArgumentVector> arguments = parse_explicit_template_arguments(&argument_syntax_nodes);
+			std::optional<TemplateArgumentVector> arguments = syntax_nodes == NestedNameSyntaxNodes::Collect
+				? parse_explicit_template_arguments(&argument_syntax_nodes)
+				: parse_explicit_template_arguments();
 			if (arguments.has_value() && peek() == "::"_tok) {
 				segment.template_arguments = std::move(*arguments);
 				segment.template_argument_syntax_nodes = std::move(argument_syntax_nodes);

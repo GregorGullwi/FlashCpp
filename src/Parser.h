@@ -4048,6 +4048,14 @@ private:
 	// explicit `::template` disambiguator. Template arguments are kept in parsed
 	// form so callers can materialize a class-template owner without re-reading
 	// the token stream.
+	// Whether the shared nested-name-specifier parse retains the parsed
+	// template-argument syntax nodes. Only the member-pointer owner hook
+	// consumes them; every other caller skips the transient vector allocation.
+	enum class NestedNameSyntaxNodes : uint8_t {
+		Skip = 0,
+		Collect = 1,
+	};
+
 	struct NestedNameSpecifierSegment {
 		Token identifier{};
 		StringHandle name{};
@@ -4081,7 +4089,10 @@ private:
 	// it; the helper then owns its optional template-id arguments and every
 	// following `::segment`. The terminal unqualified name is consumed and
 	// returned, so one parse supplies both the owner and the member name.
-	NestedNameSpecifierParse parseNestedNameSpecifier(std::optional<Token> already_consumed_head);
+	// `syntax_nodes` retains the parsed template-argument syntax only for the
+	// member-pointer owner hook; other consumers pass `Skip` so the transient
+	// syntax vector is not allocated.
+	NestedNameSpecifierParse parseNestedNameSpecifier(std::optional<Token> already_consumed_head, NestedNameSyntaxNodes syntax_nodes);
 
 	// Interns the canonical owner spelling used as the type-table lookup key.
 	// Template-id segments are materialized so `N::S<int>` becomes the
