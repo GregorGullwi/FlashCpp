@@ -568,7 +568,7 @@ struct CallOp {
 	bool is_indirect_call = false;		   // 1 byte - True if calling through function pointer/reference
 	bool returns_reference = false;		// 1 byte - True if function returns T& or T&&
 	bool returns_rvalue_reference = false; // 1 byte - True if function returns T&&
-	bool returns_pointer = false; // Pointer prvalue, including pointers to nominal types
+	bool returns_pointer = false; // Pointer prvalue, including pointers to nominal types and pointers to members
 	std::optional<TempVar> return_slot;	// Optional temp var representing the return slot location
 	std::optional<LocalVarId> result_destination;	// Direct object result for guaranteed copy elision
 	bool result_to_hidden_return_slot = false;	// Aggregate result is constructed in our own hidden return slot
@@ -911,6 +911,7 @@ struct FunctionDeclOp {
 	TypeCategory returnType() const { return return_type_index.category(); }
 	bool returns_reference = false;	// True if function returns a reference (T& or T&&)
 	bool returns_rvalue_reference = false;  // True if function returns an rvalue reference (T&&)
+	bool returns_member_pointer = false;  // True if function returns a pointer-to-member in any declarator projection
 	StringHandle function_name;	// Pure StringHandle
 	StringHandle struct_name;  // Empty for non-member functions
 	Linkage linkage = Linkage::None;
@@ -1172,6 +1173,7 @@ struct IndirectCallOp {
 	bool use_return_slot = false;
 	bool returns_reference = false;
 	bool returns_rvalue_reference = false;
+	bool returns_member_pointer = false;	// True if the signature returns a pointer-to-member in any declarator projection
 	uint8_t control_flow_flags = static_cast<uint8_t>(IrCallFlowFlags::None);
 	std::optional<LocalVarId> result_destination;	// Caller object receiving the return slot directly
 	bool result_to_hidden_return_slot = false;		// Aggregate result is constructed in our own hidden return slot

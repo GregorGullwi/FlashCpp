@@ -392,6 +392,20 @@ ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessN
 	}
 	TempVar receiver_address = [&] {
 		if (receiver_needs_address && receiver.storage != ValueStorage::ContainsAddress) {
+			// A Load-context global receiver is a copy in a temporary. Applying the
+			// member offset to that copy would read or write the copy, and the copy
+			// is at most one eightbyte even for a larger object. Global lvalue
+			// metadata names the real storage, so take its address.
+			if (const auto* receiver_temp = std::get_if<TempVar>(&receiver.value)) {
+				if (const auto lvalue_info = getTempVarLValueInfo(*receiver_temp);
+					lvalue_info.has_value() && lvalue_info->kind == LValueInfo::Kind::Global) {
+					const auto* global_name = std::get_if<StringHandle>(&lvalue_info->base);
+					if (global_name == nullptr) {
+						throw InternalError("global lvalue metadata has no global name");
+					}
+					return emitGlobalObjectAddress(*global_name, token);
+				}
+			}
 			return emitAddressOf(receiver.category(), receiver.size_in_bits.value, toIrValue(receiver.value), token);
 		}
 		if (const auto* temp = std::get_if<TempVar>(&receiver.value)) {
@@ -523,6 +537,22 @@ TempVar AstToIr::emitGlobalStoredAddressLoad(StringHandle global_name, const Tok
 	op.result.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
 	op.result.value = address_temp;
 	op.global_name = global_name;
+	ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), token));
+	setTempVarMetadata(address_temp, TempVarMetadata::makeAddressOnly(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{POINTER_SIZE_BITS},
+		ValueCategory::LValue));
+	return address_temp;
+}
+
+TempVar AstToIr::emitGlobalObjectAddress(StringHandle global_name, const Token& token) {
+	TempVar address_temp = var_counter.next();
+	GlobalLoadOp op;
+	op.result.setType(TypeCategory::UnsignedLongLong);
+	op.result.ir_type = IrType::Integer;
+	op.result.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+	op.result.value = address_temp;
+	op.global_name = global_name;
+	// handleGlobalLoad emits a RIP-relative LEA for an address-only load.
+	op.is_array = true;
 	ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), token));
 	setTempVarMetadata(address_temp, TempVarMetadata::makeAddressOnly(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{POINTER_SIZE_BITS},
 		ValueCategory::LValue));

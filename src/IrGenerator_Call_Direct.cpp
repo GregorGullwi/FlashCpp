@@ -97,6 +97,7 @@ void AstToIr::populateIndirectCallReturnInfo(IndirectCallOp& call_op, const Func
 	call_op.return_pointer_depth = PointerDepth{static_cast<int>(return_type.runtime_pointer_depth())};
 	call_op.is_variadic = signature.is_variadic;
 	call_op.fixed_argument_count = signature.parameter_type_indices.size();
+	call_op.returns_member_pointer = isAbiMemberPointerType(return_type);
 	call_op.returns_reference = signature.returns_reference() && !return_type.has_function_signature();
 	call_op.returns_rvalue_reference = signature.returns_rvalue_reference();
 	call_op.referenced_value_size_in_bits = call_op.returns_reference
@@ -118,7 +119,7 @@ static TypeIndex getCallReturnTypeIndex(const TypeSpecifierNode& return_type) {
 
 void AstToIr::populateCallReturnInfo(CallOp& call_op, const TypeSpecifierNode& return_type) {
 	const TypeSpecifierNode normalized_return_type = normalizeCallReturnType(return_type);
-	call_op.returns_pointer = normalized_return_type.runtime_pointer_depth() > 0;
+	call_op.returns_pointer = normalized_return_type.runtime_pointer_depth() > 0 || isAbiMemberPointerType(normalized_return_type);
 	call_op.return_type_index = getCallReturnTypeIndex(normalized_return_type);
 	call_op.return_size_in_bits = SizeInBits{
 		(call_op.returns_pointer ||

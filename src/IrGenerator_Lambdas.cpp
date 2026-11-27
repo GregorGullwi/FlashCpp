@@ -762,6 +762,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 
 	// Build TypeSpecifierNode for return type (with proper type_index if struct)
 	TypeSpecifierNode return_type_node = lambda_info.makeReturnTypeNode();
+	func_decl_op.returns_member_pointer = isAbiMemberPointerType(return_type_node);
 
 	// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
 	// Only non-pointer, non-reference struct returns need this
@@ -930,6 +931,7 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 
 	// Build TypeSpecifierNode for return type (with proper type_index if struct)
 	TypeSpecifierNode return_type_node = lambda_info.makeReturnTypeNode();
+	func_decl_op.returns_member_pointer = isAbiMemberPointerType(return_type_node);
 
 	bool needs_hidden_return_param = needsHiddenReturnParam(return_type_node, context_->isLLP64());
 	func_decl_op.has_hidden_return_param = needs_hidden_return_param;
