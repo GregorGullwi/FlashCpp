@@ -557,7 +557,7 @@ std::optional<CVQualifier> Parser::tryConsumeMemberPointerPtrOperator(TypeSpecif
 	// identifier or template-id components - followed by `*`. The shared parser
 	// owns every one of those spellings; this helper only decides that the `::`
 	// chain ends in `*` rather than a declarator-id.
-	const NestedNameSpecifierParse specifier = parseNestedNameSpecifier(already_consumed_head);
+	const NestedNameSpecifierParse specifier = parseNestedNameSpecifier(already_consumed_head, NestedNameSyntaxNodes::Collect);
 	if (specifier.segments.empty() || specifier.has_terminal || peek() != "*"_tok) {
 		restore_token_position(failure_position);
 		return std::nullopt;
@@ -953,7 +953,7 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 				// scope. The nested-name-specifier helper records the leading
 				// global and the per-segment template arguments, and leaves a
 				// terminal template-id's `<...>` for the declarator suffixes.
-				NestedNameSpecifierParse parsed = parseNestedNameSpecifier(std::nullopt);
+				NestedNameSpecifierParse parsed = parseNestedNameSpecifier(std::nullopt, NestedNameSyntaxNodes::Skip);
 				if (!parsed.has_terminal) {
 					return ParseResult::error("Expected a declarator-id after '::'", peek_info());
 				}
@@ -1761,7 +1761,7 @@ ParseResult Parser::parse_declarator(
 						// `int (*Registry::table)[2][4]` or `int Outer::Inner::data;`.
 						// The member-pointer form (`Owner::*`) was already handled above.
 						if (peek() == "::"_tok || peek() == "<"_tok) {
-							NestedNameSpecifierParse qualified = parseNestedNameSpecifier(identifier);
+							NestedNameSpecifierParse qualified = parseNestedNameSpecifier(identifier, NestedNameSyntaxNodes::Skip);
 							if (leading_global_declarator_id) {
 								qualified.has_leading_global = true;
 							}
