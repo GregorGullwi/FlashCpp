@@ -268,6 +268,30 @@ inline SysVAbiValueLayout classifySysVValue(TypeIndex type_index, SizeInBits siz
 
 } // namespace TargetABI
 
+// A pointer-to-member is a scalar integer-class value on both x64 ABIs: one
+// eightbyte independent of its pointee category and pointee cv. The
+// compatibility projection can spell one as the pointee category plus a pointer
+// level or as an ordered member-pointer declarator, so ABI consumers classify
+// the type instead of reading the pointee category alone.
+inline bool isAbiMemberPointerType(const TypeSpecifierNode& type) {
+	if (type.is_member_object_pointer_type() || type.is_member_function_pointer()) {
+		return true;
+	}
+	if (!type.type_index().is_valid()) {
+		return false;
+	}
+	const TypeCategory resolved_category = canonicalize_type_alias(type.type_index()).resolvedTypeIndex().category();
+	return resolved_category == TypeCategory::MemberObjectPointer || resolved_category == TypeCategory::MemberFunctionPointer;
+}
+
+// Scalar register class shared by both x64 ABIs: only a genuine floating-point
+// object value travels in an SSE register. A pointer, a reference, and a
+// pointer-to-member are integer-class, so a member pointer is never classified
+// by the category of its pointee.
+inline bool isAbiSseRegisterScalar(TypeCategory category, bool is_integer_class_value) {
+	return !is_integer_class_value && isFloatingPointType(category);
+}
+
 // Aggregate return classification is the single decision point for function
 // definitions and every call kind. The SysV and Win64 paths share the size and
 // layout plumbing but consult their own record-fact predicate: Itanium's

@@ -3938,6 +3938,7 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 	func_decl_op.return_type_index = return_type.type_index();
 	func_decl_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
 	func_decl_op.return_pointer_depth = PointerDepth{static_cast<int>(return_type.runtime_pointer_depth())};
+	func_decl_op.returns_member_pointer = isAbiMemberPointerType(return_type);
 
 	// Add function name and struct name
 	func_decl_op.function_name = full_func_name;

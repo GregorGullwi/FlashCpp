@@ -1055,6 +1055,7 @@ private:
 	bool current_function_has_hidden_return_param_ = false;	// True if function uses hidden return parameter (RVO)
 	bool current_function_returns_reference_ = false;  // True if function returns a reference (lvalue or rvalue)
 	bool current_function_returns_pointer_ = false;  // True if function returns a pointer (any pointer depth)
+	bool current_function_returns_member_pointer_ = false;	// True if function returns a pointer-to-member in any declarator projection
 	int32_t current_function_this_offset_ = 0;  // Stack home offset of the implicit this parameter in member functions
 	int32_t current_function_varargs_reg_save_offset_ = 0;  // Offset of varargs register save area (Linux only)
 

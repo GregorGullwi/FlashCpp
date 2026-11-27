@@ -8454,6 +8454,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 	current_function_has_hidden_return_param_ = func_decl.has_hidden_return_param;  // Track for return statement handling
 	current_function_returns_reference_ = func_decl.returns_reference;  // Track if function returns a reference
 	current_function_returns_pointer_ = func_decl.return_pointer_depth.value > 0;  // Track if function returns a pointer
+	current_function_returns_member_pointer_ = func_decl.returns_member_pointer;
 	current_function_this_offset_ = 0;
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 		current_function_is_noexcept_ = func_decl.is_noexcept;
@@ -9722,9 +9723,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 								 return_var.var_number, return_offset);
 
 					// Check if return type is float/double
-				bool is_float_return =
-					isFloatingPointType(ret_op.return_type_index.category()) &&
-					!current_function_returns_reference_;
+				bool is_float_return = currentFunctionReturnsFloatingPointInXmm0();
 
 				bool handled_reference_return = false;
 				{
@@ -10120,7 +10119,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 						int var_size = getActualVariableSize(ret_key, ret_op.return_size);
 
 							// Check if return type is float/double
-						bool is_float_return = isFloatingPointType(ret_op.return_type_index.category());
+						bool is_float_return = currentFunctionReturnsFloatingPointInXmm0();
 
 							// Check if function uses hidden return parameter (for struct returns)
 						if (current_function_has_hidden_return_param_) {
@@ -10196,7 +10195,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 					if (!var_name_handle.isValid()) {
 						throw InternalError("Return local id has no frame slot");
 					}
-					const bool is_float_return = isFloatingPointType(ret_op.return_type_index.category());
+					const bool is_float_return = currentFunctionReturnsFloatingPointInXmm0();
 					if (current_function_returns_reference_) {
 						spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 						uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
@@ -16137,7 +16136,7 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 	textSectionData.push_back(0xD0); // ModR/M: RAX
 
 	if (!returns_valueless_void && !op.usesReturnSlot()) {
-		if (op.returns_reference || op.return_pointer_depth.is_pointer()) {
+		if (op.returns_reference || op.return_pointer_depth.is_pointer() || op.returns_member_pointer) {
 				// A reference (T& / T&&) or pointer (T*) result is a 64-bit address in
 				// RAX, never a by-value aggregate. Store it directly; running SysV struct
 				// classification on the referent (e.g. a MEMORY-class Big) would abort the
@@ -16269,14 +16268,11 @@ void IrToObjConverter<TWriterClass>::materializeCatchObjectFromRax(const CatchBe
 template <class TWriterClass>
 bool IrToObjConverter<TWriterClass>::currentFunctionReturnsFloatingPointInXmm0() const {
 	const TypeCategory return_cat = current_function_return_type_index_.category();
-	return return_cat != TypeCategory::Void &&
-		   isFloatingPointType(return_cat) &&
-		   !current_function_has_hidden_return_param_ &&
-		   !current_function_returns_reference_;
+	const bool is_integer_class_value = current_function_returns_pointer_ || current_function_returns_member_pointer_ || current_function_returns_reference_;
+	return return_cat != TypeCategory::Void && isAbiSseRegisterScalar(return_cat, is_integer_class_value) && !current_function_has_hidden_return_param_;
 }
 
-template <class TWriterClass>
-bool IrToObjConverter<TWriterClass>::currentFunctionHasCatchParentReturnValue() const {
+template <class TWriterClass> bool IrToObjConverter<TWriterClass>::currentFunctionHasCatchParentReturnValue() const {
 	return current_function_return_type_index_.category() != TypeCategory::Void;
 }
 

@@ -426,6 +426,10 @@ private:
 	// Load the word that a namespace-scope reference object stores: the address
 	// of its referent. The result is address-only, not a dereferenceable value.
 	TempVar emitGlobalStoredAddressLoad(StringHandle global_name, const Token& token);
+	// Take the address of a namespace-scope object. A Load-context global value is
+	// a copy in a temporary, so a consumer that needs the object's storage must
+	// ask for its RIP-relative address instead of addressing that copy.
+	TempVar emitGlobalObjectAddress(StringHandle global_name, const Token& token);
 	// Resolve a statically allocated lvalue to its storage symbol and the byte
 	// offset of the addressed subobject. Returns nullopt for values, temporaries,
 	// and objects without static storage; callers fail closed instead of storing

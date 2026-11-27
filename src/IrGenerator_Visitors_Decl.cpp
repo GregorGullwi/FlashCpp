@@ -424,6 +424,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	func_decl_op.return_pointer_depth = PointerDepth{static_cast<int>(ret_type.runtime_pointer_depth())};
 	func_decl_op.returns_reference = ret_type.is_reference();
 	func_decl_op.returns_rvalue_reference = ret_type.is_rvalue_reference();
+	func_decl_op.returns_member_pointer = isAbiMemberPointerType(ret_type);
 
 	// Detect if function returns struct by value (needs hidden return parameter for RVO/NRVO)
 	// Only non-pointer, non-reference struct returns need this (pointer/reference returns are in RAX like regular pointers)

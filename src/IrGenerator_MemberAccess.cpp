@@ -3274,7 +3274,7 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	call_op.result_destination = result_destination;
 	// Array decay uses the returned address as a by-value pointer in the same
 	// ABI register. Describe it that way so consumers do not load the array.
-	call_op.returns_pointer = decays_array || conversion_return_type.runtime_pointer_depth() > 0;
+	call_op.returns_pointer = decays_array || conversion_return_type.runtime_pointer_depth() > 0 || isAbiMemberPointerType(conversion_return_type);
 	if (call_op.returns_pointer) {
 		call_op.return_size_in_bits = SizeInBits{POINTER_SIZE_BITS};
 	}

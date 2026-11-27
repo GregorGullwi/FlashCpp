@@ -1034,19 +1034,39 @@ so a local that is genuinely `int*` is not distinguishable from the collapsed
 form at this boundary. Member-pointer owner identity itself is carried by one
 substitution rule; see the projection notes below.
 
-## Member-pointer return values with a floating-point pointee use the pointee ABI
+## Floating-pointee member-pointer values still take a floating conversion in pointee-typed contexts
 
-Parameter declarations, local declarations, trailing return types, and alias
-templates that spell `T B::*` keep the owner and pointer level through
-dependent-pointee substitution. A data-member pointer is an integer-class
-value, so returning one by value works when the pointee is integer-like or a
-record. A floating-point pointee still selects the pointee register class for
-the function signature: `template<class T> auto identity(T B::* p) -> T B::*`
-instantiated with `double` returns in an XMM register while the caller reads an
-integer register. Passing such a pointer as a parameter is unaffected because
-the projected `double*` parameter also travels in an integer register. The
-member owner and pointer level are correct in sema; the gap is in IR/codegen
-type lowering, which classifies the return value by its pointee category.
+Address-of a non-static data member lowers as an integer member offset with the
+`MemberObjectPointer` IR type, but a member-pointer declaration is still spelled
+in the flat compatibility projection as the pointee category plus one pointer
+level. A context that converts the address into that spelled type therefore
+sees a `MemberObjectPointer`-to-`double`/`float`/`long double` conversion and
+emits a floating conversion of the offset instead of treating the two shapes as
+one member pointer. `double B::* p = &B::m; if (p != &B::m)` compares the stored
+offset against the floating value of the offset, and passing `&B::m` to a
+`const double B::*` parameter converts the offset before the callee sees it.
+Direct initialization, storing a call result, dereferencing, and reading or
+writing through the pointer are unaffected. A `long double B::*` pointee cannot
+be round-tripped through a call for the same reason: `&B::x` becomes a long
+double constant before the offset reaches the callee, so the long double
+pointee return-value regression is not covered yet. The next required change is
+to make the member-pointer type's own category the conversion source and target
+for these contexts, then extend
+`test_member_pointer_floating_pointee_return_ret0.cpp` to compare against
+`&B::member`, pass a non-constant address to a const-pointee parameter, and
+round-trip a `long double` pointee.
+
+## A member-access receiver in `LValueAddress` context returns an undefined temporary
+
+`generateMemberAccessIr` returns a `ContainsAddress` result in `LValueAddress`
+context without emitting a defining instruction for a non-array, non-reference
+member. A consumer that reads the address, such as the `.*` receiver of
+`object.inner.*pointer`, therefore adds the member offset to an uninitialized
+temporary for both local and global base objects. Direct object receivers,
+arrays, reference members, and reads through an already computed member address
+are unaffected. The next change is to emit a `ComputeAddress` for a scalar
+member in `LValueAddress` context the way the array-member branch already does,
+then return that emitted address and delete the metadata-only result.
 
 ## Member-pointer owner copies that stay lexical projections
 
