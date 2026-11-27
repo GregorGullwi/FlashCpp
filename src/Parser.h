@@ -4037,21 +4037,30 @@ private:
 	struct MemberPointerOwnerParse {
 		StringHandle spelling;
 		std::optional<ASTNode> specialization_node;
+		// Class owner TypeId for a template-id or decltype-specifier owner.
 		TypeId specialization_type_id{};
 		Token owner_token{};
 	};
 	MemberPointerOwnerParse parseMemberPointerOwnerAfterName(Token class_name_token);
 
-	// One nested-name-specifier component: `name` or `name<template-args>`
-	// followed by `::`. `has_template_keyword` records an explicit `::template`
-	// disambiguator. Template arguments are kept in parsed form so callers can
-	// materialize a class-template owner without re-reading the token stream.
+	// One nested-name-specifier component: `name`, `name<template-args>`, or a
+	// `decltype-specifier` followed by `::`. `has_template_keyword` records an
+	// explicit `::template` disambiguator. Template arguments are kept in parsed
+	// form so callers can materialize a class-template owner without re-reading
+	// the token stream.
 	struct NestedNameSpecifierSegment {
 		Token identifier{};
 		StringHandle name{};
 		TemplateArgumentVector template_arguments;
+		// Type-syntax nodes parsed for `template_arguments`; the owner hook needs
+		// them to stamp a template-id component's specialization identity.
+		std::vector<ASTNode> template_argument_syntax_nodes;
+		// Resolved decltype-specifier syntax for `decltype(expr)::` components;
+		// the owner hook imports its canonical class identity.
+		ASTNode decltype_specifier{};
 		bool has_template_keyword = false;
 		bool has_template_arguments = false;
+		bool is_decltype_specifier = false;
 	};
 
 	// A parsed `::? segment (`::` segment)*` followed by the unqualified name it
@@ -4078,31 +4087,48 @@ private:
 	// Template-id segments are materialized so `N::S<int>` becomes the
 	// instantiated class name rather than an unresolved spelling.
 	StringHandle resolveNestedNameSpecifierOwner(const NestedNameSpecifierParse& parsed);
+	// The same canonical spelling, also handing the final template-id segment's
+	// materialization to `last_materialization` (when non-null) so an owner
+	// keeps its specialization identity without materializing it twice.
+	StringHandle resolveNestedNameSpecifierOwnerWithMaterialization(const NestedNameSpecifierParse& parsed,
+		AliasTemplateMaterializationResult* last_materialization);
+
+	// True at `decltype(...)` or the GCC `__typeof__`/`__typeof(...)` spelling.
+	bool startsDecltypeSpecifier() const;
+
+	// Resolve the owner of the last nested-name-specifier segment into the same
+	// shape parseMemberPointerOwnerAfterName produces: joined canonical spelling,
+	// template-id specialization identity where one materializes, and the owner
+	// token for diagnostics.
+	MemberPointerOwnerParse resolveMemberPointerOwner(const NestedNameSpecifierParse& parsed);
 
 	// Resolve an out-of-line declarator owner spelling to the published class
 	// OwnerId. The spelling is a type-system lookup key only; a dependent or
 	// not-yet-published owner yields an invalid id.
 	OwnerId resolveDeclaratorOwnerId(StringHandle owner_spelling) const;
 
-	// Publish mop/mfp owner identity from a prior parseMemberPointerOwnerAfterName
-	// result: TypeId for specializations, else EntityId via tryBind. Spelling is
-	// retained only as a lexical projection for has_member_class().
-	void applyMemberPointerOwner(
-		TypeSpecifierNode& type_spec,
-		const MemberPointerOwnerParse& parsed);
+	// Publish mop/mfp owner identity from a resolved owner parse: TypeId for
+	// specializations and decltype-specifier owners, else EntityId via tryBind.
+	// Spelling is retained only as a lexical projection for has_member_class().
+	void applyMemberPointerOwner(TypeSpecifierNode& type_spec, const MemberPointerOwnerParse& parsed);
 
 	// parseMemberPointerOwnerAfterName + applyMemberPointerOwner.
 	void bindMemberPointerOwner(TypeSpecifierNode& type_spec, Token class_name_token);
 
-	// [dcl.mptr]: consume one `nested-name-specifier *` ptr-operator and apply
-	// its owner and pointer level to the type specifier. Restores the token
-	// position and returns false when the next tokens are not one.
+	// [dcl.mptr]: consume one `nested-name-specifier * cv-qualifier-seq(opt)`
+	// ptr-operator and apply its owner to the type specifier. `already_consumed_head`
+	// is the first nested-name-specifier component when the caller consumed it;
+	// `failure_position` must be saved before that component. Restores
+	// `failure_position` and returns nullopt when the tokens are not a member
+	// pointer. Returns the member-pointer cv-qualifier on success; the caller
+	// decides whether it becomes a flat pointer level or an ordered component.
+	std::optional<CVQualifier> tryConsumeMemberPointerPtrOperator(TypeSpecifierNode& type_spec, std::optional<Token> already_consumed_head,
+		SaveHandle failure_position);
+
+	// [dcl.mptr]: consume one member-pointer ptr-operator and add its pointer
+	// level to the type specifier. Restores the token position and returns false
+	// when the next tokens are not one.
 	bool tryConsumeMemberPointerDeclarator(TypeSpecifierNode& type_spec);
-	// The same ptr-operator after the caller consumed the first owner segment.
-	// `failure_position` is restored when the tokens are not a member pointer.
-	// Returns the member-pointer cv-qualifier on success; the caller decides
-	// whether it becomes a flat pointer level or an ordered component.
-	std::optional<CVQualifier> tryConsumeMemberPointerDeclaratorAfterCandidate(TypeSpecifierNode& type_spec, Token owner_token, SaveHandle failure_position);
 
 		// Template name extraction helpers - extract base template names from mangled/instantiated names
 	std::string_view extract_base_template_name(std::string_view mangled_name);	// Extract by searching for underscores left-to-right
