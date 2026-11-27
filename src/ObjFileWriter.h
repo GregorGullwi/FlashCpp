@@ -505,8 +505,6 @@ public:
 	void emitNativeVagueLinkageFunction(std::string_view mangled_name, std::span<const uint8_t> text_bytes);
 	void finishNativeComdatFunction();
 	void emitInlineFunctionComdats(std::span<const uint8_t> text_data);
-	void emit_vague_linkage_comdat_rdata(std::string_view external_symbol_name, std::span<const char> data,
-		std::span<const ComdatReloc> relocations, uint32_t external_symbol_value);
 	void add_static_text_symbol(std::string_view symbol_name, uint32_t section_offset);
 	void add_data(std::span<const uint8_t> data, SectionType section_type);
 	void add_data(std::span<const char> data, SectionType section_type);
@@ -576,6 +574,7 @@ public:
 	std::string get_or_create_type_descriptor(std::string_view class_name);
 	std::string get_or_create_type_descriptor(std::string_view class_name, TypeIndex type_index);
 	std::string get_or_create_type_descriptor_for_spelling(std::string_view type_name);
+	std::string get_or_create_canonical_typeinfo(TypeId type);
 	static std::string_view msvcBuiltinTypeCode(TypeCategory cat);
 	// MSVC ??_R0 Type Descriptor for a built-in/arithmetic type (int, float, …).
 	// Produces a proper descriptor symbol (e.g. "??_R0H@8" for int) so that
@@ -653,7 +652,9 @@ protected:
 	uint32_t inline_comdat_xdata_section_counter_ = 0;
 	uint32_t inline_comdat_pdata_section_counter_ = 0;
 	uint32_t inline_comdat_rdata_section_counter_ = 0;
+	uint32_t type_descriptor_section_counter_ = 0;
 	uint32_t replaced_undef_counter_ = 0;
+	std::string emitMsvcTypeDescriptor(std::string_view mangled_type_name);
 
 	COFFI::section* emitComdatSection(std::string_view section_name_prefix, uint32_t& section_counter,
 		int32_t section_flags, std::span<const char> data, std::span<const ComdatReloc> relocations,

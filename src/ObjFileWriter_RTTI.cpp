@@ -108,6 +108,7 @@ std::string_view ObjectFileWriter::msvcBuiltinTypeCode(TypeCategory cat) {
 	case TypeCategory::Float:             return "M"sv;
 	case TypeCategory::Double:            return "N"sv;
 	case TypeCategory::LongDouble:        return "O"sv;
+	case TypeCategory::Nullptr:           return "$$T"sv;
 	default:                              return {};
 	}
 }
@@ -682,6 +683,379 @@ std::string ObjectFileWriter::get_or_create_builtin_throwinfo(TypeCategory type)
 	return throw_info_symbol;
 }
 
+namespace {
+// Canonical types can contain arbitrarily nested pointers, callables, and template arguments.
+// Keep their traversal on a worklist so that mangling does not consume native stack with depth.
+class MsvcTypeDescriptorMangler {
+public:
+	explicit MsvcTypeDescriptorMangler(CanonicalTypeTable& table) : table_(table) {}
+
+	std::string encode(TypeId type) {
+		contexts_.emplace_back();
+		output() += '.';
+		work_.push_back({Operation::ResultType, type});
+		while (!work_.empty()) {
+			const Work item = work_.back();
+			work_.pop_back();
+			switch (item.operation) {
+			case Operation::Type:
+			case Operation::PointeeType:
+			case Operation::ResultType:
+			case Operation::EscapedType:
+				appendType(item.type, item.operation);
+				break;
+			case Operation::MemberFunction:
+				appendFunction(item.type, true);
+				break;
+			case Operation::Parameters:
+				appendParameter(item.type);
+				break;
+			case Operation::FunctionEnd:
+				appendFunctionEnd(item.type);
+				break;
+			case Operation::SaveParameter:
+				if (output().size() - item.offset > 1 && contexts_.back().parameters.size() < 10) {
+					contexts_.back().parameters.push_back(item.type);
+				}
+				break;
+			case Operation::Name:
+				appendName(item.type);
+				break;
+			case Operation::Namespace:
+				appendNamespace(NamespaceHandle{static_cast<uint16_t>(item.offset)});
+				break;
+			case Operation::TemplateArguments:
+				appendTemplateArgument(item.type);
+				break;
+			case Operation::TemplateNameEnd: {
+				const std::string name = std::move(output());
+				contexts_.pop_back();
+				appendNameComponent(name);
+				break;
+			}
+			}
+		}
+		return std::move(output());
+	}
+
+private:
+	enum class Operation : uint8_t {
+		Type, PointeeType, ResultType, EscapedType, MemberFunction, Parameters, FunctionEnd,
+		SaveParameter, Name, Namespace, TemplateArguments, TemplateNameEnd,
+	};
+	struct Work {
+		Operation operation;
+		TypeId type;
+		size_t offset = 0;
+	};
+	struct BackReferences {
+		// Template arguments have their own output and back-reference tables.
+		std::string output;
+		std::vector<std::string> names;
+		std::vector<TypeId> parameters;
+	};
+
+	std::string& output() {
+		return contexts_.back().output;
+	}
+
+	static const TypeInfo& nominalTypeInfo(CanonicalTypeTable& table, TypeId type, CanonicalTypeKind kind) {
+		const TypeInfo* info = nullptr;
+		if (kind == CanonicalTypeKind::Enum) {
+			info = tryFindTypeInfoByEntityId(table.enumEntity(type));
+		} else if (kind == CanonicalTypeKind::NestedRecord) {
+			info = tryFindTypeInfoByEntityId(table.nestedRecordEntity(type));
+		} else {
+			info = NameMangling::tryFindPublishedClassTypeInfoForCanonicalOwner(table, type);
+		}
+		if (info == nullptr) {
+			throw InternalError("MSVC RTTI: canonical type has no published nominal name");
+		}
+		return *info;
+	}
+
+	void appendNameComponent(std::string_view name) {
+		auto& names = contexts_.back().names;
+		const auto found = std::ranges::find(names, name);
+		if (found != names.end()) {
+			output() += static_cast<char>('0' + (found - names.begin()));
+			return;
+		}
+		if (names.size() < 10) {
+			names.emplace_back(name);
+		}
+		output() += name;
+		output() += '@';
+	}
+
+	void appendNamespace(NamespaceHandle ns) {
+		for (; ns.isValid() && !ns.isGlobal(); ns = gNamespaceRegistry.getParent(ns)) {
+			appendNameComponent(gNamespaceRegistry.getName(ns));
+		}
+		output() += '@';
+	}
+
+	static std::string_view unqualifiedName(std::string_view name) {
+		const size_t scope = name.rfind("::");
+		return name.substr(scope == std::string_view::npos ? 0 : scope + 2);
+	}
+
+	void appendName(TypeId type) {
+		const CanonicalTypeKind kind = table_.node(type).kind;
+		const TypeInfo& info = nominalTypeInfo(table_, type, kind);
+		if (kind == CanonicalTypeKind::NestedRecord) {
+			appendNameComponent(unqualifiedName(info.name().view()));
+			work_.push_back({Operation::Name, table_.nestedRecordOwner(type)});
+			return;
+		}
+		if (kind == CanonicalTypeKind::TemplateSpecialization) {
+			const StringHandle primary = info.baseTemplateName();
+			if (!primary.isValid()) {
+				throw InternalError("MSVC RTTI: specialization has no published primary name");
+			}
+			const TypeId owner = table_.templateSpecializationOwner(type);
+			if (owner) {
+				work_.push_back({Operation::Name, owner});
+			} else {
+				const NamespaceHandle ns = info.sourceNamespace().isValid() ? info.sourceNamespace() : info.namespaceHandle();
+				work_.push_back({Operation::Namespace, {}, ns.index});
+			}
+			work_.push_back({Operation::TemplateNameEnd, {}});
+			const TypeId args = table_.templateSpecializationArguments(type);
+			if (args) {
+				work_.push_back({Operation::TemplateArguments, args});
+			}
+			contexts_.emplace_back();
+			output() += "?$";
+			appendNameComponent(unqualifiedName(primary.view()));
+			return;
+		}
+
+		std::string_view name = info.name().view();
+		if (name.find("::") == std::string_view::npos) {
+			appendNameComponent(name);
+			appendNamespace(info.namespaceHandle());
+			return;
+		}
+		for (size_t scope = name.rfind("::"); scope != std::string_view::npos; scope = name.rfind("::")) {
+			appendNameComponent(name.substr(scope + 2));
+			name = name.substr(0, scope);
+		}
+		appendNameComponent(name);
+		output() += '@';
+	}
+
+	void appendTemplateArgument(TypeId link) {
+		if (const TypeId next = table_.templateArgumentNext(link)) {
+			work_.push_back({Operation::TemplateArguments, next});
+		}
+		switch (table_.templateArgumentKind(link)) {
+		case CanonicalTemplateArgKind::Type:
+			work_.push_back({Operation::EscapedType, table_.templateArgumentType(link)});
+			return;
+		case CanonicalTemplateArgKind::Value: {
+			const CanonicalTypeNode value = table_.node(table_.templateArgumentValue(link));
+			if (value.kind != CanonicalTypeKind::IntegralValue) {
+				break;
+			}
+			CanonicalTypeNode representation = table_.node(value.child);
+			if (representation.kind == CanonicalTypeKind::Enum) {
+				representation = table_.node(table_.enumLayout(table_.enumEntity(value.child)).underlying_type);
+			}
+			output() += "$0";
+			if (canonicalBuiltinIsSigned(representation.builtin)) {
+				NameMangling::appendMsvcNumber(output(), static_cast<int64_t>(value.array_extent));
+			} else {
+				NameMangling::appendMsvcUnsignedNumber(output(), value.array_extent);
+			}
+			return;
+		}
+		default:
+			break;
+		}
+		throw InternalError("MSVC RTTI: unsupported canonical template argument");
+	}
+
+	void appendParameter(TypeId link) {
+		if (const TypeId next = table_.functionParameterNext(link)) {
+			work_.push_back({Operation::Parameters, next});
+		}
+		const TypeId parameter = table_.functionParameterType(link);
+		const auto& parameters = contexts_.back().parameters;
+		const auto found = std::ranges::find(parameters, parameter);
+		if (found != parameters.end()) {
+			output() += static_cast<char>('0' + (found - parameters.begin()));
+			return;
+		}
+		if (parameters.size() < 10) {
+			work_.push_back({Operation::SaveParameter, parameter, output().size()});
+		}
+		work_.push_back({Operation::Type, parameter});
+	}
+
+	void appendFunction(TypeId type, bool has_this) {
+		const CanonicalTypeNode node = table_.node(type);
+		if (node.kind != CanonicalTypeKind::Function ||
+			hasCanonicalTypeNodeFlag(node.flags, CanonicalTypeNodeFlags::DependentNoexceptFunction)) {
+			throw InternalError("MSVC RTTI: expected a concrete canonical function");
+		}
+		if (has_this) {
+			NameMangling::appendMsvcThisQualifierCode(output(), functionRefQualifier(node), node.qualifiers);
+		}
+		static_assert(static_cast<uint8_t>(CanonicalCallingConvention::Count) == static_cast<uint8_t>(CallingConvention::Clrcall) + 1);
+		NameMangling::appendMsvcCallingConventionCode(output(), static_cast<CallingConvention>(node.builtin));
+		work_.push_back({Operation::FunctionEnd, type});
+		if (const TypeId params = table_.functionParameters(type)) {
+			work_.push_back({Operation::Parameters, params});
+		}
+		work_.push_back({Operation::ResultType, node.child});
+	}
+
+	static ReferenceQualifier functionRefQualifier(CanonicalTypeNode node) {
+		if (hasCanonicalTypeNodeFlag(node.flags, CanonicalTypeNodeFlags::FunctionLValueRef)) {
+			return ReferenceQualifier::LValueReference;
+		}
+		if (hasCanonicalTypeNodeFlag(node.flags, CanonicalTypeNodeFlags::FunctionRValueRef)) {
+			return ReferenceQualifier::RValueReference;
+		}
+		return ReferenceQualifier::None;
+	}
+
+	void appendFunctionEnd(TypeId type) {
+		const CanonicalTypeNode node = table_.node(type);
+		if (hasCanonicalTypeNodeFlag(node.flags, CanonicalTypeNodeFlags::VariadicFunction)) {
+			output() += 'Z';
+		} else {
+			output() += table_.functionParameters(type) ? '@' : 'X';
+		}
+		output() += hasCanonicalTypeNodeFlag(node.flags, CanonicalTypeNodeFlags::NoexceptFunction) ? "_E" : "Z";
+	}
+
+	void appendArray(TypeId type, Operation encoding) {
+		if (encoding == Operation::PointeeType) {
+			output() += 'A';
+		} else if (encoding != Operation::Type) {
+			output() += "$$B";
+		}
+		output() += 'Y';
+		size_t rank = 0;
+		for (CanonicalTypeNode node = table_.node(type); node.kind == CanonicalTypeKind::Array; node = table_.node(node.child)) {
+			++rank;
+		}
+		NameMangling::appendMsvcUnsignedNumber(output(), rank);
+		for (CanonicalTypeNode node = table_.node(type); node.kind == CanonicalTypeKind::Array; node = table_.node(type)) {
+			const bool has_bound = hasCanonicalTypeNodeFlag(node.flags, CanonicalTypeNodeFlags::KnownArrayBound);
+			NameMangling::appendMsvcUnsignedNumber(output(), has_bound ? node.array_extent : 0);
+			type = node.child;
+		}
+		work_.push_back({Operation::EscapedType, type});
+	}
+
+	void appendType(TypeId type, Operation encoding) {
+		CanonicalTypeNode node = table_.node(type);
+		CVQualifier cv = CVQualifier::None;
+		if (node.kind == CanonicalTypeKind::Qualified) {
+			cv = node.qualifiers;
+			type = node.child;
+			node = table_.node(type);
+		}
+		const bool pointer = node.kind == CanonicalTypeKind::Pointer || node.kind == CanonicalTypeKind::MemberObjectPointer ||
+			node.kind == CanonicalTypeKind::MemberFunctionPointer;
+		const bool nominal = isCanonicalClassTypeKind(node.kind) || node.kind == CanonicalTypeKind::Enum;
+		if (encoding == Operation::PointeeType && node.kind != CanonicalTypeKind::Array && node.kind != CanonicalTypeKind::Function) {
+			// Pointee CV precedes the type, including the CV-bearing P/Q/R/S pointer code.
+			NameMangling::appendCVQualifier(output(), cv);
+		} else if (encoding == Operation::ResultType && (nominal || (!pointer && cv != CVQualifier::None)) &&
+			(node.kind != CanonicalTypeKind::Builtin || node.builtin != CanonicalBuiltinKind::Void)) {
+			output() += '?';
+			NameMangling::appendCVQualifier(output(), cv);
+		} else if (encoding == Operation::EscapedType && !pointer && cv != CVQualifier::None) {
+			output() += "$$C";
+			NameMangling::appendCVQualifier(output(), cv);
+		}
+		if (pointer) {
+			output() += static_cast<char>('P' + static_cast<uint8_t>(cv));
+		}
+
+		switch (node.kind) {
+		case CanonicalTypeKind::Builtin: {
+			const auto category = canonicalBuiltinToTypeCategory(node.builtin);
+			const std::string_view code = node.builtin == CanonicalBuiltinKind::SignedChar ? "C" :
+				category ? ObjectFileWriter::msvcBuiltinTypeCode(*category) : std::string_view{};
+			if (code.empty()) {
+				throw InternalError("MSVC RTTI: unknown canonical builtin type");
+			}
+			output() += code;
+			return;
+		}
+		case CanonicalTypeKind::Pointer:
+		case CanonicalTypeKind::LValueReference:
+		case CanonicalTypeKind::RValueReference:
+			if (node.kind == CanonicalTypeKind::LValueReference) {
+				output() += 'A';
+			} else if (node.kind == CanonicalTypeKind::RValueReference) {
+				output() += "$$Q";
+			}
+			if (table_.node(node.child).kind != CanonicalTypeKind::Function) {
+				output() += 'E';
+			}
+			work_.push_back({Operation::PointeeType, node.child});
+			return;
+		case CanonicalTypeKind::Array:
+			appendArray(type, encoding);
+			return;
+		case CanonicalTypeKind::Function: {
+			const bool has_this = node.qualifiers != CVQualifier::None || functionRefQualifier(node) != ReferenceQualifier::None;
+			if (encoding == Operation::PointeeType) {
+				output() += '6';
+			} else {
+				output() += has_this ? "$$A8@@" : "$$A6";
+			}
+			appendFunction(type, encoding != Operation::PointeeType && has_this);
+			return;
+		}
+		case CanonicalTypeKind::MemberObjectPointer:
+			output() += 'E';
+			output() += static_cast<char>('Q' + static_cast<uint8_t>(table_.node(node.child).qualifiers));
+			work_.push_back({Operation::Type, node.child});
+			work_.push_back({Operation::Name, table_.memberPointerOwner(type)});
+			return;
+		case CanonicalTypeKind::MemberFunctionPointer:
+			output() += '8';
+			work_.push_back({Operation::MemberFunction, node.child});
+			work_.push_back({Operation::Name, table_.memberPointerOwner(type)});
+			return;
+		case CanonicalTypeKind::Record:
+		case CanonicalTypeKind::NestedRecord:
+		case CanonicalTypeKind::TemplateSpecialization: {
+			const StructTypeInfo* info = nominalTypeInfo(table_, type, node.kind).getStructInfo();
+			if (info == nullptr) {
+				throw InternalError("MSVC RTTI: canonical record has no published class key");
+			}
+			output() += info->is_union ? 'T' : info->default_access == AccessSpecifier::Private ? 'V' : 'U';
+			work_.push_back({Operation::Name, type});
+			return;
+		}
+		case CanonicalTypeKind::Enum:
+			output() += "W4";
+			work_.push_back({Operation::Name, type});
+			return;
+		default:
+			throw InternalError("MSVC RTTI: canonical type kind is not encodable");
+		}
+	}
+
+	CanonicalTypeTable& table_;
+	std::vector<Work> work_;
+	std::vector<BackReferences> contexts_;
+};
+} // namespace
+
+std::string ObjectFileWriter::get_or_create_canonical_typeinfo(TypeId type) {
+	MsvcTypeDescriptorMangler mangler(requireFrontendContext().canonicalTypes());
+	return emitMsvcTypeDescriptor(mangler.encode(type));
+}
+
 // Get or create MSVC ??_R0 Type Descriptor symbol for a class.
 // Returns the symbol name (e.g., "??_R0?AVMyClass@@@8").
 // If the descriptor doesn't exist yet, it is emitted as a SELECT_ANY COMDAT.
@@ -696,16 +1070,13 @@ std::string ObjectFileWriter::get_or_create_type_descriptor(std::string_view cla
 //   class MyClass   -> mangled ".?AVMyClass@@",  symbol "??_R0?AVMyClass@@@8"
 //   int             -> mangled ".H",             symbol "??_R0H@8"
 //   bool            -> mangled "._N",            symbol "??_R0_N@8"
-static std::string emitMsvcTypeDescriptor(ObjectFileWriter& writer,
-										  COFFI::coffi& coffi,
-										  std::unordered_map<std::string, uint32_t, ObjectFileCommon::StringViewHash, std::equal_to<>>& symbol_cache,
-										  std::string_view mangled_type_name) {
+std::string ObjectFileWriter::emitMsvcTypeDescriptor(std::string_view mangled_type_name) {
 	std::string type_desc_symbol = buildMsvcTypeDescriptorSymbol(mangled_type_name);
 
 	// Check if the type descriptor was already emitted
-	auto td_cache_it = symbol_cache.find(type_desc_symbol);
-	if (td_cache_it != symbol_cache.end()) {
-		auto* existing_sym = coffi.get_symbol(td_cache_it->second);
+	auto td_cache_it = symbol_index_cache_.find(type_desc_symbol);
+	if (td_cache_it != symbol_index_cache_.end()) {
+		auto* existing_sym = coffi_.get_symbol(td_cache_it->second);
 		// Only reuse if the symbol has a definition (section_number > 0)
 		if (existing_sym && existing_sym->get_section_number() > 0) {
 			if (g_enable_debug_output)
@@ -725,27 +1096,13 @@ static std::string emitMsvcTypeDescriptor(ObjectFileWriter& writer,
 		type_desc_data.push_back(c);
 	type_desc_data.push_back(0);
 
-	auto* type_info_vftable = coffi.get_symbol("??_7type_info@@6B@");
-	if (!type_info_vftable) {
-		type_info_vftable = coffi.add_symbol("??_7type_info@@6B@");
-		type_info_vftable->set_value(0);
-		type_info_vftable->set_section_number(0);
-		type_info_vftable->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		type_info_vftable->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-	}
-
-	std::vector<ObjectFileWriter::ComdatReloc> comdat_relocs;
-	comdat_relocs.push_back({0, type_info_vftable->get_index(), IMAGE_REL_AMD64_ADDR64});
-	writer.emit_vague_linkage_comdat_rdata(type_desc_symbol, std::span<const char>(type_desc_data),
-		std::span<const ObjectFileWriter::ComdatReloc>(comdat_relocs), 0);
-
-	auto* type_desc_sym = coffi.get_symbol(type_desc_symbol);
-	if (!type_desc_sym) {
-		throw InternalError("COMDAT type descriptor symbol was not created");
-	}
-
-	// Update cache
-	symbol_cache[type_desc_symbol] = type_desc_sym->get_index();
+	const uint32_t vftable_index = get_or_create_symbol_index("??_7type_info@@6B@");
+	coffi_.get_symbol(vftable_index)->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+	const ComdatReloc vftable_reloc{0, vftable_index, IMAGE_REL_AMD64_ADDR64};
+	// The CRT caches the demangled name in the descriptor's spare pointer.
+	const int32_t flags = IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_8BYTES;
+	emitComdatSection(".data$", type_descriptor_section_counter_, flags, type_desc_data, std::span(&vftable_reloc, 1),
+		0, IMAGE_COMDAT_SELECT_ANY, type_desc_symbol, false, 0);
 
 	if (g_enable_debug_output)
 		std::cerr << "Created ??_R0 Type Descriptor '" << type_desc_symbol << "' as COMDAT" << std::endl;
@@ -755,7 +1112,7 @@ static std::string emitMsvcTypeDescriptor(ObjectFileWriter& writer,
 
 std::string ObjectFileWriter::get_or_create_type_descriptor(std::string_view class_name, TypeIndex type_index) {
 	std::string mangled_class_name = buildMsvcTypeDescriptorName(class_name, type_index);
-	return emitMsvcTypeDescriptor(*this, coffi_, symbol_index_cache_, mangled_class_name);
+	return emitMsvcTypeDescriptor(mangled_class_name);
 }
 
 std::string ObjectFileWriter::get_or_create_builtin_type_descriptor(TypeCategory cat) {
@@ -770,7 +1127,7 @@ std::string ObjectFileWriter::get_or_create_builtin_type_descriptor(TypeCategory
 											 .append("."sv)
 											 .append(code)
 											 .commit();
-	return emitMsvcTypeDescriptor(*this, coffi_, symbol_index_cache_, mangled_type_name);
+	return emitMsvcTypeDescriptor(mangled_type_name);
 }
 
 std::string ObjectFileWriter::get_or_create_type_descriptor_for_spelling(std::string_view type_name) {
