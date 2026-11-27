@@ -13,6 +13,7 @@ struct MemberLayout {
 	int prefix;
 	double wide;
 	float narrow;
+	long double extended;
 	int tail;
 
 	int read_tail() {
@@ -41,6 +42,10 @@ int MemberLayout::* tail_identity(int MemberLayout::* pointer) {
 }
 
 MemberFunction member_function_identity(MemberFunction pointer) {
+	return pointer;
+}
+
+long double MemberLayout::* extended_identity(long double MemberLayout::* pointer) {
 	return pointer;
 }
 
@@ -140,6 +145,35 @@ int main() {
 	const double MemberLayout::* const_wide = const_wide_identity(const_local);
 	if ((object.*const_wide) != 7.25) {
 		return 10;
+	}
+
+	// The address-of result itself must compare equal to a stored pointer: the
+	// comparison may not convert the offset through the floating pointee, and the
+	// same address-of result passed straight to a const-pointee parameter must
+	// reach the callee as one member pointer.
+	if (!(wide == &MemberLayout::wide)) {
+		return 21;
+	}
+	if (wide != &MemberLayout::wide) {
+		return 22;
+	}
+	const double MemberLayout::* direct_const_wide = const_wide_identity(&MemberLayout::wide);
+	if (direct_const_wide != &MemberLayout::wide) {
+		return 23;
+	}
+	if ((object.*direct_const_wide) != 7.25) {
+		return 24;
+	}
+
+	// A long double pointee keeps the same integer offset through a call.
+	// Reading the long double value itself is limited by a separate value
+	// lowering gap, so this compares the member-pointer identity only.
+	long double MemberLayout::* extended = extended_identity(&MemberLayout::extended);
+	if (extended != &MemberLayout::extended) {
+		return 25;
+	}
+	if (extended == &MemberLayout::wide) {
+		return 26;
 	}
 
 	// A call through a function pointer classifies the member-pointer result the

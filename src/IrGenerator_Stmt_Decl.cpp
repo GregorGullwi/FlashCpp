@@ -2007,7 +2007,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							appendValueAsBytes(op.init_data, value, element_size);
 						}
 					} else if (eval_result.success()) {
-						unsigned long long value = evalResultMemberToRaw(eval_result, type_node.type());
+						// A data-member pointer is one 64-bit offset object. Its flat
+						// projection names the pointee category, so evaluating the
+						// pointee here would store a floating representation of the
+						// offset instead of the offset itself.
+						unsigned long long value = type_node.is_member_object_pointer_type()
+							? evalResultScalarToRaw(eval_result)
+							: evalResultMemberToRaw(eval_result, type_node.type());
 						if (type_node.is_member_object_pointer_type() && initializerIsNullPointerConstant()) {
 							value = kNullMemberObjectPointerRepresentation;
 						}

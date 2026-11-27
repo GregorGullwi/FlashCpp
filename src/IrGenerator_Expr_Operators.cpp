@@ -1589,6 +1589,45 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	// below are only for legacy non-normalized bodies that can still reach codegen.
 	TypeCategory common_cat = TypeCategory::Invalid;
 	exact_ternary_result_type = sema_.getTernaryResultType(ternaryNode);
+	// A conditional whose branches are a data-member pointer and another
+	// data-member pointer (or a null pointer constant) has a member-pointer
+	// composite type. The flat projection of such a branch looks like its
+	// pointee, so without this classification the merged value would be
+	// float-converted as the pointee.
+	auto normalizedBranchType = [&](const ASTNode& branch) -> TypeId {
+		const TypeId branch_type = canonicalOperandStructuralTypeId(branch);
+		if (!branch_type) {
+			return {};
+		}
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		return table.withoutTopLevelQualifiers(canonicalTypeWithoutReference(table, branch_type));
+	};
+	auto branchIsMemberObjectPointer = [&](TypeId type) {
+		return type && requireFrontendContext().canonicalTypes().node(type).kind == CanonicalTypeKind::MemberObjectPointer;
+	};
+	const TypeId true_branch_type = normalizedBranchType(ternaryNode.true_expr());
+	const TypeId false_branch_type = normalizedBranchType(ternaryNode.false_expr());
+	const bool true_branch_is_member_object_pointer = branchIsMemberObjectPointer(true_branch_type);
+	const bool false_branch_is_member_object_pointer = branchIsMemberObjectPointer(false_branch_type);
+	bool member_object_pointer_branches_convert = false;
+	if (true_branch_is_member_object_pointer && false_branch_is_member_object_pointer) {
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		const std::optional<ConversionPlan> true_to_false = tryBuildCanonicalMemberPointerConversionPlan(table, true_branch_type, false_branch_type);
+		const std::optional<ConversionPlan> false_to_true = tryBuildCanonicalMemberPointerConversionPlan(table, false_branch_type, true_branch_type);
+		member_object_pointer_branches_convert = true_branch_type == false_branch_type || (true_to_false.has_value() && true_to_false->is_valid) ||
+			(false_to_true.has_value() && false_to_true->is_valid);
+	}
+	auto branchIsNullPointer = [&](const ASTNode& branch) {
+		if (isIntegerLiteralZeroNullPointerConstant(branch)) {
+			return true;
+		}
+		const std::optional<TypeSpecifierNode> branch_type = sema_.getExpressionType(branch);
+		return branch_type.has_value() && branch_type->category() == TypeCategory::Nullptr;
+	};
+	const bool true_branch_is_null_pointer = branchIsNullPointer(ternaryNode.true_expr());
+	const bool false_branch_is_null_pointer = branchIsNullPointer(ternaryNode.false_expr());
+	const bool ternary_member_object_pointer_result = (true_branch_is_member_object_pointer && (member_object_pointer_branches_convert ||
+		false_branch_is_null_pointer)) || (false_branch_is_member_object_pointer && (member_object_pointer_branches_convert || true_branch_is_null_pointer));
 	bool result_is_function_designator = false;
 	if (context != ExpressionContext::LValueAddress && exact_ternary_result_type.has_value()) {
 		common_cat = exact_ternary_result_type->category();
@@ -1656,6 +1695,9 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	if (common_cat == TypeCategory::Invalid) {
 		throw InternalError("Ternary expression: sema did not provide a common result type (checked annotation, sema expression types)");
 	}
+	if (ternary_member_object_pointer_result) {
+		common_cat = TypeCategory::MemberObjectPointer;
+	}
 
 	// Evaluate true expression
 	ExprResult true_result = visitExpressionNode(ternaryNode.true_expr().as<ExpressionNode>(), context);
@@ -1678,6 +1720,9 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	PointerDepth result_pointer_depth = exact_ternary_result_type.has_value()
 		? PointerDepth{static_cast<int>(exact_ternary_result_type->pointer_depth())}
 		: PointerDepth{};
+	if (ternary_member_object_pointer_result && context != ExpressionContext::LValueAddress) {
+		result_pointer_depth = PointerDepth{};
+	}
 
 	// C++20 [expr.cond]/3: an array operand of a conditional expression decays
 	// to a pointer before the common type is chosen. Sema annotates each array
@@ -1720,9 +1765,24 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	// via getSemaAnnotatedTargetType. The actual conversion uses common_type directly;
 	// there is no need to re-query the annotation here since both paths would produce
 	// the same generateTypeConversion call (sema_target == common_type by construction).
-	if (context != ExpressionContext::LValueAddress &&
-		true_result.typeEnum() != common_type)
-		true_result = generateTypeConversion(true_result, true_result.category(), common_type, ternaryNode.get_token());
+	auto mergeBranchToCommonType = [&](ExprResult& branch_result, bool branch_is_member_object_pointer, bool branch_is_null_pointer) {
+		if (context == ExpressionContext::LValueAddress || branch_result.typeEnum() == common_type) {
+			return;
+		}
+		if (ternary_member_object_pointer_result && branch_is_member_object_pointer) {
+			// The branch value already is the member offset; only its flat
+			// pointee projection needs to become the member-pointer category.
+			branch_result.type_index = branch_result.type_index.withCategory(TypeCategory::MemberObjectPointer);
+			branch_result.ir_type = IrType::MemberObjectPointer;
+			return;
+		}
+		if (ternary_member_object_pointer_result && branch_is_null_pointer) {
+			branch_result = generateTypeConversion(branch_result, TypeCategory::Nullptr, TypeCategory::MemberObjectPointer, ternaryNode.get_token());
+			return;
+		}
+		branch_result = generateTypeConversion(branch_result, branch_result.category(), common_type, ternaryNode.get_token());
+	};
+	mergeBranchToCommonType(true_result, true_branch_is_member_object_pointer, true_branch_is_null_pointer);
 	const bool true_branch_decayed = applyAnnotatedArrayDecay(ternaryNode.true_expr(), true_result);
 
 	int result_size = 0;
@@ -1792,9 +1852,7 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	}
 
 	// Convert false result to common type if needed (same reasoning as true branch above).
-	if (context != ExpressionContext::LValueAddress &&
-		false_result.typeEnum() != common_type)
-		false_result = generateTypeConversion(false_result, false_result.category(), common_type, ternaryNode.get_token());
+	mergeBranchToCommonType(false_result, false_branch_is_member_object_pointer, false_branch_is_null_pointer);
 	const bool false_branch_decayed = applyAnnotatedArrayDecay(ternaryNode.false_expr(), false_result);
 
 	// Assign false_expr result to result variable
@@ -2589,6 +2647,17 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	int rhsSize = rhsExprResult.size_in_bits.value;
 	TypeCategory lhsCat = lhsExprResult.category();
 	TypeCategory rhsCat = rhsExprResult.category();
+	// A data-member pointer's flat declarator projection spells its pointee
+	// category plus one pointer level, so a comparison of two member pointers
+	// would otherwise select the pointee's floating common type and convert the
+	// offsets. Classify both operands by their canonical identity and keep them
+	// at the member-pointer category, which selects the integer comparison.
+	const bool is_member_object_pointer_comparison = (op == "==" || op == "!=") && operandIsMemberObjectPointer(lhsExprResult, binaryOperatorNode.get_lhs()) &&
+		operandIsMemberObjectPointer(rhsExprResult, binaryOperatorNode.get_rhs());
+	if (is_member_object_pointer_comparison) {
+		lhsCat = TypeCategory::MemberObjectPointer;
+		rhsCat = TypeCategory::MemberObjectPointer;
+	}
 
 	auto tryGetBinaryOperatorTypeSpecs = [&]() -> std::optional<std::pair<TypeSpecifierNode, TypeSpecifierNode>> {
 		auto tryBuildGeneratedExprTypeSpec = [](const ExprResult& operand_result, const Token& token) -> std::optional<TypeSpecifierNode> {
@@ -3037,18 +3106,18 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		// struct-operator lookup. (C++20 [expr.eq]/3.)
 		const bool either_operand_is_pointer =
 			lhsExprResult.pointer_depth.is_pointer() || rhsExprResult.pointer_depth.is_pointer();
-		if (either_operand_is_pointer || is_logical_operator) {
+		if (either_operand_is_pointer || is_member_object_pointer_comparison || is_logical_operator) {
 			requires_user_defined_operator = false;
 		} else if (concrete_type_specs.has_value()) {
-			requires_user_defined_operator =
-				requiresUserDefinedBinaryOperator(concrete_type_specs->first) || requiresUserDefinedBinaryOperator(concrete_type_specs->second);
+			requires_user_defined_operator = requiresUserDefinedBinaryOperator(concrete_type_specs->first) ||
+				requiresUserDefinedBinaryOperator(concrete_type_specs->second);
 		} else {
-			requires_user_defined_operator =
-				requiresUserDefinedBinaryOperatorByBase(lhs_type_index, lhsExprResult.pointer_depth) || requiresUserDefinedBinaryOperatorByBase(rhs_type_index, rhsExprResult.pointer_depth);
+			requires_user_defined_operator = requiresUserDefinedBinaryOperatorByBase(lhs_type_index, lhsExprResult.pointer_depth) ||
+				requiresUserDefinedBinaryOperatorByBase(rhs_type_index, rhsExprResult.pointer_depth);
 		}
 
-		can_try_spaceship_rewrite =
-			!overload_result.has_match && requires_user_defined_operator && lhsCat == TypeCategory::Struct && (op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=");
+		can_try_spaceship_rewrite = !overload_result.has_match && requires_user_defined_operator && lhsCat == TypeCategory::Struct && (op == "<" || op == "<=" ||
+			op == ">" || op == ">=" || op == "==" || op == "!=");
 
 		if (!overload_result.has_match && requires_user_defined_operator && !can_try_spaceship_rewrite) {
 			throwOperatorOverloadNotFoundDiagnostic(*context_, binaryOperatorNode.get_token(), op);
@@ -3825,12 +3894,14 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		if (operandIsMemberObjectPointer(lhsExprResult, binaryOperatorNode.get_lhs()) && rhs_is_null_pointer_constant) {
 			rhsExprResult = generateTypeConversion(rhsExprResult, TypeCategory::Nullptr, TypeCategory::MemberObjectPointer, binaryOperatorNode.get_token());
 			rhsSize = rhsExprResult.size_in_bits.value;
-			rhsCat = rhsExprResult.category();
+			lhsCat = TypeCategory::MemberObjectPointer;
+			rhsCat = TypeCategory::MemberObjectPointer;
 			is_member_object_pointer_null_comparison = true;
 		} else if (operandIsMemberObjectPointer(rhsExprResult, binaryOperatorNode.get_rhs()) && lhs_is_null_pointer_constant) {
 			lhsExprResult = generateTypeConversion(lhsExprResult, TypeCategory::Nullptr, TypeCategory::MemberObjectPointer, binaryOperatorNode.get_token());
 			lhsSize = lhsExprResult.size_in_bits.value;
-			lhsCat = lhsExprResult.category();
+			lhsCat = TypeCategory::MemberObjectPointer;
+			rhsCat = TypeCategory::MemberObjectPointer;
 			is_member_object_pointer_null_comparison = true;
 		} else if (lhs_pointer_depth > 0 && rhs_is_null_pointer_constant) {
 			rhsExprResult = makeNullPointerExpr(lhsExprResult, lhs_pointer_depth);
@@ -4551,6 +4622,15 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				op_ref = IrOpcode::UnsignedGreaterThan;
 			else if (op_ref == IrOpcode::GreaterEqual)
 				op_ref = IrOpcode::UnsignedGreaterEqual;
+		} else if (is_member_object_pointer_comparison) {
+			// Compare the full 64-bit member-pointer representation. The flat
+			// pointee category must not turn the offsets into floats.
+			bin_op.lhs.setType(TypeCategory::UnsignedLongLong);
+			bin_op.lhs.ir_type = IrType::Integer;
+			bin_op.lhs.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+			bin_op.rhs.setType(TypeCategory::UnsignedLongLong);
+			bin_op.rhs.ir_type = IrType::Integer;
+			bin_op.rhs.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
 		} else if (is_member_object_pointer_null_comparison) {
 			// Compare the full 64-bit member-pointer object representation, so
 			// the arithmetic common-type path cannot narrow the sentinel.
