@@ -2,10 +2,12 @@
 
 #include "AstNodeTypes.h"
 #include "CanonicalIdentityCompare.h"
+#include "TemplateConstraintSubsumption.h"
 #include "TemplateRegistry_Types.h"
 #include "TemplateTypes.h"
 
 #include <algorithm>
+#include <optional>
 #include <ranges>
 #include <vector>
 
@@ -189,42 +191,81 @@ inline bool primaryFunctionTemplatesHaveMatchingSignature(
 		functionDeclarationsHaveMatchingShape(lhs.function_decl_node(), rhs.function_decl_node());
 }
 
-// Stamp specifiers that name a Type parameter of this function template with
-// template_decl_id and the parameter's position. Publication calls this with the
-// function's own id. Redeclaration probing calls it with a candidate's id,
-// because a member definition parsed inside a class template can still carry
-// the enclosing template's provisional stamp on its own parameters.
-inline void stampFunctionTemplateOwnParameters(TemplateFunctionDeclarationNode& template_decl, TemplateDeclId template_decl_id) {
-	if (!template_decl_id) {
-		return;
+// A function template spelling is constrained when it has a trailing
+// requires-clause or any of its own template parameters carries a concept
+// constraint.
+inline bool functionTemplateHasConstraints(const TemplateFunctionDeclarationNode& template_decl) {
+	if (template_decl.has_requires_clause()) {
+		return true;
 	}
-	TemplateParameterVector& template_parameters = template_decl.template_parameters();
+	for (const TemplateParameterNode& parameter : template_decl.template_parameters()) {
+		if (parameter.has_concept_constraint()) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Redeclarations of one function template must carry equivalent constraints.
+// Unconstrained spellings are equivalent; a constrained and an unconstrained
+// spelling never are. A constrained pair whose formulas cannot be built stays
+// distinct rather than guessing.
+inline bool functionTemplateConstraintsAreEquivalent(const TemplateFunctionDeclarationNode& lhs, const TemplateFunctionDeclarationNode& rhs) {
+	const bool lhs_constrained = functionTemplateHasConstraints(lhs);
+	const bool rhs_constrained = functionTemplateHasConstraints(rhs);
+	if (!lhs_constrained && !rhs_constrained) {
+		return true;
+	}
+	if (lhs_constrained != rhs_constrained) {
+		return false;
+	}
+	const FlashCpp::detail::ConstraintSubsumptionOrdering ordering = FlashCpp::detail::compareMemberTemplateConstraints(
+		requireFrontendContext().canonicalTypes(), lhs, rhs);
+	return ordering == FlashCpp::detail::ConstraintSubsumptionOrdering::Equivalent;
+}
+
+// Apply the positional identity of a function template's own Type parameters to
+// every signature specifier that names one. `template_parameters` is null when
+// clearing stamps left by a failed redeclaration probe.
+inline void applyFunctionTemplateOwnParameterStamps(FunctionDeclarationNode& function_decl, TemplateParameterVector* template_parameters,
+	TemplateDeclId template_decl_id) {
+	const auto stampFunctionType = [&](FunctionType& function_type) {
+		if (!function_type.template_parameter_name.isValid()) {
+			return;
+		}
+		if (template_parameters == nullptr) {
+			if (function_type.template_parameter_decl) {
+				function_type.template_parameter_decl = {};
+				function_type.template_parameter_index = 0;
+			}
+			return;
+		}
+		for (size_t index = 0; index < template_parameters->size(); ++index) {
+			const TemplateParameterNode& parameter = (*template_parameters)[index];
+			if (parameter.kind() == TemplateParameterKind::Type && parameter.nameHandle() == function_type.template_parameter_name) {
+				function_type.template_parameter_decl = template_decl_id;
+				function_type.template_parameter_index = static_cast<uint32_t>(index);
+				break;
+			}
+		}
+	};
 	const auto stampFunctionSignature = [&](FunctionSignature& root_signature) {
 		std::vector<FunctionSignature*> pending_signatures{&root_signature};
 		while (!pending_signatures.empty()) {
 			FunctionSignature& signature = *pending_signatures.back();
 			pending_signatures.pop_back();
-			const auto stampFunctionType = [&](FunctionType& function_type) {
-				if (function_type.template_parameter_name.isValid()) {
-					for (size_t index = 0; index < template_parameters.size(); ++index) {
-						const TemplateParameterNode& parameter = template_parameters[index];
-						if (parameter.kind() == TemplateParameterKind::Type && parameter.nameHandle() == function_type.template_parameter_name) {
-							function_type.template_parameter_decl = template_decl_id;
-							function_type.template_parameter_index = static_cast<uint32_t>(index);
-							break;
-						}
-					}
-				}
+			const auto stampCallableType = [&](FunctionType& function_type) {
+				stampFunctionType(function_type);
 				if (function_type.callable_signature) {
 					function_type.callable_signature = allocatePersistentFunctionSignature(*function_type.callable_signature);
 					pending_signatures.push_back(function_type.callable_signature);
 				}
 			};
 			if (signature.hasStructuredTypes()) {
-				signature.updateReturnType(stampFunctionType);
+				signature.updateReturnType(stampCallableType);
 				signature.updateParameterTypes([&](OverloadVector<FunctionType, 4>& parameter_types) {
 					for (FunctionType& parameter_type : parameter_types) {
-						stampFunctionType(parameter_type);
+						stampCallableType(parameter_type);
 					}
 				});
 			}
@@ -236,12 +277,18 @@ inline void stampFunctionTemplateOwnParameters(TemplateFunctionDeclarationNode& 
 			TypeSpecifierNode& type_spec = *pending_types.back();
 			pending_types.pop_back();
 			if (type_spec.has_template_parameter_identity()) {
-				const StringHandle param_name = type_spec.template_parameter_name();
-				for (size_t index = 0; index < template_parameters.size(); ++index) {
-					const TemplateParameterNode& parameter = template_parameters[index];
-					if (parameter.kind() == TemplateParameterKind::Type && parameter.nameHandle() == param_name) {
-						type_spec.set_template_parameter_decl(template_decl_id, static_cast<uint32_t>(index));
-						break;
+				if (template_parameters == nullptr) {
+					if (type_spec.has_template_parameter_decl()) {
+						type_spec.clear_template_parameter_decl();
+					}
+				} else {
+					const StringHandle param_name = type_spec.template_parameter_name();
+					for (size_t index = 0; index < template_parameters->size(); ++index) {
+						const TemplateParameterNode& parameter = (*template_parameters)[index];
+						if (parameter.kind() == TemplateParameterKind::Type && parameter.nameHandle() == param_name) {
+							type_spec.set_template_parameter_decl(template_decl_id, static_cast<uint32_t>(index));
+							break;
+						}
 					}
 				}
 			}
@@ -259,7 +306,6 @@ inline void stampFunctionTemplateOwnParameters(TemplateFunctionDeclarationNode& 
 			}
 		}
 	};
-	FunctionDeclarationNode& function_decl = template_decl.function_decl_node();
 	stampTypeSpecifier(function_decl.decl_node().type_specifier_node());
 	for (ASTNode& parameter_node : function_decl.parameter_nodes()) {
 		if (parameter_node.is<DeclarationNode>()) {
@@ -269,15 +315,80 @@ inline void stampFunctionTemplateOwnParameters(TemplateFunctionDeclarationNode& 
 	// A non-type parameter type or a default type can also name a Type parameter
 	// of this same function template; those specifiers participate in the
 	// template parameter shape comparison just like signature specifiers.
-	for (TemplateParameterNode& parameter : template_parameters) {
-		if (parameter.has_type()) {
-			stampTypeSpecifier(parameter.type_specifier_node());
-		}
-		if (parameter.has_default()) {
-			ASTNode default_value = parameter.default_value();
-			if (default_value.is<TypeSpecifierNode>()) {
-				stampTypeSpecifier(default_value.as<TypeSpecifierNode>());
+	if (template_parameters != nullptr) {
+		for (TemplateParameterNode& parameter : *template_parameters) {
+			if (parameter.has_type()) {
+				stampTypeSpecifier(parameter.type_specifier_node());
+			}
+			if (parameter.has_default()) {
+				ASTNode default_value = parameter.default_value();
+				if (default_value.is<TypeSpecifierNode>()) {
+					stampTypeSpecifier(default_value.as<TypeSpecifierNode>());
+				}
 			}
 		}
 	}
+}
+
+// Stamp specifiers that name a Type parameter of this function template with
+// template_decl_id and the parameter's position. Publication calls this with the
+// function's own id. Redeclaration probing calls it with a candidate's id,
+// because a member definition parsed inside a class template can still carry
+// the enclosing template's provisional stamp on its own parameters.
+inline void stampFunctionTemplateOwnParameters(TemplateFunctionDeclarationNode& template_decl, TemplateDeclId template_decl_id) {
+	if (!template_decl_id) {
+		return;
+	}
+	applyFunctionTemplateOwnParameterStamps(template_decl.function_decl_node(), &template_decl.template_parameters(), template_decl_id);
+}
+
+// Same stamping for an out-of-line definition whose own template head is stored
+// beside a plain FunctionDeclarationNode rather than in a
+// TemplateFunctionDeclarationNode wrapper.
+inline void stampFunctionTemplateOwnParameters(TemplateParameterVector& template_parameters, FunctionDeclarationNode& function_decl,
+	TemplateDeclId template_decl_id) {
+	if (!template_decl_id) {
+		return;
+	}
+	applyFunctionTemplateOwnParameterStamps(function_decl, &template_parameters, template_decl_id);
+}
+
+inline void clearFunctionTemplateOwnParameterStamps(FunctionDeclarationNode& function_decl) {
+	applyFunctionTemplateOwnParameterStamps(function_decl, nullptr, TemplateDeclId{});
+}
+
+// An out-of-line member function template definition redeclares the matching
+// in-class member template declaration. Matching uses the same structural rule
+// as in-class redeclarations: the resolved owner's member list, the simple name,
+// the own template parameter shape (arity, kind, packs, concept constraints),
+// the function signature shape (parameter count/types/packs, return type, cv,
+// noexcept, calling convention), and equivalent constraints. A missing owner or
+// declaration leaves the definition without a TemplateDeclId, so instantiation
+// keeps its first-use behaviour instead of guessing an identity.
+inline std::optional<TemplateDeclId> resolveOutOfLineMemberTemplateDeclarationId(const StructDeclarationNode* owner,
+	StringHandle simple_name, TemplateParameterVector& own_template_parameters, FunctionDeclarationNode& definition) {
+	if (owner == nullptr || !simple_name.isValid() || own_template_parameters.empty()) {
+		return std::nullopt;
+	}
+	TemplateFunctionDeclarationNode probe(own_template_parameters, ASTNode(&definition), std::nullopt);
+	for (const StructMemberFunctionDecl& candidate : owner->member_functions()) {
+		if (!candidate.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+			continue;
+		}
+		const TemplateFunctionDeclarationNode& sibling = candidate.function_declaration.as<TemplateFunctionDeclarationNode>();
+		if (!sibling.has_template_decl_id() || sibling.function_decl_node().decl_node().identifier_token().handle() != simple_name) {
+			continue;
+		}
+		// The definition's own type parameters carry no published identity yet.
+		// Probe with the candidate's id so both sides compare with the same
+		// positional identity, exactly like an in-class redeclaration probe.
+		stampFunctionTemplateOwnParameters(probe, sibling.template_decl_id());
+		if (primaryFunctionTemplatesHaveMatchingSignature(probe, sibling) && functionTemplateConstraintsAreEquivalent(probe, sibling)) {
+			stampFunctionTemplateOwnParameters(own_template_parameters, definition, sibling.template_decl_id());
+			return sibling.template_decl_id();
+		}
+	}
+	// A failed probe must not leave another declaration's identity on this node.
+	clearFunctionTemplateOwnParameterStamps(definition);
+	return std::nullopt;
 }

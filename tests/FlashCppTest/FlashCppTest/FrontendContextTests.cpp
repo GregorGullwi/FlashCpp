@@ -3732,6 +3732,228 @@ TEST_SUITE("FrontendContext") {
 		CHECK(repeat_definition->template_decl_id() != widen_definition->template_decl_id());
 	}
 
+	TEST_CASE("Out-of-line member function template definitions adopt their declaration identity") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"template<typename Outer> struct OutOfLineOwner {\n"
+			"  template<typename Value> Value convert(Value value);\n"
+			"  template<typename Left, typename Right> Right combine(Left left, Right right);\n"
+			"  template<typename Value> Value convert(Value value, int offset);\n"
+			"  template<typename Value> Value address(Value value);\n"
+			"  template<typename Value> Value* address(Value* value);\n"
+			"};\n"
+			"template<typename Outer> template<typename Value> Value OutOfLineOwner<Outer>::convert(Value value) { return value; }\n"
+			"template<typename Outer> template<typename Left, typename Right> Right OutOfLineOwner<Outer>::combine(Left left, Right right) { return right; }\n"
+			"template<typename Outer> template<typename Value> Value OutOfLineOwner<Outer>::convert(Value value, int offset) { return value; }\n"
+			"template<typename Outer> template<typename Value> Value OutOfLineOwner<Outer>::address(Value value) { return value; }\n"
+			"template<typename Outer> template<typename Value> Value* OutOfLineOwner<Outer>::address(Value* value) { return value; }\n"
+			"template<typename OtherOuter> struct SecondOutOfLineOwner {\n"
+			"  template<typename Value> Value convert(Value value);\n"
+			"};\n"
+			"template<typename OtherOuter> template<typename Value> Value SecondOutOfLineOwner<OtherOuter>::convert(Value value) { return value; }\n"
+			"template<typename PartialOuter> struct PartialOutOfLineOwner {\n"
+			"  template<typename Value> Value convert(Value value);\n"
+			"};\n"
+			"template<typename PartialOuter> struct PartialOutOfLineOwner<PartialOuter*> {\n"
+			"  template<typename Value> Value convert(Value value);\n"
+			"};\n"
+			"template<typename PartialOuter> template<typename Value> Value PartialOutOfLineOwner<PartialOuter*>::convert(Value value) { return value; }\n"
+			"template<typename Outer> struct PlainOutOfLineOwner {\n"
+			"  int paired(Outer value);\n"
+			"  static int storage;\n"
+			"};\n"
+			"template<typename Outer> int PlainOutOfLineOwner<Outer>::paired(Outer value) { return static_cast<int>(value); }\n"
+			"template<typename Outer> int PlainOutOfLineOwner<Outer>::storage = 7;\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("out_of_line_member_template_identity_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const auto owner_opt =
+			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("OutOfLineOwner"));
+		REQUIRE(owner_opt.has_value());
+		REQUIRE(owner_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& owner = owner_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(owner.has_template_decl_id());
+
+		const TemplateFunctionDeclarationNode* convert_single_declaration = nullptr;
+		const TemplateFunctionDeclarationNode* combine_declaration = nullptr;
+		const TemplateFunctionDeclarationNode* convert_offset_declaration = nullptr;
+		const TemplateFunctionDeclarationNode* address_value_declaration = nullptr;
+		const TemplateFunctionDeclarationNode* address_pointer_declaration = nullptr;
+		for (const StructMemberFunctionDecl& member : owner.class_decl_node().member_functions()) {
+			if (!member.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+				continue;
+			}
+			const TemplateFunctionDeclarationNode& candidate =
+				member.function_declaration.as<TemplateFunctionDeclarationNode>();
+			const std::string_view name =
+				StringTable::getStringView(candidate.function_decl_node().decl_node().identifier_token().handle());
+			const size_t parameter_count = candidate.function_decl_node().parameter_nodes().size();
+			if (name == "convert"sv && parameter_count == 1u) {
+				convert_single_declaration = &candidate;
+			} else if (name == "convert"sv && parameter_count == 2u) {
+				convert_offset_declaration = &candidate;
+			} else if (name == "combine"sv) {
+				combine_declaration = &candidate;
+			} else if (name == "address"sv) {
+				const TypeSpecifierNode& parameter_type =
+					candidate.function_decl_node().parameter_nodes()[0].as<DeclarationNode>().type_specifier_node();
+				if (parameter_type.runtime_pointer_depth() > 0u) {
+					address_pointer_declaration = &candidate;
+				} else {
+					address_value_declaration = &candidate;
+				}
+			}
+		}
+		REQUIRE(convert_single_declaration != nullptr);
+		REQUIRE(convert_offset_declaration != nullptr);
+		REQUIRE(combine_declaration != nullptr);
+		REQUIRE(address_value_declaration != nullptr);
+		REQUIRE(address_pointer_declaration != nullptr);
+		REQUIRE(convert_single_declaration->has_template_decl_id());
+		REQUIRE(convert_offset_declaration->has_template_decl_id());
+		REQUIRE(combine_declaration->has_template_decl_id());
+		REQUIRE(address_value_declaration->has_template_decl_id());
+		REQUIRE(address_pointer_declaration->has_template_decl_id());
+		CHECK(address_value_declaration->template_decl_id() != address_pointer_declaration->template_decl_id());
+
+		const std::vector<OutOfLineMemberFunction> definitions =
+			gTemplateRegistry.getOutOfLineMemberFunctions("OutOfLineOwner");
+		REQUIRE(definitions.size() == 5u);
+		const OutOfLineMemberFunction* convert_single_definition = nullptr;
+		const OutOfLineMemberFunction* combine_definition = nullptr;
+		const OutOfLineMemberFunction* convert_offset_definition = nullptr;
+		const OutOfLineMemberFunction* address_value_definition = nullptr;
+		const OutOfLineMemberFunction* address_pointer_definition = nullptr;
+		for (const OutOfLineMemberFunction& definition : definitions) {
+			REQUIRE(definition.function_node.is<FunctionDeclarationNode>());
+			const FunctionDeclarationNode& function =
+				definition.function_node.as<FunctionDeclarationNode>();
+			const std::string_view name = function.decl_node().identifier_token().value();
+			const size_t parameter_count = function.parameter_nodes().size();
+			if (name == "convert" && parameter_count == 1u) {
+				convert_single_definition = &definition;
+			} else if (name == "convert" && parameter_count == 2u) {
+				convert_offset_definition = &definition;
+			} else if (name == "combine") {
+				combine_definition = &definition;
+			} else if (name == "address") {
+				const TypeSpecifierNode& parameter_type =
+					function.parameter_nodes()[0].as<DeclarationNode>().type_specifier_node();
+				if (parameter_type.runtime_pointer_depth() > 0u) {
+					address_pointer_definition = &definition;
+				} else {
+					address_value_definition = &definition;
+				}
+			}
+		}
+		REQUIRE(convert_single_definition != nullptr);
+		REQUIRE(convert_offset_definition != nullptr);
+		REQUIRE(combine_definition != nullptr);
+		REQUIRE(address_value_definition != nullptr);
+		REQUIRE(address_pointer_definition != nullptr);
+
+		// The out-of-line definition reuses the in-class declaration's identity,
+		// and distinct overloads stay distinct.
+		REQUIRE(static_cast<bool>(convert_single_definition->template_decl_id));
+		REQUIRE(static_cast<bool>(convert_offset_definition->template_decl_id));
+		REQUIRE(static_cast<bool>(combine_definition->template_decl_id));
+		REQUIRE(static_cast<bool>(address_value_definition->template_decl_id));
+		REQUIRE(static_cast<bool>(address_pointer_definition->template_decl_id));
+		CHECK(convert_single_definition->template_decl_id == convert_single_declaration->template_decl_id());
+		CHECK(convert_offset_definition->template_decl_id == convert_offset_declaration->template_decl_id());
+		CHECK(combine_definition->template_decl_id == combine_declaration->template_decl_id());
+		CHECK(address_value_definition->template_decl_id == address_value_declaration->template_decl_id());
+		CHECK(address_pointer_definition->template_decl_id == address_pointer_declaration->template_decl_id());
+		CHECK(convert_single_definition->template_decl_id != convert_offset_definition->template_decl_id);
+		CHECK(convert_single_definition->template_decl_id != combine_definition->template_decl_id);
+		// Same name and arity but different parameter types stay distinct.
+		CHECK(address_value_definition->template_decl_id != address_pointer_definition->template_decl_id);
+		CHECK(combine_definition->template_decl_id != owner.template_decl_id());
+
+		// The definition's own type-parameter references carry the same
+		// declaration-relative positions as the in-class declaration.
+		const FunctionDeclarationNode& convert_function =
+			convert_single_definition->function_node.as<FunctionDeclarationNode>();
+		REQUIRE(convert_function.parameter_nodes().size() == 1u);
+		const TypeSpecifierNode& value_parameter =
+			convert_function.parameter_nodes()[0].as<DeclarationNode>().type_specifier_node();
+		REQUIRE(value_parameter.has_template_parameter_decl());
+		CHECK(value_parameter.template_decl_id() == convert_single_declaration->template_decl_id());
+		CHECK(value_parameter.template_parameter_index() == 0u);
+
+		const FunctionDeclarationNode& combine_function =
+			combine_definition->function_node.as<FunctionDeclarationNode>();
+		REQUIRE(combine_function.parameter_nodes().size() == 2u);
+		const TypeSpecifierNode& left_parameter =
+			combine_function.parameter_nodes()[0].as<DeclarationNode>().type_specifier_node();
+		const TypeSpecifierNode& right_parameter =
+			combine_function.parameter_nodes()[1].as<DeclarationNode>().type_specifier_node();
+		REQUIRE(left_parameter.has_template_parameter_decl());
+		REQUIRE(right_parameter.has_template_parameter_decl());
+		CHECK(left_parameter.template_decl_id() == combine_declaration->template_decl_id());
+		CHECK(left_parameter.template_parameter_index() == 0u);
+		CHECK(right_parameter.template_decl_id() == combine_declaration->template_decl_id());
+		CHECK(right_parameter.template_parameter_index() == 1u);
+
+		CanonicalTypeTable& table = context.canonicalTypes();
+		const CanonicalTypeImport value_import = importCanonicalType(table, value_parameter);
+		REQUIRE(value_import.status == CanonicalTypeImportStatus::Supported);
+		CHECK(value_import.type == table.templateParameter(convert_single_declaration->template_decl_id(), 0u));
+		const CanonicalTypeImport right_import = importCanonicalType(table, right_parameter);
+		REQUIRE(right_import.status == CanonicalTypeImportStatus::Supported);
+		CHECK(right_import.type == table.templateParameter(combine_declaration->template_decl_id(), 1u));
+
+		// A return type that uses the definition's own parameter carries the same
+		// identity: `Value* address(Value*)` stamps both sides with position 0.
+		const FunctionDeclarationNode& address_pointer_function =
+			address_pointer_definition->function_node.as<FunctionDeclarationNode>();
+		const TypeSpecifierNode& pointer_return_type =
+			address_pointer_function.decl_node().type_specifier_node();
+		REQUIRE(pointer_return_type.has_template_parameter_decl());
+		CHECK(pointer_return_type.template_decl_id() == address_pointer_declaration->template_decl_id());
+		CHECK(pointer_return_type.template_parameter_index() == 0u);
+		REQUIRE(address_pointer_function.parameter_nodes().size() == 1u);
+		const TypeSpecifierNode& pointer_parameter =
+			address_pointer_function.parameter_nodes()[0].as<DeclarationNode>().type_specifier_node();
+		REQUIRE(pointer_parameter.has_template_parameter_decl());
+		CHECK(pointer_parameter.template_decl_id() == address_pointer_declaration->template_decl_id());
+		CHECK(pointer_parameter.template_parameter_index() == 0u);
+
+		// Non-template member functions and static data members keep their
+		// existing out-of-line registration without a function-template identity.
+		const std::vector<OutOfLineMemberFunction> plain_definitions =
+			gTemplateRegistry.getOutOfLineMemberFunctions("PlainOutOfLineOwner");
+		REQUIRE(plain_definitions.size() == 1u);
+		CHECK_FALSE(static_cast<bool>(plain_definitions[0].template_decl_id));
+		CHECK(gTemplateRegistry.getOutOfLineMemberVariables("PlainOutOfLineOwner").size() == 1u);
+
+		// The same spelling and signature under a different owner is a different
+		// template, so its out-of-line definition cannot adopt the first one's id.
+		const std::vector<OutOfLineMemberFunction> second_definitions =
+			gTemplateRegistry.getOutOfLineMemberFunctions("SecondOutOfLineOwner");
+		REQUIRE(second_definitions.size() == 1u);
+		REQUIRE(static_cast<bool>(second_definitions[0].template_decl_id));
+		CHECK(second_definitions[0].template_decl_id != convert_single_definition->template_decl_id);
+		CHECK(second_definitions[0].template_decl_id != convert_single_declaration->template_decl_id());
+
+		// A partial specialization class head names the same primary template
+		// family but redeclares a different owner's member. It must not adopt the
+		// primary declaration's identity.
+		const std::vector<OutOfLineMemberFunction> partial_definitions =
+			gTemplateRegistry.getOutOfLineMemberFunctions("PartialOutOfLineOwner");
+		REQUIRE(partial_definitions.size() == 1u);
+		CHECK_FALSE(static_cast<bool>(partial_definitions[0].template_decl_id));
+	}
+
 	TEST_CASE("Free function template overloads publish distinct TemplateDeclIds") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

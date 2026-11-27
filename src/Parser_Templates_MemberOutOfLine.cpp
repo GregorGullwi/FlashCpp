@@ -2,6 +2,7 @@
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "TemplateFunctionSignatureShape.h"
 #include "TypeTraitEvaluator.h"
 
 std::optional<bool> Parser::try_parse_out_of_line_template_member(
@@ -1018,6 +1019,18 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 			buildDefinitionLookupContextFromToken(
 				function_name_token,
 				StringTable::getOrInternStringHandle(qualified_class_name));
+
+		// Adopt the matching in-class member template declaration's identity and
+		// stamp this node's own type-parameter references positionally with it.
+		// Non-template members and unresolved declarations keep the existing
+		// first-use behaviour.
+		if (!inner_template_params.empty()) {
+			const std::optional<TemplateDeclId> declaration_id = resolveOutOfLineMemberTemplateDeclarationId(
+				out_of_line_member.pattern_owner_struct_node, function_name_token.handle(), out_of_line_member.inner_template_params, func_ref);
+			if (declaration_id.has_value()) {
+				out_of_line_member.template_decl_id = *declaration_id;
+			}
+		}
 
 		gTemplateRegistry.registerOutOfLineMember(
 			makeQualifiedClassIdentifier(qualified_class_name),
