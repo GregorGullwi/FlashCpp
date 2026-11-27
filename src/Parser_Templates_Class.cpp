@@ -3549,6 +3549,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			}
 
 			TemplateArgumentVector pattern_args = *pattern_args_opt;
+			expandPartialPatternAliasArguments(*this, pattern_args, pattern_arg_syntax_nodes);
 
 			// Check for out-of-line member class definition: template<...> class Foo<...>::Bar { ... }
 			// E.g., template<typename _CharT, typename _Traits>
@@ -6169,6 +6170,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		}
 
 		TemplateArgumentVector pattern_args = *pattern_args_opt;
+		expandPartialPatternAliasArguments(*this, pattern_args, pattern_arg_syntax_nodes);
 		const auto& primary_template_params =
 			class_template_opt->as<TemplateClassDeclarationNode>().template_parameters();
 		auto is_bare_echo_of_partial_parameters =

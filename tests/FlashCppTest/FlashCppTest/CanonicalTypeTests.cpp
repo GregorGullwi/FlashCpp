@@ -12,6 +12,139 @@
 
 using OwnerPublicationMaterialization = decltype(std::declval<TemplateEngine&>().materializeTemplateInstantiationForLookup({}, {}));
 
+namespace {
+
+// Spelling-free structural description of one canonical pattern argument. The
+// primary declaration is deliberately excluded: each frontend publishes its own
+// TemplateDeclId values, while the expanded shape must be identical.
+std::string describeAliasPatternType(CanonicalTypeTable& table, TypeId type) {
+	const CanonicalTypeNode node = table.node(type);
+	switch (node.kind) {
+	case CanonicalTypeKind::Builtin:
+		return std::string("builtin:") + std::to_string(static_cast<int>(node.builtin));
+	case CanonicalTypeKind::TemplateParameter:
+		return std::string("parameter:") + std::to_string(table.templateParameterIndex(type));
+	case CanonicalTypeKind::Pointer:
+		return std::string("pointer(") + describeAliasPatternType(table, node.child) + ")";
+	case CanonicalTypeKind::LValueReference:
+		return std::string("lvalue-reference(") + describeAliasPatternType(table, node.child) + ")";
+	case CanonicalTypeKind::RValueReference:
+		return std::string("rvalue-reference(") + describeAliasPatternType(table, node.child) + ")";
+	case CanonicalTypeKind::Qualified:
+		return std::string("qualified(") + describeAliasPatternType(table, node.child) + ")";
+	case CanonicalTypeKind::Array:
+		return std::string("array(") + describeAliasPatternType(table, node.child) + ")";
+	default:
+		return std::string("kind:") + std::to_string(static_cast<int>(node.kind));
+	}
+}
+
+struct ParsedAliasPattern {
+	std::string shape;
+	bool environment_published = false;
+};
+
+ParsedAliasPattern parseAliasPartialPattern(std::string_view source, std::string_view first_interned,
+	std::string_view second_interned) {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear();
+	gConceptRegistry.clear();
+	gSymbolTable.clear();
+	// Pin the interning order independently of declaration order.
+	StringTable::getOrInternStringHandle(first_interned);
+	StringTable::getOrInternStringHandle(second_interned);
+	initialize_native_types();
+	FrontendContext context;
+	CompileContext compile_context;
+	compile_context.setInputFile("alias_partial_pattern.cpp");
+	Lexer lexer(source);
+	SemanticAnalysis semantic_analysis(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, semantic_analysis);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	const std::optional<ASTNode> primary_node = gTemplateRegistry.lookupTemplate("S");
+	REQUIRE(primary_node.has_value());
+	const TemplateClassDeclarationNode& primary_declaration = primary_node->as<TemplateClassDeclarationNode>();
+	const TemplateDeclId primary = primary_declaration.template_decl_id();
+	REQUIRE(primary);
+	REQUIRE(gTemplateRegistry.specialization_patterns_.size() == 1);
+	auto& patterns = gTemplateRegistry.specialization_patterns_.begin()->second;
+	REQUIRE(patterns.size() == 1);
+	const TemplatePattern& pattern = patterns.front();
+	const StructDeclarationNode* pattern_declaration = nullptr;
+	if (pattern.specialized_node.is<TemplateClassDeclarationNode>()) {
+		pattern_declaration = &pattern.specialized_node.as<TemplateClassDeclarationNode>().class_decl_node();
+	} else if (pattern.specialized_node.is<StructDeclarationNode>()) {
+		pattern_declaration = &pattern.specialized_node.as<StructDeclarationNode>();
+	}
+	REQUIRE(pattern_declaration != nullptr);
+	ParsedAliasPattern parsed;
+	parsed.environment_published = static_cast<bool>(pattern_declaration->partial_specialization_environment());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const std::optional<TypeId> imported = tryImportCanonicalPartialClassPattern(context, primary,
+		pattern.template_params, pattern.pattern_args, {}, CanonicalPartialPatternOptions{});
+	REQUIRE(imported.has_value());
+	const TypeId argument = table.templateArgumentType(table.templateSpecializationArguments(*imported));
+	parsed.shape = describeAliasPatternType(table, argument);
+
+	// The same structural shape under another primary is a different canonical
+	// pattern and a different parameter environment.
+	const TemplateDeclId other_primary = context.templateDecls().publishPrimaryClassTemplate(OwnerId{7777},
+		StringTable::getOrInternStringHandle("SwappedPrimary"));
+	const std::optional<TypeId> swapped = tryImportCanonicalPartialClassPattern(context, other_primary,
+		pattern.template_params, pattern.pattern_args, {}, CanonicalPartialPatternOptions{});
+	REQUIRE(swapped.has_value());
+	CHECK(*swapped != *imported);
+	const TypeId swapped_argument = table.templateArgumentType(table.templateSpecializationArguments(*swapped));
+	CHECK(describeAliasPatternType(table, swapped_argument) == parsed.shape);
+	const TemplateDeclId swapped_environment = context.templateDecls().publishClassPartialEnvironment(other_primary, *swapped, StringHandle{});
+	CHECK(swapped_environment != pattern_declaration->partial_specialization_environment());
+	return parsed;
+}
+
+} // namespace
+
+TEST_CASE("Alias-template partial patterns publish one canonical shape") {
+	const uint64_t fallback_before = gPartialPatternNameFallbackCount;
+	const ParsedAliasPattern forward = parseAliasPartialPattern(R"(
+template<class T> using AlphaPointerAlias = T*;
+template<class T> using AlphaSpareAlias = T*;
+template<class T> struct S { static constexpr int value = 0; };
+template<class T> struct S<AlphaPointerAlias<T>> { static constexpr int value = 1; };
+)", "AlphaPointerAlias", "AlphaSpareAlias");
+	const ParsedAliasPattern reverse = parseAliasPartialPattern(R"(
+template<class T> using BetaSpareAlias = T*;
+template<class T> using BetaPointerAlias = T*;
+template<class T> struct S { static constexpr int value = 0; };
+template<class T> struct S<BetaPointerAlias<T>> { static constexpr int value = 1; };
+)", "BetaPointerAlias", "BetaSpareAlias");
+	CHECK(forward.environment_published);
+	CHECK(reverse.environment_published);
+	CHECK(forward.shape == reverse.shape);
+	CHECK(forward.shape == "pointer(parameter:0)");
+	CHECK(gPartialPatternNameFallbackCount == fallback_before);
+
+	const ParsedAliasPattern different_target = parseAliasPartialPattern(R"(
+template<class T> using DoublePointerAlias = T**;
+template<class T> struct S { static constexpr int value = 0; };
+template<class T> struct S<DoublePointerAlias<T>> { static constexpr int value = 1; };
+)", "DifferentTargetAlias", "DifferentTargetOther");
+	CHECK(different_target.environment_published);
+	CHECK(different_target.shape == "pointer(pointer(parameter:0))");
+	CHECK(different_target.shape != forward.shape);
+
+	const ParsedAliasPattern different_argument = parseAliasPartialPattern(R"(
+template<class T> using Ptr = T*;
+template<class T> struct S { static constexpr int value = 0; };
+template<class T> struct S<Ptr<T*>> { static constexpr int value = 1; };
+)", "DifferentArgumentAlias", "DifferentArgumentOther");
+	CHECK(different_argument.environment_published);
+	CHECK(different_argument.shape == "pointer(pointer(parameter:0))");
+	CHECK(different_argument.shape != forward.shape);
+	CHECK(gPartialPatternNameFallbackCount == fallback_before);
+}
+
 TEST_CASE("Canonical member function pointer owner substitution rolls back late unsupported arguments") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();
