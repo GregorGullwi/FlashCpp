@@ -6848,17 +6848,17 @@ int main() {
 		const std::array<TemplateTypeArg, 2> other_value_specialization{int_argument, second_count};
 
 		const std::optional<TypeId> specialization_key =
-			tryBuildCanonicalTemplateSpecializationKey(table, conversion_template, specialization);
+			tryBuildCanonicalTemplateSpecializationKey(table, conversion_template, specialization, TypeId{});
 		REQUIRE(specialization_key.has_value());
-		CHECK(tryBuildCanonicalTemplateSpecializationKey(table, conversion_template, same_specialization) == specialization_key);
+		CHECK(tryBuildCanonicalTemplateSpecializationKey(table, conversion_template, same_specialization, TypeId{}) == specialization_key);
 		const std::optional<TypeId> other_type_key =
-			tryBuildCanonicalTemplateSpecializationKey(table, conversion_template, other_type_specialization);
+			tryBuildCanonicalTemplateSpecializationKey(table, conversion_template, other_type_specialization, TypeId{});
 		REQUIRE(other_type_key.has_value());
 		const std::optional<TypeId> other_value_key =
-			tryBuildCanonicalTemplateSpecializationKey(table, conversion_template, other_value_specialization);
+			tryBuildCanonicalTemplateSpecializationKey(table, conversion_template, other_value_specialization, TypeId{});
 		REQUIRE(other_value_key.has_value());
 		const std::optional<TypeId> other_template_key =
-			tryBuildCanonicalTemplateSpecializationKey(table, other_conversion_template, specialization);
+			tryBuildCanonicalTemplateSpecializationKey(table, other_conversion_template, specialization, TypeId{});
 		REQUIRE(other_template_key.has_value());
 		CHECK(*other_type_key != *specialization_key);
 		CHECK(*other_value_key != *specialization_key);
@@ -6947,6 +6947,86 @@ int main() {
 		CHECK(long_conversion.rank == ConversionRank::UserDefined);
 		CHECK(long_conversion.user_defined_identity.kind == UserDefinedConversionIdentity::Kind::ConversionFunctionTemplate);
 		CHECK_FALSE(sameUserDefinedConversionIdentity(int_conversion, long_conversion));
+	}
+
+	TEST_CASE("Conversion function template identities include the declaring class specialization") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		FrontendContext context;
+		CompileContext compile_context;
+		compile_context.setInputFile("conversion_template_owner_specialization_identity.cpp");
+		const std::string code =
+			"template<class T> struct BaseConversion {\n"
+			"  template<class U = int> operator T&() const { static T value{}; return value; }\n"
+			"};\n"
+			"struct ConversionOwnerBases : BaseConversion<int>, BaseConversion<const int> {};\n";
+		Lexer lexer(code);
+		SemanticAnalysis sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, sema);
+		REQUIRE(!parser.parse().is_error());
+		const TypeInfo* bases_info = findTypeByName(StringTable::getOrInternStringHandle("ConversionOwnerBases"));
+		REQUIRE(bases_info != nullptr);
+		const StructTypeInfo* bases_struct = bases_info->getStructInfo();
+		REQUIRE(bases_struct != nullptr);
+		REQUIRE(bases_struct->base_classes.size() == 2);
+
+		TypeSpecifierNode int_lvalue(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		int_lvalue.set_reference_qualifier(ReferenceQualifier::LValueReference);
+		TypeSpecifierNode const_int_lvalue(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::Const);
+		const_int_lvalue.set_reference_qualifier(ReferenceQualifier::LValueReference);
+		const ASTNode argument = ASTNode::emplace_node<ExpressionNode>(
+			IdentifierNode(Token(Token::Type::Identifier, std::string_view("source"), 0, 0, 0)));
+		const auto select_base_conversion = [&](const TypeInfo& base_info, const TypeSpecifierNode& target) {
+			TypeSpecifierNode source_type(base_info.registeredTypeIndex().withCategory(TypeCategory::Struct), base_info.sizeInBits(), Token{},
+				CVQualifier::None, ReferenceQualifier::None);
+			tryBindPublishedTypeEntity(source_type);
+			return sema.buildCallArgumentConversion(source_type, target, &argument);
+		};
+
+		struct OwnerSelection {
+			const TypeInfo* owner;
+			TypeSpecifierNode target;
+			ArgumentConversionInfo conversion;
+		};
+		std::vector<OwnerSelection> selections;
+		for (const BaseClassSpecifier& base : bases_struct->base_classes) {
+			const TypeInfo* base_info = tryGetTypeInfo(canonicalize_type_alias(base.type_index).resolvedTypeIndex());
+			REQUIRE(base_info != nullptr);
+			const ArgumentConversionInfo to_int = select_base_conversion(*base_info, int_lvalue);
+			const ArgumentConversionInfo to_const_int = select_base_conversion(*base_info, const_int_lvalue);
+			const bool int_selected = to_int.is_valid && to_int.rank == ConversionRank::UserDefined;
+			const bool const_int_selected = to_const_int.is_valid && to_const_int.rank == ConversionRank::UserDefined;
+			REQUIRE(int_selected != const_int_selected);
+			if (int_selected) {
+				selections.push_back({base_info, int_lvalue, to_int});
+			} else {
+				selections.push_back({base_info, const_int_lvalue, to_const_int});
+			}
+		}
+		REQUIRE(selections.size() == 2);
+		for (const OwnerSelection& selection : selections) {
+			REQUIRE(hasUserDefinedConversionIdentity(selection.conversion));
+			CHECK(selection.conversion.user_defined_identity.kind == UserDefinedConversionIdentity::Kind::ConversionFunctionTemplate);
+		}
+		// Both specializations instantiate operator T&() with the same defaulted
+		// U=int argument list; only the declaring class specialization differs.
+		CHECK_FALSE(sameUserDefinedConversionIdentity(selections[0].conversion, selections[1].conversion));
+
+		// The same owner specialization selected again publishes the same key.
+		const ArgumentConversionInfo repeated = select_base_conversion(*selections[0].owner, selections[0].target);
+		REQUIRE(repeated.is_valid);
+		CHECK(sameUserDefinedConversionIdentity(selections[0].conversion, repeated));
+
+		// One key still lets the second standard sequences order, while two keys
+		// stay indistinguishable.
+		ArgumentConversionInfo shared_exact = selections[0].conversion;
+		shared_exact.trailing_standard_rank = ConversionRank::ExactMatch;
+		ArgumentConversionInfo shared_conversion = selections[0].conversion;
+		shared_conversion.trailing_standard_rank = ConversionRank::Conversion;
+		CHECK(compareArgumentConversionInfo(int_lvalue, shared_exact, shared_conversion) < 0);
+		CHECK(compareArgumentConversionInfo(int_lvalue, selections[0].conversion, selections[1].conversion) == 0);
 	}
 
 	TEST_CASE("Sema records reference-qualified conversion operator selection") {

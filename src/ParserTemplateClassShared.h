@@ -279,9 +279,12 @@ inline std::optional<TypeId> tryImportCanonicalTemplateTypeArgument(CanonicalTyp
 // cannot share the key unless both the declaration and every argument match. The
 // canonical node is used only as this content key: it is never materialized as a
 // class, substituted, or laid out. An argument without canonical identity leaves
-// the specialization unkeyed instead of falling back to a lossy key.
+// the specialization unkeyed instead of falling back to a lossy key. A direct
+// member template also carries its declaring class's canonical specialization,
+// because class instantiation clones the member pattern and keeps its published
+// TemplateDeclId; the owner is not one of the member's argument links.
 inline std::optional<TypeId> tryBuildCanonicalTemplateSpecializationKey(CanonicalTypeTable& table, TemplateDeclId primary,
-	std::span<const TemplateTypeArg> arguments) {
+	std::span<const TemplateTypeArg> arguments, TypeId member_owner_specialization) {
 	if (!primary) {
 		return std::nullopt;
 	}
@@ -305,7 +308,32 @@ inline std::optional<TypeId> tryBuildCanonicalTemplateSpecializationKey(Canonica
 		}
 		canonical_arguments.push_back(CanonicalTemplateArgument::makeType(*type));
 	}
+	if (member_owner_specialization) {
+		return table.memberTemplateSpecialization(primary, member_owner_specialization, canonical_arguments);
+	}
 	return table.templateSpecialization(primary, canonical_arguments);
+}
+
+// Recover the declaring class's canonical specialization for a member template
+// key. A plain class declares each member template once, so the member's own
+// TemplateDeclId already identifies it and an empty owner keeps that key. A
+// class-template instance clones the member pattern into every specialization,
+// so its canonical owner must join the key. An owner that cannot be published
+// leaves the member unkeyed instead of borrowing a sibling specialization's key.
+// The owner is resolved from its published declaration and arguments, never from
+// its spelling.
+inline std::optional<TypeId> tryResolveCanonicalMemberTemplateOwner(CanonicalTypeTable& table, const TypeInfo& owner) {
+	const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, owner);
+	if (imported.status == CanonicalTypeImportStatus::Supported) {
+		if (table.node(imported.type).kind == CanonicalTypeKind::Record) {
+			return TypeId{};
+		}
+		return imported.type;
+	}
+	if (owner.isTemplateInstantiation() || owner.getStructInfo() == nullptr) {
+		return std::nullopt;
+	}
+	return TypeId{};
 }
 
 // A bare function type argument (`R(int)`) keeps the return type on the

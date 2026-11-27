@@ -96,8 +96,10 @@ struct UserDefinedConversionIdentity {
 	// Member-function ordinal or constructor index inside owner's published schema.
 	uint32_t ordinal = kInvalidUserDefinedConversionOrdinal;
 	// Interned key of one conversion function template specialization: the
-	// published template declaration plus its canonical deduced arguments. It is
-	// not a type to substitute or lay out; only equality of the key is used.
+	// published template declaration, the declaring class's canonical
+	// specialization when the declaration is a cloned member pattern, and the
+	// canonical deduced arguments. It is not a type to substitute or lay out;
+	// only equality of the key is used.
 	TypeId template_specialization{};
 };
 
@@ -1096,7 +1098,8 @@ struct UserDefinedConversionOperatorSelection {
 	// member-function schema; the numeric identity of that conversion function.
 	uint32_t member_ordinal = kInvalidUserDefinedConversionOrdinal;
 	// Interned canonical key of the conversion function template specialization:
-	// template declaration plus deduced arguments. Empty when the selection has
+	// template declaration, declaring class specialization when the member
+	// pattern was cloned, plus deduced arguments. Empty when the selection has
 	// no recoverable specialization key.
 	TypeId template_specialization{};
 	StandardConversionKind trailing_standard_kind = StandardConversionKind::None;

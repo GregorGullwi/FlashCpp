@@ -616,27 +616,31 @@ sequence only when the plan carries the selected conversion function or
 constructor identity. Member functions publish no declaration `EntityId`, so a
 conversion operator is identified by its declaring class `TypeId` plus its
 member-function ordinal, and a conversion function template specialization by an
-interned `TypeId` key over its published `TemplateDeclId` and canonical deduced
-template arguments. The key is interned, so equal keys mean an equal declaration
-and argument list; it is not a spelling, source location, raw address, or
-hash-only comparison. A lambda-closure conversion (declared on the closure or
-synthesized for it) and a constructor whose class publishes no schema entry for
-the selected declaration (or no declaration at all) publish no such identity. A
-conversion function template specialization whose deduced argument has no
-canonical identity (a pack, a dependent argument, a template-template argument,
-or a non-type value the canonical importer does not represent) also publishes no
-key. A sequence without identity keeps no standard tail and stays unordered,
-which is the conservative answer; ranking it needs a published numeric identity
-for the selected declaration.
+interned `TypeId` key over its published `TemplateDeclId`, the declaring class's
+canonical specialization when the member pattern was cloned, and canonical
+deduced template arguments. The key is interned, so equal keys mean an equal
+declaration and argument list; it is not a spelling, source location, raw
+address, or hash-only comparison. A lambda-closure conversion (declared on the
+closure or synthesized for it) and a constructor whose class publishes no schema
+entry for the selected declaration (or no declaration at all) publish no such
+identity. A conversion function template specialization whose deduced argument
+has no canonical identity (a pack, a dependent argument, a template-template
+argument, or a non-type value the canonical importer does not represent) also
+publishes no key. A sequence without identity keeps no standard tail and stays
+unordered, which is the conservative answer; ranking it needs a published
+numeric identity for the selected declaration.
 
-The conversion function template key does not include the enclosing class
-specialization. Member function templates cloned into different specializations
-of a class template keep the pattern's published `TemplateDeclId`, so conversion
-functions reached through two different class-specialization bases can still
-share a key when their own deduced arguments match. Composing the declaring
-class's canonical specialization into the key is the next change; until then
-such a pair can be ordered by its second standard sequences instead of staying
-indistinguishable.
+The conversion function template key includes the declaring class's canonical
+specialization when that class is a class-template instance. Member function
+templates cloned into different specializations of a class template keep the
+pattern's published `TemplateDeclId`, so the owner distinguishes the clones: two
+bases that are different specializations of one class template with identical
+deduced member arguments publish different keys and stay unordered instead of
+being ranked by their second standard sequences. A plain class declares each
+member template once, so the member declaration alone still keys it. When the
+declaring class is a class-template instance but its canonical specialization
+cannot be published, the selection publishes no key and stays unordered rather
+than falling back to a spelling or to a sibling specialization's key.
 
 The member-function ordinal and the constructor schema index are within-snapshot
 keys, not durable identity: they disambiguate selections inside one published
@@ -662,6 +666,12 @@ before they can be ranked.
   without a concrete record must stay excluded.
 - Support conversion-template results whose dependent array bounds or packs are
   not concrete.
+- Collect conversion function templates declared in a class nested inside a
+  class-template specialization. `Outer<T>::Inner` does not contribute a
+  conversion candidate for `Outer<int>::Inner`, and a generic `operator U&()`
+  form reaches the lazy member path's `InternalError`; the same nested class
+  outside a class template works. The declaring-class key composition would
+  cover such a member once candidate collection reaches it.
 - Seed built-in subscript candidates from conversion templates whose return
   pointer or array-reference shape still depends on the template parameters.
 

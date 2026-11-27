@@ -12834,8 +12834,14 @@ std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::selectCo
 			!functionTemplateConstraintsSatisfied(function_template, *arguments))) {
 			continue;
 		}
-		const TypeId specialization_key = tryBuildCanonicalTemplateSpecializationKey(requireFrontendContext().canonicalTypes(),
-			function_template.template_decl_id(), *arguments).value_or(TypeId{});
+		CanonicalTypeTable& types = requireFrontendContext().canonicalTypes();
+		const TypeInfo* owner_info = tryGetTypeInfo(member.owner_type);
+		const std::optional<TypeId> owner_specialization = owner_info != nullptr ? tryResolveCanonicalMemberTemplateOwner(types, *owner_info) : std::nullopt;
+		TypeId specialization_key{};
+		if (owner_specialization.has_value()) {
+			specialization_key = tryBuildCanonicalTemplateSpecializationKey(types, function_template.template_decl_id(), *arguments, *owner_specialization)
+				.value_or(TypeId{});
+		}
 		const auto signature = parser().try_instantiate_member_function_template_explicit_candidate(member.owner_name.view(), member.name.view(),
 			*arguments, FunctionTemplateInstantiation::SignatureOnly, &function_template, source_value_category);
 		const FunctionDeclarationNode* instantiated = signature.has_value() ? signature->get_if<FunctionDeclarationNode>() : nullptr;
