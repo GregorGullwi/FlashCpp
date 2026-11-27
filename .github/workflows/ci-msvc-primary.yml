@@ -36,6 +36,20 @@ jobs:
           # Build only the FlashCppMSVC project with MSBuild (Sharded) - uses MSVC toolset
           msbuild FlashCppMSVC.vcxproj /p:Configuration=Sharded /p:Platform=x64 /m
 
+      - name: Build FlashCpp unit tests (Debug x64)
+        shell: powershell
+        run: |
+          msbuild tests/FlashCppTest/FlashCppTest.vcxproj /p:Configuration=Debug /p:Platform=x64 /m
+
+      - name: Run FlashCpp unit tests
+        shell: pwsh
+        run: |
+          & tests/FlashCppTest/x64/Debug/FlashCppTest.exe
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "FlashCpp unit tests failed!" -ForegroundColor Red
+            exit 1
+          }
+
       - name: Canonical production adapter counters and traces
         run: python tests/architecture/run_canonical_adapter.py --compiler x64/Sharded/FlashCppMSVC.exe
 
