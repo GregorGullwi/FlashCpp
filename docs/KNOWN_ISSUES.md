@@ -170,20 +170,35 @@ missing record for a published environment fails closed.
 `partial_pattern_name_fallback` counts every remaining name lookup; extend
 canonical pattern import coverage and then delete the fallback.
 
-A bare function-type argument such as `S<R(int)>` now publishes an environment
+A bare function-type argument such as `S<R(int)>` publishes an environment
 composed from the canonical return type and the ordered canonical parameter
 types, including the empty parameter list, parameter adjustment, and plain
-noexcept/calling-convention qualifiers, so it no longer takes this fallback. The
-pattern matcher compares the same signature before binding a parameter, so a
-different parameter list selects another partial or the primary. Remaining
-unsupported function shapes are a parameter pack in the signature, a dependent
-noexcept expression, an alias or dependent-name component that the canonical
-importer cannot stamp, a reference-returning function type, and a
-function-pointer or member-pointer callable (or a
-callable written through an ordered declarator) instead of the bare
-function-type spelling; those keep the fallback. The fallback also remains for
-non-type-parameter and alias argument shapes and for patterns whose concept or
-requires-clause argument identity cannot be published. Member and constructor
+noexcept/calling-convention qualifiers, so it does not take this fallback. A
+plain function-pointer or function-reference argument such as `S<T (*)(T)>` or
+`S<T (&)(T)>` now publishes the canonical callable plus its pointer or reference
+wrapper, so it also leaves the fallback and a different signature selects
+another partial or the primary. The pattern matcher compares the same signature
+before binding a parameter.
+Remaining unsupported function shapes are a parameter pack in the signature, a
+dependent noexcept expression, a reference-returning function type, a
+member-pointer callable, and a callable written through an ordered declarator or
+with more than one pointer level. A callable with several pointer levels
+(`S<T (**)(T)>`) additionally fails pattern deduction with an inconsistent
+substitution and selects the primary; that matcher gap is independent of
+environment publication.
+The fallback also remains for non-type-parameter and alias argument shapes and
+for patterns whose concept or requires-clause argument identity cannot be
+published.
+
+An alias-template-specialization pattern argument such as `S<Ptr<T>>` neither
+publishes an environment nor matches a concrete `int*`: the structural pattern
+matcher keeps `Ptr<T>` as an opaque dependent name instead of expanding it
+through the alias target, so no match selects any partial and no environment is
+consulted. Alias expansion in partial-pattern arguments must happen before that
+shape can leave this gap. The canonical importer therefore continues to reject
+the alias component instead of publishing an identity the matcher cannot use.
+
+Member and constructor
 schemas for supported shapes are keyed by the canonical
 `TemplateSpecialization` composed from the enclosing owner, the member primary,
 and the member template-id arguments, never by the synthesized spelling.

@@ -325,9 +325,44 @@ inline bool isBareFunctionPartialPatternSyntax(const TypeSpecifierNode& syntax) 
 		syntax.category() != TypeCategory::MemberObjectPointer;
 }
 
-inline size_t bareFunctionPartialPatternParameterCount(const TypeSpecifierNode& syntax) {
+inline size_t partialPatternCallableParameterCount(const TypeSpecifierNode& syntax) {
 	const FunctionSignature& signature = syntax.function_signature();
 	return signature.hasStructuredTypes() ? signature.parameter_types().size() : 0;
+}
+
+// A callable whose signature is carried on the specifier but whose declarator is
+// not the bare function type: function pointers and function references
+// (including pointer-qualified variants). The canonical importer can shape
+// these from a built function type. Ordered declarators and member pointers stay
+// unsupported here and keep the name-keyed fallback.
+inline bool isCallablePartialPatternSyntax(const TypeSpecifierNode& syntax) {
+	if (!syntax.has_function_signature() || syntax.has_ordered_declarator() || syntax.has_member_class()) {
+		return false;
+	}
+	if (isBareFunctionPartialPatternSyntax(syntax)) {
+		return false;
+	}
+	return syntax.category() != TypeCategory::MemberFunctionPointer && syntax.category() != TypeCategory::MemberObjectPointer;
+}
+
+// Compose the canonical function identity from imported return and parameter
+// types. [dcl.fct]/5 adjusts a function or array parameter to a pointer, so the
+// same rule must reach the function-pointer and bare-function pattern shapes.
+// The parameter slots belong to the caller's scratch frame, so adjustment
+// rewrites them in place instead of allocating a second list.
+inline TypeId canonicalCallableFromPartialPattern(CanonicalTypeTable& table, const FunctionSignature& signature, TypeId return_type,
+	std::span<TypeId> parameters) {
+	for (TypeId& parameter : parameters) {
+		const CanonicalTypeNode parameter_node = table.node(table.withoutTopLevelQualifiers(parameter));
+		if (parameter_node.kind == CanonicalTypeKind::Array) {
+			parameter = table.pointer(parameter_node.child);
+		} else if (parameter_node.kind == CanonicalTypeKind::Function) {
+			parameter = table.pointer(parameter);
+		}
+	}
+	return table.function(return_type, std::span<const TypeId>(parameters), signature.is_variadic, functionSignatureCV(signature),
+		signature.function_reference_qualifier, signature.is_noexcept, toCanonicalCallingConvention(signature.calling_convention),
+		toCanonicalDllLinkage(signature.linkage), signature.dependent_noexcept);
 }
 
 // Normalize captured type-only argument syntax without copying nested specifier
@@ -347,9 +382,9 @@ inline std::optional<TypeId> tryImportCanonicalPartialTypePattern(CanonicalTypeT
 	const ScratchArenaState scratch_mark = scratch.mark();
 	auto scratch_scope = ScopeGuard([&scratch, scratch_mark]() { scratch.rollbackTo(scratch_mark); });
 	const auto child_count = [](const TypeSpecifierNode& syntax) -> size_t {
-		if (isBareFunctionPartialPatternSyntax(syntax)) {
+		if (isBareFunctionPartialPatternSyntax(syntax) || isCallablePartialPatternSyntax(syntax)) {
 			// Slot 0 is the return type; the remaining slots are parameters.
-			return bareFunctionPartialPatternParameterCount(syntax) + 1;
+			return partialPatternCallableParameterCount(syntax) + 1;
 		}
 		return syntax.has_template_specialization() ? syntax.specialization_arg_count() : 0;
 	};
@@ -424,10 +459,11 @@ inline std::optional<TypeId> tryImportCanonicalPartialTypePattern(CanonicalTypeT
 			}
 		}
 		const bool bare_function = isBareFunctionPartialPatternSyntax(syntax);
-		if (bare_function && !syntax.function_signature().hasStructuredTypes()) return std::nullopt;
+		const bool callable = isCallablePartialPatternSyntax(syntax);
+		if ((bare_function || callable) && !syntax.function_signature().hasStructuredTypes()) return std::nullopt;
 		const size_t count = child_count(syntax);
 		std::optional<TypeId> result;
-		if (syntax.has_template_specialization() && !bare_function) {
+		if (syntax.has_template_specialization() && !bare_function && !callable) {
 			if (frame.next_argument < count) {
 				const size_t index = frame.next_argument++;
 				if (!syntax.specialization_arg_is_type(index))
@@ -440,7 +476,7 @@ inline std::optional<TypeId> tryImportCanonicalPartialTypePattern(CanonicalTypeT
 			if (shaped.status != CanonicalTypeImportStatus::Supported)
 				return std::nullopt;
 			result = shaped.type;
-		} else if (bare_function) {
+		} else if (bare_function || callable) {
 			const FunctionSignature& signature = syntax.function_signature();
 			if (signature.class_name.isValid() || (signature.noexcept_expression.has_value() && !signature.dependent_noexcept) ||
 				(signature.is_noexcept && signature.dependent_noexcept)) {
@@ -449,9 +485,13 @@ inline std::optional<TypeId> tryImportCanonicalPartialTypePattern(CanonicalTypeT
 			if (frame.next_argument < count) {
 				const size_t index = frame.next_argument++;
 				if (index == 0) {
-					TypeSpecifierNode return_syntax = syntax;
-					return_syntax.clear_function_signature();
-					function_parameters.push_back(std::move(return_syntax));
+					if (callable) {
+						function_parameters.push_back(typeSpecifierFromFunctionType(signature.return_type()));
+					} else {
+						TypeSpecifierNode return_syntax = syntax;
+						return_syntax.clear_function_signature();
+						function_parameters.push_back(std::move(return_syntax));
+					}
 				} else {
 					const FunctionType& parameter = signature.parameter_types()[index - 1];
 					if (parameter.is_pack_expansion) return std::nullopt;
@@ -461,23 +501,11 @@ inline std::optional<TypeId> tryImportCanonicalPartialTypePattern(CanonicalTypeT
 				continue;
 			}
 			const TypeId return_type = frame.arguments()[0];
-			std::vector<TypeId> parameter_types;
-			parameter_types.reserve(count - 1);
-			for (size_t index = 1; index < count; ++index) {
-				TypeId parameter_type = frame.arguments()[index];
-				// [dcl.fct]/5: a function type or an array type parameter is
-				// adjusted to a pointer to its function or element type.
-				const CanonicalTypeNode parameter_node = table.node(table.withoutTopLevelQualifiers(parameter_type));
-				if (parameter_node.kind == CanonicalTypeKind::Array) {
-					parameter_type = table.pointer(parameter_node.child);
-				} else if (parameter_node.kind == CanonicalTypeKind::Function) {
-					parameter_type = table.pointer(parameter_type);
-				}
-				parameter_types.push_back(parameter_type);
-			}
-			result = table.function(return_type, std::span<const TypeId>(parameter_types), signature.is_variadic,
-				functionSignatureCV(signature), signature.function_reference_qualifier, signature.is_noexcept,
-				toCanonicalCallingConvention(signature.calling_convention), toCanonicalDllLinkage(signature.linkage), signature.dependent_noexcept);
+			const TypeId function = canonicalCallableFromPartialPattern(table, signature, return_type, std::span<TypeId>(frame.arguments() + 1, count - 1));
+			// A bare function type already is the complete pattern shape. A
+			// function pointer or reference carries additional pointer, cv,
+			// reference, or array wrappers on the specifier.
+			result = bare_function ? function : shapeCanonicalCallableType(table, function, syntax, CanonicalTypeImportContext::Exact);
 		} else {
 			result = import_base(syntax, frame.syntax == &root);
 			if (!result.has_value()) return std::nullopt;

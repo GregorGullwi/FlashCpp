@@ -1925,6 +1925,116 @@ TEST_CASE("Function-signature partial patterns import canonical parameter enviro
 	CHECK(context.templateDecls().publishClassPartialEnvironment(primary, *empty, StringHandle{}) != environment);
 }
 
+TEST_CASE("Function-pointer partial patterns import canonical parameter environments") {
+	clearLegacyTypeTablesForTesting();
+	FrontendContext context;
+	initialize_native_types();
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const StringHandle return_name = StringTable::getOrInternStringHandle("R");
+	const StringHandle value_name = StringTable::getOrInternStringHandle("A");
+	TypeInfo& return_parameter = add_template_param_type(return_name, TypeCategory::UserDefined, 0);
+	TypeInfo& value_parameter = add_template_param_type(value_name, TypeCategory::UserDefined, 0);
+	TemplateParameterNode parameters[] = {TemplateParameterNode(return_name, Token{}), TemplateParameterNode(value_name, Token{})};
+	parameters[0].set_registered_type_index(return_parameter.type_index_);
+	parameters[1].set_registered_type_index(value_parameter.type_index_);
+	const TemplateDeclId primary = context.templateDecls().publishPrimaryClassTemplate(OwnerId{1}, StringTable::getOrInternStringHandle("Signal"));
+	const auto make_function_pointer_syntax = [&](bool with_parameter, bool parameter_is_template) {
+		TypeSpecifierNode return_syntax(return_parameter.type_index_, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+		FunctionSignature signature;
+		signature.setReturnType(makeFunctionTypeFromSpecifier(return_syntax));
+		signature.return_type_index = return_syntax.type_index();
+		OverloadVector<FunctionType, 4> parameter_types;
+		if (with_parameter) {
+			const TypeIndex parameter_index = parameter_is_template
+				? value_parameter.type_index_
+				: nativeTypeIndex(TypeCategory::Int);
+			TypeSpecifierNode parameter_syntax(parameter_index, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+			parameter_types.push_back(makeFunctionTypeFromSpecifier(parameter_syntax));
+		}
+		signature.setParameterTypes(std::move(parameter_types));
+		TypeSpecifierNode syntax(TypeCategory::FunctionPointer, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+		syntax.set_function_signature(signature);
+		return syntax;
+	};
+	TemplateTypeArg arguments[1];
+	arguments[0].type_index = return_parameter.type_index_;
+	arguments[0].is_dependent = true;
+	arguments[0].dependent_name = return_name;
+	const auto import = [&](const TypeSpecifierNode& syntax) {
+		const ASTNode syntax_nodes[] = {ASTNode::emplace_node<TypeSpecifierNode>(syntax)};
+		return tryImportCanonicalPartialClassPattern(context, primary, parameters, arguments, syntax_nodes,
+			CanonicalPartialPatternOptions{});
+	};
+	const auto imported_function = [&](const std::optional<TypeId>& pattern) {
+		return table.node(table.templateArgumentType(table.templateSpecializationArguments(*pattern)));
+	};
+	const std::optional<TypeId> concrete = import(make_function_pointer_syntax(true, false));
+	REQUIRE(concrete.has_value());
+	const CanonicalTypeNode concrete_pointer = imported_function(concrete);
+	REQUIRE(concrete_pointer.kind == CanonicalTypeKind::Pointer);
+	REQUIRE(table.node(concrete_pointer.child).kind == CanonicalTypeKind::Function);
+	CHECK(table.node(concrete_pointer.child).child == table.templateParameter(primary, 0));
+	const TypeId concrete_parameter = table.functionParameters(concrete_pointer.child);
+	REQUIRE(static_cast<bool>(concrete_parameter));
+	CHECK(table.functionParameterType(concrete_parameter) == table.builtin(CanonicalBuiltinKind::Int));
+	CHECK_FALSE(table.functionParameterNext(concrete_parameter));
+
+	// An empty parameter list stays a distinct function-pointer shape.
+	const std::optional<TypeId> empty = import(make_function_pointer_syntax(false, false));
+	REQUIRE(empty.has_value());
+	const CanonicalTypeNode empty_pointer = imported_function(empty);
+	REQUIRE(empty_pointer.kind == CanonicalTypeKind::Pointer);
+	REQUIRE(table.node(empty_pointer.child).kind == CanonicalTypeKind::Function);
+	CHECK_FALSE(table.functionParameters(empty_pointer.child));
+	CHECK(empty_pointer.child != concrete_pointer.child);
+
+	// A parameter-shaped parameter alpha-normalizes to its partial parameter
+	// placeholder instead of keeping its registered TypeIndex.
+	const std::optional<TypeId> parameter = import(make_function_pointer_syntax(true, true));
+	REQUIRE(parameter.has_value());
+	const CanonicalTypeNode parameter_pointer = imported_function(parameter);
+	REQUIRE(parameter_pointer.kind == CanonicalTypeKind::Pointer);
+	const TypeId parameter_link = table.functionParameters(parameter_pointer.child);
+	REQUIRE(static_cast<bool>(parameter_link));
+	CHECK(table.functionParameterType(parameter_link) == table.templateParameter(primary, 1));
+	CHECK(parameter_pointer.child != concrete_pointer.child);
+
+	// The published environment keys the same canonical pattern and splits a
+	// different parameter list.
+	const TemplateDeclId environment = context.templateDecls().publishClassPartialEnvironment(primary, *concrete, StringHandle{});
+	CHECK(environment != primary);
+	CHECK(context.templateDecls().publishClassPartialEnvironment(primary, *concrete, StringHandle{}) == environment);
+	CHECK(context.templateDecls().publishClassPartialEnvironment(primary, *empty, StringHandle{}) != environment);
+}
+
+TEST_CASE("Function-pointer partial patterns select through published environments") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream fixture("tests/test_canonical_partial_function_pointer_environment_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	const std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	CompileContext compile_context;
+	compile_context.setInputFile("partial_function_pointer_environment.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	const uint64_t fallback_before = gPartialPatternNameFallbackCount;
+	REQUIRE(!parser.parse().is_error());
+	CHECK(gPartialPatternNameFallbackCount == fallback_before);
+	size_t patterns = 0;
+	for (const ASTNode& node : parser.get_nodes()) {
+		if (!node.is<StructDeclarationNode>()) continue;
+		const StructDeclarationNode& pattern = node.as<StructDeclarationNode>();
+		if (!gTemplateRegistry.isClassTemplateSpecializationPattern(&pattern)) continue;
+		++patterns;
+		CHECK(static_cast<bool>(pattern.partial_specialization_environment()));
+	}
+	CHECK(patterns == 3);
+}
+
 TEST_CASE("Partial pattern normalization keeps deep declarators off the native stack") {
 	clearLegacyTypeTablesForTesting();
 	FrontendContext context;
