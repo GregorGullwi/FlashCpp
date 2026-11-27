@@ -1080,15 +1080,20 @@ An alias such as `using M = int (OwnerAlias::*)(); using P = M*;` can also
 drop the outer pointer in `typeid(P)`. The parenthesized declarator
 `int (OwnerAlias::**)()` preserves it.
 
-## Functional cast of a null member-function pointer builds an ownerless identity
+## Offset-zero data-member-pointer alias casts fold to the null sentinel
 
-`using PF = int (C::*)(); PF p = PF(0);` fails with an internal error,
-`member-pointer type identity is missing its class owner`. The alias resolution
-used by the functional-cast type node keeps the member-function-pointer category
-but drops the class-owner identity, so canonical identity construction rejects
-it. `PF p = PF(&C::f);` works, and data-member-pointer aliases such as
-`using PM = int C::*; PM p = PM(0);` work. This is a member-pointer
-construction/lowering gap, not a declarator-grammar gap.
+Direct initialization from the address form works for a data-member-pointer
+alias: `using PM = int C::*; PM p = &C::first;` with `first` at offset zero keeps
+a non-null pointer-to-member. The explicit cast spellings do not. Both
+`PM p = static_cast<PM>(&C::first);` and the functional form
+`PM p = PM(&C::first);` produce the all-bits-one null sentinel, so `p == nullptr`
+is true even though `&C::first` designates a valid member. A nonzero-offset
+member and a direct `int C::*p = static_cast<int C::*>(&C::first);` are
+unaffected. The alias target specifier arrives with the flat terminal category,
+one runtime pointer level, and its class owner rather than the
+`MemberObjectPointer` category, so the cast does not take the same-type path and
+the offset-zero value is reclassified as null. Making the flat alias shape reach
+the explicit-cast lowering as a member-object pointer is the remaining fix.
 
 ## Static-storage aggregate members of data-member-pointer type zero-fill to a null offset
 

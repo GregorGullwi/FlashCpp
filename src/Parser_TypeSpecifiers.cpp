@@ -645,6 +645,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 	std::optional<FunctionSignature> cast_function_signature;
 	std::vector<size_t> cast_array_dimensions;
 	int cast_pointer_depth = 0;
+	ResolvedAliasTypeInfo cast_alias_info;
 
 	auto builtin_type_info = get_builtin_type_info(type_name);
 	if (builtin_type_info.has_value()) {
@@ -665,20 +666,19 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 			}
 		}
 		if (type_info) {
-			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
-				type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
-			cast_type_index = resolved_alias.type_index.is_valid()
-								  ? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
-								  : type_info->registeredTypeIndex().withCategory(resolved_alias.typeEnum());
-			cast_cv = resolved_alias.cv_qualifier;
-			cast_ref = resolved_alias.reference_qualifier;
-			cast_function_signature = resolved_alias.function_signature;
-			cast_array_dimensions = resolved_alias.array_dimensions;
-			cast_pointer_depth = static_cast<int>(resolved_alias.pointer_depth);
+			cast_alias_info = resolveAliasTypeInfo(type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
+			cast_type_index = cast_alias_info.type_index.is_valid()
+								  ? cast_alias_info.type_index.withCategory(cast_alias_info.typeEnum())
+								  : type_info->registeredTypeIndex().withCategory(cast_alias_info.typeEnum());
+			cast_cv = cast_alias_info.cv_qualifier;
+			cast_ref = cast_alias_info.reference_qualifier;
+			cast_function_signature = cast_alias_info.function_signature;
+			cast_array_dimensions = cast_alias_info.array_dimensions;
+			cast_pointer_depth = static_cast<int>(cast_alias_info.pointer_depth);
 			if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(cast_type_index)) {
 				type_size = struct_info->sizeInBits();
-			} else if (resolved_alias.terminal_type_info) {
-				type_size = resolved_alias.terminal_type_info->sizeInBits();
+			} else if (cast_alias_info.terminal_type_info) {
+				type_size = cast_alias_info.terminal_type_info->sizeInBits();
 			} else {
 				type_size = type_info->sizeInBits();
 			}
@@ -698,6 +698,12 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		}
 		if (!cast_array_dimensions.empty()) {
 			type_spec.set_array_dimensions(cast_array_dimensions);
+		}
+		// A functional cast names the type through its alias, so project the
+		// alias-chain member-pointer owner onto the use-site specifier. Canonical
+		// member-pointer identity is keyed by this publication, not by spelling.
+		if (cast_alias_info.has_member_class_owner()) {
+			applyResolvedAliasMemberOwner(type_spec, cast_alias_info);
 		}
 		if (const int composed_size_bits = getTypeSpecSizeBits(type_spec);
 			composed_size_bits > 0) {
