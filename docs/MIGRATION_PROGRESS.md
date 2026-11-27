@@ -12,9 +12,8 @@ only in [KNOWN_ISSUES](KNOWN_ISSUES.md); link there instead of restating them.
 **Make `TypeId` the conversion currency** (Remaining 3A work item 1). The
 remaining conversion-template slices are tracked in
 [known issues](KNOWN_ISSUES.md#remaining-conversion-function-template-cases).
-The next callable-pattern slice is
-[deduction and publication for two pointer levels](KNOWN_ISSUES.md#partial-patterns-without-a-canonical-environment-still-resolve-their-record-by-spelling)
-(item 4). The flat-consumer migration in item 2 remains independent. The
+The remaining callable-pattern gaps in that inventory and the flat-consumer
+migration in item 2 stay independent. The
 provisional-publication slice is complete: nested callable signatures are
 candidate-owned and whole-signature canonical publication rolls back as one
 transaction. Type-pack materialization stays deferred to boundary 8A until 3A
@@ -811,10 +810,19 @@ remaining pattern schemas by identity, and remove the name fallback.
    its pointer or reference wrapper, so `S<T (*)(T)>` and `S<T (&)(T)>` publish
    an environment instead of taking the name-keyed fallback; a different
    signature selects another partial or the primary through the existing
-   signature comparison. Supported alias-template arguments expand by alias
-   declaration identity before registration. The structural matcher and
-   canonical importer consume the same expanded pattern, so a pointer alias
-   such as `S<Ptr<T>>` matches `S<int*>` and reads its environment-keyed record.
+   signature comparison. A multi-level pointer callable such as `S<T (**)(T)>`
+   now publishes the canonical callable with both pointer levels observable,
+   whether the parser records them as flat pointer levels or as a pointer-only
+   ordered declarator. The matcher binds return and parameter names from the
+   signature instead of re-binding them from the whole callable, so
+   `S<int (**)(int)>` selects the partial, `S<int (**)(long)>` selects the
+   primary, and the single-pointer and function-reference patterns stay
+   distinct; `test_canonical_partial_double_pointer_environment_ret0.cpp` pins
+   those outcomes and zero name fallback. Supported alias-template arguments
+   expand by alias declaration identity before registration. The structural
+   matcher and canonical importer consume the same expanded pattern, so a
+   pointer alias such as `S<Ptr<T>>` matches `S<int*>` and reads its
+   environment-keyed record.
    `test_partial_alias_pattern_environment_ret0.cpp` pins pointer and array
    patterns, equivalent alias spellings, and zero name fallback. Normalize
    requires-clause constraints and extend

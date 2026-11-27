@@ -588,16 +588,22 @@ struct TemplatePattern {
 		const bool bare_function_argument = pattern_arg.hasFunctionSignature() && pattern_arg.category() != TypeCategory::FunctionPointer &&
 			pattern_arg.category() != TypeCategory::MemberFunctionPointer && pattern_arg.category() != TypeCategory::MemberObjectPointer &&
 			!signatureHasPackParameter(pattern_arg.functionSignature());
+		const bool structured_callable_argument = pattern_arg.hasFunctionSignature() && pattern_arg.functionSignature().hasStructuredTypes() &&
+			!signatureHasPackParameter(pattern_arg.functionSignature()) && pattern_arg.category() == concrete_arg.category();
 		if ((bare_function_argument || pattern_arg.category() == TypeCategory::FunctionPointer || pattern_arg.category() == TypeCategory::MemberFunctionPointer) &&
 			!matchFunctionSignature(pattern_arg, concrete_arg, template_param_names, param_substitutions)) {
 			FLASH_LOG(Templates, Trace, "  FAILED: function signature mismatch");
 			return false;
 		}
-		// A bare function type's identity is its return and parameter types. The
-		// specifier category comes from the return type, so the whole-argument
-		// deduction below would bind a parameter to the callable shape instead of
-		// the return type the signature already deduced.
-		if (bare_function_argument) {
+		// [temp.deduct.partial]/2,10 and [temp.deduct.type]/5: a callable pattern
+		// deduces its parameters from the return/parameter types (and the member
+		// pointer owner deduced above), not from the whole argument. The
+		// whole-argument path below would re-bind a return/parameter name to the
+		// callable itself, which disagrees with the signature binding as soon as
+		// the callable carries its own declarator shape, such as `T (**)(T)`.
+		// The outer category check keeps `T (*)(T)` from absorbing a bare
+		// `int(int)` argument, whose category follows the return type.
+		if (bare_function_argument || structured_callable_argument) {
 			return true;
 		}
 

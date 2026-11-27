@@ -4165,6 +4165,114 @@ inline void checkFunctionPointerPartialPatternIdentityIndependence() {
 		reverse_patterns.integer);
 }
 
+// [temp.spec.partial]/1 keys a partial by its normalized template argument, so
+// both pointer levels of `T (**)(T)` must survive normalization. [dcl.ptr]/1 and
+// [dcl.fct]/1 describe the wrapper stack composed around the function type. Two
+// tables that intern the inputs in opposite order must agree structurally,
+// while a different signature, one pointer level, a reference wrapper, or
+// another primary must partition the published environment.
+inline void checkDoublePointerPartialPatternIdentityIndependence() {
+	const TemplateDeclId primary{8741};
+	const TemplateDeclId other_primary{8742};
+	const StringHandle first_identity = StringTable::getOrInternStringHandle("double-pointer-pattern-declaration-first");
+	const StringHandle second_identity = StringTable::getOrInternStringHandle("double-pointer-pattern-declaration-second");
+	struct Patterns {
+		TypeId integer;
+		TypeId wide;
+		TypeId single_pointer;
+		TypeId reference;
+		TypeId other_primary_integer;
+	};
+	const auto build = [&](CanonicalTypeTable& table, bool reverse) {
+		if (reverse) {
+			table.pointer(table.builtin(CanonicalBuiltinKind::Char));
+			table.builtin(CanonicalBuiltinKind::UnsignedLongLong);
+		}
+		const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+		const TypeId wide = table.builtin(CanonicalBuiltinKind::Long);
+		const TypeId parameter = table.templateParameter(primary, 0);
+		const TypeId other_parameter = table.templateParameter(other_primary, 0);
+		const auto make_function = [&table](TypeId return_type, std::span<const TypeId> parameters) {
+			return table.function(return_type, parameters, false, CVQualifier::None, ReferenceQualifier::None, false,
+				CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+		};
+		const TypeId integer_parameters[] = {integer};
+		const TypeId wide_parameters[] = {wide};
+		const TypeId integer_function = make_function(parameter, integer_parameters);
+		const auto make_pattern = [&table](TemplateDeclId decl, TypeId callable) {
+			const CanonicalTemplateArgument arguments[] = {CanonicalTemplateArgument::makeType(callable)};
+			return table.templateSpecialization(decl, arguments);
+		};
+		return Patterns{
+			make_pattern(primary, table.pointer(table.pointer(integer_function))),
+			make_pattern(primary, table.pointer(table.pointer(make_function(parameter, wide_parameters)))),
+			make_pattern(primary, table.pointer(integer_function)),
+			make_pattern(primary, table.reference(integer_function, ReferenceQualifier::LValueReference)),
+			make_pattern(other_primary, table.pointer(table.pointer(make_function(other_parameter, integer_parameters)))),
+		};
+	};
+	CanonicalTypeTable forward;
+	const Patterns forward_patterns = build(forward, false);
+	const TypeId forward_argument = forward.templateArgumentType(forward.templateSpecializationArguments(forward_patterns.integer));
+	const CanonicalTypeNode outer_pointer = forward.node(forward_argument);
+	require(outer_pointer.kind == CanonicalTypeKind::Pointer);
+	const CanonicalTypeNode inner_pointer = forward.node(outer_pointer.child);
+	require(inner_pointer.kind == CanonicalTypeKind::Pointer);
+	require(forward.node(inner_pointer.child).kind == CanonicalTypeKind::Function);
+	// [dcl.declarators]/1: the ordered pointer spine and the flat pointer levels
+	// are two spellings of the same shape; shaping must apply one of them only.
+	TypeSpecifierNode declarator_syntax;
+	declarator_syntax.set_ordered_declarator({DeclaratorComponent::pointer(CVQualifier::None), DeclaratorComponent::pointer(CVQualifier::None)});
+	const TypeId shaped = shapeCanonicalCallableType(forward,
+		forward.function(forward.templateParameter(primary, 0), std::array<TypeId, 1>{forward.builtin(CanonicalBuiltinKind::Int)},
+			false, CVQualifier::None, ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{}),
+		declarator_syntax, CanonicalTypeImportContext::Exact);
+	require(shaped == forward_argument);
+	const size_t forward_count = forward.size();
+	internUnrelatedCanonicalSpelling("unrelated double pointer pattern spelling B");
+	require(forward.templateSpecialization(primary, std::array<CanonicalTemplateArgument, 1>{
+		CanonicalTemplateArgument::makeType(forward.pointer(forward.pointer(forward.function(forward.templateParameter(primary, 0),
+			std::array<TypeId, 1>{forward.builtin(CanonicalBuiltinKind::Int)}, false, CVQualifier::None,
+			ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{}))))}) ==
+		forward_patterns.integer);
+	internUnrelatedCanonicalSpelling("unrelated double pointer pattern spelling A");
+	require(forward.size() == forward_count);
+
+	CanonicalTypeTable reverse;
+	const Patterns reverse_patterns = build(reverse, true);
+	require(sameStructure(forward, forward_patterns.integer, reverse, reverse_patterns.integer));
+	require(sameStructure(forward, forward_patterns.wide, reverse, reverse_patterns.wide));
+	require(sameStructure(forward, forward_patterns.single_pointer, reverse, reverse_patterns.single_pointer));
+	require(sameStructure(forward, forward_patterns.reference, reverse, reverse_patterns.reference));
+	require(sameStructure(forward, forward_patterns.other_primary_integer, reverse, reverse_patterns.other_primary_integer));
+	// Paired negative controls: a different signature, a dropped pointer level,
+	// a reference wrapper, or a swapped primary must not compare equal.
+	require(!sameStructure(forward, forward_patterns.integer, reverse, reverse_patterns.wide));
+	require(!sameStructure(forward, forward_patterns.integer, reverse, reverse_patterns.single_pointer));
+	require(!sameStructure(forward, forward_patterns.integer, reverse, reverse_patterns.reference));
+	require(!sameStructure(forward, forward_patterns.integer, reverse, reverse_patterns.other_primary_integer));
+
+	const auto check_environment_partition = [&](TemplateDeclTable& decls, TemplateDeclId pattern_primary,
+		TypeId pattern, TypeId other_pattern, TypeId third_pattern) {
+		const TemplateDeclId first = decls.publishClassPartialEnvironment(pattern_primary, pattern, first_identity);
+		const TemplateDeclId second = decls.publishClassPartialEnvironment(pattern_primary, pattern, second_identity);
+		require(first != second);
+		require(decls.publishClassPartialEnvironment(pattern_primary, pattern, first_identity) == first);
+		require(decls.publishClassPartialEnvironment(pattern_primary, other_pattern, first_identity) != first);
+		require(decls.publishClassPartialEnvironment(pattern_primary, third_pattern, first_identity) != first);
+	};
+	const OwnerId owner{8743};
+	const StringHandle name = StringTable::getOrInternStringHandle("DoublePointerPartialIdentity");
+	TemplateDeclTable forward_decls;
+	const TemplateDeclId forward_primary = forward_decls.publishPrimaryClassTemplate(owner, name);
+	check_environment_partition(forward_decls, forward_primary, forward_patterns.integer, forward_patterns.wide,
+		forward_patterns.single_pointer);
+	TemplateDeclTable reverse_decls;
+	const TemplateDeclId reverse_primary = reverse_decls.publishPrimaryClassTemplate(owner, name);
+	check_environment_partition(reverse_decls, reverse_primary, reverse_patterns.wide, reverse_patterns.single_pointer,
+		reverse_patterns.integer);
+}
+
 // The shape is a by-value query result; a future field must not quietly re-add
 // padding to it.
 static_assert(sizeof(CanonicalPointerShape) == 10, "pointer shape stays a packed by-value result");
@@ -4518,6 +4626,7 @@ inline int run() {
 	checkMemberPartialSchemaIdentityIndependence();
 	checkFunctionSignaturePartialPatternIdentityIndependence();
 	checkFunctionPointerPartialPatternIdentityIndependence();
+	checkDoublePointerPartialPatternIdentityIndependence();
 	checkSpecializationFieldSchemas();
 	checkNestedFieldSchemas();
 	checkRecordMemberProperties();

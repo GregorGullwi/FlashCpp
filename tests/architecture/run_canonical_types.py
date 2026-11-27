@@ -686,32 +686,9 @@ def main():
              "has_ordinary_array && context == CanonicalTypeImportContext::FunctionParameter &&",
              "has_ordinary_array && context == CanonicalTypeImportContext::Exact &&"),
             ("adapter_function_pointer", "CanonicalTypeAdapter.h",
-             "if (syntax.category() == TypeCategory::FunctionPointer || !syntax.pointer_levels().empty()) {\n"
-             "\t\t// FunctionPointer with empty pointer_levels is a single pointer-to-function\n"
-             "\t\t// (int (*)(Args)): add one wrapper. Non-empty pointer_levels are the full\n"
-             "\t\t// wrapper stack around the function, including nested forms such as\n"
-             "\t\t// int (**)(Args) encoded as FunctionPointer with two levels, so do not\n"
-             "\t\t// also add a category wrap (legacy decltype aliases may carry a\n"
-             "\t\t// redundant level that would otherwise become depth 2).\n"
-             "\t\tif (syntax.pointer_levels().empty()) {\n"
-             "\t\t\tid = table.pointer(id);\n"
-             "\t\t} else {\n"
-             "\t\t\tid = addCanonicalPointerLevels(table, id, syntax.pointer_levels());\n"
-             "\t\t}\n"
-             "\t}",
-             "if (false && (syntax.category() == TypeCategory::FunctionPointer || !syntax.pointer_levels().empty())) {\n"
-             "\t\t// FunctionPointer with empty pointer_levels is a single pointer-to-function\n"
-             "\t\t// (int (*)(Args)): add one wrapper. Non-empty pointer_levels are the full\n"
-             "\t\t// wrapper stack around the function, including nested forms such as\n"
-             "\t\t// int (**)(Args) encoded as FunctionPointer with two levels, so do not\n"
-             "\t\t// also add a category wrap (legacy decltype aliases may carry a\n"
-             "\t\t// redundant level that would otherwise become depth 2).\n"
-             "\t\tif (syntax.pointer_levels().empty()) {\n"
-             "\t\t\tid = table.pointer(id);\n"
-             "\t\t} else {\n"
-             "\t\t\tid = addCanonicalPointerLevels(table, id, syntax.pointer_levels());\n"
-             "\t\t}\n"
-             "\t}"),
+             "if (syntax.category() == TypeCategory::FunctionPointer || !syntax.pointer_levels().empty() || hasPointerOnlyOrderedDeclarator(syntax)) {",
+             "if (false && (syntax.category() == TypeCategory::FunctionPointer || !syntax.pointer_levels().empty() || "
+             "hasPointerOnlyOrderedDeclarator(syntax))) {"),
             ("adapter_function_param_decay", "CanonicalTypeAdapter.h",
              "if (context == CanonicalTypeImportContext::FunctionParameter) {\n"
              "\t\tconst CanonicalTypeNode outer = table.node(table.withoutTopLevelQualifiers(id));",
