@@ -186,17 +186,22 @@ with more than one pointer level. A callable with several pointer levels
 (`S<T (**)(T)>`) additionally fails pattern deduction with an inconsistent
 substitution and selects the primary; that matcher gap is independent of
 environment publication.
-The fallback also remains for non-type-parameter and alias argument shapes and
-for patterns whose concept or requires-clause argument identity cannot be
-published.
+The fallback also remains for non-type-parameter argument shapes and for
+patterns whose concept or requires-clause argument identity cannot be published.
 
-An alias-template-specialization pattern argument such as `S<Ptr<T>>` neither
-publishes an environment nor matches a concrete `int*`: the structural pattern
-matcher keeps `Ptr<T>` as an opaque dependent name instead of expanding it
-through the alias target, so no match selects any partial and no environment is
-consulted. Alias expansion in partial-pattern arguments must happen before that
-shape can leave this gap. The canonical importer therefore continues to reject
-the alias component instead of publishing an identity the matcher cannot use.
+An alias-template-specialization pattern argument such as `S<Ptr<T>>` is
+expanded through its alias declaration identity and the use-site argument
+syntax before the pattern is registered or its canonical environment is
+published. The structural matcher and the canonical importer therefore consume
+the same expanded pattern, and `S<int*>` selects the partial instead of the
+primary. Expanding an alias use whose own argument is another alias is
+supported when that argument's alias target expands. The fallback remains for
+an alias declaration whose target is or contains another alias-template-id (for
+example `template<class T> using Q = P<T*>`) or a callable signature, for a
+variadic alias parameter list, for an alias use whose argument count does not
+match the alias declaration's parameter list, for alias arguments that are not
+type arguments, and for an alias target whose shared template-parameter
+substitution cannot produce a type specifier.
 
 Member and constructor
 schemas for supported shapes are keyed by the canonical

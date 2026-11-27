@@ -546,6 +546,113 @@ inline std::optional<TypeId> tryImportCanonicalPartialTypePattern(CanonicalTypeT
 	throw InternalError("partial pattern normalization ended without a result");
 }
 
+// [temp.alias]/2: an alias-template-id denotes its aliased type, so a partial
+// pattern argument written through an alias must reach both the structural
+// matcher and the canonical pattern importer as the alias target. Resolve the
+// argument's alias declaration identity, substitute the alias declaration's own
+// parameter list with the use-site argument syntax, and compose the alias use's
+// outer declarator shape onto the substituted target. The expansion is
+// fail-closed: an alias component the substitution cannot rewrite stays an
+// alias specialization and keeps the name-keyed fallback.
+inline constexpr size_t kMaxPartialPatternAliasExpansionDepth = 32;
+
+// An alias declaration whose target is or contains another alias-template-id
+// cannot be expanded here without materializing the nested alias argument's
+// declaration identity, which a TemplateTypeArg projection does not retain. The
+// same holds for an aliased callable signature, whose return and parameter
+// aliases would project through that lossy representation. Leave such a pattern
+// on the name-keyed fallback instead of publishing a different shape.
+inline bool partialPatternAliasTargetIsOpaque(const TypeSpecifierNode& syntax) {
+	std::vector<const TypeSpecifierNode*> pending{&syntax};
+	while (!pending.empty()) {
+		const TypeSpecifierNode& current = *pending.back();
+		pending.pop_back();
+		if (current.is_alias_template_specialization() || current.has_function_signature()) {
+			return true;
+		}
+		if (!current.has_template_specialization()) {
+			continue;
+		}
+		for (size_t index = 0; index < current.specialization_arg_count(); ++index) {
+			if (current.specialization_arg_is_type(index)) {
+				pending.push_back(&current.specialization_arg_type(index));
+			}
+		}
+	}
+	return false;
+}
+
+inline bool expandPartialPatternAliasComponent(Parser& parser, TypeSpecifierNode& syntax, size_t depth) {
+	if (!syntax.is_alias_template_specialization() || depth >= kMaxPartialPatternAliasExpansionDepth) {
+		return false;
+	}
+	const TemplateDeclId alias_declaration = syntax.specialization_template_decl();
+	if (!alias_declaration) {
+		throw InternalError("partial-pattern alias specialization lost its declaration identity");
+	}
+	FrontendContext& context = requireFrontendContext();
+	const std::optional<ASTNode> alias_pattern = context.templateDecls().primaryAliasPattern(alias_declaration);
+	if (!alias_pattern.has_value() || !alias_pattern->is<TemplateAliasNode>()) {
+		throw InternalError("partial-pattern alias specialization has no published alias declaration");
+	}
+	const TemplateAliasNode& alias_node = alias_pattern->as<TemplateAliasNode>();
+	if (partialPatternAliasTargetIsOpaque(alias_node.target_type_node())) {
+		return false;
+	}
+	const size_t argument_count = syntax.specialization_arg_count();
+	if (argument_count != alias_node.template_parameters().size()) {
+		return false;
+	}
+	std::vector<TemplateTypeArg> alias_arguments;
+	alias_arguments.reserve(argument_count);
+	for (size_t index = 0; index < argument_count; ++index) {
+		if (!syntax.specialization_arg_is_type(index)) {
+			return false;
+		}
+		TypeSpecifierNode argument_syntax = syntax.specialization_arg_type(index);
+		while (expandPartialPatternAliasComponent(parser, argument_syntax, depth + 1)) {
+		}
+		alias_arguments.emplace_back(argument_syntax);
+	}
+	const TypeSpecifierNode alias_target = alias_node.target_type_node();
+	ASTNode substituted = parser.substituteTemplateParameters(ASTNode::emplace_node<TypeSpecifierNode>(alias_target),
+		alias_node.template_parameters(), alias_arguments);
+	if (!substituted.is<TypeSpecifierNode>()) {
+		return false;
+	}
+	TypeSpecifierNode expanded = substituted.as<TypeSpecifierNode>();
+	if (typeSpecifierPreservesSurfaceModifiers(syntax)) {
+		applyOuterDeclaratorShapeForSubstitution(expanded, syntax);
+	}
+	while (expandPartialPatternAliasComponent(parser, expanded, depth + 1)) {
+	}
+	syntax = std::move(expanded);
+	return true;
+}
+
+// Replace each expanded pattern argument with the structural shape the matcher
+// and the canonical importer must agree on. The syntax nodes are the source of
+// truth for both consumers, so one expansion serves both.
+inline size_t expandPartialPatternAliasArguments(Parser& parser, TemplateArgumentVector& arguments, std::vector<ASTNode>& argument_syntax) {
+	const size_t count = std::min(arguments.size(), argument_syntax.size());
+	size_t expanded_count = 0;
+	for (size_t index = 0; index < count; ++index) {
+		if (!argument_syntax[index].is<TypeSpecifierNode>() || arguments[index].is_pack) {
+			continue;
+		}
+		TypeSpecifierNode syntax = argument_syntax[index].as<TypeSpecifierNode>();
+		if (!expandPartialPatternAliasComponent(parser, syntax, 0)) {
+			continue;
+		}
+		TemplateTypeArg expanded(syntax);
+		expanded.is_pack = arguments[index].is_pack;
+		arguments[index] = std::move(expanded);
+		argument_syntax[index] = ASTNode::emplace_node<TypeSpecifierNode>(std::move(syntax));
+		++expanded_count;
+	}
+	return expanded_count;
+}
+
 struct CanonicalPartialPatternOptions {
 	bool allow_concept_constrained_parameters;
 	bool allow_non_type_literal_arguments;
