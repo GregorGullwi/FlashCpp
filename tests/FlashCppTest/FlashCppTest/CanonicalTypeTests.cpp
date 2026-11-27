@@ -11862,6 +11862,55 @@ Outer<long long>::Inner wide;
 	CHECK_FALSE(table.templateArgumentNext(arguments));
 }
 
+TEST_CASE("Nested class declarations belong to their explicit full specializations") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear();
+	gConceptRegistry.clear();
+	gSymbolTable.clear();
+	FrontendContext frontend;
+	CompileContext compile_context;
+	compile_context.setInputFile("full_specialization_nested_class_identity.cpp");
+	Lexer lexer(R"(
+template<class T> struct Outer {};
+template<> struct Outer<int> { struct Inner { int value; }; };
+template<> struct Outer<long long> { struct Inner { long long value; }; };
+Outer<int>::Inner narrow;
+Outer<long long>::Inner wide;
+)");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const auto nested_identity = [&](std::string_view name, CanonicalBuiltinKind argument) {
+		const auto object = gSymbolTable.lookup(name);
+		REQUIRE(object.has_value());
+		const DeclarationNode* declaration = get_decl_from_symbol(*object);
+		REQUIRE(declaration != nullptr);
+		const TypeInfo* type = tryGetTypeInfo(declaration->type_specifier_node().type_index());
+		REQUIRE(type != nullptr);
+		const StructTypeInfo* record = type->getStructInfo();
+		REQUIRE(record != nullptr);
+		REQUIRE(record->typeEntity());
+		REQUIRE(record->getEnclosingClass() != nullptr);
+		const StructDeclarationNode* enclosing = record->getEnclosingClass()->declaration_node;
+		REQUIRE(enclosing != nullptr);
+		const CanonicalTypeImport owner = importCanonicalClassDeclaration(table, *enclosing);
+		REQUIRE(owner.status == CanonicalTypeImportStatus::Supported);
+		REQUIRE(table.node(owner.type).kind == CanonicalTypeKind::TemplateSpecialization);
+		CHECK(table.templateArgumentType(table.templateSpecializationArguments(owner.type)) == table.builtin(argument));
+		const TemplateDeclId primary = table.templateSpecializationDecl(owner.type);
+		const OwnerId published_owner = frontend.declarationBuilder().entity(record->typeEntity()).owner_id;
+		CHECK(published_owner == ownerIdFromTemplateDecl(frontend.templateDecls().publishClassFullSpecialization(primary, owner.type)));
+		const CanonicalTypeImport nested = importCanonicalClassTypeInfo(table, *type);
+		REQUIRE(nested.status == CanonicalTypeImportStatus::Supported);
+		CHECK(nested.type == table.record(record->typeEntity()));
+		return nested.type;
+	};
+	CHECK(nested_identity("narrow", CanonicalBuiltinKind::Int) != nested_identity("wide", CanonicalBuiltinKind::LongLong));
+}
+
 TEST_CASE("Compatibility constructor selections share the canonical schema identity") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

@@ -379,10 +379,8 @@ bool mustBeMemberOperator(OverloadableOperator operator_kind) {
 // runs before the nested body parse so in-body member class/function templates
 // can publish under this identity during the nested body; the nested
 // complete-definition epoch passes is_definition=true to merge the definition
-// flag. A primary class template owns a nested class through its TemplateDeclId
-// until the nested class has its own EntityId. Fail-closed: without either
-// published owner identity the node stays unpublished and the lazy
-// enclosing-epoch fallback remains the authority.
+// flag. Primary templates own nested classes through their TemplateDeclId.
+// Full specializations use a declaration ID keyed by their canonical specialization.
 void Parser::tryPublishNestedClassIdentity(StructDeclarationNode& nested, bool is_definition) {
 	if (struct_parsing_context_stack_.size() < 2u) {
 		return;
@@ -393,16 +391,22 @@ void Parser::tryPublishNestedClassIdentity(StructDeclarationNode& nested, bool i
 	if (enclosing == nullptr) {
 		return;
 	}
+	FrontendContext& front_end = requireFrontendContext();
 	OwnerId enclosing_owner_id{};
 	if (enclosing->has_entity_id()) {
 		enclosing_owner_id = ownerIdFromClassEntity(enclosing->entity_id());
 	} else if (enclosing->has_template_decl_id()) {
 		enclosing_owner_id = ownerIdFromTemplateDecl(enclosing->template_decl_id());
+	} else if (enclosing->has_canonical_specialization_owner()) {
+		const CanonicalTypeImport imported = importCanonicalClassDeclaration(front_end.canonicalTypes(), *enclosing);
+		if (imported.status == CanonicalTypeImportStatus::Supported) {
+			const TemplateDeclId primary = enclosing->canonical_specialization_owner_template_decl_id();
+			enclosing_owner_id = ownerIdFromTemplateDecl(front_end.templateDecls().publishClassFullSpecialization(primary, imported.type));
+		}
 	}
 	if (!enclosing_owner_id) {
 		return;
 	}
-	FrontendContext& front_end = requireFrontendContext();
 	const PublishResult published = commitParserNestedClassPublication(
 		front_end.declarationBuilder(),
 		nested,
@@ -413,6 +417,32 @@ void Parser::tryPublishNestedClassIdentity(StructDeclarationNode& nested, bool i
 		published.status == PublishStatus::MergedRedeclaration) {
 		recordDeclarationBuilderPublish();
 	}
+}
+
+ParseResult Parser::parseNestedClassDeclaration(StructDeclarationNode& enclosing, StructTypeInfo& enclosing_info, StringHandle owner, AccessSpecifier access) {
+	// The nested parser drains delayed bodies for its own class.
+	auto enclosing_delayed_bodies = std::move(delayed_function_bodies_);
+	delayed_function_bodies_.clear();
+	ScopeGuard restore_delayed_bodies([&]() { delayed_function_bodies_ = std::move(enclosing_delayed_bodies); });
+	ParseResult result = parse_struct_declaration();
+	if (result.is_error() || !result.node().has_value()) {
+		return result;
+	}
+	ASTNode nested_node = *result.node();
+	auto& nested = nested_node.as<StructDeclarationNode>();
+	nested.set_enclosing_class(&enclosing);
+	enclosing.add_nested_class(nested_node);
+	const StringHandle nested_name = StringTable::getOrInternStringHandle(StringBuilder().append(owner).append("::"sv).append(nested.name()));
+	if (auto nested_type = getTypesByNameMap().find(nested_name); nested_type != getTypesByNameMap().end()) {
+		if (StructTypeInfo* nested_info = nested_type->second->getStructInfo()) {
+			enclosing_info.addNestedClass(nested_info);
+		}
+	}
+	for (const ASTNode& variable : pending_struct_variables_) {
+		enclosing.add_member(variable.as<VariableDeclarationNode>().declaration_node(), access, std::nullopt);
+	}
+	pending_struct_variables_.clear();
+	return result;
 }
 
 ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_result, FunctionDeclarationNode*& out_func_decl, DeclarationNode*& out_decl) {
@@ -2208,62 +2238,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						// Pattern 2: Nested struct declaration (with or without base class)
 						restore_token_position(saved_pos);
 
-						// Save the parent's delayed function bodies before parsing nested struct
-						// This prevents the nested struct's parse_struct_declaration() from trying
-						// to parse the parent's delayed bodies
-						auto saved_delayed_bodies = std::move(delayed_function_bodies_);
-						delayed_function_bodies_.clear();
-
-						auto nested_result = parse_struct_declaration();
-
-						// Restore the parent's delayed function bodies after nested struct is complete
-						// Any delayed bodies from the nested struct have already been parsed
-						delayed_function_bodies_ = std::move(saved_delayed_bodies);
-
+						auto nested_result = parseNestedClassDeclaration(struct_ref, *struct_info, qualified_struct_name, current_access);
 						if (nested_result.is_error()) {
 							return nested_result;
 						}
-
-						if (auto nested_node = nested_result.node()) {
-							// Set enclosing class relationship
-							auto& nested_struct = nested_node->as<StructDeclarationNode>();
-							nested_struct.set_enclosing_class(&struct_ref);
-
-							// Add to outer class
-							struct_ref.add_nested_class(*nested_node);
-
-							// Update type info - use qualified name to avoid ambiguity
-							std::string_view qualified_nested_name = StringBuilder()
-																		 .append(qualified_struct_name)
-																		 .append("::")
-																		 .append(nested_struct.name())
-																		 .commit();
-							auto nested_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_nested_name));
-							if (nested_type_it != getTypesByNameMap().end()) {
-								StructTypeInfo* nested_info = nested_type_it->second->getStructInfo();
-								if (nested_info) {
-									struct_info->addNestedClass(nested_info);
-								}
-
-								auto qualified_name = StringTable::getOrInternStringHandle(qualified_nested_name);
-								if (getTypesByNameMap().find(qualified_name) == getTypesByNameMap().end()) {
-									getTypesByNameMap().emplace(qualified_name, nested_type_it->second);
-								}
-							}
-
-							// Handle any variable declarators parsed after the nested declaration
-							// e.g., "union Data { ... } data;" - the "data" member should be added
-							for (auto& var_node : pending_struct_variables_) {
-								// Extract the declaration node from the VariableDeclarationNode wrapper
-								auto& var_decl_node = var_node.as<VariableDeclarationNode>();
-								auto decl_node = var_decl_node.declaration_node();
-
-								// Add as a member of the outer struct
-								struct_ref.add_member(decl_node, current_access, std::nullopt);
-							}
-							pending_struct_variables_.clear();
-						}
-
 						continue; // Skip to next member
 					} else {
 						// Pattern 3: Member with struct type (struct Name member; or struct Name *ptr;)
