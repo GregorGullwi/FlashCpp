@@ -1283,6 +1283,25 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 		// For non-polymorphic types, we return a compile-time constant
 
 	TempVar result_temp = var_counter.next();
+	// A pointer or member pointer keeps its pointee and owner only in the
+	// canonical shape; the legacy TypeIndex projection collapses them onto the
+	// pointee category. Resolve the canonical identity here so codegen can emit a
+	// type_info for exactly this type instead of the pointee's.
+	auto tryResolveCanonicalTypeidType = [](const TypeSpecifierNode& type_node) -> TypeId {
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		CanonicalTypeTransaction transaction(table);
+		const CanonicalTypeImport imported = importCanonicalType(table, type_node);
+		if (imported.status != CanonicalTypeImportStatus::Supported) {
+			return {};
+		}
+		const TypeId stripped = table.withoutTopLevelQualifiers(imported.type);
+		const CanonicalTypeKind kind = table.node(stripped).kind;
+		if (kind != CanonicalTypeKind::Pointer && kind != CanonicalTypeKind::MemberObjectPointer && kind != CanonicalTypeKind::MemberFunctionPointer) {
+			return {};
+		}
+		transaction.commit();
+		return imported.type;
+	};
 	auto getStructTypeName = [&](TypeIndex type_index) -> StringHandle {
 		if (type_index.category() != TypeCategory::Struct || !type_index.is_valid()) {
 			return {};
@@ -1308,6 +1327,7 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 			.result = result_temp,
 			.operand = type_name,  // Type name for RTTI lookup
 			.type_index = type_node.type_index(),
+			.canonical_type = tryResolveCanonicalTypeidType(type_node),
 			.is_type = true};
 		ir_.addInstruction(IrOpcode::Typeid, std::move(op), typeidNode.typeid_token());
 	} else {
@@ -1453,6 +1473,7 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 				.result = result_temp,
 				.operand = getStructTypeName(static_expr_type->type_index()),
 				.type_index = static_expr_type->type_index(),
+				.canonical_type = tryResolveCanonicalTypeidType(*static_expr_type),
 				.is_type = true};
 			ir_.addInstruction(IrOpcode::Typeid, std::move(op), typeidNode.typeid_token());
 

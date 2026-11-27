@@ -6649,6 +6649,9 @@ void IrToObjConverter<TWriterClass>::handleTypeid(const IrInstruction& instructi
 
 	auto getTypeinfoSymbol = [&](TypeIndex type_index, StringHandle type_name_handle) -> std::string {
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			if (op.canonical_type) {
+				return writer.get_or_create_canonical_typeinfo(op.canonical_type);
+			}
 			if (type_index.category() == TypeCategory::Struct) {
 				if (type_index.is_valid()) {
 					if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {

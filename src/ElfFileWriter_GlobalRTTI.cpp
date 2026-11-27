@@ -59,6 +59,36 @@ bool findVBaseOffset(const StructTypeInfo* si, TypeIndex target_tidx,
 	}
 	return false;
 }
+
+std::string encodeCanonicalTypeCode(CanonicalTypeTable& table, TypeId type) {
+	StringBuilder builder;
+	NameMangling::ItaniumManglingCtx context(builder);
+	NameMangling::appendCanonicalItaniumTypeCode(context, table, type);
+	return std::string(builder.commit());
+}
+
+void alignSectionData(ELFIO::section* section, size_t alignment) {
+	const size_t padding = (alignment - (section->get_size() % alignment)) % alignment;
+	if (padding != 0) {
+		static const char zero_padding[8] = {};
+		section->append_data(zero_padding, padding);
+	}
+}
+
+// __pbase_type_info::__flags encodes the pointee's top-level qualifiers.
+uint32_t canonicalPointeeCVFlags(const CanonicalTypeNode& pointee) {
+	if (pointee.kind != CanonicalTypeKind::Qualified) {
+		return 0;
+	}
+	uint32_t flags = 0;
+	if (hasCVQualifier(pointee.qualifiers, CVQualifier::Const)) {
+		flags |= 0x1;
+	}
+	if (hasCVQualifier(pointee.qualifiers, CVQualifier::Volatile)) {
+		flags |= 0x2;
+	}
+	return flags;
+}
 } // namespace
 
 ELFIO::section* ElfFileWriter::getOrCreateDataRelRoSection() {
@@ -592,6 +622,202 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 
 	created_class_typeinfos_.insert(typeinfo_symbol);
 	return typeinfo_symbol;
+}
+
+/**
+ * @brief Emit the null-terminated _ZTS name for a canonical type encoding.
+ */
+std::string ElfFileWriter::emitCanonicalTypeName(std::string_view type_code) {
+	std::string name_symbol(StringBuilder().append("_ZTS"sv).append(type_code).commit());
+	// A class emitter may already have published this exact name string.
+	if (symbol_index_cache_.find(name_symbol) != symbol_index_cache_.end()) {
+		return name_symbol;
+	}
+	auto* rodata = getSectionByName(".rodata");
+	if (rodata == nullptr) {
+		throw std::runtime_error(".rodata section not found");
+	}
+	const uint32_t name_offset = rodata->get_size();
+	rodata->append_data(type_code.data(), type_code.size());
+	const char terminator = '\0';
+	rodata->append_data(&terminator, 1);
+	getOrCreateSymbol(name_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK, rodata->get_index(), name_offset, type_code.size() + 1);
+	return name_symbol;
+}
+
+/**
+ * @brief Emit a 16-byte Itanium type_info with the supplied ABI vtable.
+ *
+ * __function_type_info and __enum_type_info add no fields beyond the base
+ * std::type_info, so both share this flat layout.
+ */
+std::string ElfFileWriter::emitFlatCanonicalTypeinfo(std::string_view type_code, std::string_view vtable_name) {
+	std::string typeinfo_symbol(StringBuilder().append("_ZTI"sv).append(type_code).commit());
+	if (!created_canonical_typeinfos_.insert(typeinfo_symbol).second) {
+		return typeinfo_symbol;
+	}
+
+	const std::string name_symbol = emitCanonicalTypeName(type_code);
+	auto* data_rel_ro = getOrCreateDataRelRoSection();
+	alignSectionData(data_rel_ro, 8);
+	const char zeros[16] = {};
+	const uint32_t ti_offset = data_rel_ro->get_size();
+	data_rel_ro->append_data(zeros, 16);
+	getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK, data_rel_ro->get_index(), ti_offset, 16);
+
+	ELFIO::relocation_section_accessor* rela_acc = getOrCreateDataRelRoRelocationAccessor();
+	const auto vtable_symbol = getOrCreateSymbol(vtable_name, ELFIO::STT_NOTYPE, ELFIO::STB_GLOBAL);
+	rela_acc->add_entry(ti_offset, vtable_symbol, ELFIO::R_X86_64_64, 16);
+	const auto name_symbol_index = getOrCreateSymbol(name_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK);
+	rela_acc->add_entry(ti_offset + 8, name_symbol_index, ELFIO::R_X86_64_64, 0);
+	return typeinfo_symbol;
+}
+
+std::string ElfFileWriter::get_or_create_function_typeinfo(TypeId function_type, std::string_view type_code) {
+	if (requireFrontendContext().canonicalTypes().node(function_type).kind != CanonicalTypeKind::Function) {
+		throw InternalError("typeid: canonical function type_info operand is not a function type");
+	}
+	return emitFlatCanonicalTypeinfo(type_code, "_ZTVN10__cxxabiv120__function_type_infoE");
+}
+
+/**
+ * @brief Emit __pointer_type_info for a canonical Pointer type.
+ *
+ * Layout (32 bytes): vtable, name, flags (inline zero), pointee type_info. The
+ * canonical pointee may itself be a function, object, array, or named type, so
+ * nested pointers reuse the same dispatcher.
+ */
+std::string ElfFileWriter::get_or_create_pointer_typeinfo(TypeId pointer_type, std::string_view type_code) {
+	std::string typeinfo_symbol(StringBuilder().append("_ZTI"sv).append(type_code).commit());
+	if (!created_canonical_typeinfos_.insert(typeinfo_symbol).second) {
+		return typeinfo_symbol;
+	}
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	const CanonicalTypeNode pointee_node = table.node(table.node(pointer_type).child);
+	const TypeId pointee = table.withoutTopLevelQualifiers(table.node(pointer_type).child);
+	const std::string pointee_symbol = get_or_create_canonical_typeinfo(pointee);
+	const std::string name_symbol = emitCanonicalTypeName(type_code);
+
+	auto* data_rel_ro = getOrCreateDataRelRoSection();
+	alignSectionData(data_rel_ro, 8);
+	char zeros[32] = {};
+	const uint32_t pointee_flags = canonicalPointeeCVFlags(pointee_node);
+	std::memcpy(zeros + 16, &pointee_flags, sizeof(pointee_flags));
+	const uint32_t ti_offset = data_rel_ro->get_size();
+	data_rel_ro->append_data(zeros, 32);
+	getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK, data_rel_ro->get_index(), ti_offset, 32);
+
+	ELFIO::relocation_section_accessor* rela_acc = getOrCreateDataRelRoRelocationAccessor();
+	const auto vtable_symbol = getOrCreateSymbol("_ZTVN10__cxxabiv119__pointer_type_infoE", ELFIO::STT_NOTYPE, ELFIO::STB_GLOBAL);
+	rela_acc->add_entry(ti_offset, vtable_symbol, ELFIO::R_X86_64_64, 16);
+	const auto name_symbol_index = getOrCreateSymbol(name_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK);
+	rela_acc->add_entry(ti_offset + 8, name_symbol_index, ELFIO::R_X86_64_64, 0);
+	const auto pointee_symbol_index = getOrCreateSymbol(pointee_symbol, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL);
+	rela_acc->add_entry(ti_offset + 24, pointee_symbol_index, ELFIO::R_X86_64_64, 0);
+	return typeinfo_symbol;
+}
+
+/**
+ * @brief Emit __pointer_to_member_type_info for a canonical member pointer.
+ *
+ * Layout (40 bytes): vtable, name, flags (inline zero), pointee type_info,
+ * declaring-class type_info. A member function pointer's pointee is a Function
+ * type, so its qualifiers stay in the encoded name while the class pointer names
+ * the owner. A data member pointer stores its pointee object type there.
+ */
+std::string ElfFileWriter::get_or_create_member_pointer_typeinfo(TypeId member_pointer_type, std::string_view type_code) {
+	std::string typeinfo_symbol(StringBuilder().append("_ZTI"sv).append(type_code).commit());
+	if (!created_canonical_typeinfos_.insert(typeinfo_symbol).second) {
+		return typeinfo_symbol;
+	}
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	const TypeId owner = table.memberPointerOwner(member_pointer_type);
+	const TypeId pointee = table.withoutTopLevelQualifiers(table.memberPointerPointee(member_pointer_type));
+	const TypeInfo* owner_type_info = NameMangling::tryFindPublishedClassTypeInfoForCanonicalOwner(table, owner);
+	if (owner_type_info == nullptr || owner_type_info->getStructInfo() == nullptr) {
+		throw InternalError("typeid: canonical member pointer owner has no published StructTypeInfo");
+	}
+	const std::string owner_symbol = get_or_create_class_typeinfo(owner_type_info->getStructInfo());
+	std::string pointee_symbol;
+	if (table.node(pointee).kind == CanonicalTypeKind::Function) {
+		// GCC's member-pointer type_info names the member function type without
+		// its noexcept specification, even though the own name above keeps it.
+		StringBuilder builder;
+		NameMangling::ItaniumManglingCtx context(builder);
+		NameMangling::appendCanonicalItaniumFunctionTypeCode(context, table, pointee, false);
+		pointee_symbol = emitFlatCanonicalTypeinfo(builder.commit(), "_ZTVN10__cxxabiv120__function_type_infoE");
+	} else {
+		pointee_symbol = get_or_create_canonical_typeinfo(pointee);
+	}
+	const std::string name_symbol = emitCanonicalTypeName(type_code);
+
+	auto* data_rel_ro = getOrCreateDataRelRoSection();
+	alignSectionData(data_rel_ro, 8);
+	char zeros[40] = {};
+	const uint32_t pointee_flags = canonicalPointeeCVFlags(table.node(table.memberPointerPointee(member_pointer_type)));
+	std::memcpy(zeros + 16, &pointee_flags, sizeof(pointee_flags));
+	const uint32_t ti_offset = data_rel_ro->get_size();
+	data_rel_ro->append_data(zeros, 40);
+	getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK, data_rel_ro->get_index(), ti_offset, 40);
+
+	ELFIO::relocation_section_accessor* rela_acc = getOrCreateDataRelRoRelocationAccessor();
+	const auto vtable_symbol = getOrCreateSymbol("_ZTVN10__cxxabiv129__pointer_to_member_type_infoE", ELFIO::STT_NOTYPE, ELFIO::STB_GLOBAL);
+	rela_acc->add_entry(ti_offset, vtable_symbol, ELFIO::R_X86_64_64, 16);
+	const auto name_symbol_index = getOrCreateSymbol(name_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK);
+	rela_acc->add_entry(ti_offset + 8, name_symbol_index, ELFIO::R_X86_64_64, 0);
+	const auto pointee_symbol_index = getOrCreateSymbol(pointee_symbol, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL);
+	rela_acc->add_entry(ti_offset + 24, pointee_symbol_index, ELFIO::R_X86_64_64, 0);
+	const auto owner_symbol_index = getOrCreateSymbol(owner_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK);
+	rela_acc->add_entry(ti_offset + 32, owner_symbol_index, ELFIO::R_X86_64_64, 0);
+	return typeinfo_symbol;
+}
+
+/**
+ * @brief Get or emit the type_info symbol for a canonical pointer-like type.
+ *
+ * The legacy TypeIndex used by typeid lowering projects pointers and member
+ * pointers onto their pointee category, so the symbol is mangled from the
+ * canonical shape here. Top-level cv is ignored because typeid drops it.
+ */
+std::string ElfFileWriter::get_or_create_canonical_typeinfo(TypeId type) {
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	CanonicalTypeNode node = table.node(type);
+	while (node.kind == CanonicalTypeKind::Qualified) {
+		type = node.child;
+		node = table.node(type);
+	}
+	if (node.kind == CanonicalTypeKind::LValueReference || node.kind == CanonicalTypeKind::RValueReference) {
+		return get_or_create_canonical_typeinfo(node.child);
+	}
+	const std::string type_code = encodeCanonicalTypeCode(table, type);
+	switch (node.kind) {
+	case CanonicalTypeKind::Builtin:
+		// Built-in type_info objects are supplied by the C++ runtime; the symbol
+		// is simply the canonical type code behind the _ZTI prefix.
+		return std::string(StringBuilder().append("_ZTI"sv).append(type_code).commit());
+	case CanonicalTypeKind::Enum:
+		return emitFlatCanonicalTypeinfo(type_code, "_ZTVN10__cxxabiv116__enum_type_infoE");
+	case CanonicalTypeKind::Array:
+		return emitFlatCanonicalTypeinfo(type_code, "_ZTVN10__cxxabiv117__array_type_infoE");
+	case CanonicalTypeKind::Function:
+		return get_or_create_function_typeinfo(type, type_code);
+	case CanonicalTypeKind::Pointer:
+		return get_or_create_pointer_typeinfo(type, type_code);
+	case CanonicalTypeKind::MemberFunctionPointer:
+	case CanonicalTypeKind::MemberObjectPointer:
+		return get_or_create_member_pointer_typeinfo(type, type_code);
+	case CanonicalTypeKind::Record:
+	case CanonicalTypeKind::NestedRecord:
+	case CanonicalTypeKind::TemplateSpecialization: {
+		const TypeInfo* type_info = NameMangling::tryFindPublishedClassTypeInfoForCanonicalOwner(table, type);
+		if (type_info == nullptr || type_info->getStructInfo() == nullptr) {
+			throw InternalError("typeid: canonical class type has no published StructTypeInfo");
+		}
+		return get_or_create_class_typeinfo(type_info->getStructInfo());
+	}
+	default:
+		throw InternalError("typeid: canonical type_info emission does not support this type kind");
+	}
 }
 
 /**
