@@ -667,6 +667,10 @@ private:
 	CastInfoIndex allocateNonUserDefinedCastInfo(CanonicalTypeId source_type_id,
 												 CanonicalTypeId target_type_id,
 												 StandardConversionKind cast_kind);
+	// Return a descriptor whose category is the member-pointer kind when
+	// type_id denotes a data-member pointer, so a standard conversion records
+	// the member-pointer value rather than its pointee projection.
+	CanonicalTypeId memberPointerConversionRecordTypeId(CanonicalTypeId type_id);
 
 	// Store a semantic slot for the given expression node pointer.
 	void setSlot(const void* key, const SemanticSlot& slot);

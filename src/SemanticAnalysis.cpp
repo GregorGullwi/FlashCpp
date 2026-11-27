@@ -10752,12 +10752,43 @@ CastInfoIndex SemanticAnalysis::allocateCastInfo(const ImplicitCastInfo& info) {
 	return CastInfoIndex{static_cast<uint16_t>(cast_info_table_.size())};
 }
 
+// A data-member pointer's compatibility projection spells its pointee category
+// plus one pointer level, so a conversion recorded against that projection is
+// indistinguishable from a scalar conversion of the member offset. Record both
+// ends of a member-pointer standard conversion at the member-pointer category
+// itself: the conversion then operates on the member-pointer value, and codegen
+// copies/adjusts the 64-bit offset instead of converting it as its pointee.
+CanonicalTypeId SemanticAnalysis::memberPointerConversionRecordTypeId(CanonicalTypeId type_id) {
+	if (!type_id) {
+		return type_id;
+	}
+	const CanonicalTypeDesc desc = type_context_.get(type_id);
+	const CanonicalTypeImport imported = tryImportCanonicalTypeDesc(desc);
+	if (imported.status != CanonicalTypeImportStatus::Supported) {
+		return type_id;
+	}
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	const auto [unqualified, cv] = stripCanonicalTopCv(table, imported.type);
+	if (table.node(unqualified).kind != CanonicalTypeKind::MemberObjectPointer) {
+		return type_id;
+	}
+	if (desc.category() == TypeCategory::MemberObjectPointer && desc.structural_type_id == imported.type) {
+		return type_id;
+	}
+	CanonicalTypeDesc record;
+	record.type_index = nativeTypeIndex(TypeCategory::MemberObjectPointer);
+	record.base_cv = cv;
+	record.flags = CanonicalTypeFlags::MemberPointerValue;
+	record.structural_type_id = imported.type;
+	return type_context_.intern(record);
+}
+
 CastInfoIndex SemanticAnalysis::allocateNonUserDefinedCastInfo(CanonicalTypeId source_type_id,
 															   CanonicalTypeId target_type_id,
 															   StandardConversionKind cast_kind) {
 	ImplicitCastInfo cast_info;
-	cast_info.source_type_id = source_type_id;
-	cast_info.target_type_id = target_type_id;
+	cast_info.source_type_id = memberPointerConversionRecordTypeId(source_type_id);
+	cast_info.target_type_id = memberPointerConversionRecordTypeId(target_type_id);
 	cast_info.cast_kind = cast_kind;
 	cast_info.value_category_after = ValueCategory::PRValue;
 	return allocateCastInfo(cast_info);

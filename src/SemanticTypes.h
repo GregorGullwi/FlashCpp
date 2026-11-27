@@ -108,6 +108,11 @@ enum class CanonicalTypeFlags : uint8_t {
 	// Materialization keeps using that projection. Non-projectable structural
 	// ids do not set this flag.
 	PublishedPointerArray = 1 << 2,
+	// The descriptor's category is the member-pointer kind itself rather than
+	// the pointee category plus one pointer level of its flat projection. A
+	// standard-conversion endpoint records this so lowering converts the
+	// member-pointer value, never its pointee.
+	MemberPointerValue = 1 << 3,
 };
 
 inline CanonicalTypeFlags operator|(CanonicalTypeFlags a, CanonicalTypeFlags b) {
