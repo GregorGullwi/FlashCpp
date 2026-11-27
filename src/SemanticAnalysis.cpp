@@ -30,6 +30,7 @@
 #include "StringLiteralTokenUtils.h"
 #include "Parser_FunctionTypeHelpers.h"
 #include "ParserInternal.h"
+#include "ParserTemplateClassShared.h"
 #include "NameMangling.h"
 #include "MemberFunctionLookupShared.h"
 #include "TemplateTypes.h"
@@ -12802,6 +12803,8 @@ std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::selectCo
 			!functionTemplateConstraintsSatisfied(function_template, *arguments))) {
 			continue;
 		}
+		const TypeId specialization_key = tryBuildCanonicalTemplateSpecializationKey(requireFrontendContext().canonicalTypes(),
+			function_template.template_decl_id(), *arguments).value_or(TypeId{});
 		const auto signature = parser().try_instantiate_member_function_template_explicit_candidate(member.owner_name.view(), member.name.view(),
 			*arguments, FunctionTemplateInstantiation::SignatureOnly, &function_template, source_value_category);
 		const FunctionDeclarationNode* instantiated = signature.has_value() ? signature->get_if<FunctionDeclarationNode>() : nullptr;
@@ -12823,6 +12826,7 @@ std::optional<UserDefinedConversionOperatorSelection> SemanticAnalysis::selectCo
 		selection.function = instantiated;
 		selection.conversion_template = &function_template;
 		selection.compatibility_declaring_type_index = member.owner_type;
+		selection.template_specialization = specialization_key;
 		selection.trailing_standard_kind = tail->kind;
 		selection.trailing_standard_rank = tail->rank;
 		selection.member_cv_qualifier = member.cv;
@@ -13028,11 +13032,8 @@ ArgumentConversionInfo SemanticAnalysis::buildCallArgumentConversion(const TypeS
 		ArgumentConversionInfo ambiguous_sequence{ConversionRank::UserDefined, &parameter_type, true, ConversionRank::NoMatch};
 		return ambiguous_sequence;
 	}
-	TypeSpecifierNode result = selected->function->decl_node().type_specifier_node();
-	tryBindPublishedTypeEntity(result);
-	const auto result_type = tryImportSupportedCanonical(requireFrontendContext().canonicalTypes(), result);
 	ArgumentConversionInfo selected_info{ConversionRank::UserDefined, &parameter_type, true, selected->trailing_standard_rank};
-	selected_info.user_defined_identity = makeUserDefinedConversionFunctionIdentity(*selected, result_type.value_or(TypeId{}));
+	selected_info.user_defined_identity = makeUserDefinedConversionFunctionIdentity(*selected);
 	if (!hasUserDefinedConversionIdentity(selected_info)) {
 		selected_info.trailing_standard_rank = ConversionRank::NoMatch;
 	}
