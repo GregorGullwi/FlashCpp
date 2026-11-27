@@ -919,6 +919,50 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			// arguments (e.g. Owner<T>::Box<U>::value), which means the inner
 			// template head belongs to that member class template, not the function.
 			bool saw_member_class_template_arguments = false;
+			// True when the discovered class head is exactly the out-of-line
+			// definition's own template parameter list in order (`C<T>` or
+			// `C<X>`). A partial-specialization head (`C<T*>`) names the primary
+			// template family but redeclares a different owner's member, so
+			// identity resolution must decline rather than match the primary's
+			// declaration.
+			bool nested_class_head_names_primary_parameters = false;
+
+			// Conservative lexical check for a primary class head: every argument
+			// must be a bare identifier equal to the corresponding outer template
+			// parameter name. Packed, qualified, pointer, reference, cv, concrete,
+			// and expression arguments decline so the caller fails closed.
+			auto classHeadNamesPrimaryParameters = [&]() {
+				SaveHandle arguments_start = save_token_position();
+				bool matches = true;
+				size_t index = 0;
+				advance(); // consume '<'
+				while (!peek().is_eof()) {
+					if (peek() == ">"_tok) {
+						advance();
+						break;
+					}
+					if (!peek().is_identifier() || index >= template_param_names.size() || StringTable::getStringView(template_param_names[index]) != peek_info().value()) {
+						matches = false;
+						break;
+					}
+					++index;
+					advance();
+					if (peek() == ","_tok) {
+						advance();
+						continue;
+					}
+					if (peek() == ">"_tok) {
+						advance();
+						break;
+					}
+					matches = false;
+					break;
+				}
+				matches = matches && index == template_param_names.size();
+				restore_lexer_position_only(arguments_start);
+				discard_saved_token(arguments_start);
+				return matches;
+			};
 
 			// Skip return type and everything up to ClassName<...>::FunctionName(
 			// Strategy: scan tokens looking for the pattern: identifier < ... > :: identifier
@@ -946,6 +990,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 						if (peek() == "<"_tok) {
 							Token class_token = current_ident;
+							const bool class_head_names_primary_parameters = classHeadNamesPrimaryParameters();
 							skip_template_arguments();
 							if (peek() == "::"_tok) {
 								std::string owner_name = qualified_prefix;
@@ -998,6 +1043,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 										nested_func_name_token = Token(Token::Type::Identifier, full_op_name,
 																   operator_keyword.line(), operator_keyword.column(),
 																   operator_keyword.file_index());
+										nested_class_head_names_primary_parameters = class_head_names_primary_parameters;
 										found_nested_def = true;
 										break;
 									}
@@ -1045,6 +1091,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 									nested_class_name = class_token.value();
 									nested_qualified_class_name = owner_name;
 									nested_func_name_token = candidate_token;
+									nested_class_head_names_primary_parameters = class_head_names_primary_parameters;
 									found_nested_def = true;
 									break;
 								}
@@ -1102,9 +1149,35 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					nested_template_param_kinds,
 					nested_template_param_non_type_categories);
 
-				// Create a stub function declaration for registration
-				auto void_type = emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeQualifier::None, 0, nested_func_name_token, CVQualifier::None);
-				auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(void_type, nested_func_name_token);
+				// Create a stub function declaration for registration. The
+				// redeclaration signature comparison also reads the return type, so
+				// recover the real spelling from the declaration start instead of
+				// publishing every out-of-line member as returning void. Constructors
+				// and operators have no ordinary return type before the class name and
+				// keep the void stub.
+				SaveHandle parameter_list_start = save_token_position();
+				ASTNode return_type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeQualifier::None, 0, nested_func_name_token, CVQualifier::None);
+				const std::string_view nested_member_name = nested_func_name_token.value();
+				if (nested_member_name != nested_class_name && !nested_member_name.starts_with("operator"sv)) {
+					restore_lexer_position_only(nested_declaration_start);
+					FlashCpp::DeclarationSpecifiers nested_return_specs = parse_declaration_specifiers();
+					ParseResult nested_return_result;
+					{
+						FlashCpp::ScopedState implicit_typename_guard(parsing_implicit_typename_context_);
+						parsing_implicit_typename_context_ = true;
+						nested_return_result = parse_type_specifier();
+					}
+					if (nested_return_result.node().has_value() && nested_return_result.node()->is<TypeSpecifierNode>()) {
+						ASTNode parsed_return_type = *nested_return_result.node();
+						TypeSpecifierNode& parsed_specifier = parsed_return_type.as<TypeSpecifierNode>();
+						parsed_specifier.add_cv_qualifier(nested_return_specs.cv_qualifier);
+						consume_pointer_ref_modifiers(parsed_specifier);
+						return_type_node = parsed_return_type;
+					}
+					restore_lexer_position_only(parameter_list_start);
+				}
+				discard_saved_token(parameter_list_start);
+				auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, nested_func_name_token);
 				auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref, nested_func_name_token.value());
 
 				// Parse parameter list so delayed constructor/member matching can compare signatures.
@@ -1236,16 +1309,25 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						nested_func_name_token,
 						StringTable::getOrInternStringHandle(nested_qualified_class_name));
 
-				gTemplateRegistry.registerOutOfLineMember(
-					QualifiedIdentifier::fromQualifiedName(
-						nested_qualified_class_name,
-						gSymbolTable.get_current_namespace_handle()),
+				// An out-of-line definition of a member function template redeclares
+				// the in-class declaration. Adopt that declaration's TemplateDeclId and
+				// stamp this node's own type-parameter references with the same
+				// positional identity. When the inner head belongs to an intervening
+				// member class template, this record does not hold the function's own
+				// parameters, so identity stays unresolved (fail closed).
+				if (nested_class_head_names_primary_parameters && !saw_member_class_template_arguments && !out_of_line_member.inner_template_params.empty()) {
+					const std::optional<TemplateDeclId> declaration_id = resolveOutOfLineMemberTemplateDeclarationId(
+						out_of_line_member.pattern_owner_struct_node, nested_func_name_token.handle(), out_of_line_member.inner_template_params, func_ref);
+					if (declaration_id.has_value()) {
+						out_of_line_member.template_decl_id = *declaration_id;
+					}
+				}
+
+				gTemplateRegistry.registerOutOfLineMember(QualifiedIdentifier::fromQualifiedName(nested_qualified_class_name, gSymbolTable.get_current_namespace_handle()),
 					std::move(out_of_line_member));
 
-				FLASH_LOG(Templates, Trace, "Registered nested template out-of-line member: ",
-						  nested_qualified_class_name, "::", nested_func_name_token.value(),
-						  " (outer params: ", template_param_nodes.size(),
-						  ", inner params: ", inner_template_params.size(), ")");
+				FLASH_LOG(Templates, Trace, "Registered nested template out-of-line member: ", nested_qualified_class_name, "::", nested_func_name_token.value(),
+					" (outer params: ", template_param_nodes.size(), ", inner params: ", inner_template_params.size(), ")");
 
 				discard_saved_token(nested_declaration_start);
 				cleanup_template_state();

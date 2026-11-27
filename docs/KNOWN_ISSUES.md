@@ -210,24 +210,41 @@ supported member-partial materialization records it explicitly; the inference is
 kept only for declarations with no such producer and must be replaced when one
 appears rather than extended with a spelling heuristic.
 
-## Out-of-line member function template definitions publish no TemplateDeclId
+## Out-of-line member function template identity has unresolved shapes
 
-An in-class member function template declaration and its in-class definition
-share one `TemplateDeclId` selected by owner, spelling, template parameter shape,
-signature shape, and equivalent constraints. An out-of-line definition of the
-same member template is stored as an `OutOfLineMemberFunction` and carries no
-`TemplateDeclId`, so the table has no second identity to merge and the
-out-of-line function node's own type-parameter references are not stamped with
-the declaration's identity.
-Instantiation still resolves through the in-class declaration and the definition
-keeps working. A consumer that needs the out-of-line node's canonical signature
-must first resolve its pattern owner, match the in-class declaration with the
-same structural rule, and stamp the node with that declaration's identity.
+An out-of-line definition of a member function template adopts the matching
+in-class declaration's `TemplateDeclId` when the definition's pattern owner
+resolves to a class template that has a published in-class declaration, the
+definition carries the function's own template head, and that declaration
+matches by owner, simple name, template parameter shape, function signature
+shape, and equivalent constraints. The definition's return and parameter
+type-parameter references carry that id and position.
+
+The following shapes remain unmerged and fail closed: the definition keeps no
+`TemplateDeclId`, and instantiation continues to attach through the in-class
+declaration's first-use path.
+
+- The out-of-line scanner does not parse a trailing `requires`-clause, so a
+  declaration/definition pair constrained only by that clause cannot prove
+  constraint equivalence. Concept constraints on the template parameters
+  themselves are parsed and do participate.
+- In the three-head form
+  `template<class T> template<class U> template<class V> V Owner<T>::Box<U>::f(V)`
+  the record stores the intervening member class's template head as its own
+  parameters, so the function's own parameter shape is unavailable and the
+  definition stays unmerged.
+- An out-of-line member function template of a non-template class has no
+  registered class-template pattern owner, so this resolution cannot reach its
+  in-class declaration.
+- The class-head check is lexical and conservative. A primary definition whose
+  class head spells a parameter pack (`C<Ts...>`) declines identity, and
+  partial-specialization heads such as `C<T*>`, `C<T&>`, `C<const T>`, and
+  `C<T::type>` decline so they cannot adopt the primary owner's declaration.
 
 Constrained redeclarations whose constraint formulas
-`compareMemberTemplateConstraints` cannot build fail closed and remain distinct,
-so such a declaration and definition can still publish two ids. Extending the
-formula builder is required before those shapes can merge.
+`compareMemberTemplateConstraints` cannot build also fail closed and remain
+distinct. Extending the formula builder is required before those shapes can
+merge.
 
 ## Nominal import gaps are publication gaps, not importer gaps
 

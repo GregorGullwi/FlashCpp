@@ -4,7 +4,6 @@
 #include "FrontendContext.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
-#include "TemplateConstraintSubsumption.h"
 #include "TemplateFunctionSignatureShape.h"
 #include "TypeTraitEvaluator.h"
 
@@ -24,36 +23,6 @@ TypeIndex makeConstantValueTypeIndex(TypeCategory category, TypeIndex type_index
 		return native_index.withCategory(resolved_category);
 	}
 	return TypeIndex{0, resolved_category};
-}
-
-bool functionTemplateHasConstraints(const TemplateFunctionDeclarationNode& template_decl) {
-	if (template_decl.has_requires_clause()) {
-		return true;
-	}
-	for (const TemplateParameterNode& parameter : template_decl.template_parameters()) {
-		if (parameter.has_concept_constraint()) {
-			return true;
-		}
-	}
-	return false;
-}
-
-// Redeclarations of one function template must carry equivalent constraints.
-// Unconstrained spellings are equivalent; a constrained and an unconstrained
-// spelling never are. A constrained pair whose formulas cannot be built stays
-// distinct rather than guessing.
-bool functionTemplateConstraintsAreEquivalent(const TemplateFunctionDeclarationNode& lhs, const TemplateFunctionDeclarationNode& rhs) {
-	const bool lhs_constrained = functionTemplateHasConstraints(lhs);
-	const bool rhs_constrained = functionTemplateHasConstraints(rhs);
-	if (!lhs_constrained && !rhs_constrained) {
-		return true;
-	}
-	if (lhs_constrained != rhs_constrained) {
-		return false;
-	}
-	const FlashCpp::detail::ConstraintSubsumptionOrdering ordering = FlashCpp::detail::compareMemberTemplateConstraints(
-		requireFrontendContext().canonicalTypes(), lhs, rhs);
-	return ordering == FlashCpp::detail::ConstraintSubsumptionOrdering::Equivalent;
 }
 
 // Publish a member function-template when its immediately enclosing class has

@@ -77,6 +77,10 @@ struct OutOfLineMemberFunction {
 	TemplateParamNameVector inner_template_param_names;
 	TemplateDefinitionLookupContext definition_lookup_context; // Definition-context lookup boundary for two-phase lookup
 	const StructDeclarationNode* pattern_owner_struct_node = nullptr;
+	// Published identity of the in-class member template declaration this
+	// definition redeclares. Empty when no matching declaration was resolved;
+	// instantiation then keeps its existing first-use behaviour.
+	TemplateDeclId template_decl_id{};
 	// Scanner/definition facts; see OutOfLineMemberFunctionFlags.
 	OutOfLineMemberFunctionFlags flags = OutOfLineMemberFunctionFlags::None;
 };
