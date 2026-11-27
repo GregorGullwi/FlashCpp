@@ -6831,6 +6831,124 @@ int main() {
 		CHECK(enum_tail_plan->rank == ConversionRank::ExactMatch);
 	}
 
+	TEST_CASE("Conversion function template identities key the deduced argument list") {
+		FrontendContext context;
+		CanonicalTypeTable& table = context.canonicalTypes();
+		const TemplateDeclId conversion_template{91001};
+		const TemplateDeclId other_conversion_template{91002};
+		const TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		const TypeSpecifierNode long_type(TypeCategory::LongLong, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		const TemplateTypeArg int_argument(int_type);
+		const TemplateTypeArg long_argument(long_type);
+		const TemplateTypeArg first_count = TemplateTypeArg::makeValue(1, TypeCategory::Int);
+		const TemplateTypeArg second_count = TemplateTypeArg::makeValue(2, TypeCategory::Int);
+		const std::array<TemplateTypeArg, 2> specialization{int_argument, first_count};
+		const std::array<TemplateTypeArg, 2> same_specialization{int_argument, first_count};
+		const std::array<TemplateTypeArg, 2> other_type_specialization{long_argument, first_count};
+		const std::array<TemplateTypeArg, 2> other_value_specialization{int_argument, second_count};
+
+		const std::optional<TypeId> specialization_key =
+			tryBuildCanonicalTemplateSpecializationKey(table, conversion_template, specialization);
+		REQUIRE(specialization_key.has_value());
+		CHECK(tryBuildCanonicalTemplateSpecializationKey(table, conversion_template, same_specialization) == specialization_key);
+		const std::optional<TypeId> other_type_key =
+			tryBuildCanonicalTemplateSpecializationKey(table, conversion_template, other_type_specialization);
+		REQUIRE(other_type_key.has_value());
+		const std::optional<TypeId> other_value_key =
+			tryBuildCanonicalTemplateSpecializationKey(table, conversion_template, other_value_specialization);
+		REQUIRE(other_value_key.has_value());
+		const std::optional<TypeId> other_template_key =
+			tryBuildCanonicalTemplateSpecializationKey(table, other_conversion_template, specialization);
+		REQUIRE(other_template_key.has_value());
+		CHECK(*other_type_key != *specialization_key);
+		CHECK(*other_value_key != *specialization_key);
+		CHECK(*other_value_key != *other_type_key);
+		CHECK(*other_template_key != *specialization_key);
+
+		// The specialization key never consults the instantiated return type, so
+		// two specializations that happen to return the same type stay distinct.
+		UserDefinedConversionOperatorSelection shared_selection;
+		shared_selection.template_specialization = *specialization_key;
+		shared_selection.trailing_standard_rank = ConversionRank::ExactMatch;
+		const UserDefinedConversionIdentity shared_identity = makeUserDefinedConversionFunctionIdentity(shared_selection);
+		CHECK(shared_identity.kind == UserDefinedConversionIdentity::Kind::ConversionFunctionTemplate);
+		CHECK(sameUserDefinedConversionIdentity(shared_identity, makeUserDefinedConversionFunctionIdentity(shared_selection)));
+
+		UserDefinedConversionOperatorSelection distinct_selection = shared_selection;
+		distinct_selection.template_specialization = *other_type_key;
+		distinct_selection.trailing_standard_rank = ConversionRank::Conversion;
+		const UserDefinedConversionIdentity distinct_identity = makeUserDefinedConversionFunctionIdentity(distinct_selection);
+		CHECK(distinct_identity.kind == UserDefinedConversionIdentity::Kind::ConversionFunctionTemplate);
+		CHECK_FALSE(sameUserDefinedConversionIdentity(shared_identity, distinct_identity));
+
+		// One shared specialization lets the second standard conversion sequences
+		// order; distinct specializations remain indistinguishable.
+		UserDefinedConversionOperatorSelection shared_tail_selection = shared_selection;
+		shared_tail_selection.trailing_standard_rank = ConversionRank::Conversion;
+		const ConversionPlan exact_plan = makeUserDefinedConversionFunctionPlan(shared_selection);
+		const ConversionPlan conversion_plan = makeUserDefinedConversionFunctionPlan(shared_tail_selection);
+		CHECK(exact_plan.trailing_standard_rank == ConversionRank::ExactMatch);
+		CHECK(conversion_plan.trailing_standard_rank == ConversionRank::Conversion);
+		ArgumentConversionInfo exact_info{exact_plan.rank, nullptr, true, exact_plan.trailing_standard_rank};
+		exact_info.user_defined_identity = exact_plan.user_defined_identity;
+		ArgumentConversionInfo conversion_info{conversion_plan.rank, nullptr, true, conversion_plan.trailing_standard_rank};
+		conversion_info.user_defined_identity = conversion_plan.user_defined_identity;
+		CHECK(compareArgumentConversionInfo(int_type, exact_info, conversion_info) < 0);
+		const ConversionPlan distinct_plan = makeUserDefinedConversionFunctionPlan(distinct_selection);
+		ArgumentConversionInfo distinct_info{distinct_plan.rank, nullptr, true, distinct_plan.trailing_standard_rank};
+		distinct_info.user_defined_identity = distinct_plan.user_defined_identity;
+		CHECK(compareArgumentConversionInfo(int_type, exact_info, distinct_info) == 0);
+
+		// A selection with no recoverable key keeps no identity and no standard
+		// tail, so it stays unordered instead of inventing an ordering.
+		UserDefinedConversionOperatorSelection unkeyed_selection;
+		unkeyed_selection.trailing_standard_rank = ConversionRank::Conversion;
+		CHECK_FALSE(hasUserDefinedConversionIdentity(makeUserDefinedConversionFunctionIdentity(unkeyed_selection)));
+		const ConversionPlan unkeyed_plan = makeUserDefinedConversionFunctionPlan(unkeyed_selection);
+		CHECK_FALSE(hasUserDefinedConversionIdentity(unkeyed_plan.user_defined_identity));
+		CHECK(unkeyed_plan.trailing_standard_rank == ConversionRank::NoMatch);
+	}
+
+	TEST_CASE("Conversion function template selections key each deduced specialization") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		FrontendContext context;
+		CompileContext compile_context;
+		compile_context.setInputFile("conversion_template_specialization_identity.cpp");
+		Lexer lexer("struct ConversionSource { template<class T> operator T() const { return T{}; } };");
+		SemanticAnalysis sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, sema);
+		REQUIRE(!parser.parse().is_error());
+		const TypeInfo* source_info = findTypeByName(StringTable::getOrInternStringHandle("ConversionSource"));
+		REQUIRE(source_info != nullptr);
+		TypeSpecifierNode source_type(TypeCategory::Struct, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+		source_type.set_type_index(source_info->registeredTypeIndex());
+		tryBindPublishedTypeEntity(source_type);
+		REQUIRE(source_type.has_type_entity());
+		const TypeSpecifierNode int_target(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		const TypeSpecifierNode long_target(TypeCategory::LongLong, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		const ASTNode argument = ASTNode::emplace_node<ExpressionNode>(
+			IdentifierNode(Token(Token::Type::Identifier, std::string_view("source"), 0, 0, 0)));
+
+		const ArgumentConversionInfo int_conversion = sema.buildCallArgumentConversion(source_type, int_target, &argument);
+		REQUIRE(int_conversion.is_valid);
+		CHECK(int_conversion.rank == ConversionRank::UserDefined);
+		CHECK(int_conversion.user_defined_identity.kind == UserDefinedConversionIdentity::Kind::ConversionFunctionTemplate);
+		const ArgumentConversionInfo int_conversion_again = sema.buildCallArgumentConversion(source_type, int_target, &argument);
+		REQUIRE(int_conversion_again.is_valid);
+		CHECK(sameUserDefinedConversionIdentity(int_conversion, int_conversion_again));
+
+		// A different target deduces a different T and therefore a different
+		// specialization of the one conversion function template.
+		const ArgumentConversionInfo long_conversion = sema.buildCallArgumentConversion(source_type, long_target, &argument);
+		REQUIRE(long_conversion.is_valid);
+		CHECK(long_conversion.rank == ConversionRank::UserDefined);
+		CHECK(long_conversion.user_defined_identity.kind == UserDefinedConversionIdentity::Kind::ConversionFunctionTemplate);
+		CHECK_FALSE(sameUserDefinedConversionIdentity(int_conversion, long_conversion));
+	}
+
 	TEST_CASE("Sema records reference-qualified conversion operator selection") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

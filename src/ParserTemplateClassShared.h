@@ -273,6 +273,41 @@ inline std::optional<TypeId> tryImportCanonicalTemplateTypeArgument(CanonicalTyp
 	return tryImportSupportedCanonical(table, syntax);
 }
 
+// Numeric identity for one specialization of a published template: the template
+// declaration plus its interned canonical argument list. Neither component is a
+// spelling or an AST address, and the result is interned, so two specializations
+// cannot share the key unless both the declaration and every argument match. The
+// canonical node is used only as this content key: it is never materialized as a
+// class, substituted, or laid out. An argument without canonical identity leaves
+// the specialization unkeyed instead of falling back to a lossy key.
+inline std::optional<TypeId> tryBuildCanonicalTemplateSpecializationKey(CanonicalTypeTable& table, TemplateDeclId primary,
+	std::span<const TemplateTypeArg> arguments) {
+	if (!primary) {
+		return std::nullopt;
+	}
+	std::vector<CanonicalTemplateArgument> canonical_arguments;
+	canonical_arguments.reserve(arguments.size());
+	for (const TemplateTypeArg& argument : arguments) {
+		if (argument.is_pack || argument.is_dependent || argument.is_template_template_arg) {
+			return std::nullopt;
+		}
+		if (argument.is_value) {
+			const std::optional<TypeId> value = tryImportCanonicalValue(table, argument.valueIdentity());
+			if (!value.has_value()) {
+				return std::nullopt;
+			}
+			canonical_arguments.push_back(CanonicalTemplateArgument::makeValue(*value));
+			continue;
+		}
+		const std::optional<TypeId> type = tryImportCanonicalTemplateTypeArgument(table, argument);
+		if (!type.has_value()) {
+			return std::nullopt;
+		}
+		canonical_arguments.push_back(CanonicalTemplateArgument::makeType(*type));
+	}
+	return table.templateSpecialization(primary, canonical_arguments);
+}
+
 // A bare function type argument (`R(int)`) keeps the return type on the
 // specifier and its parameter list in the cold signature; function pointers and
 // member pointers carry a declarator shape mapping to another path. A reference

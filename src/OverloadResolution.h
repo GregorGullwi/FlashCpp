@@ -95,9 +95,10 @@ struct UserDefinedConversionIdentity {
 	TypeId owner{};
 	// Member-function ordinal or constructor index inside owner's published schema.
 	uint32_t ordinal = kInvalidUserDefinedConversionOrdinal;
-	// Conversion function template and the return type its specialization instantiated.
-	TemplateDeclId template_decl{};
-	TypeId template_return_type{};
+	// Interned key of one conversion function template specialization: the
+	// published template declaration plus its canonical deduced arguments. It is
+	// not a type to substitute or lay out; only equality of the key is used.
+	TypeId template_specialization{};
 };
 
 inline bool hasUserDefinedConversionIdentity(const UserDefinedConversionIdentity& identity) {
@@ -109,7 +110,7 @@ inline bool sameUserDefinedConversionIdentity(const UserDefinedConversionIdentit
 		return false;
 	}
 	if (lhs.kind == UserDefinedConversionIdentity::Kind::ConversionFunctionTemplate) {
-		return lhs.template_decl == rhs.template_decl && lhs.template_return_type == rhs.template_return_type;
+		return lhs.template_specialization == rhs.template_specialization;
 	}
 	return lhs.owner == rhs.owner && lhs.ordinal == rhs.ordinal;
 }
@@ -1094,6 +1095,10 @@ struct UserDefinedConversionOperatorSelection {
 	// Ordinal of the selected member in its declaring class's published
 	// member-function schema; the numeric identity of that conversion function.
 	uint32_t member_ordinal = kInvalidUserDefinedConversionOrdinal;
+	// Interned canonical key of the conversion function template specialization:
+	// template declaration plus deduced arguments. Empty when the selection has
+	// no recoverable specialization key.
+	TypeId template_specialization{};
 	StandardConversionKind trailing_standard_kind = StandardConversionKind::None;
 	ConversionRank trailing_standard_rank = ConversionRank::NoMatch;
 	CVQualifier member_cv_qualifier = CVQualifier::None;
@@ -1116,18 +1121,16 @@ inline bool canonicalConversionOperatorAllowsValueCategory(ReferenceQualifier re
 }
 
 // A conversion function is identified by the member-function ordinal its
-// declaring class published, or by its template plus the return type the
-// specialization instantiated. A selection with neither keeps no identity and
-// therefore no standard tail: the sequence stays unordered instead of being
-// ranked against a conversion it may not actually share.
-inline UserDefinedConversionIdentity makeUserDefinedConversionFunctionIdentity(
-	const UserDefinedConversionOperatorSelection& selection, TypeId template_return_type) {
+// declaring class published, or by its template specialization key. A selection
+// with neither keeps no identity and therefore no standard tail: the sequence
+// stays unordered instead of being ranked against a conversion it may not
+// actually share.
+inline UserDefinedConversionIdentity makeUserDefinedConversionFunctionIdentity(const UserDefinedConversionOperatorSelection& selection) {
 	UserDefinedConversionIdentity identity;
-	if (selection.conversion_template != nullptr) {
-		if (selection.conversion_template->has_template_decl_id() && template_return_type) {
+	if (selection.conversion_template != nullptr || selection.template_specialization) {
+		if (selection.template_specialization) {
 			identity.kind = UserDefinedConversionIdentity::Kind::ConversionFunctionTemplate;
-			identity.template_decl = selection.conversion_template->template_decl_id();
-			identity.template_return_type = template_return_type;
+			identity.template_specialization = selection.template_specialization;
 		}
 		return identity;
 	}
@@ -1142,12 +1145,12 @@ inline UserDefinedConversionIdentity makeUserDefinedConversionFunctionIdentity(
 // A selected conversion function carries the standard tail from its result to
 // the destination as well as the function identity that tail may be compared
 // under. Both travel on the plan so [over.ics.rank]/3.3 can tell a shared
-// conversion function from two different ones. Conversion function templates
-// only reach this path through their instantiated declaration, which publishes
-// no specialization identity, so those sequences stay unordered here.
+// conversion function from two different ones. A conversion function template
+// specialization publishes its interned declaration-plus-arguments key, and a
+// selection without that key stays unordered here.
 inline ConversionPlan makeUserDefinedConversionFunctionPlan(const UserDefinedConversionOperatorSelection& selection) {
 	ConversionPlan plan{ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
-	plan.user_defined_identity = makeUserDefinedConversionFunctionIdentity(selection, TypeId{});
+	plan.user_defined_identity = makeUserDefinedConversionFunctionIdentity(selection);
 	if (hasUserDefinedConversionIdentity(plan.user_defined_identity)) {
 		plan.trailing_standard_rank = selection.trailing_standard_rank;
 	}
