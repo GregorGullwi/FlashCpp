@@ -10,8 +10,8 @@ only in [KNOWN_ISSUES](KNOWN_ISSUES.md); link there instead of restating them.
 ## Next 3A action
 
 **Make `TypeId` the conversion currency** (Remaining 3A work item 1). The
-next conversion slice is
-[conversion-template discovery in nested classes of class-template specializations](KNOWN_ISSUES.md#remaining-conversion-function-template-cases).
+remaining conversion-template slices are tracked in
+[known issues](KNOWN_ISSUES.md#remaining-conversion-function-template-cases).
 The next callable-pattern slice is
 [deduction and publication for two pointer levels](KNOWN_ISSUES.md#partial-patterns-without-a-canonical-environment-still-resolve-their-record-by-spelling)
 (item 4). The flat-consumer migration in item 2 remains independent. The
@@ -461,7 +461,14 @@ remaining pattern schemas by identity, and remove the name fallback.
    templates key their identity by `TemplateDeclId` and canonical deduced
    arguments, with the declaring-class specialization included for cloned
    members. Selection distinguishes different declaring specializations even
-   when the member arguments match.
+   when the member arguments match. Conversion templates declared in a nested
+   class instantiated from a primary class template use the same selector and
+   key, with the nested record carrying its enclosing specialization. Their
+   definitions replay through member-template instantiation.
+   `test_conversion_function_template_nested_specialization_ret0.cpp` checks
+   writes through converted references in two outer specializations. The native
+   identity check verifies distinct conversion keys for those nested owners
+   with the same member declaration and deduced `int` argument.
    `test_conversion_shared_converting_constructor_second_sequence_ret0.cpp` pins
    the shared-constructor winner, while
    `test_conversion_distinct_conversion_functions_ambiguous_e1701.cpp` and

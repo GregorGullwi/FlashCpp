@@ -688,12 +688,9 @@ before they can be ranked.
   without a concrete record must stay excluded.
 - Support conversion-template results whose dependent array bounds or packs are
   not concrete.
-- Collect conversion function templates declared in a class nested inside a
-  class-template specialization. `Outer<T>::Inner` does not contribute a
-  conversion candidate for `Outer<int>::Inner`, and a generic `operator U&()`
-  form reaches the lazy member path's `InternalError`; the same nested class
-  outside a class template works. The declaring-class key composition would
-  cover such a member once candidate collection reaches it.
+- Qualified lookup of `Outer<int>::Inner` can fail when `Inner` is declared in
+  an explicit full specialization of `Outer`. The parser reports `Unknown
+  nested type` before it can collect conversion candidates.
 - Seed built-in subscript candidates from conversion templates whose return
   pointer or array-reference shape still depends on the template parameters.
 

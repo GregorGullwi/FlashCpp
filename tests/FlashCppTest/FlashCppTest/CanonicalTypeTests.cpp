@@ -11806,6 +11806,62 @@ TEST_CASE("Canonical constructor selection reports reason codes across the polic
 	CHECK(existence.status == CanonicalConstructorSelectionStatus::Selected);
 }
 
+TEST_CASE("Nested conversion function templates retain their declaring specialization identity") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear();
+	gConceptRegistry.clear();
+	gSymbolTable.clear();
+	FrontendContext frontend;
+	CompileContext compile_context;
+	compile_context.setInputFile("nested_conversion_template_identity.cpp");
+	Lexer lexer(R"(
+template<class T> struct Outer {
+	struct Inner {
+		int value;
+		template<class U> operator U&() { return value; }
+	};
+};
+Outer<int>::Inner narrow;
+Outer<long long>::Inner wide;
+)");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	TypeSpecifierNode target(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	target.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	const auto conversion_identity = [&](std::string_view name) {
+		const auto object = gSymbolTable.lookup(name);
+		REQUIRE(object.has_value());
+		const DeclarationNode* declaration = get_decl_from_symbol(*object);
+		REQUIRE(declaration != nullptr);
+		const TypeSpecifierNode& source = declaration->type_specifier_node();
+		const TypeInfo* owner = tryGetTypeInfo(source.type_index());
+		REQUIRE(owner != nullptr);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *owner);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		REQUIRE(table.node(imported.type).kind == CanonicalTypeKind::NestedRecord);
+		const ASTNode argument = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(declaration->identifier_token()));
+		const ArgumentConversionInfo conversion = sema.buildCallArgumentConversion(source, target, &argument);
+		REQUIRE(conversion.is_valid);
+		const UserDefinedConversionIdentity identity = conversion.user_defined_identity;
+		REQUIRE(identity.kind == UserDefinedConversionIdentity::Kind::ConversionFunctionTemplate);
+		CHECK(table.templateSpecializationOwner(identity.template_specialization) == imported.type);
+		return identity;
+	};
+	const UserDefinedConversionIdentity narrow = conversion_identity("narrow");
+	const UserDefinedConversionIdentity wide = conversion_identity("wide");
+	CHECK(sameUserDefinedConversionIdentity(narrow, conversion_identity("narrow")));
+	CHECK_FALSE(sameUserDefinedConversionIdentity(narrow, wide));
+	CHECK(table.templateSpecializationDecl(narrow.template_specialization) == table.templateSpecializationDecl(wide.template_specialization));
+	const TypeId arguments = table.templateSpecializationArguments(narrow.template_specialization);
+	CHECK(arguments == table.templateSpecializationArguments(wide.template_specialization));
+	CHECK(table.templateArgumentType(arguments) == table.builtin(CanonicalBuiltinKind::Int));
+	CHECK_FALSE(table.templateArgumentNext(arguments));
+}
+
 TEST_CASE("Compatibility constructor selections share the canonical schema identity") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

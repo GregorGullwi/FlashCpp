@@ -2726,10 +2726,6 @@ LazyMemberFunctionInfo buildLazyNestedMemberFunctionInfo(
 		appendLazyTemplateSequence(
 			lazy_mem_info.template_params,
 			mem_func.function_declaration.as<ConstructorDeclarationNode>().template_parameters());
-	} else if (mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
-		appendLazyTemplateSequence(
-			lazy_mem_info.template_params,
-			mem_func.function_declaration.as<TemplateFunctionDeclarationNode>().template_parameters());
 	}
 	appendLazyTemplateSequence(lazy_mem_info.template_args, template_args);
 	lazy_mem_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
@@ -2827,6 +2823,7 @@ inline void registerNestedMemberFunctionsLazyEntries(
 	const TArgs& template_args,
 	const TemplateEnvironmentSnapshot* outer_parent_snapshot,
 	bool should_register_lazy_members) {
+	// Function templates stay in member-template lookup for deduction and specialization.
 	for (const StructMemberFunctionDecl& mem_func : nested_struct.member_functions()) {
 		if (mem_func.is_constructor || mem_func.is_destructor) {
 			StringHandle member_function_name{};
@@ -2850,7 +2847,7 @@ inline void registerNestedMemberFunctionsLazyEntries(
 			if (should_register_lazy_members) {
 				LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
 			}
-		} else if (const FunctionDeclarationNode* func_decl = get_function_decl_node(mem_func.function_declaration)) {
+		} else if (const auto* func_decl = mem_func.function_declaration.get_if<FunctionDeclarationNode>()) {
 			const DeclarationNode& decl = func_decl->decl_node();
 
 			auto lazy_mem_info = buildLazyNestedMemberFunctionInfo(
