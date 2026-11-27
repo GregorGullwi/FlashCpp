@@ -1081,9 +1081,13 @@ ParseResult Parser::parse_type_specifier() {
 	}
 
 	// Leading cv-qualifiers also apply to intrinsic type specifiers such as
-	// `const decltype(expr)` and `const __underlying_type(E)`.
-	if (peek() == "decltype"_tok ||
-		(!peek().is_eof() && (peek_info().value() == "__typeof__" || peek_info().value() == "__typeof"))) {
+	// `const decltype(expr)` and `const __underlying_type(E)`. A `long`, `signed`
+	// or `unsigned` already fixes the type, so a following decltype-specifier is
+	// the nested-name-specifier owner of a member-pointer ptr-operator
+	// (`long decltype(c)::*`), not another type specifier.
+	const bool has_non_cv_type_specifier = long_count > 0 || qualifier != TypeQualifier::None;
+	if (!has_non_cv_type_specifier && (peek() == "decltype"_tok || (!peek().is_eof() && (peek_info().value() == "__typeof__" || peek_info().value() == "__typeof"
+		)))) {
 		return applyLeadingCvToParsedType(parse_decltype_specifier(), cv_qualifier);
 	}
 	if (!peek().is_eof() && peek_info().type() == Token::Type::Identifier &&

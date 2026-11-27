@@ -1731,23 +1731,6 @@ StringHandle Parser::NestedNameSpecifierParse::ownerSpelling() const {
 
 Parser::NestedNameSpecifierParse Parser::parseNestedNameSpecifier(std::optional<Token> already_consumed_head) {
 	NestedNameSpecifierParse parsed;
-	NestedNameSpecifierSegment first;
-	if (already_consumed_head.has_value()) {
-		first.identifier = *already_consumed_head;
-		first.name = first.identifier.handle();
-	} else {
-		if (peek() == "::"_tok) {
-			parsed.has_leading_global = true;
-			advance();
-		}
-		if (!peek().is_identifier()) {
-			return parsed;
-		}
-		first.identifier = peek_info();
-		first.name = first.identifier.handle();
-		advance();
-	}
-
 	// Consume the template-id arguments and the trailing `::` of an owner
 	// segment. A terminal name keeps its `<...>` tokens unconsumed so the
 	// function or variable parser still sees them; only a component that is
@@ -1755,9 +1738,11 @@ Parser::NestedNameSpecifierParse Parser::parseNestedNameSpecifier(std::optional<
 	auto consume_segment_suffix = [&](NestedNameSpecifierSegment& segment) {
 		if (peek() == "<"_tok) {
 			SaveHandle argument_start = save_token_position();
-			std::optional<TemplateArgumentVector> arguments = parse_explicit_template_arguments();
+			std::vector<ASTNode> argument_syntax_nodes;
+			std::optional<TemplateArgumentVector> arguments = parse_explicit_template_arguments(&argument_syntax_nodes);
 			if (arguments.has_value() && peek() == "::"_tok) {
 				segment.template_arguments = std::move(*arguments);
+				segment.template_argument_syntax_nodes = std::move(argument_syntax_nodes);
 				segment.has_template_arguments = true;
 				discard_saved_token(argument_start);
 				advance();
@@ -1773,15 +1758,82 @@ Parser::NestedNameSpecifierParse Parser::parseNestedNameSpecifier(std::optional<
 		}
 		return false;
 	};
+	// [expr.prim.id.qual]: `decltype-specifier ::` is one component of a
+	// nested-name-specifier. The type it denotes supplies the component spelling
+	// and, through the owner hook, the class identity. A dependent or otherwise
+	// unresolved decltype type cannot name an owner here, so it is rejected
+	// instead of guessed.
+	auto consume_decltype_segment = [&](NestedNameSpecifierSegment& segment) {
+		SaveHandle decltype_start = save_token_position();
+		const Token decltype_token = peek_info();
+		const ParseResult decltype_result = parse_decltype_specifier();
+		if (decltype_result.is_error() || !decltype_result.node().has_value() || !decltype_result.node()->is<TypeSpecifierNode>()) {
+			restore_token_position(decltype_start);
+			discard_saved_token(decltype_start);
+			return false;
+		}
+		const TypeSpecifierNode& spec = decltype_result.node()->as<TypeSpecifierNode>();
+		const TypeInfo* type_info = tryGetTypeInfo(spec.type_index());
+		if (spec.category() == TypeCategory::DeclTypeAuto || type_info == nullptr ||
+			type_info->isDependentPlaceholder() || !type_info->name().isValid() || peek() != "::"_tok) {
+			restore_token_position(decltype_start);
+			discard_saved_token(decltype_start);
+			return false;
+		}
+		segment.identifier = decltype_token;
+		segment.name = type_info->name();
+		segment.is_decltype_specifier = true;
+		segment.decltype_specifier = *decltype_result.node();
+		discard_saved_token(decltype_start);
+		advance();
+		return true;
+	};
 
-	if (!consume_segment_suffix(first)) {
-		parsed.terminal = first.identifier;
-		parsed.has_terminal = true;
-		return parsed;
+	NestedNameSpecifierSegment first;
+	if (already_consumed_head.has_value()) {
+		first.identifier = *already_consumed_head;
+		first.name = first.identifier.handle();
+		if (!consume_segment_suffix(first)) {
+			parsed.terminal = first.identifier;
+			parsed.has_terminal = true;
+			return parsed;
+		}
+		parsed.segments.push_back(std::move(first));
+	} else {
+		if (peek() == "::"_tok) {
+			parsed.has_leading_global = true;
+			advance();
+		}
+		if (startsDecltypeSpecifier()) {
+			if (!consume_decltype_segment(first)) {
+				return parsed;
+			}
+			parsed.segments.push_back(std::move(first));
+		} else {
+			if (!peek().is_identifier()) {
+				return parsed;
+			}
+			first.identifier = peek_info();
+			first.name = first.identifier.handle();
+			advance();
+			if (!consume_segment_suffix(first)) {
+				parsed.terminal = first.identifier;
+				parsed.has_terminal = true;
+				return parsed;
+			}
+			parsed.segments.push_back(std::move(first));
+		}
 	}
-	parsed.segments.push_back(std::move(first));
 
 	while (true) {
+		if (startsDecltypeSpecifier()) {
+			NestedNameSpecifierSegment segment;
+			if (!consume_decltype_segment(segment)) {
+				return parsed;
+			}
+			parsed.segments.push_back(std::move(segment));
+			continue;
+		}
 		bool has_template_keyword = false;
 		if (peek() == "template"_tok) {
 			has_template_keyword = true;
@@ -1805,14 +1857,34 @@ Parser::NestedNameSpecifierParse Parser::parseNestedNameSpecifier(std::optional<
 	}
 }
 
+bool Parser::startsDecltypeSpecifier() const {
+	if (peek() == "decltype"_tok) {
+		return true;
+	}
+	if (peek().is_eof()) {
+		return false;
+	}
+	const std::string_view value = peek_info().value();
+	return value == "__typeof__" || value == "__typeof";
+}
+
 StringHandle Parser::resolveNestedNameSpecifierOwner(const NestedNameSpecifierParse& parsed) {
+	return resolveNestedNameSpecifierOwnerWithMaterialization(parsed, nullptr);
+}
+
+StringHandle Parser::resolveNestedNameSpecifierOwnerWithMaterialization(const NestedNameSpecifierParse& parsed,
+	AliasTemplateMaterializationResult* last_materialization) {
+	if (last_materialization != nullptr) {
+		*last_materialization = {};
+	}
 	const bool has_template_id_segment = std::ranges::any_of(parsed.segments,
 		[](const NestedNameSpecifierSegment& segment) { return segment.has_template_arguments; });
 	if (!has_template_id_segment) {
 		return parsed.ownerSpelling();
 	}
 	StringHandle owner{};
-	for (const NestedNameSpecifierSegment& segment : parsed.segments) {
+	for (size_t index = 0; index < parsed.segments.size(); ++index) {
+		const NestedNameSpecifierSegment& segment = parsed.segments[index];
 		StringHandle qualified_name = segment.name;
 		if (owner.isValid()) {
 			qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(owner).append("::"sv).append(segment.name).commit());
@@ -1836,6 +1908,9 @@ StringHandle Parser::resolveNestedNameSpecifierOwner(const NestedNameSpecifierPa
 			fallback_name.view(), segment.template_arguments);
 		StringHandle canonical_name = materialized.canonicalNameHandle();
 		owner = canonical_name.isValid() ? canonical_name : qualified_name;
+		if (last_materialization != nullptr && index + 1 == parsed.segments.size()) {
+			*last_materialization = std::move(materialized);
+		}
 	}
 	return owner;
 }

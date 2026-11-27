@@ -1087,6 +1087,25 @@ authority from a record or `TypeInfo` at the canonical boundary or emit a
 spelling for lookup and mangling; they do not copy an owner triple from another
 specifier.
 
+## Dependent member-pointer owners the shared nested-name-specifier parse cannot resolve
+
+Member-pointer owners parse through one nested-name-specifier block, which
+also resolves a `decltype-specifier ::` component from its deduced class and
+stamps a template-id component's dependent specialization identity. Two
+dependent spellings still cannot name an owner:
+
+- `decltype-specifier ::` needs a concrete, published deduced type. A dependent
+  operand such as `template<class T> int read(T& object, int decltype(object)::*member)`
+  is rejected while the nested-name-specifier is built and reports `Expected
+  identifier token`. The next change is to retain a dependent owner record on
+  `MemberPointerOwnerParse` and resolve it during substitution.
+- A dependent qualified member-template owner parses in a parameter
+  (`Outer<T>::template Inner<U>::*`), but a `object.*member` access through that
+  parameter still reports `InvalidDataMemberPointerOperand` because the owner is
+  not substituted before the operand check. The same owner in a namespace-scope
+  variable template is claimed by the out-of-line member-definition probe and
+  reports `Expected type specifier`.
+
 ## Static-member template initializer replay still handles unresolved lookups
 
 All four static-member initializer sites (in-class primary and partial
