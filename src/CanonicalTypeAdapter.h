@@ -1193,6 +1193,55 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 	return {id, CanonicalTypeImportStatus::Supported};
 }
 
+// Apply the declarator shape a callable specifier carries to an already built
+// function type: the pointer stack (including the implicit FunctionPointer
+// pointer), cv, reference, array bounds, and [dcl.fct]/5 parameter adjustment.
+// Importers that construct the function from canonical components share this so
+// the outer shape cannot drift from `importCanonicalCallable`.
+inline TypeId shapeCanonicalCallableType(CanonicalTypeTable& table, TypeId function, const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
+	TypeId id = function;
+	if (syntax.category() == TypeCategory::FunctionPointer || !syntax.pointer_levels().empty()) {
+		// FunctionPointer with empty pointer_levels is a single pointer-to-function
+		// (int (*)(Args)): add one wrapper. Non-empty pointer_levels are the full
+		// wrapper stack around the function, including nested forms such as
+		// int (**)(Args) encoded as FunctionPointer with two levels, so do not
+		// also add a category wrap (legacy decltype aliases may carry a
+		// redundant level that would otherwise become depth 2).
+		if (syntax.pointer_levels().empty()) {
+			id = table.pointer(id);
+		} else {
+			id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
+		}
+	}
+	id = table.qualify(id, syntax.cv_qualifier());
+	if (syntax.reference_qualifier() != ReferenceQualifier::None) {
+		id = table.reference(id, syntax.reference_qualifier());
+	}
+	// A projectable flat callable shape can carry array bounds around the
+	// callable element: `int (*a[2])(int)` is an array of two function
+	// pointers. The cold signature shaped the element and any pointer wrappers;
+	// wrap the recorded bounds around it ([dcl.array]).
+	if (syntax.is_array() && !syntax.has_pointee_array_declarator()) {
+		if (!syntax.array_dimensions().empty()) {
+			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
+		}
+		if (syntax.has_unsized_outer_array_dimension()) {
+			id = table.arrayOfUnknownBound(id);
+		}
+	}
+	// [dcl.fct]/5 parameter adjustment: a function type or an array type becomes
+	// a pointer to its element/function.
+	if (context == CanonicalTypeImportContext::FunctionParameter) {
+		const CanonicalTypeNode outer = table.node(table.withoutTopLevelQualifiers(id));
+		if (outer.kind == CanonicalTypeKind::Array) {
+			id = table.pointer(outer.child);
+		} else if (outer.kind == CanonicalTypeKind::Function) {
+			id = table.pointer(id);
+		}
+	}
+	return id;
+}
+
 // Free-function and function-pointer shapes.
 inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
@@ -1239,47 +1288,7 @@ inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
 	if (imported_function.status != CanonicalTypeImportStatus::Supported) {
 		return imported_function;
 	}
-	auto id = imported_function.type;
-	if (syntax.category() == TypeCategory::FunctionPointer || !syntax.pointer_levels().empty()) {
-		// FunctionPointer with empty pointer_levels is a single pointer-to-function
-		// (int (*)(Args)): add one wrapper. Non-empty pointer_levels are the full
-		// wrapper stack around the function, including nested forms such as
-		// int (**)(Args) encoded as FunctionPointer with two levels, so do not
-		// also add a category wrap (legacy decltype aliases may carry a
-		// redundant level that would otherwise become depth 2).
-		if (syntax.pointer_levels().empty()) {
-			id = table.pointer(id);
-		} else {
-			id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
-		}
-	}
-	id = table.qualify(id, syntax.cv_qualifier());
-	if (syntax.reference_qualifier() != ReferenceQualifier::None) {
-		id = table.reference(id, syntax.reference_qualifier());
-	}
-	// A projectable flat callable shape can carry array bounds around the
-	// callable element: `int (*a[2])(int)` is an array of two function
-	// pointers. The cold signature shaped the element and any pointer wrappers;
-	// wrap the recorded bounds around it ([dcl.array]).
-	if (syntax.is_array() && !syntax.has_pointee_array_declarator()) {
-		if (!syntax.array_dimensions().empty()) {
-			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
-		}
-		if (syntax.has_unsized_outer_array_dimension()) {
-			id = table.arrayOfUnknownBound(id);
-		}
-	}
-	// [dcl.fct]/5 parameter adjustment: a function type or an array type becomes
-	// a pointer to its element/function.
-	if (context == CanonicalTypeImportContext::FunctionParameter) {
-		const CanonicalTypeNode outer = table.node(table.withoutTopLevelQualifiers(id));
-		if (outer.kind == CanonicalTypeKind::Array) {
-			id = table.pointer(outer.child);
-		} else if (outer.kind == CanonicalTypeKind::Function) {
-			id = table.pointer(id);
-		}
-	}
-	return {id, CanonicalTypeImportStatus::Supported};
+	return {shapeCanonicalCallableType(table, imported_function.type, syntax, context), CanonicalTypeImportStatus::Supported};
 }
 
 // Shared validation and shaping for opaque canonical bases. Callers own the

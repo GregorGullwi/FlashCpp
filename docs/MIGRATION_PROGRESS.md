@@ -788,12 +788,20 @@ remaining pattern schemas by identity, and remove the name fallback.
    parameter types, so partials such as `S<R(int)>` publish an environment for
    empty, concrete, and parameter-shaped parameter lists, and the pattern
    matcher compares the same signature before binding a parameter, so
-   `S<int(long)>` no longer selects `S<R(int)>`. A parameter pack in the
-   signature, a dependent noexcept expression, and callable shapes written
-   through an ordered declarator remain unsupported and stay documented. Other
-   unsupported shapes remain on that explicit name-keyed fallback. Normalize
-   requires-clause constraints and extend canonical pattern import coverage for
-   the remaining constraint and argument shapes, then remove the fallback. The
+   `S<int(long)>` no longer selects `S<R(int)>`. Plain function-pointer and
+   function-reference pattern arguments now import the canonical callable plus
+   its pointer or reference wrapper, so `S<T (*)(T)>` and `S<T (&)(T)>` publish
+   an environment instead of taking the name-keyed fallback; a different
+   signature selects another partial or the primary through the existing
+   signature comparison. A parameter pack in the signature, a dependent noexcept
+   expression, a reference-returning function type, member-pointer callables,
+   callables written through an ordered declarator, and callables with more than
+   one pointer level remain unsupported and stay documented. Alias-template
+   pattern arguments additionally fail selection because the structural matcher
+   does not expand them. Other unsupported shapes remain on that explicit
+   name-keyed fallback. Normalize requires-clause constraints and extend
+   canonical pattern import coverage for the remaining constraint and argument
+   shapes, then remove the fallback. The
    per-declaration ordinal makes colliding
    pattern spellings unique as a bridge for the fallback and registry lookups,
    but it is not semantic identity and does not satisfy the parse-order or
