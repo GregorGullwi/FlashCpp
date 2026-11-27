@@ -10,10 +10,14 @@ only in [KNOWN_ISSUES](KNOWN_ISSUES.md); link there instead of restating them.
 ## Next 3A action
 
 **Make `TypeId` the conversion currency** (Remaining 3A work item 1). The
+next conversion slice is
+[conversion-template discovery in nested classes of class-template specializations](KNOWN_ISSUES.md#remaining-conversion-function-template-cases).
+The next callable-pattern slice is
+[deduction and publication for two pointer levels](KNOWN_ISSUES.md#partial-patterns-without-a-canonical-environment-still-resolve-their-record-by-spelling)
+(item 4). The flat-consumer migration in item 2 remains independent. The
 provisional-publication slice is complete: nested callable signatures are
 candidate-owned and whole-signature canonical publication rolls back as one
-transaction. The flat-consumer migration in item 2 remains the independent
-parallel track. Type-pack materialization stays deferred to boundary 8A until 3A
+transaction. Type-pack materialization stays deferred to boundary 8A until 3A
 closes.
 
 The consolidated lvalue-marker guard in the projectable conversion planner is a
@@ -453,7 +457,11 @@ remaining pattern schemas by identity, and remove the name fallback.
    binding of the constructed prvalue. A selection made by the compatibility
    declaration bridge reports the canonical owner `TypeId` and schema index of
    that same constructor, so a constructor template that the canonical schema
-   cannot select still compares under one identity.
+   cannot select still compares under one identity. Selected conversion function
+   templates key their identity by `TemplateDeclId` and canonical deduced
+   arguments, with the declaring-class specialization included for cloned
+   members. Selection distinguishes different declaring specializations even
+   when the member arguments match.
    `test_conversion_shared_converting_constructor_second_sequence_ret0.cpp` pins
    the shared-constructor winner, while
    `test_conversion_distinct_conversion_functions_ambiguous_e1701.cpp` and
@@ -590,7 +598,7 @@ remaining pattern schemas by identity, and remove the name fallback.
      migration before the projection fields can be removed.
    - TypeId shape queries, `requireCanonicalShape`, the flat-reader gate, sampled
      import-gap telemetry, published class/enum array import, and every
-     array-extent consumer are on main. The flat-reader inventory is now 811
+     array-extent consumer are on main. The flat-reader inventory is 804
      reads across 67 files; the gate counts alias accessors and only goes down.
      `requireCanonicalShape` throws on a non-Supported import and during
      speculative parsing. Production speculative parsing is not the scratch
@@ -643,10 +651,10 @@ remaining pattern schemas by identity, and remove the name fallback.
      signature keys) now decide from canonical identity when both operands
      publish one, and keep the flat compare only for shapes with no publishable
      identity. The constexpr operator-overload compare consumes the shared
-     signature-shape compare. `equalTypeSpecifierIdentityImpl` and its
-     `hashTypeSpecifierIdentityImpl` partner still read the flat projection and
-     cannot move alone. See
-     [known issues](KNOWN_ISSUES.md#type-identity-equality-still-uses-the-flat-projection).
+     signature-shape compare. The template-expression equality and hash
+     helpers use the same publication-independent declarator and terminal
+     identity, with
+     [legacy indexes for opaque terminals](KNOWN_ISSUES.md#opaque-type-identity-terminals-still-fall-back-to-typeindex).
      Derived pointee and element reads: the flat array-element peel in
      `arrayElementType` (51 Supported calls, canonical element matched the flat
      peel) and the range-for array element peel (12 Supported calls, same match)
@@ -674,8 +682,7 @@ remaining pattern schemas by identity, and remove the name fallback.
      asks the runtime-representation query `runtime_pointer_depth()` for the
      pointer-object tests in array-to-pointer decay, integer promotion, and null
      dereference. Per-file reads are 13 in `ConstExprEvaluator_Core.cpp` and 0 in
-     `ConstExprEvaluator.h`; the inventory is 806 reads across 67 files. The
-     cast pass-through and const_cast validation now ask
+     `ConstExprEvaluator.h`. The cast pass-through and const_cast validation now ask
      `canonicalSimilarIgnoringCvAndRef`, the [expr.const.cast]/3 operand rule:
      the pointer, array, and member-pointer components must be identical, cv is
      ignored at every level, and references are stripped. Shapes the importer
@@ -743,12 +750,11 @@ remaining pattern schemas by identity, and remove the name fallback.
    `UnsupportedStaticMemberType` (1020) remains the fail-closed guard for
    canonical type families not yet imported, now pinned by
    `test_static_member_member_pointer_array_e1020.cpp`. Non-null object pointer
-   arguments now publish a target for a bare identifier, a namespace-qualified
-   variable, and a static member of a non-template class; a static member of a
-   class-template instance, a data-member address, and an array element still lack
-   declaration identity in their constexpr payload, because publication needs the
-   owning class's declaration entity and an instantiated class has no declaration
-   node. Instance entities need a key that distinguishes specialization arguments,
+   arguments publish a target for a bare identifier, a namespace-qualified
+   variable, a static member of a non-template class, and an element of a named
+   array. Class-template instance static members and data-member addresses
+   still need declaration identity in the constexpr payload. Instance entities
+   need a key that distinguishes specialization arguments,
    which is boundary 6 registry work; do not substitute spelling for it. The importer
    remains fail-closed for them until that identity exists. Structural values keep
    their non-null object pointer
@@ -793,16 +799,17 @@ remaining pattern schemas by identity, and remove the name fallback.
    its pointer or reference wrapper, so `S<T (*)(T)>` and `S<T (&)(T)>` publish
    an environment instead of taking the name-keyed fallback; a different
    signature selects another partial or the primary through the existing
-   signature comparison. A parameter pack in the signature, a dependent noexcept
-   expression, a reference-returning function type, member-pointer callables,
-   callables written through an ordered declarator, and callables with more than
-   one pointer level remain unsupported and stay documented. Alias-template
-   pattern arguments additionally fail selection because the structural matcher
-   does not expand them. Other unsupported shapes remain on that explicit
-   name-keyed fallback. Normalize requires-clause constraints and extend
+   signature comparison. Supported alias-template arguments expand by alias
+   declaration identity before registration. The structural matcher and
+   canonical importer consume the same expanded pattern, so a pointer alias
+   such as `S<Ptr<T>>` matches `S<int*>` and reads its environment-keyed record.
+   `test_partial_alias_pattern_environment_ret0.cpp` pins pointer and array
+   patterns, equivalent alias spellings, and zero name fallback. Normalize
+   requires-clause constraints and extend
    canonical pattern import coverage for the remaining constraint and argument
-   shapes, then remove the fallback. The
-   per-declaration ordinal makes colliding
+   shapes, especially the callable wrappers and alias targets in
+   [known issues](KNOWN_ISSUES.md#partial-patterns-without-a-canonical-environment-still-resolve-their-record-by-spelling),
+   then remove the fallback. The per-declaration ordinal makes colliding
    pattern spellings unique as a bridge for the fallback and registry lookups,
    but it is not semantic identity and does not satisfy the parse-order or
    string-table-order exit criteria. Moving the
@@ -835,6 +842,8 @@ remaining pattern schemas by identity, and remove the name fallback.
    That evidence also exposed `sameStructure` comparing the packed
    member-specialization owner slot numerically, which hid cross-table owner
    identity; it now compares the primary and the owner structurally.
+   The alias-pattern identity check reverses declaration and string insertion
+   order and distinguishes different alias targets, arguments, and primaries.
    Member-alias owner resolution and concrete pack argument identity now have
    the same evidence: a second table resolves the alias and interns the pack
    elements in the opposite order, the two identities compare structurally, and
@@ -868,9 +877,9 @@ These seed adjacent slices; the authoritative inventory is
   a C-style ellipsis combined with a pack are unsupported.
 - Evaluated function-template address arguments still need IR materialization of
   the selected specialization.
-- Virtual member-function addresses and multiple-inheritance member-pointer
-  adjustment are unsupported, and calling through a materialized member-function
-  pointer is unimplemented.
+- Materialized non-virtual member-function pointers lower to indirect calls
+  using the canonical owner for receiver adjustment. See the remaining
+  [address and conversion gaps](KNOWN_ISSUES.md#member-function-pointer-address-of-only-lowers-non-virtual-non-adjusted-cases).
 - Conditional array decay and builtin subscript element extraction are
   structural-only. An implicit class-template specialization's `*this` uses that
   specialization. A pointer to a nested class of that specialization is a
@@ -962,6 +971,11 @@ These seed adjacent slices; the authoritative inventory is
   MSVC retains `tryMaterializeFlatCallableForMangling` for projectable shapes.
   Full ABI conformance remains boundary 3B; preserve calling-convention identity
   while completing that audit.
+- **Pointer RTTI:** `typeid` carries the canonical pointer or member-pointer
+  `TypeId` to the ELF and COFF writers. COFF descriptors coalesce across
+  translation units. See the [RTTI plan](RTTI_IMPLEMENTATION_PLAN.md) and the
+  remaining [reference binding](KNOWN_ISSUES.md#typeid-results-cannot-be-bound-to-a-type_info-reference)
+  and [type publication](KNOWN_ISSUES.md#some-member-pointer-spellings-lose-type-identity-before-rtti-emission) gaps.
 - **Boundary 4 handoff - member-function-pointer descriptor identity:** a
   concrete member-function-pointer descriptor now reconstructs without the
   compatibility projection. `canonicalizeType` stamps the published class
@@ -977,18 +991,20 @@ These seed adjacent slices; the authoritative inventory is
   specialization and instantiation caches, and facade lookups are boundary 6;
   removing name-based partial-specialization replay and selection is boundary
   8A. Synthesized `$pattern` names are diagnostics only in all three.
+- **Out-of-line member function template identity:** a definition with a
+  resolved class-template pattern owner adopts the in-class `TemplateDeclId`
+  when the member name, template parameter shape, signature, and constraints
+  match. The definition stamps references to its own type parameters with that
+  ID and position. See the
+  [unmerged cases](KNOWN_ISSUES.md#out-of-line-member-function-template-identity-has-unresolved-shapes).
 - **Negative tests:** encode the exact expected diagnostic ID multiset in the
   filename (`_e1001.cpp`, `_e1003_e1051.cpp`); `_fail.cpp` is reserved for the
   immutable legacy inventory.
 
 ## Active findings
 
-- The top-level expression fallback can mask declaration-parse errors; see
-  [known issues](KNOWN_ISSUES.md).
-- Bit-field declarations still accept non-integral types, widths larger than the
-  declared type, and named zero-width fields; static constexpr data-member NTTP
-  arguments also fail outer specialization matching. Both are recorded in
-  [known issues](KNOWN_ISSUES.md).
+- The [top-level declaration retry](../src/Parser_Decl_FunctionOrVar.cpp) can
+  mask a function-parse failure that carries no `DiagnosticId`.
 
 ## Validation handoff
 
@@ -1106,6 +1122,15 @@ supported and zero deferred. Gate 0's Windows and ELF
 multi-translation-unit checks remain required compatibility evidence. See the
 plan for complete boundary-specific validation.
 
+Constexpr aggregate lookup walks materialized base subobjects with an explicit
+worklist and shares brace partitioning with runtime initialization. The focused
+Windows run on `9164bb81` passed the ordinary aggregate-base regression, while
+[`test_constexpr_deep_aggregate_base_member_access_ret42.cpp`](../tests/test_constexpr_deep_aggregate_base_member_access_ret42.cpp)
+hit the 120-second compiler timeout. Keep the 1,024-level case as the validation
+target. See the open
+[qualified object](KNOWN_ISSUES.md#constexpr-member-access-requires-an-unqualified-object-spelling)
+and [reference argument](KNOWN_ISSUES.md#constexpr-aggregate-reference-parameters-lose-namespace-scope-arguments) cases.
+
 For recursive-path changes, report the largest changed native stack frame and
 whether stack use stays bounded as logical depth grows; do not raise the stack
 limit to make a regression pass. Canonical traversal is iterative where noted,
@@ -1143,9 +1168,11 @@ value-initialization, `static_cast`/`reinterpret_cast`, assignment, return,
 argument passing, and conditional operands. Equality and inequality read the
 same representation over the full 64-bit value, bool conversion zero-tests
 against it, and base-to-derived member-pointer adjustment preserves it. A
-data-member-pointer expression is no longer treated as a null pointer constant
-merely because its offset is zero. Namespace-scope aggregate subobjects of
-member-pointer type remain outside this boundary and stay in `KNOWN_ISSUES.md`.
+data-member pointer designating the offset-zero member compares unequal to
+null after direct initialization. Functional casts through a member-function
+pointer alias also publish the alias's class owner for canonical identity. See
+the remaining [offset-zero alias-cast](KNOWN_ISSUES.md#offset-zero-data-member-pointer-alias-casts-fold-to-the-null-sentinel)
+and [static aggregate zero-fill](KNOWN_ISSUES.md#static-storage-aggregate-members-of-data-member-pointer-type-zero-fill-to-a-null-offset) gaps.
 
 The `.*`/`->*` right-operand check lives in sema normalisation and reports
 `InvalidDataMemberPointerOperand` at the operator before IR conversion.
