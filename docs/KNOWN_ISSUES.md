@@ -776,14 +776,22 @@ constexpr`, `inline static`, and out-of-line definition forms. Remaining gaps:
   match their reference (`undefined reference to 'N::a'`), which is a separate
   symbol-emission gap.
 
-## Constexpr member access through an aggregate base subobject
+## Constexpr member access requires an unqualified object spelling
 
-A constant aggregate that initializes a base subobject materializes the base
-value for static storage, but evaluating a member access through that base
-(`constexpr Derived d{1, 2, 3}; static_assert(d.first == 1);`) reports that the
-member was not found. Member lookup consults the object's own member bindings
-and does not descend into the base subobject values. Namespace-scope runtime
-read-back of the same object is correct.
+An object expression spelled as a qualified name, such as
+`Holder::constant.first`, reaches the generic "Complex member access expressions
+not yet supported" path even when the member is a direct member of the object's
+own type. Member lookup resolves identifier, nested member access, call result,
+and array element object expressions. Needed: resolve a `QualifiedIdentifierNode`
+object source and feed its materialized object into the same member lookup.
+
+## Constexpr aggregate reference parameters lose namespace-scope arguments
+
+A constexpr function with an aggregate reference parameter reports
+"Dangling reference binding in constant expression" when the argument is a
+namespace-scope constexpr object, before member lookup runs; the same function
+called with a local object works. The argument binding, not base subobject
+member lookup, needs to keep the namespace-scope object's identity.
 
 ## Subscript storage follow-up architecture
 

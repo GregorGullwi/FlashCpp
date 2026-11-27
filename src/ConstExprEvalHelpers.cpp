@@ -734,38 +734,65 @@ const StructMember* findMemberInfoRecursive(const StructTypeInfo* struct_info, S
 	return nullptr;
 }
 
-const EvalResult* findConstexprObjectMemberRecursive(
-	const EvalResult& object,
-	StringHandle member_name_handle) {
+const EvalResult* findConstexprObjectMemberRecursive(const EvalResult& object, StringHandle member_name_handle) {
+	return resolveConstexprObjectMemberRecursive(object, member_name_handle).value;
+}
+
+ConstexprObjectMemberLookup resolveConstexprObjectMemberRecursive(const EvalResult& object, StringHandle member_name_handle) {
+	ConstexprObjectMemberLookup result;
 	if (!member_name_handle.isValid()) {
-		return nullptr;
+		return result;
 	}
 
-	if (const auto member_it = object.object_member_bindings.find(
-			StringTable::getStringView(member_name_handle));
-		member_it != object.object_member_bindings.end()) {
-		return &member_it->second;
-	}
+	// Inheritance depth is source-controlled, so the class graph is walked with an
+	// explicit depth-first worklist instead of native recursion. The order is the
+	// recursive lookup order: own bindings, then each base in published order, with
+	// a base's own bases visited before the next sibling base.
+	const std::string_view member_name = StringTable::getStringView(member_name_handle);
+	std::vector<const EvalResult*> pending;
+	pending.push_back(&object);
+	while (!pending.empty()) {
+		const EvalResult& current = *pending.back();
+		pending.pop_back();
 
-	const TypeInfo* type_info = tryGetTypeInfo(object.object_type_index);
-	const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
-	if (struct_info == nullptr) {
-		return nullptr;
-	}
+		if (const auto member_it = current.object_member_bindings.find(member_name); member_it != current.object_member_bindings.end()) {
+			result.value = &member_it->second;
+			return result;
+		}
 
-	const size_t base_count = std::min(
-		struct_info->base_classes.size(),
-		object.object_base_values.size());
-	for (size_t base_index = 0; base_index < base_count; ++base_index) {
-		if (const EvalResult* member = findConstexprObjectMemberRecursive(
-				object.object_base_values[base_index],
-				member_name_handle);
-			member != nullptr) {
-			return member;
+		const TypeInfo* type_info = tryGetTypeInfo(current.object_type_index);
+		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+		if (struct_info == nullptr || struct_info->base_classes.empty()) {
+			continue;
+		}
+
+		// Every declared base owns one materialized subobject value. Losing one means
+		// the object no longer describes its own class graph, so the member cannot be
+		// answered from a neighbouring base or from a zero value.
+		if (struct_info->base_classes.size() != current.object_base_values.size()) {
+			const std::string message = std::string(StringBuilder().append("Member '"sv).append(member_name).append("' needs a materialized base subobject of '"sv)
+				.append(StringTable::getStringView(struct_info->getName())).append("'"sv).commit());
+			result.error = EvalResult::error(message, EvalErrorType::NotConstantExpression);
+			return result;
+		}
+
+		for (auto base_it = current.object_base_values.rbegin(); base_it != current.object_base_values.rend(); ++base_it) {
+			pending.push_back(&*base_it);
 		}
 	}
 
-	return nullptr;
+	return result;
+}
+
+AggregateInitialization::BasePartition partitionConstexprAggregateBases(const StructTypeInfo& struct_info, const InitializerListNode& init_list,
+	EvaluationContext& context) {
+	return AggregateInitialization::partitionBases(
+		struct_info,
+		init_list,
+		[&](const AggregateElements::Element& element, const ASTNode& clause) {
+			const std::optional<TypeSpecifierNode> source_type = Evaluator::tryQueryExpressionType(clause, context);
+			return source_type.has_value() && AggregateInitialization::acceptsWholeExpression(element, *source_type, clause);
+		});
 }
 
 TypeSpecifierNode makeTypeSpecForDefaultInit(TypeIndex type_index) {
