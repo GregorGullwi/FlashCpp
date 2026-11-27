@@ -815,16 +815,19 @@ member function templates in those published class-template bodies likewise
 publish a signature-aware child `TemplateDeclId` under that template-owned
 `OwnerId`; matching declarations and definitions merge, overloads remain
 distinct, declared Type-kind parameter specifiers stamp retroactively with the
-child ID, and replay activates that published child ID. Nested member templates
-in those class-template bodies remain deferred. Nested classes of
+child ID, and replay activates that published child ID. Nested classes of
 published namespace/global non-template classes publish their EntityId at
 parse time under the enclosing class-owned `OwnerId` (non-definition before
 the nested body parse, definition merged at the nested complete-definition
 epoch, nested forward declarations merged into the definition EntityId), so
 direct member class templates and member function templates inside those
 nested classes publish during the nested body and stamp their declared
-Type-kind parameters; nested classes under class templates, local, and
-anonymous forms remain deferred. Qualified
+Type-kind parameters. A named nested class of a published primary class
+template also publishes its pattern EntityId. For conversion function templates
+declared there, the instantiated nested record carries its enclosing
+specialization into the canonical conversion key. Candidate selection uses the
+published member template, and member-template instantiation replays its body
+with the deduced arguments. Local and anonymous forms remain deferred. Qualified
 type-ids resolve through the published nested `EntityId` and
 `TemplateDeclId` rather than registry aliases: the former
 `TemplateRegistry` owner-chain spelling aliases are deleted, and
