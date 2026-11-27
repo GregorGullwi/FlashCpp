@@ -1796,11 +1796,13 @@ void Parser::consume_type_id_parenthesized_declarator_followup(TypeSpecifierNode
 	if (peek() != "("_tok) {
 		return;
 	}
-	// A member-pointer ptr-declarator group starts with an optional calling
-	// convention, an optional global `::`, then a nested-name-specifier and
-	// `*` (`(C::*)()`, `(::N::C::*)`). A functional-cast expression operand
-	// also starts with `(` (`sizeof(T())`), so look ahead without replaying
-	// tokens and leave every other shape to the expression interpretation.
+	// Structural, non-consuming lookahead for a member-pointer ptr-declarator
+	// group: an optional calling convention, an optional global `::`, then one or
+	// more nested-name-specifier components and `*` (`(C::*)()`,
+	// `(Outer<T>::template Inner<U>::*)`, `(decltype(c)::*)`). A functional-cast
+	// expression operand also starts with `(` (`sizeof(T())`), so every other
+	// shape stays with the expression interpretation. This mirrors the shared
+	// nested-name-specifier grammar in parseNestedNameSpecifier.
 	const auto skip_template_arguments = [&](size_t& index) {
 		if (peek(index) != "<"_tok) {
 			return;
@@ -1810,6 +1812,21 @@ void Parser::consume_type_id_parenthesized_declarator_followup(TypeSpecifierNode
 			update_angle_depth(peek(index), angle_depth);
 			++index;
 		} while (angle_depth > 0 && !peek(index).is_eof());
+	};
+	const auto skip_balanced_parentheses = [&](size_t& index) {
+		if (peek(index) != "("_tok) {
+			return false;
+		}
+		int paren_depth = 0;
+		do {
+			if (peek(index) == "("_tok) {
+				++paren_depth;
+			} else if (peek(index) == ")"_tok) {
+				--paren_depth;
+			}
+			++index;
+		} while (paren_depth > 0 && !peek(index).is_eof());
+		return paren_depth == 0;
 	};
 	size_t index = 1;
 	while (peek_info(index).type() == Token::Type::Identifier || peek(index).is_keyword()) {
@@ -1823,22 +1840,32 @@ void Parser::consume_type_id_parenthesized_declarator_followup(TypeSpecifierNode
 	if (peek(index) == "::"_tok) {
 		++index;
 	}
-	if (peek_info(index).type() != Token::Type::Identifier) {
-		return;
-	}
-	++index;
-	skip_template_arguments(index);
-	while (peek(index) == "::"_tok) {
+	while (true) {
+		if (peek(index) == "template"_tok) {
+			++index;
+		}
+		const bool is_decltype_component = peek(index) == "decltype"_tok || (!peek(index).is_eof() && (peek_info(index).value() == "__typeof__" ||
+			peek_info(index).value() == "__typeof"));
+		if (is_decltype_component) {
+			++index;
+			if (!skip_balanced_parentheses(index)) {
+				return;
+			}
+		} else {
+			if (peek_info(index).type() != Token::Type::Identifier) {
+				return;
+			}
+			++index;
+			skip_template_arguments(index);
+		}
+		if (peek(index) != "::"_tok) {
+			return;
+		}
 		++index;
 		if (peek(index) == "*"_tok) {
 			(void)consume_cast_type_id_paren_declarator(type_spec);
 			return;
 		}
-		if (peek_info(index).type() != Token::Type::Identifier) {
-			return;
-		}
-		++index;
-		skip_template_arguments(index);
 	}
 }
 

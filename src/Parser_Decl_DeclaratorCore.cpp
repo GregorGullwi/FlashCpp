@@ -454,10 +454,9 @@ void Parser::applyMemberPointerOwner(
 
 	if (parsed.specialization_type_id) {
 		type_spec.set_member_class_type_id(parsed.specialization_type_id);
-		return;
+	} else {
+		tryBindPublishedMemberClassEntity(type_spec);
 	}
-
-	tryBindPublishedMemberClassEntity(type_spec);
 
 	// A member-pointer owner must name a class or union. An alias that resolves to
 	// a non-class type (for example `using Int = int; int Int::* p;`) would
@@ -483,60 +482,106 @@ void Parser::bindMemberPointerOwner(TypeSpecifierNode& type_spec, Token class_na
 	applyMemberPointerOwner(type_spec, parseMemberPointerOwnerAfterName(class_name_token));
 }
 
-std::optional<CVQualifier> Parser::tryConsumeMemberPointerDeclaratorAfterCandidate(TypeSpecifierNode& type_spec, Token owner_token,
-	SaveHandle failure_position) {
-	MemberPointerOwnerParse owner = parseMemberPointerOwnerAfterName(owner_token);
-	if (!consume("::"_tok)) {
+Parser::MemberPointerOwnerParse Parser::resolveMemberPointerOwner(const NestedNameSpecifierParse& parsed) {
+	MemberPointerOwnerParse owner;
+	if (parsed.segments.empty()) {
+		return owner;
+	}
+	const NestedNameSpecifierSegment& last = parsed.segments.back();
+	owner.owner_token = last.identifier;
+	if (last.is_decltype_specifier) {
+		// [expr.prim.id.qual]: the decltype-specifier component names the class the
+		// expression has, so its canonical type is the owner identity. A non-class
+		// decltype type reaches the class-kind check in applyMemberPointerOwner.
+		if (!last.decltype_specifier.is<TypeSpecifierNode>()) {
+			throw InternalError("decltype owner segment lost its type specifier");
+		}
+		owner.spelling = resolveNestedNameSpecifierOwner(parsed);
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		CanonicalTypeTransaction transaction(table);
+		const CanonicalTypeImport imported = importCanonicalType(table, last.decltype_specifier.as<TypeSpecifierNode>());
+		if (imported.status == CanonicalTypeImportStatus::Supported) {
+			// A top-level cv-qualifier on the deduced type does not change the
+			// class a member pointer names; a reference or non-class type keeps
+			// its kind and reaches the class-kind check in applyMemberPointerOwner.
+			owner.specialization_type_id = table.withoutTopLevelQualifiers(imported.type);
+			transaction.commit();
+		}
+		return owner;
+	}
+	AliasTemplateMaterializationResult last_materialization;
+	AliasTemplateMaterializationResult* materialization_out = last.has_template_arguments ? &last_materialization : nullptr;
+	owner.spelling = resolveNestedNameSpecifierOwnerWithMaterialization(parsed, materialization_out);
+	if (materialization_out == nullptr) {
+		return owner;
+	}
+	// Keep the owner's specialization identity: a class-template owner that
+	// materializes hands its declaration (and therefore its TypeId) to the same
+	// publish path parseMemberPointerOwnerAfterName already uses.
+	owner.specialization_node = last_materialization.instantiated_struct_node;
+	if (owner.specialization_node.has_value() && owner.specialization_node->is<StructDeclarationNode>()) {
+		registerAndNormalizeLateMaterializedTopLevelNode(*owner.specialization_node);
+		return owner;
+	}
+	if (last_materialization.resolved_type_info != nullptr) {
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		CanonicalTypeTransaction transaction(table);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(table, *last_materialization.resolved_type_info);
+		if (imported.status == CanonicalTypeImportStatus::Supported) {
+			owner.specialization_type_id = imported.type;
+			transaction.commit();
+			return owner;
+		}
+	}
+	// A dependent classification such as `Owner<T>::*` materializes no
+	// declaration and no concrete class identity. Its stamped type-only
+	// specialization is then the only identity the canonical graph can retain.
+	TypeSpecifierNode stamped_owner(TypeCategory::Struct, TypeQualifier::None, SizeInBits{0}, last.identifier, CVQualifier::None);
+	tryStampTypeOnlyClassTemplateSpecialization(stamped_owner, last.name, last.template_arguments, last.template_argument_syntax_nodes);
+	if (stamped_owner.has_template_specialization()) {
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		CanonicalTypeTransaction transaction(table);
+		const CanonicalTypeImport imported = importCanonicalType(table, stamped_owner);
+		if (imported.status == CanonicalTypeImportStatus::Supported) {
+			owner.specialization_type_id = imported.type;
+			transaction.commit();
+		}
+	}
+	return owner;
+}
+
+std::optional<CVQualifier> Parser::tryConsumeMemberPointerPtrOperator(TypeSpecifierNode& type_spec,
+	std::optional<Token> already_consumed_head, SaveHandle failure_position) {
+	// [dcl.mptr] / [expr.prim.id.qual]: the owner is one nested-name-specifier -
+	// an optional leading `::`, a decltype-specifier component, and any number of
+	// identifier or template-id components - followed by `*`. The shared parser
+	// owns every one of those spellings; this helper only decides that the `::`
+	// chain ends in `*` rather than a declarator-id.
+	const NestedNameSpecifierParse specifier = parseNestedNameSpecifier(already_consumed_head);
+	if (specifier.segments.empty() || specifier.has_terminal || peek() != "*"_tok) {
 		restore_token_position(failure_position);
 		return std::nullopt;
 	}
-	// [dcl.mptr]: a nested-name-specifier owner can carry further scope segments
-	// before the final `*` (`N::C::*`, `Outer::Inner::*`). Every segment reuses
-	// the single-owner parse so a template owner keeps its specialization
-	// identity, and the joined spelling stays the type-table lookup key.
-	StringBuilder owner_spelling;
-	owner_spelling.append(owner.spelling);
-	while (!consume("*"_tok)) {
-		if (!peek().is_identifier()) {
-			owner_spelling.reset();
-			restore_token_position(failure_position);
-			return std::nullopt;
-		}
-		const Token segment_token = peek_info();
-		advance(); // consume the scope segment name
-		owner = parseMemberPointerOwnerAfterName(segment_token);
-		owner_spelling.append("::"sv).append(owner.spelling);
-		if (!consume("::"_tok)) {
-			owner_spelling.reset();
-			restore_token_position(failure_position);
-			return std::nullopt;
-		}
-	}
-	owner.spelling = StringTable::getOrInternStringHandle(owner_spelling.commit());
+	const MemberPointerOwnerParse owner = resolveMemberPointerOwner(specifier);
+	advance(); // consume '*'
 	applyMemberPointerOwner(type_spec, owner);
 	CVQualifier member_pointer_cv = parse_cv_qualifiers();
 	skip_noop_gnu_qualifiers();
 	member_pointer_cv |= parse_cv_qualifiers();
-	FLASH_LOG(Parser, Debug, "Consumed pointer-to-member declarator: ", owner_token.value(), "::*");
+	FLASH_LOG(Parser, Debug, "Consumed pointer-to-member declarator: ", owner.spelling.view(), "::*");
 	return member_pointer_cv;
 }
 
 bool Parser::tryConsumeMemberPointerDeclarator(TypeSpecifierNode& type_spec) {
-	// [dcl.mptr]: the nested-name-specifier may start at the global scope, as
-	// in `int* ::N::C::* pm`. The owner spelling stays global-relative, so a
-	// failed candidate restores the leading `::` for the out-of-line path.
-	const bool has_leading_global = peek() == "::"_tok && peek(1).is_identifier();
-	if (!has_leading_global && !peek().is_identifier()) {
+	// [dcl.mptr]: a member pointer can start at a leading `::`, at a
+	// decltype-specifier component, or at an identifier. Every other token
+	// cannot begin a nested-name-specifier, so no speculative save is needed.
+	if (!peek().is_identifier() && peek() != "::"_tok && !startsDecltypeSpecifier()) {
 		return false;
 	}
-	SaveHandle saved_pos = save_token_position();
-	if (has_leading_global) {
-		advance();
-	}
-	Token class_name_token = peek_info();
-	advance(); // consume class name
-	const std::optional<CVQualifier> member_pointer_cv = tryConsumeMemberPointerDeclaratorAfterCandidate(type_spec, class_name_token, saved_pos);
-	discard_saved_token(saved_pos);
+	SaveHandle failure_position = save_token_position();
+	const std::optional<CVQualifier> member_pointer_cv = tryConsumeMemberPointerPtrOperator(type_spec, std::nullopt, failure_position);
+	discard_saved_token(failure_position);
 	if (!member_pointer_cv.has_value()) {
 		return false;
 	}
@@ -785,6 +830,23 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 		return std::move(*parenthesized);
 	}
 
+	// [dcl.mptr]: a member-pointer ptr-operator can follow the pointer chain. Its
+	// owner is a full nested-name-specifier - an optional leading `::`, a
+	// decltype-specifier component, and identifier or template-id components - so
+	// one helper decides it. A failed candidate restores the tokens for the
+	// out-of-line declarator-id and leading-global paths below.
+	auto tryConsumeMemberPointerWithGroup = [&]() -> bool {
+		SaveHandle owner_start = save_token_position();
+		const std::optional<CVQualifier> member_pointer_cv = tryConsumeMemberPointerPtrOperator(type_spec, std::nullopt, owner_start);
+		discard_saved_token(owner_start);
+		if (!member_pointer_cv.has_value()) {
+			return false;
+		}
+		type_spec.add_pointer_level(*member_pointer_cv);
+		consume_pointer_ref_modifiers(type_spec);
+		return true;
+	};
+
 	// Check for parameter pack: Type... identifier
 	// This is used in variadic function templates like: template<typename... Args> void func(Args... args)
 	bool is_parameter_pack = false;
@@ -876,20 +938,12 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 				// Create a synthetic identifier token for the operator
 				identifier_token = Token(Token::Type::Identifier, operator_name, operator_keyword_token.line(), operator_keyword_token.column(),
 										 operator_keyword_token.file_index());
-			} else if (peek() == "::"_tok && peek(1).is_identifier()) {
-				// A leading `::` can open the out-of-line declarator-id or a
-				// global member-pointer owner (`int* ::N::C::* pm`). The first
-				// segment after `::` is the owner candidate; the shared
-				// member-pointer helper decides and restores the `::` on failure.
-				SaveHandle global_owner_start = save_token_position();
-				advance(); // consume leading '::'
-				Token owner_token = peek_info();
-				advance(); // consume the first owner segment
-				const std::optional<CVQualifier> member_pointer_cv = tryConsumeMemberPointerDeclaratorAfterCandidate(type_spec, owner_token, global_owner_start);
-				discard_saved_token(global_owner_start);
-				if (member_pointer_cv.has_value()) {
-					type_spec.add_pointer_level(*member_pointer_cv);
-					consume_pointer_ref_modifiers(type_spec);
+			} else if (peek() == "::"_tok) {
+				// A leading `::` can open the out-of-line declarator-id, a
+				// global member-pointer owner (`int* ::N::C::* pm`), or the
+				// owner of a parenthesized group. The shared ptr-operator helper
+				// decides and restores the `::` on failure.
+				if (tryConsumeMemberPointerWithGroup()) {
 					if (std::optional<ParseResult> parenthesized = parseParenthesizedDeclarator()) {
 						return std::move(*parenthesized);
 					}
@@ -907,6 +961,17 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 				leading_global_declarator_owner = resolveNestedNameSpecifierOwner(parsed);
 				leading_global_declarator_owner_id = resolveDeclaratorOwnerId(leading_global_declarator_owner);
 				has_leading_global_declarator = true;
+			} else if (startsDecltypeSpecifier()) {
+				// [expr.prim.id.qual]: `decltype(expr)::` is a nested-name-specifier
+				// component, so `int decltype(c)::* p` declares a member pointer.
+				// Anything else is not a declarator-id.
+				if (!tryConsumeMemberPointerWithGroup()) {
+					return ParseResult::error("Expected identifier token", peek_info());
+				}
+				if (std::optional<ParseResult> parenthesized = parseParenthesizedDeclarator()) {
+					return std::move(*parenthesized);
+				}
+				continue;
 			} else {
 				// Check if this might be an unnamed parameter (next token is ',', ')', '=', or '[')
 				FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Parsing identifier. current_token={}, peek={}",
@@ -940,7 +1005,7 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 			break;
 		}
 		SaveHandle owner_start = save_token_position();
-		const std::optional<CVQualifier> member_pointer_cv = tryConsumeMemberPointerDeclaratorAfterCandidate(type_spec, identifier_token, owner_start);
+		const std::optional<CVQualifier> member_pointer_cv = tryConsumeMemberPointerPtrOperator(type_spec, identifier_token, owner_start);
 		discard_saved_token(owner_start);
 		if (!member_pointer_cv.has_value()) {
 			break;
@@ -1627,18 +1692,13 @@ ParseResult Parser::parse_declarator(
 							}
 							break;
 						}
-						// `int* ::N::C::* p` starts the member owner at the global
-						// scope. The candidate and its `::*` decision stay in the
-						// shared helper; a failed candidate restores the `::` for
-						// the leading-global declarator-id path below.
-						if (peek().is_identifier() || (peek() == "::"_tok && peek(1).is_identifier())) {
+						// [dcl.mptr]: the owner is one nested-name-specifier, so
+						// `int* ::N::C::* p`, `int (Outer<T>::Inner<U>::*)` and
+						// `int (decltype(c)::*)` all start here. A failed candidate
+						// restores the tokens for the declarator-id path below.
+						if (peek().is_identifier() || peek() == "::"_tok || startsDecltypeSpecifier()) {
 							SaveHandle member_pointer_start = save_token_position();
-							if (peek() == "::"_tok) {
-								advance();
-							}
-							Token owner_token = peek_info();
-							advance();
-							const std::optional<CVQualifier> member_cv = tryConsumeMemberPointerDeclaratorAfterCandidate(base_type, owner_token, member_pointer_start);
+							const std::optional<CVQualifier> member_cv = tryConsumeMemberPointerPtrOperator(base_type, std::nullopt, member_pointer_start);
 							discard_saved_token(member_pointer_start);
 							if (member_cv.has_value()) {
 								frame.prefixes.push_back(
