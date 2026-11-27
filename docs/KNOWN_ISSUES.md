@@ -1033,16 +1033,33 @@ The following remain unsupported and are rejected or left unresolved:
   the translation unit, so the old uninitialized-slot behavior can still appear
   there.
 
-## type_info emission does not cover member-function-pointer types
+## Member-pointer type_info emission is complete on ELF but not on COFF
 
-`typeid` parses a member-function-pointer type-id, including the pointer-return
-spelling `T* (C::*)()`, but code generation cannot resolve a type_info symbol
-for such an operand and fails the translation unit with `typeid: unable to
-resolve type_info symbol for operand type '<unknown>'`. Any
-member-function-pointer spelling is affected, including the `T (C::*)()` form
-that parsed before the pointer-return follow-up; data-member pointers such as
-`typeid(int C::*)` work. The missing piece is type_info symbol emission and
-mangling for member-function-pointer canonical types, not the type-id grammar.
+`typeid` on a member-function-pointer type-id now resolves on ELF/Itanium,
+including `T (C::*)()`, cv/ref/noexcept/varargs-qualified forms, and the
+pointer-return spelling `T* (C::*)()`. The ELF writer emits Itanium
+`__pointer_to_member_type_info` objects whose mangled name carries the owner
+class, function signature, and member-function qualifiers, and whose relocations
+name the owner and pointee type_info. Plain pointers emit
+`__pointer_type_info`, and member-object pointers keep their own family, so
+object, data-member, plain-function, and member-function pointers are no longer
+collapsed onto their pointee type.
+
+The COFF writer still only emits `??_R0` descriptors for classes and built-in
+categories. A `typeid` operand of pointer or member-pointer type therefore still
+fails on Windows with
+`typeid: unable to resolve type_info symbol for operand type '<unknown>'`.
+Completing that path requires an MSVC canonical-type encoder for `??_R0` names
+and the matching type descriptor symbols; it has not been implemented or
+validated here.
+
+## typeid results cannot be bound to a type_info reference
+
+`const void* p = typeid(T);` works, but binding the result to a reference such
+as `const std::type_info& info = typeid(int);` makes the reference denote the
+pointer variable instead of the pointed-to object. A later `info.name()` call
+passes the address of that stack slot to the member function. Use the pointer
+form until reference binding of the typeid result is fixed.
 
 ## Functional cast of a null member-function pointer builds an ownerless identity
 

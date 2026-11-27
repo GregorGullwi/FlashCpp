@@ -1146,6 +1146,10 @@ struct TypeidOp {
 	TempVar result;				// Result variable (pointer to type_info)
 	std::variant<StringHandle, TempVar, LocalVarId> operand;	 // Type name (StringHandle) or expression (TempVar)
 	TypeIndex type_index{};	  // Static type for compile-time RTTI symbol lookup
+	// Canonical identity when the legacy TypeIndex cannot name the type_info.
+	// Member pointers and callable pointers carry their owner and signature only
+	// in the canonical shape, so the writer mangles from this TypeId.
+	TypeId canonical_type{};
 	bool is_type = false;		  // true if typeid(Type), false if typeid(expr)
 };
 

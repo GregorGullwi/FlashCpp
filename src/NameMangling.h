@@ -1826,6 +1826,129 @@ inline void appendItaniumCVQualifier(auto& output, CVQualifier cv) {
 	}
 }
 
+// Encode the qualified name of a canonical class or enum type. The published
+// TypeInfo is the ABI name authority, so member-pointer owners and parameters
+// encode exactly like the same type in a function symbol.
+inline void appendCanonicalItaniumTypeName(ItaniumManglingCtx& output, CanonicalTypeTable& table, TypeId type) {
+	const CanonicalTypeKind kind = table.node(type).kind;
+	const TypeInfo* type_info = nullptr;
+	if (kind == CanonicalTypeKind::Enum) {
+		type_info = tryFindTypeInfoByEntityId(table.enumEntity(type));
+	} else if (isCanonicalClassTypeKind(kind)) {
+		type_info = tryFindPublishedClassTypeInfoForCanonicalOwner(table, type);
+	}
+	if (type_info == nullptr) {
+		throw InternalError("Itanium name mangling: canonical type has no published nominal name");
+	}
+	appendItaniumTypeNameWithSubstitution(output, getItaniumTypeInfoName(*type_info));
+}
+
+inline void appendCanonicalItaniumTypeCode(ItaniumManglingCtx& output, CanonicalTypeTable& table, TypeId type);
+
+inline std::string_view canonicalBuiltinItaniumTypeCode(CanonicalBuiltinKind kind) {
+	static constexpr std::string_view codes[] = {
+		"v", "b", "c", "a", "h", "w", "Du", "Ds", "Di", "s", "t",
+		"i", "j", "l", "m", "x", "y", "f", "d", "e", "Dn"};
+	static_assert(sizeof(codes) / sizeof(codes[0]) == static_cast<size_t>(CanonicalBuiltinKind::Count));
+	if (kind >= CanonicalBuiltinKind::Count) {
+		throw InternalError("Itanium name mangling: unknown canonical builtin kind");
+	}
+	return codes[static_cast<uint8_t>(kind)];
+}
+
+// Append the encoding of a canonical Function node. Member-function cv-qualifiers
+// and noexcept precede F, while varargs and the reference qualifier follow the
+// parameter types, per the Itanium C++ ABI type grammar.
+inline void appendCanonicalItaniumFunctionTypeCode(ItaniumManglingCtx& output, CanonicalTypeTable& table, TypeId function, bool include_noexcept) {
+	const CanonicalTypeNode node = table.node(function);
+	if (node.kind != CanonicalTypeKind::Function) {
+		throw InternalError("Itanium name mangling: canonical member pointer does not point at a function type");
+	}
+	if (node.builtin != static_cast<CanonicalBuiltinKind>(CanonicalCallingConvention::Default)) {
+		throw InternalError("Itanium name mangling: canonical function uses a non-default calling convention");
+	}
+	if (hasCanonicalTypeNodeFlag(node.flags, CanonicalTypeNodeFlags::DependentNoexceptFunction)) {
+		throw InternalError("Itanium name mangling: canonical function has a dependent noexcept specification");
+	}
+	appendItaniumCVQualifier(output, node.qualifiers);
+	if (include_noexcept && hasCanonicalTypeNodeFlag(node.flags, CanonicalTypeNodeFlags::NoexceptFunction)) {
+		output += "Do";
+	}
+	output += 'F';
+	appendCanonicalItaniumTypeCode(output, table, node.child);
+	const TypeId parameters = table.functionParameters(function);
+	if (!parameters) {
+		output += 'v';
+	} else {
+		for (TypeId link = parameters; link; link = table.functionParameterNext(link)) {
+			appendCanonicalItaniumTypeCode(output, table, table.functionParameterType(link));
+		}
+	}
+	if (hasCanonicalTypeNodeFlag(node.flags, CanonicalTypeNodeFlags::VariadicFunction)) {
+		output += 'z';
+	}
+	if (hasCanonicalTypeNodeFlag(node.flags, CanonicalTypeNodeFlags::FunctionLValueRef)) {
+		output += 'R';
+	} else if (hasCanonicalTypeNodeFlag(node.flags, CanonicalTypeNodeFlags::FunctionRValueRef)) {
+		output += 'O';
+	}
+	output += 'E';
+}
+
+inline void appendCanonicalItaniumTypeCode(ItaniumManglingCtx& output, CanonicalTypeTable& table, TypeId type) {
+	const CanonicalTypeNode node = table.node(type);
+	switch (node.kind) {
+	case CanonicalTypeKind::Builtin:
+		output += canonicalBuiltinItaniumTypeCode(node.builtin);
+		return;
+	case CanonicalTypeKind::Qualified:
+		appendItaniumCVQualifier(output, node.qualifiers);
+		appendCanonicalItaniumTypeCode(output, table, node.child);
+		return;
+	case CanonicalTypeKind::Pointer:
+		output += 'P';
+		appendCanonicalItaniumTypeCode(output, table, node.child);
+		return;
+	case CanonicalTypeKind::LValueReference:
+		output += 'R';
+		appendCanonicalItaniumTypeCode(output, table, node.child);
+		return;
+	case CanonicalTypeKind::RValueReference:
+		output += 'O';
+		appendCanonicalItaniumTypeCode(output, table, node.child);
+		return;
+	case CanonicalTypeKind::Array:
+		output += 'A';
+		if (hasCanonicalTypeNodeFlag(node.flags, CanonicalTypeNodeFlags::KnownArrayBound)) {
+			output += static_cast<int64_t>(node.array_extent);
+		}
+		output += '_';
+		appendCanonicalItaniumTypeCode(output, table, node.child);
+		return;
+	case CanonicalTypeKind::Function:
+		appendCanonicalItaniumFunctionTypeCode(output, table, type, true);
+		return;
+	case CanonicalTypeKind::MemberObjectPointer:
+		output += 'M';
+		appendCanonicalItaniumTypeName(output, table, table.memberPointerOwner(type));
+		appendCanonicalItaniumTypeCode(output, table, node.child);
+		return;
+	case CanonicalTypeKind::MemberFunctionPointer:
+		output += 'M';
+		appendCanonicalItaniumTypeName(output, table, table.memberPointerOwner(type));
+		appendCanonicalItaniumFunctionTypeCode(output, table, node.child, true);
+		return;
+	case CanonicalTypeKind::Record:
+	case CanonicalTypeKind::NestedRecord:
+	case CanonicalTypeKind::TemplateSpecialization:
+	case CanonicalTypeKind::Enum:
+		appendCanonicalItaniumTypeName(output, table, type);
+		return;
+	default:
+		throw InternalError("Itanium name mangling: canonical type kind is not encodable");
+	}
+}
+
 template <typename OutputType>
 inline void appendItaniumOrderedDeclaratorTypeCode(OutputType& output, const TypeSpecifierNode& normalized, bool is_function_parameter) {
 	const std::span<const DeclaratorComponent> components = normalized.declarator_components();

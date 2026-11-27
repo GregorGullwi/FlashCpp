@@ -361,6 +361,12 @@ public:
 	std::string get_or_create_builtin_typeinfo(TypeCategory cat);
 	std::string get_or_create_class_typeinfo(std::string_view class_name);
 	std::string get_or_create_class_typeinfo(const StructTypeInfo* struct_info);
+	std::string get_or_create_canonical_typeinfo(TypeId type);
+	std::string get_or_create_function_typeinfo(TypeId function_type, std::string_view type_code);
+	std::string get_or_create_pointer_typeinfo(TypeId pointer_type, std::string_view type_code);
+	std::string get_or_create_member_pointer_typeinfo(TypeId member_pointer_type, std::string_view type_code);
+	std::string emitCanonicalTypeName(std::string_view type_code);
+	std::string emitFlatCanonicalTypeinfo(std::string_view type_code, std::string_view vtable_name);
 	void add_vtable(std::string_view vtable_symbol, std::span<const std::string_view> function_symbols, std::string_view class_name, std::span<const std::string_view> base_class_names, std::span<const BaseClassDescriptorInfo> base_class_info, std::span<const int64_t> virtual_base_offsets, const RTTITypeInfo* rtti_info = nullptr, TypeIndex subobject_type_index = {}, int64_t offset_to_top = 0);
 	std::string_view generateMangledName(std::string_view name, const FunctionSignature& sig);
 	std::string_view addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, Linkage linkage = Linkage::None, bool is_variadic = false);
@@ -477,6 +483,7 @@ private:
 	std::unordered_map<std::string, ELFIO::Elf_Word, ObjectFileCommon::StringViewHash, std::equal_to<>> symbol_index_cache_;
 	bool symbol_index_cache_dirty_ = true;
 	std::set<std::string> created_class_typeinfos_;	// tracks emitted _ZTI symbols within this ElfFileWriter instance
+	std::set<std::string> created_canonical_typeinfos_;	// emitted canonical callable/member-pointer _ZTI symbols
 
 	// DWARF4 debug info data
 	struct DebugLineEntry {
