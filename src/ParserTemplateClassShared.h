@@ -360,11 +360,17 @@ inline size_t partialPatternCallableParameterCount(const TypeSpecifierNode& synt
 
 // A callable whose signature is carried on the specifier but whose declarator is
 // not the bare function type: function pointers and function references
-// (including pointer-qualified variants). The canonical importer can shape
-// these from a built function type. Ordered declarators and member pointers stay
-// unsupported here and keep the name-keyed fallback.
+// (including pointer-qualified variants). [dcl.declarators]/1 permits the
+// pointer stack of `T (**)(T)` to be recorded as an ordered spine of pointer
+// components instead of flat pointer levels; that shape is the same canonical
+// wrapper stack. A Function or member-pointer component owns another signature
+// or an owner identity ([dcl.fct]/1, [class.mfct]) and keeps the name-keyed
+// fallback.
 inline bool isCallablePartialPatternSyntax(const TypeSpecifierNode& syntax) {
-	if (!syntax.has_function_signature() || syntax.has_ordered_declarator() || syntax.has_member_class()) {
+	if (!syntax.has_function_signature() || syntax.has_member_class()) {
+		return false;
+	}
+	if (syntax.has_ordered_declarator() && !hasPointerOnlyOrderedDeclarator(syntax)) {
 		return false;
 	}
 	if (isBareFunctionPartialPatternSyntax(syntax)) {

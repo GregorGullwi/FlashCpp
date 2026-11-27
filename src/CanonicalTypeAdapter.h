@@ -1193,6 +1193,24 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 	return {id, CanonicalTypeImportStatus::Supported};
 }
 
+// [dcl.ptr]/1: every `*` in a declarator introduces one pointer level. A
+// callable carries that stack either in `pointer_levels()` or in an ordered
+// declarator whose components are all pointers; consume one representation only
+// so `T (**)(T)` keeps both levels without applying either twice. A Function or
+// member-pointer component owns another signature or an owner identity and
+// stays on the opaque path.
+inline bool hasPointerOnlyOrderedDeclarator(const TypeSpecifierNode& syntax) {
+	if (!syntax.has_ordered_declarator()) {
+		return false;
+	}
+	for (const DeclaratorComponent& component : syntax.declarator_components()) {
+		if (component.kind != DeclaratorComponentKind::Pointer) {
+			return false;
+		}
+	}
+	return true;
+}
+
 // Apply the declarator shape a callable specifier carries to an already built
 // function type: the pointer stack (including the implicit FunctionPointer
 // pointer), cv, reference, array bounds, and [dcl.fct]/5 parameter adjustment.
@@ -1200,14 +1218,20 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 // the outer shape cannot drift from `importCanonicalCallable`.
 inline TypeId shapeCanonicalCallableType(CanonicalTypeTable& table, TypeId function, const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
 	TypeId id = function;
-	if (syntax.category() == TypeCategory::FunctionPointer || !syntax.pointer_levels().empty()) {
-		// FunctionPointer with empty pointer_levels is a single pointer-to-function
-		// (int (*)(Args)): add one wrapper. Non-empty pointer_levels are the full
-		// wrapper stack around the function, including nested forms such as
-		// int (**)(Args) encoded as FunctionPointer with two levels, so do not
-		// also add a category wrap (legacy decltype aliases may carry a
-		// redundant level that would otherwise become depth 2).
-		if (syntax.pointer_levels().empty()) {
+	if (syntax.category() == TypeCategory::FunctionPointer || !syntax.pointer_levels().empty() || hasPointerOnlyOrderedDeclarator(syntax)) {
+		// FunctionPointer with no recorded levels is a single pointer-to-function
+		// (`int (*)(Args)`, [dcl.fct]/1): add one wrapper. Recorded levels are the
+		// complete wrapper stack, including `int (**)(Args)` carried as two
+		// levels or as two ordered pointer components, so do not also add a
+		// category wrap (legacy decltype aliases can carry a redundant level).
+		if (syntax.has_ordered_declarator()) {
+			// [dcl.declarators]/1: the ordered spine runs from the
+			// declarator-id outward, so apply its pointer components backwards.
+			const std::span<const DeclaratorComponent> components = syntax.declarator_components();
+			for (size_t index = components.size(); index > 0; --index) {
+				id = table.qualify(table.pointer(id), components[index - 1].cv_qualifier);
+			}
+		} else if (syntax.pointer_levels().empty()) {
 			id = table.pointer(id);
 		} else {
 			id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());

@@ -2168,6 +2168,39 @@ TEST_CASE("Function-pointer partial patterns select through published environmen
 	CHECK(patterns == 3);
 }
 
+TEST_CASE("Double-pointer partial patterns select through published environments") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream fixture("tests/test_canonical_partial_double_pointer_environment_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	const std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	CompileContext compile_context;
+	compile_context.setInputFile("double_pointer_partial_environment.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	const uint64_t fallback_before = gPartialPatternNameFallbackCount;
+	REQUIRE(!parser.parse().is_error());
+	CHECK(gPartialPatternNameFallbackCount == fallback_before);
+	size_t patterns = 0;
+	for (const ASTNode& node : parser.get_nodes()) {
+		if (!node.is<StructDeclarationNode>()) continue;
+		const StructDeclarationNode& pattern = node.as<StructDeclarationNode>();
+		if (!gTemplateRegistry.isClassTemplateSpecializationPattern(&pattern)) continue;
+		++patterns;
+		const TemplateDeclId environment = pattern.partial_specialization_environment();
+		CHECK(static_cast<bool>(environment));
+		// [temp.spec.partial]/1: the environment is the pattern's identity, so
+		// its StructTypeInfo record must be reachable through that key and not
+		// through the synthesized `$pattern` spelling.
+		CHECK(gTemplateRegistry.tryGetPartialPatternStructInfo(environment) != nullptr);
+	}
+	CHECK(patterns == 3);
+}
+
 TEST_CASE("Partial pattern normalization keeps deep declarators off the native stack") {
 	clearLegacyTypeTablesForTesting();
 	FrontendContext context;

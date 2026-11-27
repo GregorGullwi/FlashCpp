@@ -18,31 +18,15 @@ a transitional bridge, not a second semantic authority.
 
 ## Operator candidate lookup still lacks complete member-name provenance
 
-Direct unary, binary, and assignment operator lookup now stop at the first class
-that declares the operator name, while using-declarations restore only nominated
-base overloads. Requires-expression assignment viability consumes the resolved
-no-match or ambiguous operator state instead of accepting the expression from its
-left-hand type alone. Class using-declarations now retain the source base
-declaration ordinal through template instantiation, so dependent and
-alias-spelled bases restore the nominated operator after rebinding without
-matching instantiated type spellings. Pack-expanded base using-declarations and
-general member using-import lookup now consume the same nominated-base identity,
-so hidden base operators, member functions, data members, and static members are
-restored for direct, indirect, and instantiated base classes. Hiding sets for
-forms that a requires-expression evaluates before class rebinding remain
-unsupported; forcing that evaluation ordering overlaps Boundary 8A
+Hiding sets for forms that a requires-expression evaluates before class rebinding
+remain unsupported; forcing that evaluation ordering overlaps Boundary 8A
 class-template instantiation.
 
 ## Remaining dependent member-template field forms need concrete TypeInfo
 
-Direct type packs, supported nontrivial type-pack patterns, and lockstep
-expansions across enclosing and primary member-template packs now materialize
-concrete field TypeInfo and canonical target owners. Mixed scalar/pack lockstep
-patterns are supported when every referenced pack is bound and concrete.
 Alias/non-type partial patterns still need grouped substitution and complete
-canonical publication; supported nested primary-member expansions now retain
-independent inner bindings. Keep those unsupported fields
-fail-closed; the lockstep follow-up entry below records the remaining paths.
+canonical publication. Keep those unsupported fields fail-closed; the lockstep
+follow-up entry below records the remaining paths.
 
 ## Built-in indirection of a callable copy is unsupported
 
@@ -97,11 +81,7 @@ into the same one. This is producer-side, in the constexpr evaluation of a
 non-void function address-of; canonical import cannot recover the target and must
 not guess one from a name.
 
-Object pointer members and pointer array elements of structural values now carry
-their
-published target and element offset, so a value that differs only in a pointer
-member or in a neighbouring scalar member instantiates a distinct specialization; a
-member whose pointer has no publishable target makes structural extraction fail.
+A member whose pointer has no publishable target makes structural extraction fail.
 The parser can then attempt scalar construction from the same evaluation result;
 whether an unsupported structural value can be accepted through that path needs a
 reduced regression. Resolve the evaluator's own declaration origin into a published `EntityId` for every address-of
@@ -128,36 +108,17 @@ closed: the canonical substitutor preserves those ExprIds and cannot replace a p
 its concrete value. Publish substitutable parameter/value identity before
 enabling those graphs; keep evaluator and overload-selection rules separate.
 
-Non-null object-, function-, and member-pointer template arguments now carry
-published target identity; function pointers also carry their target signature
-and member pointers their canonical member value. Canonical import fails closed
-for object-pointer element offsets outside the canonical 32-bit range or targets
-without a published identity. Some qualified, data-member, and complex array-element
-origins still arrive without a target, as recorded above.
+Canonical import fails closed for object-pointer element offsets outside the
+canonical 32-bit range or targets without a published identity. Some qualified,
+data-member, and complex array-element origins still arrive without a target, as
+recorded above.
 
 ## Partial-specialization constraint atoms must be proven before selection
 
-Partial-specialization selection carries the requires-clause through
-registration, checks concept-constrained parameters and the clause against the
-deduced bindings, and only orders candidates whose constraints are proven
-satisfied. The constraint worklist substitutes each atomic constraint when its
-boolean path is reached, evaluates it with the canonical type and constexpr
-machinery, and schedules nested requirements and boolean continuations without
-native recursion. An unknown atomic result is not proof of satisfaction, so a
+An unknown atomic result is not proof of satisfaction, so a
 specialization whose constraint uses a construct the evaluator cannot classify
 is conservatively skipped; extend the canonical/constexpr atom path instead of
 treating that atom as satisfied.
-
-Constraint type-trait atoms deliberately stay on the canonical trait evaluator,
-which publishes the operand entity before import. The general constexpr
-`evaluate_type_trait` path still imports raw syntax operands, so traits evaluated
-outside constraint atoms can still record canonical shape-gap, structural-trait
-fallback, or TypeIndex entity-recovery counters. Boundary 3A owns publishing
-those trait operands in the shared path. Boundary 7 owns consolidating comparison
-atom evaluation so the constraint evaluator does not need to probe the general
-constexpr path first. Until both are done, keep `TypeTraitExprNode` atoms routed
-to `evaluateConstraintAtom`; moving them back through the generic constexpr
-probe regresses the migration counters without improving constraint semantics.
 
 ## Partial patterns without a canonical environment still resolve their record by spelling
 
@@ -170,43 +131,20 @@ missing record for a published environment fails closed.
 `partial_pattern_name_fallback` counts every remaining name lookup; extend
 canonical pattern import coverage and then delete the fallback.
 
-A bare function-type argument such as `S<R(int)>` publishes an environment
-composed from the canonical return type and the ordered canonical parameter
-types, including the empty parameter list, parameter adjustment, and plain
-noexcept/calling-convention qualifiers, so it does not take this fallback. A
-plain function-pointer or function-reference argument such as `S<T (*)(T)>` or
-`S<T (&)(T)>` now publishes the canonical callable plus its pointer or reference
-wrapper, so it also leaves the fallback and a different signature selects
-another partial or the primary. The pattern matcher compares the same signature
-before binding a parameter.
-Remaining unsupported function shapes are a parameter pack in the signature, a
-dependent noexcept expression, a reference-returning function type, a
-member-pointer callable, and a callable written through an ordered declarator or
-with more than one pointer level. A callable with several pointer levels
-(`S<T (**)(T)>`) additionally fails pattern deduction with an inconsistent
-substitution and selects the primary; that matcher gap is independent of
-environment publication.
+Remaining unsupported callable shapes are signature parameter packs, dependent
+noexcept expressions, reference returns, member-pointer callables, and ordered
+declarators with a non-pointer component (nested function, array, reference, or
+member-pointer spine).
 The fallback also remains for non-type-parameter argument shapes and for
 patterns whose concept or requires-clause argument identity cannot be published.
 
-An alias-template-specialization pattern argument such as `S<Ptr<T>>` is
-expanded through its alias declaration identity and the use-site argument
-syntax before the pattern is registered or its canonical environment is
-published. The structural matcher and the canonical importer therefore consume
-the same expanded pattern, and `S<int*>` selects the partial instead of the
-primary. Expanding an alias use whose own argument is another alias is
-supported when that argument's alias target expands. The fallback remains for
+The fallback remains for
 an alias declaration whose target is or contains another alias-template-id (for
 example `template<class T> using Q = P<T*>`) or a callable signature, for a
 variadic alias parameter list, for an alias use whose argument count does not
 match the alias declaration's parameter list, for alias arguments that are not
 type arguments, and for an alias target whose shared template-parameter
 substitution cannot produce a type specifier.
-
-Member and constructor
-schemas for supported shapes are keyed by the canonical
-`TemplateSpecialization` composed from the enclosing owner, the member primary,
-and the member template-id arguments, never by the synthesized spelling.
 
 The class adapter still infers the enclosing-owner argument prefix by
 subtracting the member template-id argument count from
@@ -216,14 +154,6 @@ kept only for declarations with no such producer and must be replaced when one
 appears rather than extended with a spelling heuristic.
 
 ## Out-of-line member function template identity has unresolved shapes
-
-An out-of-line definition of a member function template adopts the matching
-in-class declaration's `TemplateDeclId` when the definition's pattern owner
-resolves to a class template that has a published in-class declaration, the
-definition carries the function's own template head, and that declaration
-matches by owner, simple name, template parameter shape, function signature
-shape, and equivalent constraints. The definition's return and parameter
-type-parameter references carry that id and position.
 
 The following shapes remain unmerged and fail closed: the definition keeps no
 `TemplateDeclId`, and instantiation continues to attach through the in-class
@@ -281,10 +211,7 @@ materialization still needs smaller frames and bounded scheduling.
 Parenthesized `requires` operands in concept definitions can also overflow a
 1 MB stack in expression parsing before constraint evaluation starts, for example
 `Base<T> && (requires(T value) { value.probe(); } || __is_integral(T))`.
-Named-concept expansion, boolean continuations, and nested requirements are
-worklist-scheduled: a 128-level named-concept chain and a 128-level
-`requires { requires Previous<T>; }` chain compile under a 1 MB reserve. The
-remaining overflow above is in expression parsing, before constraint evaluation.
+The remaining overflow above is in expression parsing, before constraint evaluation.
 
 Persistent payload handles and out-of-line argument vectors are not reclaimed
 when rolled-back probes abandon entries; they remain allocated until process
@@ -296,9 +223,8 @@ Runtime function-parameter fold replay still uses its separate legacy adapter.
 The legacy structural matcher still has its 64-level nested-argument guard.
 Alias and variable-template substitution still have flattened input adapters
 that need migration to grouped bindings; nested pack NTTP aliases remain
-unsupported through those adapters. Member class-templates now parse
-pack-expanded bases such as `List : U...`; remaining base-template-id gaps are
-tracked separately.
+unsupported through those adapters. Remaining base-template-id gaps are tracked
+separately.
 
 C++20 permits observable class-instantiation effects before a later deduction
 failure and requires errors in separately instantiated bodies to remain hard
@@ -310,25 +236,14 @@ after a later failure, and nested callable signature objects are shared by the
 legacy representation. Establish owned candidate signature storage before
 extending rollback across that walk.
 
-`FrontendScratchTransaction` now also journals legacy type-registry publication:
-rollback restores name/native bindings and truncates newly published top-level
-`TypeInfo` rows plus their index-keyed cold payloads (dependent-name records,
-template-argument lists and intern buckets, template-argument cold payloads, and
-instantiation contexts). The pointer-keyed legacy `StructTypeInfo`/`EnumTypeInfo`
-arenas also truncate when the discarded range is unreachable; a range still
-referenced by a surviving row is retained instead of left dangling. Retention
-scans surviving `TypeInfo` cold indices, interned argument lists, instantiation
-contexts, and dependent-name records without allocating during rollback. Owners
-outside those stores, such as a `QualifiedIdentifierNode` or a copied
+Owners outside those stores, such as a `QualifiedIdentifierNode` or a copied
 `TemplateArgInfo` held by the AST/template registries, are not yet enumerable, so
 in-place rewrites of those external owners remain outside the boundary. Legacy
 AST nodes, parser publication, and direct `TypeInfo` field writes that bypass
 the mutable accessor and mutator API still need an owned transaction boundary,
 and production speculative parsing is not yet routed through it. Do not wrap the whole materialization path in the transaction or
-erase required dependency instantiations. Lockstep member and namespace-scope
-expansions now report
-`TemplatePackLengthMismatch` (#1820) when referenced packs differ in length.
-Expansion contexts that still use the flat legacy adapter remain dependent
+erase required dependency instantiations. Expansion contexts that still use the
+flat legacy adapter remain dependent
 instead of producing the diagnostic.
 
 ## SEH finally funclet termination is conservative in return-flow diagnostics
@@ -691,29 +606,12 @@ before they can be ranked.
 - Seed built-in subscript candidates from conversion templates whose return
   pointer or array-reference shape still depends on the template parameters.
 
-## Array-reference conversion and subscript coverage
-
-Built-in subscript lowering evaluates the postfix expression before the
-bracket operand, including the reversed form `index()[object()]`. Reads,
-writes, and address-taking share this lowering, including when a conversion
-supplies the array or when subscripts are combined across dimensions.
-
 ## Out-of-line static data member definition edge cases
 
-Scalar, array, nested-class, namespace-qualified, class-template, and
-nested-class-template definitions attach to the in-class declaration. A leading
-`::` on the out-of-line declarator-id names the global scope, so
-`int ::N::S::data = 7;` resolves the owner from the global namespace, and the
-`template` disambiguator of a dependent member class template
-(`Outer<T>::template Inner<U>::data`) reaches the same owner resolution. An
-out-of-line array definition of a static member of an explicitly specialized
-class template (`template<> struct S<int> { static int values[2]; };` followed by
-`int S<int>::values[2] = ...;`) binds when the declared and defined array shapes
-match. Concrete type conflicts are reported. Two boundaries remain: a repeated
-out-of-line definition is accepted as another attachment instead of producing a
-redefinition diagnostic, and the class-template conflict check covers concrete
-arithmetic member types; a dependent element type is validated against the
-instantiated declaration.
+Two boundaries remain: a repeated out-of-line definition is accepted as another
+attachment instead of producing a redefinition diagnostic, and the class-template
+conflict check covers concrete arithmetic member types; a dependent element type
+is validated against the instantiated declaration.
 
 An assignment through an unparenthesized qualified chain that names a member
 class template or a nested owner (`Outer<T>::Inner<U>::data = 1;`) is currently
@@ -768,21 +666,7 @@ elided yet and still requires an accessible copy or move constructor.
 
 ## Remaining namespace-scope initializer lowering gaps
 
-Declaration-namespace lookup now covers runtime initializers, including reopened
-and enclosing namespaces, using-declarations, and array-to-pointer decay for a
-whole array. Namespace-scope arrays whose canonical leaf element is a pointer or
-member pointer now place each scalar leaf at its element stride, including nested
-rows and brace elision; arrays of records and scalars keep their previous paths.
-Static pointer initializers now record a base symbol plus a byte addend, so a
-decayed element (`values + 1`, `&values[i]`) and a pointer-valued aggregate member
-at any offset store the addressed subobject instead of null. A pointer-to-array
-addend uses the canonical pointee object, so `&cells[1]` of `int[2][3]` advances
-one row instead of one `int`. A namespace-scope reference object now stores the
-referent's address: the initializer follows reference aliases and adds the member
-or array-element byte offset, and reads and writes through the reference
-dereference that stored address. A static-member array used as a pointer
-(`S::arr`) resolves the member's emitted storage for the in-class `static
-constexpr`, `inline static`, and out-of-line definition forms. Remaining gaps:
+Remaining gaps:
 
 - A namespace-scope reference initializer that needs a runtime pointer value
   (for example `int& r = *p;`, a reference-returning call, or a reference to a
@@ -821,16 +705,6 @@ member lookup, needs to keep the namespace-scope object's identity.
 
 ## Subscript storage follow-up architecture
 
-Some local `VariableDeclOp` records still publish stale parser sizes. The
-`AliasChain<Payload>::final_type payload{42};` declaration in
-`tests/test_chained_member_alias_overload_ret0.cpp` allocates zero bytes even
-though its member store writes four bytes. Inline function-pointer arrays in
-`tests/test_array_of_function_pointers_ret0.cpp` publish 32-bit elements while
-their initialization and subscripting use 64-bit pointers. Existing frame
-padding can mask these undersized allocations. Declaration IR must publish the
-resolved alias and ordered-declarator object sizes before local slot spacing
-can be compacted safely.
-
 Runtime storage now describes what each temporary holds, but two consumers
 still infer semantics from it. `ReturnOp` should carry explicit by-value versus
 reference intent instead of consulting per-function `TempVar` lvalue metadata;
@@ -841,39 +715,8 @@ result". `ArrayStore` and `ArrayElementAddress` still need an explicit element
 shape so codegen stops classifying pointer-valued elements as records from
 `TypeCategory` alone.
 
-Dependent array bounds in composed aliases now survive template instantiation.
-For example, `using Row = short[3];` followed by
-`template<int N> using Grid = Row[N];` composes the substituted outer extent
-with the inner extent of 3. The same substitution path covers direct aliases,
-forwarded alias templates, class member aliases, and conversion to an array
-reference, while preserving the order of array, pointer, and reference
-declarators. A bound that substitutes to zero is rejected as an unresolved
-alias-template array bound rather than materializing a zero-extent array.
-
 ## Remaining flat trait consumers
 
-The triviality and lifetime facts are published, including a trivial-destructor
-fact that ignores access and deletion while destructibility applies them. A
-canonical per-member fact schema now records trivial copying, triviality,
-destructibility, nothrow and trivial destructor answers, and deleted, inaccessible,
-or non-trivial destructor state for each data member. The publisher derives the
-member-sensitive record facts from that schema instead of walking `StructTypeInfo`;
-the compatibility projection remains only for members whose canonical type cannot
-be represented (`CanonicalRecordMemberFacts::Unknown`). Trait evaluators consume
-the same member facts and keep the legacy classifier only as the fallback for
-those unrepresented shapes. Record publication also computes the aggregate
-triviality, POD, destructibility, and virtual-destructor answers once and tags
-them with `AggregateTraitFacts`. Canonical trait checks read those bits directly;
-recursive and compatibility paths remain fallbacks when the tag is absent.
-Compatibility wrappers used by code generation and pseudo-destructor lowering also
-read the published aggregate fact first. Default-construction answers use the same
-member and base facts with an `AggregateDefaultConstructionFacts` tag; default
-member initializers consume canonical initializer and constructor facts, leaving
-the recursive fallback only for unresolved schema entries. Empty and standard-layout
-facts also aggregate member and base answers, including no-unique-address empty
-members and cross-base ownership; unknown schema entries keep the legacy fallback.
-Explicit member-object-pointer template arguments publish ordered owner identity
-for pointer- and array-wrapped pointees.
 The sema-owned construction traits
 (`__is_constructible`, `__is_trivially_constructible`, and
 `__is_nothrow_constructible`) answer exact matches, supported scalar and
@@ -1115,19 +958,6 @@ the call result, and the legacy lowering peels that pointer back to the member,
 so a local that is genuinely `int*` is not distinguishable from the collapsed
 form at this boundary. Member-pointer owner identity itself is carried by one
 substitution rule; see the projection notes below.
-
-## Member-pointer owner copies that stay lexical projections
-
-`applyMemberClassIdentityForSubstitution` is the single copy rule for deriving
-a `TypeSpecifierNode` from an outer pattern that already carries a member
-owner. Some paths deliberately do not use it because their source has no owner
-authority to copy or because they publish a different owner: alias metadata and
-`TemplateTypeArg`/`TemplateArgInfo` reconstruction, the address-of and member
-projection builders, and canonical rematerialization that rebinds a
-template-pattern owner to its concrete specialization. Those paths either bind
-authority from a record or `TypeInfo` at the canonical boundary or emit a
-spelling for lookup and mangling; they do not copy an owner triple from another
-specifier.
 
 ## Dependent member-pointer owners the shared nested-name-specifier parse cannot resolve
 
