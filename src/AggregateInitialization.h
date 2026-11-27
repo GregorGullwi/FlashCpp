@@ -49,6 +49,17 @@ inline bool acceptsWholeExpression(
 	if (element.is_array) {
 		return false;
 	}
+	// [dcl.init.aggr]/[dcl.init.list]: an aggregate has no user-provided
+	// constructors, so a non-aggregate (scalar/pointer/enum) clause cannot
+	// initialize the whole aggregate object; its subobjects must be filled by
+	// brace elision. Aggregate-typed clauses still need the normal conversion
+	// check (e.g. copy/move from the same or a derived type). Skipping only
+	// the non-aggregate case avoids O(depth^2) work on deep aggregate
+	// (especially inheritance) chains without changing appertainment results.
+	if (element.struct_info != nullptr && !element.struct_info->hasUserDeclaredConstructor() &&
+		!is_struct_type(source_type.category())) {
+		return false;
+	}
 	const TypeSpecifierNode target_type = AggregateElements::makeTypeSpecifier(element);
 	const ConversionPlan plan = buildConversionPlan(source_type, target_type, &clause);
 	if (!plan.is_valid) {
