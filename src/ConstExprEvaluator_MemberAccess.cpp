@@ -1665,9 +1665,9 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 				return elem_result;
 			}
 		} else {
-			auto it = elem_result.object_member_bindings.find(member_name);
-			if (it != elem_result.object_member_bindings.end()) {
-				return it->second;
+			ConstexprObjectMemberLookup member_lookup = resolveConstexprObjectMemberRecursive(elem_result, StringTable::getOrInternStringHandle(member_name));
+			if (member_lookup.value != nullptr) {
+				return *member_lookup.value;
 			}
 		}
 		// For a plain (non-array) struct pointer at offset 0, fall back to the standard resolver
@@ -1699,9 +1699,9 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 	if (object_identifier != nullptr) {
 		EvalResult evaluated_object = evaluate(object_expr, context);
 		if (evaluated_object.success() && evaluated_object.object_type_index.is_valid()) {
-			auto member_it = evaluated_object.object_member_bindings.find(member_name);
-			if (member_it != evaluated_object.object_member_bindings.end()) {
-				return validateConstexprRead(member_it->second);
+			ConstexprObjectMemberLookup member_lookup = resolveConstexprObjectMemberRecursive(evaluated_object, StringTable::getOrInternStringHandle(member_name));
+			if (member_lookup.value != nullptr) {
+				return validateConstexprRead(*member_lookup.value);
 			}
 		}
 	}
@@ -1717,9 +1717,9 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 					return object_result;
 				}
 
-				auto member_it = object_result.object_member_bindings.find(member_name);
-				if (member_it != object_result.object_member_bindings.end()) {
-					return member_it->second;
+				ConstexprObjectMemberLookup member_lookup = resolveConstexprObjectMemberRecursive(object_result, StringTable::getOrInternStringHandle(member_name));
+				if (member_lookup.value != nullptr) {
+					return *member_lookup.value;
 				}
 
 				if (object_result.pointer_to_var.isValid()) {
@@ -1732,9 +1732,9 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 						return deref_result;
 					}
 
-					auto deref_member_it = deref_result.object_member_bindings.find(member_name);
-					if (deref_member_it != deref_result.object_member_bindings.end()) {
-						return deref_member_it->second;
+					ConstexprObjectMemberLookup deref_lookup = resolveConstexprObjectMemberRecursive(deref_result, StringTable::getOrInternStringHandle(member_name));
+					if (deref_lookup.value != nullptr) {
+						return *deref_lookup.value;
 					}
 				}
 
@@ -1774,9 +1774,9 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
  // a miss here is expected and we fall through to normal AST evaluation.
 	if (resolved_object.materialized_value.has_value()) {
 		const EvalResult& mat = *resolved_object.materialized_value;
-		auto it = mat.object_member_bindings.find(member_name);
-		if (it != mat.object_member_bindings.end()) {
-			return it->second;
+		const EvalResult* materialized_member = findConstexprObjectMemberRecursive(mat, StringTable::getOrInternStringHandle(member_name));
+		if (materialized_member != nullptr) {
+			return *materialized_member;
 		}
  // Not found in materialized bindings (e.g., array member) — fall through
  // to normal AST-based evaluation below.
@@ -1980,21 +1980,40 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 		}
 
 		const InitializerListNode& init_list = initializer.as<InitializerListNode>();
-		size_t positional_member_index = 0;
-		for (size_t init_index = 0; init_index < init_list.size(); ++init_index) {
-			StringHandle current_member_name;
-			if (init_list.is_designated(init_index)) {
-				current_member_name = init_list.member_name(init_index);
-			} else if (positional_member_index < struct_info->members.size()) {
-				current_member_name = struct_info->members[positional_member_index].getName();
-				positional_member_index++;
-			} else {
-				break;
+		if (struct_info->findMember(member_name_handle) == nullptr) {
+			// A base member has no binding on the derived object: the value lives in
+			// the materialized base subobject. Materialize the whole object so the
+			// same base partition and class graph that the runtime path uses select
+			// the subobject, then read the member through it.
+			if (find_member_info(struct_info) == nullptr) {
+				return EvalResult::error("Member '" + std::string(member_name) + "' not found in " + std::string(usage_name));
 			}
+			EvalResult object_result = materialize_aggregate_object_value(struct_info, declared_type_index, init_list, context, enclosing_bindings);
+			if (!object_result.success()) {
+				return object_result;
+			}
+			ConstexprObjectMemberLookup member_lookup = resolveConstexprObjectMemberRecursive(object_result, member_name_handle);
+			if (member_lookup.error.has_value()) {
+				return *member_lookup.error;
+			}
+			if (member_lookup.value == nullptr) {
+				return EvalResult::error("Member '" + std::string(member_name) + "' has no materialized value in " + std::string(usage_name));
+			}
+			resolved_member.member_info = find_member_info(struct_info);
+			resolved_member.value = *member_lookup.value;
+			return std::nullopt;
+		}
 
-			if (current_member_name == member_name_handle) {
-				return resolve_explicit_member(struct_info, &init_list.initializers()[init_index]);
+		const AggregateInitialization::BasePartition partition = partitionConstexprAggregateBases(*struct_info, init_list, context);
+		for (size_t member_index = 0; member_index < struct_info->members.size(); ++member_index) {
+			if (struct_info->members[member_index].getName() != member_name_handle) {
+				continue;
 			}
+			const AggregateInitialization::ElementAssignment& assignment = partition.member_elements[member_index];
+			if (!assignment.range.empty()) {
+				return resolve_explicit_member(struct_info, &init_list.initializers()[assignment.range.begin]);
+			}
+			break;
 		}
 
 		return resolve_explicit_member(struct_info, nullptr);
@@ -2013,9 +2032,12 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 		if (is_func_call) {
 			auto func_result = evaluate(initializer, context);
 			if (func_result.success() && !func_result.object_member_bindings.empty()) {
-				auto it = func_result.object_member_bindings.find(member_name);
-				if (it != func_result.object_member_bindings.end()) {
-					resolved_member.value = it->second;
+				ConstexprObjectMemberLookup member_lookup = resolveConstexprObjectMemberRecursive(func_result, member_name_handle);
+				if (member_lookup.error.has_value()) {
+					return *member_lookup.error;
+				}
+				if (member_lookup.value != nullptr) {
+					resolved_member.value = *member_lookup.value;
 					return std::nullopt;
 				}
 				return EvalResult::error("Member '" + std::string(member_name) + "' not found in function call result");
@@ -2038,9 +2060,12 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 			if (!gen_result.success())
 				return gen_result;
 			if (!gen_result.object_member_bindings.empty()) {
-				auto it = gen_result.object_member_bindings.find(member_name);
-				if (it != gen_result.object_member_bindings.end()) {
-					resolved_member.value = it->second;
+				ConstexprObjectMemberLookup member_lookup = resolveConstexprObjectMemberRecursive(gen_result, member_name_handle);
+				if (member_lookup.error.has_value()) {
+					return *member_lookup.error;
+				}
+				if (member_lookup.value != nullptr) {
+					resolved_member.value = *member_lookup.value;
 					return std::nullopt;
 				}
 				return EvalResult::error("Member '" + std::string(member_name) + "' not found in " + std::string(usage_name));
@@ -2064,11 +2089,14 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 		if (!object_result.success()) {
 			return object_result;
 		}
-		auto member_it = object_result.object_member_bindings.find(member_name);
-		if (member_it == object_result.object_member_bindings.end()) {
+		ConstexprObjectMemberLookup member_lookup = resolveConstexprObjectMemberRecursive(object_result, member_name_handle);
+		if (member_lookup.error.has_value()) {
+			return *member_lookup.error;
+		}
+		if (member_lookup.value == nullptr) {
 			return EvalResult::error("Member '" + std::string(member_name) + "' has no value in " + std::string(usage_name));
 		}
-		resolved_member.value = member_it->second;
+		resolved_member.value = *member_lookup.value;
 		return std::nullopt;
 	}
 	const TypeSpecifierNode& type_spec = ctor_call.type_node();
@@ -2102,16 +2130,16 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 			for (size_t i = 0; i < ctor_args.size(); ++i) {
 				init_list.add_initializer(ctor_args[i]);
 			}
-			EvalResult obj_result = EvalResult::from_int(0);
-			obj_result.object_type_index = type_index;
-			auto bind_result = bind_members_from_initializer_list(
-				struct_info, init_list, obj_result.object_member_bindings, context, enclosing_bindings);
-			if (!bind_result.success()) {
-				return bind_result;
+			EvalResult obj_result = materialize_aggregate_object_value(struct_info, type_index, init_list, context, enclosing_bindings);
+			if (!obj_result.success()) {
+				return obj_result;
 			}
-			auto it = obj_result.object_member_bindings.find(member_name);
-			if (it != obj_result.object_member_bindings.end()) {
-				resolved_member.value = it->second;
+			ConstexprObjectMemberLookup member_lookup = resolveConstexprObjectMemberRecursive(obj_result, member_name_handle);
+			if (member_lookup.error.has_value()) {
+				return *member_lookup.error;
+			}
+			if (member_lookup.value != nullptr) {
+				resolved_member.value = *member_lookup.value;
 				return std::nullopt;
 			}
 			return EvalResult::error("Member '" + std::string(member_name) + "' not found in aggregate initialization result");
@@ -2389,9 +2417,13 @@ EvalResult Evaluator::evaluate_nested_member_access(
 				return intermediate_result;
 			}
 
-			auto final_member_it = intermediate_result.object_member_bindings.find(final_member_name);
-			if (final_member_it != intermediate_result.object_member_bindings.end()) {
-				return final_member_it->second;
+			ConstexprObjectMemberLookup final_lookup = resolveConstexprObjectMemberRecursive(intermediate_result,
+				StringTable::getOrInternStringHandle(final_member_name));
+			if (final_lookup.error.has_value()) {
+				return *final_lookup.error;
+			}
+			if (final_lookup.value != nullptr) {
+				return *final_lookup.value;
 			}
 			if (intermediate_result.object_member_bindings.empty() &&
 				!intermediate_result.object_type_index.is_valid()) {
@@ -2439,9 +2471,13 @@ EvalResult Evaluator::evaluate_nested_member_access(
 									return materialize_result;
 								}
 
-								final_member_it = materialized_result.object_member_bindings.find(final_member_name);
-								if (final_member_it != materialized_result.object_member_bindings.end()) {
-									return final_member_it->second;
+								ConstexprObjectMemberLookup materialized_lookup = resolveConstexprObjectMemberRecursive(materialized_result,
+									StringTable::getOrInternStringHandle(final_member_name));
+								if (materialized_lookup.error.has_value()) {
+									return *materialized_lookup.error;
+								}
+								if (materialized_lookup.value != nullptr) {
+									return *materialized_lookup.value;
 								}
 							}
 						}
@@ -2488,7 +2524,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 				return EvalResult::error("Base expression in nested member access is not a struct object");
 			}
 
-			const StructMember* intermediate_member_info = base_struct_info->findMember(intermediate_member);
+			const StructMember* intermediate_member_info = findMemberInfoRecursive(base_struct_info, StringTable::getOrInternStringHandle(intermediate_member));
 			if (!intermediate_member_info) {
 				return EvalResult::error(
 					std::string(StringBuilder()
@@ -2498,8 +2534,12 @@ EvalResult Evaluator::evaluate_nested_member_access(
 									.commit()));
 			}
 
-			auto intermediate_member_it = base_result.object_member_bindings.find(intermediate_member);
-			if (intermediate_member_it == base_result.object_member_bindings.end()) {
+			ConstexprObjectMemberLookup intermediate_lookup = resolveConstexprObjectMemberRecursive(base_result,
+				StringTable::getOrInternStringHandle(intermediate_member));
+			if (intermediate_lookup.error.has_value()) {
+				return *intermediate_lookup.error;
+			}
+			if (intermediate_lookup.value == nullptr) {
 				return EvalResult::error(
 					std::string(StringBuilder()
 									.append("Intermediate member '"sv)
@@ -2508,7 +2548,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 									.commit()));
 			}
 
-			EvalResult intermediate_result = intermediate_member_it->second;
+			EvalResult intermediate_result = *intermediate_lookup.value;
 			const TypeInfo* intermediate_member_type_info = tryGetTypeInfo(intermediate_member_info->type_index);
 			const bool needs_intermediate_materialization =
 				!intermediate_result.object_type_index.is_valid() &&
@@ -2553,9 +2593,13 @@ EvalResult Evaluator::evaluate_nested_member_access(
 				}
 			}
 
-			auto final_member_it = intermediate_result.object_member_bindings.find(final_member_name);
-			if (final_member_it != intermediate_result.object_member_bindings.end()) {
-				return final_member_it->second;
+			ConstexprObjectMemberLookup final_lookup = resolveConstexprObjectMemberRecursive(intermediate_result,
+				StringTable::getOrInternStringHandle(final_member_name));
+			if (final_lookup.error.has_value()) {
+				return *final_lookup.error;
+			}
+			if (final_lookup.value != nullptr) {
+				return *final_lookup.value;
 			}
 
 			return EvalResult::error(
@@ -2582,8 +2626,12 @@ EvalResult Evaluator::evaluate_nested_member_access(
 			return EvalResult::error("Dangling reference binding in nested member access: " + std::string(base_var_name));
 		}
 
-		auto intermediate_member_it = base_value->object_member_bindings.find(intermediate_member);
-		if (intermediate_member_it == base_value->object_member_bindings.end()) {
+		ConstexprObjectMemberLookup intermediate_lookup = resolveConstexprObjectMemberRecursive(*base_value,
+			StringTable::getOrInternStringHandle(intermediate_member));
+		if (intermediate_lookup.error.has_value()) {
+			return *intermediate_lookup.error;
+		}
+		if (intermediate_lookup.value == nullptr) {
 			return EvalResult::error(
 				std::string(StringBuilder()
 								.append("Intermediate member '"sv)
@@ -2592,10 +2640,13 @@ EvalResult Evaluator::evaluate_nested_member_access(
 								.commit()));
 		}
 
-		const EvalResult& intermediate_value = intermediate_member_it->second;
-		auto final_member_it = intermediate_value.object_member_bindings.find(final_member_name);
-		if (final_member_it != intermediate_value.object_member_bindings.end()) {
-			return final_member_it->second;
+		const EvalResult& intermediate_value = *intermediate_lookup.value;
+		ConstexprObjectMemberLookup final_lookup = resolveConstexprObjectMemberRecursive(intermediate_value, StringTable::getOrInternStringHandle(final_member_name));
+		if (final_lookup.error.has_value()) {
+			return *final_lookup.error;
+		}
+		if (final_lookup.value != nullptr) {
+			return *final_lookup.value;
 		}
 	}
 
@@ -2614,12 +2665,13 @@ EvalResult Evaluator::evaluate_nested_member_access(
 	// an AST initializer.
 	if (resolved_object.materialized_value.has_value()) {
 		const EvalResult& base_value = *resolved_object.materialized_value;
-		auto intermediate_member_it = base_value.object_member_bindings.find(intermediate_member);
-		if (intermediate_member_it != base_value.object_member_bindings.end()) {
-			const EvalResult& intermediate_value = intermediate_member_it->second;
-			auto final_member_it = intermediate_value.object_member_bindings.find(final_member_name);
-			if (final_member_it != intermediate_value.object_member_bindings.end()) {
-				return final_member_it->second;
+		ConstexprObjectMemberLookup intermediate_lookup = resolveConstexprObjectMemberRecursive(base_value,
+			StringTable::getOrInternStringHandle(intermediate_member));
+		if (intermediate_lookup.value != nullptr) {
+			ConstexprObjectMemberLookup final_lookup = resolveConstexprObjectMemberRecursive(*intermediate_lookup.value,
+				StringTable::getOrInternStringHandle(final_member_name));
+			if (final_lookup.value != nullptr) {
+				return *final_lookup.value;
 			}
 		}
 	}
@@ -2666,9 +2718,12 @@ EvalResult Evaluator::evaluate_nested_member_access(
 
 	if (intermediate_member_source.value.has_value()) {
 		EvalResult intermediate_value = intermediate_member_source.value.value();
-		auto final_member_it = intermediate_value.object_member_bindings.find(final_member_name);
-		if (final_member_it != intermediate_value.object_member_bindings.end()) {
-			return final_member_it->second;
+		ConstexprObjectMemberLookup final_lookup = resolveConstexprObjectMemberRecursive(intermediate_value, StringTable::getOrInternStringHandle(final_member_name));
+		if (final_lookup.error.has_value()) {
+			return *final_lookup.error;
+		}
+		if (final_lookup.value != nullptr) {
+			return *final_lookup.value;
 		}
 		if (intermediate_member_source.member_info &&
 			!intermediate_value.object_type_index.is_valid() &&
@@ -2709,9 +2764,13 @@ EvalResult Evaluator::evaluate_nested_member_access(
 						return materialize_result;
 					}
 
-					final_member_it = materialized_value.object_member_bindings.find(final_member_name);
-					if (final_member_it != materialized_value.object_member_bindings.end()) {
-						return final_member_it->second;
+					ConstexprObjectMemberLookup materialized_lookup = resolveConstexprObjectMemberRecursive(materialized_value,
+						StringTable::getOrInternStringHandle(final_member_name));
+					if (materialized_lookup.error.has_value()) {
+						return *materialized_lookup.error;
+					}
+					if (materialized_lookup.value != nullptr) {
+						return *materialized_lookup.value;
 					}
 				}
 			}
@@ -2911,11 +2970,14 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 			if (!object_result.success()) {
 				return object_result;
 			}
-			auto member_it = object_result.object_member_bindings.find(member_name);
-			if (member_it == object_result.object_member_bindings.end()) {
-				return EvalResult::error("Member '" + std::string(member_name) + "' not found in aggregate array element");
+			ConstexprObjectMemberLookup member_lookup = resolveConstexprObjectMemberRecursive(object_result, StringTable::getOrInternStringHandle(member_name));
+			if (member_lookup.error.has_value()) {
+				return *member_lookup.error;
 			}
-			return member_it->second;
+			if (member_lookup.value != nullptr) {
+				return *member_lookup.value;
+			}
+			return EvalResult::error("Member '" + std::string(member_name) + "' not found in aggregate array element");
 		}
 
 		const auto& ctor_args = ctor_call.arguments();

@@ -842,9 +842,13 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 										 EvalErrorType::Other,
 										 DiagnosticId::ConstantExpressionOutOfBoundsAccess);
 			}
-			auto member_it = target_obj->object_member_bindings.find(member_access.member_name());
-			if (member_it != target_obj->object_member_bindings.end()) {
-				return validateConstexprRead(member_it->second);
+			ConstexprObjectMemberLookup member_lookup = resolveConstexprObjectMemberRecursive(*target_obj,
+				StringTable::getOrInternStringHandle(member_access.member_name()));
+			if (member_lookup.error.has_value()) {
+				return *member_lookup.error;
+			}
+			if (member_lookup.value != nullptr) {
+				return validateConstexprRead(*member_lookup.value);
 			}
 			// The heap entry exists but the requested member name is absent.  Return an
 			// explicit diagnostic here rather than falling through to std::nullopt which
@@ -865,9 +869,10 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 			}
 			return std::nullopt;
 		}
-		auto member_it = deref_result.object_member_bindings.find(member_access.member_name());
-		if (member_it != deref_result.object_member_bindings.end()) {
-			return validateConstexprRead(member_it->second);
+		ConstexprObjectMemberLookup member_lookup = resolveConstexprObjectMemberRecursive(deref_result,
+			StringTable::getOrInternStringHandle(member_access.member_name()));
+		if (member_lookup.value != nullptr) {
+			return validateConstexprRead(*member_lookup.value);
 		}
 		if (object_result->pointer_offset == 0) {
 			return std::nullopt;
@@ -881,12 +886,13 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 		return std::nullopt;
 	}
 
-	auto member_it = object_result->object_member_bindings.find(member_access.member_name());
-	if (member_it == object_result->object_member_bindings.end()) {
+	ConstexprObjectMemberLookup member_lookup = resolveConstexprObjectMemberRecursive(*object_result,
+		StringTable::getOrInternStringHandle(member_access.member_name()));
+	if (member_lookup.value == nullptr) {
 		return std::nullopt;
 	}
 
-	return validateConstexprRead(member_it->second);
+	return validateConstexprRead(*member_lookup.value);
 }
 
 std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(

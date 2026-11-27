@@ -188,13 +188,7 @@ EvalResult Evaluator::materialize_aggregate_object_value(
 	// partition assigns every clause up to the base's last scalar leaf to that
 	// base; counting one clause per base would leave those leaves zero and push
 	// the remaining clauses onto the wrong member.
-	const AggregateInitialization::BasePartition partition = AggregateInitialization::partitionBases(
-		*struct_info,
-		init_list,
-		[&](const AggregateElements::Element& element, const ASTNode& clause) {
-			const std::optional<TypeSpecifierNode> source_type = tryQueryExpressionType(clause, context);
-			return source_type.has_value() && AggregateInitialization::acceptsWholeExpression(element, *source_type, clause);
-		});
+	const AggregateInitialization::BasePartition partition = partitionConstexprAggregateBases(*struct_info, init_list, context);
 	if (partition.excess_clause.has_value()) {
 		return EvalResult::error("Excess or unrecognized initializer in aggregate initialization " "(no matching aggregate element for clause)");
 	}

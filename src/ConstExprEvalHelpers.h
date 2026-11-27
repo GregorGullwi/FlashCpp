@@ -2,6 +2,7 @@
 
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
+#include "AggregateInitialization.h"
 #include "BuiltinListInitNarrowing.h"
 #include "CallNodeHelpers.h"
 #include "ExpressionSubstitutor.h"
@@ -89,9 +90,26 @@ struct ShiftEvaluationInfo {
 };
 
 const StructMember* findMemberInfoRecursive(const StructTypeInfo* struct_info, StringHandle member_name_handle);
-const EvalResult* findConstexprObjectMemberRecursive(
-	const EvalResult& object,
-	StringHandle member_name_handle);
+
+// Result of looking a member up in a materialized constexpr object. A base
+// member binding lives only inside the corresponding base subobject value, so a
+// miss in the object's own bindings must descend the class graph. `error` is set
+// when the class graph needs a base subobject value that the object does not
+// carry; that shape cannot be answered and must not be guessed.
+struct ConstexprObjectMemberLookup {
+	const EvalResult* value = nullptr;
+	std::optional<EvalResult> error;
+};
+
+ConstexprObjectMemberLookup resolveConstexprObjectMemberRecursive(const EvalResult& object, StringHandle member_name_handle);
+const EvalResult* findConstexprObjectMemberRecursive(const EvalResult& object, StringHandle member_name_handle);
+
+// Partition an aggregate initializer list between base subobjects and direct
+// members with the appertainment rule that aggregate initialization shares with
+// the runtime path. The returned assignments index the initializer clauses that
+// each base or member consumes, including brace elision into scalar leaves.
+AggregateInitialization::BasePartition partitionConstexprAggregateBases(const StructTypeInfo& struct_info, const InitializerListNode& init_list,
+	EvaluationContext& context);
 TypeSpecifierNode makeTypeSpecForDefaultInit(TypeIndex type_index);
 EvalResult makeConstructorDefaultInitFromType(const TypeSpecifierNode& type_spec, EvaluationContext& context);
 
