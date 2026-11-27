@@ -1062,18 +1062,6 @@ for these contexts, then extend
 `&B::member`, pass a non-constant address to a const-pointee parameter, and
 round-trip a `long double` pointee.
 
-## A member-access receiver in `LValueAddress` context returns an undefined temporary
-
-`generateMemberAccessIr` returns a `ContainsAddress` result in `LValueAddress`
-context without emitting a defining instruction for a non-array, non-reference
-member. A consumer that reads the address, such as the `.*` receiver of
-`object.inner.*pointer`, therefore adds the member offset to an uninitialized
-temporary for both local and global base objects. Direct object receivers,
-arrays, reference members, and reads through an already computed member address
-are unaffected. The next change is to emit a `ComputeAddress` for a scalar
-member in `LValueAddress` context the way the array-member branch already does,
-then return that emitted address and delete the metadata-only result.
-
 ## Member-pointer owner copies that stay lexical projections
 
 `applyMemberClassIdentityForSubstitution` is the single copy rule for deriving

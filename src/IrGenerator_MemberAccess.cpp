@@ -2248,38 +2248,39 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	member_load.bitfield_width = member->bitfield_width;
 	member_load.bitfield_bit_offset = member->bitfield_bit_offset;
 
-	// When context is LValueAddress, skip the load and return address/metadata only
+	// When context is LValueAddress, skip the load and materialize the member address.
+	// Neither an array member nor a scalar member has a value to load here, and every
+	// returned temp needs a defining instruction: an address consumer such as a `.*`
+	// receiver otherwise adds the member offset to an uninitialized temporary.
 	// EXCEPTION: For reference members, we must emit MemberAccess to load the stored address
 	// because references store a pointer value that needs to be returned
 	if (context == ExpressionContext::LValueAddress && !member->is_reference()) {
-		if (member->is_array) {
-			// An array member has no scalar value to load. Materialize its address
-			// here so every LValueAddress consumer receives an emitted temp, not a
-			// value-bearing result with no defining instruction.
-			ValueStorage base_storage = ValueStorage::ContainsData;
-			if (is_pointer_dereference) {
+		ValueStorage base_storage = ValueStorage::ContainsData;
+		if (is_pointer_dereference) {
+			base_storage = ValueStorage::ContainsAddress;
+		} else if (const auto* base_temp = std::get_if<TempVar>(&effective_base)) {
+			const TempVarMetadata base_metadata = getTempVarMetadata(*base_temp);
+			if (base_metadata.is_address || base_metadata.holds_address_only ||
+				(base_metadata.lvalue_info.has_value() &&
+				 (base_metadata.lvalue_info->kind == LValueInfo::Kind::Indirect ||
+				  base_metadata.lvalue_info->kind == LValueInfo::Kind::ReferenceDeref))) {
 				base_storage = ValueStorage::ContainsAddress;
-			} else if (const auto* base_temp = std::get_if<TempVar>(&effective_base)) {
-				const TempVarMetadata base_metadata = getTempVarMetadata(*base_temp);
-				if (base_metadata.is_address || base_metadata.holds_address_only ||
-					(base_metadata.lvalue_info.has_value() &&
-					 (base_metadata.lvalue_info->kind == LValueInfo::Kind::Indirect ||
-					  base_metadata.lvalue_info->kind == LValueInfo::Kind::ReferenceDeref))) {
-					base_storage = ValueStorage::ContainsAddress;
-				}
 			}
-			TempVar address_var = var_counter.next();
-			ComputeAddressOp compute;
-			compute.result = address_var;
-			compute.base = effective_base;
-			compute.base_storage = base_storage;
-			compute.total_member_offset = did_unwrap ? accumulated_offset : resolved_member_offset;
-			compute.result_type_index = member->type_index.withCategory(member->memberType());
-			compute.result_size_bits = SizeInBits{member_size_bits};
-			ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(compute), memberAccessNode.member_token()));
-			markAddressOnlyResult(address_var, compute.result_type_index, compute.result_size_bits);
-			return makeMemberResult(SizeInBits{member_size_bits}, address_var, member->type_index,
-									PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
+		}
+		const TypeIndex address_type = member->type_index.withCategory(member->memberType());
+		const SizeInBits address_size{member_size_bits};
+		ComputeAddressOp compute;
+		compute.result = result_var;
+		compute.base = effective_base;
+		compute.base_storage = base_storage;
+		compute.total_member_offset = did_unwrap ? accumulated_offset : resolved_member_offset;
+		compute.result_type_index = address_type;
+		compute.result_size_bits = address_size;
+		ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(compute), memberAccessNode.member_token()));
+		if (member->is_array) {
+			// An array member has no lvalue slot for a member store; the address is
+			// the whole result, so it must not be dereferenced like a reference.
+			markAddressOnlyResult(result_var, address_type, address_size);
 		}
 		return makeMemberResult(SizeInBits{member_size_bits}, result_var, member->type_index,
 								PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);

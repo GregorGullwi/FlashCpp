@@ -563,7 +563,10 @@ remaining pattern schemas by identity, and remove the name fallback.
      bounds are materialized onto the type specifier so canonical identity sees
      the array. Array-member lvalue-address lowering now emits the member address
      for every array member, so direct member-array reference arguments receive
-     a real address. Conditional array branches consume their annotated
+     a real address. Scalar-member lvalue-address lowering emits the same
+     address, so a `.*` receiver built from a member access adds the
+     member-pointer offset to the subobject instead of an unemitted temporary.
+     Conditional array branches consume their annotated
      array-to-pointer conversion without re-dereferencing the address temp,
      subscript lowering treats pointer-to-array declarators as scalar pointers
      rather than array objects, builtin unary `*` consumes the canonical
